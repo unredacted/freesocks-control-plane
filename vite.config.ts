@@ -15,7 +15,7 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
  *     script + css + the external theme-init script + any modulepreloads).
  *  2. Inject ONE import map with an `integrity` section covering EVERY emitted
  *     JS chunk, so the runtime code-split / dynamic-import chunks (the lazy admin
- *     CMS, the e2ee crypto) are integrity-checked too — index.html only
+ *     CMS, the hpke crypto) are integrity-checked too — index.html only
  *     references the entry, so without this they carried no SRI. Also emit the
  *     same map as `dist/sri-manifest.json` for the OOB / reproducible-build
  *     verifier (Phase 4).
@@ -121,7 +121,7 @@ export default defineConfig(() => ({
     target: 'esnext',
     rolldownOptions: {
       input: path.resolve(__dirname, 'index.html'),
-      // `@hpke/common` (a transitive dep of the E2EE stack) writes
+      // `@hpke/common` (a transitive dep of the HPKE stack) writes
       // `/* @__PURE__ */` in positions Rolldown's parser ignores, so every build
       // printed two multi-line INVALID_ANNOTATION blocks. It is upstream code we
       // do not control and the only consequence is slightly weaker dead-code

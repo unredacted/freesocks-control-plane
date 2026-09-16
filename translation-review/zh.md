@@ -1,7 +1,7 @@
 # FreeSocks translation review — Chinese (中文)
 
 Generated from `messages/en.json` (source of truth) vs `messages/zh.json`.
-**115 of 846 strings are missing** (the app currently shows English for
+**144 of 785 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -194,7 +194,7 @@ review.
 | `passkey.signInFailed` | Passkey sign-in failed | 通行密钥登录失败 |
 | `passkey.notNow` | Not now | 暂不 |
 
-## `account` — The signed-in /account dashboard: connection, membership, codes, security tabs. *(1 missing)*
+## `account` — The signed-in /account dashboard: connection, membership, codes, security tabs. *(4 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
@@ -232,6 +232,9 @@ review.
 | `account.membershipNudge.body` | Unlimited bandwidth and devices. | 无限流量与设备。 |
 | `account.membershipNudge.bodyNoDevices` | Unlimited bandwidth. | 无限带宽。 |
 | `account.membershipNudge.cta` | View membership | 查看会员 |
+| `account.map.title` | Where your key lives | ⚠️ **MISSING** |
+| `account.map.network` | One of {count} FreeSocks locations | ⚠️ **MISSING** |
+| `account.map.aria` | Globe of FreeSocks server locations, highlighting yours | ⚠️ **MISSING** |
 | `account.tab.connection` | Connection | 连接 |
 | `account.tab.membership` | Membership | 会员 |
 | `account.tab.gifts` | Gifts & referrals | 礼品与推荐 |
@@ -267,7 +270,7 @@ review.
 | `account.deviceRevokedBody` | The slot is free. That device loses access until it re-imports your subscription. | 该插槽空闲。该设备将失去访问权限，直到重新导入您的订阅。 |
 | `account.deviceRevokeFailedTitle` | Couldn't revoke the device | 无法撤销该设备 |
 
-## `hero` — The subscription panel: the key/URL block, traffic + expiry stats, QR, status callouts. *(3 missing)*
+## `hero` — The subscription panel: the key/URL block, traffic + expiry stats, QR, status callouts. *(5 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
@@ -314,6 +317,8 @@ review.
 | `hero.nodeOffline` | Node offline | 节点离线 |
 | `hero.nodeUnknown` | Node status unknown | 节点状态未知 |
 | `hero.nodeStatusLink` | Network status | 网络状态 |
+| `hero.relayRefreshSuggested` | New connection details are available. Update this subscription in your app to keep connecting. | ⚠️ **MISSING** |
+| `hero.relayConnections` | Connections in your config: | ⚠️ **MISSING** |
 | `hero.nodeOnlineHint` | The server behind your config is up and responding. If you still can't connect, your network or ISP is likely filtering it - try another connection mode or location. | 你配置背后的服务器运行正常。如果仍无法连接，很可能是你的网络或运营商在拦截--试试其他连接模式或位置。 |
 | `hero.nodeOfflineBody` | The server behind your config is currently offline. This is on our side, not your network. Try again in a few minutes, or create a new config (optionally in a different location). | 你配置背后的服务器当前离线。这是我们这边的问题，不是你的网络。请几分钟后重试，或创建一个新配置（可选择其他位置）。 |
 | `hero.keyLimited` | You've used all your data for this period. It resets automatically, or you can upgrade for more. | 您本周期的数据流量已用完。流量将自动重置，或者您可以升级以获得更多流量。 |
@@ -633,7 +638,7 @@ review.
 | `error.noOtherServer` | There is no other server available right now. Please try again later. | ⚠️ **MISSING** |
 | `error.switchServerUnsupported` | Switching servers is not available for this key. | ⚠️ **MISSING** |
 
-## `setup` — The "set up your app" section: recommended VPN clients per platform, install steps.
+## `setup` — The "set up your app" section: recommended VPN clients per platform, install steps. *(2 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
@@ -641,6 +646,8 @@ review.
 | `setup.install` | Install | 安装 |
 | `setup.noApps` | No recommended apps for this platform yet - use any compatible client and add your subscription manually. | 此平台暂无推荐应用--可使用任何兼容客户端，手动添加你的订阅。 |
 | `setup.openSource` | Open source | 开源 |
+| `setup.ipv6Works` | IPv6 ready | ⚠️ **MISSING** |
+| `setup.ipv4Only` | IPv4 only | ⚠️ **MISSING** |
 | `setup.recommended` | Recommended | 推荐 |
 | `setup.proprietary` | Proprietary | 专有软件 |
 | `setup.easeEasy` | Easy to use | 简单易用 |
@@ -753,7 +760,7 @@ review.
 | `delivery.switchFailedTitle` | Could not switch mode | ⚠️ **MISSING** |
 | `delivery.detailsToggle` | More details | ⚠️ **MISSING** |
 
-## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(3 missing)*
+## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(24 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
@@ -766,86 +773,17 @@ review.
 | `home.network.srOffline` | offline | 离线 |
 | `home.network.note` | Checked every 10 minutes | 每 10 分钟检查一次 |
 | `home.network.link` | Live status | 实时状态 |
-| `home.quicknav.label` | Jump to a section | 跳转到某一节 |
-| `home.quicknav.privacy` | What we store | 我们存储什么 |
-| `home.quicknav.threat` | Threat model | 威胁模型 |
-| `home.quicknav.faq` | FAQ | 常见问题 |
-| `home.quicknav.impact` | Donation impact | 捐款成效 |
-| `home.sections.features` | Features | 功能 |
 | `home.sections.privacy` | Privacy | 隐私 |
 | `home.sections.how` | Getting started | 快速上手 |
 | `home.sections.membership` | Membership | 会员 |
-| `home.sections.impact` | Impact | 成效 |
 | `home.sections.faq` | FAQ | 常见问题 |
 | `home.sections.about` | About | 关于 |
-| `home.sections.globe` | The map | 地图 |
-| `home.globe.title` | Voices from behind the firewall | 来自防火墙后的声音 |
-| `home.globe.body` | Every day, people behind national firewalls use FreeSocks to read, share, and publish - and to be heard. | 每天，身处国家防火墙后的人们使用 FreeSocks 阅读、分享和发布内容——并让世界听见。 |
-| `home.globe.aria` | A rotating globe: labels with voices from censored countries | 旋转的地球仪：带有来自受审查国家声音的标签 |
-| `home.globe.voices.ir.place` | Tehran, Iran | 德黑兰，伊朗 |
-| `home.globe.voices.ir.l1` | They filter the internet; they can't filter the truth. | 他们过滤互联网，却过滤不了真相。 |
-| `home.globe.voices.ir.l2` | My report on the protests reached the world. | 我关于抗议的报道传到了全世界。 |
-| `home.globe.voices.ir.l3` | My students read what the state calls lies. | 我的学生读着被国家称为谎言的东西。 |
-| `home.globe.voices.cn.place` | Beijing, China | 北京，中国 |
-| `home.globe.voices.cn.l1` | History should not be a banned word. | 历史不该成为违禁词。 |
-| `home.globe.voices.cn.l2` | I shared what happened in my city - and it stayed up. | 我分享了家乡发生的事——它一直还在。 |
-| `home.globe.voices.cn.l3` | I archived the deleted posts before they vanished. | 被删的帖子，我在它们消失前就存了档。 |
-| `home.globe.voices.ru.place` | Moscow, Russia | 莫斯科，俄罗斯 |
-| `home.globe.voices.ru.l1` | The truth should not need a permit. | 真相不该需要许可证。 |
-| `home.globe.voices.ru.l2` | Independent journalism is not a crime. | 独立新闻不是犯罪。 |
-| `home.globe.voices.ru.l3` | A blocked newspaper still gets read. | 被封的报纸，依然有人读。 |
-| `home.globe.voices.tm.place` | Ashgabat, Turkmenistan | 阿什哈巴德，土库曼斯坦 |
-| `home.globe.voices.tm.l1` | A whole country, almost offline - and still heard. | 整个国家几乎断网——却依然被听见。 |
-| `home.globe.voices.tm.l2` | They control the media, not my voice. | 他们控制媒体，却控制不了我的声音。 |
-| `home.globe.voices.tm.l3` | Silence is the law here; we whisper anyway. | 沉默是这里的法律；我们依然低声细语。 |
-| `home.globe.voices.cu.place` | Havana, Cuba | 哈瓦那，古巴 |
-| `home.globe.voices.cu.l1` | My voice travels farther than I ever will. | 我的声音，比我走得更远。 |
-| `home.globe.voices.cu.l2` | We document what the state denies. | 我们记录国家否认的一切。 |
-| `home.globe.voices.cu.l3` | Independent voices, hand to hand, screen to screen. | 独立的声音，手手相传，屏屏相递。 |
-| `home.globe.voices.by.place` | Minsk, Belarus | 明斯克，白俄罗斯 |
-| `home.globe.voices.by.l1` | When they shut us down, we still spoke. | 他们断网时，我们仍在发声。 |
-| `home.globe.voices.by.l2` | Free elections are not extremism. | 自由选举不是极端主义。 |
-| `home.globe.voices.by.l3` | They banned our flag; not our voice. | 他们禁了我们的旗帜，却禁不了我们的声音。 |
-| `home.globe.voices.mm.place` | Yangon, Myanmar | 仰光，缅甸 |
-| `home.globe.voices.mm.l1` | The blackout did not silence us. | 断网没能让我们沉默。 |
-| `home.globe.voices.mm.l2` | Evidence of the crackdown got out. | 镇压的证据传了出去。 |
-| `home.globe.voices.mm.l3` | When the towers fell silent, the story did not. | 信号塔沉默了，故事却没有。 |
-| `home.globe.voices.ve.place` | Caracas, Venezuela | 加拉加斯，委内瑞拉 |
-| `home.globe.voices.ve.l1` | We count the votes they won't. | 我们清点他们不肯清点的选票。 |
-| `home.globe.voices.ve.l2` | Hunger is not a state secret. | 饥饿不是国家机密。 |
-| `home.globe.voices.ve.l3` | The queue for food is long; the truth is longer. | 买面包的队伍很长；真相更长。 |
-| `home.globe.voices.vn.place` | Hanoi, Vietnam | 河内，越南 |
-| `home.globe.voices.vn.l1` | Writing about corruption is not a crime. | 揭露腐败不是犯罪。 |
-| `home.globe.voices.vn.l2` | My blog outlived the block. | 我的博客，比封锁活得更久。 |
-| `home.globe.voices.vn.l3` | One article they deleted reached thousands. | 那篇被删的文章，传到了成千上万人手中。 |
-| `home.globe.voices.pk.place` | Karachi, Pakistan | 卡拉奇，巴基斯坦 |
-| `home.globe.voices.pk.l1` | During the shutdown, witnesses still spoke. | 断网期间，目击者仍在发声。 |
-| `home.globe.voices.pk.l2` | Silencing journalists won't hide the story. | 让记者沉默，掩盖不了真相。 |
-| `home.globe.voices.pk.l3` | The channel went dark; the reporting did not. | 频道黑了，报道没有停。 |
-| `home.globe.voices.eg.place` | Cairo, Egypt | 开罗，埃及 |
-| `home.globe.voices.eg.l1` | They jailed the bloggers, not the words. | 他们关押了博主，却关不住文字。 |
-| `home.globe.voices.eg.l2` | The protest was documented anyway. | 抗议依然被记录了下来。 |
-| `home.globe.voices.eg.l3` | From a small screen, a big story. | 小小的屏幕，大大的故事。 |
-| `home.globe.voices.sa.place` | Riyadh, Saudi Arabia | 利雅得，沙特阿拉伯 |
-| `home.globe.voices.sa.l1` | Speaking is not a crime. | 说话不是犯罪。 |
-| `home.globe.voices.sa.l2` | Her voice reached beyond the wall. | 她的声音传到了墙外。 |
-| `home.globe.voices.sa.l3` | She asked a question the kingdom bans. | 她问了一个王国禁止的问题。 |
-| `home.globe.voices.et.place` | Addis Ababa, Ethiopia | 亚的斯亚贝巴，埃塞俄比亚 |
-| `home.globe.voices.et.l1` | The shutdown hid nothing. | 断网掩盖不了一切。 |
-| `home.globe.voices.et.l2` | Witnesses still found a way out. | 目击者还是把消息传了出去。 |
-| `home.globe.voices.et.l3` | The dead were counted, despite the blackout. | 逝者被一一记录，尽管断网。 |
-| `home.globe.voices.tr.place` | Istanbul, Turkey | 伊斯坦布尔，土耳其 |
-| `home.globe.voices.tr.l1` | Blocking the site won't block the story. | 封了网站，封不住真相。 |
-| `home.globe.voices.tr.l2` | Journalism continues, court order or not. | 无论有没有法院禁令，新闻仍在继续。 |
-| `home.globe.voices.tr.l3` | An arrested anchor cannot sign off the news. | 被捕的主播，无法为新闻画上句号。 |
-| `home.globe.voices.az.place` | Baku, Azerbaijan | 巴库，阿塞拜疆 |
-| `home.globe.voices.az.l1` | They call reporting extremism. | 他们把报道称为极端主义。 |
-| `home.globe.voices.az.l2` | The investigation was published anyway. | 调查报道还是发表了。 |
-| `home.globe.voices.az.l3` | They froze our accounts, not our work. | 他们冻结了我们的账户，却冻不住我们的工作。 |
-| `home.globe.voices.uz.place` | Tashkent, Uzbekistan | 塔什干，乌兹别克斯坦 |
-| `home.globe.voices.uz.l1` | A closed internet is not a quiet one. | 封闭的互联网，并不等于沉默的互联网。 |
-| `home.globe.voices.uz.l2` | The world still heard what happened here. | 世界依然听到了这里发生的事。 |
-| `home.globe.voices.uz.l3` | The squares are watched; the words still move. | 广场有人监视；文字仍在流动。 |
+| `home.sections.globe` | The network | ⚠️ **MISSING** |
+| `home.globe.title` | A real network, shown live | ⚠️ **MISSING** |
+| `home.globe.body` | The green markers are FreeSocks server locations, taken straight from the live network status. The amber marks are some of the regions where the internet is heavily censored and where FreeSocks is built to reach. | ⚠️ **MISSING** |
+| `home.globe.aria` | A rotating globe showing FreeSocks server locations and censored regions | ⚠️ **MISSING** |
+| `home.globe.legendServers` | Server location | ⚠️ **MISSING** |
+| `home.globe.legendRegions` | Censored region | ⚠️ **MISSING** |
 | `home.impact.title` | Donations at work | 捐款在行动 |
 | `home.impact.body` | Every donation made through FreeSocks raises the bandwidth of every free account for at least the next {days} days. This is what donors have added so far - you could add to it too. | 通过 FreeSocks 捐出的每一笔捐款，都会提升当月每个免费账户的每月带宽。以下是捐赠者迄今增加的带宽--你也可以添一份力。 |
 | `home.impact.cta` | Make a donation | 立即捐款 |
@@ -866,17 +804,6 @@ review.
 | `home.freeCard.noAuthTitle` | No email or password | 无需电子邮件或密码 |
 | `home.freeCard.noAuthBody` | One human-check. Save your account number to sign in. No email collected. | 一次人工验证。保存您的账号即可登录。不收集邮箱地址。 |
 | `home.freeCard.footnote` | Numbers reflect the current free-tier configuration. Solve the check to get yours. | 此处显示的数字反映的是当前免费套餐的配置。完成验证即可获取您的套餐配置。 |
-| `home.freeCard.upsellTitle` | Want unlimited? | 想要无限量供应？ |
-| `home.freeCard.upsellBody` | Get {limits} - and help keep FreeSocks free for others. | 获取{limits} - 并帮助 FreeSocks 继续免费供他人使用。 |
-| `home.freeCard.fromPerMonth` | from {price}/mo | 来自{price} /月 |
-| `home.freeCard.cryptoNote` | Crypto accepted - Bitcoin, Monero, Zcash and more | 支持加密货币--比特币、门罗币、Zcash 等 |
-| `home.features.title` | What FreeSocks is | FreeSocks是什么 |
-| `home.features.noAuth.title` | No email or password | 无需电子邮件或密码 |
-| `home.features.noAuth.body` | One human-check and you are in. We mint a 32-digit account number you save to sign back in. No email collected. | 只需一次人工验证即可登录。我们会生成一个32位数的账号，您可以保存该账号以便下次登录。我们不会收集您的邮箱地址。 |
-| `home.features.mirrors.title` | Mirror URLs | 镜像网址 |
-| `home.features.mirrors.body` | Subscriptions are mirrored across multiple providers so a single block does not cut you off. | 订阅服务在多个提供商之间是同步的，因此单个服务中断不会导致您的服务中断。 |
-| `home.features.protocols.title` | Standard protocols | 标准协议 |
-| `home.features.protocols.body` | Xray-powered VLESS. Works in most VPN clients. | Xray-powered VLESS. Works in most VPN clients. |
 | `home.privacy.title` | What we store | 我们储存 |
 | `home.privacy.subtitle` | FreeSocks is built to know as little about you as possible. | FreeSocks 的设计理念是尽可能少地了解你的信息。 |
 | `home.privacy.point1` | We store only a hashed version of your account number - never the number itself. | 我们只存储您账号的哈希版本，绝不会存储账号本身。 |
@@ -900,67 +827,78 @@ review.
 | `home.about.bodySuffix` | , a US 501(c)(3) nonprofit. | ，一家美国 501(c)(3) 非营利组织。 |
 | `home.about.body2` | Most VPNs assume you can pay for a subscription and safely hand over an email address. In much of the world neither is true, so FreeSocks asks for neither. Anyone can get a working key in about a minute and keep it for as long as they use it. | 大多数 VPN 默认你能付费订阅、并能放心交出邮箱地址。但在世界上许多地方，这两点都不成立，所以 FreeSocks 两者都不要求。任何人都能在一分钟左右拿到可用的密钥，并一直使用下去。 |
 | `home.about.siteLink` | unredacted.org | unredacted.org |
-| `home.about.openSource` | The code that runs this service is published for anyone to inspect, audit, or run themselves. | 运行此服务的代码已公开，任何人都可以检查、审计或自行部署。 |
 | `home.about.viewSourceCta` | View the source | 查看源码 |
-| `home.about.fact2Title` | Open source | 开源 |
-| `home.about.fact3Title` | Donation funded | 捐款资助 |
-| `home.about.fact3Body` | Free accounts are paid for by donations and memberships. There are no ads and nothing is sold. | 免费账户由捐款和会员付费支持。没有广告，也不出售任何东西。 |
 | `home.limits.unlimitedBoth` | unlimited bandwidth and devices | 无限带宽和设备 |
 | `home.limits.unlimitedBandwidth` | unlimited bandwidth | 无限带宽 |
 | `home.limits.unlimitedDevices` | unlimited devices | 无限设备 |
 | `home.limits.bandwidthAndDevices` | {bandwidth} and {devices} | {bandwidth}和{devices} |
 | `home.limits.upToDevices [countPlural=one]` | up to 1 device | 最多 1 台设备 |
 | `home.limits.upToDevices [countPlural=other]` | up to {count} devices | 最多{count}设备 |
+| `home.flow.title` | Who sees what | ⚠️ **MISSING** |
+| `home.flow.subtitle` | Here is the path your traffic takes, and what each stop on the way can actually learn. | ⚠️ **MISSING** |
+| `home.flow.youName` | Your device | ⚠️ **MISSING** |
+| `home.flow.youSees` | Your apps and your data live here. Traffic is encrypted on the device before it goes anywhere. | ⚠️ **MISSING** |
+| `home.flow.ispName` | Your ISP | ⚠️ **MISSING** |
+| `home.flow.ispSees` | Sees encrypted data flowing to a busy CDN or a plain server. Not the sites you visit, and not what you send. | ⚠️ **MISSING** |
+| `home.flow.cdnName` | The CDN | ⚠️ **MISSING** |
+| `home.flow.cdnBadge` | Freedom Mode only | ⚠️ **MISSING** |
+| `home.flow.cdnSees` | Carries your traffic without being able to read it. It can tell you use FreeSocks, and nothing about what you do through it. | ⚠️ **MISSING** |
+| `home.flow.nodeName` | FreeSocks server | ⚠️ **MISSING** |
+| `home.flow.nodeSees` | Hands your traffic to the open internet. No logs are kept, and your key has no identity behind it. | ⚠️ **MISSING** |
+| `home.flow.webName` | Websites you visit | ⚠️ **MISSING** |
+| `home.flow.webSees` | See the FreeSocks server's address instead of yours. | ⚠️ **MISSING** |
+| `home.flow.captionFreedom` | Routes through a large CDN, so your connection looks like ordinary web traffic. | ⚠️ **MISSING** |
+| `home.flow.captionPrivacy` | Skips the CDN and connects you straight to the server. | ⚠️ **MISSING** |
 
-## `e2ee` — The HPKE/E2EE "encrypted to this server" badge + verification panel. *(1 missing)*
+## `hpke` — The HPKE "encrypted to this server" badge + verification panel. *(1 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
-| `e2ee.badgeActiveTitle` | Encrypted to this server with HPKE. Click to verify. | 已使用HPKE加密传输到此服务器。点击验证。 |
-| `e2ee.badgeWarnTitle` | Couldn't verify the encryption key. Click to verify out-of-band before entering your account number. | 无法验证加密密钥。请点击进行带外验证，然后再输入您的账号。 |
-| `e2ee.badgeActiveTitleAdmin` | Sensitive member and admin actions are HPKE-encrypted on this deployment. Click for details. | 在此部署中，敏感的成员和管理员操作均采用 HPKE 加密。点击查看详情。 |
-| `e2ee.badgeWarnTitleAdmin` | Couldn't verify this deployment's encryption key. Click for details and out-of-band verification. | 无法验证此部署的加密密钥。点击此处查看详情并进行带外验证。 |
-| `e2ee.badgeOff` | TLS | TLS |
-| `e2ee.badgeOffTitle` | Standard TLS only. Extra HPKE body encryption isn't enabled on this deployment. | 仅支持标准 TLS。此部署未启用额外的 HPKE 正文加密。 |
-| `e2ee.bannerWarn` | Couldn't verify the encryption key | 无法验证加密密钥 |
-| `e2ee.bannerWarnDetail` | Don't enter your account number yet - verify this connection out-of-band first. | 暂时不要输入您的账号 - 请先通过带外方式验证此连接。 |
-| `e2ee.verify` | Verify | 核实 |
-| `e2ee.verifyTitle` | Verify this connection | 验证此连接 |
-| `e2ee.verifyIntro` | FreeSocks seals your account number and VPN key to this server with HPKE, so a compromised CDN can't read them. These fingerprints identify the keys your browser is using - compare them against the values published out-of-band to be sure they haven't been swapped. | FreeSocks 使用 HPKE 将您的账号和代理密钥与此服务器进行加密，因此即使 CDN 遭到入侵也无法读取它们。这些指纹可以识别您的浏览器正在使用的密钥--请将它们与带外发布的密钥值进行比较，以确保密钥未被替换。 |
-| `e2ee.protectHeading` | What this protects | 它保护的是什么 |
-| `e2ee.protectScope` | Your account number and key are encrypted to this server with HPKE, so the network and any CDN in front of it can't read them. | 您的账号和密钥已使用 HPKE 加密到此服务器，因此网络及其前面的任何 CDN 都无法读取它们。 |
-| `e2ee.protectServerReads` | FreeSocks itself can read them to set up your account, so this protects you from the network in between, not from the server. | FreeSocks 本身可以读取这些信息来设置您的帐户，因此这保护您免受中间网络的侵害，而不是免受服务器的侵害。 |
-| `e2ee.protectTunnel` | It's separate from your VPN connection, which is encrypted on its own. | 它与您的 VPN 连接是分开的，VPN 连接本身是加密的。 |
-| `e2ee.protectAdmin` | On the admin dashboard, sensitive actions - creating API tokens, invites, and membership codes, and uploading backend, billing, or storage credentials - are HPKE-encrypted to this server too. Routine reads and settings use TLS, your passkey, and proof-of-possession. | 在管理后台，创建 API 令牌、邀请码和会员代码，以及上传后端、计费或存储凭证等敏感操作也会使用 HPKE 加密传输到此服务器。常规读取和设置操作则使用 TLS、您的密码和所有权证明。 |
-| `e2ee.fingerprintsHeading` | Key fingerprints | 关键指纹 |
-| `e2ee.fpHpke` | Server key (HPKE / X-Wing) | 服务器密钥（HPKE / X-Wing） |
-| `e2ee.fpKid` | Key id | 密钥 ID |
-| `e2ee.fpManifest` | Manifest key (Ed25519) | 清单密钥（Ed25519） |
-| `e2ee.fpManifestPq` | Manifest key (ML-DSA-65, post-quantum) | 清单密钥（ML-DSA-65，后量子时代） |
-| `e2ee.fpSuite` | Cipher suite | 密码套件 |
-| `e2ee.copy` | Copy | 复制 |
-| `e2ee.copied` | Copied | 已复制 |
-| `e2ee.attestationHeading` | Live server attestation | 在线服务器证明 |
-| `e2ee.attestationOk` | Verified - the server is attesting a valid key signed by the manifest key your app trusts. | 已验证 - 服务器正在验证由您的应用信任的清单密钥签名的有效密钥。 |
-| `e2ee.attestationEpoch` | Current key {kid}, expires {expiry}. | 当前键{kid} ，过期{expiry} 。 |
-| `e2ee.attestationFail` | Could not verify the server's current key - a network problem, or a CDN tampering with the key endpoint. Verify out-of-band before continuing. | 无法验证服务器的当前密钥--可能是网络问题，或者 CDN 篡改了密钥端点。请在继续操作前进行带外验证。 |
-| `e2ee.attestationUnreachable` | The live key check is temporarily unavailable. Your connection still uses the verified key built into the app. | 实时密钥验证功能暂时不可用。您的连接仍使用应用内置的已验证密钥。 |
-| `e2ee.attestationStale` | The server isn't publishing a current rotating key right now, so your connection is using the verified key built into the app. Nothing here suggests tampering. | ⚠️ **MISSING** |
-| `e2ee.attestationUnconfigured` | Live key checking isn't set up on this build. | 此版本未启用实时密钥检查。 |
-| `e2ee.compareHeading` | How to verify | 如何验证 |
-| `e2ee.compareBody` | Compare the fingerprints above against the values published through a channel this server doesn't control. They must match. | 将上述指纹与通过此服务器无法控制的渠道发布的值进行比较。它们必须匹配。 |
-| `e2ee.channelRelease` | Signed release notes | 已签署的发布说明 |
-| `e2ee.channelSource` | Source code (rebuild to compare) | 源代码（重新构建以进行比较） |
-| `e2ee.channelOnion` | Tor mirror | Tor镜像 |
-| `e2ee.dnsHeading` | Verify via DNS | 通过 DNS 验证 |
-| `e2ee.dnsBody` | Look the pin up yourself in a terminal, through your own DNS resolver - a path that doesn't run through this site or its CDN. The answer should contain the same fingerprints shown above. (If it returns nothing, the operator may not have published the record yet; use the signed release instead.) | 请在终端中使用您自己的 DNS 解析器查找该 PIN 码--该解析器使用的路径不应经过此站点或其 CDN。查询结果应包含与上面显示的相同的指纹。（如果没有任何返回结果，则可能是运营商尚未发布该记录；请改用已签名的发布版本。） |
-| `e2ee.dnsCommand` | Run this in a terminal | 在终端中运行此命令。 |
-| `e2ee.dnsExpected` | It should return | 它应该返回 |
-| `e2ee.dnsCaveat` | Independent only if your DNS isn't run by the same company as the CDN; a DNSSEC-validating resolver is best. For full assurance, confirm the same values in the signed release too. | 仅当您的 DNS 服务器与 CDN 服务器并非由同一家公司运营时，才应使用独立 DNS 服务器；最好使用支持 DNSSEC 验证的解析器。为确保万无一失，请同时确认已签署的发布文件中的相同值。 |
-| `e2ee.verifierExtension` | A verifier browser extension that re-checks this build on every visit is planned, but not available yet. | 我们计划推出一款浏览器扩展程序，每次访问时都会重新检查此版本，但目前尚未推出。 |
-| `e2ee.verifierExtensionInstall` | Install the verifier extension - it re-checks this build against the published one on every visit (the strongest protection against a tampered page). | 安装验证器扩展程序 - 每次访问时，它都会将此版本与已发布的版本进行重新检查（这是防止页面被篡改的最强保护措施）。 |
-| `e2ee.caveat` | This in-page check is a convenience. A tampered page could lie about its own status, so the real proof comes from comparing these values somewhere outside this server, such as the DNS lookup above or a published release. | 页面内检查只是为了方便。被篡改的页面可能会谎报自身状态，因此真正的验证方法是将这些数据与服务器外部的值进行比较，例如上述 DNS 查询或已发布的版本。 |
-| `e2ee.close` | Close | 关闭 |
+| `hpke.badgeActiveTitle` | Encrypted to this server with HPKE. Click to verify. | 已使用HPKE加密传输到此服务器。点击验证。 |
+| `hpke.badgeWarnTitle` | Couldn't verify the encryption key. Click to verify out-of-band before entering your account number. | 无法验证加密密钥。请点击进行带外验证，然后再输入您的账号。 |
+| `hpke.badgeActiveTitleAdmin` | Sensitive member and admin actions are HPKE-encrypted on this deployment. Click for details. | 在此部署中，敏感的成员和管理员操作均采用 HPKE 加密。点击查看详情。 |
+| `hpke.badgeWarnTitleAdmin` | Couldn't verify this deployment's encryption key. Click for details and out-of-band verification. | 无法验证此部署的加密密钥。点击此处查看详情并进行带外验证。 |
+| `hpke.badgeOff` | TLS | TLS |
+| `hpke.badgeOffTitle` | Standard TLS only. Extra HPKE body encryption isn't enabled on this deployment. | 仅支持标准 TLS。此部署未启用额外的 HPKE 正文加密。 |
+| `hpke.bannerWarn` | Couldn't verify the encryption key | 无法验证加密密钥 |
+| `hpke.bannerWarnDetail` | Don't enter your account number yet - verify this connection out-of-band first. | 暂时不要输入您的账号 - 请先通过带外方式验证此连接。 |
+| `hpke.verify` | Verify | 核实 |
+| `hpke.verifyTitle` | Verify this connection | 验证此连接 |
+| `hpke.verifyIntro` | FreeSocks seals your account number and VPN key to this server with HPKE, so a compromised CDN can't read them. These fingerprints identify the keys your browser is using - compare them against the values published out-of-band to be sure they haven't been swapped. | FreeSocks 使用 HPKE 将您的账号和代理密钥与此服务器进行加密，因此即使 CDN 遭到入侵也无法读取它们。这些指纹可以识别您的浏览器正在使用的密钥--请将它们与带外发布的密钥值进行比较，以确保密钥未被替换。 |
+| `hpke.protectHeading` | What this protects | 它保护的是什么 |
+| `hpke.protectScope` | Your account number and key are encrypted to this server with HPKE, so the network and any CDN in front of it can't read them. | 您的账号和密钥已使用 HPKE 加密到此服务器，因此网络及其前面的任何 CDN 都无法读取它们。 |
+| `hpke.protectServerReads` | FreeSocks itself can read them to set up your account, so this protects you from the network in between, not from the server. | FreeSocks 本身可以读取这些信息来设置您的帐户，因此这保护您免受中间网络的侵害，而不是免受服务器的侵害。 |
+| `hpke.protectTunnel` | It's separate from your VPN connection, which is encrypted on its own. | 它与您的 VPN 连接是分开的，VPN 连接本身是加密的。 |
+| `hpke.protectAdmin` | On the admin dashboard, sensitive actions - creating API tokens, invites, and membership codes, and uploading backend, billing, or storage credentials - are HPKE-encrypted to this server too. Routine reads and settings use TLS, your passkey, and proof-of-possession. | 在管理后台，创建 API 令牌、邀请码和会员代码，以及上传后端、计费或存储凭证等敏感操作也会使用 HPKE 加密传输到此服务器。常规读取和设置操作则使用 TLS、您的密码和所有权证明。 |
+| `hpke.fingerprintsHeading` | Key fingerprints | 关键指纹 |
+| `hpke.fpHpke` | Server key (HPKE / X-Wing) | 服务器密钥（HPKE / X-Wing） |
+| `hpke.fpKid` | Key id | 密钥 ID |
+| `hpke.fpManifest` | Manifest key (Ed25519) | 清单密钥（Ed25519） |
+| `hpke.fpManifestPq` | Manifest key (ML-DSA-65, post-quantum) | 清单密钥（ML-DSA-65，后量子时代） |
+| `hpke.fpSuite` | Cipher suite | 密码套件 |
+| `hpke.copy` | Copy | 复制 |
+| `hpke.copied` | Copied | 已复制 |
+| `hpke.attestationHeading` | Live server attestation | 在线服务器证明 |
+| `hpke.attestationOk` | Verified - the server is attesting a valid key signed by the manifest key your app trusts. | 已验证 - 服务器正在验证由您的应用信任的清单密钥签名的有效密钥。 |
+| `hpke.attestationEpoch` | Current key {kid}, expires {expiry}. | 当前键{kid} ，过期{expiry} 。 |
+| `hpke.attestationFail` | Could not verify the server's current key - a network problem, or a CDN tampering with the key endpoint. Verify out-of-band before continuing. | 无法验证服务器的当前密钥--可能是网络问题，或者 CDN 篡改了密钥端点。请在继续操作前进行带外验证。 |
+| `hpke.attestationUnreachable` | The live key check is temporarily unavailable. Your connection still uses the verified key built into the app. | 实时密钥验证功能暂时不可用。您的连接仍使用应用内置的已验证密钥。 |
+| `hpke.attestationStale` | The server isn't publishing a current rotating key right now, so your connection is using the verified key built into the app. Nothing here suggests tampering. | ⚠️ **MISSING** |
+| `hpke.attestationUnconfigured` | Live key checking isn't set up on this build. | 此版本未启用实时密钥检查。 |
+| `hpke.compareHeading` | How to verify | 如何验证 |
+| `hpke.compareBody` | Compare the fingerprints above against the values published through a channel this server doesn't control. They must match. | 将上述指纹与通过此服务器无法控制的渠道发布的值进行比较。它们必须匹配。 |
+| `hpke.channelRelease` | Signed release notes | 已签署的发布说明 |
+| `hpke.channelSource` | Source code (rebuild to compare) | 源代码（重新构建以进行比较） |
+| `hpke.channelOnion` | Tor mirror | Tor镜像 |
+| `hpke.dnsHeading` | Verify via DNS | 通过 DNS 验证 |
+| `hpke.dnsBody` | Look the pin up yourself in a terminal, through your own DNS resolver - a path that doesn't run through this site or its CDN. The answer should contain the same fingerprints shown above. (If it returns nothing, the operator may not have published the record yet; use the signed release instead.) | 请在终端中使用您自己的 DNS 解析器查找该 PIN 码--该解析器使用的路径不应经过此站点或其 CDN。查询结果应包含与上面显示的相同的指纹。（如果没有任何返回结果，则可能是运营商尚未发布该记录；请改用已签名的发布版本。） |
+| `hpke.dnsCommand` | Run this in a terminal | 在终端中运行此命令。 |
+| `hpke.dnsExpected` | It should return | 它应该返回 |
+| `hpke.dnsCaveat` | Independent only if your DNS isn't run by the same company as the CDN; a DNSSEC-validating resolver is best. For full assurance, confirm the same values in the signed release too. | 仅当您的 DNS 服务器与 CDN 服务器并非由同一家公司运营时，才应使用独立 DNS 服务器；最好使用支持 DNSSEC 验证的解析器。为确保万无一失，请同时确认已签署的发布文件中的相同值。 |
+| `hpke.verifierExtension` | A verifier browser extension that re-checks this build on every visit is planned, but not available yet. | 我们计划推出一款浏览器扩展程序，每次访问时都会重新检查此版本，但目前尚未推出。 |
+| `hpke.verifierExtensionInstall` | Install the verifier extension - it re-checks this build against the published one on every visit (the strongest protection against a tampered page). | 安装验证器扩展程序 - 每次访问时，它都会将此版本与已发布的版本进行重新检查（这是防止页面被篡改的最强保护措施）。 |
+| `hpke.caveat` | This in-page check is a convenience. A tampered page could lie about its own status, so the real proof comes from comparing these values somewhere outside this server, such as the DNS lookup above or a published release. | 页面内检查只是为了方便。被篡改的页面可能会谎报自身状态，因此真正的验证方法是将这些数据与服务器外部的值进行比较，例如上述 DNS 查询或已发布的版本。 |
+| `hpke.close` | Close | 关闭 |
 
 ## `deviceRevoke` — The disconnect-a-device confirmation dialog.
 
@@ -1026,7 +964,7 @@ review.
 | `switchServer.failed` | Could not move your key | ⚠️ **MISSING** |
 | `switchServer.vsNewKey` | If the subscription URL itself stopped working everywhere, or you think someone else has it, use "Create a new key" instead - that replaces the URL. | ⚠️ **MISSING** |
 
-## `report` — Miscellaneous strings. *(16 missing)*
+## `report` — Miscellaneous strings. *(17 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
@@ -1040,6 +978,7 @@ review.
 | `report.reasonBlockedSite` | A site or app won't load through the VPN | ⚠️ **MISSING** |
 | `report.reasonAppProblem` | The VPN app itself is giving me trouble | ⚠️ **MISSING** |
 | `report.reasonOther` | Something else | ⚠️ **MISSING** |
+| `report.tellUsMore` | Need to tell us more? Email us: | ⚠️ **MISSING** |
 | `report.nothingChanges` | Reporting changes nothing on your account. If you need a fix right now, try "Switch server" or "Create a new key". | ⚠️ **MISSING** |
 | `report.confirm` | Send report | ⚠️ **MISSING** |
 | `report.working` | Sending… | ⚠️ **MISSING** |
@@ -1052,9 +991,9 @@ review.
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
 | `telemetry.sendLabel` | Include connection details | ⚠️ **MISSING** |
-| `telemetry.sendExplainer` | Only the values shown below are sent. They are not tied to your account, and your IP address is never included. | ⚠️ **MISSING** |
+| `telemetry.sendExplainer` | This helps us see patterns, like one network or region blocking us. Only the values shown below are sent. They are not tied to your account, and your IP address is never included. | ⚠️ **MISSING** |
 | `telemetry.countryLabel` | Country | ⚠️ **MISSING** |
 | `telemetry.cityLabel` | City | ⚠️ **MISSING** |
-| `telemetry.asnLabel` | Network provider (ASN) | ⚠️ **MISSING** |
+| `telemetry.asnLabel` | Network (ASN) | ⚠️ **MISSING** |
 | `telemetry.notSet` | Not set | ⚠️ **MISSING** |
 | `telemetry.editHint` | Check these before sending. If you are connected to FreeSocks right now, they may show our server's network instead of yours. Fix anything that looks wrong, or clear it. | ⚠️ **MISSING** |

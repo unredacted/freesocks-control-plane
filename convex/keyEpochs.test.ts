@@ -2,7 +2,7 @@
 /**
  * CDN-blinding wiring tests (Phase 3/3c): the epoch-key store semantics
  * (validity window + sweep grace = forward secrecy), the monotonic
- * revoked-kid list, and the e2eeCrypto actions end-to-end — epoch rotation
+ * revoked-kid list, and the hpkeCrypto actions end-to-end — epoch rotation
  * produces a manifest-signed key the client can verify, and openRequest
  * round-trips a sealed login against BOTH the static and an epoch key.
  * (The shared primitives — HPKE, channel, manifest — have their own suites
@@ -113,10 +113,10 @@ describe('keyRevocations store', () => {
   });
 });
 
-describe('e2eeCrypto actions (node runtime)', () => {
+describe('hpkeCrypto actions (node runtime)', () => {
   test('rotateEpochKey skips cleanly when the manifest key is unset (dark deploy)', async () => {
     const t = convexTest(schema, modules);
-    expect(await t.action(internal.lib.e2eeCrypto.rotateEpochKey, {})).toEqual({ skipped: true });
+    expect(await t.action(internal.lib.hpkeCrypto.rotateEpochKey, {})).toEqual({ skipped: true });
     await t.run(async (ctx) => {
       expect(await ctx.db.query('keyEpochs').collect()).toHaveLength(0);
     });
@@ -126,7 +126,7 @@ describe('e2eeCrypto actions (node runtime)', () => {
     vi.stubEnv('FS_MANIFEST_SK', bytesToB64Url(manifestSk));
     const t = convexTest(schema, modules);
     const before = Date.now();
-    const out = await t.action(internal.lib.e2eeCrypto.rotateEpochKey, {});
+    const out = await t.action(internal.lib.hpkeCrypto.rotateEpochKey, {});
     if ('skipped' in out) throw new Error('expected a rotation, got skipped');
     expect(out.notAfter).toBeGreaterThanOrEqual(before + 29 * 60_000);
     const cur = await t.query(internal.keyEpochs.current, {});
@@ -146,11 +146,11 @@ describe('e2eeCrypto actions (node runtime)', () => {
   test('signRevocation publishes monotonically-versioned, verifiable lists', async () => {
     vi.stubEnv('FS_MANIFEST_SK', bytesToB64Url(manifestSk));
     const t = convexTest(schema, modules);
-    const v1 = await t.action(internal.lib.e2eeCrypto.signRevocation, {
+    const v1 = await t.action(internal.lib.hpkeCrypto.signRevocation, {
       revokedKids: ['kid-a'],
     });
     expect(v1.version).toBe(1);
-    const v2 = await t.action(internal.lib.e2eeCrypto.signRevocation, {
+    const v2 = await t.action(internal.lib.hpkeCrypto.signRevocation, {
       revokedKids: ['kid-a', 'kid-b'],
     });
     expect(v2.version).toBe(2);
@@ -181,7 +181,7 @@ describe('e2eeCrypto actions (node runtime)', () => {
       policy: { request: 'seal', response: 'plain' },
       bodyObj: { accountId: '1'.repeat(32), captchaToken: 'tok' },
     });
-    const out = await t.action(internal.lib.e2eeCrypto.openRequest, {
+    const out = await t.action(internal.lib.hpkeCrypto.openRequest, {
       method: 'POST',
       path: '/api/v1/auth/account-login',
       wireBody: prepared.body,
@@ -192,7 +192,7 @@ describe('e2eeCrypto actions (node runtime)', () => {
   test('openRequest routes an epoch-sealed login to the epoch key', async () => {
     vi.stubEnv('FS_MANIFEST_SK', bytesToB64Url(manifestSk));
     const t = convexTest(schema, modules);
-    const rotated = await t.action(internal.lib.e2eeCrypto.rotateEpochKey, {});
+    const rotated = await t.action(internal.lib.hpkeCrypto.rotateEpochKey, {});
     if ('skipped' in rotated) throw new Error('expected a rotation');
     const epoch = (await t.query(internal.keyEpochs.current, {}))!;
     const prepared = await clientPrepareRequest({
@@ -203,7 +203,7 @@ describe('e2eeCrypto actions (node runtime)', () => {
       policy: { request: 'seal', response: 'plain' },
       bodyObj: { accountId: '2'.repeat(32), captchaToken: 'tok2' },
     });
-    const out = await t.action(internal.lib.e2eeCrypto.openRequest, {
+    const out = await t.action(internal.lib.hpkeCrypto.openRequest, {
       method: 'POST',
       path: '/api/v1/auth/account-login',
       wireBody: prepared.body,

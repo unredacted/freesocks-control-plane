@@ -1,7 +1,7 @@
 'use node';
 /**
  * Server-side HPKE crypto, in the Convex NODE runtime (full WebCrypto). The
- * default V8 isolate lacks subtle HKDF (Phase 0 finding, docs/e2ee-phase0-spike.md),
+ * default V8 isolate lacks subtle HKDF (Phase 0 finding, docs/hpke-phase0-spike.md),
  * so the sealed `httpAction`s in convex/http.ts must reach the X-Wing seal/open
  * here via `ctx.runAction`. This module owns the server static key material.
  *
@@ -75,7 +75,7 @@ export async function loadServerKeyPair(): Promise<CryptoKeyPair> {
 /**
  * Health probe: reconstruct the server keypair from the env seed and run one
  * X-Wing round-trip in the Node runtime. Confirms the env key + the suite work
- * end to end on the server. Run with `bunx convex run e2eeCrypto:selfTest`.
+ * end to end on the server. Run with `bunx convex run hpkeCrypto:selfTest`.
  */
 export const selfTest = internalAction({
   args: {},
@@ -118,7 +118,7 @@ export const rotateEpochKey = internalAction({
     // invisible next to a fresh heartbeat — the rotation would silently stop
     // and clients would fall back to the static key at epoch exhaustion.
     try {
-      // No manifest key -> E2EE is not configured on this deployment; skip cleanly
+      // No manifest key -> HPKE is not configured on this deployment; skip cleanly
       // (the cron would otherwise error every tick). Clients fall back to static.
       if (!process.env.FS_MANIFEST_SK) return { skipped: true };
       const seed = crypto.getRandomValues(new Uint8Array(32));
@@ -161,7 +161,7 @@ export const rotateEpochKey = internalAction({
  * Break-glass: publish a new manifest-signed revoked-kid list (Phase 3c). Bumps
  * the monotonic version, signs the full snapshot, and stores it. Run by an
  * operator when a static or epoch key is believed compromised:
- *   bunx convex run lib/e2eeCrypto:signRevocation '{"revokedKids":["<kid>"]}'
+ *   bunx convex run lib/hpkeCrypto:signRevocation '{"revokedKids":["<kid>"]}'
  * Pass the FULL set of kids that should be revoked (a snapshot, not a delta);
  * passing fewer kids at a higher version un-revokes the omitted ones.
  */

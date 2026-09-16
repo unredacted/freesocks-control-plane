@@ -469,6 +469,45 @@ export const seedPeerGroups = internalMutation({
   },
 });
 
+/**
+ * appSettings keys renamed in code, mapped old -> new. `renameAppSettingKeys`
+ * carries an operator's stored override across the rename: the row is re-keyed
+ * when the new key has no row yet, and dropped when the new key already has one
+ * (the newer edit wins). Idempotent; runs at every deploy via seedCutover.
+ */
+export const RENAMED_APP_SETTING_KEYS: Record<string, string> = {
+  // 2026-09-16 E2EE -> HPKE identifier rename (the per-IP policy for the public
+  // epoch-key route, formerly /api/v1/e2ee/keys).
+  'ratelimit.e2ee.keys.fetch': 'ratelimit.hpke.keys.fetch',
+};
+
+export const renameAppSettingKeys = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<{ renamed: number; dropped: number }> => {
+    let renamed = 0;
+    let dropped = 0;
+    for (const [from, to] of Object.entries(RENAMED_APP_SETTING_KEYS)) {
+      const old = await ctx.db
+        .query('appSettings')
+        .withIndex('by_key', (q) => q.eq('key', from))
+        .unique();
+      if (!old) continue;
+      const current = await ctx.db
+        .query('appSettings')
+        .withIndex('by_key', (q) => q.eq('key', to))
+        .unique();
+      if (current) {
+        await ctx.db.delete(old._id);
+        dropped++;
+      } else {
+        await ctx.db.patch(old._id, { key: to });
+        renamed++;
+      }
+    }
+    return { renamed, dropped };
+  },
+});
+
 export const seedCutover = internalAction({
   args: {},
   handler: async (
@@ -485,6 +524,7 @@ export const seedCutover = internalAction({
     const freeTierId = await ctx.runMutation(internal.seed.seedDefaultFreeTier, {});
     const memberTierId = await ctx.runMutation(internal.seed.seedMemberTier, {});
     const settings = await ctx.runMutation(internal.seed.seedAppSettings, {});
+    await ctx.runMutation(internal.seed.renameAppSettingKeys, {});
     const instances = await ctx.runMutation(internal.seed.seedBackendServersFromEnv, {});
     const clients = await ctx.runMutation(internal.seed.seedClients, {});
     const modes = await ctx.runMutation(internal.seed.seedConnectionModes, {});

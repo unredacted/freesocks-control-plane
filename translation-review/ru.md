@@ -1,7 +1,7 @@
 # FreeSocks translation review — Russian (Русский)
 
 Generated from `messages/en.json` (source of truth) vs `messages/ru.json`.
-**115 of 846 strings are missing** (the app currently shows English for
+**144 of 785 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -194,7 +194,7 @@ review.
 | `passkey.signInFailed` | Passkey sign-in failed | Не удалось войти с пасс-ключом |
 | `passkey.notNow` | Not now | Не сейчас |
 
-## `account` — The signed-in /account dashboard: connection, membership, codes, security tabs. *(1 missing)*
+## `account` — The signed-in /account dashboard: connection, membership, codes, security tabs. *(4 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
@@ -232,6 +232,9 @@ review.
 | `account.membershipNudge.body` | Unlimited bandwidth and devices. | Безлимитный трафик и устройства. |
 | `account.membershipNudge.bodyNoDevices` | Unlimited bandwidth. | Безлимитный трафик. |
 | `account.membershipNudge.cta` | View membership | Открыть подписку |
+| `account.map.title` | Where your key lives | ⚠️ **MISSING** |
+| `account.map.network` | One of {count} FreeSocks locations | ⚠️ **MISSING** |
+| `account.map.aria` | Globe of FreeSocks server locations, highlighting yours | ⚠️ **MISSING** |
 | `account.tab.connection` | Connection | Подключение |
 | `account.tab.membership` | Membership | Членство |
 | `account.tab.gifts` | Gifts & referrals | Подарки и приглашения |
@@ -267,7 +270,7 @@ review.
 | `account.deviceRevokedBody` | The slot is free. That device loses access until it re-imports your subscription. | Слот бесплатный. Это устройство потеряет доступ, пока не повторно не импортирует вашу подписку. |
 | `account.deviceRevokeFailedTitle` | Couldn't revoke the device | Не удалось отозвать устройство. |
 
-## `hero` — The subscription panel: the key/URL block, traffic + expiry stats, QR, status callouts. *(3 missing)*
+## `hero` — The subscription panel: the key/URL block, traffic + expiry stats, QR, status callouts. *(5 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
@@ -314,6 +317,8 @@ review.
 | `hero.nodeOffline` | Node offline | Узел не в сети |
 | `hero.nodeUnknown` | Node status unknown | Статус узла неизвестен |
 | `hero.nodeStatusLink` | Network status | Состояние сети |
+| `hero.relayRefreshSuggested` | New connection details are available. Update this subscription in your app to keep connecting. | ⚠️ **MISSING** |
+| `hero.relayConnections` | Connections in your config: | ⚠️ **MISSING** |
 | `hero.nodeOnlineHint` | The server behind your config is up and responding. If you still can't connect, your network or ISP is likely filtering it - try another connection mode or location. | Сервер вашей конфигурации работает и отвечает. Если подключиться всё равно не удаётся, скорее всего, ваша сеть или провайдер его фильтрует - попробуйте другой режим подключения или другую локацию. |
 | `hero.nodeOfflineBody` | The server behind your config is currently offline. This is on our side, not your network. Try again in a few minutes, or create a new config (optionally in a different location). | Сервер вашей конфигурации сейчас не в сети. Проблема на нашей стороне, а не в вашей сети. Попробуйте снова через несколько минут или создайте новую конфигурацию (можно в другой локации). |
 | `hero.keyLimited` | You've used all your data for this period. It resets automatically, or you can upgrade for more. | Вы использовали весь свой трафик за этот период. Он автоматически обнуляется, или вы можете приобрести более дорогой тарифный план. |
@@ -633,7 +638,7 @@ review.
 | `error.noOtherServer` | There is no other server available right now. Please try again later. | ⚠️ **MISSING** |
 | `error.switchServerUnsupported` | Switching servers is not available for this key. | ⚠️ **MISSING** |
 
-## `setup` — The "set up your app" section: recommended VPN clients per platform, install steps.
+## `setup` — The "set up your app" section: recommended VPN clients per platform, install steps. *(2 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
@@ -641,6 +646,8 @@ review.
 | `setup.install` | Install | Установить |
 | `setup.noApps` | No recommended apps for this platform yet - use any compatible client and add your subscription manually. | Для этой платформы пока нет рекомендуемых приложений - используйте любой совместимый клиент и добавьте подписку вручную. |
 | `setup.openSource` | Open source | Открытый код |
+| `setup.ipv6Works` | IPv6 ready | ⚠️ **MISSING** |
+| `setup.ipv4Only` | IPv4 only | ⚠️ **MISSING** |
 | `setup.recommended` | Recommended | Рекомендуется |
 | `setup.proprietary` | Proprietary | Проприетарное |
 | `setup.easeEasy` | Easy to use | Простое в использовании |
@@ -753,7 +760,7 @@ review.
 | `delivery.switchFailedTitle` | Could not switch mode | ⚠️ **MISSING** |
 | `delivery.detailsToggle` | More details | ⚠️ **MISSING** |
 
-## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(3 missing)*
+## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(24 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
@@ -766,86 +773,17 @@ review.
 | `home.network.srOffline` | offline | не в сети |
 | `home.network.note` | Checked every 10 minutes | Проверяется каждые 10 минут |
 | `home.network.link` | Live status | Статус в реальном времени |
-| `home.quicknav.label` | Jump to a section | Перейти к разделу |
-| `home.quicknav.privacy` | What we store | Что мы храним |
-| `home.quicknav.threat` | Threat model | Модель угроз |
-| `home.quicknav.faq` | FAQ | ЧаВо |
-| `home.quicknav.impact` | Donation impact | Вклад пожертвований |
-| `home.sections.features` | Features | Возможности |
 | `home.sections.privacy` | Privacy | Приватность |
 | `home.sections.how` | Getting started | С чего начать |
 | `home.sections.membership` | Membership | Членство |
-| `home.sections.impact` | Impact | Вклад |
 | `home.sections.faq` | FAQ | ЧаВо |
 | `home.sections.about` | About | О нас |
-| `home.sections.globe` | The map | Карта |
-| `home.globe.title` | Voices from behind the firewall | Голоса из-за файрвола |
-| `home.globe.body` | Every day, people behind national firewalls use FreeSocks to read, share, and publish - and to be heard. | Каждый день люди за государственными файрволами читают, делятся и публикуют через FreeSocks — и их слышат. |
-| `home.globe.aria` | A rotating globe: labels with voices from censored countries | Вращающийся глобус: подписи с голосами из стран с цензурой |
-| `home.globe.voices.ir.place` | Tehran, Iran | Тегеран, Иран |
-| `home.globe.voices.ir.l1` | They filter the internet; they can't filter the truth. | Они фильтруют интернет, но правду не отфильтруешь. |
-| `home.globe.voices.ir.l2` | My report on the protests reached the world. | Мой репортаж о протестах увидел весь мир. |
-| `home.globe.voices.ir.l3` | My students read what the state calls lies. | Мои студенты читают то, что государство называет ложью. |
-| `home.globe.voices.cn.place` | Beijing, China | Пекин, Китай |
-| `home.globe.voices.cn.l1` | History should not be a banned word. | История не должна быть запрещённым словом. |
-| `home.globe.voices.cn.l2` | I shared what happened in my city - and it stayed up. | Я рассказал, что случилось в моём городе, — и это осталось в сети. |
-| `home.globe.voices.cn.l3` | I archived the deleted posts before they vanished. | Я заархивировал удалённые посты до того, как они исчезли. |
-| `home.globe.voices.ru.place` | Moscow, Russia | Москва, Россия |
-| `home.globe.voices.ru.l1` | The truth should not need a permit. | Правда не должна требовать разрешения. |
-| `home.globe.voices.ru.l2` | Independent journalism is not a crime. | Независимая журналистика — не преступление. |
-| `home.globe.voices.ru.l3` | A blocked newspaper still gets read. | Заблокированную газету всё равно читают. |
-| `home.globe.voices.tm.place` | Ashgabat, Turkmenistan | Ашхабад, Туркменистан |
-| `home.globe.voices.tm.l1` | A whole country, almost offline - and still heard. | Целая страна почти офлайн — и всё равно услышанная. |
-| `home.globe.voices.tm.l2` | They control the media, not my voice. | Они контролируют СМИ, но не мой голос. |
-| `home.globe.voices.tm.l3` | Silence is the law here; we whisper anyway. | Молчание здесь — закон; но мы всё равно шепчемся. |
-| `home.globe.voices.cu.place` | Havana, Cuba | Гавана, Куба |
-| `home.globe.voices.cu.l1` | My voice travels farther than I ever will. | Мой голос улетает дальше, чем я когда-либо смогу. |
-| `home.globe.voices.cu.l2` | We document what the state denies. | Мы документируем то, что государство отрицает. |
-| `home.globe.voices.cu.l3` | Independent voices, hand to hand, screen to screen. | Независимые голоса — из рук в руки, с экрана на экран. |
-| `home.globe.voices.by.place` | Minsk, Belarus | Минск, Беларусь |
-| `home.globe.voices.by.l1` | When they shut us down, we still spoke. | Когда нас отключали, мы всё равно говорили. |
-| `home.globe.voices.by.l2` | Free elections are not extremism. | Свободные выборы — это не экстремизм. |
-| `home.globe.voices.by.l3` | They banned our flag; not our voice. | Они запретили наш флаг, но не наш голос. |
-| `home.globe.voices.mm.place` | Yangon, Myanmar | Янгон, Мьянма |
-| `home.globe.voices.mm.l1` | The blackout did not silence us. | Блэкаут не заставил нас замолчать. |
-| `home.globe.voices.mm.l2` | Evidence of the crackdown got out. | Доказательства репрессий вышли наружу. |
-| `home.globe.voices.mm.l3` | When the towers fell silent, the story did not. | Когда вышки замолчали, история не замолчала. |
-| `home.globe.voices.ve.place` | Caracas, Venezuela | Каракас, Венесуэла |
-| `home.globe.voices.ve.l1` | We count the votes they won't. | Мы считаем голоса, которые они не считают. |
-| `home.globe.voices.ve.l2` | Hunger is not a state secret. | Голод — не государственная тайна. |
-| `home.globe.voices.ve.l3` | The queue for food is long; the truth is longer. | Очередь за хлебом длинная; правда длиннее. |
-| `home.globe.voices.vn.place` | Hanoi, Vietnam | Ханой, Вьетнам |
-| `home.globe.voices.vn.l1` | Writing about corruption is not a crime. | Писать о коррупции — не преступление. |
-| `home.globe.voices.vn.l2` | My blog outlived the block. | Мой блог пережил блокировку. |
-| `home.globe.voices.vn.l3` | One article they deleted reached thousands. | Одна удалённая статья дошла до тысяч. |
-| `home.globe.voices.pk.place` | Karachi, Pakistan | Карачи, Пакистан |
-| `home.globe.voices.pk.l1` | During the shutdown, witnesses still spoke. | Во время отключения свидетели продолжали говорить. |
-| `home.globe.voices.pk.l2` | Silencing journalists won't hide the story. | Заткнув журналистов, историю не скроешь. |
-| `home.globe.voices.pk.l3` | The channel went dark; the reporting did not. | Канал погас; журналистика — нет. |
-| `home.globe.voices.eg.place` | Cairo, Egypt | Каир, Египет |
-| `home.globe.voices.eg.l1` | They jailed the bloggers, not the words. | Блогеров посадили, но не слова. |
-| `home.globe.voices.eg.l2` | The protest was documented anyway. | Протесты всё равно задокументировали. |
-| `home.globe.voices.eg.l3` | From a small screen, a big story. | С маленького экрана — большая история. |
-| `home.globe.voices.sa.place` | Riyadh, Saudi Arabia | Эр-Рияд, Саудовская Аравия |
-| `home.globe.voices.sa.l1` | Speaking is not a crime. | Говорить — не преступление. |
-| `home.globe.voices.sa.l2` | Her voice reached beyond the wall. | Её голос прорвался за стену. |
-| `home.globe.voices.sa.l3` | She asked a question the kingdom bans. | Она задала вопрос, запрещённый в королевстве. |
-| `home.globe.voices.et.place` | Addis Ababa, Ethiopia | Аддис-Абеба, Эфиопия |
-| `home.globe.voices.et.l1` | The shutdown hid nothing. | Отключение ничего не скрыло. |
-| `home.globe.voices.et.l2` | Witnesses still found a way out. | Свидетели всё равно нашли выход. |
-| `home.globe.voices.et.l3` | The dead were counted, despite the blackout. | Погибших посчитали, несмотря на блэкаут. |
-| `home.globe.voices.tr.place` | Istanbul, Turkey | Стамбул, Турция |
-| `home.globe.voices.tr.l1` | Blocking the site won't block the story. | Заблокировать сайт — не заблокировать историю. |
-| `home.globe.voices.tr.l2` | Journalism continues, court order or not. | Журналистика продолжается, с решением суда или без. |
-| `home.globe.voices.tr.l3` | An arrested anchor cannot sign off the news. | Арестованный ведущий не может закончить выпуск. |
-| `home.globe.voices.az.place` | Baku, Azerbaijan | Баку, Азербайджан |
-| `home.globe.voices.az.l1` | They call reporting extremism. | Они называют репортажи экстремизмом. |
-| `home.globe.voices.az.l2` | The investigation was published anyway. | Расследование всё равно вышло. |
-| `home.globe.voices.az.l3` | They froze our accounts, not our work. | Они заморозили наши счета, но не нашу работу. |
-| `home.globe.voices.uz.place` | Tashkent, Uzbekistan | Ташкент, Узбекистан |
-| `home.globe.voices.uz.l1` | A closed internet is not a quiet one. | Закрытый интернет — не тихий интернет. |
-| `home.globe.voices.uz.l2` | The world still heard what happened here. | Мир всё равно услышал, что здесь произошло. |
-| `home.globe.voices.uz.l3` | The squares are watched; the words still move. | Площади под наблюдением; слова всё равно движутся. |
+| `home.sections.globe` | The network | ⚠️ **MISSING** |
+| `home.globe.title` | A real network, shown live | ⚠️ **MISSING** |
+| `home.globe.body` | The green markers are FreeSocks server locations, taken straight from the live network status. The amber marks are some of the regions where the internet is heavily censored and where FreeSocks is built to reach. | ⚠️ **MISSING** |
+| `home.globe.aria` | A rotating globe showing FreeSocks server locations and censored regions | ⚠️ **MISSING** |
+| `home.globe.legendServers` | Server location | ⚠️ **MISSING** |
+| `home.globe.legendRegions` | Censored region | ⚠️ **MISSING** |
 | `home.impact.title` | Donations at work | Пожертвования в деле |
 | `home.impact.body` | Every donation made through FreeSocks raises the bandwidth of every free account for at least the next {days} days. This is what donors have added so far - you could add to it too. | Каждое пожертвование через FreeSocks увеличивает месячный трафик каждого бесплатного аккаунта в том месяце. Вот что уже добавили доноры - и вы тоже можете внести вклад. |
 | `home.impact.cta` | Make a donation | Сделать пожертвование |
@@ -866,17 +804,6 @@ review.
 | `home.freeCard.noAuthTitle` | No email or password | Электронная почта и пароль не требуются. |
 | `home.freeCard.noAuthBody` | One human-check. Save your account number to sign in. No email collected. | Одна проверка человеком. Сохраните номер своего счета для входа. Адрес электронной почты не собирается. |
 | `home.freeCard.footnote` | Numbers reflect the current free-tier configuration. Solve the check to get yours. | Цифры отражают текущую конфигурацию бесплатного тарифа. Пройдите проверку, чтобы получить свой. |
-| `home.freeCard.upsellTitle` | Want unlimited? | Хотите безлимитный доступ? |
-| `home.freeCard.upsellBody` | Get {limits} - and help keep FreeSocks free for others. | Получите {limits} - и помогите сохранить FreeSocks бесплатным для других. |
-| `home.freeCard.fromPerMonth` | from {price}/mo | из {price} /mo |
-| `home.freeCard.cryptoNote` | Crypto accepted - Bitcoin, Monero, Zcash and more | Принимаем криптовалюту - Bitcoin, Monero, Zcash и другие |
-| `home.features.title` | What FreeSocks is | Что такое FreeSocks? |
-| `home.features.noAuth.title` | No email or password | Электронная почта и пароль не требуются. |
-| `home.features.noAuth.body` | One human-check and you are in. We mint a 32-digit account number you save to sign back in. No email collected. | Одна проверка человеком - и вы авторизованы. Мы создаём 32-значный номер аккаунта, который вы сохраняете для повторного входа. Адрес электронной почты не собирается. |
-| `home.features.mirrors.title` | Mirror URLs | Зеркальные URL-адреса |
-| `home.features.mirrors.body` | Subscriptions are mirrored across multiple providers so a single block does not cut you off. | Подписки дублируются у нескольких провайдеров, поэтому блокировка одного пакета услуг не приведет к отключению. |
-| `home.features.protocols.title` | Standard protocols | Стандартные протоколы |
-| `home.features.protocols.body` | Xray-powered VLESS. Works in most VPN clients. | Xray-powered VLESS. Works in most VPN clients. |
 | `home.privacy.title` | What we store | Что мы храним |
 | `home.privacy.subtitle` | FreeSocks is built to know as little about you as possible. | FreeSocks создан для того, чтобы знать о вас как можно меньше. |
 | `home.privacy.point1` | We store only a hashed version of your account number - never the number itself. | Мы храним только хешированную версию номера вашего счета - сам номер никогда не сохраняется. |
@@ -900,67 +827,78 @@ review.
 | `home.about.bodySuffix` | , a US 501(c)(3) nonprofit. | , американской некоммерческой организацией 501(c)(3). |
 | `home.about.body2` | Most VPNs assume you can pay for a subscription and safely hand over an email address. In much of the world neither is true, so FreeSocks asks for neither. Anyone can get a working key in about a minute and keep it for as long as they use it. | Большинство VPN исходят из того, что вы можете оплатить подписку и безопасно сообщить адрес почты. Во многих странах ни то, ни другое невозможно, поэтому FreeSocks не просит ни того, ни другого. Любой может получить рабочий ключ примерно за минуту и пользоваться им, пока он нужен. |
 | `home.about.siteLink` | unredacted.org | unredacted.org |
-| `home.about.openSource` | The code that runs this service is published for anyone to inspect, audit, or run themselves. | Код, на котором работает этот сервис, опубликован - любой может изучить его, проверить или запустить самостоятельно. |
 | `home.about.viewSourceCta` | View the source | Посмотреть исходный код |
-| `home.about.fact2Title` | Open source | Открытый код |
-| `home.about.fact3Title` | Donation funded | Финансируется пожертвованиями |
-| `home.about.fact3Body` | Free accounts are paid for by donations and memberships. There are no ads and nothing is sold. | Бесплатные аккаунты оплачиваются пожертвованиями и членствами. Здесь нет рекламы, и ничего не продаётся. |
 | `home.limits.unlimitedBoth` | unlimited bandwidth and devices | неограниченная пропускная способность и устройства |
 | `home.limits.unlimitedBandwidth` | unlimited bandwidth | неограниченная пропускная способность |
 | `home.limits.unlimitedDevices` | unlimited devices | неограниченное количество устройств |
 | `home.limits.bandwidthAndDevices` | {bandwidth} and {devices} | {bandwidth} и {devices} |
 | `home.limits.upToDevices [countPlural=one]` | up to 1 device | до 1 устройства |
 | `home.limits.upToDevices [countPlural=other]` | up to {count} devices | до {count} устройств |
+| `home.flow.title` | Who sees what | ⚠️ **MISSING** |
+| `home.flow.subtitle` | Here is the path your traffic takes, and what each stop on the way can actually learn. | ⚠️ **MISSING** |
+| `home.flow.youName` | Your device | ⚠️ **MISSING** |
+| `home.flow.youSees` | Your apps and your data live here. Traffic is encrypted on the device before it goes anywhere. | ⚠️ **MISSING** |
+| `home.flow.ispName` | Your ISP | ⚠️ **MISSING** |
+| `home.flow.ispSees` | Sees encrypted data flowing to a busy CDN or a plain server. Not the sites you visit, and not what you send. | ⚠️ **MISSING** |
+| `home.flow.cdnName` | The CDN | ⚠️ **MISSING** |
+| `home.flow.cdnBadge` | Freedom Mode only | ⚠️ **MISSING** |
+| `home.flow.cdnSees` | Carries your traffic without being able to read it. It can tell you use FreeSocks, and nothing about what you do through it. | ⚠️ **MISSING** |
+| `home.flow.nodeName` | FreeSocks server | ⚠️ **MISSING** |
+| `home.flow.nodeSees` | Hands your traffic to the open internet. No logs are kept, and your key has no identity behind it. | ⚠️ **MISSING** |
+| `home.flow.webName` | Websites you visit | ⚠️ **MISSING** |
+| `home.flow.webSees` | See the FreeSocks server's address instead of yours. | ⚠️ **MISSING** |
+| `home.flow.captionFreedom` | Routes through a large CDN, so your connection looks like ordinary web traffic. | ⚠️ **MISSING** |
+| `home.flow.captionPrivacy` | Skips the CDN and connects you straight to the server. | ⚠️ **MISSING** |
 
-## `e2ee` — The HPKE/E2EE "encrypted to this server" badge + verification panel. *(1 missing)*
+## `hpke` — The HPKE "encrypted to this server" badge + verification panel. *(1 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
-| `e2ee.badgeActiveTitle` | Encrypted to this server with HPKE. Click to verify. | Зашифровано на этом сервере с помощью HPKE. Нажмите для проверки. |
-| `e2ee.badgeWarnTitle` | Couldn't verify the encryption key. Click to verify out-of-band before entering your account number. | Не удалось проверить ключ шифрования. Нажмите, чтобы подтвердить его внеполосным способом, прежде чем вводить номер счета. |
-| `e2ee.badgeActiveTitleAdmin` | Sensitive member and admin actions are HPKE-encrypted on this deployment. Click for details. | В этой версии системы конфиденциальные действия пользователей и администраторов шифруются с помощью HPKE. Нажмите для получения подробной информации. |
-| `e2ee.badgeWarnTitleAdmin` | Couldn't verify this deployment's encryption key. Click for details and out-of-band verification. | Не удалось проверить ключ шифрования этого развертывания. Нажмите для получения подробной информации и внеполосной проверки. |
-| `e2ee.badgeOff` | TLS | ТЛС |
-| `e2ee.badgeOffTitle` | Standard TLS only. Extra HPKE body encryption isn't enabled on this deployment. | Используется только стандартный TLS. Дополнительное шифрование тела запроса HPKE в данной конфигурации не включено. |
-| `e2ee.bannerWarn` | Couldn't verify the encryption key | Не удалось проверить ключ шифрования. |
-| `e2ee.bannerWarnDetail` | Don't enter your account number yet - verify this connection out-of-band first. | Пока не вводите номер своего счета - сначала проверьте это соединение внеполосным способом. |
-| `e2ee.verify` | Verify | Проверять |
-| `e2ee.verifyTitle` | Verify this connection | Проверьте это соединение. |
-| `e2ee.verifyIntro` | FreeSocks seals your account number and VPN key to this server with HPKE, so a compromised CDN can't read them. These fingerprints identify the keys your browser is using - compare them against the values published out-of-band to be sure they haven't been swapped. | FreeSocks защищает номер вашей учетной записи и ключ прокси-сервера с помощью HPKE, поэтому скомпрометированная CDN не сможет их прочитать. Эти «отпечатки» идентифицируют ключи, используемые вашим браузером - сравните их со значениями, опубликованными вне сети, чтобы убедиться, что они не были подменены. |
-| `e2ee.protectHeading` | What this protects | Что это защищает |
-| `e2ee.protectScope` | Your account number and key are encrypted to this server with HPKE, so the network and any CDN in front of it can't read them. | Номер вашего счета и ключ зашифрованы на этом сервере с помощью HPKE, поэтому сеть и любая CDN-сеть перед ним не смогут их прочитать. |
-| `e2ee.protectServerReads` | FreeSocks itself can read them to set up your account, so this protects you from the network in between, not from the server. | FreeSocks сам может считывать их для настройки вашей учетной записи, поэтому это защищает вас от сетевой защиты, а не от защиты сервера. |
-| `e2ee.protectTunnel` | It's separate from your VPN connection, which is encrypted on its own. | Это отдельная функция, не связанная с вашим VPN-соединением, которое шифруется самостоятельно. |
-| `e2ee.protectAdmin` | On the admin dashboard, sensitive actions - creating API tokens, invites, and membership codes, and uploading backend, billing, or storage credentials - are HPKE-encrypted to this server too. Routine reads and settings use TLS, your passkey, and proof-of-possession. | На панели администратора конфиденциальные действия - создание токенов API, приглашений и кодов членства, а также загрузка учетных данных для бэкэнда, выставления счетов или хранения данных - также шифруются HPKE на этом сервере. Для обычных операций чтения и настройки используется TLS, ваш пароль и подтверждение владения. |
-| `e2ee.fingerprintsHeading` | Key fingerprints | Ключевые отпечатки пальцев |
-| `e2ee.fpHpke` | Server key (HPKE / X-Wing) | Ключ сервера (HPKE / X-Wing) |
-| `e2ee.fpKid` | Key id | Идентификатор ключа |
-| `e2ee.fpManifest` | Manifest key (Ed25519) | Ключ манифеста (Ed25519) |
-| `e2ee.fpManifestPq` | Manifest key (ML-DSA-65, post-quantum) | Ключ манифеста (ML-DSA-65, постквантовый) |
-| `e2ee.fpSuite` | Cipher suite | Набор шифров |
-| `e2ee.copy` | Copy | Копия |
-| `e2ee.copied` | Copied | Скопировано |
-| `e2ee.attestationHeading` | Live server attestation | Аттестация работающего сервера |
-| `e2ee.attestationOk` | Verified - the server is attesting a valid key signed by the manifest key your app trusts. | Подтверждено - сервер подтверждает действительность ключа, подписанного ключом манифеста, которому доверяет ваше приложение. |
-| `e2ee.attestationEpoch` | Current key {kid}, expires {expiry}. | Текущий ключ {kid} , истекает {expiry} . |
-| `e2ee.attestationFail` | Could not verify the server's current key - a network problem, or a CDN tampering with the key endpoint. Verify out-of-band before continuing. | Не удалось проверить текущий ключ сервера - проблема в сети или CDN вмешивается в работу конечной точки ключа. Перед продолжением проверьте внеполосное соединение. |
-| `e2ee.attestationUnreachable` | The live key check is temporarily unavailable. Your connection still uses the verified key built into the app. | Функция проверки ключа в реальном времени временно недоступна. Ваше соединение по-прежнему использует проверенный ключ, встроенный в приложение. |
-| `e2ee.attestationStale` | The server isn't publishing a current rotating key right now, so your connection is using the verified key built into the app. Nothing here suggests tampering. | ⚠️ **MISSING** |
-| `e2ee.attestationUnconfigured` | Live key checking isn't set up on this build. | В этой сборке проверка работоспособности клавиатуры в реальном времени не настроена. |
-| `e2ee.compareHeading` | How to verify | Как проверить |
-| `e2ee.compareBody` | Compare the fingerprints above against the values published through a channel this server doesn't control. They must match. | Сравните приведенные выше отпечатки пальцев со значениями, опубликованными по каналу, который не контролируется этим сервером. Они должны совпадать. |
-| `e2ee.channelRelease` | Signed release notes | Подписанные примечания к выпуску |
-| `e2ee.channelSource` | Source code (rebuild to compare) | Исходный код (для сравнения пересоберите) |
-| `e2ee.channelOnion` | Tor mirror | Зеркало Тора |
-| `e2ee.dnsHeading` | Verify via DNS | Проверка через DNS |
-| `e2ee.dnsBody` | Look the pin up yourself in a terminal, through your own DNS resolver - a path that doesn't run through this site or its CDN. The answer should contain the same fingerprints shown above. (If it returns nothing, the operator may not have published the record yet; use the signed release instead.) | Найдите PIN-код самостоятельно в терминале, используя свой собственный DNS-сервер - путь, который не проходит через этот сайт или его CDN. Ответ должен содержать те же отпечатки, что и выше. (Если он ничего не возвращает, возможно, оператор еще не опубликовал запись; используйте вместо этого подписанный релиз.) |
-| `e2ee.dnsCommand` | Run this in a terminal | Выполните это в терминале. |
-| `e2ee.dnsExpected` | It should return | Оно должно вернуться |
-| `e2ee.dnsCaveat` | Independent only if your DNS isn't run by the same company as the CDN; a DNSSEC-validating resolver is best. For full assurance, confirm the same values in the signed release too. | Независимый сервер необходим только в том случае, если ваш DNS-сервер управляется не той же компанией, что и CDN; лучше всего использовать DNSSEC-проверяющий резолвер. Для полной уверенности подтвердите одинаковые значения и в подписанном релизе. |
-| `e2ee.verifierExtension` | A verifier browser extension that re-checks this build on every visit is planned, but not available yet. | Планируется выпуск расширения для браузера, которое будет повторно проверять эту сборку при каждом посещении, но пока оно недоступно. |
-| `e2ee.verifierExtensionInstall` | Install the verifier extension - it re-checks this build against the published one on every visit (the strongest protection against a tampered page). | Установите расширение для проверки - оно будет перепроверять эту сборку на соответствие опубликованной при каждом посещении (самая надежная защита от подделки страницы). |
-| `e2ee.caveat` | This in-page check is a convenience. A tampered page could lie about its own status, so the real proof comes from comparing these values somewhere outside this server, such as the DNS lookup above or a published release. | Эта проверка на странице - удобство. Подделанная страница может искажать свой собственный статус, поэтому реальное доказательство можно получить, сравнив эти значения с данными за пределами этого сервера, например, с результатами DNS-запроса, приведенного выше, или с опубликованным релизом. |
-| `e2ee.close` | Close | Закрывать |
+| `hpke.badgeActiveTitle` | Encrypted to this server with HPKE. Click to verify. | Зашифровано на этом сервере с помощью HPKE. Нажмите для проверки. |
+| `hpke.badgeWarnTitle` | Couldn't verify the encryption key. Click to verify out-of-band before entering your account number. | Не удалось проверить ключ шифрования. Нажмите, чтобы подтвердить его внеполосным способом, прежде чем вводить номер счета. |
+| `hpke.badgeActiveTitleAdmin` | Sensitive member and admin actions are HPKE-encrypted on this deployment. Click for details. | В этой версии системы конфиденциальные действия пользователей и администраторов шифруются с помощью HPKE. Нажмите для получения подробной информации. |
+| `hpke.badgeWarnTitleAdmin` | Couldn't verify this deployment's encryption key. Click for details and out-of-band verification. | Не удалось проверить ключ шифрования этого развертывания. Нажмите для получения подробной информации и внеполосной проверки. |
+| `hpke.badgeOff` | TLS | ТЛС |
+| `hpke.badgeOffTitle` | Standard TLS only. Extra HPKE body encryption isn't enabled on this deployment. | Используется только стандартный TLS. Дополнительное шифрование тела запроса HPKE в данной конфигурации не включено. |
+| `hpke.bannerWarn` | Couldn't verify the encryption key | Не удалось проверить ключ шифрования. |
+| `hpke.bannerWarnDetail` | Don't enter your account number yet - verify this connection out-of-band first. | Пока не вводите номер своего счета - сначала проверьте это соединение внеполосным способом. |
+| `hpke.verify` | Verify | Проверять |
+| `hpke.verifyTitle` | Verify this connection | Проверьте это соединение. |
+| `hpke.verifyIntro` | FreeSocks seals your account number and VPN key to this server with HPKE, so a compromised CDN can't read them. These fingerprints identify the keys your browser is using - compare them against the values published out-of-band to be sure they haven't been swapped. | FreeSocks защищает номер вашей учетной записи и ключ прокси-сервера с помощью HPKE, поэтому скомпрометированная CDN не сможет их прочитать. Эти «отпечатки» идентифицируют ключи, используемые вашим браузером - сравните их со значениями, опубликованными вне сети, чтобы убедиться, что они не были подменены. |
+| `hpke.protectHeading` | What this protects | Что это защищает |
+| `hpke.protectScope` | Your account number and key are encrypted to this server with HPKE, so the network and any CDN in front of it can't read them. | Номер вашего счета и ключ зашифрованы на этом сервере с помощью HPKE, поэтому сеть и любая CDN-сеть перед ним не смогут их прочитать. |
+| `hpke.protectServerReads` | FreeSocks itself can read them to set up your account, so this protects you from the network in between, not from the server. | FreeSocks сам может считывать их для настройки вашей учетной записи, поэтому это защищает вас от сетевой защиты, а не от защиты сервера. |
+| `hpke.protectTunnel` | It's separate from your VPN connection, which is encrypted on its own. | Это отдельная функция, не связанная с вашим VPN-соединением, которое шифруется самостоятельно. |
+| `hpke.protectAdmin` | On the admin dashboard, sensitive actions - creating API tokens, invites, and membership codes, and uploading backend, billing, or storage credentials - are HPKE-encrypted to this server too. Routine reads and settings use TLS, your passkey, and proof-of-possession. | На панели администратора конфиденциальные действия - создание токенов API, приглашений и кодов членства, а также загрузка учетных данных для бэкэнда, выставления счетов или хранения данных - также шифруются HPKE на этом сервере. Для обычных операций чтения и настройки используется TLS, ваш пароль и подтверждение владения. |
+| `hpke.fingerprintsHeading` | Key fingerprints | Ключевые отпечатки пальцев |
+| `hpke.fpHpke` | Server key (HPKE / X-Wing) | Ключ сервера (HPKE / X-Wing) |
+| `hpke.fpKid` | Key id | Идентификатор ключа |
+| `hpke.fpManifest` | Manifest key (Ed25519) | Ключ манифеста (Ed25519) |
+| `hpke.fpManifestPq` | Manifest key (ML-DSA-65, post-quantum) | Ключ манифеста (ML-DSA-65, постквантовый) |
+| `hpke.fpSuite` | Cipher suite | Набор шифров |
+| `hpke.copy` | Copy | Копия |
+| `hpke.copied` | Copied | Скопировано |
+| `hpke.attestationHeading` | Live server attestation | Аттестация работающего сервера |
+| `hpke.attestationOk` | Verified - the server is attesting a valid key signed by the manifest key your app trusts. | Подтверждено - сервер подтверждает действительность ключа, подписанного ключом манифеста, которому доверяет ваше приложение. |
+| `hpke.attestationEpoch` | Current key {kid}, expires {expiry}. | Текущий ключ {kid} , истекает {expiry} . |
+| `hpke.attestationFail` | Could not verify the server's current key - a network problem, or a CDN tampering with the key endpoint. Verify out-of-band before continuing. | Не удалось проверить текущий ключ сервера - проблема в сети или CDN вмешивается в работу конечной точки ключа. Перед продолжением проверьте внеполосное соединение. |
+| `hpke.attestationUnreachable` | The live key check is temporarily unavailable. Your connection still uses the verified key built into the app. | Функция проверки ключа в реальном времени временно недоступна. Ваше соединение по-прежнему использует проверенный ключ, встроенный в приложение. |
+| `hpke.attestationStale` | The server isn't publishing a current rotating key right now, so your connection is using the verified key built into the app. Nothing here suggests tampering. | ⚠️ **MISSING** |
+| `hpke.attestationUnconfigured` | Live key checking isn't set up on this build. | В этой сборке проверка работоспособности клавиатуры в реальном времени не настроена. |
+| `hpke.compareHeading` | How to verify | Как проверить |
+| `hpke.compareBody` | Compare the fingerprints above against the values published through a channel this server doesn't control. They must match. | Сравните приведенные выше отпечатки пальцев со значениями, опубликованными по каналу, который не контролируется этим сервером. Они должны совпадать. |
+| `hpke.channelRelease` | Signed release notes | Подписанные примечания к выпуску |
+| `hpke.channelSource` | Source code (rebuild to compare) | Исходный код (для сравнения пересоберите) |
+| `hpke.channelOnion` | Tor mirror | Зеркало Тора |
+| `hpke.dnsHeading` | Verify via DNS | Проверка через DNS |
+| `hpke.dnsBody` | Look the pin up yourself in a terminal, through your own DNS resolver - a path that doesn't run through this site or its CDN. The answer should contain the same fingerprints shown above. (If it returns nothing, the operator may not have published the record yet; use the signed release instead.) | Найдите PIN-код самостоятельно в терминале, используя свой собственный DNS-сервер - путь, который не проходит через этот сайт или его CDN. Ответ должен содержать те же отпечатки, что и выше. (Если он ничего не возвращает, возможно, оператор еще не опубликовал запись; используйте вместо этого подписанный релиз.) |
+| `hpke.dnsCommand` | Run this in a terminal | Выполните это в терминале. |
+| `hpke.dnsExpected` | It should return | Оно должно вернуться |
+| `hpke.dnsCaveat` | Independent only if your DNS isn't run by the same company as the CDN; a DNSSEC-validating resolver is best. For full assurance, confirm the same values in the signed release too. | Независимый сервер необходим только в том случае, если ваш DNS-сервер управляется не той же компанией, что и CDN; лучше всего использовать DNSSEC-проверяющий резолвер. Для полной уверенности подтвердите одинаковые значения и в подписанном релизе. |
+| `hpke.verifierExtension` | A verifier browser extension that re-checks this build on every visit is planned, but not available yet. | Планируется выпуск расширения для браузера, которое будет повторно проверять эту сборку при каждом посещении, но пока оно недоступно. |
+| `hpke.verifierExtensionInstall` | Install the verifier extension - it re-checks this build against the published one on every visit (the strongest protection against a tampered page). | Установите расширение для проверки - оно будет перепроверять эту сборку на соответствие опубликованной при каждом посещении (самая надежная защита от подделки страницы). |
+| `hpke.caveat` | This in-page check is a convenience. A tampered page could lie about its own status, so the real proof comes from comparing these values somewhere outside this server, such as the DNS lookup above or a published release. | Эта проверка на странице - удобство. Подделанная страница может искажать свой собственный статус, поэтому реальное доказательство можно получить, сравнив эти значения с данными за пределами этого сервера, например, с результатами DNS-запроса, приведенного выше, или с опубликованным релизом. |
+| `hpke.close` | Close | Закрывать |
 
 ## `deviceRevoke` — The disconnect-a-device confirmation dialog.
 
@@ -1026,7 +964,7 @@ review.
 | `switchServer.failed` | Could not move your key | ⚠️ **MISSING** |
 | `switchServer.vsNewKey` | If the subscription URL itself stopped working everywhere, or you think someone else has it, use "Create a new key" instead - that replaces the URL. | ⚠️ **MISSING** |
 
-## `report` — Miscellaneous strings. *(16 missing)*
+## `report` — Miscellaneous strings. *(17 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
@@ -1040,6 +978,7 @@ review.
 | `report.reasonBlockedSite` | A site or app won't load through the VPN | ⚠️ **MISSING** |
 | `report.reasonAppProblem` | The VPN app itself is giving me trouble | ⚠️ **MISSING** |
 | `report.reasonOther` | Something else | ⚠️ **MISSING** |
+| `report.tellUsMore` | Need to tell us more? Email us: | ⚠️ **MISSING** |
 | `report.nothingChanges` | Reporting changes nothing on your account. If you need a fix right now, try "Switch server" or "Create a new key". | ⚠️ **MISSING** |
 | `report.confirm` | Send report | ⚠️ **MISSING** |
 | `report.working` | Sending… | ⚠️ **MISSING** |
@@ -1052,9 +991,9 @@ review.
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
 | `telemetry.sendLabel` | Include connection details | ⚠️ **MISSING** |
-| `telemetry.sendExplainer` | Only the values shown below are sent. They are not tied to your account, and your IP address is never included. | ⚠️ **MISSING** |
+| `telemetry.sendExplainer` | This helps us see patterns, like one network or region blocking us. Only the values shown below are sent. They are not tied to your account, and your IP address is never included. | ⚠️ **MISSING** |
 | `telemetry.countryLabel` | Country | ⚠️ **MISSING** |
 | `telemetry.cityLabel` | City | ⚠️ **MISSING** |
-| `telemetry.asnLabel` | Network provider (ASN) | ⚠️ **MISSING** |
+| `telemetry.asnLabel` | Network (ASN) | ⚠️ **MISSING** |
 | `telemetry.notSet` | Not set | ⚠️ **MISSING** |
 | `telemetry.editHint` | Check these before sending. If you are connected to FreeSocks right now, they may show our server's network instead of yours. Fix anything that looks wrong, or clear it. | ⚠️ **MISSING** |

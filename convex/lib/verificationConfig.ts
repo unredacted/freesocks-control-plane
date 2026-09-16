@@ -1,8 +1,8 @@
 /**
- * Verification / E2EE-transparency config. The out-of-band verification channels
+ * Verification / HPKE-transparency config. The out-of-band verification channels
  * shown in the "Verify connection" panel are per-deployment (a signed-release or
  * verify-page URL, an optional Tor .onion mirror, a public source-repo URL), and
- * an operator may want to hide the whole E2EE badge + panel. Stored in the
+ * an operator may want to hide the whole HPKE badge + panel. Stored in the
  * `appSettings` `verification.*` namespace (like `theme.*` / `billing.*`: NOT in
  * SETTINGS_DEFAULTS, so it gets typed validation here instead of leaking through
  * the generic settings allowlist), resolved fail-safe, and exposed (non-secret)
@@ -11,7 +11,7 @@
 import type { DatabaseReader } from '../_generated/server';
 
 export interface VerificationConfig {
-  /** Master switch for the E2EE badge + verify panel (independent of the baked pins). */
+  /** Master switch for the HPKE badge + verify panel (independent of the baked pins). */
   showPanel: boolean;
   /** URL where users compare fingerprints (signed release / verify page); '' = unset. */
   releaseUrl: string;

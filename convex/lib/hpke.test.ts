@@ -1,9 +1,9 @@
 /// <reference types="vite/client" />
 /**
  * The sealing wrapper's REQUIRED posture for admin routes: with
- * FS_E2EE_ADMIN_REQUIRED=true a cookie-session (passkey CMS) caller must seal,
+ * FS_HPKE_ADMIN_REQUIRED=true a cookie-session (passkey CMS) caller must seal,
  * while an `fsv1_` bearer caller (IaC, cannot seal) keeps plaintext. The member
- * knob (FS_E2EE_REQUIRED) never touches admin routes. Exercised through the
+ * knob (FS_HPKE_REQUIRED) never touches admin routes. Exercised through the
  * edges prefix (GET reveal / POST seal-both / PATCH seal-request).
  *
  * Plus the MEMBER knob on the three routes that were wrapped in `sealed()` but
@@ -16,7 +16,7 @@ import schema from '../schema';
 import { internal } from '../_generated/api';
 import { signValue } from './cookies';
 import { sha256Hex } from './crypto';
-import { bearerHeaderPresent } from './e2ee';
+import { bearerHeaderPresent } from './hpke';
 import {
   bytesToB64Url,
   isSealedWire,
@@ -27,8 +27,8 @@ import { serializePublicKey, serverKeyPairFromSeed } from '../../src/shared/cryp
 import { clientOpenResponse, clientPrepareRequest } from '../../src/shared/crypto/channel';
 import type { Id } from '../_generated/dataModel';
 
-// convex-test resolves `ctx.runAction(internal.lib.e2eeCrypto…)` as
-// `<root>lib/e2eeCrypto` where <root> comes from the `_generated` key (`../`).
+// convex-test resolves `ctx.runAction(internal.lib.hpkeCrypto…)` as
+// `<root>lib/hpkeCrypto` where <root> comes from the `_generated` key (`../`).
 // Vite rewrites this directory's own matches to `./x.ts`, which that lookup
 // never finds, so re-root them under `../lib/`.
 const modules = Object.fromEntries(
@@ -85,7 +85,7 @@ const SUMMARY = '/api/v1/admin/edges/summary';
 const PREVIEW = '/api/v1/admin/edges/render/preview';
 const CONFIG = '/api/v1/admin/edges/config';
 
-describe('e2ee: FS_E2EE_ADMIN_REQUIRED', () => {
+describe('hpke: FS_HPKE_ADMIN_REQUIRED', () => {
   test('bearerHeaderPresent: only a well-formed Authorization: Bearer header counts', () => {
     const mk = (h: Record<string, string>) => new Request('https://x/', { headers: h });
     expect(bearerHeaderPresent(mk({ authorization: 'Bearer fsv1_abc' }))).toBe(true);
@@ -106,7 +106,7 @@ describe('e2ee: FS_E2EE_ADMIN_REQUIRED', () => {
     });
     // Reached the handler (a validation-class failure, NOT the sealing gate).
     expect(preview.status).not.toBe(401);
-    expect((await preview.json()).error?.code).not.toBe('e2ee.sealed_required');
+    expect((await preview.json()).error?.code).not.toBe('hpke.sealed_required');
     const patch = await t.fetch(CONFIG, {
       method: 'PATCH',
       headers: { cookie, 'content-type': 'application/json' },
@@ -115,8 +115,8 @@ describe('e2ee: FS_E2EE_ADMIN_REQUIRED', () => {
     expect(patch.status).toBe(200);
   });
 
-  test('FS_E2EE_REQUIRED alone (member knob) never gates admin routes', async () => {
-    vi.stubEnv('FS_E2EE_REQUIRED', 'true');
+  test('FS_HPKE_REQUIRED alone (member knob) never gates admin routes', async () => {
+    vi.stubEnv('FS_HPKE_REQUIRED', 'true');
     const { t, cookie } = await setup();
     expect((await t.fetch(SUMMARY, { headers: { cookie } })).status).toBe(200);
     const patch = await t.fetch(CONFIG, {
@@ -127,26 +127,34 @@ describe('e2ee: FS_E2EE_ADMIN_REQUIRED', () => {
     expect(patch.status).toBe(200);
   });
 
-  test('knob on: a cookie caller is refused in plaintext (GET reveal, POST seal-both, PATCH seal-request) with e2ee.sealed_required', async () => {
+  test('legacy FS_E2EE_ADMIN_REQUIRED spelling still gates cookie callers (pre-rename deployment env)', async () => {
     vi.stubEnv('FS_E2EE_ADMIN_REQUIRED', 'true');
     const { t, cookie } = await setup();
     const get = await t.fetch(SUMMARY, { headers: { cookie } });
     expect(get.status).toBe(400);
-    expect(await get.json()).toMatchObject({ error: { code: 'e2ee.sealed_required' } });
+    expect(await get.json()).toMatchObject({ error: { code: 'hpke.sealed_required' } });
+  });
+
+  test('knob on: a cookie caller is refused in plaintext (GET reveal, POST seal-both, PATCH seal-request) with hpke.sealed_required', async () => {
+    vi.stubEnv('FS_HPKE_ADMIN_REQUIRED', 'true');
+    const { t, cookie } = await setup();
+    const get = await t.fetch(SUMMARY, { headers: { cookie } });
+    expect(get.status).toBe(400);
+    expect(await get.json()).toMatchObject({ error: { code: 'hpke.sealed_required' } });
     const post = await t.fetch(PREVIEW, {
       method: 'POST',
       headers: { cookie, 'content-type': 'application/json' },
       body: JSON.stringify({ relayId: 'nope', family: 'other' }),
     });
     expect(post.status).toBe(400);
-    expect(await post.json()).toMatchObject({ error: { code: 'e2ee.sealed_required' } });
+    expect(await post.json()).toMatchObject({ error: { code: 'hpke.sealed_required' } });
     const patch = await t.fetch(CONFIG, {
       method: 'PATCH',
       headers: { cookie, 'content-type': 'application/json' },
       body: JSON.stringify({ render: { enabled: true } }),
     });
     expect(patch.status).toBe(400);
-    expect(await patch.json()).toMatchObject({ error: { code: 'e2ee.sealed_required' } });
+    expect(await patch.json()).toMatchObject({ error: { code: 'hpke.sealed_required' } });
     // Nothing was written by the refused PATCH.
     const rows = await t.run((ctx) => ctx.db.query('appSettings').collect());
     expect(rows.find((r) => r.key === 'edge.render.enabled')).toBeUndefined();
@@ -159,18 +167,18 @@ describe('e2ee: FS_E2EE_ADMIN_REQUIRED', () => {
       headers: { cookie, authorization: 'Bearer fsv1_bogus' },
     });
     expect(downgrade.status).toBe(400);
-    expect(await downgrade.json()).toMatchObject({ error: { code: 'e2ee.sealed_required' } });
+    expect(await downgrade.json()).toMatchObject({ error: { code: 'hpke.sealed_required' } });
     // ...nor by adding a REAL token: the cookie still authenticates, so the
     // handler would run with the cookie's privileges — the class is the
     // credential that authenticates, not any bearer that happens to be valid.
     const { bearer } = await setup();
     const realToken = await t.fetch(SUMMARY, { headers: { cookie, authorization: bearer } });
     expect(realToken.status).toBe(400);
-    expect(await realToken.json()).toMatchObject({ error: { code: 'e2ee.sealed_required' } });
+    expect(await realToken.json()).toMatchObject({ error: { code: 'hpke.sealed_required' } });
   });
 
   test('knob on: an fsv1_ bearer caller keeps plaintext on every verb class', async () => {
-    vi.stubEnv('FS_E2EE_ADMIN_REQUIRED', 'true');
+    vi.stubEnv('FS_HPKE_ADMIN_REQUIRED', 'true');
     const { t, bearer } = await setup();
     expect((await t.fetch(SUMMARY, { headers: { authorization: bearer } })).status).toBe(200);
     // A stale / malformed / expired browser cookie riding along must not refuse
@@ -193,7 +201,7 @@ describe('e2ee: FS_E2EE_ADMIN_REQUIRED', () => {
   });
 
   test('knob on: a SEALED cookie request is opened and the response sealed to the request ephemeral', async () => {
-    vi.stubEnv('FS_E2EE_ADMIN_REQUIRED', 'true');
+    vi.stubEnv('FS_HPKE_ADMIN_REQUIRED', 'true');
     const { t, cookie, kp, kid } = await setup();
     // GET reveal with a response ephemeral header.
     const prepGet = await clientPrepareRequest({
@@ -279,7 +287,7 @@ async function memberSetup() {
 
 const JSON_HDR = { 'content-type': 'application/json' };
 
-describe('e2ee: FS_E2EE_REQUIRED on the member routes sealed in 2026-09', () => {
+describe('hpke: FS_HPKE_REQUIRED on the member routes sealed in 2026-09', () => {
   test('knob off (dual-mode): plaintext reaches the handlers', async () => {
     const { t, cookie } = await memberSetup();
     // No subscription row -> the handler's own 404, i.e. the gate let it through.
@@ -298,8 +306,8 @@ describe('e2ee: FS_E2EE_REQUIRED on the member routes sealed in 2026-09', () => 
     expect(mirror.status).toBe(401);
   });
 
-  test('knob on: plaintext is refused with e2ee.sealed_required BEFORE auth, even for a signed-in member', async () => {
-    vi.stubEnv('FS_E2EE_REQUIRED', 'true');
+  test('knob on: plaintext is refused with hpke.sealed_required BEFORE auth, even for a signed-in member', async () => {
+    vi.stubEnv('FS_HPKE_REQUIRED', 'true');
     const { t, cookie } = await memberSetup();
     for (const [path, init] of [
       [CONTENT, { headers: { cookie } }],
@@ -314,12 +322,12 @@ describe('e2ee: FS_E2EE_REQUIRED on the member routes sealed in 2026-09', () => 
     ] as [string, RequestInit][]) {
       const res = await t.fetch(path, init);
       expect(res.status, `${init.method ?? 'GET'} ${path}`).toBe(400);
-      expect(await res.json()).toMatchObject({ error: { code: 'e2ee.sealed_required' } });
+      expect(await res.json()).toMatchObject({ error: { code: 'hpke.sealed_required' } });
     }
   });
 
   test('knob on: the sealed forms pass the gate and the handlers see the opened plaintext', async () => {
-    vi.stubEnv('FS_E2EE_REQUIRED', 'true');
+    vi.stubEnv('FS_HPKE_REQUIRED', 'true');
     const { t, kp, kid, cookie } = await memberSetup();
 
     // GET reveal: the ephemeral rides the x-fs-resp-eph header (as the SPA sends it).

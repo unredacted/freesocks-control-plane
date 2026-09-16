@@ -1,15 +1,18 @@
-# Threat model: CDN-blinding (application-layer E2EE + proof-of-possession)
+# Threat model: CDN-blinding (application-layer HPKE sealing + proof-of-possession)
 
 Design + status for the CDN-blinding feature. Phase 0 gate artifact:
-`docs/e2ee-phase0-spike.md`. This doc is the standing "what is and is not protected"
+`docs/hpke-phase0-spike.md`. This doc is the standing "what is and is not protected"
 reference. Status: Phases 0 to 4 implemented on `v2`. The manifest trust anchor is post-quantum
 (hybrid Ed25519 + ML-DSA-65). The remaining pieces are operator-shipped, not code: the out-of-band
 publication + reproducible rebuilder (`docs/oob-verification.md`) and the verifier extension
 (`verifier-extension/`, the active-CDN defense, published through the web store).
 
-> **Naming:** the user-facing label for this feature is **"HPKE"** (the SPA badge,
-> verify panel, and member copy all say HPKE). Code identifiers and this doc keep
-> the historical `e2ee` name — they are the same thing.
+> **Naming:** this feature is called **"HPKE"** everywhere: the SPA badge, verify
+> panel, member copy, code identifiers, env knobs, routes, and this doc. It was
+> called "E2EE" until 2026-09-16, when the identifiers were renamed for accuracy
+> (see "What this is, stated honestly" below). The only place the old name
+> survives is the v1 wire constant `SUITE_ID` / `INFO_PREFIX` in
+> `src/shared/crypto/envelope.ts`, which is a protocol string, not a label.
 
 ## Why
 
@@ -29,7 +32,7 @@ quantum computer exists. So confidentiality is **post-quantum from day one**.
 Application-layer encryption of the sensitive request/response bodies between the browser and our
 origin, tunnelled through the CDN as ciphertext, plus a proof-of-possession binding that stops a
 captured session cookie from being replayed. Call it **CDN-blinding for sensitive fields**, not
-"E2EE" in the Signal sense.
+"E2EE" in the Signal sense (which is why the feature is named after its primitive, HPKE, not "E2EE").
 
 - It **defeats a PASSIVE CDN** (logging, compelled disclosure, insiders) and, via the hybrid KEM, the
   **HNDL / quantum** version of that adversary. This is the realistic, at-scale threat.
@@ -48,7 +51,7 @@ captured session cookie from being replayed. Call it **CDN-blinding for sensitiv
   post-quantum hybrid, IND-CCA secure if **either** leg holds), KDF = HKDF-SHA256, AEAD =
   ChaCha20-Poly1305. `mode_base`. The client refuses any non-pinned suite.
 - **Runtime split (Phase 0 finding):** the Convex default V8 isolate lacks `crypto.subtle` HKDF, so
-  server seal/open runs in a `"use node"` action (`convex/lib/e2eeCrypto.ts`); the public
+  server seal/open runs in a `"use node"` action (`convex/lib/hpkeCrypto.ts`); the public
   `httpAction`s delegate via `ctx.runAction`. The browser uses native WebCrypto.
 - **Login request leg:** the client HPKE-seals the login body (the account number). It seals to the
   current **epoch key** when one is available (Layer 3), else to the pinned static key. Defeats a
@@ -90,8 +93,8 @@ captured session cookie from being replayed. Call it **CDN-blinding for sensitiv
   proxy config / URLs, bearer codes and infra credentials; it is not applied to identifiers or
   single-use ceremonies.
 
-See `convex/lib/e2ee.ts`, `convex/lib/e2eeCrypto.ts`, `src/shared/crypto/{envelope,hpke,channel}.ts`,
-`src/client/lib/e2ee.ts`.
+See `convex/lib/hpke.ts`, `convex/lib/hpkeCrypto.ts`, `src/shared/crypto/{envelope,hpke,channel}.ts`,
+`src/client/lib/hpke.ts`.
 
 ### Layer 2: proof-of-possession sessions (Phase 2)
 
@@ -170,13 +173,13 @@ remove POP_REQUIRED` where the CLI is configured). Takes effect on the next requ
 
 - **Epoch keys (request-direction forward secrecy).** The server mints a short-lived hybrid KEM
   keypair every 10 min (validity ~30 min), manifest-signs the public key, and publishes it at
-  `GET /api/v1/e2ee/keys`. The client verifies the signature against the baked manifest key
+  `GET /api/v1/hpke/keys`. The client verifies the signature against the baked manifest key
   (`VITE_FS_MANIFEST_PK`) and seals the login to it instead of the multi-day static key. Retired
   epoch seeds are destroyed by the sweep, so a later key compromise cannot decrypt a swept epoch's
   logins. Any failure falls back to the static key (dual-mode). See `convex/keyEpochs.ts`,
-  `rotateEpochKey` / `openRequest` in `convex/lib/e2eeCrypto.ts`.
+  `rotateEpochKey` / `openRequest` in `convex/lib/hpkeCrypto.ts`.
 - **Anti-rollback revoked-kid list.** A manifest-signed, monotonic-versioned list
-  (`e2eeCrypto.signRevocation`, served alongside the epoch key). The client persists the last-seen
+  (`hpkeCrypto.signRevocation`, served alongside the epoch key). The client persists the last-seen
   version, rejects an older one, will not seal to a revoked kid, and fails closed on the login route
   if the only seal target is revoked. The break-glass kill switch for a compromised static or epoch
   key. See `convex/keyRevocations.ts`.
@@ -202,7 +205,7 @@ remove POP_REQUIRED` where the CLI is configured). Takes effect on the next requ
 - **Out-of-band trust + reproducible build.** A signed release + `.onion` mirror publish the manifest
   fingerprint (Ed25519 + ML-DSA-65) and the reproducible `dist-sha256`; CI builds twice and asserts
   identical output. The real active-CDN defense (a store-delivered verifier) is Phase 4. An in-app
-  **E2EE banner + "Verify connection" panel** surface the active status + the same fingerprints (plus a
+  **HPKE banner + "Verify connection" panel** surface the active status + the same fingerprints (plus a
   live manifest-attestation check) so users can read them off the running page and compare off-CDN — a
   convenience layer over this OOB trust root, never a substitute for it. The live check's verdict is
   split by which test failed: only a **signature failure or a revoked kid** (i.e. a swapped key) raises
@@ -213,18 +216,18 @@ remove POP_REQUIRED` where the CLI is configured). Takes effect on the next requ
 
 ## Documented residual limits
 
-- **Dual-mode acceptance ends at the operator's option (`FS_E2EE_REQUIRED`).** The rollout default is
+- **Dual-mode acceptance ends at the operator's option (`FS_HPKE_REQUIRED`).** The rollout default is
   dual-mode: the backend accepts BOTH sealed and plaintext bodies on the seal/reveal routes, so until
   the deployed SPA is built with the HPKE public pins (`VITE_FS_SERVER_HPKE_PK`/`KID`) the account
   number still transits TLS-terminating infrastructure in plaintext on every login — PoP binds only the
-  resulting session, not the permanent credential. Setting `FS_E2EE_REQUIRED=true` REJECTS unsealed
-  member requests on every member route in the policy table (`e2ee.sealed_required`), including the
+  resulting session, not the permanent credential. Setting `FS_HPKE_REQUIRED=true` REJECTS unsealed
+  member requests on every member route in the policy table (`hpke.sealed_required`), including the
   raw-config copy, code redeem and mirror request; flip it only after the
   keyed SPA build is live (a dark client cannot seal and would be refused). The SPA and the backend
   read the same table, so ship them together: adding a member entry while the knob is on refuses any
   still-cached older bundle on that route until it reloads. Admin `fsv1_`/Ansible
   callers are unaffected (only member routes are gated). The admin status card surfaces
-  `e2ee.required`. The admin-side counterpart is `FS_E2EE_ADMIN_REQUIRED=true`: it rejects
+  `hpke.required`. The admin-side counterpart is `FS_HPKE_ADMIN_REQUIRED=true`: it rejects
   unsealed requests on the sealed ADMIN routes (backend-server / mirror / edges credential writes
   and reveals) from cookie-session (passkey CMS) callers, while `fsv1_` bearer callers, who cannot
   seal, keep dual-mode; the caller class is decided by the Authorization header.
@@ -273,7 +276,7 @@ remove POP_REQUIRED` where the CLI is configured). Takes effect on the next requ
 - The proxy **content** fetch (the native client pulling the subscription URL) is out-of-band on its
   own TLS; this layer protects delivery of the URL/key in the SPA, not that later fetch. Two distinct
   risks live here and only one is a crypto problem: (1) **fetch confidentiality** — who can read a
-  user's config in transit (solvable by E2EE delivery to a capable client); (2) **server enumeration**
+  user's config in transit (solvable by end-to-end encrypted delivery to a capable client); (2) **server enumeration**
   — that a censor can obtain the proxy server addresses at all (NOT a crypto problem: any working
   config handed to an untrusted dumb client contains them, so a censor who signs up harvests them
   regardless of delivery). Enumeration is bounded by fleet design (rotation/fronting/cohorting), not
@@ -315,9 +318,9 @@ remove POP_REQUIRED` where the CLI is configured). Takes effect on the next requ
 - HPKE channel round-trips, info-binding, tamper rejection: `src/shared/crypto/{hpke,channel}.test.ts`.
 - Wrapper-vs-policy drift (every `sealed()` route has an entry or is explicitly listed as intentionally
   unsealed; every entry has a wrapped handler): `convex/sealedRoutePolicy.test.ts`. The member knob on
-  the raw-config / redeem / mirror routes (plaintext refused, sealed forms opened): `convex/lib/e2ee.test.ts`.
+  the raw-config / redeem / mirror routes (plaintext refused, sealed forms opened): `convex/lib/hpke.test.ts`.
   The SPA seam for those routes (GET ephemeral in `x-fs-resp-eph`, SEAL_REQ body sealed, POST reveal
-  body carrying `fsRespEph`): `src/client/lib/e2ee.test.ts`.
+  body carrying `fsRespEph`): `src/client/lib/hpke.test.ts`.
 - PoP canonical message + WebCrypto->noble round-trip incl. high-S (`lowS:false`):
   `src/shared/crypto/pop.test.ts`.
 - Server PoP evaluation (freshness window, tamper, wrong key, version): `convex/lib/pop.test.ts`.

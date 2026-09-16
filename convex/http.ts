@@ -28,7 +28,7 @@ import { sanitizeUmamiUrl } from './lib/analyticsConfig';
 import { detectedFromHeaders, sanitizeSubmitted } from './lib/issueTelemetry';
 import { isReportIssueReason } from '../src/shared/contracts/issueReasons';
 import { sha256Hex } from './lib/crypto';
-import { sealed } from './lib/e2ee';
+import { sealed } from './lib/hpke';
 import { POP_ALG_FIELD, POP_PUBKEY_FIELD } from '../src/shared/crypto/pop';
 import { isBackendId, type BackendId } from './lib/backendIds';
 import { isSwitchServerReason } from '../src/shared/contracts/switchServerReasons';
@@ -374,7 +374,7 @@ async function throttlePublicGet(
   req: Request,
   policyKey:
     | 'config.fetch'
-    | 'e2ee.keys.fetch'
+    | 'hpke.keys.fetch'
     | 'status.fetch'
     | 'readyz.fetch'
     | 'admin.auth-status.fetch'
@@ -476,49 +476,52 @@ http.route({
 // and the client verifies the manifest signature against its baked manifest
 // public key before sealing the login to it, so a CDN that tampers is caught.
 // Briefly cacheable (the epoch is valid for ~30 min and carries its own notAfter).
-http.route({
-  path: '/api/v1/e2ee/keys',
-  method: 'GET',
-  handler: httpAction(async (ctx, req) => {
-    const limited = await throttlePublicGet(ctx, req, 'e2ee.keys.fetch');
-    if (limited) return limited;
-    const [epoch, revocation] = await Promise.all([
-      ctx.runQuery(internal.keyEpochs.current, {}),
-      ctx.runQuery(internal.keyRevocations.current, {}),
-    ]);
-    return json(
-      {
-        epoch: epoch
-          ? {
-              kid: epoch.kid,
-              publicKey: epoch.publicKey,
-              notAfter: epoch.notAfter,
-              sig: epoch.manifestSig,
-              sigPq: epoch.manifestSigPq,
-            }
-          : null,
-        revocation: revocation
-          ? {
-              version: revocation.version,
-              revokedKids: revocation.revokedKids,
-              notAfter: revocation.notAfter,
-              sig: revocation.manifestSig,
-              sigPq: revocation.manifestSigPq,
-            }
-          : null,
-      },
-      200,
-      // Cache for at most 60s, and NEVER past the epoch's own validity: a cache
-      // (browser HTTP cache, Caddy, a CDN) that outlives the key hands clients an
-      // EXPIRED epoch, which the client cannot tell apart from a tampered one.
-      // Rotation every 10 min against a 30-min validity means the served epoch
-      // normally has >=20 min left, so this clamp only ever bites if that ratio
-      // changes -- it is the guarantee, not a hot path. A rotation gap (epoch null)
-      // is not cached at all, so it clears the moment the rotate cron catches up.
-      { 'cache-control': epochCacheControl(epoch?.notAfter) },
-    );
-  }),
-});
+const hpkeKeysHandler = async (ctx: ActionCtx, req: Request): Promise<Response> => {
+  const limited = await throttlePublicGet(ctx, req, 'hpke.keys.fetch');
+  if (limited) return limited;
+  const [epoch, revocation] = await Promise.all([
+    ctx.runQuery(internal.keyEpochs.current, {}),
+    ctx.runQuery(internal.keyRevocations.current, {}),
+  ]);
+  return json(
+    {
+      epoch: epoch
+        ? {
+            kid: epoch.kid,
+            publicKey: epoch.publicKey,
+            notAfter: epoch.notAfter,
+            sig: epoch.manifestSig,
+            sigPq: epoch.manifestSigPq,
+          }
+        : null,
+      revocation: revocation
+        ? {
+            version: revocation.version,
+            revokedKids: revocation.revokedKids,
+            notAfter: revocation.notAfter,
+            sig: revocation.manifestSig,
+            sigPq: revocation.manifestSigPq,
+          }
+        : null,
+    },
+    200,
+    // Cache for at most 60s, and NEVER past the epoch's own validity: a cache
+    // (browser HTTP cache, Caddy, a CDN) that outlives the key hands clients an
+    // EXPIRED epoch, which the client cannot tell apart from a tampered one.
+    // Rotation every 10 min against a 30-min validity means the served epoch
+    // normally has >=20 min left, so this clamp only ever bites if that ratio
+    // changes -- it is the guarantee, not a hot path. A rotation gap (epoch null)
+    // is not cached at all, so it clears the moment the rotate cron catches up.
+    { 'cache-control': epochCacheControl(epoch?.notAfter) },
+  );
+};
+http.route({ path: '/api/v1/hpke/keys', method: 'GET', handler: httpAction(hpkeKeysHandler) });
+// LEGACY ALIAS (2026-09-16 E2EE -> HPKE rename): SPA builds cached by browsers and
+// the CDN, and any third-party verifier built against the old path, still fetch
+// `/api/v1/e2ee/keys`. Same handler, same per-IP policy bucket. Remove once no
+// pre-rename bundle can still be in circulation (well past the CDN / browser cache
+// lifetime of the pre-rename index.html + chunks).
+http.route({ path: '/api/v1/e2ee/keys', method: 'GET', handler: httpAction(hpkeKeysHandler) });
 
 /** max-age for the key endpoint: 60s, clamped to the epoch's remaining validity. */
 function epochCacheControl(notAfter: number | undefined): string {
@@ -929,7 +932,7 @@ http.route({
 // src/shared/crypto/envelope.ts; the SPA sends the response ephemeral in the
 // x-fs-resp-eph header, PoP-bound), so a privacy-minded member can copy their
 // config by hand WITHOUT their proxy client pulling the subscription URL through
-// a CDN in plaintext — the E2EE-preserving alternative to the public S3 mirror.
+// a CDN in plaintext — the alternative to the public S3 mirror that keeps the HPKE sealing.
 http.route({
   path: '/api/v1/subscription/content',
   method: 'GET',
@@ -979,7 +982,7 @@ http.route({
 // fetches its config from THIS origin instead of the backend panel, so the backend
 // origin is never exposed and we gain a cache/control point. PUBLIC + unauthenticated
 // — possession of the 128-bit `subToken` IS the capability, exactly like the backend
-// subscription URL it replaces (a proxy app can't do the E2EE reveal-leg). A small
+// subscription URL it replaces (a proxy app can't do the HPKE reveal-leg). A small
 // per-subscription TTL cache (keyed by User-Agent, since Remnawave formats config by
 // UA) absorbs the app's periodic re-polls. NOTE: this necessarily serves data-plane
 // config over the FCP edge in plaintext for evade users; privacy users never receive

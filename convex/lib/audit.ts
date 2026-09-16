@@ -76,12 +76,12 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // Epoch rotation gap: epochs exist but none is currently valid while
   // FS_MANIFEST_SK is set (≥3 consecutive failed rotates) — clients are
   // silently falling back to the static key.
-  'e2ee.epoch_gap': ['lastNotAfter'],
+  'hpke.epoch_gap': ['lastNotAfter'],
   'membership.tier_change': ['fromTierId', 'toTierId', 'reason'],
   'user.create.free': ['ipCountry', 'asn'],
   // W2: admin retunes a rate-limit policy.
   'settings.ratelimit_change': ['policyKey', 'max', 'windowMs', 'enabled'],
-  // E2EE verification channels (non-secret URLs + the show/hide toggle).
+  // HPKE verification channels (non-secret URLs + the show/hide toggle).
   'admin.verification.change': [
     'showPanel',
     'releaseUrl',

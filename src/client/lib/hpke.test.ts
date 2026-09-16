@@ -19,12 +19,12 @@ import { serializePublicKey, serverKeyPairFromSeed } from '../../shared/crypto/h
 
 // The status store is a Svelte-runes module; the seam only pokes it after opening
 // a sealed response, so a stub is all this test needs.
-vi.mock('./e2ee-status.svelte', () => ({ markSealedResponse: () => {} }));
+vi.mock('./hpke-status.svelte', () => ({ markSealedResponse: () => {} }));
 
 const SEED = new Uint8Array(32).fill(9);
 let kp: CryptoKeyPair;
 let kid: string;
-let e2ee: typeof import('./e2ee');
+let hpke: typeof import('./hpke');
 
 beforeAll(async () => {
   kp = await serverKeyPairFromSeed(SEED);
@@ -33,8 +33,8 @@ beforeAll(async () => {
   // The pins are read at module load, so bake them before the first import.
   vi.stubEnv('VITE_FS_SERVER_HPKE_PK', bytesToB64Url(pkBytes));
   vi.stubEnv('VITE_FS_SERVER_HPKE_KID', kid);
-  e2ee = await import('./e2ee');
-  expect(e2ee.sealingEnabled()).toBe(true);
+  hpke = await import('./hpke');
+  expect(hpke.sealingEnabled()).toBe(true);
 });
 afterAll(() => {
   vi.unstubAllEnvs();
@@ -43,7 +43,7 @@ afterAll(() => {
 describe('prepareOutbound on the member routes sealed in 2026-09', () => {
   test('GET /api/v1/subscription/content: reveal ephemeral rides the x-fs-resp-eph header, and the sealed response opens', async () => {
     const path = '/api/v1/subscription/content';
-    const out = await e2ee.prepareOutbound(path, 'GET', undefined);
+    const out = await hpke.prepareOutbound(path, 'GET', undefined);
     expect(out).toBeDefined();
     expect(out!.policy).toEqual({ request: 'plain', response: 'reveal' });
     expect(out!.body).toBeUndefined();
@@ -59,13 +59,13 @@ describe('prepareOutbound on the member routes sealed in 2026-09', () => {
       responseObj: { content: 'vless://uuid@1.2.3.4:443', contentType: 'text/plain' },
     });
     expect(isSealedWire(wire)).toBe(true);
-    const opened = await e2ee.openInbound(out!, path, 'GET', wire);
+    const opened = await hpke.openInbound(out!, path, 'GET', wire);
     expect(opened).toEqual({ content: 'vless://uuid@1.2.3.4:443', contentType: 'text/plain' });
   });
 
   test('POST /api/v1/account/redeem-code: the request body is a sealed envelope the server opens to the code', async () => {
     const path = '/api/v1/account/redeem-code';
-    const out = await e2ee.prepareOutbound(path, 'POST', JSON.stringify({ code: 'ABCD-EFGH' }));
+    const out = await hpke.prepareOutbound(path, 'POST', JSON.stringify({ code: 'ABCD-EFGH' }));
     expect(out).toBeDefined();
     expect(out!.policy).toEqual({ request: 'seal', response: 'plain' });
     expect(out!.header).toBeUndefined();
@@ -87,7 +87,7 @@ describe('prepareOutbound on the member routes sealed in 2026-09', () => {
 
   test('POST /api/v1/mirror/request: plain body carrying fsRespEph, response sealed to it', async () => {
     const path = '/api/v1/mirror/request';
-    const out = await e2ee.prepareOutbound(path, 'POST', JSON.stringify({ countryCode: null }));
+    const out = await hpke.prepareOutbound(path, 'POST', JSON.stringify({ countryCode: null }));
     expect(out).toBeDefined();
     expect(out!.policy).toEqual({ request: 'plain', response: 'reveal' });
     expect(out!.header).toBeUndefined();
@@ -102,19 +102,19 @@ describe('prepareOutbound on the member routes sealed in 2026-09', () => {
       respEphPubB64: body[RESP_EPH_FIELD] as string,
       responseObj: { status: 'ok', publicUrl: 'https://bucket.example/abc', remaining: 0 },
     });
-    const opened = (await e2ee.openInbound(out!, path, 'POST', wire)) as { publicUrl: string };
+    const opened = (await hpke.openInbound(out!, path, 'POST', wire)) as { publicUrl: string };
     expect(opened.publicUrl).toBe('https://bucket.example/abc');
   });
 
   test('routes without a policy entry are left plaintext (intentionally unsealed)', async () => {
     expect(
-      await e2ee.prepareOutbound('/api/v1/account/devices/revoke', 'POST', '{"hwid":"x"}'),
+      await hpke.prepareOutbound('/api/v1/account/devices/revoke', 'POST', '{"hwid":"x"}'),
     ).toBeUndefined();
     expect(
-      await e2ee.prepareOutbound('/api/v1/account/passkeys', 'GET', undefined),
+      await hpke.prepareOutbound('/api/v1/account/passkeys', 'GET', undefined),
     ).toBeUndefined();
     expect(
-      await e2ee.prepareOutbound('/api/v1/account/passkey/revoke', 'POST', '{"id":"x"}'),
+      await hpke.prepareOutbound('/api/v1/account/passkey/revoke', 'POST', '{"id":"x"}'),
     ).toBeUndefined();
   });
 });

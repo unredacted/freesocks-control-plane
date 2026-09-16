@@ -15,7 +15,7 @@ import { httpAction } from './_generated/server';
 import type { ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Id, TableNames } from './_generated/dataModel';
-import { sealed } from './lib/e2ee';
+import { sealed } from './lib/hpke';
 import { sha256Hex } from './lib/crypto';
 import {
   errorJson,

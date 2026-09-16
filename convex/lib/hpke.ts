@@ -1,7 +1,7 @@
 /**
  * Isolate-side sealing wrapper for the CDN-blinding channel. `sealed(handler)`
  * wraps a public httpAction: it opens a sealed request and/or seals the response
- * by delegating the actual HPKE to the "use node" action in ./e2eeCrypto.ts (the
+ * by delegating the actual HPKE to the "use node" action in ./hpkeCrypto.ts (the
  * default isolate lacks subtle HKDF, Phase 0 finding).
  *
  * Per-route behavior comes from SEALED_ROUTES (envelope.ts). This module imports
@@ -13,10 +13,11 @@
  * are never sealed; the client treats them as plaintext.
  *
  * Two env knobs end dual-mode, each for one caller class, both answering
- * `400 e2ee.sealed_required` to an unsealed request:
- * - `FS_E2EE_REQUIRED=true` — MEMBER routes (the account number must never
+ * `400 hpke.sealed_required` to an unsealed request (read via `postureKnob`,
+ * which also accepts the pre-rename `FS_E2EE_*` spelling):
+ * - `FS_HPKE_REQUIRED=true` — MEMBER routes (the account number must never
  *   transit in the clear). Admin routes are exempt.
- * - `FS_E2EE_ADMIN_REQUIRED=true` — ADMIN routes, for COOKIE-session callers
+ * - `FS_HPKE_ADMIN_REQUIRED=true` — ADMIN routes, for COOKIE-session callers
  *   only (the passkey-signed-in CMS, which always seals when built with the
  *   HPKE keys). An `fsv1_` token caller (IaC / Ansible) cannot seal and keeps
  *   plaintext: a bearer header when the admin cookie is absent or does not
@@ -47,6 +48,18 @@ import {
 } from '../../src/shared/crypto/envelope';
 
 type RawHandler = (ctx: ActionCtx, req: Request) => Promise<Response>;
+
+/**
+ * Read a sealing-posture knob from the deployment env. Also honors the
+ * pre-2026-09-16 `FS_E2EE_*` spelling (the E2EE -> HPKE rename) so a deploy that
+ * lands before the operator renames the deployment env cannot silently reopen
+ * dual-mode and let account numbers transit in plaintext. Drop the legacy read
+ * once every deployment's env carries the `FS_HPKE_*` names.
+ */
+export function postureKnob(name: 'FS_HPKE_REQUIRED' | 'FS_HPKE_ADMIN_REQUIRED'): boolean {
+  const legacy = name.replace('FS_HPKE_', 'FS_E2EE_');
+  return process.env[name] === 'true' || process.env[legacy] === 'true';
+}
 
 /**
  * A Request-like view over the inbound request with a replacement parsed body.
@@ -123,7 +136,7 @@ async function sealedInner(ctx: ActionCtx, req: Request, handler: RawHandler): P
   const policy = routePolicy(path, method);
   if (!policy) return handler(ctx, req);
 
-  // H1 (CDN-blinding posture): with FS_E2EE_REQUIRED=true the dual-mode rollout
+  // H1 (CDN-blinding posture): with FS_HPKE_REQUIRED=true the dual-mode rollout
   // ends for MEMBER routes — an unsealed login body (or a reveal request with no
   // response ephemeral) is REJECTED instead of passed through in plaintext, so
   // the account number can never transit TLS-terminating infrastructure in the
@@ -131,22 +144,20 @@ async function sealedInner(ctx: ActionCtx, req: Request, handler: RawHandler): P
   // plaintext from `fsv1_` token / Ansible callers, which cannot seal.
   // Flip this on ONLY once the deployed SPA was built with the HPKE keys baked
   // (VITE_FS_SERVER_HPKE_PK/KID) — a dark client cannot seal and will be
-  // refused. The e2ee.sealed_required code makes the posture debuggable.
+  // refused. The hpke.sealed_required code makes the posture debuggable.
   //
-  // FS_E2EE_ADMIN_REQUIRED=true is the admin-side counterpart: cookie-session
+  // FS_HPKE_ADMIN_REQUIRED=true is the admin-side counterpart: cookie-session
   // (passkey CMS) callers must seal admin credential writes / reveals; bearer
   // token callers keep plaintext because they cannot seal. Caller class = the
   // credential that would authenticate the request (see `isBearerCaller`).
   const isAdminPath = path.startsWith('/api/v1/admin/');
-  const e2eeRequired =
-    (process.env.FS_E2EE_REQUIRED === 'true' && !isAdminPath) ||
-    (process.env.FS_E2EE_ADMIN_REQUIRED === 'true' &&
-      isAdminPath &&
-      !(await isBearerCaller(ctx, req)));
+  const hpkeRequired =
+    (postureKnob('FS_HPKE_REQUIRED') && !isAdminPath) ||
+    (postureKnob('FS_HPKE_ADMIN_REQUIRED') && isAdminPath && !(await isBearerCaller(ctx, req)));
   const sealedRequired = (): Response =>
     errorJson(
-      'e2ee.sealed_required',
-      'This deployment requires an end-to-end encrypted client. Please update your app or use the official web client.',
+      'hpke.sealed_required',
+      'This deployment requires a client that seals requests with HPKE. Please update your app or use the official web client.',
       400,
     );
 
@@ -166,7 +177,7 @@ async function sealedInner(ctx: ActionCtx, req: Request, handler: RawHandler): P
     }
     let bodyObj: Record<string, unknown>;
     if (isSealedWire(parsed)) {
-      const opened = await ctx.runAction(internal.lib.e2eeCrypto.openRequest, {
+      const opened = await ctx.runAction(internal.lib.hpkeCrypto.openRequest, {
         method,
         path,
         wireBody: parsed,
@@ -174,7 +185,7 @@ async function sealedInner(ctx: ActionCtx, req: Request, handler: RawHandler): P
       bodyObj = (opened.plaintext ?? {}) as Record<string, unknown>;
     } else {
       // The account number rides the REQUEST on the login route.
-      if (e2eeRequired) return sealedRequired();
+      if (hpkeRequired) return sealedRequired();
       bodyObj = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
     }
     if (policy.response === 'reveal') {
@@ -205,7 +216,7 @@ async function sealedInner(ctx: ActionCtx, req: Request, handler: RawHandler): P
     }
     // The account number (account create/rotate) rides the RESPONSE on these
     // routes; with no response ephemeral it would go out in plaintext.
-    if (e2eeRequired && !respEphPubB64) return sealedRequired();
+    if (hpkeRequired && !respEphPubB64) return sealedRequired();
   }
 
   const res = await handler(ctx, handlerReq);
@@ -214,7 +225,7 @@ async function sealedInner(ctx: ActionCtx, req: Request, handler: RawHandler): P
     const ct = res.headers.get('content-type') ?? '';
     if (ct.includes('json')) {
       const responseObj = await res.json();
-      const sealedWire: SealedWire = await ctx.runAction(internal.lib.e2eeCrypto.sealResponse, {
+      const sealedWire: SealedWire = await ctx.runAction(internal.lib.hpkeCrypto.sealResponse, {
         method,
         path,
         respEphPubB64,

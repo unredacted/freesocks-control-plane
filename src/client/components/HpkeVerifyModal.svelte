@@ -2,7 +2,7 @@
   import { Button } from '@client/components/ui/button';
   import * as Dialog from '@client/components/ui/dialog';
   import { t } from '../lib/i18n/index.svelte';
-  import { e2eeSession, ensureAttestationChecked } from '../lib/e2ee-status.svelte';
+  import { hpkeSession, ensureAttestationChecked } from '../lib/hpke-status.svelte';
   import { router } from '../stores/router.svelte';
   import { configQuery } from '../lib/queries';
   import { copyText } from '../lib/utils';
@@ -12,10 +12,10 @@
 
   /**
    * "Verify this connection" panel. Shows the out-of-band-comparable fingerprints
-   * of the baked E2EE keys (the SAME values scripts/e2ee-fingerprint.mjs prints),
-   * the live server attestation (read from the shared e2ee-status store, so the
+   * of the baked HPKE keys (the SAME values scripts/hpke-fingerprint.mjs prints),
+   * the live server attestation (read from the shared hpke-status store, so the
    * badge and this panel share one fetch), and how to verify off-CDN - including a
-   * DNS TXT pin the user looks up themselves with dig. The heavy e2ee chunk is
+   * DNS TXT pin the user looks up themselves with dig. The heavy hpke chunk is
    * lazy-imported only when the panel is opened, so a dark build never pulls it.
    * Honest by design: the in-page check is a convenience; the trust root is the
    * off-CDN comparison (signed release / .onion / the DNS lookup you run yourself).
@@ -58,15 +58,15 @@
       .join('; '),
   );
 
-  // Lazy-load the e2ee chunk + populate on open (keeps a dark build from pulling it).
+  // Lazy-load the hpke chunk + populate on open (keeps a dark build from pulling it).
   // Attestation comes from the shared store (one fetch across badge + panel).
   $effect(() => {
     if (!open) return;
     // `force`: opening the panel is an explicit "check this now", so it bypasses the
     // re-check throttle rather than showing a verdict from minutes ago.
     void ensureAttestationChecked({ force: true });
-    void import('../lib/e2ee').then(async (m) => {
-      const p = m.e2eePins();
+    void import('../lib/hpke').then(async (m) => {
+      const p = m.hpkePins();
       pins = { hpkeKid: p.hpkeKid, suiteId: p.suiteId };
       fps = await m.connectionFingerprints();
       dns = await m.dnsPinFields();
@@ -86,34 +86,34 @@
   const fmtExpiry = (ms?: number | null) => (ms ? new Date(ms).toLocaleString() : '');
 
   let rows = $derived([
-    { label: t('e2ee.fpHpke'), value: fps.hpke },
-    { label: t('e2ee.fpManifest'), value: fps.manifest },
-    { label: t('e2ee.fpManifestPq'), value: fps.manifestPq },
+    { label: t('hpke.fpHpke'), value: fps.hpke },
+    { label: t('hpke.fpManifest'), value: fps.manifest },
+    { label: t('hpke.fpManifestPq'), value: fps.manifestPq },
   ]);
 </script>
 
 <Dialog.Root bind:open>
   <Dialog.Content class="sm:max-w-lg max-h-[85vh] overflow-y-auto">
     <Dialog.Header>
-      <Dialog.Title>{t('e2ee.verifyTitle')}</Dialog.Title>
-      <Dialog.Description>{t('e2ee.verifyIntro')}</Dialog.Description>
+      <Dialog.Title>{t('hpke.verifyTitle')}</Dialog.Title>
+      <Dialog.Description>{t('hpke.verifyIntro')}</Dialog.Description>
     </Dialog.Header>
 
     <div class="space-y-4 text-sm">
       <section class="space-y-1">
-        <h3 class="font-semibold">{t('e2ee.protectHeading')}</h3>
+        <h3 class="font-semibold">{t('hpke.protectHeading')}</h3>
         {#if isAdmin}
           <p class="rounded-md border border-border bg-muted/40 p-2 text-muted-foreground">
-            {t('e2ee.protectAdmin')}
+            {t('hpke.protectAdmin')}
           </p>
         {/if}
-        <p class="text-muted-foreground">{t('e2ee.protectScope')}</p>
-        <p class="text-muted-foreground">{t('e2ee.protectServerReads')}</p>
-        <p class="text-muted-foreground">{t('e2ee.protectTunnel')}</p>
+        <p class="text-muted-foreground">{t('hpke.protectScope')}</p>
+        <p class="text-muted-foreground">{t('hpke.protectServerReads')}</p>
+        <p class="text-muted-foreground">{t('hpke.protectTunnel')}</p>
       </section>
 
       <section class="space-y-2">
-        <h3 class="font-semibold">{t('e2ee.fingerprintsHeading')}</h3>
+        <h3 class="font-semibold">{t('hpke.fingerprintsHeading')}</h3>
         {#each rows as row (row.label)}
           {#if row.value}
             <div class="rounded-md border border-border bg-muted/30 p-2">
@@ -125,8 +125,8 @@
                   onclick={() => copy(row.label, row.value!)}
                 >
                   <CopyIcon class="size-3" />{copied === row.label
-                    ? t('e2ee.copied')
-                    : t('e2ee.copy')}
+                    ? t('hpke.copied')
+                    : t('hpke.copy')}
                 </button>
               </div>
               <code class="mt-1 block break-all font-mono text-[11px] leading-relaxed"
@@ -137,46 +137,46 @@
         {/each}
         {#if pins.hpkeKid}
           <p class="text-xs text-muted-foreground">
-            {t('e2ee.fpKid')}: <code class="font-mono">{pins.hpkeKid}</code>
+            {t('hpke.fpKid')}: <code class="font-mono">{pins.hpkeKid}</code>
           </p>
         {/if}
         <p class="text-xs text-muted-foreground">
-          {t('e2ee.fpSuite')}: <code class="font-mono break-all">{pins.suiteId}</code>
+          {t('hpke.fpSuite')}: <code class="font-mono break-all">{pins.suiteId}</code>
         </p>
       </section>
 
       <section class="space-y-1">
-        <h3 class="font-semibold">{t('e2ee.attestationHeading')}</h3>
-        {#if e2eeSession.attestation === 'pending'}
+        <h3 class="font-semibold">{t('hpke.attestationHeading')}</h3>
+        {#if hpkeSession.attestation === 'pending'}
           <p class="text-xs text-muted-foreground">…</p>
-        {:else if e2eeSession.attestation === 'active'}
+        {:else if hpkeSession.attestation === 'active'}
           <p class="inline-flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
-            <ShieldCheck class="size-4 shrink-0" />{t('e2ee.attestationOk')}
+            <ShieldCheck class="size-4 shrink-0" />{t('hpke.attestationOk')}
           </p>
-          {#if e2eeSession.epochKid}
+          {#if hpkeSession.epochKid}
             <p class="text-xs text-muted-foreground">
-              {t('e2ee.attestationEpoch', {
-                kid: e2eeSession.epochKid,
-                expiry: fmtExpiry(e2eeSession.notAfter),
+              {t('hpke.attestationEpoch', {
+                kid: hpkeSession.epochKid,
+                expiry: fmtExpiry(hpkeSession.notAfter),
               })}
             </p>
           {/if}
-        {:else if e2eeSession.attestation === 'warn'}
+        {:else if hpkeSession.attestation === 'warn'}
           <p class="inline-flex items-center gap-1.5 text-destructive">
-            <ShieldAlert class="size-4 shrink-0" />{t('e2ee.attestationFail')}
+            <ShieldAlert class="size-4 shrink-0" />{t('hpke.attestationFail')}
           </p>
-        {:else if e2eeSession.attestation === 'stale'}
-          <p class="text-xs text-muted-foreground">{t('e2ee.attestationStale')}</p>
-        {:else if e2eeSession.attestation === 'unconfigured'}
-          <p class="text-xs text-muted-foreground">{t('e2ee.attestationUnconfigured')}</p>
+        {:else if hpkeSession.attestation === 'stale'}
+          <p class="text-xs text-muted-foreground">{t('hpke.attestationStale')}</p>
+        {:else if hpkeSession.attestation === 'unconfigured'}
+          <p class="text-xs text-muted-foreground">{t('hpke.attestationUnconfigured')}</p>
         {:else}
-          <p class="text-xs text-muted-foreground">{t('e2ee.attestationUnreachable')}</p>
+          <p class="text-xs text-muted-foreground">{t('hpke.attestationUnreachable')}</p>
         {/if}
       </section>
 
       <section class="space-y-2">
-        <h3 class="font-semibold">{t('e2ee.compareHeading')}</h3>
-        <p class="text-muted-foreground">{t('e2ee.compareBody')}</p>
+        <h3 class="font-semibold">{t('hpke.compareHeading')}</h3>
+        <p class="text-muted-foreground">{t('hpke.compareBody')}</p>
         {#if hasChannel}
           <ul class="space-y-1.5">
             {#if verification?.releaseUrl}
@@ -187,7 +187,7 @@
                   rel="noopener noreferrer"
                   class="break-all text-primary underline underline-offset-2 hover:no-underline"
                 >
-                  {t('e2ee.channelRelease')}
+                  {t('hpke.channelRelease')}
                 </a>
               </li>
             {/if}
@@ -199,13 +199,13 @@
                   rel="noopener noreferrer"
                   class="break-all text-primary underline underline-offset-2 hover:no-underline"
                 >
-                  {t('e2ee.channelSource')}
+                  {t('hpke.channelSource')}
                 </a>
               </li>
             {/if}
             {#if verification?.onionAddress}
               <li class="text-muted-foreground">
-                {t('e2ee.channelOnion')}:
+                {t('hpke.channelOnion')}:
                 <code class="break-all font-mono text-[11px]">{verification.onionAddress}</code>
               </li>
             {/if}
@@ -214,17 +214,17 @@
       </section>
 
       <section class="space-y-2">
-        <h3 class="font-semibold">{t('e2ee.dnsHeading')}</h3>
-        <p class="text-muted-foreground">{t('e2ee.dnsBody')}</p>
+        <h3 class="font-semibold">{t('hpke.dnsHeading')}</h3>
+        <p class="text-muted-foreground">{t('hpke.dnsBody')}</p>
         <div class="rounded-md border border-border bg-muted/30 p-2">
           <div class="flex items-center justify-between gap-2">
-            <span class="text-xs text-muted-foreground">{t('e2ee.dnsCommand')}</span>
+            <span class="text-xs text-muted-foreground">{t('hpke.dnsCommand')}</span>
             <button
               type="button"
               class="text-xs underline underline-offset-2 hover:no-underline inline-flex items-center gap-1"
               onclick={() => copy('dns-cmd', digCommand)}
             >
-              <CopyIcon class="size-3" />{copied === 'dns-cmd' ? t('e2ee.copied') : t('e2ee.copy')}
+              <CopyIcon class="size-3" />{copied === 'dns-cmd' ? t('hpke.copied') : t('hpke.copy')}
             </button>
           </div>
           <code class="mt-1 block break-all font-mono text-[11px] leading-relaxed"
@@ -233,22 +233,22 @@
         </div>
         <div class="rounded-md border border-border bg-muted/30 p-2">
           <div class="flex items-center justify-between gap-2">
-            <span class="text-xs text-muted-foreground">{t('e2ee.dnsExpected')}</span>
+            <span class="text-xs text-muted-foreground">{t('hpke.dnsExpected')}</span>
             <button
               type="button"
               class="text-xs underline underline-offset-2 hover:no-underline inline-flex items-center gap-1"
               onclick={() => copy('dns-txt', txtValue)}
             >
-              <CopyIcon class="size-3" />{copied === 'dns-txt' ? t('e2ee.copied') : t('e2ee.copy')}
+              <CopyIcon class="size-3" />{copied === 'dns-txt' ? t('hpke.copied') : t('hpke.copy')}
             </button>
           </div>
           <code class="mt-1 block break-all font-mono text-[11px] leading-relaxed">{txtValue}</code>
         </div>
-        <p class="text-xs text-muted-foreground">{t('e2ee.dnsCaveat')}</p>
+        <p class="text-xs text-muted-foreground">{t('hpke.dnsCaveat')}</p>
       </section>
 
       <div class="space-y-1 border-t border-border pt-3 text-xs text-muted-foreground">
-        <p>{t('e2ee.caveat')}</p>
+        <p>{t('hpke.caveat')}</p>
         {#if verification?.extensionUrl}
           <p>
             <a
@@ -257,17 +257,17 @@
               rel="noopener noreferrer"
               class="break-all text-primary underline underline-offset-2 hover:no-underline"
             >
-              {t('e2ee.verifierExtensionInstall')}
+              {t('hpke.verifierExtensionInstall')}
             </a>
           </p>
         {:else}
-          <p>{t('e2ee.verifierExtension')}</p>
+          <p>{t('hpke.verifierExtension')}</p>
         {/if}
       </div>
     </div>
 
     <Dialog.Footer>
-      <Button variant="ghost" onclick={() => (open = false)}>{t('e2ee.close')}</Button>
+      <Button variant="ghost" onclick={() => (open = false)}>{t('hpke.close')}</Button>
     </Dialog.Footer>
   </Dialog.Content>
 </Dialog.Root>

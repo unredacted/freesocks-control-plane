@@ -36,7 +36,7 @@ Files: `docker-compose.stack.yml`, `Caddyfile`, `docker/web.Dockerfile`,
 ## 1. Fill the two env files
 
 ```sh
-cp .env.beta.example   .env.beta      # infra: Caddy + backend identity + Postgres + E2EE pins
+cp .env.beta.example   .env.beta      # infra: Caddy + backend identity + Postgres + HPKE pins
 cp .env.convex.example .env.convex    # Convex deployment secrets
 bun run bootstrap                     # installs deps (if stale) + generates every secret (idempotent)
 $EDITOR .env.beta .env.convex         # then fill the EXTERNAL creds by hand (below)
@@ -282,7 +282,7 @@ Known-benign lines you will see and can ignore:
 - **`See https://rolldown.rs/options/checks#plugintimings`** with a plugin
   percentage breakdown — a Rolldown performance report, not a diagnostic.
 - **`Some chunks are larger than 500 kB`** — the member SPA entry chunk is ~1.2 MB
-  (365 kB gzipped). Real, known, and tracked; the admin CMS and the E2EE crypto
+  (365 kB gzipped). Real, known, and tracked; the admin CMS and the HPKE crypto
   are already split out.
 - **`Failed to resolve http.js:/api/...`** and **`Module not in functions: …`** in
   the _backend_ log during a `convex deploy` — benign analyzer chatter (above).
@@ -325,7 +325,7 @@ Operator-run one-offs that live in the code (all safe to rerun): `seed:seedCutov
 
 ## 7. Turning on app-layer encryption later
 
-1. Generate the keypairs: `node scripts/gen-e2ee-keys.mjs` (prints the Ed25519 +
+1. Generate the keypairs: `node scripts/gen-hpke-keys.mjs` (prints the Ed25519 +
    ML-DSA manifest keys and the X-Wing server key, public + private halves).
 2. Add the private halves to `.env.convex` (`FS_MANIFEST_SK`, `FS_MANIFEST_SK_PQ`,
    `FS_SERVER_HPKE_SK`; `POP_REQUIRED` after the client soaks) so the deployer sets

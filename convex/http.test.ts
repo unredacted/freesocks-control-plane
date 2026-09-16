@@ -525,17 +525,36 @@ describe('public GET throttles (WS5)', () => {
     );
   });
 
-  test('/api/v1/e2ee/keys is per-IP rate limited past its policy', async () => {
+  test('/api/v1/hpke/keys is per-IP rate limited past its policy', async () => {
     const t = convexTest(schema, modules);
     await t.mutation(internal.rateLimits.setPolicy, {
-      policyKey: 'e2ee.keys.fetch',
+      policyKey: 'hpke.keys.fetch',
       max: 1,
       windowMs: 60_000,
       enabled: true,
     });
     const headers = { 'x-forwarded-for': '203.0.113.78' };
+    expect((await t.fetch('/api/v1/hpke/keys', { headers })).status).toBe(200);
+    expect((await t.fetch('/api/v1/hpke/keys', { headers })).status).toBe(429);
+  });
+
+  test('the legacy /api/v1/e2ee/keys alias serves the same body and shares the policy bucket', async () => {
+    const t = convexTest(schema, modules);
+    const [alias, current] = await Promise.all([
+      t.fetch('/api/v1/e2ee/keys'),
+      t.fetch('/api/v1/hpke/keys'),
+    ]);
+    expect(alias.status).toBe(200);
+    expect(await alias.json()).toEqual(await current.json());
+    await t.mutation(internal.rateLimits.setPolicy, {
+      policyKey: 'hpke.keys.fetch',
+      max: 1,
+      windowMs: 60_000,
+      enabled: true,
+    });
+    const headers = { 'x-forwarded-for': '203.0.113.79' };
     expect((await t.fetch('/api/v1/e2ee/keys', { headers })).status).toBe(200);
-    expect((await t.fetch('/api/v1/e2ee/keys', { headers })).status).toBe(429);
+    expect((await t.fetch('/api/v1/hpke/keys', { headers })).status).toBe(429);
   });
 });
 
@@ -568,7 +587,7 @@ describe('cache-control defaults', () => {
   // the client cannot distinguish from a tampered one (it fired the loud
   // "couldn't verify the encryption key" banner), so max-age is clamped to the
   // remaining validity and a rotation gap is never cached.
-  test('the e2ee keys route caps max-age at the epoch validity', async () => {
+  test('the hpke keys route caps max-age at the epoch validity', async () => {
     const t = convexTest(schema, modules);
     const now = Date.now();
     await t.run(async (ctx) => {
@@ -581,14 +600,14 @@ describe('cache-control defaults', () => {
         notAfter: now + 20_000, // 20s left: shorter than the 60s ceiling
       });
     });
-    const res = await t.fetch('/api/v1/e2ee/keys');
+    const res = await t.fetch('/api/v1/hpke/keys');
     expect(res.status).toBe(200);
     const maxAge = Number(/max-age=(\d+)/.exec(res.headers.get('cache-control') ?? '')?.[1]);
     expect(maxAge).toBeGreaterThan(0);
     expect(maxAge).toBeLessThanOrEqual(20);
   });
 
-  test('the e2ee keys route keeps public, max-age=60 for a long-lived epoch', async () => {
+  test('the hpke keys route keeps public, max-age=60 for a long-lived epoch', async () => {
     const t = convexTest(schema, modules);
     const now = Date.now();
     await t.run(async (ctx) => {
@@ -601,13 +620,13 @@ describe('cache-control defaults', () => {
         notAfter: now + 30 * 60_000,
       });
     });
-    const res = await t.fetch('/api/v1/e2ee/keys');
+    const res = await t.fetch('/api/v1/hpke/keys');
     expect(res.headers.get('cache-control')).toBe('public, max-age=60');
   });
 
   test('a rotation gap (no live epoch) is not cached at all', async () => {
     const t = convexTest(schema, modules);
-    const res = await t.fetch('/api/v1/e2ee/keys');
+    const res = await t.fetch('/api/v1/hpke/keys');
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ epoch: null });
     expect(res.headers.get('cache-control')).toBe('no-store');

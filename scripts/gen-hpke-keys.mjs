@@ -2,10 +2,10 @@
 // (FS_SERVER_HPKE_SK, FS_MANIFEST_SK, FS_MANIFEST_SK_PQ); the public fields are
 // baked into the SPA bundle at build (VITE_*).
 //
-// As a CLI it prints the full set as JSON: `bun scripts/gen-e2ee-keys.mjs`
+// As a CLI it prints the full set as JSON: `bun scripts/gen-hpke-keys.mjs`
 //   - pipe the FS_* secrets to `bunx convex env set ...`
 //   - put the VITE_* fields in .env.local (dev) / the web build args (prod).
-// As a module it exports generateE2eeKeys() — used by scripts/bootstrap-secrets.mjs
+// As a module it exports generateHpkeKeys() — used by scripts/bootstrap-secrets.mjs
 // to fill a fresh deploy's .env files in one shot.
 //
 // Prod keys are generated fresh at cutover; never commit real key values.
@@ -20,7 +20,7 @@ import { bytesToB64Url, kidFromPublicKey, SUITE_ID } from '../src/shared/crypto/
  * manifest-signing identity (Ed25519 + ML-DSA-65, both required by the client).
  * Returns secrets (FS_*) and publics (VITE_*) together so they always match.
  */
-export async function generateE2eeKeys() {
+export async function generateHpkeKeys() {
   // X-Wing server identity: the private key IS a 32-byte seed.
   const seed = crypto.getRandomValues(new Uint8Array(32));
   const kp = await serverKeyPairFromSeed(seed);
@@ -42,12 +42,12 @@ export async function generateE2eeKeys() {
     // --- public: baked into the bundle (the web build args / .env.local) ---
     VITE_FS_SERVER_HPKE_PK: bytesToB64Url(pk),
     VITE_FS_SERVER_HPKE_KID: kid,
-    VITE_FS_E2EE_SUITE_ID: SUITE_ID,
+    VITE_FS_HPKE_SUITE_ID: SUITE_ID,
     VITE_FS_MANIFEST_PK: bytesToB64Url(manifestPk),
     VITE_FS_MANIFEST_PK_PQ: bytesToB64Url(manifestPkPq),
   };
 }
 
 if (import.meta.main) {
-  console.log(JSON.stringify(await generateE2eeKeys(), null, 2));
+  console.log(JSON.stringify(await generateHpkeKeys(), null, 2));
 }

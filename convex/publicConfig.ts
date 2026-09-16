@@ -266,9 +266,9 @@ export const get = query({
       // Admin-selected brand theme (preset + optional hue), applied client-side
       // over the baked default. Non-secret; always present (fail-safe default).
       theme,
-      // Admin-configured E2EE verification channels (non-secret): which off-CDN
+      // Admin-configured HPKE verification channels (non-secret): which off-CDN
       // channels the "Verify connection" panel shows, and whether to surface the
-      // whole E2EE badge/panel at all. The panel renders only the set channels.
+      // whole HPKE badge/panel at all. The panel renders only the set channels.
       verification,
       // Admin-configured site chrome (non-secret): the announcement banner (toggle
       // + text) and the footer "View source" repo link (toggle + https URL). Both

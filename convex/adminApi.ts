@@ -22,6 +22,7 @@ import { internalAction, internalMutation, internalQuery } from './_generated/se
 import type { DatabaseReader, MutationCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
+import { postureKnob } from './lib/hpke';
 import { resolveRange } from './lib/timeRange';
 import { ConvexError, v } from 'convex/values';
 import { writeAuditLog } from './lib/audit';
@@ -2015,12 +2016,12 @@ export const statusSummary = internalQuery({
       // Nothing relies on cookie-only auth → enabling POP_REQUIRED logs no one out.
       readyToEnable: initialized && unboundMember + unboundAdmin === 0,
     };
-    // CDN-blinding E2EE posture (H1): FS_E2EE_REQUIRED rejects unsealed member
+    // CDN-blinding HPKE posture (H1): FS_HPKE_REQUIRED rejects unsealed member
     // requests on seal/reveal routes. `required` is the server flag; the SPA
     // must ALSO have been built with the HPKE keys (VITE_FS_SERVER_HPKE_PK/KID)
     // or member clients will be refused — the pairing to check before flipping.
-    const e2ee = {
-      required: process.env.FS_E2EE_REQUIRED === 'true',
+    const hpke = {
+      required: postureKnob('FS_HPKE_REQUIRED'),
     };
     // Edges (docs/edges.md): the dashboard mini-card figures, plus the
     // Node runtime the "use node" actions run on (recorded by the reconcile
@@ -2082,7 +2083,7 @@ export const statusSummary = internalQuery({
       crons,
       cronsStale,
       pop,
-      e2ee,
+      hpke,
       relays,
       runtime,
       generatedAt: iso(now),
@@ -2120,7 +2121,7 @@ export const setTheme = internalMutation({
 });
 
 /**
- * Set the E2EE verification config (V-config): the off-CDN channels shown in the
+ * Set the HPKE verification config (V-config): the off-CDN channels shown in the
  * "Verify connection" panel + the master show/hide toggle. Sanitizes each URL
  * (https-only for release/source; .onion for the mirror) so a bad value stores as
  * '' rather than a broken/unsafe link. Audited (URLs are non-secret).

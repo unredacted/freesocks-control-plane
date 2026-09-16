@@ -1,4 +1,4 @@
-# E2EE Phase 0 spike: KEM decision, KAT sources, and the isolate-budget gate
+# HPKE Phase 0 spike: KEM decision, KAT sources, and the isolate-budget gate
 
 This is the on-the-record decision artifact for the CDN-blinding feature (full design:
 `docs/threat-model-cdn-blinding.md`). It exists because the
@@ -92,7 +92,7 @@ run in the `"use node"` action.
 ## 5. The gate (results)
 
 Run against the self-hosted Convex deployment (`http://127.0.0.1:3210`) via a throwaway
-`"use node"` action `e2eeSpike:roundTrip` (and a standalone `bun` smoke). Default-isolate result
+`"use node"` action `hpkeSpike:roundTrip` (and a standalone `bun` smoke). Default-isolate result
 recorded for the record.
 
 | #   | Check                                                                     | Result                                                                                                                                                                                                                            |
@@ -129,6 +129,6 @@ with the shared module in P0d before any production sealing.
   1120/1216, implicit-rejection via AEAD open failure). FAIL in the default isolate (no subtle HKDF).
 - Architectural consequence: server HPKE open/seal runs in a `"use node"` internal action that the
   sealed `httpAction`s call via `ctx.runAction`; the browser uses native WebCrypto. The main plan and
-  `convex/lib/e2ee.ts` design are updated accordingly.
+  `convex/lib/hpke.ts` design are updated accordingly.
 - Pending before production sealing (P0d): vendor the X-Wing draft-10 + FIPS 203 KATs into CI; assert
   single-use-context in the wrapper; build `src/shared/crypto/hpke.ts` behind the narrow API.

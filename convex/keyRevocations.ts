@@ -1,8 +1,8 @@
 /**
  * Revoked-kid list store (CDN-blinding Phase 3c). The current revocation is the
  * row with the highest `version`. New versions are published by the break-glass
- * action e2eeCrypto.signRevocation (it manifest-signs the list); the client
- * fetches it via /api/v1/e2ee/keys, verifies the signature, and refuses to seal
+ * action hpkeCrypto.signRevocation (it manifest-signs the list); the client
+ * fetches it via /api/v1/hpke/keys, verifies the signature, and refuses to seal
  * to any listed kid. `version` is monotonic so a CDN cannot roll back to a list
  * that omits a compromised kid.
  */

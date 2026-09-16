@@ -18,7 +18,7 @@
       these live in the static HTML - one site-wide card for every route (the
       SPA has no per-route SSR). og:image must be ABSOLUTE, and it is
       deliberately BUILD-STABLE (the canonical prod host hardcoded, never a
-      Caddy host placeholder): the E2EE verifier pins the served index.html's
+      Caddy host placeholder): the HPKE verifier pins the served index.html's
       bytes and normalizes ONLY the csp-nonce tag below, so any other
       per-request template expansion would make every legitimate bundle hash
       as tampered in the store-delivered extension. Beta therefore advertises
@@ -54,7 +54,7 @@
       IMPORTANT: this whole file is run through Caddy templates, so it must
       contain NO other Go-template action sequences anywhere (comments
       included) — only the placeholder below. That is also a VERIFIER
-      constraint, not just hygiene: the E2EE verifier pins this file's served
+      constraint, not just hygiene: the HPKE verifier pins this file's served
       bytes and normalizes exactly this one csp-nonce tag
       (scripts/gen-verifier-pin.mjs + verifier-extension), so any additional
       per-request expansion would flag every legitimate bundle as tampered.
