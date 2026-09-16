@@ -72,6 +72,9 @@
     "yaml": "2.9.0",
     "zod": "^4.4.3"
   },
+  "overrides": {
+    "superagent": "10.3.0"
+  },
   "devDependencies": {
     "@edge-runtime/vm": "^5.0.0",
     "@inlang/paraglide-js": "2.20.0",

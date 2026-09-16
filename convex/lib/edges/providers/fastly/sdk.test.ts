@@ -312,3 +312,18 @@ describe('fastly error-code allowlist', () => {
     expect(fastlyErrorCode(null)).toBeUndefined();
   });
 });
+
+describe('fastly sdk transport pin', () => {
+  test('superagent resolves to the maintained 10.x line (the SDK declares a deprecated ^6)', async () => {
+    // The SDK's own range pulls superagent 6 + formidable 1, both deprecated by
+    // their maintainers (a Socket "Warn" on the PR that added the SDK). The
+    // override in package.json is what keeps them out; a future SDK bump or a
+    // lockfile regeneration must not silently drop it.
+    const { createRequire } = await import('node:module');
+    const req = createRequire(import.meta.url);
+    const pkg = req('superagent/package.json') as { version: string };
+    expect(Number(pkg.version.split('.')[0])).toBeGreaterThanOrEqual(10);
+    const formidable = req('formidable/package.json') as { version: string };
+    expect(Number(formidable.version.split('.')[0])).toBeGreaterThanOrEqual(3);
+  });
+});

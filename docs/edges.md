@@ -703,7 +703,9 @@ lifecycle runs in that test and its rows appear here.
 The `"use node"` actions (provider SDKs, probes, the front qualification) run on the Node
 version baked into the self-hosted Convex backend image. The L7 adapters add `cloudflare` (the
 official TypeScript SDK, retries off) and `fastly` (the official JavaScript SDK behind a typed
-wrapper; it pulls in `superagent`); both bundle into the Node action without external packages. `scripts/node-floor.mjs` derives the highest `engines.node`
+wrapper; it declares `superagent@^6`, which is deprecated along with its `formidable@1`, so
+`package.json` overrides `superagent` to the maintained 10.x line and `sdk.test.ts` pins that the
+resolved major stays at or above 10); both bundle into the Node action without external packages. `scripts/node-floor.mjs` derives the highest `engines.node`
 floor among those dependencies and `docker/deploy-entrypoint.sh` fails the deploy when the
 runtime is below it (`DEPLOY_SKIP_NODE_FLOOR=true` bypasses). The check runs BEFORE the push when
 the running deployment already exposes the runtime probe (so incompatible code is never
