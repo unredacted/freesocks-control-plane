@@ -924,10 +924,12 @@ http.route({
 });
 
 // Raw subscription content (the actual proxy config) for manual setup. Fetched
-// server-side from the backend and returned over the SEALED reveal-leg channel,
-// so a privacy-minded member can copy their config by hand WITHOUT their proxy
-// client pulling the subscription URL through a CDN in plaintext — the
-// E2EE-preserving alternative to the public S3 mirror.
+// server-side from the backend and returned over the SEALED reveal-leg channel
+// (the `GET /api/v1/subscription/content` REVEAL policy in
+// src/shared/crypto/envelope.ts; the SPA sends the response ephemeral in the
+// x-fs-resp-eph header, PoP-bound), so a privacy-minded member can copy their
+// config by hand WITHOUT their proxy client pulling the subscription URL through
+// a CDN in plaintext — the E2EE-preserving alternative to the public S3 mirror.
 http.route({
   path: '/api/v1/subscription/content',
   method: 'GET',
@@ -1528,6 +1530,13 @@ http.route({
 // Revoke one of the member's HWID devices, freeing a slot under the tier's
 // device cap without the nuclear full-key regenerate. Ownership of the hwid is
 // verified server-side against the member's own key.
+//
+// Intentionally UNSEALED (no envelope.ts policy entry; the `sealed()` wrapper is
+// a plaintext pass-through here and only keeps the route's error handling
+// uniform). The body carries a hwid only: a device identifier the proxy client
+// already reports to the panel over its own TLS, not a credential, a config or
+// a bearer code, so a passive CDN gains nothing from it. PoP-signed like every
+// member route. Listed in convex/sealedRoutePolicy.test.ts.
 http.route({
   path: '/api/v1/account/devices/revoke',
   method: 'POST',
@@ -1558,10 +1567,16 @@ http.route({
 });
 
 // --- member passkey management (Security tab: enroll / list / revoke) --------
-// Authenticated member actions → sealed + PoP-signed like the other account
-// routes. Enrolling a passkey is authorized by the existing session (no invite
-// token needed, unlike admin onboarding). The account number stays valid, so
-// revoke has no last-credential guard.
+// Authenticated member actions → PoP-signed like the other account routes, but
+// intentionally UNSEALED (no envelope.ts policy entry; `sealed()` passes
+// plaintext through), for the same reason the passkey LOGIN ceremony is
+// unsealed (docs/threat-model-cdn-blinding.md): the bodies carry WebAuthn
+// creation options (a single-use, origin-bound challenge), an attestation (the
+// credential's PUBLIC key), and credential ids + labels — nothing a passive CDN
+// can replay or use. Listed in convex/sealedRoutePolicy.test.ts. Enrolling a
+// passkey is authorized by the existing session (no invite token needed, unlike
+// admin onboarding). The account number stays valid, so revoke has no
+// last-credential guard.
 http.route({
   path: '/api/v1/account/passkey/register/options',
   method: 'POST',
@@ -1632,7 +1647,8 @@ http.route({
 });
 
 // Redeem a membership code (W4). Member-authenticated; the code is a bearer
-// secret so the route is sealed like the other member actions. Every failure
+// secret, so the REQUEST leg is sealed (the `POST /api/v1/account/redeem-code`
+// SEAL_REQ policy in src/shared/crypto/envelope.ts). Every failure
 // (unknown / revoked / used / rate-limited / malformed) returns one generic
 // envelope — no oracle.
 http.route({
@@ -1658,9 +1674,11 @@ http.route({
 
 // --- opt-in S3 subscription mirrors -----------------------------------------
 // A member who can't reach the normal subscription URL provisions one mirror at a
-// time (country-tiered, capped). `sealed` because the response carries the mirror
-// URL (the config's location). The country code (from the body, else the CDN
-// header) is used transiently to pick a nearby host and is never stored.
+// time (country-tiered, capped). The response is sealed to the client's reveal
+// ephemeral (the `POST /api/v1/mirror/request` REVEAL policy in
+// src/shared/crypto/envelope.ts) because it carries the mirror URL (the config's
+// location). The country code (from the body, else the CDN header) is used
+// transiently to pick a nearby host and is never stored.
 http.route({
   path: '/api/v1/mirror/request',
   method: 'POST',

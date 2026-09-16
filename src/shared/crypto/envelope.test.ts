@@ -85,6 +85,34 @@ describe('routePolicy (method-aware)', () => {
   });
 });
 
+describe('routePolicy (member routes sealed 2026-09 + intentionally unsealed)', () => {
+  test('the raw-config copy path, code redeem and mirror request are sealed on the right leg', () => {
+    expect(routePolicy('/api/v1/subscription/content', 'GET')).toEqual({
+      request: 'plain',
+      response: 'reveal',
+    });
+    expect(routePolicy('/api/v1/account/redeem-code', 'POST')).toEqual({
+      request: 'seal',
+      response: 'plain',
+    });
+    expect(routePolicy('/api/v1/mirror/request', 'POST')).toEqual({
+      request: 'plain',
+      response: 'reveal',
+    });
+  });
+
+  test('device revoke and the passkey management routes stay unsealed by design', () => {
+    // No crown-jewel secret crosses these (hwid, WebAuthn challenge/attestation,
+    // credential ids) - see convex/sealedRoutePolicy.test.ts INTENTIONALLY_UNSEALED.
+    expect(routePolicy('/api/v1/account/devices/revoke', 'POST')).toBeUndefined();
+    expect(routePolicy('/api/v1/account/passkey/register/options', 'POST')).toBeUndefined();
+    expect(routePolicy('/api/v1/account/passkey/register/verify', 'POST')).toBeUndefined();
+    expect(routePolicy('/api/v1/account/passkeys', 'GET')).toBeUndefined();
+    expect(routePolicy('/api/v1/account/passkey/revoke', 'POST')).toBeUndefined();
+    expect(routePolicy('/api/v1/mirror', 'DELETE')).toBeUndefined();
+  });
+});
+
 describe('sha256HexOfB64Url (the DNS TXT pin form)', () => {
   test('is ungrouped 64-char lowercase hex (no spaces — safe for a single-line TXT value)', async () => {
     const hex = await sha256HexOfB64Url('AbCd_base64url-example');

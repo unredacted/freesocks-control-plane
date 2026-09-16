@@ -250,6 +250,13 @@ const SEAL_BOTH: RoutePolicy = { request: 'seal', response: 'reveal' };
  * `SEAL_REQ` = the admin uploads a long-lived infra credential. This is PASSIVE-CDN
  * confidentiality, NOT an anti-tamper measure (an active CDN that rewrites the
  * bundle is out of scope for sealing — see docs/oob-verification.md).
+ *
+ * A `sealed()` wrapper in convex/http.ts does NOTHING without an entry here (it
+ * looks the policy up and passes plaintext through when there is none), so the
+ * table, not the wrapper, is what decides. convex/sealedRoutePolicy.test.ts
+ * holds the two in sync: every wrapped route must have an entry or sit on that
+ * test's explicit intentionally-unsealed list, and every entry must map to a
+ * wrapped route.
  */
 export const SEALED_ROUTES: Record<string, RoutePolicy> = {
   // Member account-plane. POST /account mints+reveals the account number (and binds
@@ -262,6 +269,15 @@ export const SEALED_ROUTES: Record<string, RoutePolicy> = {
   'POST /api/v1/account/switch-mode': REVEAL,
   'POST /api/v1/account/switch-server': REVEAL,
   'POST /api/v1/account/account-id/rotate': REVEAL,
+  // The raw proxy config (server addresses, UUIDs, the Reality material) for the
+  // privacy copy path — the whole point of that route is to never cross the CDN
+  // in the clear (docs/threat-model-cdn-blinding.md).
+  'GET /api/v1/subscription/content': REVEAL,
+  // The membership code is a bearer secret and rides the REQUEST (the response
+  // is only the granted tier + duration).
+  'POST /api/v1/account/redeem-code': SEAL_REQ,
+  // The response carries the mirror URL: a public capability URL to the config.
+  'POST /api/v1/mirror/request': REVEAL,
   // Admin secret reveals (server returns a fresh secret once).
   'POST /api/v1/admin/tokens': REVEAL,
   'POST /api/v1/admin/membership-codes': REVEAL,
@@ -280,7 +296,7 @@ export const SEALED_ROUTES: Record<string, RoutePolicy> = {
  * lookup misses. Method-scoped so the read verbs under a prefix (GET/DELETE, no
  * body) are never asked to seal an empty request body.
  */
-const SEALED_PREFIXES: { method: string; prefix: string; policy: RoutePolicy }[] = [
+export const SEALED_PREFIXES: { method: string; prefix: string; policy: RoutePolicy }[] = [
   // by-slug/by-name BEFORE the shorter prefix so the specific rule wins; they're
   // PUT (the shorter prefixes are PATCH), so there's no method overlap anyway.
   { method: 'PUT', prefix: '/api/v1/admin/backend-servers/by-slug/', policy: SEAL_REQ },
