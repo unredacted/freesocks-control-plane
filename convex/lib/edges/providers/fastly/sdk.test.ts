@@ -319,11 +319,19 @@ describe('fastly sdk transport pin', () => {
     // their maintainers (a Socket "Warn" on the PR that added the SDK). The
     // override in package.json is what keeps them out; a future SDK bump or a
     // lockfile regeneration must not silently drop it.
-    const { createRequire } = await import('node:module');
-    const req = createRequire(import.meta.url);
-    const pkg = req('superagent/package.json') as { version: string };
-    expect(Number(pkg.version.split('.')[0])).toBeGreaterThanOrEqual(10);
-    const formidable = req('formidable/package.json') as { version: string };
-    expect(Number(formidable.version.split('.')[0])).toBeGreaterThanOrEqual(3);
+    // Read the installed manifests directly: superagent's `exports` map does
+    // not expose package.json to `require`.
+    const { readFileSync } = await import('node:fs');
+    const root = new URL('../../../../../node_modules/', import.meta.url);
+    const versionOf = (name: string): number =>
+      Number(
+        (
+          JSON.parse(readFileSync(new URL(`${name}/package.json`, root), 'utf8')) as {
+            version: string;
+          }
+        ).version.split('.')[0],
+      );
+    expect(versionOf('superagent')).toBeGreaterThanOrEqual(10);
+    expect(versionOf('formidable')).toBeGreaterThanOrEqual(3);
   });
 });
