@@ -291,9 +291,9 @@
         const opts = optionsFor(f);
         if (opts.length === 1 && opts[0]) editor.settings[f.key] = opts[0].id;
       }
-      const failed = Object.keys(r.errors ?? {});
+      const failed = Object.entries(r.errors ?? {}).map(([k, code]) => `${k} (${code})`);
       if (failed.length)
-        toast.warning(`Could not list: ${failed.join(', ')} (type the id instead)`);
+        toast.warning(`Could not list: ${failed.join(', ')}. Type the id instead.`);
       else toast.success('Connected');
     },
     onError: onError('Could not connect'),
