@@ -25,7 +25,7 @@ import { buildSetCookie, parseCookies, verifySignedValue } from './lib/cookies';
 import { verifyCaptcha } from './lib/captcha';
 import { sendUmamiEvent } from './lib/umami';
 import { sanitizeUmamiUrl } from './lib/analyticsConfig';
-import { detectedFromHeaders, sanitizeDetail, sanitizeSubmitted } from './lib/issueTelemetry';
+import { detectedFromHeaders, sanitizeSubmitted } from './lib/issueTelemetry';
 import { isReportIssueReason } from '../src/shared/contracts/issueReasons';
 import { sha256Hex } from './lib/crypto';
 import { sealed } from './lib/e2ee';
@@ -1412,9 +1412,12 @@ http.route({
         retryAfterMs: rl.retryAfterMs,
       });
     }
+    // Reason enum + consented telemetry only. Free text is NOT accepted (the
+    // former `detail` field was retired 2026-09-15; a stale SPA bundle that
+    // still sends it is ignored, not rejected) — members who need to say more
+    // are pointed at the operator's support email in the dialog.
     const body = await readJson<{
       reason?: string;
-      detail?: unknown;
       telemetry?: unknown;
       connection?: unknown;
     }>(req);
@@ -1439,10 +1442,6 @@ http.route({
     const result = await ctx.runMutation(internal.issueReports.reportIssue, {
       userId: member.userId,
       reason: body.reason,
-      // Free-text description (the UI offers it for "other"). Accepted for any
-      // reason so a future UI change needs no server change; sanitizeDetail
-      // caps + scrubs it, and it never reaches the audit log.
-      detail: sanitizeDetail(body.detail),
       country: telemetry?.country ?? null,
       city: telemetry?.city ?? null,
       asn: telemetry?.asn ?? null,

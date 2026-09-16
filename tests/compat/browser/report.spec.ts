@@ -18,7 +18,13 @@ for (const viewport of [
     const send = dialog.getByRole('button', { name: 'Send report', exact: true });
     await expect(send).toBeDisabled();
     await dialog.locator('input[value="other"]').check();
-    await dialog.locator('textarea').fill('Linux client cannot import the URL');
+    // No free-text box any more: "something else" points at the support email.
+    await expect(dialog.locator('textarea')).toHaveCount(0);
+    const mailto = dialog.getByRole('link', { name: 'support@example.test' });
+    await expect(mailto).toBeVisible();
+    expect(await mailto.getAttribute('href')).toBe(
+      'mailto:support@example.test?subject=FreeSocks%20support%20-%20ID%20W3-TEST',
+    );
     await send.scrollIntoViewIfNeeded();
     await expect(send).toBeInViewport();
     const bounds = await dialog.boundingBox();
@@ -26,13 +32,11 @@ for (const viewport of [
     expect(bounds!.height).toBeLessThanOrEqual(viewport.height);
     await send.click();
     await expect(page.getByRole('status')).toHaveText('Report sent');
-    expect(submitted).toMatchObject({
-      reason: 'other',
-      detail: 'Linux client cannot import the URL',
-    });
+    expect(submitted).toMatchObject({ reason: 'other' });
+    expect(submitted).not.toHaveProperty('detail');
+    // Reopening starts clean: no reason preselected.
     await page.getByRole('button', { name: 'Open report' }).click();
-    await dialog.locator('input[value="other"]').check();
-    await expect(dialog.locator('textarea')).toHaveValue('');
+    await expect(dialog.locator('input[value="other"]')).not.toBeChecked();
   });
 }
 for (const status of [401, 429, 502]) {
@@ -49,11 +53,10 @@ for (const status of [401, 429, 502]) {
     await page.goto('/');
     await page.getByRole('button', { name: 'Open report' }).click();
     const dialog = page.getByRole('dialog');
-    await dialog.locator('input[value="other"]').check();
-    await dialog.locator('textarea').fill('Keep this report');
+    await dialog.locator('input[value="disconnects"]').check();
     await dialog.getByRole('button', { name: 'Send report', exact: true }).click();
     await expect(page.getByRole('status')).toHaveText(`Test error ${status}`);
-    await expect(dialog.locator('textarea')).toHaveValue('Keep this report');
+    await expect(dialog.locator('input[value="disconnects"]')).toBeChecked();
     await dialog.getByRole('button', { name: 'Send report', exact: true }).click();
     await expect(page.getByRole('status')).toHaveText('Report sent');
     expect(attempts).toBe(2);

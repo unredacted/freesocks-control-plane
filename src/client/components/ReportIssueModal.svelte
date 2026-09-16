@@ -9,17 +9,23 @@
   /**
    * "Report issue": tell the operator what is going wrong, without touching the
    * key. The member must pick a reason from a fixed list (audited scalars only;
-   * also the aggregation buckets on Admin → Telemetry); picking "something
-   * else" opens a free-text box (stored only on the unlinked telemetry row);
-   * the optional consent block attaches editable network context. Purely
-   * presentational; the mutation lives in the page.
+   * also the aggregation buckets on Admin → Telemetry). There is deliberately
+   * NO free-text box: a member who needs to say more is pointed at the
+   * operator's support email (`site.supportEmail`, admin-set; the line is
+   * absent when none is configured). The optional consent block attaches
+   * editable network context. Purely presentational; the mutation lives in
+   * the page.
    */
   interface Props {
     open: boolean;
     reason: ReportIssueReason | null;
     telemetryContext: TelemetryContextResponse | undefined;
+    /** Operator support address from publicConfig.site; empty/null = no pointer. */
+    supportEmail?: string | null;
+    /** The member's NON-SECRET support ID, prefilled into the mailto subject. */
+    supportId?: string | null;
     onCancel: () => void;
-    onConfirm: (telemetry: TelemetryPayload | null, detail: string | null) => void;
+    onConfirm: (telemetry: TelemetryPayload | null) => void;
     busy: boolean;
   }
 
@@ -27,15 +33,24 @@
     open = $bindable(),
     reason = $bindable(),
     telemetryContext,
+    supportEmail = null,
+    supportId = null,
     onCancel,
     onConfirm,
     busy,
   }: Props = $props();
 
   let consent = $state<ReturnType<typeof TelemetryConsent>>();
-  // Free text for "something else" — server caps at 500 too (sanitizeDetail).
-  const DETAIL_MAX = 500;
-  let detail = $state('');
+
+  // Subject carries the support ID only (never the account number), matching
+  // the support card on /account.
+  const mailto = $derived(
+    supportEmail
+      ? `mailto:${supportEmail}${
+          supportId ? `?subject=${encodeURIComponent(`FreeSocks support - ID ${supportId}`)}` : ''
+        }`
+      : null,
+  );
 
   const REASON_LABELS: Record<ReportIssueReason, () => string> = {
     'cant-connect': () => t('report.reasonCantConnect'),
@@ -45,14 +60,6 @@
     'app-problem': () => t('report.reasonAppProblem'),
     other: () => t('report.reasonOther'),
   };
-
-  // Clear the free text on EVERY close, not just dialog-initiated ones: the
-  // parent flips `open` directly on cancel and on submit success, paths that
-  // never invoke onOpenChange — without this, reopening after an "other"
-  // report would resurface (and risk resubmitting) the previous text.
-  $effect(() => {
-    if (!open) detail = '';
-  });
 
   function onOpenChange(next: boolean) {
     if (!next && busy) return;
@@ -87,22 +94,11 @@
       {/each}
     </fieldset>
 
-    {#if reason === 'other'}
-      <div class="space-y-1.5">
-        <label for="report-issue-detail" class="text-sm font-medium">
-          {t('report.detailLabel')}
-        </label>
-        <textarea
-          id="report-issue-detail"
-          bind:value={detail}
-          rows="3"
-          maxlength={DETAIL_MAX}
-          disabled={busy}
-          placeholder={t('report.detailPlaceholder')}
-          class="w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
-        ></textarea>
-        <p class="text-xs text-muted-foreground">{t('report.detailHint')}</p>
-      </div>
+    {#if mailto}
+      <p class="text-sm text-muted-foreground">
+        {t('report.tellUsMore')}
+        <a class="text-primary underline" href={mailto}>{supportEmail}</a>
+      </p>
     {/if}
 
     <TelemetryConsent bind:this={consent} context={telemetryContext} {busy} />
@@ -112,8 +108,7 @@
     <Dialog.Footer>
       <Button variant="ghost" onclick={onCancel} disabled={busy}>{t('common.cancel')}</Button>
       <Button
-        onclick={() =>
-          onConfirm(consent?.payload() ?? null, reason === 'other' ? detail.trim() || null : null)}
+        onclick={() => onConfirm(consent?.payload() ?? null)}
         disabled={busy || reason === null}
       >
         {busy ? t('report.working') : t('report.confirm')}

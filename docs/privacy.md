@@ -258,13 +258,14 @@ one-click decline). What it does and does not do:
   **member-editable**: the prefill comes from the CDN edge's view of the
   request, which is the VPN exit's network (not the member's) whenever they
   report from inside the tunnel, so members are told to correct it.
-  A report with the "something else" reason may additionally carry an
-  **optional free-text description** the member types themselves (capped at
-  500 characters, control characters stripped). It follows the same rules as
-  every telemetry field: it lands only on the unlinked `issueReports` row
-  (visible to admins on Admin → Telemetry), never in the per-user audit log,
-  and is deleted by the same retention sweep. The dialog warns members not to
-  include personal details.
+  **No free text.** The report dialog has no "tell us what's happening" box
+  (it was removed 2026-09-15; the server ignores a `detail` field if a stale
+  client still sends one). A member who needs to say more is pointed at the
+  operator's support email (`site.supportEmail`, Admin → Settings) with their
+  non-secret support ID prefilled in the subject, so anything they choose to
+  write goes over a channel they pick rather than into the telemetry table.
+  Rows written before the change may still carry a `detail` value until the
+  retention sweep deletes them; nothing writes the field any more.
 - **Unlinked by design:** telemetry rows (`issueReports` table) carry no
   userId, no subscriptionId, and no IP. They answer "what is failing, where,
   on which networks" — never "who". The per-user audit log records only the
