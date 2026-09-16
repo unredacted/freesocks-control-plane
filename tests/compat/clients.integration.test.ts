@@ -177,26 +177,63 @@ async function startEngine(engine: 'singbox' | 'mihomo', body: string) {
   }
   throw new Error(`${engine}: SOCKS listener never became ready`);
 }
-function httpsProbe() {
-  const nonce = randomUUID();
-  const result = docker(
-    'exec',
-    'compat-client',
-    'curl',
-    '--silent',
-    '--show-error',
-    '--fail',
-    '--max-time',
-    '8',
-    '--noproxy',
-    '',
-    '--socks5-hostname',
-    '127.0.0.1:1080',
-    '--cacert',
-    '/work/cert.pem',
-    `https://compat-origin:8443/${nonce}`,
-  );
-  expect(JSON.parse(result)).toMatchObject({ nonce, via: 'isolated-origin' });
+// curl exit codes that say the tunnel dropped or never answered THIS attempt
+// rather than answering wrongly: 7 could not connect, 28 timed out, 35 TLS
+// handshake broke (including "Send failure: Broken pipe"), 56 receive failed.
+const TRANSIENT_CURL_EXITS = new Set([7, 28, 35, 56]);
+const PROBE_BACKOFF_MS = [250, 500, 1000];
+const PROBE_BUDGET_MS = 15_000;
+
+/**
+ * HTTPS to a fresh nonce on the isolated origin through the engine's SOCKS
+ * listener. Retried a few times on transient curl failures only.
+ *
+ * The listener accepting TCP (startEngine's poll) is not the engine being
+ * ready to proxy. mihomo binds its listeners inside hub/executor ApplyConfig
+ * before `tunnel.OnRunning()`; a connection handed to the tunnel in that window
+ * completes the SOCKS handshake and is then closed by `tunnel.isHandle`, which
+ * curl reports as exit 35 "Send failure: Broken pipe". sing-box starts its
+ * inbounds last, so only mihomo showed this. A wrong credential or a broken
+ * REALITY handshake fails every attempt, so the budget stays tight and the
+ * wrong-credential test below still fails closed.
+ */
+async function httpsProbe() {
+  const started = Date.now();
+  for (let attempt = 0; ; attempt++) {
+    const nonce = randomUUID();
+    try {
+      const result = docker(
+        'exec',
+        'compat-client',
+        'curl',
+        '--silent',
+        '--show-error',
+        '--fail',
+        '--max-time',
+        '8',
+        '--noproxy',
+        '',
+        '--socks5-hostname',
+        '127.0.0.1:1080',
+        '--cacert',
+        '/work/cert.pem',
+        `https://compat-origin:8443/${nonce}`,
+      );
+      expect(JSON.parse(result)).toMatchObject({ nonce, via: 'isolated-origin' });
+      return;
+    } catch (error) {
+      const status = (error as { status?: unknown }).status;
+      const backoff = PROBE_BACKOFF_MS[attempt];
+      if (
+        backoff === undefined ||
+        typeof status !== 'number' ||
+        !TRANSIENT_CURL_EXITS.has(status) ||
+        Date.now() - started > PROBE_BUDGET_MS
+      )
+        throw error;
+      await new Promise((r) => setTimeout(r, backoff));
+    }
+  }
 }
 
 describe('reference engines: real panel-generated REALITY connections', () => {
@@ -225,7 +262,7 @@ describe('reference engines: real panel-generated REALITY connections', () => {
     test(`${engine}: native config validation, REALITY, remote DNS, HTTPS and UDP DNS`, async () => {
       try {
         await startEngine(engine, await subscription(ua));
-        httpsProbe();
+        await httpsProbe();
         expect(
           docker(
             'exec',
@@ -248,7 +285,7 @@ describe('reference engines: real panel-generated REALITY connections', () => {
       if (outbound.type === 'vless') outbound.uuid = randomUUID();
     try {
       await startEngine('singbox', JSON.stringify(config));
-      expect(httpsProbe).toThrow();
+      await expect(httpsProbe()).rejects.toThrow();
     } finally {
       stopEngine();
     }
