@@ -52,7 +52,36 @@ export interface OvhConfig {
   subnetId: string;
   gatewayId?: string;
 }
-export type EdgeProviderConfig = GcoreConfig | UpcloudConfig | ScalewayConfig | OvhConfig;
+/** The Cloudflare DNS zone a Fastly edge writes its records into (the referenced DNS account, resolved). */
+export interface CloudflareDnsConfig {
+  apiToken: string;
+  zoneId: string;
+  zoneName: string;
+  /** The edgeProviderAccounts id the credentials came from (recorded in DNS resource meta). */
+  accountId: string;
+}
+export interface CloudflareConfig {
+  type: 'cloudflare';
+  apiToken: string;
+  zoneId: string;
+  zoneName: string;
+  accountId?: string;
+}
+export interface FastlyConfig {
+  type: 'fastly';
+  apiToken: string;
+  certificateAuthority: 'certainly' | 'lets-encrypt' | 'globalsign';
+  tlsConfigurationId?: string;
+  /** Present once the referenced DNS account is resolved (edgeProviderOps.loadAdapter). */
+  dns?: CloudflareDnsConfig;
+}
+export type EdgeProviderConfig =
+  | GcoreConfig
+  | UpcloudConfig
+  | ScalewayConfig
+  | OvhConfig
+  | CloudflareConfig
+  | FastlyConfig;
 
 // --- what to build -----------------------------------------------------------------
 
@@ -65,10 +94,22 @@ export interface EdgeListenerSpec {
   transport?: 'tcp' | 'udp';
 }
 
+/** How the node is reached behind an L7 front (the slot's declaration, see lib/edges/layers.ts). */
+export interface OriginTransportSpec {
+  scheme: 'http' | 'https';
+  certPublic: boolean;
+  certNames: string[];
+  acceptsHostHeader: 'any' | 'names';
+}
+
 export interface EdgeSpec {
   /** Provider-side resource name == edges.name; the discovery key. */
   name: string;
   listeners: EdgeListenerSpec[];
+  /** L7 only: the fronted hostname (minted by lib/edges/hostname.ts, frozen in the intent). */
+  hostname?: string;
+  /** L7 only: what the front dials. */
+  originTransport?: OriginTransportSpec;
 }
 
 // --- steps, ledger, outcomes --------------------------------------------------------
@@ -81,7 +122,18 @@ export type ResourceKind =
   | 'create_pool'
   | 'create_backend'
   | 'create_frontend'
-  | 'attach_ip';
+  | 'attach_ip'
+  // L7 (CDN) kinds
+  | 'create_dns_record'
+  | 'create_origin_rule'
+  | 'create_service'
+  | 'create_snippet'
+  | 'create_domain'
+  | 'enable_product'
+  | 'activate_version'
+  | 'create_tls_subscription'
+  | 'create_dns_acme'
+  | 'await_tls';
 
 export type Discoverability = 'by_name' | 'by_tag' | 'none';
 
@@ -143,6 +195,15 @@ export interface ChildResource {
 export interface Addresses {
   v4?: string;
   v6?: string;
+  /** L7: the fronted hostname (the only address members receive). */
+  hostname?: string;
+}
+
+export type ReadinessState = 'ready' | 'pending' | 'failed' | 'unknown';
+/** L7 readiness dimensions; `front` is filled by the front qualification, not the adapter. */
+export interface EdgeReadiness {
+  dns: ReadinessState;
+  certificate: ReadinessState;
 }
 
 export type StepOutcome =
@@ -172,6 +233,8 @@ export interface EdgeDescription {
   code?: string;
   /** Children first visible after creation (e.g. a floating IP the LB minted). */
   resources?: ChildResource[];
+  /** L7 adapters: DNS and certificate readiness (state is `active` only when both are ready). */
+  readiness?: EdgeReadiness;
 }
 
 export type DestroyOutcome =
@@ -211,6 +274,10 @@ export interface InventoryLb {
   status?: string;
   addresses: Addresses;
   createdAt?: string;
+  /** L7: what the front dials (a DNS record's content, a service backend's address). */
+  content?: string;
+  /** L7: every hostname the resource serves (the import ownership boundary). */
+  hostnames?: string[];
 }
 export interface InventoryIp {
   id: string;
@@ -252,6 +319,9 @@ export interface DiscoverResult {
   projects?: DiscoverOption[];
   regions?: DiscoverOption[];
   networks?: Array<DiscoverOption & { subnets: DiscoverOption[] }>;
+  /** L7: DNS zones (Cloudflare) / TLS configurations (Fastly). */
+  zones?: DiscoverOption[];
+  tlsConfigurations?: DiscoverOption[];
   /** Per-list failure codes (never bodies): the form shows the field as free text instead. */
   errors?: Record<string, string>;
 }

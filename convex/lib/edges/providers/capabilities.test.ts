@@ -15,6 +15,7 @@ import { jsonRes, mockFetch } from '../testing/mockFetch';
 import {
   EDGE_PROVIDER_CAPABILITIES,
   discoveryMaySettle,
+  protocolCarriedBy,
   unsupportedTransport,
 } from './capabilities';
 import { EDGE_PROVIDERS } from './registry';
@@ -55,7 +56,28 @@ const CONFIGS: Record<(typeof EDGE_PROVIDER_IDS)[number], EdgeProviderConfig> = 
     subnetId: 's',
     gatewayId: 'g',
   },
+  cloudflare: {
+    type: 'cloudflare',
+    apiToken: 'SECRET_CF',
+    zoneId: '0123456789abcdef0123456789abcdef',
+    zoneName: 'example.org',
+  },
+  fastly: {
+    type: 'fastly',
+    apiToken: 'SECRET_FASTLY',
+    certificateAuthority: 'certainly',
+    dns: {
+      apiToken: 'SECRET_CF',
+      zoneId: '0123456789abcdef0123456789abcdef',
+      zoneName: 'example.org',
+      accountId: 'acct',
+    },
+  },
 };
+
+/** L4 providers only (the balancer-shaped tests below); L7 fronts have their own checks. */
+const L4_IDS = EDGE_PROVIDER_IDS.filter((id) => EDGE_PROVIDER_CAPABILITIES[id].layer === 'l4');
+const L7_IDS = EDGE_PROVIDER_IDS.filter((id) => EDGE_PROVIDER_CAPABILITIES[id].layer === 'l7');
 
 /** Valid settings per provider WITH a private network where the schema knows one. */
 const SETTINGS_WITH_NETWORK: Record<(typeof EDGE_PROVIDER_IDS)[number], Record<string, unknown>> = {
@@ -70,6 +92,8 @@ const SETTINGS_WITH_NETWORK: Record<(typeof EDGE_PROVIDER_IDS)[number], Record<s
     networkId: 'n',
     subnetId: 's',
   },
+  cloudflare: { zoneId: '0123456789abcdef0123456789abcdef', zoneName: 'example.org' },
+  fastly: { dnsAccountId: 'acct', certificateAuthority: 'certainly' },
 };
 
 const lbLedger: Ledger = {
@@ -140,6 +164,39 @@ describe('relay capability record ⇔ adapters', () => {
     },
   );
 
+  test.each([...L7_IDS])('%s: L7 flags are coherent', (id) => {
+    const caps = EDGE_PROVIDER_CAPABILITIES[id];
+    expect(caps.addressKind).toBe('hostname');
+    expect(caps.l7Transports.length).toBeGreaterThan(0);
+    for (const t of caps.l7Transports) expect(protocolCarriedBy(id, t)).toBe(true);
+    expect(protocolCarriedBy(id, 'reality')).toBe(false);
+    expect(protocolCarriedBy(id, 'plain')).toBe(false);
+    expect(caps.originPortMode).not.toBe('any');
+    // DNS is provided by exactly the providers others can reference.
+    expect(caps.needsDnsAccount && caps.providesDns).toBe(false);
+    // The template exposes the hostname label settings.
+    const keys = EDGE_PROVIDERS[id].templateFields.map((f) => f.key);
+    expect(keys).toContain('labelLength');
+  });
+
+  test.each([...L4_IDS])('%s: L4 flags are coherent and carry any protocol', (id) => {
+    const caps = EDGE_PROVIDER_CAPABILITIES[id];
+    expect(caps.addressKind).toBe('ip');
+    expect(caps.l7Transports).toEqual([]);
+    expect(caps.originPortMode).toBe('any');
+    expect(caps.needsDnsAccount).toBe(false);
+    for (const p of ['reality', 'tls', 'plain', 'ws', 'httpupgrade', 'grpc'] as const)
+      expect(protocolCarriedBy(id, p)).toBe(true);
+  });
+
+  test('a DNS account reference always points at a providesDns provider', () => {
+    const dnsProviders = EDGE_PROVIDER_IDS.filter((id) => EDGE_PROVIDER_CAPABILITIES[id].providesDns);
+    expect(dnsProviders.length).toBeGreaterThan(0);
+    for (const id of EDGE_PROVIDER_IDS)
+      if (EDGE_PROVIDER_CAPABILITIES[id].needsDnsAccount)
+        expect(EDGE_SETTINGS_SCHEMAS[id].safeParse({ ...SETTINGS_WITH_NETWORK[id], type: id }).success).toBe(true);
+  });
+
   test.each([...EDGE_PROVIDER_IDS])(
     '%s: ipv6 + idleTimeoutConfigurable mirror the template fields',
     (id) => {
@@ -151,7 +208,7 @@ describe('relay capability record ⇔ adapters', () => {
     },
   );
 
-  test.each([...EDGE_PROVIDER_IDS])(
+  test.each([...L4_IDS])(
     '%s: memberHealth mirrors whether describe() reports a healthy balancer as online',
     async (id) => {
       mockFetch((c) =>
@@ -164,7 +221,7 @@ describe('relay capability record ⇔ adapters', () => {
     },
   );
 
-  test.each([...EDGE_PROVIDER_IDS])(
+  test.each([...L4_IDS])(
     '%s: discoverySettleMs > 0 mirrors a first-look absence being unresolved (listing not authoritative)',
     async (id) => {
       // Empty listings under every shape: gcore `{results}`, others arrays.
@@ -227,18 +284,21 @@ describe('relay capability record ⇔ adapters', () => {
     ).toBeNull();
   });
 
-  test('discoveryMaySettle needs two looks and the settle floor; a missing startedAt keeps the look count only', () => {
+  test('discoveryMaySettle needs two looks and the settle floor; without a reference time the floor cannot be proven', () => {
     const now = 10_000_000;
     const settle = EDGE_PROVIDER_CAPABILITIES.gcore.discoverySettleMs;
     expect(discoveryMaySettle('gcore', 1, now - settle * 2, now)).toBe(false);
     expect(discoveryMaySettle('gcore', 2, now - settle + 1, now)).toBe(false);
     expect(discoveryMaySettle('gcore', 2, now - settle, now)).toBe(true);
-    expect(discoveryMaySettle('gcore', 2, undefined, now)).toBe(true);
+    // A lost settle that never stamped startedAt must NOT let a 40-second-old
+    // create be declared absent (review R1): the caller supplies a fallback time.
+    expect(discoveryMaySettle('gcore', 2, undefined, now)).toBe(false);
+    expect(discoveryMaySettle('upcloud', 2, undefined, now)).toBe(true);
     // A zero floor (authoritative listings) settles on the look count alone.
     expect(discoveryMaySettle('scaleway', 2, now, now)).toBe(true);
   });
 
-  test.each([...EDGE_PROVIDER_IDS])(
+  test.each([...L4_IDS])(
     '%s: default template validates and steps are well-formed',
     (id) => {
       const p = EDGE_PROVIDERS[id];

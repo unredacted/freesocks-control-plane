@@ -75,6 +75,9 @@ export const EdgeDiscoverResponse = z.object({
   projects: z.array(DiscoverOption).optional(),
   regions: z.array(DiscoverOption).optional(),
   networks: z.array(DiscoverOption.extend({ subnets: z.array(DiscoverOption) })).optional(),
+  /** L7: DNS zones (Cloudflare) and TLS configurations (Fastly). */
+  zones: z.array(DiscoverOption).optional(),
+  tlsConfigurations: z.array(DiscoverOption).optional(),
   errors: z.record(z.string(), z.string()).optional(),
 });
 export type EdgeDiscoverResponse = z.infer<typeof EdgeDiscoverResponse>;
@@ -85,10 +88,18 @@ export const EdgeInventory = z.object({
       id: z.string(),
       name: z.string(),
       status: z.string().optional(),
-      addresses: z.object({ v4: z.string().optional(), v6: z.string().optional() }),
+      addresses: z.object({
+        v4: z.string().optional(),
+        v6: z.string().optional(),
+        hostname: z.string().optional(),
+      }),
       createdAt: z.string().optional(),
       /** True when no edge ledger references this resource (an unowned LB). */
       unowned: z.boolean().optional(),
+      /** L7 import: what the front dials (must equal the relay's origin to be owned). */
+      content: z.string().optional(),
+      /** L7 import: every hostname the resource serves (ownership boundary). */
+      hostnames: z.array(z.string()).optional(),
     }),
   ),
   ips: z.array(
@@ -154,7 +165,7 @@ export const ProtocolProfileAdmin = z.object({
   slug: z.string(),
   name: z.string(),
   /** What the inbound speaks; decides whether server names / a target apply. */
-  protocol: z.enum(['reality', 'tls', 'plain']),
+  protocol: z.enum(['reality', 'tls', 'plain', 'ws', 'httpupgrade', 'grpc']),
   /** null = usable behind any provider. */
   provider: EdgeProviderId.nullable(),
   accountId: z.string().nullable(),
@@ -174,6 +185,7 @@ export const ProtocolProfileAdmin = z.object({
     })
     .nullable(),
   notes: z.string().nullable(),
+  revision: z.number().default(0),
   updatedAt: iso,
 });
 export type ProtocolProfileAdmin = z.infer<typeof ProtocolProfileAdmin>;
@@ -245,7 +257,18 @@ export const RelayAdmin = z.object({
 });
 export type RelayAdmin = z.infer<typeof RelayAdmin>;
 
-export const SLOT_PROTOCOL_IDS = ['reality', 'tls', 'plain'] as const;
+export const SLOT_PROTOCOL_IDS = ['reality', 'tls', 'plain', 'ws', 'httpupgrade', 'grpc'] as const;
+export const EDGE_LAYER_IDS = ['l4', 'l7'] as const;
+export const EdgeLayer = z.enum(EDGE_LAYER_IDS);
+export type EdgeLayer = z.infer<typeof EdgeLayer>;
+/** How a slot's inbound is reached behind an L7 front (declared by the node role). */
+export const SlotOriginTransport = z.object({
+  scheme: z.enum(['http', 'https']),
+  certPublic: z.boolean(),
+  certNames: z.array(z.string()),
+  acceptsHostHeader: z.enum(['any', 'names']),
+});
+export type SlotOriginTransport = z.infer<typeof SlotOriginTransport>;
 export const SlotProtocol = z.enum(SLOT_PROTOCOL_IDS);
 export type SlotProtocol = z.infer<typeof SlotProtocol>;
 
@@ -266,9 +289,21 @@ export const RelaySlotAdmin = z.object({
   deployed: z.boolean(),
   deployedAt: isoN,
   retired: z.boolean(),
+  originTransport: SlotOriginTransport.nullable().default(null),
+  /** Layers that can front this slot given its complete chain (lib/edges/layers.ts). */
+  layers: z.array(EdgeLayer).default(['l4']),
+  revision: z.number().default(0),
   updatedAt: iso,
 });
 export type RelaySlotAdmin = z.infer<typeof RelaySlotAdmin>;
+
+/** Edge addresses: IP literals for an L4 edge, the fronted hostname for an L7 edge. */
+export const EdgeAddresses = z.object({
+  v4: z.string().nullable(),
+  v6: z.string().nullable(),
+  hostname: z.string().nullable().default(null),
+});
+export type EdgeAddresses = z.infer<typeof EdgeAddresses>;
 
 export const EdgeStep = z.object({
   stepId: z.string(),
@@ -321,7 +356,28 @@ export const EdgeAdmin = z.object({
   listeners: z.array(
     z.object({ edgePort: z.number(), originAddress: z.string(), originPort: z.number() }),
   ),
-  addresses: z.object({ v4: z.string().nullable(), v6: z.string().nullable() }),
+  addresses: EdgeAddresses,
+  layer: EdgeLayer.default('l4'),
+  readiness: z
+    .object({
+      dns: z.enum(['ready', 'pending', 'failed', 'unknown']),
+      certificate: z.enum(['ready', 'pending', 'failed', 'unknown']),
+      front: z.enum(['ready', 'pending', 'failed', 'unknown']),
+      checkedAt: iso,
+    })
+    .nullable()
+    .default(null),
+  frontQualification: z
+    .object({
+      ok: z.boolean(),
+      code: z.string().nullable(),
+      checkedAt: iso,
+      expiresAt: iso,
+      /** True when the binding still matches the current slot/profile/intent and has not expired. */
+      current: z.boolean(),
+    })
+    .nullable()
+    .default(null),
   publication: z.enum(['unpublished', 'published', 'draining']),
   poolIndex: z.number().nullable(),
   publishedAt: isoN,
@@ -354,7 +410,11 @@ export const EdgeLive = z.object({
       flavor: z.string().optional(),
       region: z.string().optional(),
       createdAt: z.string().optional(),
-      addresses: z.object({ v4: z.string().optional(), v6: z.string().optional() }),
+      addresses: z.object({
+        v4: z.string().optional(),
+        v6: z.string().optional(),
+        hostname: z.string().optional(),
+      }),
       members: z.array(
         z.object({ address: z.string(), port: z.number(), health: z.string().optional() }),
       ),
@@ -425,7 +485,7 @@ export const EdgeRotationAdmin = z.object({
     .object({
       id: z.string(),
       provider: EdgeProviderId.nullable(),
-      addresses: z.object({ v4: z.string().nullable(), v6: z.string().nullable() }),
+      addresses: EdgeAddresses,
       health: z.string(),
       status: z.string(),
     })
@@ -463,7 +523,10 @@ export const ProbeRunAdmin = z.object({
   id: z.string(),
   target: ProbeTargetRef,
   source: z.enum(['globalping', 'checkhost', 'ripeatlas', 'internal']),
-  ipVersion: z.union([z.literal(4), z.literal(6)]),
+  /** Observed address family; null when probed by name. */
+  ipVersion: z.union([z.literal(4), z.literal(6)]).nullable().default(null),
+  addressKind: z.enum(['ip', 'name']).default('ip'),
+  probeProtocol: z.enum(['tcp', 'tls', 'https']).default('tcp'),
   /** The listener port this run probed (a multi-port edge gets one run per port). */
   port: z.number().int().nullable().optional(),
   status: z.enum(['requested', 'running', 'finished', 'failed', 'timeout']),
@@ -561,7 +624,8 @@ export const RelayPoolEntry = z.object({
   edgeId: z.string(),
   provider: EdgeProviderId.nullable(),
   managed: z.boolean(),
-  addresses: z.object({ v4: z.string().nullable(), v6: z.string().nullable() }),
+  addresses: EdgeAddresses,
+  layer: EdgeLayer.default('l4'),
   health: z.string(),
   status: z.string(),
   unreachableIn: z.array(z.string()),
@@ -600,8 +664,14 @@ export const RelayPublishedEndpoint = z.object({
   slotRemark: z.string(),
   protocol: SlotProtocol,
   port: z.number(),
-  addresses: z.object({ v4: z.string().nullable(), v6: z.string().nullable() }),
-  /** Empty for a non-REALITY slot. */
+  addresses: EdgeAddresses,
+  layer: EdgeLayer.default('l4'),
+  /** L7: the fronted hostname (address, SNI and Host header alike). */
+  hostname: z.string().nullable().default(null),
+  /** What the template Host must present: the SNI and the HTTP Host header (null = none / clear). */
+  sni: z.string().nullable().default(null),
+  hostHeader: z.string().nullable().default(null),
+  /** Empty for a `plain` slot; for an L7 edge the hostname is the only name. */
   activeServerNames: z.array(z.string()),
 });
 export const RelayEndpointsResponse = z.object({
@@ -683,7 +753,11 @@ export const RelayBySlugMinimalResponse = z.object({
       slotRemark: z.string(),
       protocol: SlotProtocol,
       port: z.number(),
-      addresses: z.object({ v4: z.string().nullable(), v6: z.string().nullable() }),
+      addresses: EdgeAddresses,
+      layer: EdgeLayer.default('l4'),
+      hostname: z.string().nullable().default(null),
+      sni: z.string().nullable().default(null),
+      hostHeader: z.string().nullable().default(null),
       activeServerNames: z.array(z.string()),
     }),
   ),

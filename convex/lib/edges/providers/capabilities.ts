@@ -5,9 +5,31 @@
  * every flag that has an observable adapter counterpart.
  */
 import type { EdgeProviderId } from '../../edgeProviderIds';
+import { protocolIsHttpTransport, type SlotProtocol } from '../protocols';
 import type { EdgeSpec } from './types';
 
+export type EdgeLayer = 'l4' | 'l7';
+export type EdgeAddressKind = 'ip' | 'hostname';
+/**
+ * How the provider reaches the origin port: `any` (an L4 forwarder dials
+ * whatever the listener says), `fixed` (the port follows the origin scheme:
+ * 443 for https, 80 for http), `default-or-override` (a default by the zone's
+ * encryption mode, any other port through a destination-port override).
+ */
+export type OriginPortMode = 'any' | 'fixed' | 'default-or-override';
+
 export interface EdgeProviderCapabilities {
+  /** L4 = a TCP forwarder in front of the node; L7 = a CDN front terminating TLS + HTTP. */
+  layer: EdgeLayer;
+  /** What members connect to: an IP literal (L4) or a hostname (L7). */
+  addressKind: EdgeAddressKind;
+  /** HTTP-carried protocols an L7 front can carry (empty for L4: it carries any TCP protocol). */
+  l7Transports: readonly SlotProtocol[];
+  /** Fastly-style: the hostnames' DNS lives in a referenced Cloudflare account. */
+  needsDnsAccount: boolean;
+  /** Cloudflare-style: can host DNS records for other providers' edges. */
+  providesDns: boolean;
+  originPortMode: OriginPortMode;
   /** Mutations return a task/operation the adapter polls (`pollStep` present). */
   asyncOps: boolean;
   /** Async deletes: `confirmDestroyed` present. */
@@ -39,8 +61,18 @@ export interface EdgeProviderCapabilities {
 
 const MIN = 60_000;
 
+const L4 = {
+  layer: 'l4',
+  addressKind: 'ip',
+  l7Transports: [] as readonly SlotProtocol[],
+  needsDnsAccount: false,
+  providesDns: false,
+  originPortMode: 'any',
+} as const satisfies Partial<EdgeProviderCapabilities>;
+
 export const EDGE_PROVIDER_CAPABILITIES: Record<EdgeProviderId, EdgeProviderCapabilities> = {
   gcore: {
+    ...L4,
     asyncOps: true,
     asyncDelete: true,
     needsPrivateNetwork: false,
@@ -52,6 +84,7 @@ export const EDGE_PROVIDER_CAPABILITIES: Record<EdgeProviderId, EdgeProviderCapa
     discoverySettleMs: 2 * MIN,
   },
   upcloud: {
+    ...L4,
     asyncOps: false,
     asyncDelete: false,
     needsPrivateNetwork: false,
@@ -63,6 +96,7 @@ export const EDGE_PROVIDER_CAPABILITIES: Record<EdgeProviderId, EdgeProviderCapa
     discoverySettleMs: 0,
   },
   scaleway: {
+    ...L4,
     asyncOps: false,
     asyncDelete: true,
     needsPrivateNetwork: false,
@@ -74,6 +108,7 @@ export const EDGE_PROVIDER_CAPABILITIES: Record<EdgeProviderId, EdgeProviderCapa
     discoverySettleMs: 0,
   },
   ovh: {
+    ...L4,
     asyncOps: true,
     asyncDelete: true,
     needsPrivateNetwork: true,
@@ -84,10 +119,75 @@ export const EDGE_PROVIDER_CAPABILITIES: Record<EdgeProviderId, EdgeProviderCapa
     typicalProvisionMs: 10 * MIN,
     discoverySettleMs: 5 * MIN,
   },
+  // A proxied DNS record in one zone; TLS terminates at the CDN. DNS existence is
+  // not origin health, so `memberHealth` is false and publication waits for the
+  // front qualification instead.
+  cloudflare: {
+    layer: 'l7',
+    addressKind: 'hostname',
+    l7Transports: ['ws', 'httpupgrade', 'grpc'],
+    needsDnsAccount: false,
+    providesDns: true,
+    originPortMode: 'default-or-override',
+    asyncOps: false,
+    asyncDelete: false,
+    needsPrivateNetwork: false,
+    ipv6: false,
+    udp: false,
+    idleTimeoutConfigurable: false,
+    memberHealth: false,
+    typicalProvisionMs: 1 * MIN,
+    discoverySettleMs: 0,
+  },
+  // A service + domain + backend + WebSockets product + TLS subscription, with
+  // the DNS records written into a Cloudflare account. Certificate issuance is
+  // asynchronous (minutes). The WebSockets path honours only name/address/
+  // use_ssl/override_host on the backend, hence the fixed origin port.
+  fastly: {
+    layer: 'l7',
+    addressKind: 'hostname',
+    l7Transports: ['ws'],
+    needsDnsAccount: true,
+    providesDns: false,
+    originPortMode: 'fixed',
+    asyncOps: true,
+    asyncDelete: true,
+    needsPrivateNetwork: false,
+    ipv6: false,
+    udp: false,
+    idleTimeoutConfigurable: false,
+    memberHealth: false,
+    typicalProvisionMs: 10 * MIN,
+    discoverySettleMs: 0,
+  },
 };
 
 export function edgeCapabilitiesOf(id: EdgeProviderId): EdgeProviderCapabilities {
   return EDGE_PROVIDER_CAPABILITIES[id];
+}
+
+export function edgeLayerOf(id: EdgeProviderId | string | null | undefined): EdgeLayer {
+  return id && id in EDGE_PROVIDER_CAPABILITIES
+    ? EDGE_PROVIDER_CAPABILITIES[id as EdgeProviderId].layer
+    : 'l4';
+}
+
+export function edgeAddressKindOf(id: EdgeProviderId | string | null | undefined): EdgeAddressKind {
+  return id && id in EDGE_PROVIDER_CAPABILITIES
+    ? EDGE_PROVIDER_CAPABILITIES[id as EdgeProviderId].addressKind
+    : 'ip';
+}
+
+/**
+ * Whether the provider's edges can carry a slot speaking `protocol`. An L4
+ * forwarder carries any TCP protocol (the chain constraint on TLS-terminating
+ * origins is layers.ts's job); an L7 front carries only the HTTP transports it
+ * declares.
+ */
+export function protocolCarriedBy(id: EdgeProviderId, protocol: SlotProtocol): boolean {
+  const caps = EDGE_PROVIDER_CAPABILITIES[id];
+  if (caps.layer === 'l4') return true;
+  return protocolIsHttpTransport(protocol) && caps.l7Transports.includes(protocol);
 }
 
 /**
@@ -106,8 +206,10 @@ export function unsupportedTransport(id: EdgeProviderId, spec: EdgeSpec): 'udp' 
 /**
  * Whether a by-name listing that shows nothing may be promoted to
  * `confirmed_absent`: at least two quiet looks AND the provider's settle floor
- * elapsed since the step was first requested. Without a `startedAt` (a ledger
- * predating the stamp) only the look count applies.
+ * elapsed since the step was first requested. `startedAt` is the step's first
+ * request time, or (when a lost settle never stamped it) the claim time /
+ * the edge's creation time the caller falls back to; with no reference time
+ * at all the floor cannot be proven and the answer is NO.
  */
 export function discoveryMaySettle(
   id: EdgeProviderId,
@@ -116,8 +218,10 @@ export function discoveryMaySettle(
   now = Date.now(),
 ): boolean {
   if (attempt < 2) return false;
-  if (startedAt === undefined) return true;
-  return now - startedAt >= EDGE_PROVIDER_CAPABILITIES[id].discoverySettleMs;
+  const floor = EDGE_PROVIDER_CAPABILITIES[id].discoverySettleMs;
+  if (floor === 0) return true;
+  if (startedAt === undefined) return false;
+  return now - startedAt >= floor;
 }
 
 /**

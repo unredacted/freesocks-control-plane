@@ -3,6 +3,7 @@ import { EDGE_PROVIDER_IDS } from '../edgeProviderIds';
 import {
   EDGE_CREDENTIAL_FIELDS,
   EDGE_CREDENTIAL_IDENTIFIER_FIELDS,
+  EDGE_INTENT_DEFAULT_SETTINGS,
   EDGE_LOCATING_SETTINGS,
   EDGE_SETTINGS_SCHEMAS,
   locatingSettingsChanged,
@@ -12,17 +13,18 @@ import {
 
 describe('account settings: locating vs credential-identifier split', () => {
   test.each([...EDGE_PROVIDER_IDS])(
-    '%s: every settings key is either locating or a credential identifier (never both), and never a secret',
+    '%s: every settings key is exactly one of locating / credential identifier / intent default, and never a secret',
     (id) => {
       const keys = Object.keys(EDGE_SETTINGS_SCHEMAS[id].shape).filter((k) => k !== 'type');
       const locating = new Set(EDGE_LOCATING_SETTINGS[id]);
       const idents = new Set(EDGE_CREDENTIAL_IDENTIFIER_FIELDS[id]);
+      const defaults = new Set(EDGE_INTENT_DEFAULT_SETTINGS[id]);
       for (const k of keys) {
-        expect(locating.has(k) || idents.has(k)).toBe(true);
-        expect(locating.has(k) && idents.has(k)).toBe(false);
+        const classes = [locating.has(k), idents.has(k), defaults.has(k)].filter(Boolean).length;
+        expect(classes).toBe(1);
         expect(EDGE_CREDENTIAL_FIELDS[id]).not.toContain(k);
       }
-      for (const k of [...locating, ...idents]) expect(keys).toContain(k);
+      for (const k of [...locating, ...idents, ...defaults]) expect(keys).toContain(k);
     },
   );
 

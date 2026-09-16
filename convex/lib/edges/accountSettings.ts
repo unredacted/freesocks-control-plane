@@ -12,7 +12,10 @@
  *  - credential IDENTIFIERS (the public half of a key pair: Scaleway access
  *    key, OVH application key). They rotate with the secret and locate nothing,
  *    so they stay editable while edges exist.
- * `accountSettings.test.ts` pins that the two lists cover every schema key.
+ *  - INTENT DEFAULTS (L7: certificate authority, TLS configuration). They are
+ *    frozen into each edge's `provisionIntent` when the edge is planned, so a
+ *    change only affects NEW edges and they stay editable at any time.
+ * `accountSettings.test.ts` pins that the three lists cover every schema key.
  */
 import { z } from 'zod';
 import type { EdgeProviderId } from '../edgeProviderIds';
@@ -47,6 +50,28 @@ export const EDGE_SETTINGS_SCHEMAS = {
     subnetId: z.string().min(1).max(128),
     gatewayId: z.string().min(1).max(128).optional(),
   }),
+  // L7: one DNS zone the account's hostnames live in (proxied records). The zone
+  // NAME is recorded from the zone read at credential test so hostname minting
+  // is pure; both locate the account's resources.
+  cloudflare: z.object({
+    type: z.literal('cloudflare'),
+    zoneId: z.string().regex(/^[0-9a-f]{32}$/, 'zone id is 32 hex characters'),
+    zoneName: z
+      .string()
+      .min(1)
+      .max(253)
+      .regex(/^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/, 'zone name like example.org'),
+    accountId: z.string().regex(/^[0-9a-f]{32}$/).optional(),
+  }),
+  // L7: Fastly services; the hostnames' DNS lives in a Cloudflare account FCP
+  // also manages (`dnsAccountId`, an edgeProviderAccounts id of provider
+  // cloudflare). Certificates are Fastly-managed TLS subscriptions.
+  fastly: z.object({
+    type: z.literal('fastly'),
+    dnsAccountId: z.string().min(1).max(64),
+    certificateAuthority: z.enum(['certainly', 'lets-encrypt', 'globalsign']).default('certainly'),
+    tlsConfigurationId: z.string().min(1).max(64).optional(),
+  }),
 } as const;
 
 export type EdgeSettingsFor<P extends EdgeProviderId> = z.infer<(typeof EDGE_SETTINGS_SCHEMAS)[P]>;
@@ -58,6 +83,8 @@ export const EDGE_CREDENTIAL_FIELDS: Record<EdgeProviderId, readonly string[]> =
   upcloud: ['token'],
   scaleway: ['secretKey'],
   ovh: ['applicationSecret', 'consumerKey'],
+  cloudflare: ['apiToken'],
+  fastly: ['apiToken'],
 };
 
 /** Settings that LOCATE resources: locked while any non-destroyed edge references the account. */
@@ -66,6 +93,21 @@ export const EDGE_LOCATING_SETTINGS: Record<EdgeProviderId, readonly string[]> =
   upcloud: ['zone'],
   scaleway: ['projectId', 'zone'],
   ovh: ['endpoint', 'serviceName', 'regionName', 'networkId', 'subnetId', 'gatewayId'],
+  cloudflare: ['zoneId', 'zoneName', 'accountId'],
+  // The DNS account locates every record a Fastly edge depends on; the TLS
+  // configuration and CA are frozen per edge in its provisionIntent, so they
+  // may change for NEW edges without touching existing ones.
+  fastly: ['dnsAccountId'],
+};
+
+/** Defaults frozen into each new edge's provisionIntent (L7); a change never moves an existing edge. */
+export const EDGE_INTENT_DEFAULT_SETTINGS: Record<EdgeProviderId, readonly string[]> = {
+  gcore: [],
+  upcloud: [],
+  scaleway: [],
+  ovh: [],
+  cloudflare: [],
+  fastly: ['certificateAuthority', 'tlsConfigurationId'],
 };
 
 /** Non-secret credential identifiers kept in `settings`: rotate with the secret, locate nothing. */
@@ -74,6 +116,8 @@ export const EDGE_CREDENTIAL_IDENTIFIER_FIELDS: Record<EdgeProviderId, readonly 
   upcloud: [],
   scaleway: ['accessKey'],
   ovh: ['applicationKey'],
+  cloudflare: [],
+  fastly: [],
 };
 
 export type EdgeCredentials = { type: EdgeProviderId } & Record<string, string>;

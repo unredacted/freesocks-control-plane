@@ -1,5 +1,6 @@
 /**
- * The set of relay-edge PROVIDER ids (cloud load-balancer APIs FCP can drive),
+ * The set of relay-edge PROVIDER ids (the cloud load-balancer and CDN APIs FCP
+ * can drive; L4 forwarders and L7 fronts alike, see capabilities.ts `layer`),
  * the single source of truth, deliberately zod-free so Convex code can
  * VALUE-import it. Everything else derives from this tuple:
  *   - the zod enum in ./relays.ts (client contracts),
@@ -9,7 +10,7 @@
  * Adding a provider starts HERE; the derived `Record<EdgeProviderId, ...>`
  * maps then fail to compile until every per-provider surface has an entry.
  */
-export const EDGE_PROVIDER_IDS = ['gcore', 'upcloud', 'scaleway', 'ovh'] as const;
+export const EDGE_PROVIDER_IDS = ['gcore', 'upcloud', 'scaleway', 'ovh', 'cloudflare', 'fastly'] as const;
 export type EdgeProviderId = (typeof EDGE_PROVIDER_IDS)[number];
 
 export function isRelayProviderId(v: unknown): v is EdgeProviderId {

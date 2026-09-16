@@ -118,6 +118,21 @@ export interface EdgeConfig {
     minBaselineSamples: number;
     probeWeight: number;
     allowProbeOnlyAutoRotate: boolean;
+    /** Report rows read per relay per evaluation; past it the window is `incomplete` (no rotation). */
+    maxReportRowsPerEval: number;
+  };
+  /** L7 (CDN front) edges. */
+  l7: {
+    /** Automatic selection of L7 accounts (detector replacements, auto-provision). Off until the node role registers the L7 slot fields. */
+    autoSelect: boolean;
+    /** Same-provider L7 replacements per relay per UTC day (a new hostname is not a new frontend IP). */
+    maxSameProviderReplacementsPerDay: number;
+    /** Affected-country evidence wait for a detector-triggered L7 replacement. */
+    qualifyTimeoutMinutes: number;
+    /** Per-step timeout of the authenticated front qualification session. */
+    qualifyStepTimeoutMs: number;
+    /** How long a front qualification stays valid (its binding must also still match). */
+    qualificationTtlMinutes: number;
   };
   render: {
     /** Master switch for FCP-rendered relay endpoints; off = the panel body passes through. */
@@ -142,6 +157,8 @@ export interface EdgeConfig {
     preferEyeball: boolean;
     /** Gap between consecutive runs against the same external source within one batch (ms). */
     sourceSpacingMs: number;
+    /** Probe the IPv6 path of relay / custom targets (edge targets follow `render.ipv6Mode`). */
+    ipv6: boolean;
   };
 }
 
@@ -193,6 +210,14 @@ export const EDGE_DEFAULTS: EdgeConfig = {
     minBaselineSamples: 72,
     probeWeight: 0.5,
     allowProbeOnlyAutoRotate: true,
+    maxReportRowsPerEval: 2000,
+  },
+  l7: {
+    autoSelect: false,
+    maxSameProviderReplacementsPerDay: 2,
+    qualifyTimeoutMinutes: 15,
+    qualifyStepTimeoutMs: 10_000,
+    qualificationTtlMinutes: 60,
   },
   render: {
     enabled: false,
@@ -215,6 +240,7 @@ export const EDGE_DEFAULTS: EdgeConfig = {
     agreementVantages: 2,
     preferEyeball: true,
     sourceSpacingMs: 1500,
+    ipv6: true,
   },
 };
 
@@ -333,6 +359,12 @@ export const EDGE_KEYS = {
   'detect.minBaselineSamples': 'edge.detect.minBaselineSamples',
   'detect.probeWeight': 'edge.detect.probeWeight',
   'detect.allowProbeOnlyAutoRotate': 'edge.detect.allowProbeOnlyAutoRotate',
+  'detect.maxReportRowsPerEval': 'edge.detect.maxReportRowsPerEval',
+  'l7.autoSelect': 'edge.l7.autoSelect',
+  'l7.maxSameProviderReplacementsPerDay': 'edge.l7.maxSameProviderReplacementsPerDay',
+  'l7.qualifyTimeoutMinutes': 'edge.l7.qualifyTimeoutMinutes',
+  'l7.qualifyStepTimeoutMs': 'edge.l7.qualifyStepTimeoutMs',
+  'l7.qualificationTtlMinutes': 'edge.l7.qualificationTtlMinutes',
   'render.enabled': 'edge.render.enabled',
   'render.autoGroupName': 'edge.render.autoGroupName',
   'render.primaryLabel': 'edge.render.primaryLabel',
@@ -353,6 +385,7 @@ export const EDGE_KEYS = {
   'probe.agreementVantages': 'edge.probe.agreementVantages',
   'probe.preferEyeball': 'edge.probe.preferEyeball',
   'probe.sourceSpacingMs': 'edge.probe.sourceSpacingMs',
+  'probe.ipv6': 'edge.probe.ipv6',
 } as const;
 export type RelayKeyPath = keyof typeof EDGE_KEYS;
 
@@ -481,6 +514,39 @@ export function sanitizeRelayConfig(
         raw['detect.allowProbeOnlyAutoRotate'],
         D.detect.allowProbeOnlyAutoRotate,
       ),
+      maxReportRowsPerEval: sanitizeInt(
+        raw['detect.maxReportRowsPerEval'],
+        100,
+        20_000,
+        D.detect.maxReportRowsPerEval,
+      ),
+    },
+    l7: {
+      autoSelect: sanitizeBool(raw['l7.autoSelect'], D.l7.autoSelect),
+      maxSameProviderReplacementsPerDay: sanitizeInt(
+        raw['l7.maxSameProviderReplacementsPerDay'],
+        0,
+        50,
+        D.l7.maxSameProviderReplacementsPerDay,
+      ),
+      qualifyTimeoutMinutes: sanitizeInt(
+        raw['l7.qualifyTimeoutMinutes'],
+        1,
+        120,
+        D.l7.qualifyTimeoutMinutes,
+      ),
+      qualifyStepTimeoutMs: sanitizeInt(
+        raw['l7.qualifyStepTimeoutMs'],
+        1_000,
+        60_000,
+        D.l7.qualifyStepTimeoutMs,
+      ),
+      qualificationTtlMinutes: sanitizeInt(
+        raw['l7.qualificationTtlMinutes'],
+        5,
+        1440,
+        D.l7.qualificationTtlMinutes,
+      ),
     },
     render: {
       enabled: sanitizeBool(raw['render.enabled'], D.render.enabled),
@@ -532,6 +598,7 @@ export function sanitizeRelayConfig(
         60_000,
         D.probe.sourceSpacingMs,
       ),
+      ipv6: sanitizeBool(raw['probe.ipv6'], D.probe.ipv6),
     },
   };
 }

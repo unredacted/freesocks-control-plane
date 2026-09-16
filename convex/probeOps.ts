@@ -58,7 +58,7 @@ export const execute = internalAction({
     const c = await ctx.runQuery(internal.probes.runContext, { runId });
     if (!c || c.run.status !== 'requested') return null;
     const { run, cfg, secrets } = c;
-    const target = parseTarget(run.target, run.ipVersion);
+    const target = parseTarget(run.target, run.ipVersion ?? 4);
     const opts = {
       countries: cfg.probe.countries,
       perCountryLimit: cfg.probe.perCountryLimit,
