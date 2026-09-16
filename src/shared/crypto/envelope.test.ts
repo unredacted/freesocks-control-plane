@@ -3,7 +3,7 @@ import { describe, expect, test } from 'vitest';
 import { createHash } from 'node:crypto';
 import { fingerprintB64Url, routePolicy, sha256HexOfB64Url } from './envelope';
 
-/** The EXACT form scripts/e2ee-fingerprint.mjs publishes, computed independently
+/** The EXACT form scripts/hpke-fingerprint.mjs publishes, computed independently
  *  with node:crypto. If fingerprintB64Url (crypto.subtle) ever diverges from this,
  *  the in-app "Verify connection" panel would show a value that doesn't match the
  *  out-of-band-published anchor — defeating the whole point. */
@@ -18,7 +18,7 @@ describe('fingerprintB64Url', () => {
     expect(fp).toMatch(/^([0-9a-f]{4} ){15}[0-9a-f]{4}$/); // 32-byte digest = 64 hex = 16 groups
   });
 
-  test('matches the e2ee-fingerprint.mjs published form exactly (client === published)', async () => {
+  test('matches the hpke-fingerprint.mjs published form exactly (client === published)', async () => {
     for (const s of ['', 'A', 'VITE_FS_SERVER_HPKE_PK-example-value', 'x'.repeat(120)]) {
       expect(await fingerprintB64Url(s)).toBe(scriptForm(s));
     }

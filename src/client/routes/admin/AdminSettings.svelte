@@ -77,7 +77,7 @@
     },
   }));
 
-  // E2EE verification config lives in its own namespace (publicConfig.verification),
+  // HPKE verification config lives in its own namespace (publicConfig.verification),
   // not the settings bag, so it has its own draft + save (mirrors the theme page).
   // Server sanitizes each URL (https-only / .onion) and returns the cleaned values.
   const cfg = configQuery();

@@ -3,7 +3,7 @@
   import { Skeleton } from '@client/components/ui/skeleton';
   import ThemeToggle from './ThemeToggle.svelte';
   import LanguageSwitcher from './LanguageSwitcher.svelte';
-  import E2eeBadge from './E2eeBadge.svelte';
+  import HpkeBadge from './HpkeBadge.svelte';
   import SourceBadge from './SourceBadge.svelte';
   import { Button } from '@client/components/ui/button';
   import { meQuery } from '../lib/queries';
@@ -20,7 +20,7 @@
   const me = meQuery();
 
   // Mobile accordion: on narrow viewports the bar keeps only the logo + the
-  // E2EE (HPKE) badge + a menu toggle; everything else lives in a full-width,
+  // HPKE badge + a menu toggle; everything else lives in a full-width,
   // fully-LABELED panel below. The old icon-only row was too condensed to tell
   // the controls apart. Desktop (sm+) keeps the inline nav.
   let menuOpen = $state(false);
@@ -51,7 +51,7 @@
 
     <!-- Desktop: the inline nav, unchanged. -->
     <nav class="hidden sm:flex items-center gap-2">
-      <E2eeBadge />
+      <HpkeBadge />
       <SourceBadge />
       {#if me.isPending}
         <!-- Neutral placeholder while the auth check resolves: rendering the
@@ -86,9 +86,9 @@
       <ThemeToggle />
     </nav>
 
-    <!-- Mobile: keep the E2EE + Source badges visible; the rest folds into the panel. -->
+    <!-- Mobile: keep the HPKE + Source badges visible; the rest folds into the panel. -->
     <div class="flex sm:hidden items-center gap-2">
-      <E2eeBadge />
+      <HpkeBadge />
       <SourceBadge />
       <Button
         variant="outline"

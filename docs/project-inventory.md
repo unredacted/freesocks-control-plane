@@ -52,7 +52,7 @@ is the only removal path; (WS3) `adminApi.statusSummary` reads a maintained `app
 user-status counter (self-healed by a daily `user-counts-reconcile` cron) instead of an O(users)
 scan that 500-ed the /status health-gate; (WS4) the fronted `/api/v1/sub` route sends
 `Vary: User-Agent` (+ `private, no-store` for HWID requests); (WS5) `/api/v1/config` +
-`/api/v1/e2ee/keys` are per-IP rate-limited; (WS6) removed dead migration-era symbols
+`/api/v1/hpke/keys` are per-IP rate-limited; (WS6) removed dead migration-era symbols
 (`tiers.list`/`listActive`, `BILLING_PROCESSORS`, `remnawaveNodes.stablePlacement`).
 
 **Update 2026-07-28 (branch `beta`): the DB-driven mode catalog + multi-backend overhaul.**
@@ -308,7 +308,7 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
     resolve/delete incidents, curate the country × connection-mode censorship matrix,
     tune the load-band thresholds; scope `admin:servers:write`, routes
     `/api/v1/admin/status/{page,incidents}`); App settings (incl. the **Verification** panel — `setVerification` /
-    `PATCH /api/v1/admin/verification`, surfaced in `E2eeVerifyModal` — and the **site
+    `PATCH /api/v1/admin/verification`, surfaced in `HpkeVerifyModal` — and the **site
     chrome** block: the announcement banner + footer source link, `site.*` namespace in
     `convex/lib/siteConfig.ts`, `PATCH /api/v1/admin/site`, rendered by `SiteBanner.svelte`); **Audit log** (filter by action / actor / since).
 - **IaC-addressable mutations** (for the Ansible role): idempotent **`PUT …/backend-servers/by-slug/{slug}`** + **`DELETE …/by-slug/{slug}`**, **`PUT …/tiers/by-slug/{slug}`**, and **`PUT

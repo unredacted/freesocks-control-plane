@@ -229,7 +229,7 @@ export type NodeStatusResponse = z.infer<typeof NodeStatusResponse>;
  * clash/sing-box doc) for the member to add manually. Delivered over the SEALED
  * reveal-leg channel (CDN sees ciphertext), so a member can get their config
  * WITHOUT their proxy client fetching the subscription URL through a CDN in
- * plaintext — the E2EE-preserving alternative to the public S3 mirror.
+ * plaintext — the alternative to the public S3 mirror that keeps the HPKE sealing.
  */
 export const SubscriptionContentResponse = z.object({
   content: z.string(),

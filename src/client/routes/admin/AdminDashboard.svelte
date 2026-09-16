@@ -270,12 +270,12 @@
             </span>
           </div>
         {/if}
-        <!-- CDN-blinding E2EE posture: PoP binds the session, but the account
-             number itself only stays sealed once FS_E2EE_REQUIRED rejects
+        <!-- CDN-blinding HPKE posture: PoP binds the session, but the account
+             number itself only stays sealed once FS_HPKE_REQUIRED rejects
              unsealed member requests. Warn while that's off. -->
-        {#if s.e2ee.required}
+        {#if s.hpke.required}
           <p class="text-muted-foreground">
-            E2EE sealing is enforced for member requests (FS_E2EE_REQUIRED is on) - the account
+            HPKE sealing is enforced for member requests (FS_HPKE_REQUIRED is on) - the account
             number never transits in plaintext.
           </p>
         {:else}
@@ -284,9 +284,9 @@
           >
             <TriangleAlert class="size-4 shrink-0 text-amber-600 dark:text-amber-400" />
             <span>
-              E2EE is in dual-mode: the account number still crosses the CDN in plaintext on login.
+              HPKE is in dual-mode: the account number still crosses the CDN in plaintext on login.
               Once the deployed SPA is built with the HPKE pins, set
-              <code class="font-mono">FS_E2EE_REQUIRED=true</code> to reject unsealed member requests.
+              <code class="font-mono">FS_HPKE_REQUIRED=true</code> to reject unsealed member requests.
             </span>
           </div>
         {/if}

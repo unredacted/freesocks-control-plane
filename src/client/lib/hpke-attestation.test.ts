@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { classifyAttestation, nextAttestation } from './e2ee-attestation';
+import { classifyAttestation, nextAttestation } from './hpke-attestation';
 
 describe('classifyAttestation', () => {
   test('a verified epoch is active', () => {

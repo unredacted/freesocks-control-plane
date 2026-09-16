@@ -1,12 +1,12 @@
 /**
  * Pure mapping from a live key-attestation result to the UI verdict the chrome
- * renders. Kept out of `e2ee-status.svelte.ts` so it is unit-testable without the
- * Svelte compiler (that module carries runes) and out of `e2ee.ts` so reading it
+ * renders. Kept out of `hpke-status.svelte.ts` so it is unit-testable without the
+ * Svelte compiler (that module carries runes) and out of `hpke.ts` so reading it
  * costs no crypto chunk.
  */
-import type { AttestationFailure, ConnectionAttestation } from './e2ee';
+import type { AttestationFailure, ConnectionAttestation } from './hpke';
 
-export type E2eeAttestation =
+export type HpkeAttestation =
   | 'pending'
   | 'active'
   | 'warn'
@@ -23,7 +23,7 @@ const TAMPER_FAILURES: readonly AttestationFailure[] = ['signature', 'revoked'];
  *  - `active`      key verified against the baked manifest key, unexpired, not revoked.
  *  - `warn`        the endpoint answered and the key it served FAILS to verify, or is
  *                  revoked. Only a CDN swapping the key produces this, so it is the
- *                  one state escalated loudly (the full-width <E2eeAlert/> bar).
+ *                  one state escalated loudly (the full-width <HpkeAlert/> bar).
  *  - `stale`       the endpoint answered but has no live epoch to offer (none
  *                  published, or the one we got had expired). The client keeps
  *                  sealing to the manifest-pinned STATIC key, so nothing is
@@ -35,7 +35,7 @@ const TAMPER_FAILURES: readonly AttestationFailure[] = ['signature', 'revoked'];
  *  - `unreachable` couldn't reach the endpoint (a network blip); the pinned key is
  *                  still in use, so this is NOT an alarm either.
  */
-export function classifyAttestation(att: ConnectionAttestation): E2eeAttestation {
+export function classifyAttestation(att: ConnectionAttestation): HpkeAttestation {
   if (att.configured === false) return 'unconfigured'; // manifest key not baked: can't verify
   if (att.attested) return 'active';
   if (!att.reachable) return 'unreachable';
@@ -52,6 +52,6 @@ export function classifyAttestation(att: ConnectionAttestation): E2eeAttestation
  * making the next poll inconclusive (block it → `unreachable`, or strip/expire the
  * epoch → `stale`). Inconclusive is not exculpatory, so it does not clear.
  */
-export function nextAttestation(prev: E2eeAttestation, next: E2eeAttestation): E2eeAttestation {
+export function nextAttestation(prev: HpkeAttestation, next: HpkeAttestation): HpkeAttestation {
   return prev === 'warn' && next !== 'active' ? 'warn' : next;
 }

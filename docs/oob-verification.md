@@ -1,7 +1,9 @@
 # Out-of-band verification and reproducible build (CDN-blinding Phase 3f)
 
-> **Naming:** the user-facing label for the sealed channel is **"HPKE"**; code
-> identifiers and these docs keep the historical `e2ee` name.
+> **Naming:** the sealed channel is called **"HPKE"** in the UI, the code, the env
+> knobs, and these docs. It was called "E2EE" until 2026-09-16 (`FS_E2EE_*` env
+> vars, `/api/v1/e2ee/keys`, `scripts/e2ee-fingerprint.mjs`); see the rename
+> checklist in `docs/secrets.md` §2 if you operate a deployment from before then.
 
 This is the runbook for the active-adversary tier of the CDN-blinding feature.
 Phases 1 to 3 defeat a PASSIVE CDN: the crown-jewel secrets are sealed, sessions
@@ -24,7 +26,7 @@ noted as such.
 
 Publish, on every release, two values:
 
-- the **key fingerprints** (`bun scripts/e2ee-fingerprint.mjs`): the manifest
+- the **key fingerprints** (`bun scripts/hpke-fingerprint.mjs`): the manifest
   public keys — Ed25519 **and** ML-DSA-65 (the script emits both, matching the
   client's hybrid requirement) — which anchor the epoch keys + the revoked-kid
   list, plus the static HPKE key, and
@@ -46,7 +48,7 @@ through as many of these independent channels as are available:
    without the CDN ever seeing the request.
 3. **DNS TXT pin (`_fcp-pin`).** Publish a TXT record carrying the same key
    fingerprints so a user can confirm them through their own resolver, a path that
-   does not run through the CDN's HTTP. `bun scripts/e2ee-fingerprint.mjs` prints the
+   does not run through the CDN's HTTP. `bun scripts/hpke-fingerprint.mjs` prints the
    ready-to-publish record:
 
    ```
@@ -81,10 +83,10 @@ through as many of these independent channels as are available:
    gamed by a sophisticated active CDN). **Pin generation is automated; packaging +
    web-store publication remain operator actions.**
 
-The in-app **"Verify connection" panel** (opened from the E2EE badge in the header /
+The in-app **"Verify connection" panel** (opened from the HPKE badge in the header /
 admin sidebar) shows the SAME fingerprints — it and the script both call
 `fingerprintB64Url`, so the value on the running page is byte-identical to the one
-published here — adds a live manifest-attestation check (`/api/v1/e2ee/keys`), and
+published here — adds a live manifest-attestation check (`/api/v1/hpke/keys`), and
 surfaces the **"Verify via DNS"** lookup (the `_fcp-pin` `dig` command + the expected
 record) so a user can check off-CDN without leaving the page. The panel is a
 _convenience_, not the trust root: a tampered page could lie about its own status, so
@@ -93,7 +95,7 @@ the DNS lookup you run yourself, the signed release, or the `.onion` mirror.
 
 ### What the live attestation check reports
 
-`/api/v1/e2ee/keys` publishes the current manifest-signed **epoch key** (rotated every
+`/api/v1/hpke/keys` publishes the current manifest-signed **epoch key** (rotated every
 10 minutes, valid 30). The panel verifies that signature in the browser against the
 baked manifest public key, and the verdict is deliberately split by _which_ check
 failed, because only some failures mean someone swapped a key:
@@ -108,7 +110,7 @@ failed, because only some failures mean someone swapped a key:
 `stale` and `unreachable` are quiet on purpose. In both the client keeps sealing to the
 manifest-**pinned static key** baked into the bundle, so nothing is sent unprotected and
 neither state is evidence of tampering: they mean epoch rotation is behind (check the
-`epoch-key-rotate` heartbeat and the `e2ee.epoch_gap` audit action) or that a cache
+`epoch-key-rotate` heartbeat and the `hpke.epoch_gap` audit action) or that a cache
 handed the client an old response. Escalating them to the loud bar was a real bug — it
 fired at users over a wedged cron and taught them to dismiss the one alarm that matters.
 Neither state hands an attacker anything new either: a CDN that wants the static-key
@@ -128,7 +130,7 @@ cache rules.
 
 The client deliberately does **not** force revalidation. The fetch-spec cache modes
 (`no-store`, `no-cache`) send `max-age=0`, which punches every request past the CDN to the
-origin, where the per-IP `e2ee.keys.fetch` policy lives; and a per-browser cache saves
+origin, where the per-IP `hpke.keys.fetch` policy lives; and a per-browser cache saves
 nothing for many distinct clients sharing one carrier-grade NAT, which only the shared CDN
 cache can absorb. Bypassing it would trade a bounded, now-quiet staleness for 429s and a
 silent static-key fallback precisely where censorship makes NAT sharing the norm.
@@ -190,7 +192,7 @@ A third party who does not trust us (or the CDN) reproduces a release:
 ## Per-release operator checklist
 
 1. From a clean checkout at the tag: `bun install --frozen-lockfile`.
-2. `bun scripts/e2ee-fingerprint.mjs` -> record the manifest + static-key fingerprints
+2. `bun scripts/hpke-fingerprint.mjs` -> record the manifest + static-key fingerprints
    AND the ready-to-publish `_fcp-pin` DNS TXT record it prints.
 3. `bash scripts/verify-reproducible.sh` -> record `dist-sha256`.
 4. `git tag -s <version>` and publish a GitHub release with both values.
@@ -202,7 +204,7 @@ A third party who does not trust us (or the CDN) reproduces a release:
    sign the zone with DNSSEC. Skip only if DNS shares a provider with the CDN (and note
    that in the release notes, since it is then not an independent path).
 8. On an emergency key compromise, run
-   `bunx convex run lib/e2eeCrypto:signRevocation '{"revokedKids":["<kid>"]}'`
+   `bunx convex run lib/hpkeCrypto:signRevocation '{"revokedKids":["<kid>"]}'`
    and announce the new revoked-kid list version through the same channels.
 
 ## Status

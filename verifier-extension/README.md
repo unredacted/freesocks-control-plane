@@ -31,7 +31,7 @@ extension, not another server we run.
    ```
 2. `cp verifier-extension/pinned.example.js verifier-extension/pinned.js` and fill
    in `indexSha384` (above) + the manifest public keys
-   (`bun scripts/e2ee-fingerprint.mjs`).
+   (`bun scripts/hpke-fingerprint.mjs`).
 3. Add `icon.png` (any 128px icon) and load `verifier-extension/` unpacked
    (chrome://extensions, Developer mode, "Load unpacked") to test, then package
    and submit to the Chrome Web Store / Firefox AMO. The store listing should
@@ -52,7 +52,7 @@ extension, not another server we run.
 ## Optional next layer: manifest-signature check
 
 `pinned.js` also carries the baked manifest public keys. A fuller verifier can
-fetch `GET /api/v1/e2ee/keys` and verify the hybrid manifest signatures
+fetch `GET /api/v1/hpke/keys` and verify the hybrid manifest signatures
 (Ed25519 + ML-DSA-65) against those pinned keys, independently confirming the
 epoch-key + revocation trust chain the page relies on. That needs the
 `@noble/curves` + `@noble/post-quantum` verify code vendored into the extension;

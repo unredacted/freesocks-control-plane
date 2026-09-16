@@ -122,10 +122,10 @@ export const RATE_LIMIT_DEFAULTS = {
   // is generous for a member's own devices (each polls every few minutes).
   'subscription.fetch.token': { max: 60, windowMs: MINUTE, enabled: true },
   // Unauthenticated public GETs (per IP) — DoS-amplification hygiene, not access
-  // control. Generous: the SPA polls /config on load and /e2ee/keys before a
+  // control. Generous: the SPA polls /config on load and /hpke/keys before a
   // sealed login, and both are briefly cacheable.
   'config.fetch': { max: 120, windowMs: MINUTE, enabled: true },
-  'e2ee.keys.fetch': { max: 120, windowMs: MINUTE, enabled: true },
+  'hpke.keys.fetch': { max: 120, windowMs: MINUTE, enabled: true },
   // The public network-status page (per IP): the SPA polls it ~every 60s while
   // open, and the payload is cron-quantized — DoS hygiene, not access control.
   'status.fetch': { max: 120, windowMs: MINUTE, enabled: true },

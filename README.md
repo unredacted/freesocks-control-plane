@@ -185,9 +185,9 @@ from the SPA's build-time `VITE_*`); the full required/optional list is in
 to a clean slate with `docker compose --env-file .env.docker down -v` (wipes the
 `fcp_data` volume).
 
-To exercise the CDN-blinding sealed channel locally (user-facing label: **"HPKE"**;
-code identifiers remain `e2ee`), also generate its keys
-(`bun scripts/gen-e2ee-keys.mjs`), `bunx convex env set` the printed `FS_*` secrets,
+To exercise the CDN-blinding sealed channel locally (the "HPKE" feature; it was
+called "E2EE" until 2026-09-16), also generate its keys
+(`bun scripts/gen-hpke-keys.mjs`), `bunx convex env set` the printed `FS_*` secrets,
 and append the printed `VITE_FS_*` public vars to `.env.local`. See
 [`docs/threat-model-cdn-blinding.md`](docs/threat-model-cdn-blinding.md).
 
@@ -294,7 +294,7 @@ Highlights:
 ### Endpoints (served by `convex/http.ts`)
 
 - **Public / member:** `GET /healthz` (liveness), `GET /readyz` (deep readiness),
-  `GET /api/v1/config`, `GET /api/v1/e2ee/keys` (HPKE epoch keys + revocations),
+  `GET /api/v1/config`, `GET /api/v1/hpke/keys` (HPKE epoch keys + revocations),
   `GET /api/v1/status` (public network status: locations, load bands, incidents),
   `POST /api/v1/account` (create), `GET /api/v1/account`, `GET /api/v1/account/usage`,
   `GET /api/v1/account/referrals` (referral code + stats),

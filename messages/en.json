@@ -946,7 +946,7 @@
       "captionPrivacy": "Skips the CDN and connects you straight to the server."
     }
   },
-  "e2ee": {
+  "hpke": {
     "badgeActiveTitle": "Encrypted to this server with HPKE. Click to verify.",
     "badgeWarnTitle": "Couldn't verify the encryption key. Click to verify out-of-band before entering your account number.",
     "badgeActiveTitleAdmin": "Sensitive member and admin actions are HPKE-encrypted on this deployment. Click for details.",

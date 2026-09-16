@@ -13,7 +13,7 @@
   import { toast } from 'svelte-sonner';
 
   /**
-   * Lazy, E2EE-preserving raw-config viewer. The proxy config is fetched
+   * Lazy raw-config viewer that keeps the HPKE sealing. The proxy config is fetched
    * server-side and delivered over the SEALED reveal-leg channel (the CDN sees
    * ciphertext), so a member can copy it by hand WITHOUT their proxy client
    * pulling the subscription URL through a CDN in plaintext. Fetched only while

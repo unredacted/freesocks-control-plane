@@ -1,7 +1,7 @@
 # FreeSocks translation review — Arabic (العربية)
 
 Generated from `messages/en.json` (source of truth) vs `messages/ar.json`.
-**115 of 846 strings are missing** (the app currently shows English for
+**144 of 785 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -195,7 +195,7 @@ review.
 | `passkey.signInFailed` | Passkey sign-in failed | فشل تسجيل الدخول بمفتاح المرور |
 | `passkey.notNow` | Not now | ليس الآن |
 
-## `account` — The signed-in /account dashboard: connection, membership, codes, security tabs. *(1 missing)*
+## `account` — The signed-in /account dashboard: connection, membership, codes, security tabs. *(4 missing)*
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
@@ -233,6 +233,9 @@ review.
 | `account.membershipNudge.body` | Unlimited bandwidth and devices. | نطاق ترددي وأجهزة غير محدودة. |
 | `account.membershipNudge.bodyNoDevices` | Unlimited bandwidth. | نطاق ترددي غير محدود. |
 | `account.membershipNudge.cta` | View membership | عرض العضوية |
+| `account.map.title` | Where your key lives | ⚠️ **MISSING** |
+| `account.map.network` | One of {count} FreeSocks locations | ⚠️ **MISSING** |
+| `account.map.aria` | Globe of FreeSocks server locations, highlighting yours | ⚠️ **MISSING** |
 | `account.tab.connection` | Connection | الاتصال |
 | `account.tab.membership` | Membership | العضوية |
 | `account.tab.gifts` | Gifts & referrals | الهدايا والإحالات |
@@ -268,7 +271,7 @@ review.
 | `account.deviceRevokedBody` | The slot is free. That device loses access until it re-imports your subscription. | الفتحة مجانية. سيفقد هذا الجهاز إمكانية الوصول حتى يعيد استيراد اشتراكك. |
 | `account.deviceRevokeFailedTitle` | Couldn't revoke the device | تعذر إلغاء الجهاز |
 
-## `hero` — The subscription panel: the key/URL block, traffic + expiry stats, QR, status callouts. *(3 missing)*
+## `hero` — The subscription panel: the key/URL block, traffic + expiry stats, QR, status callouts. *(5 missing)*
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
@@ -315,6 +318,8 @@ review.
 | `hero.nodeOffline` | Node offline | العقدة غير متصلة |
 | `hero.nodeUnknown` | Node status unknown | حالة العقدة غير معروفة |
 | `hero.nodeStatusLink` | Network status | حالة الشبكة |
+| `hero.relayRefreshSuggested` | New connection details are available. Update this subscription in your app to keep connecting. | ⚠️ **MISSING** |
+| `hero.relayConnections` | Connections in your config: | ⚠️ **MISSING** |
 | `hero.nodeOnlineHint` | The server behind your config is up and responding. If you still can't connect, your network or ISP is likely filtering it - try another connection mode or location. | الخادم الذي يقف خلف إعدادك يعمل ويستجيب. إذا كنت ما زلت غير قادر على الاتصال، فمن المرجح أن شبكتك أو مزوّد الإنترنت يحجبه - جرّب وضع اتصال أو موقعًا آخر. |
 | `hero.nodeOfflineBody` | The server behind your config is currently offline. This is on our side, not your network. Try again in a few minutes, or create a new config (optionally in a different location). | الخادم الذي يقف خلف إعدادك متوقف حاليًا. المشكلة من جهتنا، وليست من شبكتك. أعد المحاولة بعد بضع دقائق، أو أنشئ إعدادًا جديدًا (ويمكنك اختيار موقع مختلف). |
 | `hero.keyLimited` | You've used all your data for this period. It resets automatically, or you can upgrade for more. | لقد استنفدت جميع بياناتك لهذه الفترة. ستتم إعادة ضبطها تلقائيًا، أو يمكنك الترقية للحصول على المزيد. |
@@ -634,7 +639,7 @@ review.
 | `error.noOtherServer` | There is no other server available right now. Please try again later. | ⚠️ **MISSING** |
 | `error.switchServerUnsupported` | Switching servers is not available for this key. | ⚠️ **MISSING** |
 
-## `setup` — The "set up your app" section: recommended VPN clients per platform, install steps.
+## `setup` — The "set up your app" section: recommended VPN clients per platform, install steps. *(2 missing)*
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
@@ -642,6 +647,8 @@ review.
 | `setup.install` | Install | تثبيت |
 | `setup.noApps` | No recommended apps for this platform yet - use any compatible client and add your subscription manually. | لا توجد تطبيقات موصى بها لهذه المنصة بعد - استخدم أي عميل متوافق وأضف اشتراكك يدويًا. |
 | `setup.openSource` | Open source | مفتوح المصدر |
+| `setup.ipv6Works` | IPv6 ready | ⚠️ **MISSING** |
+| `setup.ipv4Only` | IPv4 only | ⚠️ **MISSING** |
 | `setup.recommended` | Recommended | موصى به |
 | `setup.proprietary` | Proprietary | مغلق المصدر |
 | `setup.easeEasy` | Easy to use | سهل الاستخدام |
@@ -754,7 +761,7 @@ review.
 | `delivery.switchFailedTitle` | Could not switch mode | ⚠️ **MISSING** |
 | `delivery.detailsToggle` | More details | ⚠️ **MISSING** |
 
-## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(3 missing)*
+## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(24 missing)*
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
@@ -767,86 +774,17 @@ review.
 | `home.network.srOffline` | offline | غير متصل |
 | `home.network.note` | Checked every 10 minutes | يُفحص كل 10 دقائق |
 | `home.network.link` | Live status | الحالة المباشرة |
-| `home.quicknav.label` | Jump to a section | انتقل إلى قسم |
-| `home.quicknav.privacy` | What we store | ما نخزنه |
-| `home.quicknav.threat` | Threat model | نموذج التهديدات |
-| `home.quicknav.faq` | FAQ | الأسئلة الشائعة |
-| `home.quicknav.impact` | Donation impact | أثر التبرعات |
-| `home.sections.features` | Features | الميزات |
 | `home.sections.privacy` | Privacy | الخصوصية |
 | `home.sections.how` | Getting started | البداية |
 | `home.sections.membership` | Membership | العضوية |
-| `home.sections.impact` | Impact | الأثر |
 | `home.sections.faq` | FAQ | الأسئلة الشائعة |
 | `home.sections.about` | About | حول |
-| `home.sections.globe` | The map | الخريطة |
-| `home.globe.title` | Voices from behind the firewall | أصوات من خلف الجدار الناري |
-| `home.globe.body` | Every day, people behind national firewalls use FreeSocks to read, share, and publish - and to be heard. | كل يوم، يستخدم الناس خلف الجدران النارية الوطنية FreeSocks للقراءة والمشاركة والنشر — وليُسمع صوتهم. |
-| `home.globe.aria` | A rotating globe: labels with voices from censored countries | كرة أرضية دوارة: ملصقات تحمل أصواتًا من دول خاضعة للرقابة |
-| `home.globe.voices.ir.place` | Tehran, Iran | طهران، إيران |
-| `home.globe.voices.ir.l1` | They filter the internet; they can't filter the truth. | يحجبون الإنترنت؛ لكنهم لا يستطيعون حجب الحقيقة. |
-| `home.globe.voices.ir.l2` | My report on the protests reached the world. | تقريري عن الاحتجاجات وصل إلى العالم. |
-| `home.globe.voices.ir.l3` | My students read what the state calls lies. | طلابي يقرأون ما تسميه الدولة أكاذيب. |
-| `home.globe.voices.cn.place` | Beijing, China | بكين، الصين |
-| `home.globe.voices.cn.l1` | History should not be a banned word. | لا ينبغي أن يكون التاريخ كلمة محظورة. |
-| `home.globe.voices.cn.l2` | I shared what happened in my city - and it stayed up. | شاركت ما حدث في مدينتي — وبقي منشورًا. |
-| `home.globe.voices.cn.l3` | I archived the deleted posts before they vanished. | أرشفت المنشورات المحذوفة قبل اختفائها. |
-| `home.globe.voices.ru.place` | Moscow, Russia | موسكو، روسيا |
-| `home.globe.voices.ru.l1` | The truth should not need a permit. | الحقيقة لا ينبغي أن تحتاج إلى تصريح. |
-| `home.globe.voices.ru.l2` | Independent journalism is not a crime. | الصحافة المستقلة ليست جريمة. |
-| `home.globe.voices.ru.l3` | A blocked newspaper still gets read. | الصحيفة المحجوبة ما زالت تُقرأ. |
-| `home.globe.voices.tm.place` | Ashgabat, Turkmenistan | عشق آباد، تركمانستان |
-| `home.globe.voices.tm.l1` | A whole country, almost offline - and still heard. | بلد كامل، شبه منقطع عن الإنترنت — ومع ذلك مسموع. |
-| `home.globe.voices.tm.l2` | They control the media, not my voice. | يتحكمون في الإعلام، لا في صوتي. |
-| `home.globe.voices.tm.l3` | Silence is the law here; we whisper anyway. | الصمت قانون هنا؛ ومع ذلك نتهامس. |
-| `home.globe.voices.cu.place` | Havana, Cuba | هافانا، كوبا |
-| `home.globe.voices.cu.l1` | My voice travels farther than I ever will. | صوتي يسافر أبعد مما سأصل إليه يومًا. |
-| `home.globe.voices.cu.l2` | We document what the state denies. | نوثق ما تنكره الدولة. |
-| `home.globe.voices.cu.l3` | Independent voices, hand to hand, screen to screen. | أصوات مستقلة، من يد إلى يد، ومن شاشة إلى شاشة. |
-| `home.globe.voices.by.place` | Minsk, Belarus | مينسك، بيلاروس |
-| `home.globe.voices.by.l1` | When they shut us down, we still spoke. | حين أوقفونا، واصلنا الكلام. |
-| `home.globe.voices.by.l2` | Free elections are not extremism. | الانتخابات الحرة ليست تطرفًا. |
-| `home.globe.voices.by.l3` | They banned our flag; not our voice. | حظروا علمنا؛ لا صوتنا. |
-| `home.globe.voices.mm.place` | Yangon, Myanmar | يانغون، ميانمار |
-| `home.globe.voices.mm.l1` | The blackout did not silence us. | انقطاع الإنترنت لم يُسكتنا. |
-| `home.globe.voices.mm.l2` | Evidence of the crackdown got out. | أدلة القمع خرجت إلى العلن. |
-| `home.globe.voices.mm.l3` | When the towers fell silent, the story did not. | حين صمتت الأبراج، لم تصمت الحكاية. |
-| `home.globe.voices.ve.place` | Caracas, Venezuela | كاراكاس، فنزويلا |
-| `home.globe.voices.ve.l1` | We count the votes they won't. | نحن نُحصي الأصوات التي لا يحصونها. |
-| `home.globe.voices.ve.l2` | Hunger is not a state secret. | الجوع ليس سرًّا من أسرار الدولة. |
-| `home.globe.voices.ve.l3` | The queue for food is long; the truth is longer. | طابور الخبز طويل؛ والحقيقة أطول. |
-| `home.globe.voices.vn.place` | Hanoi, Vietnam | هانوي، فيتنام |
-| `home.globe.voices.vn.l1` | Writing about corruption is not a crime. | الكتابة عن الفساد ليست جريمة. |
-| `home.globe.voices.vn.l2` | My blog outlived the block. | مدونتي نجت من الحجب. |
-| `home.globe.voices.vn.l3` | One article they deleted reached thousands. | مقال واحد حذفوه وصل إلى الآلاف. |
-| `home.globe.voices.pk.place` | Karachi, Pakistan | كراتشي، باكستان |
-| `home.globe.voices.pk.l1` | During the shutdown, witnesses still spoke. | أثناء القطيعة، ظل الشهود يتكلمون. |
-| `home.globe.voices.pk.l2` | Silencing journalists won't hide the story. | إسكات الصحفيين لن يخفي القصة. |
-| `home.globe.voices.pk.l3` | The channel went dark; the reporting did not. | القناة أظلمت؛ الصحافة لم تُظلم. |
-| `home.globe.voices.eg.place` | Cairo, Egypt | القاهرة، مصر |
-| `home.globe.voices.eg.l1` | They jailed the bloggers, not the words. | سجنوا المدونين، لا الكلمات. |
-| `home.globe.voices.eg.l2` | The protest was documented anyway. | وُثّقت الاحتجاجات رغم كل شيء. |
-| `home.globe.voices.eg.l3` | From a small screen, a big story. | من شاشة صغيرة، قصة كبيرة. |
-| `home.globe.voices.sa.place` | Riyadh, Saudi Arabia | الرياض، السعودية |
-| `home.globe.voices.sa.l1` | Speaking is not a crime. | الكلام ليس جريمة. |
-| `home.globe.voices.sa.l2` | Her voice reached beyond the wall. | صوتها وصل إلى ما وراء الجدار. |
-| `home.globe.voices.sa.l3` | She asked a question the kingdom bans. | سألت سؤالًا تحظره المملكة. |
-| `home.globe.voices.et.place` | Addis Ababa, Ethiopia | أديس أبابا، إثيوبيا |
-| `home.globe.voices.et.l1` | The shutdown hid nothing. | القطيعة لم تُخفِ شيئًا. |
-| `home.globe.voices.et.l2` | Witnesses still found a way out. | الشهود وجدوا طريقًا للخارج. |
-| `home.globe.voices.et.l3` | The dead were counted, despite the blackout. | أُحصي القتلى، رغم الانقطاع. |
-| `home.globe.voices.tr.place` | Istanbul, Turkey | إسطنبول، تركيا |
-| `home.globe.voices.tr.l1` | Blocking the site won't block the story. | حجب الموقع لن يحجب القصة. |
-| `home.globe.voices.tr.l2` | Journalism continues, court order or not. | الصحافة مستمرة، بأمر المحكمة أو بدونه. |
-| `home.globe.voices.tr.l3` | An arrested anchor cannot sign off the news. | مذيع معتقل لا يستطيع إنهاء النشرة. |
-| `home.globe.voices.az.place` | Baku, Azerbaijan | باكو، أذربيجان |
-| `home.globe.voices.az.l1` | They call reporting extremism. | يسمون الصحافة تطرفًا. |
-| `home.globe.voices.az.l2` | The investigation was published anyway. | نُشر التحقيق رغم كل شيء. |
-| `home.globe.voices.az.l3` | They froze our accounts, not our work. | جمّدوا حساباتنا، لا عملنا. |
-| `home.globe.voices.uz.place` | Tashkent, Uzbekistan | طشقند، أوزبكستان |
-| `home.globe.voices.uz.l1` | A closed internet is not a quiet one. | الإنترنت المغلق ليس إنترنت صامتًا. |
-| `home.globe.voices.uz.l2` | The world still heard what happened here. | وسمع العالم بما جرى هنا. |
-| `home.globe.voices.uz.l3` | The squares are watched; the words still move. | الساحات مراقبة؛ والكلمات تتحرك رغم ذلك. |
+| `home.sections.globe` | The network | ⚠️ **MISSING** |
+| `home.globe.title` | A real network, shown live | ⚠️ **MISSING** |
+| `home.globe.body` | The green markers are FreeSocks server locations, taken straight from the live network status. The amber marks are some of the regions where the internet is heavily censored and where FreeSocks is built to reach. | ⚠️ **MISSING** |
+| `home.globe.aria` | A rotating globe showing FreeSocks server locations and censored regions | ⚠️ **MISSING** |
+| `home.globe.legendServers` | Server location | ⚠️ **MISSING** |
+| `home.globe.legendRegions` | Censored region | ⚠️ **MISSING** |
 | `home.impact.title` | Donations at work | التبرعات تُحدث فرقًا |
 | `home.impact.body` | Every donation made through FreeSocks raises the bandwidth of every free account for at least the next {days} days. This is what donors have added so far - you could add to it too. | كل تبرع عبر FreeSocks يرفع النطاق الترددي الشهري لكل حساب مجاني في ذلك الشهر. هذا ما أضافه المتبرعون حتى الآن - ويمكنك الإضافة إليه أيضًا. |
 | `home.impact.cta` | Make a donation | قدّم تبرعًا |
@@ -867,17 +805,6 @@ review.
 | `home.freeCard.noAuthTitle` | No email or password | لا حاجة إلى بريد إلكتروني أو كلمة مرور |
 | `home.freeCard.noAuthBody` | One human-check. Save your account number to sign in. No email collected. | عملية تحقق بشرية واحدة. احفظ رقم حسابك لتسجيل الدخول. لم يتم جمع أي بريد إلكتروني. |
 | `home.freeCard.footnote` | Numbers reflect the current free-tier configuration. Solve the check to get yours. | الأرقام تعكس إعدادات المستوى المجاني الحالية. حلّ الاختبار للحصول على إعداداتك. |
-| `home.freeCard.upsellTitle` | Want unlimited? | هل تريد اشتراكاً غير محدود؟ |
-| `home.freeCard.upsellBody` | Get {limits} - and help keep FreeSocks free for others. | احصل على {limits} - وساعد في إبقاء FreeSocks مجانيًا للآخرين. |
-| `home.freeCard.fromPerMonth` | from {price}/mo | من {price} /شهرياً |
-| `home.freeCard.cryptoNote` | Crypto accepted - Bitcoin, Monero, Zcash and more | نقبل العملات المشفّرة - بيتكوين ومونيرو وزيكاش والمزيد |
-| `home.features.title` | What FreeSocks is | ما هو FreeSocks؟ |
-| `home.features.noAuth.title` | No email or password | لا حاجة إلى بريد إلكتروني أو كلمة مرور |
-| `home.features.noAuth.body` | One human-check and you are in. We mint a 32-digit account number you save to sign back in. No email collected. | بمجرد التحقق البشري، ستتمكن من الدخول. سنقوم بإنشاء رقم حساب مكون من 32 رقمًا يمكنك حفظه لتسجيل الدخول مرة أخرى. لا يتم جمع أي بريد إلكتروني. |
-| `home.features.mirrors.title` | Mirror URLs | روابط النسخ الاحتياطية |
-| `home.features.mirrors.body` | Subscriptions are mirrored across multiple providers so a single block does not cut you off. | يتم نسخ الاشتراكات عبر مزودين متعددين، لذا فإن حظرًا واحدًا لن يقطع الخدمة عنك. |
-| `home.features.protocols.title` | Standard protocols | البروتوكولات القياسية |
-| `home.features.protocols.body` | Xray-powered VLESS. Works in most VPN clients. | Xray-powered VLESS. Works in most VPN clients. |
 | `home.privacy.title` | What we store | ما نخزنه |
 | `home.privacy.subtitle` | FreeSocks is built to know as little about you as possible. | تم تصميم FreeSocks بحيث لا يعرف عنك إلا أقل قدر ممكن. |
 | `home.privacy.point1` | We store only a hashed version of your account number - never the number itself. | نحن نخزن فقط نسخة مشفرة من رقم حسابك - وليس الرقم نفسه أبدًا. |
@@ -901,67 +828,78 @@ review.
 | `home.about.bodySuffix` | , a US 501(c)(3) nonprofit. | ، منظمة أمريكية غير ربحية 501(c)(3). |
 | `home.about.body2` | Most VPNs assume you can pay for a subscription and safely hand over an email address. In much of the world neither is true, so FreeSocks asks for neither. Anyone can get a working key in about a minute and keep it for as long as they use it. | معظم خدمات VPN تفترض أنك تستطيع الدفع مقابل اشتراك وتسليم بريدك الإلكتروني بأمان. في معظم أنحاء العالم لا يصحّ أيٌّ منهما، لذلك لا يطلب FreeSocks أيًّا منهما. يمكن لأي شخص الحصول على مفتاح يعمل في نحو دقيقة والاحتفاظ به ما دام يستخدمه. |
 | `home.about.siteLink` | unredacted.org | unredacted.org |
-| `home.about.openSource` | The code that runs this service is published for anyone to inspect, audit, or run themselves. | الكود الذي يشغّل هذه الخدمة منشور ليطّلع عليه أي شخص أو يدقّقه أو يشغّله بنفسه. |
 | `home.about.viewSourceCta` | View the source | اطّلع على المصدر |
-| `home.about.fact2Title` | Open source | مفتوح المصدر |
-| `home.about.fact3Title` | Donation funded | ممول بالتبرعات |
-| `home.about.fact3Body` | Free accounts are paid for by donations and memberships. There are no ads and nothing is sold. | تموَّل الحسابات المجانية من التبرعات والعضويات. لا إعلانات ولا شيء يُباع. |
 | `home.limits.unlimitedBoth` | unlimited bandwidth and devices | نطاق ترددي وأجهزة غير محدودة |
 | `home.limits.unlimitedBandwidth` | unlimited bandwidth | نطاق ترددي غير محدود |
 | `home.limits.unlimitedDevices` | unlimited devices | أجهزة غير محدودة |
 | `home.limits.bandwidthAndDevices` | {bandwidth} and {devices} | {bandwidth} و {devices} |
 | `home.limits.upToDevices [countPlural=one]` | up to 1 device | جهاز واحد كحد أقصى |
 | `home.limits.upToDevices [countPlural=other]` | up to {count} devices | يصل عدد الأجهزة إلى {count} جهازًا |
+| `home.flow.title` | Who sees what | ⚠️ **MISSING** |
+| `home.flow.subtitle` | Here is the path your traffic takes, and what each stop on the way can actually learn. | ⚠️ **MISSING** |
+| `home.flow.youName` | Your device | ⚠️ **MISSING** |
+| `home.flow.youSees` | Your apps and your data live here. Traffic is encrypted on the device before it goes anywhere. | ⚠️ **MISSING** |
+| `home.flow.ispName` | Your ISP | ⚠️ **MISSING** |
+| `home.flow.ispSees` | Sees encrypted data flowing to a busy CDN or a plain server. Not the sites you visit, and not what you send. | ⚠️ **MISSING** |
+| `home.flow.cdnName` | The CDN | ⚠️ **MISSING** |
+| `home.flow.cdnBadge` | Freedom Mode only | ⚠️ **MISSING** |
+| `home.flow.cdnSees` | Carries your traffic without being able to read it. It can tell you use FreeSocks, and nothing about what you do through it. | ⚠️ **MISSING** |
+| `home.flow.nodeName` | FreeSocks server | ⚠️ **MISSING** |
+| `home.flow.nodeSees` | Hands your traffic to the open internet. No logs are kept, and your key has no identity behind it. | ⚠️ **MISSING** |
+| `home.flow.webName` | Websites you visit | ⚠️ **MISSING** |
+| `home.flow.webSees` | See the FreeSocks server's address instead of yours. | ⚠️ **MISSING** |
+| `home.flow.captionFreedom` | Routes through a large CDN, so your connection looks like ordinary web traffic. | ⚠️ **MISSING** |
+| `home.flow.captionPrivacy` | Skips the CDN and connects you straight to the server. | ⚠️ **MISSING** |
 
-## `e2ee` — The HPKE/E2EE "encrypted to this server" badge + verification panel. *(1 missing)*
+## `hpke` — The HPKE "encrypted to this server" badge + verification panel. *(1 missing)*
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
-| `e2ee.badgeActiveTitle` | Encrypted to this server with HPKE. Click to verify. | تم تشفير البيانات على هذا الخادم باستخدام HPKE. انقر للتحقق. |
-| `e2ee.badgeWarnTitle` | Couldn't verify the encryption key. Click to verify out-of-band before entering your account number. | تعذر التحقق من مفتاح التشفير. انقر للتحقق خارج النطاق قبل إدخال رقم حسابك. |
-| `e2ee.badgeActiveTitleAdmin` | Sensitive member and admin actions are HPKE-encrypted on this deployment. Click for details. | يتم تشفير الإجراءات الحساسة للأعضاء والمسؤولين باستخدام بروتوكول HPKE في هذا النظام. انقر هنا للاطلاع على التفاصيل. |
-| `e2ee.badgeWarnTitleAdmin` | Couldn't verify this deployment's encryption key. Click for details and out-of-band verification. | تعذر التحقق من مفتاح تشفير هذا النشر. انقر هنا للاطلاع على التفاصيل والتحقق خارج النطاق. |
-| `e2ee.badgeOff` | TLS | TLS |
-| `e2ee.badgeOffTitle` | Standard TLS only. Extra HPKE body encryption isn't enabled on this deployment. | بروتوكول TLS القياسي فقط. تشفير بيانات HPKE الإضافي غير مُفعّل في هذا الإصدار. |
-| `e2ee.bannerWarn` | Couldn't verify the encryption key | تعذر التحقق من مفتاح التشفير |
-| `e2ee.bannerWarnDetail` | Don't enter your account number yet - verify this connection out-of-band first. | لا تُدخل رقم حسابك الآن - تحقق من هذا الاتصال خارج النطاق أولاً. |
-| `e2ee.verify` | Verify | يؤكد |
-| `e2ee.verifyTitle` | Verify this connection | تحقق من هذا الاتصال |
-| `e2ee.verifyIntro` | FreeSocks seals your account number and VPN key to this server with HPKE, so a compromised CDN can't read them. These fingerprints identify the keys your browser is using - compare them against the values published out-of-band to be sure they haven't been swapped. | يقوم FreeSocks بتشفير رقم حسابك ومفتاح الوكيل لهذا الخادم باستخدام HPKE، مما يمنع أي شبكة توصيل محتوى (CDN) مخترقة من قراءتهما. تُحدد هذه البصمات المفاتيح التي يستخدمها متصفحك - قارنها بالقيم المنشورة خارج النطاق للتأكد من عدم استبدالها. |
-| `e2ee.protectHeading` | What this protects | ما يحميه هذا |
-| `e2ee.protectScope` | Your account number and key are encrypted to this server with HPKE, so the network and any CDN in front of it can't read them. | يتم تشفير رقم حسابك ومفتاحك على هذا الخادم باستخدام HPKE، لذلك لا يمكن للشبكة وأي شبكة توصيل محتوى (CDN) أمامها قراءتهما. |
-| `e2ee.protectServerReads` | FreeSocks itself can read them to set up your account, so this protects you from the network in between, not from the server. | يمكن لبرنامج FreeSocks نفسه قراءة هذه البيانات لإعداد حسابك، لذا فإن هذا يحميك من الشبكة الوسيطة، وليس من الخادم. |
-| `e2ee.protectTunnel` | It's separate from your VPN connection, which is encrypted on its own. | وهو منفصل عن اتصال VPN الخاص بك، والذي يتم تشفيره بشكل مستقل. |
-| `e2ee.protectAdmin` | On the admin dashboard, sensitive actions - creating API tokens, invites, and membership codes, and uploading backend, billing, or storage credentials - are HPKE-encrypted to this server too. Routine reads and settings use TLS, your passkey, and proof-of-possession. | في لوحة تحكم المسؤول، تُشفّر الإجراءات الحساسة - مثل إنشاء رموز API، ودعوات المستخدمين، ورموز العضوية، وتحميل بيانات اعتماد الواجهة الخلفية، والفواتير، والتخزين - باستخدام بروتوكول HPKE على هذا الخادم أيضًا. أما عمليات القراءة والإعدادات الروتينية فتستخدم بروتوكول TLS، وكلمة المرور الخاصة بك، وإثبات الملكية. |
-| `e2ee.fingerprintsHeading` | Key fingerprints | بصمات المفاتيح |
-| `e2ee.fpHpke` | Server key (HPKE / X-Wing) | مفتاح الخادم (HPKE / X-Wing) |
-| `e2ee.fpKid` | Key id | معرف المفتاح |
-| `e2ee.fpManifest` | Manifest key (Ed25519) | مفتاح البيان (Ed25519) |
-| `e2ee.fpManifestPq` | Manifest key (ML-DSA-65, post-quantum) | مفتاح البيان (ML-DSA-65، ما بعد الكم) |
-| `e2ee.fpSuite` | Cipher suite | مجموعة التشفير |
-| `e2ee.copy` | Copy | ينسخ |
-| `e2ee.copied` | Copied | تم النسخ |
-| `e2ee.attestationHeading` | Live server attestation | مصادقة الخادم المباشر |
-| `e2ee.attestationOk` | Verified - the server is attesting a valid key signed by the manifest key your app trusts. | تم التحقق - يقوم الخادم بالتصديق على مفتاح صالح موقع بواسطة مفتاح البيان الذي يثق به تطبيقك. |
-| `e2ee.attestationEpoch` | Current key {kid}, expires {expiry}. | المفتاح الحالي {kid} , تنتهي صلاحيته {expiry} . |
-| `e2ee.attestationFail` | Could not verify the server's current key - a network problem, or a CDN tampering with the key endpoint. Verify out-of-band before continuing. | تعذر التحقق من مفتاح الخادم الحالي - إما بسبب مشكلة في الشبكة، أو بسبب تلاعب شبكة توصيل المحتوى (CDN) بنقطة نهاية المفتاح. يرجى التحقق من المفتاح خارج النطاق قبل المتابعة. |
-| `e2ee.attestationUnreachable` | The live key check is temporarily unavailable. Your connection still uses the verified key built into the app. | خاصية التحقق من المفتاح المباشر غير متاحة مؤقتًا. لا يزال اتصالك يستخدم المفتاح المُتحقق منه والمدمج في التطبيق. |
-| `e2ee.attestationStale` | The server isn't publishing a current rotating key right now, so your connection is using the verified key built into the app. Nothing here suggests tampering. | ⚠️ **MISSING** |
-| `e2ee.attestationUnconfigured` | Live key checking isn't set up on this build. | لم يتم إعداد خاصية التحقق المباشر من المفاتيح في هذه النسخة. |
-| `e2ee.compareHeading` | How to verify | كيفية التحقق |
-| `e2ee.compareBody` | Compare the fingerprints above against the values published through a channel this server doesn't control. They must match. | قارن البصمات المذكورة أعلاه بالقيم المنشورة عبر قناة لا يتحكم بها هذا الخادم. يجب أن تتطابق. |
-| `e2ee.channelRelease` | Signed release notes | ملاحظات الإفراج الموقعة |
-| `e2ee.channelSource` | Source code (rebuild to compare) | شفرة المصدر (أعد بناءها للمقارنة) |
-| `e2ee.channelOnion` | Tor mirror | مرآة تور |
-| `e2ee.dnsHeading` | Verify via DNS | التحقق عبر نظام أسماء النطاقات (DNS) |
-| `e2ee.dnsBody` | Look the pin up yourself in a terminal, through your own DNS resolver - a path that doesn't run through this site or its CDN. The answer should contain the same fingerprints shown above. (If it returns nothing, the operator may not have published the record yet; use the signed release instead.) | ابحث عن رمز التعريف بنفسك في سطر الأوامر، عبر خادم DNS الخاص بك - مسار لا يمر عبر هذا الموقع أو شبكة توصيل المحتوى الخاصة به. يجب أن تحتوي الإجابة على نفس بصمات الأصابع الموضحة أعلاه. (إذا لم تُظهر أي نتيجة، فقد لا يكون المشغل قد نشر السجل بعد؛ استخدم الإصدار الموقّع بدلاً من ذلك.) |
-| `e2ee.dnsCommand` | Run this in a terminal | قم بتشغيل هذا الأمر في نافذة طرفية. |
-| `e2ee.dnsExpected` | It should return | ينبغي أن يعود |
-| `e2ee.dnsCaveat` | Independent only if your DNS isn't run by the same company as the CDN; a DNSSEC-validating resolver is best. For full assurance, confirm the same values in the signed release too. | مستقل فقط إذا لم تكن خدمة نظام أسماء النطاقات (DNS) مُدارة من قِبل نفس الشركة التي تُدير شبكة توصيل المحتوى (CDN)؛ ويُفضّل استخدام مُحلِّل أسماء نطاقات يدعم التحقق من صحة DNSSEC. ولضمان كامل، تأكد من صحة القيم نفسها في الإصدار المُوقَّع أيضًا. |
-| `e2ee.verifierExtension` | A verifier browser extension that re-checks this build on every visit is planned, but not available yet. | من المخطط إطلاق إضافة متصفح للتحقق تعيد فحص هذا الإصدار في كل زيارة، ولكنها غير متاحة بعد. |
-| `e2ee.verifierExtensionInstall` | Install the verifier extension - it re-checks this build against the published one on every visit (the strongest protection against a tampered page). | قم بتثبيت ملحق التحقق - فهو يعيد فحص هذا الإصدار مقابل الإصدار المنشور في كل زيارة (أقوى حماية ضد التلاعب بالصفحة). |
-| `e2ee.caveat` | This in-page check is a convenience. A tampered page could lie about its own status, so the real proof comes from comparing these values somewhere outside this server, such as the DNS lookup above or a published release. | يُعدّ هذا الفحص داخل الصفحة إجراءً مُريحًا. قد تُضلل الصفحة المُعدّلة بشأن حالتها، لذا فإنّ الدليل الحقيقي يأتي من مُقارنة هذه القيم في مكانٍ خارج هذا الخادم، مثل البحث في نظام أسماء النطاقات (DNS) المذكور أعلاه أو إصدارٍ منشور. |
-| `e2ee.close` | Close | يغلق |
+| `hpke.badgeActiveTitle` | Encrypted to this server with HPKE. Click to verify. | تم تشفير البيانات على هذا الخادم باستخدام HPKE. انقر للتحقق. |
+| `hpke.badgeWarnTitle` | Couldn't verify the encryption key. Click to verify out-of-band before entering your account number. | تعذر التحقق من مفتاح التشفير. انقر للتحقق خارج النطاق قبل إدخال رقم حسابك. |
+| `hpke.badgeActiveTitleAdmin` | Sensitive member and admin actions are HPKE-encrypted on this deployment. Click for details. | يتم تشفير الإجراءات الحساسة للأعضاء والمسؤولين باستخدام بروتوكول HPKE في هذا النظام. انقر هنا للاطلاع على التفاصيل. |
+| `hpke.badgeWarnTitleAdmin` | Couldn't verify this deployment's encryption key. Click for details and out-of-band verification. | تعذر التحقق من مفتاح تشفير هذا النشر. انقر هنا للاطلاع على التفاصيل والتحقق خارج النطاق. |
+| `hpke.badgeOff` | TLS | TLS |
+| `hpke.badgeOffTitle` | Standard TLS only. Extra HPKE body encryption isn't enabled on this deployment. | بروتوكول TLS القياسي فقط. تشفير بيانات HPKE الإضافي غير مُفعّل في هذا الإصدار. |
+| `hpke.bannerWarn` | Couldn't verify the encryption key | تعذر التحقق من مفتاح التشفير |
+| `hpke.bannerWarnDetail` | Don't enter your account number yet - verify this connection out-of-band first. | لا تُدخل رقم حسابك الآن - تحقق من هذا الاتصال خارج النطاق أولاً. |
+| `hpke.verify` | Verify | يؤكد |
+| `hpke.verifyTitle` | Verify this connection | تحقق من هذا الاتصال |
+| `hpke.verifyIntro` | FreeSocks seals your account number and VPN key to this server with HPKE, so a compromised CDN can't read them. These fingerprints identify the keys your browser is using - compare them against the values published out-of-band to be sure they haven't been swapped. | يقوم FreeSocks بتشفير رقم حسابك ومفتاح الوكيل لهذا الخادم باستخدام HPKE، مما يمنع أي شبكة توصيل محتوى (CDN) مخترقة من قراءتهما. تُحدد هذه البصمات المفاتيح التي يستخدمها متصفحك - قارنها بالقيم المنشورة خارج النطاق للتأكد من عدم استبدالها. |
+| `hpke.protectHeading` | What this protects | ما يحميه هذا |
+| `hpke.protectScope` | Your account number and key are encrypted to this server with HPKE, so the network and any CDN in front of it can't read them. | يتم تشفير رقم حسابك ومفتاحك على هذا الخادم باستخدام HPKE، لذلك لا يمكن للشبكة وأي شبكة توصيل محتوى (CDN) أمامها قراءتهما. |
+| `hpke.protectServerReads` | FreeSocks itself can read them to set up your account, so this protects you from the network in between, not from the server. | يمكن لبرنامج FreeSocks نفسه قراءة هذه البيانات لإعداد حسابك، لذا فإن هذا يحميك من الشبكة الوسيطة، وليس من الخادم. |
+| `hpke.protectTunnel` | It's separate from your VPN connection, which is encrypted on its own. | وهو منفصل عن اتصال VPN الخاص بك، والذي يتم تشفيره بشكل مستقل. |
+| `hpke.protectAdmin` | On the admin dashboard, sensitive actions - creating API tokens, invites, and membership codes, and uploading backend, billing, or storage credentials - are HPKE-encrypted to this server too. Routine reads and settings use TLS, your passkey, and proof-of-possession. | في لوحة تحكم المسؤول، تُشفّر الإجراءات الحساسة - مثل إنشاء رموز API، ودعوات المستخدمين، ورموز العضوية، وتحميل بيانات اعتماد الواجهة الخلفية، والفواتير، والتخزين - باستخدام بروتوكول HPKE على هذا الخادم أيضًا. أما عمليات القراءة والإعدادات الروتينية فتستخدم بروتوكول TLS، وكلمة المرور الخاصة بك، وإثبات الملكية. |
+| `hpke.fingerprintsHeading` | Key fingerprints | بصمات المفاتيح |
+| `hpke.fpHpke` | Server key (HPKE / X-Wing) | مفتاح الخادم (HPKE / X-Wing) |
+| `hpke.fpKid` | Key id | معرف المفتاح |
+| `hpke.fpManifest` | Manifest key (Ed25519) | مفتاح البيان (Ed25519) |
+| `hpke.fpManifestPq` | Manifest key (ML-DSA-65, post-quantum) | مفتاح البيان (ML-DSA-65، ما بعد الكم) |
+| `hpke.fpSuite` | Cipher suite | مجموعة التشفير |
+| `hpke.copy` | Copy | ينسخ |
+| `hpke.copied` | Copied | تم النسخ |
+| `hpke.attestationHeading` | Live server attestation | مصادقة الخادم المباشر |
+| `hpke.attestationOk` | Verified - the server is attesting a valid key signed by the manifest key your app trusts. | تم التحقق - يقوم الخادم بالتصديق على مفتاح صالح موقع بواسطة مفتاح البيان الذي يثق به تطبيقك. |
+| `hpke.attestationEpoch` | Current key {kid}, expires {expiry}. | المفتاح الحالي {kid} , تنتهي صلاحيته {expiry} . |
+| `hpke.attestationFail` | Could not verify the server's current key - a network problem, or a CDN tampering with the key endpoint. Verify out-of-band before continuing. | تعذر التحقق من مفتاح الخادم الحالي - إما بسبب مشكلة في الشبكة، أو بسبب تلاعب شبكة توصيل المحتوى (CDN) بنقطة نهاية المفتاح. يرجى التحقق من المفتاح خارج النطاق قبل المتابعة. |
+| `hpke.attestationUnreachable` | The live key check is temporarily unavailable. Your connection still uses the verified key built into the app. | خاصية التحقق من المفتاح المباشر غير متاحة مؤقتًا. لا يزال اتصالك يستخدم المفتاح المُتحقق منه والمدمج في التطبيق. |
+| `hpke.attestationStale` | The server isn't publishing a current rotating key right now, so your connection is using the verified key built into the app. Nothing here suggests tampering. | ⚠️ **MISSING** |
+| `hpke.attestationUnconfigured` | Live key checking isn't set up on this build. | لم يتم إعداد خاصية التحقق المباشر من المفاتيح في هذه النسخة. |
+| `hpke.compareHeading` | How to verify | كيفية التحقق |
+| `hpke.compareBody` | Compare the fingerprints above against the values published through a channel this server doesn't control. They must match. | قارن البصمات المذكورة أعلاه بالقيم المنشورة عبر قناة لا يتحكم بها هذا الخادم. يجب أن تتطابق. |
+| `hpke.channelRelease` | Signed release notes | ملاحظات الإفراج الموقعة |
+| `hpke.channelSource` | Source code (rebuild to compare) | شفرة المصدر (أعد بناءها للمقارنة) |
+| `hpke.channelOnion` | Tor mirror | مرآة تور |
+| `hpke.dnsHeading` | Verify via DNS | التحقق عبر نظام أسماء النطاقات (DNS) |
+| `hpke.dnsBody` | Look the pin up yourself in a terminal, through your own DNS resolver - a path that doesn't run through this site or its CDN. The answer should contain the same fingerprints shown above. (If it returns nothing, the operator may not have published the record yet; use the signed release instead.) | ابحث عن رمز التعريف بنفسك في سطر الأوامر، عبر خادم DNS الخاص بك - مسار لا يمر عبر هذا الموقع أو شبكة توصيل المحتوى الخاصة به. يجب أن تحتوي الإجابة على نفس بصمات الأصابع الموضحة أعلاه. (إذا لم تُظهر أي نتيجة، فقد لا يكون المشغل قد نشر السجل بعد؛ استخدم الإصدار الموقّع بدلاً من ذلك.) |
+| `hpke.dnsCommand` | Run this in a terminal | قم بتشغيل هذا الأمر في نافذة طرفية. |
+| `hpke.dnsExpected` | It should return | ينبغي أن يعود |
+| `hpke.dnsCaveat` | Independent only if your DNS isn't run by the same company as the CDN; a DNSSEC-validating resolver is best. For full assurance, confirm the same values in the signed release too. | مستقل فقط إذا لم تكن خدمة نظام أسماء النطاقات (DNS) مُدارة من قِبل نفس الشركة التي تُدير شبكة توصيل المحتوى (CDN)؛ ويُفضّل استخدام مُحلِّل أسماء نطاقات يدعم التحقق من صحة DNSSEC. ولضمان كامل، تأكد من صحة القيم نفسها في الإصدار المُوقَّع أيضًا. |
+| `hpke.verifierExtension` | A verifier browser extension that re-checks this build on every visit is planned, but not available yet. | من المخطط إطلاق إضافة متصفح للتحقق تعيد فحص هذا الإصدار في كل زيارة، ولكنها غير متاحة بعد. |
+| `hpke.verifierExtensionInstall` | Install the verifier extension - it re-checks this build against the published one on every visit (the strongest protection against a tampered page). | قم بتثبيت ملحق التحقق - فهو يعيد فحص هذا الإصدار مقابل الإصدار المنشور في كل زيارة (أقوى حماية ضد التلاعب بالصفحة). |
+| `hpke.caveat` | This in-page check is a convenience. A tampered page could lie about its own status, so the real proof comes from comparing these values somewhere outside this server, such as the DNS lookup above or a published release. | يُعدّ هذا الفحص داخل الصفحة إجراءً مُريحًا. قد تُضلل الصفحة المُعدّلة بشأن حالتها، لذا فإنّ الدليل الحقيقي يأتي من مُقارنة هذه القيم في مكانٍ خارج هذا الخادم، مثل البحث في نظام أسماء النطاقات (DNS) المذكور أعلاه أو إصدارٍ منشور. |
+| `hpke.close` | Close | يغلق |
 
 ## `deviceRevoke` — The disconnect-a-device confirmation dialog.
 
@@ -1027,7 +965,7 @@ review.
 | `switchServer.failed` | Could not move your key | ⚠️ **MISSING** |
 | `switchServer.vsNewKey` | If the subscription URL itself stopped working everywhere, or you think someone else has it, use "Create a new key" instead - that replaces the URL. | ⚠️ **MISSING** |
 
-## `report` — Miscellaneous strings. *(16 missing)*
+## `report` — Miscellaneous strings. *(17 missing)*
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
@@ -1041,6 +979,7 @@ review.
 | `report.reasonBlockedSite` | A site or app won't load through the VPN | ⚠️ **MISSING** |
 | `report.reasonAppProblem` | The VPN app itself is giving me trouble | ⚠️ **MISSING** |
 | `report.reasonOther` | Something else | ⚠️ **MISSING** |
+| `report.tellUsMore` | Need to tell us more? Email us: | ⚠️ **MISSING** |
 | `report.nothingChanges` | Reporting changes nothing on your account. If you need a fix right now, try "Switch server" or "Create a new key". | ⚠️ **MISSING** |
 | `report.confirm` | Send report | ⚠️ **MISSING** |
 | `report.working` | Sending… | ⚠️ **MISSING** |
@@ -1053,9 +992,9 @@ review.
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
 | `telemetry.sendLabel` | Include connection details | ⚠️ **MISSING** |
-| `telemetry.sendExplainer` | Only the values shown below are sent. They are not tied to your account, and your IP address is never included. | ⚠️ **MISSING** |
+| `telemetry.sendExplainer` | This helps us see patterns, like one network or region blocking us. Only the values shown below are sent. They are not tied to your account, and your IP address is never included. | ⚠️ **MISSING** |
 | `telemetry.countryLabel` | Country | ⚠️ **MISSING** |
 | `telemetry.cityLabel` | City | ⚠️ **MISSING** |
-| `telemetry.asnLabel` | Network provider (ASN) | ⚠️ **MISSING** |
+| `telemetry.asnLabel` | Network (ASN) | ⚠️ **MISSING** |
 | `telemetry.notSet` | Not set | ⚠️ **MISSING** |
 | `telemetry.editHint` | Check these before sending. If you are connected to FreeSocks right now, they may show our server's network instead of yours. Fix anything that looks wrong, or clear it. | ⚠️ **MISSING** |

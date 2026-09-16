@@ -5,13 +5,13 @@
  *
  * RUNTIME: this module performs the HPKE key schedule, which needs subtle HKDF.
  * The Convex DEFAULT V8 isolate does NOT implement subtle HKDF, so on the server
- * this runs ONLY inside the "use node" action (convex/lib/e2eeCrypto.ts). In the
+ * this runs ONLY inside the "use node" action (convex/lib/hpkeCrypto.ts). In the
  * browser it runs natively (full WebCrypto). Never import this from an isolate
  * query/mutation/httpAction; import ./envelope.ts there instead.
  *
  * The server static private key is stored and reconstructed as a 32-byte X-Wing
  * SEED (generateKeyPairDerand), never a separately cached expanded ML-KEM key
- * (see docs/e2ee-phase0-spike.md and the X-Wing draft binding caveat).
+ * (see docs/hpke-phase0-spike.md and the X-Wing draft binding caveat).
  */
 import { CipherSuite, HkdfSha256 } from '@hpke/core';
 import { XWing } from '@hpke/hybridkem-x-wing';

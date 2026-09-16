@@ -4,16 +4,16 @@ import { augmentLoginBody, captureSessionToken, signedHeaders } from './pop';
 
 /**
  * CDN-blinding sealing is OFF unless the server HPKE pin is baked at build
- * (the dark default). The whole e2ee module - and its heavy @hpke/@noble crypto
+ * (the dark default). The whole hpke module - and its heavy @hpke/@noble crypto
  * - is therefore LAZY-IMPORTED only when enabled: in a dark build this is a
  * compile-time `false`, so the dynamic import (and the crypto chunk) is dropped
  * from the bundle entirely; in an enabled build it's a separate chunk fetched on
  * the first sealed request. (PoP signing stays static - it's a thin worker RPC.)
  */
-const E2EE_ENABLED =
+const HPKE_ENABLED =
   !!import.meta.env.VITE_FS_SERVER_HPKE_PK && !!import.meta.env.VITE_FS_SERVER_HPKE_KID;
-let _e2ee: Promise<typeof import('./e2ee')> | null = null;
-const loadE2ee = () => (_e2ee ??= import('./e2ee'));
+let _hpke: Promise<typeof import('./hpke')> | null = null;
+const loadHpke = () => (_hpke ??= import('./hpke'));
 
 /**
  * Coerce ANY error body into our `{ error: { code, message } }` envelope so
@@ -59,8 +59,8 @@ async function request<S extends z.ZodTypeAny>(
   // CDN-blinding: seal the request body and/or set up to open a sealed response,
   // per the route policy. No-op (undefined) for non-sealed routes or when sealing
   // isn't baked in (then everything stays plaintext, dual-mode).
-  const seal = E2EE_ENABLED
-    ? await (await loadE2ee()).prepareOutbound(path, method, outBodyStr)
+  const seal = HPKE_ENABLED
+    ? await (await loadHpke()).prepareOutbound(path, method, outBodyStr)
     : undefined;
 
   const headers: Record<string, string> = {
@@ -104,7 +104,7 @@ async function request<S extends z.ZodTypeAny>(
   if (!res.ok) {
     throw new ApiCallError(res.status, json);
   }
-  if (seal) json = await (await loadE2ee()).openInbound(seal, path, method, json);
+  if (seal) json = await (await loadHpke()).openInbound(seal, path, method, json);
   // PoP sid-binding: a member login / account-create response carries the public
   // per-session token; persist it (no-op for every other route) before parsing.
   captureSessionToken(path, method, json);

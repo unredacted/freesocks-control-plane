@@ -35,7 +35,7 @@ export function json(data: unknown, status = 200, headers: Record<string, string
   // IS the proxy key; /account is the credential surface) and must never land
   // in a shared/intermediary cache if the fronting topology ever changes.
   // Routes that are genuinely cacheable override via `headers` (the spread
-  // wins — e.g. /api/v1/e2ee/keys sets 'cache-control: public, max-age=60').
+  // wins — e.g. /api/v1/hpke/keys sets 'cache-control: public, max-age=60').
   return new Response(JSON.stringify(data), {
     status,
     // nosniff everywhere (the shipped Caddyfile sets hardening headers at the
@@ -120,7 +120,7 @@ export async function readJson<T = Record<string, unknown>>(
  * readJson/readBodyTextCapped) into the 413 envelope, and any UNCAUGHT handler
  * error into a generic 500 envelope (Review B-F9: routes without a handler-level
  * catch otherwise surface runtime 500 text — internal detail, if not secrets).
- * Sealed routes get the same mapping inside lib/e2ee.sealed(), which reads the
+ * Sealed routes get the same mapping inside lib/hpke.sealed(), which reads the
  * wire body itself.
  */
 export function guard(handler: (ctx: ActionCtx, req: Request) => Promise<Response>) {

@@ -1,12 +1,12 @@
 <script lang="ts">
   import Link from './components/Link.svelte';
   import AppHeader from './components/AppHeader.svelte';
-  import E2eeAlert from './components/E2eeAlert.svelte';
+  import HpkeAlert from './components/HpkeAlert.svelte';
   import SiteBanner from './components/SiteBanner.svelte';
   import FooterRepoLink from './components/FooterRepoLink.svelte';
   import FooterDonateLink from './components/FooterDonateLink.svelte';
-  import E2eeVerifyModal from './components/E2eeVerifyModal.svelte';
-  import { e2eeSession } from './lib/e2ee-status.svelte';
+  import HpkeVerifyModal from './components/HpkeVerifyModal.svelte';
+  import { hpkeSession } from './lib/hpke-status.svelte';
   import PopWarm from './components/PopWarm.svelte';
   import ThemeSync from './components/ThemeSync.svelte';
   import PageviewBeacon from './components/PageviewBeacon.svelte';
@@ -49,8 +49,8 @@
   const isDev = import.meta.env.DEV;
 
   // Compile-time gate (Vite inlines it) so a dark build tree-shakes the verify
-  // modal and never pulls the e2ee chunk through it.
-  const E2EE_ENABLED =
+  // modal and never pulls the hpke chunk through it.
+  const HPKE_ENABLED =
     !!import.meta.env.VITE_FS_SERVER_HPKE_PK && !!import.meta.env.VITE_FS_SERVER_HPKE_KID;
 
   // Per-route document titles (localized, reactive to locale changes) so
@@ -108,13 +108,13 @@
       >
         {t('app.skipToContent')}
       </a>
-      <!-- E2EE attestation-failure escalation: a loud bar shown ONLY when the live
-           key check fails (the quiet steady-state signal is the <E2eeBadge/> in the
+      <!-- HPKE attestation-failure escalation: a loud bar shown ONLY when the live
+           key check fails (the quiet steady-state signal is the <HpkeBadge/> in the
            header / admin sidebar). Above the route chrome, outside the {#key} remount
            wrapper so it doesn't re-fade on navigation; covers member + admin. -->
-      <E2eeAlert />
-      {#if E2EE_ENABLED}
-        <E2eeVerifyModal bind:open={e2eeSession.verifyOpen} />
+      <HpkeAlert />
+      {#if HPKE_ENABLED}
+        <HpkeVerifyModal bind:open={hpkeSession.verifyOpen} />
       {/if}
       <!-- Admin-configurable announcement bar. Member-facing only (the CMS has its
            own chrome); an end-user broadcast has no place inside the admin UI. -->

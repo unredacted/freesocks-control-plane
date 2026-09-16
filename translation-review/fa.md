@@ -1,7 +1,7 @@
 # FreeSocks translation review — Persian (فارسی)
 
 Generated from `messages/en.json` (source of truth) vs `messages/fa.json`.
-**115 of 846 strings are missing** (the app currently shows English for
+**144 of 785 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -195,7 +195,7 @@ review.
 | `passkey.signInFailed` | Passkey sign-in failed | ورود با کلید عبور ناموفق بود |
 | `passkey.notNow` | Not now | فعلاً نه |
 
-## `account` — The signed-in /account dashboard: connection, membership, codes, security tabs. *(1 missing)*
+## `account` — The signed-in /account dashboard: connection, membership, codes, security tabs. *(4 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
@@ -233,6 +233,9 @@ review.
 | `account.membershipNudge.body` | Unlimited bandwidth and devices. | پهنای باند و دستگاه‌های نامحدود. |
 | `account.membershipNudge.bodyNoDevices` | Unlimited bandwidth. | پهنای باند نامحدود. |
 | `account.membershipNudge.cta` | View membership | مشاهده عضویت |
+| `account.map.title` | Where your key lives | ⚠️ **MISSING** |
+| `account.map.network` | One of {count} FreeSocks locations | ⚠️ **MISSING** |
+| `account.map.aria` | Globe of FreeSocks server locations, highlighting yours | ⚠️ **MISSING** |
 | `account.tab.connection` | Connection | اتصال |
 | `account.tab.membership` | Membership | عضویت |
 | `account.tab.gifts` | Gifts & referrals | هدیه و معرفی |
@@ -268,7 +271,7 @@ review.
 | `account.deviceRevokedBody` | The slot is free. That device loses access until it re-imports your subscription. | اسلات خالی است. آن دستگاه تا زمانی که اشتراک شما را دوباره وارد نکند، دسترسی خود را از دست می‌دهد. |
 | `account.deviceRevokeFailedTitle` | Couldn't revoke the device | نتوانستم دستگاه را باطل کنم |
 
-## `hero` — The subscription panel: the key/URL block, traffic + expiry stats, QR, status callouts. *(3 missing)*
+## `hero` — The subscription panel: the key/URL block, traffic + expiry stats, QR, status callouts. *(5 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
@@ -315,6 +318,8 @@ review.
 | `hero.nodeOffline` | Node offline | گره آفلاین است |
 | `hero.nodeUnknown` | Node status unknown | وضعیت گره نامشخص است |
 | `hero.nodeStatusLink` | Network status | وضعیت شبکه |
+| `hero.relayRefreshSuggested` | New connection details are available. Update this subscription in your app to keep connecting. | ⚠️ **MISSING** |
+| `hero.relayConnections` | Connections in your config: | ⚠️ **MISSING** |
 | `hero.nodeOnlineHint` | The server behind your config is up and responding. If you still can't connect, your network or ISP is likely filtering it - try another connection mode or location. | سرور پشت پیکربندی شما روشن است و پاسخ می‌دهد. اگر هنوز وصل نمی‌شوید، احتمالاً شبکه یا ارائه‌دهندهٔ اینترنت شما آن را فیلتر می‌کند - حالت اتصال یا مکان دیگری را امتحان کنید. |
 | `hero.nodeOfflineBody` | The server behind your config is currently offline. This is on our side, not your network. Try again in a few minutes, or create a new config (optionally in a different location). | سرور پشت پیکربندی شما فعلاً آفلاین است. این مشکل از سمت ماست، نه شبکهٔ شما. چند دقیقهٔ دیگر دوباره امتحان کنید، یا یک پیکربندی جدید بسازید (در صورت تمایل در مکانی دیگر). |
 | `hero.keyLimited` | You've used all your data for this period. It resets automatically, or you can upgrade for more. | شما تمام داده‌های خود را برای این مدت استفاده کرده‌اید. به‌طور خودکار بازنشانی می‌شود، یا می‌توانید برای اطلاعات بیشتر ارتقا دهید. |
@@ -634,7 +639,7 @@ review.
 | `error.noOtherServer` | There is no other server available right now. Please try again later. | ⚠️ **MISSING** |
 | `error.switchServerUnsupported` | Switching servers is not available for this key. | ⚠️ **MISSING** |
 
-## `setup` — The "set up your app" section: recommended VPN clients per platform, install steps.
+## `setup` — The "set up your app" section: recommended VPN clients per platform, install steps. *(2 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
@@ -642,6 +647,8 @@ review.
 | `setup.install` | Install | نصب |
 | `setup.noApps` | No recommended apps for this platform yet - use any compatible client and add your subscription manually. | هنوز برنامهٔ پیشنهادی برای این پلتفرم نیست - از هر کلاینت سازگاری استفاده کنید و اشتراک خود را دستی اضافه کنید. |
 | `setup.openSource` | Open source | متن‌باز |
+| `setup.ipv6Works` | IPv6 ready | ⚠️ **MISSING** |
+| `setup.ipv4Only` | IPv4 only | ⚠️ **MISSING** |
 | `setup.recommended` | Recommended | پیشنهادی |
 | `setup.proprietary` | Proprietary | اختصاصی |
 | `setup.easeEasy` | Easy to use | آسان برای استفاده |
@@ -754,7 +761,7 @@ review.
 | `delivery.switchFailedTitle` | Could not switch mode | ⚠️ **MISSING** |
 | `delivery.detailsToggle` | More details | ⚠️ **MISSING** |
 
-## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(3 missing)*
+## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(24 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
@@ -767,86 +774,17 @@ review.
 | `home.network.srOffline` | offline | آفلاین |
 | `home.network.note` | Checked every 10 minutes | هر ۱۰ دقیقه بررسی می‌شود |
 | `home.network.link` | Live status | وضعیت زنده |
-| `home.quicknav.label` | Jump to a section | پرش به یک بخش |
-| `home.quicknav.privacy` | What we store | آنچه ذخیره می‌کنیم |
-| `home.quicknav.threat` | Threat model | مدل تهدید |
-| `home.quicknav.faq` | FAQ | سوالات متداول |
-| `home.quicknav.impact` | Donation impact | اثر کمک‌های مالی |
-| `home.sections.features` | Features | ویژگی‌ها |
 | `home.sections.privacy` | Privacy | حریم خصوصی |
 | `home.sections.how` | Getting started | شروع به کار |
 | `home.sections.membership` | Membership | عضویت |
-| `home.sections.impact` | Impact | اثر |
 | `home.sections.faq` | FAQ | سوالات متداول |
 | `home.sections.about` | About | درباره |
-| `home.sections.globe` | The map | نقشه |
-| `home.globe.title` | Voices from behind the firewall | صداهایی از پشت دیوار آتشین |
-| `home.globe.body` | Every day, people behind national firewalls use FreeSocks to read, share, and publish - and to be heard. | هر روز مردم پشت دیوارهای آتشین ملی با FreeSocks می‌خوانند، به اشتراک می‌گذارند، منتشر می‌کنند — و شنیده می‌شوند. |
-| `home.globe.aria` | A rotating globe: labels with voices from censored countries | کره‌ای چرخان: برچسب‌هایی با صداهایی از کشورهای سانسورشده |
-| `home.globe.voices.ir.place` | Tehran, Iran | تهران، ایران |
-| `home.globe.voices.ir.l1` | They filter the internet; they can't filter the truth. | اینترنت را فیلتر می‌کنند؛ حقیقت را نمی‌توانند فیلتر کنند. |
-| `home.globe.voices.ir.l2` | My report on the protests reached the world. | گزارش من دربارهٔ اعتراض‌ها به جهان رسید. |
-| `home.globe.voices.ir.l3` | My students read what the state calls lies. | شاگردانم آنچه را دولت دروغ می‌خواند می‌خوانند. |
-| `home.globe.voices.cn.place` | Beijing, China | پکن، چین |
-| `home.globe.voices.cn.l1` | History should not be a banned word. | تاریخ نباید کلمه‌ای ممنوع باشد. |
-| `home.globe.voices.cn.l2` | I shared what happened in my city - and it stayed up. | آنچه در شهرم گذشت را به اشتراک گذاشتم — و باقی ماند. |
-| `home.globe.voices.cn.l3` | I archived the deleted posts before they vanished. | پست‌های حذف‌شده را پیش از نابودیشان بایگانی کردم. |
-| `home.globe.voices.ru.place` | Moscow, Russia | مسکو، روسیه |
-| `home.globe.voices.ru.l1` | The truth should not need a permit. | حقیقت نباید به مجوز نیاز داشته باشد. |
-| `home.globe.voices.ru.l2` | Independent journalism is not a crime. | روزنامه‌نگاری مستقل جرم نیست. |
-| `home.globe.voices.ru.l3` | A blocked newspaper still gets read. | روزنامهٔ مسدودشده همچنان خوانده می‌شود. |
-| `home.globe.voices.tm.place` | Ashgabat, Turkmenistan | عشق‌آباد، ترکمنستان |
-| `home.globe.voices.tm.l1` | A whole country, almost offline - and still heard. | یک کشور کامل، تقریباً آفلاین — و با این حال شنیده‌شده. |
-| `home.globe.voices.tm.l2` | They control the media, not my voice. | رسانه‌ها را کنترل می‌کنند، نه صدایم را. |
-| `home.globe.voices.tm.l3` | Silence is the law here; we whisper anyway. | سکوت این‌جا قانون است؛ ما با این حال پچ‌پچ می‌کنیم. |
-| `home.globe.voices.cu.place` | Havana, Cuba | هاوانا، کوبا |
-| `home.globe.voices.cu.l1` | My voice travels farther than I ever will. | صدای من خیلی دورتر از خودم می‌رسد. |
-| `home.globe.voices.cu.l2` | We document what the state denies. | آنچه دولت انکار می‌کند را ثبت می‌کنیم. |
-| `home.globe.voices.cu.l3` | Independent voices, hand to hand, screen to screen. | صداهای مستقل، دست به دست، صفحه به صفحه. |
-| `home.globe.voices.by.place` | Minsk, Belarus | مینسک، بلاروس |
-| `home.globe.voices.by.l1` | When they shut us down, we still spoke. | وقتی خاموشمان کردند، باز هم سخن گفتیم. |
-| `home.globe.voices.by.l2` | Free elections are not extremism. | انتخابات آزاد افراطی‌گری نیست. |
-| `home.globe.voices.by.l3` | They banned our flag; not our voice. | پرچممان را ممنوع کردند؛ صدایمان را نه. |
-| `home.globe.voices.mm.place` | Yangon, Myanmar | یانگون، میانمار |
-| `home.globe.voices.mm.l1` | The blackout did not silence us. | قطعی اینترنت ساکتمان نکرد. |
-| `home.globe.voices.mm.l2` | Evidence of the crackdown got out. | شواهد سرکوب بیرون رفت. |
-| `home.globe.voices.mm.l3` | When the towers fell silent, the story did not. | وقتی برج‌ها خاموش شدند، قصه خاموش نشد. |
-| `home.globe.voices.ve.place` | Caracas, Venezuela | کاراکاس، ونزوئلا |
-| `home.globe.voices.ve.l1` | We count the votes they won't. | رأی‌هایی را می‌شماریم که آن‌ها نمی‌شمارند. |
-| `home.globe.voices.ve.l2` | Hunger is not a state secret. | گرسنگی راز دولتی نیست. |
-| `home.globe.voices.ve.l3` | The queue for food is long; the truth is longer. | صف نان طولانی است؛ حقیقت طولانی‌تر. |
-| `home.globe.voices.vn.place` | Hanoi, Vietnam | هانوی، ویتنام |
-| `home.globe.voices.vn.l1` | Writing about corruption is not a crime. | نوشتن دربارهٔ فساد جرم نیست. |
-| `home.globe.voices.vn.l2` | My blog outlived the block. | وبلاگم از مسدودیت جان سالم به در برد. |
-| `home.globe.voices.vn.l3` | One article they deleted reached thousands. | همان یک مقاله‌ای که حذف کردند به هزاران نفر رسید. |
-| `home.globe.voices.pk.place` | Karachi, Pakistan | کراچی، پاکستان |
-| `home.globe.voices.pk.l1` | During the shutdown, witnesses still spoke. | در زمان قطعی، شاهدان همچنان سخن گفتند. |
-| `home.globe.voices.pk.l2` | Silencing journalists won't hide the story. | ساکت‌کردن روزنامه‌نگاران خبر را پنهان نمی‌کند. |
-| `home.globe.voices.pk.l3` | The channel went dark; the reporting did not. | شبکه تاریک شد؛ خبرنگاری نشد. |
-| `home.globe.voices.eg.place` | Cairo, Egypt | قاهره، مصر |
-| `home.globe.voices.eg.l1` | They jailed the bloggers, not the words. | وبلاگ‌نویسان را زندانی کردند، نه کلمات را. |
-| `home.globe.voices.eg.l2` | The protest was documented anyway. | اعتراض به هر حال ثبت شد. |
-| `home.globe.voices.eg.l3` | From a small screen, a big story. | از یک صفحهٔ کوچک، قصه‌ای بزرگ. |
-| `home.globe.voices.sa.place` | Riyadh, Saudi Arabia | ریاض، عربستان سعودی |
-| `home.globe.voices.sa.l1` | Speaking is not a crime. | حرف زدن جرم نیست. |
-| `home.globe.voices.sa.l2` | Her voice reached beyond the wall. | صدای او از پس دیوار بیرون رفت. |
-| `home.globe.voices.sa.l3` | She asked a question the kingdom bans. | او پرسشی پرسید که پادشاهی ممنوع می‌کند. |
-| `home.globe.voices.et.place` | Addis Ababa, Ethiopia | آدیس‌آبابا، اتیوپی |
-| `home.globe.voices.et.l1` | The shutdown hid nothing. | قطعی اینترنت هیچ‌چیز را پنهان نکرد. |
-| `home.globe.voices.et.l2` | Witnesses still found a way out. | شاهدان باز هم راهی بیرون پیدا کردند. |
-| `home.globe.voices.et.l3` | The dead were counted, despite the blackout. | کشته‌ها شمرده شدند، با وجود قطعی. |
-| `home.globe.voices.tr.place` | Istanbul, Turkey | استانبول، ترکیه |
-| `home.globe.voices.tr.l1` | Blocking the site won't block the story. | مسدودکردن سایت، خبر را مسدود نمی‌کند. |
-| `home.globe.voices.tr.l2` | Journalism continues, court order or not. | روزنامه‌نگاری ادامه دارد، با حکم دادگاه هم. |
-| `home.globe.voices.tr.l3` | An arrested anchor cannot sign off the news. | مجری دستگیرشده نمی‌تواند خبر را تمام کند. |
-| `home.globe.voices.az.place` | Baku, Azerbaijan | باکو، آذربایجان |
-| `home.globe.voices.az.l1` | They call reporting extremism. | آن‌ها به گزارش‌گری می‌گویند افراطی‌گری. |
-| `home.globe.voices.az.l2` | The investigation was published anyway. | تحقیق به هر حال منتشر شد. |
-| `home.globe.voices.az.l3` | They froze our accounts, not our work. | حساب‌هایمان را مسدود کردند، نه کارمان را. |
-| `home.globe.voices.uz.place` | Tashkent, Uzbekistan | تاشکند، ازبکستان |
-| `home.globe.voices.uz.l1` | A closed internet is not a quiet one. | اینترنت بسته، اینترنت ساکتی نیست. |
-| `home.globe.voices.uz.l2` | The world still heard what happened here. | جهان باز هم شنید که این‌جا چه گذشت. |
-| `home.globe.voices.uz.l3` | The squares are watched; the words still move. | میدان‌ها تحت نظرند؛ کلمات با این حال می‌گردند. |
+| `home.sections.globe` | The network | ⚠️ **MISSING** |
+| `home.globe.title` | A real network, shown live | ⚠️ **MISSING** |
+| `home.globe.body` | The green markers are FreeSocks server locations, taken straight from the live network status. The amber marks are some of the regions where the internet is heavily censored and where FreeSocks is built to reach. | ⚠️ **MISSING** |
+| `home.globe.aria` | A rotating globe showing FreeSocks server locations and censored regions | ⚠️ **MISSING** |
+| `home.globe.legendServers` | Server location | ⚠️ **MISSING** |
+| `home.globe.legendRegions` | Censored region | ⚠️ **MISSING** |
 | `home.impact.title` | Donations at work | کمک‌های مالی در حال کار |
 | `home.impact.body` | Every donation made through FreeSocks raises the bandwidth of every free account for at least the next {days} days. This is what donors have added so far - you could add to it too. | هر کمک مالی که از طریق فری‌ساکس انجام شود، پهنای باند ماهانهٔ هر حساب رایگان را برای همان ماه افزایش می‌دهد. این چیزی است که اهداکنندگان تا الان اضافه کرده‌اند - شما هم می‌توانید به آن اضافه کنید. |
 | `home.impact.cta` | Make a donation | کمک مالی کنید |
@@ -867,17 +805,6 @@ review.
 | `home.freeCard.noAuthTitle` | No email or password | بدون ایمیل یا رمز عبور |
 | `home.freeCard.noAuthBody` | One human-check. Save your account number to sign in. No email collected. | یک بررسی انسانی. شماره حساب خود را برای ورود ذخیره کنید. هیچ ایمیلی جمع‌آوری نمی‌شود. |
 | `home.freeCard.footnote` | Numbers reflect the current free-tier configuration. Solve the check to get yours. | اعداد نشان‌دهنده‌ی پیکربندی فعلیِ ردیف آزاد هستند. برای دریافت چک، آن را حل کنید. |
-| `home.freeCard.upsellTitle` | Want unlimited? | نامحدود میخوای؟ |
-| `home.freeCard.upsellBody` | Get {limits} - and help keep FreeSocks free for others. | دریافت کنید {limits} - و به رایگان نگه داشتن FreeSocks برای دیگران کمک کنید. |
-| `home.freeCard.fromPerMonth` | from {price}/mo | از {price} /mo |
-| `home.freeCard.cryptoNote` | Crypto accepted - Bitcoin, Monero, Zcash and more | رمزارز پذیرفته می‌شود - بیت‌کوین، مونرو، زی‌کش و بیشتر |
-| `home.features.title` | What FreeSocks is | فری‌ساکس چیست؟ |
-| `home.features.noAuth.title` | No email or password | بدون ایمیل یا رمز عبور |
-| `home.features.noAuth.body` | One human-check and you are in. We mint a 32-digit account number you save to sign back in. No email collected. | با یک بررسی انسانی، حساب شما فعال می‌شود. ما یک شماره حساب ۳۲ رقمی ایجاد می‌کنیم که برای ورود مجدد ذخیره می‌کنید. هیچ ایمیلی جمع‌آوری نمی‌شود. |
-| `home.features.mirrors.title` | Mirror URLs | URL های آینه ای |
-| `home.features.mirrors.body` | Subscriptions are mirrored across multiple providers so a single block does not cut you off. | اشتراک‌ها در چندین ارائه‌دهنده منعکس می‌شوند، بنابراین یک بلوک واحد شما را از دسترسی محروم نمی‌کند. |
-| `home.features.protocols.title` | Standard protocols | پروتکل‌های استاندارد |
-| `home.features.protocols.body` | Xray-powered VLESS. Works in most VPN clients. | Xray-powered VLESS. Works in most VPN clients. |
 | `home.privacy.title` | What we store | آنچه ما ذخیره می‌کنیم |
 | `home.privacy.subtitle` | FreeSocks is built to know as little about you as possible. | FreeSocks طوری ساخته شده که تا حد امکان اطلاعات کمی در مورد شما داشته باشد. |
 | `home.privacy.point1` | We store only a hashed version of your account number - never the number itself. | ما فقط یک نسخه هش شده از شماره حساب شما را ذخیره می‌کنیم - هرگز خود شماره را ذخیره نمی‌کنیم. |
@@ -901,67 +828,78 @@ review.
 | `home.about.bodySuffix` | , a US 501(c)(3) nonprofit. | ، یک سازمان غیرانتفاعی 501(c)(3) آمریکایی. |
 | `home.about.body2` | Most VPNs assume you can pay for a subscription and safely hand over an email address. In much of the world neither is true, so FreeSocks asks for neither. Anyone can get a working key in about a minute and keep it for as long as they use it. | بیشتر VPNها فرض می‌کنند می‌توانید برای اشتراک پول بدهید و بی‌خطر یک آدرس ایمیل تحویل دهید. در بیشتر جهان هیچ‌کدام درست نیست، پس فری‌ساکس هیچ‌کدام را نمی‌خواهد. هر کسی می‌تواند در حدود یک دقیقه یک کلید کارکرده بگیرد و تا وقتی از آن استفاده می‌کند نگهش دارد. |
 | `home.about.siteLink` | unredacted.org | unredacted.org |
-| `home.about.openSource` | The code that runs this service is published for anyone to inspect, audit, or run themselves. | کدی که این سرویس را اجرا می‌کند منتشر شده تا هر کسی بتواند آن را بررسی، حسابرسی یا خودش اجرا کند. |
 | `home.about.viewSourceCta` | View the source | مشاهدهٔ کد منبع |
-| `home.about.fact2Title` | Open source | متن‌باز |
-| `home.about.fact3Title` | Donation funded | با کمک‌های مالی اداره می‌شود |
-| `home.about.fact3Body` | Free accounts are paid for by donations and memberships. There are no ads and nothing is sold. | هزینهٔ حساب‌های رایگان با کمک‌های مالی و عضویت‌ها پرداخت می‌شود. تبلیغاتی نیست و چیزی فروخته نمی‌شود. |
 | `home.limits.unlimitedBoth` | unlimited bandwidth and devices | پهنای باند و دستگاه‌های نامحدود |
 | `home.limits.unlimitedBandwidth` | unlimited bandwidth | پهنای باند نامحدود |
 | `home.limits.unlimitedDevices` | unlimited devices | دستگاه‌های نامحدود |
 | `home.limits.bandwidthAndDevices` | {bandwidth} and {devices} | {bandwidth} و {devices} |
 | `home.limits.upToDevices [countPlural=one]` | up to 1 device | تا ۱ دستگاه |
 | `home.limits.upToDevices [countPlural=other]` | up to {count} devices | تا {count} دستگاه |
+| `home.flow.title` | Who sees what | ⚠️ **MISSING** |
+| `home.flow.subtitle` | Here is the path your traffic takes, and what each stop on the way can actually learn. | ⚠️ **MISSING** |
+| `home.flow.youName` | Your device | ⚠️ **MISSING** |
+| `home.flow.youSees` | Your apps and your data live here. Traffic is encrypted on the device before it goes anywhere. | ⚠️ **MISSING** |
+| `home.flow.ispName` | Your ISP | ⚠️ **MISSING** |
+| `home.flow.ispSees` | Sees encrypted data flowing to a busy CDN or a plain server. Not the sites you visit, and not what you send. | ⚠️ **MISSING** |
+| `home.flow.cdnName` | The CDN | ⚠️ **MISSING** |
+| `home.flow.cdnBadge` | Freedom Mode only | ⚠️ **MISSING** |
+| `home.flow.cdnSees` | Carries your traffic without being able to read it. It can tell you use FreeSocks, and nothing about what you do through it. | ⚠️ **MISSING** |
+| `home.flow.nodeName` | FreeSocks server | ⚠️ **MISSING** |
+| `home.flow.nodeSees` | Hands your traffic to the open internet. No logs are kept, and your key has no identity behind it. | ⚠️ **MISSING** |
+| `home.flow.webName` | Websites you visit | ⚠️ **MISSING** |
+| `home.flow.webSees` | See the FreeSocks server's address instead of yours. | ⚠️ **MISSING** |
+| `home.flow.captionFreedom` | Routes through a large CDN, so your connection looks like ordinary web traffic. | ⚠️ **MISSING** |
+| `home.flow.captionPrivacy` | Skips the CDN and connects you straight to the server. | ⚠️ **MISSING** |
 
-## `e2ee` — The HPKE/E2EE "encrypted to this server" badge + verification panel. *(1 missing)*
+## `hpke` — The HPKE "encrypted to this server" badge + verification panel. *(1 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
-| `e2ee.badgeActiveTitle` | Encrypted to this server with HPKE. Click to verify. | با HPKE در این سرور رمزگذاری شده است. برای تأیید کلیک کنید. |
-| `e2ee.badgeWarnTitle` | Couldn't verify the encryption key. Click to verify out-of-band before entering your account number. | کلید رمزگذاری تأیید نشد. قبل از وارد کردن شماره حساب خود، برای تأیید خارج از باند، کلیک کنید. |
-| `e2ee.badgeActiveTitleAdmin` | Sensitive member and admin actions are HPKE-encrypted on this deployment. Click for details. | اقدامات حساس اعضا و مدیران در این پیاده‌سازی با HPKE رمزگذاری شده‌اند. برای جزئیات بیشتر کلیک کنید. |
-| `e2ee.badgeWarnTitleAdmin` | Couldn't verify this deployment's encryption key. Click for details and out-of-band verification. | کلید رمزگذاری این استقرار تأیید نشد. برای جزئیات و تأیید خارج از باند کلیک کنید. |
-| `e2ee.badgeOff` | TLS | TLS |
-| `e2ee.badgeOffTitle` | Standard TLS only. Extra HPKE body encryption isn't enabled on this deployment. | فقط TLS استاندارد. رمزگذاری بدنه اضافی HPKE در این پیاده‌سازی فعال نیست. |
-| `e2ee.bannerWarn` | Couldn't verify the encryption key | کلید رمزگذاری قابل تأیید نیست |
-| `e2ee.bannerWarnDetail` | Don't enter your account number yet - verify this connection out-of-band first. | هنوز شماره حساب خود را وارد نکنید - ابتدا این اتصال را خارج از باند تأیید کنید. |
-| `e2ee.verify` | Verify | تأیید |
-| `e2ee.verifyTitle` | Verify this connection | این ارتباط را تأیید کنید |
-| `e2ee.verifyIntro` | FreeSocks seals your account number and VPN key to this server with HPKE, so a compromised CDN can't read them. These fingerprints identify the keys your browser is using - compare them against the values published out-of-band to be sure they haven't been swapped. | FreeSocks شماره حساب و کلید پروکسی شما را با HPKE به این سرور متصل می‌کند، بنابراین یک CDN آسیب‌پذیر نمی‌تواند آنها را بخواند. این اثر انگشت‌ها کلیدهایی را که مرورگر شما استفاده می‌کند شناسایی می‌کنند - آنها را با مقادیر منتشر شده خارج از باند مقایسه کنید تا مطمئن شوید که آنها جابجا نشده‌اند. |
-| `e2ee.protectHeading` | What this protects | این از چه چیزی محافظت می‌کند؟ |
-| `e2ee.protectScope` | Your account number and key are encrypted to this server with HPKE, so the network and any CDN in front of it can't read them. | شماره حساب و کلید شما با HPKE برای این سرور رمزگذاری شده‌اند، بنابراین شبکه و هر CDN مقابل آن نمی‌تواند آنها را بخواند. |
-| `e2ee.protectServerReads` | FreeSocks itself can read them to set up your account, so this protects you from the network in between, not from the server. | خود FreeSocks می‌تواند آنها را بخواند تا حساب شما را تنظیم کند، بنابراین این شما را از شبکه بین آنها محافظت می‌کند، نه از سرور. |
-| `e2ee.protectTunnel` | It's separate from your VPN connection, which is encrypted on its own. | این جدا از اتصال VPN شماست که به خودی خود رمزگذاری شده است. |
-| `e2ee.protectAdmin` | On the admin dashboard, sensitive actions - creating API tokens, invites, and membership codes, and uploading backend, billing, or storage credentials - are HPKE-encrypted to this server too. Routine reads and settings use TLS, your passkey, and proof-of-possession. | در داشبورد مدیریت، اقدامات حساس - ایجاد توکن‌های API، دعوت‌نامه‌ها و کدهای عضویت، و آپلود اعتبارنامه‌های backend، صورتحساب یا ذخیره‌سازی - نیز توسط HPKE در این سرور رمزگذاری می‌شوند. خواندن‌ها و تنظیمات معمول از TLS، کلید عبور شما و اثبات مالکیت استفاده می‌کنند. |
-| `e2ee.fingerprintsHeading` | Key fingerprints | اثر انگشت کلید |
-| `e2ee.fpHpke` | Server key (HPKE / X-Wing) | کلید سرور (HPKE / X-Wing) |
-| `e2ee.fpKid` | Key id | شناسه کلید |
-| `e2ee.fpManifest` | Manifest key (Ed25519) | کلید مانیفست (Ed25519) |
-| `e2ee.fpManifestPq` | Manifest key (ML-DSA-65, post-quantum) | کلید مانیفست (ML-DSA-65، پسا کوانتومی) |
-| `e2ee.fpSuite` | Cipher suite | مجموعه رمز |
-| `e2ee.copy` | Copy | کپی |
-| `e2ee.copied` | Copied | کپی شده |
-| `e2ee.attestationHeading` | Live server attestation | تأیید سرور زنده |
-| `e2ee.attestationOk` | Verified - the server is attesting a valid key signed by the manifest key your app trusts. | تأیید شده - سرور در حال تأیید یک کلید معتبر است که توسط کلید مانیفست مورد اعتماد برنامه شما امضا شده است. |
-| `e2ee.attestationEpoch` | Current key {kid}, expires {expiry}. | کلید فعلی {kid} , منقضی می‌شود {expiry} . |
-| `e2ee.attestationFail` | Could not verify the server's current key - a network problem, or a CDN tampering with the key endpoint. Verify out-of-band before continuing. | کلید فعلی سرور تأیید نشد - مشکل شبکه یا دستکاری CDN در نقطه پایانی کلید. قبل از ادامه، خارج از باند تأیید کنید. |
-| `e2ee.attestationUnreachable` | The live key check is temporarily unavailable. Your connection still uses the verified key built into the app. | بررسی کلید زنده موقتاً در دسترس نیست. اتصال شما هنوز از کلید تأیید شده‌ی داخلی برنامه استفاده می‌کند. |
-| `e2ee.attestationStale` | The server isn't publishing a current rotating key right now, so your connection is using the verified key built into the app. Nothing here suggests tampering. | ⚠️ **MISSING** |
-| `e2ee.attestationUnconfigured` | Live key checking isn't set up on this build. | بررسی کلید زنده در این نسخه راه‌اندازی نشده است. |
-| `e2ee.compareHeading` | How to verify | نحوه تأیید |
-| `e2ee.compareBody` | Compare the fingerprints above against the values published through a channel this server doesn't control. They must match. | اثر انگشت‌های بالا را با مقادیر منتشر شده از طریق کانالی که این سرور کنترل نمی‌کند مقایسه کنید. آنها باید مطابقت داشته باشند. |
-| `e2ee.channelRelease` | Signed release notes | یادداشت‌های انتشار امضا شده |
-| `e2ee.channelSource` | Source code (rebuild to compare) | کد منبع (برای مقایسه بازسازی کنید) |
-| `e2ee.channelOnion` | Tor mirror | آینه تور |
-| `e2ee.dnsHeading` | Verify via DNS | از طریق DNS تأیید کنید |
-| `e2ee.dnsBody` | Look the pin up yourself in a terminal, through your own DNS resolver - a path that doesn't run through this site or its CDN. The answer should contain the same fingerprints shown above. (If it returns nothing, the operator may not have published the record yet; use the signed release instead.) | خودتان در ترمینال، از طریق DNS resolver خودتان - مسیری که از این سایت یا CDN آن عبور نمی‌کند - پین را جستجو کنید. پاسخ باید حاوی همان اثر انگشت‌های نشان داده شده در بالا باشد. (اگر چیزی برنگرداند، ممکن است اپراتور هنوز رکورد را منتشر نکرده باشد؛ به جای آن از نسخه امضا شده استفاده کنید.) |
-| `e2ee.dnsCommand` | Run this in a terminal | این را در ترمینال اجرا کنید |
-| `e2ee.dnsExpected` | It should return | باید برگردد. |
-| `e2ee.dnsCaveat` | Independent only if your DNS isn't run by the same company as the CDN; a DNSSEC-validating resolver is best. For full assurance, confirm the same values in the signed release too. | فقط در صورتی مستقل عمل کنید که DNS شما توسط همان شرکت CDN اداره نشود؛ یک تحلیلگر اعتبارسنجی DNSSEC بهترین گزینه است. برای اطمینان کامل، مقادیر مشابه را در نسخه امضا شده نیز تأیید کنید. |
-| `e2ee.verifierExtension` | A verifier browser extension that re-checks this build on every visit is planned, but not available yet. | یک افزونه مرورگر تأییدکننده که این نسخه را در هر بازدید دوباره بررسی کند، برنامه‌ریزی شده است، اما هنوز در دسترس نیست. |
-| `e2ee.verifierExtensionInstall` | Install the verifier extension - it re-checks this build against the published one on every visit (the strongest protection against a tampered page). | افزونه‌ی تأییدکننده را نصب کنید - این افزونه در هر بازدید، این نسخه را با نسخه منتشر شده مقایسه می‌کند (قوی‌ترین محافظت در برابر صفحه‌ی دستکاری‌شده). |
-| `e2ee.caveat` | This in-page check is a convenience. A tampered page could lie about its own status, so the real proof comes from comparing these values somewhere outside this server, such as the DNS lookup above or a published release. | این بررسی درون صفحه‌ای یک مزیت است. یک صفحه دستکاری‌شده می‌تواند در مورد وضعیت خود دروغ بگوید، بنابراین اثبات واقعی از مقایسه این مقادیر در جایی خارج از این سرور، مانند جستجوی DNS در بالا یا یک نسخه منتشر شده، حاصل می‌شود. |
-| `e2ee.close` | Close | بستن |
+| `hpke.badgeActiveTitle` | Encrypted to this server with HPKE. Click to verify. | با HPKE در این سرور رمزگذاری شده است. برای تأیید کلیک کنید. |
+| `hpke.badgeWarnTitle` | Couldn't verify the encryption key. Click to verify out-of-band before entering your account number. | کلید رمزگذاری تأیید نشد. قبل از وارد کردن شماره حساب خود، برای تأیید خارج از باند، کلیک کنید. |
+| `hpke.badgeActiveTitleAdmin` | Sensitive member and admin actions are HPKE-encrypted on this deployment. Click for details. | اقدامات حساس اعضا و مدیران در این پیاده‌سازی با HPKE رمزگذاری شده‌اند. برای جزئیات بیشتر کلیک کنید. |
+| `hpke.badgeWarnTitleAdmin` | Couldn't verify this deployment's encryption key. Click for details and out-of-band verification. | کلید رمزگذاری این استقرار تأیید نشد. برای جزئیات و تأیید خارج از باند کلیک کنید. |
+| `hpke.badgeOff` | TLS | TLS |
+| `hpke.badgeOffTitle` | Standard TLS only. Extra HPKE body encryption isn't enabled on this deployment. | فقط TLS استاندارد. رمزگذاری بدنه اضافی HPKE در این پیاده‌سازی فعال نیست. |
+| `hpke.bannerWarn` | Couldn't verify the encryption key | کلید رمزگذاری قابل تأیید نیست |
+| `hpke.bannerWarnDetail` | Don't enter your account number yet - verify this connection out-of-band first. | هنوز شماره حساب خود را وارد نکنید - ابتدا این اتصال را خارج از باند تأیید کنید. |
+| `hpke.verify` | Verify | تأیید |
+| `hpke.verifyTitle` | Verify this connection | این ارتباط را تأیید کنید |
+| `hpke.verifyIntro` | FreeSocks seals your account number and VPN key to this server with HPKE, so a compromised CDN can't read them. These fingerprints identify the keys your browser is using - compare them against the values published out-of-band to be sure they haven't been swapped. | FreeSocks شماره حساب و کلید پروکسی شما را با HPKE به این سرور متصل می‌کند، بنابراین یک CDN آسیب‌پذیر نمی‌تواند آنها را بخواند. این اثر انگشت‌ها کلیدهایی را که مرورگر شما استفاده می‌کند شناسایی می‌کنند - آنها را با مقادیر منتشر شده خارج از باند مقایسه کنید تا مطمئن شوید که آنها جابجا نشده‌اند. |
+| `hpke.protectHeading` | What this protects | این از چه چیزی محافظت می‌کند؟ |
+| `hpke.protectScope` | Your account number and key are encrypted to this server with HPKE, so the network and any CDN in front of it can't read them. | شماره حساب و کلید شما با HPKE برای این سرور رمزگذاری شده‌اند، بنابراین شبکه و هر CDN مقابل آن نمی‌تواند آنها را بخواند. |
+| `hpke.protectServerReads` | FreeSocks itself can read them to set up your account, so this protects you from the network in between, not from the server. | خود FreeSocks می‌تواند آنها را بخواند تا حساب شما را تنظیم کند، بنابراین این شما را از شبکه بین آنها محافظت می‌کند، نه از سرور. |
+| `hpke.protectTunnel` | It's separate from your VPN connection, which is encrypted on its own. | این جدا از اتصال VPN شماست که به خودی خود رمزگذاری شده است. |
+| `hpke.protectAdmin` | On the admin dashboard, sensitive actions - creating API tokens, invites, and membership codes, and uploading backend, billing, or storage credentials - are HPKE-encrypted to this server too. Routine reads and settings use TLS, your passkey, and proof-of-possession. | در داشبورد مدیریت، اقدامات حساس - ایجاد توکن‌های API، دعوت‌نامه‌ها و کدهای عضویت، و آپلود اعتبارنامه‌های backend، صورتحساب یا ذخیره‌سازی - نیز توسط HPKE در این سرور رمزگذاری می‌شوند. خواندن‌ها و تنظیمات معمول از TLS، کلید عبور شما و اثبات مالکیت استفاده می‌کنند. |
+| `hpke.fingerprintsHeading` | Key fingerprints | اثر انگشت کلید |
+| `hpke.fpHpke` | Server key (HPKE / X-Wing) | کلید سرور (HPKE / X-Wing) |
+| `hpke.fpKid` | Key id | شناسه کلید |
+| `hpke.fpManifest` | Manifest key (Ed25519) | کلید مانیفست (Ed25519) |
+| `hpke.fpManifestPq` | Manifest key (ML-DSA-65, post-quantum) | کلید مانیفست (ML-DSA-65، پسا کوانتومی) |
+| `hpke.fpSuite` | Cipher suite | مجموعه رمز |
+| `hpke.copy` | Copy | کپی |
+| `hpke.copied` | Copied | کپی شده |
+| `hpke.attestationHeading` | Live server attestation | تأیید سرور زنده |
+| `hpke.attestationOk` | Verified - the server is attesting a valid key signed by the manifest key your app trusts. | تأیید شده - سرور در حال تأیید یک کلید معتبر است که توسط کلید مانیفست مورد اعتماد برنامه شما امضا شده است. |
+| `hpke.attestationEpoch` | Current key {kid}, expires {expiry}. | کلید فعلی {kid} , منقضی می‌شود {expiry} . |
+| `hpke.attestationFail` | Could not verify the server's current key - a network problem, or a CDN tampering with the key endpoint. Verify out-of-band before continuing. | کلید فعلی سرور تأیید نشد - مشکل شبکه یا دستکاری CDN در نقطه پایانی کلید. قبل از ادامه، خارج از باند تأیید کنید. |
+| `hpke.attestationUnreachable` | The live key check is temporarily unavailable. Your connection still uses the verified key built into the app. | بررسی کلید زنده موقتاً در دسترس نیست. اتصال شما هنوز از کلید تأیید شده‌ی داخلی برنامه استفاده می‌کند. |
+| `hpke.attestationStale` | The server isn't publishing a current rotating key right now, so your connection is using the verified key built into the app. Nothing here suggests tampering. | ⚠️ **MISSING** |
+| `hpke.attestationUnconfigured` | Live key checking isn't set up on this build. | بررسی کلید زنده در این نسخه راه‌اندازی نشده است. |
+| `hpke.compareHeading` | How to verify | نحوه تأیید |
+| `hpke.compareBody` | Compare the fingerprints above against the values published through a channel this server doesn't control. They must match. | اثر انگشت‌های بالا را با مقادیر منتشر شده از طریق کانالی که این سرور کنترل نمی‌کند مقایسه کنید. آنها باید مطابقت داشته باشند. |
+| `hpke.channelRelease` | Signed release notes | یادداشت‌های انتشار امضا شده |
+| `hpke.channelSource` | Source code (rebuild to compare) | کد منبع (برای مقایسه بازسازی کنید) |
+| `hpke.channelOnion` | Tor mirror | آینه تور |
+| `hpke.dnsHeading` | Verify via DNS | از طریق DNS تأیید کنید |
+| `hpke.dnsBody` | Look the pin up yourself in a terminal, through your own DNS resolver - a path that doesn't run through this site or its CDN. The answer should contain the same fingerprints shown above. (If it returns nothing, the operator may not have published the record yet; use the signed release instead.) | خودتان در ترمینال، از طریق DNS resolver خودتان - مسیری که از این سایت یا CDN آن عبور نمی‌کند - پین را جستجو کنید. پاسخ باید حاوی همان اثر انگشت‌های نشان داده شده در بالا باشد. (اگر چیزی برنگرداند، ممکن است اپراتور هنوز رکورد را منتشر نکرده باشد؛ به جای آن از نسخه امضا شده استفاده کنید.) |
+| `hpke.dnsCommand` | Run this in a terminal | این را در ترمینال اجرا کنید |
+| `hpke.dnsExpected` | It should return | باید برگردد. |
+| `hpke.dnsCaveat` | Independent only if your DNS isn't run by the same company as the CDN; a DNSSEC-validating resolver is best. For full assurance, confirm the same values in the signed release too. | فقط در صورتی مستقل عمل کنید که DNS شما توسط همان شرکت CDN اداره نشود؛ یک تحلیلگر اعتبارسنجی DNSSEC بهترین گزینه است. برای اطمینان کامل، مقادیر مشابه را در نسخه امضا شده نیز تأیید کنید. |
+| `hpke.verifierExtension` | A verifier browser extension that re-checks this build on every visit is planned, but not available yet. | یک افزونه مرورگر تأییدکننده که این نسخه را در هر بازدید دوباره بررسی کند، برنامه‌ریزی شده است، اما هنوز در دسترس نیست. |
+| `hpke.verifierExtensionInstall` | Install the verifier extension - it re-checks this build against the published one on every visit (the strongest protection against a tampered page). | افزونه‌ی تأییدکننده را نصب کنید - این افزونه در هر بازدید، این نسخه را با نسخه منتشر شده مقایسه می‌کند (قوی‌ترین محافظت در برابر صفحه‌ی دستکاری‌شده). |
+| `hpke.caveat` | This in-page check is a convenience. A tampered page could lie about its own status, so the real proof comes from comparing these values somewhere outside this server, such as the DNS lookup above or a published release. | این بررسی درون صفحه‌ای یک مزیت است. یک صفحه دستکاری‌شده می‌تواند در مورد وضعیت خود دروغ بگوید، بنابراین اثبات واقعی از مقایسه این مقادیر در جایی خارج از این سرور، مانند جستجوی DNS در بالا یا یک نسخه منتشر شده، حاصل می‌شود. |
+| `hpke.close` | Close | بستن |
 
 ## `deviceRevoke` — The disconnect-a-device confirmation dialog.
 
@@ -1027,7 +965,7 @@ review.
 | `switchServer.failed` | Could not move your key | ⚠️ **MISSING** |
 | `switchServer.vsNewKey` | If the subscription URL itself stopped working everywhere, or you think someone else has it, use "Create a new key" instead - that replaces the URL. | ⚠️ **MISSING** |
 
-## `report` — Miscellaneous strings. *(16 missing)*
+## `report` — Miscellaneous strings. *(17 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
@@ -1041,6 +979,7 @@ review.
 | `report.reasonBlockedSite` | A site or app won't load through the VPN | ⚠️ **MISSING** |
 | `report.reasonAppProblem` | The VPN app itself is giving me trouble | ⚠️ **MISSING** |
 | `report.reasonOther` | Something else | ⚠️ **MISSING** |
+| `report.tellUsMore` | Need to tell us more? Email us: | ⚠️ **MISSING** |
 | `report.nothingChanges` | Reporting changes nothing on your account. If you need a fix right now, try "Switch server" or "Create a new key". | ⚠️ **MISSING** |
 | `report.confirm` | Send report | ⚠️ **MISSING** |
 | `report.working` | Sending… | ⚠️ **MISSING** |
@@ -1053,9 +992,9 @@ review.
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
 | `telemetry.sendLabel` | Include connection details | ⚠️ **MISSING** |
-| `telemetry.sendExplainer` | Only the values shown below are sent. They are not tied to your account, and your IP address is never included. | ⚠️ **MISSING** |
+| `telemetry.sendExplainer` | This helps us see patterns, like one network or region blocking us. Only the values shown below are sent. They are not tied to your account, and your IP address is never included. | ⚠️ **MISSING** |
 | `telemetry.countryLabel` | Country | ⚠️ **MISSING** |
 | `telemetry.cityLabel` | City | ⚠️ **MISSING** |
-| `telemetry.asnLabel` | Network provider (ASN) | ⚠️ **MISSING** |
+| `telemetry.asnLabel` | Network (ASN) | ⚠️ **MISSING** |
 | `telemetry.notSet` | Not set | ⚠️ **MISSING** |
 | `telemetry.editHint` | Check these before sending. If you are connected to FreeSocks right now, they may show our server's network instead of yours. Fix anything that looks wrong, or clear it. | ⚠️ **MISSING** |

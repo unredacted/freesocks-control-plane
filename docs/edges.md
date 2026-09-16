@@ -274,8 +274,8 @@ live LB data, so the whole prefix is sealed by verb in `src/shared/crypto/envelo
 reveals the response to the caller's ephemeral key, POST seals the request AND reveals the
 response (the response ephemeral rides inside the sealed body), PATCH/PUT seal the request,
 DELETE carries nothing. Dual-mode (plaintext accepted) stays for `fsv1_` IaC callers, as for
-backend servers; `FS_E2EE_ADMIN_REQUIRED=true` additionally refuses plaintext from cookie-session
-(passkey CMS) callers on these routes (`e2ee.sealed_required`) while bearer callers, who cannot
+backend servers; `FS_HPKE_ADMIN_REQUIRED=true` additionally refuses plaintext from cookie-session
+(passkey CMS) callers on these routes (`hpke.sealed_required`) while bearer callers, who cannot
 seal, keep dual-mode. The caller class follows the credential that would authenticate the
 request, exactly as `resolveAdmin` does: the admin cookie is tried first, and only when it does
 not authenticate (absent, stale, malformed, inactive admin, failed proof of possession) is the

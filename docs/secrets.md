@@ -54,8 +54,9 @@ _before_ `up`):
 | `CAP_ADMIN_KEY`     | Login to the self-hosted Cap captcha dashboard          | The bootstrap **prints it** (you need it to create the Cap site key/secret). |
 
 **CDN-blinding keypair → split across both files, generated as a UNIT** so the
-public pins always match the secret keys (user-facing label: **"HPKE"**; code
-identifiers keep the historical `e2ee` name):
+public pins always match the secret keys (the feature is called **"HPKE"** in the
+UI, the code, and the env; it was "E2EE" until 2026-09-16, see the rename checklist
+below the table):
 
 | Var                                    | Home                                     | Purpose                                                                 |
 | -------------------------------------- | ---------------------------------------- | ----------------------------------------------------------------------- |
@@ -70,6 +71,27 @@ dual-mode over TLS) — safe, just unsealed. To **rotate** the keypair: clear
 `FS_SERVER_HPKE_SK` in `.env.convex` AND the `VITE_FS_*` pins in `.env.beta`, re-run
 the bootstrap, then rebuild `web` + redeploy. (Never edit one side alone — the
 bootstrap warns and refuses if the two drift.)
+
+**Rename checklist (deployments bootstrapped before 2026-09-16).** The feature was
+called "E2EE" until then; the key material itself did NOT change, only the names
+around it. On each such deployment, once, after deploying the renamed release:
+
+| Was                                                         | Now                                                         | Where                                                                                                                  |
+| ----------------------------------------------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `FS_E2EE_REQUIRED`                                          | `FS_HPKE_REQUIRED`                                          | `.env.convex` → `bunx convex env set`. The server reads BOTH spellings for now, so the posture holds while you rename. |
+| `FS_E2EE_ADMIN_REQUIRED`                                    | `FS_HPKE_ADMIN_REQUIRED`                                    | `.env.convex` → `bunx convex env set`. Same dual read.                                                                 |
+| `VITE_FS_E2EE_SUITE_ID`                                     | `VITE_FS_HPKE_SUITE_ID`                                     | `.env.beta`. Informational only (the SPA compiles the suite id in); `scripts/hpke-fingerprint.mjs` reads the new name. |
+| `GET /api/v1/e2ee/keys`                                     | `GET /api/v1/hpke/keys`                                     | Served by the SAME handler under both paths until pre-rename bundles have aged out of caches; then the alias goes.     |
+| `ratelimit.e2ee.keys.fetch` (row)                           | `ratelimit.hpke.keys.fetch`                                 | `appSettings` override, re-keyed automatically by `seed:seedCutover` at deploy. Nothing to do.                         |
+| `e2ee.epoch_gap` (audit action)                             | `hpke.epoch_gap`                                            | Historical `auditLog` rows keep the old action string; new rows use the new one. Nothing to do.                        |
+| `fs_e2ee_revocation` (localStorage)                         | `fs_hpke_revocation`                                        | Migrated by the SPA on first load. Nothing to do.                                                                      |
+| `lib/e2eeCrypto:*` (convex run)                             | `lib/hpkeCrypto:*`                                          | Operator runbook commands (`signRevocation`, `selfTest`).                                                              |
+| `scripts/gen-e2ee-keys.mjs`, `scripts/e2ee-fingerprint.mjs` | `scripts/gen-hpke-keys.mjs`, `scripts/hpke-fingerprint.mjs` | Operator scripts.                                                                                                      |
+
+Not renamed on purpose: the wire constant `FCP-E2EE-v1/...` (`SUITE_ID` in
+`src/shared/crypto/envelope.ts`) is the v1 protocol's domain-separation string and
+one of the published fingerprints; changing it is a coordinated protocol bump, not
+a rename.
 
 ---
 

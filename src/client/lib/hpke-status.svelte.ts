@@ -1,37 +1,37 @@
 /**
- * Reactive E2EE session status. Mutated by the lazy CDN-blinding seam
- * (`openInbound` in ./e2ee.ts) when it actually opens a sealed response, and read
- * by the E2EE badge + alert + the verify modal to show an "actively encrypted"
+ * Reactive HPKE session status. Mutated by the lazy CDN-blinding seam
+ * (`openInbound` in ./hpke.ts) when it actually opens a sealed response, and read
+ * by the HPKE badge + alert + the verify modal to show an "actively encrypted"
  * confirmation and the live key-attestation verdict. A plain `$state` object so a
- * mutation from the non-reactive `e2ee.ts` module still drives component
+ * mutation from the non-reactive `hpke.ts` module still drives component
  * reactivity wherever it's read.
  *
- * This module is light (no crypto), so the always-loaded chrome (the E2EE badge)
- * can import it eagerly while the heavy `e2ee.ts` chunk that mutates it stays
- * lazy. `ensureAttestationChecked()` lazy-imports `e2ee.ts` only on demand, so a
+ * This module is light (no crypto), so the always-loaded chrome (the HPKE badge)
+ * can import it eagerly while the heavy `hpke.ts` chunk that mutates it stays
+ * lazy. `ensureAttestationChecked()` lazy-imports `hpke.ts` only on demand, so a
  * dark build whose badge never renders the active branch never pulls the chunk.
  */
-import { classifyAttestation, nextAttestation, type E2eeAttestation } from './e2ee-attestation';
+import { classifyAttestation, nextAttestation, type HpkeAttestation } from './hpke-attestation';
 
 export { classifyAttestation };
-export type { E2eeAttestation };
+export type { HpkeAttestation };
 
 /**
- * COMPILE-TIME read of the baked pins (same expression as api.ts E2EE_ENABLED and
+ * COMPILE-TIME read of the baked pins (same expression as api.ts HPKE_ENABLED and
  * the banner's `enabled`). Vite inlines it, so in a dark build the guarded
- * `import('./e2ee')` below becomes dead code and Rollup drops the heavy e2ee chunk
+ * `import('./hpke')` below becomes dead code and Rollup drops the heavy hpke chunk
  * entirely. Keep the gate at the import call-site for that tree-shaking to hold.
  */
 const SEALING_CONFIGURED =
   !!import.meta.env.VITE_FS_SERVER_HPKE_PK && !!import.meta.env.VITE_FS_SERVER_HPKE_KID;
 
-export const e2eeSession = $state<{
+export const hpkeSession = $state<{
   lastSealedAt: number | null;
-  /** Live verdict from GET /api/v1/e2ee/keys (see ensureAttestationChecked). */
-  attestation: E2eeAttestation;
+  /** Live verdict from GET /api/v1/hpke/keys (see ensureAttestationChecked). */
+  attestation: HpkeAttestation;
   epochKid: string | null;
   notAfter: number | null;
-  /** Drives the single shared <E2eeVerifyModal> mounted once in App.svelte. */
+  /** Drives the single shared <HpkeVerifyModal> mounted once in App.svelte. */
   verifyOpen: boolean;
 }>({
   lastSealedAt: null,
@@ -41,9 +41,9 @@ export const e2eeSession = $state<{
   verifyOpen: false,
 });
 
-/** Record that the client just opened a sealed (E2EE) response. */
+/** Record that the client just opened a sealed (HPKE) response. */
 export function markSealedResponse(): void {
-  e2eeSession.lastSealedAt = Date.now();
+  hpkeSession.lastSealedAt = Date.now();
 }
 
 /** Don't re-hit the key endpoint more often than this (its own max-age is 60s). */
@@ -56,23 +56,23 @@ let inFlight: Promise<void> | null = null;
 let hooksInstalled = false;
 
 async function runAttestation(): Promise<void> {
-  const { verifyConnection } = await import('./e2ee');
+  const { verifyConnection } = await import('./hpke');
   const att = await verifyConnection();
   lastCheckedAt = Date.now();
   const verdict = classifyAttestation(att);
-  const held = nextAttestation(e2eeSession.attestation, verdict);
+  const held = nextAttestation(hpkeSession.attestation, verdict);
   // A `warn` held over an inconclusive poll keeps the epoch fields from the
   // observation that raised it: overwriting them would erase what tripped the alarm
   // while the alarm is still showing.
   if (held === verdict) {
-    e2eeSession.epochKid = att.epochKid ?? null;
-    e2eeSession.notAfter = att.notAfter ?? null;
+    hpkeSession.epochKid = att.epochKid ?? null;
+    hpkeSession.notAfter = att.notAfter ?? null;
   }
-  e2eeSession.attestation = held;
+  hpkeSession.attestation = held;
 }
 
 /**
- * Re-run the live key attestation and fold the fresh verdict into `e2eeSession`.
+ * Re-run the live key attestation and fold the fresh verdict into `hpkeSession`.
  * Throttled to one call per MIN_RECHECK_MS (pass `force` for an explicit user
  * action, e.g. opening the verify panel), and single-flighted so a burst of
  * triggers - the interval firing as a tab is refocused - is one request.
@@ -114,7 +114,7 @@ function installRefreshHooks(): void {
  * Idempotent: the first caller starts the check and installs the refresh hooks,
  * later callers fall through to the throttled `refreshAttestation`.
  * Lazy-imports the crypto chunk so the light badge can trigger it without eagerly
- * loading `e2ee.ts`.
+ * loading `hpke.ts`.
  */
 export async function ensureAttestationChecked(opts?: { force?: boolean }): Promise<void> {
   if (!SEALING_CONFIGURED) return; // dark build: compile-time false → import() is tree-shaken
@@ -124,5 +124,5 @@ export async function ensureAttestationChecked(opts?: { force?: boolean }): Prom
 
 /** Open the shared "Verify connection" modal from anywhere (badge or alert). */
 export function openVerify(): void {
-  e2eeSession.verifyOpen = true;
+  hpkeSession.verifyOpen = true;
 }

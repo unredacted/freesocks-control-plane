@@ -21,7 +21,7 @@
 // Run from the repo root:  bun scripts/bootstrap-secrets.mjs
 import { existsSync, readFileSync, writeFileSync, copyFileSync } from 'node:fs';
 import path from 'node:path';
-import { generateE2eeKeys } from './gen-e2ee-keys.mjs';
+import { generateHpkeKeys } from './gen-hpke-keys.mjs';
 
 // Repo root. FCP_BOOTSTRAP_ROOT overrides it (used by the dry-run test); the
 // crypto/example imports still resolve against this script's real location.
@@ -111,14 +111,14 @@ for (const [key, n] of [
 const hpkeSet = !isPlaceholder(convex.get('FS_SERVER_HPKE_SK'));
 const pinSet = !isPlaceholder(beta.get('VITE_FS_SERVER_HPKE_PK'));
 if (!hpkeSet && !pinSet) {
-  const k = await generateE2eeKeys();
+  const k = await generateHpkeKeys();
   for (const key of ['FS_SERVER_HPKE_SK', 'FS_MANIFEST_SK', 'FS_MANIFEST_SK_PQ']) {
     setEnv(convex, key, k[key]);
   }
   for (const key of [
     'VITE_FS_SERVER_HPKE_PK',
     'VITE_FS_SERVER_HPKE_KID',
-    'VITE_FS_E2EE_SUITE_ID',
+    'VITE_FS_HPKE_SUITE_ID',
     'VITE_FS_MANIFEST_PK',
     'VITE_FS_MANIFEST_PK_PQ',
   ]) {
@@ -132,7 +132,7 @@ if (!hpkeSet && !pinSet) {
       'public pins (VITE_FS_* in .env.beta) are out of sync — one is set, the other is not. ' +
       'Leaving BOTH untouched (a half-written pair must never deploy). To regenerate: clear ' +
       'FS_SERVER_HPKE_SK and the VITE_FS_* pins in BOTH files, then re-run; or set them by hand ' +
-      'from `bun scripts/gen-e2ee-keys.mjs`.',
+      'from `bun scripts/gen-hpke-keys.mjs`.',
   );
 }
 

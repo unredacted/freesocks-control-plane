@@ -1,20 +1,29 @@
 /**
- * Pure, runtime-agnostic E2EE envelope + canonicalization helpers for the
+ * Pure, runtime-agnostic HPKE envelope + canonicalization helpers for the
  * CDN-blinding channel. This module imports no crypto library and executes no
  * key-schedule crypto, so it is safe to import from the Convex default V8
  * isolate (which lacks subtle HKDF). The HPKE seal/open primitives that need
  * full WebCrypto live in ./hpke.ts and run only in the browser and the
  * "use node" server action.
  *
- * Design: docs/e2ee-phase0-spike.md and the threat model. The wire envelope is
+ * Design: docs/hpke-phase0-spike.md and the threat model. The wire envelope is
  * `{ fsSealed: { v, suiteId?, kid?, enc?, responseNonce?, ct } }` with all byte
  * fields base64url-encoded.
  */
 
-/** Versioned suite identifier, folded into the HPKE `info` so a substituted suite fails Open(). */
+/**
+ * Versioned suite identifier, folded into the HPKE `info` so a substituted suite
+ * fails Open(). WIRE CONSTANT: the `E2EE` in the literal is the v1 protocol's
+ * domain-separation string, not a label. It stays as-is through the 2026-09
+ * E2EE -> HPKE identifier rename, because changing it (or INFO_PREFIX) is a
+ * protocol version bump: every already-cached SPA build would fail Open()
+ * against the new server and vice versa, and the suite id is one of the
+ * fingerprints operators publish out of band. Bump to `FCP-HPKE-v2` only as a
+ * deliberate, coordinated protocol change.
+ */
 export const SUITE_ID = 'FCP-E2EE-v1/xwing-hkdfsha256-chacha20poly1305';
 
-/** HPKE `info` human-readable prefix. */
+/** HPKE `info` human-readable prefix (wire constant, see SUITE_ID). */
 const INFO_PREFIX = 'FCP-E2EE v1';
 const NUL = 0x00;
 
@@ -208,7 +217,7 @@ export async function sha256HexOfB64Url(b64url: string): Promise<string> {
  * the FULL SHA-256 of the exact UTF-8 base64url string (NOT the decoded key
  * bytes — that is `kidFromPublicKey`), as lowercase hex grouped in 4-char chunks.
  * This is the single source of truth shared by the in-app "Verify connection"
- * panel and the `scripts/e2ee-fingerprint.mjs` publisher, so the value a user
+ * panel and the `scripts/hpke-fingerprint.mjs` publisher, so the value a user
  * sees in the browser is byte-identical to the one published out of band (signed
  * release / .onion). Comparing the two off-CDN is what makes the pinned key
  * meaningful against an active CDN.

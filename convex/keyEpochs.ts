@@ -1,6 +1,6 @@
 /**
  * Epoch-key store (CDN-blinding Phase 3). Rows are minted by the rotate cron
- * (which calls the "use node" generator in lib/e2eeCrypto.ts, the only place the
+ * (which calls the "use node" generator in lib/hpkeCrypto.ts, the only place the
  * X-Wing keypair + manifest signature can be produced) and read on the login
  * path: the current epoch key is published via /config, and openRequest resolves
  * an inbound envelope's epoch kid back to its seed here.
@@ -25,7 +25,7 @@ const MAX_DRAIN_ROUNDS = 50;
 
 /**
  * Cron entry point for epoch rotation. Gates in the ISOLATE runtime: while
- * E2EE ships dark (FS_MANIFEST_SK unset) the 10-min cron used to cold-start a
+ * HPKE ships dark (FS_MANIFEST_SK unset) the 10-min cron used to cold-start a
  * Node action 144x/day just to early-return. Per-tick gating (not conditional
  * cron registration) so `convex env set FS_MANIFEST_SK` activates rotation on
  * the next tick without a redeploy; rotateEpochKey keeps its own skip as
@@ -53,12 +53,12 @@ export const maybeRotate = internalMutation({
       );
       await writeAuditLog(ctx, {
         actorType: 'system',
-        action: 'e2ee.epoch_gap',
+        action: 'hpke.epoch_gap',
         targetType: 'key_epoch',
         payload: { lastNotAfter: latest.notAfter },
       });
     }
-    await ctx.scheduler.runAfter(0, internal.lib.e2eeCrypto.rotateEpochKey, {});
+    await ctx.scheduler.runAfter(0, internal.lib.hpkeCrypto.rotateEpochKey, {});
     return null;
   },
 });

@@ -12,7 +12,7 @@
 <script lang="ts">
   import { z } from 'zod';
   import Link from '../../components/Link.svelte';
-  import E2eeBadge from '../../components/E2eeBadge.svelte';
+  import HpkeBadge from '../../components/HpkeBadge.svelte';
   import { router } from '../../stores/router.svelte';
   import { cn } from '../../lib/utils';
   import { apiClient } from '../../lib/api';
@@ -132,7 +132,7 @@
   <div class="md:hidden flex items-center justify-between border-b border-border pb-3 mb-4">
     <div class="flex items-center gap-2">
       <Link href="/" class="font-display text-xl font-bold tracking-tight">FreeSocks</Link>
-      <E2eeBadge context="admin" />
+      <HpkeBadge context="admin" />
     </div>
     <button
       type="button"
@@ -168,7 +168,7 @@
       </span>
     </Link>
     <div class="mb-8 hidden md:block">
-      <E2eeBadge context="admin" />
+      <HpkeBadge context="admin" />
     </div>
     <nav class="space-y-0.5">
       {#each NAV as item, i (i)}

@@ -9,7 +9,7 @@
 // docs/oob-verification.md.
 //
 // Reads the public VITE_FS_* values from the environment, falling back to
-// .env.local. Run: bun scripts/e2ee-fingerprint.mjs
+// .env.local. Run: bun scripts/hpke-fingerprint.mjs
 import { readFileSync } from 'node:fs';
 import { fingerprintB64Url, sha256HexOfB64Url } from '../src/shared/crypto/envelope.ts';
 
@@ -34,7 +34,7 @@ const fields = [
   ['Manifest key (Ed25519)', 'VITE_FS_MANIFEST_PK', false],
   ['Manifest key (ML-DSA-65, post-quantum)', 'VITE_FS_MANIFEST_PK_PQ', true],
   ['Static HPKE key (X-Wing)', 'VITE_FS_SERVER_HPKE_PK', false],
-  ['HPKE suite id', 'VITE_FS_E2EE_SUITE_ID', false],
+  ['HPKE suite id', 'VITE_FS_HPKE_SUITE_ID', false],
 ];
 
 console.log('CDN-blinding out-of-band verification anchors');
@@ -47,7 +47,7 @@ for (const [label, key, optional] of fields) {
     if (!optional) missing = true;
     continue;
   }
-  if (key === 'VITE_FS_E2EE_SUITE_ID') console.log(`${label}: ${v}`);
+  if (key === 'VITE_FS_HPKE_SUITE_ID') console.log(`${label}: ${v}`);
   else console.log(`${label}\n  ${key}\n  sha256: ${await fingerprintB64Url(v)}`);
 }
 

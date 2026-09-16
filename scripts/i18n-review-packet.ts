@@ -47,7 +47,7 @@ const NAMESPACE_CONTEXT: Record<string, string> = {
   switch: 'The switch-backend confirmation dialog.',
   passkey: 'Optional passkey (Face ID / fingerprint) sign-in management.',
   deviceRevoke: 'The disconnect-a-device confirmation dialog.',
-  e2ee: 'The HPKE/E2EE "encrypted to this server" badge + verification panel.',
+  hpke: 'The HPKE "encrypted to this server" badge + verification panel.',
   captcha: 'The proof-of-work human check widget states.',
   support: 'The support-ID line (a non-secret handle for contacting support).',
   error: 'API error messages shown to members.',

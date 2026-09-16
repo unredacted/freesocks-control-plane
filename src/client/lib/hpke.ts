@@ -27,7 +27,7 @@ import {
   verifyManifest,
   verifyManifestPq,
 } from '../../shared/crypto/manifest';
-import { markSealedResponse } from './e2ee-status.svelte';
+import { markSealedResponse } from './hpke-status.svelte';
 
 const PK_B64 = import.meta.env.VITE_FS_SERVER_HPKE_PK as string | undefined;
 const KID = import.meta.env.VITE_FS_SERVER_HPKE_KID as string | undefined;
@@ -61,11 +61,11 @@ export function sealingEnabled(): boolean {
 }
 
 /**
- * The baked public E2EE identity, for the "Verify connection" panel (all
+ * The baked public HPKE identity, for the "Verify connection" panel (all
  * base64url strings; the key fields are undefined in a dark build). Non-secret by
  * design - these are the public halves baked into the bundle.
  */
-export function e2eePins(): {
+export function hpkePins(): {
   hpkePk?: string;
   hpkeKid?: string;
   manifestPk?: string;
@@ -83,7 +83,7 @@ export function e2eePins(): {
 
 /**
  * Out-of-band-comparable fingerprints of the baked public keys - the SAME values
- * `scripts/e2ee-fingerprint.mjs` publishes (both call `fingerprintB64Url`), so a
+ * `scripts/hpke-fingerprint.mjs` publishes (both call `fingerprintB64Url`), so a
  * user can compare what the browser shows against the signed release / .onion
  * mirror. Undefined fields mean that key isn't baked.
  */
@@ -102,7 +102,7 @@ export async function connectionFingerprints(): Promise<{
 /**
  * The ungrouped-hex (no-spaces) fingerprints in the exact `_fcp-pin` DNS TXT
  * field layout, so the "Verify via DNS" panel shows precisely what `dig` should
- * return and what `scripts/e2ee-fingerprint.mjs` publishes. Undefined fields
+ * return and what `scripts/hpke-fingerprint.mjs` publishes. Undefined fields
  * (e.g. no ML-DSA key baked) are omitted from the record by the consumer.
  */
 export async function dnsPinFields(): Promise<{
@@ -142,13 +142,24 @@ const EPOCH_MARGIN_MS = 30_000;
 // of compromised kids. Persisted so it survives reload and applies before the
 // first fetch; a CDN cannot roll it back to a lower version. The client refuses
 // to seal the login to a revoked kid (fail closed rather than leak plaintext).
-const REV_STORAGE_KEY = 'fs_e2ee_revocation';
+const REV_STORAGE_KEY = 'fs_hpke_revocation';
+// Pre-2026-09-16 key (the E2EE -> HPKE rename). Read once and carried over, so a
+// browser that already holds a revocation snapshot keeps its monotonic version
+// across the rename instead of briefly trusting a rolled-back list.
+const LEGACY_REV_STORAGE_KEY = 'fs_e2ee_revocation';
 let _revVersion = -1;
 let _revokedKids = new Set<string>();
 
 (function loadPersistedRevocation() {
   try {
-    const raw = localStorage.getItem(REV_STORAGE_KEY);
+    let raw = localStorage.getItem(REV_STORAGE_KEY);
+    if (!raw) {
+      raw = localStorage.getItem(LEGACY_REV_STORAGE_KEY);
+      if (raw) {
+        localStorage.setItem(REV_STORAGE_KEY, raw);
+        localStorage.removeItem(LEGACY_REV_STORAGE_KEY);
+      }
+    }
     if (!raw) return;
     const s = JSON.parse(raw) as { version: number; revokedKids: string[] };
     if (typeof s.version === 'number' && Array.isArray(s.revokedKids)) {
@@ -204,13 +215,13 @@ function applyRevocation(r: {
  * Forcing revalidation from here instead (`no-store` / `no-cache`, both tried) is
  * WORSE for the population this serves: the fetch-spec cache modes send
  * `max-age=0`, which punches every request past the CDN to the origin, where the
- * per-IP `e2ee.keys.fetch` policy lives. A per-browser cache saves nothing for many
+ * per-IP `hpke.keys.fetch` policy lives. A per-browser cache saves nothing for many
  * distinct clients behind one carrier-grade NAT - only the shared CDN cache does -
  * so bypassing it trades a bounded, quiet staleness for 429s and a silent
  * static-key fallback exactly where censorship makes NAT sharing the norm.
  */
 function fetchKeys(): Promise<Response> {
-  return fetch('/api/v1/e2ee/keys', { credentials: 'omit' });
+  return fetch('/api/v1/hpke/keys', { credentials: 'omit' });
 }
 
 async function refreshEpoch(): Promise<void> {
@@ -274,12 +285,12 @@ async function currentEpoch(): Promise<{ kid: string; pub: CryptoKey } | null> {
  * `signature` and `revoked` are tamper tells (a CDN swapping the key, or a key we
  * were told to refuse); `absent` and `expired` mean the server has no live epoch
  * to offer, so the client keeps sealing to the pinned static key. See
- * `classifyAttestation` in ./e2ee-status.svelte.ts for how each maps to UI.
+ * `classifyAttestation` in ./hpke-status.svelte.ts for how each maps to UI.
  */
 export type AttestationFailure = 'absent' | 'expired' | 'signature' | 'revoked';
 
 export interface ConnectionAttestation {
-  /** The /api/v1/e2ee/keys endpoint responded. */
+  /** The /api/v1/hpke/keys endpoint responded. */
   reachable: boolean;
   /** The current epoch key verified against the baked manifest key(s), unexpired + not revoked. */
   attested: boolean;
@@ -410,7 +421,7 @@ export async function prepareOutbound(
     // Fail closed: if even the chosen seal target is revoked (e.g. the static key
     // is compromised and no valid epoch key is available), refuse to send the
     // login rather than leak the account number in plaintext.
-    if (isRevoked(sealKid)) throw new Error('fcp_e2ee_seal_key_revoked');
+    if (isRevoked(sealKid)) throw new Error('fcp_hpke_seal_key_revoked');
   }
   const prep = await clientPrepareRequest({
     serverPub: sealPub,

@@ -46,7 +46,7 @@ const CODE_MESSAGES: Record<string, () => string> = {
   'devices.unsupported': () => t('error.deviceUnsupported'),
   'devices.no_subscription': () => t('error.generic'),
   'devices.unavailable': () => t('error.backendUnavailable'),
-  'e2ee.sealed_required': () => t('error.serverError'),
+  'hpke.sealed_required': () => t('error.serverError'),
   'server.error': () => t('error.serverError'),
   'billing.error': () => t('error.billing'),
   'content.unavailable': () => t('error.backendUnavailable'),
