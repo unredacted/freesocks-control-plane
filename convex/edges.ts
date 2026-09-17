@@ -22,7 +22,7 @@ import { reserveAllocation } from './edgeProviderAccounts';
 import { edgeResourceName } from './lib/edges/accountSettings';
 import { dropEdgeFromPool, liveEdgesOfAccount } from './relays';
 import { EDGE_LIVE_STATUSES } from './lib/edges/pool';
-import type { ProvisionIntent } from './lib/edges/intent';
+import { parseIntent, type ProvisionIntent } from './lib/edges/intent';
 
 /** Consecutive `gone` describes before the pool drop + status transition act. */
 export const GONE_OBSERVATIONS_REQUIRED = 2;
@@ -193,6 +193,18 @@ export function mapEdgeAdmin(e: Edge) {
 export const get = internalQuery({
   args: { id: v.id('edges') },
   handler: (ctx, { id }) => ctx.db.get(id),
+});
+
+/**
+ * The frozen intent of one edge (the DNS account / zone a later call must use).
+ * Read by the "use node" adapter loader, which cannot define queries itself.
+ */
+export const intentOf = internalQuery({
+  args: { edgeId: v.id('edges') },
+  handler: async (ctx, { edgeId }) => {
+    const edge = await ctx.db.get(edgeId);
+    return edge ? parseIntent(edge.provisionIntent) : null;
+  },
 });
 
 export const listByRelay = internalQuery({

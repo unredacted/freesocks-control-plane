@@ -179,7 +179,9 @@ export functions: the CLI skips `_generated/`, `schema.ts` and names with more t
 `'use node';`. A helper under `convex/lib/` that imports a Node built-in (`node:tls`,
 `node:http2`, …) or a dependency that requires one therefore needs the directive itself, and
 must be imported only from other `"use node"` modules (a pure helper shared with queries and
-mutations belongs in a separate file without the directive). `bun run convex:bundle-check`
+mutations belongs in a separate file without the directive). The converse holds too: a
+`"use node"` module may define actions only; a query or mutation it needs goes in an isolate
+module and is reached through `ctx.runQuery`/`ctx.runMutation`. `bun run convex:bundle-check`
 (`scripts/convex-bundle-check.mjs`) reproduces the deploy's isolate/node bundle split offline
 with the CLI's own esbuild and runs in CI, so this fails on the pull request rather than in
 `docker/deploy-entrypoint.sh`.

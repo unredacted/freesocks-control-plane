@@ -14,7 +14,9 @@
  * entry-point rules and esbuild options (convex@1.45 `src/bundler/index.ts`)
  * with the esbuild that ships with the installed `convex`, and adds one rule the
  * CLI only enforces by accident: an isolate entry point must not import a
- * `"use node"` module, even when that module happens to bundle.
+ * `"use node"` module, even when that module happens to bundle. It also
+ * refuses queries, mutations and HTTP actions defined in a `"use node"`
+ * module, which the backend rejects at push time after bundling succeeded.
  *
  * Usage: `bun run convex:bundle-check` (CI) or `node scripts/convex-bundle-check.mjs`.
  */
@@ -89,15 +91,54 @@ function directivesOf(source) {
   }
 }
 
+/**
+ * Only actions may be defined in the Node runtime: the backend refuses the push
+ * when a "use node" module exports a query, mutation or HTTP action ("`x`
+ * defined in `y.js` is a Query function. Only actions can be defined in
+ * Node.js."). The bundler does not see this, so read the module's imports from
+ * the generated server module: importing one of these builders is defining one.
+ */
+const ISOLATE_ONLY_BUILDERS = [
+  'query',
+  'mutation',
+  'internalQuery',
+  'internalMutation',
+  'httpAction',
+];
+function isolateOnlyBuildersImported(source) {
+  const found = [];
+  const re = /import\s*\{([^}]*)\}\s*from\s*["'][^"']*_generated\/server["']/g;
+  for (const m of source.matchAll(re)) {
+    for (const spec of m[1].split(',')) {
+      const name = spec
+        .trim()
+        .split(/\s+as\s+/)[0]
+        .replace(/^type\s+/, '')
+        .trim();
+      if (ISOLATE_ONLY_BUILDERS.includes(name) && !/^type\s/.test(spec.trim())) found.push(name);
+    }
+  }
+  return found;
+}
+
 function split(files) {
   const isolate = [];
   const node = [];
   const problems = [];
   for (const fpath of files) {
     const rel = path.relative(convexDir, fpath);
-    const useNode = directivesOf(readFileSync(fpath, 'utf8')).includes('use node');
+    const source = readFileSync(fpath, 'utf8');
+    const useNode = directivesOf(source).includes('use node');
     if (useNode && MUST_BE_ISOLATE.includes(rel.replace(/\.[^/.]+$/, ''))) {
       problems.push(`"use node" directive is not allowed for ${rel}.`);
+    }
+    if (useNode) {
+      const builders = isolateOnlyBuildersImported(source);
+      if (builders.length) {
+        problems.push(
+          `${rel} has "use node" but imports ${builders.join(', ')} from _generated/server: only actions can be defined in Node.js. Move those functions to a module without the directive.`,
+        );
+      }
     }
     (useNode ? node : isolate).push(fpath);
   }
