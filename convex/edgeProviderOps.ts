@@ -24,7 +24,7 @@
  */
 import { ConvexError, v } from 'convex/values';
 import { ZodError } from 'zod';
-import { internalAction, internalQuery } from './_generated/server';
+import { internalAction } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { ActionCtx } from './_generated/server';
@@ -263,7 +263,7 @@ async function loadAdapter(
   // subscription (`certificateAuthority`, `tlsConfigurationId`), which decides
   // which certificate a describe or a destroy acts on. A settings edit after
   // planning must not move a live edge's certificate to another subscription.
-  const intent = edgeId ? await ctx.runQuery(internal.edgeProviderOps.intentOf, { edgeId }) : null;
+  const intent = edgeId ? await ctx.runQuery(internal.edges.intentOf, { edgeId }) : null;
   if (intent) {
     const frozen = intent as unknown as Record<string, unknown>;
     for (const key of EDGE_INTENT_DEFAULT_SETTINGS[acct.provider]) {
@@ -451,15 +451,6 @@ function checkSpec(
   checkOriginTransport(providerId, spec, tpl, zoneSslMode);
   checkOriginPort(providerId, spec, protocol);
 }
-
-/** The frozen intent of one edge (the DNS account / zone a later call must use). */
-export const intentOf = internalQuery({
-  args: { edgeId: v.id('edges') },
-  handler: async (ctx, { edgeId }) => {
-    const edge = await ctx.db.get(edgeId);
-    return edge ? parseIntent(edge.provisionIntent) : null;
-  },
-});
 
 /**
  * The EFFECTIVE template params for one spec: the adapter's schema applied

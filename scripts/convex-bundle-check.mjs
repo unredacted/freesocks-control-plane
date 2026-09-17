@@ -14,14 +14,19 @@
  * entry-point rules and esbuild options (convex@1.45 `src/bundler/index.ts`)
  * with the esbuild that ships with the installed `convex`, and adds one rule the
  * CLI only enforces by accident: an isolate entry point must not import a
- * `"use node"` module, even when that module happens to bundle.
+ * `"use node"` module, even when that module happens to bundle. It also
+ * refuses queries, mutations and HTTP actions defined in a `"use node"`
+ * module, which the backend rejects at push time after bundling succeeded:
+ * every `"use node"` bundle is loaded here and its exports are inspected the
+ * way the backend's analyze step inspects them.
  *
  * Usage: `bun run convex:bundle-check` (CI) or `node scripts/convex-bundle-check.mjs`.
  */
 import { createRequire } from 'node:module';
-import { readdirSync, readFileSync, existsSync } from 'node:fs';
+import { readdirSync, readFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const convexDir = path.join(root, 'convex');
@@ -95,7 +100,8 @@ function split(files) {
   const problems = [];
   for (const fpath of files) {
     const rel = path.relative(convexDir, fpath);
-    const useNode = directivesOf(readFileSync(fpath, 'utf8')).includes('use node');
+    const source = readFileSync(fpath, 'utf8');
+    const useNode = directivesOf(source).includes('use node');
     if (useNode && MUST_BE_ISOLATE.includes(rel.replace(/\.[^/.]+$/, ''))) {
       problems.push(`"use node" directive is not allowed for ${rel}.`);
     }
@@ -166,6 +172,63 @@ async function bundle(platform, entries) {
   }
 }
 
+/**
+ * Only actions may be defined in the Node runtime. The bundler cannot see this
+ * (both bundles succeed); the backend's analyze step loads every pushed module
+ * and rejects the push when a "use node" module exports a query, mutation or
+ * HTTP action, whatever import form defined it. Do the same: bundle the Node
+ * entry points for Node, load them, and read the markers `convex/server` puts on
+ * every registered function (`isQuery`, `isMutation`, `isHttp`).
+ */
+async function nodeOnlyDefinesActions(nodeEntries) {
+  const tmp = mkdtempSync(path.join(os.tmpdir(), 'convex-bundle-check-'));
+  try {
+    await esbuild.build({
+      entryPoints: nodeEntries,
+      bundle: true,
+      platform: 'node',
+      format: 'esm',
+      target: 'esnext',
+      outdir: tmp,
+      outbase: convexDir,
+      outExtension: { '.js': '.mjs' },
+      conditions: ['convex', 'module'],
+      plugins: [serverOnlyStub],
+      write: true,
+      splitting: false,
+      logLevel: 'silent',
+      absWorkingDir: root,
+      // CommonJS dependencies inside an ESM bundle need a `require`.
+      banner: {
+        js: 'import { createRequire as __convexCheckCreateRequire } from "node:module"; const require = __convexCheckCreateRequire(import.meta.url);',
+      },
+    });
+    const problems = [];
+    for (const entry of nodeEntries) {
+      const rel = path.relative(convexDir, entry).replace(/\.[^./]+$/, '');
+      const mod = await import(pathToFileURL(path.join(tmp, `${rel}.mjs`)).href);
+      for (const [name, value] of Object.entries(mod)) {
+        if (!value || (typeof value !== 'function' && typeof value !== 'object')) continue;
+        const kind = value.isQuery
+          ? 'Query'
+          : value.isMutation
+            ? 'Mutation'
+            : value.isHttp
+              ? 'HTTP action'
+              : null;
+        if (kind) {
+          problems.push(
+            `\`${name}\` defined in \`${rel}.js\` is a ${kind} function. Only actions can be defined in Node.js. Move it to a module without the "use node" directive.`,
+          );
+        }
+      }
+    }
+    return problems;
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
 const HINT =
   'It looks like you are using Node APIs from a file without the "use node" directive.\n' +
   "Add 'use node'; as the first statement of every module that needs Node built-ins or a\n" +
@@ -220,6 +283,11 @@ async function main() {
         color: false,
       });
       console.error(formatted.join('\n'));
+    } else {
+      for (const p of await nodeOnlyDefinesActions(node)) {
+        failed = true;
+        console.error(`convex-bundle-check: ${p}`);
+      }
     }
   }
 
