@@ -179,6 +179,26 @@ export function edgeAddressKindOf(id: EdgeProviderId | string | null | undefined
 }
 
 /**
+ * Whether the DNS zone's encryption mode decides how THIS provider's front
+ * dials the origin.
+ *
+ * It does only when the CDN in front of the edge IS the zone's proxy, i.e. a
+ * provider that hosts the zone itself (`providesDns`): the mode is that proxy's
+ * own origin-leg setting. A front whose records merely live in someone else's
+ * zone as unproxied CNAMEs dials the origin by its own service configuration,
+ * so the zone's mode says nothing about it and must never refuse it (an
+ * `ssl: strict` zone would otherwise block every plaintext origin behind an
+ * unrelated CDN).
+ */
+export function zoneModeGovernsOrigin(id: EdgeProviderId | string | null | undefined): boolean {
+  const caps =
+    id && id in EDGE_PROVIDER_CAPABILITIES
+      ? EDGE_PROVIDER_CAPABILITIES[id as EdgeProviderId]
+      : undefined;
+  return !!caps && caps.layer === 'l7' && caps.providesDns;
+}
+
+/**
  * Whether the provider's edges can carry a slot speaking `protocol`. An L4
  * forwarder carries any TCP protocol (the chain constraint on TLS-terminating
  * origins is layers.ts's job); an L7 front carries only the HTTP transports it

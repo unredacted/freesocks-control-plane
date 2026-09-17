@@ -428,6 +428,19 @@ describe('ripe atlas', () => {
         error: 'tls_alert',
       },
     ]);
+    // For a `tls` probe (an L7 front by name) the handshake IS the measurement:
+    // an alerting probe is a failure, never positive country evidence.
+    const tls = parseRipeAtlasResults(
+      [{ prb_id: 3, rt: 80.2, alert: { level: 2, description: 40 } }],
+      'IR',
+      { asnByProbe: { 3: 'AS3' }, protocol: 'tls' },
+    );
+    expect(tls).toEqual([
+      { country: 'IR', asn: 'AS3', vantageClass: 'unknown', ok: false, error: 'tls_alert' },
+    ]);
+    expect(
+      parseRipeAtlasResults([{ prb_id: 3, alert: {} }], 'IR', { protocol: 'https' })[0]?.ok,
+    ).toBe(false);
   });
 
   test('a probe id is NOT a network: without an ASN the results carry neither asn nor network, so they cannot fake agreement', () => {

@@ -84,7 +84,11 @@ import {
   type ProvisionIntent,
 } from './lib/edges/intent';
 import { qualificationBinding, qualificationVerdict } from './lib/edges/frontCheck/binding';
-import { edgeLayerOf, providerHealthSatisfies } from './lib/edges/providers/capabilities';
+import {
+  edgeLayerOf,
+  providerHealthSatisfies,
+  zoneModeGovernsOrigin,
+} from './lib/edges/providers/capabilities';
 import type {
   StepOutcome,
   Discovery,
@@ -1548,7 +1552,27 @@ export const finalize = internalMutation({
       events: appendEvent(r.events, { at: now, level: 'info', code: 'done' }),
       updatedAt: now,
     });
+    // A detector-triggered L7 replacement that SUCCEEDED on the same provider
+    // counts against the relay's daily bound exactly like a blocked one: the
+    // new hostname very probably resolves to the same shared anycast frontend,
+    // so a censor that blocked the address is not answered by it. A
+    // replacement that moved to another provider, or to another layer, is a
+    // genuinely new frontend address and is not counted.
+    const sameProviderL7 =
+      r.trigger === 'detector' &&
+      r.kind === 'replace' &&
+      !!from &&
+      !!to &&
+      (from.layer ?? 'l4') === 'l7' &&
+      (to.layer ?? 'l4') === 'l7' &&
+      !!from.provider &&
+      from.provider === to.provider;
+    const today = todayKey(now);
+    const usedToday = origin.l7ReplacementsDayKey === today ? (origin.l7ReplacementsToday ?? 0) : 0;
     await releaseOrigin(ctx, r, {
+      ...(sameProviderL7
+        ? { l7ReplacementsDayKey: today, l7ReplacementsToday: usedToday + 1 }
+        : {}),
       ...(r.kind === 'replace'
         ? { lastRotatedAt: now, cooldownUntil: now + origin.cooldownMs }
         : {}),
@@ -2399,16 +2423,21 @@ async function phaseSelect(ctx: ActionCtx, c: Ctx) {
     advanceCall(ctx, r._id, sv, { type: 'fail', code, detail, rollback: false });
   let hostname: string | undefined;
   const originTransport = selection.slot.originTransport ?? undefined;
-  const zoneSslMode = selection.account.zoneSslMode ?? undefined;
+  // The zone's mode describes the origin leg only when the front IS the zone's
+  // proxy; for any other CDN the referenced zone merely holds unproxied CNAMEs.
+  const zoneModeApplies = zoneModeGovernsOrigin(selection.account.provider);
+  const zoneSslMode = zoneModeApplies ? (selection.account.zoneSslMode ?? undefined) : undefined;
   if (edgeLayerOf(selection.account.provider) === 'l7') {
     if (!selection.account.zoneName) return void (await fail('dns_zone_missing'));
     if (!originTransport) return void (await fail('origin_transport_missing'));
     // The zone's encryption mode is OBSERVED, never entered: an untested
     // account cannot be planned against, and a mode that cannot carry the
     // slot's origin transport is refused before anything is allocated.
-    if (!zoneSslMode) return void (await fail('zone_mode_unknown'));
-    if (!zoneModeCarriesOrigin(zoneSslMode, originTransport))
-      return void (await fail('origin_tls_mismatch'));
+    if (zoneModeApplies) {
+      if (!zoneSslMode) return void (await fail('zone_mode_unknown'));
+      if (!zoneModeCarriesOrigin(zoneSslMode, originTransport))
+        return void (await fail('origin_tls_mismatch'));
+    }
     const tpl = selection.template.params as { labelLength?: number; labelPrefix?: string };
     try {
       hostname = edgeHostnameFor(name, selection.account.zoneName, {

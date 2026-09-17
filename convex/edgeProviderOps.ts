@@ -34,6 +34,7 @@ import {
   EDGE_PROVIDER_CAPABILITIES,
   protocolCarriedBy,
   unsupportedTransport,
+  zoneModeGovernsOrigin,
 } from './lib/edges/providers/capabilities';
 import { renderTemplateValue } from './lib/edges/providers/template';
 import { isRelayProviderId, type EdgeProviderId } from './lib/edgeProviderIds';
@@ -311,14 +312,23 @@ async function loadAdapter(
   return { provider: edgeProviderFor(acct.provider), cfg, providerId: acct.provider, intent };
 }
 
-/** Template params are validated by the adapter schema, then placeholders rendered. */
+/**
+ * Template params are validated by the adapter schema, then placeholders
+ * rendered. The zone's encryption mode rides ALONG the params rather than in
+ * them: it is not an operator-settable template field (the adapter schema
+ * would strip it), but the adapter that proxies the zone reads it as one,
+ * because it decides the effective origin port and whether the origin leg is
+ * encrypted. It is added after the schema parse for exactly that reason.
+ */
 function renderedTemplate(
   provider: EdgeProvider,
   params: unknown,
   spec: EdgeSpec,
+  zoneSslMode?: string,
 ): Record<string, unknown> {
   const parsed = provider.templateSchema.parse(params ?? {}) as Record<string, unknown>;
-  return renderTemplateValue(parsed, spec);
+  const rendered = renderTemplateValue(parsed, spec) as Record<string, unknown>;
+  return zoneSslMode ? { ...rendered, zoneSslMode } : rendered;
 }
 
 function refuse(code: string, message: string, providerId: EdgeProviderId): never {
@@ -386,8 +396,15 @@ function checkOriginTransport(
       providerId,
     );
   // The zone's encryption mode decides whether the front dials the origin over
-  // HTTP or HTTPS, and whether it validates the origin certificate.
-  if (zoneSslMode && !zoneModeCarriesOrigin(zoneSslMode, spec.originTransport))
+  // HTTP or HTTPS, and whether it validates the origin certificate, but only
+  // for the provider that proxies the zone itself. A front whose records are
+  // unproxied CNAMEs in someone else's zone dials the origin by its own
+  // service configuration, so that zone's mode never refuses it.
+  if (
+    zoneSslMode &&
+    zoneModeGovernsOrigin(providerId) &&
+    !zoneModeCarriesOrigin(zoneSslMode, spec.originTransport)
+  )
     refuse(
       'origin_tls_mismatch',
       'the zone encryption mode cannot carry this origin transport',
@@ -655,7 +672,7 @@ export const planProvision = internalAction({
   handler: (ctx, a): Promise<ResourceStep[]> =>
     run(async () => {
       const { provider, cfg, providerId } = await loadAdapter(ctx, a.accountId);
-      const tpl = renderedTemplate(provider, a.templateParams, a.spec);
+      const tpl = renderedTemplate(provider, a.templateParams, a.spec, a.zoneSslMode);
       checkSpec(providerId, a.spec, a.protocol, tpl, a.zoneSslMode);
       return provider.planProvision(cfg, a.spec, tpl);
     }),
@@ -674,7 +691,7 @@ export const runStep = internalAction({
   handler: (ctx, a): Promise<StepOutcome> =>
     run(async () => {
       const { provider, cfg, providerId, intent } = await loadAdapter(ctx, a.accountId, a.edgeId);
-      const tpl = renderedTemplate(provider, a.templateParams, a.spec);
+      const tpl = renderedTemplate(provider, a.templateParams, a.spec, intent?.zoneSslMode);
       checkSpec(providerId, a.spec, a.protocol, tpl, intent?.zoneSslMode);
       return provider.runStep(cfg, a.step as ResourceStep, a.spec, tpl, a.ledger as Ledger);
     }),

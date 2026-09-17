@@ -133,6 +133,8 @@ export interface EdgeConfig {
     qualifyStepTimeoutMs: number;
     /** How long a front qualification stays valid (its binding must also still match). */
     qualificationTtlMinutes: number;
+    /** Front re-proofs one reconcile tick may run (each is an outbound session, not a read). */
+    maxRequalifyPerTick: number;
   };
   render: {
     /** Master switch for FCP-rendered relay endpoints; off = the panel body passes through. */
@@ -218,6 +220,7 @@ export const EDGE_DEFAULTS: EdgeConfig = {
     qualifyTimeoutMinutes: 15,
     qualifyStepTimeoutMs: 10_000,
     qualificationTtlMinutes: 60,
+    maxRequalifyPerTick: 6,
   },
   render: {
     enabled: false,
@@ -365,6 +368,7 @@ export const EDGE_KEYS = {
   'l7.qualifyTimeoutMinutes': 'edge.l7.qualifyTimeoutMinutes',
   'l7.qualifyStepTimeoutMs': 'edge.l7.qualifyStepTimeoutMs',
   'l7.qualificationTtlMinutes': 'edge.l7.qualificationTtlMinutes',
+  'l7.maxRequalifyPerTick': 'edge.l7.maxRequalifyPerTick',
   'render.enabled': 'edge.render.enabled',
   'render.autoGroupName': 'edge.render.autoGroupName',
   'render.primaryLabel': 'edge.render.primaryLabel',
@@ -546,6 +550,12 @@ export function sanitizeRelayConfig(
         5,
         1440,
         D.l7.qualificationTtlMinutes,
+      ),
+      maxRequalifyPerTick: sanitizeInt(
+        raw['l7.maxRequalifyPerTick'],
+        1,
+        50,
+        D.l7.maxRequalifyPerTick,
       ),
     },
     render: {
@@ -745,4 +755,18 @@ export const edgeMs = {
   opClaim: (cfg: EdgeConfig) => cfg.opClaimSeconds * 1000,
   settleGrace: (cfg: EdgeConfig) => cfg.settleGraceSeconds * 1000,
   poll: (cfg: EdgeConfig) => cfg.pollSeconds * 1000,
+  qualificationTtl: (cfg: EdgeConfig) => cfg.l7.qualificationTtlMinutes * MIN,
+  /**
+   * How long BEFORE a front qualification expires the reconcile cron renews it.
+   * An expired proof makes the edge ineligible for rendering the moment it
+   * lapses, so waiting for the expiry would flap a healthy front out of every
+   * new subscription body until the next tick re-proves it. A quarter of the
+   * TTL, never less than 15 minutes (a proof is an outbound session, not a
+   * read) and never as much as half the TTL, so a fresh proof is not due again
+   * at once.
+   */
+  renewLead: (cfg: EdgeConfig) => {
+    const ttl = edgeMs.qualificationTtl(cfg);
+    return Math.min(Math.max(15 * MIN, ttl * 0.25), ttl / 2);
+  },
 };

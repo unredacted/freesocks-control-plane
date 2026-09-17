@@ -1030,6 +1030,32 @@ describe('relay admin routes: importing an existing L7 front', () => {
     expect(await wrongHost.json()).toMatchObject({ error: { code: 'edge.not_owned' } });
   });
 
+  test('a DNS-only (unproxied) record is refused by the import, not silently adopted', async () => {
+    const { call, accountId, relayId, slotId } = await l7Fixture();
+    // The adapter refuses one itself; this is the orchestrator's half, for an
+    // inspection taken before the record lost its proxy. Nothing fronts a
+    // DNS-only name, so the "edge" would answer with the origin's own address.
+    fakeCloudflare({
+      resources: [
+        {
+          kind: 'dns_record',
+          resourceId: 'rec-1',
+          ownership: 'adopted' as const,
+          meta: { zoneId: 'z1', proxied: false },
+        },
+      ],
+    });
+    const res = await call('POST', `relays/${relayId}/adopt`, {
+      slotId,
+      accountId,
+      resourceId: 'rec-1',
+      hostname: HOSTNAME,
+      publish: false,
+    });
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(await res.json()).toMatchObject({ error: { code: 'edge.record_not_proxied' } });
+  });
+
   test('an L4 edge on a name-free HTTP-transport slot is refused; the L7 one publishes', async () => {
     const { t, call, relayId, slotId } = await l7Fixture();
     fakeCloudflare();

@@ -819,6 +819,117 @@ describe('fastly: discovery answers the four outcomes', () => {
     });
   });
 
+  /** A `GET /tls/subscriptions` answer built from (id, domains, CA, configuration). */
+  function subscriptionsDoc(
+    subs: Array<{ id: string; domains: string[]; ca?: string; configuration?: string }>,
+  ) {
+    return {
+      status: 200,
+      contentType: 'application/vnd.api+json',
+      body: {
+        data: subs.map((x) => ({
+          id: x.id,
+          type: 'tls_subscription',
+          attributes: { state: 'issued', certificate_authority: x.ca ?? 'certainly' },
+          relationships: {
+            tls_domains: { data: x.domains.map((d) => ({ id: d, type: 'tls_domain' })) },
+            ...(x.configuration
+              ? {
+                  tls_configuration: {
+                    data: { id: x.configuration, type: 'tls_configuration' },
+                  },
+                }
+              : {}),
+          },
+        })),
+        meta: { current_page: 1, per_page: 20, record_count: subs.length, total_pages: 1 },
+      },
+    };
+  }
+
+  const tlsStep = () =>
+    fastlyProvider.planProvision(cfg, spec, tpl).find((s) => s.kind === 'create_tls_subscription')!;
+
+  test('a subscription is adopted only when it is the ONLY one covering the hostname and matches the intent', async () => {
+    // Exactly one, issued by the certificate authority this edge was planned
+    // with: proven enough to adopt.
+    await serve((c) =>
+      c.method === 'GET' && c.path === '/tls/subscriptions'
+        ? subscriptionsDoc([{ id: SUB, domains: [HOST] }])
+        : defaultReply(c),
+    );
+    expect(await fastlyProvider.discover(cfg, tlsStep(), spec, serviceLedger, 1)).toEqual({
+      status: 'found',
+      resources: [
+        {
+          kind: 'tls_subscription',
+          resourceId: SUB,
+          ownership: 'adopted',
+          meta: { hostname: HOST },
+        },
+      ],
+    });
+  });
+
+  test('several subscriptions covering the hostname are ambiguous, never the first one', async () => {
+    await serve((c) =>
+      c.method === 'GET' && c.path === '/tls/subscriptions'
+        ? subscriptionsDoc([
+            { id: 'sub-other', domains: [HOST, 'someone-else.example.org'] },
+            { id: SUB, domains: [HOST] },
+          ])
+        : defaultReply(c),
+    );
+    const res = await fastlyProvider.discover(cfg, tlsStep(), spec, serviceLedger, 1);
+    expect(res.status).toBe('ambiguous');
+    expect(res.status === 'ambiguous' && res.candidates.map((x) => x.resourceId)).toEqual([
+      'sub-other',
+      SUB,
+    ]);
+  });
+
+  test('a subscription whose CA or TLS configuration is not the frozen one is ambiguous', async () => {
+    // Same hostname, another certificate authority: somebody else's.
+    await serve((c) =>
+      c.method === 'GET' && c.path === '/tls/subscriptions'
+        ? subscriptionsDoc([{ id: 'sub-foreign', domains: [HOST], ca: 'lets-encrypt' }])
+        : defaultReply(c),
+    );
+    expect(await fastlyProvider.discover(cfg, tlsStep(), spec, serviceLedger, 1)).toMatchObject({
+      status: 'ambiguous',
+      candidates: [{ resourceId: 'sub-foreign' }],
+    });
+    // With a TLS configuration in the intent, the configuration must match too.
+    const pinned = { ...cfg, tlsConfigurationId: 'tls-1' };
+    await serve((c) =>
+      c.method === 'GET' && c.path === '/tls/subscriptions'
+        ? subscriptionsDoc([{ id: SUB, domains: [HOST], configuration: 'tls-other' }])
+        : defaultReply(c),
+    );
+    expect(await fastlyProvider.discover(pinned, tlsStep(), spec, serviceLedger, 1)).toMatchObject({
+      status: 'ambiguous',
+    });
+    await serve((c) =>
+      c.method === 'GET' && c.path === '/tls/subscriptions'
+        ? subscriptionsDoc([{ id: SUB, domains: [HOST], configuration: 'tls-1' }])
+        : defaultReply(c),
+    );
+    expect(await fastlyProvider.discover(pinned, tlsStep(), spec, serviceLedger, 1)).toMatchObject({
+      status: 'found',
+    });
+  });
+
+  test('a listing that covers only OTHER hostnames proves this subscription absent', async () => {
+    await serve((c) =>
+      c.method === 'GET' && c.path === '/tls/subscriptions'
+        ? subscriptionsDoc([{ id: 'sub-other', domains: ['someone-else.example.org'] }])
+        : defaultReply(c),
+    );
+    expect(await fastlyProvider.discover(cfg, tlsStep(), spec, serviceLedger, 1)).toEqual({
+      status: 'confirmed_absent',
+    });
+  });
+
   test('a DNS record with a foreign comment is ambiguous, never adopted', async () => {
     await serve();
     fakeDns([
@@ -1154,6 +1265,58 @@ function sharedLedger(): Ledger {
     ],
   };
 }
+
+/** `sharedLedger()` plus a TLS subscription with the given sharing marker. */
+function sharedLedgerWithSubscription(subscriptionShared: boolean): Ledger {
+  const ledger = sharedLedger();
+  ledger.resources.push({
+    stepId: 'tls',
+    kind: 'tls_subscription',
+    resourceId: SUB,
+    ownership: 'adopted',
+    deleteState: 'present',
+    meta: JSON.stringify({ hostname: HOST, shared: subscriptionShared }),
+  });
+  return ledger;
+}
+
+describe('fastly: a TLS subscription on a shared service', () => {
+  test('a subscription dedicated to OUR hostname is destroyed even though the service is shared', async () => {
+    const ledger = sharedLedgerWithSubscription(false);
+    // The certificate is not part of the service: leaving it behind would keep
+    // renewing (and paying for) a certificate for a hostname nobody serves.
+    expect(fastlyProvider.planDestroy(cfg, ledger).map(fastlyDestroyKey)).toEqual([
+      'dns_record:traffic',
+      'tls_subscription',
+      'domain',
+    ]);
+    const r = await serve();
+    fakeDns();
+    const sub = ledger.resources.find((x) => x.kind === 'tls_subscription')!;
+    expect(await fastlyProvider.runDestroy(cfg, sub, ledger)).toEqual({
+      status: 'delete_requested',
+    });
+    expect(r.calls.map((c) => `${c.method} ${c.path}`)).toEqual([
+      `DELETE /tls/subscriptions/${SUB}`,
+    ]);
+  });
+
+  test('a subscription that also covers other hostnames is left alone', async () => {
+    const ledger = sharedLedgerWithSubscription(true);
+    expect(fastlyProvider.planDestroy(cfg, ledger).map(fastlyDestroyKey)).toEqual([
+      'dns_record:traffic',
+      'domain',
+    ]);
+    const r = await serve();
+    fakeDns();
+    const sub = ledger.resources.find((x) => x.kind === 'tls_subscription')!;
+    // Deleting it would drop somebody else's certificate.
+    expect(await fastlyProvider.runDestroy(cfg, sub, ledger)).toEqual({
+      status: 'confirmed_gone',
+    });
+    expect(r.calls).toEqual([]);
+  });
+});
 
 describe('fastly: shared teardown of an adopted domain', () => {
   test('a shared service is never deleted: only the domain and our DNS records are planned', async () => {

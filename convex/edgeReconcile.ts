@@ -52,8 +52,6 @@ const MAX_DISCOVER_ATTEMPTS = 3;
  * provider, so confirming alone could wait forever).
  */
 export const MAX_CONFIRM_ATTEMPTS = 3;
-/** Front qualifications re-run per tick (each is an outbound session, not a cheap read). */
-export const MAX_REQUALIFY_PER_TICK = 3;
 
 export interface ReconcileReport {
   rekicked: number;
@@ -176,7 +174,6 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
     report.rekicked++;
   }
 
-  let requalified = 0;
   const edges = await ctx.runQuery(internal.edges.listLive, {});
   const origins = await ctx.runQuery(internal.relays.listAll, {});
   const rotatingOrigins = new Set(
@@ -184,6 +181,32 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
   );
   const quarantinedOrigins = new Set(
     origins.filter((o) => o.quarantine).map((o) => o._id as string),
+  );
+
+  // Published L7 fronts whose proof is due for RENEWAL this tick. An expired
+  // qualification makes the edge ineligible for rendering the instant it
+  // lapses (`edgeRender.publishedEdgesOf`), so renewing only after the expiry
+  // would flap a healthy front out of every new body until the next tick. The
+  // ones closest to expiry go first, and the tick's budget is config-driven
+  // because each proof is an outbound session.
+  const renewLead = edgeMs.renewLead(cfg);
+  const expiryOf = (e: Edge) => e.frontQualification?.expiresAt ?? 0;
+  const requalifyDue = new Set(
+    edges
+      .filter(
+        (e) =>
+          (e.layer ?? 'l4') === 'l7' &&
+          e.publication === 'published' &&
+          e.managed &&
+          !!e.accountId &&
+          ['active', 'standby', 'draining'].includes(e.status) &&
+          !quarantinedOrigins.has(e.relayId as string) &&
+          !rotatingOrigins.has(e.relayId as string) &&
+          expiryOf(e) - now <= renewLead,
+      )
+      .sort((a, b) => expiryOf(a) - expiryOf(b))
+      .slice(0, cfg.l7.maxRequalifyPerTick)
+      .map((e) => e._id as string),
   );
 
   for (const edge of edges) {
@@ -245,38 +268,36 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
       // 3. Health refresh for live edges (non-destructive).
       if (['active', 'standby', 'draining'].includes(edge.status) && !inRotation) {
         const staleHealth = (edge.lastHealthAt ?? 0) + edgeMs.poll(cfg) * 10 <= now;
-        if (!staleHealth) continue;
-        const desc: EdgeDescription = await ctx.runAction(internal.edgeProviderOps.describe, {
-          accountId: edge.accountId,
-          ledger: ledgerOf(edge),
-          edgeId: edge._id,
-        });
-        // A `gone` describe acts (status transition + pool drop + epoch bump, in
-        // that ONE mutation) only on the second consecutive observation.
-        const rec = await ctx.runMutation(internal.edges.recordDescribe, {
-          edgeId: edge._id,
-          state: desc.state,
-          addresses: desc.addresses,
-          health: desc.health,
-          resources: desc.resources,
-          // L7 adapters report DNS + certificate readiness; the `front`
-          // dimension follows the stored qualification, not the adapter.
-          readiness: desc.readiness,
-        });
-        report.described++;
-        if (rec?.dropped) report.dropped++;
-        // A published L7 front whose proof expired is re-proven here, bounded
-        // per tick: the proof is what publication depends on, so letting it
-        // lapse silently would leave the pool carrying an unverified front.
-        if (
-          (edge.layer ?? 'l4') === 'l7' &&
-          edge.publication === 'published' &&
-          requalified < MAX_REQUALIFY_PER_TICK &&
-          (edge.frontQualification?.expiresAt ?? 0) <= now
-        ) {
-          requalified++;
-          await ctx.runAction(internal.frontQualifyOps.run, { edgeId: edge._id });
+        // The proof has its own clock: a front whose health was refreshed a
+        // minute ago still has to be re-proven before its qualification lapses.
+        if (!staleHealth && !requalifyDue.has(edge._id as string)) continue;
+        if (staleHealth) {
+          const desc: EdgeDescription = await ctx.runAction(internal.edgeProviderOps.describe, {
+            accountId: edge.accountId,
+            ledger: ledgerOf(edge),
+            edgeId: edge._id,
+          });
+          // A `gone` describe acts (status transition + pool drop + epoch bump,
+          // in that ONE mutation) only on the second consecutive observation.
+          const rec = await ctx.runMutation(internal.edges.recordDescribe, {
+            edgeId: edge._id,
+            state: desc.state,
+            addresses: desc.addresses,
+            health: desc.health,
+            resources: desc.resources,
+            // L7 adapters report DNS + certificate readiness; the `front`
+            // dimension follows the stored qualification, not the adapter.
+            readiness: desc.readiness,
+          });
+          report.described++;
+          if (rec?.dropped) report.dropped++;
         }
+        // A published L7 front's proof is renewed BEFORE it lapses, so a
+        // healthy front never drops out of the rendered pool waiting for the
+        // next tick. A re-proof that FAILS still takes it out at once: the
+        // stored `ok:false` is what the renderer reads.
+        if (requalifyDue.has(edge._id as string))
+          await ctx.runAction(internal.frontQualifyOps.run, { edgeId: edge._id });
       }
     } catch (err) {
       report.errors++;

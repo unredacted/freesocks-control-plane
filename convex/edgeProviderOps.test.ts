@@ -699,6 +699,81 @@ describe('edgeProviderOps: L7 plan-time refusals', () => {
     ).rejects.toThrow(/origin_tls_mismatch/);
   });
 
+  test('the zone encryption mode only refuses the CDN that PROXIES the zone', async () => {
+    const t = newT();
+    const cfId = await cloudflareAccount(t);
+    const { id: fastlyId } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'fastly',
+      name: 'acct-fastly',
+      settings: { dnsAccountId: cfId, certificateAuthority: 'certainly' },
+      credentials: { apiToken: 'f' },
+    });
+    mockFetch(() => jsonRes({}));
+    // A plaintext origin, and a DNS zone set to the strictest mode. The zone
+    // only holds this front's unproxied CNAMEs, so its mode says nothing about
+    // how the front dials the origin: the plan goes through.
+    const httpOrigin = l7Spec({
+      listeners: [{ edgePort: 443, members: [{ address: '198.51.100.7', port: 80 }] }],
+      originTransport: {
+        scheme: 'http',
+        certPublic: false,
+        certNames: [],
+        acceptsHostHeader: 'any',
+      },
+    });
+    const steps = await t.action(internal.edgeProviderOps.planProvision, {
+      accountId: fastlyId,
+      spec: httpOrigin,
+      templateParams: {},
+      protocol: 'ws',
+      zoneSslMode: 'strict',
+    });
+    expect(steps.length).toBeGreaterThan(0);
+    // The same origin behind the zone's own proxy is still refused.
+    await expect(
+      t.action(internal.edgeProviderOps.planProvision, {
+        accountId: cfId,
+        spec: httpOrigin,
+        templateParams: {},
+        protocol: 'ws',
+        zoneSslMode: 'strict',
+      }),
+    ).rejects.toThrow(/origin_tls_mismatch/);
+  });
+
+  test('the observed zone mode reaches the zone proxy adapter as a template param', async () => {
+    const t = newT();
+    const cfId = await cloudflareAccount(t);
+    mockFetch(() => jsonRes({}));
+    // `flexible` dials port 80; an origin on 443 therefore needs an Origin Rule.
+    // Without the mode the adapter would refuse with `zone_mode_unknown`, so
+    // the extra step proves the mode survived the template schema.
+    const steps = await t.action(internal.edgeProviderOps.planProvision, {
+      accountId: cfId,
+      spec: l7Spec(),
+      templateParams: {},
+      protocol: 'ws',
+      zoneSslMode: 'full',
+    });
+    expect(steps.map((s) => s.kind)).toEqual(['create_dns_record']);
+    const flexible = await t.action(internal.edgeProviderOps.planProvision, {
+      accountId: cfId,
+      spec: l7Spec({
+        listeners: [{ edgePort: 443, members: [{ address: '198.51.100.7', port: 80 }] }],
+        originTransport: {
+          scheme: 'http',
+          certPublic: false,
+          certNames: [],
+          acceptsHostHeader: 'any',
+        },
+      }),
+      templateParams: {},
+      protocol: 'ws',
+      zoneSslMode: 'flexible',
+    });
+    expect(flexible.map((s) => s.kind)).toEqual(['create_dns_record']);
+  });
+
   test('an adapter with no adoption inspection refuses the import instead of guessing', async () => {
     const t = newT();
     const cfId = await cloudflareAccount(t);

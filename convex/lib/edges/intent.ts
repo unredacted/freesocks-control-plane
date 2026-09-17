@@ -21,7 +21,7 @@
  */
 import { canonicalJson } from './providers/template';
 import { edgeHostnameFor } from './hostname';
-import { edgeLayerOf } from './providers/capabilities';
+import { edgeLayerOf, zoneModeGovernsOrigin } from './providers/capabilities';
 import type { SlotProtocol } from './protocols';
 import { zoneModeCarriesOrigin, type OriginTransport } from './layers';
 
@@ -55,7 +55,12 @@ export interface ProvisionIntent {
   certificateAuthority?: string;
   originTransport: FrozenOriginTransport;
   originPort: number;
-  /** The zone's encryption mode at plan time; a live change is surfaced, never followed. */
+  /**
+   * The zone's encryption mode at plan time; a live change is surfaced, never
+   * followed. Present only for a provider that is the zone's own proxy
+   * (`providesDns`); for any other L7 front the mode does not describe the
+   * origin leg and is deliberately absent.
+   */
   zoneSslMode?: string;
   templateHash: string;
   /** The EFFECTIVE rendered template values, so no step ever needs the template row again. */
@@ -105,7 +110,10 @@ export interface BuildIntentArgs {
   templateParams: Record<string, unknown>;
   templateHash: string;
   slot: IntentSlotLike;
-  /** Overrides the observed zone mode (tests, an operator-forced re-plan). */
+  /**
+   * Overrides the observed zone mode (tests, an operator-forced re-plan).
+   * Ignored for a provider the zone mode does not govern.
+   */
   zoneSslMode?: string;
   /**
    * Import only: the hostname that already exists at the provider. A provisioned
@@ -149,14 +157,23 @@ export function buildProvisionIntent(a: BuildIntentArgs): ProvisionIntent | null
       labelLength: typeof tpl.labelLength === 'number' ? tpl.labelLength : 12,
       labelPrefix: str(tpl.labelPrefix),
     });
-  // The zone's encryption mode decides how the front dials the origin. It is
-  // OBSERVED at the provider (the credential test), never entered, so an
-  // account nobody has tested cannot be planned against: guessing a mode would
-  // silently front a plaintext origin over HTTPS, or the other way round.
-  const zoneSslMode = a.zoneSslMode ?? zoneSource.observedSettings?.zoneSslMode;
-  if (!zoneSslMode) throw new IntentError('zone_mode_unknown');
-  if (!zoneModeCarriesOrigin(zoneSslMode, originTransport))
-    throw new IntentError('origin_tls_mismatch');
+  // The zone's encryption mode decides how the front dials the origin ONLY
+  // when the CDN fronting this edge is the zone's own proxy (`providesDns`).
+  // It is OBSERVED at the provider (the credential test), never entered, so
+  // such an account nobody has tested cannot be planned against: guessing a
+  // mode would silently front a plaintext origin over HTTPS, or the other way
+  // round. For a front whose records are only unproxied CNAMEs in someone
+  // else's zone the mode is irrelevant: it is neither required nor frozen, and
+  // it never refuses the origin transport.
+  const zoneModeApplies = zoneModeGovernsOrigin(a.account.provider);
+  const zoneSslMode = zoneModeApplies
+    ? (a.zoneSslMode ?? zoneSource.observedSettings?.zoneSslMode)
+    : undefined;
+  if (zoneModeApplies) {
+    if (!zoneSslMode) throw new IntentError('zone_mode_unknown');
+    if (!zoneModeCarriesOrigin(zoneSslMode, originTransport))
+      throw new IntentError('origin_tls_mismatch');
+  }
   return {
     hostname,
     zoneId,
@@ -175,7 +192,7 @@ export function buildProvisionIntent(a: BuildIntentArgs): ProvisionIntent | null
       acceptsHostHeader: originTransport.acceptsHostHeader,
     },
     originPort: a.slot.originPort,
-    zoneSslMode,
+    ...(zoneSslMode ? { zoneSslMode } : {}),
     templateHash: a.templateHash,
     templateParams: tpl,
   };

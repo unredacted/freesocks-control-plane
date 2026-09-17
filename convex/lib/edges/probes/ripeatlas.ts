@@ -10,7 +10,13 @@
  * results. Probes whose ASN cannot be resolved stay network-less and collapse
  * into one bucket in `verdict.ts` rather than faking agreement.
  */
-import { shortError, type ProbeRequestOptions, type ProbeResult, type ProbeTarget } from './types';
+import {
+  shortError,
+  type ProbeProtocol,
+  type ProbeRequestOptions,
+  type ProbeResult,
+  type ProbeTarget,
+} from './types';
 import type { FetchLike } from './checkhost';
 
 export const RIPE_ATLAS_BASE = 'https://atlas.ripe.net/api/v2';
@@ -22,6 +28,12 @@ export interface AtlasStarted {
   af: 4 | 6;
   /** probe id → ASN, filled lazily by the poller (shared across its polls). */
   asnByProbe?: Record<number, string>;
+  /**
+   * What the run measures. A TLS alert is "the peer answered" for a bare
+   * `tcp` probe (a REALITY edge presents no certificate for a random SNI) but a
+   * FAILURE for a `tls` / `https` probe, whose measurement is the handshake.
+   */
+  protocol?: ProbeProtocol;
 }
 
 /**
@@ -82,7 +94,7 @@ export async function ripeAtlasStart(
     if (typeof id !== 'number') throw new Error('ripe atlas: no measurement id');
     measurements[country] = id;
   }
-  return { measurements, af: atlasFamily(target), asnByProbe: {} };
+  return { measurements, af: atlasFamily(target), asnByProbe: {}, protocol: target.protocol };
 }
 
 function asnOfRow(raw: Record<string, unknown>, af: 4 | 6): string | undefined {
@@ -101,19 +113,23 @@ function asnOfRow(raw: Record<string, unknown>, af: 4 | 6): string | undefined {
 }
 
 /**
- * Parse one measurement's `/results/`: `rt`/`cert` = reachable; a TLS `alert`
- * ALSO means reachable (the peer answered on the port — a REALITY edge will not
- * present a certificate for a random SNI; same rule as the internal probe);
- * only `err` (connection-level) = not. The probe's ASN is the network; the
- * probe id never is.
+ * Parse one measurement's `/results/`: `rt`/`cert` = reachable; `err`
+ * (connection-level) = not. A TLS `alert` depends on what was measured: for a
+ * bare `tcp` probe the peer answered on the port (a REALITY edge will not
+ * present a certificate for a random SNI; same rule as the internal probe),
+ * for a `tls` / `https` probe the handshake IS the measurement and an alert is
+ * a failure, or several alerting probes would become positive country evidence
+ * for a front that cannot complete a handshake. The probe's ASN is the network;
+ * the probe id never is.
  */
 export function parseRipeAtlasResults(
   body: unknown,
   country: string,
-  opts: { af?: 4 | 6; asnByProbe?: Record<number, string> } = {},
+  opts: { af?: 4 | 6; asnByProbe?: Record<number, string>; protocol?: ProbeProtocol } = {},
 ): ProbeResult[] {
   if (!Array.isArray(body)) return [];
   const af = opts.af ?? 4;
+  const alertIsAnswer = (opts.protocol ?? 'tcp') === 'tcp';
   const out: ProbeResult[] = [];
   for (const raw of body as Array<Record<string, unknown>>) {
     const prb = typeof raw.prb_id === 'number' ? raw.prb_id : Number(raw.prb_id);
@@ -125,8 +141,8 @@ export function parseRipeAtlasResults(
       const rt = Number(raw.rt);
       out.push({
         ...base,
-        ok: true,
-        rttMs: Number.isFinite(rt) ? Math.round(rt) : undefined,
+        ok: alertIsAnswer,
+        rttMs: alertIsAnswer && Number.isFinite(rt) ? Math.round(rt) : undefined,
         error: 'tls_alert',
       });
     } else if (raw.rt !== undefined || Array.isArray(raw.cert)) {
@@ -209,7 +225,11 @@ export async function ripeAtlasPoll(
   }
   const results: ProbeResult[] = [];
   for (const { country, body } of bodies) {
-    const parsed = parseRipeAtlasResults(body, country, { af: started.af, asnByProbe: cache });
+    const parsed = parseRipeAtlasResults(body, country, {
+      af: started.af,
+      asnByProbe: cache,
+      protocol: started.protocol,
+    });
     if (parsed.length < Math.max(1, expectedPerCountry)) running = true;
     results.push(...parsed);
   }

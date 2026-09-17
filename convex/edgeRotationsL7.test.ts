@@ -529,6 +529,117 @@ describe('edgeRotations: the L7 automatic-selection gate', () => {
       force: true,
     });
   });
+
+  /** A published L7 (or L4) front on the relay, as the detector's target. */
+  async function publishedFront(
+    t: ReturnType<typeof convexTest>,
+    relayId: Id<'relays'>,
+    slotId: Id<'relaySlots'>,
+    over: Record<string, unknown> = {},
+  ) {
+    const edgeId = await t.run((ctx) =>
+      ctx.db.insert('edges', {
+        relayId,
+        slotId,
+        managed: false,
+        provider: 'cloudflare',
+        name: 'adopted-old',
+        steps: [],
+        resources: [],
+        listeners: [{ edgePort: 443, originAddress: ORIGIN, originPort: 443 }],
+        addresses: { hostname: 'old.example.org' },
+        layer: 'l7',
+        publication: 'published',
+        poolIndex: 0,
+        status: 'active',
+        statusChangedAt: Date.now(),
+        health: 'unknown',
+        destroyAttempts: 0,
+        updatedAt: Date.now(),
+        ...over,
+      }),
+    );
+    await t.run(async (ctx) => {
+      await ctx.db.patch(relayId, { publishedEdgeIds: [edgeId], autoRotate: true });
+      await ctx.db.insert('appSettings', {
+        key: 'edge.autoRotate',
+        value: 'true',
+        updatedAt: Date.now(),
+      });
+    });
+    return edgeId;
+  }
+
+  test('a SUCCESSFUL same-provider L7 replacement counts against the daily bound too', async () => {
+    vi.useFakeTimers();
+    fakeL7();
+    fakePanel();
+    __setFrontChecker(async () => ({ ok: true, steps: [], checkedAt: Date.now() }));
+    const { t, relayId, slotId } = await seed({ autoSelect: true });
+    const oldEdge = await publishedFront(t, relayId, slotId);
+    // The affected-country evidence is waived here (audited); everything else
+    // about the replacement is the ordinary detector path.
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'replace',
+      trigger: 'detector',
+      targetEdgeId: oldEdge,
+      forceGeoEvidence: true,
+    });
+    await drain(t, rotationId);
+    const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
+    expect([r.phase, r.outcome]).toEqual(['done', 'published']);
+    const to = (await t.query(internal.edges.get, { id: r.toEdgeId! }))!;
+    expect(to.provider).toBe('cloudflare');
+    // A new hostname on the SAME CDN is not a new frontend address, so the
+    // successful replacement is bounded exactly like a blocked one.
+    const origin = (await t.query(internal.relays.get, { id: relayId }))!;
+    expect(origin.l7ReplacementsToday).toBe(1);
+    expect(origin.l7ReplacementsDayKey).toBe(new Date().toISOString().slice(0, 10));
+    vi.useRealTimers();
+  });
+
+  test('a replacement that CHANGED layer, or one the operator asked for, is not counted', async () => {
+    vi.useFakeTimers();
+    fakeL7();
+    fakePanel();
+    __setFrontChecker(async () => ({ ok: true, steps: [], checkedAt: Date.now() }));
+    const { t, relayId, slotId } = await seed({ autoSelect: true });
+    // An L4 forwarder replaced by a front IS a new frontend address.
+    const oldEdge = await publishedFront(t, relayId, slotId, {
+      layer: 'l4',
+      addresses: { v4: '198.51.100.9' },
+      provider: undefined,
+    });
+    const first = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'replace',
+      trigger: 'detector',
+      targetEdgeId: oldEdge,
+      forceGeoEvidence: true,
+    });
+    await drain(t, first.rotationId);
+    expect((await t.query(internal.edgeRotations.get, { id: first.rotationId }))!.phase).toBe(
+      'done',
+    );
+    let origin = (await t.query(internal.relays.get, { id: relayId }))!;
+    expect(origin.l7ReplacementsToday ?? 0).toBe(0);
+    // And an operator's own rotation is never rationed.
+    await t.run((ctx) => ctx.db.patch(relayId, { cooldownUntil: undefined, rotationsToday: 0 }));
+    const second = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'replace',
+      trigger: 'manual',
+      targetEdgeId: origin.publishedEdgeIds[0]!,
+    });
+    await drain(t, second.rotationId);
+    expect((await t.query(internal.edgeRotations.get, { id: second.rotationId }))!.phase).toBe(
+      'done',
+    );
+    origin = (await t.query(internal.relays.get, { id: relayId }))!;
+    expect(origin.l7ReplacementsToday ?? 0).toBe(0);
+    vi.useRealTimers();
+  });
 });
 
 describe('edgeRotations: affected-country evidence must be FRESH', () => {

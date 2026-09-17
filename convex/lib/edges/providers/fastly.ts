@@ -365,6 +365,38 @@ export function subscriptionDomains(res: FastlyJsonApiResource): string[] {
     .filter((id): id is string => typeof id === 'string');
 }
 
+/** The certificate authority one TLS subscription was issued by. */
+export function subscriptionCertificateAuthority(res: FastlyJsonApiResource): string | undefined {
+  const ca = (res.attributes as { certificate_authority?: unknown } | undefined)
+    ?.certificate_authority;
+  return typeof ca === 'string' ? ca : undefined;
+}
+
+/** The TLS configuration one subscription is attached to (absent = Fastly's default). */
+export function subscriptionConfigurationId(res: FastlyJsonApiResource): string | undefined {
+  const data = (
+    res.relationships as { tls_configuration?: { data?: { id?: unknown } } } | undefined
+  )?.tls_configuration?.data;
+  const id = data?.id;
+  return typeof id === 'string' ? id : undefined;
+}
+
+/**
+ * Whether a subscription the provider returned for a hostname is the one THIS
+ * edge's frozen intent describes: same certificate authority, and, when the
+ * intent names a TLS configuration, the same configuration. Adopting a
+ * subscription that differs would hand the edge a certificate somebody else
+ * pays for and renews, and a destroy would then delete theirs.
+ */
+export function subscriptionMatchesIntent(
+  res: FastlyJsonApiResource,
+  want: { certificateAuthority: string; tlsConfigurationId?: string },
+): boolean {
+  if (subscriptionCertificateAuthority(res) !== want.certificateAuthority) return false;
+  if (!want.tlsConfigurationId) return true;
+  return subscriptionConfigurationId(res) === want.tlsConfigurationId;
+}
+
 function subscriptionState(doc: unknown): string | undefined {
   const data = (doc as { data?: FastlyJsonApiResource })?.data;
   const state = (data?.attributes as { state?: unknown } | undefined)?.state;
@@ -1043,21 +1075,34 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
       }
       case 'create_tls_subscription': {
         if (!hostname) return { status: 'confirmed_absent' };
+        // Ownership is PROVEN, never assumed: the account may hold several
+        // subscriptions covering this hostname (an operator's own, an older
+        // one), and adopting whichever the API listed first would let a destroy
+        // delete a certificate this edge never created. A subscription is this
+        // step's only when it is the single one covering the hostname AND its
+        // certificate authority (plus the TLS configuration, when the frozen
+        // intent names one) is what this edge was planned with.
         const doc = await api.listTlsSubscriptionsForDomain(hostname);
-        const hit = doc.data.find((d) => d.type === 'tls_subscription');
-        return hit
-          ? {
-              status: 'found',
-              resources: [
-                {
-                  kind: 'tls_subscription',
-                  resourceId: hit.id,
-                  ownership: 'adopted',
-                  meta: { hostname },
-                },
-              ],
-            }
-          : { status: 'confirmed_absent' };
+        const wanted = hostname.trim().toLowerCase();
+        const covering = doc.data.filter(
+          (d) =>
+            d.type === 'tls_subscription' &&
+            subscriptionDomains(d).some((n) => n.trim().toLowerCase() === wanted),
+        );
+        if (covering.length === 0) return { status: 'confirmed_absent' };
+        const candidates = covering.map((d) => ({
+          kind: 'tls_subscription' as const,
+          resourceId: d.id,
+          ownership: 'adopted' as const,
+          meta: { hostname },
+        }));
+        const want = {
+          certificateAuthority: cfg.certificateAuthority,
+          ...(cfg.tlsConfigurationId ? { tlsConfigurationId: cfg.tlsConfigurationId } : {}),
+        };
+        if (covering.length > 1 || !subscriptionMatchesIntent(covering[0]!, want))
+          return { status: 'ambiguous', candidates };
+        return { status: 'found', resources: candidates };
       }
       case 'create_dns_acme':
       case 'create_dns_record': {
@@ -1316,11 +1361,24 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
 
   sharedTeardown: fastlySharedTeardown,
 
+  /**
+   * On a SHARED service FCP deletes only what it owns THERE. A TLS
+   * subscription is not part of the service: one covering only the imported
+   * hostname is this edge's alone (`meta.shared !== true`, recorded at import
+   * time), so it stays in the plan and is deleted; leaving it out would keep
+   * paying for, and renewing, a certificate for a hostname nobody serves.
+   */
   planDestroy(_cfg, ledger) {
     const svc = firstResource(ledger, 'service');
     const shared = !!svc && metaOf(svc).shared === true;
     const live = ledger.resources.filter((r) => r.deleteState !== 'confirmed_gone');
-    const owned = shared ? live.filter((r) => SHARED_DESTROYABLE.has(r.kind)) : live;
+    const owned = shared
+      ? live.filter(
+          (r) =>
+            SHARED_DESTROYABLE.has(r.kind) ||
+            (r.kind === 'tls_subscription' && metaOf(r).shared !== true),
+        )
+      : live;
     return [...owned]
       .reverse()
       .map((r, i) => ({ r, i }))
@@ -1342,7 +1400,9 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
           return { status: 'delete_requested' };
         }
         case 'tls_subscription': {
-          if (shared) return { status: 'confirmed_gone' };
+          // The SUBSCRIPTION's own sharing decides, not the service's: one that
+          // covers other hostnames too would drop their certificate.
+          if (metaOf(r).shared === true) return { status: 'confirmed_gone' };
           await api.deleteTlsSubscription(r.resourceId);
           return { status: 'delete_requested' };
         }

@@ -239,6 +239,24 @@ export function cloudflareOriginRule(spec: EdgeSpec, originPort: number): Cloudf
   };
 }
 
+/**
+ * Whether an Origin Rule expression targets EXACTLY one hostname: the operand
+ * of an `http.host eq "<name>"` comparison, compared as a hostname (case
+ * insensitive, trailing dot tolerated) and never as a substring of the
+ * expression. `ba.example.org` contains `a.example.org`, so a substring match
+ * would adopt (and later delete) a rule that belongs to another host.
+ * The shape is the one `cloudflareOriginRule` writes; an expression this
+ * function cannot read is not this edge's rule.
+ */
+export function originRuleTargetsHost(expression: unknown, hostname: string): boolean {
+  if (typeof expression !== 'string') return false;
+  const wanted = normalizeDnsName(hostname);
+  if (!wanted) return false;
+  for (const m of expression.matchAll(/http\.host\s+eq\s+"([^"]*)"/gi))
+    if (normalizeDnsName(m[1]) === wanted) return true;
+  return false;
+}
+
 // --- SDK plumbing ------------------------------------------------------------------
 
 function dnsFor(cfg: CloudflareConfig, fetchImpl?: FetchLike) {
@@ -736,15 +754,19 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
    * record serves exactly one name), so `shared` is always false.
    *
    * Refusals rather than a best guess: a record that is gone is `not_found`,
-   * and a record whose name is not the hostname the operator named is
-   * `hostname_mismatch` (importing it would hand members somebody else's name).
-   * A record that is NOT proxied is reported with `meta.proxied: false` instead
-   * of being refused here: the orchestrator turns that into the refusal, so the
-   * operator sees which record it was.
+   * a record whose name is not the hostname the operator named is
+   * `hostname_mismatch` (importing it would hand members somebody else's name),
+   * and a DNS-only record is `record_not_proxied`: nothing fronts it, so its
+   * content is the origin's own address and importing it would publish the node
+   * itself as an "edge". The `meta.proxied:false` marker is kept as well, so the
+   * orchestrator refuses a stale inspection the same way.
    *
-   * The zone's origin rules are read too: a rule whose expression names the
-   * hostname belongs to this edge and is adopted with it, so a later destroy
-   * removes the port override the operator set up by hand.
+   * The zone's origin rules are read too: the rule whose expression names
+   * EXACTLY this hostname belongs to this edge and is adopted with it, so a
+   * later destroy removes the port override the operator set up by hand. The
+   * operand is parsed rather than substring-matched: `ba.example.org` contains
+   * `a.example.org`, and adopting that rule would delete another host's
+   * override.
    */
   async inspectForAdoption(cfg, resourceId, hostname): Promise<AdoptionInspection> {
     const step = 'adopt';
@@ -752,6 +774,7 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
     const record = await dnsFor(cfg).getRecord(resourceId);
     if (!record) throw providerError(step, 'not_found');
     if (record.name !== wanted) throw providerError(step, 'hostname_mismatch');
+    if (!record.proxied) throw providerError(step, 'record_not_proxied');
     const resources: ChildResource[] = [
       {
         kind: 'dns_record',
@@ -766,9 +789,7 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
       },
     ];
     const phase = await getOriginPhase(cfg, step);
-    const rule = (phase?.rules ?? []).find(
-      (r) => typeof r.expression === 'string' && r.expression.includes(wanted),
-    );
+    const rule = (phase?.rules ?? []).find((r) => originRuleTargetsHost(r.expression, wanted));
     if (rule?.id) {
       const port = rule.action_parameters?.origin?.port;
       resources.push({

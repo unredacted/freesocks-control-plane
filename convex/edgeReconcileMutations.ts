@@ -78,9 +78,12 @@ export const destroyExhausted = internalMutation({
  * extra fields ride along as JSON in `edges.sharedTeardownState`.
  *
  * Terminal phases act here, in the same transaction as the state write:
- *  - `done`: the hostname is off the shared resource, so the children FCP owns
- *    on it (its domain, its DNS records) are `confirmed_gone` and the ordinary
- *    destroy walk finishes the edge;
+ *  - `done`: the workflow removed FCP's DOMAIN from the shared resource, so
+ *    that child is `confirmed_gone`. Nothing else is: the DNS records live in
+ *    another account's zone and no version workflow touches them, so they stay
+ *    `present` and the ordinary destroy walk deletes and confirms them through
+ *    the DNS client. Marking them gone here would leave the zone holding a
+ *    CNAME (and an ACME challenge record) for a hostname FCP no longer serves;
  *  - `needs_operator`: the workflow cannot converge on its own (a lost clone, a
  *    version drift); the edge parks with the driver's code.
  */
@@ -95,7 +98,11 @@ export const recordSharedTeardown = internalMutation({
       code: v.optional(v.string()),
       extra: v.optional(v.string()),
     }),
-    /** Ledger kinds whose OWNED children a `done` phase resolves. */
+    /**
+     * Ledger kinds a `done` phase resolves: the ones the workflow itself
+     * removed. Only the domain by default; everything else is deleted by the
+     * ordinary destroy walk, which can actually confirm it.
+     */
     ownedKinds: v.optional(v.array(v.string())),
     countAttempt: v.optional(v.boolean()),
   },
@@ -106,7 +113,7 @@ export const recordSharedTeardown = internalMutation({
     const prior = edge.sharedTeardown;
     const attempts =
       (prior?.serviceId === state.serviceId ? prior.attempts : 0) + (countAttempt ? 1 : 0);
-    const kinds = ownedKinds ?? ['domain', 'dns_record'];
+    const kinds = ownedKinds ?? ['domain'];
     const done = state.phase === 'done';
     await ctx.db.patch(edgeId, {
       sharedTeardown: {

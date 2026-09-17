@@ -29,6 +29,7 @@ import {
   edgeLayerOf,
   protocolCarriedBy,
   providerHealthSatisfies,
+  zoneModeGovernsOrigin,
 } from './lib/edges/providers/capabilities';
 import {
   buildProvisionIntent,
@@ -794,13 +795,18 @@ export const finalizeDelete = internalMutation({
     await dropRollups('relay', id);
     // The qualification credential is a panel user: deactivate it after the row
     // is gone (best effort; an orphan is a capped, expiring test account).
-    if (row.qualificationBackendUserId) {
+    const owedUsers = [
+      ...(row.qualificationBackendUserId ? [row.qualificationBackendUserId] : []),
+      ...(row.qualificationRemovalPending ?? []),
+    ];
+    if (owedUsers.length > 0) {
       const server = await ctx.db.get(row.backendServerId);
       if (server)
-        await ctx.scheduler.runAfter(0, internal.relayQualification.removeBackendUser, {
-          backend: server.backend,
-          backendUserId: row.qualificationBackendUserId,
-        });
+        for (const backendUserId of new Set(owedUsers))
+          await ctx.scheduler.runAfter(0, internal.relayQualification.removeBackendUser, {
+            backend: server.backend,
+            backendUserId,
+          });
     }
     await ctx.db.delete(id);
     return { removed: true };
@@ -831,6 +837,25 @@ function metaFor(r: { kind: string; meta?: string }, sharedService: boolean): { 
   }
   if (sharedService && isService) parsed.shared = true;
   return { meta: JSON.stringify(parsed).slice(0, 4_000) };
+}
+
+/**
+ * A child the adapter read back as NOT fronted (`meta.proxied:false`): a
+ * DNS-only record answers with the origin's own address, so importing it would
+ * publish the node itself as an edge and hand members the address the front
+ * exists to hide. The adapter refuses it too; this is the orchestrator's half,
+ * so an inspection taken before the record was un-proxied cannot slip through.
+ */
+function unproxiedChild(resources: ReadonlyArray<{ meta?: string }>): boolean {
+  return resources.some((r) => {
+    if (!r.meta) return false;
+    try {
+      const raw = JSON.parse(r.meta) as unknown;
+      return !!raw && typeof raw === 'object' && (raw as Record<string, unknown>).proxied === false;
+    } catch {
+      return false;
+    }
+  });
 }
 
 /**
@@ -950,6 +975,11 @@ export const adoptEdge = internalMutation({
     // Adopting is a bookkeeping insert; PUBLISHING touches the pool, so it takes
     // the same gate as every other pool writer.
     if (a.publish) await assertNoRotationOrQuarantine(ctx.db, origin);
+    if (unproxiedChild(a.resources ?? []))
+      throw new ConvexError({
+        code: 'edge.record_not_proxied',
+        message: 'the record is DNS only: nothing fronts this hostname',
+      });
     const managed = !!accountRow && (a.resources?.length ?? 0) > 0;
     const now = Date.now();
     // A MANAGED L7 import: FCP will describe, qualify, rotate and (partially)
@@ -1194,8 +1224,15 @@ export async function checkPublishable(
   if (layer === 'l7') {
     // The zone's encryption mode decides how the front dials the origin; a
     // plaintext origin behind a mode that dials HTTPS (or the other way round)
-    // never completes a member connection.
-    if (intent?.zoneSslMode && !zoneModeCarriesOrigin(intent.zoneSslMode, intent.originTransport))
+    // never completes a member connection. It says that only for the provider
+    // that proxies the zone itself: a front whose records are unproxied CNAMEs
+    // in someone else's zone dials the origin by its own configuration, and an
+    // intent frozen before that distinction must not refuse it now.
+    if (
+      intent?.zoneSslMode &&
+      zoneModeGovernsOrigin(edge.provider) &&
+      !zoneModeCarriesOrigin(intent.zoneSslMode, intent.originTransport)
+    )
       return { ok: false, code: 'origin_tls_mismatch' };
     // The binding is re-derived HERE, inside the publishing transaction, from
     // the current slot/profile/intent: a proof taken against an older

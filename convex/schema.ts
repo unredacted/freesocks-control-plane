@@ -1071,6 +1071,10 @@ export default defineSchema({
     // The panel user behind that credential (the stored backendUserId form), so
     // it can be deactivated when the relay goes or the credential is re-minted.
     qualificationBackendUserId: v.optional(v.string()),
+    // Panel users whose deactivation failed transiently (a replaced or revoked
+    // credential): retried on the next mint/revoke and on relay delete, so a
+    // capped account is never silently orphaned.
+    qualificationRemovalPending: v.optional(v.array(v.string())),
     updatedAt: v.number(),
   })
     .index('by_slug', ['slug'])

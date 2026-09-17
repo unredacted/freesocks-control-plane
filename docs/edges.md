@@ -96,30 +96,41 @@ as `403` or `52x`), `grpc_<status>` (trailers without a tunnel response), `auth_
 profile revisions, protocol, transport parameters, intent hash) and an expiry
 (`edge.l7.qualificationTtlMinutes`); publication re-derives the binding inside the mutation
 and refuses `front_unqualified` / `front_qualification_stale`. The reconcile cron re-qualifies
-published L7 edges whose qualification expired. `POST …/{edgeId}/qualify` runs it on demand.
+published L7 edges before their qualification expires (see **Renewal** below). `POST …/{edgeId}/qualify` runs it on demand.
 
 **Affected-country evidence.** A detector-triggered L7 replacement additionally needs, during
 `verifying`, probes of the new hostname from every country in the detector's evidence:
-`reachable` everywhere → proceed; any `unreachable` → `replacement_blocked` (counted against
+`reachable` everywhere → proceed; any `unreachable` → `replacement_blocked`. Both a blocked
+replacement AND one that succeeds on the SAME provider count against
 `edge.l7.maxSameProviderReplacementsPerDay`, because a new hostname on the same provider is
-not a new frontend address); timeout, no enabled source or `mixed` / `unknown` →
-`qualification_inconclusive`. An unknown result never counts as success. `confirming` repeats
+not a new frontend address; a replacement that moved provider or layer does not count. A
+timeout, no enabled source or `mixed` / `unknown` gives `qualification_inconclusive`. An unknown result never counts as success. `confirming` repeats
 the probe set once and rolls back on `unreachable`. A manual publish may pass
 `forceGeoEvidence` to skip only this gate (audited); it never bypasses the transport proof,
 the TLS chain, ownership, layer compatibility or the configuration binding.
 
 **Observed zone facts.** The credential test records what planning needs but nobody types
 (`observedSettings` on the account: the zone's encryption mode and its WebSockets switch), and
-the inventory refresh re-reads it. Planning freezes the mode into the intent and refuses
-`zone_mode_unknown` (test the credentials first) or `origin_tls_mismatch` (a plaintext origin
-needs `flexible`, an encrypted one `full`/`strict`, and `strict` needs a publicly trusted origin
-certificate). The Host header the front will send is checked against the slot's
-`acceptsHostHeader` policy before any allocation (`host_header_rejected`).
+the inventory refresh re-reads it. The zone's encryption mode describes the origin leg only of
+the provider that PROXIES the zone (capability `providesDns`): for it, planning freezes the mode
+into the intent and refuses `zone_mode_unknown` (test the credentials first) or
+`origin_tls_mismatch` (a plaintext origin needs `flexible`, an encrypted one `full`/`strict`, and
+`strict` needs a publicly trusted origin certificate). A front whose records are only unproxied
+CNAMEs in that zone dials the origin by its own service configuration, so no mode is required,
+none is frozen, and the zone's setting never refuses it. The Host header the front will send is
+checked against the slot's `acceptsHostHeader` policy before any allocation
+(`host_header_rejected`).
 
 **Name-free HTTP-transport profiles.** A `ws` / `httpupgrade` / `grpc` profile may carry no
 server names when its slots are fronted only by L7 edges (the hostname is the name); such a
 slot excludes the L4 layer (`no_server_names`), and `profile_no_active_sni` applies to L4 edges
 only.
+
+**Renewal.** The reconcile cron re-proves a published front BEFORE its qualification lapses:
+a proof within `max(15 minutes, a quarter of the TTL)` of expiring is renewed on that tick,
+soonest expiry first, at most `edge.l7.maxRequalifyPerTick` sessions per tick. An expired proof
+makes the edge ineligible at once, so waiting for the expiry would flap a healthy front out of
+every new render for minutes.
 
 **Failed requalification.** A published L7 front whose re-proof fails is taken out of service
 at once: it stays at its pool index but becomes ineligible, the relay's epoch bumps and the
@@ -131,7 +142,9 @@ detector's own rule); a stale `reachable` requests a new round instead of passin
 (`inspectForAdoption`; `adoption_unsupported` when a provider has none): the recorded children
 carry the real ids, versions and metadata, the resource must dial the relay's origin
 (`edge.not_owned` otherwise), a shared resource is marked as such, the intent is frozen from the
-given hostname, and the import is never published without a current front qualification.
+given hostname, and the import is never published without a current front qualification. A
+record nothing fronts (DNS only, unproxied) is refused by both halves
+(`edge.record_not_proxied`): its content is the origin's own address.
 
 **Gate.** `edge.l7.autoSelect` (default off) governs automatic selection of L7 accounts
 (detector replacements, auto-provision, auto-publish). It stays off until the node role
@@ -287,7 +300,9 @@ Live progress: the rotation row carries `events[]` (bounded) and the admin route
 Re-kicks stale rotations; settles edges with unknown outcomes by discovery; refreshes provider
 health (a published edge the provider reports gone on **two consecutive** passes is dropped
 from the pool, the epoch bumped and mirrors refreshed in one mutation, with an `edge.drift`
-audit; a single 404, which a narrowed credential can also produce, does nothing); turns
+audit; a single 404, which a narrowed credential can also produce, does nothing); renews the
+front qualification of published L7 edges before it lapses (soonest expiry first, at most
+`edge.l7.maxRequalifyPerTick` sessions per tick, independently of the health refresh); turns
 drained / failed / cancelled edges into destroy runs (the attempt cap parks an edge as
 `needs_operator`; reaching `destroyed` clears the stored live snapshot); publishes standbys
 into free pool indexes (`autoPublishStandby`, through the same start guards as a manual
@@ -417,12 +432,19 @@ Importing what already fronts a node ("Import edge") records the provider resour
 identity (record id / service id and version / domains / TLS subscription) so discovery and
 destroy never depend on a generated name. For a shared resource (a service or subscription that
 also serves other hostnames) the edge is **shared**: FCP publishes and rotates it but deletes
-only the owned children (its domain, its DNS records) through a persisted per-service version
+only the children it owns. The DOMAIN comes off through a persisted per-service version
 workflow (clone → remove domain → validate → activate → confirm, serialized per service; a
 lost clone is re-found by its marker or parked as `needs_operator`; the active version is
-re-read before every activation and a drift parks the edge). Exclusivity is re-checked before
-any destructive step. A record whose content is not the relay's origin, or a service the
-account does not own, is refused.
+re-read before every activation and a drift parks the edge). Everything the workflow does not
+touch (the DNS records, and a TLS subscription covering only this hostname) is deleted and
+confirmed by the ordinary destroy walk. A subscription that also covers other hostnames is
+left alone. Exclusivity is re-checked before
+any destructive step. A record whose content is not the relay's origin, one nothing fronts
+(`record_not_proxied`), or a service the account does not own, is refused. What is adopted
+WITH the record is matched exactly, never by substring: an origin rule belongs to the import
+only when its expression compares the host to this hostname, and a TLS subscription only when
+it is the single one covering the hostname and its certificate authority (and configuration,
+when the intent names one) is the frozen one; anything else is `ambiguous` for an operator.
 
 ## Configuration
 
@@ -432,7 +454,8 @@ Telemetry → Probes; both `GET/PATCH /api/v1/admin/edges/config`). Ships fully 
 (`edge.secret.probe.*`, env fallback `EDGE_PROBE_GLOBALPING_TOKEN` /
 `EDGE_PROBE_RIPEATLAS_KEY`). Defaults and bounds: `convex/lib/edgeConfig.ts`. The L7 knobs are
 `edge.l7.autoSelect`, `edge.l7.maxSameProviderReplacementsPerDay`, `edge.l7.qualifyTimeoutMinutes`,
-`edge.l7.qualifyStepTimeoutMs` and `edge.l7.qualificationTtlMinutes`; `edge.probe.ipv6` decides
+`edge.l7.qualifyStepTimeoutMs`, `edge.l7.qualificationTtlMinutes` and
+`edge.l7.maxRequalifyPerTick`; `edge.probe.ipv6` decides
 whether relay and custom targets are probed over IPv6; `edge.detect.maxReportRowsPerEval` caps the
 report rows one detector evaluation reads (past it the window is incomplete and nothing rotates).
 
@@ -568,7 +591,9 @@ permit the chosen certificate authority (checked before issuance).
 
 **Qualify an L7 front.** Mint the relay's qualification credential (`POST
 …/relays/{id}/qualification-credential`, or the button in the relay drawer: a capped panel
-account on the relay's placement, deactivated again on revoke or relay delete), register the
+account on the relay's placement, deactivated again on revoke or relay delete; a deactivation
+the panel refuses is owed and retried on the next mint, revoke or delete, and a revoke keeps
+the credential until the account is really gone), register the
 slot with its `originTransport` and the HTTP-transport profile, provision an edge (unpublished),
 then "Qualify now" on it (or wait for the `verifying` phase): the authenticated session must
 reach the tunnel target and return `204`.

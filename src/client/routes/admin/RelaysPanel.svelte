@@ -317,7 +317,10 @@
             ? { hostname: adopt.hostname.trim() }
             : { ipv4: adopt.ipv4.trim(), ipv6: adopt.ipv6.trim() || null }),
           port: Number(adopt.port) || 443,
-          publish: adopt.publish,
+          // A hostname recorded by hand (observe-only) has no frozen intent and no
+          // proof, so it can only ever be a standby; only a provider import may
+          // ask to publish (and even then the front must be qualified first).
+          publish: adoptByHostname && adopt.source !== 'provider' ? false : adopt.publish,
           ...(adopt.source === 'provider' && adopt.accountId && adopt.lbId
             ? {
                 accountId: adopt.accountId,
@@ -415,9 +418,15 @@
   const revokeCredential = createMutation(() => ({
     mutationFn: (id: string) =>
       apiClient.delete(`/api/v1/admin/edges/relays/${id}/qualification-credential`, EdgeOkResponse),
-    onSuccess: () => {
+    onSuccess: (r) => {
       invalidate();
-      toast.success('Qualification credential revoked');
+      // A panel that could not deactivate the account keeps the credential
+      // (the removal is owed and retried); the operator must see that.
+      if (r.ok) toast.success('Qualification credential revoked');
+      else
+        toast.error('Credential kept: the panel account could not be deactivated', {
+          description: r.code ?? 'failed',
+        });
     },
     onError: onError('Could not revoke the credential'),
   }));
@@ -1280,9 +1289,16 @@
           >Port<Input class="mt-1" type="number" bind:value={adopt.port} /></label
         >
       </div>
-      <label class="flex items-center gap-2 text-sm"
-        ><Checkbox bind:checked={adopt.publish} /> Publish at the next free pool index</label
-      >
+      {#if adoptByHostname && adopt.source !== 'provider'}
+        <p class="text-muted-foreground text-xs">
+          A hostname recorded by hand is observe-only and stays a standby: it carries no frozen
+          intent and no transport proof, so it cannot be published.
+        </p>
+      {:else}
+        <label class="flex items-center gap-2 text-sm"
+          ><Checkbox bind:checked={adopt.publish} /> Publish at the next free pool index</label
+        >
+      {/if}
     </div>
     <Dialog.Footer>
       <Button variant="outline" onclick={() => (adoptFor = null)}>Cancel</Button>

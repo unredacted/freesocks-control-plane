@@ -8,6 +8,10 @@ import { jsonRes, mockFetch } from './lib/edges/testing/mockFetch';
 import { upsertSettingRow } from './appSettings';
 import { MAX_CONFIRM_ATTEMPTS, shouldReissueDelete } from './edgeReconcile';
 import { __setEdgeProviderForTests, edgeProviderFor } from './lib/edges/providers/registry';
+import { __setFrontChecker } from './frontQualifyOps';
+import { publishedEdgesOf } from './edgeRender';
+import { qualificationBinding } from './lib/edges/frontCheck/binding';
+import type { Id } from './_generated/dataModel';
 import { z } from 'zod';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -985,6 +989,7 @@ describe('edgeReconcile: tearing a hostname off a SHARED resource', () => {
   function fakeSharedProvider(opts: { phases?: string[]; parkWith?: string } = {}) {
     const phases = opts.phases ?? ['clone', 'remove_domain', 'activate', 'done'];
     const steps: Array<{ phase: string; workVersion?: number }> = [];
+    const destroyed: string[] = [];
     __setEdgeProviderForTests('cloudflare', {
       id: 'cloudflare',
       templateSchema: z.object({}).passthrough(),
@@ -1001,7 +1006,11 @@ describe('edgeReconcile: tearing a hostname off a SHARED resource', () => {
       // it owns on it (its domain, its DNS record).
       planDestroy: (_cfg: unknown, ledger: { resources: Array<Record<string, unknown>> }) =>
         ledger.resources.filter((r) => r.kind !== 'service' && r.deleteState !== 'confirmed_gone'),
-      runDestroy: async () => ({ status: 'confirmed_gone' }),
+      runDestroy: async (_cfg: unknown, r: { kind: string; resourceId: string }) => {
+        destroyed.push(`${r.kind}:${r.resourceId}`);
+        // A domain on a shared service is the workflow's job, never the walk's.
+        return r.kind === 'domain' ? { status: 'unresolved' } : { status: 'confirmed_gone' };
+      },
       sharedTeardown: {
         plan: (ledger: { resources: Array<Record<string, unknown>> }, opId: string) => {
           const svc = ledger.resources.find((r) => r.kind === 'service');
@@ -1023,7 +1032,7 @@ describe('edgeReconcile: tearing a hostname off a SHARED resource', () => {
         },
       },
     } as never);
-    return steps;
+    return { steps, destroyed };
   }
 
   /** A destroying L7 edge whose ledger holds a shared service + the children FCP owns. */
@@ -1105,7 +1114,7 @@ describe('edgeReconcile: tearing a hostname off a SHARED resource', () => {
 
   test('the version workflow is persisted and advanced ONE phase per pass, then the walk finishes', async () => {
     mockFetch(() => jsonRes({ response: [] }));
-    const steps = fakeSharedProvider();
+    const { steps, destroyed } = fakeSharedProvider();
     const { t, edgeId } = await sharedEdge();
     // Pass 1: the workflow is planned from the ledger and its first phase runs.
     await run(t);
@@ -1122,17 +1131,22 @@ describe('edgeReconcile: tearing a hostname off a SHARED resource', () => {
     await run(t);
     edge = (await t.run((ctx) => ctx.db.get(edgeId)))!;
     expect(edge.sharedTeardown!.phase).toBe('done');
-    // `done` means the hostname is off the shared service: the children FCP
-    // owns on it are gone, and the SERVICE itself is untouched.
+    // `done` means the hostname is off the shared service: only the DOMAIN the
+    // workflow removed is gone. The DNS records live in another zone and the
+    // workflow never touched them, so they are still the walk's to delete; the
+    // SERVICE itself is untouched.
     expect(edge.resources.map((r) => [r.kind, r.deleteState])).toEqual([
       ['service', 'present'],
       ['domain', 'confirmed_gone'],
-      ['dns_record', 'confirmed_gone'],
+      ['dns_record', 'present'],
     ]);
-    // The ordinary walk now completes the edge (the shared service is not its
-    // to delete, so nothing is left).
+    expect(destroyed).toEqual([]);
+    // The ordinary walk now DELETES the records through the provider (the
+    // workflow never touched them) and, with that last child gone, completes
+    // the edge; the shared service was never its to delete.
     await run(t);
     edge = (await t.run((ctx) => ctx.db.get(edgeId)))!;
+    expect(destroyed).toEqual(['dns_record:rec-1']);
     expect(edge.status).toBe('destroyed');
     expect(steps.map((s) => s.phase)).toEqual(['clone', 'remove_domain', 'activate']);
     // The version the workflow started from is remembered across re-entries.
@@ -1165,7 +1179,7 @@ describe('edgeReconcile: tearing a hostname off a SHARED resource', () => {
     expect(edge.status).toBe('destroying');
     expect(edge.sharedTeardown).toBeUndefined();
     expect(edge.sharedTeardownState).toBeUndefined();
-    const steps = fakeSharedProvider();
+    const { steps } = fakeSharedProvider();
     await run(t);
     edge = (await t.run((ctx) => ctx.db.get(edgeId)))!;
     expect(edge.sharedTeardown).toMatchObject({ phase: 'remove_domain' });
@@ -1251,5 +1265,203 @@ describe('edgeReconcile: tearing a hostname off a SHARED resource', () => {
     expect(edge.status).toBe('destroying');
     expect(edge.sharedTeardown).toBeUndefined();
     expect(edge.sharedTeardownState).toBeUndefined();
+  });
+});
+
+describe('edgeReconcile: renewing a front qualification before it lapses', () => {
+  afterEach(() => {
+    __setEdgeProviderForTests('cloudflare', null);
+    __setFrontChecker(null);
+  });
+
+  const HOSTNAME = 'a1b2c3d4e5f6.example.org';
+  const QUALIFY_UUID = '99999999-9999-4999-8999-999999999999';
+
+  /**
+   * A published L7 front with a CURRENT proof that expires in `expiresInMs`.
+   * Its health was just refreshed, so nothing but the proof clock can bring the
+   * reconcile pass to it.
+   */
+  async function frontedRelay(expiresInMs: number[]) {
+    const t = convexTest(schema, modules);
+    await t.run((ctx) =>
+      ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'panel-a',
+        slug: 'panel-a',
+        config: { type: 'remnawave', baseUrl: 'https://panel.example', apiToken: 'tok' },
+        isActive: true,
+        priority: 0,
+        keyCount: 0,
+        updatedAt: Date.now(),
+      }),
+    );
+    const { id: accountId } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'cloudflare',
+      name: 'acct-cf',
+      settings: { zoneId: 'a'.repeat(32), zoneName: 'example.org' },
+      credentials: { apiToken: 'cf' },
+    });
+    await t.mutation(internal.protocolProfiles.create, {
+      slug: 'prof-ws',
+      name: 'WS',
+      protocol: 'ws',
+    });
+    const { id: relayId } = await t.mutation(internal.relays.upsertBySlug, {
+      slug: 'node-one',
+      backendServerSlug: 'panel-a',
+      nodeHostname: 'node-one',
+      originAddress: ORIGIN,
+    });
+    const originTransport = {
+      scheme: 'https' as const,
+      certPublic: true,
+      certNames: ['node-one.origin.example'],
+      acceptsHostHeader: 'any' as const,
+    };
+    const { id: slotId } = await t.mutation(internal.relaySlots.upsert, {
+      relayId,
+      slotKey: 'w',
+      profileSlug: 'prof-ws',
+      inboundTag: 'VLESS_RELAY_W',
+      configProfileUuid: '11111111-1111-4111-8111-111111111111',
+      configProfileInboundUuid: '22222222-2222-4222-8222-222222222222',
+      originPort: 443,
+      originTransport,
+      transportParams: { path: '/ws' },
+    });
+    await t.run((ctx) => ctx.db.patch(relayId, { qualificationUserId: QUALIFY_UUID }));
+    const edgeIds = await t.run(async (ctx) => {
+      const now = Date.now();
+      const slot = (await ctx.db.get(slotId))!;
+      const profile = (await ctx.db.get(slot.profileId))!;
+      const ids: Id<'edges'>[] = [];
+      for (const [i, ms] of expiresInMs.entries()) {
+        const hostname = i === 0 ? HOSTNAME : `${i}${HOSTNAME}`;
+        const intent = {
+          hostname,
+          zoneId: 'a'.repeat(32),
+          zoneName: 'example.org',
+          originTransport,
+          originPort: 443,
+          zoneSslMode: 'full',
+          templateHash: 'h',
+          templateParams: {},
+        };
+        const binding = qualificationBinding({
+          slot,
+          profile,
+          intent,
+          params: slot.transportParams ?? {},
+        });
+        ids.push(
+          await ctx.db.insert('edges', {
+            relayId,
+            slotId,
+            accountId,
+            provider: 'cloudflare',
+            managed: true,
+            name: `fcp-node-one-${i}`,
+            steps: [],
+            resources: [],
+            listeners: [{ edgePort: 443, originAddress: ORIGIN, originPort: 443 }],
+            addresses: { hostname },
+            layer: 'l7',
+            provisionIntent: JSON.stringify(intent),
+            frontQualification: {
+              ok: true,
+              checkedAt: now,
+              expiresAt: now + ms,
+              binding: {
+                ...binding,
+                slotId: binding.slotId as Id<'relaySlots'>,
+                profileId: binding.profileId as Id<'protocolProfiles'>,
+              },
+            },
+            publication: 'published',
+            poolIndex: i,
+            status: 'active',
+            statusChangedAt: now,
+            health: 'unknown',
+            lastHealthAt: now,
+            destroyAttempts: 0,
+            updatedAt: now,
+          }),
+        );
+      }
+      const relay = (await ctx.db.get(relayId))!;
+      await ctx.db.patch(relayId, { publishedEdgeIds: ids, desiredPublished: ids.length });
+      return { ids, epoch: relay.publicationEpoch };
+    });
+    return { t, relayId, edgeIds: edgeIds.ids };
+  }
+
+  /** The pool as the renderer sees it: `eligible:false` = the front is out. */
+  async function renderable(t: ReturnType<typeof convexTest>, relayId: Id<'relays'>) {
+    return await t.run(async (ctx) => {
+      const origin = (await ctx.db.get(relayId))!;
+      const { published } = await publishedEdgesOf(ctx, origin, { includeIneligible: true });
+      return published.map((p) => ({ edgeId: p.edgeId, eligible: p.eligible !== false }));
+    });
+  }
+
+  test('a proof about to expire is renewed this tick, so the front never drops out', async () => {
+    mockFetch(() => jsonRes({ response: [] }));
+    const checked: string[] = [];
+    __setFrontChecker(async (args) => {
+      checked.push(args.hostname);
+      return { ok: true, steps: [], checkedAt: Date.now() };
+    });
+    // Ten minutes left on a 60-minute TTL: inside the renewal lead, and still
+    // perfectly valid, so the edge is rendered before AND after the pass.
+    const { t, relayId, edgeIds } = await frontedRelay([10 * 60_000]);
+    expect(await renderable(t, relayId)).toEqual([{ edgeId: edgeIds[0], eligible: true }]);
+    const before = (await t.run((ctx) => ctx.db.get(edgeIds[0])))!.frontQualification!.expiresAt;
+    await run(t);
+    expect(checked).toEqual([HOSTNAME]);
+    const after = (await t.run((ctx) => ctx.db.get(edgeIds[0])))!.frontQualification!;
+    expect(after.ok).toBe(true);
+    expect(after.expiresAt).toBeGreaterThan(before);
+    expect(await renderable(t, relayId)).toEqual([{ edgeId: edgeIds[0], eligible: true }]);
+  });
+
+  test('a proof with most of its life left is left alone', async () => {
+    mockFetch(() => jsonRes({ response: [] }));
+    const checked: string[] = [];
+    __setFrontChecker(async (args) => {
+      checked.push(args.hostname);
+      return { ok: true, steps: [], checkedAt: Date.now() };
+    });
+    const { t } = await frontedRelay([50 * 60_000]);
+    await run(t);
+    expect(checked).toEqual([]);
+  });
+
+  test('the tick budget is config-driven and spends itself on the soonest expiry first', async () => {
+    mockFetch(() => jsonRes({ response: [] }));
+    const checked: string[] = [];
+    __setFrontChecker(async (args) => {
+      checked.push(args.hostname);
+      return { ok: true, steps: [], checkedAt: Date.now() };
+    });
+    const { t } = await frontedRelay([9 * 60_000, 2 * 60_000, 5 * 60_000]);
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.l7.maxRequalifyPerTick', '2'));
+    await run(t);
+    // Two proofs this tick, the two closest to expiring, soonest first.
+    expect(checked).toEqual([`1${HOSTNAME}`, `2${HOSTNAME}`]);
+  });
+
+  test('a re-proof that FAILS takes the front out at once', async () => {
+    mockFetch(() => jsonRes({ response: [] }));
+    __setFrontChecker(async () => ({
+      ok: false,
+      code: 'front_error',
+      steps: [],
+      checkedAt: Date.now(),
+    }));
+    const { t, relayId, edgeIds } = await frontedRelay([10 * 60_000]);
+    await run(t);
+    expect((await t.run((ctx) => ctx.db.get(edgeIds[0])))!.frontQualification!.ok).toBe(false);
+    expect(await renderable(t, relayId)).toEqual([{ edgeId: edgeIds[0], eligible: false }]);
   });
 });

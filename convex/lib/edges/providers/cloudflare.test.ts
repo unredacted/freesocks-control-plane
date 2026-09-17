@@ -15,6 +15,7 @@ import {
   cloudflareRecordBody,
   defaultOriginPort,
   originRuleNeeded,
+  originRuleTargetsHost,
   recordComment,
   zoneSslModeOf,
   __setCloudflareApiFactory,
@@ -318,6 +319,13 @@ describe('cloudflare: request bodies', () => {
       ref: NAME,
       enabled: true,
     });
+    // The adoption matcher reads back exactly what the generator writes, and
+    // nothing else: a longer sibling label is a different host.
+    const expression = cloudflareOriginRule(specFor(8443), 8443).expression;
+    expect(originRuleTargetsHost(expression, HOSTNAME)).toBe(true);
+    expect(originRuleTargetsHost(expression, `ba.${HOSTNAME}`)).toBe(false);
+    expect(originRuleTargetsHost(`(http.host eq "ba.${HOSTNAME}")`, HOSTNAME)).toBe(false);
+    expect(originRuleTargetsHost(undefined, HOSTNAME)).toBe(false);
   });
 });
 
@@ -725,17 +733,53 @@ describe('cloudflare: inspectForAdoption', () => {
     ).toHaveLength(1);
   });
 
-  test('an UNPROXIED record is reported with meta.proxied false, for the caller to refuse', async () => {
+  test('an UNPROXIED record is refused: nothing fronts a DNS-only name', async () => {
     const rec = structuredClone(wire(recordCreated)) as { result: { proxied: boolean } };
     rec.result.proxied = false;
     mockFetch(route({ '/dns_records/': () => jsonRes(rec) }));
-    const seen = await cloudflareProvider.inspectForAdoption!(cfg, RECORD_ID, HOSTNAME);
-    expect(seen.resources[0]!.meta).toEqual({
-      name: HOSTNAME,
-      zoneId: ZONE,
-      type: 'A',
-      proxied: false,
-    });
+    // A DNS-only record answers with the origin's own address, so importing it
+    // would publish the node itself as an "edge".
+    await expect(cloudflareProvider.inspectForAdoption!(cfg, RECORD_ID, HOSTNAME)).rejects.toThrow(
+      /record_not_proxied/,
+    );
+  });
+
+  test('an origin rule is adopted by an EXACT hostname match, never by substring', async () => {
+    // A rule for a host whose name CONTAINS the imported one belongs to that
+    // other host; adopting it would delete its port override on destroy.
+    const sibling = structuredClone(wire(originPhase)) as {
+      result: { rules: Array<{ expression: string }> };
+    };
+    sibling.result.rules[0]!.expression = `(http.host eq "ba.${HOSTNAME}")`;
+    mockFetch(route({ '/rulesets/phases': () => jsonRes(sibling) }));
+    expect(
+      (await cloudflareProvider.inspectForAdoption!(cfg, RECORD_ID, HOSTNAME)).resources.map(
+        (r) => r.kind,
+      ),
+    ).toEqual(['dns_record']);
+
+    // A rule that merely mentions the name in a comparison against ANOTHER
+    // field is not a match either.
+    const mention = structuredClone(wire(originPhase)) as {
+      result: { rules: Array<{ expression: string }> };
+    };
+    mention.result.rules[0]!.expression = `(http.request.uri.path contains "${HOSTNAME}")`;
+    mockFetch(route({ '/rulesets/phases': () => jsonRes(mention) }));
+    expect(
+      (await cloudflareProvider.inspectForAdoption!(cfg, RECORD_ID, HOSTNAME)).resources,
+    ).toHaveLength(1);
+
+    // The operand is compared as a hostname: case and a trailing dot still match.
+    const noisy = structuredClone(wire(originPhase)) as {
+      result: { rules: Array<{ expression: string }> };
+    };
+    noisy.result.rules[0]!.expression = `(http.host eq "${HOSTNAME.toUpperCase()}.")`;
+    mockFetch(route({ '/rulesets/phases': () => jsonRes(noisy) }));
+    expect(
+      (await cloudflareProvider.inspectForAdoption!(cfg, RECORD_ID, HOSTNAME)).resources.map(
+        (r) => r.kind,
+      ),
+    ).toEqual(['dns_record', 'origin_rule']);
   });
 
   test('a record that is gone, or serves another name, is refused with a short code', async () => {

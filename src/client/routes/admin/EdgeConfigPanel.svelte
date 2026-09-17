@@ -292,7 +292,19 @@
           />
           <span class="mt-1 block text-[11px] text-muted-foreground"
             >After this, and after any slot or profile change, the edge must qualify again before it
-            can be published.</span
+            can be published. Published fronts are re-proven ahead of time (at least 15 minutes or a
+            quarter of the lifetime before it ends) so a healthy front never drops out of renders.</span
+          ></label
+        >
+        <label class="text-xs"
+          >Re-proofs per reconcile pass<Input
+            class="mt-1"
+            type="number"
+            value={num('l7.maxRequalifyPerTick', 6)}
+            oninput={(e) => set('l7.maxRequalifyPerTick', Number(e.currentTarget.value))}
+          />
+          <span class="mt-1 block text-[11px] text-muted-foreground"
+            >How many published fronts one reconcile pass may re-prove, soonest expiry first.</span
           ></label
         >
       </CardContent>

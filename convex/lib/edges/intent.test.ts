@@ -124,6 +124,54 @@ describe('buildProvisionIntent', () => {
     }
   });
 
+  test('the DNS zone mode only governs the provider that PROXIES the zone', () => {
+    // The zone hosting the CNAMEs is set to the strictest mode. For a front
+    // whose records are unproxied there, that mode describes nothing about the
+    // origin leg: a plaintext origin behind it plans fine and freezes no mode.
+    const plaintext = {
+      originPort: 80,
+      originTransport: { ...originTransport, scheme: 'http' as const },
+    };
+    const strictZone = { ...cloudflare, observedSettings: { zoneSslMode: 'strict' } };
+    const intent = buildProvisionIntent({
+      ...args,
+      account: fastly,
+      dnsAccount: strictZone,
+      slot: plaintext,
+    })!;
+    expect(intent.zoneSslMode).toBeUndefined();
+    expect(intent.originTransport.scheme).toBe('http');
+    // An explicit override does not smuggle the mode back in either.
+    expect(
+      buildProvisionIntent({
+        ...args,
+        account: fastly,
+        dnsAccount: strictZone,
+        slot: plaintext,
+        zoneSslMode: 'strict',
+      })!.zoneSslMode,
+    ).toBeUndefined();
+    // The same zone in front of ITS OWN proxy still refuses the plaintext origin.
+    try {
+      buildProvisionIntent({ ...args, account: strictZone, slot: plaintext });
+      throw new Error('expected a refusal');
+    } catch (err) {
+      expect((err as IntentError).code).toBe('origin_tls_mismatch');
+    }
+  });
+
+  test('a front the zone does not proxy plans against an UNTESTED DNS account', () => {
+    // `zone_mode_unknown` is a Cloudflare-proxy refusal: a Fastly edge only
+    // needs the zone's name and id from that account, not its encryption mode.
+    const intent = buildProvisionIntent({
+      ...args,
+      account: fastly,
+      dnsAccount: { ...cloudflare, observedSettings: {} },
+    })!;
+    expect(intent.zoneSslMode).toBeUndefined();
+    expect(intent.zoneName).toBe('example.org');
+  });
+
   test('an imported front keeps the hostname it already serves', () => {
     const intent = buildProvisionIntent({
       ...args,
