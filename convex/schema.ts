@@ -106,6 +106,8 @@ const relayProviderCredentials = v.union(
   v.object({ type: v.literal('upcloud'), token: v.string() }),
   v.object({ type: v.literal('scaleway'), secretKey: v.string() }),
   v.object({ type: v.literal('ovh'), applicationSecret: v.string(), consumerKey: v.string() }),
+  v.object({ type: v.literal('cloudflare'), apiToken: v.string() }),
+  v.object({ type: v.literal('fastly'), apiToken: v.string() }),
 );
 const relayProviderSettings = v.union(
   v.object({
@@ -133,6 +135,53 @@ const relayProviderSettings = v.union(
     subnetId: v.string(),
     gatewayId: v.optional(v.string()),
   }),
+  // L7 (CDN front): the zone the account's hostnames live in. Both locate.
+  v.object({
+    type: v.literal('cloudflare'),
+    zoneId: v.string(),
+    zoneName: v.string(),
+    accountId: v.optional(v.string()),
+  }),
+  // L7: the DNS records of a Fastly edge live in a Cloudflare account FCP also
+  // manages (`dnsAccountId`); certificate authority + TLS configuration are
+  // defaults frozen into each edge's provisionIntent.
+  v.object({
+    type: v.literal('fastly'),
+    dnsAccountId: v.string(),
+    certificateAuthority: v.union(
+      v.literal('certainly'),
+      v.literal('lets-encrypt'),
+      v.literal('globalsign'),
+    ),
+    tlsConfigurationId: v.optional(v.string()),
+  }),
+);
+// Layers an edge can be: an L4 forwarder (address = IP literal) or an L7 CDN
+// front (address = hostname). Absent on rows written before L7 = l4.
+const relayEdgeLayer = v.union(v.literal('l4'), v.literal('l7'));
+const relaySlotProtocol = v.union(
+  v.literal('reality'),
+  v.literal('tls'),
+  v.literal('plain'),
+  v.literal('ws'),
+  v.literal('httpupgrade'),
+  v.literal('grpc'),
+);
+// What the node speaks to whoever dials it behind an L7 front (declared by the
+// node role on the slot): scheme, whether its certificate is publicly trusted,
+// the names that certificate carries (wildcards allowed) and which Host header
+// values it accepts. Absent = a legacy L4-only slot (raw TCP to the inbound).
+const relaySlotOriginTransport = v.object({
+  scheme: v.union(v.literal('http'), v.literal('https')),
+  certPublic: v.boolean(),
+  certNames: v.array(v.string()),
+  acceptsHostHeader: v.union(v.literal('any'), v.literal('names')),
+});
+const relayReadinessState = v.union(
+  v.literal('ready'),
+  v.literal('pending'),
+  v.literal('failed'),
+  v.literal('unknown'),
 );
 const relayStepState = v.union(
   v.literal('pending'),
@@ -187,6 +236,10 @@ const probeReachabilitySummary = v.object({
       verdict: relayReachVerdict,
       // The IPv6 path, when the target has one and it was probed.
       v6Verdict: v.optional(relayReachVerdict),
+      // The BY-NAME path, when the target was also probed by hostname (an L7
+      // front has no family of its own; for such a target the name path IS
+      // `verdict` and this stays absent).
+      nameVerdict: v.optional(relayReachVerdict),
       okVantages: v.number(),
       failVantages: v.number(),
       lastAt: v.number(),
@@ -858,6 +911,11 @@ export default defineSchema({
     maxLiveEdges: v.number(),
     lastTestOkAt: v.optional(v.number()),
     lastTestError: v.optional(v.string()), // short code, never a body
+    // Facts the credential test OBSERVED at the provider that planning needs but
+    // the operator never enters (e.g. a zone's encryption mode). JSON, string
+    // values only; frozen per edge into its provisionIntent.
+    observedSettings: v.optional(v.string()),
+    observedAt: v.optional(v.number()),
     // Last provider inventory pull (LBs / IPs / flavors), JSON, admin-only.
     inventorySnapshot: v.optional(v.string()),
     inventoryAt: v.optional(v.number()),
@@ -890,7 +948,7 @@ export default defineSchema({
     name: v.string(),
     // What the inbound speaks (lib/edges/protocols.ts): decides whether server
     // names / a target are required and what the renderer rewrites.
-    protocol: v.union(v.literal('reality'), v.literal('tls'), v.literal('plain')),
+    protocol: relaySlotProtocol,
     // Bound to one provider's network (REALITY server names are only plausible
     // near the edge network); absent = usable behind any provider.
     provider: v.optional(relayProviderId),
@@ -920,6 +978,8 @@ export default defineSchema({
       }),
     ),
     notes: v.optional(v.string()),
+    // Bumped on every write; a front qualification binds to it (absent = 0).
+    revision: v.optional(v.number()),
     updatedAt: v.number(),
   })
     .index('by_slug', ['slug'])
@@ -956,6 +1016,11 @@ export default defineSchema({
     cooldownUntil: v.optional(v.number()),
     rotationsDayKey: v.optional(v.string()),
     rotationsToday: v.number(),
+    // L7 replacements that went to the SAME provider today. Minting another CDN
+    // hostname does not guarantee a different frontend IP, so repeated
+    // same-provider replacements are bounded (edge.l7.maxSameProviderReplacementsPerDay).
+    l7ReplacementsDayKey: v.optional(v.string()),
+    l7ReplacementsToday: v.optional(v.number()),
     lastRotatedAt: v.optional(v.number()),
     // A rotation whose rollback could not converge parks the origin here; nothing
     // bypasses it (resolveQuarantine is the only exit).
@@ -999,6 +1064,17 @@ export default defineSchema({
     // Probe the node's own address too (a direct block signal, operator evidence only).
     probeNode: v.optional(v.boolean()),
     reachability: v.optional(probeReachabilitySummary),
+    // The panel account the L7 front qualification authenticates with (minted
+    // by FCP through the backend provider on the relay's placement; a member-
+    // shaped credential so the proof travels a member's path).
+    qualificationUserId: v.optional(v.string()),
+    // The panel user behind that credential (the stored backendUserId form), so
+    // it can be deactivated when the relay goes or the credential is re-minted.
+    qualificationBackendUserId: v.optional(v.string()),
+    // Panel users whose deactivation failed transiently (a replaced or revoked
+    // credential): retried on the next mint/revoke and on relay delete, so a
+    // capped account is never silently orphaned.
+    qualificationRemovalPending: v.optional(v.array(v.string())),
     updatedAt: v.number(),
   })
     .index('by_slug', ['slug'])
@@ -1023,6 +1099,23 @@ export default defineSchema({
     deployed: v.boolean(),
     deployedAt: v.optional(v.number()),
     retired: v.boolean(),
+    // How the inbound is reached behind an L7 front (lib/edges/layers.ts).
+    originTransport: v.optional(relaySlotOriginTransport),
+    // HTTP-transport parameters of the inbound, as the node role deploys them:
+    // what the front qualification must send to reach it (path + upgrade token
+    // for ws/httpupgrade, service name for grpc) and what the renderer keeps in
+    // sync. Absent = the transport's defaults. A qualification binds to their
+    // hash, so changing one here expires the proof (lib/edges/frontCheck).
+    transportParams: v.optional(
+      v.object({
+        path: v.optional(v.string()),
+        host: v.optional(v.string()),
+        serviceName: v.optional(v.string()),
+        upgradeToken: v.optional(v.string()),
+      }),
+    ),
+    // Bumped on every write; a front qualification binds to it (absent = 0).
+    revision: v.optional(v.number()),
     updatedAt: v.number(),
   })
     .index('by_relay', ['relayId'])
@@ -1081,7 +1174,70 @@ export default defineSchema({
         transport: v.optional(v.union(v.literal('tcp'), v.literal('udp'))),
       }),
     ),
-    addresses: v.object({ v4: v.optional(v.string()), v6: v.optional(v.string()) }),
+    // L4: IP literals. L7: the fronted hostname (what members connect to).
+    addresses: v.object({
+      v4: v.optional(v.string()),
+      v6: v.optional(v.string()),
+      hostname: v.optional(v.string()),
+    }),
+    layer: v.optional(relayEdgeLayer),
+    // L7: everything a step, discovery, describe or destroy needs, FROZEN when
+    // the edge is planned (JSON, lib/edges/intent.ts). Account settings and
+    // templates may change afterwards without moving this edge.
+    provisionIntent: v.optional(v.string()),
+    // L7 readiness dimensions (DNS record, certificate, the front end to end).
+    readiness: v.optional(
+      v.object({
+        dns: relayReadinessState,
+        certificate: relayReadinessState,
+        front: relayReadinessState,
+        checkedAt: v.number(),
+      }),
+    ),
+    // L7: the authenticated end-to-end test session through the front, bound to
+    // the exact configuration it proved (lib/edges/frontCheck). Publication
+    // re-derives the binding and refuses on mismatch or expiry.
+    frontQualification: v.optional(
+      v.object({
+        ok: v.boolean(),
+        code: v.optional(v.string()),
+        checkedAt: v.number(),
+        expiresAt: v.number(),
+        binding: v.object({
+          hostname: v.string(),
+          slotId: v.id('relaySlots'),
+          slotRevision: v.number(),
+          profileId: v.id('protocolProfiles'),
+          profileRevision: v.number(),
+          protocol: relaySlotProtocol,
+          transportParamsHash: v.string(),
+          intentHash: v.string(),
+        }),
+        affectedCountries: v.optional(
+          v.array(v.object({ country: v.string(), verdict: relayReachVerdict, at: v.number() })),
+        ),
+      }),
+    ),
+    // Fastly shared-service teardown (an adopted domain on a service FCP does
+    // not own): the persisted version workflow, serialized per service.
+    sharedTeardown: v.optional(
+      v.object({
+        // The adapter's own workflow phase (Fastly: clone → remove_domain →
+        // validate → activate → confirm), plus the terminal `done` /
+        // `needs_operator`. A string, not a union: the phase vocabulary belongs
+        // to the driver, and reconcile only ever compares the terminal two.
+        phase: v.string(),
+        serviceId: v.string(),
+        fromVersion: v.number(),
+        workVersion: v.optional(v.number()),
+        opId: v.optional(v.string()),
+        attempts: v.number(),
+      }),
+    ),
+    // The driver's own extra fields for that workflow (adapter-shaped: a code,
+    // a marker, whatever the next phase needs), JSON, so the persisted state can
+    // carry more than the columns above without a schema change per adapter.
+    sharedTeardownState: v.optional(v.string()),
     publication: relayPublication,
     poolIndex: v.optional(v.number()),
     publishedAt: v.optional(v.number()),
@@ -1096,6 +1252,10 @@ export default defineSchema({
     // Consecutive `gone` describes (reset by any other state). The pool drop +
     // status transition need TWO so an auth-shaped 404 or one blip cannot act.
     goneObservations: v.optional(v.number()),
+    // Consecutive `active` describes that OMITTED a previously known address.
+    // Dropping an address stops rendering it, so it needs the same two
+    // observations a `gone` transition does (one truncated answer is not proof).
+    addressLossObservations: v.optional(v.number()),
     // Consecutive `unresolved` confirmDestroyed passes for the resource the
     // destroy walk is currently on; past the cap the idempotent delete is re-issued.
     destroyConfirm: v.optional(v.object({ resourceId: v.string(), attempts: v.number() })),
@@ -1129,6 +1289,10 @@ export default defineSchema({
     ),
     burn: v.boolean(),
     force: v.boolean(),
+    // An operator waived the affected-country evidence gate for this run (and
+    // ONLY that gate: the transport proof, TLS chain, ownership, layer and
+    // configuration-binding checks all still apply). Audited at the request.
+    forceGeoEvidence: v.optional(v.boolean()),
     // provision kind: publish the new edge when it verifies (bootstrap / pool fill).
     publishOnDone: v.optional(v.boolean()),
     targetEdgeId: v.optional(v.id('edges')), // the edge being replaced
@@ -1165,6 +1329,13 @@ export default defineSchema({
         oldAddress: v.string(),
         oldPort: v.number(),
         inboundUuid: v.optional(v.string()),
+        // Snapshot version 2 also captured the Host's SNI and Host header, so
+        // the flip/rollback write the FULL tuple. Absent = a legacy plan whose
+        // historical SNI/Host are UNKNOWN (not null): rollback restores
+        // address/port only and never clears operator configuration.
+        snapshotVersion: v.optional(v.number()),
+        oldSni: v.optional(v.union(v.string(), v.null())),
+        oldHost: v.optional(v.union(v.string(), v.null())),
       }),
     ),
     // The complete binding before a replace, for a complete rollback.
@@ -1202,6 +1373,18 @@ export default defineSchema({
     // Retention: terminal rows by finish time.
     .index('by_phase_finished', ['phase', 'finishedAt']),
 
+  // Claims on EXTERNAL resources shared by several edges (a Cloudflare zone's
+  // ruleset, a Fastly service's version chain). `claimOp` locks one edge; this
+  // locks the shared thing. An expired, unsettled lock blocks further writes
+  // until the holder re-observes the outcome (same rule as `currentOp`).
+  externalLocks: defineTable({
+    key: v.string(), // e.g. "cloudflare-zone:<zoneId>", "fastly-service:<serviceId>"
+    holderEdgeId: v.id('edges'),
+    opId: v.string(),
+    claimedAt: v.number(),
+    expiresAt: v.number(),
+  }).index('by_key', ['key']),
+
   // External / internal reachability probe requests against one edge.
   // Operator-entered probe targets (any host:port), alongside the derived ones
   // (edge addresses, relay nodes). Operator evidence only: never fed to the detector.
@@ -1209,6 +1392,10 @@ export default defineSchema({
     label: v.string(),
     address: v.string(), // IP literal or hostname
     port: v.number(),
+    // What the probe speaks. Default `tcp` (a bare connect): a hostname does
+    // not imply HTTPS, and a REALITY or plaintext decoy would fail a handshake
+    // probe while serving perfectly well. `tls` / `https` are opt-in per target.
+    probeProtocol: v.optional(v.union(v.literal('tcp'), v.literal('tls'), v.literal('https'))),
     enabled: v.boolean(),
     notes: v.optional(v.string()),
     reachability: v.optional(probeReachabilitySummary),
@@ -1225,7 +1412,13 @@ export default defineSchema({
     // The listener port probed (also inside `target`; absent on rows written
     // before per-port rollups, which parse it out of `target`).
     port: v.optional(v.number()),
-    ipVersion: v.union(v.literal(4), v.literal(6)),
+    // Observed address family; absent = probed by NAME (the resolver decided).
+    ipVersion: v.optional(v.union(v.literal(4), v.literal(6))),
+    // Independent of the family: what kind of address was probed, what the
+    // probe spoke, and which family was requested (`any` for a name).
+    addressKind: v.optional(v.union(v.literal('ip'), v.literal('name'))),
+    probeProtocol: v.optional(v.union(v.literal('tcp'), v.literal('tls'), v.literal('https'))),
+    requestedFamily: v.optional(v.union(v.literal(4), v.literal(6), v.literal('any'))),
     externalId: v.optional(v.string()),
     status: v.union(
       v.literal('requested'),
@@ -1273,8 +1466,11 @@ export default defineSchema({
     targetRef: v.string(),
     country: v.string(),
     source: relayProbeSource,
-    // Address family probed; absent = 4 (rows written before dual-stack rollups).
+    // Address family probed; absent = 4 (rows written before dual-stack rollups)
+    // unless `addressKind` is `name` (probed by name: no family).
     ipVersion: v.optional(v.union(v.literal(4), v.literal(6))),
+    addressKind: v.optional(v.union(v.literal('ip'), v.literal('name'))),
+    probeProtocol: v.optional(v.union(v.literal('tcp'), v.literal('tls'), v.literal('https'))),
     // Listener port probed; absent = the legacy single-port row, adopted (and
     // stamped) by the first per-port run that lands on its path.
     port: v.optional(v.number()),
@@ -1319,9 +1515,12 @@ export default defineSchema({
     .index('by_server_name', ['backendServerId', 'name'])
     .index('by_server', ['backendServerId']),
 
-  // Detector dedupe marks: one contribution per member per relay origin per
-  // detector window. `key` is a peppered HMAC computed in the HTTP action; the
-  // issueReports row itself carries only the resulting 0/1 weight.
+  // Detector dedupe marks: one contribution per member per detector window,
+  // ACROSS relays: the key is a peppered HMAC of the member alone (see
+  // `http.ts`: `relay-mark:<userId>`), with no relay in it, so a member who
+  // reports about two origins inside one window is counted once. `key` is
+  // computed in the HTTP action; the issueReports row itself carries only the
+  // resulting 0/1 weight.
   relayReportMarks: defineTable({
     key: v.string(),
     firstAt: v.number(),

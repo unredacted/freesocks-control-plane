@@ -7,6 +7,12 @@ import { internal } from './_generated/api';
 import { jsonRes, mockFetch } from './lib/edges/testing/mockFetch';
 import { upsertSettingRow } from './appSettings';
 import { MAX_CONFIRM_ATTEMPTS, shouldReissueDelete } from './edgeReconcile';
+import { __setEdgeProviderForTests, edgeProviderFor } from './lib/edges/providers/registry';
+import { __setFrontChecker } from './frontQualifyOps';
+import { publishedEdgesOf } from './edgeRender';
+import { qualificationBinding } from './lib/edges/frontCheck/binding';
+import type { Id } from './_generated/dataModel';
+import { z } from 'zod';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -244,6 +250,10 @@ describe('edgeReconcile', () => {
     fakeUpcloud([]); // lb-1 does not exist any more
     const s = await seed();
     const edgeId = await managedEdge(s, 'lb-1', { lastHealthAt: undefined });
+    // Pool index 0 is the template Host's index: a direct publish there is the
+    // rotation machine's job on a Host-managed relay, and these tests are about
+    // the reconcile loop, not the flip.
+    await s.t.mutation(internal.relays.update, { id: s.relayId, hostManaged: false });
     await s.t.mutation(internal.relays.publishEdge, { relayId: s.relayId, edgeId });
     const before = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
     expect(before.publishedEdgeIds).toEqual([edgeId]);
@@ -285,6 +295,10 @@ describe('edgeReconcile', () => {
     const world = fakeUpcloud([]);
     const s = await seed();
     const edgeId = await managedEdge(s, 'lb-1', { lastHealthAt: undefined });
+    // Pool index 0 is the template Host's index: a direct publish there is the
+    // rotation machine's job on a Host-managed relay, and these tests are about
+    // the reconcile loop, not the flip.
+    await s.t.mutation(internal.relays.update, { id: s.relayId, hostManaged: false });
     await s.t.mutation(internal.relays.publishEdge, { relayId: s.relayId, edgeId });
     const rotationId = await s.t.run((ctx) =>
       ctx.db.insert('edgeRotations', {
@@ -657,13 +671,30 @@ describe('edgeReconcile', () => {
     let edge = (await s.t.query(internal.edges.get, { id: edgeId }))!;
     expect(edge.steps[0]).toMatchObject({ state: 'unresolved', discoverAttempts: 1 });
     expect(edge.currentOp).toBeUndefined();
+    // Two quiet looks are not enough on their own: this provider also needs its
+    // SETTLE FLOOR to have passed since the step was first requested, so a slow
+    // compound create is never declared absent seconds after the request. The
+    // reconcile always supplies a reference time (the step's own `startedAt`,
+    // else the claim, else the edge's creation), so the floor is provable.
+    const r1b = await run(s.t);
+    expect(r1b.settled).toBe(1);
+    edge = (await s.t.query(internal.edges.get, { id: edgeId }))!;
+    expect(edge.steps[0]).toMatchObject({ state: 'unresolved', discoverAttempts: 2 });
+    // Age the step past the floor.
+    await s.t.run(async (ctx) => {
+      const e = (await ctx.db.get(edgeId))!;
+      await ctx.db.patch(edgeId, {
+        steps: e.steps.map((st) => ({ ...st, startedAt: Date.now() - 5 * 60_000 })),
+      });
+    });
     const r2 = await run(s.t);
     expect(r2.settled).toBe(1);
     edge = (await s.t.query(internal.edges.get, { id: edgeId }))!;
     expect(edge.steps[0].state).toBe('done');
     expect(edge.steps[0].discoverAttempts).toBeUndefined();
-    // Two LISTs, never a POST.
+    // Only LISTs, never a POST.
     expect(stub.calls.filter((c) => c.path.startsWith('/cloud/')).map((c) => c.method)).toEqual([
+      'GET',
       'GET',
       'GET',
     ]);
@@ -904,5 +935,533 @@ describe('edgeReconcile', () => {
       templateParams: {},
     });
     expect(steps.length).toBeGreaterThan(0);
+  });
+});
+
+describe('edgeReconcile: observe-only edges', () => {
+  /** An adopted, unmanaged edge in the given state. */
+  async function adopted(s: Awaited<ReturnType<typeof seed>>, patch: Record<string, unknown>) {
+    const { edgeId } = await s.t.mutation(internal.relays.adoptEdge, {
+      relayId: s.relayId,
+      slotId: s.slotId,
+      ipv4: '198.51.100.60',
+    });
+    await s.t.run((ctx) => ctx.db.patch(edgeId, patch));
+    return edgeId;
+  }
+
+  test('a DRAINED observe-only edge is destroyed after its drain, without a provider call', async () => {
+    const world = fakeUpcloud([]);
+    const s = await seed();
+    const edgeId = await adopted(s, {
+      status: 'draining',
+      publication: 'draining',
+      drainUntil: Date.now() - 1,
+    });
+    const r = await run(s.t);
+    expect(r.destroyed).toBe(1);
+    expect((await s.t.query(internal.edges.get, { id: edgeId }))!.status).toBe('destroyed');
+    // FCP never created it, so it never deletes it either.
+    expect(world.deletes).toEqual([]);
+  });
+
+  test('an observe-only edge still inside its drain is left alone', async () => {
+    fakeUpcloud([]);
+    const s = await seed();
+    const edgeId = await adopted(s, {
+      status: 'draining',
+      publication: 'draining',
+      drainUntil: Date.now() + 60_000,
+    });
+    await run(s.t);
+    expect((await s.t.query(internal.edges.get, { id: edgeId }))!.status).toBe('draining');
+  });
+});
+
+describe('edgeReconcile: tearing a hostname off a SHARED resource', () => {
+  afterEach(() => __setEdgeProviderForTests('cloudflare', null));
+
+  /**
+   * A front provider whose adopted domain sits on a service FCP does not own:
+   * the service cannot be deleted, so removing one hostname from it is a
+   * persisted version workflow the adapter drives one phase at a time.
+   */
+  function fakeSharedProvider(opts: { phases?: string[]; parkWith?: string } = {}) {
+    const phases = opts.phases ?? ['clone', 'remove_domain', 'activate', 'done'];
+    const steps: Array<{ phase: string; workVersion?: number }> = [];
+    const destroyed: string[] = [];
+    __setEdgeProviderForTests('cloudflare', {
+      id: 'cloudflare',
+      templateSchema: z.object({}).passthrough(),
+      templateFields: [],
+      defaultTemplate: {},
+      testCredentials: async () => ({ ok: true }),
+      planProvision: () => [],
+      runStep: async () => ({ status: 'done', resources: [] }),
+      discover: async () => ({ status: 'unresolved' }),
+      describe: async () => ({ state: 'active', addresses: {}, health: 'unknown' }),
+      inspect: async () => ({ summary: { addresses: [], members: [], listeners: [] }, raw: {} }),
+      inventory: async () => ({ loadBalancers: [], ips: [], flavors: [] }),
+      // The SHARED service is never in the destroy plan: FCP deletes only what
+      // it owns on it (its domain, its DNS record).
+      planDestroy: (_cfg: unknown, ledger: { resources: Array<Record<string, unknown>> }) =>
+        ledger.resources.filter((r) => r.kind !== 'service' && r.deleteState !== 'confirmed_gone'),
+      runDestroy: async (_cfg: unknown, r: { kind: string; resourceId: string }) => {
+        destroyed.push(`${r.kind}:${r.resourceId}`);
+        // A domain on a shared service is the workflow's job, never the walk's.
+        return r.kind === 'domain' ? { status: 'unresolved' } : { status: 'confirmed_gone' };
+      },
+      sharedTeardown: {
+        plan: (ledger: { resources: Array<Record<string, unknown>> }, opId: string) => {
+          const svc = ledger.resources.find((r) => r.kind === 'service');
+          if (!svc) return null;
+          return {
+            phase: phases[0],
+            serviceId: String(svc.resourceId),
+            fromVersion: 7,
+            opId,
+            attempts: 0,
+            marker: `fcp-${opId}`,
+          };
+        },
+        step: async (_cfg: unknown, state: { phase: string; workVersion?: number }) => {
+          steps.push({ phase: state.phase, workVersion: state.workVersion });
+          if (opts.parkWith) return { ...state, phase: 'needs_operator', code: opts.parkWith };
+          const next = phases[phases.indexOf(state.phase) + 1] ?? 'done';
+          return { ...state, phase: next, workVersion: (state.workVersion ?? 7) + 1 };
+        },
+      },
+    } as never);
+    return { steps, destroyed };
+  }
+
+  /** A destroying L7 edge whose ledger holds a shared service + the children FCP owns. */
+  async function sharedEdge() {
+    const t = convexTest(schema, modules);
+    await t.run((ctx) =>
+      ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'panel-a',
+        slug: 'panel-a',
+        config: { type: 'remnawave', baseUrl: 'https://panel.example', apiToken: 'tok' },
+        isActive: true,
+        priority: 0,
+        keyCount: 0,
+        updatedAt: Date.now(),
+      }),
+    );
+    const { id: accountId } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'cloudflare',
+      name: 'acct-cf',
+      settings: { zoneId: 'a'.repeat(32), zoneName: 'example.org' },
+      credentials: { apiToken: 'cf' },
+    });
+    await t.mutation(internal.protocolProfiles.create, {
+      slug: 'prof-ws',
+      name: 'WS',
+      protocol: 'ws',
+    });
+    const { id: relayId } = await t.mutation(internal.relays.upsertBySlug, {
+      slug: 'node-one',
+      backendServerSlug: 'panel-a',
+      nodeHostname: 'node-one',
+      originAddress: ORIGIN,
+    });
+    const { id: slotId } = await t.mutation(internal.relaySlots.upsert, {
+      relayId,
+      slotKey: 'w',
+      profileSlug: 'prof-ws',
+      inboundTag: 'VLESS_RELAY_W',
+      configProfileUuid: '11111111-1111-4111-8111-111111111111',
+      configProfileInboundUuid: '22222222-2222-4222-8222-222222222222',
+      originPort: 443,
+    });
+    const child = (kind: string, resourceId: string, meta?: string) => ({
+      stepId: 'adopted',
+      kind,
+      resourceId,
+      ownership: 'adopted' as const,
+      deleteState: 'present' as const,
+      ...(meta ? { meta } : {}),
+    });
+    const edgeId = await t.run((ctx) =>
+      ctx.db.insert('edges', {
+        relayId,
+        slotId,
+        accountId,
+        provider: 'cloudflare',
+        managed: true,
+        name: 'adopted-node-one',
+        steps: [],
+        resources: [
+          child('service', 'svc-1', JSON.stringify({ shared: true })),
+          child('domain', 'dom-1'),
+          child('dns_record', 'rec-1'),
+        ],
+        listeners: [{ edgePort: 443, originAddress: ORIGIN, originPort: 443 }],
+        addresses: { hostname: 'front-a.example.org' },
+        layer: 'l7',
+        publication: 'unpublished',
+        status: 'destroying',
+        statusChangedAt: Date.now(),
+        health: 'unknown',
+        destroyAttempts: 0,
+        updatedAt: Date.now(),
+      }),
+    );
+    return { t, edgeId, relayId };
+  }
+
+  test('the version workflow is persisted and advanced ONE phase per pass, then the walk finishes', async () => {
+    mockFetch(() => jsonRes({ response: [] }));
+    const { steps, destroyed } = fakeSharedProvider();
+    const { t, edgeId } = await sharedEdge();
+    // Pass 1: the workflow is planned from the ledger and its first phase runs.
+    await run(t);
+    let edge = (await t.run((ctx) => ctx.db.get(edgeId)))!;
+    expect(edge.sharedTeardown).toMatchObject({ phase: 'remove_domain', serviceId: 'svc-1' });
+    // The driver's own extra fields survive as JSON.
+    expect(JSON.parse(edge.sharedTeardownState!)).toMatchObject({ marker: expect.any(String) });
+    expect(steps).toEqual([{ phase: 'clone', workVersion: undefined }]);
+    // Each later pass advances exactly ONE phase: the service's version chain
+    // is shared with every other adopted hostname on it.
+    await run(t);
+    edge = (await t.run((ctx) => ctx.db.get(edgeId)))!;
+    expect(edge.sharedTeardown!.phase).toBe('activate');
+    await run(t);
+    edge = (await t.run((ctx) => ctx.db.get(edgeId)))!;
+    expect(edge.sharedTeardown!.phase).toBe('done');
+    // `done` means the hostname is off the shared service: only the DOMAIN the
+    // workflow removed is gone. The DNS records live in another zone and the
+    // workflow never touched them, so they are still the walk's to delete; the
+    // SERVICE itself is untouched.
+    expect(edge.resources.map((r) => [r.kind, r.deleteState])).toEqual([
+      ['service', 'present'],
+      ['domain', 'confirmed_gone'],
+      ['dns_record', 'present'],
+    ]);
+    expect(destroyed).toEqual([]);
+    // The ordinary walk now DELETES the records through the provider (the
+    // workflow never touched them) and, with that last child gone, completes
+    // the edge; the shared service was never its to delete.
+    await run(t);
+    edge = (await t.run((ctx) => ctx.db.get(edgeId)))!;
+    expect(destroyed).toEqual(['dns_record:rec-1']);
+    expect(edge.status).toBe('destroyed');
+    expect(steps.map((s) => s.phase)).toEqual(['clone', 'remove_domain', 'activate']);
+    // The version the workflow started from is remembered across re-entries.
+    expect(edge.sharedTeardown!.fromVersion).toBe(7);
+  });
+
+  test('a workflow that cannot converge parks the edge with the driver code', async () => {
+    mockFetch(() => jsonRes({ response: [] }));
+    fakeSharedProvider({ parkWith: 'clone_lost' });
+    const { t, edgeId } = await sharedEdge();
+    await run(t);
+    const edge = (await t.run((ctx) => ctx.db.get(edgeId)))!;
+    expect(edge.status).toBe('needs_operator');
+    expect(edge.failure).toMatchObject({ step: 'shared_teardown', code: 'clone_lost' });
+  });
+
+  test('a retry after an operator repair RESTARTS the workflow from its first phase', async () => {
+    mockFetch(() => jsonRes({ response: [] }));
+    fakeSharedProvider({ parkWith: 'clone_lost' });
+    const { t, edgeId } = await sharedEdge();
+    await run(t);
+    let edge = (await t.run((ctx) => ctx.db.get(edgeId)))!;
+    expect(edge.status).toBe('needs_operator');
+    expect(edge.sharedTeardown?.phase).toBe('needs_operator');
+    // The operator repairs the service by hand and retries: the terminal state
+    // must not survive, or the driver would treat it as finished and the walk
+    // could only answer `unresolved` for the shared domain.
+    await t.mutation(internal.edgeReconcileMutations.retryDestroy, { edgeId });
+    edge = (await t.run((ctx) => ctx.db.get(edgeId)))!;
+    expect(edge.status).toBe('destroying');
+    expect(edge.sharedTeardown).toBeUndefined();
+    expect(edge.sharedTeardownState).toBeUndefined();
+    const { steps } = fakeSharedProvider();
+    await run(t);
+    edge = (await t.run((ctx) => ctx.db.get(edgeId)))!;
+    expect(edge.sharedTeardown).toMatchObject({ phase: 'remove_domain' });
+    expect(steps).toEqual([{ phase: 'clone', workVersion: undefined }]);
+  });
+
+  test('out-of-rotation discovery RELEASES the shared-object lock once it has answered', async () => {
+    mockFetch(() => jsonRes({ response: [] }));
+    fakeSharedProvider();
+    __setEdgeProviderForTests('cloudflare', {
+      ...(edgeProviderFor('cloudflare') as object),
+      testCredentials: async () => ({ ok: true }),
+      discover: async () => ({ status: 'confirmed_absent' }),
+      describe: async () => ({ state: 'active', addresses: {}, health: 'unknown' }),
+      planDestroy: () => [],
+      runDestroy: async () => ({ status: 'confirmed_gone' }),
+    } as never);
+    const { t, edgeId } = await sharedEdge();
+    const zoneId = 'a'.repeat(32);
+    // A cancelled run whose origin-rule write had an unknown outcome: the lock a
+    // lost write left behind is expired and unsettled, and only the reconcile
+    // discovery path will ever settle this edge again.
+    await t.run((ctx) =>
+      ctx.db.patch(edgeId, {
+        status: 'cancelled',
+        resources: [],
+        steps: [
+          {
+            stepId: 'rule',
+            kind: 'create_origin_rule',
+            resourceName: 'adopted-node-one-rule',
+            discoverability: 'by_name',
+            state: 'unresolved',
+            attempt: 1,
+            startedAt: Date.now() - 600_000,
+          },
+        ],
+        provisionIntent: JSON.stringify({
+          hostname: 'front-a.example.org',
+          zoneId,
+          zoneName: 'example.org',
+          originTransport: {
+            scheme: 'https',
+            certPublic: true,
+            certNames: [],
+            acceptsHostHeader: 'any',
+          },
+          originPort: 8443,
+          templateHash: 'h',
+          templateParams: {},
+        }),
+      }),
+    );
+    const key = `cloudflare-zone:${zoneId}`;
+    await t.mutation(internal.edges.claimExternalLock, { key, edgeId, opId: 'lost', ttlMs: 1 });
+    await t.run(async (ctx) => {
+      const row = await ctx.db
+        .query('externalLocks')
+        .withIndex('by_key', (q) => q.eq('key', key))
+        .unique();
+      await ctx.db.patch(row!._id, { expiresAt: Date.now() - 1 });
+    });
+    await run(t);
+    const edge = (await t.run((ctx) => ctx.db.get(edgeId)))!;
+    expect(edge.steps[0]!.state).toBe('done');
+    // The zone is free again for every later origin-rule write.
+    const lock = await t.run((ctx) =>
+      ctx.db
+        .query('externalLocks')
+        .withIndex('by_key', (q) => q.eq('key', key))
+        .unique(),
+    );
+    expect(lock).toBeNull();
+  });
+
+  test('the operator "destroy" resolution restarts a parked workflow too', async () => {
+    mockFetch(() => jsonRes({ response: [] }));
+    fakeSharedProvider({ parkWith: 'clone_lost' });
+    const { t, edgeId } = await sharedEdge();
+    await run(t);
+    await t.mutation(internal.edgeAdmin.resolveOperator, { edgeId, action: 'destroy' });
+    const edge = (await t.run((ctx) => ctx.db.get(edgeId)))!;
+    expect(edge.status).toBe('destroying');
+    expect(edge.sharedTeardown).toBeUndefined();
+    expect(edge.sharedTeardownState).toBeUndefined();
+  });
+});
+
+describe('edgeReconcile: renewing a front qualification before it lapses', () => {
+  afterEach(() => {
+    __setEdgeProviderForTests('cloudflare', null);
+    __setFrontChecker(null);
+  });
+
+  const HOSTNAME = 'a1b2c3d4e5f6.example.org';
+  const QUALIFY_UUID = '99999999-9999-4999-8999-999999999999';
+
+  /**
+   * A published L7 front with a CURRENT proof that expires in `expiresInMs`.
+   * Its health was just refreshed, so nothing but the proof clock can bring the
+   * reconcile pass to it.
+   */
+  async function frontedRelay(expiresInMs: number[]) {
+    const t = convexTest(schema, modules);
+    await t.run((ctx) =>
+      ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'panel-a',
+        slug: 'panel-a',
+        config: { type: 'remnawave', baseUrl: 'https://panel.example', apiToken: 'tok' },
+        isActive: true,
+        priority: 0,
+        keyCount: 0,
+        updatedAt: Date.now(),
+      }),
+    );
+    const { id: accountId } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'cloudflare',
+      name: 'acct-cf',
+      settings: { zoneId: 'a'.repeat(32), zoneName: 'example.org' },
+      credentials: { apiToken: 'cf' },
+    });
+    await t.mutation(internal.protocolProfiles.create, {
+      slug: 'prof-ws',
+      name: 'WS',
+      protocol: 'ws',
+    });
+    const { id: relayId } = await t.mutation(internal.relays.upsertBySlug, {
+      slug: 'node-one',
+      backendServerSlug: 'panel-a',
+      nodeHostname: 'node-one',
+      originAddress: ORIGIN,
+    });
+    const originTransport = {
+      scheme: 'https' as const,
+      certPublic: true,
+      certNames: ['node-one.origin.example'],
+      acceptsHostHeader: 'any' as const,
+    };
+    const { id: slotId } = await t.mutation(internal.relaySlots.upsert, {
+      relayId,
+      slotKey: 'w',
+      profileSlug: 'prof-ws',
+      inboundTag: 'VLESS_RELAY_W',
+      configProfileUuid: '11111111-1111-4111-8111-111111111111',
+      configProfileInboundUuid: '22222222-2222-4222-8222-222222222222',
+      originPort: 443,
+      originTransport,
+      transportParams: { path: '/ws' },
+    });
+    await t.run((ctx) => ctx.db.patch(relayId, { qualificationUserId: QUALIFY_UUID }));
+    const edgeIds = await t.run(async (ctx) => {
+      const now = Date.now();
+      const slot = (await ctx.db.get(slotId))!;
+      const profile = (await ctx.db.get(slot.profileId))!;
+      const ids: Id<'edges'>[] = [];
+      for (const [i, ms] of expiresInMs.entries()) {
+        const hostname = i === 0 ? HOSTNAME : `${i}${HOSTNAME}`;
+        const intent = {
+          hostname,
+          zoneId: 'a'.repeat(32),
+          zoneName: 'example.org',
+          originTransport,
+          originPort: 443,
+          zoneSslMode: 'full',
+          templateHash: 'h',
+          templateParams: {},
+        };
+        const binding = qualificationBinding({
+          slot,
+          profile,
+          intent,
+          params: slot.transportParams ?? {},
+        });
+        ids.push(
+          await ctx.db.insert('edges', {
+            relayId,
+            slotId,
+            accountId,
+            provider: 'cloudflare',
+            managed: true,
+            name: `fcp-node-one-${i}`,
+            steps: [],
+            resources: [],
+            listeners: [{ edgePort: 443, originAddress: ORIGIN, originPort: 443 }],
+            addresses: { hostname },
+            layer: 'l7',
+            provisionIntent: JSON.stringify(intent),
+            frontQualification: {
+              ok: true,
+              checkedAt: now,
+              expiresAt: now + ms,
+              binding: {
+                ...binding,
+                slotId: binding.slotId as Id<'relaySlots'>,
+                profileId: binding.profileId as Id<'protocolProfiles'>,
+              },
+            },
+            publication: 'published',
+            poolIndex: i,
+            status: 'active',
+            statusChangedAt: now,
+            health: 'unknown',
+            lastHealthAt: now,
+            destroyAttempts: 0,
+            updatedAt: now,
+          }),
+        );
+      }
+      const relay = (await ctx.db.get(relayId))!;
+      await ctx.db.patch(relayId, { publishedEdgeIds: ids, desiredPublished: ids.length });
+      return { ids, epoch: relay.publicationEpoch };
+    });
+    return { t, relayId, edgeIds: edgeIds.ids };
+  }
+
+  /** The pool as the renderer sees it: `eligible:false` = the front is out. */
+  async function renderable(t: ReturnType<typeof convexTest>, relayId: Id<'relays'>) {
+    return await t.run(async (ctx) => {
+      const origin = (await ctx.db.get(relayId))!;
+      const { published } = await publishedEdgesOf(ctx, origin, { includeIneligible: true });
+      return published.map((p) => ({ edgeId: p.edgeId, eligible: p.eligible !== false }));
+    });
+  }
+
+  test('a proof about to expire is renewed this tick, so the front never drops out', async () => {
+    mockFetch(() => jsonRes({ response: [] }));
+    const checked: string[] = [];
+    __setFrontChecker(async (args) => {
+      checked.push(args.hostname);
+      return { ok: true, steps: [], checkedAt: Date.now() };
+    });
+    // Ten minutes left on a 60-minute TTL: inside the renewal lead, and still
+    // perfectly valid, so the edge is rendered before AND after the pass.
+    const { t, relayId, edgeIds } = await frontedRelay([10 * 60_000]);
+    expect(await renderable(t, relayId)).toEqual([{ edgeId: edgeIds[0], eligible: true }]);
+    const before = (await t.run((ctx) => ctx.db.get(edgeIds[0])))!.frontQualification!.expiresAt;
+    await run(t);
+    expect(checked).toEqual([HOSTNAME]);
+    const after = (await t.run((ctx) => ctx.db.get(edgeIds[0])))!.frontQualification!;
+    expect(after.ok).toBe(true);
+    expect(after.expiresAt).toBeGreaterThan(before);
+    expect(await renderable(t, relayId)).toEqual([{ edgeId: edgeIds[0], eligible: true }]);
+  });
+
+  test('a proof with most of its life left is left alone', async () => {
+    mockFetch(() => jsonRes({ response: [] }));
+    const checked: string[] = [];
+    __setFrontChecker(async (args) => {
+      checked.push(args.hostname);
+      return { ok: true, steps: [], checkedAt: Date.now() };
+    });
+    const { t } = await frontedRelay([50 * 60_000]);
+    await run(t);
+    expect(checked).toEqual([]);
+  });
+
+  test('the tick budget is config-driven and spends itself on the soonest expiry first', async () => {
+    mockFetch(() => jsonRes({ response: [] }));
+    const checked: string[] = [];
+    __setFrontChecker(async (args) => {
+      checked.push(args.hostname);
+      return { ok: true, steps: [], checkedAt: Date.now() };
+    });
+    const { t } = await frontedRelay([9 * 60_000, 2 * 60_000, 5 * 60_000]);
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.l7.maxRequalifyPerTick', '2'));
+    await run(t);
+    // Two proofs this tick, the two closest to expiring, soonest first.
+    expect(checked).toEqual([`1${HOSTNAME}`, `2${HOSTNAME}`]);
+  });
+
+  test('a re-proof that FAILS takes the front out at once', async () => {
+    mockFetch(() => jsonRes({ response: [] }));
+    __setFrontChecker(async () => ({
+      ok: false,
+      code: 'front_error',
+      steps: [],
+      checkedAt: Date.now(),
+    }));
+    const { t, relayId, edgeIds } = await frontedRelay([10 * 60_000]);
+    await run(t);
+    expect((await t.run((ctx) => ctx.db.get(edgeIds[0])))!.frontQualification!.ok).toBe(false);
+    expect(await renderable(t, relayId)).toEqual([{ edgeId: edgeIds[0], eligible: false }]);
   });
 });

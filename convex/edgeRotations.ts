@@ -29,11 +29,24 @@ import type { Doc, Id } from './_generated/dataModel';
 import { sanitizeAuditPayload, writeAuditLog, type AuditEntry } from './lib/audit';
 import { randomHex } from './lib/crypto';
 import { resolveEdgeConfig, edgeMs, type EdgeConfig } from './lib/edgeConfig';
-import { checkPublishable, scheduleMirrorRefresh, todayKey } from './relays';
+import {
+  checkPublishable,
+  liveEdgesOfAccount,
+  liveEdgesOfRelay,
+  scheduleMirrorRefresh,
+  todayKey,
+} from './relays';
 import { insertPlannedEdge } from './edges';
 import { dayKey } from './edgeProviderAccounts';
 import { edgeResourceName } from './lib/edges/accountSettings';
-import { matchSlotHosts, planFromMatches, diffHosts, sameAddress } from './lib/edges/hosts';
+import {
+  matchSlotHosts,
+  planFromMatches,
+  diffHosts,
+  rollbackTargetFor,
+  sameAddress,
+  type HostTarget,
+} from './lib/edges/hosts';
 import type { BackendHost } from './lib/backends/types';
 import { nextFreePoolIndex, withEdgeAt, withoutEdge } from './lib/edges/pool';
 import {
@@ -44,14 +57,38 @@ import {
   pickAccount,
   pickAccountAny,
   pickSlot,
+  accountsForSlot,
+  l7SelectionAllowed,
   CANCELLABLE_PHASES,
   ROLLBACK_ON_CANCEL_PHASES,
   ROTATION_PHASES,
   TERMINAL_PHASES,
   type RotationEvent,
 } from './lib/edges/rotation';
-import { PROTOCOL_TRANSPORT, protocolUsesSni } from './lib/edges/protocols';
-import { providerHealthSatisfies } from './lib/edges/providers/capabilities';
+import {
+  PROTOCOL_TRANSPORT,
+  protocolIsHttpTransport,
+  protocolUsesSni,
+} from './lib/edges/protocols';
+import { hostTargetFor, slotLayers, zoneModeCarriesOrigin } from './lib/edges/layers';
+// The freshness window the DETECTOR scores on is the one this gate accepts
+// evidence on: one rule, imported, never a second copy of "two intervals".
+import { probeStaleAfterMs } from './lib/edges/scoring';
+import { edgeHostnameFor } from './lib/edges/hostname';
+import { publishAddressOf, hasPublishableAddress } from './lib/edges/ip';
+import {
+  buildProvisionIntent,
+  IntentError,
+  parseIntent,
+  parseObservedSettings,
+  type ProvisionIntent,
+} from './lib/edges/intent';
+import { qualificationBinding, qualificationVerdict } from './lib/edges/frontCheck/binding';
+import {
+  edgeLayerOf,
+  providerHealthSatisfies,
+  zoneModeGovernsOrigin,
+} from './lib/edges/providers/capabilities';
 import type {
   StepOutcome,
   Discovery,
@@ -324,6 +361,8 @@ const startArgs = {
   ),
   burn: v.optional(v.boolean()),
   force: v.optional(v.boolean()),
+  /** Waives ONLY the affected-country evidence gate (audited); never the transport proof. */
+  forceGeoEvidence: v.optional(v.boolean()),
   targetEdgeId: v.optional(v.id('edges')),
   toEdgeId: v.optional(v.id('edges')),
   slotId: v.optional(v.id('relaySlots')),
@@ -338,6 +377,7 @@ export interface StartRotationArgs {
   trigger: 'manual' | 'detector' | 'api' | 'reconcile';
   burn?: boolean;
   force?: boolean;
+  forceGeoEvidence?: boolean;
   targetEdgeId?: Id<'edges'>;
   toEdgeId?: Id<'edges'>;
   slotId?: Id<'relaySlots'>;
@@ -437,16 +477,47 @@ export async function startRotation(
       });
     }
     const profile = await ctx.db.get(slot.profileId);
+    // A name-free HTTP-transport profile is usable: behind an L7 front the
+    // member presents the edge HOSTNAME. It is only L4 that needs one of the
+    // profile's own names, and `slotLayers` already excludes L4 for it.
     const usable =
       slot.deployed &&
       !!profile?.enabled &&
       (!protocolUsesSni(profile.protocol) ||
+        protocolIsHttpTransport(profile.protocol) ||
         profile.serverNames.some((s) => s.status === 'active'));
     if (!usable) {
       throw new ConvexError({
         code: 'edge.no_compatible_profile',
-        message: 'The slot is not deployed, or its REALITY profile has no active server name',
+        message: 'The slot is not deployed, or its profile is disabled or has no server name',
       });
+    }
+    // An L7-ONLY slot cannot be answered automatically while the L7 gate is
+    // off: the run would have nothing compatible to pick, and silently routing
+    // it to an L4 account would front a plaintext origin with a raw forwarder.
+    // The veto is explicit so the operator sees why nothing happened.
+    if (a.trigger === 'detector' && profile) {
+      const layers = slotLayers(slot, profile).layers;
+      if (layers.length === 1 && layers[0] === 'l7' && !l7SelectionAllowed(cfg)) {
+        throw new ConvexError({
+          code: 'edge.l7_auto_select_disabled',
+          message: 'Automatic selection of L7 edges is disabled; publish this slot by hand',
+        });
+      }
+    }
+  }
+  // A new CDN hostname is not a new frontend IP (shared anycast), so repeated
+  // automatic L7 replacements on one relay are bounded per day.
+  if (a.trigger === 'detector' && a.kind === 'replace' && targetEdge && !force) {
+    if ((targetEdge.layer ?? 'l4') === 'l7') {
+      const used =
+        origin.l7ReplacementsDayKey === todayKey(now) ? (origin.l7ReplacementsToday ?? 0) : 0;
+      if (used >= cfg.l7.maxSameProviderReplacementsPerDay) {
+        throw new ConvexError({
+          code: 'edge.l7_replacement_cap',
+          message: 'Daily cap on L7 replacements for this relay reached',
+        });
+      }
     }
   }
   const id = await ctx.db.insert('edgeRotations', {
@@ -455,6 +526,7 @@ export async function startRotation(
     trigger: a.trigger,
     burn: a.burn ?? false,
     force,
+    forceGeoEvidence: a.forceGeoEvidence === true ? true : undefined,
     publishOnDone: a.kind === 'provision' ? (a.publishOnDone ?? false) : undefined,
     targetEdgeId: a.targetEdgeId,
     toEdgeId: a.kind === 'publish' ? a.toEdgeId : undefined,
@@ -505,6 +577,7 @@ export async function startRotation(
       slug: origin.slug,
       trigger: a.trigger,
       force,
+      forceGeoEvidence: a.forceGeoEvidence === true,
       rotationId: id,
       edgeId: a.kind === 'publish' ? a.toEdgeId : undefined,
     },
@@ -1014,10 +1087,61 @@ export const commitSelection = internalMutation({
         discoverability: v.union(v.literal('by_name'), v.literal('by_tag'), v.literal('none')),
       }),
     ),
+    /** The EFFECTIVE rendered template params (adapter defaults applied), frozen into the intent. */
+    templateParams: v.optional(v.any()),
   },
   handler: async (ctx, a) => {
     const r = await guard(ctx, a.rotationId, a.stepVersion);
     if (!r) return { ok: false as const, code: 'stale' as const };
+    const origin = await ctx.db.get(r.relayId);
+    const account = await ctx.db.get(a.accountId);
+    const slot = await ctx.db.get(a.slotId);
+    if (!origin || !account || !slot) return { ok: false as const, code: 'missing' as const };
+    const layer = edgeLayerOf(account.provider);
+    // Freeze the intent HERE, before any provider call: from this point on, an
+    // operator editing the account's zone, its DNS account, the TLS
+    // configuration or the template no longer moves this edge. Everything the
+    // remaining steps, discovery, describe and destroy need is on the row.
+    let provisionIntent: ProvisionIntent | null = null;
+    if (layer === 'l7') {
+      const dnsAccountId = (account.settings as { dnsAccountId?: string }).dnsAccountId;
+      const dnsAccount = dnsAccountId
+        ? await ctx.db.get(dnsAccountId as Id<'edgeProviderAccounts'>)
+        : null;
+      if (dnsAccountId && !dnsAccount)
+        return { ok: false as const, code: 'dns_account_missing' as const };
+      // A disabled DNS account stops NEW allocations (reconciliation and
+      // destroy keep working through it, which is why this is the only gate).
+      if (dnsAccount && !dnsAccount.enabled)
+        return { ok: false as const, code: 'dns_account_disabled' as const };
+      try {
+        provisionIntent = buildProvisionIntent({
+          account: {
+            id: account._id as string,
+            provider: account.provider,
+            settings: account.settings as Record<string, unknown>,
+            observedSettings: parseObservedSettings(account.observedSettings),
+          },
+          dnsAccount: dnsAccount
+            ? {
+                id: dnsAccount._id as string,
+                provider: dnsAccount.provider,
+                settings: dnsAccount.settings as Record<string, unknown>,
+                observedSettings: parseObservedSettings(dnsAccount.observedSettings),
+              }
+            : null,
+          specName: edgeResourceName(origin.slug, a.nameNonce),
+          templateParams: (a.templateParams as Record<string, unknown>) ?? {},
+          templateHash: a.templateHash,
+          slot,
+        });
+      } catch (err) {
+        return {
+          ok: false as const,
+          code: err instanceof IntentError ? err.code : 'intent_failed',
+        };
+      }
+    }
     let inserted: { id: Id<'edges'>; name: string };
     try {
       inserted = await insertPlannedEdge(ctx, {
@@ -1029,6 +1153,8 @@ export const commitSelection = internalMutation({
         listeners: a.listeners,
         steps: a.steps,
         nameNonce: a.nameNonce,
+        layer,
+        provisionIntent,
       });
     } catch (err) {
       const code =
@@ -1203,6 +1329,13 @@ export const setHostPlan = internalMutation({
         oldAddress: v.string(),
         oldPort: v.number(),
         inboundUuid: v.optional(v.string()),
+        // Version 2 also captured the previous SNI / Host header, so a rollback
+        // can restore the whole tuple, clears included. A plan without it is a
+        // LEGACY one (rotation in flight at deploy time): its historical names
+        // are unknown, and unknown is never written back as "clear".
+        snapshotVersion: v.optional(v.number()),
+        oldSni: v.optional(v.union(v.string(), v.null())),
+        oldHost: v.optional(v.union(v.string(), v.null())),
       }),
     ),
     slotId: v.id('relaySlots'),
@@ -1419,13 +1552,41 @@ export const finalize = internalMutation({
       events: appendEvent(r.events, { at: now, level: 'info', code: 'done' }),
       updatedAt: now,
     });
+    // A detector-triggered L7 replacement that SUCCEEDED on the same provider
+    // counts against the relay's daily bound exactly like a blocked one: the
+    // new hostname very probably resolves to the same shared anycast frontend,
+    // so a censor that blocked the address is not answered by it. A
+    // replacement that moved to another provider, or to another layer, is a
+    // genuinely new frontend address and is not counted.
+    const sameProviderL7 =
+      r.trigger === 'detector' &&
+      r.kind === 'replace' &&
+      !!from &&
+      !!to &&
+      (from.layer ?? 'l4') === 'l7' &&
+      (to.layer ?? 'l4') === 'l7' &&
+      !!from.provider &&
+      from.provider === to.provider;
+    const today = todayKey(now);
+    const usedToday = origin.l7ReplacementsDayKey === today ? (origin.l7ReplacementsToday ?? 0) : 0;
     await releaseOrigin(ctx, r, {
+      ...(sameProviderL7
+        ? { l7ReplacementsDayKey: today, l7ReplacementsToday: usedToday + 1 }
+        : {}),
       ...(r.kind === 'replace'
         ? { lastRotatedAt: now, cooldownUntil: now + origin.cooldownMs }
         : {}),
-      // Standby bookkeeping for a provision that did not publish.
+      // Standby bookkeeping for a provision that did not publish. Only an edge
+      // that could actually be published later belongs on the list: a destroyed
+      // or failed one would sit there forever and be offered to every
+      // `autoPublishStandby` pass, which then refuses it again.
       ...(to && !published
-        ? { standbyEdgeIds: [...origin.standbyEdgeIds.filter((e) => e !== to._id), to._id] }
+        ? {
+            standbyEdgeIds:
+              to.status === 'active' || to.status === 'standby'
+                ? [...origin.standbyEdgeIds.filter((e) => e !== to._id), to._id]
+                : origin.standbyEdgeIds.filter((e) => e !== to._id),
+          }
         : {}),
     });
     if (r.kind === 'replace') {
@@ -1635,6 +1796,103 @@ export const resolveQuarantine = internalMutation({
   },
 });
 
+// --- L7 gate state -------------------------------------------------------------------------
+
+/**
+ * Whether the L7 front is proven for what THIS rotation would publish, and
+ * which countries (if any) must additionally be shown to reach it. The binding
+ * is re-derived from the live slot/profile/intent, so a configuration written
+ * while the session ran is not silently accepted as proof.
+ */
+export const l7GateState = internalQuery({
+  args: { rotationId: v.id('edgeRotations'), edgeId: v.id('edges') },
+  handler: async (ctx, { rotationId, edgeId }) => {
+    const r = await ctx.db.get(rotationId);
+    const edge = await ctx.db.get(edgeId);
+    if (!r || !edge) return null;
+    const slot = await ctx.db.get(edge.slotId);
+    const profile = slot ? await ctx.db.get(slot.profileId) : null;
+    const intent = parseIntent(edge.provisionIntent);
+    const q = edge.frontQualification;
+    const qualified =
+      !!slot &&
+      !!profile &&
+      !!intent &&
+      qualificationVerdict(
+        q,
+        qualificationBinding({ slot, profile, intent, params: slot.transportParams ?? {} }),
+        Date.now(),
+      ) === 'ok';
+    // Evidence is required only for a replacement the DETECTOR asked for: a
+    // manual or reconcile run has no "affected countries" to answer to.
+    const needsGeoEvidence = r.trigger === 'detector' && r.forceGeoEvidence !== true;
+    const relay = await ctx.db.get(r.relayId);
+    const evidence = relay?.suspicion?.edgeEvidence ?? [];
+    const target = r.targetEdgeId;
+    const countries = new Set<string>();
+    for (const e of evidence) {
+      if (target && e.edgeId !== target) continue;
+      for (const c of e.countries) countries.add(c);
+    }
+    return {
+      qualified,
+      qualificationCode: q?.code ?? (q?.ok === false ? 'failed' : null),
+      needsGeoEvidence,
+      affectedCountries: [...countries],
+    };
+  },
+});
+
+/**
+ * The stored per-country verdicts for an edge, WITH their freshness. `absent` =
+ * no row yet (nothing measured); `stale` = a row older than the detector's
+ * freshness window (two probe intervals), which says nothing about the edge now
+ * and is therefore never accepted as evidence in either direction. The caller
+ * asks for a fresh round instead.
+ */
+export const edgeReachability = internalQuery({
+  args: { edgeId: v.id('edges'), countries: v.array(v.string()) },
+  handler: async (
+    ctx,
+    { edgeId, countries },
+  ): Promise<Array<{ country: string; verdict: string; lastAt: number | null }>> => {
+    const edge = await ctx.db.get(edgeId);
+    const cfg = await resolveEdgeConfig(ctx.db);
+    const rows = edge?.reachability?.byCountry ?? [];
+    const now = Date.now();
+    const staleAfter = probeStaleAfterMs(cfg.probe);
+    return countries.map((country) => {
+      const row = rows.find((c) => c.country === country);
+      if (!row) return { country, verdict: 'absent', lastAt: null };
+      const fresh = now - row.lastAt <= staleAfter;
+      return { country, verdict: fresh ? row.verdict : 'stale', lastAt: row.lastAt };
+    });
+  },
+});
+
+/**
+ * Count one same-provider L7 replacement against the relay's daily bound.
+ * Minting another CDN hostname does not guarantee a different frontend IP, so
+ * a block that survives the replacement must not turn into an allocation loop.
+ */
+export const countL7Replacement = internalMutation({
+  args: { rotationId: v.id('edgeRotations') },
+  handler: async (ctx, { rotationId }) => {
+    const r = await ctx.db.get(rotationId);
+    if (!r) return null;
+    const origin = await ctx.db.get(r.relayId);
+    if (!origin) return null;
+    const today = todayKey();
+    const used = origin.l7ReplacementsDayKey === today ? (origin.l7ReplacementsToday ?? 0) : 0;
+    await ctx.db.patch(origin._id, {
+      l7ReplacementsDayKey: today,
+      l7ReplacementsToday: used + 1,
+      updatedAt: Date.now(),
+    });
+    return null;
+  },
+});
+
 // --- step context ------------------------------------------------------------------------------
 
 export const stepContext = internalQuery({
@@ -1666,7 +1924,12 @@ interface SelectionContext {
   standbyId: Id<'edges'> | null;
   account: {
     id: Id<'edgeProviderAccounts'>;
+    provider: string;
     defaultTemplateId: Id<'edgeTemplates'> | null;
+    /** L7: the DNS zone the hostname is minted under (this account's, or its DNS account's). */
+    zoneName: string | null;
+    /** L7: the zone's OBSERVED encryption mode (null = the account was never tested). */
+    zoneSslMode: string | null;
   } | null;
   accountFailure: string | null;
   template: {
@@ -1683,10 +1946,7 @@ async function selectionContext(
   targetEdge: Edge | null,
   cfg: EdgeConfig,
 ): Promise<SelectionContext> {
-  const edges = await ctx.db
-    .query('edges')
-    .withIndex('by_relay_status', (q) => q.eq('relayId', origin._id))
-    .collect();
+  const edges = await liveEdgesOfRelay(ctx.db, origin._id);
   const publishedProviders = edges
     .filter((e) => e.publication === 'published' && e.provider)
     .map((e) => e.provider as string);
@@ -1760,7 +2020,7 @@ async function selectionContext(
       status: e.status,
       publication: e.publication,
       health: e.health,
-      hasV4: !!e.addresses.v4,
+      hasAddress: hasPublishableAddress(e),
     })),
     slot._id,
     publishedProviders,
@@ -1778,18 +2038,38 @@ async function selectionContext(
       template: null,
     };
   }
-  const accounts = await ctx.db.query('edgeProviderAccounts').collect();
+  // Which LAYERS the complete client-to-origin chain allows in front of this
+  // slot, and which providers can carry its protocol at all. An account that
+  // cannot front the slot is not a candidate: picking it would provision an edge
+  // that `checkPublishable` would then refuse (`layer_mismatch` /
+  // `protocol_not_carried`) after the provider had already been paid.
+  const layers = slotLayers(slot, profile).layers;
+  // Every trigger except an operator's own request is "automatic" for the L7
+  // gate: an unproven front must not reach members because a cron or the
+  // detector chose it.
+  const allowL7 = rotation.trigger === 'manual' || l7SelectionAllowed(cfg);
+  const eligibleAccounts = accountsForSlot(
+    (await ctx.db.query('edgeProviderAccounts').collect()).filter((a) => a.enabled),
+    { layers, protocol: profile.protocol, allowL7 },
+  );
+  const accounts = eligibleAccounts;
+  if (accounts.length === 0) {
+    return {
+      slot,
+      profile,
+      standbyId: null,
+      account: null,
+      accountFailure: layers.length === 0 ? 'no_compatible_layer' : 'no_account_for_layer',
+      template: null,
+    };
+  }
   const candidates = [];
   for (const a of accounts) {
-    if (!a.enabled) continue;
     // An account-scoped profile provisions from that account only.
     if (profile.accountId && a._id !== profile.accountId) continue;
-    const live = (
-      await ctx.db
-        .query('edges')
-        .withIndex('by_account_status', (q) => q.eq('accountId', a._id))
-        .collect()
-    ).filter((e) => e.status !== 'destroyed').length;
+    // Same rule as the insert-time capacity check: observe-only edges were not
+    // provisioned by FCP and never consume its allocation.
+    const live = (await liveEdgesOfAccount(ctx.db, a._id)).filter((e) => e.managed).length;
     candidates.push({
       id: a._id as string,
       provider: a.provider,
@@ -1829,11 +2109,29 @@ async function selectionContext(
     account.defaultTemplateId ?? null,
     account._id,
   );
+  // The zone the hostname will be minted under: the account's own (a provider
+  // that hosts its DNS) or the referenced DNS account's.
+  const settings = account.settings as { zoneName?: string; dnsAccountId?: string };
+  let zoneName = settings.zoneName ?? null;
+  // The zone's encryption mode is observed on the account that HOSTS the zone
+  // (a provider that hosts its own DNS: itself; otherwise the DNS account).
+  let zoneHost = account;
+  if (!zoneName && settings.dnsAccountId) {
+    const dns = await ctx.db.get(settings.dnsAccountId as Id<'edgeProviderAccounts'>);
+    zoneName = (dns?.settings as { zoneName?: string } | undefined)?.zoneName ?? null;
+    if (dns) zoneHost = dns;
+  }
   return {
     slot,
     profile,
     standbyId: null,
-    account: { id: account._id, defaultTemplateId: account.defaultTemplateId ?? null },
+    account: {
+      id: account._id,
+      provider: account.provider,
+      defaultTemplateId: account.defaultTemplateId ?? null,
+      zoneName,
+      zoneSslMode: parseObservedSettings(zoneHost.observedSettings).zoneSslMode ?? null,
+    },
     accountFailure: null,
     template,
   };
@@ -1846,8 +2144,15 @@ async function stepContextHandler(ctx: ActionCtx, rotationId: Id<'edgeRotations'
   return ctx.runQuery(internal.edgeRotations.stepContext, { rotationId });
 }
 
-/** The provider-facing spec; `transport` rides along so a udp slot is refused before any call. */
+/**
+ * The provider-facing spec; `transport` rides along so a udp slot is refused
+ * before any call. For an L7 edge the hostname and the origin transport come
+ * from the FROZEN intent, never from the account or the slot as they are now:
+ * an operator edit mid-rotation must not make the adapter create one resource
+ * and then look for another.
+ */
 function specOf(edge: Edge) {
+  const intent = parseIntent(edge.provisionIntent);
   return {
     name: edge.name,
     listeners: edge.listeners.map((l) => ({
@@ -1855,7 +2160,44 @@ function specOf(edge: Edge) {
       members: [{ address: l.originAddress, port: l.originPort }],
       ...(l.transport ? { transport: l.transport } : {}),
     })),
+    ...(intent ? { hostname: intent.hostname, originTransport: intent.originTransport } : {}),
   };
+}
+
+/**
+ * The template the remaining steps run with. An L7 edge uses the params frozen
+ * in its intent (the template row may have been edited since), plus
+ * `zoneSslMode`, which the adapter reads as an extra parameter: the zone's
+ * encryption mode decides the default origin port, and following a live change
+ * would silently repoint an edge that was planned against the old mode.
+ */
+function templateParamsOf(edge: Edge, fallback: Record<string, unknown>): Record<string, unknown> {
+  const intent = parseIntent(edge.provisionIntent);
+  if (!intent) return fallback;
+  return {
+    ...intent.templateParams,
+    ...(intent.zoneSslMode ? { zoneSslMode: intent.zoneSslMode } : {}),
+  };
+}
+
+/**
+ * The EXTERNAL lock a step needs, or null. `claimOp` serialises work on one
+ * edge; a step that rewrites something several edges share needs more. A
+ * Cloudflare origin rule is one rule inside the ZONE's rule set: two edges
+ * bootstrapping that rule set at once would each read it and each write it
+ * back, and the second write would drop the first rule. The key is the zone, so
+ * every account row pointing at that zone serialises on it.
+ */
+export function stepLockKey(edge: Edge, stepKind: string): string | null {
+  if (stepKind !== 'create_origin_rule') return null;
+  const intent = parseIntent(edge.provisionIntent);
+  return intent?.zoneId ? `cloudflare-zone:${intent.zoneId}` : null;
+}
+
+/** The lock a Fastly shared-service teardown serialises on (one service, several adopted domains). */
+export function sharedTeardownLockKey(edge: Edge): string | null {
+  const serviceId = edge.sharedTeardown?.serviceId;
+  return serviceId ? `fastly-service:${serviceId}` : null;
 }
 
 function resourceStepOf(s: Edge['steps'][number]): ResourceStep {
@@ -2073,6 +2415,39 @@ async function phaseSelect(ctx: ActionCtx, c: Ctx) {
       transport: PROTOCOL_TRANSPORT[selection.profile.protocol],
     },
   ];
+  // An L7 edge's hostname is minted HERE, from the resource name and the zone,
+  // by the same deterministic function `buildProvisionIntent` uses when it
+  // freezes the intent one mutation later: the plan and the intent therefore
+  // name the same host without either having to persist it first.
+  const fail = (code: string, detail?: string) =>
+    advanceCall(ctx, r._id, sv, { type: 'fail', code, detail, rollback: false });
+  let hostname: string | undefined;
+  const originTransport = selection.slot.originTransport ?? undefined;
+  // The zone's mode describes the origin leg only when the front IS the zone's
+  // proxy; for any other CDN the referenced zone merely holds unproxied CNAMEs.
+  const zoneModeApplies = zoneModeGovernsOrigin(selection.account.provider);
+  const zoneSslMode = zoneModeApplies ? (selection.account.zoneSslMode ?? undefined) : undefined;
+  if (edgeLayerOf(selection.account.provider) === 'l7') {
+    if (!selection.account.zoneName) return void (await fail('dns_zone_missing'));
+    if (!originTransport) return void (await fail('origin_transport_missing'));
+    // The zone's encryption mode is OBSERVED, never entered: an untested
+    // account cannot be planned against, and a mode that cannot carry the
+    // slot's origin transport is refused before anything is allocated.
+    if (zoneModeApplies) {
+      if (!zoneSslMode) return void (await fail('zone_mode_unknown'));
+      if (!zoneModeCarriesOrigin(zoneSslMode, originTransport))
+        return void (await fail('origin_tls_mismatch'));
+    }
+    const tpl = selection.template.params as { labelLength?: number; labelPrefix?: string };
+    try {
+      hostname = edgeHostnameFor(name, selection.account.zoneName, {
+        labelLength: typeof tpl.labelLength === 'number' ? tpl.labelLength : 12,
+        labelPrefix: tpl.labelPrefix,
+      });
+    } catch {
+      return void (await fail('hostname_invalid'));
+    }
+  }
   const spec = {
     name,
     listeners: listeners.map((l) => ({
@@ -2080,13 +2455,31 @@ async function phaseSelect(ctx: ActionCtx, c: Ctx) {
       members: [{ address: l.originAddress, port: l.originPort }],
       ...(l.transport ? { transport: l.transport } : {}),
     })),
+    ...(hostname ? { hostname, originTransport } : {}),
   };
+  // The EFFECTIVE params (adapter schema defaults applied, placeholders
+  // rendered) are what the intent freezes, so a later step never needs the
+  // template row again.
+  let effectiveParams: Record<string, unknown>;
+  try {
+    effectiveParams = await ctx.runAction(internal.edgeProviderOps.effectiveTemplate, {
+      accountId: selection.account.id,
+      spec,
+      templateParams: selection.template.params,
+    });
+  } catch (err) {
+    const { code, detail } = errCode(err);
+    await fail(`plan_failed:${code}`, detail);
+    return;
+  }
   let steps: ResourceStep[];
   try {
     steps = await ctx.runAction(internal.edgeProviderOps.planProvision, {
       accountId: selection.account.id,
       spec,
       templateParams: selection.template.params,
+      protocol: selection.profile.protocol,
+      ...(zoneSslMode ? { zoneSslMode } : {}),
     });
   } catch (err) {
     const { code, detail } = errCode(err);
@@ -2107,6 +2500,7 @@ async function phaseSelect(ctx: ActionCtx, c: Ctx) {
     templateHash: selection.template.hash,
     nameNonce: nonce,
     listeners,
+    templateParams: effectiveParams,
     steps: steps.map((s) => ({
       id: s.id,
       kind: s.kind,
@@ -2150,7 +2544,11 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
     // Every step done: describe until the LB is active with an IPv4.
     let desc: EdgeDescription;
     try {
-      desc = await ctx.runAction(internal.edgeProviderOps.describe, { accountId, ledger });
+      desc = await ctx.runAction(internal.edgeProviderOps.describe, {
+        accountId,
+        ledger,
+        edgeId: edge._id,
+      });
     } catch (err) {
       const { code, detail } = errCode(err);
       await advanceCall(ctx, r._id, sv, {
@@ -2167,6 +2565,7 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
       addresses: desc.addresses,
       health: desc.health,
       resources: desc.resources,
+      readiness: desc.readiness,
     });
     if (desc.state === 'error' || desc.state === 'gone') {
       await advanceCall(ctx, r._id, sv, {
@@ -2177,7 +2576,12 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
       });
       return;
     }
-    if (desc.state === 'active' && desc.addresses.v4) {
+    // The address to wait for is the one this edge's LAYER publishes: an L7
+    // front never reports an IPv4 of its own.
+    if (
+      desc.state === 'active' &&
+      hasPublishableAddress({ layer: edge.layer, addresses: desc.addresses })
+    ) {
       await advanceCall(ctx, r._id, sv, { type: 'provisioned' });
       return;
     }
@@ -2220,8 +2624,12 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
         detail: `step ${pending.stepId} requested`,
       });
     } else {
+      // `partial` means the call REACHED the provider and created some children
+      // before failing, so the step HAS started: without the flag a lost
+      // `startedAt` would leave discovery with no reference time and its settle
+      // floor unprovable (the same hole R1 closed for the claim).
       await settle(opId, {
-        stepPatch: { stepId: pending.stepId, state: 'unresolved' },
+        stepPatch: { stepId: pending.stepId, state: 'unresolved', started: true },
         addResources: out.resources,
         failure: { step: pending.stepId, code: out.code },
       });
@@ -2252,16 +2660,47 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
         });
         return;
       }
+      // A step that rewrites a SHARED external object takes the external lock
+      // too. A busy lock is simply a wait; an expired unsettled one means its
+      // previous holder's write is still unknown, so nothing may touch the
+      // shared object until that holder re-observes it.
+      const lockKey = stepLockKey(edge, pending.kind);
+      if (lockKey) {
+        const lk = await ctx.runMutation(internal.edges.claimExternalLock, {
+          key: lockKey,
+          edgeId: edge._id,
+          opId: cl.opId,
+          ttlMs: edgeMs.opClaim(cfg),
+        });
+        if (!lk.ok) {
+          await settle(cl.opId, {});
+          await advanceCall(ctx, r._id, sv, {
+            type: 'progress',
+            delayMs: poll,
+            detail: lk.code,
+            countPoll: true,
+          });
+          return;
+        }
+      }
+      const releaseLock = async () => {
+        if (lockKey)
+          await ctx.runMutation(internal.edges.settleExternalLock, { key: lockKey, opId: cl.opId });
+      };
       let out: StepOutcome;
       try {
         out = await ctx.runAction(internal.edgeProviderOps.runStep, {
           accountId,
           spec,
-          templateParams: tpl.params,
+          templateParams: templateParamsOf(edge, tpl.params),
           step,
           ledger,
+          edgeId: edge._id,
+          protocol: c.profile?.protocol,
         });
       } catch (err) {
+        // The lock is deliberately NOT released: the write's outcome is
+        // unknown, and the discovery pass that resolves it releases it.
         const { code, detail } = errCode(err);
         await settle(cl.opId, {
           stepPatch: { stepId: pending.stepId, state: 'unresolved', started: true },
@@ -2275,6 +2714,9 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
         });
         return;
       }
+      // A known outcome (done / requested) releases the shared object; a
+      // `partial` leaves it half-written, so the lock is held until discovery.
+      if (out.status !== 'partial') await releaseLock();
       await applyOutcome(cl.opId, out);
       return;
     }
@@ -2296,6 +2738,7 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
           step,
           opRef: pending.opRef ?? '',
           ledger,
+          edgeId: edge._id,
         });
       } catch (err) {
         const { code, detail } = errCode(err);
@@ -2328,6 +2771,16 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
       // Attempts live on the step (each pass settles the claim; adapters need
       // ≥2 quiet looks before `confirmed_absent`).
       const discoverAttempt = (pending.discoverAttempts ?? 0) + 1;
+      // Once discovery ANSWERS, the shared object's state is known again, so the
+      // lock a lost write left behind is released here (whatever opId held it).
+      const discoveryLockKey = stepLockKey(edge, pending.kind);
+      const releaseAfterDiscovery = async () => {
+        if (discoveryLockKey)
+          await ctx.runMutation(internal.edges.releaseExternalLocksOf, {
+            edgeId: edge._id,
+            keys: [discoveryLockKey],
+          });
+      };
       let disc: Discovery;
       try {
         disc = await ctx.runAction(internal.edgeProviderOps.discover, {
@@ -2336,6 +2789,11 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
           step,
           ledger,
           attempt: discoverAttempt,
+          edgeId: edge._id,
+          // A lost settle can leave the step unstamped; the claim time (and
+          // failing that the edge's creation) is the oldest moment the request
+          // could have left, so the settle floor is measured from there.
+          stepStartedAt: pending.startedAt ?? edge.currentOp?.claimedAt ?? edge._creationTime,
         });
       } catch (err) {
         const { code, detail } = errCode(err);
@@ -2349,6 +2807,7 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
         return;
       }
       if (disc.status === 'found') {
+        await releaseAfterDiscovery();
         await settle(cl.opId, {
           stepPatch: { stepId: pending.stepId, state: 'done', opRef: null, finished: true },
           addResources: disc.resources,
@@ -2362,6 +2821,7 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
         return;
       }
       if (disc.status === 'confirmed_absent') {
+        await releaseAfterDiscovery();
         const attempt = pending.attempt + 1;
         if (attempt > MAX_STEP_RETRIES) {
           await settle(cl.opId, {
@@ -2387,6 +2847,7 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
         return;
       }
       if (disc.status === 'ambiguous') {
+        await releaseAfterDiscovery();
         await settle(cl.opId, {
           stepPatch: { stepId: pending.stepId, state: 'ambiguous' },
           addResources: disc.candidates.map((x) => ({ ...x, ownership: 'adopted' as const })),
@@ -2483,6 +2944,7 @@ async function phaseVerifying(ctx: ActionCtx, c: Ctx) {
       desc = await ctx.runAction(internal.edgeProviderOps.describe, {
         accountId: edge.accountId,
         ledger: { steps: edge.steps, resources: edge.resources },
+        edgeId: edge._id,
       });
     } catch (err) {
       const { code, detail } = errCode(err);
@@ -2509,6 +2971,7 @@ async function phaseVerifying(ctx: ActionCtx, c: Ctx) {
       addresses: desc.addresses,
       health: desc.health,
       resources: desc.resources,
+      readiness: desc.readiness,
     });
     if (desc.state === 'gone' || desc.state === 'error') {
       await advanceCall(ctx, r._id, sv, {
@@ -2519,10 +2982,17 @@ async function phaseVerifying(ctx: ActionCtx, c: Ctx) {
       });
       return;
     }
-    const v4 = desc.addresses.v4 ?? edge.addresses.v4;
+    // The address to verify is the one this LAYER publishes: an L7 front has a
+    // hostname and no IPv4 of its own.
+    const merged = {
+      v4: desc.addresses.v4 ?? edge.addresses.v4,
+      v6: desc.addresses.v6 ?? edge.addresses.v6,
+      hostname: desc.addresses.hostname ?? edge.addresses.hostname,
+    };
+    const publishAddress = publishAddressOf({ layer: edge.layer, addresses: merged });
     // A provider without member health never answers `online`: `unknown` is enough from it.
     const healthy = providerHealthSatisfies(edge.provider, desc.health, cfg.requireProviderHealth);
-    if (!(desc.state === 'active' && v4 && healthy)) {
+    if (!(desc.state === 'active' && publishAddress && healthy)) {
       if (r.pollAttempts + 1 >= cfg.verifyAttempts) {
         await advanceCall(ctx, r._id, sv, {
           type: 'fail',
@@ -2540,26 +3010,185 @@ async function phaseVerifying(ctx: ActionCtx, c: Ctx) {
       });
       return;
     }
-    if (sameAddress(v4, origin.originAddress)) {
+    // Whatever the layer, what members would be sent to must not be the node
+    // itself: publishing that would hand every subscriber the origin.
+    if (sameAddress(publishAddress, origin.originAddress)) {
       await advanceCall(ctx, r._id, sv, { type: 'fail', code: 'edge_is_origin', rollback: false });
       return;
     }
-  } else if (!edge.addresses.v4) {
-    await advanceCall(ctx, r._id, sv, { type: 'fail', code: 'no_ipv4', rollback: false });
+    // An L7 front answers DNS and serves a certificate long before it carries
+    // the transport: provider readiness is not publishability. Require an
+    // authenticated end-to-end session through the deployed transport and,
+    // for a replacement the detector asked for, evidence from the countries
+    // that reported the block.
+    if ((edge.layer ?? 'l4') === 'l7') {
+      const gate = await l7VerifyGate(ctx, c, edge);
+      if (gate.kind === 'fail') {
+        await advanceCall(ctx, r._id, sv, {
+          type: 'fail',
+          code: gate.code,
+          detail: gate.detail,
+          rollback: false,
+        });
+        return;
+      }
+      if (gate.kind === 'wait') {
+        await advanceCall(ctx, r._id, sv, {
+          type: 'progress',
+          delayMs: edgeMs.poll(cfg),
+          detail: gate.detail,
+          countPoll: true,
+        });
+        return;
+      }
+    }
+  } else if (!hasPublishableAddress(edge)) {
+    await advanceCall(ctx, r._id, sv, { type: 'fail', code: 'no_address', rollback: false });
     return;
   }
   await advanceCall(ctx, r._id, sv, { type: 'verified' });
+}
+
+type VerifyGate =
+  | { kind: 'ok' }
+  | { kind: 'wait'; detail: string }
+  | { kind: 'fail'; code: string; detail?: string };
+
+/**
+ * The L7 publishability gate, run inside `verifying` (and once more in
+ * `confirming` for its geographic half):
+ *
+ *  1. the transport proof: one authenticated session through the front,
+ *     bounded and run at most once per poll; a throw is a poll failure, not a
+ *     verdict;
+ *  2. for a DETECTOR-triggered replacement, probes of the new hostname from
+ *     every country the evidence named. `reachable` everywhere proceeds; any
+ *     `unreachable` fails (`replacement_blocked`, counted against the relay's
+ *     same-provider day bound, because a new hostname on the same CDN is often
+ *     the same anycast frontend); anything else (timeout, `unknown`, `mixed`)
+ *     fails `qualification_inconclusive`. An unknown result is never a success.
+ *
+ * A manual publish may waive ONLY step 2 with an audited `forceGeoEvidence`.
+ */
+async function l7VerifyGate(ctx: ActionCtx, c: Ctx, edge: Edge): Promise<VerifyGate> {
+  const { rotation: r, cfg } = c;
+  try {
+    await ctx.runAction(internal.frontQualifyOps.run, { edgeId: edge._id });
+  } catch (err) {
+    // The session could not be RUN (the action threw): that is a poll failure,
+    // never a verdict about the front.
+    const { code, detail } = errCode(err);
+    if (r.pollAttempts + 1 >= cfg.verifyAttempts)
+      return {
+        kind: 'fail',
+        code: 'front_qualification_failed',
+        detail: `${code} ${detail}`.trim(),
+      };
+    return { kind: 'wait', detail: `front qualification threw: ${code}` };
+  }
+  const state = await ctx.runQuery(internal.edgeRotations.l7GateState, {
+    rotationId: r._id,
+    edgeId: edge._id,
+  });
+  if (!state) return { kind: 'fail', code: 'edge_missing' };
+  if (!state.qualified) {
+    if (r.pollAttempts + 1 >= cfg.verifyAttempts)
+      return {
+        kind: 'fail',
+        code: 'front_unqualified',
+        detail: state.qualificationCode ?? undefined,
+      };
+    return { kind: 'wait', detail: `front not qualified: ${state.qualificationCode ?? 'pending'}` };
+  }
+  if (!state.needsGeoEvidence) return { kind: 'ok' };
+  return geoEvidenceGate(ctx, c, edge, state.affectedCountries);
+}
+
+/** The affected-country half, shared by `verifying` and the `confirming` re-check. */
+async function geoEvidenceGate(
+  ctx: ActionCtx,
+  c: Ctx,
+  edge: Edge,
+  countries: readonly string[],
+): Promise<VerifyGate> {
+  const { rotation: r, cfg } = c;
+  if (countries.length === 0)
+    // The detector named no country: there is nothing to prove reachable, and
+    // an empty proof is not a proof.
+    return { kind: 'fail', code: 'qualification_inconclusive', detail: 'no affected country' };
+  const verdicts = await ctx.runQuery(internal.edgeRotations.edgeReachability, {
+    edgeId: edge._id,
+    countries: [...countries],
+  });
+  if (verdicts.some((v) => v.verdict === 'unreachable')) {
+    await ctx.runMutation(internal.edgeRotations.countL7Replacement, { rotationId: r._id });
+    return {
+      kind: 'fail',
+      code: 'replacement_blocked',
+      detail: verdicts
+        .filter((v) => v.verdict === 'unreachable')
+        .map((v) => v.country)
+        .join(','),
+    };
+  }
+  if (verdicts.every((v) => v.verdict === 'reachable')) return { kind: 'ok' };
+  // Still waiting: request the round once, then poll until the timeout.
+  const waitedMs = Date.now() - (r.provisionedAt ?? r.startedAt);
+  if (waitedMs > cfg.l7.qualifyTimeoutMinutes * 60_000)
+    return {
+      kind: 'fail',
+      code: 'qualification_inconclusive',
+      detail: verdicts.map((v) => `${v.country}:${v.verdict}`).join(','),
+    };
+  // Nothing measured, or nothing measured RECENTLY: a verdict older than the
+  // freshness window is not evidence about this hostname now, so the round is
+  // requested and the gate waits for it rather than passing on a stale
+  // `reachable` (which is exactly how a blocked replacement would slip out).
+  if (verdicts.every((v) => v.verdict === 'absent' || v.verdict === 'stale')) {
+    try {
+      await ctx.runMutation(internal.probes.requestProbes, {
+        target: { kind: 'edge', ref: edge._id as string },
+        trigger: 'qualification',
+      });
+    } catch (err) {
+      // A budget refusal is not a verdict either; the next poll retries.
+      const { code } = errCode(err);
+      return { kind: 'wait', detail: `probe request: ${code}` };
+    }
+  }
+  return { kind: 'wait', detail: 'awaiting affected-country evidence' };
 }
 
 async function listHosts(ctx: ActionCtx, origin: Origin): Promise<BackendHost[]> {
   return ctx.runAction(internal.backends.listHosts, { backendServerId: origin.backendServerId });
 }
 
+/**
+ * The FULL Host tuple the flip must land: address, port, SNI and Host header,
+ * from the single source `hostTargetFor`. Writing only address/port would leave
+ * a stale name behind whenever the layer changes (an L4 IP front replaced by an
+ * L7 hostname front or back), so members would present the previous layer's SNI
+ * to the new one. `null` in the tuple means CLEAR the field.
+ */
+function flipTargetFor(edge: Edge, profile: Doc<'protocolProfiles'> | null): HostTarget | null {
+  const protocol = profile?.protocol ?? 'plain';
+  const selectedSni = profile?.serverNames.find((s) => s.status === 'active')?.sni ?? null;
+  return hostTargetFor(
+    {
+      layer: edge.layer,
+      addresses: edge.addresses,
+      edgePort: edge.listeners[0]?.edgePort ?? 443,
+    },
+    protocol,
+    selectedSni,
+  );
+}
+
 async function phaseHostFlip(ctx: ActionCtx, c: Ctx) {
-  const { rotation: r, cfg, toEdge: edge, origin, slot } = c;
+  const { rotation: r, cfg, toEdge: edge, origin, slot, profile } = c;
   const sv = r.stepVersion;
   const poll = edgeMs.poll(cfg);
-  if (!edge?.addresses.v4 || !slot) {
+  if (!edge || !hasPublishableAddress(edge) || !slot) {
     await advanceCall(ctx, r._id, sv, {
       type: 'fail',
       code: 'flip_context_missing',
@@ -2606,7 +3235,16 @@ async function phaseHostFlip(ctx: ActionCtx, c: Ctx) {
     });
     return;
   }
-  const target = { address: edge.addresses.v4, port: edge.listeners[0]?.edgePort ?? 443 };
+  const target = flipTargetFor(edge, profile);
+  if (!target) {
+    // The edge lost the address (or the profile the name) the flip needs.
+    await advanceCall(ctx, r._id, sv, {
+      type: 'fail',
+      code: 'flip_context_missing',
+      rollback: true,
+    });
+    return;
+  }
   if (!hostPlanCaptured(r)) {
     const matches = matchSlotHosts(
       hosts,
@@ -2704,6 +3342,9 @@ async function phaseHostFlip(ctx: ActionCtx, c: Ctx) {
       uuid: entry.uuid,
       address: target.address,
       port: target.port,
+      // Undefined stays undefined (leave the field); null clears it.
+      ...(target.sni !== undefined ? { sni: target.sni } : {}),
+      ...(target.host !== undefined ? { host: target.host } : {}),
     });
     await ctx.runMutation(internal.edgeRotations.settleHostOp, {
       rotationId: r._id,
@@ -2747,9 +3388,37 @@ export const bumpFlipAttempts = internalMutation({
 });
 
 async function phaseConfirming(ctx: ActionCtx, c: Ctx) {
-  const { rotation: r, cfg, toEdge: edge, origin } = c;
+  const { rotation: r, cfg, toEdge: edge, origin, profile } = c;
   const sv = r.stepVersion;
-  if (r.hostPlan.length === 0 || !edge?.addresses.v4) {
+  // The affected countries are asked ONCE MORE after the flip: the front is now
+  // the one members actually receive, so a block that only shows up under real
+  // traffic still rolls the rotation back instead of standing.
+  if (edge && (edge.layer ?? 'l4') === 'l7') {
+    const state = await ctx.runQuery(internal.edgeRotations.l7GateState, {
+      rotationId: r._id,
+      edgeId: edge._id,
+    });
+    if (state?.needsGeoEvidence && state.affectedCountries.length > 0) {
+      const verdicts = await ctx.runQuery(internal.edgeRotations.edgeReachability, {
+        edgeId: edge._id,
+        countries: state.affectedCountries,
+      });
+      if (verdicts.some((v) => v.verdict === 'unreachable')) {
+        await advanceCall(ctx, r._id, sv, {
+          type: 'fail',
+          code: 'replacement_blocked',
+          detail: verdicts
+            .filter((v) => v.verdict === 'unreachable')
+            .map((v) => v.country)
+            .join(','),
+          rollback: true,
+        });
+        return;
+      }
+    }
+  }
+  const confirmTarget = edge ? flipTargetFor(edge, profile) : null;
+  if (r.hostPlan.length === 0 || !confirmTarget) {
     await advanceCall(ctx, r._id, sv, { type: 'confirmed' });
     return;
   }
@@ -2776,10 +3445,7 @@ async function phaseConfirming(ctx: ActionCtx, c: Ctx) {
     });
     return;
   }
-  const diff = diffHosts(hosts, r.hostPlan, {
-    address: edge.addresses.v4,
-    port: edge.listeners[0]?.edgePort ?? 443,
-  });
+  const diff = diffHosts(hosts, r.hostPlan, confirmTarget);
   if (diff.hostsChanged) {
     await advanceCall(ctx, r._id, sv, { type: 'fail', code: 'hosts_changed', rollback: true });
     return;
@@ -2822,21 +3488,22 @@ async function phaseRollingBack(ctx: ActionCtx, c: Ctx) {
     });
     return;
   }
-  const byUuid = new Map(hosts.map((h) => [h.uuid, h]));
+  // Drift is judged by the SAME predicate the flip uses (`diffHosts`), entry by
+  // entry: the inline check here used to accept a planned Host that had LOST its
+  // inbound binding (`h.inbound` null), which the flip treats as drift, so a
+  // rollback could keep writing to a Host the role had detached.
   let pendingEntry: Rotation['hostPlan'][number] | null = null;
   for (const p of r.hostPlan) {
-    const h = byUuid.get(p.uuid);
-    if (
-      !h ||
-      (p.inboundUuid && h.inbound && h.inbound.configProfileInboundUuid !== p.inboundUuid)
-    ) {
+    const want = rollbackTargetFor(p);
+    const d = diffHosts(hosts, [p], want);
+    if (d.hostsChanged) {
       await advanceCall(ctx, r._id, sv, {
         type: 'quarantine',
         reason: 'a planned Host vanished or was rebound during rollback',
       });
       return;
     }
-    if (!(sameAddress(h.address, p.oldAddress) && h.port === p.oldPort)) {
+    if (d.needsWrite.length > 0) {
       pendingEntry = p;
       break;
     }
@@ -2845,6 +3512,7 @@ async function phaseRollingBack(ctx: ActionCtx, c: Ctx) {
     await advanceCall(ctx, r._id, sv, { type: 'rolled_back' });
     return;
   }
+  const rollbackTarget = rollbackTargetFor(pendingEntry);
   const cl = await ctx.runMutation(internal.edgeRotations.claimHostOp, {
     rotationId: r._id,
     stepVersion: sv,
@@ -2871,8 +3539,12 @@ async function phaseRollingBack(ctx: ActionCtx, c: Ctx) {
     await ctx.runAction(internal.backends.updateHost, {
       backendServerId: origin.backendServerId,
       uuid: pendingEntry.uuid,
-      address: pendingEntry.oldAddress,
-      port: pendingEntry.oldPort,
+      address: rollbackTarget.address,
+      port: rollbackTarget.port,
+      // A legacy plan leaves these undefined: its historical SNI/Host are
+      // UNKNOWN, and unknown must never be written back as "clear".
+      ...(rollbackTarget.sni !== undefined ? { sni: rollbackTarget.sni } : {}),
+      ...(rollbackTarget.host !== undefined ? { host: rollbackTarget.host } : {}),
     });
     await ctx.runMutation(internal.edgeRotations.settleHostOp, {
       rotationId: r._id,

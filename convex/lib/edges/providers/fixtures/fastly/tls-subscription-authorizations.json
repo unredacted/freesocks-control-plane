@@ -1,0 +1,45 @@
+{
+  "_source": "https://www.fastly.com/documentation/reference/api/tls/subscriptions/#get-tls-sub (include=tls_authorizations, read 2026-09-16)",
+  "data": {
+    "id": "C0cuTFmLzMCiyMcOZuLEZ1",
+    "type": "tls_subscription",
+    "attributes": {
+      "state": "processing",
+      "certificate_authority": "certainly"
+    },
+    "relationships": {
+      "tls_authorizations": {
+        "data": [
+          {
+            "id": "AUTH01",
+            "type": "tls_authorization"
+          }
+        ]
+      }
+    }
+  },
+  "included": [
+    {
+      "id": "AUTH01",
+      "type": "tls_authorization",
+      "attributes": {
+        "state": "pending",
+        "created_at": "2026-09-16T10:10:00Z",
+        "challenges": [
+          {
+            "type": "managed-dns",
+            "record_type": "CNAME",
+            "record_name": "_acme-challenge.k3m7q9zb.example.org",
+            "values": ["6a8mtt5uzzsw2qsl.fastly-validations.com"]
+          },
+          {
+            "type": "managed-http-cname",
+            "record_type": "CNAME",
+            "record_name": "k3m7q9zb.example.org",
+            "values": ["j.sni.global.fastly.net"]
+          }
+        ]
+      }
+    }
+  ]
+}

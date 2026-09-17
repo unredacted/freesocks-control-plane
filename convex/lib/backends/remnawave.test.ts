@@ -817,6 +817,7 @@ describe('hosts + node inventory (relay edges)', () => {
         address: '192.0.2.10',
         port: 443,
         sni: 'www.example',
+        host: null,
         isDisabled: false,
         inbound: { configProfileUuid: 'cp-1', configProfileInboundUuid: 'in-1' },
       },
@@ -827,7 +828,7 @@ describe('hosts + node inventory (relay edges)', () => {
     expect(b).toHaveLength(1);
   });
 
-  test('remnawaveUpdateHost PATCHes /api/hosts with the uuid IN THE BODY and only address/port', async () => {
+  test('remnawaveUpdateHost PATCHes /api/hosts with the uuid IN THE BODY; absent fields are omitted', async () => {
     mockFetch(() => jsonRes({ response: { ...hostRow, address: '203.0.113.5' } }));
     await remnawaveUpdateHost(cfg, { uuid: 'h-1', address: '203.0.113.5', port: 443 });
     expect(calls[0]).toMatchObject({
@@ -835,7 +836,39 @@ describe('hosts + node inventory (relay edges)', () => {
       method: 'PATCH',
       body: { uuid: 'h-1', address: '203.0.113.5', port: 443 },
     });
+    // An absent sni/host leaves the panel's value alone: it is not in the body.
     expect(Object.keys(calls[0].body ?? {}).sort()).toEqual(['address', 'port', 'uuid']);
+  });
+
+  test('remnawaveUpdateHost sets sni/host, and CLEARS them as empty strings (never null)', async () => {
+    mockFetch(() => jsonRes({ response: hostRow }));
+    await remnawaveUpdateHost(cfg, {
+      uuid: 'h-1',
+      address: 'cdn.example',
+      port: 443,
+      sni: 'cdn.example',
+      host: 'cdn.example',
+    });
+    expect(calls[0].body).toMatchObject({ sni: 'cdn.example', host: 'cdn.example' });
+    calls.length = 0;
+    mockFetch(() => jsonRes({ response: hostRow }));
+    // The panel's update DTO validates these as optional STRINGS: a null would
+    // 400 and reject the whole PATCH, losing the address move with it.
+    await remnawaveUpdateHost(cfg, {
+      uuid: 'h-1',
+      address: '203.0.113.5',
+      port: 443,
+      sni: null,
+      host: null,
+    });
+    expect(calls[0].body).toMatchObject({ sni: '', host: '' });
+  });
+
+  test("listHosts reads '' and null alike: both mean the Host carries no name", async () => {
+    mockFetch(() => jsonRes({ response: [{ ...hostRow, sni: '', host: '' }] }));
+    const rows = await remnawaveListHosts(cfg);
+    expect(rows[0].sni).toBeNull();
+    expect(rows[0].host).toBeNull();
   });
 
   test('remnawaveUpdateHost surfaces a panel error without the URL host', async () => {

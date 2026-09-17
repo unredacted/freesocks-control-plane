@@ -1,0 +1,13 @@
+{
+  "_source": "https://www.fastly.com/documentation/reference/api/auth-tokens/user/#get-token-current (read 2026-09-16)",
+  "id": "5Yo3XXnjUZaqup1zmDDo9x",
+  "user_id": "4nQgzLXFsUqxEcv73WFP5y",
+  "services": [],
+  "name": "fcp automation",
+  "scope": "global",
+  "created_at": "2026-09-01T00:00:00Z",
+  "expires_at": null,
+  "last_used_at": null,
+  "ip": null,
+  "access_token": null
+}

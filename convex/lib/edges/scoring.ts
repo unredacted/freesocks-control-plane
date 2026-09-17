@@ -23,6 +23,13 @@ export interface WindowReports {
   countries: Record<string, number>;
   /** Deduplicated (Σ detectorWeight) reports whose member said which connection failed, per edge. */
   byEdge: Record<string, { count: number; countries: Record<string, number> }>;
+  /**
+   * The window hit the per-evaluation read cap: the counts above are a PREFIX
+   * of the real window, so they may under-count reporters and mis-attribute the
+   * share per edge. Scores still describe what was read (the operator sees the
+   * hint), but nothing automatic acts on a partial window.
+   */
+  incomplete?: boolean;
 }
 
 export interface BaselineSample {
@@ -100,6 +107,8 @@ export interface Evaluation {
   probeSourcesDown: boolean;
   /** The relay node itself is offline per the panel: whatever else says, an outage. */
   nodeOffline: boolean;
+  /** The report window was truncated at the read cap (see `WindowReports.incomplete`). */
+  windowIncomplete: boolean;
   /** Which baseline the load score used. */
   loadBaseline: 'time_of_day' | 'flat' | 'none';
 }
@@ -110,6 +119,16 @@ const DAY = 24 * HOUR;
 const TOD_TOLERANCE_MS = HOUR;
 const TOD_MIN_AGE_MS = 22 * HOUR;
 const TOD_MIN_SAMPLES = 3;
+
+/**
+ * How old a probe verdict may be and still say something about the target NOW:
+ * two probe intervals. The detector scores on it and the L7 replacement gate
+ * accepts evidence on it, so both read the rule from here rather than each
+ * carrying its own copy of "two intervals".
+ */
+export function probeStaleAfterMs(probe: Pick<EdgeConfig['probe'], 'intervalMinutes'>): number {
+  return 2 * probe.intervalMinutes * 60_000;
+}
 
 const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
 const mean = (xs: number[]) => (xs.length === 0 ? 0 : xs.reduce((a, b) => a + b, 0) / xs.length);
@@ -178,7 +197,7 @@ export function evaluate(input: EvaluationInput): Evaluation {
   // than two intervals (or one left over from before probes were disabled) says
   // nothing about the edge now, so it neither scores nor counts as evidence.
   // The internal probe alone never makes an edge fresh (it is not a country).
-  const staleAfterMs = 2 * probe.intervalMinutes * 60_000;
+  const staleAfterMs = probeStaleAfterMs(probe);
   const probeFresh = (e: EdgeProbeState) =>
     probe.enabled && e.probeAgeMs !== null && e.probeAgeMs <= staleAfterMs;
   const freshCountries = (e: EdgeProbeState): CountryVerdict[] =>
@@ -289,6 +308,7 @@ export function evaluate(input: EvaluationInput): Evaluation {
     outageEdges,
     probeSourcesDown,
     nodeOffline,
+    windowIncomplete: w.incomplete ?? false,
     loadBaseline: base.kind,
   };
 }
@@ -297,6 +317,7 @@ export type AutoRotateVeto =
   | 'edge_disabled'
   | 'auto_rotate_off'
   | 'not_suspected'
+  | 'evidence_incomplete'
   | 'no_edge_evidence'
   | 'target_not_published'
   | 'node_offline'
@@ -337,6 +358,10 @@ export function autoRotateDecision(args: {
   if (!origin.autoRotate) return { veto: 'auto_rotate_off' };
   // 3. suspected
   if (ev.state !== 'suspected') return { veto: 'not_suspected' };
+  // 3b. the evidence is whole: a window truncated at the read cap under-counts
+  //     reporters and distorts the per-edge share, so neither the report-backed
+  //     nor the probe-backed path may act on it. The hint still shows.
+  if (ev.windowIncomplete) return { veto: 'evidence_incomplete' };
   // 4. edge-level evidence on a published edge
   if (ev.edgeEvidence.length === 0) return { veto: 'no_edge_evidence' };
   const publishedIds = new Set(args.published.map((p) => p.edgeId));

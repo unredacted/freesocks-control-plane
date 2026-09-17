@@ -305,6 +305,11 @@ describe('relays + slots + profiles', () => {
 
   test('unpublish leaves a gap that the next publish inherits; epoch bumps each time', async () => {
     const { t, relayId, slotId } = await seed();
+    // Index 0 is the index the template Host points at, so a DIRECT publish
+    // there is refused on a Host-managed relay (it would need the flip). This
+    // test is about pool bookkeeping, so the relay leaves the Host to the
+    // operator.
+    await t.mutation(internal.relays.update, { id: relayId, hostManaged: false });
     const a = await t.mutation(internal.relays.adoptEdge, {
       relayId,
       slotId,
@@ -355,6 +360,7 @@ describe('relays + slots + profiles', () => {
 
   test('an account-scoped profile publishes only edges provisioned from that account', async () => {
     const { t, relayId, slotId, profileId, accountId } = await seed();
+    await t.mutation(internal.relays.update, { id: relayId, hostManaged: false });
     const { id: otherAccount } = await t.mutation(internal.edgeProviderAccounts.create, {
       provider: 'gcore',
       name: 'acct-b',
@@ -759,5 +765,288 @@ describe('relays + slots + profiles', () => {
     const view = (await t.query(internal.edgeAdmin.endpoints, { relayId }))!;
     expect(view.published[0]).toMatchObject({ protocol: 'plain', activeServerNames: [] });
     expect(view.sample.primary).toEqual({ edgeId: e.edgeId, sni: null });
+  });
+});
+
+describe('relays: layers, adoption by hostname and the publish gates', () => {
+  const originTransport = {
+    scheme: 'https' as const,
+    certPublic: true,
+    certNames: ['a.example', 'b.example'],
+    acceptsHostHeader: 'any' as const,
+  };
+
+  /** A relay + an L7-capable slot (a `ws` profile over an https origin). */
+  async function l7Seed() {
+    const s = await seed();
+    const { id: cfAccount } = await s.t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'cloudflare',
+      name: 'acct-cf',
+      settings: { zoneId: 'a'.repeat(32), zoneName: 'example.org' },
+      credentials: { apiToken: 'cf' },
+    });
+    await s.t.mutation(internal.protocolProfiles.create, {
+      slug: 'prof-ws',
+      name: 'Profile WS',
+      protocol: 'ws',
+      serverNames: ['a.example'],
+    });
+    const { id: wsSlot } = await s.t.mutation(internal.relaySlots.upsert, {
+      relayId: s.relayId,
+      slotKey: 'w',
+      profileSlug: 'prof-ws',
+      inboundTag: 'VLESS_RELAY_W',
+      configProfileUuid: '11111111-1111-4111-8111-111111111111',
+      configProfileInboundUuid: '44444444-4444-4444-8444-444444444444',
+      originPort: 443,
+      originTransport,
+    });
+    return { ...s, cfAccount, wsSlot };
+  }
+
+  test('adoption by hostname records an L7 edge; an IP in the hostname field is refused', async () => {
+    const { t, relayId, wsSlot, cfAccount } = await l7Seed();
+    const { edgeId } = await t.mutation(internal.relays.adoptEdge, {
+      relayId,
+      slotId: wsSlot,
+      accountId: cfAccount,
+      hostname: 'Front.Example.Org.',
+    });
+    const edge = (await t.query(internal.edges.get, { id: edgeId }))!;
+    expect(edge.layer).toBe('l7');
+    expect(edge.addresses).toEqual({ v4: undefined, v6: undefined, hostname: 'front.example.org' });
+    await expect(
+      t.mutation(internal.relays.adoptEdge, {
+        relayId,
+        slotId: wsSlot,
+        accountId: cfAccount,
+        hostname: '198.51.100.9',
+      }),
+    ).rejects.toThrow(/valid hostname/);
+    await expect(
+      t.mutation(internal.relays.adoptEdge, {
+        relayId,
+        slotId: wsSlot,
+        accountId: cfAccount,
+        hostname: 'nodots',
+      }),
+    ).rejects.toThrow(/valid hostname/);
+  });
+
+  test('a hostname that IS the origin is refused (anti-leak), as an IP one is', async () => {
+    const { t, relayId, wsSlot, cfAccount } = await l7Seed();
+    await t.mutation(internal.relays.update, { id: relayId, originAddress: 'node.example.net' });
+    await expect(
+      t.mutation(internal.relays.adoptEdge, {
+        relayId,
+        slotId: wsSlot,
+        accountId: cfAccount,
+        hostname: 'node.example.net',
+      }),
+    ).rejects.toThrow(/origin itself/);
+  });
+
+  test('the address KIND follows the account: an L7 account refuses an IP, an L4 one a hostname', async () => {
+    const { t, relayId, slotId, wsSlot, cfAccount, accountId } = await l7Seed();
+    await expect(
+      t.mutation(internal.relays.adoptEdge, {
+        relayId,
+        slotId: wsSlot,
+        accountId: cfAccount,
+        ipv4: '198.51.100.9',
+      }),
+    ).rejects.toThrow(/hostname/);
+    await expect(
+      t.mutation(internal.relays.adoptEdge, {
+        relayId,
+        slotId,
+        accountId,
+        hostname: 'front.example.org',
+      }),
+    ).rejects.toThrow(/IP literal/);
+  });
+
+  test('checkPublishable refuses a layer the chain cannot carry and a protocol the provider cannot', async () => {
+    const { t, relayId, slotId, wsSlot, cfAccount } = await l7Seed();
+    // A Cloudflare (L7) edge on a legacy REALITY slot: the slot declares no
+    // origin transport, so nothing but an L4 forwarder can front it. The
+    // profile is provider-free so the LAYER rule is what refuses it.
+    await t.mutation(internal.protocolProfiles.create, {
+      slug: 'prof-legacy',
+      name: 'Profile legacy',
+      targetAddress: 'target.example',
+      serverNames: ['a.example'],
+    });
+    const { id: legacySlot } = await t.mutation(internal.relaySlots.upsert, {
+      relayId,
+      slotKey: 'l',
+      profileSlug: 'prof-legacy',
+      inboundTag: 'VLESS_RELAY_L',
+      configProfileUuid: '11111111-1111-4111-8111-111111111111',
+      configProfileInboundUuid: '66666666-6666-4666-8666-666666666666',
+      originPort: 443,
+    });
+    const { edgeId: mismatch } = await t.mutation(internal.relays.adoptEdge, {
+      relayId,
+      slotId: legacySlot,
+      accountId: cfAccount,
+      hostname: 'front.example.org',
+    });
+    await t.run((ctx) => ctx.db.patch(mismatch, { managed: true }));
+    await expect(
+      t.mutation(internal.relays.publishEdge, { relayId, edgeId: mismatch }),
+    ).rejects.toThrow(/protocol_not_carried|layer_mismatch/);
+    // A Fastly account cannot carry gRPC even though it is an L7 front.
+    const { id: fastlyAccount } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'fastly',
+      name: 'acct-fastly',
+      settings: { dnsAccountId: cfAccount, certificateAuthority: 'certainly' },
+      credentials: { apiToken: 'f' },
+    });
+    await t.mutation(internal.protocolProfiles.create, {
+      slug: 'prof-grpc',
+      name: 'Profile gRPC',
+      protocol: 'grpc',
+      serverNames: ['a.example'],
+    });
+    expect(slotId).toBeDefined();
+    const { id: grpcSlot } = await t.mutation(internal.relaySlots.upsert, {
+      relayId,
+      slotKey: 'g',
+      profileSlug: 'prof-grpc',
+      inboundTag: 'VLESS_RELAY_G',
+      configProfileUuid: '11111111-1111-4111-8111-111111111111',
+      configProfileInboundUuid: '55555555-5555-4555-8555-555555555555',
+      originPort: 443,
+      originTransport,
+    });
+    const { edgeId: grpcEdge } = await t.mutation(internal.relays.adoptEdge, {
+      relayId,
+      slotId: grpcSlot,
+      accountId: fastlyAccount,
+      hostname: 'grpc.example.org',
+    });
+    await expect(
+      t.mutation(internal.relays.publishEdge, { relayId, edgeId: grpcEdge }),
+    ).rejects.toThrow(/protocol_not_carried/);
+    expect(wsSlot).toBeDefined();
+  });
+
+  test('an L7 edge without a current front qualification is refused (front_unqualified)', async () => {
+    const { t, relayId, wsSlot, cfAccount } = await l7Seed();
+    await t.mutation(internal.relays.update, { id: relayId, hostManaged: false });
+    const { edgeId } = await t.mutation(internal.relays.adoptEdge, {
+      relayId,
+      slotId: wsSlot,
+      accountId: cfAccount,
+      hostname: 'front.example.org',
+    });
+    // No intent, no proof: nothing has been shown to work end to end.
+    await expect(t.mutation(internal.relays.publishEdge, { relayId, edgeId })).rejects.toThrow(
+      /front_unqualified/,
+    );
+  });
+
+  test('publishing at pool index 0 on a Host-managed relay needs the rotation, not a direct write', async () => {
+    const { t, relayId, slotId } = await seed();
+    const { edgeId } = await t.mutation(internal.relays.adoptEdge, {
+      relayId,
+      slotId,
+      ipv4: '198.51.100.31',
+    });
+    await expect(t.mutation(internal.relays.publishEdge, { relayId, edgeId })).rejects.toThrow(
+      /needs_rotation/,
+    );
+    // With the Host left to the operator there is nothing to flip, so it proceeds.
+    await t.mutation(internal.relays.update, { id: relayId, hostManaged: false });
+    expect(await t.mutation(internal.relays.publishEdge, { relayId, edgeId })).toMatchObject({
+      poolIndex: 0,
+    });
+  });
+
+  test('adoption that PUBLISHES runs the publish checks and refreshes the mirrors', async () => {
+    const { t, relayId, slotId, profileId } = await seed();
+    // A disabled profile makes the edge unpublishable; adoption must not be a
+    // way past that check.
+    await t.mutation(internal.protocolProfiles.update, { id: profileId, enabled: false });
+    await expect(
+      t.mutation(internal.relays.adoptEdge, {
+        relayId,
+        slotId,
+        ipv4: '198.51.100.32',
+        publish: true,
+      }),
+    ).rejects.toThrow(/profile_disabled/);
+    await t.mutation(internal.protocolProfiles.update, { id: profileId, enabled: true });
+    const before = await t.run(
+      async (ctx) =>
+        (await ctx.db.system.query('_scheduled_functions').collect()).filter(
+          (r) => r.name === 'storage:refreshActiveMirrors',
+        ).length,
+    );
+    await t.mutation(internal.relays.adoptEdge, {
+      relayId,
+      slotId,
+      ipv4: '198.51.100.33',
+      publish: true,
+    });
+    const after = await t.run(
+      async (ctx) =>
+        (await ctx.db.system.query('_scheduled_functions').collect()).filter(
+          (r) => r.name === 'storage:refreshActiveMirrors',
+        ).length,
+    );
+    expect(after).toBe(before + 1);
+  });
+
+  test('a direct publish refreshes the mirrors too (the epoch alone does not reach them)', async () => {
+    const { t, relayId, slotId } = await seed();
+    await t.mutation(internal.relays.update, { id: relayId, hostManaged: false });
+    const { edgeId } = await t.mutation(internal.relays.adoptEdge, {
+      relayId,
+      slotId,
+      ipv4: '198.51.100.34',
+    });
+    const before = await t.run(
+      async (ctx) =>
+        (await ctx.db.system.query('_scheduled_functions').collect()).filter(
+          (r) => r.name === 'storage:refreshActiveMirrors',
+        ).length,
+    );
+    await t.mutation(internal.relays.publishEdge, { relayId, edgeId });
+    const after = await t.run(
+      async (ctx) =>
+        (await ctx.db.system.query('_scheduled_functions').collect()).filter(
+          (r) => r.name === 'storage:refreshActiveMirrors',
+        ).length,
+    );
+    expect(after).toBe(before + 1);
+  });
+
+  test('retiring a slot is refused while a rotation runs on the relay', async () => {
+    const { t, relayId } = await seed();
+    const rotationId = await t.run((ctx) =>
+      ctx.db.insert('edgeRotations', {
+        relayId,
+        kind: 'replace',
+        trigger: 'manual',
+        burn: false,
+        force: false,
+        phase: 'host_flipping',
+        stepVersion: 1,
+        cancelRequested: false,
+        hostPlan: [],
+        flipAttempts: 0,
+        rollbackAttempts: 0,
+        pollAttempts: 0,
+        events: [],
+        startedAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+    await t.run((ctx) => ctx.db.patch(relayId, { activeRotationId: rotationId }));
+    await expect(t.mutation(internal.relaySlots.retire, { relayId, slotKey: 'a' })).rejects.toThrow(
+      /rotation_running/,
+    );
   });
 });

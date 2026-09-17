@@ -6,7 +6,13 @@
  */
 
 import { protocolUsesSni, type SlotProtocol } from './protocols';
-import { providerHealthSatisfies } from './providers/capabilities';
+import {
+  edgeLayerOf,
+  protocolCarriedBy,
+  providerHealthSatisfies,
+  type EdgeLayer,
+} from './providers/capabilities';
+import type { EdgeProviderId } from '../edgeProviderIds';
 export const ROTATION_PHASES = [
   'select',
   'provisioning',
@@ -106,13 +112,14 @@ export interface StandbyCandidate {
   status: string;
   publication: string;
   health: string;
-  hasV4: boolean;
+  /** Has the address of ITS OWN layer's kind (an L7 hostname, an L4 IPv4). */
+  hasAddress: boolean;
 }
 
 /**
  * A compatible standby: active + unpublished, on the SAME slot (same profile,
- * same inbound), with an IPv4, and from the profile's account when the profile
- * is account-scoped. Prefers a provider not already published.
+ * same inbound), with a publishable address, and from the profile's account when
+ * the profile is account-scoped. Prefers a provider not already published.
  */
 export function pickStandby(
   candidates: readonly StandbyCandidate[],
@@ -128,13 +135,47 @@ export function pickStandby(
       c.slotId === slotId &&
       c.status === 'active' &&
       c.publication === 'unpublished' &&
-      c.hasV4 &&
+      c.hasAddress &&
       providerHealthSatisfies(c.provider, c.health, requireOnline) &&
       (!requiredAccountId || !c.accountId || c.accountId === requiredAccountId),
   );
   if (ok.length === 0) return null;
   const distinct = ok.find((c) => !c.provider || !publishedProviders.includes(c.provider));
   return distinct ?? ok[0];
+}
+
+/**
+ * Whether AUTOMATIC selection may pick an L7 account at all. Until the node
+ * role registers the slots' origin transport and the HTTP-transport profiles,
+ * and a qualification run has passed, L7 edges are provisioned and published by
+ * hand only: an automatic pick could publish a front nobody has proven.
+ * A manual operator action is never gated by this.
+ */
+export function l7SelectionAllowed(cfg: { l7: { autoSelect: boolean } }): boolean {
+  return cfg.l7.autoSelect === true;
+}
+
+/**
+ * Filter provider accounts to the ones that can actually front this slot: the
+ * layers the complete client-to-origin chain allows (`slotLayers`), the
+ * protocol the provider can carry, and (for automatic selection) the L7 gate.
+ * Reads capabilities, never provider ids.
+ */
+export function accountsForSlot<T extends { provider: string }>(
+  accounts: readonly T[],
+  opts: {
+    layers: readonly EdgeLayer[];
+    protocol: SlotProtocol;
+    /** false = automatic selection with the L7 gate off: L7 accounts are excluded. */
+    allowL7: boolean;
+  },
+): T[] {
+  return accounts.filter((a) => {
+    const layer = edgeLayerOf(a.provider);
+    if (!opts.layers.includes(layer)) return false;
+    if (layer === 'l7' && !opts.allowL7) return false;
+    return protocolCarriedBy(a.provider as EdgeProviderId, opts.protocol);
+  });
 }
 
 export interface AccountCandidate {

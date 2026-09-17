@@ -128,6 +128,12 @@ export interface IssuedUser {
   backendShortId: string;
   subscriptionUrl: string;
   raw: unknown;
+  /**
+   * The UUID-class protocol credential the panel minted for the user (the VLESS
+   * id), when the backend exposes one. The L7 front qualification authenticates
+   * its test session with it; absent = this backend cannot back that check.
+   */
+  protocolUuid?: string;
 }
 
 export interface BackendDevice {
@@ -237,8 +243,24 @@ export interface BackendHost {
   address: string;
   port: number;
   sni?: string | null;
+  /** The HTTP Host header the client sends (`null`/`''` = the Host carries none). */
+  host?: string | null;
   isDisabled: boolean;
   inbound?: { configProfileUuid: string; configProfileInboundUuid: string } | null;
+}
+
+/**
+ * A Host repoint. `address`/`port` always move; `sni`/`host` are three-valued:
+ * `undefined` = leave the field alone, a string = set it, `null` = CLEAR it.
+ * An L4 → L7 transition must be able to clear a stale name, and an L7 → L4 one
+ * must be able to clear a stale CDN hostname.
+ */
+export interface BackendHostPatch {
+  uuid: string;
+  address: string;
+  port: number;
+  sni?: string | null;
+  host?: string | null;
 }
 
 /**

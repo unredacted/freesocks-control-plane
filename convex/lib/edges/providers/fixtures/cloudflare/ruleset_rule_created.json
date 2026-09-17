@@ -1,0 +1,34 @@
+{
+  "_source": {
+    "api": "POST /zones/{zone_id}/rulesets/{ruleset_id}/rules",
+    "doc": "https://developers.cloudflare.com/api/resources/rulesets/subresources/rules/methods/create/",
+    "sdk": "node_modules/cloudflare/resources/rulesets/rules.d.ts (RuleCreateParams.RouteRule, RuleCreateResponse.Ruleset)",
+    "note": "the answer is the WHOLE ruleset, so the created rule is located by its ref",
+    "taken": "2026-09-16"
+  },
+  "result": {
+    "id": "3c0b456bc2aa443089c5f40defb5fdc9",
+    "name": "default",
+    "description": "",
+    "kind": "zone",
+    "version": "2",
+    "phase": "http_request_origin",
+    "last_updated": "2026-09-16T10:00:01.000000Z",
+    "rules": [
+      {
+        "id": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+        "version": "1",
+        "action": "route",
+        "action_parameters": { "origin": { "port": 8443 } },
+        "expression": "(http.host eq \"k7m2x9qp4n3f.example.net\")",
+        "description": "fcp-relay-o1-0badf00d",
+        "ref": "fcp-relay-o1-0badf00d",
+        "enabled": true,
+        "last_updated": "2026-09-16T10:00:01.000000Z"
+      }
+    ]
+  },
+  "success": true,
+  "errors": [],
+  "messages": []
+}

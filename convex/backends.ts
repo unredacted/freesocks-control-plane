@@ -404,13 +404,24 @@ export const updateHost = internalAction({
     uuid: v.string(),
     address: v.string(),
     port: v.number(),
+    /** Three-valued: absent = leave the field, a string = set it, null = clear it. */
+    sni: v.optional(v.union(v.string(), v.null())),
+    host: v.optional(v.union(v.string(), v.null())),
   },
-  handler: async (ctx, { backendServerId, uuid, address, port }): Promise<null> => {
+  handler: async (ctx, { backendServerId, uuid, address, port, sni, host }): Promise<null> => {
     const server = await ctx.runQuery(internal.backendServers.getById, { id: backendServerId });
     if (!server) throw new ConvexError({ code: 'backend.not_found' });
     const provider = PROVIDERS[server.backend];
     if (!provider.updateHost) throw new ConvexError({ code: 'backend.hosts_unsupported' });
-    await provider.updateHost(server.config as BackendConfig, { uuid, address, port });
+    await provider.updateHost(server.config as BackendConfig, {
+      uuid,
+      address,
+      port,
+      // `undefined` must stay undefined (leave it): a Convex arg that was not
+      // sent is absent here, and only an explicit null means "clear".
+      ...(sni !== undefined ? { sni } : {}),
+      ...(host !== undefined ? { host } : {}),
+    });
     return null;
   },
 });

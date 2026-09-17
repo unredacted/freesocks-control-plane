@@ -1,0 +1,30 @@
+{
+  "_source": {
+    "api": "GET /zones/{zone_id}/dns_records?name.exact=<name>&per_page=5",
+    "doc": "https://developers.cloudflare.com/api/resources/dns/subresources/records/methods/list/",
+    "sdk": "node_modules/cloudflare/resources/dns/records.d.ts (RecordListParams.Name, V4PagePaginationArray)",
+    "note": "the SDK serializes nested filters with allowDots, so name: { exact } becomes name.exact",
+    "taken": "2026-09-16"
+  },
+  "result": [
+    {
+      "id": "372e67954025e0ba6aaa6d586b9e0b59",
+      "zone_id": "023e105f4ecef8ad9ca31a8372d0c353",
+      "zone_name": "example.net",
+      "name": "k7m2x9qp4n3f.example.net",
+      "type": "A",
+      "content": "198.51.100.7",
+      "proxiable": true,
+      "proxied": true,
+      "ttl": 1,
+      "comment": "fcp:fcp-relay-o1-0badf00d",
+      "tags": [],
+      "created_on": "2026-09-16T10:00:00.000000Z",
+      "modified_on": "2026-09-16T10:00:00.000000Z"
+    }
+  ],
+  "result_info": { "page": 1, "per_page": 5, "count": 1, "total_count": 1, "total_pages": 1 },
+  "success": true,
+  "errors": [],
+  "messages": []
+}

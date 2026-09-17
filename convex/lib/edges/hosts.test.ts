@@ -6,6 +6,7 @@ import {
   matchSlotHosts,
   planFromMatches,
   relayRemarkRegex,
+  rollbackTargetFor,
   sameAddress,
   templateHostRemark,
 } from './hosts';
@@ -75,8 +76,48 @@ describe('matchSlotHosts', () => {
     ];
     const plan = planFromMatches(matchSlotHosts(hosts, slots, '198.51.100.7'));
     expect(plan).toEqual([
-      { uuid: 'u1', oldAddress: '192.0.2.10', oldPort: 443, inboundUuid: 'in-1' },
+      {
+        uuid: 'u1',
+        oldAddress: '192.0.2.10',
+        oldPort: 443,
+        inboundUuid: 'in-1',
+        // Version 2 captures the FULL previous tuple so a rollback can restore
+        // it, clears included.
+        snapshotVersion: 2,
+        oldSni: 'www.example',
+        oldHost: null,
+      },
     ]);
+  });
+
+  test('planFromMatches records an empty panel field as a known null, not as unknown', () => {
+    const plan = planFromMatches(
+      matchSlotHosts([host({ uuid: 'u1', sni: '', host: '' })], slots, '198.51.100.7'),
+    );
+    expect(plan[0].oldSni).toBeNull();
+    expect(plan[0].oldHost).toBeNull();
+  });
+});
+
+describe('rollbackTargetFor', () => {
+  test('a version-2 entry restores the whole tuple, clears included', () => {
+    expect(
+      rollbackTargetFor({
+        uuid: 'u1',
+        oldAddress: '192.0.2.10',
+        oldPort: 443,
+        snapshotVersion: 2,
+        oldSni: 'www.example',
+        oldHost: null,
+      }),
+    ).toEqual({ address: '192.0.2.10', port: 443, sni: 'www.example', host: null });
+  });
+
+  test('a LEGACY entry restores address and port only: unknown is never written as a clear', () => {
+    const t = rollbackTargetFor({ uuid: 'u1', oldAddress: '192.0.2.10', oldPort: 443 });
+    expect(t).toEqual({ address: '192.0.2.10', port: 443 });
+    expect('sni' in t).toBe(false);
+    expect('host' in t).toBe(false);
   });
 });
 
@@ -141,5 +182,55 @@ describe('diffHosts', () => {
     expect(sameAddress('[2001:DB8::1]', '2001:db8::1')).toBe(true);
     expect(sameAddress('edge.example.', 'edge.example')).toBe(true);
     expect(sameAddress('192.0.2.1', '192.0.2.2')).toBe(false);
+  });
+});
+
+describe('diffHosts: the full tuple', () => {
+  const plan = [{ uuid: 'u1', oldAddress: '192.0.2.10', oldPort: 443, inboundUuid: 'in-1' }];
+
+  test('an L4 → L7 transition is not converged while the panel keeps the old SNI', () => {
+    const live = [host({ uuid: 'u1', address: 'cdn.example', port: 443, sni: 'www.example' })];
+    const target = { address: 'cdn.example', port: 443, sni: 'cdn.example', host: 'cdn.example' };
+    const d = diffHosts(live, plan, target);
+    expect(d.converged).toBe(false);
+    expect(d.needsWrite).toHaveLength(1);
+  });
+
+  test('an L7 → L4 transition needs the CDN hostname cleared from SNI and Host', () => {
+    const live = [
+      host({
+        uuid: 'u1',
+        address: '203.0.113.5',
+        port: 443,
+        sni: 'cdn.example',
+        host: 'cdn.example',
+      }),
+    ];
+    // `plain` presents nothing: both fields must be cleared.
+    const d = diffHosts(live, plan, { address: '203.0.113.5', port: 443, sni: null, host: null });
+    expect(d.converged).toBe(false);
+    const cleared = diffHosts(
+      [host({ uuid: 'u1', address: '203.0.113.5', port: 443, sni: '', host: '' })],
+      plan,
+      { address: '203.0.113.5', port: 443, sni: null, host: null },
+    );
+    expect(cleared.converged).toBe(true);
+  });
+
+  test('a target that does not define sni/host does not compare them (legacy callers)', () => {
+    const live = [host({ uuid: 'u1', address: '203.0.113.5', port: 443, sni: 'anything' })];
+    expect(diffHosts(live, plan, { address: '203.0.113.5', port: 443 }).converged).toBe(true);
+  });
+
+  test('a partial write (address landed, SNI lost) still needs a write', () => {
+    const live = [host({ uuid: 'u1', address: 'cdn.example', port: 443, sni: null })];
+    const d = diffHosts(live, plan, {
+      address: 'cdn.example',
+      port: 443,
+      sni: 'cdn.example',
+      host: 'cdn.example',
+    });
+    expect(d.needsWrite.map((p) => p.uuid)).toEqual(['u1']);
+    expect(d.hostsChanged).toBe(false);
   });
 });

@@ -89,6 +89,17 @@ export function renderClash(input: RenderInput): RenderOutput {
     clone.server = ep.address;
     clone.port = ep.port;
     if (ep.sni !== null) setServerName(clone, ep.sni);
+    // `network: ws` carries the Host in `ws-opts.headers` (Clash has no
+    // httpupgrade network, so an httpupgrade slot is served as ws); gRPC takes
+    // its authority from the server name. `ws-opts.path` /
+    // `grpc-opts.grpc-service-name` are the node's routing and stay untouched.
+    if (ep.hostHeader !== null && clone.network === 'ws') {
+      const wsOpts = isObj(clone['ws-opts']) ? { ...clone['ws-opts'] } : {};
+      const headers = isObj(wsOpts.headers) ? { ...wsOpts.headers } : {};
+      headers.Host = ep.hostHeader;
+      wsOpts.headers = headers;
+      clone['ws-opts'] = wsOpts;
+    }
     emitted.push(clone);
   }
   // Drop-only: no endpoint to emit (empty pool) — remove the templates, prune
@@ -131,7 +142,10 @@ export function renderClash(input: RenderInput): RenderOutput {
       members.push(m);
     }
     const out: Obj = { ...g, proxies: members };
-    if (g.name === autoName && autoGroupIsGroup) {
+    // Only ADOPT an operator group of that name when the auto group is on:
+    // with `autoGroup` off the name is the operator's, not ours, and rewriting
+    // its type and membership would hijack their selector.
+    if (useAuto && g.name === autoName && autoGroupIsGroup) {
       sawAuto = true;
       out.type = 'url-test';
       out.proxies = names;

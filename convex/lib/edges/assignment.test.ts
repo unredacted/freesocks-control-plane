@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { assignEndpoints, pickSni, type PublishedEdge } from './assignment';
+import { assignEndpoints, edgeAssignable, pickSni, type PublishedEdge } from './assignment';
 
 const NOW = 1_700_000_000_000;
 const sha = (i: number) => ((i * 2654435761) >>> 0).toString(16).padStart(8, '0') + 'ab'.repeat(28);
@@ -203,6 +203,138 @@ describe('pickSni', () => {
     expect(pickSni(sha(1), 'e0', [])).toBeNull();
     const e = edge({ edgeId: 'e0', poolIndex: 0, serverNames: allRetired });
     expect(assignEndpoints(sha(1), [e], opts).primary).toBeNull();
+  });
+});
+
+// An L7 edge is a hostname fronted by a CDN: the hostname is the address, the
+// SNI and the Host header at once, so the profile's (origin-facing) server
+// names play no part in it.
+describe('hostname (L7) edges', () => {
+  const l7 = (over: Partial<PublishedEdge> & { edgeId: string; poolIndex: number }) =>
+    edge({
+      layer: 'l7',
+      protocol: 'ws',
+      serverNames: [],
+      addresses: { hostname: `front-${over.poolIndex}.example` },
+      ...over,
+    });
+
+  test('assignable without any profile server name; the hostname is the SNI and the Host header', () => {
+    const e = l7({ edgeId: 'h0', poolIndex: 0 });
+    const a = assignEndpoints(sha(1), [e], opts);
+    expect(a.primary).toMatchObject({
+      edge: { edgeId: 'h0' },
+      sni: 'front-0.example',
+      hostHeader: 'front-0.example',
+    });
+    // The rendering rule's IPv6 mode is irrelevant: there is no address family.
+    expect(assignEndpoints(sha(1), [e], { ...opts, canEmitV6: false }).primary?.sni).toBe(
+      'front-0.example',
+    );
+    // Retired origin names do not make it unassignable either.
+    const retired = l7({
+      edgeId: 'h1',
+      poolIndex: 0,
+      serverNames: [{ sni: 'x.example', status: 'retired', retiredAt: NOW - 1 }],
+    });
+    expect(assignEndpoints(sha(1), [retired], opts).primary?.sni).toBe('front-0.example');
+    // An L7 edge whose hostname is not provisioned yet is NOT assignable.
+    expect(edgeAssignable(l7({ edgeId: 'h2', poolIndex: 0, addresses: {} }))).toBe(false);
+  });
+
+  test('hostHeader follows the protocol: the hostname for L7, the selected name for L4 ws/httpupgrade, null otherwise', () => {
+    for (const protocol of ['ws', 'httpupgrade', 'grpc', 'reality', 'tls', 'plain'] as const) {
+      const hosted = assignEndpoints(sha(1), [l7({ edgeId: 'h0', poolIndex: 0, protocol })], opts);
+      expect(hosted.primary!.hostHeader).toBe('front-0.example');
+      expect(hosted.primary!.sni).toBe('front-0.example');
+    }
+    const expected: Record<string, 'sni' | null> = {
+      ws: 'sni',
+      httpupgrade: 'sni',
+      grpc: null,
+      reality: null,
+      tls: null,
+    };
+    for (const [protocol, want] of Object.entries(expected)) {
+      const a = assignEndpoints(
+        sha(1),
+        [edge({ edgeId: 'e0', poolIndex: 0, protocol: protocol as PublishedEdge['protocol'] })],
+        opts,
+      );
+      expect(a.primary!.hostHeader).toBe(want === 'sni' ? a.primary!.sni : null);
+    }
+    const plain = assignEndpoints(
+      sha(1),
+      [edge({ edgeId: 'e0', poolIndex: 0, protocol: 'plain', serverNames: [] })],
+      opts,
+    );
+    expect(plain.primary!.hostHeader).toBeNull();
+    // A v6-only L4 ws edge still gets its Host header (assignment is family agnostic).
+    const v6 = assignEndpoints(
+      sha(1),
+      [edge({ edgeId: 'e6', poolIndex: 0, protocol: 'ws', addresses: { v6: '2001:db8::6' } })],
+      opts,
+    );
+    expect(v6.primary!.hostHeader).toBe(v6.primary!.sni);
+  });
+
+  test('a mixed L4 + L7 pool walks in pool order and the backup still prefers another provider', () => {
+    const pool = [
+      edge({ edgeId: 'e0', poolIndex: 0, provider: 'gcore' }),
+      l7({ edgeId: 'h1', poolIndex: 1, provider: 'cdn-one' }),
+      edge({ edgeId: 'e2', poolIndex: 2, provider: 'upcloud' }),
+    ];
+    const seen = new Set<string>();
+    for (let i = 0; i < 2000; i++) {
+      const a = assignEndpoints(sha(i), pool, opts);
+      seen.add(a.primary!.edge.edgeId);
+      expect(a.backup!.edge.provider).not.toBe(a.primary!.edge.provider);
+      // Each endpoint carries the tuple of ITS own layer.
+      for (const ep of [a.primary!, a.backup!]) {
+        if (ep.edge.edgeId === 'h1') {
+          expect(ep.sni).toBe('front-1.example');
+          expect(ep.hostHeader).toBe('front-1.example');
+        } else {
+          expect(['a.example', 'b.example', 'c.example']).toContain(ep.sni);
+          expect(ep.hostHeader).toBeNull();
+        }
+      }
+      // Stable across renders.
+      expect(assignEndpoints(sha(i), pool, opts).primary!.edge.edgeId).toBe(a.primary!.edge.edgeId);
+    }
+    expect(seen).toEqual(new Set(['e0', 'h1', 'e2']));
+    // An L7 edge is never skipped by an ipv6Mode:'off' rule, and a v6-only L4
+    // neighbour is: only the neighbour's subscribers move.
+    const withV6 = [
+      pool[0],
+      pool[1],
+      edge({ edgeId: 'e2', poolIndex: 2, provider: 'upcloud', addresses: { v6: '2001:db8::2' } }),
+    ];
+    for (let i = 0; i < 500; i++) {
+      const a = assignEndpoints(sha(i), withV6, { ...opts, canEmitV6: false });
+      expect(a.primary!.edge.edgeId).not.toBe('e2');
+    }
+  });
+
+  test('an L4 ws/httpupgrade edge behaves exactly like a tls one (names picked the same way)', () => {
+    const names = snis('a.example', 'b.example', 'c.example');
+    for (const protocol of ['ws', 'httpupgrade', 'grpc'] as const) {
+      const tls = edge({ edgeId: 'e0', poolIndex: 0, protocol: 'tls', serverNames: names });
+      const http = edge({ edgeId: 'e0', poolIndex: 0, protocol, serverNames: names });
+      for (let i = 0; i < 200; i++) {
+        expect(assignEndpoints(sha(i), [http], opts).primary!.sni).toBe(
+          assignEndpoints(sha(i), [tls], opts).primary!.sni,
+        );
+      }
+      // …and stays unassignable without an active name, like tls.
+      expect(
+        assignEndpoints(
+          sha(1),
+          [edge({ edgeId: 'e0', poolIndex: 0, protocol, serverNames: [] })],
+          opts,
+        ).primary,
+      ).toBeNull();
+    }
   });
 
   test('a plain-protocol edge is assignable without server names and carries a null sni', () => {

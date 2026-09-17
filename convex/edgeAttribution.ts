@@ -7,8 +7,10 @@
  */
 import type { Doc } from './_generated/dataModel';
 import type { DatabaseReader, DatabaseWriter } from './_generated/server';
-import { resolveEdgeConfig, edgeMs } from './lib/edgeConfig';
+import { resolveEdgeConfig, edgeMs, RENDER_CLIENT_FAMILIES } from './lib/edgeConfig';
 import { assignEndpoints } from './lib/edges/assignment';
+import { CLIENT_FAMILY_FORMATS } from './lib/edges/clientFamilies';
+import { effectiveRule, formatHasAutoGroup, ruleCanEmitV6 } from './lib/edges/render';
 import { publishedEdgesOf } from './edgeRender';
 
 export const CONNECTION_CHOICES = ['primary', 'backup', 'auto', 'direct', 'unsure'] as const;
@@ -29,7 +31,9 @@ export interface EdgeAttribution {
 /**
  * Resolve the origin behind the subscription's pinned node and, for an explicit
  * connection choice, the one edge it denotes under this subscriber's assignment.
- * `auto` resolves only when a single edge is published (nothing else to pick).
+ * `auto` resolves only when a single edge is published (nothing else to pick),
+ * and an assignment over a larger pool only when every enabled client family's
+ * render rule picks the same edge (the family the member used is unknown).
  */
 export async function resolveEdgeAttribution(
   db: DatabaseReader,
@@ -77,13 +81,33 @@ export async function resolveEdgeAttribution(
       (choice === 'primary' || choice === 'backup')
     ) {
       const cfg = await resolveEdgeConfig(db);
-      const assigned = assignEndpoints(sub.renderKey, published, {
-        now,
-        preferDistinctProviders: cfg.render.preferDistinctProviders,
-        includeBackup: true,
-      });
-      const ep = choice === 'primary' ? assigned.primary : assigned.backup;
-      relayEdgeId = ep?.edge.edgeId ?? null;
+      // The member's client family is not recorded with the report, and the
+      // assignment depends on it: a family whose rule cannot emit IPv6 skips a
+      // v6-only edge, so the same key lands on a different edge per family.
+      // Attribute only when EVERY enabled family agrees on the edge behind the
+      // chosen connection; a disagreement (or no enabled family at all, i.e.
+      // the member's body was never rendered) leaves the report at origin level.
+      const picked = new Set<string | null>();
+      for (const family of RENDER_CLIENT_FAMILIES) {
+        const rule = effectiveRule(cfg.render, cfg.render.clients[family]);
+        if (!rule.enabled) continue;
+        const canEmitV6 = ruleCanEmitV6(
+          rule,
+          formatHasAutoGroup(rule, CLIENT_FAMILY_FORMATS[family]),
+        );
+        const assigned = assignEndpoints(sub.renderKey, published, {
+          now,
+          preferDistinctProviders: cfg.render.preferDistinctProviders,
+          // Which edge the choice DENOTES, not whether this family renders it:
+          // a family that omits the backup is one the member cannot have been
+          // reporting a backup from.
+          includeBackup: true,
+          canEmitV6,
+        });
+        const ep = choice === 'primary' ? assigned.primary : assigned.backup;
+        picked.add(ep?.edge.edgeId ?? null);
+      }
+      relayEdgeId = picked.size === 1 ? [...picked][0] : null;
     }
   }
   return { relaySlug: origin.slug, relayEdgeId, refreshNotObserved };

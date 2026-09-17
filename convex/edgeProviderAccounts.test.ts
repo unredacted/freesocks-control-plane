@@ -4,6 +4,7 @@ import { describe, expect, test } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
+import { EDGE_PROVIDER_IDS } from '../src/shared/contracts/edgeProviderIds';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -695,10 +696,11 @@ describe('edgeTemplates', () => {
   test('ensureDefaults seeds one default per provider; create/update validate through the adapter schema', async () => {
     const t = convexTest(schema, modules);
     const seeded = await t.mutation(internal.edgeTemplates.ensureDefaults, {});
-    expect(seeded.created).toBe(4);
+    // One per supported provider (EDGE_PROVIDER_IDS): four L4 + two L7.
+    expect(seeded.created).toBe(EDGE_PROVIDER_IDS.length);
     expect((await t.mutation(internal.edgeTemplates.ensureDefaults, {})).created).toBe(0);
     const all = await t.query(internal.edgeTemplates.list, {});
-    expect(all.filter((x) => x.isDefault)).toHaveLength(4);
+    expect(all.filter((x) => x.isDefault)).toHaveLength(EDGE_PROVIDER_IDS.length);
     // Seeding is first-use only: an operator-created template on ANY provider
     // means the table is theirs, and no defaults are added for the others.
     const t2 = convexTest(schema, modules);
@@ -932,5 +934,237 @@ describe('edgeTemplates', () => {
     });
     expect(typeof view.inventoryAt).toBe('string');
     expect(new Date(view.inventoryAt as string).getTime()).toBeGreaterThan(0);
+  });
+});
+
+describe('edgeProviderAccounts: the DNS-account reference', () => {
+  async function pair() {
+    const t = convexTest(schema, modules);
+    const { id: dnsId } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'cloudflare',
+      name: 'acct-dns',
+      settings: { zoneId: 'a'.repeat(32), zoneName: 'example.org' },
+      credentials: { apiToken: 'cf-1' },
+    });
+    const { id: fastlyId } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'fastly',
+      name: 'acct-fastly',
+      settings: { dnsAccountId: dnsId, certificateAuthority: 'certainly' },
+      credentials: { apiToken: 'f-1' },
+    });
+    return { t, dnsId, fastlyId };
+  }
+
+  test('dnsAccountId must name an existing account that can host DNS', async () => {
+    const { t, fastlyId } = await pair();
+    await expect(
+      t.mutation(internal.edgeProviderAccounts.create, {
+        provider: 'fastly',
+        name: 'acct-bad',
+        // An L4 account cannot host DNS records.
+        settings: { dnsAccountId: fastlyId, certificateAuthority: 'certainly' },
+        credentials: { apiToken: 'f-2' },
+      }),
+    ).rejects.toThrow(/host DNS records/);
+    await expect(
+      t.mutation(internal.edgeProviderAccounts.create, {
+        provider: 'fastly',
+        name: 'acct-none',
+        settings: {
+          dnsAccountId: 'jd7abcdefghijklmnopqrstuvwx',
+          certificateAuthority: 'certainly',
+        },
+        credentials: { apiToken: 'f-3' },
+      }),
+    ).rejects.toThrow(/host DNS records|DNS account is required/);
+  });
+
+  test('a DNS account cannot be removed while another account writes through it', async () => {
+    const { t, dnsId } = await pair();
+    await expect(t.mutation(internal.edgeProviderAccounts.remove, { id: dnsId })).rejects.toThrow(
+      /account_referenced|uses this one for DNS/,
+    );
+  });
+
+  test('its LOCATING settings are locked by edges that only name it in their frozen intent', async () => {
+    const { t, dnsId, fastlyId } = await pair();
+    // No edges yet: the zone may still move.
+    await t.mutation(internal.edgeProviderAccounts.update, {
+      id: dnsId,
+      settings: { zoneId: 'b'.repeat(32), zoneName: 'other.example' },
+    });
+    // A Fastly edge whose DNS lives in that zone. It references the DNS account
+    // only through its intent; the account's own edge list never mentions it.
+    const relayId = await t.run(async (ctx) => {
+      const serverId = await ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'panel-a',
+        slug: 'panel-a',
+        config: { type: 'remnawave', baseUrl: 'https://panel.example', apiToken: 'tok' },
+        isActive: true,
+        priority: 0,
+        keyCount: 0,
+        updatedAt: Date.now(),
+      });
+      return ctx.db.insert('relays', {
+        slug: 'node-one',
+        backendServerId: serverId,
+        nodeHostname: 'node-one',
+        originAddress: '203.0.113.10',
+        modeSlugs: ['freedom-ws'],
+        enabled: true,
+        autoRotate: false,
+        hostManaged: true,
+        providerAffinity: 'rotate',
+        desiredPublished: 2,
+        standbyPerRelay: 0,
+        cooldownMs: 1,
+        maxRotationsPerDay: 4,
+        drainMs: 1,
+        publicationEpoch: 0,
+        publishedEdgeIds: [],
+        standbyEdgeIds: [],
+        rotationsToday: 0,
+        updatedAt: Date.now(),
+      });
+    });
+    await t.run(async (ctx) => {
+      const profileId = await ctx.db.insert('protocolProfiles', {
+        slug: 'p',
+        name: 'p',
+        protocol: 'ws',
+        serverNames: [{ sni: 'a.example', status: 'active' }],
+        enabled: true,
+        updatedAt: Date.now(),
+      });
+      const slotId = await ctx.db.insert('relaySlots', {
+        relayId,
+        slotKey: 'w',
+        profileId,
+        inboundTag: 'T',
+        configProfileUuid: '11111111-1111-4111-8111-111111111111',
+        configProfileInboundUuid: '22222222-2222-4222-8222-222222222222',
+        originPort: 443,
+        templateHostRemark: 'node-one-relay-w',
+        deployed: true,
+        retired: false,
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert('edges', {
+        relayId,
+        slotId,
+        accountId: fastlyId,
+        provider: 'fastly',
+        managed: true,
+        name: 'fcp-relay-node-one-00000001',
+        steps: [],
+        resources: [],
+        listeners: [],
+        addresses: { hostname: 'x.other.example' },
+        layer: 'l7',
+        provisionIntent: JSON.stringify({
+          hostname: 'x.other.example',
+          zoneId: 'b'.repeat(32),
+          zoneName: 'other.example',
+          dnsAccountId: dnsId,
+          originTransport: {
+            scheme: 'https',
+            certPublic: true,
+            certNames: ['origin.example'],
+            acceptsHostHeader: 'any',
+          },
+          originPort: 443,
+          templateHash: 'h',
+          templateParams: {},
+        }),
+        publication: 'unpublished',
+        status: 'active',
+        statusChangedAt: Date.now(),
+        health: 'unknown',
+        destroyAttempts: 0,
+        updatedAt: Date.now(),
+      });
+    });
+    await expect(
+      t.mutation(internal.edgeProviderAccounts.update, {
+        id: dnsId,
+        settings: { zoneId: 'c'.repeat(32), zoneName: 'third.example' },
+      }),
+    ).rejects.toThrow(/still reference this account/);
+    // And the account cannot be removed either.
+    await expect(t.mutation(internal.edgeProviderAccounts.remove, { id: dnsId })).rejects.toThrow(
+      /account_referenced|uses this one for DNS/,
+    );
+  });
+
+  test('editing the DNS account clears the qualification of every account writing through it', async () => {
+    const { t, dnsId, fastlyId } = await pair();
+    await t.mutation(internal.edgeProviderAccounts.setQualified, { id: fastlyId, qualified: true });
+    expect(
+      (await t.query(internal.edgeProviderAccounts.getForAdmin, { id: fastlyId }))!.qualified,
+    ).toBe(true);
+    // A new token on the DNS account was never qualified by the Fastly account
+    // that uses it, so its qualification goes too (audited per account).
+    const r = await t.mutation(internal.edgeProviderAccounts.update, {
+      id: dnsId,
+      credentials: { apiToken: 'cf-2' },
+    });
+    expect(r.requalify).toBe(1);
+    expect(
+      (await t.query(internal.edgeProviderAccounts.getForAdmin, { id: fastlyId }))!.qualified,
+    ).toBe(false);
+    const audits = await t.run((ctx) => ctx.db.query('auditLog').collect());
+    expect(
+      audits.filter(
+        (a) =>
+          a.action === 'edge.provider_account.qualified' &&
+          (a.payload as { name?: string; qualified?: boolean }).name === 'acct-fastly' &&
+          (a.payload as { qualified?: boolean }).qualified === false,
+      ),
+    ).toHaveLength(1);
+  });
+
+  test('a DNS account with no referencing accounts is editable and removable', async () => {
+    const t = convexTest(schema, modules);
+    const { id } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'cloudflare',
+      name: 'acct-lonely',
+      settings: { zoneId: 'a'.repeat(32), zoneName: 'example.org' },
+      credentials: { apiToken: 'cf' },
+    });
+    await t.mutation(internal.edgeProviderAccounts.update, {
+      id,
+      credentials: { apiToken: 'cf2' },
+    });
+    await t.mutation(internal.edgeProviderAccounts.remove, { id });
+    expect(await t.query(internal.edgeProviderAccounts.getForAdmin, { id })).toBeNull();
+  });
+});
+
+describe('edgeProviderAccounts: what the credential test OBSERVED', () => {
+  test('observed facts are stored, exposed and kept when a later test reports none', async () => {
+    const t = convexTest(schema, modules);
+    const { id } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'cloudflare',
+      name: 'acct-cf',
+      settings: { zoneId: 'a'.repeat(32), zoneName: 'example.org' },
+      credentials: { apiToken: 'cf' },
+    });
+    expect(
+      (await t.query(internal.edgeProviderAccounts.getForAdmin, { id }))!.observedSettings,
+    ).toBeNull();
+    await t.mutation(internal.edgeProviderAccounts.recordTest, {
+      id,
+      ok: true,
+      observed: { zoneSslMode: 'full', websockets: 'on' },
+    });
+    const row = (await t.query(internal.edgeProviderAccounts.getForAdmin, { id }))!;
+    expect(row.observedSettings).toEqual({ zoneSslMode: 'full', websockets: 'on' });
+    expect(row.observedAt).not.toBeNull();
+    // An adapter with nothing to report is not evidence that the zone changed.
+    await t.mutation(internal.edgeProviderAccounts.recordTest, { id, ok: false, code: 'auth' });
+    expect(
+      (await t.query(internal.edgeProviderAccounts.getForAdmin, { id }))!.observedSettings,
+    ).toEqual({ zoneSslMode: 'full', websockets: 'on' });
   });
 });

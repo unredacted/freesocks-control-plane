@@ -5,7 +5,7 @@
  * and hands them in; this module only transforms text.
  */
 import type { ClientRenderRule, EdgeConfig } from '../edgeConfig';
-import type { AssignedEndpoint } from './assignment';
+import { edgeHostname, type AssignedEndpoint } from './assignment';
 import { detectBodyFormat, type SubscriptionFormat } from './clientFamilies';
 import { renderClash } from './render/clash';
 import { renderLinks } from './render/links';
@@ -61,6 +61,10 @@ export function ruleCanEmitV6(
  * plus an IPv6 entry when the edge has one and the mode allows it. In
  * `auto-group-only` mode the v6 entries are emitted only for formats with an
  * auto group (the caller passes `hasAutoGroup`).
+ *
+ * An L7 (CDN-fronted) edge is ONE entry carrying its hostname: the address the
+ * client dials, the SNI and the Host header are that one name, and the address
+ * families behind it are the CDN's business, never the member's.
  */
 export function renderEntries(
   assigned: { primary: AssignedEndpoint | null; backup: AssignedEndpoint | null },
@@ -78,7 +82,13 @@ export function renderEntries(
       slotRemark: ep.edge.slotRemark,
       port: ep.edge.edgePort,
       sni: ep.sni,
+      hostHeader: ep.hostHeader,
     };
+    const hostname = edgeHostname(ep.edge);
+    if (hostname) {
+      out.push({ ...base, label, address: hostname, family: 'name' });
+      return;
+    }
     if (ep.edge.addresses.v4)
       out.push({ ...base, label, address: ep.edge.addresses.v4, family: 'v4' });
     if (ep.edge.addresses.v6 && wantV6) {

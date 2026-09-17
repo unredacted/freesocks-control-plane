@@ -28,6 +28,12 @@
     type EdgeProviderId,
   } from '../../../shared/contracts/edges';
   import { formatDateTime } from '../../lib/i18n/format';
+  import {
+    EDGE_PROVIDER_META,
+    addressLine,
+    layerLabel,
+    providerLabel,
+  } from '../../lib/edgeProviderMeta';
   import AdminListState from './AdminListState.svelte';
 
   /**
@@ -37,6 +43,10 @@
    * account can see (projects, regions or zones, private networks) so the rest
    * is a pick, not a paste. Everything still stores as the adapter's settings
    * shape; the raw JSON stays available under "Advanced".
+   *
+   * An L7 account (a CDN front) differs in two ways only: its edges are named
+   * by hostname, and one of its settings may point at another account (the DNS
+   * account whose zone holds the hostname's records).
    */
   const providers = adminEdgeProvidersQuery();
   const templates = adminEdgeTemplatesQuery();
@@ -55,13 +65,23 @@
     key: string;
     label: string;
     kind: 'text' | 'number' | 'select';
-    from?: 'projects' | 'regions' | 'networks' | 'subnets' | 'fixed';
+    from?:
+      | 'projects'
+      | 'regions'
+      | 'networks'
+      | 'subnets'
+      | 'zones'
+      | 'tlsConfigurations'
+      | 'dnsAccounts'
+      | 'fixed';
     options?: Array<{ id: string; label: string }>;
     required: boolean;
     advanced?: boolean;
     help?: string;
     /** Store as a number (Gcore ids). */
     numeric?: boolean;
+    /** Derived from another field (the zone's name); shown, never typed. */
+    readOnly?: boolean;
   };
   const FIELDS: Record<EdgeProviderId, Field[]> = {
     gcore: [
@@ -157,6 +177,63 @@
         help: 'Leave empty to let each edge create its own gateway (template setting).',
       },
     ],
+    cloudflare: [
+      {
+        key: 'zoneId',
+        label: 'DNS zone',
+        kind: 'select',
+        from: 'zones',
+        required: true,
+        help: 'Every edge of this account mints one hostname directly under the zone apex.',
+      },
+      {
+        key: 'zoneName',
+        label: 'Zone name',
+        kind: 'text',
+        required: false,
+        readOnly: true,
+        help: 'Filled from the chosen zone.',
+      },
+      {
+        key: 'accountId',
+        label: 'Account id',
+        kind: 'text',
+        required: false,
+        advanced: true,
+        help: 'Only needed when the token can see several accounts. Not a secret.',
+      },
+    ],
+    fastly: [
+      {
+        key: 'dnsAccountId',
+        label: 'DNS account',
+        kind: 'select',
+        from: 'dnsAccounts',
+        required: true,
+        help: 'The account whose zone holds the hostname records and the certificate challenges. Add it first.',
+      },
+      {
+        key: 'certificateAuthority',
+        label: 'Certificate authority',
+        kind: 'select',
+        from: 'fixed',
+        options: [
+          { id: 'certainly', label: 'certainly (default)' },
+          { id: 'lets-encrypt', label: 'lets-encrypt' },
+          { id: 'globalsign', label: 'globalsign (paid plans only)' },
+        ],
+        required: true,
+      },
+      {
+        key: 'tlsConfigurationId',
+        label: 'TLS configuration',
+        kind: 'select',
+        from: 'tlsConfigurations',
+        required: false,
+        advanced: true,
+        help: "Leave empty to use the account's default configuration.",
+      },
+    ],
   };
   /** Which credential fields must be filled before "Connect" can list anything. */
   const NEEDS_FOR_DISCOVERY: Record<EdgeProviderId, string[]> = {
@@ -164,6 +241,15 @@
     upcloud: [],
     scaleway: ['accessKey'],
     ovh: ['applicationKey', 'endpoint'],
+    cloudflare: [],
+    fastly: [],
+  };
+  /** What each provider's API token must be allowed to do, shown above the field. */
+  const CREDENTIAL_HELP: Partial<Record<EdgeProviderId, string>> = {
+    cloudflare:
+      'A zone-scoped API token with Zone DNS Edit, Zone Read, Zone Settings Read, SSL and Certificates Read, plus Origin Rules Edit when an edge needs an origin port other than the zone default.',
+    fastly:
+      'An API token with the global scope, issued on a dedicated automation user. The account also needs the WebSockets product entitlement.',
   };
 
   type Draft = {
@@ -183,12 +269,18 @@
   let editor = $state<Draft | null>(null);
   let discovered = $state<EdgeDiscoverResponse | null>(null);
 
+  /** The few settings that have a sensible value before the operator picks anything. */
+  const defaultSettings = (): Record<string, string> => ({
+    endpoint: 'ovh-eu',
+    certificateAuthority: 'certainly',
+  });
+
   function newDraft(): Draft {
     return {
       id: null,
       provider: 'gcore',
       name: '',
-      settings: { endpoint: 'ovh-eu' },
+      settings: defaultSettings(),
       credentials: {},
       enabled: true,
       priority: 10,
@@ -221,12 +313,22 @@
   const credentialFields = $derived(providers.data?.credentialFields ?? {});
   const fields = $derived(editor ? FIELDS[editor.provider] : []);
 
-  /** Options for one select field from the discovery result (subnets follow the chosen network). */
+  /**
+   * Options for one select field. Most come from the discovery result (subnets
+   * follow the chosen network); the DNS account list is the accounts already on
+   * this page, narrowed to the providers that host DNS.
+   */
   function optionsFor(f: Field): Array<{ id: string; label: string }> {
     if (f.from === 'fixed') return f.options ?? [];
+    if (f.from === 'dnsAccounts')
+      return (providers.data?.accounts ?? [])
+        .filter((a) => EDGE_PROVIDER_META[a.provider].providesDns && a.id !== editor?.id)
+        .map((a) => ({ id: a.id, label: a.name }));
     if (!discovered) return [];
     if (f.from === 'projects') return discovered.projects ?? [];
     if (f.from === 'regions') return discovered.regions ?? [];
+    if (f.from === 'zones') return discovered.zones ?? [];
+    if (f.from === 'tlsConfigurations') return discovered.tlsConfigurations ?? [];
     if (f.from === 'networks')
       return (discovered.networks ?? []).map((n) => ({ id: n.id, label: n.label }));
     if (f.from === 'subnets') {
@@ -234,6 +336,20 @@
       return net?.subnets ?? [];
     }
     return [];
+  }
+  /**
+   * Picking a zone also fixes its name: the adapter needs both (the id for every
+   * API call, the name to mint `<label>.<zone>`), and typing the name by hand is
+   * one more way to mint a hostname in the wrong zone.
+   */
+  function onSettingChange(f: Field, value: string) {
+    if (!editor) return;
+    editor.settings[f.key] = value;
+    if (f.from === 'zones')
+      editor.settings.zoneName = optionsFor(f).find((o) => o.id === value)?.label ?? '';
+    // A new network invalidates the subnet choice; a new project/region, the lists below it.
+    if (f.from === 'networks') editor.settings.subnetId = '';
+    if (f.from === 'projects' || f.from === 'regions') discover.mutate();
   }
   const canDiscover = $derived.by(() => {
     if (!editor) return false;
@@ -289,7 +405,10 @@
       for (const f of fields) {
         if (f.kind !== 'select' || f.from === 'fixed' || editor.settings[f.key]) continue;
         const opts = optionsFor(f);
-        if (opts.length === 1 && opts[0]) editor.settings[f.key] = opts[0].id;
+        if (opts.length === 1 && opts[0]) {
+          editor.settings[f.key] = opts[0].id;
+          if (f.from === 'zones') editor.settings.zoneName = opts[0].label;
+        }
       }
       const failed = Object.entries(r.errors ?? {}).map(([k, code]) => `${k} (${code})`);
       if (failed.length)
@@ -427,7 +546,9 @@
           unowned: inv?.loadBalancers.filter((l) => l.unowned).length ?? 0,
           rows: (inv?.loadBalancers ?? []).map(
             (l) =>
-              `${l.name} · ${l.status ?? '-'} · ${l.addresses.v4 ?? '-'}${l.unowned ? ' · UNOWNED' : ''}`,
+              `${l.name} · ${l.status ?? '-'} · ${addressLine(l.addresses)}${
+                l.content ? ` → ${l.content}` : ''
+              }${l.unowned ? ' · UNOWNED' : ''}`,
           ),
         },
       };
@@ -441,7 +562,15 @@
     const s = a.settings as Record<string, unknown>;
     return FIELDS[a.provider]
       .filter((f) => s[f.key] !== undefined && s[f.key] !== null && s[f.key] !== '')
-      .map((f) => `${f.label.replace(/ \(.*\)$/, '')}: ${String(s[f.key])}`)
+      .map((f) => {
+        const raw = String(s[f.key]);
+        // A referenced account reads as its name, not as a row id.
+        const shown =
+          f.from === 'dnsAccounts'
+            ? ((providers.data?.accounts ?? []).find((x) => x.id === raw)?.name ?? raw)
+            : raw;
+        return `${f.label.replace(/ \(.*\)$/, '')}: ${shown}`;
+      })
       .join(' · ');
   }
   function openEditor(d: Draft) {
@@ -460,7 +589,7 @@
     />{/if}
   {#if providers.data && providers.data.accounts.length === 0}
     <AdminListState
-      emptyText="No provider accounts. Add one, connect it to list its projects and regions, test the credentials, then qualify it after a manual check through a test edge."
+      emptyText="No provider accounts. Add one, connect it to list its projects, regions or DNS zones, test the credentials, then qualify it after a manual check through a test edge."
     />
   {/if}
   {#each providers.data?.accounts ?? [] as a (a.id)}
@@ -470,7 +599,16 @@
           <div>
             <CardTitle class="flex items-center gap-2 text-base">
               <span>{a.name}</span>
-              <span class="rounded-full border px-2 py-0.5 text-xs">{a.provider}</span>
+              <span class="rounded-full border px-2 py-0.5 text-xs"
+                >{providerLabel(a.provider)}</span
+              >
+              <span
+                class="rounded-full border px-2 py-0.5 text-xs"
+                title={EDGE_PROVIDER_META[a.provider].layer === 'l7'
+                  ? 'An L7 front: edges are hostnames fronted by the CDN'
+                  : 'An L4 forwarder: edges are IP literals in front of the node'}
+                >{layerLabel(EDGE_PROVIDER_META[a.provider].layer)}</span
+              >
               {#if !a.enabled}<span class="rounded-full border px-2 py-0.5 text-xs">disabled</span
                 >{/if}
               <span
@@ -574,14 +712,19 @@
                 value={editor.provider}
                 onValueChange={(v) => {
                   editor!.provider = v as EdgeProviderId;
-                  editor!.settings = { endpoint: 'ovh-eu' };
+                  editor!.settings = defaultSettings();
                   editor!.rawJson = null;
                   discovered = null;
                 }}
               >
-                <Select.Trigger class="mt-1 w-full">{editor.provider}</Select.Trigger>
+                <Select.Trigger class="mt-1 w-full"
+                  >{providerLabel(editor.provider)} ({layerLabel(
+                    EDGE_PROVIDER_META[editor.provider].layer,
+                  )})</Select.Trigger
+                >
                 <Select.Content
-                  >{#each EDGE_PROVIDER_IDS as p (p)}<Select.Item value={p}>{p}</Select.Item
+                  >{#each EDGE_PROVIDER_IDS as p (p)}<Select.Item value={p}
+                      >{providerLabel(p)} · {layerLabel(EDGE_PROVIDER_META[p].layer)}</Select.Item
                     >{/each}</Select.Content
                 >
               </Select.Root>
@@ -595,6 +738,9 @@
         <!-- 1. credentials + the public ids the API needs on every call -->
         <div class="rounded-md border p-3">
           <p class="mb-2 text-xs font-semibold">1. Credentials</p>
+          {#if CREDENTIAL_HELP[editor.provider]}
+            <p class="mb-2 text-[11px] text-muted-foreground">{CREDENTIAL_HELP[editor.provider]}</p>
+          {/if}
           <div class="grid gap-3 sm:grid-cols-2">
             {#each credentialFields[editor.provider] ?? [] as field (field)}
               <label class="text-xs"
@@ -607,7 +753,7 @@
                 /></label
               >
             {/each}
-            {#each fields.filter((f) => f.kind !== 'select' && !f.advanced) as f (f.key)}
+            {#each fields.filter((f) => f.kind !== 'select' && !f.advanced && !f.readOnly) as f (f.key)}
               <label class="text-xs"
                 >{f.label}<Input class="mt-1 font-mono" bind:value={editor.settings[f.key]} />
                 {#if f.help}<span class="block text-[11px] text-muted-foreground">{f.help}</span
@@ -670,12 +816,7 @@
                   <Select.Root
                     type="single"
                     value={editor.settings[f.key] ?? ''}
-                    onValueChange={(v) => {
-                      editor!.settings[f.key] = v;
-                      // A new network invalidates the subnet choice; a new project/region, the lists below it.
-                      if (f.from === 'networks') editor!.settings.subnetId = '';
-                      if (f.from === 'projects' || f.from === 'regions') discover.mutate();
-                    }}
+                    onValueChange={(v) => onSettingChange(f, v)}
                   >
                     <Select.Trigger class="mt-1 w-full"
                       >{opts.find((o) => o.id === editor?.settings[f.key])?.label ??
@@ -688,6 +829,11 @@
                         >{/each}</Select.Content
                     >
                   </Select.Root>
+                {:else if f.from === 'dnsAccounts'}
+                  <p class="mt-1 rounded-md border border-dashed px-2 py-1.5 text-[11px]">
+                    No account that can host DNS yet. Add a Cloudflare account for the zone first,
+                    then come back here.
+                  </p>
                 {:else}
                   <Input
                     class="mt-1 font-mono"
@@ -699,6 +845,14 @@
                       : 'connect to list, or type the id'}
                   />
                 {/if}
+                {#if f.help}<span class="block text-[11px] text-muted-foreground">{f.help}</span
+                  >{/if}</label
+              >
+            {/each}
+            {#each fields.filter((f) => f.readOnly) as f (f.key)}
+              <label class="text-xs"
+                >{f.label}
+                <Input class="mt-1 font-mono" readonly value={editor.settings[f.key] ?? ''} />
                 {#if f.help}<span class="block text-[11px] text-muted-foreground">{f.help}</span
                   >{/if}</label
               >

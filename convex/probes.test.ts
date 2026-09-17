@@ -11,6 +11,8 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { upsertSettingRow } from './appSettings';
 import { __setGlobalpingFactory } from './probeOps';
+import { familiesOf, type ResolvedTarget } from './probes';
+import { EDGE_DEFAULTS, type EdgeConfig } from './lib/edgeConfig';
 import type { GlobalpingLike } from './lib/edges/probes/globalping';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -52,6 +54,38 @@ function fakeGlobalping(
               : { status: 'finished', stats: { loss: 100, avg: null } },
         }));
       });
+      return { ok: true, data: { id, status: 'finished', results } };
+    },
+  };
+}
+
+/** A Globalping fake for `http` measurements (the tls/https path): every probe answers 200. */
+function fakeGlobalpingHttp(
+  statusCode: number | null = 200,
+): GlobalpingLike & { requests: unknown[] } {
+  const requests: unknown[] = [];
+  return {
+    requests,
+    async createMeasurement(req) {
+      requests.push(req);
+      return { ok: true, data: { id: `m-${requests.length}` } };
+    },
+    async getMeasurement(id) {
+      const req = requests[Number(id.slice(2)) - 1] as { locations: Array<{ country: string }> };
+      const results = req.locations.flatMap((l, i) =>
+        [1, 2].map((k) => ({
+          probe: {
+            country: l.country,
+            asn: 1000 * (i + 1) + k,
+            network: `net-${l.country}-${k}`,
+            tags: ['eyeball-network'],
+          },
+          result:
+            statusCode === null
+              ? { status: 'failed', rawOutput: 'handshake failed' }
+              : { status: 'finished', statusCode, timings: { total: 40 } },
+        })),
+      );
       return { ok: true, data: { id, status: 'finished', results } };
     },
   };
@@ -720,8 +754,6 @@ describe('relayProbes', () => {
       'fd00::1',
       '[fc00::1]',
       '::ffff:10.0.0.1',
-      'localhost',
-      'LOCALHOST',
       'panel.localhost',
       'printer.local',
       'db.internal',
@@ -729,6 +761,14 @@ describe('relayProbes', () => {
       await expect(
         t.mutation(internal.probeTargets.create, { label: 'x', address }),
       ).rejects.toThrow(/public/);
+    }
+    // A single label resolves through the control plane's own search domains
+    // (`intranet` → `intranet.corp.example`), which is exactly the internal
+    // reach a probe target must never have: refused on shape.
+    for (const address of ['localhost', 'LOCALHOST', 'intranet', 'wpad', 'gateway']) {
+      await expect(
+        t.mutation(internal.probeTargets.create, { label: 'x', address }),
+      ).rejects.toThrow(/dotted hostname/);
     }
     const ok = await t.mutation(internal.probeTargets.create, {
       label: 'ok',
@@ -1139,5 +1179,245 @@ describe('relayProbes', () => {
       staggerIndex: 100,
     });
     expect(await offsets('globalping')).toEqual([5 * MIN]);
+  });
+
+  test('familiesOf: an edge follows the RENDER ipv6 setting, a relay or custom target follows probe.ipv6, a name is probed once', () => {
+    const cfg = (over: { ipv6Mode?: 'off' | 'both'; probeIpv6?: boolean }): EdgeConfig =>
+      ({
+        ...EDGE_DEFAULTS,
+        render: { ...EDGE_DEFAULTS.render, ipv6Mode: over.ipv6Mode ?? 'both' },
+        probe: { ...EDGE_DEFAULTS.probe, ipv6: over.probeIpv6 ?? true },
+      }) as EdgeConfig;
+    const dual = (kind: ResolvedTarget['kind']): ResolvedTarget => ({
+      kind,
+      label: 'x',
+      addresses: { v4: '198.51.100.9', v6: '2001:db8::9' },
+      ports: [443],
+      probeProtocol: 'tcp',
+    });
+    // An edge is probed over what members are RENDERED, whatever probe.ipv6 says.
+    expect(familiesOf(dual('edge'), cfg({ ipv6Mode: 'both', probeIpv6: false }))).toEqual([4, 6]);
+    expect(familiesOf(dual('edge'), cfg({ ipv6Mode: 'off', probeIpv6: true }))).toEqual([4]);
+    // A relay node / custom target has nothing to do with rendering: its own knob decides.
+    for (const kind of ['relay', 'custom'] as const) {
+      expect(familiesOf(dual(kind), cfg({ ipv6Mode: 'off', probeIpv6: true }))).toEqual([4, 6]);
+      expect(familiesOf(dual(kind), cfg({ ipv6Mode: 'both', probeIpv6: false }))).toEqual([4]);
+    }
+    // A v6-only target is probed over v6 either way (it is all there is).
+    const v6Only = { ...dual('custom'), addresses: { v6: '2001:db8::9' } };
+    expect(familiesOf(v6Only, cfg({ probeIpv6: false }))).toEqual([6]);
+    // A name has no family: one run, no family requested.
+    const named = { ...dual('edge'), addresses: { name: 'front.example' } };
+    expect(familiesOf(named, cfg({ ipv6Mode: 'off' }))).toEqual(['any']);
+  });
+
+  test('a target with no listener port is not probeable: no fallback to 443, skipped by the cron and refused by name', async () => {
+    __setGlobalpingFactory(() => fakeGlobalping(() => 'ok'));
+    const { t, relayId, edgeId } = await seed();
+    await t.run((ctx) => ctx.db.patch(edgeId, { listeners: [] }));
+    const target = { kind: 'edge' as const, ref: edgeId as string };
+    expect(await t.query(internal.probes.planFor, { target })).toEqual({ runsPerSource: 0 });
+    await expect(
+      t.mutation(internal.probes.requestProbes, { target, trigger: 'manual' }),
+    ).rejects.toThrow(/probe\.no_listeners/);
+    const many = await t.mutation(internal.probes.requestMany, { targets: [target] });
+    expect(many.runIds).toEqual([]);
+    expect(many.skipped).toEqual([`edge:${edgeId}: probe.no_listeners`]);
+    // The cron does not consider it either, and nothing was ever probed on 443.
+    const plan = await t.query(internal.probes.due, { now: Date.now() + 60 * 60_000 });
+    expect(plan.dueTargets.map((d) => d.target.ref)).not.toContain(edgeId);
+    expect(await t.run((ctx) => ctx.db.query('probeRuns').collect())).toEqual([]);
+    // A relay whose slots are all retired is the same case.
+    await t.mutation(internal.relays.update, { id: relayId, probeNode: true });
+    await t.run(async (ctx) => {
+      for (const slot of await ctx.db.query('relaySlots').collect())
+        await ctx.db.patch(slot._id, { deployed: false });
+    });
+    const plan2 = await t.query(internal.probes.due, { now: Date.now() + 60 * 60_000 });
+    expect(plan2.dueTargets.map((d) => d.target.kind)).not.toContain('relay');
+  });
+
+  test('reachable history survives a disabled or aged-out source, and a degraded (mixed) verdict arms the transition too', async () => {
+    __setGlobalpingFactory(() => fakeGlobalping(() => 'ok'));
+    const { t, edgeId } = await seed({ countries: ['IR', 'RU'] });
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.probe.sources.checkhost', 'true'));
+    const finish = async (
+      source: 'globalping' | 'checkhost',
+      country: string,
+      results: Array<{ ok: boolean; asn: string }>,
+    ) => {
+      const runId = await t.run((ctx) =>
+        ctx.db.insert('probeRuns', {
+          targetKind: 'edge',
+          targetRef: edgeId,
+          source,
+          target: `${EDGE}:443`,
+          port: 443,
+          ipVersion: 4,
+          status: 'running',
+          trigger: 'manual',
+          requestedAt: Date.now(),
+          results: [],
+        }),
+      );
+      await t.mutation(internal.probes.finishRun, {
+        runId,
+        results: results.map((r) => ({
+          country,
+          asn: r.asn,
+          network: r.asn,
+          vantageClass: 'eyeball' as const,
+          ok: r.ok,
+        })),
+      });
+    };
+    const of = async (country: string) =>
+      (await t.query(internal.edges.get, { id: edgeId }))!.reachability!.byCountry.find(
+        (c) => c.country === country,
+      )!;
+    // IR: globalping once reached the edge. RU: globalping only ever saw a
+    // DEGRADED path (one success, one failure): a `mixed` verdict, so
+    // `lastReachableAt` is never stamped and only `lastOkAt` records it.
+    await finish('globalping', 'IR', [
+      { ok: true, asn: 'AS1' },
+      { ok: true, asn: 'AS2' },
+    ]);
+    await finish('globalping', 'RU', [
+      { ok: true, asn: 'AS1' },
+      { ok: false, asn: 'AS2' },
+    ]);
+    const rows = await t.run((ctx) => ctx.db.query('probeReachability').collect());
+    const ru = rows.find((r) => r.country === 'RU')!;
+    expect(ru.verdict).toBe('mixed');
+    expect(ru.lastReachableAt).toBeUndefined();
+    expect(ru.lastOkAt).toBeDefined();
+    // Now the source that holds the history is switched off and its rows age
+    // past the freshness window, while a DIFFERENT, enabled source reports the
+    // block. The history view is unfiltered, so the transition still arms.
+    await t.run(async (ctx) => {
+      await upsertSettingRow(ctx, 'edge.probe.sources.globalping', 'false');
+      for (const r of await ctx.db.query('probeReachability').collect())
+        await ctx.db.patch(r._id, { updatedAt: Date.now() - 31 * 60_000 });
+    });
+    for (const country of ['IR', 'RU'])
+      await finish('checkhost', country, [
+        { ok: false, asn: 'AS8' },
+        { ok: false, asn: 'AS9' },
+      ]);
+    expect(await of('IR')).toMatchObject({ verdict: 'unreachable', wasReachable: true });
+    expect(await of('RU')).toMatchObject({ verdict: 'unreachable', wasReachable: true });
+    // A country that was never reached at all is still not evidence.
+    await finish('checkhost', 'CN', [
+      { ok: false, asn: 'AS8' },
+      { ok: false, asn: 'AS9' },
+    ]);
+    expect(await of('CN')).toMatchObject({ verdict: 'unreachable', wasReachable: false });
+  });
+
+  test('a hostname (L7) edge is probed by NAME over TLS: one run, no family, rolled up on its own path', async () => {
+    const gp = fakeGlobalpingHttp();
+    __setGlobalpingFactory(() => gp);
+    const { t, edgeId } = await seed({ countries: ['IR'] });
+    await t.run((ctx) =>
+      ctx.db.patch(edgeId, { addresses: { hostname: 'front.example' }, layer: 'l7' }),
+    );
+    const { runIds } = await t.mutation(internal.probes.requestProbes, {
+      target: { kind: 'edge', ref: edgeId },
+      trigger: 'manual',
+      sources: ['globalping'],
+    });
+    expect(runIds).toHaveLength(1); // one name, one port: no per-family fan-out
+    const run = (await t.run((ctx) => ctx.db.get(runIds[0])))!;
+    expect(run).toMatchObject({
+      target: 'front.example:443',
+      addressKind: 'name',
+      probeProtocol: 'tls',
+      requestedFamily: 'any',
+    });
+    expect(run.ipVersion).toBeUndefined();
+    await drainRuns(t);
+    // Globalping was asked for an http measurement against the name.
+    expect(gp.requests[0]).toMatchObject({
+      type: 'http',
+      target: 'front.example',
+      measurementOptions: { protocol: 'HTTPS', port: 443 },
+    });
+    const rows = await t.run((ctx) => ctx.db.query('probeReachability').collect());
+    const row = rows.find((r) => r.source === 'globalping')!;
+    expect(row.ipVersion).toBeUndefined();
+    expect(row).toMatchObject({ addressKind: 'name', probeProtocol: 'tls', verdict: 'reachable' });
+    const admin = (
+      await t.query(internal.probes.listRuns, {
+        target: { kind: 'edge', ref: edgeId },
+      })
+    ).find((r) => r.source === 'globalping')!;
+    expect(admin).toMatchObject({ ipVersion: null, addressKind: 'name', probeProtocol: 'tls' });
+    // Rows from an earlier LITERAL life of the same edge stay their own path:
+    // the country verdict follows the v4 rows and the name path is reported
+    // alongside as `nameVerdict`.
+    await t.run((ctx) =>
+      ctx.db.insert('probeReachability', {
+        targetKind: 'edge',
+        targetRef: edgeId,
+        country: 'IR',
+        source: 'globalping',
+        ipVersion: 4,
+        addressKind: 'ip',
+        port: 443,
+        okCount: 0,
+        failCount: 2,
+        failNetworks: ['AS1', 'AS2'],
+        verdict: 'unreachable',
+        updatedAt: Date.now(),
+      }),
+    );
+    await t.mutation(internal.probes.requestProbes, {
+      target: { kind: 'edge', ref: edgeId },
+      trigger: 'manual',
+      sources: ['globalping'],
+    });
+    await drainRuns(t);
+    const ir = (await t.query(internal.edges.get, { id: edgeId }))!.reachability!.byCountry.find(
+      (c) => c.country === 'IR',
+    )!;
+    expect(ir.verdict).toBe('unreachable');
+    expect(ir.nameVerdict).toBe('reachable');
+  });
+
+  test('a custom target can opt into tls/https; changing the protocol resets its history', async () => {
+    __setGlobalpingFactory(() => fakeGlobalpingHttp());
+    const { t } = await seed({ countries: ['IR'] });
+    const created = await t.mutation(internal.probeTargets.create, {
+      label: 'Front',
+      address: 'decoy.example',
+      port: 8443,
+      probeProtocol: 'https',
+    });
+    expect((await t.query(internal.probeTargets.list, {}))[0].probeProtocol).toBe('https');
+    const target = { kind: 'custom' as const, ref: created.id };
+    await t.mutation(internal.probes.requestProbes, {
+      target,
+      trigger: 'manual',
+      sources: ['globalping'],
+    });
+    await drainRuns(t);
+    const runs = await t.query(internal.probes.listRuns, { target });
+    expect(runs[0]).toMatchObject({ addressKind: 'name', probeProtocol: 'https' });
+    const rollups = () =>
+      t.run((ctx) =>
+        ctx.db
+          .query('probeReachability')
+          .withIndex('by_target_country', (q) =>
+            q.eq('targetKind', 'custom').eq('targetRef', created.id),
+          )
+          .collect(),
+      );
+    expect((await rollups()).length).toBeGreaterThan(0);
+    // A different protocol is a different measurement: the old verdicts go.
+    await t.mutation(internal.probeTargets.update, { id: created.id, probeProtocol: 'tcp' });
+    expect(await rollups()).toEqual([]);
+    await expect(
+      t.mutation(internal.probeTargets.update, { id: created.id, probeProtocol: 'quic' as never }),
+    ).rejects.toThrow();
   });
 });

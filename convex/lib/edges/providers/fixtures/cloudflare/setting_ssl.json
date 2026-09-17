@@ -1,0 +1,17 @@
+{
+  "_source": {
+    "api": "GET /zones/{zone_id}/settings/ssl",
+    "doc": "https://developers.cloudflare.com/api/resources/zones/subresources/settings/methods/get/",
+    "note": "value is one of off | flexible | full | strict (https://developers.cloudflare.com/ssl/origin-configuration/ssl-modes/)",
+    "taken": "2026-09-16"
+  },
+  "result": {
+    "id": "ssl",
+    "value": "full",
+    "editable": true,
+    "modified_on": "2026-01-02T00:01:00.12345Z"
+  },
+  "success": true,
+  "errors": [],
+  "messages": []
+}

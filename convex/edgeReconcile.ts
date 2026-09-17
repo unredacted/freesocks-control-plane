@@ -32,6 +32,9 @@ import { runWithCronOutcome } from './cronHeartbeat';
 import { edgeMs, type EdgeConfig } from './lib/edgeConfig';
 import { isDiscoverable } from './edges';
 import { publishedCount } from './lib/edges/pool';
+import { hasPublishableAddress } from './lib/edges/ip';
+import { parseIntent } from './lib/edges/intent';
+import { sharedTeardownLockKey, stepLockKey } from './edgeRotations';
 import { EDGE_PROVIDER_CAPABILITIES } from './lib/edges/providers/capabilities';
 import type {
   Discovery,
@@ -78,8 +81,14 @@ function errText(err: unknown): string {
   return (err instanceof Error ? err.message : String(err)).slice(0, 120);
 }
 
-/** The provider-facing spec; `transport` rides along so a udp slot is refused before any call. */
+/**
+ * The provider-facing spec; `transport` rides along so a udp slot is refused
+ * before any call. An L7 edge's hostname and origin transport come from its
+ * FROZEN intent, so a settings edit since the edge was planned cannot make
+ * discovery look for a different host than the one that was created.
+ */
 function specOf(edge: Edge) {
+  const intent = parseIntent(edge.provisionIntent);
   return {
     name: edge.name,
     listeners: edge.listeners.map((l) => ({
@@ -87,6 +96,7 @@ function specOf(edge: Edge) {
       members: [{ address: l.originAddress, port: l.originPort }],
       ...(l.transport ? { transport: l.transport } : {}),
     })),
+    ...(intent ? { hostname: intent.hostname, originTransport: intent.originTransport } : {}),
   };
 }
 
@@ -173,13 +183,44 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
     origins.filter((o) => o.quarantine).map((o) => o._id as string),
   );
 
+  // Published L7 fronts whose proof is due for RENEWAL this tick. An expired
+  // qualification makes the edge ineligible for rendering the instant it
+  // lapses (`edgeRender.publishedEdgesOf`), so renewing only after the expiry
+  // would flap a healthy front out of every new body until the next tick. The
+  // ones closest to expiry go first, and the tick's budget is config-driven
+  // because each proof is an outbound session.
+  const renewLead = edgeMs.renewLead(cfg);
+  const expiryOf = (e: Edge) => e.frontQualification?.expiresAt ?? 0;
+  const requalifyDue = new Set(
+    edges
+      .filter(
+        (e) =>
+          (e.layer ?? 'l4') === 'l7' &&
+          e.publication === 'published' &&
+          e.managed &&
+          !!e.accountId &&
+          ['active', 'standby', 'draining'].includes(e.status) &&
+          !quarantinedOrigins.has(e.relayId as string) &&
+          !rotatingOrigins.has(e.relayId as string) &&
+          expiryOf(e) - now <= renewLead,
+      )
+      .sort((a, b) => expiryOf(a) - expiryOf(b))
+      .slice(0, cfg.l7.maxRequalifyPerTick)
+      .map((e) => e._id as string),
+  );
+
   for (const edge of edges) {
     // Nothing bypasses a quarantine: no describe, drop, destroy or forget.
     if (quarantinedOrigins.has(edge.relayId as string)) continue;
     if (!edge.managed || !edge.accountId) {
-      // Observe-only edges: nothing to discover, describe or destroy. A failed/
-      // cancelled adopted row is simply forgotten.
-      if (['failed', 'cancelled', 'destroying'].includes(edge.status)) {
+      // Observe-only edges: nothing to discover, describe or destroy. A failed /
+      // cancelled adopted row is simply forgotten, and so is a DRAINING one once
+      // its drain has elapsed: FCP never calls a provider for it, so without
+      // this it would stay `draining` for good, keep its relay's delete from
+      // finishing and keep counting against the account's live-edge cap.
+      const drained =
+        edge.status === 'draining' && edge.drainUntil !== undefined && edge.drainUntil <= now;
+      if (drained || ['failed', 'cancelled', 'destroying'].includes(edge.status)) {
         await ctx.runMutation(internal.edges.patchEdge, {
           edgeId: edge._id,
           status: 'destroyed',
@@ -227,22 +268,36 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
       // 3. Health refresh for live edges (non-destructive).
       if (['active', 'standby', 'draining'].includes(edge.status) && !inRotation) {
         const staleHealth = (edge.lastHealthAt ?? 0) + edgeMs.poll(cfg) * 10 <= now;
-        if (!staleHealth) continue;
-        const desc: EdgeDescription = await ctx.runAction(internal.edgeProviderOps.describe, {
-          accountId: edge.accountId,
-          ledger: ledgerOf(edge),
-        });
-        // A `gone` describe acts (status transition + pool drop + epoch bump, in
-        // that ONE mutation) only on the second consecutive observation.
-        const rec = await ctx.runMutation(internal.edges.recordDescribe, {
-          edgeId: edge._id,
-          state: desc.state,
-          addresses: desc.addresses,
-          health: desc.health,
-          resources: desc.resources,
-        });
-        report.described++;
-        if (rec?.dropped) report.dropped++;
+        // The proof has its own clock: a front whose health was refreshed a
+        // minute ago still has to be re-proven before its qualification lapses.
+        if (!staleHealth && !requalifyDue.has(edge._id as string)) continue;
+        if (staleHealth) {
+          const desc: EdgeDescription = await ctx.runAction(internal.edgeProviderOps.describe, {
+            accountId: edge.accountId,
+            ledger: ledgerOf(edge),
+            edgeId: edge._id,
+          });
+          // A `gone` describe acts (status transition + pool drop + epoch bump,
+          // in that ONE mutation) only on the second consecutive observation.
+          const rec = await ctx.runMutation(internal.edges.recordDescribe, {
+            edgeId: edge._id,
+            state: desc.state,
+            addresses: desc.addresses,
+            health: desc.health,
+            resources: desc.resources,
+            // L7 adapters report DNS + certificate readiness; the `front`
+            // dimension follows the stored qualification, not the adapter.
+            readiness: desc.readiness,
+          });
+          report.described++;
+          if (rec?.dropped) report.dropped++;
+        }
+        // A published L7 front's proof is renewed BEFORE it lapses, so a
+        // healthy front never drops out of the rendered pool waiting for the
+        // next tick. A re-proof that FAILS still takes it out at once: the
+        // stored `ok:false` is what the renderer reads.
+        if (requalifyDue.has(edge._id as string))
+          await ctx.runAction(internal.frontQualifyOps.run, { edgeId: edge._id });
       }
     } catch (err) {
       report.errors++;
@@ -266,7 +321,7 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
       const originEdges = edges.filter((e) => e.relayId === origin._id);
       const publishedNow = publishedCount(origin.publishedEdgeIds);
       const standbys = originEdges.filter(
-        (e) => e.status === 'active' && e.publication === 'unpublished' && !!e.addresses.v4,
+        (e) => e.status === 'active' && e.publication === 'unpublished' && hasPublishableAddress(e),
       );
       if (publishedNow < origin.desiredPublished) {
         if (cfg.autoPublishStandby && standbys.length > 0) {
@@ -335,6 +390,7 @@ async function settleEdge(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: R
       accountId,
       resource: target,
       ledger: ledgerOf(edge),
+      edgeId: edge._id,
     });
     await ctx.runMutation(internal.edges.settleOp, {
       edgeId: edge._id,
@@ -386,12 +442,29 @@ async function settleEdge(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: R
       step: stepOf(pending),
       ledger: ledgerOf(edge),
       attempt: discoverAttempt,
+      edgeId: edge._id,
+      // Never `undefined`: without a reference time an adapter cannot prove its
+      // settle floor elapsed, and a slow compound create would be re-run.
+      stepStartedAt: pending.startedAt ?? edge.currentOp?.claimedAt ?? edge._creationTime,
     });
   } catch (err) {
     await ctx.runMutation(internal.edges.settleOp, { edgeId: edge._id, opId: cl.opId });
     throw err;
   }
   const failedRun = edge.status === 'failed' || edge.status === 'cancelled';
+  // Once discovery has ANSWERED, the shared object's state is known again: the
+  // lock a lost write left behind (e.g. a zone's ruleset) is released here, as
+  // the in-rotation path does. A cancelled or timed-out run is settled by this
+  // path only, so without this the expired lock would block every later write
+  // on that shared object.
+  const discoveryLockKey = stepLockKey(edge, pending.kind);
+  const releaseAfterDiscovery = async () => {
+    if (discoveryLockKey)
+      await ctx.runMutation(internal.edges.releaseExternalLocksOf, {
+        edgeId: edge._id,
+        keys: [discoveryLockKey],
+      });
+  };
   if (disc.status === 'found') {
     await ctx.runMutation(internal.edges.settleOp, {
       edgeId: edge._id,
@@ -400,6 +473,7 @@ async function settleEdge(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: R
       addResources: disc.resources,
       addresses: disc.addresses,
     });
+    await releaseAfterDiscovery();
   } else if (disc.status === 'confirmed_absent') {
     // Nothing exists for this step. A failed run marks it done-with-nothing so the
     // destroy can proceed; a live run may retry (the rotation machine owns retries).
@@ -417,6 +491,7 @@ async function settleEdge(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: R
         failure: { step: pending.stepId, code: 'step_retries_exhausted' },
       });
     }
+    await releaseAfterDiscovery();
   } else if (disc.status === 'ambiguous') {
     await ctx.runMutation(internal.edges.settleOp, {
       edgeId: edge._id,
@@ -425,6 +500,9 @@ async function settleEdge(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: R
       addResources: disc.candidates.map((c) => ({ ...c, ownership: 'adopted' as const })),
       status: 'needs_operator',
     });
+    // Ambiguity is an answer too (an operator now decides); the lock must not
+    // outlive it or the zone stays frozen for everyone.
+    await releaseAfterDiscovery();
   } else {
     await ctx.runMutation(internal.edges.settleOp, {
       edgeId: edge._id,
@@ -463,6 +541,113 @@ export function shouldReissueDelete(
   return !!c && c.resourceId === resourceId && c.attempts >= MAX_CONFIRM_ATTEMPTS;
 }
 
+/** The persisted shared-teardown state of an edge in the shape the action takes. */
+function sharedStateOf(edge: Edge): {
+  phase: string;
+  serviceId: string;
+  fromVersion?: number;
+  workVersion?: number;
+  code?: string;
+  extra?: string;
+} | null {
+  const s = edge.sharedTeardown;
+  if (!s) return null;
+  return {
+    phase: s.phase,
+    serviceId: s.serviceId,
+    fromVersion: s.fromVersion,
+    ...(s.workVersion !== undefined ? { workVersion: s.workVersion } : {}),
+    ...(edge.sharedTeardownState ? { extra: edge.sharedTeardownState } : {}),
+  };
+}
+
+/**
+ * Drive at most ONE phase of a shared-resource teardown, or report that the
+ * edge has none (`false`, the ordinary destroy walk then runs).
+ *
+ * The workflow rewrites a version chain that every other adopted hostname on
+ * the same service also rewrites, so the per-edge op claim is not enough: the
+ * SERVICE is locked for the pass. A terminal `done` marks the children FCP owns
+ * on that service gone (the walk then completes the edge); `needs_operator`
+ * parks the edge with the driver's code. Every pass counts toward
+ * `destroyAttempts`, so a workflow that never converges parks at the cap.
+ */
+async function sharedTeardownPass(
+  ctx: ActionCtx,
+  cfg: EdgeConfig,
+  edge: Edge,
+  ledger: { steps: Edge['steps']; resources: Edge['resources'] },
+): Promise<boolean> {
+  const accountId = edge.accountId!;
+  let state = sharedStateOf(edge);
+  // Only an L7 front can sit on a resource shared with other hostnames; asking
+  // every L4 edge's adapter on every pass would be a round trip for a constant.
+  if (!state && (edge.layer ?? 'l4') !== 'l7') return false;
+  if (!state) {
+    const planned = await ctx.runAction(internal.edgeProviderOps.planSharedTeardown, {
+      accountId,
+      ledger,
+      edgeId: edge._id,
+      opId: `st-${edge._id as string}`,
+    });
+    // Nothing shared here: an exclusively owned resource is deleted outright.
+    if (!planned) return false;
+    state = planned;
+    await ctx.runMutation(internal.edgeReconcileMutations.recordSharedTeardown, {
+      edgeId: edge._id,
+      state,
+    });
+  }
+  // A terminal state has already acted (the children are `confirmed_gone`, or
+  // the edge is parked): let the ordinary walk finish, or stay parked.
+  if (state.phase === 'done' || state.phase === 'needs_operator') return false;
+  const cl = await ctx.runMutation(internal.edges.claimOp, {
+    edgeId: edge._id,
+    kind: 'destroy_step',
+    target: state.serviceId,
+    claimMs: edgeMs.opClaim(cfg),
+  });
+  if (!cl.ok) return true;
+  const lockKey = `fastly-service:${state.serviceId}`;
+  const lk = await ctx.runMutation(internal.edges.claimExternalLock, {
+    key: lockKey,
+    edgeId: edge._id,
+    opId: cl.opId,
+    ttlMs: edgeMs.opClaim(cfg),
+  });
+  if (!lk.ok) {
+    await ctx.runMutation(internal.edges.settleOp, { edgeId: edge._id, opId: cl.opId });
+    return true;
+  }
+  let next;
+  try {
+    next = await ctx.runAction(internal.edgeProviderOps.sharedTeardownStep, {
+      accountId,
+      edgeId: edge._id,
+      state,
+    });
+  } catch (err) {
+    // An unknown outcome keeps the persisted phase: the next pass re-observes
+    // what the clone or the activation actually did before touching anything.
+    await ctx.runMutation(internal.edges.settleExternalLock, { key: lockKey, opId: cl.opId });
+    await ctx.runMutation(internal.edges.settleOp, { edgeId: edge._id, opId: cl.opId });
+    await ctx.runMutation(internal.edges.patchEdge, {
+      edgeId: edge._id,
+      destroyAttemptsDelta: 1,
+    });
+    throw err;
+  }
+  await ctx.runMutation(internal.edges.settleExternalLock, { key: lockKey, opId: cl.opId });
+  await ctx.runMutation(internal.edges.settleOp, { edgeId: edge._id, opId: cl.opId });
+  await ctx.runMutation(internal.edgeReconcileMutations.recordSharedTeardown, {
+    edgeId: edge._id,
+    state: next,
+    countAttempt: true,
+  });
+  await ctx.runMutation(internal.edges.patchEdge, { edgeId: edge._id, destroyAttemptsDelta: 1 });
+  return true;
+}
+
 /**
  * One destroy pass: confirm requested deletes (re-issuing the delete where
  * confirmation cannot make progress), then request the next present resource
@@ -483,6 +668,7 @@ async function destroyStep(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: 
       ? ((await ctx.runAction(internal.edgeProviderOps.planDestroy, {
           accountId,
           ledger,
+          edgeId: edge._id,
         })) as Edge['resources'])
       : [];
   const remaining = plan.filter((r) => r.deleteState !== 'confirmed_gone');
@@ -491,6 +677,12 @@ async function destroyStep(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: 
     report.destroyed++;
     return;
   }
+  // A SHARED external resource cannot be deleted at all: removing ONE hostname
+  // from it is a persisted, serialised version workflow the adapter drives. When
+  // the ledger describes such a resource, that workflow IS this edge's destroy
+  // until it reports `done` (which marks the children FCP owns gone and lets the
+  // ordinary walk below finish) or `needs_operator`.
+  if (await sharedTeardownPass(ctx, cfg, edge, ledger)) return;
   const target = remaining[0];
   const cl = await ctx.runMutation(internal.edges.claimOp, {
     edgeId: edge._id,
@@ -499,6 +691,31 @@ async function destroyStep(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: 
     claimMs: edgeMs.opClaim(cfg),
   });
   if (!cl.ok) return;
+  // A SHARED-service teardown (an adopted domain on a service FCP does not own)
+  // rewrites that service's version chain, which other adopted domains on the
+  // same service also rewrite. The per-edge claim cannot serialise that, so the
+  // service itself is locked; an expired unsettled lock blocks until its holder
+  // re-observes what its clone or activation did.
+  const sharedLockKey = sharedTeardownLockKey(edge);
+  if (sharedLockKey) {
+    const lk = await ctx.runMutation(internal.edges.claimExternalLock, {
+      key: sharedLockKey,
+      edgeId: edge._id,
+      opId: cl.opId,
+      ttlMs: edgeMs.opClaim(cfg),
+    });
+    if (!lk.ok) {
+      await ctx.runMutation(internal.edges.settleOp, { edgeId: edge._id, opId: cl.opId });
+      return;
+    }
+  }
+  const releaseShared = async () => {
+    if (sharedLockKey)
+      await ctx.runMutation(internal.edges.settleExternalLock, {
+        key: sharedLockKey,
+        opId: cl.opId,
+      });
+  };
   const confirming =
     target.deleteState === 'delete_requested' && !shouldReissueDelete(edge, target.resourceId);
   const priorConfirms =
@@ -510,11 +727,13 @@ async function destroyStep(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: 
           accountId,
           resource: target,
           ledger,
+          edgeId: edge._id,
         })
       : await ctx.runAction(internal.edgeProviderOps.runDestroy, {
           accountId,
           resource: target,
           ledger,
+          edgeId: edge._id,
         });
   } catch (err) {
     // Unknown outcome: keep the claim's target as `delete_requested`; the next
@@ -534,6 +753,7 @@ async function destroyStep(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: 
     });
     throw err;
   }
+  await releaseShared();
   await ctx.runMutation(internal.edges.settleOp, {
     edgeId: edge._id,
     opId: cl.opId,

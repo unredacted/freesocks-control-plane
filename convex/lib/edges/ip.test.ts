@@ -6,6 +6,8 @@ import {
   isIpv4Literal,
   isIpv6Literal,
   isPublicIpLiteral,
+  publishAddressOf,
+  hasPublishableAddress,
 } from './ip';
 
 describe('ip helpers', () => {
@@ -53,5 +55,19 @@ describe('ip helpers', () => {
     expect(bracketIfV6('[2001:db8::5]')).toBe('[2001:db8::5]');
     expect(bracketIfV6('203.0.113.5')).toBe('203.0.113.5');
     expect(hostPort('2001:db8::5', 443)).toBe('[2001:db8::5]:443');
+  });
+});
+
+describe('publishAddressOf', () => {
+  test('an L7 edge publishes its hostname and never an IP literal of its own', () => {
+    const l7 = { layer: 'l7' as const, addresses: { hostname: 'cdn.example', v4: '198.51.100.1' } };
+    expect(publishAddressOf(l7)).toBe('cdn.example');
+    expect(hasPublishableAddress({ layer: 'l7', addresses: { v4: '198.51.100.1' } })).toBe(false);
+  });
+
+  test('an L4 edge publishes its IPv4; a missing layer means L4 (legacy rows)', () => {
+    expect(publishAddressOf({ addresses: { v4: '198.51.100.1' } })).toBe('198.51.100.1');
+    expect(publishAddressOf({ layer: 'l4', addresses: { v6: '2001:db8::1' } })).toBeNull();
+    expect(hasPublishableAddress({ addresses: {} })).toBe(false);
   });
 });

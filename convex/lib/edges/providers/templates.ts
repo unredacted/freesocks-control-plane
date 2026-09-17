@@ -231,6 +231,91 @@ export const OVH_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [
   { key: 'allowedCidrs', label: 'Allowed client CIDRs', type: 'string-list' },
 ];
 
+// --- Cloudflare (L7) ---------------------------------------------------------------
+
+/** Hostname label settings shared by the L7 templates (lib/edges/hostname.ts). */
+const LABEL_FIELDS = {
+  labelLength: z.number().int().min(8).max(16).default(12),
+  labelPrefix: z
+    .string()
+    .regex(/^[a-z0-9-]{0,8}$/, 'lowercase letters, digits, dashes; up to 8 chars')
+    .default(''),
+};
+
+export const CloudflareTemplate = z.object({
+  ...LABEL_FIELDS,
+  /** Marker prefix for the DNS record comment (the discovery/ownership key follows). */
+  commentPrefix: z.string().max(24).default('fcp'),
+  /**
+   * Any origin port other than the zone mode's effective default (443 for full/
+   * strict, 80 for flexible) needs an Origin Rule (destination-port override,
+   * 10 rules on Free). False refuses such slots at plan time.
+   */
+  allowOriginPortOverride: z.boolean().default(true),
+});
+export type CloudflareTemplateParams = z.infer<typeof CloudflareTemplate>;
+
+export const CLOUDFLARE_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [
+  {
+    key: 'labelLength',
+    label: 'Hostname label length',
+    type: 'number',
+    help: '8 to 16 characters.',
+  },
+  {
+    key: 'labelPrefix',
+    label: 'Hostname label prefix',
+    type: 'string',
+    help: 'Optional; up to 8 lowercase characters.',
+  },
+  { key: 'commentPrefix', label: 'DNS comment prefix', type: 'string' },
+  {
+    key: 'allowOriginPortOverride',
+    label: 'Allow origin port override (Origin Rules)',
+    type: 'boolean',
+    help: 'Needed when the origin port is not the zone encryption mode default.',
+  },
+];
+
+// --- Fastly (L7) -------------------------------------------------------------------
+
+export const FastlyTemplate = z.object({
+  ...LABEL_FIELDS,
+  /**
+   * The Host header the front sends the origin: the fronted hostname (the node
+   * accepts any / the minted name) or the origin address itself.
+   */
+  overrideHost: z.enum(['hostname', 'origin']).default('hostname'),
+  /** Comment stamped on the service (never the public hostname). */
+  serviceComment: z.string().max(64).default('relay edge'),
+});
+export type FastlyTemplateParams = z.infer<typeof FastlyTemplate>;
+
+export const FASTLY_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [
+  {
+    key: 'labelLength',
+    label: 'Hostname label length',
+    type: 'number',
+    help: '8 to 16 characters.',
+  },
+  {
+    key: 'labelPrefix',
+    label: 'Hostname label prefix',
+    type: 'string',
+    help: 'Optional; up to 8 lowercase characters.',
+  },
+  {
+    key: 'overrideHost',
+    label: 'Origin Host header',
+    type: 'select',
+    options: [
+      { value: 'hostname', label: 'The fronted hostname' },
+      { value: 'origin', label: 'The origin address' },
+    ],
+  },
+  { key: 'serviceComment', label: 'Service comment', type: 'string' },
+];
+
 // --- registry ----------------------------------------------------------------------
 
 export interface TemplateDefinition {
@@ -259,6 +344,16 @@ export const EDGE_TEMPLATES: Record<EdgeProviderId, TemplateDefinition> = {
     schema: OvhTemplate as unknown as z.ZodType<Record<string, unknown>>,
     fields: OVH_TEMPLATE_FIELDS,
     defaults: OvhTemplate.parse({}),
+  },
+  cloudflare: {
+    schema: CloudflareTemplate as unknown as z.ZodType<Record<string, unknown>>,
+    fields: CLOUDFLARE_TEMPLATE_FIELDS,
+    defaults: CloudflareTemplate.parse({}),
+  },
+  fastly: {
+    schema: FastlyTemplate as unknown as z.ZodType<Record<string, unknown>>,
+    fields: FASTLY_TEMPLATE_FIELDS,
+    defaults: FastlyTemplate.parse({}),
   },
 };
 

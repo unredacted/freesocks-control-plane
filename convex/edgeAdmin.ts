@@ -20,7 +20,10 @@ import {
   resolveEdgeSecrets,
   type RenderClientFamily,
 } from './lib/edgeConfig';
-import { assignEndpoints } from './lib/edges/assignment';
+import { assignEndpoints, edgeHostname, edgeLayer } from './lib/edges/assignment';
+import { hostTargetFor } from './lib/edges/layers';
+import { parseIntent } from './lib/edges/intent';
+import { qualificationBinding, qualificationVerdict } from './lib/edges/frontCheck/binding';
 import { CLIENT_FAMILY_FORMATS } from './lib/edges/clientFamilies';
 import { previewBody } from './lib/edges/preview';
 import { applyEdgeRender } from './lib/edges/renderPipeline';
@@ -227,17 +230,57 @@ async function publishedEndpoints(
     .query('relaySlots')
     .withIndex('by_relay', (q) => q.eq('relayId', origin._id))
     .collect();
-  return published.map((p) => ({
-    poolIndex: p.poolIndex,
-    edgeId: p.edgeId,
-    provider: p.provider,
-    slotKey: slots.find((s) => (s._id as string) === p.slotId)?.slotKey ?? '',
-    slotRemark: p.slotRemark,
-    protocol: p.protocol,
-    port: p.edgePort,
-    addresses: { v4: p.addresses.v4 ?? null, v6: p.addresses.v6 ?? null },
-    activeServerNames: p.serverNames.filter((s) => s.status === 'active').map((s) => s.sni),
-  }));
+  // An L7 front answers DNS long before it carries the transport, so "published
+  // with a hostname" is not role-usable on its own: the role would point its
+  // template Host at a front nothing has been shown to pass through. Require a
+  // current, passing end-to-end proof, re-derived from the live rows.
+  const usable = [];
+  for (const p of published) {
+    if (edgeLayer(p) !== 'l7') {
+      usable.push(p);
+      continue;
+    }
+    const edge = await ctx.db.get(p.edgeId as Id<'edges'>);
+    const slot = edge ? await ctx.db.get(edge.slotId) : null;
+    const profile = slot ? await ctx.db.get(slot.profileId) : null;
+    const intent = edge ? parseIntent(edge.provisionIntent) : null;
+    if (!edge || !slot || !profile || !intent) continue;
+    const verdict = qualificationVerdict(
+      edge.frontQualification,
+      qualificationBinding({ slot, profile, intent, params: slot.transportParams ?? {} }),
+      Date.now(),
+    );
+    if (verdict === 'ok') usable.push(p);
+  }
+  return usable.map((p) => {
+    const actives = p.serverNames.filter((s) => s.status === 'active').map((s) => s.sni);
+    // ONE source for the Host tuple, shared with the flip and with assignment,
+    // so what the role configures and what FCP writes can never disagree.
+    const target = hostTargetFor(p, p.protocol, actives[0] ?? null);
+    const layer = edgeLayer(p);
+    return {
+      poolIndex: p.poolIndex,
+      edgeId: p.edgeId,
+      provider: p.provider,
+      slotKey: slots.find((s) => (s._id as string) === p.slotId)?.slotKey ?? '',
+      slotRemark: p.slotRemark,
+      protocol: p.protocol,
+      layer,
+      port: p.edgePort,
+      addresses: {
+        v4: p.addresses.v4 ?? null,
+        v6: p.addresses.v6 ?? null,
+        hostname: p.addresses.hostname ?? null,
+      },
+      hostname: edgeHostname(p),
+      sni: target?.sni ?? null,
+      hostHeader: target?.host ?? null,
+      // Behind an L7 front the edge HOSTNAME is the name the client presents;
+      // the profile's own names are not consulted, so reporting them here would
+      // have the role configure a name that is never sent.
+      activeServerNames: layer === 'l7' && p.addresses.hostname ? [p.addresses.hostname] : actives,
+    };
+  });
 }
 
 export const relayBySlugView = internalQuery({
@@ -270,10 +313,17 @@ export const endpoints = internalQuery({
     if (!origin) return null;
     const cfg = await resolveEdgeConfig(ctx.db);
     const { published } = await publishedEdgesOf(ctx, origin, { includeIneligible: true });
+    // The sample must be assigned under the SAME family rule the renderer uses,
+    // not under a default: with IPv6 emission off for a family, an edge that
+    // only has a v6 address is not assignable, so a sample computed with v6
+    // allowed would name an edge that family never renders.
     const assigned = assignEndpoints(SAMPLE_RENDER_KEY, published, {
       now: Date.now(),
       preferDistinctProviders: cfg.render.preferDistinctProviders,
       includeBackup: true,
+      canEmitV6: RENDER_CLIENT_FAMILIES.every(
+        (f) => effectiveRule(cfg.render, cfg.render.clients[f]).ipv6Mode !== 'off',
+      ),
     });
     return {
       relaySlug: origin.slug,
@@ -307,7 +357,9 @@ export const renderPreview = internalQuery({
       includeIneligible: true,
     });
     const format = CLIENT_FAMILY_FORMATS[fam];
-    const input = previewBody(format, templateRemarks);
+    // The preview body must speak the slot's own protocol: a `ws` slot previewed
+    // with a REALITY template would exercise a rewrite path the relay never uses.
+    const input = previewBody(format, templateRemarks, published[0]?.protocol ?? 'reality');
     const out = applyEdgeRender(
       {
         epoch: origin.publicationEpoch,
@@ -439,6 +491,9 @@ export const resolveOperator = internalMutation({
         status: 'destroying',
         destroyAttempts: 0,
         destroyConfirm: undefined,
+        // Restart a parked shared-resource teardown from its first phase.
+        sharedTeardown: undefined,
+        sharedTeardownState: undefined,
         currentOp: undefined,
         failure: undefined,
         steps: e.steps.map((s) => (s.state === 'ambiguous' ? { ...s, state: 'done' as const } : s)),

@@ -1,0 +1,36 @@
+{
+  "_source": {
+    "api": "GET /zones/{zone_id}",
+    "doc": "https://developers.cloudflare.com/api/resources/zones/methods/get/",
+    "sdk": "node_modules/cloudflare/resources/zones/zones.d.ts (Zone)",
+    "taken": "2026-09-16"
+  },
+  "result": {
+    "id": "023e105f4ecef8ad9ca31a8372d0c353",
+    "name": "example.net",
+    "status": "active",
+    "paused": false,
+    "type": "full",
+    "development_mode": 0,
+    "name_servers": ["ns1.example-dns.net", "ns2.example-dns.net"],
+    "original_dnshost": null,
+    "original_name_servers": null,
+    "original_registrar": null,
+    "activated_on": "2026-01-02T00:01:00.12345Z",
+    "created_on": "2026-01-01T05:20:00.12345Z",
+    "modified_on": "2026-01-02T00:01:00.12345Z",
+    "account": { "id": "023e105f4ecef8ad9ca31a8372d0c353", "name": "Example Account" },
+    "owner": { "id": null, "type": "user", "email": null },
+    "meta": { "step": 4, "phishing_detected": false },
+    "plan": {
+      "id": "0feeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "name": "Free Website",
+      "legacy_id": "free",
+      "is_subscribed": true,
+      "can_subscribe": false
+    }
+  },
+  "success": true,
+  "errors": [],
+  "messages": []
+}

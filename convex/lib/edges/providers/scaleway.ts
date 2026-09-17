@@ -16,7 +16,12 @@
  * delete: an LB still `ready` means the delete never landed (`still_present`).
  */
 import { z } from 'zod';
-import { createClient } from '@scaleway/sdk-client';
+import {
+  createAdvancedClient,
+  withHTTPClient,
+  withProfile,
+  withUserAgent,
+} from '@scaleway/sdk-client';
 import { Lbv1 } from '@scaleway/sdk-lb';
 import type {
   DiscoverResult,
@@ -57,16 +62,26 @@ export const SCALEWAY_ZONES = [
 type ZonedApi = InstanceType<typeof Lbv1.ZonedAPI>;
 type FetchLike = typeof fetch;
 
-/** Build the SDK client. `fetchImpl` is injectable for tests. */
+/**
+ * Build the SDK client. `fetchImpl` is injectable for tests. Built with the
+ * advanced factory: `createClient` runs its argument through `withProfile`,
+ * which copies only the profile fields and silently DROPS `httpClient`, so the
+ * simple form kept the fetch captured at module import and no stub could ever
+ * replace it (the wire-contract test caught a call reaching the real API).
+ * `withHTTPClient` is the documented way to substitute the transport, and the
+ * production path resolves `fetch` lazily per call so a runtime polyfill applies.
+ */
 export function scalewayApi(cfg: ScalewayConfig, fetchImpl?: FetchLike): ZonedApi {
-  const client = createClient({
-    accessKey: cfg.accessKey,
-    secretKey: cfg.secretKey,
-    defaultProjectId: cfg.projectId,
-    defaultZone: cfg.zone as never,
-    httpClient: fetchImpl ?? ((input, init) => fetch(input, init)),
-    userAgent: 'fcp-relay/1',
-  });
+  const client = createAdvancedClient(
+    withProfile({
+      accessKey: cfg.accessKey,
+      secretKey: cfg.secretKey,
+      defaultProjectId: cfg.projectId,
+      defaultZone: cfg.zone as never,
+    }),
+    withHTTPClient(fetchImpl ?? ((input, init) => fetch(input, init))),
+    withUserAgent('fcp-relay/1'),
+  );
   return new Lbv1.ZonedAPI(client);
 }
 

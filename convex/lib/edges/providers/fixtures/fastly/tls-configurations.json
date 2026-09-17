@@ -1,0 +1,75 @@
+{
+  "_source": "https://www.fastly.com/documentation/reference/api/tls/configurations/#list-tls-configs (include=dns_records, read 2026-09-16)",
+  "data": [
+    {
+      "id": "TLSCONFIG01",
+      "type": "tls_configuration",
+      "attributes": {
+        "name": "Default TLS configuration",
+        "default": true,
+        "bulk": false,
+        "http_protocols": ["http/1.1", "h2"],
+        "tls_protocols": ["1.2", "1.3"]
+      },
+      "relationships": {
+        "dns_records": {
+          "data": [
+            {
+              "id": "j.sni.global.fastly.net",
+              "type": "dns_record"
+            },
+            {
+              "id": "151.101.1.0",
+              "type": "dns_record"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "TLSCONFIG02",
+      "type": "tls_configuration",
+      "attributes": {
+        "name": "Customer TLS configuration",
+        "default": false,
+        "bulk": false
+      },
+      "relationships": {
+        "dns_records": {
+          "data": [
+            {
+              "id": "c.sni.global.fastly.net",
+              "type": "dns_record"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "included": [
+    {
+      "id": "j.sni.global.fastly.net",
+      "type": "dns_record",
+      "attributes": {
+        "record_type": "CNAME",
+        "region": "global"
+      }
+    },
+    {
+      "id": "151.101.1.0",
+      "type": "dns_record",
+      "attributes": {
+        "record_type": "A",
+        "region": "global"
+      }
+    },
+    {
+      "id": "c.sni.global.fastly.net",
+      "type": "dns_record",
+      "attributes": {
+        "record_type": "CNAME",
+        "region": "global"
+      }
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "_source": {
+    "api": "any call over the 1,200 requests / 5 min per-user limit (HTTP 429)",
+    "doc": "https://developers.cloudflare.com/fundamentals/api/reference/limits/",
+    "note": "retryable at the orchestrator level only; the SDK is built with maxRetries 0",
+    "taken": "2026-09-16"
+  },
+  "result": null,
+  "success": false,
+  "errors": [{ "code": 10000, "message": "Rate limited. More than 1200 requests per 300 seconds" }],
+  "messages": []
+}

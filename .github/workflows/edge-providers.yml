@@ -1,0 +1,66 @@
+name: Edge providers
+# Wire-level contract tests for every edge provider adapter: the way FCP calls
+# each provider's API (paths, methods, headers, bodies, pagination, no retries,
+# lost-response recovery, destroy after partial provisioning) pinned per
+# provider, one job per provider so a drift shows up by name in the checks.
+# Credential-free: the SDKs and hand-rolled clients run against a recording
+# HTTP transport, never against the real provider.
+on:
+  pull_request:
+  push:
+    branches: [main, v2]
+  schedule:
+    - cron: '41 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+concurrency:
+  group: edge-providers-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  contract:
+    name: ${{ matrix.provider }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        provider: [gcore, upcloud, scaleway, ovh, cloudflare, fastly]
+    steps:
+      - uses: actions/checkout@v7
+      # Same single source of truth as ci.yml: Bun from package.json.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: bun install --frozen-lockfile
+      - run: bun run i18n:compile
+      # The adapter's own tests + the lifecycle wire contract filtered to this
+      # provider (`-t` matches the per-provider describe blocks) + the
+      # capability cross-check.
+      - name: Adapter tests
+        run: bunx vitest run "convex/lib/edges/providers/${{ matrix.provider }}"
+      - name: Wire contract
+        run: bunx vitest run convex/lib/edges/providers/wireContract.test.ts -t "${{ matrix.provider }}"
+      - name: Capability cross-check
+        run: bunx vitest run convex/lib/edges/providers/capabilities.test.ts convex/lib/edgeProviderIds.test.ts -t "${{ matrix.provider }}"
+
+  orchestration:
+    name: Provider ops through the orchestrator
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: bun install --frozen-lockfile
+      - run: bun run i18n:compile
+      - run: bunx vitest run convex/edgeProviderOps.test.ts convex/lib/edgeProviderIds.test.ts convex/lib/edges/providers/capabilities.test.ts convex/lib/edges/providers/http.test.ts
+      # The wire-contract table in docs/edges.md must list every call the
+      # adapters make (the test that pins it lives beside the contract).
+      - run: bunx vitest run convex/lib/edges/providers/wireContract.test.ts -t "docs"

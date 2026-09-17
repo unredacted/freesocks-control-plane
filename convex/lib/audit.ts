@@ -294,9 +294,11 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // `changed` = names of the fields the write touched (never their values);
   // the three booleans are the operator-owned knob flips, when they changed.
   'relay.update': ['slug', 'changed', 'autoRotate', 'hostManaged', 'enabled'],
+  // Booleans only: the credential itself never reaches the audit log.
+  'relay.qualification_credential': ['slug', 'minted', 'revoked', 'replaced'],
   'relay.delete': ['slug', 'force'],
   'relay.upsert': ['slug', 'created', 'changed'],
-  'edge.adopted': ['slug', 'edgeId', 'managed', 'publication'],
+  'edge.adopted': ['slug', 'edgeId', 'managed', 'publication', 'refused', 'shared'],
   'relay.slot.upsert': ['relaySlug', 'slotKey', 'created'],
   'relay.slot.retire': ['relaySlug', 'slotKey'],
   'edge.published': ['relaySlug', 'edgeId', 'poolIndex', 'epoch', 'rotationId'],
@@ -349,10 +351,12 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'admin.edge.config.change': ['changedKeys'],
   'admin.edge.render.change': ['changedKeys'],
   'admin.edge.probe.change': ['changedKeys'],
-  'admin.edge.rotate': ['slug', 'trigger', 'force', 'rotationId'],
-  'admin.edge.burn': ['slug', 'trigger', 'force', 'rotationId'],
-  'admin.edge.provision': ['slug', 'trigger', 'rotationId'],
-  'admin.edge.publish': ['slug', 'trigger', 'rotationId', 'edgeId'],
+  // `forceGeoEvidence` records that an operator waived the affected-country
+  // evidence gate for this run (a boolean; the transport proof is never waived).
+  'admin.edge.rotate': ['slug', 'trigger', 'force', 'forceGeoEvidence', 'rotationId'],
+  'admin.edge.burn': ['slug', 'trigger', 'force', 'forceGeoEvidence', 'rotationId'],
+  'admin.edge.provision': ['slug', 'trigger', 'forceGeoEvidence', 'rotationId'],
+  'admin.edge.publish': ['slug', 'trigger', 'forceGeoEvidence', 'rotationId', 'edgeId'],
   'admin.edge.cancel': ['slug', 'rotationId', 'deferred'],
 };
 

@@ -1,0 +1,11 @@
+{
+  "_source": "https://www.fastly.com/documentation/reference/api/tls/subscriptions/ (JSON:API error envelope, read 2026-09-16)",
+  "errors": [
+    {
+      "status": "422",
+      "code": "Unprocessable Entity",
+      "title": "Unprocessable Entity",
+      "detail": "k3m7q9zb.example.org is already covered by another subscription"
+    }
+  ]
+}

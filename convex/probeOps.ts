@@ -14,6 +14,7 @@ import type { Id } from './_generated/dataModel';
 import Globalping from 'globalping';
 import {
   GLOBALPING_USER_AGENT,
+  globalpingKind,
   globalpingPoll,
   globalpingStart,
   type GlobalpingLike,
@@ -21,7 +22,14 @@ import {
 import { checkhostNodes, checkhostPoll, checkhostStart } from './lib/edges/probes/checkhost';
 import { ripeAtlasPoll, ripeAtlasStart, type AtlasStarted } from './lib/edges/probes/ripeatlas';
 import { internalProbe } from './lib/edges/probes/internal';
-import { shortError, type ProbeResult, type ProbeTarget } from './lib/edges/probes/types';
+import {
+  shortError,
+  type ProbeAddressKind,
+  type ProbeProtocol,
+  type ProbeResult,
+  type ProbeTarget,
+  type RequestedFamily,
+} from './lib/edges/probes/types';
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -38,10 +46,33 @@ export function __setGlobalpingFactory(f: typeof globalpingFactory | null): void
     f ?? ((token) => new Globalping({ auth: token || undefined }) as unknown as GlobalpingLike);
 }
 
-function parseTarget(target: string, ipVersion: 4 | 6): ProbeTarget {
+/**
+ * `<address>:<port>` as the run stored it: `1.2.3.4:443`, `[2001:db8::1]:443`
+ * or `front.example:443`. The address kind, protocol and requested family come
+ * from the run's own fields; a row written before they existed is an IPv4
+ * literal probed over bare TCP.
+ */
+export function parseTarget(
+  target: string,
+  run: {
+    ipVersion?: 4 | 6;
+    addressKind?: ProbeAddressKind;
+    probeProtocol?: ProbeProtocol;
+    requestedFamily?: RequestedFamily;
+  },
+): ProbeTarget {
   const m = /^\[?([^\]]+?)\]?:(\d+)$/.exec(target);
-  if (!m) return { address: target, port: 443, ipVersion };
-  return { address: m[1], port: Number(m[2]), ipVersion };
+  const address = m ? m[1] : target;
+  const port = m ? Number(m[2]) : 443;
+  const addressKind = run.addressKind ?? 'ip';
+  return {
+    address,
+    port,
+    addressKind,
+    protocol: run.probeProtocol ?? 'tcp',
+    requestedFamily: run.requestedFamily ?? (addressKind === 'name' ? 'any' : (run.ipVersion ?? 4)),
+    ...(run.ipVersion !== undefined ? { ipVersion: run.ipVersion } : {}),
+  };
 }
 
 async function finish(ctx: ActionCtx, runId: Id<'probeRuns'>, results: ProbeResult[]) {
@@ -58,7 +89,9 @@ export const execute = internalAction({
     const c = await ctx.runQuery(internal.probes.runContext, { runId });
     if (!c || c.run.status !== 'requested') return null;
     const { run, cfg, secrets } = c;
-    const target = parseTarget(run.target, run.ipVersion);
+    const target = parseTarget(run.target, run);
+    // Error strings are stored: a hostname target's own name never goes into one.
+    const redact = target.addressKind === 'name' ? [target.address] : [];
     const opts = {
       countries: cfg.probe.countries,
       perCountryLimit: cfg.probe.perCountryLimit,
@@ -68,12 +101,13 @@ export const execute = internalAction({
       switch (run.source) {
         case 'internal': {
           await ctx.runMutation(internal.probes.markRunning, { runId });
-          const r = await internalProbe(fetch, target);
+          const r = await internalProbe({ fetchFn: fetch }, target);
           await finish(ctx, runId, [r]);
           return null;
         }
         case 'globalping': {
           const client = globalpingFactory(secrets.globalpingToken);
+          const kind = globalpingKind(target);
           const started = await globalpingStart(client, target, opts);
           await ctx.runMutation(internal.probes.markRunning, {
             runId,
@@ -82,7 +116,7 @@ export const execute = internalAction({
           const deadline = Date.now() + 60_000;
           while (Date.now() < deadline) {
             await sleep(3000);
-            const p = await globalpingPoll(client, started.externalId);
+            const p = await globalpingPoll(client, started.externalId, { kind, redact });
             if (p.status === 'finished') {
               await finish(ctx, runId, p.results);
               return null;
@@ -104,7 +138,13 @@ export const execute = internalAction({
           let last: ProbeResult[] = [];
           while (Date.now() < deadline) {
             await sleep(3000);
-            const p = await checkhostPoll(fetch, started.externalId, started.nodeCountries, asns);
+            const p = await checkhostPoll(
+              fetch,
+              started.externalId,
+              started.nodeCountries,
+              asns,
+              redact,
+            );
             last = p.results;
             if (p.status === 'finished') {
               await finish(ctx, runId, p.results);

@@ -359,6 +359,143 @@ describe('relay block detector', () => {
     expect(w.window.byEdge[s.edgeA]).toEqual({ count: 1, countries: { IR: 1 } });
   });
 
+  /**
+   * Report rows on the origin: `zeroWeight` deduplicated repeats and `weighted`
+   * distinct reporters. `weightedFirst` puts the real reporters at the head of
+   * the index instead of behind the repeats.
+   */
+  async function bulkReports(
+    t: ReturnType<typeof convexTest>,
+    opts: {
+      zeroWeight: number;
+      weighted: number;
+      edgeId?: Id<'edges'>;
+      weightedFirst?: boolean;
+    },
+  ) {
+    const insert = (
+      ctx: { db: { insert: (table: 'issueReports', doc: object) => unknown } },
+      weight: 0 | 1,
+    ) =>
+      ctx.db.insert('issueReports', {
+        kind: 'report',
+        reason: 'cant-connect',
+        backend: 'remnawave',
+        relaySlug: 'node-one',
+        country: 'IR',
+        detectorWeight: weight,
+        ...(weight === 1 && opts.edgeId
+          ? { connectionChoice: 'primary' as const, relayEdgeId: opts.edgeId }
+          : {}),
+      });
+    await t.run(async (ctx) => {
+      const rounds: Array<0 | 1> = opts.weightedFirst ? [1, 0] : [0, 1];
+      for (const weight of rounds) {
+        const n = weight === 1 ? opts.weighted : opts.zeroWeight;
+        for (let i = 0; i < n; i++) await insert(ctx, weight);
+      }
+    });
+  }
+
+  test('the window is paginated, not collected: zero-weight duplicates ahead of the real reporters never hide them', async () => {
+    vi.useFakeTimers({ now: NOW });
+    const s = await seed();
+    // 300 deduplicated repeats are written FIRST, so any `.take(N)` with N ≤ 300
+    // would read nothing but zero-weight rows and see no reporter at all.
+    await bulkReports(s.t, { zeroWeight: 300, weighted: 8 });
+    const w = (await s.t.query(internal.edgeDetector.relayWindow, {
+      relayId: s.relayId,
+      now: NOW,
+    }))!;
+    expect(w.window.reports).toBe(308);
+    expect(w.window.distinctReporters).toBe(8);
+    expect(w.window.incomplete ?? false).toBe(false);
+  });
+
+  test('a window past detect.maxReportRowsPerEval is INCOMPLETE: suspicion still shows, but the veto is evidence_incomplete and nothing rotates', async () => {
+    vi.useFakeTimers({ now: NOW });
+    const s = await seed();
+    await warmBaseline(s.t, s.relayId, 100);
+    await nodeLoad(s.t, s.serverId, 0);
+    await s.t.run(async (ctx) => {
+      await upsertSettingRow(ctx, 'edge.enabled', 'true');
+      await upsertSettingRow(ctx, 'edge.autoRotate', 'true');
+      // A cap below the row count (100 is the configurable floor): the same
+      // evidence that rotates under the cap must not rotate over it.
+      await upsertSettingRow(ctx, 'edge.detect.maxReportRowsPerEval', '100');
+      await ctx.db.patch(s.relayId, { autoRotate: true });
+    });
+    // Enough edge-attributed reporters to rotate, behind enough duplicates to
+    // push the window over the cap.
+    await bulkReports(s.t, {
+      zeroWeight: 200,
+      weighted: 8,
+      edgeId: s.edgeA,
+      weightedFirst: true,
+    });
+    const capped = (await s.t.query(internal.edgeDetector.relayWindow, {
+      relayId: s.relayId,
+      now: NOW,
+    }))!;
+    expect(capped.window.incomplete).toBe(true);
+    expect(capped.window.reports).toBe(100);
+    const r = await s.t.action(internal.edgeDetector.run, {});
+    expect(r.rotated).toBe(0);
+    const o = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
+    expect(o.suspicion!.veto).toBe('evidence_incomplete');
+    expect(o.activeRotationId).toBeUndefined();
+    // A truncated window never teaches the baseline either.
+    const samples = await s.t.run((ctx) => ctx.db.query('relaySamples').collect());
+    expect(samples.some((x) => x.at === NOW)).toBe(false);
+    // Raise the cap over the row count and the very same rows rotate.
+    await s.t.run((ctx) => upsertSettingRow(ctx, 'edge.detect.maxReportRowsPerEval', '2000'));
+    const whole = (await s.t.query(internal.edgeDetector.relayWindow, {
+      relayId: s.relayId,
+      now: NOW,
+    }))!;
+    expect(whole.window.incomplete ?? false).toBe(false);
+    expect(whole.window.reports).toBe(208);
+    expect(whole.window.distinctReporters).toBe(8);
+    expect((await s.t.action(internal.edgeDetector.run, {})).rotated).toBe(1);
+  });
+
+  test('a baseline sample is written ONCE from the window, and never while the node stats are stale', async () => {
+    vi.useFakeTimers({ now: NOW });
+    const s = await seed();
+    await warmBaseline(s.t, s.relayId, 100);
+    // Stats older than the staleness ceiling: no live user count to compare
+    // against, so the sample would poison the baseline it feeds.
+    await s.t.run((ctx) =>
+      ctx.db.insert('backendNodeInventory', {
+        backendServerId: s.serverId,
+        nodeUuid: 'n1',
+        name: 'node-one',
+        usersOnline: 100,
+        online: true,
+        lastStatsAt: NOW - 60 * 60_000,
+      }),
+    );
+    await bulkReports(s.t, { zeroWeight: 3, weighted: 2 });
+    await s.t.action(internal.edgeDetector.run, {});
+    expect(
+      (await s.t.run((ctx) => ctx.db.query('relaySamples').collect())).some((x) => x.at === NOW),
+    ).toBe(false);
+    // Fresh stats: one sample, carrying the WINDOW's own counts (rows and
+    // deduplicated reporters), written by a single mutation.
+    await s.t.run(async (ctx) => {
+      for (const inv of await ctx.db.query('backendNodeInventory').collect())
+        await ctx.db.patch(inv._id, { lastStatsAt: NOW - 60_000 });
+    });
+    const later = NOW + 60_000;
+    vi.setSystemTime(later);
+    await s.t.action(internal.edgeDetector.run, {});
+    const written = (await s.t.run((ctx) => ctx.db.query('relaySamples').collect())).filter(
+      (x) => x.at === later,
+    );
+    expect(written).toHaveLength(1);
+    expect(written[0]).toMatchObject({ reports: 5, distinctReporters: 2, usersOnline: 100 });
+  });
+
   async function warmBaseline(
     t: ReturnType<typeof convexTest>,
     relayId: Id<'relays'>,

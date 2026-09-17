@@ -18,6 +18,9 @@ const NODE_ACTION_DEPS = [
   '@scaleway/sdk-client',
   '@scaleway/sdk-lb',
   '@scaleway/sdk-std',
+  'cloudflare',
+  'fastly',
+  'superagent',
   'yaml',
 ];
 

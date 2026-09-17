@@ -23,6 +23,42 @@ services:
       - ./.cache/compat/runtime:/work:ro
     command: [bun, /origin.mjs]
     networks: [compat-origin]
+
+  # Front qualification (docker/compat/frontcheck-up.sh): the REAL software the
+  # relay nodes run, so the check is proved against Xray-core rather than
+  # against a fake that returns what the checker expects. Pinned by digest.
+  compat-frontcheck-xray:
+    platform: linux/amd64
+    image: ghcr.io/xtls/xray-core:26.3.27@sha256:592ec4d11f656db95598d01e76dbcc6e002d67360b96a5436500a938230f52c7
+    volumes:
+      - ./docker/compat/frontcheck-xray.json:/etc/xray/config.json:ro
+      - ./.cache/compat/frontcheck:/etc/xray/tls:ro
+    command: [run, -c, /etc/xray/config.json]
+    # Loopback only: these inbounds accept a known test credential.
+    ports:
+      - '127.0.0.1:18443:18443'
+      - '127.0.0.1:18444:18444'
+      - '127.0.0.1:18445:18445'
+    depends_on: [compat-frontcheck-origin]
+    networks: [compat-frontcheck]
+  compat-frontcheck-origin:
+    image: oven/bun:${FCP_COMPAT_BUN_VERSION:?read from packageManager by test:compat}
+    volumes:
+      - ./docker/compat/frontcheck-origin.mjs:/origin.mjs:ro
+    command: [bun, /origin.mjs]
+    networks:
+      compat-frontcheck:
+        # A fixed address: the Xray image is distroless, so the test must not
+        # depend on name resolution inside it (the outbound redirects here).
+        ipv4_address: 10.89.71.10
+
 networks:
   compat-origin:
     internal: true
+  # Not `internal`: the Xray inbounds are published on loopback, and published
+  # ports are not reliably routed on an internal network. Nothing here reaches
+  # the internet by itself anyway (the outbound redirects to the origin above).
+  compat-frontcheck:
+    ipam:
+      config:
+        - subnet: 10.89.71.0/24

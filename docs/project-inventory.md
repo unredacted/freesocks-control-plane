@@ -507,17 +507,23 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   `pg_dump` shipped offsite to S3-compatible storage. **Live when `BACKUP_S3_*` is set** (else
   local-only with a loud warning).
 - **Edge providers + probes** (`convex/lib/edges/providers/*`, `convex/edgeProviderOps.ts`;
-  `convex/lib/edges/probes/*`, `convex/probeOps.ts`; `docs/edges.md`): TCP load-balancer
+  `convex/lib/edges/probes/*`, `convex/probeOps.ts`; `convex/lib/edges/frontCheck/*`,
+  `convex/frontQualifyOps.ts`; `docs/edges.md`): L4 load-balancer adapters and L7 CDN-front
   adapters for the supported providers (`src/shared/contracts/edgeProviderIds.ts`), a
-  resource-step ledger with four-outcome discovery and operation claims, and reachability probes
-  via the official `globalping` SDK, check-host.net and optional RIPE Atlas. Pinned deps (verified
+  resource-step ledger with four-outcome discovery, operation claims and shared external locks,
+  an authenticated end-to-end front qualification for L7 edges, and reachability probes via the
+  official `globalping` SDK, check-host.net and optional RIPE Atlas. Pinned deps (verified
   against the registry at install): `yaml` 2.9.0 (Clash rendering), `@scaleway/sdk-lb` 2.13.1 +
-  `@scaleway/sdk-client` 2.7.0, `globalping` 0.4.0. **Action runtime floor:** the `"use node"`
-  actions run on the Node baked into the self-hosted backend image (22.22.2 at the pinned
-  release); `scripts/node-floor.mjs` derives the highest `engines.node` among those deps and
-  `docker/deploy-entrypoint.sh` fails the deploy below it (`DEPLOY_SKIP_NODE_FLOOR=true` to
+  `@scaleway/sdk-client` 2.7.0, `cloudflare` 7.1.0 (TypeScript SDK, retries off), `fastly`
+  16.1.0 (official JavaScript SDK behind a typed wrapper), `globalping` 0.4.0. Every adapter's
+  wire contract (each endpoint FCP calls) is pinned by `wireContract.test.ts` and the
+  `.github/workflows/edge-providers.yml` matrix, credential-free. **Action runtime floor:** the
+  `"use node"` actions run on the Node baked into the self-hosted backend image (22.22.2 at the
+  pinned release); `scripts/node-floor.mjs` derives the highest `engines.node` among those deps
+  and `docker/deploy-entrypoint.sh` fails the deploy below it (`DEPLOY_SKIP_NODE_FLOOR=true` to
   bypass); the dashboard shows the observed version. **Dormant** until the operator adds
-  accounts and flips the `edge.*` switches.
+  accounts and flips the `edge.*` switches; L7 automatic selection additionally waits for
+  `edge.l7.autoSelect`.
 - **Email / notifications**: **intentionally absent.** Accounts are anonymous: no contact
   details are collected and the control plane sends nothing. Lifecycle transitions (grace,
   disabled) are recorded to the audit log only. There is no email subsystem, and adding one

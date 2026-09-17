@@ -72,6 +72,84 @@ export const destroyExhausted = internalMutation({
 });
 
 /**
+ * Persist one step of a SHARED-resource teardown (an adopted domain on a
+ * service FCP does not own). The known columns live on `edges.sharedTeardown`
+ * so reconcile and the lock key can read them without parsing; the driver's own
+ * extra fields ride along as JSON in `edges.sharedTeardownState`.
+ *
+ * Terminal phases act here, in the same transaction as the state write:
+ *  - `done`: the workflow removed FCP's DOMAIN from the shared resource, so
+ *    that child is `confirmed_gone`. Nothing else is: the DNS records live in
+ *    another account's zone and no version workflow touches them, so they stay
+ *    `present` and the ordinary destroy walk deletes and confirms them through
+ *    the DNS client. Marking them gone here would leave the zone holding a
+ *    CNAME (and an ACME challenge record) for a hostname FCP no longer serves;
+ *  - `needs_operator`: the workflow cannot converge on its own (a lost clone, a
+ *    version drift); the edge parks with the driver's code.
+ */
+export const recordSharedTeardown = internalMutation({
+  args: {
+    edgeId: v.id('edges'),
+    state: v.object({
+      phase: v.string(),
+      serviceId: v.string(),
+      fromVersion: v.optional(v.number()),
+      workVersion: v.optional(v.number()),
+      code: v.optional(v.string()),
+      extra: v.optional(v.string()),
+    }),
+    /**
+     * Ledger kinds a `done` phase resolves: the ones the workflow itself
+     * removed. Only the domain by default; everything else is deleted by the
+     * ordinary destroy walk, which can actually confirm it.
+     */
+    ownedKinds: v.optional(v.array(v.string())),
+    countAttempt: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { edgeId, state, ownedKinds, countAttempt }) => {
+    const edge = await ctx.db.get(edgeId);
+    if (!edge) return null;
+    const now = Date.now();
+    const prior = edge.sharedTeardown;
+    const attempts =
+      (prior?.serviceId === state.serviceId ? prior.attempts : 0) + (countAttempt ? 1 : 0);
+    const kinds = ownedKinds ?? ['domain'];
+    const done = state.phase === 'done';
+    await ctx.db.patch(edgeId, {
+      sharedTeardown: {
+        phase: state.phase,
+        serviceId: state.serviceId,
+        // The version the workflow started from is the one it cloned; keep the
+        // first observation so a re-entry never re-anchors on a newer version.
+        fromVersion: prior?.fromVersion ?? state.fromVersion ?? state.workVersion ?? 0,
+        ...(state.workVersion !== undefined ? { workVersion: state.workVersion } : {}),
+        attempts,
+      },
+      ...(state.extra ? { sharedTeardownState: state.extra } : {}),
+      ...(done
+        ? {
+            resources: edge.resources.map((r) =>
+              kinds.includes(r.kind) ? { ...r, deleteState: 'confirmed_gone' as const } : r,
+            ),
+          }
+        : {}),
+      ...(state.phase === 'needs_operator'
+        ? {
+            status: 'needs_operator' as const,
+            statusChangedAt: now,
+            failure: {
+              step: 'shared_teardown',
+              code: (state.code ?? 'needs_operator').slice(0, 64),
+            },
+          }
+        : {}),
+      updatedAt: now,
+    });
+    return null;
+  },
+});
+
+/**
  * Operator: put a parked edge back on the destroy path (resets the attempt
  * counter). Refusals are ConvexErrors so the HTTP layer answers an error, never
  * a 200 with `ok:false`.
@@ -98,6 +176,12 @@ export const retryDestroy = internalMutation({
       destroyConfirm: undefined,
       currentOp: undefined,
       failure: undefined,
+      // A shared-resource teardown parked in a terminal phase must restart from
+      // its first phase (the driver re-plans from the ledger); leaving the
+      // terminal state would make the driver fall through to a destroy walk
+      // that can only answer `unresolved` for a shared domain.
+      sharedTeardown: undefined,
+      sharedTeardownState: undefined,
       statusChangedAt: now,
       updatedAt: now,
     });

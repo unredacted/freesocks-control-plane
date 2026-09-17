@@ -139,3 +139,151 @@ describe('protocolProfiles: server-name retirement invalidation', () => {
     expect(await epochOf(t, relayId)).toBe(afterReactivate);
   });
 });
+
+describe('protocolProfiles: the pool-writer gate', () => {
+  /** Park the relay in quarantine the way a failed rollback does. */
+  async function quarantine(t: ReturnType<typeof convexTest>, relayId: Id<'relays'>) {
+    const rotationId = await t.run((ctx) =>
+      ctx.db.insert('edgeRotations', {
+        relayId,
+        kind: 'replace',
+        trigger: 'manual',
+        burn: false,
+        force: false,
+        phase: 'quarantined',
+        stepVersion: 1,
+        cancelRequested: false,
+        hostPlan: [],
+        flipAttempts: 0,
+        rollbackAttempts: 0,
+        pollAttempts: 0,
+        events: [],
+        startedAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+    await t.run((ctx) =>
+      ctx.db.patch(relayId, {
+        quarantine: { rotationId, since: Date.now(), reason: 'test' },
+        updatedAt: Date.now(),
+      }),
+    );
+  }
+
+  /** A rotation in flight on the relay, as `start` leaves it. */
+  async function rotating(t: ReturnType<typeof convexTest>, relayId: Id<'relays'>) {
+    const rotationId = await t.run((ctx) =>
+      ctx.db.insert('edgeRotations', {
+        relayId,
+        kind: 'replace',
+        trigger: 'manual',
+        burn: false,
+        force: false,
+        phase: 'host_flipping',
+        stepVersion: 1,
+        cancelRequested: false,
+        hostPlan: [],
+        flipAttempts: 0,
+        rollbackAttempts: 0,
+        pollAttempts: 0,
+        events: [],
+        startedAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+    await t.run((ctx) => ctx.db.patch(relayId, { activeRotationId: rotationId }));
+  }
+
+  test('every profile write is refused while a relay on it has a rotation running', async () => {
+    const { t, profileId, relayId } = await seed();
+    await rotating(t, relayId);
+    await expect(
+      t.mutation(internal.protocolProfiles.update, { id: profileId, enabled: false }),
+    ).rejects.toThrow(/rotation_running/);
+    await expect(
+      t.mutation(internal.protocolProfiles.retireSni, { id: profileId, snis: ['a.example'] }),
+    ).rejects.toThrow(/rotation_running/);
+    await expect(
+      t.mutation(internal.protocolProfiles.reactivateSni, { id: profileId, snis: ['a.example'] }),
+    ).rejects.toThrow(/rotation_running/);
+  });
+
+  test('every profile write is refused while a relay on it is quarantined', async () => {
+    const { t, profileId, relayId } = await seed();
+    await quarantine(t, relayId);
+    await expect(
+      t.mutation(internal.protocolProfiles.update, { id: profileId, enabled: false }),
+    ).rejects.toThrow(/quarantined/);
+    await expect(
+      t.mutation(internal.protocolProfiles.retireSni, { id: profileId, snis: ['a.example'] }),
+    ).rejects.toThrow(/quarantined/);
+    await expect(
+      t.mutation(internal.protocolProfiles.reactivateSni, { id: profileId, snis: ['a.example'] }),
+    ).rejects.toThrow(/quarantined/);
+  });
+
+  test('a profile no relay uses is writable during another relay rotation', async () => {
+    const { t, relayId } = await seed();
+    const { id: other } = await t.mutation(internal.protocolProfiles.create, {
+      slug: 'prof-unused',
+      name: 'Unused',
+      targetAddress: 'target.example',
+      serverNames: ['x.example'],
+    });
+    await rotating(t, relayId);
+    await t.mutation(internal.protocolProfiles.update, { id: other, enabled: false });
+    expect((await t.query(internal.protocolProfiles.get, { id: other }))!.enabled).toBe(false);
+  });
+
+  test('every write bumps the revision, so a front qualification bound to it expires', async () => {
+    const { t, profileId } = await seed();
+    expect((await t.query(internal.protocolProfiles.get, { id: profileId }))!.revision).toBe(1);
+    await t.mutation(internal.protocolProfiles.update, { id: profileId, enabled: false });
+    expect((await t.query(internal.protocolProfiles.get, { id: profileId }))!.revision).toBe(2);
+    await t.mutation(internal.protocolProfiles.retireSni, { id: profileId, snis: ['a.example'] });
+    expect((await t.query(internal.protocolProfiles.get, { id: profileId }))!.revision).toBe(3);
+    await t.mutation(internal.protocolProfiles.reactivateSni, {
+      id: profileId,
+      snis: ['a.example'],
+    });
+    expect((await t.query(internal.protocolProfiles.get, { id: profileId }))!.revision).toBe(4);
+  });
+});
+
+describe('protocolProfiles: name-free HTTP-transport profiles', () => {
+  test('ws / httpupgrade / grpc may carry NO server name; reality and tls may not', async () => {
+    const t = convexTest(schema, modules);
+    const { id } = await t.mutation(internal.protocolProfiles.create, {
+      slug: 'prof-ws-l7',
+      name: 'WS behind a front only',
+      protocol: 'ws',
+      serverNames: [],
+    });
+    expect((await t.query(internal.protocolProfiles.get, { id }))!.serverNames).toEqual([]);
+    // Behind an L7 front the member presents the edge HOSTNAME, so there is
+    // nothing for the profile to carry; REALITY/TLS have no such substitute.
+    await expect(
+      t.mutation(internal.protocolProfiles.create, {
+        slug: 'prof-reality-empty',
+        name: 'REALITY',
+        protocol: 'reality',
+        targetAddress: 'target.example',
+        serverNames: [],
+      }),
+    ).rejects.toThrow(/serverNames needs 1\.\.32/);
+  });
+
+  test('an update may retire the LAST name of an HTTP-transport profile', async () => {
+    const t = convexTest(schema, modules);
+    const { id } = await t.mutation(internal.protocolProfiles.create, {
+      slug: 'prof-ws-named',
+      name: 'WS',
+      protocol: 'ws',
+      serverNames: ['a.example'],
+    });
+    await t.mutation(internal.protocolProfiles.update, { id, serverNames: [] });
+    const row = (await t.query(internal.protocolProfiles.get, { id }))!;
+    expect(row.serverNames.every((s) => s.status === 'retired')).toBe(true);
+    await t.mutation(internal.protocolProfiles.retireSni, { id, snis: ['a.example'] });
+  });
+});

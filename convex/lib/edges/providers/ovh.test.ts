@@ -179,13 +179,14 @@ describe('ovh: polling, discovery, describe, destroy', () => {
 
   test('discover: absence needs two quiet looks AND the settle floor; an in-flight balancer operation blocks it', async () => {
     mockFetch(withTime(emptyProject));
-    // Legacy ledger without startedAt: the look count alone applies.
+    // Ledger without startedAt: the settle floor cannot be proven, so absence
+    // is never promoted (the orchestrator supplies a fallback reference time).
     const noStart: Ledger = { steps: [], resources: [] };
     expect(await ovhProvider.discover(cfg, step, spec, noStart, 1)).toEqual({
       status: 'unresolved',
     });
     expect(await ovhProvider.discover(cfg, step, spec, noStart, 2)).toEqual({
-      status: 'confirmed_absent',
+      status: 'unresolved',
     });
     // Two looks 40 s after the request: too early.
     expect(await ovhProvider.discover(cfg, step, spec, ledgerAt(Date.now() - 40_000), 2)).toEqual({

@@ -22,6 +22,7 @@ export function mockIssueUser(spec: IssueUserSpec): IssuedUser {
     backendShortId: shortId,
     subscriptionUrl: `https://mock.local/sub/${shortId}`,
     raw: { mock: true, username: spec.username },
+    protocolUuid: crypto.randomUUID(),
   };
 }
 

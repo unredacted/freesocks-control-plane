@@ -1,0 +1,12 @@
+{
+  "_source": {
+    "api": "any DNS record read/delete for an id that is gone (HTTP 404)",
+    "doc": "https://developers.cloudflare.com/api/ (error envelope); https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-errors/",
+    "note": "message text echoes request fields, so only status and errors[].code ever leave the adapter",
+    "taken": "2026-09-16"
+  },
+  "result": null,
+  "success": false,
+  "errors": [{ "code": 81044, "message": "Record does not exist. (81044)" }],
+  "messages": []
+}

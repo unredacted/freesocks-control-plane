@@ -4,6 +4,7 @@ import { EDGE_DEFAULTS, defaultClientRule } from '../edgeConfig';
 import type { AssignedEndpoint, PublishedEdge } from './assignment';
 import { effectiveRule, renderEntries, renderEdgeEndpoints } from './render';
 import { applyEdgeRender } from './renderPipeline';
+import { decodeBase64Loose, encodeBase64 } from './render/base64';
 import { rewriteVlessLine } from './render/links';
 
 const NODE = 'node-a';
@@ -35,8 +36,8 @@ const edgeB: PublishedEdge = {
 };
 
 const assigned: { primary: AssignedEndpoint; backup: AssignedEndpoint } = {
-  primary: { role: 'primary', edge: edgeA, sni: 'cdn-a.example' },
-  backup: { role: 'backup', edge: edgeB, sni: 'cdn-b.example' },
+  primary: { role: 'primary', edge: edgeA, sni: 'cdn-a.example', hostHeader: null },
+  backup: { role: 'backup', edge: edgeB, sni: 'cdn-b.example', hostHeader: null },
 };
 
 const cfg = { ...EDGE_DEFAULTS.render, enabled: true };
@@ -140,7 +141,7 @@ describe('link-list rendering', () => {
     const tcpTemplate = `vless://11111111-2222-3333-4444-555555555555@192.0.2.10:443?encryption=none&security=tls&sni=node.example&type=tcp#${encodeURIComponent(TEMPLATE)}`;
     const tcpEdge: PublishedEdge = { ...edgeA, protocol: 'plain', serverNames: [] };
     const tcpAssigned = {
-      primary: { role: 'primary' as const, edge: tcpEdge, sni: null },
+      primary: { role: 'primary' as const, edge: tcpEdge, sni: null, hostHeader: null },
       backup: null,
     };
     const links = renderEdgeEndpoints({
@@ -195,6 +196,22 @@ describe('link-list rendering', () => {
     const decoded = atob(out1.body);
     expect(decoded.split('\n')).toHaveLength(4);
     expect(decoded).toContain(OTHER_NODE_WS);
+  });
+
+  test('a base64 list with a non-ASCII remark round-trips (bytes, not latin1)', () => {
+    const cyrillic = `vless://11111111-2222-3333-4444-555555555555@198.51.100.9:443?encryption=none&type=tcp#${encodeURIComponent('Прямое подключение')}`;
+    const body = encodeBase64([templateLink, cyrillic].join('\n'));
+    const out = renderEdgeEndpoints({
+      body,
+      templateRemarks: [TEMPLATE],
+      assigned,
+      rule: linksRule,
+    });
+    expect(out.applied).toBe(true);
+    const decoded = decodeBase64Loose(out.body)!;
+    expect(decoded.split('\n')).toHaveLength(4);
+    expect(decoded).toContain(encodeURIComponent('Прямое подключение'));
+    expect(decoded).toContain('FreeSocks%20Primary');
   });
 
   test('no template line → untouched; disabled → untouched', () => {
@@ -490,6 +507,43 @@ describe('sing-box rendering', () => {
     expect(selector.default).toBe('FreeSocks Auto (2)');
   });
 
+  test('autoGroup OFF: an operator group named like the auto group keeps its type and members (R7)', () => {
+    const withOperatorGroup = {
+      ...singbox,
+      outbounds: [
+        ...singbox.outbounds,
+        { type: 'selector', tag: 'FreeSocks Auto', outbounds: [TEMPLATE, OTHER_NODE_WS] },
+      ],
+    };
+    const out = renderEdgeEndpoints({
+      body: JSON.stringify(withOperatorGroup),
+      templateRemarks: [TEMPLATE],
+      assigned,
+      rule: { ...autoRule, autoGroup: false },
+    });
+    expect(out.applied).toBe(true);
+    const cfg = JSON.parse(out.body) as { outbounds: Array<Record<string, unknown>> };
+    const operator = cfg.outbounds.find((o) => o.tag === 'FreeSocks Auto')!;
+    expect(operator.type).toBe('selector');
+    expect(operator.outbounds).toEqual([
+      'FreeSocks Primary',
+      'FreeSocks Primary (IPv6)',
+      'FreeSocks Backup',
+      OTHER_NODE_WS,
+    ]);
+    // With the auto group ON the same group IS adopted (today's behaviour).
+    const on = renderEdgeEndpoints({
+      body: JSON.stringify(withOperatorGroup),
+      templateRemarks: [TEMPLATE],
+      assigned,
+      rule: autoRule,
+    });
+    const adopted = (on.body ? JSON.parse(on.body) : { outbounds: [] }).outbounds.find(
+      (o: Record<string, unknown>) => o.tag === 'FreeSocks Auto',
+    )!;
+    expect(adopted.type).toBe('urltest');
+  });
+
   test('renders are byte-identical for identical input', () => {
     const a = renderEdgeEndpoints({
       body: JSON.stringify(singbox),
@@ -675,6 +729,46 @@ rules:
     const doc2 = YAML.parse(out2.body) as { proxies: Array<Record<string, unknown>> };
     expect(doc2.proxies[0]).toMatchObject({ type: 'trojan', sni: 'cdn-a.example' });
     expect(doc2.proxies[0].servername).toBeUndefined();
+  });
+
+  test('autoGroup OFF: an operator group named like the auto group keeps its type and members (R7)', () => {
+    // The operator already has a select group called "FreeSocks Auto" listing
+    // the template. With the auto group off we must only swap the template for
+    // the emitted proxies: turning their selector into a url-test of our own
+    // entries would hijack a group we were told not to manage.
+    const body = clash.replace(
+      "  - name: '→ Remnawave'",
+      `  - name: FreeSocks Auto\n    type: select\n    proxies:\n      - ${TEMPLATE}\n      - ${OTHER_NODE_WS}\n  - name: '→ Remnawave'`,
+    );
+    const out = renderEdgeEndpoints({
+      body,
+      templateRemarks: [TEMPLATE],
+      assigned,
+      rule: { ...mihomoRule, autoGroup: false },
+    });
+    expect(out.applied).toBe(true);
+    const doc = YAML.parse(out.body) as {
+      'proxy-groups': Array<{ name: string; type: string; proxies: string[] }>;
+    };
+    const operator = doc['proxy-groups'].find((g) => g.name === 'FreeSocks Auto')!;
+    expect(operator.type).toBe('select');
+    expect(operator.proxies).toEqual([
+      'FreeSocks Primary',
+      'FreeSocks Primary (IPv6)',
+      'FreeSocks Backup',
+      OTHER_NODE_WS,
+    ]);
+    // With the auto group ON the same group IS adopted (today's behaviour).
+    const on = renderEdgeEndpoints({
+      body,
+      templateRemarks: [TEMPLATE],
+      assigned,
+      rule: mihomoRule,
+    });
+    const adopted = (
+      YAML.parse(on.body) as { 'proxy-groups': Array<{ name: string; type: string }> }
+    )['proxy-groups'].find((g) => g.name === 'FreeSocks Auto')!;
+    expect(adopted.type).toBe('url-test');
   });
 
   test('label / auto-group collisions with existing proxy names are suffixed', () => {

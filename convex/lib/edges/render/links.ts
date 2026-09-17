@@ -6,7 +6,7 @@
  * list (other transports, comments) passes through untouched.
  */
 import { bracketIfV6 } from '../ip';
-import { decodeBase64Loose } from './base64';
+import { decodeBase64Loose, encodeBase64 } from './base64';
 import { orderEndpoints, type RenderInput, type RenderOutput } from './types';
 
 const PROXY_LINE_RE = /^(vless|vmess|trojan|ss|ssr|hy2|hysteria2|tuic):\/\//i;
@@ -22,13 +22,28 @@ export function remarkOf(line: string): string | null {
 }
 
 /**
- * Rewrite one proxy line's host, port, remark and (when given) SNI. Returns
- * null if unparseable. A null `sni` leaves the line's own TLS parameters alone
- * (a non-REALITY slot terminates TLS on the node with its real name).
+ * Rewrite one proxy line's host, port, remark, SNI and HTTP Host. Returns null
+ * if unparseable: the `user@host:port?query` schemes only, so a `vmess://`
+ * base64 blob (whose whole payload is one encoded JSON object, address
+ * included) is never touched and is dropped instead of handed out.
+ *
+ * A null `sni` leaves the line's own TLS parameters alone (a non-REALITY slot
+ * terminates TLS on the node with its real name). `hostHeader` is the HTTP Host
+ * the transport must carry: it is written to `host=` for an HTTP transport
+ * (always for `type=ws|httpupgrade`, otherwise only when the template already
+ * carried the parameter) and to `authority=` for `type=grpc` when the template
+ * carried one. `path`, `serviceName`, `pbk`, `sid`, `spx`, `fp`, `security` and
+ * `flow` are never touched: they are the node's own credentials and routing.
  */
 export function rewriteVlessLine(
   line: string,
-  target: { address: string; port: number; sni: string | null; label: string },
+  target: {
+    address: string;
+    port: number;
+    sni: string | null;
+    hostHeader?: string | null;
+    label: string;
+  },
 ): string | null {
   const hashIdx = line.indexOf('#');
   const main = hashIdx >= 0 ? line.slice(0, hashIdx) : line;
@@ -36,10 +51,20 @@ export function rewriteVlessLine(
   if (!m) return null;
   const [, scheme, user, , , query] = m;
   const params = new URLSearchParams(query ? query.slice(1) : '');
+  const hostHeader = target.hostHeader ?? null;
   if (target.sni !== null) {
     params.set('sni', target.sni);
-    // REALITY never wants the address as the SNI; keep serverName-style params in sync.
-    if (params.has('host')) params.set('host', target.sni);
+    // A protocol with no Host of its own (REALITY / plain TLS) must still not
+    // keep the template's `host=`: it would carry the origin's name.
+    if (hostHeader === null && params.has('host')) params.set('host', target.sni);
+  }
+  if (hostHeader !== null) {
+    const type = (params.get('type') ?? '').toLowerCase();
+    if (params.has('host') || type === 'ws' || type === 'httpupgrade')
+      params.set('host', hostHeader);
+    // gRPC carries the name in `:authority`; only keep an existing one in step,
+    // never invent one (Xray defaults it to the address, which is correct here).
+    if (type === 'grpc' && params.has('authority')) params.set('authority', hostHeader);
   }
   const q = params.toString();
   return `${scheme}${user}@${bracketIfV6(target.address)}:${target.port}${q ? `?${q}` : ''}#${encodeURIComponent(target.label)}`;
@@ -93,6 +118,7 @@ export function renderLinks(input: RenderInput): RenderOutput {
       address: ep.address,
       port: ep.port,
       sni: ep.sni,
+      hostHeader: ep.hostHeader,
       label: ep.label,
     });
     if (line) emitted.push(line);
@@ -105,7 +131,7 @@ export function renderLinks(input: RenderInput): RenderOutput {
   // Drop-only (no endpoints, templates dropped): the marker expands to nothing.
   const joined = out.flatMap((l) => (l === '__RELAY_ENDPOINTS__' ? emitted : [l])).join('\n');
   return {
-    body: encoded ? btoa(joined) : joined,
+    body: encoded ? encodeBase64(joined) : joined,
     applied: true,
     ...(emitted.length === 0 ? { reason: 'templates_dropped' } : {}),
     emitted: emitted.length,

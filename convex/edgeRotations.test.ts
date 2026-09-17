@@ -39,6 +39,8 @@ function fakeWorld(
     remark: string;
     address: string;
     port: number;
+    sni?: string;
+    host?: string;
     inbound: { configProfileUuid: string; configProfileInboundUuid: string };
   }> = [];
   if (opts.hostPresent !== false) {
@@ -47,6 +49,7 @@ function fakeWorld(
       remark: 'node-one-relay-u',
       address: opts.hostLeaks ? ORIGIN : OLD_EDGE,
       port: 443,
+      sni: 'a.example',
       inbound: {
         configProfileUuid: '11111111-1111-4111-8111-111111111111',
         configProfileInboundUuid: INBOUND,
@@ -61,11 +64,20 @@ function fakeWorld(
       if (c.path === '/api/hosts' && c.method === 'GET') return jsonRes({ response: panelHosts });
       if (c.path === '/api/hosts' && c.method === 'PATCH') {
         patches++;
-        const body = c.body as { uuid: string; address: string; port: number };
+        const body = c.body as {
+          uuid: string;
+          address: string;
+          port: number;
+          sni?: string;
+          host?: string;
+        };
         const h = panelHosts.find((x) => x.uuid === body.uuid);
         if (h) {
           h.address = body.address;
           h.port = body.port;
+          // The panel stores what it is sent; a cleared field arrives as ''.
+          if (body.sni !== undefined) h.sni = body.sni;
+          if (body.host !== undefined) h.host = body.host;
           if (opts.vanishAfterFirstPatch) panelHosts.splice(panelHosts.indexOf(h), 1);
         }
         return jsonRes({ response: h ?? null });
@@ -255,7 +267,17 @@ describe('edgeRotations: replace', () => {
     expect(r.phase).toBe('done');
     expect(r.outcome).toBe('published');
     expect(r.hostPlan).toEqual([
-      { uuid: HOST_UUID, oldAddress: OLD_EDGE, oldPort: 443, inboundUuid: INBOUND },
+      {
+        uuid: HOST_UUID,
+        oldAddress: OLD_EDGE,
+        oldPort: 443,
+        inboundUuid: INBOUND,
+        // A version-2 snapshot: the previous SNI/Host are known, so a rollback
+        // can restore the whole tuple.
+        snapshotVersion: 2,
+        oldSni: 'a.example',
+        oldHost: null,
+      },
     ]);
     expect(r.previousBinding).toMatchObject({ edgeId: oldEdgeId, poolIndex: 0 });
     const codes = r.events.map((e) => e.code);
@@ -712,6 +734,10 @@ describe('edgeRotations: recovery, guards and bounds', () => {
     slotId: Id<'relaySlots'>,
     oldEdgeId: Id<'edges'>,
     extra: Record<string, unknown>,
+    /** Absent = a LEGACY plan (no snapshot version): SNI/Host are unknown. */
+    hostPlan: Array<Record<string, unknown>> = [
+      { uuid: HOST_UUID, oldAddress: OLD_EDGE, oldPort: 443, inboundUuid: INBOUND },
+    ],
   ) {
     const { edgeId: newEdgeId } = await t.mutation(internal.relays.adoptEdge, {
       relayId,
@@ -733,7 +759,7 @@ describe('edgeRotations: recovery, guards and bounds', () => {
         stepVersion: 7,
         cancelRequested: false,
         outcome: 'hosts_changed',
-        hostPlan: [{ uuid: HOST_UUID, oldAddress: OLD_EDGE, oldPort: 443, inboundUuid: INBOUND }],
+        hostPlan,
         hostPlanCaptured: true,
         previousBinding: { edgeId: oldEdgeId, slotId, poolIndex: 0 },
         flipAttempts: 1,
@@ -804,6 +830,72 @@ describe('edgeRotations: recovery, guards and bounds', () => {
     expect(world.patches()).toBe(0);
   });
 
+  test('a LEGACY plan restores address and port ONLY: unknown is never written as a clear', async () => {
+    vi.useFakeTimers();
+    const world = fakeWorld();
+    const { t, relayId, slotId, oldEdgeId } = await seed();
+    // The panel holds the new edge (the forward PATCH landed) with a name the
+    // operator, not FCP, put there.
+    world.panelHosts[0].address = NEW_EDGE;
+    world.panelHosts[0].sni = 'operator.example';
+    const { rotationId } = await rollingBackRow(
+      t,
+      relayId,
+      slotId,
+      oldEdgeId,
+      { forwardWriteAttempted: true },
+      // A rotation captured before the full-tuple snapshot existed.
+      [{ uuid: HOST_UUID, oldAddress: OLD_EDGE, oldPort: 443, inboundUuid: INBOUND }],
+    );
+    await drain(t, rotationId);
+    expect((await t.query(internal.edgeRotations.get, { id: rotationId }))!.phase).toBe(
+      'rolled_back',
+    );
+    expect(world.panelHosts[0].address).toBe(OLD_EDGE);
+    // The name the plan knows nothing about is untouched.
+    expect(world.panelHosts[0].sni).toBe('operator.example');
+  });
+
+  test('a version-2 plan restores the WHOLE tuple, clears included (an L7 flip rolled back)', async () => {
+    vi.useFakeTimers();
+    const world = fakeWorld();
+    const { t, relayId, slotId, oldEdgeId } = await seed();
+    // The flip had pointed the Host at a CDN hostname: address, SNI and Host.
+    world.panelHosts[0].address = 'front.example.org';
+    world.panelHosts[0].sni = 'front.example.org';
+    world.panelHosts[0].host = 'front.example.org';
+    const { rotationId } = await rollingBackRow(
+      t,
+      relayId,
+      slotId,
+      oldEdgeId,
+      { forwardWriteAttempted: true },
+      [
+        {
+          uuid: HOST_UUID,
+          oldAddress: OLD_EDGE,
+          oldPort: 443,
+          inboundUuid: INBOUND,
+          snapshotVersion: 2,
+          oldSni: 'a.example',
+          // The previous L4 binding carried no Host header: restoring it means
+          // CLEARING the CDN hostname, not leaving it behind.
+          oldHost: null,
+        },
+      ],
+    );
+    await drain(t, rotationId);
+    expect((await t.query(internal.edgeRotations.get, { id: rotationId }))!.phase).toBe(
+      'rolled_back',
+    );
+    expect(world.panelHosts[0]).toMatchObject({
+      address: OLD_EDGE,
+      port: 443,
+      sni: 'a.example',
+      host: '',
+    });
+  });
+
   test('a running rotation blocks every other pool writer and a hostManaged flip', async () => {
     fakeWorld();
     const { t, relayId, slotId, oldEdgeId } = await seed();
@@ -859,7 +951,13 @@ describe('edgeRotations: recovery, guards and bounds', () => {
       publishOnDone: false,
     });
     await driveUntil(t, rotationId, 'provisioning');
-    await t.mutation(internal.protocolProfiles.update, { id: profileId, enabled: false });
+    // The profile MUTATION is refused while a rotation runs (docs/edges.md), so
+    // the row is patched directly: the point of this test is that the run
+    // survives observing a disabled profile, whatever put it there.
+    await expect(
+      t.mutation(internal.protocolProfiles.update, { id: profileId, enabled: false }),
+    ).rejects.toThrow(/rotation_running/);
+    await t.run((ctx) => ctx.db.patch(profileId, { enabled: false }));
     await drain(t, rotationId);
     const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
     expect(r.phase).toBe('done');
@@ -1059,11 +1157,16 @@ describe('edgeRotations: recovery, guards and bounds', () => {
     expect((await t.query(internal.edgeRotations.get, { id: rotationId }))!.phase).toBe(
       'quarantined',
     );
-    await t.mutation(internal.protocolProfiles.update, { id: profileId, enabled: false });
+    // Nothing bypasses a quarantine, profile writes included, so the row is
+    // patched directly to put the edge in the state the resolve must refuse.
+    await expect(
+      t.mutation(internal.protocolProfiles.update, { id: profileId, enabled: false }),
+    ).rejects.toThrow(/quarantined/);
+    await t.run((ctx) => ctx.db.patch(profileId, { enabled: false }));
     await expect(
       t.mutation(internal.edgeRotations.resolveQuarantine, { relayId, keep: 'current' }),
     ).rejects.toThrow(/profile_disabled/);
-    await t.mutation(internal.protocolProfiles.update, { id: profileId, enabled: true });
+    await t.run((ctx) => ctx.db.patch(profileId, { enabled: true }));
     await t.mutation(internal.edgeRotations.resolveQuarantine, { relayId, keep: 'current' });
     expect((await t.query(internal.relays.get, { id: relayId }))!.quarantine).toBeUndefined();
   });

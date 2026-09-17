@@ -44,6 +44,9 @@ import {
   EdgeSummary,
 } from '../src/shared/contracts/edges';
 import { scopeFor, throttlePolicyFor } from './httpEdges';
+import { __setEdgeProviderForTests } from './lib/edges/providers/registry';
+import { qualificationBinding } from './lib/edges/frontCheck/binding';
+import type { AdoptionInspection } from './lib/edges/providers/types';
 
 const modules = import.meta.glob('./**/*.*s');
 const ADMIN_SIGN_KEY = 'test-admin-sign';
@@ -260,6 +263,7 @@ describe('relay admin routes', () => {
       'relays',
       'relays/node-candidates/refresh',
       'relays/r1/adopt',
+      'relays/r1/qualification-credential',
       'relays/r1/burn',
       'relays/r1/probe',
       'e1/publish',
@@ -295,6 +299,8 @@ describe('relay admin routes', () => {
     expect(scopeFor(['providers', 'a'], 'PATCH')).toBe('admin:servers:write');
     expect(scopeFor(['providers', 'a', 'rotate-credentials'], 'POST')).toBe('admin:servers:write');
     expect(scopeFor(['relays', 'r'], 'DELETE')).toBe('admin:servers:write');
+    // Qualifying writes a verdict onto the edge: a write scope, not a read one.
+    expect(scopeFor(['edges', 'e1', 'qualify'], 'POST')).toBe('admin:servers:write');
     expect(scopeFor(['relays', 'by-slug', 'n'], 'PUT')).toBe('admin:servers:write');
   });
 
@@ -305,7 +311,12 @@ describe('relay admin routes', () => {
     expect(throttlePolicyFor(['providers', 'a1', 'inventory', 'refresh'])).toBe(P);
     expect(throttlePolicyFor(['providers', 'a1', 'rotate-credentials'])).toBe(P);
     expect(throttlePolicyFor(['relays', 'node-candidates', 'refresh'])).toBe(P);
+    // An import inspects the provider resource before anything is recorded.
+    expect(throttlePolicyFor(['relays', 'r1', 'adopt'])).toBe(P);
     expect(throttlePolicyFor(['edges', 'e1', 'live', 'refresh'])).toBe(P);
+    // An authenticated session through the front is an outbound call too.
+    expect(throttlePolicyFor(['edges', 'e1', 'qualify'])).toBe(P);
+    expect(throttlePolicyFor(['relays', 'r1', 'qualification-credential'])).toBe(P);
     expect(throttlePolicyFor(['render', 'preview'])).toBe(P);
     expect(throttlePolicyFor(['edges', 'e1', 'probe'])).toBe('admin.edges.probe');
     expect(throttlePolicyFor(['relays', 'r1', 'probe'])).toBe('admin.edges.probe');
@@ -316,7 +327,6 @@ describe('relay admin routes', () => {
       ['templates'],
       ['templates', 'validate'],
       ['relays'],
-      ['relays', 'r1', 'adopt'],
       ['relays', 'r1', 'burn'],
       ['edges', 'e1', 'publish'],
       ['probes', 'targets'],
@@ -439,7 +449,10 @@ describe('relay admin routes', () => {
     const { t, call, relayId } = await fixture();
     await t.mutation(internal.rateLimits.setPolicy, {
       policyKey: 'admin.edges.provider-call',
-      max: 2,
+      // The fixture already imported two edges through `…/adopt`, which is a
+      // provider-calling POST on this same bucket: allow for them so the two
+      // preview calls below are still inside the window.
+      max: 4,
       windowMs: 60_000,
       enabled: true,
     });
@@ -843,5 +856,279 @@ describe('relay admin routes', () => {
     );
     expect(opened.family).toBe('v2rayng');
     expect(opened.format).toBe('links');
+  });
+});
+
+describe('relay admin routes: importing an existing L7 front', () => {
+  const ORIGIN = '203.0.113.10';
+  const HOSTNAME = 'front-a.example.org';
+
+  afterEach(() => __setEdgeProviderForTests('cloudflare', null));
+
+  /**
+   * A Cloudflare stand-in whose `inspectForAdoption` reports what a real one
+   * would: the record's own id, every hostname the resource serves, what it
+   * dials, and whether it is shared with other hostnames.
+   */
+  function fakeCloudflare(over: Partial<AdoptionInspection> = {}) {
+    const calls: Array<{ resourceId: string; hostname: string }> = [];
+    __setEdgeProviderForTests('cloudflare', {
+      id: 'cloudflare',
+      templateSchema: z.object({}).passthrough(),
+      templateFields: [],
+      defaultTemplate: {},
+      testCredentials: async () => ({ ok: true, observed: { zoneSslMode: 'full' } }),
+      planProvision: () => [],
+      runStep: async () => ({ status: 'done', resources: [] }),
+      discover: async () => ({ status: 'unresolved' }),
+      describe: async () => ({ state: 'active', addresses: {}, health: 'unknown' }),
+      inspect: async () => ({ summary: { addresses: [], members: [], listeners: [] }, raw: {} }),
+      inventory: async () => ({ loadBalancers: [], ips: [], flavors: [] }),
+      planDestroy: () => [],
+      runDestroy: async () => ({ status: 'confirmed_gone' }),
+      inspectForAdoption: async (_cfg: unknown, resourceId: string, hostname: string) => {
+        calls.push({ resourceId, hostname });
+        return {
+          resources: [
+            {
+              kind: 'dns_record',
+              resourceId,
+              ownership: 'adopted' as const,
+              meta: { zoneId: 'z1' },
+            },
+            {
+              kind: 'service',
+              resourceId: 'svc-1',
+              ownership: 'adopted' as const,
+              meta: { version: 7 },
+            },
+          ],
+          hostname,
+          hostnames: [HOSTNAME, 'someone-else.example.org'],
+          shared: true,
+          content: ORIGIN,
+          ...over,
+        };
+      },
+    } as never);
+    return calls;
+  }
+
+  /** seed() + a Cloudflare account, a name-free ws profile, a relay and an L7 slot. */
+  async function l7Fixture() {
+    const s = await seed();
+    const { call, t } = s;
+    const acct = (await (
+      await call('POST', 'providers', {
+        provider: 'cloudflare',
+        name: 'acct-cf',
+        settings: { zoneId: 'a'.repeat(32), zoneName: 'example.org' },
+        credentials: { apiToken: 'cf' },
+      })
+    ).json()) as { id: string };
+    // The zone's encryption mode comes from the credential test, never typed.
+    await t.run((ctx) =>
+      ctx.db.patch(acct.id as Id<'edgeProviderAccounts'>, {
+        observedSettings: JSON.stringify({ zoneSslMode: 'full' }),
+        observedAt: Date.now(),
+      }),
+    );
+    // A ws profile with NO server names: behind a front the member presents the
+    // edge hostname, so the profile has nothing of its own to carry.
+    await call('POST', 'profiles', { slug: 'prof-ws', name: 'WS', protocol: 'ws' });
+    const view = (await (
+      await call('PUT', 'relays/by-slug/node-one', {
+        backendServerSlug: 'panel-a',
+        nodeHostname: 'node-one',
+        originAddress: ORIGIN,
+      })
+    ).json()) as { relay: { id: string } };
+    await call('PUT', 'relays/by-slug/node-one/slots/w', {
+      profileSlug: 'prof-ws',
+      inboundTag: 'VLESS_RELAY_W',
+      configProfileUuid: '11111111-1111-4111-8111-111111111111',
+      configProfileInboundUuid: '22222222-2222-4222-8222-222222222222',
+      originPort: 443,
+      originTransport: {
+        scheme: 'https',
+        certPublic: true,
+        certNames: ['origin.example'],
+        acceptsHostHeader: 'any',
+      },
+      transportParams: { path: '/ws' },
+    });
+    const slots = RelayBySlugResponse.parse(
+      await (await call('GET', 'relays/by-slug/node-one')).json(),
+    ).slots;
+    expect(slots).toHaveLength(1);
+    return { ...s, accountId: acct.id, relayId: view.relay.id, slotId: slots[0].id };
+  }
+
+  test('the resource is inspected first: the import carries its real children and a frozen intent', async () => {
+    const { t, call, accountId, relayId, slotId } = await l7Fixture();
+    const calls = fakeCloudflare();
+    const res = await call('POST', `relays/${relayId}/adopt`, {
+      slotId,
+      accountId,
+      resourceId: 'rec-1',
+      hostname: HOSTNAME,
+      publish: true,
+    });
+    const body = (await res.json()) as {
+      edgeId: string;
+      poolIndex: number | null;
+      code: string;
+    };
+    expect(res.status).toBe(200);
+    // The adapter was asked about exactly the resource and hostname requested.
+    expect(calls).toEqual([{ resourceId: 'rec-1', hostname: HOSTNAME }]);
+    const edge = (await t.query(internal.edges.get, {
+      id: body.edgeId as Id<'edges'>,
+    }))!;
+    expect(edge.layer).toBe('l7');
+    expect(edge.managed).toBe(true);
+    expect(edge.addresses.hostname).toBe(HOSTNAME);
+    // The intent is frozen against the hostname the resource ALREADY serves,
+    // never a minted one, so describe/qualify/destroy can find it.
+    const intent = JSON.parse(edge.provisionIntent!) as { hostname: string; zoneSslMode: string };
+    expect(intent.hostname).toBe(HOSTNAME);
+    expect(intent.zoneSslMode).toBe('full');
+    // The real children, with their metadata; the shared service is stamped.
+    const raw = await t.run((ctx) => ctx.db.get(body.edgeId as Id<'edges'>));
+    expect(raw!.resources.map((r) => [r.kind, r.resourceId, r.ownership])).toEqual([
+      ['dns_record', 'rec-1', 'adopted'],
+      ['service', 'svc-1', 'adopted'],
+    ]);
+    expect(JSON.parse(raw!.resources[1].meta!)).toEqual({ version: 7, shared: true });
+    // An L7 import is NEVER published on the operator's word: it takes the
+    // ordinary gate, and a front with no end-to-end proof does not pass it.
+    expect(body.poolIndex).toBeNull();
+    expect(body.code).toBe('front_unqualified');
+    expect(edge.publication).toBe('unpublished');
+  });
+
+  test('a resource that does not dial this origin, or does not serve the hostname, is refused', async () => {
+    const { call, accountId, relayId, slotId } = await l7Fixture();
+    fakeCloudflare({ content: '198.51.100.99' });
+    const foreign = await call('POST', `relays/${relayId}/adopt`, {
+      slotId,
+      accountId,
+      resourceId: 'rec-1',
+      hostname: HOSTNAME,
+      publish: false,
+    });
+    expect(foreign.status).toBeGreaterThanOrEqual(400);
+    expect(await foreign.json()).toMatchObject({ error: { code: 'edge.not_owned' } });
+    fakeCloudflare({ hostnames: ['someone-else.example.org'] });
+    const wrongHost = await call('POST', `relays/${relayId}/adopt`, {
+      slotId,
+      accountId,
+      resourceId: 'rec-1',
+      hostname: HOSTNAME,
+      publish: false,
+    });
+    expect(await wrongHost.json()).toMatchObject({ error: { code: 'edge.not_owned' } });
+  });
+
+  test('a DNS-only (unproxied) record is refused by the import, not silently adopted', async () => {
+    const { call, accountId, relayId, slotId } = await l7Fixture();
+    // The adapter refuses one itself; this is the orchestrator's half, for an
+    // inspection taken before the record lost its proxy. Nothing fronts a
+    // DNS-only name, so the "edge" would answer with the origin's own address.
+    fakeCloudflare({
+      resources: [
+        {
+          kind: 'dns_record',
+          resourceId: 'rec-1',
+          ownership: 'adopted' as const,
+          meta: { zoneId: 'z1', proxied: false },
+        },
+      ],
+    });
+    const res = await call('POST', `relays/${relayId}/adopt`, {
+      slotId,
+      accountId,
+      resourceId: 'rec-1',
+      hostname: HOSTNAME,
+      publish: false,
+    });
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(await res.json()).toMatchObject({ error: { code: 'edge.record_not_proxied' } });
+  });
+
+  test('an L4 edge on a name-free HTTP-transport slot is refused; the L7 one publishes', async () => {
+    const { t, call, relayId, slotId } = await l7Fixture();
+    fakeCloudflare();
+    // An L4 forwarder would have to SELECT one of the profile's own names, and
+    // the profile has none: publishing it would render an endpoint with no name.
+    const l4 = (await (
+      await call('POST', `relays/${relayId}/adopt`, {
+        slotId,
+        ipv4: '198.51.100.7',
+        publish: false,
+      })
+    ).json()) as { edgeId: string };
+    const l4Publish = await call('POST', `${l4.edgeId}/publish`, { direct: true });
+    expect(await l4Publish.json()).toMatchObject({
+      error: { code: 'edge.profile_no_active_sni' },
+    });
+    // The same slot behind a front publishes: its name IS the edge hostname.
+    const l7 = (await (
+      await call('POST', `relays/${relayId}/adopt`, {
+        slotId,
+        hostname: HOSTNAME,
+        publish: false,
+      })
+    ).json()) as { edgeId: string };
+    const edgeId = l7.edgeId as Id<'edges'>;
+    // A front is published only with a CURRENT end-to-end proof; give it one
+    // bound to exactly this configuration.
+    await t.run(async (ctx) => {
+      const edge = (await ctx.db.get(edgeId))!;
+      const slot = (await ctx.db.get(edge.slotId))!;
+      const profile = (await ctx.db.get(slot.profileId))!;
+      const intent = {
+        hostname: HOSTNAME,
+        zoneId: 'a'.repeat(32),
+        zoneName: 'example.org',
+        originTransport: slot.originTransport!,
+        originPort: slot.originPort,
+        zoneSslMode: 'full',
+        templateHash: 'h1',
+        templateParams: {},
+      };
+      const now = Date.now();
+      const binding = qualificationBinding({
+        slot,
+        profile,
+        intent,
+        params: slot.transportParams ?? {},
+      });
+      await ctx.db.patch(edgeId, {
+        provisionIntent: JSON.stringify(intent),
+        frontQualification: {
+          ok: true,
+          checkedAt: now,
+          expiresAt: now + 3_600_000,
+          binding: {
+            ...binding,
+            slotId: binding.slotId as Id<'relaySlots'>,
+            profileId: binding.profileId as Id<'protocolProfiles'>,
+          },
+        },
+      });
+    });
+    // Index 0 on a Host-managed origin needs the flip: that is the rotation
+    // machine's job, not this test's, so take the relay off Host management.
+    await t.mutation(internal.relays.update, {
+      id: relayId as Id<'relays'>,
+      hostManaged: false,
+    });
+    expect(
+      await t.mutation(internal.relays.publishEdge, {
+        relayId: relayId as Id<'relays'>,
+        edgeId,
+      }),
+    ).toMatchObject({ poolIndex: 0 });
   });
 });
