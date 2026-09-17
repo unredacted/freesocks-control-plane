@@ -7,6 +7,8 @@ import { internal } from './_generated/api';
 import { jsonRes, mockFetch } from './lib/edges/testing/mockFetch';
 import { upsertSettingRow } from './appSettings';
 import { MAX_CONFIRM_ATTEMPTS, shouldReissueDelete } from './edgeReconcile';
+import { __setEdgeProviderForTests } from './lib/edges/providers/registry';
+import { z } from 'zod';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -969,5 +971,181 @@ describe('edgeReconcile: observe-only edges', () => {
     });
     await run(s.t);
     expect((await s.t.query(internal.edges.get, { id: edgeId }))!.status).toBe('draining');
+  });
+});
+
+describe('edgeReconcile: tearing a hostname off a SHARED resource', () => {
+  afterEach(() => __setEdgeProviderForTests('cloudflare', null));
+
+  /**
+   * A front provider whose adopted domain sits on a service FCP does not own:
+   * the service cannot be deleted, so removing one hostname from it is a
+   * persisted version workflow the adapter drives one phase at a time.
+   */
+  function fakeSharedProvider(opts: { phases?: string[]; parkWith?: string } = {}) {
+    const phases = opts.phases ?? ['clone', 'remove_domain', 'activate', 'done'];
+    const steps: Array<{ phase: string; workVersion?: number }> = [];
+    __setEdgeProviderForTests('cloudflare', {
+      id: 'cloudflare',
+      templateSchema: z.object({}).passthrough(),
+      templateFields: [],
+      defaultTemplate: {},
+      testCredentials: async () => ({ ok: true }),
+      planProvision: () => [],
+      runStep: async () => ({ status: 'done', resources: [] }),
+      discover: async () => ({ status: 'unresolved' }),
+      describe: async () => ({ state: 'active', addresses: {}, health: 'unknown' }),
+      inspect: async () => ({ summary: { addresses: [], members: [], listeners: [] }, raw: {} }),
+      inventory: async () => ({ loadBalancers: [], ips: [], flavors: [] }),
+      // The SHARED service is never in the destroy plan: FCP deletes only what
+      // it owns on it (its domain, its DNS record).
+      planDestroy: (_cfg: unknown, ledger: { resources: Array<Record<string, unknown>> }) =>
+        ledger.resources.filter((r) => r.kind !== 'service' && r.deleteState !== 'confirmed_gone'),
+      runDestroy: async () => ({ status: 'confirmed_gone' }),
+      sharedTeardown: {
+        plan: (ledger: { resources: Array<Record<string, unknown>> }, opId: string) => {
+          const svc = ledger.resources.find((r) => r.kind === 'service');
+          if (!svc) return null;
+          return {
+            phase: phases[0],
+            serviceId: String(svc.resourceId),
+            fromVersion: 7,
+            opId,
+            attempts: 0,
+            marker: `fcp-${opId}`,
+          };
+        },
+        step: async (_cfg: unknown, state: { phase: string; workVersion?: number }) => {
+          steps.push({ phase: state.phase, workVersion: state.workVersion });
+          if (opts.parkWith) return { ...state, phase: 'needs_operator', code: opts.parkWith };
+          const next = phases[phases.indexOf(state.phase) + 1] ?? 'done';
+          return { ...state, phase: next, workVersion: (state.workVersion ?? 7) + 1 };
+        },
+      },
+    } as never);
+    return steps;
+  }
+
+  /** A destroying L7 edge whose ledger holds a shared service + the children FCP owns. */
+  async function sharedEdge() {
+    const t = convexTest(schema, modules);
+    await t.run((ctx) =>
+      ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'panel-a',
+        slug: 'panel-a',
+        config: { type: 'remnawave', baseUrl: 'https://panel.example', apiToken: 'tok' },
+        isActive: true,
+        priority: 0,
+        keyCount: 0,
+        updatedAt: Date.now(),
+      }),
+    );
+    const { id: accountId } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'cloudflare',
+      name: 'acct-cf',
+      settings: { zoneId: 'a'.repeat(32), zoneName: 'example.org' },
+      credentials: { apiToken: 'cf' },
+    });
+    await t.mutation(internal.protocolProfiles.create, {
+      slug: 'prof-ws',
+      name: 'WS',
+      protocol: 'ws',
+    });
+    const { id: relayId } = await t.mutation(internal.relays.upsertBySlug, {
+      slug: 'node-one',
+      backendServerSlug: 'panel-a',
+      nodeHostname: 'node-one',
+      originAddress: ORIGIN,
+    });
+    const { id: slotId } = await t.mutation(internal.relaySlots.upsert, {
+      relayId,
+      slotKey: 'w',
+      profileSlug: 'prof-ws',
+      inboundTag: 'VLESS_RELAY_W',
+      configProfileUuid: '11111111-1111-4111-8111-111111111111',
+      configProfileInboundUuid: '22222222-2222-4222-8222-222222222222',
+      originPort: 443,
+    });
+    const child = (kind: string, resourceId: string, meta?: string) => ({
+      stepId: 'adopted',
+      kind,
+      resourceId,
+      ownership: 'adopted' as const,
+      deleteState: 'present' as const,
+      ...(meta ? { meta } : {}),
+    });
+    const edgeId = await t.run((ctx) =>
+      ctx.db.insert('edges', {
+        relayId,
+        slotId,
+        accountId,
+        provider: 'cloudflare',
+        managed: true,
+        name: 'adopted-node-one',
+        steps: [],
+        resources: [
+          child('service', 'svc-1', JSON.stringify({ shared: true })),
+          child('domain', 'dom-1'),
+          child('dns_record', 'rec-1'),
+        ],
+        listeners: [{ edgePort: 443, originAddress: ORIGIN, originPort: 443 }],
+        addresses: { hostname: 'front-a.example.org' },
+        layer: 'l7',
+        publication: 'unpublished',
+        status: 'destroying',
+        statusChangedAt: Date.now(),
+        health: 'unknown',
+        destroyAttempts: 0,
+        updatedAt: Date.now(),
+      }),
+    );
+    return { t, edgeId, relayId };
+  }
+
+  test('the version workflow is persisted and advanced ONE phase per pass, then the walk finishes', async () => {
+    mockFetch(() => jsonRes({ response: [] }));
+    const steps = fakeSharedProvider();
+    const { t, edgeId } = await sharedEdge();
+    // Pass 1: the workflow is planned from the ledger and its first phase runs.
+    await run(t);
+    let edge = (await t.run((ctx) => ctx.db.get(edgeId)))!;
+    expect(edge.sharedTeardown).toMatchObject({ phase: 'remove_domain', serviceId: 'svc-1' });
+    // The driver's own extra fields survive as JSON.
+    expect(JSON.parse(edge.sharedTeardownState!)).toMatchObject({ marker: expect.any(String) });
+    expect(steps).toEqual([{ phase: 'clone', workVersion: undefined }]);
+    // Each later pass advances exactly ONE phase: the service's version chain
+    // is shared with every other adopted hostname on it.
+    await run(t);
+    edge = (await t.run((ctx) => ctx.db.get(edgeId)))!;
+    expect(edge.sharedTeardown!.phase).toBe('activate');
+    await run(t);
+    edge = (await t.run((ctx) => ctx.db.get(edgeId)))!;
+    expect(edge.sharedTeardown!.phase).toBe('done');
+    // `done` means the hostname is off the shared service: the children FCP
+    // owns on it are gone, and the SERVICE itself is untouched.
+    expect(edge.resources.map((r) => [r.kind, r.deleteState])).toEqual([
+      ['service', 'present'],
+      ['domain', 'confirmed_gone'],
+      ['dns_record', 'confirmed_gone'],
+    ]);
+    // The ordinary walk now completes the edge (the shared service is not its
+    // to delete, so nothing is left).
+    await run(t);
+    edge = (await t.run((ctx) => ctx.db.get(edgeId)))!;
+    expect(edge.status).toBe('destroyed');
+    expect(steps.map((s) => s.phase)).toEqual(['clone', 'remove_domain', 'activate']);
+    // The version the workflow started from is remembered across re-entries.
+    expect(edge.sharedTeardown!.fromVersion).toBe(7);
+  });
+
+  test('a workflow that cannot converge parks the edge with the driver code', async () => {
+    mockFetch(() => jsonRes({ response: [] }));
+    fakeSharedProvider({ parkWith: 'clone_lost' });
+    const { t, edgeId } = await sharedEdge();
+    await run(t);
+    const edge = (await t.run((ctx) => ctx.db.get(edgeId)))!;
+    expect(edge.status).toBe('needs_operator');
+    expect(edge.failure).toMatchObject({ step: 'shared_teardown', code: 'clone_lost' });
   });
 });

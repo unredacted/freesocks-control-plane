@@ -25,6 +25,7 @@ import { edgeProviderIdValidator } from './lib/edgeProviderIds';
 import { resolveEdgeConfig, edgeMs } from './lib/edgeConfig';
 import {
   isSlotProtocol,
+  protocolIsHttpTransport,
   protocolNeedsTarget,
   protocolUsesSni,
   type SlotProtocol,
@@ -208,8 +209,15 @@ function parseSnis(raw: unknown, protocol: SlotProtocol): string[] {
       });
     if (!out.includes(n)) out.push(n);
   }
-  if (out.length === 0 || out.length > 32) {
-    throw new ConvexError({ code: 'validation', message: 'serverNames needs 1..32 entries' });
+  // An HTTP-transport profile used only behind an L7 front presents the edge
+  // HOSTNAME, never one of its own names, so it may carry NONE. `reality` /
+  // `tls` always need at least one: there is nothing else to present.
+  const min = protocolIsHttpTransport(protocol) ? 0 : 1;
+  if (out.length < min || out.length > 32) {
+    throw new ConvexError({
+      code: 'validation',
+      message: `serverNames needs ${min}..32 entries`,
+    });
   }
   return out;
 }
@@ -460,7 +468,14 @@ export const retireSni = internalMutation({
       return s;
     });
     const count = retiring.length;
-    if (protocolUsesSni(row.protocol) && !next.some((s) => s.status === 'active')) {
+    // An HTTP-transport profile may end up with no name at all (it is then
+    // L7-only: `slotLayers` excludes L4 with `no_server_names`). `reality` /
+    // `tls` have nothing else to present, so they keep at least one.
+    if (
+      protocolUsesSni(row.protocol) &&
+      !protocolIsHttpTransport(row.protocol) &&
+      !next.some((s) => s.status === 'active')
+    ) {
       throw new ConvexError({
         code: 'conflict',
         message: 'A profile keeps at least one active server name',

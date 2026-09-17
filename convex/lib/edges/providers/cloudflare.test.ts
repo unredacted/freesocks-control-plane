@@ -62,16 +62,31 @@ const cfg: CloudflareConfig = {
   accountId: 'acct_1',
 };
 
-const tpl = CloudflareTemplate.parse({});
+/** The template as the CMS stores it: the zone mode is NOT one of its fields. */
+const bareTpl = CloudflareTemplate.parse({});
 
 /**
  * The zone encryption mode reaches the adapter as an EXTRA rendered template
- * param (the orchestrator freezes it into the edge's provisionIntent), not as
- * a schema field, so it is added on top of the parsed template.
+ * param (the orchestrator observes it at credential-test time and freezes it
+ * into the edge's provisionIntent), not as a schema field, so it is added on
+ * top of the parsed template.
  */
-function withMode(mode: 'flexible' | 'full' | 'strict') {
-  return { ...tpl, zoneSslMode: mode };
+function withMode(mode: string, over: Record<string, unknown> = {}) {
+  return { ...bareTpl, ...over, zoneSslMode: mode };
 }
+
+/** The thrown value of a synchronous call (the pure refusals throw rather than reject). */
+function errorOf(fn: () => unknown): unknown {
+  try {
+    fn();
+    return undefined;
+  } catch (e) {
+    return e;
+  }
+}
+
+/** The default for every test that is not about the mode itself. */
+const tpl = withMode('full');
 
 function specFor(originPort = 443, over: Partial<EdgeSpec> = {}): EdgeSpec {
   return {
@@ -157,7 +172,71 @@ describe('cloudflare: port model', () => {
     }
   });
 
-  test('a plaintext-HTTP origin implies the flexible mode when the template says nothing', () => {
+  test('an absent zone mode is refused, never inferred from the origin scheme', () => {
+    // The live zone setting is not readable from a pure plan, and guessing it
+    // would decide both the effective origin port and whether the origin leg is
+    // encrypted at all. A plaintext-HTTP origin is NOT a licence to assume
+    // `flexible`.
+    const httpSpec = specFor(80, {
+      originTransport: {
+        scheme: 'http',
+        certPublic: false,
+        certNames: [],
+        acceptsHostHeader: 'any',
+      },
+    });
+    const stub = mockFetch(route());
+    expect(() => zoneSslModeOf(httpSpec, bareTpl)).toThrow(/zone_mode_unknown/);
+    expect(() => zoneSslModeOf(specFor(443), bareTpl)).toThrow(/zone_mode_unknown/);
+    expect(() => cloudflareProvider.planProvision(cfg, httpSpec, bareTpl)).toThrow(
+      /zone_mode_unknown/,
+    );
+    // An unusable value is no better than a missing one.
+    expect(() => zoneSslModeOf(specFor(443), withMode('off'))).toThrow(/zone_mode_unknown/);
+    // Refused without any I/O at all.
+    expect(stub.calls).toHaveLength(0);
+  });
+
+  test('the zone mode and the slot origin transport must agree, or the plan is refused', () => {
+    const transports = {
+      http: { scheme: 'http', certPublic: false, certNames: [], acceptsHostHeader: 'any' },
+      httpsPublic: {
+        scheme: 'https',
+        certPublic: true,
+        certNames: ['*.origin.example'],
+        acceptsHostHeader: 'any',
+      },
+      httpsPrivate: {
+        scheme: 'https',
+        certPublic: false,
+        certNames: ['node7.internal'],
+        acceptsHostHeader: 'any',
+      },
+    } as const;
+    const matrix: Array<[keyof typeof transports, 'flexible' | 'full' | 'strict', boolean]> = [
+      // a plaintext origin needs `flexible`: every other mode dials 443 over TLS
+      ['http', 'flexible', true],
+      ['http', 'full', false],
+      ['http', 'strict', false],
+      // an https origin needs an encrypted mode; `flexible` would dial port 80
+      ['httpsPublic', 'flexible', false],
+      ['httpsPublic', 'full', true],
+      ['httpsPublic', 'strict', true],
+      // `strict` validates the origin certificate: a private one cannot sit there
+      ['httpsPrivate', 'full', true],
+      ['httpsPrivate', 'strict', false],
+    ];
+    for (const [transport, mode, ok] of matrix) {
+      const port = transport === 'http' ? 80 : 443;
+      const spec = specFor(port, { originTransport: transports[transport] as never });
+      if (ok) expect(zoneSslModeOf(spec, withMode(mode))).toBe(mode);
+      else expect(() => zoneSslModeOf(spec, withMode(mode))).toThrow(/origin_tls_mismatch/);
+    }
+    // A slot that declares no transport at all is not second-guessed.
+    expect(zoneSslModeOf(specFor(443), withMode('strict'))).toBe('strict');
+  });
+
+  test('a refused mode never quotes the hostname, the origin or the zone', () => {
     const spec = specFor(80, {
       originTransport: {
         scheme: 'http',
@@ -166,16 +245,19 @@ describe('cloudflare: port model', () => {
         acceptsHostHeader: 'any',
       },
     });
-    expect(zoneSslModeOf(spec, tpl)).toBe('flexible');
-    expect(cloudflareProvider.planProvision(cfg, spec, tpl).map((s) => s.kind)).toEqual([
-      'create_dns_record',
-    ]);
-    // Absent both signals the conservative default is `full` (encrypted origin on 443).
-    expect(zoneSslModeOf(specFor(443), tpl)).toBe('full');
+    for (const [thrown, code] of [
+      [errorOf(() => zoneSslModeOf(spec, bareTpl)), 'zone_mode_unknown'],
+      [errorOf(() => zoneSslModeOf(spec, withMode('full'))), 'origin_tls_mismatch'],
+    ] as const) {
+      const blob = errorBlob(thrown);
+      expect(blob).toContain(code);
+      for (const secret of ['SECRET_CF', HOSTNAME, ORIGIN, 'example.net'])
+        expect(blob).not.toContain(secret);
+    }
   });
 
   test('a template that forbids the override refuses the slot at plan time (no I/O)', () => {
-    const strictTpl = CloudflareTemplate.parse({ allowOriginPortOverride: false });
+    const strictTpl = withMode('full', { allowOriginPortOverride: false });
     const stub = mockFetch(route());
     expect(() => cloudflareProvider.planProvision(cfg, specFor(8443), strictTpl)).toThrow(
       /origin_port_override_disabled/,
@@ -589,6 +671,103 @@ describe('cloudflare: inspect + inventory', () => {
   });
 });
 
+// --- adoption -------------------------------------------------------------------------
+
+describe('cloudflare: inspectForAdoption', () => {
+  test('an existing record is described as the children an import records', async () => {
+    const stub = mockFetch(route());
+    const seen = await cloudflareProvider.inspectForAdoption!(cfg, RECORD_ID, HOSTNAME);
+    expect(seen).toEqual({
+      resources: [
+        {
+          kind: 'dns_record',
+          resourceId: RECORD_ID,
+          ownership: 'adopted',
+          meta: { name: HOSTNAME, zoneId: ZONE, type: 'A' },
+        },
+        {
+          kind: 'origin_rule',
+          resourceId: RULE_ID,
+          ownership: 'adopted',
+          meta: { rulesetId: RULESET, port: 8443 },
+        },
+      ],
+      hostname: HOSTNAME,
+      hostnames: [HOSTNAME],
+      // A DNS record serves exactly one name: a Cloudflare edge is never shared.
+      shared: false,
+      content: ORIGIN,
+    });
+    // Two reads, no writes: an import changes nothing at the provider.
+    expect(stub.calls.map((c) => c.method)).toEqual(['GET', 'GET']);
+    expect(stub.calls[0]!.path).toBe(`/client/v4/zones/${ZONE}/dns_records/${RECORD_ID}`);
+  });
+
+  test('a zone whose origin rules do not name the hostname adopts the record alone', async () => {
+    mockFetch(route({ '/rulesets/phases': () => jsonRes(wire(originPhaseEmpty)) }));
+    const seen = await cloudflareProvider.inspectForAdoption!(cfg, RECORD_ID, HOSTNAME);
+    expect(seen.resources.map((r) => r.kind)).toEqual(['dns_record']);
+
+    // ...and neither does a rule that routes somebody else's hostname.
+    const foreign = structuredClone(wire(originPhase)) as {
+      result: { rules: Array<{ expression: string }> };
+    };
+    foreign.result.rules[0]!.expression = '(http.host eq "other.example.net")';
+    mockFetch(route({ '/rulesets/phases': () => jsonRes(foreign) }));
+    expect(
+      (await cloudflareProvider.inspectForAdoption!(cfg, RECORD_ID, HOSTNAME)).resources,
+    ).toHaveLength(1);
+
+    // A zone with no entry point ruleset at all is not an error either.
+    mockFetch(route({ '/rulesets/phases': () => jsonRes(wire(notFound), 404) }));
+    expect(
+      (await cloudflareProvider.inspectForAdoption!(cfg, RECORD_ID, HOSTNAME)).resources,
+    ).toHaveLength(1);
+  });
+
+  test('an UNPROXIED record is reported with meta.proxied false, for the caller to refuse', async () => {
+    const rec = structuredClone(wire(recordCreated)) as { result: { proxied: boolean } };
+    rec.result.proxied = false;
+    mockFetch(route({ '/dns_records/': () => jsonRes(rec) }));
+    const seen = await cloudflareProvider.inspectForAdoption!(cfg, RECORD_ID, HOSTNAME);
+    expect(seen.resources[0]!.meta).toEqual({
+      name: HOSTNAME,
+      zoneId: ZONE,
+      type: 'A',
+      proxied: false,
+    });
+  });
+
+  test('a record that is gone, or serves another name, is refused with a short code', async () => {
+    mockFetch(route({ '/dns_records/': () => jsonRes(wire(notFound), 404) }));
+    await expect(cloudflareProvider.inspectForAdoption!(cfg, RECORD_ID, HOSTNAME)).rejects.toThrow(
+      /not_found/,
+    );
+
+    mockFetch(route());
+    await expect(
+      cloudflareProvider.inspectForAdoption!(cfg, RECORD_ID, 'someone-else.example.net'),
+    ).rejects.toThrow(/hostname_mismatch/);
+    // The name comparison is the normalised one (trailing dot, case).
+    await expect(
+      cloudflareProvider.inspectForAdoption!(cfg, RECORD_ID, `${HOSTNAME.toUpperCase()}.`),
+    ).resolves.toMatchObject({ hostname: HOSTNAME });
+  });
+
+  test('an adoption refusal carries no hostname, origin address or token', async () => {
+    mockFetch(route());
+    const err = await cloudflareProvider.inspectForAdoption!(
+      cfg,
+      RECORD_ID,
+      'someone-else.example.net',
+    ).catch((e: unknown) => e);
+    const blob = errorBlob(err);
+    expect(blob).toContain('hostname_mismatch');
+    for (const secret of ['SECRET_CF', HOSTNAME, ORIGIN, 'someone-else', 'example.net'])
+      expect(blob).not.toContain(secret);
+  });
+});
+
 // --- destroy --------------------------------------------------------------------------
 
 describe('cloudflare: destroy', () => {
@@ -664,6 +843,44 @@ describe('cloudflare: credentials + discovery options', () => {
     const res = await cloudflareProvider.testCredentials(cfg);
     expect(res.ok).toBe(true);
     expect(res.detail).toContain('websockets_off');
+    expect(res.observed).toEqual({ zoneSslMode: 'full', websockets: 'off' });
+  });
+
+  test('the two settings travel as `observed`, which is what planning is later given', async () => {
+    for (const mode of ['flexible', 'full', 'strict'] as const) {
+      const ssl = structuredClone(wire(settingSsl)) as { result: { value: string } };
+      ssl.result.value = mode;
+      mockFetch(route({ '/settings/ssl': () => jsonRes(ssl) }));
+      const res = await cloudflareProvider.testCredentials(cfg);
+      expect(res.observed).toEqual({ zoneSslMode: mode, websockets: 'on' });
+      // The observed mode is exactly what `zoneSslModeOf` accepts as a param.
+      expect(zoneSslModeOf(specFor(443), withMode(res.observed!.zoneSslMode))).toBe(mode);
+    }
+    // A refusal still reports what it saw, so the operator sees the mode too.
+    const off = structuredClone(wire(settingSsl)) as { result: { value: string } };
+    off.result.value = 'off';
+    mockFetch(route({ '/settings/ssl': () => jsonRes(off) }));
+    expect((await cloudflareProvider.testCredentials(cfg)).observed).toEqual({
+      zoneSslMode: 'off',
+      websockets: 'on',
+    });
+  });
+
+  test('a setting the token cannot read leaves the mode OUT rather than guessing one', async () => {
+    mockFetch(
+      route({
+        '/settings/ssl': () => jsonRes(wire(notFound), 403),
+        '/settings/websockets': () => jsonRes(wire(notFound), 403),
+      }),
+    );
+    const res = await cloudflareProvider.testCredentials(cfg);
+    expect(res.ok).toBe(true);
+    // No zoneSslMode at all: an edge planned from this account is refused with
+    // zone_mode_unknown instead of being built against an unread setting.
+    expect(res.observed).toEqual({ websockets: 'off' });
+    expect(() => zoneSslModeOf(specFor(443), withMode(res.observed!.zoneSslMode ?? ''))).toThrow(
+      /zone_mode_unknown/,
+    );
   });
 
   test('every ssl mode but `off` is usable; `off` is refused', async () => {

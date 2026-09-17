@@ -72,6 +72,77 @@ export const destroyExhausted = internalMutation({
 });
 
 /**
+ * Persist one step of a SHARED-resource teardown (an adopted domain on a
+ * service FCP does not own). The known columns live on `edges.sharedTeardown`
+ * so reconcile and the lock key can read them without parsing; the driver's own
+ * extra fields ride along as JSON in `edges.sharedTeardownState`.
+ *
+ * Terminal phases act here, in the same transaction as the state write:
+ *  - `done`: the hostname is off the shared resource, so the children FCP owns
+ *    on it (its domain, its DNS records) are `confirmed_gone` and the ordinary
+ *    destroy walk finishes the edge;
+ *  - `needs_operator`: the workflow cannot converge on its own (a lost clone, a
+ *    version drift); the edge parks with the driver's code.
+ */
+export const recordSharedTeardown = internalMutation({
+  args: {
+    edgeId: v.id('edges'),
+    state: v.object({
+      phase: v.string(),
+      serviceId: v.string(),
+      fromVersion: v.optional(v.number()),
+      workVersion: v.optional(v.number()),
+      code: v.optional(v.string()),
+      extra: v.optional(v.string()),
+    }),
+    /** Ledger kinds whose OWNED children a `done` phase resolves. */
+    ownedKinds: v.optional(v.array(v.string())),
+    countAttempt: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { edgeId, state, ownedKinds, countAttempt }) => {
+    const edge = await ctx.db.get(edgeId);
+    if (!edge) return null;
+    const now = Date.now();
+    const prior = edge.sharedTeardown;
+    const attempts =
+      (prior?.serviceId === state.serviceId ? prior.attempts : 0) + (countAttempt ? 1 : 0);
+    const kinds = ownedKinds ?? ['domain', 'dns_record'];
+    const done = state.phase === 'done';
+    await ctx.db.patch(edgeId, {
+      sharedTeardown: {
+        phase: state.phase,
+        serviceId: state.serviceId,
+        // The version the workflow started from is the one it cloned; keep the
+        // first observation so a re-entry never re-anchors on a newer version.
+        fromVersion: prior?.fromVersion ?? state.fromVersion ?? state.workVersion ?? 0,
+        ...(state.workVersion !== undefined ? { workVersion: state.workVersion } : {}),
+        attempts,
+      },
+      ...(state.extra ? { sharedTeardownState: state.extra } : {}),
+      ...(done
+        ? {
+            resources: edge.resources.map((r) =>
+              kinds.includes(r.kind) ? { ...r, deleteState: 'confirmed_gone' as const } : r,
+            ),
+          }
+        : {}),
+      ...(state.phase === 'needs_operator'
+        ? {
+            status: 'needs_operator' as const,
+            statusChangedAt: now,
+            failure: {
+              step: 'shared_teardown',
+              code: (state.code ?? 'needs_operator').slice(0, 64),
+            },
+          }
+        : {}),
+      updatedAt: now,
+    });
+    return null;
+  },
+});
+
+/**
  * Operator: put a parked edge back on the destroy path (resets the attempt
  * counter). Refusals are ConvexErrors so the HTTP layer answers an error, never
  * a 200 with `ok:false`.

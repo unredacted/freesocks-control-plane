@@ -249,3 +249,41 @@ describe('protocolProfiles: the pool-writer gate', () => {
     expect((await t.query(internal.protocolProfiles.get, { id: profileId }))!.revision).toBe(4);
   });
 });
+
+describe('protocolProfiles: name-free HTTP-transport profiles', () => {
+  test('ws / httpupgrade / grpc may carry NO server name; reality and tls may not', async () => {
+    const t = convexTest(schema, modules);
+    const { id } = await t.mutation(internal.protocolProfiles.create, {
+      slug: 'prof-ws-l7',
+      name: 'WS behind a front only',
+      protocol: 'ws',
+      serverNames: [],
+    });
+    expect((await t.query(internal.protocolProfiles.get, { id }))!.serverNames).toEqual([]);
+    // Behind an L7 front the member presents the edge HOSTNAME, so there is
+    // nothing for the profile to carry; REALITY/TLS have no such substitute.
+    await expect(
+      t.mutation(internal.protocolProfiles.create, {
+        slug: 'prof-reality-empty',
+        name: 'REALITY',
+        protocol: 'reality',
+        targetAddress: 'target.example',
+        serverNames: [],
+      }),
+    ).rejects.toThrow(/serverNames needs 1\.\.32/);
+  });
+
+  test('an update may retire the LAST name of an HTTP-transport profile', async () => {
+    const t = convexTest(schema, modules);
+    const { id } = await t.mutation(internal.protocolProfiles.create, {
+      slug: 'prof-ws-named',
+      name: 'WS',
+      protocol: 'ws',
+      serverNames: ['a.example'],
+    });
+    await t.mutation(internal.protocolProfiles.update, { id, serverNames: [] });
+    const row = (await t.query(internal.protocolProfiles.get, { id }))!;
+    expect(row.serverNames.every((s) => s.status === 'retired')).toBe(true);
+    await t.mutation(internal.protocolProfiles.retireSni, { id, snis: ['a.example'] });
+  });
+});

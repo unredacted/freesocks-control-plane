@@ -12,6 +12,7 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { upsertSettingRow } from './appSettings';
 import { pickNode } from './lib/nodePinning';
+import { qualificationBinding } from './lib/edges/frontCheck/binding';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -49,6 +50,55 @@ function stubPanel(body = panelBody) {
       return new Response(body, { status: 200, headers: { 'content-type': 'text/plain' } });
     }),
   );
+}
+
+/**
+ * An L7 front is only rendered while an authenticated end-to-end session has
+ * PROVEN the configuration that would be published, so a hostname edge in a
+ * test needs the same frozen intent + proof a provisioned one carries.
+ */
+async function proveFront(
+  t: ReturnType<typeof convexTest>,
+  edgeId: Id<'edges'>,
+  hostname: string,
+  ok = true,
+) {
+  await t.run(async (ctx) => {
+    const edge = (await ctx.db.get(edgeId))!;
+    const slot = (await ctx.db.get(edge.slotId))!;
+    const profile = (await ctx.db.get(slot.profileId))!;
+    const intent = {
+      hostname,
+      zoneId: 'z'.repeat(32),
+      zoneName: 'example',
+      originTransport: {
+        scheme: 'https' as const,
+        certPublic: true,
+        certNames: [],
+        acceptsHostHeader: 'any' as const,
+      },
+      originPort: slot.originPort,
+      zoneSslMode: 'full',
+      templateHash: 'h1',
+      templateParams: {},
+    };
+    const now = Date.now();
+    await ctx.db.patch(edgeId, {
+      provisionIntent: JSON.stringify(intent),
+      frontQualification: {
+        ok,
+        ...(ok ? {} : { code: 'front_error' }),
+        checkedAt: now,
+        expiresAt: now + 3_600_000,
+        binding: qualificationBinding({
+          slot,
+          profile,
+          intent,
+          params: slot.transportParams ?? {},
+        }),
+      },
+    });
+  });
 }
 
 async function seed(opts: { renderEnabled?: boolean; pinned?: boolean } = {}) {
@@ -308,6 +358,7 @@ describe('edgeRender: fronted route', () => {
     const HOSTNAME = 'front-a.example';
     // What the CDN provider's adapter leaves on the row: a hostname, no literal.
     await t.run((ctx) => ctx.db.patch(edgeA, { layer: 'l7', addresses: { hostname: HOSTNAME } }));
+    await proveFront(t, edgeA, HOSTNAME);
     const rctx = await t.query(internal.edgeRender.contextForSubscription, {
       subscriptionId: subId,
       family: 'other',
@@ -326,6 +377,42 @@ describe('edgeRender: fronted route', () => {
     // The hostname is the SNI, whatever the profile's origin-facing names say.
     expect(qs.get('sni')).toBe(HOSTNAME);
     expect(qs.get('pbk')).toBe('PUBKEY');
+
+    // A requalification that comes back FAILED takes the front out of
+    // assignment at once: DNS keeps answering long after a front stops carrying
+    // the transport, so the stored proof is the only thing that may keep it
+    // live. Recording the failure also bumps the epoch and refreshes mirrors,
+    // so cached bodies stop handing the hostname out.
+    const epochBefore = rctx!.epoch;
+    const binding = await t.run(async (ctx) => {
+      const edge = (await ctx.db.get(edgeA))!;
+      const slot = (await ctx.db.get(edge.slotId))!;
+      const profile = (await ctx.db.get(slot.profileId))!;
+      return qualificationBinding({
+        slot,
+        profile,
+        intent: JSON.parse(edge.provisionIntent!),
+        params: slot.transportParams ?? {},
+      });
+    });
+    const rec = await t.mutation(internal.frontQualify.record, {
+      edgeId: edgeA,
+      binding,
+      result: { ok: false, code: 'front_error', steps: [], checkedAt: Date.now() },
+    });
+    expect(rec).toEqual({ ok: false, code: 'front_error' });
+    const failed = await t.query(internal.edgeRender.contextForSubscription, {
+      subscriptionId: subId,
+      family: 'other',
+    });
+    expect(failed?.published[0].eligible).toBe(false);
+    expect(failed!.epoch).toBe(epochBefore + 1);
+    expect(pickNodeFor(await (await get(t)).text()).join('\n')).not.toContain(HOSTNAME);
+    // A failed proof expires SOON (a few poll intervals), so the reconcile cron
+    // re-runs the check instead of waiting out a whole qualification TTL.
+    const after = await t.run((ctx) => ctx.db.get(edgeA));
+    const q = after!.frontQualification!;
+    expect(q.expiresAt - q.checkedAt).toBeLessThan(60 * 60_000);
   });
 
   test('panel outage: the stale fallback is served only while its edge token is still current', async () => {

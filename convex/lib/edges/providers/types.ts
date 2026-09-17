@@ -308,6 +308,48 @@ export interface CredentialTestResult {
   ok: boolean;
   code?: string;
   detail?: string;
+  /**
+   * Facts the test observed at the provider that planning needs but the
+   * operator does not enter (e.g. a zone's encryption mode). Stored on the
+   * account as `observedSettings` and frozen into each new edge's intent.
+   */
+  observed?: Record<string, string>;
+}
+
+/**
+ * What an L7 adapter learns about an EXISTING provider resource an operator
+ * wants to import: the ledger children FCP should record (with the real ids,
+ * versions and metadata discovery needs), the hostname it serves, whether the
+ * resource also serves other hostnames (`shared` = FCP may delete only its own
+ * children), and what it dials (must equal the relay's origin to be owned).
+ */
+export interface AdoptionInspection {
+  resources: ChildResource[];
+  hostname: string;
+  hostnames: string[];
+  shared: boolean;
+  content?: string;
+}
+
+/**
+ * A shared external resource cannot simply be deleted: removing one hostname
+ * from it is a multi-step, persisted workflow (Fastly: clone → remove domain →
+ * validate → activate → confirm). Adapters that own such a resource expose the
+ * driver; the reconcile cron persists the state on the edge and advances ONE
+ * phase per pass under an external lock. Terminal phases: `done`,
+ * `needs_operator`.
+ */
+export interface SharedTeardownState {
+  phase: string;
+  serviceId: string;
+  workVersion?: number;
+  code?: string;
+  [key: string]: unknown;
+}
+export interface SharedTeardownDriver<Cfg> {
+  /** `null` when the ledger describes an exclusively owned resource (ordinary destroy). */
+  plan(ledger: Ledger, opId: string, now?: number): SharedTeardownState | null;
+  step(cfg: Cfg, state: SharedTeardownState): Promise<SharedTeardownState>;
 }
 
 export interface DiscoverOption {
@@ -376,6 +418,14 @@ export interface EdgeProvider<
   describe(cfg: Cfg, ledger: Ledger): Promise<EdgeDescription>;
   inspect(cfg: Cfg, ledger: Ledger): Promise<InspectResult>;
   inventory(cfg: Cfg): Promise<Inventory>;
+  /**
+   * L7 adapters: inspect an existing resource for import (real ids, versions,
+   * every hostname it serves, what it dials). The import records exactly these
+   * children; discovery never depends on a generated name for an adopted edge.
+   */
+  inspectForAdoption?(cfg: Cfg, resourceId: string, hostname: string): Promise<AdoptionInspection>;
+  /** Adapters whose adopted edges can sit on a shared resource (see SharedTeardownDriver). */
+  sharedTeardown?: SharedTeardownDriver<Cfg>;
 
   /**
    * Ledger resources in destroy order, skipping gone ones. Ordered by KIND

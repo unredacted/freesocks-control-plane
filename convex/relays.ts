@@ -22,7 +22,7 @@ import {
 } from './lib/edges/ip';
 import { sameAddress } from './lib/edges/hosts';
 import { isValidHostname } from './lib/edges/hostname';
-import { slotAllowsLayer } from './lib/edges/layers';
+import { l7HostHeaderFor, slotAllowsLayer, zoneModeCarriesOrigin } from './lib/edges/layers';
 import { PROTOCOL_TRANSPORT, protocolUsesSni } from './lib/edges/protocols';
 import {
   edgeAddressKindOf,
@@ -30,7 +30,12 @@ import {
   protocolCarriedBy,
   providerHealthSatisfies,
 } from './lib/edges/providers/capabilities';
-import { parseIntent } from './lib/edges/intent';
+import {
+  buildProvisionIntent,
+  IntentError,
+  parseIntent,
+  parseObservedSettings,
+} from './lib/edges/intent';
 // The binding derivation is shared with the checker that records the
 // qualification (lib/edges/frontCheck/binding.ts): one entry point, so the
 // proof and the gate cannot hash the same configuration differently.
@@ -805,6 +810,30 @@ export const finalizeDelete = internalMutation({
 // --- adoption -----------------------------------------------------------------------------
 
 /**
+ * The ledger `meta` of one imported child: whatever the adapter reported, plus
+ * `shared:true` on the SERVICE-kind child of a resource that also serves other
+ * hostnames. The destroy walk reads that flag to choose the per-service version
+ * workflow (remove our domain) over deleting the service outright.
+ */
+function metaFor(r: { kind: string; meta?: string }, sharedService: boolean): { meta?: string } {
+  const isService = r.kind.includes('service');
+  if (!r.meta && !(sharedService && isService)) return {};
+  let parsed: Record<string, unknown> = {};
+  if (r.meta) {
+    try {
+      const raw = JSON.parse(r.meta) as unknown;
+      if (raw && typeof raw === 'object' && !Array.isArray(raw))
+        parsed = raw as Record<string, unknown>;
+    } catch {
+      // A meta blob FCP cannot read is kept verbatim: it is the adapter's.
+      return { meta: r.meta.slice(0, 4_000) };
+    }
+  }
+  if (sharedService && isService) parsed.shared = true;
+  return { meta: JSON.stringify(parsed).slice(0, 4_000) };
+}
+
+/**
  * Adopt an edge that exists outside FCP's ledger: observe-only (`managed:false`,
  * only the address + port known; never destroyed) or managed (account +
  * resource ids supplied). The address is of the ACCOUNT's kind: an IPv4 literal
@@ -822,7 +851,30 @@ export const adoptEdge = internalMutation({
     hostname: v.optional(v.string()),
     port: v.optional(v.number()),
     accountId: v.optional(v.union(v.id('edgeProviderAccounts'), v.null())),
-    resources: v.optional(v.array(v.object({ kind: v.string(), resourceId: v.string() }))),
+    resources: v.optional(
+      v.array(
+        v.object({
+          kind: v.string(),
+          resourceId: v.string(),
+          /** Everything discovery / describe / destroy needs (versions, ids). */
+          meta: v.optional(v.string()),
+          ownership: v.optional(v.union(v.literal('created'), v.literal('adopted'))),
+        }),
+      ),
+    ),
+    /**
+     * What the adapter read at the provider (`edgeProviderOps.inspectForAdoption`).
+     * Required for a MANAGED L7 import: it is the ownership proof (the resource
+     * dials the relay's own origin and serves the hostname) and it says whether
+     * the resource is shared with other hostnames.
+     */
+    inspection: v.optional(
+      v.object({
+        hostnames: v.array(v.string()),
+        shared: v.boolean(),
+        content: v.optional(v.string()),
+      }),
+    ),
     publish: v.optional(v.boolean()),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
@@ -900,6 +952,75 @@ export const adoptEdge = internalMutation({
     if (a.publish) await assertNoRotationOrQuarantine(ctx.db, origin);
     const managed = !!accountRow && (a.resources?.length ?? 0) > 0;
     const now = Date.now();
+    // A MANAGED L7 import: FCP will describe, qualify, rotate and (partially)
+    // destroy this front, so it needs the same frozen intent a provisioned edge
+    // carries — with the hostname the operator's resource already serves, not a
+    // minted one. Without it the edge could never qualify or be described.
+    let provisionIntent: string | undefined;
+    let sharedService = false;
+    if (managed && layer === 'l7') {
+      const insp = a.inspection;
+      if (!insp)
+        throw new ConvexError({
+          code: 'validation',
+          message: 'an L7 import needs the provider inspection',
+        });
+      // Ownership: the resource must dial THIS relay's origin and actually serve
+      // the hostname being imported. Anything else belongs to someone else.
+      if (!insp.content || !sameAddress(insp.content, origin.originAddress))
+        throw new ConvexError({
+          code: 'edge.not_owned',
+          message: 'the resource does not dial this origin',
+        });
+      if (!insp.hostnames.some((h) => h.trim().toLowerCase().replace(/\.$/, '') === hostname))
+        throw new ConvexError({
+          code: 'edge.not_owned',
+          message: 'the resource does not serve this hostname',
+        });
+      sharedService = insp.shared;
+      const { resolveTemplateFor } = await import('./edgeTemplates');
+      const template = await resolveTemplateFor(
+        ctx,
+        accountRow!.provider,
+        null,
+        accountRow!.defaultTemplateId ?? null,
+        accountRow!._id,
+      );
+      const dnsAccountId = (accountRow!.settings as { dnsAccountId?: string }).dnsAccountId;
+      const dnsAccount = dnsAccountId
+        ? await ctx.db.get(dnsAccountId as Id<'edgeProviderAccounts'>)
+        : null;
+      try {
+        provisionIntent = JSON.stringify(
+          buildProvisionIntent({
+            account: {
+              id: accountRow!._id as string,
+              provider: accountRow!.provider,
+              settings: accountRow!.settings as Record<string, unknown>,
+              observedSettings: parseObservedSettings(accountRow!.observedSettings),
+            },
+            dnsAccount: dnsAccount
+              ? {
+                  id: dnsAccount._id as string,
+                  provider: dnsAccount.provider,
+                  settings: dnsAccount.settings as Record<string, unknown>,
+                  observedSettings: parseObservedSettings(dnsAccount.observedSettings),
+                }
+              : null,
+            specName: `adopted-${origin.slug}-${now.toString(36)}`,
+            templateParams: template.params,
+            templateHash: template.hash,
+            slot,
+            hostnameOverride: hostname,
+          }),
+        );
+      } catch (err) {
+        throw new ConvexError({
+          code: `edge.${err instanceof IntentError ? err.code : 'intent_failed'}`,
+          message: 'the import cannot be described',
+        });
+      }
+    }
     const edgeId = await ctx.db.insert('edges', {
       relayId: a.relayId,
       slotId: a.slotId,
@@ -912,8 +1033,13 @@ export const adoptEdge = internalMutation({
         stepId: 'adopted',
         kind: r.kind,
         resourceId: r.resourceId,
+        // An imported child is always `adopted`: FCP did not create it, and the
+        // destroy walk must never treat it as its own.
         ownership: 'adopted' as const,
         deleteState: 'present' as const,
+        // A SHARED service is stamped on its own resource: the destroy walk
+        // reads it to pick the version workflow over an outright delete.
+        ...metaFor(r, sharedService),
       })),
       listeners: [
         {
@@ -925,6 +1051,7 @@ export const adoptEdge = internalMutation({
       ],
       addresses: { v4: a.ipv4, v6: a.ipv6 ?? undefined, hostname },
       layer,
+      ...(provisionIntent ? { provisionIntent } : {}),
       publication: 'unpublished',
       status: 'active',
       statusChangedAt: now,
@@ -933,22 +1060,40 @@ export const adoptEdge = internalMutation({
       updatedAt: now,
     });
     let poolIndex: number | null = null;
+    // An L7 import is never published on the operator's word alone: it takes the
+    // ordinary gate, which for a front means a CURRENT end-to-end proof. A
+    // refusal must not throw, though, or the whole import (including the
+    // provider inspection that paid for it) would roll back with it: the edge
+    // stays as a standby and the refusal comes back as a code.
+    const softRefusal = layer === 'l7' && managed;
+    let refusedCode: string | null = null;
     if (a.publish) {
       const idx = nextFreePoolIndex(origin.publishedEdgeIds, origin.desiredPublished);
-      if (idx === null)
-        throw new ConvexError({ code: 'edge.pool_full', message: 'The published pool is full' });
+      if (idx === null) {
+        if (!softRefusal)
+          throw new ConvexError({ code: 'edge.pool_full', message: 'The published pool is full' });
+        refusedCode = 'pool_full';
+      }
       // Adoption is not a way around the publish preconditions: an adopted edge
       // whose slot is undeployed, whose profile has no name to present or whose
       // layer the slot cannot carry would be rendered to members as a working
       // endpoint. Same check every other publisher runs.
       const cfg = await resolveEdgeConfig(ctx.db);
       const fresh = (await ctx.db.get(edgeId))!;
-      const check = await checkPublishable(ctx, fresh, cfg.requireProviderHealth);
-      if (!check.ok)
-        throw new ConvexError({
-          code: `edge.${check.code}`,
-          message: `Edge cannot be published: ${check.code}`,
-        });
+      const check = refusedCode
+        ? { ok: false as const, code: refusedCode }
+        : await checkPublishable(ctx, fresh, cfg.requireProviderHealth);
+      if (!check.ok) {
+        if (!softRefusal)
+          throw new ConvexError({
+            code: `edge.${check.code}`,
+            message: `Edge cannot be published: ${check.code}`,
+          });
+        refusedCode = check.code ?? 'not_publishable';
+      }
+    }
+    if (a.publish && !refusedCode) {
+      const idx = nextFreePoolIndex(origin.publishedEdgeIds, origin.desiredPublished)!;
       poolIndex = idx;
       await ctx.db.patch(edgeId, {
         publication: 'published',
@@ -975,10 +1120,12 @@ export const adoptEdge = internalMutation({
         slug: origin.slug,
         edgeId,
         managed,
-        publication: a.publish ? 'published' : 'unpublished',
+        publication: poolIndex !== null ? 'published' : 'unpublished',
+        ...(refusedCode ? { refused: refusedCode } : {}),
+        ...(sharedService ? { shared: true } : {}),
       },
     });
-    return { edgeId, poolIndex };
+    return { edgeId, poolIndex, code: refusedCode };
   },
 });
 
@@ -1014,10 +1161,26 @@ export async function checkPublishable(
   // when its protocol presents one, and (when provider-scoped) match the edge.
   const profile = await ctx.db.get(slot.profileId);
   if (!profile || !profile.enabled) return { ok: false, code: 'profile_disabled' };
-  if (protocolUsesSni(profile.protocol) && !profile.serverNames.some((s) => s.status === 'active'))
+  const layer = edge.layer ?? edgeLayerOf(edge.provider);
+  const intent = parseIntent(edge.provisionIntent);
+  // Behind an L7 front the name a member presents is the edge HOSTNAME, so a
+  // name-free HTTP-transport profile is perfectly publishable there; only an L4
+  // edge needs one of the profile's own names to select.
+  if (
+    layer === 'l4' &&
+    protocolUsesSni(profile.protocol) &&
+    !profile.serverNames.some((s) => s.status === 'active')
+  )
     return { ok: false, code: 'profile_no_active_sni' };
   if (edge.provider && profile.provider && profile.provider !== edge.provider)
     return { ok: false, code: 'provider_mismatch' };
+  // The Host header the front would send the origin decides whether the node
+  // would answer at all (`acceptsHostHeader:'names'`); it comes from the frozen
+  // intent, never from the account's current template.
+  const l7Host = l7HostHeaderFor(
+    edge.addresses.hostname ?? intent?.hostname,
+    (intent?.templateParams as { overrideHost?: unknown } | undefined)?.overrideHost,
+  );
   if (edge.provider) {
     // Two independent questions: can this provider carry the protocol at all
     // (an L7 front carries only the HTTP transports it declares), and does the
@@ -1025,15 +1188,18 @@ export async function checkPublishable(
     // (a plaintext origin cannot sit behind a raw TCP forwarder).
     if (!protocolCarriedBy(edge.provider, profile.protocol))
       return { ok: false, code: 'protocol_not_carried' };
-    if (!slotAllowsLayer(slot, profile, edgeLayerOf(edge.provider)))
+    if (!slotAllowsLayer(slot, profile, edgeLayerOf(edge.provider), { l7Host }))
       return { ok: false, code: 'layer_mismatch' };
   }
-  const layer = edge.layer ?? edgeLayerOf(edge.provider);
   if (layer === 'l7') {
+    // The zone's encryption mode decides how the front dials the origin; a
+    // plaintext origin behind a mode that dials HTTPS (or the other way round)
+    // never completes a member connection.
+    if (intent?.zoneSslMode && !zoneModeCarriesOrigin(intent.zoneSslMode, intent.originTransport))
+      return { ok: false, code: 'origin_tls_mismatch' };
     // The binding is re-derived HERE, inside the publishing transaction, from
     // the current slot/profile/intent: a proof taken against an older
     // configuration is not a proof of what would now be published.
-    const intent = parseIntent(edge.provisionIntent);
     if (!intent) return { ok: false, code: 'front_unqualified' };
     const verdict = qualificationVerdict(
       edge.frontQualification,

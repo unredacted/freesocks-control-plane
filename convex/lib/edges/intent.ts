@@ -23,7 +23,7 @@ import { canonicalJson } from './providers/template';
 import { edgeHostnameFor } from './hostname';
 import { edgeLayerOf } from './providers/capabilities';
 import type { SlotProtocol } from './protocols';
-import type { OriginTransport } from './layers';
+import { zoneModeCarriesOrigin, type OriginTransport } from './layers';
 
 /** FNV-1a 64-bit as 16 hex chars (isolate-safe, no WebCrypto; same function the template hash uses). */
 export function intentFnv1a64Hex(input: string): string {
@@ -66,6 +66,28 @@ export interface IntentAccountLike {
   id: string;
   provider: string;
   settings: Record<string, unknown>;
+  /**
+   * What the credential test OBSERVED at the provider (`edgeProviderAccounts
+   * .observedSettings`): facts planning needs that the operator never enters,
+   * above all the zone's encryption mode.
+   */
+  observedSettings?: Record<string, string>;
+}
+
+/** Read an account's stored `observedSettings` blob; anything unusable is `{}`. */
+export function parseObservedSettings(json: string | null | undefined): Record<string, string> {
+  if (!json) return {};
+  let raw: unknown;
+  try {
+    raw = JSON.parse(json);
+  } catch {
+    return {};
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>))
+    if (typeof v === 'string') out[k] = v;
+  return out;
 }
 
 export interface IntentSlotLike {
@@ -83,7 +105,14 @@ export interface BuildIntentArgs {
   templateParams: Record<string, unknown>;
   templateHash: string;
   slot: IntentSlotLike;
+  /** Overrides the observed zone mode (tests, an operator-forced re-plan). */
   zoneSslMode?: string;
+  /**
+   * Import only: the hostname that already exists at the provider. A provisioned
+   * edge MINTS its hostname from the resource name; an adopted one must keep the
+   * name the operator's resource already serves.
+   */
+  hostnameOverride?: string;
 }
 
 /** Thrown when an L7 edge is planned without what its intent needs; the rotation fails with the code. */
@@ -114,10 +143,20 @@ export function buildProvisionIntent(a: BuildIntentArgs): ProvisionIntent | null
   const originTransport = a.slot.originTransport ?? null;
   if (!originTransport) throw new IntentError('origin_transport_missing');
   const tpl = a.templateParams;
-  const hostname = edgeHostnameFor(a.specName, zoneName, {
-    labelLength: typeof tpl.labelLength === 'number' ? tpl.labelLength : 12,
-    labelPrefix: str(tpl.labelPrefix),
-  });
+  const hostname =
+    a.hostnameOverride ??
+    edgeHostnameFor(a.specName, zoneName, {
+      labelLength: typeof tpl.labelLength === 'number' ? tpl.labelLength : 12,
+      labelPrefix: str(tpl.labelPrefix),
+    });
+  // The zone's encryption mode decides how the front dials the origin. It is
+  // OBSERVED at the provider (the credential test), never entered, so an
+  // account nobody has tested cannot be planned against: guessing a mode would
+  // silently front a plaintext origin over HTTPS, or the other way round.
+  const zoneSslMode = a.zoneSslMode ?? zoneSource.observedSettings?.zoneSslMode;
+  if (!zoneSslMode) throw new IntentError('zone_mode_unknown');
+  if (!zoneModeCarriesOrigin(zoneSslMode, originTransport))
+    throw new IntentError('origin_tls_mismatch');
   return {
     hostname,
     zoneId,
@@ -136,7 +175,7 @@ export function buildProvisionIntent(a: BuildIntentArgs): ProvisionIntent | null
       acceptsHostHeader: originTransport.acceptsHostHeader,
     },
     originPort: a.slot.originPort,
-    ...(a.zoneSslMode ? { zoneSslMode: a.zoneSslMode } : {}),
+    zoneSslMode,
     templateHash: a.templateHash,
     templateParams: tpl,
   };

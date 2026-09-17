@@ -140,6 +140,8 @@ export function throttlePolicyFor(parts: string[]): RateLimitPolicyKey | null {
   if (a === 'relays' && b === 'node-candidates' && c === 'refresh') {
     return 'admin.edges.provider-call';
   }
+  // Importing a front inspects the provider resource first: an outbound call.
+  if (a === 'relays' && b && c === 'adopt' && !d) return 'admin.edges.provider-call';
   if (a === 'edges' && b && c === 'live' && d === 'refresh') return 'admin.edges.provider-call';
   // An authenticated session through the front: an outbound call like any other.
   if (a === 'edges' && b && c === 'qualify' && !d) return 'admin.edges.provider-call';
@@ -522,14 +524,54 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
         // Mint (or re-mint) the panel account the L7 front qualification
         // authenticates with; the credential never leaves the server.
         return json(await ctx.runAction(internal.relayQualification.mint, { relayId, ...act }));
-      case 'adopt':
+      case 'adopt': {
+        // Importing a HOSTNAME front from a provider account: ask the adapter
+        // what the resource really is FIRST (its real child ids and versions,
+        // every hostname it serves, what it dials, whether it is shared). The
+        // mutation then has an ownership proof and everything discovery,
+        // qualification and a partial destroy will need; without it the import
+        // would be an unqualifiable row.
+        const accountId =
+          typeof body.accountId === 'string' && body.accountId
+            ? id<'edgeProviderAccounts'>(body.accountId)
+            : null;
+        const resourceId = typeof body.resourceId === 'string' ? body.resourceId.trim() : '';
+        const hostname = typeof body.hostname === 'string' ? body.hostname.trim() : '';
+        let inspected: {
+          resources: Array<{ kind: string; resourceId: string; meta?: string }>;
+          inspection: { hostnames: string[]; shared: boolean; content?: string };
+        } | null = null;
+        if (accountId && resourceId && hostname) {
+          const insp = await ctx.runAction(internal.edgeProviderOps.inspectForAdoption, {
+            accountId,
+            resourceId,
+            hostname,
+          });
+          inspected = {
+            resources: insp.resources.map((r) => ({
+              kind: r.kind,
+              resourceId: r.resourceId,
+              // The ledger stores `meta` as JSON, exactly as every step outcome does.
+              ...(r.meta ? { meta: JSON.stringify(r.meta) } : {}),
+            })),
+            inspection: {
+              hostnames: insp.hostnames,
+              shared: insp.shared,
+              ...(insp.content ? { content: insp.content } : {}),
+            },
+          };
+        }
+        // `resourceId` addresses the PROVIDER call above, not the mutation.
+        const { resourceId: _picked, ...rest } = body;
         return json(
           await ctx.runMutation(internal.relays.adoptEdge, {
-            ...body,
+            ...rest,
+            ...(inspected ?? {}),
             relayId,
             ...act,
           } as never),
         );
+      }
       case 'provision':
         return json(
           await ctx.runMutation(internal.edgeRotations.start, {

@@ -23,6 +23,8 @@ import { effectiveRule, renderEntries } from './lib/edges/render';
 import { assignEndpoints } from './lib/edges/assignment';
 import type { PublishedEdge } from './lib/edges/assignment';
 import { protocolUsesSni } from './lib/edges/protocols';
+import { parseIntent } from './lib/edges/intent';
+import { qualificationBinding, qualificationVerdict } from './lib/edges/frontCheck/binding';
 import type { EdgeRenderContext } from './lib/edges/renderPipeline';
 
 const familyValidator = v.union(
@@ -58,6 +60,31 @@ async function renderEnabled(ctx: QueryCtx): Promise<boolean> {
 }
 
 /**
+ * Whether an L7 edge's stored qualification still proves what would be RENDERED
+ * for it: the binding is re-derived from the live slot/profile/intent, exactly
+ * as publication does, so a failed or expired requalification and a mid-flight
+ * configuration write reach the renderer through one rule.
+ */
+async function l7QualificationCurrent(
+  ctx: QueryCtx | { db: import('./_generated/server').DatabaseReader },
+  edge: Doc<'edges'>,
+  slot: Doc<'relaySlots'> | null | undefined,
+  profile: Doc<'protocolProfiles'> | null | undefined,
+  now: number,
+): Promise<boolean> {
+  if (!slot || !profile) return false;
+  const intent = parseIntent(edge.provisionIntent);
+  if (!intent) return false;
+  return (
+    qualificationVerdict(
+      edge.frontQualification,
+      qualificationBinding({ slot, profile, intent, params: slot.transportParams ?? {} }),
+      now,
+    ) === 'ok'
+  );
+}
+
+/**
  * Published edges in pool order. By default only edges with an eligible slot +
  * profile (and an address) are returned. With `includeIneligible` every
  * published, active edge is returned and the ineligible ones (slot retired or
@@ -86,8 +113,22 @@ export async function publishedEdgesOf(
     // An edge is only usable once it has an address to publish: an IP literal
     // for an L4 forwarder, the fronted hostname for an L7 (CDN) edge.
     const hasAddress = !!edge.addresses.v4 || !!edge.addresses.v6 || !!edge.addresses.hostname;
+    // An L7 front is only as good as its last PROOF: DNS keeps answering long
+    // after the front stopped carrying the transport, so a requalification that
+    // came back `ok:false` (or `config_changed`), or one that expired, takes the
+    // edge out of assignment at once. It keeps its pool index, so only its own
+    // subscribers move (`lib/edges/assignment.ts`).
+    const l7Proven =
+      (edge.layer ?? 'l4') !== 'l7' ||
+      (await l7QualificationCurrent(ctx, edge, slot, profile, Date.now()));
     const eligible =
-      hasAddress && !!slot && !slot.retired && slot.deployed && !!profile && profile.enabled;
+      hasAddress &&
+      l7Proven &&
+      !!slot &&
+      !slot.retired &&
+      slot.deployed &&
+      !!profile &&
+      profile.enabled;
     if (!eligible && !opts.includeIneligible) continue;
     const protocol = profile?.protocol ?? 'plain';
     published.push({

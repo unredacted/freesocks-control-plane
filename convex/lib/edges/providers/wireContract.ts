@@ -434,7 +434,7 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
       {
         method: 'GET',
         path: '^/client/v4/zones/[^/]+/dns_records/[^/]+$',
-        purpose: 'read the record back: describe, inspect, delete confirmation',
+        purpose: 'read the record back: describe, inspect, import inspection, delete confirmation',
       },
       {
         method: 'DELETE',
@@ -444,7 +444,8 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
       {
         method: 'GET',
         path: '^/client/v4/zones/[^/]+/rulesets/phases/http_request_origin/entrypoint$',
-        purpose: 'read the origin-rules entry point (404 = none yet)',
+        purpose:
+          'read the origin-rules entry point (404 = none yet), and the rule an imported hostname already carries',
       },
       {
         method: 'PUT',
@@ -497,7 +498,7 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
       {
         method: 'GET',
         path: '^/service/[^/]+/details$',
-        purpose: 'active version: activation discovery, describe, drift check',
+        purpose: 'active version: activation discovery, describe, import inspection, drift check',
       },
       {
         method: 'GET',
@@ -576,7 +577,8 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
       {
         method: 'GET',
         path: '^/service/[^/]+/version/[^/]+/domain$',
-        purpose: 'list the version domains: inspect and shared-teardown confirmation',
+        purpose:
+          'list the version domains: inspect, the import ownership boundary, shared-teardown confirmation',
       },
       {
         method: 'GET',
@@ -601,7 +603,7 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
       {
         method: 'GET',
         path: '^/enabled-products/v1/websockets/services/[^/]+$',
-        purpose: 'discover the product state; read it back after a destroy',
+        purpose: 'discover the product state, on import too; read it back after a destroy',
       },
       {
         method: 'DELETE',
@@ -617,7 +619,8 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
       {
         method: 'GET',
         path: '^/tls/subscriptions$',
-        purpose: 'discover the subscription by domain; confirm its removal',
+        purpose:
+          'discover the subscription by domain, and the certificate an imported hostname already has; confirm its removal',
         query: ['filter[tls_domains.id]'],
       },
       {

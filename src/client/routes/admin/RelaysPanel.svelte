@@ -321,16 +321,22 @@
           ...(adopt.source === 'provider' && adopt.accountId && adopt.lbId
             ? {
                 accountId: adopt.accountId,
-                resources: [{ kind: 'lb', resourceId: adopt.lbId }],
+                // A HOSTNAME front is imported by the resource the server then
+                // inspects (real child ids, versions, every hostname it serves);
+                // an L4 balancer keeps the plain ledger entry.
+                ...(adoptByHostname
+                  ? { resourceId: adopt.lbId }
+                  : { resources: [{ kind: 'lb', resourceId: adopt.lbId }] }),
               }
             : {}),
         },
         EdgeAdoptResponse,
       ),
-    onSuccess: () => {
+    onSuccess: (res) => {
       adoptFor = null;
       invalidate();
-      toast.success(adopt.source === 'provider' ? 'Edge imported' : 'Edge recorded');
+      if (res.code) toast.success(`Edge imported as a standby (not published: ${res.code})`);
+      else toast.success(adopt.source === 'provider' ? 'Edge imported' : 'Edge recorded');
     },
     onError: onError('Could not import the edge'),
   }));

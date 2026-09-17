@@ -30,6 +30,7 @@
  */
 import { z } from 'zod';
 import type {
+  AdoptionInspection,
   ChildResource,
   CredentialTestResult,
   Discovery,
@@ -46,6 +47,8 @@ import type {
   LedgerResource,
   ReadinessState,
   ResourceStep,
+  SharedTeardownDriver,
+  SharedTeardownState as GenericSharedTeardownState,
   StepOutcome,
   CloudflareDnsConfig,
 } from './types';
@@ -346,6 +349,22 @@ export function parseTrafficCname(
   return hit?.id;
 }
 
+/**
+ * The domains one TLS subscription covers, from its `tls_domains` relationship
+ * (each linkage's `id` IS the domain name). A subscription that covers more
+ * than the hostname being imported is SHARED: deleting it would drop somebody
+ * else's certificate, so the import records it as shared rather than owned.
+ * Source: https://www.fastly.com/documentation/reference/api/tls/subscriptions/, 2026-09-16.
+ */
+export function subscriptionDomains(res: FastlyJsonApiResource): string[] {
+  const data = (res.relationships as { tls_domains?: { data?: unknown } } | undefined)?.tls_domains
+    ?.data;
+  if (!Array.isArray(data)) return [];
+  return data
+    .map((d) => (d as { id?: unknown }).id)
+    .filter((id): id is string => typeof id === 'string');
+}
+
 function subscriptionState(doc: unknown): string | undefined {
   const data = (doc as { data?: FastlyJsonApiResource })?.data;
   const state = (data?.attributes as { state?: unknown } | undefined)?.state;
@@ -591,6 +610,55 @@ export async function sharedTeardownStep(
       return state;
   }
 }
+
+/** Every phase `sharedTeardownStep` understands; anything else parks the workflow. */
+const SHARED_TEARDOWN_PHASES: readonly SharedTeardownPhase[] = [
+  'clone',
+  'remove_domain',
+  'validate',
+  'activate',
+  'confirm',
+  'done',
+  'needs_operator',
+];
+
+/**
+ * The persisted (generic) state as this adapter's own. The reconcile cron
+ * round-trips the state through the database, so every field is re-read
+ * defensively and an unknown phase becomes `needs_operator` rather than a
+ * silent re-clone.
+ */
+function asFastlyTeardown(state: GenericSharedTeardownState): SharedTeardownState {
+  const phase = SHARED_TEARDOWN_PHASES.includes(state.phase as SharedTeardownPhase)
+    ? (state.phase as SharedTeardownPhase)
+    : 'needs_operator';
+  return {
+    ...state,
+    phase,
+    serviceId: state.serviceId,
+    hostname: typeof state.hostname === 'string' ? state.hostname : '',
+    fromVersion: typeof state.fromVersion === 'number' ? state.fromVersion : 0,
+    marker: typeof state.marker === 'string' ? state.marker : '',
+    opWindowStart: typeof state.opWindowStart === 'number' ? state.opWindowStart : 0,
+  };
+}
+
+/**
+ * The generic driver the orchestrator holds: `plan` answers `null` for an
+ * exclusively owned service (an ordinary destroy), and `step` advances exactly
+ * one phase. The terminal phases are `done` and `needs_operator`; stepping a
+ * finished teardown is a no-op that returns the state unchanged.
+ */
+export const fastlySharedTeardown: SharedTeardownDriver<FastlyConfig> = {
+  plan(ledger, opId, now) {
+    const state = planSharedTeardown(ledger, opId, now);
+    return state === null ? null : { ...state };
+  },
+  async step(cfg, state) {
+    if (state.phase === 'done') return state;
+    return { ...(await sharedTeardownStep(cfg, asFastlyTeardown(state))) };
+  },
+};
 
 // --- destroy ordering ---------------------------------------------------------------
 
@@ -1153,6 +1221,100 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
     }
     return { loadBalancers, ips: [], flavors: [] };
   },
+
+  /**
+   * Import: describe an EXISTING service as the children FCP would have
+   * created, with the ids, the version and the sharing facts a later destroy
+   * needs. Everything is read from the ACTIVE version (the one serving
+   * traffic); a service with no active version is refused rather than adopted
+   * against a draft nobody published.
+   *
+   * `shared` is the ownership boundary: a service that serves other hostnames,
+   * or a certificate that covers other domains, may never be deleted, only
+   * narrowed (see `sharedTeardown`). The subscription is recorded only when
+   * exactly ONE covers the hostname; zero (the operator terminates TLS
+   * elsewhere) or several (ambiguous) leave it out, and the import owns no
+   * certificate.
+   */
+  async inspectForAdoption(cfg, resourceId, hostname): Promise<AdoptionInspection> {
+    const step = 'adopt';
+    const api = fastlyApiFor(cfg);
+    const wanted = hostname.trim().toLowerCase();
+    const detail = await api.getServiceDetail(resourceId);
+    const activeVersion = activeVersionNumber(detail);
+    if (activeVersion === undefined)
+      throw refusal(step, 'service_not_active', 'the service has no active version');
+    const domains = await api.listDomains(resourceId, activeVersion);
+    const hostnames = domains.map((d) => d.name);
+    const mine = hostnames.find((n) => n.trim().toLowerCase() === wanted);
+    if (mine === undefined)
+      throw refusal(step, 'hostname_mismatch', 'the service does not serve that hostname');
+
+    const backends = await api.listBackends(resourceId, activeVersion).catch(() => []);
+    const content = backends[0]?.address ?? backends[0]?.hostname ?? undefined;
+
+    const subs = await api.listTlsSubscriptionsForDomain(mine);
+    const covering = subs.data.filter(
+      (d) =>
+        d.type === 'tls_subscription' &&
+        subscriptionDomains(d).some((n) => n.trim().toLowerCase() === wanted),
+    );
+    const subscription = covering.length === 1 ? covering[0] : undefined;
+    const subscriptionShared =
+      subscription !== undefined &&
+      subscriptionDomains(subscription).some((n) => n.trim().toLowerCase() !== wanted);
+    const shared = domains.length > 1 || subscriptionShared;
+
+    const resources: ChildResource[] = [
+      {
+        kind: 'service',
+        resourceId,
+        ownership: 'adopted',
+        meta: {
+          name: detail.name ?? resourceId,
+          version: activeVersion,
+          activeVersion,
+          shared,
+        },
+      },
+      { kind: 'domain', resourceId: mine, ownership: 'adopted' },
+    ];
+    if (subscription)
+      resources.push({
+        kind: 'tls_subscription',
+        resourceId: subscription.id,
+        ownership: 'adopted',
+        meta: { hostname: mine, shared: subscriptionShared },
+      });
+    // The product is account-and-service wide: recorded when it is already on,
+    // never enabled here (an import changes nothing at the provider).
+    try {
+      await api.getWebsockets(resourceId);
+      resources.push({ kind: 'ws_product', resourceId, ownership: 'adopted' });
+    } catch (e) {
+      if (!(e instanceof EdgeProviderError) || (e.meta.status ?? 500) >= 500) throw e;
+    }
+    // The DNS records live in the referenced account's zone: the traffic CNAME
+    // under the hostname itself and the ACME challenge beside it.
+    const dns = await dnsClientFor(cfg);
+    for (const [role, name] of [
+      ['traffic', mine],
+      ['acme', acmeChallengeName(mine)],
+    ] as const) {
+      const record = (await dns.findRecordsByName(name, 'CNAME'))[0];
+      if (record) resources.push({ ...dnsResource(role, record, dns), ownership: 'adopted' });
+    }
+
+    return {
+      resources,
+      hostname: mine,
+      hostnames,
+      shared,
+      ...(content ? { content } : {}),
+    };
+  },
+
+  sharedTeardown: fastlySharedTeardown,
 
   planDestroy(_cfg, ledger) {
     const svc = firstResource(ledger, 'service');

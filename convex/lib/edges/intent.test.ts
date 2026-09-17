@@ -25,6 +25,8 @@ const cloudflare = {
   id: 'acct-cf',
   provider: 'cloudflare',
   settings: { zoneId: 'z'.repeat(32), zoneName: 'example.org' },
+  // The zone's encryption mode is OBSERVED by the credential test, never typed.
+  observedSettings: { zoneSslMode: 'full' },
 };
 const fastly = {
   id: 'acct-fastly',
@@ -62,6 +64,7 @@ describe('buildProvisionIntent', () => {
     expect(intent.hostname.split('.')).toHaveLength(3);
     expect(intent.originTransport).toEqual(originTransport);
     expect(intent.originPort).toBe(443);
+    expect(intent.zoneSslMode).toBe('full');
     expect(intent.dnsAccountId).toBeUndefined();
   });
 
@@ -83,6 +86,51 @@ describe('buildProvisionIntent', () => {
       account: cloudflare,
     })!;
     expect(other.hostname).not.toBe(a.hostname);
+  });
+
+  test('an untested account cannot be planned against: the zone mode is unknown', () => {
+    try {
+      buildProvisionIntent({
+        ...args,
+        account: { ...cloudflare, observedSettings: {} },
+      });
+      throw new Error('expected a refusal');
+    } catch (err) {
+      expect((err as IntentError).code).toBe('zone_mode_unknown');
+    }
+  });
+
+  test('a zone mode that cannot carry the slot origin is refused before anything exists', () => {
+    // `flexible` dials the origin over plain HTTP; this origin speaks HTTPS.
+    try {
+      buildProvisionIntent({
+        ...args,
+        account: { ...cloudflare, observedSettings: { zoneSslMode: 'flexible' } },
+      });
+      throw new Error('expected a refusal');
+    } catch (err) {
+      expect((err as IntentError).code).toBe('origin_tls_mismatch');
+    }
+    // A privately issued origin certificate cannot be validated by `strict`.
+    try {
+      buildProvisionIntent({
+        ...args,
+        account: { ...cloudflare, observedSettings: { zoneSslMode: 'strict' } },
+        slot: { originPort: 443, originTransport: { ...originTransport, certPublic: false } },
+      });
+      throw new Error('expected a refusal');
+    } catch (err) {
+      expect((err as IntentError).code).toBe('origin_tls_mismatch');
+    }
+  });
+
+  test('an imported front keeps the hostname it already serves', () => {
+    const intent = buildProvisionIntent({
+      ...args,
+      account: cloudflare,
+      hostnameOverride: 'already.example.org',
+    })!;
+    expect(intent.hostname).toBe('already.example.org');
   });
 
   test('a missing zone or origin transport is a coded refusal, never a guess', () => {

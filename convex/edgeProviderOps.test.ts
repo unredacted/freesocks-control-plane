@@ -11,7 +11,9 @@ import { ConvexError } from 'convex/values';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
+import { z } from 'zod';
 import { jsonRes, mockFetch } from './lib/edges/testing/mockFetch';
+import { __setEdgeProviderForTests, edgeProviderFor } from './lib/edges/providers/registry';
 import type { EdgeProviderOpsFailure } from './edgeProviderOps';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -458,5 +460,302 @@ describe('edgeProviderOps: contract + layer refusals', () => {
         ledger: { steps: [], resources: [] },
       }),
     ).toMatchObject({ state: 'pending' });
+  });
+});
+
+describe('edgeProviderOps: an existing edge is driven by its FROZEN intent', () => {
+  afterEach(() => __setEdgeProviderForTests('fastly', null));
+
+  /** A fastly stand-in that records the config each call was handed. */
+  function recordingFastly() {
+    const seen: Array<Record<string, unknown>> = [];
+    __setEdgeProviderForTests('fastly', {
+      id: 'fastly',
+      templateSchema: z.object({}).passthrough(),
+      templateFields: [],
+      defaultTemplate: {},
+      testCredentials: async () => ({ ok: true }),
+      planProvision: () => [],
+      runStep: async () => ({ status: 'done', resources: [] }),
+      discover: async () => ({ status: 'unresolved' }),
+      describe: async (cfg: Record<string, unknown>) => {
+        seen.push(cfg);
+        return { state: 'active', addresses: {}, health: 'unknown' };
+      },
+      inspect: async () => ({ summary: { addresses: [], members: [], listeners: [] }, raw: {} }),
+      inventory: async () => ({ loadBalancers: [], ips: [], flavors: [] }),
+      planDestroy: () => [],
+      runDestroy: async () => ({ status: 'confirmed_gone' }),
+    } as unknown as Parameters<typeof __setEdgeProviderForTests>[1]);
+    return seen;
+  }
+
+  test('a settings edit after planning cannot move a live edge to another TLS subscription', async () => {
+    const t = newT();
+    const { id: dnsId } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'cloudflare',
+      name: 'acct-cf',
+      settings: { zoneId: 'a'.repeat(32), zoneName: 'example.org' },
+      credentials: { apiToken: 'cf' },
+    });
+    const { id: fastlyId } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'fastly',
+      name: 'acct-fastly',
+      settings: {
+        dnsAccountId: dnsId,
+        certificateAuthority: 'certainly',
+        tlsConfigurationId: 'tls-old',
+      },
+      credentials: { apiToken: 'f' },
+    });
+    const seen = recordingFastly();
+    // An edge planned against the OLD subscription.
+    await t.run((ctx) =>
+      ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'panel-a',
+        slug: 'panel-a',
+        config: { type: 'remnawave', baseUrl: 'https://p.example', apiToken: 't' },
+        isActive: true,
+        priority: 0,
+        keyCount: 0,
+        updatedAt: Date.now(),
+      }),
+    );
+    await t.mutation(internal.protocolProfiles.create, {
+      slug: 'p-ws',
+      name: 'ws',
+      protocol: 'ws',
+      serverNames: [],
+    });
+    const { id: relayId } = await t.mutation(internal.relays.upsertBySlug, {
+      slug: 'o1',
+      backendServerSlug: 'panel-a',
+      nodeHostname: 'o1',
+      originAddress: '198.51.100.7',
+    });
+    const { id: slotId } = await t.mutation(internal.relaySlots.upsert, {
+      relayId,
+      slotKey: 'w',
+      profileSlug: 'p-ws',
+      inboundTag: 'T',
+      configProfileUuid: '11111111-1111-4111-8111-111111111111',
+      configProfileInboundUuid: '22222222-2222-4222-8222-222222222222',
+      originPort: 443,
+    });
+    const edgeId = await t.run((ctx) =>
+      ctx.db.insert('edges', {
+        relayId,
+        slotId,
+        accountId: fastlyId,
+        provider: 'fastly',
+        managed: true,
+        name: 'fcp-relay-o1-1',
+        steps: [],
+        resources: [],
+        listeners: [{ edgePort: 443, originAddress: '198.51.100.7', originPort: 443 }],
+        addresses: { hostname: 'front.example.org' },
+        layer: 'l7',
+        provisionIntent: JSON.stringify({
+          hostname: 'front.example.org',
+          zoneId: 'a'.repeat(32),
+          zoneName: 'example.org',
+          dnsAccountId: dnsId,
+          certificateAuthority: 'certainly',
+          tlsConfigurationId: 'tls-old',
+          originTransport: {
+            scheme: 'https',
+            certPublic: true,
+            certNames: ['origin.example'],
+            acceptsHostHeader: 'any',
+          },
+          originPort: 443,
+          zoneSslMode: 'full',
+          templateHash: 'h',
+          templateParams: {},
+        }),
+        publication: 'unpublished',
+        status: 'active',
+        statusChangedAt: Date.now(),
+        health: 'unknown',
+        destroyAttempts: 0,
+        updatedAt: Date.now(),
+      }),
+    );
+    // The operator repoints the ACCOUNT at another subscription and CA.
+    await t.run((ctx) =>
+      ctx.db.patch(fastlyId, {
+        settings: {
+          type: 'fastly',
+          dnsAccountId: dnsId,
+          certificateAuthority: 'lets-encrypt',
+          tlsConfigurationId: 'tls-new',
+        },
+        updatedAt: Date.now(),
+      }),
+    );
+    await t.action(internal.edgeProviderOps.describe, {
+      accountId: fastlyId,
+      ledger: { steps: [], resources: [] },
+      edgeId,
+    });
+    // Acting on THIS edge uses what its intent froze, not the account's now.
+    expect(seen[0]).toMatchObject({
+      certificateAuthority: 'certainly',
+      tlsConfigurationId: 'tls-old',
+    });
+    // Planning a NEW edge (no edgeId) follows the account's current settings.
+    await t.action(internal.edgeProviderOps.describe, {
+      accountId: fastlyId,
+      ledger: { steps: [], resources: [] },
+    });
+    expect(seen[1]).toMatchObject({
+      certificateAuthority: 'lets-encrypt',
+      tlsConfigurationId: 'tls-new',
+    });
+  });
+});
+
+describe('edgeProviderOps: L7 plan-time refusals', () => {
+  const l7Spec = (over: Record<string, unknown> = {}) => ({
+    ...spec,
+    hostname: 'front.example.org',
+    originTransport: {
+      scheme: 'https' as const,
+      certPublic: true,
+      certNames: ['origin.example'],
+      acceptsHostHeader: 'any' as const,
+    },
+    ...over,
+  });
+
+  async function cloudflareAccount(t: ReturnType<typeof newT>) {
+    const { id } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'cloudflare',
+      name: 'acct-cf',
+      settings: { zoneId: 'a'.repeat(32), zoneName: 'example.org' },
+      credentials: { apiToken: 'cf' },
+    });
+    return id;
+  }
+
+  test('a Host header the origin would reject is refused before any call', async () => {
+    const t = newT();
+    const cfId = await cloudflareAccount(t);
+    const calls: string[] = [];
+    mockFetch((c) => {
+      calls.push(c.url);
+      return jsonRes({});
+    });
+    await expect(
+      t.action(internal.edgeProviderOps.planProvision, {
+        accountId: cfId,
+        spec: l7Spec({
+          originTransport: {
+            scheme: 'https',
+            certPublic: true,
+            certNames: ['origin.example'],
+            acceptsHostHeader: 'names',
+          },
+        }),
+        templateParams: {},
+        protocol: 'ws',
+        zoneSslMode: 'full',
+      }),
+    ).rejects.toThrow(/host_header_rejected/);
+    expect(calls).toEqual([]);
+  });
+
+  test('a zone encryption mode that cannot carry the origin transport is refused at plan time', async () => {
+    const t = newT();
+    const cfId = await cloudflareAccount(t);
+    mockFetch(() => jsonRes({}));
+    // `flexible` dials the origin over plain HTTP; this origin speaks HTTPS.
+    await expect(
+      t.action(internal.edgeProviderOps.planProvision, {
+        accountId: cfId,
+        spec: l7Spec(),
+        templateParams: {},
+        protocol: 'ws',
+        zoneSslMode: 'flexible',
+      }),
+    ).rejects.toThrow(/origin_tls_mismatch/);
+    // A privately issued origin certificate cannot survive `strict`.
+    await expect(
+      t.action(internal.edgeProviderOps.planProvision, {
+        accountId: cfId,
+        spec: l7Spec({
+          originTransport: {
+            scheme: 'https',
+            certPublic: false,
+            certNames: ['origin.example'],
+            acceptsHostHeader: 'any',
+          },
+        }),
+        templateParams: {},
+        protocol: 'ws',
+        zoneSslMode: 'strict',
+      }),
+    ).rejects.toThrow(/origin_tls_mismatch/);
+  });
+
+  test('an adapter with no adoption inspection refuses the import instead of guessing', async () => {
+    const t = newT();
+    const cfId = await cloudflareAccount(t);
+    mockFetch(() => jsonRes({}));
+    __setEdgeProviderForTests('cloudflare', {
+      ...edgeProviderFor('cloudflare'),
+      inspectForAdoption: undefined,
+    } as never);
+    try {
+      await expect(
+        t.action(internal.edgeProviderOps.inspectForAdoption, {
+          accountId: cfId,
+          resourceId: 'rec-1',
+          hostname: 'front.example.org',
+        }),
+      ).rejects.toThrow(/adoption_unsupported/);
+    } finally {
+      __setEdgeProviderForTests('cloudflare', null);
+    }
+  });
+});
+
+describe('edgeProviderOps: the inventory pull refreshes what was observed', () => {
+  afterEach(() => __setEdgeProviderForTests('cloudflare', null));
+
+  test('an inventory refresh re-reads the zone facts; a failing test never fails the pull', async () => {
+    const t = newT();
+    const { id: cfId } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'cloudflare',
+      name: 'acct-cf',
+      settings: { zoneId: 'a'.repeat(32), zoneName: 'example.org' },
+      credentials: { apiToken: 'cf' },
+    });
+    let mode = 'flexible';
+    let testThrows = false;
+    __setEdgeProviderForTests('cloudflare', {
+      ...edgeProviderFor('cloudflare'),
+      inventory: async () => ({ loadBalancers: [], ips: [], flavors: [] }),
+      testCredentials: async () => {
+        if (testThrows) throw new Error('zone read failed');
+        return { ok: true, observed: { zoneSslMode: mode } };
+      },
+    } as never);
+    await t.action(internal.edgeProviderOps.inventory, { accountId: cfId });
+    expect(
+      (await t.query(internal.edgeProviderAccounts.getForAdmin, { id: cfId }))!.observedSettings,
+    ).toEqual({ zoneSslMode: 'flexible' });
+    // The operator changes the zone's mode at the provider: the next pull sees it.
+    mode = 'full';
+    await t.action(internal.edgeProviderOps.inventory, { accountId: cfId });
+    expect(
+      (await t.query(internal.edgeProviderAccounts.getForAdmin, { id: cfId }))!.observedSettings,
+    ).toEqual({ zoneSslMode: 'full' });
+    // The inventory is what was asked for: a failing test does not lose it.
+    testThrows = true;
+    expect(await t.action(internal.edgeProviderOps.inventory, { accountId: cfId })).toMatchObject({
+      loadBalancers: [],
+    });
   });
 });

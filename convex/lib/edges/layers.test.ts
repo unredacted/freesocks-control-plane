@@ -1,5 +1,12 @@
 import { describe, expect, test } from 'vitest';
-import { certCovers, hostTargetFor, matchesCertName, slotLayers } from './layers';
+import {
+  certCovers,
+  hostTargetFor,
+  l7HostHeaderFor,
+  matchesCertName,
+  slotLayers,
+  zoneModeCarriesOrigin,
+} from './layers';
 
 const names = (...snis: string[]) => snis.map((sni) => ({ sni, status: 'active' as const }));
 
@@ -107,6 +114,91 @@ describe('slotLayers', () => {
     expect(r.layers).toEqual(['l4']);
     expect(r.excluded.l7).toBe('protocol_not_http_transport');
   });
+  // --- the Host header an L7 front sends the origin (F13) --------------------------
+  test('a node that answers only for its certificate names refuses a front Host it does not cover', () => {
+    const slot = {
+      originTransport: {
+        scheme: 'https' as const,
+        certPublic: true,
+        certNames: ['a.example.org'],
+        acceptsHostHeader: 'names' as const,
+      },
+    };
+    const profile = { protocol: 'ws' as const, serverNames: names('a.example.org') };
+    // The minted hostname is NOT on the origin certificate: the origin would
+    // reject every member connection the front forwards.
+    const rewritten = slotLayers(slot, profile, { l7Host: 'front-1.cdn.example' });
+    expect(rewritten.layers).toEqual(['l4']);
+    expect(rewritten.excluded.l7).toBe('host_header_rejected');
+    // A front that passes the ORIGIN's own address through is always accepted.
+    expect(slotLayers(slot, profile, { l7Host: 'origin' }).layers).toEqual(['l4', 'l7']);
+    // A covered hostname is accepted.
+    expect(slotLayers(slot, profile, { l7Host: 'a.example.org' }).layers).toEqual(['l4', 'l7']);
+  });
+  test('with no Host decided yet, only a first-level wildcard admits L7', () => {
+    const profile = { protocol: 'ws' as const, serverNames: [] };
+    const exact = slotLayers(
+      {
+        originTransport: {
+          scheme: 'http',
+          certPublic: false,
+          certNames: ['a.example.org'],
+          acceptsHostHeader: 'names',
+        },
+      },
+      profile,
+    );
+    expect(exact.layers).toEqual([]);
+    expect(exact.excluded.l7).toBe('host_header_rejected');
+    const wildcard = slotLayers(
+      {
+        originTransport: {
+          scheme: 'http',
+          certPublic: false,
+          certNames: ['*.example.org'],
+          acceptsHostHeader: 'names',
+        },
+      },
+      profile,
+    );
+    expect(wildcard.layers).toEqual(['l7']);
+  });
+  test('acceptsHostHeader `any` is unconditional', () => {
+    expect(
+      slotLayers(
+        {
+          originTransport: {
+            scheme: 'http',
+            certPublic: false,
+            certNames: [],
+            acceptsHostHeader: 'any',
+          },
+        },
+        { protocol: 'ws', serverNames: [] },
+        { l7Host: 'anything.example' },
+      ).layers,
+    ).toEqual(['l7']);
+  });
+
+  // --- name-free HTTP-transport profiles (F12) -------------------------------------
+  test('an SNI-presenting profile with NO active name cannot use L4', () => {
+    const r = slotLayers(
+      {
+        originTransport: {
+          scheme: 'https',
+          certPublic: true,
+          certNames: ['*.example.org'],
+          acceptsHostHeader: 'any',
+        },
+      },
+      { protocol: 'ws', serverNames: [{ sni: 'a.example.org', status: 'retired' }] },
+    );
+    // Assignment could never SELECT a name, so the coverage check over an empty
+    // set must not pass vacuously.
+    expect(r.layers).toEqual(['l7']);
+    expect(r.excluded.l4).toBe('no_server_names');
+  });
+
   test('plain protocol on an https origin needs no name coverage', () => {
     const r = slotLayers(
       {
@@ -120,6 +212,37 @@ describe('slotLayers', () => {
       { protocol: 'plain', serverNames: [] },
     );
     expect(r.layers).toEqual(['l4']);
+  });
+});
+
+describe('zoneModeCarriesOrigin', () => {
+  const https = {
+    scheme: 'https' as const,
+    certPublic: true,
+    certNames: [],
+    acceptsHostHeader: 'any' as const,
+  };
+  const http = { ...https, scheme: 'http' as const, certPublic: false };
+  test('a plaintext origin needs the mode that dials HTTP; an HTTPS origin the ones that dial HTTPS', () => {
+    expect(zoneModeCarriesOrigin('flexible', http)).toBe(true);
+    expect(zoneModeCarriesOrigin('full', http)).toBe(false);
+    expect(zoneModeCarriesOrigin('strict', http)).toBe(false);
+    expect(zoneModeCarriesOrigin('full', https)).toBe(true);
+    expect(zoneModeCarriesOrigin('Strict', https)).toBe(true);
+    expect(zoneModeCarriesOrigin('flexible', https)).toBe(false);
+    expect(zoneModeCarriesOrigin('off', https)).toBe(false);
+  });
+  test('the strictest mode validates the origin certificate, so a private one fails it', () => {
+    expect(zoneModeCarriesOrigin('strict', { ...https, certPublic: false })).toBe(false);
+    expect(zoneModeCarriesOrigin('full', { ...https, certPublic: false })).toBe(true);
+  });
+});
+
+describe('l7HostHeaderFor', () => {
+  test('the template decides between the minted hostname and the origin address', () => {
+    expect(l7HostHeaderFor('a.example', 'hostname')).toBe('a.example');
+    expect(l7HostHeaderFor('a.example', 'origin')).toBe('origin');
+    expect(l7HostHeaderFor(null, undefined)).toBeUndefined();
   });
 });
 

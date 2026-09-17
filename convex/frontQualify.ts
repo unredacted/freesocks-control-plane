@@ -21,7 +21,8 @@ import { v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
-import { resolveEdgeConfig } from './lib/edgeConfig';
+import { resolveEdgeConfig, edgeMs } from './lib/edgeConfig';
+import { scheduleMirrorRefresh } from './relays';
 import { parseIntent } from './lib/edges/intent';
 import {
   bindingsMatch,
@@ -145,12 +146,22 @@ export const record = internalMutation({
       ? { ok: false, code: 'config_changed', checkedAt: result.checkedAt }
       : { ok: result.ok, code: result.code, checkedAt: result.checkedAt };
     const previous = g.edge.readiness;
+    // A PASSING proof is good for the configured TTL. A FAILED one is not a
+    // proof at all, so it must not sit on the row for a whole TTL before
+    // anything looks again: it expires after a few poll intervals, which is
+    // what makes the reconcile cron re-run the check soon (and, bounded, is
+    // still long enough that one tick does not re-run it in a loop).
+    const failRetryMs = Math.min(
+      Math.max(edgeMs.poll(cfg) * 10, 60_000),
+      cfg.l7.qualificationTtlMinutes * 60_000,
+    );
     await ctx.db.patch(edgeId, {
       frontQualification: {
         ok: stored.ok,
         ...(stored.code ? { code: stored.code } : {}),
         checkedAt: stored.checkedAt,
-        expiresAt: stored.checkedAt + cfg.l7.qualificationTtlMinutes * 60_000,
+        expiresAt:
+          stored.checkedAt + (stored.ok ? cfg.l7.qualificationTtlMinutes * 60_000 : failRetryMs),
         binding: {
           hostname: current.hostname,
           slotId: current.slotId as Id<'relaySlots'>,
@@ -173,6 +184,22 @@ export const record = internalMutation({
       },
       updatedAt: now,
     });
+    // A PUBLISHED front that just failed its proof stops being rendered the
+    // moment this mutation commits (`edgeRender.publishedEdgesOf` marks it
+    // ineligible), so what subscribers should receive has changed: bump the
+    // epoch the /sub cache keys on and refresh the stored mirrors, exactly as
+    // an unpublish does. Without this, cached bodies and mirrors would keep
+    // handing out a front nothing passes through.
+    if (!stored.ok && g.edge.publication === 'published') {
+      const relay = await ctx.db.get(g.edge.relayId);
+      if (relay) {
+        await ctx.db.patch(relay._id, {
+          publicationEpoch: relay.publicationEpoch + 1,
+          updatedAt: now,
+        });
+        await scheduleMirrorRefresh(ctx);
+      }
+    }
     return { ok: stored.ok, code: stored.code ?? null };
   },
 });

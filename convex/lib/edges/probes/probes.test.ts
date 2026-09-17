@@ -19,7 +19,7 @@ import {
   type FetchLike,
 } from './checkhost';
 import { fetchAtlasProbeAsns, parseRipeAtlasResults, ripeAtlasBody } from './ripeatlas';
-import { classifyInternalError, internalProbe, resolvePublic } from './internal';
+import { classifyInternalError, internalProbe, pickDialAddress, resolvePublic } from './internal';
 import {
   countryVerdict,
   portRollup,
@@ -570,8 +570,10 @@ describe('internal probe', () => {
         nameTarget,
       );
     expect(await probe({ ok: true })).toMatchObject({ country: 'XX', ok: true });
+    // The connection goes to the literal the resolution check verified, never
+    // to the name again (a second lookup could rebind to a private address).
     expect(seen[0]).toMatchObject({
-      host: 'front.example',
+      host: '198.51.100.7',
       port: 443,
       servername: 'front.example',
     });
@@ -626,6 +628,40 @@ describe('internal probe', () => {
       ok: false,
       error: 'no_address',
     });
+  });
+
+  test('name targets never re-resolve: tcp and https probes dial the verified literal with the name as SNI/Host', async () => {
+    const dialed: Array<Record<string, unknown>> = [];
+    const deps = {
+      fetchFn: async () => {
+        throw new Error('a name target must not use fetch (it would resolve the name again)');
+      },
+      lookup: async () => ['2001:db8::7', '198.51.100.7'],
+      tcpConnect: async (o: Record<string, unknown>) => {
+        dialed.push({ kind: 'tcp', ...o });
+        return { ok: true };
+      },
+      httpsRequest: async (o: Record<string, unknown>) => {
+        dialed.push({ kind: 'https', ...o });
+        return { ok: true };
+      },
+    };
+    expect(
+      await internalProbe(deps, { ...nameTarget, protocol: 'tcp', requestedFamily: 4 }),
+    ).toMatchObject({ ok: true });
+    expect(dialed[0]).toMatchObject({ kind: 'tcp', host: '198.51.100.7', port: 443 });
+    expect(
+      await internalProbe(deps, { ...nameTarget, protocol: 'https', requestedFamily: 6 }),
+    ).toMatchObject({ ok: true });
+    expect(dialed[1]).toMatchObject({
+      kind: 'https',
+      host: '2001:db8::7',
+      servername: 'front.example',
+    });
+    // No requested family: the first verified answer is dialled.
+    await internalProbe(deps, { ...nameTarget, protocol: 'tcp' });
+    expect(dialed[2]).toMatchObject({ host: '2001:db8::7' });
+    expect(pickDialAddress(['198.51.100.7'], 6)).toBe('198.51.100.7');
   });
 });
 

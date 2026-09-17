@@ -37,14 +37,17 @@ import {
 } from './lib/edges/providers/capabilities';
 import { renderTemplateValue } from './lib/edges/providers/template';
 import { isRelayProviderId, type EdgeProviderId } from './lib/edgeProviderIds';
-import { parseIntent } from './lib/edges/intent';
+import { parseIntent, type ProvisionIntent } from './lib/edges/intent';
 import type { SlotProtocol } from './lib/edges/protocols';
 import {
   buildCredentials,
   pickCredentialIdentifiers,
   validateSettings,
+  EDGE_INTENT_DEFAULT_SETTINGS,
 } from './lib/edges/accountSettings';
+import { l7HostAccepted, l7HostHeaderFor, zoneModeCarriesOrigin } from './lib/edges/layers';
 import type {
+  AdoptionInspection,
   DiscoverResult,
   Discovery,
   EdgeDescription,
@@ -56,6 +59,7 @@ import type {
   EdgeProvider,
   EdgeProviderConfig,
   ResourceStep,
+  SharedTeardownState,
   StepOutcome,
 } from './lib/edges/providers/types';
 
@@ -233,7 +237,12 @@ async function loadAdapter(
   ctx: ActionCtx,
   accountId: Id<'edgeProviderAccounts'>,
   edgeId?: Id<'edges'>,
-): Promise<{ provider: EdgeProvider; cfg: EdgeProviderConfig; providerId: EdgeProviderId }> {
+): Promise<{
+  provider: EdgeProvider;
+  cfg: EdgeProviderConfig;
+  providerId: EdgeProviderId;
+  intent: ProvisionIntent | null;
+}> {
   const acct = await ctx.runQuery(internal.edgeProviderAccounts.getWithSecret, { id: accountId });
   if (!acct) {
     throw new ConvexError<EdgeProviderOpsFailure>({
@@ -248,17 +257,26 @@ async function loadAdapter(
     acct.credentials as Record<string, unknown> & { type: typeof acct.provider },
     acct.settings as Record<string, unknown> & { type: typeof acct.provider },
   );
+  // Acting on an EXISTING edge: every setting the intent froze wins over the
+  // account row. The zone/DNS account below is one of them; so is the TLS
+  // subscription (`certificateAuthority`, `tlsConfigurationId`), which decides
+  // which certificate a describe or a destroy acts on. A settings edit after
+  // planning must not move a live edge's certificate to another subscription.
+  const intent = edgeId ? await ctx.runQuery(internal.edgeProviderOps.intentOf, { edgeId }) : null;
+  if (intent) {
+    const frozen = intent as unknown as Record<string, unknown>;
+    for (const key of EDGE_INTENT_DEFAULT_SETTINGS[acct.provider]) {
+      if (frozen[key] !== undefined) (cfg as unknown as Record<string, unknown>)[key] = frozen[key];
+    }
+  }
   if (EDGE_PROVIDER_CAPABILITIES[acct.provider].needsDnsAccount) {
     let dnsAccountId = (acct.settings as { dnsAccountId?: string }).dnsAccountId;
     let zoneId: string | undefined;
     let zoneName: string | undefined;
-    if (edgeId) {
-      const intent = await ctx.runQuery(internal.edgeProviderOps.intentOf, { edgeId });
-      if (intent) {
-        dnsAccountId = intent.dnsAccountId ?? dnsAccountId;
-        zoneId = intent.zoneId;
-        zoneName = intent.zoneName;
-      }
+    if (intent) {
+      dnsAccountId = intent.dnsAccountId ?? dnsAccountId;
+      zoneId = intent.zoneId;
+      zoneName = intent.zoneName;
     }
     if (!dnsAccountId) {
       throw new ConvexError<EdgeProviderOpsFailure>({
@@ -290,7 +308,7 @@ async function loadAdapter(
       accountId: dnsAccountId,
     };
   }
-  return { provider: edgeProviderFor(acct.provider), cfg, providerId: acct.provider };
+  return { provider: edgeProviderFor(acct.provider), cfg, providerId: acct.provider, intent };
 }
 
 /** Template params are validated by the adapter schema, then placeholders rendered. */
@@ -344,13 +362,35 @@ function checkProtocolCarried(providerId: EdgeProviderId, protocol?: string): vo
  * (zone encryption mode, fixed ports, publicly trusted certificates) at plan
  * time with its own codes, because only it knows them.
  */
-function checkOriginTransport(providerId: EdgeProviderId, spec: EdgeSpec): void {
+function checkOriginTransport(
+  providerId: EdgeProviderId,
+  spec: EdgeSpec,
+  tpl?: Record<string, unknown>,
+  zoneSslMode?: string,
+): void {
   if (EDGE_PROVIDER_CAPABILITIES[providerId].layer !== 'l7') return;
   if (!spec.hostname) refuse('hostname_missing', 'an L7 edge needs its hostname', providerId);
   if (!spec.originTransport)
     refuse(
       'origin_transport_missing',
       'the slot does not declare how its origin is reached',
+      providerId,
+    );
+  // The Host header the front will send the origin: the minted hostname, or the
+  // origin's own address when the template passes it through. A node that
+  // answers only for its certificate names would reject anything else.
+  if (!l7HostAccepted(spec.originTransport, l7HostHeaderFor(spec.hostname, tpl?.overrideHost)))
+    refuse(
+      'host_header_rejected',
+      'the origin does not accept the Host header this front would send',
+      providerId,
+    );
+  // The zone's encryption mode decides whether the front dials the origin over
+  // HTTP or HTTPS, and whether it validates the origin certificate.
+  if (zoneSslMode && !zoneModeCarriesOrigin(zoneSslMode, spec.originTransport))
+    refuse(
+      'origin_tls_mismatch',
+      'the zone encryption mode cannot carry this origin transport',
       providerId,
     );
 }
@@ -382,10 +422,16 @@ function checkOriginPort(providerId: EdgeProviderId, spec: EdgeSpec, protocol?: 
 }
 
 /** Every pre-call refusal in one place, so plan and run apply the same rules. */
-function checkSpec(providerId: EdgeProviderId, spec: EdgeSpec, protocol?: string): void {
+function checkSpec(
+  providerId: EdgeProviderId,
+  spec: EdgeSpec,
+  protocol?: string,
+  tpl?: Record<string, unknown>,
+  zoneSslMode?: string,
+): void {
   checkTransport(providerId, spec);
   checkProtocolCarried(providerId, protocol);
-  checkOriginTransport(providerId, spec);
+  checkOriginTransport(providerId, spec, tpl, zoneSslMode);
   checkOriginPort(providerId, spec, protocol);
 }
 
@@ -425,6 +471,7 @@ export const testCredentials = internalAction({
         id: accountId,
         ok: res.ok,
         code: res.code,
+        observed: res.observed,
       });
       return { ok: res.ok, code: res.code };
     }),
@@ -570,6 +617,21 @@ export const inventory = internalAction({
         id: accountId,
         inventory: JSON.stringify(inv),
       });
+      // The observed facts (a zone's encryption mode) go stale exactly like the
+      // inventory does, and planning refuses without them. Refresh them on the
+      // same operator action; a failing test never fails the inventory pull,
+      // which is the thing that was asked for.
+      try {
+        const res = await provider.testCredentials(cfg);
+        await ctx.runMutation(internal.edgeProviderAccounts.recordTest, {
+          id: accountId,
+          ok: res.ok,
+          code: res.code,
+          observed: res.observed,
+        });
+      } catch {
+        // Deliberately silent: the inventory the operator asked for is already in.
+      }
       return inv;
     }),
 });
@@ -583,12 +645,15 @@ export const planProvision = internalAction({
     templateParams: v.any(),
     /** The slot profile's protocol, so the carriage / port rules can be checked. */
     protocol: v.optional(v.string()),
+    /** The zone's observed encryption mode (L7), checked against the origin transport. */
+    zoneSslMode: v.optional(v.string()),
   },
-  handler: (ctx, { accountId, spec, templateParams, protocol }): Promise<ResourceStep[]> =>
+  handler: (ctx, a): Promise<ResourceStep[]> =>
     run(async () => {
-      const { provider, cfg, providerId } = await loadAdapter(ctx, accountId);
-      checkSpec(providerId, spec, protocol);
-      return provider.planProvision(cfg, spec, renderedTemplate(provider, templateParams, spec));
+      const { provider, cfg, providerId } = await loadAdapter(ctx, a.accountId);
+      const tpl = renderedTemplate(provider, a.templateParams, a.spec);
+      checkSpec(providerId, a.spec, a.protocol, tpl, a.zoneSslMode);
+      return provider.planProvision(cfg, a.spec, tpl);
     }),
 });
 
@@ -604,15 +669,10 @@ export const runStep = internalAction({
   },
   handler: (ctx, a): Promise<StepOutcome> =>
     run(async () => {
-      const { provider, cfg, providerId } = await loadAdapter(ctx, a.accountId, a.edgeId);
-      checkSpec(providerId, a.spec, a.protocol);
-      return provider.runStep(
-        cfg,
-        a.step as ResourceStep,
-        a.spec,
-        renderedTemplate(provider, a.templateParams, a.spec),
-        a.ledger as Ledger,
-      );
+      const { provider, cfg, providerId, intent } = await loadAdapter(ctx, a.accountId, a.edgeId);
+      const tpl = renderedTemplate(provider, a.templateParams, a.spec);
+      checkSpec(providerId, a.spec, a.protocol, tpl, intent?.zoneSslMode);
+      return provider.runStep(cfg, a.step as ResourceStep, a.spec, tpl, a.ledger as Ledger);
     }),
 });
 
@@ -699,7 +759,129 @@ export const inspect = internalAction({
     }),
 });
 
+/**
+ * What an EXISTING provider resource an operator wants to import really is: the
+ * ledger children FCP should record (with the provider's own ids and versions,
+ * so discovery and destroy never depend on a generated name), every hostname it
+ * serves, whether it is SHARED with other hostnames, and what it dials. An
+ * adapter that cannot answer refuses `adoption_unsupported`: importing a front
+ * FCP cannot describe would produce an edge that can never qualify.
+ */
+export const inspectForAdoption = internalAction({
+  args: {
+    accountId: v.id('edgeProviderAccounts'),
+    resourceId: v.string(),
+    hostname: v.string(),
+  },
+  handler: (ctx, a): Promise<AdoptionInspection> =>
+    run(async () => {
+      const { provider, cfg, providerId } = await loadAdapter(ctx, a.accountId);
+      if (!provider.inspectForAdoption)
+        refuse(
+          'adoption_unsupported',
+          `${providerId} edges cannot be imported from a resource`,
+          providerId,
+        );
+      return provider.inspectForAdoption(cfg, a.resourceId, a.hostname);
+    }),
+});
+
 // --- destroy -------------------------------------------------------------------------
+
+const sharedTeardownState = v.object({
+  phase: v.string(),
+  serviceId: v.string(),
+  fromVersion: v.optional(v.number()),
+  workVersion: v.optional(v.number()),
+  code: v.optional(v.string()),
+  /** The driver's own extra fields (JSON, adapter-shaped). */
+  extra: v.optional(v.string()),
+});
+
+type SharedStateWire = {
+  phase: string;
+  serviceId: string;
+  fromVersion?: number;
+  workVersion?: number;
+  code?: string;
+  extra?: string;
+};
+
+/** Wire shape → the driver's own state object (its extra fields spread back on). */
+function fromWire(s: SharedStateWire): SharedTeardownState {
+  let extra: Record<string, unknown> = {};
+  if (s.extra) {
+    try {
+      const raw = JSON.parse(s.extra) as unknown;
+      if (raw && typeof raw === 'object' && !Array.isArray(raw))
+        extra = raw as Record<string, unknown>;
+    } catch {
+      extra = {};
+    }
+  }
+  const { extra: _drop, ...known } = s;
+  return { ...extra, ...known } as SharedTeardownState;
+}
+
+/** The driver's state → the wire shape (known columns + the rest as JSON). */
+export function toWire(s: SharedTeardownState): SharedStateWire {
+  const { phase, serviceId, fromVersion, workVersion, code, ...rest } = s;
+  return {
+    phase,
+    serviceId,
+    ...(typeof fromVersion === 'number' ? { fromVersion } : {}),
+    ...(typeof workVersion === 'number' ? { workVersion } : {}),
+    ...(typeof code === 'string' ? { code } : {}),
+    ...(Object.keys(rest).length > 0 ? { extra: JSON.stringify(rest).slice(0, 4_000) } : {}),
+  };
+}
+
+/**
+ * The INITIAL state of a shared-resource teardown, or `null` when the ledger
+ * describes a resource FCP owns exclusively (the ordinary destroy walk then
+ * applies). Pure at the adapter; an action only because the adapter lives in
+ * the Node runtime.
+ */
+export const planSharedTeardown = internalAction({
+  args: {
+    accountId: v.id('edgeProviderAccounts'),
+    ledger,
+    opId: v.string(),
+    edgeId: v.optional(v.id('edges')),
+  },
+  handler: (ctx, a): Promise<SharedStateWire | null> =>
+    run(async () => {
+      const { provider } = await loadAdapter(ctx, a.accountId, a.edgeId);
+      if (!provider.sharedTeardown) return null;
+      const state = provider.sharedTeardown.plan(a.ledger as Ledger, a.opId, Date.now());
+      return state ? toWire(state) : null;
+    }),
+});
+
+/**
+ * ONE phase of a shared-resource teardown (Fastly: clone → remove domain →
+ * validate → activate → confirm). The caller persists what comes back and calls
+ * again next pass, under the per-service external lock; terminal phases are
+ * `done` and `needs_operator`.
+ */
+export const sharedTeardownStep = internalAction({
+  args: {
+    accountId: v.id('edgeProviderAccounts'),
+    edgeId: v.optional(v.id('edges')),
+    state: sharedTeardownState,
+  },
+  handler: (ctx, a): Promise<SharedStateWire> =>
+    run(async () => {
+      const { provider, cfg, providerId } = await loadAdapter(ctx, a.accountId, a.edgeId);
+      if (!provider.sharedTeardown)
+        refuse(
+          'shared_teardown_unsupported',
+          `${providerId} edges have no shared-resource teardown`,
+          providerId,
+        );
+      return toWire(await provider.sharedTeardown.step(cfg, fromWire(a.state)));
+    }),
+});
 
 export const planDestroy = internalAction({
   args: { accountId: v.id('edgeProviderAccounts'), ledger, edgeId: v.optional(v.id('edges')) },

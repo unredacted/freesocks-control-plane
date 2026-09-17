@@ -144,7 +144,7 @@ const originTransport = {
   acceptsHostHeader: 'any' as const,
 };
 
-async function seed(opts: { autoSelect?: boolean } = {}) {
+async function seed(opts: { autoSelect?: boolean; zoneSslMode?: string } = {}) {
   const t = convexTest(schema, modules);
   await t.run(async (ctx) => {
     await ctx.db.insert('backendServers', {
@@ -171,6 +171,14 @@ async function seed(opts: { autoSelect?: boolean } = {}) {
     credentials: { apiToken: 'cf' },
   });
   await t.mutation(internal.edgeProviderAccounts.setQualified, { id: accountId, qualified: true });
+  // The zone's encryption mode is what the credential test OBSERVED; planning
+  // refuses without it (`zone_mode_unknown`), never guesses one.
+  await t.run((ctx) =>
+    ctx.db.patch(accountId, {
+      observedSettings: JSON.stringify({ zoneSslMode: opts.zoneSslMode ?? 'full' }),
+      observedAt: Date.now(),
+    }),
+  );
   const { id: profileId } = await t.mutation(internal.protocolProfiles.create, {
     slug: 'prof-ws',
     name: 'Profile WS',
@@ -520,5 +528,253 @@ describe('edgeRotations: the L7 automatic-selection gate', () => {
       targetEdgeId: edgeId,
       force: true,
     });
+  });
+});
+
+describe('edgeRotations: affected-country evidence must be FRESH', () => {
+  /** The stored per-country verdicts, with the freshness the gate reads. */
+  test('a verdict older than the freshness window reports `stale`, never its old value', async () => {
+    const { t, relayId, slotId } = await seed();
+    const edgeId = await t.run((ctx) =>
+      ctx.db.insert('edges', {
+        relayId,
+        slotId,
+        managed: false,
+        name: 'adopted-x',
+        steps: [],
+        resources: [],
+        listeners: [],
+        addresses: { hostname: 'old.example.org' },
+        layer: 'l7',
+        publication: 'unpublished',
+        status: 'active',
+        statusChangedAt: Date.now(),
+        health: 'unknown',
+        destroyAttempts: 0,
+        updatedAt: Date.now(),
+      }),
+    );
+    const weeksAgo = Date.now() - 21 * 24 * 60 * 60_000;
+    await t.run((ctx) =>
+      ctx.db.patch(edgeId, {
+        reachability: {
+          byCountry: [
+            {
+              country: 'IR',
+              verdict: 'reachable',
+              okVantages: 3,
+              failVantages: 0,
+              lastAt: weeksAgo,
+            },
+            {
+              country: 'RU',
+              verdict: 'reachable',
+              okVantages: 3,
+              failVantages: 0,
+              lastAt: Date.now(),
+            },
+          ],
+          updatedAt: weeksAgo,
+        },
+      }),
+    );
+    const verdicts = await t.query(internal.edgeRotations.edgeReachability, {
+      edgeId,
+      countries: ['IR', 'RU', 'CN'],
+    });
+    expect(verdicts).toEqual([
+      { country: 'IR', verdict: 'stale', lastAt: weeksAgo },
+      { country: 'RU', verdict: 'reachable', lastAt: expect.any(Number) },
+      { country: 'CN', verdict: 'absent', lastAt: null },
+    ]);
+  });
+
+  test('a detector replacement never passes on a stale `reachable`; a fresh one lets it through', async () => {
+    // Drive the same run twice: once with the new hostname's only evidence
+    // weeks old, once fresh. Nothing but the freshness differs.
+    for (const fresh of [false, true]) {
+      vi.useFakeTimers();
+      fakeL7();
+      fakePanel();
+      __setFrontChecker(async () => ({ ok: true, steps: [], checkedAt: Date.now() }));
+      const { t, relayId, slotId } = await seed({ autoSelect: true });
+      await t.run(async (ctx) => {
+        for (const [key, value] of [
+          ['edge.autoRotate', 'true'],
+          ['edge.probe.enabled', 'true'],
+          // Short enough that the gate's wait is observable step by step.
+          ['edge.pollSeconds', '5'],
+          ['edge.l7.qualifyTimeoutMinutes', '2'],
+        ] as const) {
+          await ctx.db.insert('appSettings', { key, value, updatedAt: Date.now() });
+        }
+      });
+      const oldEdge = await t.run((ctx) =>
+        ctx.db.insert('edges', {
+          relayId,
+          slotId,
+          managed: false,
+          name: 'adopted-old',
+          steps: [],
+          resources: [],
+          listeners: [{ edgePort: 443, originAddress: ORIGIN, originPort: 443 }],
+          addresses: { hostname: 'old.example.org' },
+          layer: 'l7',
+          publication: 'published',
+          poolIndex: 0,
+          status: 'active',
+          statusChangedAt: Date.now(),
+          health: 'unknown',
+          destroyAttempts: 0,
+          updatedAt: Date.now(),
+        }),
+      );
+      await t.run((ctx) =>
+        ctx.db.patch(relayId, {
+          publishedEdgeIds: [oldEdge],
+          autoRotate: true,
+          suspicion: {
+            state: 'suspected',
+            hintLevel: 'probes',
+            score: 1,
+            reportScore: 0,
+            loadScore: 0,
+            probeScore: 1,
+            scope: 'regional',
+            countries: [{ code: 'IR', count: 3 }],
+            edgeEvidence: [{ edgeId: oldEdge, source: 'probes', countries: ['IR'] }],
+            firstSeenAt: Date.now(),
+            lastEvalAt: Date.now(),
+            quietEvals: 0,
+            baselineWarm: true,
+            veto: null,
+          },
+        }),
+      );
+      const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+        relayId,
+        kind: 'replace',
+        trigger: 'detector',
+        targetEdgeId: oldEdge,
+      });
+      // As soon as the run has minted its new edge, give that hostname the only
+      // country verdict it will ever have: `reachable`, but measured weeks ago
+      // in the first pass and just now in the second.
+      const stamped = new Set<string>();
+      for (let i = 0; i < 300; i++) {
+        // Step the clock rather than draining every timer at once: the stamp
+        // below has to land WHILE the run is waiting on the gate.
+        await vi.advanceTimersByTimeAsync(2_000);
+        await t.finishInProgressScheduledFunctions();
+        const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
+        const newEdge = r.toEdgeId ?? r.createdEdgeId ?? null;
+        if (newEdge && !stamped.has(newEdge as string)) {
+          stamped.add(newEdge as string);
+          const at = fresh ? Date.now() : Date.now() - 21 * 24 * 60 * 60_000;
+          await t.run((ctx) =>
+            ctx.db.patch(newEdge, {
+              reachability: {
+                byCountry: [
+                  {
+                    country: 'IR',
+                    verdict: 'reachable',
+                    okVantages: 3,
+                    failVantages: 0,
+                    lastAt: at,
+                  },
+                ],
+                updatedAt: at,
+              },
+            }),
+          );
+        }
+        if (['done', 'failed', 'rolled_back', 'quarantined', 'cancelled'].includes(r.phase)) break;
+      }
+      const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
+      const origin = (await t.query(internal.relays.get, { id: relayId }))!;
+      // The verdict really was stamped on the NEW hostname: without this the
+      // assertions below would hold for a run that simply never measured it.
+      expect(stamped.size).toBe(1);
+      if (fresh) {
+        expect([r.phase, r.outcome]).toEqual(['done', 'published']);
+        expect(origin.publishedEdgeIds[0]).toBe(r.toEdgeId);
+      } else {
+        // The gate never accepted the stale verdict, so the replacement did not
+        // reach members; it asked for a fresh round instead.
+        expect(r.phase).not.toBe('done');
+        expect(origin.publishedEdgeIds[0]).toBe(oldEdge);
+        const runs = await t.run((ctx) => ctx.db.query('probeRuns').collect());
+        expect(runs.some((x) => x.targetRef === (r.toEdgeId as string))).toBe(true);
+      }
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('edgeReconcile: a published front whose proof failed is re-proven soon', () => {
+  test('the failed proof expires within a few poll intervals and the next tick re-runs the session', async () => {
+    fakeL7();
+    fakePanel();
+    let sessions = 0;
+    __setFrontChecker(async () => {
+      sessions++;
+      return { ok: false, code: 'front_error', steps: [], checkedAt: Date.now() };
+    });
+    const { t, accountId, relayId, slotId } = await seed();
+    const edgeId = await t.run((ctx) =>
+      ctx.db.insert('edges', {
+        relayId,
+        slotId,
+        accountId,
+        provider: 'cloudflare',
+        managed: true,
+        name: 'fcp-relay-node-one-1',
+        steps: [],
+        resources: [
+          {
+            stepId: 'dns',
+            kind: 'dns_record',
+            resourceId: 'rec-1',
+            ownership: 'created' as const,
+            deleteState: 'present' as const,
+          },
+        ],
+        listeners: [{ edgePort: 443, originAddress: ORIGIN, originPort: 443 }],
+        addresses: { hostname: `front.${ZONE}` },
+        layer: 'l7',
+        provisionIntent: JSON.stringify({
+          hostname: `front.${ZONE}`,
+          zoneId: 'a'.repeat(32),
+          zoneName: ZONE,
+          originTransport,
+          originPort: 443,
+          zoneSslMode: 'full',
+          templateHash: 'h1',
+          templateParams: {},
+        }),
+        publication: 'published',
+        poolIndex: 0,
+        status: 'active',
+        statusChangedAt: Date.now(),
+        health: 'unknown',
+        destroyAttempts: 0,
+        updatedAt: Date.now(),
+      }),
+    );
+    await t.run((ctx) => ctx.db.patch(relayId, { publishedEdgeIds: [edgeId] }));
+    await t.action(internal.edgeReconcile.run, {});
+    expect(sessions).toBe(1);
+    const edge = (await t.run((ctx) => ctx.db.get(edgeId)))!;
+    expect(edge.frontQualification!.ok).toBe(false);
+    // A few poll intervals, not a whole qualification TTL: the very next tick
+    // past that point re-runs the session instead of leaving the pool carrying
+    // an unverified front for an hour.
+    const q = edge.frontQualification!;
+    expect(q.expiresAt - q.checkedAt).toBeLessThanOrEqual(60 * 60_000);
+    await t.run((ctx) =>
+      ctx.db.patch(edgeId, { lastHealthAt: 0, frontQualification: { ...q, expiresAt: 1 } }),
+    );
+    await t.action(internal.edgeReconcile.run, {});
+    expect(sessions).toBe(2);
   });
 });

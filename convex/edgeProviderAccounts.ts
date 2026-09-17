@@ -26,7 +26,7 @@ import {
 } from './lib/edges/accountSettings';
 import { resolveTemplateFor } from './edgeTemplates';
 import { EDGE_PROVIDER_CAPABILITIES } from './lib/edges/providers/capabilities';
-import { parseIntent } from './lib/edges/intent';
+import { parseIntent, parseObservedSettings } from './lib/edges/intent';
 import { liveEdgesOfAccount } from './relays';
 
 const NAME_RE = /^[a-z0-9][a-z0-9-]{1,62}$/;
@@ -59,6 +59,10 @@ export function mapAccountAdmin(r: Doc<'edgeProviderAccounts'>) {
     maxLiveEdges: r.maxLiveEdges,
     lastTestOkAt: r.lastTestOkAt ? new Date(r.lastTestOkAt).toISOString() : null,
     lastTestError: r.lastTestError ?? null,
+    // What the last credential test read at the provider (e.g. the zone's
+    // encryption mode). Planning needs it; the operator never types it.
+    observedSettings: r.observedSettings ? parseObservedSettings(r.observedSettings) : null,
+    observedAt: r.observedAt ? new Date(r.observedAt).toISOString() : null,
     inventoryAt: r.inventoryAt ? new Date(r.inventoryAt).toISOString() : null,
     createdAt: new Date(r._creationTime).toISOString(),
     updatedAt: new Date(r.updatedAt).toISOString(),
@@ -663,15 +667,31 @@ export const setQualified = internalMutation({
 
 /** Stamp a credential test outcome (code only, never a body). */
 export const recordTest = internalMutation({
-  args: { id: v.id('edgeProviderAccounts'), ok: v.boolean(), code: v.optional(v.string()) },
-  handler: async (ctx, { id, ok, code }) => {
+  args: {
+    id: v.id('edgeProviderAccounts'),
+    ok: v.boolean(),
+    code: v.optional(v.string()),
+    /**
+     * Facts the test read at the provider that planning needs but the operator
+     * never enters (a zone's encryption mode, its WebSocket switch). Stored so a
+     * rotation can freeze them into an edge's intent instead of guessing.
+     */
+    observed: v.optional(v.record(v.string(), v.string())),
+  },
+  handler: async (ctx, { id, ok, code, observed }) => {
     const row = await ctx.db.get(id);
     if (!row) return null;
+    const now = Date.now();
     await ctx.db.patch(id, {
       ...(ok
-        ? { lastTestOkAt: Date.now(), lastTestError: undefined }
+        ? { lastTestOkAt: now, lastTestError: undefined }
         : { lastTestError: (code ?? 'error').slice(0, 64) }),
-      updatedAt: Date.now(),
+      // A test that observed nothing leaves the previous observation alone: an
+      // adapter with no facts to report is not evidence that the zone changed.
+      ...(observed && Object.keys(observed).length > 0
+        ? { observedSettings: JSON.stringify(observed).slice(0, 4_000), observedAt: now }
+        : {}),
+      updatedAt: now,
     });
     return null;
   },

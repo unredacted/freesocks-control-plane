@@ -502,6 +502,113 @@ export function shouldReissueDelete(
   return !!c && c.resourceId === resourceId && c.attempts >= MAX_CONFIRM_ATTEMPTS;
 }
 
+/** The persisted shared-teardown state of an edge in the shape the action takes. */
+function sharedStateOf(edge: Edge): {
+  phase: string;
+  serviceId: string;
+  fromVersion?: number;
+  workVersion?: number;
+  code?: string;
+  extra?: string;
+} | null {
+  const s = edge.sharedTeardown;
+  if (!s) return null;
+  return {
+    phase: s.phase,
+    serviceId: s.serviceId,
+    fromVersion: s.fromVersion,
+    ...(s.workVersion !== undefined ? { workVersion: s.workVersion } : {}),
+    ...(edge.sharedTeardownState ? { extra: edge.sharedTeardownState } : {}),
+  };
+}
+
+/**
+ * Drive at most ONE phase of a shared-resource teardown, or report that the
+ * edge has none (`false`, the ordinary destroy walk then runs).
+ *
+ * The workflow rewrites a version chain that every other adopted hostname on
+ * the same service also rewrites, so the per-edge op claim is not enough: the
+ * SERVICE is locked for the pass. A terminal `done` marks the children FCP owns
+ * on that service gone (the walk then completes the edge); `needs_operator`
+ * parks the edge with the driver's code. Every pass counts toward
+ * `destroyAttempts`, so a workflow that never converges parks at the cap.
+ */
+async function sharedTeardownPass(
+  ctx: ActionCtx,
+  cfg: EdgeConfig,
+  edge: Edge,
+  ledger: { steps: Edge['steps']; resources: Edge['resources'] },
+): Promise<boolean> {
+  const accountId = edge.accountId!;
+  let state = sharedStateOf(edge);
+  // Only an L7 front can sit on a resource shared with other hostnames; asking
+  // every L4 edge's adapter on every pass would be a round trip for a constant.
+  if (!state && (edge.layer ?? 'l4') !== 'l7') return false;
+  if (!state) {
+    const planned = await ctx.runAction(internal.edgeProviderOps.planSharedTeardown, {
+      accountId,
+      ledger,
+      edgeId: edge._id,
+      opId: `st-${edge._id as string}`,
+    });
+    // Nothing shared here: an exclusively owned resource is deleted outright.
+    if (!planned) return false;
+    state = planned;
+    await ctx.runMutation(internal.edgeReconcileMutations.recordSharedTeardown, {
+      edgeId: edge._id,
+      state,
+    });
+  }
+  // A terminal state has already acted (the children are `confirmed_gone`, or
+  // the edge is parked): let the ordinary walk finish, or stay parked.
+  if (state.phase === 'done' || state.phase === 'needs_operator') return false;
+  const cl = await ctx.runMutation(internal.edges.claimOp, {
+    edgeId: edge._id,
+    kind: 'destroy_step',
+    target: state.serviceId,
+    claimMs: edgeMs.opClaim(cfg),
+  });
+  if (!cl.ok) return true;
+  const lockKey = `fastly-service:${state.serviceId}`;
+  const lk = await ctx.runMutation(internal.edges.claimExternalLock, {
+    key: lockKey,
+    edgeId: edge._id,
+    opId: cl.opId,
+    ttlMs: edgeMs.opClaim(cfg),
+  });
+  if (!lk.ok) {
+    await ctx.runMutation(internal.edges.settleOp, { edgeId: edge._id, opId: cl.opId });
+    return true;
+  }
+  let next;
+  try {
+    next = await ctx.runAction(internal.edgeProviderOps.sharedTeardownStep, {
+      accountId,
+      edgeId: edge._id,
+      state,
+    });
+  } catch (err) {
+    // An unknown outcome keeps the persisted phase: the next pass re-observes
+    // what the clone or the activation actually did before touching anything.
+    await ctx.runMutation(internal.edges.settleExternalLock, { key: lockKey, opId: cl.opId });
+    await ctx.runMutation(internal.edges.settleOp, { edgeId: edge._id, opId: cl.opId });
+    await ctx.runMutation(internal.edges.patchEdge, {
+      edgeId: edge._id,
+      destroyAttemptsDelta: 1,
+    });
+    throw err;
+  }
+  await ctx.runMutation(internal.edges.settleExternalLock, { key: lockKey, opId: cl.opId });
+  await ctx.runMutation(internal.edges.settleOp, { edgeId: edge._id, opId: cl.opId });
+  await ctx.runMutation(internal.edgeReconcileMutations.recordSharedTeardown, {
+    edgeId: edge._id,
+    state: next,
+    countAttempt: true,
+  });
+  await ctx.runMutation(internal.edges.patchEdge, { edgeId: edge._id, destroyAttemptsDelta: 1 });
+  return true;
+}
+
 /**
  * One destroy pass: confirm requested deletes (re-issuing the delete where
  * confirmation cannot make progress), then request the next present resource
@@ -531,6 +638,12 @@ async function destroyStep(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: 
     report.destroyed++;
     return;
   }
+  // A SHARED external resource cannot be deleted at all: removing ONE hostname
+  // from it is a persisted, serialised version workflow the adapter drives. When
+  // the ledger describes such a resource, that workflow IS this edge's destroy
+  // until it reports `done` (which marks the children FCP owns gone and lets the
+  // ordinary walk below finish) or `needs_operator`.
+  if (await sharedTeardownPass(ctx, cfg, edge, ledger)) return;
   const target = remaining[0];
   const cl = await ctx.runMutation(internal.edges.claimOp, {
     edgeId: edge._id,

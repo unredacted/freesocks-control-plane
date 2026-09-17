@@ -1388,6 +1388,278 @@ describe('fastly: shared teardown of an adopted domain', () => {
   });
 });
 
+// --- adoption -------------------------------------------------------------------------------
+
+describe('fastly: inspectForAdoption', () => {
+  /** The DNS rows an already-running front has in the referenced zone. */
+  function seededDns() {
+    return fakeDns([
+      {
+        id: 'rec-traffic',
+        type: 'CNAME',
+        name: HOST,
+        content: TRAFFIC_TARGET,
+        proxied: false,
+        comment: 'operator-managed',
+      },
+      {
+        id: 'rec-acme',
+        type: 'CNAME',
+        name: acmeChallengeName(HOST),
+        content: ACME_TARGET,
+        proxied: false,
+        comment: 'operator-managed',
+      },
+    ]);
+  }
+
+  test('an exclusively owned service is described with its real ids, version and origin', async () => {
+    const r = await serve();
+    seededDns();
+    const seen = await fastlyProvider.inspectForAdoption!(cfg, SVC, HOST);
+    expect(seen.resources).toEqual([
+      {
+        kind: 'service',
+        resourceId: SVC,
+        ownership: 'adopted',
+        meta: { name: 'fcp-relay-o1-deadbeef', version: 1, activeVersion: 1, shared: false },
+      },
+      { kind: 'domain', resourceId: HOST, ownership: 'adopted' },
+      {
+        kind: 'tls_subscription',
+        resourceId: SUB,
+        ownership: 'adopted',
+        meta: { hostname: HOST, shared: false },
+      },
+      { kind: 'ws_product', resourceId: SVC, ownership: 'adopted' },
+      {
+        kind: 'dns_record',
+        resourceId: 'rec-traffic',
+        ownership: 'adopted',
+        meta: {
+          dnsAccountId: 'dnsacct1',
+          zoneId: cfg.dns!.zoneId,
+          recordId: 'rec-traffic',
+          name: HOST,
+          role: 'traffic',
+        },
+      },
+      {
+        kind: 'dns_record',
+        resourceId: 'rec-acme',
+        ownership: 'adopted',
+        meta: {
+          dnsAccountId: 'dnsacct1',
+          zoneId: cfg.dns!.zoneId,
+          recordId: 'rec-acme',
+          name: acmeChallengeName(HOST),
+          role: 'acme',
+        },
+      },
+    ]);
+    expect(seen).toMatchObject({
+      hostname: HOST,
+      hostnames: [HOST],
+      shared: false,
+      content: ORIGIN,
+    });
+    // Everything is read from the ACTIVE version, and nothing is written.
+    expect(r.calls.every((c) => c.method === 'GET')).toBe(true);
+    expect(r.calls.some((c) => c.path === `/service/${SVC}/version/1/domain`)).toBe(true);
+    expect(r.calls.some((c) => c.query['filter[tls_domains.id]'] === HOST)).toBe(true);
+  });
+
+  test('a service serving other hostnames is SHARED (FCP may never delete it)', async () => {
+    await serve((c) =>
+      c.method === 'GET' && /\/version\/1\/domain$/.test(c.path)
+        ? { status: 200, body: [{ name: HOST }, { name: 'shop.example.org' }] }
+        : defaultReply(c),
+    );
+    seededDns();
+    const seen = await fastlyProvider.inspectForAdoption!(cfg, SVC, HOST);
+    expect(seen.shared).toBe(true);
+    expect(seen.hostnames).toEqual([HOST, 'shop.example.org']);
+    expect(seen.resources[0].meta).toMatchObject({ shared: true });
+  });
+
+  test('a certificate covering other domains marks the subscription (and the edge) shared', async () => {
+    await serve((c) =>
+      c.method === 'GET' && c.path === '/tls/subscriptions'
+        ? {
+            status: 200,
+            contentType: 'application/vnd.api+json',
+            body: {
+              data: [
+                {
+                  id: SUB,
+                  type: 'tls_subscription',
+                  attributes: { state: 'issued' },
+                  relationships: {
+                    tls_domains: {
+                      data: [
+                        { id: HOST, type: 'tls_domain' },
+                        { id: 'shop.example.org', type: 'tls_domain' },
+                      ],
+                    },
+                  },
+                },
+              ],
+            },
+          }
+        : defaultReply(c),
+    );
+    seededDns();
+    const seen = await fastlyProvider.inspectForAdoption!(cfg, SVC, HOST);
+    // One domain on the service, but a certificate somebody else also depends on.
+    expect(seen.hostnames).toEqual([HOST]);
+    expect(seen.shared).toBe(true);
+    const sub = seen.resources.find((x) => x.kind === 'tls_subscription')!;
+    expect(sub.meta).toEqual({ hostname: HOST, shared: true });
+  });
+
+  test('no subscription, or several, leaves the certificate unowned rather than guessed', async () => {
+    for (const body of [
+      { data: [] },
+      {
+        data: [
+          {
+            id: SUB,
+            type: 'tls_subscription',
+            relationships: { tls_domains: { data: [{ id: HOST, type: 'tls_domain' }] } },
+          },
+          {
+            id: 'C1other',
+            type: 'tls_subscription',
+            relationships: { tls_domains: { data: [{ id: HOST, type: 'tls_domain' }] } },
+          },
+        ],
+      },
+    ]) {
+      await serve((c) =>
+        c.method === 'GET' && c.path === '/tls/subscriptions'
+          ? { status: 200, contentType: 'application/vnd.api+json', body }
+          : defaultReply(c),
+      );
+      seededDns();
+      const seen = await fastlyProvider.inspectForAdoption!(cfg, SVC, HOST);
+      expect(seen.resources.map((x) => x.kind)).not.toContain('tls_subscription');
+      await rec!.close();
+      rec = undefined;
+    }
+  });
+
+  test('the WebSockets product is recorded only when it is already on', async () => {
+    await serve((c) =>
+      c.path === `/enabled-products/v1/websockets/services/${SVC}` ? NOT_FOUND : defaultReply(c),
+    );
+    seededDns();
+    const seen = await fastlyProvider.inspectForAdoption!(cfg, SVC, HOST);
+    expect(seen.resources.map((x) => x.kind)).not.toContain('ws_product');
+
+    // A server fault is not an answer about the product: it travels.
+    await rec!.close();
+    rec = undefined;
+    await serve((c) =>
+      c.path === `/enabled-products/v1/websockets/services/${SVC}`
+        ? { status: 503, body: { msg: 'Service Unavailable' } }
+        : defaultReply(c),
+    );
+    seededDns();
+    await expect(fastlyProvider.inspectForAdoption!(cfg, SVC, HOST)).rejects.toThrow();
+  });
+
+  test('a hostname the service does not serve, and a service with no active version, are refused', async () => {
+    await serve((c) =>
+      c.method === 'GET' && /\/version\/1\/domain$/.test(c.path)
+        ? { status: 200, body: [{ name: 'kept.example.org' }] }
+        : defaultReply(c),
+    );
+    seededDns();
+    const mismatch = await fastlyProvider.inspectForAdoption!(cfg, SVC, HOST).catch(
+      (e: unknown) => e,
+    );
+    expect((mismatch as { meta: { code?: string } }).meta.code).toBe('hostname_mismatch');
+    // ...and the refusal quotes neither the hostname nor the origin nor a token.
+    const blob = errorBlob(mismatch);
+    for (const secret of ['SECRET_FASTLY_TOKEN', 'SECRET_CF_TOKEN', HOST, ORIGIN])
+      expect(blob).not.toContain(secret);
+
+    await rec!.close();
+    rec = undefined;
+    await serve((c) =>
+      c.path === `/service/${SVC}/details`
+        ? { status: 200, body: { id: SVC, name: 'draft only', versions: [{ number: 1 }] } }
+        : defaultReply(c),
+    );
+    seededDns();
+    const inactive = await fastlyProvider.inspectForAdoption!(cfg, SVC, HOST).catch(
+      (e: unknown) => e,
+    );
+    expect((inactive as { meta: { code?: string } }).meta.code).toBe('service_not_active');
+  });
+
+  test('the DNS records are optional: a front whose zone has none is still adoptable', async () => {
+    await serve();
+    fakeDns();
+    const seen = await fastlyProvider.inspectForAdoption!(cfg, SVC, HOST);
+    expect(seen.resources.map((x) => x.kind)).toEqual([
+      'service',
+      'domain',
+      'tls_subscription',
+      'ws_product',
+    ]);
+  });
+});
+
+describe('fastly: the shared-teardown driver', () => {
+  test('the provider exposes the same workflow as a generic driver', async () => {
+    const driver = fastlyProvider.sharedTeardown!;
+    expect(driver.plan(sharedLedger(), 'op1', Date.parse('2026-09-16T10:00:00Z'))).toMatchObject({
+      phase: 'clone',
+      serviceId: SVC,
+      hostname: HOST,
+      fromVersion: 4,
+      marker: 'fcp:legacy front:op1',
+    });
+
+    await serve();
+    fakeDns();
+    // An exclusively owned service has no shared teardown at all.
+    expect(driver.plan(await provision(), 'op1')).toBeNull();
+  });
+
+  test('the driver advances one phase per call and leaves a finished state alone', async () => {
+    const driver = fastlyProvider.sharedTeardown!;
+    await serve((c) => {
+      if (c.path === `/service/${SVC}/version`)
+        return {
+          status: 200,
+          body: [{ number: 4, active: true, locked: true, created_at: '2026-09-16T09:00:00Z' }],
+        };
+      if (/\/version\/4\/clone$/.test(c.path)) return { status: 200, body: { number: 5 } };
+      return defaultReply(c);
+    });
+    let state = driver.plan(sharedLedger(), 'op1', Date.parse('2026-09-16T10:00:00Z'))!;
+    state = await driver.step(cfg, state);
+    // The extra, adapter-specific fields survive the round trip through the
+    // generic state the caller persists.
+    expect(state).toMatchObject({
+      phase: 'remove_domain',
+      workVersion: 5,
+      hostname: HOST,
+      fromVersion: 4,
+      marker: 'fcp:legacy front:op1',
+    });
+
+    const done = { ...state, phase: 'done' };
+    expect(await driver.step(cfg, done)).toEqual(done);
+    // A phase nobody wrote is parked for an operator, never re-cloned.
+    expect(await driver.step(cfg, { ...state, phase: 'nonsense' })).toMatchObject({
+      phase: 'needs_operator',
+    });
+  });
+});
+
 // --- error hygiene -------------------------------------------------------------------------------
 
 describe('fastly: nothing provider-shaped reaches an error', () => {

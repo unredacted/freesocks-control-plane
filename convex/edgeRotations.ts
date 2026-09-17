@@ -65,14 +65,22 @@ import {
   TERMINAL_PHASES,
   type RotationEvent,
 } from './lib/edges/rotation';
-import { PROTOCOL_TRANSPORT, protocolUsesSni } from './lib/edges/protocols';
-import { hostTargetFor, slotLayers } from './lib/edges/layers';
+import {
+  PROTOCOL_TRANSPORT,
+  protocolIsHttpTransport,
+  protocolUsesSni,
+} from './lib/edges/protocols';
+import { hostTargetFor, slotLayers, zoneModeCarriesOrigin } from './lib/edges/layers';
+// The freshness window the DETECTOR scores on is the one this gate accepts
+// evidence on: one rule, imported, never a second copy of "two intervals".
+import { probeStaleAfterMs } from './lib/edges/scoring';
 import { edgeHostnameFor } from './lib/edges/hostname';
 import { publishAddressOf, hasPublishableAddress } from './lib/edges/ip';
 import {
   buildProvisionIntent,
   IntentError,
   parseIntent,
+  parseObservedSettings,
   type ProvisionIntent,
 } from './lib/edges/intent';
 import { qualificationBinding, qualificationVerdict } from './lib/edges/frontCheck/binding';
@@ -465,15 +473,19 @@ export async function startRotation(
       });
     }
     const profile = await ctx.db.get(slot.profileId);
+    // A name-free HTTP-transport profile is usable: behind an L7 front the
+    // member presents the edge HOSTNAME. It is only L4 that needs one of the
+    // profile's own names, and `slotLayers` already excludes L4 for it.
     const usable =
       slot.deployed &&
       !!profile?.enabled &&
       (!protocolUsesSni(profile.protocol) ||
+        protocolIsHttpTransport(profile.protocol) ||
         profile.serverNames.some((s) => s.status === 'active'));
     if (!usable) {
       throw new ConvexError({
         code: 'edge.no_compatible_profile',
-        message: 'The slot is not deployed, or its REALITY profile has no active server name',
+        message: 'The slot is not deployed, or its profile is disabled or has no server name',
       });
     }
     // An L7-ONLY slot cannot be answered automatically while the L7 gate is
@@ -1104,12 +1116,14 @@ export const commitSelection = internalMutation({
             id: account._id as string,
             provider: account.provider,
             settings: account.settings as Record<string, unknown>,
+            observedSettings: parseObservedSettings(account.observedSettings),
           },
           dnsAccount: dnsAccount
             ? {
                 id: dnsAccount._id as string,
                 provider: dnsAccount.provider,
                 settings: dnsAccount.settings as Record<string, unknown>,
+                observedSettings: parseObservedSettings(dnsAccount.observedSettings),
               }
             : null,
           specName: edgeResourceName(origin.slug, a.nameNonce),
@@ -1805,15 +1819,29 @@ export const l7GateState = internalQuery({
   },
 });
 
-/** The stored per-country verdicts for an edge; `absent` = no row yet (nothing measured). */
+/**
+ * The stored per-country verdicts for an edge, WITH their freshness. `absent` =
+ * no row yet (nothing measured); `stale` = a row older than the detector's
+ * freshness window (two probe intervals), which says nothing about the edge now
+ * and is therefore never accepted as evidence in either direction. The caller
+ * asks for a fresh round instead.
+ */
 export const edgeReachability = internalQuery({
   args: { edgeId: v.id('edges'), countries: v.array(v.string()) },
-  handler: async (ctx, { edgeId, countries }) => {
+  handler: async (
+    ctx,
+    { edgeId, countries },
+  ): Promise<Array<{ country: string; verdict: string; lastAt: number | null }>> => {
     const edge = await ctx.db.get(edgeId);
+    const cfg = await resolveEdgeConfig(ctx.db);
     const rows = edge?.reachability?.byCountry ?? [];
+    const now = Date.now();
+    const staleAfter = probeStaleAfterMs(cfg.probe);
     return countries.map((country) => {
       const row = rows.find((c) => c.country === country);
-      return { country, verdict: row ? row.verdict : ('absent' as const) };
+      if (!row) return { country, verdict: 'absent', lastAt: null };
+      const fresh = now - row.lastAt <= staleAfter;
+      return { country, verdict: fresh ? row.verdict : 'stale', lastAt: row.lastAt };
     });
   },
 });
@@ -1876,6 +1904,8 @@ interface SelectionContext {
     defaultTemplateId: Id<'edgeTemplates'> | null;
     /** L7: the DNS zone the hostname is minted under (this account's, or its DNS account's). */
     zoneName: string | null;
+    /** L7: the zone's OBSERVED encryption mode (null = the account was never tested). */
+    zoneSslMode: string | null;
   } | null;
   accountFailure: string | null;
   template: {
@@ -2059,9 +2089,13 @@ async function selectionContext(
   // that hosts its DNS) or the referenced DNS account's.
   const settings = account.settings as { zoneName?: string; dnsAccountId?: string };
   let zoneName = settings.zoneName ?? null;
+  // The zone's encryption mode is observed on the account that HOSTS the zone
+  // (a provider that hosts its own DNS: itself; otherwise the DNS account).
+  let zoneHost = account;
   if (!zoneName && settings.dnsAccountId) {
     const dns = await ctx.db.get(settings.dnsAccountId as Id<'edgeProviderAccounts'>);
     zoneName = (dns?.settings as { zoneName?: string } | undefined)?.zoneName ?? null;
+    if (dns) zoneHost = dns;
   }
   return {
     slot,
@@ -2072,6 +2106,7 @@ async function selectionContext(
       provider: account.provider,
       defaultTemplateId: account.defaultTemplateId ?? null,
       zoneName,
+      zoneSslMode: parseObservedSettings(zoneHost.observedSettings).zoneSslMode ?? null,
     },
     accountFailure: null,
     template,
@@ -2364,9 +2399,16 @@ async function phaseSelect(ctx: ActionCtx, c: Ctx) {
     advanceCall(ctx, r._id, sv, { type: 'fail', code, detail, rollback: false });
   let hostname: string | undefined;
   const originTransport = selection.slot.originTransport ?? undefined;
+  const zoneSslMode = selection.account.zoneSslMode ?? undefined;
   if (edgeLayerOf(selection.account.provider) === 'l7') {
     if (!selection.account.zoneName) return void (await fail('dns_zone_missing'));
     if (!originTransport) return void (await fail('origin_transport_missing'));
+    // The zone's encryption mode is OBSERVED, never entered: an untested
+    // account cannot be planned against, and a mode that cannot carry the
+    // slot's origin transport is refused before anything is allocated.
+    if (!zoneSslMode) return void (await fail('zone_mode_unknown'));
+    if (!zoneModeCarriesOrigin(zoneSslMode, originTransport))
+      return void (await fail('origin_tls_mismatch'));
     const tpl = selection.template.params as { labelLength?: number; labelPrefix?: string };
     try {
       hostname = edgeHostnameFor(name, selection.account.zoneName, {
@@ -2408,6 +2450,7 @@ async function phaseSelect(ctx: ActionCtx, c: Ctx) {
       spec,
       templateParams: selection.template.params,
       protocol: selection.profile.protocol,
+      ...(zoneSslMode ? { zoneSslMode } : {}),
     });
   } catch (err) {
     const { code, detail } = errCode(err);
@@ -3068,7 +3111,11 @@ async function geoEvidenceGate(
       code: 'qualification_inconclusive',
       detail: verdicts.map((v) => `${v.country}:${v.verdict}`).join(','),
     };
-  if (verdicts.every((v) => v.verdict === 'absent')) {
+  // Nothing measured, or nothing measured RECENTLY: a verdict older than the
+  // freshness window is not evidence about this hostname now, so the round is
+  // requested and the gate waits for it rather than passing on a stale
+  // `reachable` (which is exactly how a blocked replacement would slip out).
+  if (verdicts.every((v) => v.verdict === 'absent' || v.verdict === 'stale')) {
     try {
       await ctx.runMutation(internal.probes.requestProbes, {
         target: { kind: 'edge', ref: edge._id as string },

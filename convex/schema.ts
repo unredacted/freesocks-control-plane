@@ -911,6 +911,11 @@ export default defineSchema({
     maxLiveEdges: v.number(),
     lastTestOkAt: v.optional(v.number()),
     lastTestError: v.optional(v.string()), // short code, never a body
+    // Facts the credential test OBSERVED at the provider that planning needs but
+    // the operator never enters (e.g. a zone's encryption mode). JSON, string
+    // values only; frozen per edge into its provisionIntent.
+    observedSettings: v.optional(v.string()),
+    observedAt: v.optional(v.number()),
     // Last provider inventory pull (LBs / IPs / flavors), JSON, admin-only.
     inventorySnapshot: v.optional(v.string()),
     inventoryAt: v.optional(v.number()),
@@ -1213,13 +1218,11 @@ export default defineSchema({
     // not own): the persisted version workflow, serialized per service.
     sharedTeardown: v.optional(
       v.object({
-        phase: v.union(
-          v.literal('clone'),
-          v.literal('remove_domain'),
-          v.literal('validate'),
-          v.literal('activate'),
-          v.literal('confirm'),
-        ),
+        // The adapter's own workflow phase (Fastly: clone → remove_domain →
+        // validate → activate → confirm), plus the terminal `done` /
+        // `needs_operator`. A string, not a union: the phase vocabulary belongs
+        // to the driver, and reconcile only ever compares the terminal two.
+        phase: v.string(),
         serviceId: v.string(),
         fromVersion: v.number(),
         workVersion: v.optional(v.number()),
@@ -1227,6 +1230,10 @@ export default defineSchema({
         attempts: v.number(),
       }),
     ),
+    // The driver's own extra fields for that workflow (adapter-shaped: a code,
+    // a marker, whatever the next phase needs), JSON, so the persisted state can
+    // carry more than the columns above without a schema change per adapter.
+    sharedTeardownState: v.optional(v.string()),
     publication: relayPublication,
     poolIndex: v.optional(v.number()),
     publishedAt: v.optional(v.number()),

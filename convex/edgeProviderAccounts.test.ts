@@ -1140,3 +1140,31 @@ describe('edgeProviderAccounts: the DNS-account reference', () => {
     expect(await t.query(internal.edgeProviderAccounts.getForAdmin, { id })).toBeNull();
   });
 });
+
+describe('edgeProviderAccounts: what the credential test OBSERVED', () => {
+  test('observed facts are stored, exposed and kept when a later test reports none', async () => {
+    const t = convexTest(schema, modules);
+    const { id } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'cloudflare',
+      name: 'acct-cf',
+      settings: { zoneId: 'a'.repeat(32), zoneName: 'example.org' },
+      credentials: { apiToken: 'cf' },
+    });
+    expect(
+      (await t.query(internal.edgeProviderAccounts.getForAdmin, { id }))!.observedSettings,
+    ).toBeNull();
+    await t.mutation(internal.edgeProviderAccounts.recordTest, {
+      id,
+      ok: true,
+      observed: { zoneSslMode: 'full', websockets: 'on' },
+    });
+    const row = (await t.query(internal.edgeProviderAccounts.getForAdmin, { id }))!;
+    expect(row.observedSettings).toEqual({ zoneSslMode: 'full', websockets: 'on' });
+    expect(row.observedAt).not.toBeNull();
+    // An adapter with nothing to report is not evidence that the zone changed.
+    await t.mutation(internal.edgeProviderAccounts.recordTest, { id, ok: false, code: 'auth' });
+    expect(
+      (await t.query(internal.edgeProviderAccounts.getForAdmin, { id }))!.observedSettings,
+    ).toEqual({ zoneSslMode: 'full', websockets: 'on' });
+  });
+});

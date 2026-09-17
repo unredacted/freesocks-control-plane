@@ -120,6 +120,16 @@ const TOD_TOLERANCE_MS = HOUR;
 const TOD_MIN_AGE_MS = 22 * HOUR;
 const TOD_MIN_SAMPLES = 3;
 
+/**
+ * How old a probe verdict may be and still say something about the target NOW:
+ * two probe intervals. The detector scores on it and the L7 replacement gate
+ * accepts evidence on it, so both read the rule from here rather than each
+ * carrying its own copy of "two intervals".
+ */
+export function probeStaleAfterMs(probe: Pick<EdgeConfig['probe'], 'intervalMinutes'>): number {
+  return 2 * probe.intervalMinutes * 60_000;
+}
+
 const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
 const mean = (xs: number[]) => (xs.length === 0 ? 0 : xs.reduce((a, b) => a + b, 0) / xs.length);
 
@@ -187,7 +197,7 @@ export function evaluate(input: EvaluationInput): Evaluation {
   // than two intervals (or one left over from before probes were disabled) says
   // nothing about the edge now, so it neither scores nor counts as evidence.
   // The internal probe alone never makes an edge fresh (it is not a country).
-  const staleAfterMs = 2 * probe.intervalMinutes * 60_000;
+  const staleAfterMs = probeStaleAfterMs(probe);
   const probeFresh = (e: EdgeProbeState) =>
     probe.enabled && e.probeAgeMs !== null && e.probeAgeMs <= staleAfterMs;
   const freshCountries = (e: EdgeProbeState): CountryVerdict[] =>

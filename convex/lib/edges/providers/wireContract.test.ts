@@ -60,12 +60,7 @@ import { scalewayProvider, __setScalewayApiFactory } from './scaleway';
 import { ovhProvider, __resetOvhSkewCache } from './ovh';
 import { cloudflareProvider, __setCloudflareApiFactory } from './cloudflare';
 import { cloudflareApi } from './dns/cloudflareDns';
-import {
-  fastlyProvider,
-  planSharedTeardown,
-  sharedTeardownStep,
-  __setFastlyDnsClientFactory,
-} from './fastly';
+import { fastlyProvider, __setFastlyDnsClientFactory } from './fastly';
 import { __setFastlyBasePath } from './fastly/sdk';
 import { readFileSync } from 'node:fs';
 
@@ -961,6 +956,9 @@ describe('wire contract: cloudflare', () => {
     await cloudflareProvider.describe(cfg, ledger);
     await cloudflareProvider.inspect(cfg, ledger);
     await cloudflareProvider.inventory(cfg);
+    // The import path: an existing record read back as adoptable children.
+    const adopted = await cloudflareProvider.inspectForAdoption!(cfg, RECORD_ID, HOSTNAME);
+    expect(adopted).toMatchObject({ hostname: HOSTNAME, shared: false, content: ORIGIN_IP });
     // Both deletes are synchronous and idempotent (no confirmDestroyed).
     expect(await destroyAll(cloudflareProvider as never, cfg as never, ledger)).toEqual([
       'origin_rule',
@@ -1236,6 +1234,9 @@ describe('wire contract: fastly', () => {
     await fastlyProvider.describe(cfg, ledger);
     await fastlyProvider.inspect(cfg, ledger);
     await fastlyProvider.inventory(cfg);
+    // The import path: an existing service read back as adoptable children.
+    const adopted = await fastlyProvider.inspectForAdoption!(cfg, SVC, HOST);
+    expect(adopted).toMatchObject({ hostname: HOST, hostnames: [HOST], shared: false });
     expect(await destroyAll(fastlyProvider as never, cfg as never, ledger)).toEqual([
       'dns_record',
       'tls_subscription',
@@ -1261,10 +1262,11 @@ describe('wire contract: fastly', () => {
         resource('domain', 'domain', HOST),
       ],
     };
-    let state = planSharedTeardown(sharedLedger, 'op-1', Date.parse('2027-01-01T00:00:00Z'))!;
+    const teardown = fastlyProvider.sharedTeardown!;
+    let state = teardown.plan(sharedLedger, 'op-1', Date.parse('2027-01-01T00:00:00Z'))!;
     expect(state.phase).toBe('clone');
     for (const expected of ['remove_domain', 'validate', 'activate', 'confirm'] as const) {
-      state = await sharedTeardownStep(cfg, state);
+      state = await teardown.step(cfg, state);
       expect(state.phase).toBe(expected);
     }
     const work = state.workVersion!;
@@ -1275,7 +1277,7 @@ describe('wire contract: fastly', () => {
         return { status: 200, body: [] };
       return defaultReply(c);
     });
-    state = await sharedTeardownStep(cfg, state);
+    state = await teardown.step(cfg, state);
     expect(state.phase).toBe('done');
 
     expectContractCovered('fastly', fromRecorded(server.calls));

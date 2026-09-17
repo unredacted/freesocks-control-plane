@@ -33,6 +33,9 @@ export const EdgeProviderAccountAdmin = z.object({
   maxLiveEdges: z.number(),
   lastTestOkAt: isoN,
   lastTestError: z.string().nullable(),
+  /** What the last credential test OBSERVED at the provider (e.g. `zoneSslMode`). */
+  observedSettings: z.record(z.string(), z.string()).nullable().default(null),
+  observedAt: isoN.default(null),
   inventoryAt: isoN,
   createdAt: iso,
   updatedAt: iso,
@@ -896,6 +899,11 @@ export const EdgeRotationStartedResponse = z.object({ rotationId: z.string() });
 export const EdgeAdoptResponse = z.object({
   edgeId: z.string(),
   poolIndex: z.number().nullable(),
+  /**
+   * Why the import was NOT published (an L7 front is never published without a
+   * current end-to-end proof: `front_unqualified`). The edge exists either way.
+   */
+  code: z.string().nullable().default(null),
 });
 export const ProbeRequestedResponse = z.object({ runIds: z.array(z.string()) });
 export const RelaySlotUpsertResponse = z.object({

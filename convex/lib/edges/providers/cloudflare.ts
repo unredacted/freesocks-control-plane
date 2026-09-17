@@ -29,8 +29,11 @@
  */
 import type {
   Addresses,
+  AdoptionInspection,
+  ChildResource,
   CloudflareConfig,
   CloudflareDnsConfig,
+  CredentialTestResult,
   DiscoverResult,
   EdgeDescription,
   EdgeProvider,
@@ -107,16 +110,40 @@ function providerError(step: string, code: string, retryable = false): EdgeProvi
 
 /**
  * The zone's encryption mode for THIS edge. `planProvision` must stay pure, so
- * the mode is not read from the API here: the orchestrator freezes it into the
- * edge's provisionIntent and passes it through as a rendered template param.
- * A slot whose origin speaks plaintext HTTP implies `flexible`; otherwise the
- * conservative default is `full` (encrypted origin on 443).
+ * the mode is never read from the API here: `testCredentials` observes it, the
+ * orchestrator freezes it into the edge's provisionIntent and passes it back as
+ * a rendered template param. An ABSENT mode is refused (`zone_mode_unknown`)
+ * rather than guessed: inferring it from the origin scheme would plan an edge
+ * against a zone setting nobody checked, and the guess decides both the
+ * effective origin port and whether the origin leg is encrypted at all.
+ *
+ * The mode and the slot's origin transport must also agree, so a plan that
+ * would silently downgrade or break the origin leg is refused up front:
+ *  - a plaintext-HTTP origin needs `flexible` (any other mode dials 443 over TLS);
+ *  - an https origin needs `full` or `strict` (`flexible` would dial port 80);
+ *  - `strict` additionally validates the origin certificate, so an origin whose
+ *    certificate is not publicly trusted cannot sit behind it.
+ * Source: https://developers.cloudflare.com/ssl/origin-configuration/ssl-modes/, 2026-09-16.
  */
-export function zoneSslModeOf(spec: EdgeSpec, tpl: CloudflareTemplateParams): ZoneSslMode {
+export function zoneSslModeOf(
+  spec: EdgeSpec,
+  tpl: CloudflareTemplateParams,
+  step = 'plan',
+): ZoneSslMode {
   const raw = (tpl as unknown as Record<string, unknown>).zoneSslMode;
-  if (raw === 'flexible' || raw === 'full' || raw === 'strict') return raw;
-  if (spec.originTransport?.scheme === 'http') return 'flexible';
-  return 'full';
+  if (raw !== 'flexible' && raw !== 'full' && raw !== 'strict')
+    throw providerError(step, 'zone_mode_unknown');
+  const transport = spec.originTransport;
+  if (transport) {
+    if (transport.scheme === 'http' && raw !== 'flexible')
+      throw providerError(step, 'origin_tls_mismatch');
+    if (transport.scheme === 'https') {
+      if (raw === 'flexible') throw providerError(step, 'origin_tls_mismatch');
+      if (raw === 'strict' && !transport.certPublic)
+        throw providerError(step, 'origin_tls_mismatch');
+    }
+  }
+  return raw;
 }
 
 function listenerOf(spec: EdgeSpec, step: string): { address: string; port: number } {
@@ -334,8 +361,15 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
    * The zone's `ssl` mode is RECORDED, not required: `flexible|full|strict` are
    * all usable and the feasibility check against a slot's origin transport
    * happens at plan time, not here. Only `off` is refused outright.
+   *
+   * The two settings also travel as `observed`, the machine-readable half of
+   * `detail`: the orchestrator stores them on the account and freezes
+   * `zoneSslMode` into each new edge's intent, which is the ONLY way the mode
+   * reaches `planProvision` (see `zoneSslModeOf`). A setting the token cannot
+   * read leaves `zoneSslMode` out entirely (planning then refuses) and reports
+   * `websockets: 'off'`, the conservative answer.
    */
-  async testCredentials(cfg) {
+  async testCredentials(cfg): Promise<CredentialTestResult> {
     const detail: string[] = [];
     try {
       const token = await cfCall('test', () => cloudflareClient(cfg).user.tokens.verify());
@@ -345,6 +379,10 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
       );
       const ssl = await zoneSetting(cfg, 'ssl', 'test');
       const websockets = await zoneSetting(cfg, 'websockets', 'test');
+      const observed: Record<string, string> = {
+        ...(ssl ? { zoneSslMode: ssl } : {}),
+        websockets: websockets === 'on' ? 'on' : 'off',
+      };
       if (ssl) detail.push(`ssl_${ssl}`);
       else detail.push('ssl_unknown');
       if (websockets === 'on') detail.push('websockets_on');
@@ -353,16 +391,17 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
       // Free zones cap DNS comments and Origin Rules; useful for the operator.
       if ((zone.plan as { legacy_id?: string } | undefined)?.legacy_id === 'free')
         detail.push('plan_free');
-      if (ssl === 'off') return { ok: false, code: 'zone_ssl_off', detail: detail.join(' ') };
+      if (ssl === 'off')
+        return { ok: false, code: 'zone_ssl_off', detail: detail.join(' '), observed };
       if (zone.paused === true) {
         detail.push('zone_paused');
-        return { ok: false, code: 'zone_paused', detail: detail.join(' ') };
+        return { ok: false, code: 'zone_paused', detail: detail.join(' '), observed };
       }
       if (zone.status !== 'active') {
         detail.push('zone_not_active');
-        return { ok: false, code: 'zone_not_active', detail: detail.join(' ') };
+        return { ok: false, code: 'zone_not_active', detail: detail.join(' '), observed };
       }
-      return { ok: true, detail: detail.join(' ') };
+      return { ok: true, detail: detail.join(' '), observed };
     } catch (e) {
       return {
         ok: false,
@@ -688,6 +727,66 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
       }),
       ips: [],
       flavors: [],
+    };
+  },
+
+  /**
+   * Import: read ONE existing proxied record back and describe it as the
+   * children FCP would have created. A Cloudflare edge is never shared (a DNS
+   * record serves exactly one name), so `shared` is always false.
+   *
+   * Refusals rather than a best guess: a record that is gone is `not_found`,
+   * and a record whose name is not the hostname the operator named is
+   * `hostname_mismatch` (importing it would hand members somebody else's name).
+   * A record that is NOT proxied is reported with `meta.proxied: false` instead
+   * of being refused here: the orchestrator turns that into the refusal, so the
+   * operator sees which record it was.
+   *
+   * The zone's origin rules are read too: a rule whose expression names the
+   * hostname belongs to this edge and is adopted with it, so a later destroy
+   * removes the port override the operator set up by hand.
+   */
+  async inspectForAdoption(cfg, resourceId, hostname): Promise<AdoptionInspection> {
+    const step = 'adopt';
+    const wanted = normalizeDnsName(hostname);
+    const record = await dnsFor(cfg).getRecord(resourceId);
+    if (!record) throw providerError(step, 'not_found');
+    if (record.name !== wanted) throw providerError(step, 'hostname_mismatch');
+    const resources: ChildResource[] = [
+      {
+        kind: 'dns_record',
+        resourceId: record.id,
+        ownership: 'adopted',
+        meta: {
+          name: record.name,
+          zoneId: cfg.zoneId,
+          type: record.type,
+          ...(record.proxied ? {} : { proxied: false }),
+        },
+      },
+    ];
+    const phase = await getOriginPhase(cfg, step);
+    const rule = (phase?.rules ?? []).find(
+      (r) => typeof r.expression === 'string' && r.expression.includes(wanted),
+    );
+    if (rule?.id) {
+      const port = rule.action_parameters?.origin?.port;
+      resources.push({
+        kind: 'origin_rule',
+        resourceId: rule.id,
+        ownership: 'adopted',
+        meta: {
+          rulesetId: phase?.id ?? '',
+          ...(typeof port === 'number' ? { port } : {}),
+        },
+      });
+    }
+    return {
+      resources,
+      hostname: record.name,
+      hostnames: [record.name],
+      shared: false,
+      content: record.content,
     };
   },
 

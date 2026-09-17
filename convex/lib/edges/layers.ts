@@ -65,6 +65,7 @@ export type LayerExclusion =
   | 'cert_not_public'
   | 'cert_name_uncovered'
   | 'host_header_rejected'
+  | 'no_server_names'
   | 'protocol_not_http_transport';
 
 export interface SlotLayers {
@@ -73,8 +74,70 @@ export interface SlotLayers {
   excluded: Partial<Record<EdgeLayer, LayerExclusion>>;
 }
 
+/**
+ * The Host header an L7 front sends the origin: the fronted hostname, or the
+ * literal `'origin'` when the front passes the origin's own address through
+ * (Fastly's `overrideHost: 'origin'`). `undefined` = not decided yet (the
+ * hostname is minted when the edge is planned).
+ */
+export type L7HostHeader = string | 'origin';
+
+/** `*.<zone>`: a pattern that covers ANY single first-level label under a zone. */
+export function isFirstLevelWildcard(pattern: string): boolean {
+  const p = pattern.trim().toLowerCase().replace(/\.$/, '');
+  return p.startsWith('*.') && p.indexOf('*', 1) === -1 && p.length > 2;
+}
+
+/**
+ * Whether the node would accept the Host header an L7 front sends it.
+ *
+ * `acceptsHostHeader: 'any'` always does. With `'names'` the node answers only
+ * for the names on its certificate, so a front that rewrites the Host to the
+ * minted hostname needs that hostname covered; a front that passes the origin's
+ * own address through (`'origin'`) is always accepted. When the Host is not
+ * known yet (before the hostname is minted) the only safe answer is a
+ * certificate name that could cover ANY first-level label of a zone.
+ */
+export function l7HostAccepted(ot: OriginTransport, l7Host?: L7HostHeader): boolean {
+  if (ot.acceptsHostHeader === 'any') return true;
+  if (l7Host === 'origin') return true;
+  if (l7Host) return certCovers(l7Host, ot.certNames);
+  return ot.certNames.some(isFirstLevelWildcard);
+}
+
+/** The Host an L7 front would send, from the minted hostname + the template's rule. */
+export function l7HostHeaderFor(
+  hostname: string | null | undefined,
+  overrideHost?: unknown,
+): L7HostHeader | undefined {
+  if (overrideHost === 'origin') return 'origin';
+  return hostname ?? undefined;
+}
+
+/**
+ * Whether a zone's encryption mode can carry the slot's origin transport. A
+ * plaintext origin needs the mode that dials the origin over HTTP; an HTTPS
+ * origin needs one of the modes that dials it over HTTPS, and the strictest of
+ * them validates the origin certificate, which a privately issued one fails.
+ */
+export function zoneModeCarriesOrigin(mode: string, ot: OriginTransport): boolean {
+  const m = mode.trim().toLowerCase();
+  if (ot.scheme === 'http') return m === 'flexible';
+  if (m !== 'full' && m !== 'strict') return false;
+  return m !== 'strict' || ot.certPublic;
+}
+
+export interface SlotLayerOpts {
+  /** The Host the front would send the origin (see `l7HostAccepted`). */
+  l7Host?: L7HostHeader;
+}
+
 /** The layers that can front `slot` speaking `profile.protocol`. */
-export function slotLayers(slot: SlotLike, profile: ProfileLike): SlotLayers {
+export function slotLayers(
+  slot: SlotLike,
+  profile: ProfileLike,
+  opts: SlotLayerOpts = {},
+): SlotLayers {
   const ot = slot.originTransport ?? null;
   const http = protocolIsHttpTransport(profile.protocol);
   const excluded: SlotLayers['excluded'] = {};
@@ -84,12 +147,19 @@ export function slotLayers(slot: SlotLike, profile: ProfileLike): SlotLayers {
     return { layers: ['l4'], excluded };
   }
   const layers: EdgeLayer[] = [];
-  if (http) layers.push('l7');
-  else excluded.l7 = 'protocol_not_http_transport';
+  if (!http) excluded.l7 = 'protocol_not_http_transport';
+  // A front that rewrites the Host to a name the node does not answer for is
+  // not a front: the origin would reject every member connection.
+  else if (!l7HostAccepted(ot, opts.l7Host)) excluded.l7 = 'host_header_rejected';
+  else layers.push('l7');
   if (ot.scheme === 'http') excluded.l4 = 'origin_plaintext';
   else if (protocolUsesSni(profile.protocol)) {
     const active = profile.serverNames.filter((s) => s.status === 'active').map((s) => s.sni);
-    if (!ot.certPublic) excluded.l4 = 'cert_not_public';
+    // Behind an L4 forwarder the renderer must SELECT one of the profile's own
+    // names; with none left there is nothing to emit, and a coverage check over
+    // an empty set is vacuously true rather than a pass.
+    if (active.length === 0) excluded.l4 = 'no_server_names';
+    else if (!ot.certPublic) excluded.l4 = 'cert_not_public';
     else if (active.some((n) => !certCovers(n, ot.certNames))) excluded.l4 = 'cert_name_uncovered';
     else if (
       http &&
@@ -105,8 +175,13 @@ export function slotLayers(slot: SlotLike, profile: ProfileLike): SlotLayers {
   return { layers, excluded };
 }
 
-export function slotAllowsLayer(slot: SlotLike, profile: ProfileLike, layer: EdgeLayer): boolean {
-  return slotLayers(slot, profile).layers.includes(layer);
+export function slotAllowsLayer(
+  slot: SlotLike,
+  profile: ProfileLike,
+  layer: EdgeLayer,
+  opts: SlotLayerOpts = {},
+): boolean {
+  return slotLayers(slot, profile, opts).layers.includes(layer);
 }
 
 export interface HostTuple {

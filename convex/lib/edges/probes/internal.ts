@@ -15,7 +15,10 @@
  *
  * A NAME is resolved first and every answer must be a public literal: the probe
  * runs from the control plane's own network, so a name pointing at a private
- * range would turn it into an internal port scanner.
+ * range would turn it into an internal port scanner. The connection is then
+ * made to ONE OF THOSE VERIFIED LITERALS, never to the name again: a second
+ * resolution could answer differently (DNS rebinding) and reach an address the
+ * check never saw. The name survives only as the SNI and the HTTP Host header.
  */
 import { isPublicIpLiteral } from '../ip';
 import { shortError, targetHost, type ProbeResult, type ProbeTarget } from './types';
@@ -86,12 +89,39 @@ export interface TlsHandshake {
   }): Promise<{ ok: boolean; error?: string }>;
 }
 
+/** A bare TCP connect to a verified literal (the `tcp` probe of a NAME target). */
+export interface TcpConnect {
+  (opts: {
+    host: string;
+    port: number;
+    timeoutMs: number;
+  }): Promise<{ ok: boolean; error?: string }>;
+}
+
+/**
+ * The `https` probe of a NAME target: a TLS handshake to a verified literal
+ * with SNI = the name, then one request carrying the name as Host; any HTTP
+ * status line counts as an answer.
+ */
+export interface HttpsRequest {
+  (opts: {
+    host: string;
+    port: number;
+    servername: string;
+    timeoutMs: number;
+  }): Promise<{ ok: boolean; error?: string }>;
+}
+
 export interface InternalProbeDeps {
   fetchFn: FetchLike;
   /** name → IP literals. Injected in tests; defaults to the platform resolver. */
   lookup?: (name: string) => Promise<string[]>;
   /** TLS handshake. Injected in tests; defaults to `node:tls`. */
   tlsConnect?: TlsHandshake;
+  /** TCP connect for a NAME target's `tcp` probe. Injected in tests; defaults to `node:net`. */
+  tcpConnect?: TcpConnect;
+  /** HTTPS request for a NAME target's `https` probe. Injected in tests; defaults to `node:tls`. */
+  httpsRequest?: HttpsRequest;
 }
 
 async function defaultLookup(name: string): Promise<string[]> {
@@ -118,6 +148,67 @@ const defaultTlsConnect: TlsHandshake = async ({ host, port, servername, timeout
     socket.on('error', (err) => done(classifyHandshakeError(err)));
   });
 };
+
+const defaultTcpConnect: TcpConnect = async ({ host, port, timeoutMs }) => {
+  const net = await import('node:net');
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (r: { ok: boolean; error?: string }) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(r);
+    };
+    const socket = net.connect({ host, port }, () => done({ ok: true }));
+    socket.setTimeout(timeoutMs, () => done({ ok: false, error: 'timeout' }));
+    socket.on('error', (err) => {
+      const c = classifyInternalError(err);
+      done({ ok: c.ok, error: c.error });
+    });
+  });
+};
+
+const defaultHttpsRequest: HttpsRequest = async ({ host, port, servername, timeoutMs }) => {
+  const tls = await import('node:tls');
+  return new Promise((resolve) => {
+    let settled = false;
+    let buffered = '';
+    const done = (r: { ok: boolean; error?: string }) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(r);
+    };
+    const socket = tls.connect(
+      { host, port, servername, rejectUnauthorized: true, ALPNProtocols: ['http/1.1'] },
+      () => {
+        if (!socket.authorized) return done({ ok: false, error: 'cert_invalid' });
+        socket.write(
+          `GET / HTTP/1.1\r\nHost: ${servername}\r\nUser-Agent: fcp-probe/1\r\nConnection: close\r\n\r\n`,
+        );
+      },
+    );
+    socket.on('data', (chunk: Buffer) => {
+      buffered += chunk.toString('latin1');
+      if (buffered.length >= 12 || buffered.includes('\n')) {
+        done(/^HTTP\/\d/.test(buffered) ? { ok: true } : { ok: false, error: 'not_http' });
+      }
+    });
+    socket.on('end', () => done({ ok: false, error: 'no_response' }));
+    socket.setTimeout(timeoutMs, () => done({ ok: false, error: 'timeout' }));
+    socket.on('error', (err) => done(classifyHandshakeError(err)));
+  });
+};
+
+/** The verified literal to dial: the requested family when one of the answers has it, else the first answer. */
+export function pickDialAddress(addresses: string[], requestedFamily: 4 | 6 | 'any'): string {
+  if (requestedFamily !== 'any') {
+    const wantV6 = requestedFamily === 6;
+    const hit = addresses.find((a) => a.includes(':') === wantV6);
+    if (hit) return hit;
+  }
+  return addresses[0]!;
+}
 
 const vantage = { country: 'XX', vantageClass: 'datacenter' as const };
 
@@ -150,25 +241,52 @@ export async function internalProbe(
 ): Promise<ProbeResult> {
   const lookup = deps.lookup ?? defaultLookup;
   const redact = target.addressKind === 'name' ? [target.address] : [];
+  const started = Date.now();
+  const finish = (r: { ok: boolean; error?: string }): ProbeResult => ({
+    ...vantage,
+    ok: r.ok,
+    rttMs: r.ok ? Date.now() - started : undefined,
+    ...(r.error ? { error: shortError(r.error, 60, redact) } : {}),
+  });
   if (target.addressKind === 'name') {
     const resolved = await resolvePublic(target.address, lookup);
     if (!resolved.ok) return { ...vantage, ok: false, error: resolved.error };
+    // Dial the literal the check verified; the name is only SNI / Host from here.
+    const dial = pickDialAddress(resolved.addresses, target.requestedFamily);
+    if (target.protocol === 'tls') {
+      return finish(
+        await (deps.tlsConnect ?? defaultTlsConnect)({
+          host: dial,
+          port: target.port,
+          servername: target.address,
+          timeoutMs,
+        }),
+      );
+    }
+    if (target.protocol === 'https') {
+      return finish(
+        await (deps.httpsRequest ?? defaultHttpsRequest)({
+          host: dial,
+          port: target.port,
+          servername: target.address,
+          timeoutMs,
+        }),
+      );
+    }
+    return finish(
+      await (deps.tcpConnect ?? defaultTcpConnect)({ host: dial, port: target.port, timeoutMs }),
+    );
   }
   const host = targetHost(target);
-  const started = Date.now();
   if (target.protocol === 'tls') {
-    const handshake = await (deps.tlsConnect ?? defaultTlsConnect)({
-      host: target.address,
-      port: target.port,
-      servername: target.addressKind === 'name' ? target.address : undefined,
-      timeoutMs,
-    });
-    return {
-      ...vantage,
-      ok: handshake.ok,
-      rttMs: handshake.ok ? Date.now() - started : undefined,
-      ...(handshake.error ? { error: shortError(handshake.error, 60, redact) } : {}),
-    };
+    return finish(
+      await (deps.tlsConnect ?? defaultTlsConnect)({
+        host: target.address,
+        port: target.port,
+        servername: undefined,
+        timeoutMs,
+      }),
+    );
   }
   try {
     await deps.fetchFn(`https://${host}:${target.port}/`, {

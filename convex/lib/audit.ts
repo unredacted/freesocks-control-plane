@@ -298,7 +298,7 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'relay.qualification_credential': ['slug', 'minted', 'revoked', 'replaced'],
   'relay.delete': ['slug', 'force'],
   'relay.upsert': ['slug', 'created', 'changed'],
-  'edge.adopted': ['slug', 'edgeId', 'managed', 'publication'],
+  'edge.adopted': ['slug', 'edgeId', 'managed', 'publication', 'refused', 'shared'],
   'relay.slot.upsert': ['relaySlug', 'slotKey', 'created'],
   'relay.slot.retire': ['relaySlug', 'slotKey'],
   'edge.published': ['relaySlug', 'edgeId', 'poolIndex', 'epoch', 'rotationId'],
