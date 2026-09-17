@@ -1,3 +1,4 @@
+'use node';
 /**
  * The one impure edge of the front check: opening the TLS connection to the
  * fronted hostname.

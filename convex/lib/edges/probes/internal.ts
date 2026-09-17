@@ -1,3 +1,4 @@
+'use node';
 /**
  * The internal probe: FCP's own host connects to the target. This is NOT a
  * country signal (FCP is not in a censored network); it distinguishes "the edge

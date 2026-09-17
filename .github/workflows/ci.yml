@@ -32,6 +32,12 @@ jobs:
       # Typecheck spans client + shared + convex + Svelte components.
       - run: bun run typecheck
 
+      # Offline reproduction of the `convex deploy` bundle step: every non-test
+      # file under convex/ is a bundler entry point, and one without "use node"
+      # that reaches a Node built-in (or a Node-only dependency) only fails on
+      # the deployer. scripts/convex-bundle-check.mjs mirrors the CLI's split.
+      - run: bun run convex:bundle-check
+
       # convex-test suite (in-memory; no backend needed).
       - run: bun run test
 

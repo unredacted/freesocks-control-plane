@@ -1,3 +1,4 @@
+'use node';
 /**
  * RFC 6455 client side, only as much as the front check needs: the opening
  * handshake (including the `Sec-WebSocket-Accept` proof), masked binary frames

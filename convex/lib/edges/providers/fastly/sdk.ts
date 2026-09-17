@@ -1,3 +1,4 @@
+'use node';
 /**
  * Typed, body-free wrapper over the official `fastly` JS SDK (16.1.0).
  *

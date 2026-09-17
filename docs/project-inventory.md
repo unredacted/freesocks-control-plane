@@ -521,7 +521,10 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   `"use node"` actions run on the Node baked into the self-hosted backend image (22.22.2 at the
   pinned release); `scripts/node-floor.mjs` derives the highest `engines.node` among those deps
   and `docker/deploy-entrypoint.sh` fails the deploy below it (`DEPLOY_SKIP_NODE_FLOOR=true` to
-  bypass); the dashboard shows the observed version. **Dormant** until the operator adds
+  bypass); the dashboard shows the observed version; the adapters, registry, front-check socket
+  layer and internal probe carry `'use node';` themselves (every file under `convex/` is a
+  bundler entry point) and `scripts/convex-bundle-check.mjs` reproduces the deploy bundle split
+  offline in CI. **Dormant** until the operator adds
   accounts and flips the `edge.*` switches; L7 automatic selection additionally waits for
   `edge.l7.autoSelect`.
 - **Email / notifications**: **intentionally absent.** Accounts are anonymous: no contact
