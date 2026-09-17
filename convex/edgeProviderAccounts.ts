@@ -28,6 +28,7 @@ import { resolveTemplateFor } from './edgeTemplates';
 import { EDGE_PROVIDER_CAPABILITIES } from './lib/edges/providers/capabilities';
 import { parseIntent, parseObservedSettings } from './lib/edges/intent';
 import { liveEdgesOfAccount } from './relays';
+import { assertAdmission } from './lib/edges/maintenance';
 
 const NAME_RE = /^[a-z0-9][a-z0-9-]{1,62}$/;
 
@@ -352,6 +353,7 @@ export const create = internalMutation({
   handler: async (ctx, a) => {
     checkName(a.name);
     checkLimits(a);
+    await assertAdmission(ctx.db, 'provider.write');
     const dup = await ctx.db
       .query('edgeProviderAccounts')
       .withIndex('by_name', (q) => q.eq('name', a.name))
@@ -418,6 +420,7 @@ export const update = internalMutation({
     const row = await ctx.db.get(a.id);
     if (!row) throw new ConvexError({ code: 'not_found', message: 'Account not found' });
     checkLimits(a);
+    await assertAdmission(ctx.db, 'provider.write');
     const patch: Partial<Doc<'edgeProviderAccounts'>> = { updatedAt: Date.now() };
     let credentialsChanged = false;
     let settingsChanged = false;

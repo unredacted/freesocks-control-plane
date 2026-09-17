@@ -47,6 +47,7 @@ import type {
   ProbeSource,
   RequestedFamily,
 } from './lib/edges/probes/types';
+import { assertAdmission } from './lib/edges/maintenance';
 
 const MIN = 60_000;
 /** Settled probe runs are evidence history, not a ledger: 14 days is plenty for the admin view. */
@@ -598,6 +599,7 @@ export const requestMany = internalMutation({
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, { targets, sources, actorAdminId }) => {
+    await assertAdmission(ctx.db, 'probe.request');
     if (targets.length === 0 || targets.length > 50)
       throw new ConvexError({ code: 'validation', message: 'targets must hold 1..50 entries' });
     // The same target twice is one request (a duplicate would double-spend the budget).

@@ -53,6 +53,7 @@ import {
   EDGE_LIVE_STATUSES,
   LIVE_EDGE_SCAN_LIMIT,
 } from './lib/edges/pool';
+import { assertAdmission } from './lib/edges/maintenance';
 
 type Db = import('./_generated/server').DatabaseReader;
 
@@ -550,6 +551,7 @@ async function insertOrigin(
 export const create = internalMutation({
   args: { slug: v.string(), backendServerId: v.id('backendServers'), ...originWriteArgs },
   handler: async (ctx, { slug, backendServerId, actorAdminId, ...a }) => {
+    await assertAdmission(ctx.db, 'registration');
     const dup = await ctx.db
       .query('relays')
       .withIndex('by_slug', (q) => q.eq('slug', slug))
@@ -618,6 +620,7 @@ export const update = internalMutation({
 export const upsertBySlug = internalMutation({
   args: { slug: v.string(), backendServerSlug: v.string(), ...originWriteArgs },
   handler: async (ctx, { slug, backendServerSlug, actorAdminId, ...a }) => {
+    await assertAdmission(ctx.db, 'registration');
     const server = await ctx.db
       .query('backendServers')
       .withIndex('by_slug', (q) => q.eq('slug', backendServerSlug))
@@ -907,6 +910,7 @@ export const adoptEdge = internalMutation({
     const origin = await ctx.db.get(a.relayId);
     if (!origin) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     const slot = await ctx.db.get(a.slotId);
+    await assertAdmission(ctx.db, 'adopt');
     if (!slot || slot.relayId !== a.relayId)
       throw new ConvexError({ code: 'validation', message: 'slot does not belong to the origin' });
     const port = a.port ?? 443;
@@ -1264,6 +1268,7 @@ export const publishEdge = internalMutation({
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, { relayId, edgeId, poolIndex, actorAdminId }) => {
+    await assertAdmission(ctx.db, 'publish');
     const origin = await ctx.db.get(relayId);
     const edge = await ctx.db.get(edgeId);
     if (!origin || !edge || edge.relayId !== relayId)

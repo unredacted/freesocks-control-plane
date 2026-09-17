@@ -750,6 +750,42 @@ lifecycle runs in that test and its rows appear here.
 | fastly     | GET    | `^/tokens/self$`                                                                  | credential test: the token scope                                                                                  | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
 | fastly     | GET    | `^/current_customer$`                                                             | credential test: the pricing plan (informational)                                                                 | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
 
+## Maintenance switch and reset drain
+
+`edgeMaintenance:freeze` separates **admission of new work** from **completion of work in
+flight** (`convex/lib/edges/maintenance.ts`, one `appState` row `edge:maintenance`). While
+frozen, nothing new is admitted (`edge.maintenance`): a rotation start of any kind (manual,
+API, detector, reconcile upkeep), relay and slot registration, an edge import, a direct
+publish, provider account / template / profile writes, probe requests and detector
+evaluation. Everything that finishes or unwinds existing work keeps running under its own
+fencing: rotation steps and re-kicks, rollback, cancel, unpublish, destroy runs and their
+confirmation, quarantine and `needs_operator` resolution, relay delete finalisation, and the
+qualification-credential removal retry. `edgeMaintenance:thaw` lifts it.
+
+`seedEdgesReset` is the one-shot drain that precedes a breaking change to the edge tables:
+
+1. `edgeMaintenance:freeze '{"reason":"..."}'`.
+2. `seedEdgesReset:status '{}'` (read-only, every environment): lists what still has to
+   settle: non-terminal rotations, managed edges not yet `destroyed` (open operation, needs
+   operator, provider resources present), held external locks, quarantined or deleting
+   relays, relays whose qualification credential is still active or whose removal is still
+   owed. Finish that work through the ordinary machine (cancel, destroy, resolve, revoke the
+   credential) until `blockers` is empty.
+3. `seedEdgesReset:wipe '{"confirm":"wipe-edges"}'`: allowed only where `ENVIRONMENT` is one of
+   the allow-listed values (`development`, `beta`; a missing or misspelled value refuses),
+   **refuses while any blocker remains**, then deletes `edgeRotations`, `edges`,
+   `relaySlots`, `protocolProfiles`, `relays`, `externalLocks`, `relaySamples` and the
+   edge/relay probe rows in bounded pages, and turns `edge.enabled`, `edge.autoRotate`,
+   `edge.autoProvisionToDesired`, `edge.render.enabled`, `edge.probe.enabled` and
+   `edge.l7.autoSelect` off. Kept: `probeTargets` and their rollups, provider accounts
+   (credentials, qualification, inventory), templates, node inventory, report marks, the
+   audit log.
+4. Deploy the schema change, then `edgeMaintenance:thaw '{}'`.
+
+The deploy entrypoint pushes the schema before it runs any function, so the drain must run
+on the OLD code: deploy the reset module first, drain, then deploy the schema. All four run
+through the deployer container (`docs/beta-deploy.md` § "One-off functions").
+
 ## Deploy notes
 
 The `"use node"` actions (provider SDKs, probes, the front qualification) run on the Node

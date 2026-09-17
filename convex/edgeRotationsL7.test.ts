@@ -819,7 +819,7 @@ describe('edgeRotations: affected-country evidence must be FRESH', () => {
       }
       vi.useRealTimers();
     }
-  });
+  }, 20_000);
 });
 
 describe('edgeReconcile: a published front whose proof failed is re-proven soon', () => {

@@ -314,6 +314,11 @@ Swap the final command for whatever you need — the common ones:
   removes idle free accounts the `deactivate-idle-free` cron deactivated-and-retained.
 - `bunx convex env get ADMIN_BOOTSTRAP_SECRET` / `bunx convex env list` — read
   deployment env (the deployer log also prints the bootstrap secret every deploy).
+- `bunx convex run edgeMaintenance:freeze '{}'` / `seedEdgesReset:status '{}'` /
+  `seedEdgesReset:wipe '{"confirm":"wipe-edges"}'` / `edgeMaintenance:thaw '{}'` — the edge
+  reset drain that precedes a breaking change to the edge tables (`docs/edges.md` §
+  "Maintenance switch and reset drain"; the wipe refuses while `status` reports blockers
+  and outside the allow-listed environments).
 
 Everything the deployer applies on `up` (deploy, env, seed) stays the normal path
 (§6) — this recipe is only for ad-hoc operator runs.

@@ -19,6 +19,7 @@ import {
 } from './lib/edgeProviderIds';
 import { EDGE_TEMPLATES, validateTemplateParams } from './lib/edges/providers/templates';
 import { canonicalJson } from './lib/edges/providers/template';
+import { assertAdmission } from './lib/edges/maintenance';
 
 /** FNV-1a 64-bit as 16 hex chars (isolate-safe, no WebCrypto needed). */
 export function fnv1a64Hex(input: string): string {
@@ -173,6 +174,7 @@ export const ensureDefaults = internalMutation({
   args: {},
   handler: async (ctx) => {
     if (await ctx.db.query('edgeTemplates').first()) return { created: 0 };
+    await assertAdmission(ctx.db, 'template.write');
     let created = 0;
     for (const provider of EDGE_PROVIDER_IDS) {
       const existing = await ctx.db
@@ -269,6 +271,7 @@ export const create = internalMutation({
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a) => {
+    await assertAdmission(ctx.db, 'template.write');
     if (!NAME_RE.test(a.name))
       throw new ConvexError({ code: 'validation', message: 'invalid template name' });
     const parsed = validateTemplateParams(a.provider, a.params);
@@ -334,6 +337,7 @@ export const update = internalMutation({
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a) => {
+    await assertAdmission(ctx.db, 'template.write');
     const row = await ctx.db.get(a.id);
     if (!row) throw new ConvexError({ code: 'not_found', message: 'Template not found' });
     const patch: Partial<Doc<'edgeTemplates'>> = { updatedAt: Date.now() };
