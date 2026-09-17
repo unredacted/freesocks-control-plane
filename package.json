@@ -22,6 +22,7 @@
     "convex:dev": "convex dev",
     "convex:deploy": "convex deploy",
     "convex:codegen": "convex codegen",
+    "convex:bundle-check": "node scripts/convex-bundle-check.mjs",
     "test": "bun run i18n:compile && vitest run",
     "test:watch": "bun run i18n:compile && vitest",
     "test:integration:remnawave": "bash scripts/remnawave-integration.sh",

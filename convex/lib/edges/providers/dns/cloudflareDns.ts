@@ -1,3 +1,4 @@
+'use node';
 /**
  * Cloudflare DNS on the official TypeScript SDK (`cloudflare@7.1.0`).
  *

@@ -1,3 +1,4 @@
+'use node';
 /**
  * Test helper: an in-process HTTP server that RECORDS every request and answers
  * from a routing function. Not a test file itself.

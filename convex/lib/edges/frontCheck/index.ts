@@ -1,3 +1,4 @@
+'use node';
 /**
  * Front qualification: a short, authenticated, end-to-end test session through
  * a deployed L7 (CDN) edge.

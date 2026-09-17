@@ -1,3 +1,4 @@
+'use node';
 /**
  * Fastly L7 (CDN) edge adapter: one hostname fronted by one VCL service.
  *

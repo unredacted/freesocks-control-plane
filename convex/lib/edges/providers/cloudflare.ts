@@ -1,3 +1,4 @@
+'use node';
 /**
  * Cloudflare L7 edge adapter.
  *

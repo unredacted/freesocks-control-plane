@@ -1,3 +1,4 @@
+'use node';
 /**
  * The relay-provider registry: one adapter per EDGE_PROVIDER_IDS entry (a
  * missing one is a compile error). The casts erase the per-adapter config and

@@ -622,8 +622,10 @@ Everything derives from the id tuple in `src/shared/contracts/edgeProviderIds.ts
    source; `wireContract.test.ts` drives the lifecycle and refuses undeclared or dead entries;
    the table below is generated from it. `.github/workflows/edge-providers.yml`: add the id to
    the matrix.
-6. `scripts/node-floor.mjs` when the adapter imports an npm dependency; `src/client/lib/
-edgeProviderMeta.ts` and `EdgeProvidersPanel.svelte` for the account form.
+6. `scripts/node-floor.mjs` when the adapter imports an npm dependency, and `'use node';` as
+   the adapter's first statement (only `"use node"` modules may import it; `bun run
+convex:bundle-check` enforces both); `src/client/lib/edgeProviderMeta.ts` and
+   `EdgeProvidersPanel.svelte` for the account form.
 
 ## Provider wire contracts
 
@@ -755,7 +757,13 @@ version baked into the self-hosted Convex backend image. The L7 adapters add `cl
 official TypeScript SDK, retries off) and `fastly` (the official JavaScript SDK behind a typed
 wrapper; it declares `superagent@^6`, which is deprecated along with its `formidable@1`, so
 `package.json` overrides `superagent` to the maintained 10.x line and `sdk.test.ts` pins that the
-resolved major stays at or above 10); both bundle into the Node action without external packages. `scripts/node-floor.mjs` derives the highest `engines.node`
+resolved major stays at or above 10); both bundle into the Node action without external packages.
+The adapters, the shared DNS client, the registry, the front check's socket layer and the
+internal probe start with `'use node';` because every file under `convex/` is a bundler entry
+point and the Fastly SDK and the `node:*` imports only bundle for the Node runtime; isolate code
+(queries, mutations, the renderer) imports the pure helpers next to them (`capabilities`,
+`templates`, `frontCheck/binding`, `frontCheck/vless`) instead, and `bun run convex:bundle-check`
+refuses an isolate import of a `"use node"` module in CI. `scripts/node-floor.mjs` derives the highest `engines.node`
 floor among those dependencies and `docker/deploy-entrypoint.sh` fails the deploy when the
 runtime is below it (`DEPLOY_SKIP_NODE_FLOOR=true` bypasses). The check runs BEFORE the push when
 the running deployment already exposes the runtime probe (so incompatible code is never
