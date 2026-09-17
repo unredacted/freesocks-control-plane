@@ -169,6 +169,12 @@ export const retryDestroy = internalMutation({
       destroyConfirm: undefined,
       currentOp: undefined,
       failure: undefined,
+      // A shared-resource teardown parked in a terminal phase must restart from
+      // its first phase (the driver re-plans from the ledger); leaving the
+      // terminal state would make the driver fall through to a destroy walk
+      // that can only answer `unresolved` for a shared domain.
+      sharedTeardown: undefined,
+      sharedTeardownState: undefined,
       statusChangedAt: now,
       updatedAt: now,
     });

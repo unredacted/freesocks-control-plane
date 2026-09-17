@@ -758,4 +758,34 @@ describe('edgeProviderOps: the inventory pull refreshes what was observed', () =
       loadBalancers: [],
     });
   });
+
+  test('a credential rotation refreshes the observed zone facts like a test does', async () => {
+    const t = newT();
+    const { id: cfId } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'cloudflare',
+      name: 'acct-cf',
+      settings: { zoneId: 'a'.repeat(32), zoneName: 'example.org' },
+      credentials: { apiToken: 'cf' },
+    });
+    let mode = 'flexible';
+    __setEdgeProviderForTests('cloudflare', {
+      ...edgeProviderFor('cloudflare'),
+      testCredentials: async () => ({ ok: true, observed: { zoneSslMode: mode } }),
+    } as never);
+    await t.action(internal.edgeProviderOps.testCredentials, { accountId: cfId });
+    expect(
+      (await t.query(internal.edgeProviderAccounts.getForAdmin, { id: cfId }))!.observedSettings,
+    ).toEqual({ zoneSslMode: 'flexible' });
+    // The zone mode moved at the provider; the rotation's passing test sees it,
+    // so planning must not keep freezing the stale mode.
+    mode = 'strict';
+    const res = await t.action(internal.edgeProviderOps.rotateCredentials, {
+      accountId: cfId,
+      credentials: { apiToken: 'cf2' },
+    });
+    expect(res).toMatchObject({ ok: true, credentialsChanged: true });
+    expect(
+      (await t.query(internal.edgeProviderAccounts.getForAdmin, { id: cfId }))!.observedSettings,
+    ).toEqual({ zoneSslMode: 'strict' });
+  });
 });

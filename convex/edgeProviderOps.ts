@@ -541,6 +541,10 @@ export const rotateCredentials = internalAction({
         id: a.accountId,
         credentials: creds.credentials,
         settings: settings.settings,
+        // The test just observed the zone's live facts (encryption mode, WebSockets);
+        // a rotation must refresh them like a credential test does, or planning
+        // keeps freezing a mode the zone no longer has.
+        observed: res.observed,
         expectedUpdatedAt: acct.updatedAt,
         actorAdminId: a.actorAdminId,
       });

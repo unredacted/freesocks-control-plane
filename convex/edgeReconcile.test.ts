@@ -7,7 +7,7 @@ import { internal } from './_generated/api';
 import { jsonRes, mockFetch } from './lib/edges/testing/mockFetch';
 import { upsertSettingRow } from './appSettings';
 import { MAX_CONFIRM_ATTEMPTS, shouldReissueDelete } from './edgeReconcile';
-import { __setEdgeProviderForTests } from './lib/edges/providers/registry';
+import { __setEdgeProviderForTests, edgeProviderFor } from './lib/edges/providers/registry';
 import { z } from 'zod';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -1147,5 +1147,109 @@ describe('edgeReconcile: tearing a hostname off a SHARED resource', () => {
     const edge = (await t.run((ctx) => ctx.db.get(edgeId)))!;
     expect(edge.status).toBe('needs_operator');
     expect(edge.failure).toMatchObject({ step: 'shared_teardown', code: 'clone_lost' });
+  });
+
+  test('a retry after an operator repair RESTARTS the workflow from its first phase', async () => {
+    mockFetch(() => jsonRes({ response: [] }));
+    fakeSharedProvider({ parkWith: 'clone_lost' });
+    const { t, edgeId } = await sharedEdge();
+    await run(t);
+    let edge = (await t.run((ctx) => ctx.db.get(edgeId)))!;
+    expect(edge.status).toBe('needs_operator');
+    expect(edge.sharedTeardown?.phase).toBe('needs_operator');
+    // The operator repairs the service by hand and retries: the terminal state
+    // must not survive, or the driver would treat it as finished and the walk
+    // could only answer `unresolved` for the shared domain.
+    await t.mutation(internal.edgeReconcileMutations.retryDestroy, { edgeId });
+    edge = (await t.run((ctx) => ctx.db.get(edgeId)))!;
+    expect(edge.status).toBe('destroying');
+    expect(edge.sharedTeardown).toBeUndefined();
+    expect(edge.sharedTeardownState).toBeUndefined();
+    const steps = fakeSharedProvider();
+    await run(t);
+    edge = (await t.run((ctx) => ctx.db.get(edgeId)))!;
+    expect(edge.sharedTeardown).toMatchObject({ phase: 'remove_domain' });
+    expect(steps).toEqual([{ phase: 'clone', workVersion: undefined }]);
+  });
+
+  test('out-of-rotation discovery RELEASES the shared-object lock once it has answered', async () => {
+    mockFetch(() => jsonRes({ response: [] }));
+    fakeSharedProvider();
+    __setEdgeProviderForTests('cloudflare', {
+      ...(edgeProviderFor('cloudflare') as object),
+      testCredentials: async () => ({ ok: true }),
+      discover: async () => ({ status: 'confirmed_absent' }),
+      describe: async () => ({ state: 'active', addresses: {}, health: 'unknown' }),
+      planDestroy: () => [],
+      runDestroy: async () => ({ status: 'confirmed_gone' }),
+    } as never);
+    const { t, edgeId } = await sharedEdge();
+    const zoneId = 'a'.repeat(32);
+    // A cancelled run whose origin-rule write had an unknown outcome: the lock a
+    // lost write left behind is expired and unsettled, and only the reconcile
+    // discovery path will ever settle this edge again.
+    await t.run((ctx) =>
+      ctx.db.patch(edgeId, {
+        status: 'cancelled',
+        resources: [],
+        steps: [
+          {
+            stepId: 'rule',
+            kind: 'create_origin_rule',
+            resourceName: 'adopted-node-one-rule',
+            discoverability: 'by_name',
+            state: 'unresolved',
+            attempt: 1,
+            startedAt: Date.now() - 600_000,
+          },
+        ],
+        provisionIntent: JSON.stringify({
+          hostname: 'front-a.example.org',
+          zoneId,
+          zoneName: 'example.org',
+          originTransport: {
+            scheme: 'https',
+            certPublic: true,
+            certNames: [],
+            acceptsHostHeader: 'any',
+          },
+          originPort: 8443,
+          templateHash: 'h',
+          templateParams: {},
+        }),
+      }),
+    );
+    const key = `cloudflare-zone:${zoneId}`;
+    await t.mutation(internal.edges.claimExternalLock, { key, edgeId, opId: 'lost', ttlMs: 1 });
+    await t.run(async (ctx) => {
+      const row = await ctx.db
+        .query('externalLocks')
+        .withIndex('by_key', (q) => q.eq('key', key))
+        .unique();
+      await ctx.db.patch(row!._id, { expiresAt: Date.now() - 1 });
+    });
+    await run(t);
+    const edge = (await t.run((ctx) => ctx.db.get(edgeId)))!;
+    expect(edge.steps[0]!.state).toBe('done');
+    // The zone is free again for every later origin-rule write.
+    const lock = await t.run((ctx) =>
+      ctx.db
+        .query('externalLocks')
+        .withIndex('by_key', (q) => q.eq('key', key))
+        .unique(),
+    );
+    expect(lock).toBeNull();
+  });
+
+  test('the operator "destroy" resolution restarts a parked workflow too', async () => {
+    mockFetch(() => jsonRes({ response: [] }));
+    fakeSharedProvider({ parkWith: 'clone_lost' });
+    const { t, edgeId } = await sharedEdge();
+    await run(t);
+    await t.mutation(internal.edgeAdmin.resolveOperator, { edgeId, action: 'destroy' });
+    const edge = (await t.run((ctx) => ctx.db.get(edgeId)))!;
+    expect(edge.status).toBe('destroying');
+    expect(edge.sharedTeardown).toBeUndefined();
+    expect(edge.sharedTeardownState).toBeUndefined();
   });
 });

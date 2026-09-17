@@ -491,6 +491,9 @@ export const resolveOperator = internalMutation({
         status: 'destroying',
         destroyAttempts: 0,
         destroyConfirm: undefined,
+        // Restart a parked shared-resource teardown from its first phase.
+        sharedTeardown: undefined,
+        sharedTeardownState: undefined,
         currentOp: undefined,
         failure: undefined,
         steps: e.steps.map((s) => (s.state === 'ambiguous' ? { ...s, state: 'done' as const } : s)),

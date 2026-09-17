@@ -34,7 +34,7 @@ import { isDiscoverable } from './edges';
 import { publishedCount } from './lib/edges/pool';
 import { hasPublishableAddress } from './lib/edges/ip';
 import { parseIntent } from './lib/edges/intent';
-import { sharedTeardownLockKey } from './edgeRotations';
+import { sharedTeardownLockKey, stepLockKey } from './edgeRotations';
 import { EDGE_PROVIDER_CAPABILITIES } from './lib/edges/providers/capabilities';
 import type {
   Discovery,
@@ -431,6 +431,19 @@ async function settleEdge(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: R
     throw err;
   }
   const failedRun = edge.status === 'failed' || edge.status === 'cancelled';
+  // Once discovery has ANSWERED, the shared object's state is known again: the
+  // lock a lost write left behind (e.g. a zone's ruleset) is released here, as
+  // the in-rotation path does. A cancelled or timed-out run is settled by this
+  // path only, so without this the expired lock would block every later write
+  // on that shared object.
+  const discoveryLockKey = stepLockKey(edge, pending.kind);
+  const releaseAfterDiscovery = async () => {
+    if (discoveryLockKey)
+      await ctx.runMutation(internal.edges.releaseExternalLocksOf, {
+        edgeId: edge._id,
+        keys: [discoveryLockKey],
+      });
+  };
   if (disc.status === 'found') {
     await ctx.runMutation(internal.edges.settleOp, {
       edgeId: edge._id,
@@ -439,6 +452,7 @@ async function settleEdge(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: R
       addResources: disc.resources,
       addresses: disc.addresses,
     });
+    await releaseAfterDiscovery();
   } else if (disc.status === 'confirmed_absent') {
     // Nothing exists for this step. A failed run marks it done-with-nothing so the
     // destroy can proceed; a live run may retry (the rotation machine owns retries).
@@ -456,6 +470,7 @@ async function settleEdge(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: R
         failure: { step: pending.stepId, code: 'step_retries_exhausted' },
       });
     }
+    await releaseAfterDiscovery();
   } else if (disc.status === 'ambiguous') {
     await ctx.runMutation(internal.edges.settleOp, {
       edgeId: edge._id,
@@ -464,6 +479,9 @@ async function settleEdge(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: R
       addResources: disc.candidates.map((c) => ({ ...c, ownership: 'adopted' as const })),
       status: 'needs_operator',
     });
+    // Ambiguity is an answer too (an operator now decides); the lock must not
+    // outlive it or the zone stays frozen for everyone.
+    await releaseAfterDiscovery();
   } else {
     await ctx.runMutation(internal.edges.settleOp, {
       edgeId: edge._id,

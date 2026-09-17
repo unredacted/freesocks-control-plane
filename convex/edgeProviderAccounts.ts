@@ -570,6 +570,8 @@ export const applyCredentialRotation = internalMutation({
     credentials: v.any(),
     /** The FULL settings that were tested alongside them. */
     settings: v.any(),
+    /** What the passing test observed at the provider (refreshes `observedSettings`). */
+    observed: v.optional(v.record(v.string(), v.string())),
     /** `updatedAt` of the row the test was built from; a newer row refuses the write. */
     expectedUpdatedAt: v.number(),
     actorAdminId: v.optional(v.id('adminUsers')),
@@ -605,12 +607,18 @@ export const applyCredentialRotation = internalMutation({
       throw new ConvexError({ code: 'validation', message: 'rotation cannot move the account' });
     const credentialsChanged = !settingsEqual(creds.credentials, row.credentials);
     const identifiersChanged = !settingsEqual(settings.settings, row.settings);
+    const now = Date.now();
     await ctx.db.patch(a.id, {
       credentials: creds.credentials as never,
       settings: settings.settings as never,
-      lastTestOkAt: Date.now(),
+      lastTestOkAt: now,
       lastTestError: undefined,
-      updatedAt: Date.now(),
+      // The passing test observed the provider's live facts; a test that observed
+      // nothing leaves the previous observation alone (same rule as recordTest).
+      ...(a.observed && Object.keys(a.observed).length > 0
+        ? { observedSettings: JSON.stringify(a.observed).slice(0, 4_000), observedAt: now }
+        : {}),
+      updatedAt: now,
     });
     await writeAuditLog(ctx, {
       actorType: 'admin',
