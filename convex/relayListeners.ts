@@ -345,6 +345,23 @@ export async function applyRegistration(
     const merged = mergeNames(ex.tlsNames ?? [], spec.tlsNames, source, now, drainMs);
     result.blockedNames.push(...merged.blocked);
     const row = specToRow(relay, spec, merged.next, source, now, ex);
+    // A change that keeps the binding but moves the listener out of a LAYER its
+    // live edges sit on (an origin transport going from HTTPS to plaintext
+    // drops L4; removing it drops L7) would keep handing members an endpoint
+    // that can no longer reach the listener: refused while such edges exist.
+    if (!rebound) {
+      // Judged on the transport alone (the names as they were): retiring names
+      // has its own drain and must not be refused here.
+      const still = listenerLayers({ ...row, tlsNames: ex.tlsNames }).layers;
+      const stranded = live.filter(
+        (e) => e.listenerId === ex._id && !still.includes(e.layer ?? 'l4'),
+      );
+      if (stranded.length > 0)
+        throw new ConvexError({
+          code: 'edge.listener_in_use',
+          message: `${stranded.length} edge(s) front listener ${ex.listenerKey} on a layer this change no longer allows; destroy them before changing its origin transport`,
+        });
+    }
     // A re-bound inbound gets a NEW panel Host; forget the old one.
     if (rebound && ex.host) row.host = { state: 'absent' };
     await ctx.db.patch(ex._id, {

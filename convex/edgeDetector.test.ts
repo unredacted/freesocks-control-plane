@@ -137,10 +137,35 @@ async function report(
   });
 }
 
+/** Record what the renderer handed this subscriber (attribution reads ONLY this snapshot). */
+async function handed(
+  t: ReturnType<typeof convexTest>,
+  subId: Id<'subscriptions'>,
+  relayId: Id<'relays'>,
+  primaryEdgeId: Id<'edges'>,
+  backupEdgeId?: Id<'edges'>,
+) {
+  await t.run(async (ctx) => {
+    const epoch = (await ctx.db.get(relayId))!.publicationEpoch;
+    await ctx.db.patch(subId, {
+      lastRenderedEpoch: epoch,
+      lastRender: {
+        at: Date.now(),
+        epoch,
+        family: 'mihomo',
+        listenerKeys: ['a'],
+        primaryEdgeId,
+        backupEdgeId,
+      },
+    });
+  });
+}
+
 describe('relay attribution on member reports', () => {
   test('a report carries the origin slug; the edge only for an explicit choice; the first report per window weighs 1', async () => {
     const s = await seed();
     const m = await member(s.t, s.tierId, s.serverId, 1);
+    await handed(s.t, m.subId, s.relayId, s.edgeA, s.edgeB);
     const r1 = await report(s.t, m.cookie, { reason: 'cant-connect', connection: 'primary' });
     expect(r1.status).toBe(200);
     const r2 = await report(s.t, m.cookie, { reason: 'cant-connect', connection: 'unsure' });
@@ -153,7 +178,7 @@ describe('relay attribution on member reports', () => {
       detectorWeight: 1,
       refreshNotObserved: false,
     });
-    expect([s.edgeA, s.edgeB]).toContain(rows[0].relayEdgeId);
+    expect(rows[0].relayEdgeId).toBe(s.edgeA);
     // Second report by the same member inside the window: no edge (unsure), weight 0.
     expect(rows[1]).toMatchObject({
       relaySlug: 'node-one',
@@ -168,6 +193,7 @@ describe('relay attribution on member reports', () => {
     expect(marks[0].key).toMatch(/^[0-9a-f]{64}$/);
     // Primary vs backup resolve to DIFFERENT edges for the same member.
     const m2 = await member(s.t, s.tierId, s.serverId, 2);
+    await handed(s.t, m2.subId, s.relayId, s.edgeB, s.edgeA);
     await report(s.t, m2.cookie, { reason: 'cant-connect', connection: 'primary' });
     await report(s.t, m2.cookie, { reason: 'cant-connect', connection: 'backup' });
     const rows2 = (await s.t.run((ctx) => ctx.db.query('issueReports').collect())).slice(2);
@@ -181,42 +207,13 @@ describe('relay attribution on member reports', () => {
     expect(JSON.stringify(issue)).not.toContain('node-one');
   });
 
-  test('attribution recomputes the assignment over the FULL pool (ineligible edges keep their index), exactly as the renderer did', async () => {
+  test('a member never rendered gets NO edge attribution: nothing is recomputed from the pool', async () => {
     const s = await seed();
-    // A third edge, then the middle one loses its address: the renderer keeps
-    // it in the modulus and walks forward; attribution must do the same.
-    await s.t.run((ctx) => ctx.db.patch(s.relayId, { desiredPublished: 3 }));
-    const c = await adoptL4Edge(s.t, s.relayId, s.listenerId, {
-      ipv4: '198.51.100.99',
-      publish: true,
-    });
-    await s.t.run((ctx) => ctx.db.patch(s.edgeB, { addresses: {} }));
-    const now = Date.now();
-    let discriminating = false;
-    for (let i = 40; i < 56; i++) {
-      const m = await member(s.t, s.tierId, s.serverId, i);
-      await s.t.run(async (ctx) => {
-        const origin = (await ctx.db.get(s.relayId))!;
-        const sub = (await ctx.db.get(m.subId))!;
-        const full = (await publishedEdgesOf(ctx, origin, { includeIneligible: true })).published;
-        const compressed = (await publishedEdgesOf(ctx, origin)).published;
-        expect(full.map((e) => e.edgeId)).toEqual([s.edgeA, s.edgeB, c.edgeId]);
-        expect(compressed.map((e) => e.edgeId)).toEqual([s.edgeA, c.edgeId]);
-        const opts = { now, preferDistinctProviders: false, includeBackup: true };
-        const expectFull = assignEndpoints(sub.renderKey!, full, opts);
-        const wrong = assignEndpoints(sub.renderKey!, compressed, opts);
-        const current = { ...sub, lastRenderedEpoch: origin.publicationEpoch } as typeof sub;
-        const primary = await resolveEdgeAttribution(ctx.db, current, 'primary', now);
-        const backup = await resolveEdgeAttribution(ctx.db, current, 'backup', now);
-        expect(primary!.relayEdgeId).toBe(expectFull.primary!.edge.edgeId);
-        expect(backup!.relayEdgeId).toBe(expectFull.backup?.edge.edgeId ?? null);
-        expect(primary!.relayEdgeId).not.toBe(s.edgeB);
-        if (wrong.primary!.edge.edgeId !== expectFull.primary!.edge.edgeId) discriminating = true;
-      });
-    }
-    // At least one member's compressed-pool answer differs, so the assertion
-    // above genuinely pins the full-pool behaviour.
-    expect(discriminating).toBe(true);
+    const m = await member(s.t, s.tierId, s.serverId, 40);
+    await report(s.t, m.cookie, { reason: 'cant-connect', connection: 'primary' });
+    const row = (await s.t.run((ctx) => ctx.db.query('issueReports').collect()))[0];
+    expect(row).toMatchObject({ relaySlug: 'node-one', connectionChoice: 'primary' });
+    expect(row.relayEdgeId).toBeUndefined();
   });
 
   test('refreshNotObserved when the key has not fetched content since the origin last rotated', async () => {
@@ -241,7 +238,17 @@ describe('relay attribution on member reports', () => {
       const sub = (await ctx.db.get(m.subId))!;
       const epoch = (await ctx.db.get(s.relayId))!.publicationEpoch;
       const withEpoch = (lastRenderedEpoch: number) =>
-        ({ ...sub, lastRenderedEpoch }) as typeof sub;
+        ({
+          ...sub,
+          lastRenderedEpoch,
+          lastRender: {
+            at: now,
+            epoch: lastRenderedEpoch,
+            family: 'mihomo',
+            listenerKeys: ['a'],
+            primaryEdgeId: s.edgeA,
+          },
+        }) as typeof sub;
       // Rendered against an older epoch → still on the old pool → no edge attribution.
       const behind = await resolveEdgeAttribution(ctx.db, withEpoch(epoch - 1), 'primary', now);
       expect(behind).toMatchObject({ relaySlug: 'node-one', refreshNotObserved: true });

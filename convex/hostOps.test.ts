@@ -475,7 +475,7 @@ describe('hostOps: delete', () => {
 });
 
 describe('hostOps: the actions against a panel', () => {
-  test('ensureListenerHost creates the Host through POST /api/hosts with the persisted intent, then answers present without another call', async () => {
+  test('ensureListenerHost creates the Host through POST /api/hosts with the persisted intent, then answers present only after seeing it on the panel', async () => {
     const world = fakePanel();
     const { t, listenerId } = await seed();
     const r = await t.action(internal.hostOps.ensureListenerHost, { listenerId, target: TARGET });
@@ -507,7 +507,56 @@ describe('hostOps: the actions against a panel', () => {
       target: TARGET,
     });
     expect(again).toEqual({ state: 'present', uuid: r.uuid });
-    expect(world.calls()).toEqual(['POST /api/hosts']);
+    // Verified against the live listing (a read), never re-created.
+    expect(world.calls()).toEqual(['POST /api/hosts', 'GET /api/hosts']);
+  });
+
+  test('a Host the ledger calls present but the panel lost is re-created, not reported present from the database', async () => {
+    const world = fakePanel();
+    const { t, listenerId } = await seed();
+    const first = await t.action(internal.hostOps.ensureListenerHost, {
+      listenerId,
+      target: TARGET,
+    });
+    expect(first.state).toBe('present');
+    // Deleted out of band on the panel.
+    world.hosts.length = 0;
+    const again = await t.action(internal.hostOps.ensureListenerHost, {
+      listenerId,
+      target: TARGET,
+    });
+    expect(again.state).toBe('present');
+    expect(again.uuid).toBeDefined();
+    expect(world.hosts).toHaveLength(1);
+    expect(world.calls()).toEqual(['POST /api/hosts', 'GET /api/hosts', 'POST /api/hosts']);
+    const audits = await t.run(async (ctx) =>
+      (await ctx.db.query('auditLog').collect()).map((a) => a.action),
+    );
+    expect(audits).toContain('relay.host.lost');
+  });
+
+  test('a lost uuid with exactly one Host on the listener remark and inbound takes its place; several park it ambiguous', async () => {
+    const world = fakePanel();
+    const { t, listenerId } = await seed();
+    await t.action(internal.hostOps.ensureListenerHost, { listenerId, target: TARGET });
+    // Re-created out of band under a new uuid.
+    world.hosts.length = 0;
+    world.hosts.push(panelHost());
+    const one = await t.action(internal.hostOps.ensureListenerHost, { listenerId, target: TARGET });
+    expect(one).toEqual({ state: 'present', uuid: HOST_UUID });
+    expect(world.calls().filter((c) => c === 'POST /api/hosts')).toHaveLength(1);
+    // Now two candidates and the known uuid gone: nobody guesses.
+    world.hosts.length = 0;
+    world.hosts.push(
+      { ...panelHost(), uuid: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc' },
+      { ...panelHost(), uuid: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd' },
+    );
+    const many = await t.action(internal.hostOps.ensureListenerHost, {
+      listenerId,
+      target: TARGET,
+    });
+    expect(many.state).toBe('ambiguous');
+    expect(world.calls().filter((c) => c === 'POST /api/hosts')).toHaveLength(1);
   });
 
   test('a failed POST parks the listener unresolved; the next ensure RE-OBSERVES (never re-creates) and adopts what the panel did create', async () => {
