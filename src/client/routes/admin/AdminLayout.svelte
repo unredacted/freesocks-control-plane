@@ -244,7 +244,9 @@
       </button>
     </div>
   </aside>
-  <section>
+  <!-- min-w-0: a grid item defaults to min-width:auto, so one long unbreakable
+       value (a test link, an address) would widen the whole content column. -->
+  <section class="min-w-0">
     {#if children}{@render children()}{/if}
   </section>
 </div>

@@ -95,7 +95,7 @@
 <SectionHeader
   title="Guided setup"
   description="Take one relay from an origin to a published, watched edge, one step at a time."
-  back={{ href: edgesPaths.overview(), label: 'Edges overview' }}
+  back={{ href: edgesPaths.overview(), label: 'All relays' }}
 />
 
 {#if relaySlug === null && !draftMode}

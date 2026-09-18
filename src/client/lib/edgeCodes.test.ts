@@ -40,6 +40,11 @@ import {
   humanizeCode,
   isTerminalPhase,
   phaseLabel,
+  PLAIN_WORDS,
+  plainAuditActionLabel,
+  plainWords,
+  RESTORE_PHASE_WORDS,
+  restorePhaseWords,
 } from './edgeCodes';
 
 const EVERY_CODE = [
@@ -266,5 +271,38 @@ describe('phase, status and step maps', () => {
     expect(auditActionLabel('edge.published')).toBe('Edge published');
     expect(auditActionLabel('admin.edge.something_odd')).toBe('Edge something odd');
     expect(auditActionLabel('probe.new_thing')).toBe('Probe new thing');
+  });
+});
+
+describe('plain words (the simple screens)', () => {
+  test('the table maps the technical terms the plan names, without an em-dash or an API path', () => {
+    expect(PLAIN_WORDS.relay).toBe('protected node');
+    expect(PLAIN_WORDS.edge).toBe('address');
+    expect(PLAIN_WORDS.published).toBe('in use');
+    expect(PLAIN_WORDS.standby).toBe('spare');
+    expect(PLAIN_WORDS.draining).toBe('retiring');
+    expect(PLAIN_WORDS.qualified).toBe('trusted');
+    expect(PLAIN_WORDS.quarantine).toBe('paused for safety');
+    expect(PLAIN_WORDS['host flip']).toBe('update the panel');
+    for (const text of [
+      ...Object.values(PLAIN_WORDS),
+      ...Object.values(RESTORE_PHASE_WORDS),
+      ...['relay.create', 'edge.published', 'edge.verified', 'edge.setup_run.go_live'].map(
+        plainAuditActionLabel,
+      ),
+    ]) {
+      expect(text).not.toContain(EM_DASH);
+      expect(text).not.toContain('/api/');
+    }
+  });
+  test('rewrites whole words only, keeping the leading capital', () => {
+    expect(plainWords('Relay quarantined')).toBe('Protected node paused for safety');
+    expect(plainWords('Edge published')).toBe('Address in use');
+    expect(plainWords('Standby edge, ready to publish')).toBe('Spare address, ready to publish');
+    expect(plainWords('relayed')).toBe('relayed');
+    expect(plainAuditActionLabel('edge.template.create')).toBe('Template created');
+    expect(plainAuditActionLabel('edge.destroy_failed')).toBe('Address destroy failed');
+    expect(restorePhaseWords('release_binding')).toBe('Handing members the direct address');
+    expect(restorePhaseWords('brand_new')).toBe('Brand new');
   });
 });

@@ -12,7 +12,7 @@ import { auditDetailLine, displayValue, formatBytes, protocolLine } from './form
 import { parseBounded } from './number';
 import { poolSlots, poolSummary } from './pool';
 import { ROTATION_KIND_LABELS, ROTATION_TRIGGER_LABELS, stepStateTone } from './rotation';
-import { EDGES_ROUTES, edgesPaths, resolveEdgesRoute } from './routes';
+import { EDGES_ROUTES, edgesPaths, resolveEdgesRoute, sectionTabOf } from './routes';
 import { addTags, normalizeCountry, normalizeHostname, splitTags } from './tags';
 import { actorLabel, subjectOf } from './timeline';
 import type { TimelineRow } from './types';
@@ -36,8 +36,14 @@ const item = (over: Partial<AttentionItem>): AttentionItem => ({
 
 describe('resolveEdgesRoute / edgesPaths', () => {
   it('resolves every page', () => {
-    expect(resolveEdgesRoute('/admin/edges')).toEqual({ page: 'overview' });
-    expect(resolveEdgesRoute('/admin/edges/')).toEqual({ page: 'overview' });
+    expect(resolveEdgesRoute('/admin/edges')).toEqual({ page: 'home' });
+    expect(resolveEdgesRoute('/admin/edges/')).toEqual({ page: 'home' });
+    expect(resolveEdgesRoute('/admin/edges/nodes/node-a')).toEqual({
+      page: 'node',
+      slug: 'node-a',
+    });
+    expect(resolveEdgesRoute('/admin/edges/advanced')).toEqual({ page: 'advanced' });
+    expect(resolveEdgesRoute('/admin/edges/advanced/relays')).toEqual({ page: 'overview' });
     expect(resolveEdgesRoute('/admin/edges/setup')).toEqual({ page: 'setup' });
     expect(resolveEdgesRoute('/admin/edges/relays/relay-a')).toEqual({
       page: 'relay',
@@ -56,6 +62,30 @@ describe('resolveEdgesRoute / edgesPaths', () => {
     expect(resolveEdgesRoute('/admin/edges/nope')).toEqual({ page: 'not-found' });
     expect(resolveEdgesRoute('/admin/edges/relays')).toEqual({ page: 'not-found' });
     expect(resolveEdgesRoute('/admin/edges/relays/a/b')).toEqual({ page: 'not-found' });
+    expect(resolveEdgesRoute('/admin/edges/nodes')).toEqual({ page: 'not-found' });
+  });
+  it('lights the header link of each page', () => {
+    expect(sectionTabOf({ page: 'home' })).toBe('nodes');
+    expect(sectionTabOf({ page: 'node', slug: 'a' })).toBe('nodes');
+    expect(sectionTabOf({ page: 'providers' })).toBe('providers');
+    expect(sectionTabOf({ page: 'provider', id: 'x' })).toBe('providers');
+    for (const page of [
+      'advanced',
+      'overview',
+      'setup',
+      'templates',
+      'probes',
+      'settings',
+    ] as const)
+      expect(sectionTabOf({ page })).toBe('advanced');
+    expect(sectionTabOf({ page: 'relay', slug: 'a' })).toBe('advanced');
+  });
+  it('keeps every old address and builds the new ones', () => {
+    expect(edgesPaths.overview()).toBe('/admin/edges/advanced/relays');
+    expect(edgesPaths.home()).toBe('/admin/edges');
+    expect(edgesPaths.home({ protect: '1' })).toBe('/admin/edges?protect=1');
+    expect(edgesPaths.node('a b', { test: 'e1' })).toBe('/admin/edges/nodes/a%20b?test=e1');
+    expect(edgesPaths.advanced()).toBe('/admin/edges/advanced');
   });
   it('builds links that resolve back, with encoded params and clean defaults', () => {
     const href = edgesPaths.relay('a b/c', { tab: 'edges', edge: 'e1', rotation: null });
@@ -147,9 +177,18 @@ describe('attention', () => {
       '/admin/edges/settings?section=maintenance',
     );
   });
-  it('falls back to the overview without a relay', () => {
+  it('falls back to the home without a relay', () => {
     expect(attentionTarget(item({ action: 'open_relay', relaySlug: null }))).toBe('/admin/edges');
     expect(attentionTarget(item({ action: 'open_account' }))).toBe('/admin/edges/providers');
+  });
+  it('sends the endpoint test and go-live to the node page', () => {
+    expect(attentionTarget(item({ action: 'verify_endpoint', edgeId: 'e1' }))).toBe(
+      '/admin/edges/nodes/relay-a?test=e1',
+    );
+    expect(attentionTarget(item({ action: 'require_edges' }))).toBe('/admin/edges/nodes/relay-a');
+    // Both are handled by the host page when it offers `onAction` (the card opens in place).
+    expect(ATTENTION_ACTION_PLAN.verify_endpoint).toEqual({ type: 'call', confirm: null });
+    expect(ATTENTION_ACTION_PLAN.require_edges).toEqual({ type: 'call', confirm: null });
   });
   it('confirms the billable and disruptive calls only', () => {
     const confirmed = ATTENTION_ACTIONS.filter((a) => {
