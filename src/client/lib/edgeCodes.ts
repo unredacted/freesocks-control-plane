@@ -740,6 +740,18 @@ const COPY = {
     explain:
       'The published edges wanted were raised so every deployed listener has a slot of its own.',
   },
+  listener_cap: {
+    label: 'Listener cap reached',
+    explain:
+      'A relay can carry at most eight deployed, enabled listeners, one published slot each; this one would be the ninth.',
+    fix: 'Retire or disable a listener you do not need, or register the listener on another relay.',
+  },
+  pool_below_coverage: {
+    label: 'Pool below coverage',
+    explain:
+      'The published edges wanted cannot go below the number of deployed, enabled listeners: each needs a slot of its own.',
+    fix: 'Retire or disable a listener first, then lower the published edges wanted.',
+  },
   no_duplicate: {
     label: 'Nothing to rebalance',
     explain:

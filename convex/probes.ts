@@ -50,6 +50,7 @@ import type {
 import { assertAdmission } from './lib/edges/maintenance';
 import { shapeProtocolFor } from './lib/edges/verifyRung';
 import { activeNames } from './relayListeners';
+import { refreshPartialRung } from './edgeVerification';
 
 const MIN = 60_000;
 /** Settled probe runs are evidence history, not a ledger: 14 days is plenty for the admin view. */
@@ -714,6 +715,8 @@ export const failRun = internalMutation({
     const now = Date.now();
     void error; // kept out of the row: failure text is operational, not evidence
     await ctx.db.patch(runId, { status: timeout ? 'timeout' : 'failed', finishedAt: now });
+    // A failed shape run is evidence too (lib/edges/verifyRung.ts).
+    if (run.targetKind === 'edge') await refreshPartialRung(ctx, run.targetRef as Id<'edges'>, now);
     return null;
   },
 });
@@ -815,6 +818,8 @@ export const finishRun = internalMutation({
       }
     }
     await refreshTargetSummary(ctx, target, now);
+    // The L4 verification rung follows the evidence (never past `partial`).
+    if (run.targetKind === 'edge') await refreshPartialRung(ctx, run.targetRef as Id<'edges'>, now);
     return null;
   },
 });

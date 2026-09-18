@@ -179,7 +179,12 @@ listener") a published edge, so capacity follows the listeners (`convex/lib/edge
 ['edge.pool_raised']` when it did) on every registration, admin listener add and listener
 re-enable, and the reconcile cron applies it each tick. A pool that is already FULL while a
 listener is uncovered is **expanded** within the cap (`desiredPublished = min(8, published +
-uncovered)`, audited `edge.pool_expanded`); it is never shrunk. **Reserved allocation**
+uncovered)`, audited `edge.pool_expanded`); it is never shrunk. The cap is enforced where the
+operator can act on it rather than clamped silently: a listener body (the role's PUT or the
+CMS upsert) that would leave more than eight deployed, enabled listeners is refused
+(`edge.listener_cap`; a pre-existing excess is not made worse), and `relays.update` refuses
+lowering `desiredPublished` below the coverage-listener count (`edge.pool_below_coverage`).
+**Reserved allocation**
 (`allocatePoolIndex`, `convex/lib/edges/pool.ts`, used by the rotation's `applyPublish`, the
 cron's `publishStandby` and both direct publish paths): the free slots are held for uncovered
 listeners, so a second edge for an already covered listener is refused (`edge.pool_reserved`,
@@ -213,9 +218,13 @@ covers the listener's idempotency hash, the edge's template hash and its address
 ports. Refusal code `edge.unverified_endpoint`. The record proves nothing by itself:
 `verificationCurrent` compares revision and hash, so a listener revision bump or a
 re-addressing returns the endpoint to "needs a test" (attention `retest_needed`) without
-anybody clearing anything. Nothing server-side can promote an L4 edge past the probe ceiling
-(`partial`, see § Probes): there is no authenticated REALITY client in this stack, and panel
-online bits do not identify the path a member used.
+anybody clearing anything. The same condition is applied again **at render time**
+(`edgeRender.publishedEdgesOf`): a published L4 edge whose confirmation is no longer current
+is ineligible exactly like a stale L7 proof, so nothing is rendered for it until it is
+retested; it stays published (nothing unpublishes automatically). Nothing server-side can
+promote an L4 edge past the probe ceiling (`partial`, see § Probes, written by the system
+from probe evidence and never satisfying the gate): there is no authenticated REALITY client
+in this stack, and panel online bits do not identify the path a member used.
 
 Consequences, applied consistently: a **replace** of an L4 edge switches ONLY to an
 already-tested spare of the same listener; with none the start is refused
@@ -268,12 +277,20 @@ Outline server has no credential path (`use_manual_setup`).
 **Account trust is a separate record.** The first confirmed endpoint of an untrusted L4
 account also trusts the account (`edgeProviderAccounts.applyQualification`, with endpoint
 evidence `{edgeId, endpoint, accountTestedAt, templateHash, listenerId, listenerRevision}`,
-`by: 'admin'`), unless a manual untrust holds automatic trust off (`autoQualifyHold`, cleared
-by a manual trust or a credential change). A trusted account never exempts a NEW endpoint from
-its own confirmation. L7 accounts are trusted **automatically** (`lib/edges/autoQualify.ts`,
-`by: 'auto'`) when an active edge of the account carries a current proof for the account's
-effective template NOW and the account was tested after its last credential change; evaluated
-after every passing proof and by the reconcile sweep. L4 accounts are never auto-trusted.
+`by: 'admin'`) when the endpoint is evidence for the account **as it is now**: the
+credentials passed a test after their last change and the edge's `templateHash` equals the
+account's effective template hash (an adopted, template-less edge or one from an older
+template verifies its own endpoint only; the confirm response says why in
+`accountTrustReason`), unless a manual untrust holds automatic trust off (`autoQualifyHold`,
+cleared by a manual trust or a credential change). A trusted account never exempts a NEW
+endpoint from its own confirmation. L7 accounts are trusted **automatically**
+(`lib/edges/autoQualify.ts`, `by: 'auto'`) when an active edge of the account carries a
+current proof for the account's effective template NOW and the account was tested after its
+last credential change; when an account it depends on (its DNS account) changed credentials
+or settings, the dependents are stamped `dependencyChangedAt` and both the test and the proof
+must postdate it (a proof taken through the old dependency never re-trusts the account);
+evaluated after every passing proof and by the reconcile sweep. L4 accounts are never
+auto-trusted.
 
 ### Rendering (what members receive)
 
@@ -287,8 +304,10 @@ mirror refresh) fetches a body, it pins the node as before, then, in this order:
    security / transport parameters) or it is `entry_mismatch`; an unknown scheme is
    `entry_unsupported`; two candidates are `ambiguous_match`. Overlapping rules on one relay
    are refused at registration (`edge.match_rule_overlap`);
-2. marks an edge whose listener did not resolve, or whose combination has no codec for this
-   body format, **ineligible** (it keeps its pool index);
+2. marks an edge whose listener did not resolve, whose combination has no codec for this
+   body format, or whose verification is no longer current (a lapsed L7 proof, an L4
+   confirmation gone stale after a listener or address change) **ineligible** (it keeps its
+   pool index);
 3. assigns primary (+ backup) with a stable PRF keyed on the subscription's `renderKey` over
    the FULL pool order, walking forward past ineligible positions; one server name per emitted
    connection for name-presenting listeners, chosen from the listener's active names (a
@@ -597,14 +616,15 @@ CREATES it through the Host state machine instead of waiting for the role.
 ### Reconcile cron (`edge-reconcile`, 5 min)
 
 Re-kicks stale rotations (and stale guided setup runs, re-firing a terminal hook that never
-landed); settles edges with unknown outcomes by discovery; refreshes provider
-health; renews L7 proofs; re-observes unresolved Host operations and deletes the FCP-owned
-Hosts of retired listeners and deleting relays (read-back confirmed); settles the direct-Host
-hide ledger and re-observes the direct Hosts of bound guided relays; drives one phase of each
-restore workflow; turns drained / failed /
-Hosts of retired listeners and deleting relays (read-back confirmed); removes expired or released
-temporary test keys (`edgeTestCredentials.sweep`, bounded retries, then attention
-`test_key_cleanup`); turns drained / failed /
+landed); runs the L7 auto-trust sweep; clears a system `partial` rung whose binding no longer
+matches the live rows (`edgeVerification.reconcilePartialRungs`: a re-addressed edge or a
+changed listener no probe has settled on since); settles edges with unknown outcomes by
+discovery; refreshes provider health; renews L7 proofs; re-observes unresolved Host operations
+and deletes the FCP-owned Hosts of retired listeners and deleting relays (read-back confirmed);
+settles the direct-Host hide ledger and re-observes the direct Hosts of bound guided relays;
+drives one phase of each restore workflow; removes expired or released temporary test keys
+(`edgeTestCredentials.sweep`, bounded retries, then attention `test_key_cleanup`); turns
+drained / failed /
 cancelled edges into destroy runs; pool upkeep while `edge.enabled` is on and the maintenance
 switch is off (a `setupOwned` relay and a relay in a restore workflow are skipped): first `ensureCapacity` (raise / expand
 `desiredPublished` for the deployed listeners), then **listener-aware** upkeep, one listener per
@@ -639,9 +659,16 @@ against the system store, no HTTP; the name is resolved at execution time by
 `tcp`; `tls-sni` is never a custom-target choice. This is shape evidence only: a forwarder
 aimed straight at the camouflage site presents that site's own certificate and passes
 `tls-sni` while every real REALITY session through it would fail, so **`partial` is the
-ceiling for L4** and nothing server-side ever writes `verified`. `verified` comes only from
-the operator's per-endpoint confirmation (§ Publication); `unreachable` = an outside
-`unreachable` verdict or a failed shape run. L7 edges keep `tls` / `https` by name.
+ceiling for L4** and nothing server-side ever writes `verified`. The rung is re-derived after
+every probe run on an `edge` target settles (`edgeVerification.refreshPartialRung`, from
+`probes.finishRun` / `failRun`) and persisted as `edges.verification { rung: 'partial', by:
+'system', method: 'probe' }` against the current binding (audited `edge.verification.rung`,
+the word only); `unreachable` clears a `partial` record; a `verified` record is never touched.
+The record is informational: `verificationCurrent` answers false for any rung but `verified`,
+so it never satisfies the publication gate and attention still lists the edge as
+`spare_untested`. `verified` comes only from the operator's per-endpoint confirmation
+(§ Publication); `unreachable` = an outside `unreachable` verdict or a failed shape run. L7
+edges keep `tls` / `https` by name.
 
 ## Configuration
 
@@ -652,7 +679,9 @@ Probe credentials are write-only (`edge.secret.probe.*`). Defaults and bounds:
 `convex/lib/edgeConfig.ts`. `providerAffinity` was removed (never read).
 `desiredPublishedDefault` and a relay's `desiredPublished` are bounded 1..8
 (`MAX_DESIRED_PUBLISHED`, the coverage cap); `standbyPerListener` (0..2, default 0) is the
-per-listener spare count the reconcile keeps on top of `standbyPerRelay`. The one-call
+per-listener spare count the reconcile keeps on top of `standbyPerRelay` (a relay's own
+`standbyPerListener` is an override, stored only when set, so a change of the global applies
+to every relay that never set one). The one-call
 `POST automation {on}` (§ Operator endpoints) flips the four automation switches together and
 sets `standbyPerListener` to 1 when turning on; `render.enabled` and `l7.autoSelect` stay
 manual.
@@ -710,8 +739,10 @@ deleting, publicationEpoch, originAddress, lastRegisteredAt }`, `listeners[]` (w
    `hostModeRequest:'operator'` and `adoption: { edge: { address, port }, hosts: [{ uuid,
 remark, inboundUuid, sni? }] }`. FCP records the legacy Hosts on their listeners (never
    deleted; the renderer keeps matching their remarks), imports the proxy as an observe-only
-   edge and publishes it at index 0 without a flip. The operator then validates and adopts
-   each Host in the CMS and switches `hostMode` to `fcp`.
+   edge carrying the operator's statement that it already serves (a `named_connection`
+   verification: the adoption payload IS that statement) and publishes it at index 0 without
+   a flip. The operator then validates and adopts each Host in the CMS and switches
+   `hostMode` to `fcp`.
 
 Node pinning understands the relay remark (`convex/lib/nodePinning.ts`).
 
@@ -724,11 +755,13 @@ Node pinning understands the relay remark (`convex/lib/nodePinning.ts`).
   account); the probes take it to `partial` at most. Fetch `GET edges/{id}/verification-binding`,
   try the address with a real session (the isolated test link, or the named connection for an
   address that is already published), then `POST edges/{id}/verify` echoing the binding you
-  were shown. The first confirmed endpoint of the account trusts the account; every NEW
-  endpoint of that account still needs its own tick before it can be published or used by an
-  automatic replacement, and a listener or address change after the tick puts the endpoint back
-  under `retest_needed`. The Providers "Mark qualified" override trusts the account only; it
-  verifies no endpoint.
+  were shown. The first confirmed endpoint of the account trusts the account when it was
+  provisioned with the account's current template and the credentials were tested after their
+  last change (`accountTrustReason` in the response says why not); every NEW endpoint of that
+  account still needs its own tick before it can be published or used by an automatic
+  replacement, and a listener or address change after the tick puts the endpoint back under
+  `retest_needed` and out of every rendered body until retested. The Providers "Mark
+  qualified" override trusts the account only; it verifies no endpoint.
 - **L7 (a CDN front): automatic on the proof.** Once an active edge of the account carries a
   current authenticated end-to-end proof for the account's effective template (and the account
   was tested after its last credential change), the account is trusted by the auto-trust rule

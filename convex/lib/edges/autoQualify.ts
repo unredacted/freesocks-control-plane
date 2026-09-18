@@ -15,6 +15,10 @@
  *     hash NOW (a template change after the proof means the proof covers a
  *     configuration the account no longer provisions);
  *   - the account must have been tested AFTER its last credential change;
+ *   - when an account it depends on (its DNS account) changed credentials or
+ *     settings, BOTH the test and the proof must postdate that change
+ *     (`dependencyChangedAt`): a proof taken through the old dependency says
+ *     nothing about the new one;
  *   - no `autoQualifyHold` (a manual untrust holds the rule off).
  *
  * The rule only ever says "trust"; every existing invalidation (credential or
@@ -28,6 +32,8 @@ export interface AutoQualifyAccount {
   lastTestOkAt?: number | null;
   lastTestError?: string | null;
   credentialsChangedAt?: number | null;
+  /** When an account this one depends on (its DNS account) last changed. */
+  dependencyChangedAt?: number | null;
   /** The hash of the template the account provisions with NOW. */
   effectiveTemplateHash: string;
 }
@@ -69,7 +75,9 @@ export type AutoQualifyDecision =
         | 'hold'
         | 'account_untested'
         | 'tested_before_credential_change'
+        | 'tested_before_dependency_change'
         | 'no_current_proof'
+        | 'proof_before_dependency_change'
         | 'template_mismatch';
     };
 
@@ -97,10 +105,17 @@ export function autoQualifyDecision(
   if (!testedAt || account.lastTestError) return { ok: false, code: 'account_untested' };
   if (account.credentialsChangedAt && testedAt < account.credentialsChangedAt)
     return { ok: false, code: 'tested_before_credential_change' };
-  const proven = edges.filter(
+  const dependencyChangedAt = account.dependencyChangedAt ?? 0;
+  if (dependencyChangedAt && testedAt <= dependencyChangedAt)
+    return { ok: false, code: 'tested_before_dependency_change' };
+  const current = edges.filter(
     (e) => e.status === 'active' && e.layer === 'l7' && e.endpoint && proofCurrent(e, now),
   );
-  if (proven.length === 0) return { ok: false, code: 'no_current_proof' };
+  if (current.length === 0) return { ok: false, code: 'no_current_proof' };
+  const proven = current.filter(
+    (e) => !dependencyChangedAt || e.frontQualification!.checkedAt > dependencyChangedAt,
+  );
+  if (proven.length === 0) return { ok: false, code: 'proof_before_dependency_change' };
   const matching = proven.filter((e) => (e.templateHash ?? null) === account.effectiveTemplateHash);
   if (matching.length === 0) return { ok: false, code: 'template_mismatch' };
   // The most recently proven edge is the evidence.

@@ -107,6 +107,37 @@ describe('autoQualifyDecision', () => {
     });
   });
 
+  test('a dependency change (the DNS account) needs BOTH a test and a proof taken after it', () => {
+    // Test before the change: refused before the proofs are even looked at.
+    expect(
+      autoQualifyDecision(account({ dependencyChangedAt: NOW - 5000 }), [edge()], NOW),
+    ).toEqual({ ok: false, code: 'tested_before_dependency_change' });
+    // Test after the change, proof before it: the proof went through the OLD dependency.
+    expect(
+      autoQualifyDecision(
+        account({ dependencyChangedAt: NOW - 500, lastTestOkAt: NOW - 100 }),
+        [edge()],
+        NOW,
+      ),
+    ).toEqual({ ok: false, code: 'proof_before_dependency_change' });
+    // Both after: trusted, and the evidence is the fresh proof.
+    const d = autoQualifyDecision(
+      account({ dependencyChangedAt: NOW - 5000, lastTestOkAt: NOW - 100 }),
+      [
+        edge({
+          id: 'old',
+          frontQualification: { ...edge().frontQualification!, checkedAt: NOW - 6000 },
+        }),
+        edge({
+          id: 'fresh',
+          frontQualification: { ...edge().frontQualification!, checkedAt: NOW - 50 },
+        }),
+      ],
+      NOW,
+    );
+    expect(d.ok && d.evidence.edgeId).toBe('fresh');
+  });
+
   test('the most recently proven matching edge is the evidence', () => {
     const d = autoQualifyDecision(
       account(),
