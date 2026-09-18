@@ -7,12 +7,14 @@ const err = (code: string) =>
 
 describe('delete refusals', () => {
   it('explains an account that is still in use', () => {
-    expect(accountDeleteRefusal(err('conflict'))).toContain('Edges still live');
+    expect(accountDeleteRefusal(err('edge.account_in_use'))).toContain('Edges still live');
     expect(accountDeleteRefusal(err('edge.account_referenced'))).toContain('DNS');
     expect(accountDeleteRefusal(new Error('x'))).toBeNull();
   });
   it('explains the last template of a provider', () => {
-    expect(templateDeleteRefusal(err('conflict'))).toContain('last template');
-    expect(deleteRefusal(err('conflict'), 'template')).not.toContain('raw server text');
+    expect(templateDeleteRefusal(err('edge.template_last_of_provider'))).toContain('last template');
+    expect(deleteRefusal(err('edge.template_last_of_provider'), 'template')).not.toContain(
+      'raw server text',
+    );
   });
 });

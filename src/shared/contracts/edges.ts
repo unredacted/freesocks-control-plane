@@ -587,6 +587,10 @@ export const EdgeRotationAdmin = z.object({
   terminal: z.boolean(),
   stepVersion: z.number(),
   cancelRequested: z.boolean(),
+  /** Whether a cancel would be accepted right now (the server's own rule). */
+  cancellable: z.boolean().default(false),
+  /** The listener the run is for; null when it names none. */
+  listenerKey: z.string().nullable().default(null),
   outcome: z.string().nullable(),
   reason: z.string().nullable(),
   steps: z.array(EdgeStep),
@@ -1222,7 +1226,13 @@ export const AttentionItem = z.object({
   rotationId: z.string().nullable().default(null),
   /** A short code the CMS maps to words (a veto, a failure code, a Host state); never free text from a provider. */
   code: z.string().nullable().default(null),
-  /** Small facts for the row (counts, country codes, ages in ms). */
+  /**
+   * Small facts for the row. Keys per kind (all optional; the CMS renders only these):
+   * `pool_below_desired` published, desired, standbys · `members_dark` published ·
+   * `host_unresolved` op (create|delete|null), attempts · `rotation_failed` kind, phase ·
+   * `block_suspected` score, hintLevel, countries[] · `edge_unreachable` countries[] ·
+   * `needs_operator` provider, layer · `account_untested` / `account_unqualified` name, provider.
+   */
   facts: z.record(z.string(), z.unknown()).default({}),
   action: AttentionAction,
   since: isoN.default(null),

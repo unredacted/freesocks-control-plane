@@ -198,9 +198,9 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'admin.invite.created': ['username'],
   'admin.invite.redeemed': ['username'],
   // Automation-token mint (bootstrap via `convex run`); never the token/secret.
-  'admin.automation_token.mint': ['name', 'scopeCount'],
+  'admin.automation_token.mint': ['name', 'scopeCount', 'boundaryServers', 'boundaryNodes'],
   // Human-admin API-token mint / revoke from the CMS; never the token/secret.
-  'admin.token.mint': ['name', 'scopeCount', 'subjectType'],
+  'admin.token.mint': ['name', 'scopeCount', 'subjectType', 'boundaryServers', 'boundaryNodes'],
   'admin.token.revoke': ['name'],
   // Admin tier lifecycle from the CMS (the by-slug IaC path audits separately).
   'admin.tier.create': ['slug', 'backend'],

@@ -29,7 +29,7 @@
     invalidateRelay,
     rotationQuery,
   } from '@client/lib/edgesApi';
-  import { codeLabel, humanizeCode, isCancellablePhase, phaseLabel } from '@client/lib/edgeCodes';
+  import { codeLabel, humanizeCode, phaseLabel } from '@client/lib/edgeCodes';
   import AdminListState from '../../AdminListState.svelte';
   import StatusBadge from './StatusBadge.svelte';
   import KeyValue from './KeyValue.svelte';
@@ -63,7 +63,8 @@
     }
   });
 
-  const cancellable = $derived(!!r && !r.terminal && isCancellablePhase(r.phase));
+  // The server decides (its own cancel rule), never a client guess.
+  const cancellable = $derived(!!r && r.cancellable);
   let confirmCancel = $state(false);
   const cancel = createMutation(() => ({
     mutationFn: async () => assertEdgeOk(await cancelRelayRotation(relayId)),
@@ -85,6 +86,7 @@
         label: 'Kind',
         value: ROTATION_KIND_LABELS[r.kind] + (r.burn ? ', burning the old edge' : ''),
       },
+      { label: 'Listener', value: r.listenerKey },
       { label: 'Started by', value: ROTATION_TRIGGER_LABELS[r.trigger] },
       { label: 'Started', value: when(r.startedAt) },
       {

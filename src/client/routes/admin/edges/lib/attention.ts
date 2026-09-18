@@ -130,9 +130,20 @@ export function attentionFactsLine(item: AttentionItem): string {
   const f = item.facts;
   const out: string[] = [];
   const num = (k: string): number | null => (typeof f[k] === 'number' ? (f[k] as number) : null);
+  const str = (k: string): string | null =>
+    typeof f[k] === 'string' && f[k] !== '' ? (f[k] as string) : null;
+  const name = str('name');
+  if (name !== null) out.push(`Account ${name}`);
+  const kind = str('kind');
+  if (kind !== null) out.push(`${kind.charAt(0).toUpperCase()}${kind.slice(1)} run`);
+  const op = str('op');
+  if (op !== null) out.push(op === 'create' ? 'Creating the Host' : 'Deleting the Host');
   const published = num('published');
   const desired = num('desired');
   if (published !== null && desired !== null) out.push(`${published} of ${desired} published`);
+  const standbys = num('standbys');
+  if (standbys !== null && standbys > 0)
+    out.push(`${standbys} ${standbys === 1 ? 'standby' : 'standbys'} ready`);
   const count = num('count');
   if (count !== null) out.push(`${count} affected`);
   const attempts = num('attempts');

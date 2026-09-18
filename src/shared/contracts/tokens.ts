@@ -9,6 +9,11 @@ export const TokenSummary = z.object({
   scopes: ApiScopeArray,
   subjectType: z.enum(['service', 'user']),
   subjectUserId: z.string().nullable(),
+  /** The registration boundary of an `admin:edges:register` token (docs/edges.md); null otherwise. */
+  edgeRegistration: z
+    .object({ backendServerIds: z.array(z.string()), nodeNames: z.array(z.string()) })
+    .nullable()
+    .default(null),
   expiresAt: z.string().datetime().nullable(),
   lastUsedAt: z.string().datetime().nullable(),
   revokedAt: z.string().datetime().nullable(),
@@ -22,6 +27,13 @@ export const CreateTokenRequest = z.object({
   subjectType: z.enum(['service', 'user']).default('service'),
   subjectUserId: z.string().nullable().optional(),
   expiresInDays: z.number().int().positive().nullable().optional(),
+  /** Required with the `admin:edges:register` scope, refused without it. */
+  edgeRegistration: z
+    .object({
+      backendServerIds: z.array(z.string()).min(1),
+      nodeNames: z.array(z.string()).optional(),
+    })
+    .optional(),
 });
 export type CreateTokenRequest = z.infer<typeof CreateTokenRequest>;
 

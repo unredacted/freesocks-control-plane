@@ -7,9 +7,11 @@
  * Exports:
  *   EDGE_CODE_COPY                  code -> { label, explain, fix? } (typed complete over
  *                                   every code tuple; extra server codes allowed)
+ *   EDGE_REFUSAL_COPY               the refusal-code group of that table (mutation refusals,
+ *                                   plus `throttled`), shown as explain + fix in error lines
  *   codeLabel / codeExplain / codeFix(code)   with a humanised fallback for unknown codes
  *   humanizeCode(code)              'l7_auto_select_blocked' -> 'L7 auto select blocked'
- *   ROTATION_PHASE_LABELS, phaseLabel, isTerminalPhase, isCancellablePhase
+ *   ROTATION_PHASE_LABELS, phaseLabel, isTerminalPhase
  *   EDGE_STATUS_LABELS, edgeStatusLabel, edgeStatusTone
  *   EDGE_HEALTH_LABELS, healthTone, PUBLICATION_LABELS, publicationTone
  *   HOST_STATE_LABELS, SETUP_STEP_TITLES, SETUP_STATUS_LABELS
@@ -652,7 +654,60 @@ const COPY = {
   },
 } as const satisfies Record<KnownCode, CodeCopy> & Record<string, CodeCopy>;
 
-export const EDGE_CODE_COPY: Record<string, CodeCopy> = COPY;
+// --- refusal codes ---------------------------------------------------------------------------
+// What a mutation is refused with (`edge.<code>` on the wire, keyed bare here) that no status
+// vocabulary above carries. An error line shows these as `explain` + `fix` (lib/edgeErrors.ts),
+// so both read as full sentences on their own. `throttled` words a rate-limited call (HTTP 429).
+const REFUSAL_COPY = {
+  host_adopt_required: {
+    label: 'Hosts not adopted yet',
+    explain: 'FCP can only take over the Hosts once it has adopted every one of them.',
+    fix: 'Open the Listeners tab and use "Adopt a Host" on each listener that has a Host in the panel, then switch again.',
+  },
+  host_adopt_mismatch: {
+    label: 'Host does not fit',
+    explain: 'That Host does not fit this listener.',
+    fix: 'Pick a Host that carries the inbound of this listener and dials one of its published edges.',
+  },
+  listener_in_use: {
+    label: 'Listener still in use',
+    explain: 'Edges still use this listener.',
+    fix: 'Destroy or delete those edges first (Edges tab), then try again.',
+  },
+  needs_rotation: {
+    label: 'Needs a rotation',
+    explain:
+      'Publishing this edge would make it the first edge of its listener, which means writing the panel Host.',
+    fix: 'Use Publish so the rotation machine does the switch.',
+  },
+  origin_address_locked: {
+    label: 'Origin address locked',
+    explain: 'Edges still dial this origin address.',
+    fix: 'Drain or destroy every edge of the relay before changing it.',
+  },
+  match_rule_overlap: {
+    label: 'Match rules overlap',
+    explain: 'Another listener of this relay would match the same subscription entries.',
+    fix: 'Give each listener its own match rule.',
+  },
+  node_already_bound: {
+    label: 'Node already covered',
+    explain: 'Another relay already covers this node.',
+  },
+  server_already_bound: {
+    label: 'Backend server already covered',
+    explain: 'Another relay already covers this backend server.',
+  },
+  throttled: {
+    label: 'Asked too often',
+    explain: 'That was asked too often. This call reaches a panel or a provider, so it is limited.',
+    fix: 'Wait a minute and try again.',
+  },
+} as const satisfies Record<string, CodeCopy>;
+
+export const EDGE_REFUSAL_COPY: Record<string, CodeCopy> = REFUSAL_COPY;
+
+export const EDGE_CODE_COPY: Record<string, CodeCopy> = { ...COPY, ...REFUSAL_COPY };
 
 const ACRONYMS: Record<string, string> = {
   l4: 'L4',
@@ -720,19 +775,10 @@ export const ROTATION_PHASE_LABELS: Record<string, string> = {
   cancelled: 'Cancelled',
 };
 const TERMINAL_PHASES = new Set(['done', 'failed', 'rolled_back', 'quarantined', 'cancelled']);
-/** Phases where a cancel either stops the run or rolls back what was published. */
-const CANCELLABLE_PHASES = new Set([
-  'select',
-  'provisioning',
-  'verifying',
-  'publishing',
-  'host_flipping',
-]);
 
 export const phaseLabel = (phase: string): string =>
   ROTATION_PHASE_LABELS[phase] ?? humanizeCode(phase);
 export const isTerminalPhase = (phase: string): boolean => TERMINAL_PHASES.has(phase);
-export const isCancellablePhase = (phase: string): boolean => CANCELLABLE_PHASES.has(phase);
 export function phaseTone(phase: string): Tone {
   if (phase === 'done') return 'success';
   if (phase === 'failed' || phase === 'quarantined') return 'danger';

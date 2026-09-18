@@ -457,7 +457,7 @@ export const update = internalMutation({
         const total = live.length + transitive;
         if (total > 0)
           throw new ConvexError({
-            code: 'conflict',
+            code: 'edge.account_in_use',
             message: `${total} edge(s) still reference this account; destroy them before changing its settings`,
           });
       }
@@ -538,7 +538,10 @@ export const remove = internalMutation({
       .filter((q) => q.neq(q.field('status'), 'destroyed'))
       .first();
     if (live) {
-      throw new ConvexError({ code: 'conflict', message: 'Edges still reference this account' });
+      throw new ConvexError({
+        code: 'edge.account_in_use',
+        message: 'Edges still reference this account',
+      });
     }
     // An account other accounts write DNS through cannot go either: their
     // records live in its zone and are addressed with its credentials.

@@ -11,8 +11,7 @@
 import { createMutation, useQueryClient, type QueryClient } from '@tanstack/svelte-query';
 import { toast } from 'svelte-sonner';
 import { invalidateRelay } from '@client/lib/edgesApi';
-import { EdgeRefusalError } from '../lib/edgeErrors';
-import { relayErrorMessage } from './relayErrors';
+import { EdgeRefusalError, edgeErrorMessage } from '../lib/edgeErrors';
 
 export interface RelayJob<T = unknown> {
   run: () => Promise<T>;
@@ -49,7 +48,7 @@ export function relayAction(slug: () => string) {
     onError: (err: unknown, job: RelayJob<any>) => {
       // A refusal may still have changed state server-side; refresh either way.
       invalidateRelay(qc, slug());
-      if (!job.quiet) toast.error(relayErrorMessage(err));
+      if (!job.quiet) toast.error(edgeErrorMessage(err));
     },
   }));
 }

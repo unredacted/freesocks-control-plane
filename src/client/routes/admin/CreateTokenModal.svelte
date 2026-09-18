@@ -9,18 +9,61 @@
   import { CreateTokenResponse } from '../../../shared/contracts/tokens';
   import { type ApiScope, SCOPE_GROUPS } from '../../../shared/contracts/scopes';
   import { createMutation } from '@tanstack/svelte-query';
+  import { adminBackendServersQuery } from '../../lib/queries';
   import { toast } from 'svelte-sonner';
 
   interface Props {
     onClose: () => void;
     onCreated: (plaintext: string, name: string) => void;
+    /** Prefill from a deep link (`tokenPrefill.ts`); read once, when the dialog mounts. */
+    initialName?: string;
+    initialScopes?: readonly ApiScope[];
+    /** Registration boundary presets for an `admin:edges:register` token. */
+    initialServers?: readonly string[];
+    initialNodes?: readonly string[];
   }
-  let { onClose, onCreated }: Props = $props();
+  let {
+    onClose,
+    onCreated,
+    initialName = '',
+    initialScopes = [],
+    initialServers = [],
+    initialNodes = [],
+  }: Props = $props();
 
   let open = $state(true);
-  let name = $state('');
-  let scopes = $state<Set<ApiScope>>(new Set());
+  // svelte-ignore state_referenced_locally -- deliberate mount-time snapshot of the prefill.
+  let name = $state(initialName);
+  // svelte-ignore state_referenced_locally -- deliberate mount-time snapshot of the prefill.
+  let scopes = $state<Set<ApiScope>>(new Set(initialScopes));
   let expiry = $state<string>('none');
+
+  // A relay-registration token is confined to a boundary: the backend servers
+  // (and optionally the node names) the node role may register relays for.
+  // The server refuses the scope without one, so the dialog asks for it.
+  const REGISTER_SCOPE: ApiScope = 'admin:edges:register';
+  const needsBoundary = $derived(scopes.has(REGISTER_SCOPE));
+  const servers = adminBackendServersQuery();
+  // svelte-ignore state_referenced_locally -- deliberate mount-time snapshot of the prefill.
+  let boundaryServers = $state<Set<string>>(new Set(initialServers));
+  // svelte-ignore state_referenced_locally -- deliberate mount-time snapshot of the prefill.
+  let boundaryNodes = $state(initialNodes.join(', '));
+  const nodeNames = $derived([
+    ...new Set(
+      boundaryNodes
+        .split(',')
+        .map((n) => n.trim())
+        .filter(Boolean),
+    ),
+  ]);
+  const boundaryMissing = $derived(needsBoundary && boundaryServers.size === 0);
+
+  function toggleServer(id: string, next: boolean) {
+    const draft = new Set(boundaryServers);
+    if (next) draft.add(id);
+    else draft.delete(id);
+    boundaryServers = draft;
+  }
 
   const SCOPE_SECTIONS = [
     { label: 'Member', scopes: SCOPE_GROUPS.member },
@@ -68,6 +111,14 @@
           scopes: Array.from(scopes),
           subjectType: 'service',
           expiresInDays,
+          ...(needsBoundary
+            ? {
+                edgeRegistration: {
+                  backendServerIds: Array.from(boundaryServers),
+                  ...(nodeNames.length > 0 ? { nodeNames } : {}),
+                },
+              }
+            : {}),
         },
         CreateTokenResponse,
       );
@@ -134,6 +185,50 @@
         </div>
       </div>
 
+      {#if needsBoundary}
+        <div class="space-y-2 rounded border p-3">
+          <div>
+            <span class="text-sm font-medium block">Relay registration boundary</span>
+            <p class="text-xs text-muted-foreground">
+              A relay registration token may only register relays on the backend servers ticked
+              here. Pick at least one.
+            </p>
+          </div>
+          {#if servers.isPending}
+            <p class="text-xs text-muted-foreground">Loading backend servers...</p>
+          {:else if servers.isError}
+            <p class="text-xs text-destructive">{apiErrorMessage(servers.error)}</p>
+          {:else if (servers.data ?? []).length === 0}
+            <p class="text-xs text-muted-foreground">
+              No backend servers yet. Add one under Servers first.
+            </p>
+          {:else}
+            <div class="space-y-1.5 max-h-32 overflow-y-auto">
+              {#each servers.data ?? [] as srv (srv.id)}
+                <label class="flex items-center gap-2 cursor-pointer text-sm">
+                  <Checkbox
+                    checked={boundaryServers.has(srv.id)}
+                    onCheckedChange={(next) => toggleServer(srv.id, next === true)}
+                    id={`boundary-${srv.id}`}
+                  />
+                  <span>{srv.name}</span>
+                  <code class="text-xs text-muted-foreground">{srv.slug}</code>
+                </label>
+              {/each}
+            </div>
+          {/if}
+          <div>
+            <label class="text-xs text-muted-foreground mb-1 block" for="tok-nodes">
+              Node names (optional, comma separated)
+            </label>
+            <Input id="tok-nodes" bind:value={boundaryNodes} placeholder="node-one, node-two" />
+            <p class="text-xs text-muted-foreground mt-1">
+              Empty means any node on the ticked servers.
+            </p>
+          </div>
+        </div>
+      {/if}
+
       <div>
         <span class="text-xs text-muted-foreground mb-1 block">Expires</span>
         <Select.Root type="single" bind:value={expiry}>
@@ -154,7 +249,7 @@
       </Button>
       <Button
         onclick={() => create.mutate()}
-        disabled={create.isPending || !name || scopes.size === 0}
+        disabled={create.isPending || !name || scopes.size === 0 || boundaryMissing}
       >
         {create.isPending ? 'Creating...' : 'Create token'}
       </Button>

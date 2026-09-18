@@ -15,6 +15,7 @@ import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { signValue } from './lib/cookies';
+import { isCancellable } from './edgeRotations';
 import { jsonRes, mockFetch } from './lib/edges/testing/mockFetch';
 import {
   FIXTURE_CONFIG_PROFILE,
@@ -30,6 +31,7 @@ import {
   DeliveryBindingsResponse,
   EdgeMaintenanceView,
   PreflightResponse,
+  EdgeRotationDetail,
   ProvidersUsageResponse,
   QuarantineView,
   RelayAdmin,
@@ -704,5 +706,66 @@ describe('quarantine view and Host adoption', () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe('operator-facing refusals and the rotation view', () => {
+  test('a rotation says which listener it is for and whether a cancel would be accepted (the server rule, not a client guess)', async () => {
+    const { t, call, get, relayId, accountId } = await seed();
+    await markTested(t, accountId);
+    const res = await call('POST', `relays/${relayId}/test-provision`, {
+      accountId,
+      listenerKey: 'a',
+    });
+    const { rotationId } = (await res.json()) as { rotationId: Id<'edgeRotations'> };
+    let r = await get(`rotations/${rotationId}`, EdgeRotationDetail);
+    expect(r).toMatchObject({ listenerKey: 'a', cancellable: true, terminal: false });
+    // The flag is requestCancel's own rule: refused once confirming / finalizing / rolling back.
+    for (const phase of ['confirming', 'finalizing', 'rolling_back', 'done'] as const)
+      expect(isCancellable({ phase, cancelRequested: false })).toBe(false);
+    expect(isCancellable({ phase: 'provisioning', cancelRequested: true })).toBe(false);
+    expect(isCancellable({ phase: 'provisioning', cancelRequested: false })).toBe(true);
+  });
+
+  test('deleting an account with live edges and the last template of a provider answer specific codes', async () => {
+    const { t, call, relayId, listenerId, accountId } = await seed();
+    await adoptL4Edge(t, relayId, listenerId, { publish: false, accountId });
+    const acct = await call('DELETE', `providers/${accountId}`);
+    expect(acct.status).toBe(409);
+    expect(((await acct.json()) as { error: { code: string } }).error.code).toBe(
+      'edge.account_in_use',
+    );
+    await call('POST', 'templates/ensure-defaults', {});
+    const tpl = await t.run(async (ctx) =>
+      (await ctx.db.query('edgeTemplates').collect()).find((x) => x.provider === 'gcore'),
+    );
+    const del = await call('DELETE', `templates/${tpl!._id}`);
+    expect(del.status).toBe(409);
+    expect(((await del.json()) as { error: { code: string } }).error.code).toBe(
+      'edge.template_last_of_provider',
+    );
+  });
+
+  test('a relay whose only deployed listener is UDP is skipped in words: probe.udp_unsupported', async () => {
+    const { t, call } = await seed();
+    const udp = await registerRelay(t, {
+      slug: 'node-udp',
+      kind: 'manual',
+      originAddress: '203.0.113.20',
+      listeners: [
+        {
+          listenerKey: 'h',
+          protocol: 'hysteria2',
+          streamTransport: 'udp',
+          security: 'tls',
+          originPort: 8443,
+          tlsNames: ['h.example'],
+        },
+      ],
+    });
+    const res = await call('POST', 'probes', { targets: [`relay:${udp.relayId}`] });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { skipped: string[] };
+    expect(body.skipped).toEqual([`relay:${udp.relayId}: probe.udp_unsupported`]);
   });
 });

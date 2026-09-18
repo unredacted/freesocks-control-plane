@@ -76,6 +76,78 @@ describe('createToken', () => {
   });
 });
 
+describe('registration boundary (admin:edges:register)', () => {
+  const server = (t: ReturnType<typeof convexTest>, slug: string) =>
+    t.run((ctx) =>
+      ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: slug,
+        slug,
+        config: { type: 'remnawave', baseUrl: 'https://panel.example', apiToken: 'tok' },
+        isActive: true,
+        priority: 0,
+        keyCount: 0,
+        updatedAt: Date.now(),
+      }),
+    );
+
+  test('a register token is minted with its boundary (ids and slugs merge; node names trimmed and deduped) and the audit carries counts only', async () => {
+    const t = convexTest(schema, modules);
+    const adminId = await seedAdmin(t);
+    const a = await server(t, 'panel-a');
+    await server(t, 'panel-b');
+    const { id } = await t.action(internal.apiTokens.createToken, {
+      name: 'node-role',
+      scopes: ['admin:edges:register'],
+      subjectType: 'service',
+      createdByAdminId: adminId,
+      edgeRegistration: {
+        backendServerIds: [a],
+        backendSlugs: ['panel-b', 'panel-a'],
+        nodeNames: [' node-one ', 'node-one', ''],
+      },
+    });
+    const row = await t.run((ctx) => ctx.db.get(id));
+    expect(row?.edgeRegistration?.backendServerIds).toHaveLength(2);
+    expect(row?.edgeRegistration?.nodeNames).toEqual(['node-one']);
+    const view = await t.query(internal.adminApi.tokenById, { id });
+    expect(view?.edgeRegistration).toEqual({
+      backendServerIds: expect.arrayContaining([a]),
+      nodeNames: ['node-one'],
+    });
+    const audit = await t.run(async (ctx) =>
+      (await ctx.db.query('auditLog').collect()).find((r) => r.action === 'admin.token.mint'),
+    );
+    expect(audit?.payload).toMatchObject({ boundaryServers: 2, boundaryNodes: 1 });
+    expect(JSON.stringify(audit?.payload)).not.toContain('panel-a');
+  });
+
+  test('the scope without a boundary, a boundary without the scope, and an unknown server are refused', async () => {
+    const t = convexTest(schema, modules);
+    const adminId = await seedAdmin(t);
+    const a = await server(t, 'panel-a');
+    const mint = (scopes: string[], edgeRegistration?: Record<string, unknown>) =>
+      t.action(internal.apiTokens.createToken, {
+        name: 'x',
+        scopes,
+        subjectType: 'service',
+        createdByAdminId: adminId,
+        ...(edgeRegistration ? { edgeRegistration } : {}),
+      } as never);
+    await expect(mint(['admin:edges:register'])).rejects.toThrow(/needs a registration boundary/);
+    await expect(mint(['admin:servers:read'], { backendServerIds: [a] })).rejects.toThrow(
+      /needs the admin:edges:register scope/,
+    );
+    await expect(mint(['admin:edges:register'], { backendSlugs: ['nope'] })).rejects.toThrow(
+      /Unknown backend server slug/,
+    );
+    await expect(mint(['admin:edges:register'], { backendServerIds: [] })).rejects.toThrow(
+      /names no backend server/,
+    );
+    expect(await t.run(async (ctx) => (await ctx.db.query('apiTokens').collect()).length)).toBe(0);
+  });
+});
+
 describe('resolveToken', () => {
   test('round-trips a valid plaintext to its scopes + subjectType', async () => {
     const t = convexTest(schema, modules);

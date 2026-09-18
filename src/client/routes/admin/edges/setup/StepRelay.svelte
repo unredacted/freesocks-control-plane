@@ -144,13 +144,18 @@
       </CardHeader>
       <CardContent class="space-y-3">
         {#if relay}
-          <RoleVarsCard roleVars={status.roleVars} lastRegisteredAt={relay.lastRegisteredAt} />
+          <RoleVarsCard
+            roleVars={status.roleVars}
+            lastRegisteredAt={relay.lastRegisteredAt}
+            backendServerId={status.context.backendServerId ?? null}
+            nodeName={relay.origin.kind === 'panel-node' ? relay.origin.nodeName : null}
+          />
         {:else}
           <p class="text-sm">
             Pick the slug the role will register under, give the role a token, run it, then watch
             for the relay here.
           </p>
-          <RoleVarsCard roleVars={null} />
+          <RoleVarsCard roleVars={null} backendServerId={status.context.backendServerId ?? null} />
           <form
             class="space-y-1.5"
             onsubmit={(e) => {

@@ -153,7 +153,26 @@ function hostPlanCaptured(r: Rotation): boolean {
 
 // --- admin mapping -----------------------------------------------------------------------
 
-export function mapRotationAdmin(r: Rotation, edge: Edge | null) {
+/** Whether a cancel request would be accepted now (`requestCancel`'s own rule, so the CMS never guesses). */
+export function isCancellable(r: Pick<Rotation, 'phase' | 'cancelRequested'>): boolean {
+  if (isTerminalPhase(r.phase) || r.cancelRequested) return false;
+  return r.phase !== 'confirming' && r.phase !== 'finalizing' && r.phase !== 'rolling_back';
+}
+
+/** The key of the listener a run is for (null when it has none or the row is gone). */
+export async function rotationListenerKey(
+  db: QueryCtx['db'],
+  r: Pick<Rotation, 'listenerId'>,
+): Promise<string | null> {
+  if (!r.listenerId) return null;
+  return (await db.get(r.listenerId))?.listenerKey ?? null;
+}
+
+export function mapRotationAdmin(
+  r: Rotation,
+  edge: Edge | null,
+  listenerKey: string | null = null,
+) {
   const needsHostFlip =
     r.hostPlan.length > 0 || (r.previousBinding?.poolIndex === 0 && r.kind === 'replace');
   return {
@@ -169,6 +188,8 @@ export function mapRotationAdmin(r: Rotation, edge: Edge | null) {
     terminal: isTerminalPhase(r.phase),
     stepVersion: r.stepVersion,
     cancelRequested: r.cancelRequested,
+    cancellable: isCancellable(r),
+    listenerKey,
     outcome: r.outcome ?? null,
     reason: r.reason ?? null,
     steps: (edge?.steps ?? []).map((s) => ({
@@ -225,7 +246,10 @@ export const getForAdmin = internalQuery({
     const r = await ctx.db.get(id);
     if (!r) return null;
     const edge = r.toEdgeId ? await ctx.db.get(r.toEdgeId) : null;
-    return { ...mapRotationAdmin(r, edge), audit: await rotationAuditTrail(ctx, r) };
+    return {
+      ...mapRotationAdmin(r, edge, await rotationListenerKey(ctx.db, r)),
+      audit: await rotationAuditTrail(ctx, r),
+    };
   },
 });
 
@@ -292,7 +316,13 @@ export const listByRelay = internalQuery({
       .take(Math.min(take ?? 20, 100));
     const out = [];
     for (const r of rows)
-      out.push(mapRotationAdmin(r, r.toEdgeId ? await ctx.db.get(r.toEdgeId) : null));
+      out.push(
+        mapRotationAdmin(
+          r,
+          r.toEdgeId ? await ctx.db.get(r.toEdgeId) : null,
+          await rotationListenerKey(ctx.db, r),
+        ),
+      );
     return out;
   },
 });

@@ -6,9 +6,10 @@
  * avoid hot-row updates. Scope enforcement happens at the call site (HTTP layer).
  */
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
+import type { MutationCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
-import { v } from 'convex/values';
+import { ConvexError, v } from 'convex/values';
 import { base64UrlEncode, sha256Hex } from './lib/crypto';
 import { writeAuditLog } from './lib/audit';
 
@@ -90,6 +91,51 @@ export const touchLastUsed = internalMutation({
 // --- mint / revoke (admin) ---
 
 /** Mint a token (CSPRNG → must be an action). Returns the plaintext once. */
+const REGISTER_SCOPE = 'admin:edges:register';
+
+/**
+ * The boundary a register-scoped token is minted with. A token holding the
+ * scope WITHOUT a boundary could register nothing (httpEdges treats it as an
+ * empty boundary), so the mint refuses instead of handing out an inert token;
+ * a boundary on a token without the scope is refused as a mistake.
+ */
+async function resolveRegistrationBoundary(
+  ctx: MutationCtx,
+  scopes: string[],
+  requested:
+    | { backendServerIds?: string[]; backendSlugs?: string[]; nodeNames?: string[] }
+    | undefined,
+): Promise<{ backendServerIds: Id<'backendServers'>[]; nodeNames?: string[] } | null> {
+  const hasScope = scopes.includes(REGISTER_SCOPE);
+  const refuse = (message: string) => new ConvexError({ code: 'validation', message });
+  if (!requested) {
+    if (hasScope)
+      throw refuse(`A ${REGISTER_SCOPE} token needs a registration boundary (backend servers)`);
+    return null;
+  }
+  if (!hasScope) throw refuse(`A registration boundary needs the ${REGISTER_SCOPE} scope`);
+  const ids = new Set<Id<'backendServers'>>();
+  for (const raw of requested.backendServerIds ?? []) {
+    const id = ctx.db.normalizeId('backendServers', raw);
+    if (!id || !(await ctx.db.get(id))) throw refuse('Unknown backend server in the boundary');
+    ids.add(id);
+  }
+  for (const slug of requested.backendSlugs ?? []) {
+    const server = await ctx.db
+      .query('backendServers')
+      .withIndex('by_slug', (q) => q.eq('slug', slug))
+      .unique();
+    if (!server) throw refuse(`Unknown backend server slug in the boundary: ${slug}`);
+    ids.add(server._id);
+  }
+  if (ids.size === 0) throw refuse('The registration boundary names no backend server');
+  if (ids.size > 50) throw refuse('The registration boundary holds at most 50 backend servers');
+  const nodeNames = [...new Set((requested.nodeNames ?? []).map((n) => n.trim()).filter(Boolean))];
+  if (nodeNames.length > 200 || nodeNames.some((n) => n.length > 128))
+    throw refuse('The registration boundary holds at most 200 node names of 128 characters');
+  return { backendServerIds: [...ids], ...(nodeNames.length > 0 ? { nodeNames } : {}) };
+}
+
 export const createToken = internalAction({
   args: {
     name: v.string(),
@@ -98,6 +144,15 @@ export const createToken = internalAction({
     subjectUserId: v.optional(v.id('users')),
     expiresInDays: v.optional(v.number()),
     createdByAdminId: v.id('adminUsers'),
+    // Registration boundary for an `admin:edges:register` token (docs/edges.md):
+    // backend servers by id and/or slug, optionally confined to node names.
+    edgeRegistration: v.optional(
+      v.object({
+        backendServerIds: v.optional(v.array(v.string())),
+        backendSlugs: v.optional(v.array(v.string())),
+        nodeNames: v.optional(v.array(v.string())),
+      }),
+    ),
   },
   handler: async (ctx, a): Promise<{ id: Id<'apiTokens'>; plaintext: string; prefix: string }> => {
     // Retry on the (astronomically unlikely) tokenHash collision flagged by the
@@ -118,10 +173,12 @@ export const createToken = internalAction({
           subjectType: a.subjectType,
           subjectUserId: a.subjectUserId,
           expiresAt: a.expiresInDays ? Date.now() + a.expiresInDays * 86_400_000 : undefined,
+          edgeRegistration: a.edgeRegistration,
         });
         return { id, plaintext, prefix: tokenPrefix };
       } catch (err) {
-        if (attempt === 2) throw err;
+        // A refusal (validation) is final; only the hash collision is retried.
+        if (err instanceof ConvexError || attempt === 2) throw err;
       }
     }
     throw new Error('unreachable');
@@ -138,8 +195,19 @@ export const insertToken = internalMutation({
     subjectType: v.union(v.literal('service'), v.literal('user')),
     subjectUserId: v.optional(v.id('users')),
     expiresAt: v.optional(v.number()),
+    // Registration boundary for an `admin:edges:register` token (docs/edges.md):
+    // backend servers by id and/or slug, optionally confined to node names.
+    edgeRegistration: v.optional(
+      v.object({
+        backendServerIds: v.optional(v.array(v.string())),
+        backendSlugs: v.optional(v.array(v.string())),
+        nodeNames: v.optional(v.array(v.string())),
+      }),
+    ),
   },
   handler: async (ctx, a) => {
+    const { edgeRegistration: requested, ...row } = a;
+    const edgeRegistration = await resolveRegistrationBoundary(ctx, a.scopes, requested);
     // Uniqueness read-check (no UNIQUE constraint in Convex): a tokenHash dup
     // would silently break resolveToken's .unique() lookup. A collision throws
     // so the mint action retries with fresh randomness.
@@ -148,7 +216,11 @@ export const insertToken = internalMutation({
       .withIndex('by_token_hash', (q) => q.eq('tokenHash', a.tokenHash))
       .unique();
     if (clash) throw new Error('token hash collision');
-    const id = await ctx.db.insert('apiTokens', { ...a, updatedAt: Date.now() });
+    const id = await ctx.db.insert('apiTokens', {
+      ...row,
+      ...(edgeRegistration ? { edgeRegistration } : {}),
+      updatedAt: Date.now(),
+    });
     // Credential mints are security-relevant: audit (never the token/hash).
     await writeAuditLog(ctx, {
       actorType: 'admin',
@@ -156,7 +228,17 @@ export const insertToken = internalMutation({
       action: 'admin.token.mint',
       targetType: 'api_token',
       targetId: id,
-      payload: { name: a.name, scopeCount: a.scopes.length, subjectType: a.subjectType },
+      payload: {
+        name: a.name,
+        scopeCount: a.scopes.length,
+        subjectType: a.subjectType,
+        ...(edgeRegistration
+          ? {
+              boundaryServers: edgeRegistration.backendServerIds.length,
+              boundaryNodes: edgeRegistration.nodeNames?.length ?? 0,
+            }
+          : {}),
+      },
     });
     return id;
   },

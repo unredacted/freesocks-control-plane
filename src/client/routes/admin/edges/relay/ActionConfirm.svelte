@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
-   * ConfirmDialog for one async call, with the failure worded by the relay page
-   * (relayErrorMessage covers refusals the shared table has no entry for).
+   * ConfirmDialog for one async call, with a caller-side validity gate and a
+   * close callback. The failure is worded by the shared table (edgeErrorMessage).
    *
    * Props:
    *   open (bindable); title; body?; typed?; confirmLabel?; danger?
@@ -15,7 +15,7 @@
   import type { Snippet } from 'svelte';
   import InlineError from '@client/components/InlineError.svelte';
   import ConfirmDialog from '../components/ConfirmDialog.svelte';
-  import { relayErrorMessage } from './relayErrors';
+  import { edgeErrorMessage } from '../lib/edgeErrors';
 
   interface Props {
     open: boolean;
@@ -75,6 +75,6 @@
 <ConfirmDialog bind:open {title} {body} {typed} {confirmLabel} {danger} {busy} onConfirm={go}>
   {@render children?.()}
   {#if error !== null}
-    <InlineError message={relayErrorMessage(error)} class="mt-3" />
+    <InlineError message={edgeErrorMessage(error)} class="mt-3" />
   {/if}
 </ConfirmDialog>

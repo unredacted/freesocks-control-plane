@@ -27,11 +27,10 @@
   } from '@client/lib/edgesApi';
   import { codeLabel } from '@client/lib/edgeCodes';
   import AdminListState from '../../AdminListState.svelte';
-  import { assertEdgeOk } from '../lib/edgeErrors';
+  import { assertEdgeOk, edgeErrorMessage } from '../lib/edgeErrors';
   import { relativeTime } from '../lib/time';
   import ActionConfirm from './ActionConfirm.svelte';
   import HostTupleBox from './HostTupleBox.svelte';
-  import { relayErrorMessage } from './relayErrors';
   import {
     MATCH_WORDS,
     REASON_MAX,
@@ -136,7 +135,7 @@
       </span>
     </div>
     {#if inspect.error}
-      <InlineError message={relayErrorMessage(inspect.error)} />
+      <InlineError message={edgeErrorMessage(inspect.error)} />
     {/if}
 
     {#if viewQ.isPending}

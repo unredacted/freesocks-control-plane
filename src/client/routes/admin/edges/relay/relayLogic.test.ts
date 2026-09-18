@@ -2,12 +2,10 @@ import { describe, expect, it } from 'vitest';
 import type { AttentionItem, EdgeAdmin, SetupStatusResponse } from '@shared/contracts/edges';
 import {
   REASON_MAX,
-  RELAY_ERROR_COPY,
   deriveDelivery,
   highlightedColumn,
   justificationText,
   recommendKeep,
-  relayErrorWords,
   relayProbeTargetKeys,
   rotationDurationMs,
   rotationOutcomeWords,
@@ -158,19 +156,6 @@ describe('quarantine helpers', () => {
     });
     expect(mixed).toContain('not for b');
     for (const s of [ok, long, mixed]) expect(s).not.toContain('—');
-  });
-});
-
-describe('page-local refusals', () => {
-  it('covers the codes with and without the edge prefix, in clean copy', () => {
-    expect(relayErrorWords('edge.listener_in_use')).toBe(RELAY_ERROR_COPY.listener_in_use);
-    expect(relayErrorWords('host_adopt_required')).toContain('Adopt a Host');
-    expect(relayErrorWords('cooldown')).toBeNull();
-    expect(relayErrorWords(null)).toBeNull();
-    for (const text of Object.values(RELAY_ERROR_COPY)) {
-      expect(text).not.toContain('—');
-      expect(text).not.toContain('/api/');
-    }
   });
 });
 

@@ -10,11 +10,12 @@
  *   assertEdgeOk(res)                     throws EdgeRefusalError unless res.ok; returns res
  *   edgeErrorCode(err)                    the bare code ('cooldown') or null
  *   edgeErrorIssue(err)                   { code, detail } for <CodeNote>, or null
- *   edgeErrorMessage(err)                 one line for a toast / inline error
+ *   edgeErrorMessage(err)                 one line for a toast / inline error (refusal codes
+ *                                         and a throttled call read as explain + fix)
  */
 import { ApiCallError } from '../../../../lib/api';
 import { apiErrorMessage } from '../../../../lib/errors';
-import { EDGE_CODE_COPY, codeFix, codeLabel } from '../../../../lib/edgeCodes';
+import { EDGE_CODE_COPY, EDGE_REFUSAL_COPY, codeFix, codeLabel } from '../../../../lib/edgeCodes';
 
 export class EdgeRefusalError extends Error {
   readonly code: string;
@@ -46,13 +47,24 @@ export function edgeErrorIssue(err: unknown): { code: string; detail: string | n
   return code ? { code, detail: null } : null;
 }
 
+/** A refusal-group entry as one error line: what happened, then what to do. */
+function refusalWords(code: string): string | null {
+  const copy = EDGE_REFUSAL_COPY[code];
+  if (!copy) return null;
+  return copy.fix ? `${copy.explain} ${copy.fix}` : copy.explain;
+}
+
 export function edgeErrorMessage(err: unknown): string {
+  // Every throttled edge call reaches a panel or a provider: say so, whatever the code.
+  if (err instanceof ApiCallError && err.status === 429) {
+    return refusalWords('throttled') ?? apiErrorMessage(err);
+  }
   const code = edgeErrorCode(err);
   if (code === null) return apiErrorMessage(err);
-  // A rate limit / offline answer is better explained by the shared copy.
-  if (err instanceof ApiCallError && (err.status === 0 || err.status === 429)) {
-    return apiErrorMessage(err);
-  }
+  // An offline answer is better explained by the shared copy.
+  if (err instanceof ApiCallError && err.status === 0) return apiErrorMessage(err);
+  const refusal = refusalWords(code);
+  if (refusal) return refusal;
   if (EDGE_CODE_COPY[code] === undefined && !(err instanceof EdgeRefusalError)) {
     return apiErrorMessage(err);
   }

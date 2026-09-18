@@ -22,8 +22,7 @@
     type RelayPatch,
   } from '@client/lib/edgesApi';
   import NumberField from '../components/NumberField.svelte';
-  import { assertEdgeOk } from '../lib/edgeErrors';
-  import { relayErrorMessage } from './relayErrors';
+  import { assertEdgeOk, edgeErrorMessage } from '../lib/edgeErrors';
 
   interface Props {
     open: boolean;
@@ -207,7 +206,7 @@
         </div>
       {/if}
       {#if save.error}
-        <InlineError message={relayErrorMessage(save.error)} />
+        <InlineError message={edgeErrorMessage(save.error)} />
       {/if}
       <Dialog.Footer>
         <Button type="button" variant="outline" onclick={() => (open = false)}>Cancel</Button>

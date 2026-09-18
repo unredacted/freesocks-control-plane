@@ -11,7 +11,6 @@
   import { Skeleton } from '@client/components/ui/skeleton';
   import type { RelayAdmin } from '@shared/contracts/edges';
   import { cancelRelayRotation, edgeKeys, relayRotationsQuery } from '@client/lib/edgesApi';
-  import { isCancellablePhase } from '@client/lib/edgeCodes';
   import AdminListState from '../../AdminListState.svelte';
   import StatusBadge from '../components/StatusBadge.svelte';
   import { ROTATION_KIND_LABELS, ROTATION_TRIGGER_LABELS } from '../lib/rotation';
@@ -93,7 +92,7 @@
               <Table.Cell>{durationLabel(rotationDurationMs(r))}</Table.Cell>
               <Table.Cell>{rotationOutcomeWords(r)}</Table.Cell>
               <Table.Cell class="text-right">
-                {#if !r.terminal && isCancellablePhase(r.phase) && !r.cancelRequested}
+                {#if r.cancellable}
                   <Button
                     variant="outline"
                     size="sm"

@@ -320,7 +320,13 @@ an `fsv1_` token with `admin:edges:register`, minted with a **registration bound
 register for). Such a token may call only the by-slug routes below, and only for origins
 inside its boundary (`edge.registration_boundary` otherwise); a boundary-less register token
 may register nothing. Credential rotation = mint a new token with the same boundary and revoke
-the old one; nothing on the relay row references a token.
+the old one; nothing on the relay row references a token. The boundary is set at mint: in
+the CMS (Admin → API tokens; ticking the scope reveals the backend-server and node-name
+inputs, and the guided setup's "Mint role token" link presets them) or from the control plane
+with `adminApi:mintAutomationToken '{"scopes":["admin:edges:register"],
+"registerBackendSlugs":["<slug>"],"registerNodeNames":["<node>"]}'`. The mint refuses the
+scope without a boundary and a boundary without the scope (`validation`); the audit row
+carries counts only.
 
 1. `PUT /api/v1/admin/edges/relays/by-slug/{slug}` with
    `{ origin, originAddress, locationCode?, label?, listeners[], pruneListeners? }` where

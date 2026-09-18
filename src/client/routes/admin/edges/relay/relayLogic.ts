@@ -10,8 +10,6 @@
  *   MATCH_WORDS                      the match verdict in words
  *   recommendKeep(listeners)         the binding every inspected listener agrees on, or null
  *   justificationText(input)         the generated (editable) resolve reason, capped at 200 chars
- *   RELAY_ERROR_COPY / relayErrorWords(code)   refusals this page can meet that the shared
- *                                    code table does not cover
  *   edgeAddress(edge)                the one address an edge is known by
  *   operatorFactsRows(edge)          "what FCP saw" for a needs-operator edge
  *   rotationDurationMs(rotation, now)
@@ -221,27 +219,6 @@ export function justificationText(input: {
   }
   return text.length <= REASON_MAX ? text : `${text.slice(0, REASON_MAX - 1).trimEnd()}.`;
 }
-
-// --- refusals the shared table does not cover ----------------------------------------------------
-
-export const RELAY_ERROR_COPY: Record<string, string> = {
-  host_adopt_required:
-    'FCP can only take over the Hosts once it has adopted every one of them. Open the Listeners tab and use "Adopt a Host" on each listener that has a Host in the panel, then switch again.',
-  host_adopt_mismatch:
-    'That Host does not fit this listener. It must carry the inbound of this listener and dial one of its published edges.',
-  listener_in_use:
-    'Edges still use this listener. Destroy or delete those edges first (Edges tab), then try again.',
-  needs_rotation:
-    'Publishing this edge would make it the first edge of its listener, which means writing the panel Host. Use Publish so the rotation machine does the switch.',
-  origin_address_locked:
-    'Edges still dial this origin address. Drain or destroy every edge of the relay before changing it.',
-  match_rule_overlap:
-    'Another listener of this relay would match the same subscription entries. Give each listener its own match rule.',
-  node_already_bound: 'Another relay already covers this node.',
-  server_already_bound: 'Another relay already covers this backend server.',
-};
-export const relayErrorWords = (code: string | null): string | null =>
-  code ? (RELAY_ERROR_COPY[code.replace(/^edge\./, '')] ?? null) : null;
 
 // --- edges / rotations ---------------------------------------------------------------------------
 

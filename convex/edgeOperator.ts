@@ -55,7 +55,12 @@ import {
 import { activeNames, listenerRemark, listenersOf } from './relayListeners';
 import { resolveTemplateFor } from './edgeTemplates';
 import { mapEdgeAdmin } from './edges';
-import { mapRotationAdmin, collectStartBlockers, selectionContext } from './edgeRotations';
+import {
+  mapRotationAdmin,
+  collectStartBlockers,
+  rotationListenerKey,
+  selectionContext,
+} from './edgeRotations';
 import { renderPreviewFor } from './edgeAdmin';
 import type { RelayOrigin } from './lib/edges/origin';
 
@@ -1319,7 +1324,9 @@ export const quarantineView = internalQuery({
             reason: relay.quarantine.reason,
           }
         : null,
-      rotation: rotation ? mapRotationAdmin(rotation, toEdge) : null,
+      rotation: rotation
+        ? mapRotationAdmin(rotation, toEdge, await rotationListenerKey(ctx.db, rotation))
+        : null,
       listeners: out,
       extraHosts,
       inspectedAt: live ? iso(Date.now()) : null,

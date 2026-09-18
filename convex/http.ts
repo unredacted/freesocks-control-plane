@@ -2844,7 +2844,10 @@ http.route({
       subjectType?: 'service' | 'user';
       subjectUserId?: string | null;
       expiresInDays?: number | null;
+      edgeRegistration?: { backendServerIds?: unknown; nodeNames?: unknown } | null;
     }>(req);
+    const strings = (x: unknown): string[] =>
+      Array.isArray(x) ? x.filter((s): s is string => typeof s === 'string') : [];
     if (!body.name || !Array.isArray(body.scopes) || body.scopes.length === 0) {
       return errorJson('validation', 'name and at least one scope are required', 400);
     }
@@ -2856,6 +2859,14 @@ http.route({
         subjectUserId: body.subjectUserId ? (body.subjectUserId as Id<'users'>) : undefined,
         expiresInDays: body.expiresInDays ?? undefined,
         createdByAdminId: admin.adminUserId,
+        ...(body.edgeRegistration
+          ? {
+              edgeRegistration: {
+                backendServerIds: strings(body.edgeRegistration.backendServerIds),
+                nodeNames: strings(body.edgeRegistration.nodeNames),
+              },
+            }
+          : {}),
       });
       const token = await ctx.runQuery(internal.adminApi.tokenById, {
         id: minted.id,

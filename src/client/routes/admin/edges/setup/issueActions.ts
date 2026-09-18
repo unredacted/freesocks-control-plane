@@ -6,13 +6,11 @@
  *
  * Exports:
  *   backendServersHref(returnTo)      Admin -> Backend servers, with a `return` param
- *   TOKENS_PATH
  *   issueLink(code, ctx)              -> { label, href } | null
  */
 import { edgesPaths } from '../lib/routes';
 
 export const BACKEND_SERVERS_PATH = '/admin/backend-servers';
-export const TOKENS_PATH = '/admin/tokens';
 
 export function backendServersHref(returnTo: string): string {
   return `${BACKEND_SERVERS_PATH}?return=${encodeURIComponent(returnTo)}`;

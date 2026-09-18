@@ -29,7 +29,7 @@
   } from '@client/lib/edgesApi';
   import { codeFix, codeLabel } from '@client/lib/edgeCodes';
   import { protocolLine, providerLabel } from '../lib/format';
-  import { relayErrorMessage } from './relayErrors';
+  import { edgeErrorMessage } from '../lib/edgeErrors';
 
   interface Props {
     open: boolean;
@@ -323,7 +323,7 @@
       </div>
 
       {#if save.error}
-        <InlineError message={relayErrorMessage(save.error)} />
+        <InlineError message={edgeErrorMessage(save.error)} />
       {/if}
       <Dialog.Footer>
         <Button type="button" variant="outline" onclick={() => (open = false)}>Cancel</Button>

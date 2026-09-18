@@ -1,7 +1,8 @@
 <script lang="ts">
   /**
    * Probes (`/admin/edges/probes`; URL state `?target` = the target whose run
-   * history is open). Reachability of FCP's own addresses as measured from the
+   * history is open, `?range` = the outcome chart's range, see
+   * `probes/rangeParam.ts`). Reachability of FCP's own addresses as measured from the
    * configured countries: edges of every relay, relay nodes that opted in, and
    * operator-entered custom targets. Only edge evidence reaches the block
    * detector. No member data is involved anywhere on this page. Probe SETTINGS
@@ -27,8 +28,11 @@
   import { edgesPaths } from './lib/routes';
   import ProbeMatrix from './probes/ProbeMatrix.svelte';
   import CustomTargets from './probes/CustomTargets.svelte';
+  import { decodeProbeRange, encodeProbeRange } from './probes/rangeParam';
 
   const target = searchParam('target');
+  const rangeParam = searchParam('range');
+  const range = $derived(decodeProbeRange(rangeParam.value));
   const cfg = edgeConfigQuery();
   const audit = probeAuditQuery();
   const settingsHref = edgesPaths.settings({ section: 'probes' });
@@ -54,7 +58,7 @@
     </div>
   {/if}
 
-  <ProbeTimeChart />
+  <ProbeTimeChart bind:range={() => range, (r) => (rangeParam.value = encodeProbeRange(r))} />
 
   <Card>
     <CardHeader>

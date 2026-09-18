@@ -14,11 +14,33 @@
   import { adminTokensQuery, queryKeys } from '../../lib/queries';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
+  import { untrack } from 'svelte';
+  import { router } from '../../stores/router.svelte';
+  import { setSearchParams } from '../../lib/urlState.svelte';
+  import { NEW_TOKEN_PARAMS, parseNewTokenParams, type NewTokenPrefill } from './tokenPrefill';
 
   const tokens = adminTokensQuery();
   const qc = useQueryClient();
 
   let creating = $state(false);
+  let prefill = $state<NewTokenPrefill | null>(null);
+
+  // `?new=1&scope=...&name=...` (tokenPrefill.ts) opens the create dialog
+  // prefilled, then the params are dropped so a reload does not reopen it.
+  $effect(() => {
+    const wanted = parseNewTokenParams(router.searchParams);
+    if (!wanted) return;
+    untrack(() => {
+      prefill = wanted;
+      creating = true;
+      setSearchParams(Object.fromEntries(NEW_TOKEN_PARAMS.map((k) => [k, null])));
+    });
+  });
+
+  function closeCreate() {
+    creating = false;
+    prefill = null;
+  }
   let revealed = $state<{ plaintext: string; name: string } | null>(null);
   let pendingRevoke = $state<{ id: string; name: string } | null>(null);
 
@@ -125,10 +147,14 @@
 
   {#if creating}
     <CreateTokenModal
-      onClose={() => (creating = false)}
+      initialName={prefill?.name}
+      initialScopes={prefill?.scopes}
+      initialServers={prefill?.servers}
+      initialNodes={prefill?.nodes}
+      onClose={closeCreate}
       onCreated={(plaintext, name) => {
         revealed = { plaintext, name };
-        creating = false;
+        closeCreate();
         void qc.invalidateQueries({ queryKey: queryKeys.adminTokens });
       }}
     />

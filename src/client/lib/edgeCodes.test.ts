@@ -13,6 +13,7 @@ import {
 import {
   ATTENTION_ACTION_LABELS,
   EDGE_CODE_COPY,
+  EDGE_REFUSAL_COPY,
   EDGE_STATUS_LABELS,
   ROTATION_PHASE_LABELS,
   SETUP_STATUS_LABELS,
@@ -23,7 +24,6 @@ import {
   codeLabel,
   edgeStatusLabel,
   humanizeCode,
-  isCancellablePhase,
   isTerminalPhase,
   phaseLabel,
 } from './edgeCodes';
@@ -64,6 +64,42 @@ describe('EDGE_CODE_COPY', () => {
       expect(e.explain.trim().endsWith('.')).toBe(true);
       if (e.fix) expect(e.fix.trim().endsWith('.')).toBe(true);
     }
+  });
+});
+
+describe('EDGE_REFUSAL_COPY', () => {
+  const REFUSALS = [
+    'host_adopt_required',
+    'host_adopt_mismatch',
+    'listener_in_use',
+    'needs_rotation',
+    'origin_address_locked',
+    'match_rule_overlap',
+    'node_already_bound',
+    'server_already_bound',
+    'throttled',
+  ];
+
+  test('every refusal the pages meet is worded, and is part of the shared table', () => {
+    for (const code of REFUSALS) {
+      expect(EDGE_REFUSAL_COPY[code]?.label.trim()).toBeTruthy();
+      expect(EDGE_REFUSAL_COPY[code]?.explain.trim()).toBeTruthy();
+      expect(EDGE_CODE_COPY[code]).toBe(EDGE_REFUSAL_COPY[code]);
+    }
+    expect(codeLabel('needs_rotation')).toBe('Needs a rotation');
+    expect(codeFix('host_adopt_required')).toContain('Adopt a Host');
+  });
+
+  test('no refusal copy contains an em-dash or an API path, and every part is a sentence', () => {
+    const offenders: string[] = [];
+    for (const [code, e] of Object.entries(EDGE_REFUSAL_COPY)) {
+      for (const text of [e.label, e.explain, e.fix ?? '']) {
+        if (text.includes(EM_DASH) || text.includes('/api/')) offenders.push(`${code}: ${text}`);
+      }
+      expect(e.explain.trim().endsWith('.')).toBe(true);
+      if (e.fix) expect(e.fix.trim().endsWith('.')).toBe(true);
+    }
+    expect(offenders).toEqual([]);
   });
 });
 
@@ -117,8 +153,6 @@ describe('phase, status and step maps', () => {
       'quarantined',
       'cancelled',
     ]);
-    expect(isCancellablePhase('provisioning')).toBe(true);
-    expect(isCancellablePhase('confirming')).toBe(false);
     expect(phaseLabel('host_flipping')).toBe('Flipping Hosts');
     expect(phaseLabel('brand_new_phase')).toBe('Brand new phase');
   });
