@@ -376,6 +376,13 @@ export const fetchInboundCandidates = (backendServerId: string, nodeUuid: string
 // temporary key), so it needs the write scope a GET would not carry.
 export const fetchTestLink = (edgeId: string) =>
   apiClient.post(`${BASE}/edges/${enc(edgeId)}/test-link`, {}, EdgeTestLinkResponse);
+/** The card closed or finished: the temporary credential behind its link expires now. */
+export const releaseTestLink = (edgeId: string, credentialId: string) =>
+  apiClient.post(
+    `${BASE}/edges/${enc(edgeId)}/test-link/release`,
+    { credentialId },
+    EdgeOkResponse,
+  );
 export const refreshNodeCandidates = (backendServerId: string) =>
   apiClient.post(
     `${BASE}/relays/node-candidates/refresh`,

@@ -15,6 +15,7 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { fakeOutline, fakePanel } from './lib/edges/testing/fakePanel';
 import {
+  adoptL4Edge,
   insertPanelServer,
   registerRelay,
   shadowsocksListener,
@@ -102,6 +103,37 @@ describe('edgeTestCredentials (Outline temporary keys)', () => {
       { relaySlug: 'outline-one', purpose: 'test_link', removed: true, attempts: 1 },
     ]);
     for (const a of audits) expect(JSON.stringify(a)).not.toContain('ss://');
+  });
+
+  test('the card closed: releaseForEdge expires the credential behind a link, scoped to the edge relay', async () => {
+    const { t, relayId, rows } = await seedOutline();
+    const listener = await t.run((ctx) =>
+      ctx.db
+        .query('relayListeners')
+        .withIndex('by_relay', (q) => q.eq('relayId', relayId))
+        .unique(),
+    );
+    const { edgeId } = await adoptL4Edge(t, relayId, listener!._id, { ipv4: '198.51.100.7' });
+    const r = await t.action(internal.edgeTestCredentials.ensure, {
+      relayId,
+      purpose: 'test_link',
+    });
+    expect(r.ok).toBe(true);
+    const row = (await rows())[0]!;
+    expect(row.expiresAt).toBeGreaterThan(Date.now());
+    const out = await t.mutation(internal.edgeTestCredentials.releaseForEdge, {
+      edgeId: edgeId as Id<'edges'>,
+      credentialId: row._id,
+    });
+    expect(out).toEqual({ ok: true, released: true });
+    expect((await rows())[0]!.expiresAt).toBeLessThanOrEqual(Date.now());
+    // A second call is a no-op; a credential of another relay is not found.
+    expect(
+      await t.mutation(internal.edgeTestCredentials.releaseForEdge, {
+        edgeId: edgeId as Id<'edges'>,
+        credentialId: row._id,
+      }),
+    ).toEqual({ ok: true, released: false });
   });
 
   test('cancelling the run releases every pending row of the relay; the expiry (24 h) releases on its own', async () => {

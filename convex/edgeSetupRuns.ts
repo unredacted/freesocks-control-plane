@@ -334,6 +334,14 @@ export function mapRunAdmin(r: Run) {
       renderGlobal: plan.renderGlobal,
       familiesDisabled: plan.familiesDisabled,
       emptyNode: plan.emptyNode,
+      // The accounts the plan judged: `retry {accountId}` accepts only a
+      // compatible one, so a "choose another account" card offers only these.
+      accounts: plan.accounts.map((a) => ({
+        id: a.id,
+        name: a.name,
+        provider: a.provider,
+        compatible: a.compatible,
+      })),
     },
     approvedHideUuids: r.approvedHideUuids,
     events: r.events.slice(-20).map((e) => ({
@@ -1899,7 +1907,23 @@ export const retry = internalMutation({
       listeners = listeners.map((l) => ({ ...l, layer }));
     }
     const failedKey = r.need?.detail?.split(':')[0] ?? null;
-    if (a.tryAnotherAddress && r.need?.code === 'address_unreachable' && failedKey) {
+    if (a.tryAnotherAddress && r.need?.code === 'try_it') {
+      // "One of them does not work": every L4 candidate the operator has NOT
+      // confirmed is destroyed and provisioned again (the card does not say
+      // which line failed; a confirmed one is kept, its tick stands).
+      for (const entry of listeners) {
+        if (entry.layer !== 'l4' || !entry.edgeId) continue;
+        const e = await ctx.db.get(entry.edgeId);
+        if (e?.verification?.rung === 'verified') continue;
+        if (e && e.publication === 'unpublished' && LIVE_CANDIDATE.has(e.status))
+          await ctx.db.patch(e._id, { status: 'cancelled', statusChangedAt: now, updatedAt: now });
+        entry.edgeId = undefined;
+        entry.verify = 'pending';
+        entry.probeRequestedAt = undefined;
+        entry.proofRequestedAt = undefined;
+      }
+      stage = 'provision';
+    } else if (a.tryAnotherAddress && r.need?.code === 'address_unreachable' && failedKey) {
       const entry = listeners.find((l) => l.listenerKey === failedKey);
       if (entry?.edgeId) {
         const e = await ctx.db.get(entry.edgeId);
