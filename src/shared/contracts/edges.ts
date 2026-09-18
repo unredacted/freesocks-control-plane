@@ -245,6 +245,12 @@ export const RelayAdmin = z.object({
   providerPreference: EdgeProviderId.nullable(),
   desiredPublished: z.number(),
   standbyPerRelay: z.number(),
+  /** Verified standbys kept per coverage listener (null = the config default). */
+  standbyPerListener: z.number().nullable().default(null),
+  /** The delivery binding is deferred to go-live (a guided relay): members still get the raw body. */
+  bindingDeferred: z.boolean().default(false),
+  /** A guided setup owns the relay: upkeep and automatic replacement skip it. */
+  setupOwned: z.boolean().default(false),
   cooldownMinutes: z.number(),
   maxRotationsPerDay: z.number(),
   drainMinutes: z.number(),
@@ -924,6 +930,8 @@ export const RelayBySlugResponse = z.object({
         blockedNames: z.array(z.string()),
         changed: z.boolean(),
       }),
+      /** Notices (`edge.<code>`), e.g. `edge.pool_raised` when the pool grew to cover every listener. */
+      warnings: z.array(z.string()).default([]),
     })
     .passthrough()
     .optional(),
@@ -996,6 +1004,7 @@ export const EdgeConfigView = z.object({
       providerAffinity: z.enum(['rotate', 'sticky']),
       desiredPublishedDefault: z.number(),
       standbyPerRelay: z.number(),
+      standbyPerListener: z.number().default(0),
       drainMinutes: z.number(),
       burnedDrainMinutes: z.number(),
       sniDrainMinutes: z.number(),
@@ -1209,6 +1218,22 @@ export const TestProvisionRequest = z.object({
   templateId: z.string().optional(),
 });
 export type TestProvisionRequest = z.infer<typeof TestProvisionRequest>;
+
+/** `POST automation {on}`: the keys the switch wrote (`edge.*` appSettings keys). */
+export const EdgeAutomationResponse = z.object({
+  on: z.boolean(),
+  changedKeys: z.array(z.string()),
+});
+export type EdgeAutomationResponse = z.infer<typeof EdgeAutomationResponse>;
+
+/** `POST relays/{id}/rebalance`: the duplicate that went back to standby. */
+export const RelayRebalanceResponse = z.object({
+  ok: z.literal(true),
+  edgeId: z.string(),
+  poolIndex: z.number().nullable(),
+  epoch: z.number(),
+});
+export type RelayRebalanceResponse = z.infer<typeof RelayRebalanceResponse>;
 
 export const AttentionKind = z.enum(ATTENTION_KINDS);
 export const AttentionSeverity = z.enum(ATTENTION_SEVERITIES);

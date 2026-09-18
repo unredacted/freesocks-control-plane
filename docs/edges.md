@@ -144,6 +144,35 @@ unavailable. Replacing an edge re-plans **only the listeners whose template edge
 template edge under `fcp` is refused (`edge.needs_rotation`): the rotation machine does the
 flip.
 
+**Coverage.** The pool exists to give every deployed, enabled, non-retired listener ("coverage
+listener") a published edge, so capacity follows the listeners (`convex/lib/edges/poolCapacity.ts`):
+`ensurePoolCapacity` raises `desiredPublished` to the coverage-listener count (bound 1..8,
+`MAX_DESIRED_PUBLISHED`; the node role's PUT and the admin create answer `warnings:
+['edge.pool_raised']` when it did) on every registration, admin listener add and listener
+re-enable, and the reconcile cron applies it each tick. A pool that is already FULL while a
+listener is uncovered is **expanded** within the cap (`desiredPublished = min(8, published +
+uncovered)`, audited `edge.pool_expanded`); it is never shrunk. **Reserved allocation**
+(`allocatePoolIndex`, `convex/lib/edges/pool.ts`, used by the rotation's `applyPublish`, the
+cron's `publishStandby` and both direct publish paths): the free slots are held for uncovered
+listeners, so a second edge for an already covered listener is refused (`edge.pool_reserved`,
+a `pool_reserved_standby` rotation event) while `freeSlots <= uncoveredListeners`. At the cap
+no expansion is possible: attention raises `pool_rebalance` and the operator calls
+`POST relays/{id}/rebalance`, which sends ONE duplicate (a published edge that is not its
+listener's template edge, highest index first) back to standby (`edge.no_duplicate` when
+there is none), bumps the epoch and lets upkeep publish the uncovered listener. Never automatic:
+unpublishing changes what members receive.
+
+**Deferred binding and setup ownership.** A relay a guided setup creates is inserted with
+`bindingDeferred: true` + `setupOwned: true` (internal arguments of `relays.create`; a request
+body never sets them): no delivery binding is written, so the origin keeps serving its raw body,
+and there is NO shortcut that binds it when an edge publishes. Only `claimDeliveryBinding`
+(the go-live step; not routed yet) upserts the binding, bumps its policy version, refreshes the
+mirrors and clears the flag. A by-slug registration always binds at once; a re-registration of a
+deferred relay keeps it deferred. While `setupOwned`, reconcile upkeep and the detector's
+automatic replacement (veto `setup_owned`) leave the relay alone, whatever the run's state.
+`setup-status` warns `binding_deferred` on the publish step (never `members_dark`, which needs
+a binding); attention raises `go_live_pending` once an edge is published.
+
 ### Rendering (what members receive)
 
 Subscriptions are **rendered** by FCP. When the fronted `/api/v1/sub/<token>` route (or the
@@ -230,6 +259,8 @@ All under `/api/v1/admin/edges/`, sealed by verb like every other route; the rea
 | `GET maintenance`, `POST maintenance/freeze`, `.../thaw`       | The maintenance switch (see below).                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `GET delivery-bindings`, `POST delivery-bindings/{id}/release` | The edge-required places, including ones whose relay was deleted with `keep-dark`.                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `GET config`                                                   | Also carries `bounds` and `defaults` per flat key, so the settings forms validate against the server's own limits.                                                                                                                                                                                                                                                                                                                                                                                         |
+| `POST relays/{id}/rebalance`                                   | Coverage at the cap: unpublish ONE duplicate (a published edge that is not its listener's template edge, highest pool index first) back to standby, bump the epoch, refresh mirrors; upkeep then publishes the uncovered listener. Refuses `edge.no_duplicate`, and the usual rotation / quarantine guard. Audited `edge.relay.rebalanced`.                                                                                                                                                                |
+| `POST automation {on}`                                         | The one automation switch (settings scope): in ONE mutation sets `edge.enabled`, `edge.autoRotate`, `edge.probe.enabled` and `edge.autoProvisionToDesired` to `on`, and `edge.standbyPerListener = 1` when turning on (left as-is when off). Never `render.enabled` or `l7.autoSelect`; touches no relay row (a relay's own `autoRotate` keeps its meaning under the global gate: `cfg.enabled && cfg.autoRotate && relay.autoRotate`). Audited `edge.automation.set` (the boolean only).                  |
 
 ### Admin section (Admin -> Edges)
 
@@ -290,9 +321,17 @@ CREATES it through the Host state machine instead of waiting for the role.
 Re-kicks stale rotations; settles edges with unknown outcomes by discovery; refreshes provider
 health; renews L7 proofs; re-observes unresolved Host operations and deletes the FCP-owned
 Hosts of retired listeners and deleting relays (read-back confirmed); turns drained / failed /
-cancelled edges into destroy runs; publishes standbys / provisions to `desiredPublished` while
-`edge.enabled` is on and the maintenance switch is off; finishes relay deletes. Daily sweeps
-prune `destroyed` edges after 30 days and terminal rotations after 90.
+cancelled edges into destroy runs; pool upkeep while `edge.enabled` is on and the maintenance
+switch is off (a `setupOwned` relay is skipped): first `ensureCapacity` (raise / expand
+`desiredPublished` for the deployed listeners), then **listener-aware** upkeep, one listener per
+tick: every deployed, enabled listener without a template edge gets its OWN standby published
+(`publishStandby` candidates filtered by `edge.listenerId`; a standby of A never counts for B)
+or a provision FOR THAT LISTENER (`listenerId` in the start), then the relay-wide fill to
+`desiredPublished` once every listener is covered, then spares: the relay-wide
+`standbyPerRelay` reserve (unchanged) plus `standbyPerListener` verified standbys per coverage
+listener (relay field, default from `edge.standbyPerListener`; the automation switch sets the
+config key to 1). Finishes relay deletes. Daily sweeps prune `destroyed` edges after 30 days
+and terminal rotations after 90.
 
 ## Probes and the block detector
 
@@ -301,7 +340,9 @@ every relay (the only kind the detector reads), relay origins that opted in (`pr
 operator-entered custom targets; UDP listeners are not probeable (`probe.udp_unsupported`).
 The detector's load and node-online signals exist only for a `panel-node` origin; for other
 kinds the load score is 0 (`no_load_signal`) and `node_offline` reads the instance health of a
-`backend-server` origin. The "manageable Host" veto applies only to `hostMode: operator`.
+`backend-server` origin. The "manageable Host" veto applies only to `hostMode: operator`; a
+`setupOwned` relay (a guided setup in progress) is vetoed `setup_owned` right after the
+auto-rotate gates, before any evidence is weighed.
 
 ## Configuration
 
@@ -310,6 +351,12 @@ kinds the load score is 0 (`no_load_signal`) and `node_offline` reads the instan
 `autoRotate=false`, `render.enabled=false`, `probe.enabled=false`, `l7.autoSelect=false`.
 Probe credentials are write-only (`edge.secret.probe.*`). Defaults and bounds:
 `convex/lib/edgeConfig.ts`. `providerAffinity` was removed (never read).
+`desiredPublishedDefault` and a relay's `desiredPublished` are bounded 1..8
+(`MAX_DESIRED_PUBLISHED`, the coverage cap); `standbyPerListener` (0..2, default 0) is the
+per-listener spare count the reconcile keeps on top of `standbyPerRelay`. The one-call
+`POST automation {on}` (§ Operator endpoints) flips the four automation switches together and
+sets `standbyPerListener` to 1 when turning on; `render.enabled` and `l7.autoSelect` stay
+manual.
 
 ## Sealing
 

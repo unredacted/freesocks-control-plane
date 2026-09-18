@@ -75,6 +75,17 @@ export const ATTENTION_ACTION_PLAN = {
       danger: false,
     },
   },
+  rebalance: {
+    type: 'call',
+    confirm: {
+      title: 'Make room for the listener?',
+      body: 'One duplicate edge goes back to standby so the uncovered listener can be published. Members using that edge move to another one on their next subscription refresh.',
+      confirmLabel: 'Make room',
+      danger: true,
+    },
+  },
+  // Go-live is the guided setup's own step; the row navigates to the relay.
+  require_edges: { type: 'navigate' },
 } as const satisfies Record<AttentionAction, AttentionPlan>;
 
 /**
@@ -110,6 +121,10 @@ export function attentionTarget(item: AttentionItem): string {
       return edgesPaths.settings();
     case 'thaw':
       return edgesPaths.settings({ section: 'maintenance' });
+    case 'rebalance':
+      return relay({ tab: 'edges' });
+    case 'require_edges':
+      return relay(undefined);
   }
 }
 

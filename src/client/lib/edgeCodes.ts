@@ -26,6 +26,7 @@ import type {
   DeliveryUnavailableCode,
   LayerExclusionCode,
   PreflightBlockerCode,
+  PoolCode,
   PreflightWarningCode,
   SetupBlockerCode,
   SetupStepId,
@@ -49,7 +50,8 @@ type KnownCode =
   | PreflightWarningCode
   | AttentionKind
   | LayerExclusionCode
-  | DeliveryUnavailableCode;
+  | DeliveryUnavailableCode
+  | PoolCode;
 
 const COPY = {
   // --- origin --------------------------------------------------------------------------
@@ -179,6 +181,12 @@ const COPY = {
     explain:
       'Subscriptions on this origin are edge-required but nothing can be served for them yet.',
     fix: 'Publish an edge and turn rendering on.',
+  },
+  binding_deferred: {
+    label: 'Go-live pending',
+    explain:
+      'This relay was set up with its delivery binding deferred: members still receive the direct address until it goes live.',
+    fix: 'Finish the guided setup so the relay goes live.',
   },
   // --- first edge ----------------------------------------------------------------------
   no_edge: {
@@ -561,6 +569,18 @@ const COPY = {
     explain: 'Fewer edges are published than the relay wants.',
     fix: 'Provision or publish an edge.',
   },
+  go_live_pending: {
+    label: 'Go-live pending',
+    explain:
+      'An edge is published for this relay but its delivery binding is still deferred, so members keep the direct address.',
+    fix: 'Finish the guided setup to go live.',
+  },
+  pool_rebalance: {
+    label: 'Make room for a listener',
+    explain:
+      'A deployed listener has no published edge, every pool slot is taken and the pool is at its cap.',
+    fix: 'Rebalance: one duplicate edge goes back to standby so the listener can be published.',
+  },
   drift: {
     label: 'Drift',
     explain: 'What the provider reports differs from what FCP recorded for an edge.',
@@ -651,6 +671,34 @@ const COPY = {
   no_load_signal: {
     label: 'No load signal',
     explain: 'This origin kind reports no user load, so the detector uses reports and probes only.',
+  },
+  // --- published pool (reserved allocation, capacity, rebalance) -------------------------
+  pool_full: {
+    label: 'Pool full',
+    explain: 'Every published slot of this relay is taken.',
+    fix: 'Raise the published edges wanted on the relay, or unpublish an edge first.',
+  },
+  pool_reserved: {
+    label: 'Slot reserved',
+    explain:
+      'The free pool slots are held for listeners that have no published edge yet, so a second edge for an already covered listener cannot take one.',
+    fix: 'Publish an edge for the uncovered listener first, or raise the published edges wanted.',
+  },
+  pool_raised: {
+    label: 'Pool size raised',
+    explain:
+      'The published edges wanted were raised so every deployed listener has a slot of its own.',
+  },
+  no_duplicate: {
+    label: 'Nothing to rebalance',
+    explain:
+      'Every published edge is the template edge of its listener; there is no duplicate to unpublish.',
+    fix: 'Raise the published edges wanted, or retire a listener you do not need.',
+  },
+  setup_owned: {
+    label: 'Owned by a setup run',
+    explain: 'A guided setup owns this relay, so automatic replacement leaves it alone.',
+    fix: 'Finish or cancel the setup run.',
   },
 } as const satisfies Record<KnownCode, CodeCopy> & Record<string, CodeCopy>;
 
@@ -945,6 +993,8 @@ export const ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
   rotate: 'Rotate',
   test_credentials: 'Test credentials',
   thaw: 'Thaw',
+  rebalance: 'Make room',
+  require_edges: 'Go live',
 };
 
 export function severityTone(s: AttentionSeverity): Tone {
@@ -1015,6 +1065,9 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'admin.edge.probe.change': 'Probe settings changed',
   'admin.edge.maintenance': 'Maintenance switch changed',
   'admin.edge.reset': 'Edge tables reset',
+  'edge.pool_expanded': 'Pool expanded for an uncovered listener',
+  'edge.relay.rebalanced': 'Duplicate edge sent back to standby',
+  'edge.automation.set': 'Automatic protection switched',
   'probe.requested': 'Probe requested',
   'probe.run': 'Probe run finished',
   'probe.verdict': 'Reachability verdict changed',

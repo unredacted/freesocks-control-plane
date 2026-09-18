@@ -58,6 +58,8 @@ export const SETUP_BLOCKER_CODES = [
   'no_udp_provider',
   'invalid_combination',
   'members_dark',
+  // publish (a guided relay whose binding is claimed at go-live)
+  'binding_deferred',
   // first edge
   'no_edge',
   'rotation_running',
@@ -180,10 +182,12 @@ export const ATTENTION_KINDS = [
   'needs_operator',
   'host_unresolved',
   'members_dark',
+  'go_live_pending',
   'rotation_failed',
   'qualification_lapsed',
   'block_suspected',
   'edge_unreachable',
+  'pool_rebalance',
   'pool_below_desired',
   'account_unqualified',
   'account_untested',
@@ -211,6 +215,8 @@ export const ATTENTION_ACTIONS = [
   'rotate',
   'test_credentials',
   'thaw',
+  'rebalance',
+  'require_edges',
 ] as const;
 export type AttentionAction = (typeof ATTENTION_ACTIONS)[number];
 
@@ -241,3 +247,18 @@ export const DELIVERY_UNAVAILABLE_CODES = [
   'leak_detected',
 ] as const;
 export type DeliveryUnavailableCode = (typeof DELIVERY_UNAVAILABLE_CODES)[number];
+
+/**
+ * Published-pool refusals and notices (`edge.<code>` on the wire): reserved
+ * allocation (`pool_reserved`), a full pool, a rebalance with nothing to
+ * unpublish, a pool raised at registration (`pool_raised`, a warning), and the
+ * detector veto for a setup-owned relay.
+ */
+export const POOL_CODES = [
+  'pool_full',
+  'pool_reserved',
+  'pool_raised',
+  'no_duplicate',
+  'setup_owned',
+] as const;
+export type PoolCode = (typeof POOL_CODES)[number];

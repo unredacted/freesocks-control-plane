@@ -87,6 +87,14 @@ export const BASIC_NUMBERS: Field[] = [
   },
   {
     kind: 'number',
+    path: 'standbyPerListener',
+    label: 'Standbys per listener',
+    unit: 'edges',
+    helper:
+      'Ready edges kept in reserve for each deployed listener, on top of the per-relay standbys. Automatic protection sets this to one. Each one is billed.',
+  },
+  {
+    kind: 'number',
     path: 'cooldownMinutes',
     label: 'Cooldown between rotations',
     unit: 'min',
