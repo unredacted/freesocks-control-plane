@@ -21,7 +21,7 @@ import {
 } from './lib/edges/probes/globalping';
 import { checkhostNodes, checkhostPoll, checkhostStart } from './lib/edges/probes/checkhost';
 import { ripeAtlasPoll, ripeAtlasStart, type AtlasStarted } from './lib/edges/probes/ripeatlas';
-import { internalProbe } from './lib/edges/probes/internal';
+import { internalProbe, type InternalProbeDeps } from './lib/edges/probes/internal';
 import {
   shortError,
   type ProbeAddressKind,
@@ -44,6 +44,16 @@ let globalpingFactory: (token: string) => GlobalpingLike = (token) =>
 export function __setGlobalpingFactory(f: typeof globalpingFactory | null): void {
   globalpingFactory =
     f ?? ((token) => new Globalping({ auth: token || undefined }) as unknown as GlobalpingLike);
+}
+
+/**
+ * Test seam: the internal probe's socket-level dependencies (TLS handshake,
+ * TCP connect, resolver). The `tls-sni` shape check opens a real `node:tls`
+ * socket, which a test must stub the way it stubs `fetch`.
+ */
+let internalProbeDeps: Omit<InternalProbeDeps, 'fetchFn'> = {};
+export function __setInternalProbeDeps(deps: Omit<InternalProbeDeps, 'fetchFn'> | null): void {
+  internalProbeDeps = deps ?? {};
 }
 
 /**
@@ -90,6 +100,9 @@ export const execute = internalAction({
     if (!c || c.run.status !== 'requested') return null;
     const { run, cfg, secrets } = c;
     const target = parseTarget(run.target, run);
+    // The `tls-sni` shape check presents the listener's name (resolved by the
+    // context query at execution time, never stored on the run).
+    if (c.servername) target.servername = c.servername;
     // Error strings are stored: a hostname target's own name never goes into one.
     const redact = target.addressKind === 'name' ? [target.address] : [];
     const opts = {
@@ -101,7 +114,7 @@ export const execute = internalAction({
       switch (run.source) {
         case 'internal': {
           await ctx.runMutation(internal.probes.markRunning, { runId });
-          const r = await internalProbe({ fetchFn: fetch }, target);
+          const r = await internalProbe({ fetchFn: fetch, ...internalProbeDeps }, target);
           await finish(ctx, runId, [r]);
           return null;
         }

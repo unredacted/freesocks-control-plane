@@ -73,6 +73,13 @@ export function defaultClientRule(family: RenderClientFamily): ClientRenderRule 
 
 // --- main config -------------------------------------------------------------
 
+/**
+ * The published-pool cap per relay. Coverage needs one slot per deployed
+ * listener (`ensurePoolCapacity`), so the bound is the listener cap of a guided
+ * setup, not a tuning knob.
+ */
+export const MAX_DESIRED_PUBLISHED = 8;
+
 export interface EdgeConfig {
   /** Master switch for the detector + automatic actions. Ships OFF. */
   enabled: boolean;
@@ -81,6 +88,8 @@ export interface EdgeConfig {
   providerAffinity: 'rotate' | 'sticky';
   desiredPublishedDefault: number;
   standbyPerRelay: number;
+  /** Verified standbys kept PER coverage listener (on top of `standbyPerRelay`). */
+  standbyPerListener: number;
   drainMinutes: number;
   burnedDrainMinutes: number;
   sniDrainMinutes: number;
@@ -176,6 +185,7 @@ export const EDGE_DEFAULTS: EdgeConfig = {
   providerAffinity: 'rotate',
   desiredPublishedDefault: 2,
   standbyPerRelay: 0,
+  standbyPerListener: 0,
   drainMinutes: 1440,
   burnedDrainMinutes: 60,
   sniDrainMinutes: 1440,
@@ -327,6 +337,7 @@ export const EDGE_KEYS = {
   providerAffinity: 'edge.providerAffinity',
   desiredPublishedDefault: 'edge.desiredPublishedDefault',
   standbyPerRelay: 'edge.standbyPerRelay',
+  standbyPerListener: 'edge.standbyPerListener',
   drainMinutes: 'edge.drainMinutes',
   burnedDrainMinutes: 'edge.burnedDrainMinutes',
   sniDrainMinutes: 'edge.sniDrainMinutes',
@@ -437,10 +448,11 @@ export function sanitizeRelayConfig(
     desiredPublishedDefault: sanitizeInt(
       raw.desiredPublishedDefault,
       1,
-      4,
+      MAX_DESIRED_PUBLISHED,
       D.desiredPublishedDefault,
     ),
     standbyPerRelay: sanitizeInt(raw.standbyPerRelay, 0, 2, D.standbyPerRelay),
+    standbyPerListener: sanitizeInt(raw.standbyPerListener, 0, 2, D.standbyPerListener),
     drainMinutes: sanitizeInt(raw.drainMinutes, 1, 7 * 1440, D.drainMinutes),
     burnedDrainMinutes: sanitizeInt(raw.burnedDrainMinutes, 0, 7 * 1440, D.burnedDrainMinutes),
     sniDrainMinutes: sanitizeInt(raw.sniDrainMinutes, 1, 30 * 1440, D.sniDrainMinutes),
@@ -779,8 +791,9 @@ export const edgeMs = {
  * test against the sanitizer, so a bound can never drift between the two.
  */
 export const EDGE_CONFIG_BOUNDS: Readonly<Record<string, { min: number; max: number }>> = {
-  desiredPublishedDefault: { min: 1, max: 4 },
+  desiredPublishedDefault: { min: 1, max: MAX_DESIRED_PUBLISHED },
   standbyPerRelay: { min: 0, max: 2 },
+  standbyPerListener: { min: 0, max: 2 },
   drainMinutes: { min: 1, max: 7 * 1440 },
   burnedDrainMinutes: { min: 0, max: 7 * 1440 },
   sniDrainMinutes: { min: 1, max: 30 * 1440 },

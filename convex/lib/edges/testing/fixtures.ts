@@ -288,7 +288,13 @@ export async function seedEdgeFixture(
   };
 }
 
-/** Observe-only import of an L4 edge at `ipv4` on the relay's listener (published when asked). */
+/**
+ * Observe-only import of an L4 edge at `ipv4` on the relay's listener
+ * (published when asked). By default the import carries the operator's
+ * statement that the address already serves (`verified`, recorded as a
+ * `named_connection` verification), which the publication gate needs for an
+ * L4 edge; pass `verified: false` to import an UNTESTED spare.
+ */
 export async function adoptL4Edge(
   t: T,
   relayId: Id<'relays'>,
@@ -297,6 +303,7 @@ export async function adoptL4Edge(
     ipv4?: string;
     port?: number;
     publish?: boolean;
+    verified?: boolean;
     accountId?: Id<'edgeProviderAccounts'> | null;
   } = {},
 ) {
@@ -306,6 +313,23 @@ export async function adoptL4Edge(
     ipv4: opts.ipv4 ?? '198.51.100.7',
     port: opts.port,
     publish: opts.publish,
+    verified: opts.verified ?? true,
     ...(opts.accountId ? { accountId: opts.accountId } : {}),
+  });
+}
+
+/**
+ * The operator's tick on an L4 edge: fetch the binding the way the CMS does
+ * and echo it back. Returns the confirmation result.
+ */
+export async function verifyL4Edge(t: T, edgeId: Id<'edges'>) {
+  const b = await t.query(internal.edgeVerification.binding, { edgeId });
+  if (!b) throw new Error('verifyL4Edge: no binding (edge without an address?)');
+  return t.mutation(internal.edgeVerification.confirm, {
+    edgeId,
+    endpoint: b.endpoint,
+    listenerRevision: b.listenerRevision,
+    configHash: b.configHash,
+    method: 'test_link',
   });
 }

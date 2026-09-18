@@ -316,6 +316,7 @@ export function evaluate(input: EvaluationInput): Evaluation {
 export type AutoRotateVeto =
   | 'edge_disabled'
   | 'auto_rotate_off'
+  | 'setup_owned'
   | 'not_suspected'
   | 'evidence_incomplete'
   | 'no_edge_evidence'
@@ -342,6 +343,8 @@ export function autoRotateDecision(args: {
   cfg: Pick<EdgeConfig, 'enabled' | 'autoRotate' | 'detect'>;
   origin: {
     autoRotate: boolean;
+    /** A guided setup owns the relay: automatic replacement never touches it. */
+    setupOwned?: boolean;
     quarantined: boolean;
     rotationActive: boolean;
     cooldownUntil: number | null;
@@ -353,9 +356,10 @@ export function autoRotateDecision(args: {
   now: number;
 }): { edgeId: string; source: 'reports' | 'probes' } | { veto: AutoRotateVeto } {
   const { evaluation: ev, cfg, origin } = args;
-  // 1. enabled  2. autoRotate (global, then the relay's own opt-in)
+  // 1. enabled  2. autoRotate (global, then the relay's own opt-in)  2b. not setup-owned
   if (!cfg.enabled || !cfg.autoRotate) return { veto: 'edge_disabled' };
   if (!origin.autoRotate) return { veto: 'auto_rotate_off' };
+  if (origin.setupOwned) return { veto: 'setup_owned' };
   // 3. suspected
   if (ev.state !== 'suspected') return { veto: 'not_suspected' };
   // 3b. the evidence is whole: a window truncated at the read cap under-counts

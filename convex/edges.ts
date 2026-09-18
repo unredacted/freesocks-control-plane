@@ -23,6 +23,11 @@ import { edgeResourceName } from './lib/edges/accountSettings';
 import { dropEdgeFromPool, liveEdgesOfAccount } from './relays';
 import { EDGE_LIVE_STATUSES } from './lib/edges/pool';
 import { parseIntent, type ProvisionIntent } from './lib/edges/intent';
+import {
+  needsEndpointVerification,
+  verificationCurrent,
+  verificationStale,
+} from './lib/edges/verification';
 
 /** Consecutive `gone` describes before the pool drop + status transition act. */
 export const GONE_OBSERVATIONS_REQUIRED = 2;
@@ -92,8 +97,31 @@ export function edgeProgress(edge: Edge): { done: number; total: number; percent
   return { done, total, percent: total === 0 ? 0 : Math.round((done / total) * 100) };
 }
 
-export function mapEdgeAdmin(e: Edge) {
+/**
+ * The admin projection of an edge. `listener` (the edge's own listener row)
+ * lets the L4 verification view say whether the confirmation is CURRENT; a
+ * caller without it gets `current: null` (unknown), never a guess.
+ */
+export function mapEdgeAdmin(e: Edge, listener?: Doc<'relayListeners'> | null) {
+  const required = needsEndpointVerification(e);
+  const rec = e.verification;
+  const verification = {
+    required,
+    current: !required ? true : listener ? verificationCurrent(e, listener) : null,
+    stale: !required ? false : listener ? verificationStale(e, listener) : null,
+    record: rec
+      ? {
+          rung: rec.rung,
+          by: rec.by,
+          at: new Date(rec.at).toISOString(),
+          method: rec.method,
+          listenerKey: rec.listenerKey,
+          listenerRevision: rec.listenerRevision,
+        }
+      : null,
+  };
   return {
+    verification,
     id: e._id as string,
     relayId: e.relayId as string,
     listenerId: e.listenerId as string,
@@ -218,8 +246,12 @@ export const listByRelay = internalQuery({
 
 export const listByRelayForAdmin = internalQuery({
   args: { relayId: v.id('relays') },
-  handler: async (ctx, { relayId }) =>
-    (
+  handler: async (ctx, { relayId }) => {
+    const listeners = await ctx.db
+      .query('relayListeners')
+      .withIndex('by_relay', (q) => q.eq('relayId', relayId))
+      .collect();
+    return (
       await ctx.db
         .query('edges')
         .withIndex('by_relay_status', (q) => q.eq('relayId', relayId))
@@ -228,7 +260,13 @@ export const listByRelayForAdmin = internalQuery({
       .sort(
         (a, b) => (a.poolIndex ?? 99) - (b.poolIndex ?? 99) || b._creationTime - a._creationTime,
       )
-      .map(mapEdgeAdmin),
+      .map((e) =>
+        mapEdgeAdmin(
+          e,
+          listeners.find((l) => l._id === e.listenerId),
+        ),
+      );
+  },
 });
 
 export const getForAdmin = internalQuery({

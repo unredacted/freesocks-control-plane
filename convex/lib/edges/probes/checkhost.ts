@@ -11,6 +11,7 @@
  * connection and handshake completed.
  */
 import {
+  isBareConnect,
   normalizeCountry,
   shortError,
   targetHost,
@@ -75,7 +76,7 @@ export async function checkhostNodes(fetchFn: FetchLike): Promise<CheckhostNode[
 export function checkhostEndpoint(
   target: Pick<ProbeTarget, 'protocol'>,
 ): 'check-tcp' | 'check-http' {
-  return target.protocol === 'tcp' ? 'check-tcp' : 'check-http';
+  return isBareConnect(target.protocol) ? 'check-tcp' : 'check-http';
 }
 
 /** What goes in the `host` parameter: `host:port` for tcp, a URL for http. */

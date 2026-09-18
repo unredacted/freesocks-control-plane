@@ -154,6 +154,8 @@ async function seed(
     ipv4: EDGE_A,
     ipv6: EDGE_A6,
     publish: opts.publish ?? true,
+    // An import of a live front: the operator's own statement (named_connection).
+    verified: true,
   });
   return {
     t,
@@ -253,6 +255,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
       listenerId,
       ipv4: EDGE_B,
       publish: true,
+      verified: true,
     });
     const body = await (await get(t)).text();
     expect(fetchCalls).toBe(2);
@@ -564,6 +567,55 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     const after = await t.run((ctx) => ctx.db.get(edgeA));
     const q = after!.frontQualification!;
     expect(q.expiresAt - q.checkedAt).toBeLessThan(60 * 60_000);
+  });
+
+  test('a published L4 edge whose verification is no longer current is not rendered (re-addressed: dropped from the body; revision bump: empty pool) and attention says retest_needed', async () => {
+    stubPanel();
+    const { t, relayId, listenerId, edgeA } = await seed();
+    const b = await t.mutation(internal.relays.adoptEdge, {
+      relayId,
+      listenerId,
+      ipv4: EDGE_B,
+      publish: true,
+      verified: true,
+    });
+    const edgeB = b.edgeId as Id<'edges'>;
+    // A provider re-addressing of B after its tick (what `recordDescribe` does
+    // for an active edge): the record no longer describes the live endpoint.
+    await t.run((ctx) => ctx.db.patch(edgeB, { addresses: { v4: '198.51.100.9' } }));
+    const view = await t.run(async (ctx) =>
+      publishedEdgesOf(ctx, (await ctx.db.get(relayId))!, { includeIneligible: true }),
+    );
+    expect(view.published.map((p) => [p.edgeId, p.eligible ?? true])).toEqual([
+      [edgeA, true],
+      [edgeB, false],
+    ]);
+    const body = await (await get(t)).text();
+    expect(body).toContain(`@${EDGE_A}:443?`);
+    expect(body).not.toContain('198.51.100.9');
+    expect(body).not.toContain('FreeSocks%20Backup');
+    // Still published: nothing unpublishes automatically; the operator retests.
+    expect((await t.run((ctx) => ctx.db.get(relayId)))!.publishedEdgeIds).toEqual([edgeA, edgeB]);
+    const { items } = await t.query(internal.edgeOperator.attention, {});
+    expect(items.find((i) => i.kind === 'retest_needed')).toMatchObject({
+      edgeId: edgeB,
+      listenerKey: 'a',
+      action: 'verify_endpoint',
+    });
+    // A listener revision bump stales EVERY endpoint of the listener: with no
+    // current confirmation left, the pool is empty for rendering (503), the
+    // edges stay published.
+    await t.mutation(internal.relayListeners.setEnabled, { id: listenerId, enabled: false });
+    await t.mutation(internal.relayListeners.setEnabled, { id: listenerId, enabled: true });
+    const res = await get(t);
+    expect(res.status).toBe(503);
+    expect(res.headers.get('x-fcp-delivery')).toBe('empty_pool');
+    expect((await t.run((ctx) => ctx.db.get(relayId)))!.publishedEdgeIds).toEqual([edgeA, edgeB]);
+    expect(
+      (await t.query(internal.edgeOperator.attention, {})).items.filter(
+        (i) => i.kind === 'retest_needed',
+      ),
+    ).toHaveLength(2);
   });
 
   test('panel outage: the stale fallback is served only while its edge token is still current', async () => {

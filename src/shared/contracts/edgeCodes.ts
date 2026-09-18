@@ -58,6 +58,8 @@ export const SETUP_BLOCKER_CODES = [
   'no_udp_provider',
   'invalid_combination',
   'members_dark',
+  // publish (a guided relay whose binding is claimed at go-live)
+  'binding_deferred',
   // first edge
   'no_edge',
   'rotation_running',
@@ -136,7 +138,10 @@ export const PREFLIGHT_BLOCKER_CODES = [
   'front_stale',
   'front_failed',
   'account_mismatch',
+  'unverified_endpoint',
   'edge_unhealthy',
+  // replace: no tested spare on the listener (L4)
+  'no_verified_spare',
   // selection
   'no_compatible_listener',
   'no_compatible_layer',
@@ -180,10 +185,15 @@ export const ATTENTION_KINDS = [
   'needs_operator',
   'host_unresolved',
   'members_dark',
+  'go_live_pending',
+  'needs_test',
   'rotation_failed',
   'qualification_lapsed',
+  'retest_needed',
   'block_suspected',
   'edge_unreachable',
+  'pool_rebalance',
+  'spare_untested',
   'pool_below_desired',
   'account_unqualified',
   'account_untested',
@@ -210,7 +220,10 @@ export const ATTENTION_ACTIONS = [
   'qualify_front',
   'rotate',
   'test_credentials',
+  'verify_endpoint',
   'thaw',
+  'rebalance',
+  'require_edges',
 ] as const;
 export type AttentionAction = (typeof ATTENTION_ACTIONS)[number];
 
@@ -241,3 +254,22 @@ export const DELIVERY_UNAVAILABLE_CODES = [
   'leak_detected',
 ] as const;
 export type DeliveryUnavailableCode = (typeof DELIVERY_UNAVAILABLE_CODES)[number];
+
+/**
+ * Published-pool refusals and notices (`edge.<code>` on the wire): reserved
+ * allocation (`pool_reserved`), a full pool, a rebalance with nothing to
+ * unpublish, a pool raised at registration (`pool_raised`, a warning), the
+ * coverage cap (`listener_cap`: a ninth deployed, enabled listener;
+ * `pool_below_coverage`: `desiredPublished` lowered under the coverage-listener
+ * count), and the detector veto for a setup-owned relay.
+ */
+export const POOL_CODES = [
+  'pool_full',
+  'pool_reserved',
+  'pool_raised',
+  'listener_cap',
+  'pool_below_coverage',
+  'no_duplicate',
+  'setup_owned',
+] as const;
+export type PoolCode = (typeof POOL_CODES)[number];

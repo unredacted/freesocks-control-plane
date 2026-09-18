@@ -48,6 +48,9 @@ import type {
   RequestedFamily,
 } from './lib/edges/probes/types';
 import { assertAdmission } from './lib/edges/maintenance';
+import { shapeProtocolFor } from './lib/edges/verifyRung';
+import { activeNames } from './relayListeners';
+import { refreshPartialRung } from './edgeVerification';
 
 const MIN = 60_000;
 /** Settled probe runs are evidence history, not a ledger: 14 days is plenty for the admin view. */
@@ -174,6 +177,15 @@ export interface ResolvedTarget {
   ports: number[];
   /** What the probe speaks against this target (see `ProbeProtocol`). */
   probeProtocol: ProbeProtocol;
+  /**
+   * What the INTERNAL source speaks when it differs: the protocol-shape check
+   * of an L4 edge (`tls-sni` behind a REALITY / TLS listener, with the
+   * listener's first active name as `servername`; `tcp` behind a plaintext
+   * one). Outside vantages keep `probeProtocol` (a bare connect: they cannot
+   * present an SNI to an IP literal).
+   */
+  internalProbeProtocol?: ProbeProtocol;
+  servername?: string;
   /** Deployed UDP listeners left out of `ports` (relay targets; the probes are TCP connects). */
   udpListeners?: number;
 }
@@ -197,12 +209,20 @@ async function resolveTarget(
     if (hostname && isValidHostname(hostname)) {
       return { kind: t.kind, label, addresses: { name: hostname }, ports, probeProtocol: 'tls' };
     }
+    // An L4 edge: outside vantages do a bare connect; the internal source runs
+    // the protocol-SHAPE check the listener's security calls for (`tls-sni`
+    // with one of its active names, or `tcp` for a plaintext listener).
+    const listener = await ctx.db.get(edge.listenerId);
+    const shape = listener ? shapeProtocolFor(listener) : 'tcp';
+    const servername = listener && shape === 'tls-sni' ? activeNames(listener)[0] : undefined;
     return {
       kind: t.kind,
       label,
       addresses: { v4: edge.addresses.v4, v6: edge.addresses.v6 },
       ports,
       probeProtocol: 'tcp',
+      // Without an active name there is nothing to verify against: bare tcp.
+      ...(servername ? { internalProbeProtocol: shape, servername } : {}),
     };
   }
   if (t.kind === 'relay') {
@@ -501,7 +521,10 @@ async function insertPlanned(
             address,
             port,
             addressKind: requestedFamily === 'any' ? 'name' : 'ip',
-            probeProtocol: plan.resolved.probeProtocol,
+            probeProtocol:
+              source === 'internal'
+                ? (plan.resolved.internalProbeProtocol ?? plan.resolved.probeProtocol)
+                : plan.resolved.probeProtocol,
             requestedFamily,
             trigger,
             delayMs: Math.min((offset + k) * spacing, spanCap),
@@ -692,6 +715,8 @@ export const failRun = internalMutation({
     const now = Date.now();
     void error; // kept out of the row: failure text is operational, not evidence
     await ctx.db.patch(runId, { status: timeout ? 'timeout' : 'failed', finishedAt: now });
+    // A failed shape run is evidence too (lib/edges/verifyRung.ts).
+    if (run.targetKind === 'edge') await refreshPartialRung(ctx, run.targetRef as Id<'edges'>, now);
     return null;
   },
 });
@@ -793,6 +818,8 @@ export const finishRun = internalMutation({
       }
     }
     await refreshTargetSummary(ctx, target, now);
+    // The L4 verification rung follows the evidence (never past `partial`).
+    if (run.targetKind === 'edge') await refreshPartialRung(ctx, run.targetRef as Id<'edges'>, now);
     return null;
   },
 });
@@ -930,7 +957,16 @@ export const runContext = internalQuery({
     if (!run) return null;
     const cfg = await resolveEdgeConfig(ctx.db);
     const secrets = await resolveEdgeSecrets(ctx.db);
-    return { run, cfg, secrets };
+    // A `tls-sni` run presents the listener's first ACTIVE name at execution
+    // time (never stored on the run: a name retire between request and run
+    // must not be probed for).
+    let servername: string | undefined;
+    if (run.source === 'internal' && run.probeProtocol === 'tls-sni' && run.targetKind === 'edge') {
+      const edge = await ctx.db.get(run.targetRef as Id<'edges'>);
+      const listener = edge ? await ctx.db.get(edge.listenerId) : null;
+      servername = listener ? activeNames(listener)[0] : undefined;
+    }
+    return { run, cfg, secrets, servername: servername ?? null };
   },
 });
 

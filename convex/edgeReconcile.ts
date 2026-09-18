@@ -13,8 +13,12 @@
  *     child is confirmed gone; the attempt cap parks it as `needs_operator`;
  *  5. pool upkeep (config-gated: `edge.enabled` AND the per-action flag —
  *     `autoPublishStandby` / `autoProvisionToDesired`; a manual `start` runs
- *     regardless): publish a compatible standby into a free pool slot, or start
- *     a provision to reach `desiredPublished` / `standbyPerRelay`;
+ *     regardless; a `setupOwned` relay is skipped): listener-aware — first
+ *     every deployed, enabled listener without a template edge gets its own
+ *     standby published or a provision FOR IT (after `ensureCapacity` raised /
+ *     expanded `desiredPublished`), then the relay-wide fill to
+ *     `desiredPublished`, then spares (`standbyPerRelay` relay-wide plus
+ *     `standbyPerListener` per coverage listener);
  *  6. finish origin deletes once every managed edge is destroyed.
  *
  * A quarantined origin is hands-off: nothing here describes, drops, destroys or
@@ -27,11 +31,16 @@ import { ConvexError, v } from 'convex/values';
 import { internalAction } from './_generated/server';
 import type { ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
-import type { Doc } from './_generated/dataModel';
+import type { Doc, Id } from './_generated/dataModel';
 import { runWithCronOutcome } from './cronHeartbeat';
 import { edgeMs, type EdgeConfig } from './lib/edgeConfig';
 import { isDiscoverable } from './edges';
-import { publishedCount } from './lib/edges/pool';
+import {
+  coverageListeners,
+  freeSlotCount,
+  publishedCount,
+  uncoveredListeners,
+} from './lib/edges/pool';
 import { hasPublishableAddress } from './lib/edges/ip';
 import { parseIntent } from './lib/edges/intent';
 import { sharedTeardownLockKey, stepLockKey } from './edgeRotations';
@@ -172,6 +181,25 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
   for (const rotationId of stale) {
     await ctx.runMutation(internal.edgeRotations.rekick, { rotationId });
     report.rekicked++;
+  }
+
+  // 1b. L7 auto-trust: an unqualified L7 account whose active edge now holds
+  // a current proof for its effective template is trusted (bounded: the
+  // accounts table is operator-scale; L4 accounts are never looked at).
+  try {
+    await ctx.runMutation(internal.edgeProviderAccounts.reconcileAutoQualification, {});
+  } catch (err) {
+    report.errors++;
+    console.warn(`[edge-reconcile] auto-qualification sweep: ${errText(err)}`);
+  }
+
+  // 1c. A system `partial` rung that no longer describes the live configuration
+  // (re-addressed edge, changed listener, no probe settled since) is cleared.
+  try {
+    await ctx.runMutation(internal.edgeVerification.reconcilePartialRungs, {});
+  } catch (err) {
+    report.errors++;
+    console.warn(`[edge-reconcile] partial-rung sweep: ${errText(err)}`);
   }
 
   const edges = await ctx.runQuery(internal.edges.listLive, {});
@@ -326,16 +354,73 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
         continue;
       }
       if (!origin.enabled || origin.quarantine || origin.activeRotationId) continue;
+      // A guided setup owns the relay: nothing here publishes or provisions on it.
+      if (origin.setupOwned) continue;
       // Automatic pool actions need the master switch; a manual start does not.
       if (!cfg.enabled) continue;
       if (maintenance.frozen) continue;
       if (starts >= cfg.maxReconcileStartsPerTick) continue;
       const originEdges = edges.filter((e) => e.relayId === origin._id);
-      const publishedNow = publishedCount(origin.publishedEdgeIds);
       const standbys = originEdges.filter(
         (e) => e.status === 'active' && e.publication === 'unpublished' && hasPublishableAddress(e),
       );
-      if (publishedNow < origin.desiredPublished) {
+      const standbysOf = (listenerId: string) =>
+        standbys.filter((e) => (e.listenerId as string) === listenerId);
+      const provision = async (listenerId: string | null, publishOnDone: boolean) => {
+        await ctx.runMutation(internal.edgeRotations.start, {
+          relayId: origin._id,
+          kind: 'provision',
+          trigger: 'reconcile',
+          publishOnDone,
+          ...(listenerId ? { listenerId: listenerId as Id<'relayListeners'> } : {}),
+        });
+        report.started++;
+        starts++;
+      };
+      // Coverage first: `desiredPublished` follows the deployed listeners (raised
+      // or expanded within the cap; at the cap the operator rebalances).
+      const capacity = await ctx.runMutation(internal.relays.ensureCapacity, {
+        relayId: origin._id,
+      });
+      const desired = capacity?.to ?? origin.desiredPublished;
+      const listeners = await ctx.runQuery(internal.relayListeners.listByRelay, {
+        relayId: origin._id,
+      });
+      const uncovered = uncoveredListeners(listeners);
+      const publishedNow = publishedCount(origin.publishedEdgeIds);
+      const free = freeSlotCount(origin.publishedEdgeIds, desired);
+      // 5a. Listener-aware upkeep: every deployed, enabled listener without a
+      // template edge gets its OWN standby published, else a provision FOR IT.
+      // One listener per tick (each action occupies the relay).
+      const target = free > 0 ? uncovered[0] : undefined;
+      if (target) {
+        const own = standbysOf(target.id);
+        if (cfg.autoPublishStandby && own.length > 0) {
+          const res = await ctx.runMutation(internal.edgeReconcileMutations.publishStandby, {
+            relayId: origin._id,
+            candidates: own.map((e) => e._id),
+          });
+          if (res.published) {
+            report.published++;
+            continue;
+          }
+          if (res.rotationId) {
+            report.started++;
+            starts++;
+            continue;
+          }
+          // The listener already has a spare that only the operator's endpoint
+          // confirmation keeps out of the pool: do not pile up another one.
+          if (res.awaitingVerification) continue;
+        }
+        if (cfg.autoProvisionToDesired) {
+          await provision(target.id, true);
+          continue;
+        }
+        // Nothing automatic can cover it this tick; fall through to the relay-wide rules.
+      }
+      if (publishedNow < desired && uncovered.length === 0) {
+        // 5b. Relay-wide fill (every listener covered): any publishable standby, else a provision.
         if (cfg.autoPublishStandby && standbys.length > 0) {
           const res = await ctx.runMutation(internal.edgeReconcileMutations.publishStandby, {
             relayId: origin._id,
@@ -350,27 +435,27 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
             starts++;
             continue;
           }
+          // A spare that only the operator's endpoint confirmation keeps out of
+          // the pool (attention `spare_untested`): provisioning another would
+          // pile up untested candidates every tick.
+          if (res.awaitingVerification) continue;
         }
         if (cfg.autoProvisionToDesired) {
-          await ctx.runMutation(internal.edgeRotations.start, {
-            relayId: origin._id,
-            kind: 'provision',
-            trigger: 'reconcile',
-            publishOnDone: true,
-          });
-          report.started++;
-          starts++;
+          await provision(null, true);
           continue;
         }
-      } else if (cfg.autoProvisionToDesired && standbys.length < origin.standbyPerRelay) {
-        await ctx.runMutation(internal.edgeRotations.start, {
-          relayId: origin._id,
-          kind: 'provision',
-          trigger: 'reconcile',
-          publishOnDone: false,
-        });
-        report.started++;
-        starts++;
+      } else if (publishedNow >= desired && cfg.autoProvisionToDesired) {
+        // 5c. Spares: the relay-wide reserve (`standbyPerRelay`, unchanged) plus
+        // `standbyPerListener` verified standbys per coverage listener.
+        if (standbys.length < origin.standbyPerRelay) {
+          await provision(null, false);
+          continue;
+        }
+        const perListener = origin.standbyPerListener ?? cfg.standbyPerListener;
+        const short = coverageListeners(listeners).find(
+          (l) => standbysOf(l.id).length < perListener,
+        );
+        if (short) await provision(short.id, false);
       }
     } catch (err) {
       report.errors++;

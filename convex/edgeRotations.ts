@@ -33,6 +33,7 @@ import {
   checkPublishable,
   liveEdgesOfAccount,
   liveEdgesOfRelay,
+  poolListenersOf,
   refreshTemplateEdges,
   scheduleMirrorRefresh,
   todayKey,
@@ -49,7 +50,7 @@ import {
   type HostTarget,
 } from './lib/edges/hosts';
 import type { BackendHost } from './lib/backends/types';
-import { nextFreePoolIndex, withEdgeAt, withoutEdge } from './lib/edges/pool';
+import { allocatePoolIndex, withEdgeAt, withoutEdge } from './lib/edges/pool';
 import {
   appendEvent,
   isTerminalPhase,
@@ -79,6 +80,7 @@ import { activeNames, listenerRemark, listenersOf } from './relayListeners';
 import { probeStaleAfterMs } from './lib/edges/scoring';
 import { edgeHostnameFor } from './lib/edges/hostname';
 import { publishAddressOf, hasPublishableAddress } from './lib/edges/ip';
+import { verificationCurrent } from './lib/edges/verification';
 import {
   buildProvisionIntent,
   IntentError,
@@ -508,6 +510,29 @@ export async function collectStartBlockers(
       if (used >= origin.maxRotationsPerDay) push('edge.daily_cap', 'Daily rotation cap reached');
     }
     if (targetEdge) listenerId = targetEdge.listenerId;
+    // Replacing an L4 edge switches ONLY to an already-tested spare: a freshly
+    // provisioned L4 candidate could never pass the publication gate (an L4
+    // endpoint needs the operator's own confirmation, lib/edges/verification.ts),
+    // so a replace that would have to provision is refused here instead of
+    // paying for a doomed candidate. An L7 replace keeps its proof-based path.
+    // Not waived by `force`: verification is evidence, not a guard. When the
+    // listener can be fronted at L7 and the selection may pick an L7 account,
+    // the replacement may be a NEW front proven by its own session, so the
+    // start is not refused; an L4 pick then lands as an untested spare
+    // (`unverified_standby` in applyPublish), never in the pool.
+    if (targetEdge && (targetEdge.layer ?? edgeLayerOf(targetEdge.provider)) !== 'l7') {
+      const targetListener = await ctx.db.get(targetEdge.listenerId);
+      const couldGoL7 =
+        !!targetListener &&
+        listenerLayers(targetListener).layers.includes('l7') &&
+        (a.trigger === 'manual' || l7SelectionAllowed(cfg));
+      if (!couldGoL7 && !(await verifiedSpareFor(ctx, origin, targetEdge, cfg))) {
+        push(
+          'edge.no_verified_spare',
+          'No tested spare address exists for this listener; test a spare first',
+        );
+      }
+    }
   }
   if (a.kind === 'publish') {
     if (!a.toEdgeId) push('validation', 'toEdgeId is required');
@@ -580,6 +605,42 @@ export const start = internalMutation({
   args: startArgs,
   handler: (ctx, a) => startRotation(ctx, a),
 });
+
+/**
+ * Whether the target's listener holds a spare the machine could switch to
+ * WITHOUT provisioning: an active, unpublished edge on the same listener that
+ * passes the whole publication gate (for an L4 edge that includes a current
+ * operator confirmation). Read-only; the selection applies the same rule
+ * through `standbyEligible`.
+ */
+async function verifiedSpareFor(
+  ctx: { db: QueryCtx['db'] },
+  origin: Origin,
+  targetEdge: Edge,
+  cfg: EdgeConfig,
+): Promise<boolean> {
+  const edges = await liveEdgesOfRelay(ctx.db, origin._id);
+  for (const e of edges) {
+    if (e._id === targetEdge._id || e.listenerId !== targetEdge.listenerId) continue;
+    if (e.status !== 'active' || e.publication !== 'unpublished') continue;
+    // The same health rule `pickStandby` applies (an observe-only import with
+    // no provider is not a candidate the selection would take).
+    if (!providerHealthSatisfies(e.provider, e.health, cfg.requireProviderHealth)) continue;
+    if ((await checkPublishable(ctx, e, cfg.requireProviderHealth)).ok) return true;
+  }
+  return false;
+}
+
+/**
+ * The publication gate's verification rule applied to a standby candidate: an
+ * L7 edge is judged by its proof at publish time; an L4 edge is a candidate
+ * only with a CURRENT operator confirmation (an untested spare is never picked
+ * over provisioning, and never published by a rotation).
+ */
+function standbyEligible(edge: Edge, listener: Doc<'relayListeners'> | undefined): boolean {
+  if ((edge.layer ?? edgeLayerOf(edge.provider)) === 'l7') return true;
+  return !!listener && verificationCurrent(edge, listener);
+}
 
 /** Whether some listener's panel Host / plan points at this edge. */
 async function isTemplateEdge(ctx: { db: QueryCtx['db'] }, edge: Edge): Promise<boolean> {
@@ -1355,6 +1416,24 @@ export const applyPublish = internalMutation({
       return { ok: true as const, poolIndex: null, needsHostFlip: false };
     }
     const check = await checkPublishable(ctx, to, cfg.requireProviderHealth);
+    if (!check.ok && check.code === 'unverified_endpoint' && !r.viaStandby) {
+      // A freshly provisioned L4 edge is paid for and healthy but not yet
+      // confirmed by the operator: keep it as a SPARE (attention
+      // `spare_untested`) rather than failing the run and destroying it. The
+      // target of a replace stays published.
+      await ctx.db.patch(rotationId, {
+        phase: 'finalizing',
+        stepVersion: next,
+        events: appendEvent(r.events, { at: now, level: 'warn', code: 'unverified_standby' }),
+        updatedAt: now,
+      });
+      await ctx.db.patch(r.relayId, {
+        standbyEdgeIds: [...origin.standbyEdgeIds.filter((e) => e !== to._id), to._id],
+        updatedAt: now,
+      });
+      await scheduleStep(ctx, rotationId, 0);
+      return { ok: true as const, poolIndex: null, needsHostFlip: false };
+    }
     if (!check.ok) return { ok: false as const, code: check.code ?? 'not_publishable' };
     if (r.kind === 'replace') {
       const target = r.targetEdgeId ? await ctx.db.get(r.targetEdgeId) : null;
@@ -1376,13 +1455,24 @@ export const applyPublish = internalMutation({
       });
       published = withoutEdge(published, target._id);
     } else {
-      poolIndex = nextFreePoolIndex(published, origin.desiredPublished);
-      if (poolIndex === null) {
-        // Pool full: keep the edge as a standby and finish.
+      // Reserved allocation: a free slot is held for a listener with no
+      // template edge; an extra copy for a covered listener stays a standby.
+      const alloc = allocatePoolIndex(
+        published,
+        origin.desiredPublished,
+        to.listenerId,
+        await poolListenersOf(ctx.db, r.relayId),
+      );
+      if ('refused' in alloc) {
+        // Pool full (or its free slots reserved): keep the edge as a standby and finish.
         await ctx.db.patch(rotationId, {
           phase: 'finalizing',
           stepVersion: next,
-          events: appendEvent(r.events, { at: now, level: 'warn', code: 'pool_full_standby' }),
+          events: appendEvent(r.events, {
+            at: now,
+            level: 'warn',
+            code: alloc.refused === 'pool_full' ? 'pool_full_standby' : 'pool_reserved_standby',
+          }),
           updatedAt: now,
         });
         await ctx.db.patch(r.relayId, {
@@ -1392,6 +1482,7 @@ export const applyPublish = internalMutation({
         await scheduleStep(ctx, rotationId, 0);
         return { ok: true as const, poolIndex: null, needsHostFlip: false };
       }
+      poolIndex = alloc.index;
     }
     await ctx.db.patch(to._id, {
       publication: 'published',
@@ -2173,7 +2264,13 @@ export async function selectionContext(
       status: e.status,
       publication: e.publication,
       health: e.health,
-      hasAddress: hasPublishableAddress(e),
+      // An untested L4 spare is not a candidate (lib/edges/verification.ts).
+      hasAddress:
+        hasPublishableAddress(e) &&
+        standbyEligible(
+          e,
+          slotRows.find((s) => s._id === e.listenerId),
+        ),
     })),
     slot._id,
     publishedProviders,

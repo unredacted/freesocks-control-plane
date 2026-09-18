@@ -156,7 +156,8 @@ describe('attention', () => {
       const p = ATTENTION_ACTION_PLAN[a];
       return p.type === 'call' && p.confirm !== null;
     });
-    expect(confirmed.sort()).toEqual(['provision', 'publish', 'rotate', 'thaw']);
+    // A rebalance unpublishes an edge members may be using: disruptive, so confirmed.
+    expect(confirmed.sort()).toEqual(['provision', 'publish', 'rebalance', 'rotate', 'thaw']);
   });
   it('renders only known facts', () => {
     expect(

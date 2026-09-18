@@ -35,6 +35,11 @@ import {
 import { isValidListenerCombo } from '../src/shared/contracts/edgeProtocolIds';
 import { parseIntent, parseObservedSettings } from './lib/edges/intent';
 import { sameAddress } from './lib/edges/hosts';
+import {
+  needsEndpointVerification,
+  verificationCurrent,
+  verificationStale,
+} from './lib/edges/verification';
 import { publishedCount } from './lib/edges/pool';
 import { EDGE_TEMPLATES, validateTemplateParams } from './lib/edges/providers/templates';
 import { fakeShadowedIds } from './lib/edges/providers/fake';
@@ -62,6 +67,8 @@ import {
   selectionContext,
 } from './edgeRotations';
 import { accountTested } from './edgeProviderAccounts';
+import { requiredPoolSize } from './lib/edges/poolCapacity';
+import { uncoveredListeners } from './lib/edges/pool';
 import { renderPreviewFor } from './edgeAdmin';
 import type { RelayOrigin } from './lib/edges/origin';
 
@@ -362,6 +369,7 @@ async function relayFacts(
         : null,
       edges: await edgeFacts(ctx, relay, cfg),
       deliveryRequired: !!binding,
+      bindingDeferred: relay.bindingDeferred === true,
       connectionPlanCount: endpoints,
       // Mirror validation is driven by the mirror refresh cron over every
       // subscription (no per-node index exists on a traffic-scaled table), so
@@ -658,10 +666,15 @@ const ATTENTION_RANK = [
   'needs_operator',
   'host_unresolved',
   'members_dark',
+  'go_live_pending',
+  'needs_test',
   'rotation_failed',
   'qualification_lapsed',
+  'retest_needed',
   'block_suspected',
   'edge_unreachable',
+  'pool_rebalance',
+  'spare_untested',
   'pool_below_desired',
   'account_unqualified',
   'account_untested',
@@ -696,7 +709,10 @@ interface AttentionItem {
     | 'qualify_front'
     | 'rotate'
     | 'test_credentials'
-    | 'thaw';
+    | 'verify_endpoint'
+    | 'thaw'
+    | 'rebalance'
+    | 'require_edges';
   since: string | null;
 }
 
@@ -799,6 +815,20 @@ export const attention = internalQuery({
           });
         }
       }
+      // A guided relay with something published but its binding still deferred:
+      // members get the raw body until go-live claims the binding.
+      if (relay.bindingDeferred && published > 0 && relay.enabled) {
+        items.push({
+          ...base(relay),
+          id: `go_live_pending:${relay._id}`,
+          kind: 'go_live_pending',
+          severity: 'warning',
+          code: null,
+          facts: { published },
+          action: 'require_edges',
+          since: isoN(relay.updatedAt),
+        });
+      }
       const [last] = await lastRotations(ctx.db, relay._id);
       if (
         last &&
@@ -860,6 +890,75 @@ export const attention = internalQuery({
           since: isoN(relay.suspicion.firstSeenAt),
         });
       }
+      // Endpoint verification (lib/edges/verification.ts). Three cards, one
+      // action each (`verify_endpoint` on the edge that needs the test):
+      //  needs_test     critical: the relay is suspected AND its automatic
+      //                 replacement was refused for want of a TESTED spare
+      //                 (`edge.no_verified_spare`), or a suspected relay has
+      //                 only untested L4 spares;
+      //  retest_needed  warning: a published / standby L4 edge whose tick went
+      //                 stale (listener revision or configuration changed);
+      //  spare_untested warning: an active unpublished L4 edge never confirmed.
+      const l4Edges = edges.filter((e) => e.status === 'active' && needsEndpointVerification(e));
+      const listenerOf = (e: (typeof edges)[number]) =>
+        listeners.find((l) => l._id === e.listenerId) ?? null;
+      const untestedSpares = l4Edges.filter((e) => {
+        const l = listenerOf(e);
+        return e.publication === 'unpublished' && !!l && !verificationCurrent(e, l);
+      });
+      const replaceRefused = relay.suspicion?.lastRotateError === 'edge.no_verified_spare';
+      if (relay.suspicion?.state === 'suspected' && (replaceRefused || untestedSpares.length > 0)) {
+        const first = untestedSpares[0] ?? null;
+        items.push({
+          ...base(relay),
+          id: `needs_test:${relay._id}`,
+          kind: 'needs_test',
+          severity: 'critical',
+          edgeId: first ? (first._id as string) : null,
+          listenerKey: first ? (listenerOf(first)?.listenerKey ?? null) : null,
+          code: replaceRefused ? 'no_verified_spare' : 'unverified_endpoint',
+          facts: { untestedSpares: untestedSpares.length },
+          action: first ? 'verify_endpoint' : 'provision',
+          since: isoN(relay.suspicion.firstSeenAt),
+        });
+      }
+      for (const e of l4Edges) {
+        const l = listenerOf(e);
+        if (!l || l.retired) continue;
+        if (verificationCurrent(e, l)) continue;
+        const stale = verificationStale(e, l);
+        if (e.publication === 'unpublished' && !stale) {
+          items.push({
+            ...base(relay),
+            id: `spare_untested:${e._id}`,
+            kind: 'spare_untested',
+            severity: 'warning',
+            edgeId: e._id as string,
+            listenerKey: l.listenerKey,
+            code: 'unverified_endpoint',
+            facts: { publication: e.publication },
+            action: 'verify_endpoint',
+            since: iso(e.statusChangedAt),
+          });
+        } else if (stale) {
+          items.push({
+            ...base(relay),
+            id: `retest_needed:${e._id}`,
+            kind: 'retest_needed',
+            severity: 'warning',
+            edgeId: e._id as string,
+            listenerKey: l.listenerKey,
+            code: 'verification_stale',
+            facts: {
+              publication: e.publication,
+              verifiedRevision: e.verification?.listenerRevision ?? null,
+              listenerRevision: l.revision,
+            },
+            action: 'verify_endpoint',
+            since: isoN(e.verification?.at),
+          });
+        }
+      }
       for (const e of edges) {
         if (e.publication !== 'published') continue;
         const unreachable = (e.reachability?.byCountry ?? []).filter(
@@ -878,6 +977,43 @@ export const attention = internalQuery({
             since: isoN(e.reachability?.updatedAt),
           });
         }
+      }
+      // Coverage at the cap: a deployed listener has no published edge, every
+      // slot is taken and no expansion can make room. Only a rebalance
+      // (unpublishing a duplicate) frees a slot, and that is the operator's call.
+      const capacity = requiredPoolSize({
+        desiredPublished: relay.desiredPublished,
+        publishedEdgeIds: relay.publishedEdgeIds,
+        listeners: listeners.map((l) => ({
+          id: l._id as string,
+          templateEdgeId: (l.templateEdgeId as string | undefined) ?? null,
+          deployed: l.deployed,
+          enabled: l.enabled,
+          retired: l.retired,
+        })),
+      });
+      if (relay.enabled && capacity.blocked > 0) {
+        const waiting = uncoveredListeners(
+          listeners.map((l) => ({
+            id: l._id as string,
+            key: l.listenerKey,
+            templateEdgeId: (l.templateEdgeId as string | undefined) ?? null,
+            deployed: l.deployed,
+            enabled: l.enabled,
+            retired: l.retired,
+          })),
+        );
+        items.push({
+          ...base(relay),
+          id: `pool_rebalance:${relay._id}`,
+          kind: 'pool_rebalance',
+          severity: 'warning',
+          listenerKey: waiting[0]?.key ?? null,
+          code: null,
+          facts: { published, desired: relay.desiredPublished, uncovered: waiting.length },
+          action: 'rebalance',
+          since: null,
+        });
       }
       if (relay.enabled && published < relay.desiredPublished) {
         const idle = edges.filter((e) => e.status === 'active' && e.publication === 'unpublished');

@@ -15,9 +15,20 @@ export type ProbeAddressKind = 'ip' | 'name';
  * What the probe speaks. `tcp` is a bare connect (a TLS alert still means the
  * peer answered: a REALITY endpoint never presents a certificate for a random
  * SNI). `tls` is a real handshake with SNI, so a certificate or handshake
- * failure IS unreachable. `https` adds a request on top of `tls`.
+ * failure IS unreachable. `https` adds a request on top of `tls`. `tls-sni` is
+ * the INTERNAL protocol-shape check of an L4 edge in front of a REALITY / TLS
+ * listener: a full handshake to the edge ADDRESS with SNI = one of the
+ * listener's active names (`servername`), chain verified for that name, no
+ * HTTP. It is shape evidence only: a forwarder aimed at the camouflage site
+ * presents that site's certificate and passes it. External vantages cannot
+ * set an SNI against an IP literal, so they treat it as `tcp`.
  */
-export type ProbeProtocol = 'tcp' | 'tls' | 'https';
+export type ProbeProtocol = 'tcp' | 'tls' | 'https' | 'tls-sni';
+
+/** A bare connect from a vantage (`tcp`, and `tls-sni` seen from outside). */
+export function isBareConnect(p: ProbeProtocol | undefined): boolean {
+  return (p ?? 'tcp') === 'tcp' || p === 'tls-sni';
+}
 /** The family FCP asked for; `any` for a name (the resolver decides). */
 export type RequestedFamily = 4 | 6 | 'any';
 
@@ -39,6 +50,8 @@ export interface ProbeTarget {
   port: number;
   addressKind: ProbeAddressKind;
   protocol: ProbeProtocol;
+  /** `tls-sni` only: the listener name presented as SNI and verified against the chain. */
+  servername?: string;
   requestedFamily: RequestedFamily;
   /**
    * The family of an IP-literal target, and the observed family of a name a

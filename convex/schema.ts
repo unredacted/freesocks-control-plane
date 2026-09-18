@@ -332,6 +332,56 @@ const probeReachabilitySummary = v.object({
   updatedAt: v.number(),
 });
 const probeTargetKind = v.union(v.literal('edge'), v.literal('relay'), v.literal('custom'));
+// What a probe speaks (lib/edges/probes/types.ts `ProbeProtocol`). `tls-sni` is
+// the internal protocol-shape check of an L4 edge in front of a REALITY / TLS
+// listener: a handshake with SNI = one of the listener's active names, chain
+// verified for that name. Shape evidence only (a forwarder aimed at the
+// camouflage site passes it); never authentication.
+const probeProtocolV = v.union(
+  v.literal('tcp'),
+  v.literal('tls'),
+  v.literal('https'),
+  v.literal('tls-sni'),
+);
+// Configuration-bound endpoint verification of an L4 edge (lib/edges/verification.ts).
+// `verified` is set ONLY by an operator's confirmation against the exact
+// binding they were shown; `partial` is the probe ceiling, written by the
+// system (`method: 'probe'`, lib/edges/verifyRung.ts) from probe evidence and
+// never satisfying the publication gate. The record proves nothing by itself:
+// `verificationCurrent` compares revision + configHash.
+const relayEdgeVerification = v.object({
+  rung: v.union(v.literal('partial'), v.literal('verified')),
+  by: v.union(v.literal('admin'), v.literal('system')),
+  at: v.number(),
+  endpoint: v.string(), // "host:port" (or the hostname) the operator connected to
+  listenerKey: v.string(),
+  listenerRevision: v.number(),
+  configHash: v.string(),
+  method: v.union(
+    v.literal('test_link'),
+    v.literal('named_connection'),
+    v.literal('l7_proof'),
+    v.literal('probe'),
+  ),
+});
+// Provider-account trust evidence (lib/edges/autoQualify.ts): who trusted the
+// account and, when it came from an endpoint, the exact configuration that was
+// proven. Ids and hashes only: never an address.
+const relayAccountQualification = v.object({
+  by: v.union(v.literal('admin'), v.literal('auto')),
+  at: v.number(),
+  evidence: v.optional(
+    v.object({
+      edgeId: v.id('edges'),
+      endpoint: v.string(),
+      accountTestedAt: v.number(),
+      templateHash: v.string(),
+      listenerId: v.id('relayListeners'),
+      listenerRevision: v.number(),
+      proofCheckedAt: v.optional(v.number()),
+    }),
+  ),
+});
 
 const relayProbeSource = v.union(
   v.literal('globalping'),
@@ -1003,6 +1053,19 @@ export default defineSchema({
     // selection uses qualified accounts only.
     qualified: v.boolean(),
     qualifiedTemplateHash: v.optional(v.string()),
+    // How the trust was taken (an operator override or the L7 auto-trust rule)
+    // and the version-bound evidence behind it.
+    qualification: v.optional(relayAccountQualification),
+    // A manual untrust (`setQualified(false)`) holds the automatic rules off
+    // until an operator trusts again or the credentials change.
+    autoQualifyHold: v.optional(v.boolean()),
+    // When the credentials or locating settings last changed (an edit, not a
+    // keep-qualification rotation): auto-trust needs a test AFTER this.
+    credentialsChangedAt: v.optional(v.number()),
+    // When an account this one depends on (its DNS account) last changed its
+    // credentials or settings: a proof or test taken before this was taken
+    // through the OLD dependency, so auto-trust needs both AFTER it.
+    dependencyChangedAt: v.optional(v.number()),
     priority: v.number(),
     // Allocation limits: provider calls that create billable resources per UTC
     // day (0 = unlimited) and the number of not-yet-destroyed edges.
@@ -1062,6 +1125,8 @@ export default defineSchema({
     providerPreference: v.optional(relayProviderId),
     desiredPublished: v.number(),
     standbyPerRelay: v.number(),
+    // Verified standbys kept per coverage listener (absent = the config default at read).
+    standbyPerListener: v.optional(v.number()),
     cooldownMs: v.number(),
     maxRotationsPerDay: v.number(),
     drainMs: v.number(),
@@ -1087,6 +1152,14 @@ export default defineSchema({
       v.object({ rotationId: v.id('edgeRotations'), since: v.number(), reason: v.string() }),
     ),
     deleting: v.optional(v.boolean()),
+    // Guided setup: the delivery binding is claimed at go-live, not at insert
+    // (`claimDeliveryBinding`); until then the origin serves its raw body.
+    bindingDeferred: v.optional(v.boolean()),
+    // A setup run owns this relay: reconcile upkeep and the detector's automatic
+    // replacement skip it until the run clears the flag (independent of the run's state).
+    setupOwned: v.optional(v.boolean()),
+    // The stage the setup run recorded last (informational; the run machine is a later release).
+    setupStage: v.optional(v.string()),
     // Block-detector state (convex/edgeDetector.ts).
     suspicion: v.optional(
       v.object({
@@ -1305,6 +1378,10 @@ export default defineSchema({
         ),
       }),
     ),
+    // L4: the operator's per-endpoint confirmation, bound to the listener
+    // revision + configuration hash it was taken against. The publication gate
+    // (relays.checkPublishable) refuses an L4 edge without a CURRENT one.
+    verification: v.optional(relayEdgeVerification),
     // Fastly shared-service teardown (an adopted domain on a service FCP does
     // not own): the persisted version workflow, serialized per service.
     sharedTeardown: v.optional(
@@ -1507,7 +1584,7 @@ export default defineSchema({
     // What the probe speaks. Default `tcp` (a bare connect): a hostname does
     // not imply HTTPS, and a REALITY or plaintext decoy would fail a handshake
     // probe while serving perfectly well. `tls` / `https` are opt-in per target.
-    probeProtocol: v.optional(v.union(v.literal('tcp'), v.literal('tls'), v.literal('https'))),
+    probeProtocol: v.optional(probeProtocolV),
     enabled: v.boolean(),
     notes: v.optional(v.string()),
     reachability: v.optional(probeReachabilitySummary),
@@ -1529,7 +1606,7 @@ export default defineSchema({
     // Independent of the family: what kind of address was probed, what the
     // probe spoke, and which family was requested (`any` for a name).
     addressKind: v.optional(v.union(v.literal('ip'), v.literal('name'))),
-    probeProtocol: v.optional(v.union(v.literal('tcp'), v.literal('tls'), v.literal('https'))),
+    probeProtocol: v.optional(probeProtocolV),
     requestedFamily: v.optional(v.union(v.literal(4), v.literal(6), v.literal('any'))),
     externalId: v.optional(v.string()),
     status: v.union(
@@ -1582,7 +1659,7 @@ export default defineSchema({
     // unless `addressKind` is `name` (probed by name: no family).
     ipVersion: v.optional(v.union(v.literal(4), v.literal(6))),
     addressKind: v.optional(v.union(v.literal('ip'), v.literal('name'))),
-    probeProtocol: v.optional(v.union(v.literal('tcp'), v.literal('tls'), v.literal('https'))),
+    probeProtocol: v.optional(probeProtocolV),
     // Listener port probed; absent = the legacy single-port row, adopted (and
     // stamped) by the first per-port run that lands on its path.
     port: v.optional(v.number()),

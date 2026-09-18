@@ -26,6 +26,7 @@ import type {
   DeliveryUnavailableCode,
   LayerExclusionCode,
   PreflightBlockerCode,
+  PoolCode,
   PreflightWarningCode,
   SetupBlockerCode,
   SetupStepId,
@@ -49,7 +50,8 @@ type KnownCode =
   | PreflightWarningCode
   | AttentionKind
   | LayerExclusionCode
-  | DeliveryUnavailableCode;
+  | DeliveryUnavailableCode
+  | PoolCode;
 
 const COPY = {
   // --- origin --------------------------------------------------------------------------
@@ -179,6 +181,12 @@ const COPY = {
     explain:
       'Subscriptions on this origin are edge-required but nothing can be served for them yet.',
     fix: 'Publish an edge and turn rendering on.',
+  },
+  binding_deferred: {
+    label: 'Go-live pending',
+    explain:
+      'This relay was set up with its delivery binding deferred: members still receive the direct address until it goes live.',
+    fix: 'Finish the guided setup so the relay goes live.',
   },
   // --- first edge ----------------------------------------------------------------------
   no_edge: {
@@ -434,6 +442,18 @@ const COPY = {
     label: 'Edge unhealthy',
     explain: 'The edge health is offline or degraded.',
   },
+  unverified_endpoint: {
+    label: 'Address not yet tested',
+    explain:
+      'An address goes live only after you have tried it with a real session against its current configuration.',
+    fix: 'Import the test link into a client, connect, then mark the address as working.',
+  },
+  no_verified_spare: {
+    label: 'No tested spare',
+    explain:
+      'Replacing this address needs a spare you have already tested; a new address cannot go live untested.',
+    fix: 'Create a spare address, test it, then replace.',
+  },
   // --- preflight: selection -------------------------------------------------------------
   no_compatible_listener: {
     label: 'No compatible listener',
@@ -561,6 +581,35 @@ const COPY = {
     explain: 'Fewer edges are published than the relay wants.',
     fix: 'Provision or publish an edge.',
   },
+  go_live_pending: {
+    label: 'Go-live pending',
+    explain:
+      'An edge is published for this relay but its delivery binding is still deferred, so members keep the direct address.',
+    fix: 'Finish the guided setup to go live.',
+  },
+  pool_rebalance: {
+    label: 'Make room for a listener',
+    explain:
+      'A deployed listener has no published edge, every pool slot is taken and the pool is at its cap.',
+    fix: 'Rebalance: one duplicate edge goes back to standby so the listener can be published.',
+  },
+  needs_test: {
+    label: 'Blocked and the spare is untested',
+    explain:
+      'The address on this node looks blocked and automatic replacement has no spare you have tested.',
+    fix: 'Test the spare address with a real session, then replace.',
+  },
+  spare_untested: {
+    label: 'Spare address untested',
+    explain: 'A spare address exists but has not been tried with a real session yet.',
+    fix: 'Test it once; automatic replacement can then use it.',
+  },
+  retest_needed: {
+    label: 'Retest needed',
+    explain:
+      'The listener or the address changed since you tested it, so the test no longer counts.',
+    fix: 'Test the address again against its current configuration.',
+  },
   drift: {
     label: 'Drift',
     explain: 'What the provider reports differs from what FCP recorded for an edge.',
@@ -652,6 +701,46 @@ const COPY = {
     label: 'No load signal',
     explain: 'This origin kind reports no user load, so the detector uses reports and probes only.',
   },
+  // --- published pool (reserved allocation, capacity, rebalance) -------------------------
+  pool_full: {
+    label: 'Pool full',
+    explain: 'Every published slot of this relay is taken.',
+    fix: 'Raise the published edges wanted on the relay, or unpublish an edge first.',
+  },
+  pool_reserved: {
+    label: 'Slot reserved',
+    explain:
+      'The free pool slots are held for listeners that have no published edge yet, so a second edge for an already covered listener cannot take one.',
+    fix: 'Publish an edge for the uncovered listener first, or raise the published edges wanted.',
+  },
+  pool_raised: {
+    label: 'Pool size raised',
+    explain:
+      'The published edges wanted were raised so every deployed listener has a slot of its own.',
+  },
+  listener_cap: {
+    label: 'Listener cap reached',
+    explain:
+      'A relay can carry at most eight deployed, enabled listeners, one published slot each; this one would be the ninth.',
+    fix: 'Retire or disable a listener you do not need, or register the listener on another relay.',
+  },
+  pool_below_coverage: {
+    label: 'Pool below coverage',
+    explain:
+      'The published edges wanted cannot go below the number of deployed, enabled listeners: each needs a slot of its own.',
+    fix: 'Retire or disable a listener first, then lower the published edges wanted.',
+  },
+  no_duplicate: {
+    label: 'Nothing to rebalance',
+    explain:
+      'Every published edge is the template edge of its listener; there is no duplicate to unpublish.',
+    fix: 'Raise the published edges wanted, or retire a listener you do not need.',
+  },
+  setup_owned: {
+    label: 'Owned by a setup run',
+    explain: 'A guided setup owns this relay, so automatic replacement leaves it alone.',
+    fix: 'Finish or cancel the setup run.',
+  },
 } as const satisfies Record<KnownCode, CodeCopy> & Record<string, CodeCopy>;
 
 // --- refusal codes ---------------------------------------------------------------------------
@@ -702,6 +791,15 @@ const REFUSAL_COPY = {
     label: 'Asked too often',
     explain: 'That was asked too often. This call reaches a panel or a provider, so it is limited.',
     fix: 'Wait a minute and try again.',
+  },
+  verification_stale: {
+    label: 'Configuration changed',
+    explain: 'The address or its listener changed since this test link was shown.',
+    fix: 'Fetch the test link again and retest the address.',
+  },
+  l7_proof_required: {
+    label: 'Proven automatically',
+    explain: 'A CDN front is verified by its own end-to-end proof, not by hand.',
   },
 } as const satisfies Record<string, CodeCopy>;
 
@@ -944,7 +1042,10 @@ export const ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
   qualify_front: 'Qualify front',
   rotate: 'Rotate',
   test_credentials: 'Test credentials',
+  verify_endpoint: 'Test the address',
   thaw: 'Thaw',
+  rebalance: 'Make room',
+  require_edges: 'Go live',
 };
 
 export function severityTone(s: AttentionSeverity): Tone {
@@ -1015,6 +1116,9 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'admin.edge.probe.change': 'Probe settings changed',
   'admin.edge.maintenance': 'Maintenance switch changed',
   'admin.edge.reset': 'Edge tables reset',
+  'edge.pool_expanded': 'Pool expanded for an uncovered listener',
+  'edge.relay.rebalanced': 'Duplicate edge sent back to standby',
+  'edge.automation.set': 'Automatic protection switched',
   'probe.requested': 'Probe requested',
   'probe.run': 'Probe run finished',
   'probe.verdict': 'Reachability verdict changed',

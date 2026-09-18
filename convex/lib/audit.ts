@@ -272,7 +272,25 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'edge.provider_account.update': ['name', 'provider'],
   'edge.provider_account.delete': ['name', 'provider'],
   'edge.provider_account.upsert': ['name', 'provider', 'created'],
-  'edge.provider_account.qualified': ['name', 'provider', 'qualified'],
+  'edge.provider_account.qualified': [
+    'name',
+    'provider',
+    'qualified',
+    'edgeId',
+    'endpointEvidence',
+  ],
+  // The L7 auto-trust rule (lib/edges/autoQualify.ts): ids only, never the endpoint.
+  'edge.provider_account.auto_qualified': [
+    'name',
+    'provider',
+    'qualified',
+    'edgeId',
+    'endpointEvidence',
+  ],
+  // An operator confirmed an L4 endpoint (lib/edges/verification.ts): never the address.
+  'edge.verified': ['relaySlug', 'edgeId', 'listenerKey', 'method'],
+  // The system's `partial` rung moved (lib/edges/verifyRung.ts): the word only, never the address.
+  'edge.verification.rung': ['relaySlug', 'edgeId', 'listenerKey', 'rung'],
   // Rotation keeps the qualification: booleans only, never a key or identifier.
   'edge.provider_account.credentials_rotated': [
     'name',
@@ -290,7 +308,7 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'edge.profile.qualified': ['slug', 'provider', 'tlsOk', 'authOk'],
   'edge.profile.sni.retire': ['profileSlug', 'count'],
   'edge.profile.sni.reactivate': ['profileSlug', 'count'],
-  'relay.create': ['slug'],
+  'relay.create': ['slug', 'bindingDeferred', 'poolRaised'],
   // `changed` = names of the fields the write touched (never their values);
   // the three booleans are the operator-owned knob flips, when they changed.
   'relay.update': ['slug', 'changed', 'autoRotate', 'hostMode', 'enabled'],
@@ -298,7 +316,13 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'relay.qualification_credential': ['slug', 'minted', 'revoked', 'replaced'],
   'relay.delete': ['slug', 'force', 'disposition'],
   'relay.upsert': ['slug', 'created', 'changed'],
-  'edge.adopted': ['slug', 'edgeId', 'managed', 'publication', 'refused', 'shared'],
+  // Coverage: a full pool expanded (within the cap) for an uncovered listener; a
+  // rebalance unpublished a duplicate back to standby. Counts and ids only.
+  'edge.pool_expanded': ['relaySlug', 'from', 'to', 'blocked'],
+  'edge.relay.rebalanced': ['relaySlug', 'edgeId', 'poolIndex', 'epoch'],
+  // The automation switch: the one boolean it was set to.
+  'edge.automation.set': ['on'],
+  'edge.adopted': ['slug', 'edgeId', 'managed', 'publication', 'refused', 'shared', 'verified'],
   'relay.slot.upsert': ['relaySlug', 'slotKey', 'created'],
   'relay.slot.retire': ['relaySlug', 'slotKey'],
   'edge.published': ['relaySlug', 'edgeId', 'poolIndex', 'epoch', 'rotationId'],
@@ -363,6 +387,7 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
     'listenersUpdated',
     'listenersRetired',
     'adopted',
+    'poolRaised',
   ],
   'relay.listener.upsert': ['relaySlug', 'listenerKey', 'created'],
   'relay.listener.retire': ['relaySlug', 'listenerKey'],

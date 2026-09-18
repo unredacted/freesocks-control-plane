@@ -167,7 +167,7 @@
           unit="edges"
           bounds={bounds['desiredPublishedDefault']}
           min={1}
-          max={4}
+          max={8}
           defaultValue={num(defaults['desiredPublishedDefault'])}
           helper="How many edges members are spread over. More edges cost more and survive a block better."
         />

@@ -66,6 +66,9 @@ export const ATTENTION_ACTION_PLAN = {
     },
   },
   test_credentials: { type: 'call', confirm: null },
+  // The endpoint test is a page (import the test link, connect, tick), never a
+  // one-click call: the tick must echo the binding the operator was shown.
+  verify_endpoint: { type: 'navigate' },
   thaw: {
     type: 'call',
     confirm: {
@@ -75,6 +78,17 @@ export const ATTENTION_ACTION_PLAN = {
       danger: false,
     },
   },
+  rebalance: {
+    type: 'call',
+    confirm: {
+      title: 'Make room for the listener?',
+      body: 'One duplicate edge goes back to standby so the uncovered listener can be published. Members using that edge move to another one on their next subscription refresh.',
+      confirmLabel: 'Make room',
+      danger: true,
+    },
+  },
+  // Go-live is the guided setup's own step; the row navigates to the relay.
+  require_edges: { type: 'navigate' },
 } as const satisfies Record<AttentionAction, AttentionPlan>;
 
 /**
@@ -94,6 +108,7 @@ export function attentionTarget(item: AttentionItem): string {
     case 'publish':
     case 'qualify_front':
     case 'rotate':
+    case 'verify_endpoint':
       return relay({ tab: 'edges', edge: item.edgeId });
     case 'look_at_host':
       return relay({ tab: 'listeners', listener: item.listenerKey });
@@ -110,6 +125,10 @@ export function attentionTarget(item: AttentionItem): string {
       return edgesPaths.settings();
     case 'thaw':
       return edgesPaths.settings({ section: 'maintenance' });
+    case 'rebalance':
+      return relay({ tab: 'edges' });
+    case 'require_edges':
+      return relay(undefined);
   }
 }
 

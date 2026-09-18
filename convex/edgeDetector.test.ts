@@ -15,6 +15,7 @@ import { publishedEdgesOf } from './edgeRender';
 import { assignEndpoints } from './lib/edges/assignment';
 import {
   adoptL4Edge,
+  createAccount,
   FIXTURE_CONFIG_PROFILE,
   insertPanelServer,
   realityListener,
@@ -77,6 +78,20 @@ async function seed() {
   const { relayId, listenerId } = await registerRelay(t, { listeners: [listenerU()] });
   const a = await adoptL4Edge(t, relayId, listenerId, { ipv4: EDGE_A, publish: true });
   const b = await adoptL4Edge(t, relayId, listenerId, { ipv4: EDGE_B, publish: true });
+  // A TESTED spare the selection would take (a managed edge of a provider
+  // without member health: `unknown` satisfies the health rule): an automatic
+  // replacement switches only to one of those (`edge.no_verified_spare`
+  // otherwise; the publication-gate test pins it).
+  const accountId = await createAccount(t, {
+    provider: 'upcloud',
+    name: 'acct-u',
+    qualified: true,
+  });
+  const spare = await adoptL4Edge(t, relayId, listenerId, {
+    ipv4: '198.51.100.3',
+    publish: false,
+    accountId,
+  });
   return {
     t,
     tierId,
@@ -85,6 +100,7 @@ async function seed() {
     listenerId,
     edgeA: a.edgeId as Id<'edges'>,
     edgeB: b.edgeId as Id<'edges'>,
+    spare: spare.edgeId as Id<'edges'>,
   };
 }
 

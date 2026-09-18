@@ -93,6 +93,7 @@ const RESERVED = new Set([
   'setup-status',
   'maintenance',
   'delivery-bindings',
+  'automation',
 ]);
 
 /**
@@ -138,7 +139,8 @@ export function isRegistrationRoute(parts: string[]): boolean {
  * callers are additionally confined to their token's registration boundary.
  */
 export function scopeFor(parts: string[], method: string): string | string[] {
-  const ns = parts[0] === 'config' ? 'settings' : 'servers';
+  // The automation switch writes `edge.*` config: the settings scope, like `config`.
+  const ns = parts[0] === 'config' || parts[0] === 'automation' ? 'settings' : 'servers';
   const write = method !== 'GET' && !(method === 'POST' && isReadOnlyPost(parts));
   const full = `admin:${ns}:${write ? 'write' : 'read'}`;
   if (isRegistrationRoute(parts) && method !== 'POST' && method !== 'PATCH')
@@ -392,6 +394,12 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
     }
     if (c === 'live')
       return json(await ctx.runQuery(internal.edgeAdmin.liveView, { edgeId: id<'edges'>(b) }));
+    if (c === 'verification-binding' && !d) {
+      // What the operator is about to test, exactly as `POST .../verify` must
+      // echo it back (the test-link builder reuses this).
+      const b2 = await ctx.runQuery(internal.edgeVerification.binding, { edgeId: id<'edges'>(b) });
+      return b2 ? json(b2) : notFound();
+    }
     if (!c) {
       const detail = await ctx.runQuery(internal.edgeAdmin.edgeDetail, {
         edgeId: id<'edges'>(b),
@@ -508,6 +516,11 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
         ...act,
       }),
     );
+  // The one automation switch (settings scope): `{on: boolean}`.
+  if (a === 'automation' && !b) {
+    if (typeof body.on !== 'boolean') return errorJson('validation', 'on must be a boolean', 400);
+    return json(await ctx.runMutation(internal.edgeAdmin.setAutomation, { on: body.on, ...act }));
+  }
   if (a === 'providers') {
     if (!b) {
       const created = (await ctx.runMutation(internal.edgeProviderAccounts.create, {
@@ -628,8 +641,11 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
     return notFound();
   }
   if (a === 'relays') {
-    if (!b)
-      return json(await ctx.runMutation(internal.relays.create, { ...body, ...act } as never));
+    if (!b) {
+      // `deferBinding` / `setupOwned` are internal (a guided setup run); a request body never sets them.
+      const { deferBinding: _defer, setupOwned: _owned, ...rest } = body;
+      return json(await ctx.runMutation(internal.relays.create, { ...rest, ...act } as never));
+    }
     if (b === 'node-candidates' && c === 'refresh') {
       const serverId = id<'backendServers'>(String(body.backendServerId ?? ''));
       const r = await ctx.runAction(internal.backendNodes.refreshNodeInventory, {
@@ -706,6 +722,10 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
       );
     }
     switch (c) {
+      case 'rebalance':
+        // Coverage at the cap: unpublish ONE duplicate back to standby so
+        // upkeep can publish the uncovered listener. Never automatic.
+        return json(await ctx.runMutation(internal.relays.rebalance, { relayId, ...act }));
       case 'qualification-credential':
         // Mint (or re-mint) the panel account the L7 front qualification
         // authenticates with; the credential never leaves the server.
@@ -901,6 +921,32 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
         // Run the authenticated end-to-end session through this L7 front now and
         // store the verdict with the configuration it proved.
         return json(await ctx.runAction(internal.frontQualifyOps.run, { edgeId }));
+      case 'verify': {
+        // The operator's per-endpoint confirmation of an L4 edge: the body
+        // echoes the binding `GET .../verification-binding` showed; the
+        // mutation recomputes it and refuses a mismatch (`edge.verification_stale`).
+        const method = body.method === 'named_connection' ? 'named_connection' : 'test_link';
+        if (
+          typeof body.endpoint !== 'string' ||
+          typeof body.listenerRevision !== 'number' ||
+          typeof body.configHash !== 'string'
+        )
+          return errorJson(
+            'validation',
+            'endpoint, listenerRevision and configHash are required',
+            400,
+          );
+        return json(
+          await ctx.runMutation(internal.edgeVerification.confirm, {
+            edgeId,
+            endpoint: body.endpoint,
+            listenerRevision: body.listenerRevision,
+            configHash: body.configHash,
+            method,
+            ...act,
+          }),
+        );
+      }
       case 'retry-destroy':
         return json(
           await ctx.runMutation(internal.edgeReconcileMutations.retryDestroy, { edgeId, ...act }),

@@ -10,6 +10,7 @@
  * (`eyeball-network` vs `datacenter-network`).
  */
 import {
+  isBareConnect,
   normalizeCountry,
   shortError,
   type ProbeRequestOptions,
@@ -30,7 +31,7 @@ export interface GlobalpingLike {
 export type GlobalpingKind = 'ping' | 'http';
 
 export function globalpingKind(target: Pick<ProbeTarget, 'protocol'>): GlobalpingKind {
-  return target.protocol === 'tcp' ? 'ping' : 'http';
+  return isBareConnect(target.protocol) ? 'ping' : 'http';
 }
 
 /** `ipVersion` is only sent when FCP asked for a family: a name is left to the resolver. */

@@ -246,6 +246,7 @@ async function revokeMovedDefaults(
     await ctx.db.patch(fresh._id, {
       qualified: false,
       qualifiedTemplateHash: undefined,
+      qualification: undefined,
       updatedAt: Date.now(),
     });
     await writeAuditLog(ctx, {
@@ -383,6 +384,7 @@ export const update = internalMutation({
       await ctx.db.patch(acct._id, {
         qualified: false,
         qualifiedTemplateHash: undefined,
+        qualification: undefined,
         updatedAt: Date.now(),
       });
       await writeAuditLog(ctx, {

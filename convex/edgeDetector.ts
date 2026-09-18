@@ -382,6 +382,7 @@ export const run = internalAction({
             cfg: w.cfg,
             origin: {
               autoRotate: w.origin.autoRotate,
+              setupOwned: w.origin.setupOwned === true,
               quarantined: !!w.origin.quarantine,
               rotationActive: w.rotationActive,
               cooldownUntil: w.origin.cooldownUntil ?? null,

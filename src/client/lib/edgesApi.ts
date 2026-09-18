@@ -82,6 +82,8 @@ import {
   type EdgeProviderId,
   type HostMode,
   type RenderClientFamily,
+  EdgeAutomationResponse,
+  RelayRebalanceResponse,
 } from '../../shared/contracts/edges';
 
 const BASE = '/api/v1/admin/edges';
@@ -262,6 +264,9 @@ export const freezeMaintenance = (reason?: string) =>
   apiClient.post(`${BASE}/maintenance/freeze`, reason ? { reason } : {}, EdgeMaintenanceView);
 export const thawMaintenance = (reason?: string) =>
   apiClient.post(`${BASE}/maintenance/thaw`, reason ? { reason } : {}, EdgeMaintenanceView);
+/** The one automation switch: `edge.enabled` + `autoRotate` + `probe.enabled` + `autoProvisionToDesired` (+ one spare per listener when on). */
+export const setEdgeAutomation = (on: boolean) =>
+  apiClient.post(`${BASE}/automation`, { on }, EdgeAutomationResponse);
 
 // --- providers ------------------------------------------------------------------------------------
 
@@ -368,6 +373,9 @@ export const cancelRelayRotation = (relayId: string) =>
   apiClient.post(`${BASE}/relays/${enc(relayId)}/cancel`, {}, EdgeOkResponse);
 export const resolveRelayQuarantine = (relayId: string, body: ResolveQuarantineBody) =>
   apiClient.post(`${BASE}/relays/${enc(relayId)}/resolve-quarantine`, body, EdgeOkResponse);
+/** Coverage at the cap: send ONE duplicate edge back to standby so an uncovered listener can be published. */
+export const rebalanceRelay = (relayId: string) =>
+  apiClient.post(`${BASE}/relays/${enc(relayId)}/rebalance`, {}, RelayRebalanceResponse);
 export const probeRelay = (relayId: string) =>
   apiClient.post(`${BASE}/relays/${enc(relayId)}/probe`, {}, ProbeManyRequestedResponse);
 export const adoptRelayEdge = (relayId: string, body: AdoptEdgeBody) =>
