@@ -34,6 +34,8 @@ import {
   EdgeRotationDetail,
   EdgeRotationStartedResponse,
   EdgeTemplatesResponse,
+  EdgeVerificationBinding,
+  EdgeVerifyResponse,
   ProbeAuditResponse,
   ProbeReachabilityMatrix,
   ProbeRequestedResponse,
@@ -209,6 +211,8 @@ async function fixture() {
       ipv4: '198.51.100.7',
       ipv6: '2001:db8::7',
       publish: true,
+      // The operator's statement that this imported address already serves.
+      verified: true,
     })
   ).json()) as { edgeId: string };
   const standby = (await (
@@ -843,11 +847,22 @@ describe('relay admin routes', () => {
       providerScope: { provider: 'upcloud', accountId: null },
     });
     const listenerId = listeners.listeners[0].id;
+    // Without the operator's statement that the address already serves, an L4
+    // import cannot publish (the gate wants a confirmed endpoint).
+    const untested = await call('POST', `relays/${relayId}/adopt`, {
+      listenerId,
+      ipv4: '198.51.100.7',
+      ipv6: '2001:db8::7',
+      publish: true,
+    });
+    expect(untested.status).toBe(409);
+    expect(await untested.json()).toMatchObject({ error: { code: 'edge.unverified_endpoint' } });
     const adopt = await call('POST', `relays/${relayId}/adopt`, {
       listenerId,
       ipv4: '198.51.100.7',
       ipv6: '2001:db8::7',
       publish: true,
+      verified: true,
     });
     expect(adopt.status).toBe(200);
     expect(await adopt.json()).toMatchObject({ poolIndex: 0 });
@@ -1198,7 +1213,50 @@ describe('relay admin routes', () => {
     const detail = EdgeDetail.parse(await (await call('GET', publishedEdgeId)).json());
     expect(detail.live?.summary.status).toBe('running');
     expect(detail.probes.length).toBeGreaterThan(0);
-    expect(EdgeDetail.parse(await (await call('GET', standbyEdgeId)).json()).live).toBeNull();
+    const standbyDetail = EdgeDetail.parse(await (await call('GET', standbyEdgeId)).json());
+    expect(standbyDetail.live).toBeNull();
+    // The imported spare was never confirmed: the detail says so, and a
+    // publish is refused until the operator ticks the endpoint.
+    expect(standbyDetail.edge.verification).toMatchObject({
+      required: true,
+      current: false,
+      stale: false,
+      record: null,
+    });
+    const refused = await call('POST', `${standbyEdgeId}/publish`, {});
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({ error: { code: 'edge.unverified_endpoint' } });
+    // Verification binding + the confirmation that echoes it (a stale echo is refused).
+    const binding = EdgeVerificationBinding.parse(
+      await (await call('GET', `${standbyEdgeId}/verification-binding`)).json(),
+    );
+    expect(binding).toMatchObject({
+      edgeId: standbyEdgeId,
+      layer: 'l4',
+      endpoint: '198.51.100.8:443',
+      publishableAfter: true,
+      blocker: null,
+    });
+    const stale = await call('POST', `${standbyEdgeId}/verify`, {
+      ...binding,
+      listenerRevision: binding.listenerRevision + 1,
+    });
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toMatchObject({ error: { code: 'edge.verification_stale' } });
+    const verified = EdgeVerifyResponse.parse(
+      await (
+        await call('POST', `${standbyEdgeId}/verify`, {
+          endpoint: binding.endpoint,
+          listenerRevision: binding.listenerRevision,
+          configHash: binding.configHash,
+          method: 'test_link',
+        })
+      ).json(),
+    );
+    expect(verified).toMatchObject({ ok: true, edgeId: standbyEdgeId });
+    expect(
+      EdgeDetail.parse(await (await call('GET', standbyEdgeId)).json()).edge.verification,
+    ).toMatchObject({ current: true, record: { rung: 'verified', method: 'test_link' } });
     // Rotation detail: publish the standby through the machine (index 1 behind the template → no Host flip).
     const started = EdgeRotationStartedResponse.parse(
       await (await call('POST', `${standbyEdgeId}/publish`, {})).json(),

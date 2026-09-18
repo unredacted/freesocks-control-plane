@@ -13,6 +13,14 @@
  *    A certificate or handshake failure IS unreachable: an L7 front that
  *    cannot complete a handshake for its own name is not serving anyone.
  *  - `https`: a request on top of that handshake; any HTTP status is reachable.
+ *  - `tls-sni`: the protocol-SHAPE check of an L4 edge in front of a REALITY /
+ *    TLS listener: a full handshake to the edge ADDRESS with SNI =
+ *    `target.servername` (one of the listener's active names), the chain
+ *    verified for that name against the system store, no HTTP. This is shape
+ *    evidence only and never authentication: a forwarder aimed straight at the
+ *    camouflage site presents that site's own certificate and PASSES it while
+ *    every real REALITY session through it would fail (lib/edges/verifyRung.ts
+ *    caps it at the `partial` rung for that reason).
  *
  * A NAME is resolved first and every answer must be a public literal: the probe
  * runs from the control plane's own network, so a name pointing at a private
@@ -254,12 +262,13 @@ export async function internalProbe(
     if (!resolved.ok) return { ...vantage, ok: false, error: resolved.error };
     // Dial the literal the check verified; the name is only SNI / Host from here.
     const dial = pickDialAddress(resolved.addresses, target.requestedFamily);
-    if (target.protocol === 'tls') {
+    if (target.protocol === 'tls' || target.protocol === 'tls-sni') {
       return finish(
         await (deps.tlsConnect ?? defaultTlsConnect)({
           host: dial,
           port: target.port,
-          servername: target.address,
+          servername:
+            target.protocol === 'tls-sni' ? (target.servername ?? target.address) : target.address,
           timeoutMs,
         }),
       );
@@ -279,6 +288,19 @@ export async function internalProbe(
     );
   }
   const host = targetHost(target);
+  if (target.protocol === 'tls-sni') {
+    // Shape check: dial the literal, present the listener's name, verify the
+    // chain for that name. No servername = nothing to verify against = not run.
+    if (!target.servername) return { ...vantage, ok: false, error: 'no_servername' };
+    return finish(
+      await (deps.tlsConnect ?? defaultTlsConnect)({
+        host: target.address,
+        port: target.port,
+        servername: target.servername,
+        timeoutMs,
+      }),
+    );
+  }
   if (target.protocol === 'tls') {
     return finish(
       await (deps.tlsConnect ?? defaultTlsConnect)({

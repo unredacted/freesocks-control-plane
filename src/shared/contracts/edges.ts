@@ -40,6 +40,18 @@ export const EdgeProviderAccountAdmin = z.object({
   enabled: z.boolean(),
   qualified: z.boolean(),
   qualifiedTemplateHash: z.string().nullable(),
+  /** Who trusted the account and, when it came from an endpoint, which edge (ids and dates only). */
+  qualification: z
+    .object({
+      by: z.enum(['admin', 'auto']),
+      at: iso,
+      edgeId: z.string().nullable().default(null),
+      proofCheckedAt: isoN.default(null),
+    })
+    .nullable()
+    .default(null),
+  /** A manual untrust holds the automatic trust rules off until an operator trusts again. */
+  autoQualifyHold: z.boolean().default(false),
   priority: z.number(),
   dailyAllocationBudget: z.number(),
   allocationsToday: z.number(),
@@ -447,6 +459,62 @@ export const ProbeReachabilityCountry = z.object({
   failVantages: z.number(),
   lastAt: iso,
 });
+/** The L4 endpoint-verification view an admin edge carries (see `EdgeAdmin.verification`). */
+export const EdgeVerificationView = z.object({
+  required: z.boolean(),
+  /** Null when the listener could not be read (the view was built without it). */
+  current: z.boolean().nullable(),
+  stale: z.boolean().nullable(),
+  record: z
+    .object({
+      rung: z.enum(['partial', 'verified']),
+      by: z.enum(['admin', 'system']),
+      at: iso,
+      method: z.enum(['test_link', 'named_connection', 'l7_proof']),
+      listenerKey: z.string(),
+      listenerRevision: z.number(),
+    })
+    .nullable(),
+});
+export type EdgeVerificationView = z.infer<typeof EdgeVerificationView>;
+
+/**
+ * `GET edges/{id}/verification-binding`: what the operator is about to test.
+ * `POST edges/{id}/verify` must echo `endpoint`, `listenerRevision` and
+ * `configHash` exactly; the server recomputes them and refuses a mismatch.
+ */
+export const EdgeVerificationBinding = z.object({
+  edgeId: z.string(),
+  layer: EdgeLayer,
+  endpoint: z.string(),
+  listenerKey: z.string(),
+  listenerRevision: z.number(),
+  configHash: z.string(),
+  verification: EdgeVerificationView,
+  /** The gate would pass once this endpoint is confirmed (nothing else blocks it). */
+  publishableAfter: z.boolean(),
+  /** The other blocker, when one exists (a `checkPublishable` code). */
+  blocker: z.string().nullable(),
+});
+export type EdgeVerificationBinding = z.infer<typeof EdgeVerificationBinding>;
+
+export const EdgeVerifyRequest = z.object({
+  endpoint: z.string(),
+  listenerRevision: z.number(),
+  configHash: z.string(),
+  method: z.enum(['test_link', 'named_connection']).default('test_link'),
+});
+export type EdgeVerifyRequest = z.infer<typeof EdgeVerifyRequest>;
+
+export const EdgeVerifyResponse = z.object({
+  ok: z.literal(true),
+  edgeId: z.string(),
+  verifiedAt: iso,
+  /** The first confirmed endpoint of an untrusted account also trusted the account. */
+  accountTrusted: z.boolean(),
+});
+export type EdgeVerifyResponse = z.infer<typeof EdgeVerifyResponse>;
+
 export const EdgeAdmin = z.object({
   id: z.string(),
   relayId: z.string(),
@@ -502,6 +570,19 @@ export const EdgeAdmin = z.object({
     })
     .nullable()
     .default(null),
+  /**
+   * L4 endpoint verification (the operator's per-endpoint confirmation, bound
+   * to the listener revision + configuration hash). `required` is false for an
+   * L7 edge (verified by its proof); `current` is what the publication gate
+   * reads; `stale` = a record exists but no longer describes the live
+   * configuration (a retest is due).
+   */
+  verification: EdgeVerificationView.default({
+    required: true,
+    current: null,
+    stale: null,
+    record: null,
+  }),
   publication: z.enum(['unpublished', 'published', 'draining']),
   poolIndex: z.number().nullable(),
   publishedAt: isoN,
@@ -657,7 +738,7 @@ export const ProbeRunAdmin = z.object({
     .nullable()
     .default(null),
   addressKind: z.enum(['ip', 'name']).default('ip'),
-  probeProtocol: z.enum(['tcp', 'tls', 'https']).default('tcp'),
+  probeProtocol: z.enum(['tcp', 'tls', 'https', 'tls-sni']).default('tcp'),
   /** The family FCP asked for; `any` for a name (the vantage's resolver picks). */
   requestedFamily: z.union([z.literal(4), z.literal(6), z.literal('any')]).default(4),
   /** The listener port this run probed (a multi-port edge gets one run per port). */
@@ -730,7 +811,7 @@ export const ProbeTargetAdmin = z.object({
   label: z.string(),
   address: z.string(),
   port: z.number(),
-  /** What the probe speaks against this target; `tcp` (a bare connect) by default. */
+  /** What the probe speaks against this target; `tcp` (a bare connect) by default. (`tls-sni` is derived for edges only, never a custom-target choice.) */
   probeProtocol: z.enum(['tcp', 'tls', 'https']).default('tcp'),
   display: z.string(),
   enabled: z.boolean(),

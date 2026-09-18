@@ -154,6 +154,8 @@ async function seed(
     ipv4: EDGE_A,
     ipv6: EDGE_A6,
     publish: opts.publish ?? true,
+    // An import of a live front: the operator's own statement (named_connection).
+    verified: true,
   });
   return {
     t,
@@ -253,6 +255,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
       listenerId,
       ipv4: EDGE_B,
       publish: true,
+      verified: true,
     });
     const body = await (await get(t)).text();
     expect(fetchCalls).toBe(2);

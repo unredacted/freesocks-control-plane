@@ -26,10 +26,12 @@ import {
   type EdgeSettings,
 } from './lib/edges/accountSettings';
 import { resolveTemplateFor } from './edgeTemplates';
-import { EDGE_PROVIDER_CAPABILITIES } from './lib/edges/providers/capabilities';
+import { EDGE_PROVIDER_CAPABILITIES, edgeLayerOf } from './lib/edges/providers/capabilities';
 import { parseIntent, parseObservedSettings } from './lib/edges/intent';
 import { liveEdgesOfAccount } from './relays';
 import { assertAdmission } from './lib/edges/maintenance';
+import { autoQualifyDecision, type AutoQualifyEvidence } from './lib/edges/autoQualify';
+import { verificationEndpoint } from './lib/edges/verification';
 
 const NAME_RE = /^[a-z0-9][a-z0-9-]{1,62}$/;
 
@@ -55,6 +57,18 @@ export function mapAccountAdmin(r: Doc<'edgeProviderAccounts'>) {
     enabled: r.enabled,
     qualified: r.qualified,
     qualifiedTemplateHash: r.qualifiedTemplateHash ?? null,
+    // How the trust was taken (never the endpoint itself: ids + dates only).
+    qualification: r.qualification
+      ? {
+          by: r.qualification.by,
+          at: new Date(r.qualification.at).toISOString(),
+          edgeId: (r.qualification.evidence?.edgeId as string | undefined) ?? null,
+          proofCheckedAt: r.qualification.evidence?.proofCheckedAt
+            ? new Date(r.qualification.evidence.proofCheckedAt).toISOString()
+            : null,
+        }
+      : null,
+    autoQualifyHold: r.autoQualifyHold === true,
     priority: r.priority,
     dailyAllocationBudget: r.dailyAllocationBudget,
     allocationsToday: r.allocationsDayKey === dayKey() ? r.allocationsToday : 0,
@@ -315,6 +329,7 @@ async function clearQualificationOfReferencing(
     await ctx.db.patch(r._id, {
       qualified: false,
       qualifiedTemplateHash: undefined,
+      qualification: undefined,
       updatedAt: Date.now(),
     });
     n++;
@@ -515,6 +530,13 @@ export const update = internalMutation({
     if (credentialsChanged || settingsChanged || templateChanged) {
       patch.qualified = false;
       patch.qualifiedTemplateHash = undefined;
+      patch.qualification = undefined;
+    }
+    // New credentials or a moved account: the automatic rules may look again
+    // once a test AFTER this change passes (lib/edges/autoQualify.ts).
+    if (credentialsChanged || settingsChanged) {
+      patch.credentialsChangedAt = Date.now();
+      patch.autoQualifyHold = undefined;
     }
     await ctx.db.patch(a.id, patch);
     // A DNS account's new token or zone was never qualified by the accounts
@@ -677,15 +699,18 @@ export const setQualified = internalMutation({
     await assertAdmission(ctx.db, 'provider.write');
     const row = await ctx.db.get(id);
     if (!row) throw new ConvexError({ code: 'not_found', message: 'Account not found' });
-    // The hash recorded is the one of the template this account provisions
-    // with NOW (its default, else the scoped/provider default), never a
-    // client-supplied value: the template-edit invalidation keys off it.
-    const effective = qualified
-      ? await resolveTemplateFor(ctx, row.provider, null, row.defaultTemplateId ?? null, row._id)
-      : null;
+    if (qualified) {
+      // The Providers override: trusts the ACCOUNT, verifies no endpoint.
+      await applyQualification(ctx, row, { by: 'admin', actorAdminId });
+      return { ok: true as const };
+    }
+    // A manual untrust holds every automatic rule off until an operator trusts
+    // again or the credentials change.
     await ctx.db.patch(id, {
-      qualified,
-      qualifiedTemplateHash: effective ? effective.hash : undefined,
+      qualified: false,
+      qualifiedTemplateHash: undefined,
+      qualification: undefined,
+      autoQualifyHold: true,
       updatedAt: Date.now(),
     });
     await writeAuditLog(ctx, {
@@ -694,9 +719,173 @@ export const setQualified = internalMutation({
       action: 'edge.provider_account.qualified',
       targetType: 'edge_provider_account',
       targetId: id,
-      payload: { name: row.name, provider: row.provider, qualified },
+      payload: { name: row.name, provider: row.provider, qualified: false },
     });
     return { ok: true as const };
+  },
+});
+
+type QualificationCtx = import('./_generated/server').MutationCtx;
+
+/**
+ * Trust an account: the ONLY writer of `qualified: true`. The hash recorded is
+ * the one of the template this account provisions with NOW (its default, else
+ * the scoped/provider default), never a client-supplied value: the
+ * template-edit invalidation keys off it. `by` says who took the trust: an
+ * operator (the Providers override, or the first confirmed L4 endpoint, which
+ * carries endpoint evidence) or the L7 auto-trust rule. Trusting clears a
+ * manual hold.
+ */
+export async function applyQualification(
+  ctx: QualificationCtx,
+  row: Doc<'edgeProviderAccounts'>,
+  opts: {
+    by: 'admin' | 'auto';
+    actorAdminId?: Id<'adminUsers'>;
+    evidence?: Omit<AutoQualifyEvidence, 'proofCheckedAt'> & { proofCheckedAt?: number };
+  },
+): Promise<void> {
+  const effective = await resolveTemplateFor(
+    ctx,
+    row.provider,
+    null,
+    row.defaultTemplateId ?? null,
+    row._id,
+  );
+  const now = Date.now();
+  await ctx.db.patch(row._id, {
+    qualified: true,
+    qualifiedTemplateHash: effective.hash,
+    qualification: {
+      by: opts.by,
+      at: now,
+      ...(opts.evidence
+        ? {
+            evidence: {
+              edgeId: opts.evidence.edgeId as Id<'edges'>,
+              endpoint: opts.evidence.endpoint,
+              accountTestedAt: opts.evidence.accountTestedAt,
+              templateHash: opts.evidence.templateHash,
+              listenerId: opts.evidence.listenerId as Id<'relayListeners'>,
+              listenerRevision: opts.evidence.listenerRevision,
+              ...(opts.evidence.proofCheckedAt !== undefined
+                ? { proofCheckedAt: opts.evidence.proofCheckedAt }
+                : {}),
+            },
+          }
+        : {}),
+    },
+    autoQualifyHold: undefined,
+    updatedAt: now,
+  });
+  await writeAuditLog(ctx, {
+    actorType: opts.by === 'admin' ? 'admin' : 'system',
+    actorId: opts.actorAdminId ?? undefined,
+    action:
+      opts.by === 'auto'
+        ? 'edge.provider_account.auto_qualified'
+        : 'edge.provider_account.qualified',
+    targetType: 'edge_provider_account',
+    targetId: row._id,
+    // Ids only: never the endpoint.
+    payload: {
+      name: row.name,
+      provider: row.provider,
+      qualified: true,
+      ...(opts.evidence ? { edgeId: opts.evidence.edgeId, endpointEvidence: true } : {}),
+    },
+  });
+}
+
+/**
+ * The L7 auto-trust rule (lib/edges/autoQualify.ts) for ONE account: trusts it
+ * when an active edge of the account carries a current authenticated proof for
+ * the account's effective template NOW. Only ever sets `qualified: true`; every
+ * existing invalidation stays. Called after a passing front proof
+ * (frontQualify.record) and by the reconcile sweep below. L4 accounts always
+ * answer `not_l7`.
+ */
+export async function evaluateAutoQualificationFor(
+  ctx: QualificationCtx,
+  accountId: Id<'edgeProviderAccounts'>,
+  now = Date.now(),
+): Promise<{ qualified: boolean; code: string | null }> {
+  const row = await ctx.db.get(accountId);
+  if (!row) return { qualified: false, code: 'account_not_found' };
+  if (!row.enabled) return { qualified: row.qualified, code: 'account_disabled' };
+  const effective = await resolveTemplateFor(
+    ctx,
+    row.provider,
+    null,
+    row.defaultTemplateId ?? null,
+    row._id,
+  );
+  const candidates = [];
+  for (const e of await liveEdgesOfAccount(ctx.db, row._id)) {
+    const listener = await ctx.db.get(e.listenerId);
+    if (!listener || listener.retired) continue;
+    candidates.push({
+      id: e._id as string,
+      status: e.status,
+      layer: e.layer ?? edgeLayerOf(e.provider),
+      templateHash: e.templateHash ?? null,
+      listenerId: e.listenerId as string,
+      listenerRevision: listener.revision,
+      endpoint: verificationEndpoint(e),
+      frontQualification: e.frontQualification
+        ? {
+            ok: e.frontQualification.ok,
+            checkedAt: e.frontQualification.checkedAt,
+            expiresAt: e.frontQualification.expiresAt,
+            binding: {
+              listenerId: e.frontQualification.binding.listenerId as string,
+              listenerRevision: e.frontQualification.binding.listenerRevision,
+            },
+          }
+        : null,
+    });
+  }
+  const decision = autoQualifyDecision(
+    {
+      layer: edgeLayerOf(row.provider),
+      qualified: row.qualified,
+      autoQualifyHold: row.autoQualifyHold ?? false,
+      lastTestOkAt: row.lastTestOkAt ?? null,
+      lastTestError: row.lastTestError ?? null,
+      credentialsChangedAt: row.credentialsChangedAt ?? null,
+      effectiveTemplateHash: effective.hash,
+    },
+    candidates,
+    now,
+  );
+  if (!decision.ok) return { qualified: row.qualified, code: decision.code };
+  await applyQualification(ctx, row, { by: 'auto', evidence: decision.evidence });
+  return { qualified: true, code: null };
+}
+
+export const evaluateAutoQualification = internalMutation({
+  args: { accountId: v.id('edgeProviderAccounts') },
+  handler: (ctx, { accountId }) => evaluateAutoQualificationFor(ctx, accountId),
+});
+
+/**
+ * The reconcile sweep: every enabled, unqualified, unheld L7 account is
+ * evaluated (bounded: the accounts table is operator-scale). L4 accounts are
+ * never looked at here; they are trusted only by an operator.
+ */
+export const reconcileAutoQualification = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    let evaluated = 0;
+    let qualified = 0;
+    for (const row of await ctx.db.query('edgeProviderAccounts').collect()) {
+      if (!row.enabled || row.qualified || row.autoQualifyHold) continue;
+      if (edgeLayerOf(row.provider) !== 'l7') continue;
+      evaluated++;
+      if ((await evaluateAutoQualificationFor(ctx, row._id, now)).qualified) qualified++;
+    }
+    return { evaluated, qualified };
   },
 });
 

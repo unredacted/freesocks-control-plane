@@ -15,6 +15,7 @@ import type { Id } from './_generated/dataModel';
 import { z } from 'zod';
 import {
   adoptL4Edge,
+  verifyL4Edge,
   createAccount,
   FIXTURE_CONFIG_PROFILE,
   insertPanelServer,
@@ -152,11 +153,17 @@ async function gcoreListener(
 }
 
 /** A managed edge whose single `lb` step is done with one lb resource, in the given status. */
+/**
+ * A managed edge with a live resource. Confirmed by the operator by default
+ * (an L4 spare publishes only once tested); `verified: false` leaves it an
+ * UNTESTED spare.
+ */
 async function managedEdge(
   s: Awaited<ReturnType<typeof seed>>,
   lbId: string,
   patch: Record<string, unknown>,
   listenerId: Id<'relayListeners'> = s.listenerId,
+  opts: { verified?: boolean } = {},
 ) {
   const { id } = await s.t.mutation(internal.edges.insertPlanned, {
     relayId: s.relayId,
@@ -187,6 +194,8 @@ async function managedEdge(
       updatedAt: Date.now(),
     });
   });
+  if (opts.verified !== false && (patch.status ?? 'active') === 'active')
+    await verifyL4Edge(s.t, id);
   return id;
 }
 

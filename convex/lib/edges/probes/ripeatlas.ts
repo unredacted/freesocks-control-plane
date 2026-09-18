@@ -11,6 +11,7 @@
  * into one bucket in `verdict.ts` rather than faking agreement.
  */
 import {
+  isBareConnect,
   shortError,
   type ProbeProtocol,
   type ProbeRequestOptions,
@@ -129,7 +130,7 @@ export function parseRipeAtlasResults(
 ): ProbeResult[] {
   if (!Array.isArray(body)) return [];
   const af = opts.af ?? 4;
-  const alertIsAnswer = (opts.protocol ?? 'tcp') === 'tcp';
+  const alertIsAnswer = isBareConnect(opts.protocol);
   const out: ProbeResult[] = [];
   for (const raw of body as Array<Record<string, unknown>>) {
     const prb = typeof raw.prb_id === 'number' ? raw.prb_id : Number(raw.prb_id);

@@ -11,7 +11,7 @@ import { internal } from './_generated/api';
 import { realityListener, registerRelay } from './lib/edges/testing/fixtures';
 import type { Id } from './_generated/dataModel';
 import { upsertSettingRow } from './appSettings';
-import { __setGlobalpingFactory } from './probeOps';
+import { __setGlobalpingFactory, __setInternalProbeDeps } from './probeOps';
 import { familiesOf, type ResolvedTarget } from './probes';
 import { EDGE_DEFAULTS, type EdgeConfig } from './lib/edgeConfig';
 import type { GlobalpingLike } from './lib/edges/probes/globalping';
@@ -22,6 +22,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
   __setGlobalpingFactory(null);
+  __setInternalProbeDeps(null);
 });
 
 const EDGE = '198.51.100.9';
@@ -136,6 +137,7 @@ async function seed(
     listenerId,
     ipv4: EDGE,
     publish: true,
+    verified: true,
   });
   // The internal probe's fetch: any response = reachable; a connect error = down.
   vi.stubGlobal(
@@ -146,6 +148,12 @@ async function seed(
       return new Response(null, { status: 400 });
     }),
   );
+  // The REALITY listener's internal run is the `tls-sni` shape check: a real
+  // handshake, stubbed here the way `fetch` is (the same up/down switch).
+  __setInternalProbeDeps({
+    tlsConnect: async () =>
+      opts.internalOk === false ? { ok: false, error: 'ECONNREFUSED' } : { ok: true },
+  });
   return { t, relayId, edgeId: edgeId as Id<'edges'> };
 }
 
@@ -605,6 +613,7 @@ describe('relayProbes', () => {
       ipv4: '198.51.100.10',
       ipv6: '2001:db8::10',
       publish: true,
+      verified: true,
     });
     await t.run((ctx) =>
       ctx.db.patch(v6Only as Id<'edges'>, { addresses: { v6: '2001:db8::10' } }),
