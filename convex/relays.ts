@@ -1383,8 +1383,17 @@ export const finalizeDelete = internalMutation({
           await ctx.scheduler.runAfter(0, internal.relayQualification.removeBackendUser, {
             backend: server.backend,
             backendUserId,
+            backendServerId: server._id,
           });
     }
+    // An unsettled mint operation may have created a user only its username
+    // names: re-find and remove it by name (best effort, like the ids above).
+    const mint = row.qualificationMint;
+    if (mint && mint.state !== 'stored')
+      await ctx.scheduler.runAfter(0, internal.relayQualification.removeByUsername, {
+        backendServerId: mint.backendServerId,
+        username: mint.username,
+      });
     await ctx.db.delete(id);
     return { removed: true, waitingOn: null };
   },

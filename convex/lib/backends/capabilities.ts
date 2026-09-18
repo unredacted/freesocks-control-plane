@@ -55,6 +55,9 @@ export interface BackendCapabilities {
   hostDisable: boolean;
   /** The inbounds a node serves can be listed (relay listener discovery). */
   inboundDiscovery: boolean;
+  /** A user FCP created can be re-found by its username (the persisted mint
+   *  operations settle a crashed create through it). */
+  userLookupByUsername: boolean;
 }
 
 export const CAPABILITIES: Record<BackendId, BackendCapabilities> = {
@@ -72,6 +75,7 @@ export const CAPABILITIES: Record<BackendId, BackendCapabilities> = {
     nodeInventory: true,
     hostDisable: true,
     inboundDiscovery: true,
+    userLookupByUsername: true,
   },
   outline: {
     placement: false,
@@ -87,6 +91,7 @@ export const CAPABILITIES: Record<BackendId, BackendCapabilities> = {
     nodeInventory: false,
     hostDisable: false,
     inboundDiscovery: false,
+    userLookupByUsername: false,
   },
 };
 
