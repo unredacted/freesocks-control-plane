@@ -12,6 +12,8 @@
    *   hrefFor?: (entry: TimelineRow) => string | null    make an entry a link (e.g. to its rotation)
    *   max?: number                          show at most this many, with a "Show all" button
    *   label?: string                        accessible name (default 'Timeline')
+   *   labelFor?: (action: string) => string the words for an action (default auditActionLabel;
+   *                                         the simple node page passes plainAuditActionLabel)
    *   class?: string
    */
   import Waypoints from '@lucide/svelte/icons/waypoints';
@@ -37,6 +39,7 @@
     hrefFor?: (entry: TimelineRow) => string | null;
     max?: number;
     label?: string;
+    labelFor?: (action: string) => string;
     class?: string;
   }
   let {
@@ -46,6 +49,7 @@
     hrefFor,
     max,
     label = 'Timeline',
+    labelFor = auditActionLabel,
     class: className,
   }: Props = $props();
 
@@ -91,10 +95,10 @@
           <p>
             {#if href}
               <Link {href} class="font-medium underline-offset-4 hover:underline">
-                {auditActionLabel(entry.action)}
+                {labelFor(entry.action)}
               </Link>
             {:else}
-              <span class="font-medium">{auditActionLabel(entry.action)}</span>
+              <span class="font-medium">{labelFor(entry.action)}</span>
             {/if}
           </p>
           <p class="text-muted-foreground text-xs">

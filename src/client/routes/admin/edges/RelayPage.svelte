@@ -98,7 +98,7 @@
 {#if notFound}
   <SectionHeader
     title="Relay not found"
-    back={{ href: edgesPaths.overview(), label: 'Edges overview' }}
+    back={{ href: edgesPaths.overview(), label: 'All relays' }}
   />
   <Card.Root>
     <Card.Header>
@@ -110,7 +110,7 @@
     </Card.Header>
     <Card.Content class="flex flex-wrap gap-4 text-sm">
       <Link href={edgesPaths.overview()} class="font-medium text-primary hover:underline">
-        Go to the Edges overview
+        Go to all relays
       </Link>
       <Link href={edgesPaths.setup()} class="font-medium text-primary hover:underline">
         Start the guided setup
@@ -120,13 +120,13 @@
 {:else if relayQ.error && !relay}
   <SectionHeader
     title={`Relay ${slug}`}
-    back={{ href: edgesPaths.overview(), label: 'Edges overview' }}
+    back={{ href: edgesPaths.overview(), label: 'All relays' }}
   />
   <AdminListState error={relayQ.error} onRetry={() => void relayQ.refetch()} />
 {:else if !relay}
   <SectionHeader
     title={`Relay ${slug}`}
-    back={{ href: edgesPaths.overview(), label: 'Edges overview' }}
+    back={{ href: edgesPaths.overview(), label: 'All relays' }}
   />
   <div class="space-y-3">
     <Skeleton class="h-9 w-80" />
@@ -137,7 +137,7 @@
   <SectionHeader
     title={relay.label ? `${relay.label} (${relay.slug})` : `Relay ${relay.slug}`}
     description="One origin behind edges: its pool, its listeners, its rotations and how reachable it is."
-    back={{ href: edgesPaths.overview(), label: 'Edges overview' }}
+    back={{ href: edgesPaths.overview(), label: 'All relays' }}
   >
     {#snippet badges()}
       <StatusBadge

@@ -66,9 +66,11 @@ export const ATTENTION_ACTION_PLAN = {
     },
   },
   test_credentials: { type: 'call', confirm: null },
-  // The endpoint test is a page (import the test link, connect, tick), never a
-  // one-click call: the tick must echo the binding the operator was shown.
-  verify_endpoint: { type: 'navigate' },
+  // The endpoint test is a card (import the test link, connect, tick), never a
+  // one-click call: the tick must echo the binding the operator was shown. A
+  // host page that offers `onAction` opens the card in place; without one the
+  // row navigates to the node page, which opens the same card.
+  verify_endpoint: { type: 'call', confirm: null },
   thaw: {
     type: 'call',
     confirm: {
@@ -87,8 +89,10 @@ export const ATTENTION_ACTION_PLAN = {
       danger: true,
     },
   },
-  // Go-live is the guided setup's own step; the row navigates to the relay.
-  require_edges: { type: 'navigate' },
+  // Go-live applies the activation policy: the host page calls `require-edges`
+  // and renders the test card for whatever comes back pending. Without
+  // `onAction` the row navigates to the node page, which offers the same button.
+  require_edges: { type: 'call', confirm: null },
 } as const satisfies Record<AttentionAction, AttentionPlan>;
 
 /**
@@ -99,7 +103,7 @@ export const ATTENTION_ACTION_PLAN = {
 export function attentionTarget(item: AttentionItem): string {
   const slug = item.relaySlug;
   const relay = (params: Parameters<typeof edgesPaths.relay>[1]) =>
-    slug ? edgesPaths.relay(slug, params) : edgesPaths.overview();
+    slug ? edgesPaths.relay(slug, params) : edgesPaths.home();
   switch (item.action) {
     case 'resolve_quarantine':
       return relay({ tab: 'rotations', rotation: item.rotationId });
@@ -108,8 +112,12 @@ export function attentionTarget(item: AttentionItem): string {
     case 'publish':
     case 'qualify_front':
     case 'rotate':
-    case 'verify_endpoint':
       return relay({ tab: 'edges', edge: item.edgeId });
+    // The simple node page renders the test card (`?test=<edgeId>`) and the go-live button.
+    case 'verify_endpoint':
+      return slug ? edgesPaths.node(slug, { test: item.edgeId }) : edgesPaths.home();
+    case 'require_edges':
+      return slug ? edgesPaths.node(slug) : edgesPaths.home();
     case 'look_at_host':
       return relay({ tab: 'listeners', listener: item.listenerKey });
     case 'provision':
@@ -127,8 +135,6 @@ export function attentionTarget(item: AttentionItem): string {
       return edgesPaths.settings({ section: 'maintenance' });
     case 'rebalance':
       return relay({ tab: 'edges' });
-    case 'require_edges':
-      return relay(undefined);
   }
 }
 

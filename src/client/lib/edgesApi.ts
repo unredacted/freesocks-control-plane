@@ -55,6 +55,9 @@ import {
   EdgeTemplatesResponse,
   EdgeTemplatesSeedResponse,
   EdgeTestCredentialsResponse,
+  EdgeVerificationBinding,
+  EdgeVerifyRequest,
+  EdgeVerifyResponse,
   ListenerSpec,
   PreflightRequest,
   PreflightResponse,
@@ -383,6 +386,12 @@ export const releaseTestLink = (edgeId: string, credentialId: string) =>
     { credentialId },
     EdgeOkResponse,
   );
+/** What the operator is about to test, exactly as `verifyEdge` must echo it. */
+export const fetchVerificationBinding = (edgeId: string) =>
+  apiClient.get(`${BASE}/edges/${enc(edgeId)}/verification-binding`, EdgeVerificationBinding);
+/** The per-endpoint confirmation of an L4 address; `edge.verification_stale` when the binding moved. */
+export const verifyEdge = (edgeId: string, body: z.infer<typeof EdgeVerifyRequest>) =>
+  apiClient.post(`${BASE}/edges/${enc(edgeId)}/verify`, body, EdgeVerifyResponse);
 export const refreshNodeCandidates = (backendServerId: string) =>
   apiClient.post(
     `${BASE}/relays/node-candidates/refresh`,
@@ -545,6 +554,9 @@ export const edgeKeys = {
   setupDraft: (draftKey: string) => [...ROOT, 'setup-status', 'draft', draftKey] as const,
   config: [...ROOT, 'config'] as const,
   maintenance: [...ROOT, 'maintenance'] as const,
+  setupRuns: [...ROOT, 'setup-runs'] as const,
+  setupRun: (runId: string) => [...ROOT, 'setup-runs', 'run', runId] as const,
+  testLinks: (edgeIds: readonly string[]) => [...ROOT, 'test-links', edgeIds.join(',')] as const,
   providers: [...ROOT, 'providers'] as const,
   providersList: [...ROOT, 'providers', 'list'] as const,
   providersUsage: [...ROOT, 'providers', 'usage'] as const,
@@ -578,11 +590,12 @@ export const edgeKeys = {
 
 // --- invalidation ---------------------------------------------------------------------------------
 
-/** Summary + attention + setup-status (every scope). */
+/** Summary + attention + setup-status (every scope) + the guided runs. */
 export function invalidateOverview(qc: QueryClient): void {
   void qc.invalidateQueries({ queryKey: edgeKeys.summary });
   void qc.invalidateQueries({ queryKey: edgeKeys.attention });
   void qc.invalidateQueries({ queryKey: edgeKeys.setupStatusAll });
+  void qc.invalidateQueries({ queryKey: edgeKeys.setupRuns });
 }
 /** Everything keyed under one relay slug, the relay list, and the overview. */
 export function invalidateRelay(qc: QueryClient, slug: string): void {
@@ -666,6 +679,40 @@ export const edgeConfigQuery = () =>
     queryKey: edgeKeys.config,
     queryFn: fetchEdgeConfig,
     staleTime: 60_000,
+  }));
+
+const RUN_TERMINAL = new Set(['done', 'done_unbound', 'failed', 'cancelled']);
+/** Every guided setup run: 15 s, 3 s while one is live. */
+export const setupRunsQuery = () =>
+  createQuery(() => ({
+    queryKey: edgeKeys.setupRuns,
+    queryFn: fetchSetupRuns,
+    staleTime: 2_000,
+    refetchInterval: (q) =>
+      q.state.data?.runs.some((r) => !RUN_TERMINAL.has(r.state)) ? 3_000 : 15_000,
+  }));
+
+/** One run as the progress view polls it: every 3 s until it is terminal. */
+export const setupRunQuery = (runId: () => string | null) =>
+  createQuery(() => ({
+    queryKey: edgeKeys.setupRun(runId() ?? ''),
+    queryFn: () => fetchSetupRun(runId()!),
+    enabled: runId() !== null,
+    staleTime: 1_000,
+    refetchInterval: (q) => (q.state.data && !RUN_TERMINAL.has(q.state.data.state) ? 3_000 : false),
+  }));
+
+/** The isolated test links of several addresses at once (each fetch is throttled server-side). */
+export const testLinksQuery = (edgeIds: () => readonly string[]) =>
+  createQuery(() => ({
+    queryKey: edgeKeys.testLinks(edgeIds()),
+    queryFn: () => Promise.all(edgeIds().map((id) => fetchTestLink(id))),
+    enabled: edgeIds().length > 0,
+    // The fetch is a POST that may mint the test credential and always reaches
+    // the panel: built once per card, never re-issued on a window focus.
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+    retry: false,
   }));
 
 export const maintenanceQuery = () =>

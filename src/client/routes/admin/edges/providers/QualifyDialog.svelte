@@ -32,12 +32,12 @@
 <ConfirmDialog
   bind:open
   title={removing
-    ? `Remove the qualification of "${account?.name ?? ''}"?`
-    : `Mark "${account?.name ?? ''}" qualified?`}
+    ? `Remove the trust of "${account?.name ?? ''}"?`
+    : `Trust override: trust "${account?.name ?? ''}" without a tested address?`}
   body={removing
-    ? 'Ordinary provisioning and rotation will skip this account until it is qualified again. Edges that already exist stay as they are.'
-    : 'Qualified accounts are used automatically when FCP provisions, rotates or replaces an edge. Confirm each point before you continue:'}
-  confirmLabel={removing ? 'Remove qualification' : 'Mark qualified'}
+    ? 'Ordinary provisioning and rotation will skip this account until it is trusted again. Edges that already exist stay as they are.'
+    : 'An account is normally trusted the first time one of its addresses is confirmed with a real session. This override trusts the account by your word alone; every new address still needs its own test before it is used. Confirm each point before you continue:'}
+  confirmLabel={removing ? 'Remove trust' : 'Trust this account'}
   danger={removing}
   onConfirm={() => (account ? onQualify(account.id, !account.qualified) : undefined)}
 >
@@ -51,8 +51,8 @@
       </p>
     {/if}
     <p class="mt-2 text-muted-foreground">
-      Changing the credentials, the settings or the effective template clears the qualification.
-      Rotating credentials keeps it.
+      Changing the credentials, the settings or the effective template clears the trust. Rotating
+      credentials keeps it.
     </p>
   {/if}
 </ConfirmDialog>

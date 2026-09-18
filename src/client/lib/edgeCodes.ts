@@ -1427,3 +1427,101 @@ export function auditActionLabel(action: string): string {
   const stripped = action.replace(/^admin\./, '');
   return humanizeCode(stripped);
 }
+
+// --- plain words (the simple screens) ---------------------------------------------------------
+// The home, node, providers and protect screens speak in plain words; the Advanced
+// pages keep the technical terms. `PLAIN_WORDS` is the table (technical -> plain),
+// `plainWords(text)` rewrites a technical sentence with it (whole words, case kept
+// on the first letter), `plainAuditActionLabel` is the Timeline map of the node page,
+// `RESTORE_PHASE_WORDS` the restore workflow's phases in words.
+
+export const PLAIN_WORDS: Record<string, string> = {
+  relay: 'protected node',
+  relays: 'protected nodes',
+  edge: 'address',
+  edges: 'addresses',
+  published: 'in use',
+  standby: 'spare',
+  standbys: 'spares',
+  draining: 'retiring',
+  rotate: 'replace address',
+  rotation: 'address replacement',
+  rotated: 'replaced',
+  burn: 'replace now (blocked)',
+  burned: 'replaced now (blocked)',
+  provision: 'create address',
+  provisioned: 'created',
+  provisioning: 'creating an address',
+  qualified: 'trusted',
+  qualification: 'trust',
+  quarantine: 'paused for safety',
+  quarantined: 'paused for safety',
+  'host flip': 'update the panel',
+  listener: 'inbound',
+  listeners: 'inbounds',
+};
+
+/** Rewrite a technical sentence in plain words (whole-word, longest match first). */
+export function plainWords(text: string): string {
+  const keys = Object.keys(PLAIN_WORDS).sort((a, b) => b.length - a.length);
+  let out = text;
+  for (const k of keys) {
+    const re = new RegExp(`\\b${k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi');
+    out = out.replace(re, (m) => {
+      const plain = PLAIN_WORDS[k]!;
+      return m[0] === m[0]!.toUpperCase() ? plain[0]!.toUpperCase() + plain.slice(1) : plain;
+    });
+  }
+  return out;
+}
+
+/** The node page's timeline: the audit action in plain words. */
+const PLAIN_AUDIT_LABELS: Record<string, string> = {
+  'relay.create': 'Node added',
+  'relay.registered': 'Node registered',
+  'relay.upsert': 'Node registered',
+  'relay.update': 'Settings changed',
+  'relay.delete': 'Protection removed',
+  'relay.host.created': 'Panel updated with the new address',
+  'relay.host.deleted': 'Old address removed from the panel',
+  'edge.published': 'Address in use',
+  'edge.unpublished': 'Address taken out of use',
+  'edge.rotated': 'Address replaced',
+  'edge.burned': 'Address replaced (blocked)',
+  'edge.rolled_back': 'Replacement rolled back',
+  'edge.rotation_failed': 'Replacement failed',
+  'edge.quarantined': 'Paused for safety',
+  'edge.quarantine_resolved': 'Safety pause lifted',
+  'edge.destroyed': 'Address destroyed',
+  'edge.verified': 'Address tested with a real session',
+  'edge.block_suspected': 'Address looks blocked',
+  'edge.block_cleared': 'Address no longer looks blocked',
+  'edge.host.hidden': 'Direct address hidden in the panel',
+  'edge.host.restored': 'Direct address restored in the panel',
+  'edge.relay.restore_started': 'Removing protection',
+  'edge.setup_run.started': 'Protection started',
+  'edge.setup_run.needs_operator': 'Protection needs you',
+  'edge.setup_run.go_live': 'Protection live',
+  'edge.setup_run.finished': 'Protection finished',
+  'edge.setup_run.cancelled': 'Protection cancelled',
+  'admin.edge.provision': 'Address requested',
+  'admin.edge.rotate': 'Replacement requested',
+  'admin.edge.burn': 'Replacement requested (blocked)',
+  'probe.verdict': 'Reachability changed',
+};
+export function plainAuditActionLabel(action: string): string {
+  return PLAIN_AUDIT_LABELS[action] ?? plainWords(auditActionLabel(action));
+}
+
+/** The restore workflow (removing protection) phase, as the node page shows it. */
+export const RESTORE_PHASE_WORDS: Record<string, string> = {
+  freeze: 'Pausing changes on this node',
+  settle: 'Waiting for the panel to settle',
+  verify_fcp_raw: 'Checking what the panel serves',
+  release_binding: 'Handing members the direct address',
+  restore: 'Restoring the direct address in the panel',
+  verify_direct: 'Checking the direct address works',
+  finish: 'Finishing',
+};
+export const restorePhaseWords = (phase: string): string =>
+  RESTORE_PHASE_WORDS[phase] ?? humanizeCode(phase);

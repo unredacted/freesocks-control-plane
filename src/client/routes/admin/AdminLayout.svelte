@@ -39,11 +39,6 @@
   import GitBranch from '@lucide/svelte/icons/git-branch';
   import HeartPulse from '@lucide/svelte/icons/heart-pulse';
   import LogOut from '@lucide/svelte/icons/log-out';
-  import LayoutGrid from '@lucide/svelte/icons/layout-grid';
-  import CloudCog from '@lucide/svelte/icons/cloud-cog';
-  import FileCog from '@lucide/svelte/icons/file-cog';
-  import Activity from '@lucide/svelte/icons/activity';
-  import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import type { LucideIcon } from '@lucide/svelte';
   import * as Collapsible from '@client/components/ui/collapsible';
@@ -71,12 +66,12 @@
   }
 
   // Nav items are either a leaf link ({ to, label, icon }) or a collapsible group
-  // ({ group, icon, children: [...] }). Backend servers + Remnawave (both server
-  // config) live under one "Servers" group; the router is unaffected (children keep
-  // their flat paths).
+  // ({ group, icon, children: [...] }). Everything that configures the fleet
+  // (backend servers, connection modes, Remnawave, Edges, storage mirrors, the
+  // status page) lives under one "Servers" group; the router is unaffected
+  // (children keep their flat paths).
   // A leaf is active on its own path and on any sub-path (`/admin/edges/providers/<id>`
-  // keeps Providers lit); `exact` opts out for a leaf whose path is a prefix of
-  // its siblings (Edges -> Overview at `/admin/edges`).
+  // keeps Edges lit); `exact` opts out for a leaf whose path is a prefix of a sibling.
   type NavLeaf = { to: string; label: string; icon: LucideIcon; exact?: boolean };
   type NavGroup = { group: string; icon: LucideIcon; children: NavLeaf[] };
   const NAV: (NavLeaf | NavGroup)[] = [
@@ -92,25 +87,19 @@
         { to: '/admin/backend-servers', label: 'Backend servers', icon: Server },
         { to: '/admin/connection-modes', label: 'Connection modes', icon: GitBranch },
         { to: '/admin/remnawave', label: 'Remnawave', icon: Waypoints },
+        // One leaf for the whole Edges section: its own pages (providers,
+        // templates, probes, settings, setup, relay and node pages) are reached
+        // from the section's in-page header, so every `/admin/edges/*` path
+        // keeps this leaf lit.
+        { to: '/admin/edges', label: 'Edges', icon: Network },
+        { to: '/admin/storage', label: 'Storage mirrors', icon: Cloud },
         { to: '/admin/status', label: 'Status page', icon: HeartPulse },
       ],
     },
-    { to: '/admin/storage', label: 'Storage mirrors', icon: Cloud },
     { to: '/admin/clients', label: 'Client apps', icon: Smartphone },
     { to: '/admin/membership-codes', label: 'Membership codes', icon: Ticket },
     { to: '/admin/billing', label: 'Billing', icon: CreditCard },
     { to: '/admin/rate-limits', label: 'Rate limits', icon: Gauge },
-    {
-      group: 'Edges',
-      icon: Network,
-      children: [
-        { to: '/admin/edges', label: 'Overview', icon: LayoutGrid, exact: true },
-        { to: '/admin/edges/providers', label: 'Providers', icon: CloudCog },
-        { to: '/admin/edges/templates', label: 'Templates', icon: FileCog },
-        { to: '/admin/edges/probes', label: 'Probes', icon: Activity },
-        { to: '/admin/edges/settings', label: 'Settings', icon: SlidersHorizontal },
-      ],
-    },
     { to: '/admin/telemetry', label: 'User reports', icon: Radar },
     { to: '/admin/audit', label: 'Audit log', icon: History },
     { to: '/admin/settings', label: 'Settings', icon: Settings },
@@ -124,12 +113,7 @@
    *  /admin/connection-modes, so that page rendered the group collapsed). */
   const leafActive = (leaf: NavLeaf) =>
     router.pathname === leaf.to || (!leaf.exact && router.pathname.startsWith(`${leaf.to}/`));
-  /** The Overview leaf also owns the section's unlisted pages (setup, relay pages). */
-  const EDGES_OVERVIEW_EXTRA = ['/admin/edges/setup', '/admin/edges/relays/'];
-  const overviewOwns = (leaf: NavLeaf) =>
-    leaf.to === '/admin/edges' &&
-    EDGES_OVERVIEW_EXTRA.some((p) => router.pathname === p || router.pathname.startsWith(p));
-  const isActive = (leaf: NavLeaf) => leafActive(leaf) || overviewOwns(leaf);
+  const isActive = (leaf: NavLeaf) => leafActive(leaf);
   const holdsActiveRoute = (item: NavGroup) => item.children.some(isActive);
 
   /** Open when the admin has toggled it, else whenever the active route lives in it
@@ -260,7 +244,9 @@
       </button>
     </div>
   </aside>
-  <section>
+  <!-- min-w-0: a grid item defaults to min-width:auto, so one long unbreakable
+       value (a test link, an address) would widen the whole content column. -->
+  <section class="min-w-0">
     {#if children}{@render children()}{/if}
   </section>
 </div>

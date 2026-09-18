@@ -449,15 +449,63 @@ seam the tests replace (`__setStageOpsForTests`).
 
 ### Admin section (Admin -> Edges)
 
-Its own lazy chunk under `src/client/routes/admin/edges/`, one nav group: **Overview**
-(`/admin/edges`: fleet tiles, attention list, readiness with resume links, relay table, probe
-chart), **guided setup** (`/admin/edges/setup?relay=<slug>`, driven entirely by `setup-status`:
-the page holds no progress state of its own), **per-relay page**
-(`/admin/edges/relays/<slug>`: overview, edges, listeners, rotations, probes; the quarantine
-resolver), **Providers** (+ per-account page), **Templates**, **Probes** (moved from Telemetry;
-the old path redirects) and **Settings** (Basics, Advanced sections, maintenance). Codes are
-never shown bare: `src/shared/contracts/edgeCodes.ts` holds the vocabularies and
-`src/client/lib/edgeCodes.ts` the words. Paths are built only in `src/client/lib/edgesApi.ts`.
+Its own lazy chunk under `src/client/routes/admin/edges/`, reached from ONE sidebar leaf
+(**Servers -> Edges**, lit on every `/admin/edges/*` path). Inside, a quiet in-page header row
+`Nodes | Providers | Advanced` (`components/SectionNav.svelte`) sits at the top of every page.
+The section has two faces:
+
+**The simple screens** (`simple/`, plain words: relay -> protected node, edge -> address,
+published / standby / draining -> in use / spare / retiring, rotate -> replace address,
+qualified -> trusted, quarantine -> paused for safety; `PLAIN_WORDS` in
+`src/client/lib/edgeCodes.ts`):
+
+- **Nodes** (`/admin/edges`, `EdgesHome`): one status sentence with a dot ("All 6 nodes
+  protected" / "1 node needs you" / "Setting up 1 node"), the **Needs you** rows from
+  `attention` (the endpoint test opens the test card in place; go-live calls `require-edges`
+  and renders the same card for whatever comes back pending), one row per protected node
+  (name, country, one sentence, dot; a live run shows "Setting up, step N of 4" and opens its
+  progress), the primary **Protect a node**, and the automatic-protection switch (`POST
+automation`; a first-run card carries the cost and limitation sentences while it is off).
+  `?protect=1` opens the protect sheet, `?run=<id>` a run's progress.
+- **Protect a node** (`ProtectSheet` + `ProtectProgress`): three questions and then the
+  progress. Which node (a panel's nodes; already protected ones greyed; the plan from `POST
+setup-runs/plan` lists the inbounds in words, a closed "Not supported yet" disclosure and a
+  formats note), which account (compatible accounts as radio cards, incompatible greyed with
+  the reason; "Add account" renders `ProviderAccountStepper` in its `compact` mode), review
+  (one sentence; the uncovered-hosts statement with the button "Protect and hide N unsupported
+  hosts", consent = the exact uuids; the fleet-wide rendering sentence; the quiet alternative
+  "Keep those members on the direct address" = `keepDirect`). Progress: four plain stages
+  (Creating the address / Checking from outside / Checking it works / Going live, folded from
+  the machine's ten by `plainStage`), elapsed, one live line, "You can close this. It keeps
+  going.", polled every 3 s. An interruption is one card: the `SETUP_RUN_NEED_COPY` sentence
+  and its one button (at most one secondary, `needButtons` in `simple/runWords.ts`); `try_it`
+  renders the test card whose ticks echo `{edgeId, endpoint, listenerRevision, configHash}`;
+  `review_changed` re-opens the review with the delta; `family_disabled` turns the family's
+  render rule on through the config PATCH, then continues.
+- **Node page** (`/admin/edges/nodes/<slug>`, `NodePage`, no tabs): the status sentence,
+  "Addresses in use" per inbound (a reduced pool strip + one plain line per address), the
+  primary **Replace address** (`ReplaceDialog`; "Replace now, address is blocked" under More),
+  the per-node "Replace addresses automatically" switch (relay `autoRotate`, captioned when the
+  global switch is off), "Recent activity" (the timeline through `plainAuditActionLabel`), and
+  More: add a spare address, remove protection (`restore-direct`; the restore workflow's phase
+  is shown while it runs), advanced details. `?test=<edgeId>` opens the test card.
+- **Providers** (`/admin/edges/providers`): cards (Connected / Problem / Not tested, "3 of 6
+  addresses used" from `providers/usage`, and the trust line: "Trusted automatically, checked
+  with a real session on <date>" / "Tried with a real session by you on <date>" / "Reached from
+  outside. Not yet tried with a real session"); a card opens the account page, whose qualify
+  dialog is the **Trust override**.
+- **Advanced** (`/admin/edges/advanced`): a plain list of links to the technical pages.
+
+**The technical pages**, unchanged and at their old addresses: **All relays**
+(`/admin/edges/advanced/relays`, the former dashboard: fleet tiles, attention list, readiness
+with resume links, relay table, probe chart), **Manual setup** (`/admin/edges/setup?relay=<slug>`,
+driven entirely by `setup-status`), the **per-relay page** (`/admin/edges/relays/<slug>`:
+overview, edges, listeners, rotations, probes; the quarantine resolver), the per-account page
+(`/admin/edges/providers/<id>`), **Templates**, **Probes** (the old `/admin/telemetry/probes`
+redirects) and **Settings** (Basics, Advanced sections, maintenance, delivery places). Codes
+are never shown bare: `src/shared/contracts/edgeCodes.ts` holds the vocabularies and
+`src/client/lib/edgeCodes.ts` the words. Section paths are spelled only in
+`src/client/routes/admin/edges/lib/routes.ts`; API paths only in `src/client/lib/edgesApi.ts`.
 
 Member side: when the key sits behind edges the report dialog also asks which connection the
 member was using (optional; the labels the pass shows), and an edge-required single-key
