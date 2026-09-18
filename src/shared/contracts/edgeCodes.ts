@@ -271,6 +271,74 @@ export const POOL_CODES = [
 export type PoolCode = (typeof POOL_CODES)[number];
 
 /**
+ * The guided setup ("Autopilot") run stages, in order (convex/edgeSetupRuns.ts,
+ * docs/edges.md § "Guided setup runs"). `try_it` is the per-endpoint operator
+ * confirmation between verification and publication.
+ */
+export const SETUP_RUN_STAGES = [
+  'prepare',
+  'credential',
+  'provision',
+  'verify',
+  'try_it',
+  'publish',
+  'hide_direct_hosts',
+  'rehearse',
+  'go_live',
+  'done',
+] as const;
+export type SetupRunStage = (typeof SETUP_RUN_STAGES)[number];
+
+/**
+ * running = a step is scheduled; waiting = a rotation / Host settle / probe
+ * round is in flight; needs_you = an interruption (see `need`); done = live;
+ * done_unbound = finished without the binding (the operator kept members on the
+ * direct address); failed / cancelled = terminal, the relay stays setup-owned.
+ */
+export const SETUP_RUN_STATES = [
+  'running',
+  'waiting',
+  'needs_you',
+  'done',
+  'done_unbound',
+  'failed',
+  'cancelled',
+] as const;
+export type SetupRunState = (typeof SETUP_RUN_STATES)[number];
+
+/** Interruptions a run raises (`need.code`): one card, one sentence, one button each. */
+export const SETUP_RUN_NEEDS = [
+  'account_untested',
+  'account_incompatible',
+  'maintenance',
+  'too_many_inbounds',
+  'use_manual_setup',
+  'choose_mode',
+  'provider_failed',
+  'address_unreachable',
+  'coverage_incomplete',
+  'try_it',
+  'review_changed',
+  'hide_failed',
+  'family_disabled',
+  'rehearsal_failed',
+  'quarantined',
+] as const;
+export type SetupRunNeed = (typeof SETUP_RUN_NEEDS)[number];
+
+/** Why a provider account cannot be offered by the setup plan (`accounts[].reasons`). */
+export const SETUP_ACCOUNT_REASONS = [
+  'account_untested',
+  'account_disabled',
+  'layer_mismatch',
+  'account_capacity_reached',
+  'account_budget_exhausted',
+  'provider_mismatch',
+  'dns_zone_missing',
+] as const;
+export type SetupAccountReason = (typeof SETUP_ACCOUNT_REASONS)[number];
+
+/**
  * Why a discovered panel inbound could not become a listener candidate
  * (lib/edges/inboundMapping.ts). `inactive` = the node does not serve it;
  * `tag` = the tag cannot be bound; `protocol` / `transport` / `security` =
