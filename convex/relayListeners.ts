@@ -645,6 +645,9 @@ export const reactivateName = internalMutation({
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, { id, names, actorAdminId }) => {
+    // Reactivating a name is new configuration, not unwinding: refused while frozen
+    // (retiring one stays admitted).
+    await assertAdmission(ctx.db, 'registration');
     const l = await ctx.db.get(id);
     if (!l) throw new ConvexError({ code: 'not_found', message: 'Listener not found' });
     const relay = await ctx.db.get(l.relayId);
