@@ -173,10 +173,10 @@ const relayProviderSettings = v.union(
 // Layers an edge can be: an L4 forwarder (address = IP literal) or an L7 CDN
 // front (address = hostname). Absent on rows written before L7 = l4.
 const relayEdgeLayer = v.union(v.literal('l4'), v.literal('l7'));
-// What a listener speaks: three orthogonal fields with a validity matrix
+// What a listener speaks (`listenerProtoFields`, spread into the tables below):
+// three orthogonal fields with a validity matrix
 // (src/shared/contracts/edgeProtocolIds.ts). Client-facing security here is
 // separate from how a front dials the node (`originTransport` below).
-const listenerProto = v.object(listenerProtoFields);
 // One server name a listener presents (REALITY SNI or certificate name).
 // Retired names stay accepted by the node until `drainUntil`; `retiredBy`
 // says whether the node role may reactivate it (only its own retirements).
