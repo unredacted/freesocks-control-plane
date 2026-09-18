@@ -185,6 +185,7 @@ export const ATTENTION_KINDS = [
   'needs_operator',
   'host_unresolved',
   'members_dark',
+  'direct_host_reappeared',
   'go_live_pending',
   'needs_test',
   'rotation_failed',
@@ -198,6 +199,7 @@ export const ATTENTION_KINDS = [
   'account_unqualified',
   'account_untested',
   'drift',
+  'restore_in_progress',
   'maintenance_frozen',
 ] as const;
 export type AttentionKind = (typeof ATTENTION_KINDS)[number];
@@ -269,6 +271,44 @@ export const POOL_CODES = [
   'setup_owned',
 ] as const;
 export type PoolCode = (typeof POOL_CODES)[number];
+
+/**
+ * The restore workflow (`relays.restore`, convex/edgeRestore.ts): why it runs
+ * and where it is. `cancel_setup` = a guided setup cancelled after publication
+ * (relay retained, unbound); `release_requirement` = edge-required delivery
+ * switched off (everything retained, re-activatable); `delete_relay` = a
+ * `restore-direct` deletion of a guided relay (drained and removed at the end).
+ */
+export const RESTORE_PURPOSES = ['cancel_setup', 'release_requirement', 'delete_relay'] as const;
+export type RestorePurpose = (typeof RESTORE_PURPOSES)[number];
+
+export const RESTORE_PHASES = [
+  'freeze',
+  'settle',
+  'verify_fcp_raw',
+  'release_binding',
+  'restore',
+  'verify_direct',
+  'finish',
+] as const;
+export type RestorePhase = (typeof RESTORE_PHASES)[number];
+
+/** The direct-Host hide ledger's row states (`edgeHostHides.state`). */
+export const HOST_HIDE_STATES = [
+  'intended',
+  'written',
+  'confirmed',
+  'unresolved',
+  'released',
+] as const;
+export type HostHideState = (typeof HOST_HIDE_STATES)[number];
+
+/**
+ * Workflow refusals (`edge.<code>` on the wire): a second restore workflow, a
+ * direct-Host hide or a pool / listener write while one runs.
+ */
+export const WORKFLOW_CODES = ['restore_in_progress'] as const;
+export type WorkflowCode = (typeof WORKFLOW_CODES)[number];
 
 /**
  * Why a discovered panel inbound could not become a listener candidate

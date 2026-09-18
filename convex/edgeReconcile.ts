@@ -325,12 +325,21 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
   }
 
   // 4b. Panel Host operations: re-observe unresolved creates/deletes, remove the
-  // FCP-owned Hosts of retired listeners and deleting relays (read-back confirmed).
+  // FCP-owned Hosts of retired listeners and deleting relays (read-back confirmed),
+  // settle the direct-Host hide ledger and re-observe bound guided relays.
   try {
     await ctx.runAction(internal.hostOps.reconcileHosts, {});
   } catch (err) {
     report.errors++;
     console.warn(`[edge-reconcile] host ops: ${errText(err)}`);
+  }
+
+  // 4c. Restore workflows (edgeRestore.ts): one phase per relay per tick.
+  try {
+    await ctx.runAction(internal.edgeRestore.reconcilePass, {});
+  } catch (err) {
+    report.errors++;
+    console.warn(`[edge-reconcile] restore: ${errText(err)}`);
   }
 
   // 5. Pool upkeep + 6. origin deletes. While the maintenance switch is on,
@@ -347,6 +356,8 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
       if (!origin.enabled || origin.quarantine || origin.activeRotationId) continue;
       // A guided setup owns the relay: nothing here publishes or provisions on it.
       if (origin.setupOwned) continue;
+      // A restore workflow holds the pool still until it finishes.
+      if (origin.restore) continue;
       // Automatic pool actions need the master switch; a manual start does not.
       if (!cfg.enabled) continue;
       if (maintenance.frozen) continue;

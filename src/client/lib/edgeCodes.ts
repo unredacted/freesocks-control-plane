@@ -616,6 +616,18 @@ const COPY = {
     explain: 'What the provider reports differs from what FCP recorded for an edge.',
     fix: 'Open the edge and compare the live snapshot.',
   },
+  direct_host_reappeared: {
+    label: 'Direct address back in the panel',
+    explain:
+      'A panel Host that hands out the node address itself was re-enabled or added on a protected node, so members on it are refused a body until it is hidden again.',
+    fix: 'Hide it in the panel, or add it to the protected node so FCP hides it for you.',
+  },
+  restore_in_progress: {
+    label: 'Restoring the direct address',
+    explain:
+      'FCP is settling its Host changes on this node, releasing edge-required delivery and putting the direct addresses back, one checked step at a time.',
+    fix: 'Nothing yet. Open the node to watch it finish; other changes to it wait until then.',
+  },
   maintenance_frozen: {
     label: 'Maintenance freeze on',
     explain: 'No new edge work is admitted while the maintenance switch is on.',
@@ -838,6 +850,12 @@ const REFUSAL_COPY = {
   l7_proof_required: {
     label: 'Proven automatically',
     explain: 'A CDN front is verified by its own end-to-end proof, not by hand.',
+  },
+  restore_in_progress: {
+    label: 'Restore in progress',
+    explain:
+      'This node is putting its direct addresses back, so a second workflow, a new hide and pool changes wait.',
+    fix: 'Let the restore finish (the node page shows its phase), then try again.',
   },
 } as const satisfies Record<string, CodeCopy>;
 

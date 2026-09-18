@@ -11,6 +11,7 @@ import {
   SETUP_BLOCKER_CODES,
   SETUP_STEP_IDS,
   SETUP_STEP_STATUSES,
+  WORKFLOW_CODES,
 } from '../../shared/contracts/edgeCodes';
 import {
   ATTENTION_ACTION_LABELS,
@@ -40,6 +41,7 @@ const EVERY_CODE = [
   ...LAYER_EXCLUSION_CODES,
   ...DELIVERY_UNAVAILABLE_CODES,
   ...POOL_CODES,
+  ...WORKFLOW_CODES,
 ];
 
 const EM_DASH = '—';
@@ -83,6 +85,7 @@ describe('EDGE_REFUSAL_COPY', () => {
     'node_already_bound',
     'server_already_bound',
     'throttled',
+    'restore_in_progress',
   ];
 
   test('every refusal the pages meet is worded, and is part of the shared table', () => {

@@ -11,6 +11,8 @@ import {
   ATTENTION_KINDS,
   ATTENTION_SEVERITIES,
   PREFLIGHT_KINDS,
+  RESTORE_PHASES,
+  RESTORE_PURPOSES,
   SETUP_STEP_IDS,
   SETUP_STEP_STATUSES,
 } from './edgeCodes';
@@ -193,6 +195,16 @@ export type ListenerSecurity = z.infer<typeof ListenerSecurity>;
 
 // --- relays / listeners / edges / rotations ----------------------------------------------------
 
+/** The restore workflow (docs/edges.md § "Direct-Host hides and the restore workflow") in progress on a relay. */
+export const RelayRestore = z.object({
+  purpose: z.enum(RESTORE_PURPOSES),
+  phase: z.enum(RESTORE_PHASES),
+  startedAt: z.string(),
+  attempt: z.number(),
+  lastError: z.string().nullable().default(null),
+});
+export type RelayRestore = z.infer<typeof RelayRestore>;
+
 export const RelaySuspicion = z.object({
   state: z.enum(['clear', 'suspected']),
   hintLevel: z.enum(['none', 'reports', 'probes', 'corroborated']),
@@ -277,6 +289,8 @@ export const RelayAdmin = z.object({
   lastRegisteredAt: isoN.default(null),
   quarantine: z.object({ rotationId: z.string(), since: iso, reason: z.string() }).nullable(),
   deleting: z.boolean(),
+  /** The persisted restore workflow in progress (hides settled, binding released, direct Hosts back), if any. */
+  restore: RelayRestore.nullable().default(null),
   suspicion: RelaySuspicion.nullable(),
   updatedAt: iso,
 });

@@ -666,6 +666,7 @@ const ATTENTION_RANK = [
   'needs_operator',
   'host_unresolved',
   'members_dark',
+  'direct_host_reappeared',
   'go_live_pending',
   'needs_test',
   'rotation_failed',
@@ -679,6 +680,7 @@ const ATTENTION_RANK = [
   'account_unqualified',
   'account_untested',
   'drift',
+  'restore_in_progress',
   'maintenance_frozen',
 ] as const;
 type AttentionKind = (typeof ATTENTION_RANK)[number];
@@ -815,9 +817,43 @@ export const attention = internalQuery({
           });
         }
       }
+      // A direct Host reappeared on a bound guided node and could not be
+      // re-hidden: delivery is fail-closed (`leak_detected`) until it is hidden.
+      if (relay.directHostAlert && relay.directHostAlert.hosts.length > 0) {
+        items.push({
+          ...base(relay),
+          id: `direct_host_reappeared:${relay._id}`,
+          kind: 'direct_host_reappeared',
+          severity: 'critical',
+          code: null,
+          facts: {
+            count: relay.directHostAlert.hosts.length,
+            remarks: relay.directHostAlert.hosts.map((h) => h.remark),
+          },
+          action: 'open_relay',
+          since: iso(relay.directHostAlert.at),
+        });
+      }
+      // The restore workflow: informational, one phase per reconcile tick.
+      if (relay.restore) {
+        items.push({
+          ...base(relay),
+          id: `restore_in_progress:${relay._id}`,
+          kind: 'restore_in_progress',
+          severity: 'info',
+          code: relay.restore.lastError ?? null,
+          facts: {
+            purpose: relay.restore.purpose,
+            phase: relay.restore.phase,
+            attempt: relay.restore.attempt,
+          },
+          action: 'open_relay',
+          since: iso(relay.restore.startedAt),
+        });
+      }
       // A guided relay with something published but its binding still deferred:
       // members get the raw body until go-live claims the binding.
-      if (relay.bindingDeferred && published > 0 && relay.enabled) {
+      if (relay.bindingDeferred && published > 0 && relay.enabled && !relay.restore) {
         items.push({
           ...base(relay),
           id: `go_live_pending:${relay._id}`,

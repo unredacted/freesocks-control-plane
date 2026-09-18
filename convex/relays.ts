@@ -58,6 +58,7 @@ import {
 } from './lib/edges/pool';
 import { ensurePoolCapacity } from './lib/edges/poolCapacity';
 import { assertAdmission } from './lib/edges/maintenance';
+import { assertNoRestore, hasHideRows, startRestoreWorkflow } from './lib/edges/restore';
 import {
   needsEndpointVerification,
   verificationBinding,
@@ -459,6 +460,15 @@ export function mapRelayAdmin(r: Doc<'relays'>) {
         }
       : null,
     deleting: r.deleting ?? false,
+    restore: r.restore
+      ? {
+          purpose: r.restore.purpose,
+          phase: r.restore.phase,
+          startedAt: new Date(r.restore.startedAt).toISOString(),
+          attempt: r.restore.attempt,
+          lastError: r.restore.lastError ?? null,
+        }
+      : null,
     suspicion: r.suspicion
       ? {
           ...r.suspicion,
@@ -1259,6 +1269,16 @@ async function applyLegacyAdoption(
  * and removes the row. `disposition` says what happens to the delivery binding
  * of the origin: `restore-direct` releases it (raw delivery returns),
  * `keep-dark` keeps members on the node unavailable until another relay claims it.
+ *
+ * Re-sequenced for GUIDED relays (docs/edges.md § "Direct-Host hides and the
+ * restore workflow"): a `restore-direct` delete of a relay that hid direct
+ * Hosts, or that a setup run bound, does NOT tear down at once. It enters the
+ * restore workflow with purpose `delete_relay` (hides settled, the raw FCP body
+ * verified, the binding released WHILE the relay stays enabled and its edges
+ * published, direct Hosts re-enabled, the direct body verified) and only its
+ * last phase runs the deletion body below. `keep-dark` keeps the binding and
+ * never restores a hidden Host (members stay dark by choice), so it tears down
+ * at once as before. Refused while a restore is already running.
  */
 export const requestDelete = internalMutation({
   args: {
@@ -1276,6 +1296,7 @@ export const requestDelete = internalMutation({
         message: 'say what happens to members of this origin: restore-direct or keep-dark',
       });
     assertNotQuarantined(row);
+    assertNoRestore(row);
     if (row.activeRotationId) {
       const rot = await ctx.db.get(row.activeRotationId);
       if (rot && ['host_flipping', 'confirming', 'rolling_back'].includes(rot.phase)) {
@@ -1291,6 +1312,60 @@ export const requestDelete = internalMutation({
         await ctx.db.patch(rot._id, { cancelRequested: true, updatedAt: Date.now() });
       }
     }
+    if (disposition === 'restore-direct' && (await needsRestoreWorkflow(ctx.db, row))) {
+      await startRestoreWorkflow(ctx, row, {
+        purpose: 'delete_relay',
+        force,
+        ...(actorAdminId ? { actorAdminId } : {}),
+      });
+      await writeAuditLog(ctx, {
+        actorType: actorAdminId ? 'admin' : 'system',
+        actorId: actorAdminId ?? undefined,
+        action: 'relay.delete',
+        targetType: 'relay',
+        targetId: id,
+        payload: { slug: row.slug, force: force ?? false, disposition, restore: true },
+      });
+      return { ok: true as const, deleted: false, restore: true };
+    }
+    await applyDeleteBody(ctx, row, { force, disposition, actorAdminId });
+    return { ok: true as const, deleted: false };
+  },
+});
+
+/**
+ * A guided relay's delete restores first: it hid direct Hosts (a hide row
+ * exists), or a setup run bound it (`setupStage` recorded) and the binding is
+ * active. A role-registered relay with neither tears down at once, as before.
+ */
+async function needsRestoreWorkflow(db: DatabaseReader, row: Doc<'relays'>): Promise<boolean> {
+  if (await hasHideRows(db, row._id)) return true;
+  const backendServerId = originBackendServerId(row.origin);
+  if (!backendServerId || row.setupStage === undefined) return false;
+  const binding = await deliveryBindingFor(db, backendServerId, originNodeName(row.origin));
+  return !!binding && binding.relaySlug === row.slug;
+}
+
+/**
+ * The deletion body: cancel-free by now (the guards ran), drains the managed
+ * edges (destroys the observe-only ones), empties the pool, flags `deleting`,
+ * settles the binding by disposition and refreshes the mirrors. Shared by the
+ * immediate delete and the restore workflow's last phase.
+ */
+export async function applyDeleteBody(
+  ctx: MutationCtx,
+  row: Doc<'relays'>,
+  opts: {
+    force?: boolean;
+    disposition?: DeleteDisposition;
+    actorAdminId?: Id<'adminUsers'>;
+    /** The restore workflow already audited `relay.delete`; skip the second entry. */
+    audited?: boolean;
+  },
+): Promise<void> {
+  const { force, disposition, actorAdminId } = opts;
+  const id = row._id;
+  {
     const now = Date.now();
     const edges = await liveEdgesOfRelay(ctx.db, id);
     for (const e of edges) {
@@ -1322,19 +1397,19 @@ export const requestDelete = internalMutation({
       publicationEpoch: row.publicationEpoch + 1,
       updatedAt: now,
     });
-    await writeAuditLog(ctx, {
-      actorType: actorAdminId ? 'admin' : 'system',
-      actorId: actorAdminId ?? undefined,
-      action: 'relay.delete',
-      targetType: 'relay',
-      targetId: id,
-      payload: { slug: row.slug, force: force ?? false, disposition: disposition ?? null },
-    });
+    if (!opts.audited)
+      await writeAuditLog(ctx, {
+        actorType: actorAdminId ? 'admin' : 'system',
+        actorId: actorAdminId ?? undefined,
+        action: 'relay.delete',
+        targetType: 'relay',
+        targetId: id,
+        payload: { slug: row.slug, force: force ?? false, disposition: disposition ?? null },
+      });
     if (disposition) await settleDeliveryBinding(ctx.db, row, disposition);
     await scheduleMirrorRefresh(ctx);
-    return { ok: true as const, deleted: false };
-  },
-});
+  }
+}
 
 /**
  * Remove the relay row once every managed edge is destroyed and no FCP-owned
