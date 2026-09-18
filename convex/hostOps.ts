@@ -171,6 +171,75 @@ export const settleCreated = internalMutation({
   },
 });
 
+/**
+ * Re-observe a Host the ledger calls `present` against the live listing. The
+ * panel is the truth: a Host deleted or lost there must not be reported present
+ * from the database (a rotation would confirm an EMPTY plan and finish with no
+ * Host pointing members at the published edge). Outcomes:
+ *  - the uuid is listed → present;
+ *  - the uuid is gone but exactly ONE Host carries the listener's remark and
+ *    inbound → that Host takes its place (re-created out of band);
+ *  - several such Hosts → ambiguous (an operator decides);
+ *  - none → absent, audited `relay.host.lost`, and a create may run.
+ */
+export const reobservePresent = internalMutation({
+  args: {
+    listenerId: v.id('relayListeners'),
+    uuid: v.string(),
+    hosts: v.array(
+      v.object({
+        uuid: v.string(),
+        remark: v.string(),
+        address: v.string(),
+        port: v.number(),
+        sni: v.optional(v.union(v.string(), v.null())),
+        host: v.optional(v.union(v.string(), v.null())),
+        inboundUuid: v.optional(v.union(v.string(), v.null())),
+      }),
+    ),
+  },
+  handler: async (ctx, { listenerId, uuid, hosts }) => {
+    const l = await ctx.db.get(listenerId);
+    // The state moved since the caller read it: report what is there now.
+    if (!l?.host || l.host.state !== 'present' || l.host.uuid !== uuid || l.host.op)
+      return { state: l?.host?.state ?? ('absent' as const), uuid: l?.host?.uuid };
+    if (hosts.some((h) => h.uuid === uuid)) return { state: 'present' as const, uuid };
+    const remark = listenerRemark(l);
+    const inbound = l.panelBinding?.configProfileInboundUuid.toLowerCase();
+    const same = hosts.filter(
+      (h) => h.remark === remark && (h.inboundUuid ?? '').toLowerCase() === inbound,
+    );
+    const relay = await ctx.db.get(l.relayId);
+    const now = Date.now();
+    if (same.length === 1) {
+      await ctx.db.patch(listenerId, {
+        host: { ...l.host, uuid: same[0].uuid },
+        updatedAt: now,
+      });
+      return { state: 'present' as const, uuid: same[0].uuid };
+    }
+    if (same.length > 1) {
+      await ctx.db.patch(listenerId, {
+        host: { ...l.host, state: 'ambiguous', uuid: undefined },
+        updatedAt: now,
+      });
+      return { state: 'ambiguous' as const, uuid: undefined };
+    }
+    await ctx.db.patch(listenerId, {
+      host: { state: 'absent', intended: l.host.intended },
+      updatedAt: now,
+    });
+    await writeAuditLog(ctx, {
+      actorType: 'system',
+      action: 'relay.host.lost',
+      targetType: 'relay_listener',
+      targetId: listenerId,
+      payload: { relaySlug: relay?.slug ?? '', listenerKey: l.listenerKey },
+    });
+    return { state: 'absent' as const, uuid: undefined };
+  },
+});
+
 /** The call's outcome is unknown: park as unresolved, keep the op (fenced by opId). */
 export const markUnresolved = internalMutation({
   args: { listenerId: v.id('relayListeners'), opId: v.string() },
@@ -409,6 +478,26 @@ export const ensureListenerHost = internalAction({
         return { state: 'present', uuid: again?.listener.host?.uuid };
       }
       return { state: r.state === 'absent' ? 'creating' : (r.state as EnsureResult['state']) };
+    }
+    // A Host the ledger calls present is verified against the panel before it
+    // is accepted: never `present` from the database alone.
+    const known = c.listener.host;
+    if (known?.state === 'present' && known.uuid) {
+      let hosts: Awaited<ReturnType<typeof listPanelHosts>>;
+      try {
+        hosts = await listPanelHosts(ctx, serverId);
+      } catch (err) {
+        // Unknown is not present: the caller retries instead of confirming blind.
+        return { state: 'unresolved', detail: err instanceof Error ? err.name : 'error' };
+      }
+      const seen = await ctx.runMutation(internal.hostOps.reobservePresent, {
+        listenerId,
+        uuid: known.uuid,
+        hosts,
+      });
+      if (seen.state === 'present') return { state: 'present', uuid: seen.uuid };
+      if (seen.state !== 'absent') return { state: seen.state as EnsureResult['state'] };
+      // absent: fall through to a fresh create.
     }
     const claim = await ctx.runMutation(internal.hostOps.claimCreate, { listenerId, target });
     if (!claim.claimed) {

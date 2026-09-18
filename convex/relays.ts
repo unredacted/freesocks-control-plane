@@ -10,6 +10,7 @@
  * state lives in edgeRotations.ts; edge rows in edges.ts.
  */
 import { ConvexError, v } from 'convex/values';
+import { resolveModeCatalog } from './lib/connectionModes';
 import { internalMutation, internalQuery } from './_generated/server';
 import type { DatabaseReader, DatabaseWriter, MutationCtx } from './_generated/server';
 import { internal } from './_generated/api';
@@ -186,12 +187,16 @@ async function assertOriginIsNotAnEdge(db: Db, originAddress: string, selfId: Id
 /**
  * Keep the subscriptions of this origin edge-required, independently of the
  * relay row. `policyVersion` bumps whenever the binding is (re)claimed so the
- * sub cache can key on it.
+ * sub cache can key on it. Claiming a place changes what its members must
+ * receive RIGHT NOW, so the mirrors are refreshed immediately: a mirror still
+ * holding the origin's raw body must not wait for the six-hour cron (a
+ * re-parent with unchanged listeners bumps no epoch, so nothing else would).
  */
 export async function upsertDeliveryBinding(
-  db: DatabaseWriter,
+  ctx: MutationCtx,
   relay: Pick<Doc<'relays'>, 'origin' | 'slug'>,
 ): Promise<void> {
+  const db = ctx.db;
   const backendServerId = originBackendServerId(relay.origin);
   if (!backendServerId) return; // a manual origin serves nothing
   const nodeName = originNodeName(relay.origin);
@@ -220,6 +225,7 @@ export async function upsertDeliveryBinding(
       updatedAt: now,
     });
   }
+  await scheduleMirrorRefresh(ctx);
 }
 
 export type DeleteDisposition = 'restore-direct' | 'keep-dark';
@@ -304,6 +310,8 @@ export const releaseDeliveryBinding = internalMutation({
       targetType: 'relay',
       payload: { relaySlug: b.relaySlug },
     });
+    // The place serves direct again: replace the unavailable stubs now.
+    await scheduleMirrorRefresh(ctx);
     return { ok: true as const };
   },
 });
@@ -667,6 +675,9 @@ const originWriteArgs = {
   cooldownMinutes: v.optional(v.number()),
   maxRotationsPerDay: v.optional(v.number()),
   drainMinutes: v.optional(v.number()),
+  // The connection mode whose placement the L7 qualification user is minted on
+  // (null = the panel's default placement).
+  qualificationModeSlug: v.optional(v.union(v.string(), v.null())),
   actorAdminId: v.optional(v.id('adminUsers')),
 };
 
@@ -684,6 +695,7 @@ type OriginWrite = {
   cooldownMinutes?: number;
   maxRotationsPerDay?: number;
   drainMinutes?: number;
+  qualificationModeSlug?: string | null;
 };
 
 function patchFrom(a: OriginWrite): Partial<Doc<'relays'>> {
@@ -702,6 +714,8 @@ function patchFrom(a: OriginWrite): Partial<Doc<'relays'>> {
   if (a.cooldownMinutes !== undefined) p.cooldownMs = a.cooldownMinutes * 60_000;
   if (a.maxRotationsPerDay !== undefined) p.maxRotationsPerDay = a.maxRotationsPerDay;
   if (a.drainMinutes !== undefined) p.drainMs = a.drainMinutes * 60_000;
+  if (a.qualificationModeSlug !== undefined)
+    p.qualificationModeSlug = a.qualificationModeSlug?.trim() || undefined;
   return p;
 }
 
@@ -733,7 +747,7 @@ async function backendCapsOf(db: Db, origin: RelayOrigin) {
 }
 
 async function insertRelay(
-  ctx: { db: DatabaseWriter },
+  ctx: MutationCtx,
   slug: string,
   origin: RelayOrigin,
   a: OriginWrite & { hostModeRequest?: HostMode },
@@ -784,7 +798,7 @@ async function insertRelay(
     updatedAt: now,
   });
   // From this moment the origin's subscriptions are edge-required.
-  await upsertDeliveryBinding(ctx.db, { origin, slug });
+  await upsertDeliveryBinding(ctx, { origin, slug });
   return id;
 }
 
@@ -882,6 +896,14 @@ export const update = internalMutation({
     await assertAddressChangeAllowed(ctx.db, row, p.originAddress);
     if (p.originAddress !== undefined) await assertOriginIsNotAnEdge(ctx.db, p.originAddress, id);
     if (p.hostMode !== undefined) await applyHostModeChange(ctx, row, p.hostMode);
+    if (p.qualificationModeSlug) {
+      const { modes } = await resolveModeCatalog(ctx.db);
+      if (!modes.some((m) => m.id === p.qualificationModeSlug))
+        throw new ConvexError({
+          code: 'validation',
+          message: 'qualificationModeSlug names no connection mode',
+        });
+    }
     // Publication-affecting edits bump the epoch (render cache + assignment).
     const affects =
       p.desiredPublished !== undefined || p.enabled !== undefined || p.hostMode !== undefined;
@@ -1035,7 +1057,7 @@ export const registerBySlug = internalMutation({
         lastRegisteredAt: now,
         updatedAt: changed.length ? now : existing.updatedAt,
       });
-      if (originChanged) await upsertDeliveryBinding(ctx.db, { origin, slug: a.slug });
+      if (originChanged) await upsertDeliveryBinding(ctx, { origin, slug: a.slug });
     } else {
       id = await insertRelay(ctx, a.slug, origin, {
         originAddress: a.originAddress,

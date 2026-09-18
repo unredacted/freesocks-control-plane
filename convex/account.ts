@@ -1018,7 +1018,7 @@ export const switchMode = internalAction({
       });
       return {
         ok: true,
-        subscriptionUrl: oldSub.subscriptionUrl,
+        subscriptionUrl: await memberFacingUrl(ctx, oldSub.backendServerId, oldSub.subscriptionUrl),
         shortUuid: oldSub.backendShortId,
         mode: { id: chosen.id, label: chosen.label },
         oldSubscriptionDeletedAt: null,
@@ -1091,7 +1091,7 @@ export const switchMode = internalAction({
       });
       return {
         ok: true,
-        subscriptionUrl: issued.subscriptionUrl,
+        subscriptionUrl: await memberFacingUrl(ctx, issued.backendServerId, issued.subscriptionUrl),
         shortUuid: issued.backendShortId,
         mode: { id: chosen.id, label: chosen.label },
         oldSubscriptionDeletedAt:
@@ -1165,7 +1165,11 @@ export const switchMode = internalAction({
           ok: true,
           // Same key: the member's saved fronted URL keeps working, now homed to
           // the new node. No tombstone → nothing is deleted.
-          subscriptionUrl: oldSub.subscriptionUrl,
+          subscriptionUrl: await memberFacingUrl(
+            ctx,
+            oldSub.backendServerId,
+            oldSub.subscriptionUrl,
+          ),
           shortUuid: oldSub.backendShortId,
           mode: { id: chosen.id, label: chosen.label },
           oldSubscriptionDeletedAt: null,
@@ -1415,7 +1419,7 @@ export const switchServer = internalAction({
       });
       return {
         ok: true,
-        subscriptionUrl: issued.subscriptionUrl,
+        subscriptionUrl: await memberFacingUrl(ctx, issued.backendServerId, issued.subscriptionUrl),
         shortUuid: issued.backendShortId,
         inPlace: false,
         oldSubscriptionDeletedAt: tomb ? new Date(tomb.deletedAt).toISOString() : null,
@@ -1478,7 +1482,11 @@ export const switchServer = internalAction({
         });
         return {
           ok: true,
-          subscriptionUrl: oldSub.subscriptionUrl,
+          subscriptionUrl: await memberFacingUrl(
+            ctx,
+            oldSub.backendServerId,
+            oldSub.subscriptionUrl,
+          ),
           shortUuid: oldSub.backendShortId,
           inPlace: true,
           oldSubscriptionDeletedAt: null,
@@ -1529,7 +1537,7 @@ export const switchServer = internalAction({
       });
       return {
         ok: true,
-        subscriptionUrl: oldSub.subscriptionUrl,
+        subscriptionUrl: await memberFacingUrl(ctx, oldSub.backendServerId, oldSub.subscriptionUrl),
         shortUuid: oldSub.backendShortId,
         inPlace: true,
         oldSubscriptionDeletedAt: null,

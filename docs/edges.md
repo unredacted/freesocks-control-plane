@@ -172,6 +172,8 @@ mirror refresh) fetches a body, it pins the node as before, then, in this order:
    (`leak_detected`), and persists an **eligibility snapshot** (`subscriptions.lastRender`:
    epoch, family, resolved listeners, primary/backup edge) that the member's connection labels
    and report attribution read: they never reconstruct an assignment without the body.
+   Attribution names an edge ONLY from that snapshot (current epoch) and covers unpinned
+   whole-server subscriptions (Outline); no snapshot leaves the report at origin level.
 
 **Edge-required delivery.** A subscription whose resolved place (the node the body was pinned
 to, else its backend server) is covered by an active delivery binding is served the rendered
@@ -256,6 +258,11 @@ settles a create; several park the listener as `ambiguous` (needs an operator); 
 listing right after a timeout is never a licence to create again: the op stays `unresolved`
 until a settle floor and two quiet looks passed. A delete is confirmed ONLY by a read-back in
 which the uuid is gone. An expired, unsettled op blocks further Host writes for that listener.
+A Host the ledger calls `present` is **re-observed against the live listing before it is
+accepted**: the uuid listed means present; gone but exactly one Host on the listener's remark
+and inbound takes its place; several park it `ambiguous`; none makes it `absent` (audited
+`relay.host.lost`) and a create runs. `present` is never answered from the database alone, so
+a rotation cannot confirm an empty Host plan.
 Hosts FCP created are `fcp`-owned and deleted (confirmed) when the listener retires or the
 relay is deleted; a Host the operator created and FCP took over is `adopted` and only ever
 released. Legacy Hosts adopted from a manual deployment (`legacyHosts`) keep matching the

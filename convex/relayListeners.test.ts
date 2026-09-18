@@ -159,6 +159,41 @@ describe('relayListeners: admin upsert', () => {
   });
 });
 
+describe('relayListeners: a change that strands live edges', () => {
+  test('an origin transport that drops the layer a live edge sits on is refused; a change that keeps the layer is accepted', async () => {
+    const t = convexTest(schema, modules);
+    await seedEdgeFixture(t);
+    const ws = await registerRelay(t, {
+      slug: 'node-ws',
+      nodeName: 'node-ws',
+      originAddress: '203.0.113.30',
+      listeners: [wsListener()],
+    });
+    await adoptL4Edge(t, ws.relayId, ws.listenerId, { ipv4: '198.51.100.30', publish: true });
+    const https = wsListener().originTransport!;
+    // HTTPS -> plaintext HTTP: an L4 forwarder can no longer carry members' TLS to it.
+    await expect(
+      registerRelay(t, {
+        slug: 'node-ws',
+        nodeName: 'node-ws',
+        originAddress: '203.0.113.30',
+        listeners: [wsListener({ originTransport: { ...https, scheme: 'http' } })],
+      }),
+    ).rejects.toThrow(/listener_in_use/);
+    expect((await row(t, ws.listenerId))?.originTransport?.scheme).toBe('https');
+    // Same layer set (an extra covered certificate name): accepted.
+    const ok = await registerRelay(t, {
+      slug: 'node-ws',
+      nodeName: 'node-ws',
+      originAddress: '203.0.113.30',
+      listeners: [
+        wsListener({ originTransport: { ...https, certNames: ['ws.example', 'alt.example'] } }),
+      ],
+    });
+    expect(ok.changed).toBe(true);
+  });
+});
+
 describe('relayListeners: retire + enable', () => {
   test('retire: no-op for a missing/retired key; refused while an edge uses it, while an FCP Host is present, or while a rotation runs', async () => {
     const { t, relayId, listenerId } = await seed();

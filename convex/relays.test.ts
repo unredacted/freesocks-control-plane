@@ -419,8 +419,12 @@ describe('relays: registration by slug', () => {
 
   test('re-parenting without edges moves the relay AND its delivery binding; the vacated node is claimable', async () => {
     const { t, relayId, serverId } = await seed();
+    const before = await mirrorRefreshes(t);
     const r = await registerRelay(t, { nodeName: 'node-two' });
     expect(r).toMatchObject({ relayId, created: false, changed: true });
+    // Unchanged listeners bump no epoch, yet the newly covered node's mirrors may
+    // still hold its raw body: claiming the binding refreshes them at once.
+    expect(await mirrorRefreshes(t)).toBeGreaterThan(before);
     const row = (await t.query(internal.relays.get, { id: relayId }))!;
     expect(row.origin).toEqual({
       kind: 'panel-node',
@@ -448,6 +452,24 @@ describe('relays: registration by slug', () => {
         nodeName: FIXTURE_NODE,
       }),
     ).toMatchObject({ relaySlug: 'node-one-again', state: 'active' });
+  });
+
+  test('the qualification placement mode is settable by an operator: a known mode slug is stored, an unknown one refused, null clears it', async () => {
+    const { t, relayId } = await seed();
+    await t.mutation(internal.relays.update, {
+      id: relayId,
+      qualificationModeSlug: 'privacy-reality',
+    });
+    expect((await t.query(internal.relays.get, { id: relayId }))!.qualificationModeSlug).toBe(
+      'privacy-reality',
+    );
+    await expect(
+      t.mutation(internal.relays.update, { id: relayId, qualificationModeSlug: 'no-such-mode' }),
+    ).rejects.toThrow(/names no connection mode/);
+    await t.mutation(internal.relays.update, { id: relayId, qualificationModeSlug: null });
+    expect(
+      (await t.query(internal.relays.get, { id: relayId }))!.qualificationModeSlug,
+    ).toBeUndefined();
   });
 
   test('one relay per place: node_already_bound / server_already_bound; a manual origin is unique by slug only', async () => {

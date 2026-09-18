@@ -1,10 +1,10 @@
 /// <reference types="vite/client" />
 /**
  * Edge attribution for member reports: which edge a "primary"/"backup" choice
- * denotes. The member's client family is not recorded with the report and the
- * per-family render rules change the assignment (a family that cannot emit
- * IPv6 skips a v6-only edge), so an edge is named only when every enabled
- * family agrees on it.
+ * denotes. The answer comes from the render snapshot persisted on the
+ * subscription (what the subscriber was actually handed); an assignment is
+ * never recomputed, because body-level listener eligibility and the client
+ * family are unknown at report time.
  */
 import { convexTest } from 'convex-test';
 import { describe, expect, test } from 'vitest';
@@ -190,6 +190,15 @@ describe('resolveEdgeAttribution: which relay, and whether the member has the cu
       expect(await relayForBackendNode(ctx.db, b._id, 'any-node')).toMatchObject({
         slug: 'whole-b',
       });
+      // An unpinned subscription (Outline keys never carry a node) attributes to
+      // the whole-server relay instead of losing its report.
+      const sub = (await ctx.db.get(s.subId))!;
+      const unpinned = { ...sub, backend: 'outline' as const, backendServerId: b._id };
+      delete (unpinned as { pinnedNode?: string }).pinnedNode;
+      expect(await resolveEdgeAttribution(ctx.db, unpinned, 'unsure', s.now)).toMatchObject({
+        relaySlug: 'whole-b',
+        relayEdgeId: null,
+      });
     });
   });
 
@@ -231,55 +240,72 @@ describe('resolveEdgeAttribution: which relay, and whether the member has the cu
   });
 });
 
-describe('resolveEdgeAttribution across client-family rules', () => {
-  test('every family able to emit IPv6 → the v6-only edge is named', async () => {
+describe('resolveEdgeAttribution reads the persisted render snapshot, never a recomputation', () => {
+  const snapshot = async (
+    s: Awaited<ReturnType<typeof seed>>,
+    snap: { primary?: Id<'edges'>; backup?: Id<'edges'>; epochDelta?: number },
+  ) =>
+    s.t.run(async (ctx) => {
+      const relay = (await ctx.db.get(s.relayId))!;
+      await ctx.db.patch(s.subId, {
+        lastRender: {
+          at: s.now,
+          epoch: relay.publicationEpoch + (snap.epochDelta ?? 0),
+          family: 'mihomo',
+          listenerKeys: ['u'],
+          primaryEdgeId: snap.primary,
+          backupEdgeId: snap.backup,
+        },
+      });
+    });
+
+  test('primary / backup name exactly the edges the subscriber was handed', async () => {
     const s = await seed();
+    await snapshot(s, { primary: s.edges[2], backup: s.edges[0] });
     await s.t.run(async (ctx) => {
       const sub = (await ctx.db.get(s.subId))!;
-      const out = await resolveEdgeAttribution(ctx.db, sub, 'primary', s.now);
-      expect(out).toMatchObject({ relaySlug: 'node-one', refreshNotObserved: false });
-      expect(out!.relayEdgeId).toBe(s.edges[1]);
+      const primary = await resolveEdgeAttribution(ctx.db, sub, 'primary', s.now);
+      expect(primary).toMatchObject({ relaySlug: 'node-one', refreshNotObserved: false });
+      expect(primary!.relayEdgeId).toBe(s.edges[2]);
+      expect((await resolveEdgeAttribution(ctx.db, sub, 'backup', s.now))!.relayEdgeId).toBe(
+        s.edges[0],
+      );
+      // `auto` is ambiguous while a backup was handed out; unsure / direct never name an edge.
+      for (const choice of ['auto', 'unsure', 'direct'] as const)
+        expect((await resolveEdgeAttribution(ctx.db, sub, choice, s.now))!.relayEdgeId).toBeNull();
     });
   });
 
-  test('one family at ipv6Mode:off disagrees → NO edge is named (never the neighbour)', async () => {
+  test('a body that resolved only one listener: the recomputed relay-wide pick is NOT used', async () => {
     const s = await seed();
-    await s.t.run((ctx) =>
-      upsertSettingRow(ctx, 'edge.render.clients.mihomo', JSON.stringify({ ipv6Mode: 'off' })),
-    );
+    // The render key's pool-wide primary is the v6-only edge (seed), but this
+    // subscriber's body only matched an entry the first edge could serve.
+    await snapshot(s, { primary: s.edges[0] });
+    await s.t.run(async (ctx) => {
+      const sub = (await ctx.db.get(s.subId))!;
+      expect((await resolveEdgeAttribution(ctx.db, sub, 'primary', s.now))!.relayEdgeId).toBe(
+        s.edges[0],
+      );
+      // Nothing else was handed out, so `auto` denotes that one edge.
+      expect((await resolveEdgeAttribution(ctx.db, sub, 'auto', s.now))!.relayEdgeId).toBe(
+        s.edges[0],
+      );
+    });
+  });
+
+  test('no snapshot, or one from an older epoch, stays at origin level', async () => {
+    const s = await seed();
     await s.t.run(async (ctx) => {
       const sub = (await ctx.db.get(s.subId))!;
       const out = await resolveEdgeAttribution(ctx.db, sub, 'primary', s.now);
-      // The report still counts at origin level, just not against an edge: the
-      // rules point at different edges, and the neighbour is healthy.
       expect(out!.relaySlug).toBe('node-one');
       expect(out!.relayEdgeId).toBeNull();
     });
-  });
-
-  test('a family that is DISABLED does not veto the others', async () => {
-    const s = await seed();
-    await s.t.run((ctx) =>
-      upsertSettingRow(
-        ctx,
-        'edge.render.clients.mihomo',
-        JSON.stringify({ enabled: false, ipv6Mode: 'off' }),
-      ),
-    );
+    await snapshot(s, { primary: s.edges[0], epochDelta: -1 });
     await s.t.run(async (ctx) => {
       const sub = (await ctx.db.get(s.subId))!;
       const out = await resolveEdgeAttribution(ctx.db, sub, 'primary', s.now);
-      expect(out!.relayEdgeId).toBe(s.edges[1]);
-    });
-  });
-
-  test('rendering off entirely → no edge is named (the member never received a rendered pool)', async () => {
-    const s = await seed();
-    await s.t.run((ctx) => upsertSettingRow(ctx, 'edge.render.enabled', 'false'));
-    await s.t.run(async (ctx) => {
-      const sub = (await ctx.db.get(s.subId))!;
-      const out = await resolveEdgeAttribution(ctx.db, sub, 'primary', s.now);
-      expect(out!.relayEdgeId).toBeNull();
+      expect(out).toMatchObject({ relayEdgeId: null, refreshNotObserved: true });
     });
   });
 });

@@ -49,14 +49,9 @@ export const mintContext = internalQuery({
     if (!server) return null;
     // The mode the operator chose at mint time decides the placement; absent =
     // the placement resolver's default for this panel.
-    let modeId: string | null = null;
-    if (relay.qualificationModeSlug) {
-      const mode = await ctx.db
-        .query('connectionModes')
-        .withIndex('by_slug', (q) => q.eq('slug', relay.qualificationModeSlug!))
-        .unique();
-      if (mode) modeId = mode._id as string;
-    }
+    // The placement resolver is keyed by mode SLUG (the wire id), and falls back
+    // to the default pool for a slug it no longer knows.
+    const modeId: string | null = relay.qualificationModeSlug ?? null;
     const { placement } = await resolvePlacementTarget(ctx.db, modeId, {
       onlyServerId: server._id as string,
     });
