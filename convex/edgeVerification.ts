@@ -12,16 +12,20 @@
  *
  * Account trust is a SEPARATE consequence of the same tick: the first confirmed
  * endpoint of an untrusted L4 account also trusts the account (the existing
- * `setQualified` semantics, with endpoint evidence), unless a manual untrust
- * holds automatic trust off. A trusted account never exempts a NEW endpoint
- * from its own confirmation: the publication gate reads `edges.verification`,
- * never the account.
+ * `setQualified` semantics, with endpoint evidence) when the endpoint is
+ * evidence for the account as it is NOW (credentials tested after their last
+ * change, edge provisioned with the account's effective template), unless a
+ * manual untrust holds automatic trust off. A trusted account never exempts a
+ * NEW endpoint from its own confirmation: the publication gate reads
+ * `edges.verification`, never the account.
  */
 import { ConvexError, v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
+import type { DatabaseReader } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { resolveEdgeConfig } from './lib/edgeConfig';
+import { resolveTemplateFor } from './edgeTemplates';
 import {
   bindingMatches,
   needsEndpointVerification,
@@ -71,17 +75,19 @@ export const binding = internalQuery({
     const b = verificationBinding(edge, listener);
     if (!b) return null;
     const cfg = await resolveEdgeConfig(ctx.db);
-    // What the tick would unlock: the gate's verdict with the verification rule
-    // taken out, so the client can say "publishable once tested" vs "also X".
-    const check = await checkPublishable(ctx, edge, cfg.requireProviderHealth);
+    // What the tick would unlock: the gate's verdict with ONLY the verification
+    // rule taken out, so an edge that is also unhealthy (or otherwise blocked)
+    // reports that blocker instead of "publishable once tested".
+    const check = await checkPublishable(ctx, edge, cfg.requireProviderHealth, {
+      skipVerification: true,
+    });
     return {
       edgeId: edge._id as string,
       layer: (edge.layer ?? 'l4') as 'l4' | 'l7',
       ...b,
       verification: verificationView(edge, listener),
-      publishableAfter:
-        check.ok || check.code === 'unverified_endpoint' || check.code === 'already_published',
-      blocker: check.ok || check.code === 'unverified_endpoint' ? null : (check.code ?? null),
+      publishableAfter: check.ok || check.code === 'already_published',
+      blocker: check.ok ? null : (check.code ?? null),
     };
   },
 });
@@ -151,24 +157,37 @@ export const confirm = internalMutation({
       },
     });
     // The separate consequence: the first confirmed endpoint of an untrusted
-    // account trusts the account, unless an operator's untrust holds it off.
+    // account trusts the account, when the endpoint is evidence FOR THE
+    // ACCOUNT AS IT IS NOW: the credentials passed a test after they last
+    // changed, and the edge was provisioned with the template the account
+    // provisions with now (the qualification's `templateHash` keys the
+    // template-edit invalidation). An adopted edge or one from an older
+    // template proves its own endpoint only. A manual untrust holds it off.
     let accountTrusted = false;
+    let accountTrustReason: string | null = null;
     if (edge.accountId) {
       const account = await ctx.db.get(edge.accountId);
-      if (account && !account.qualified && !account.autoQualifyHold && account.lastTestOkAt) {
-        await applyQualification(ctx, account, {
-          by: 'admin',
-          actorAdminId: a.actorAdminId,
-          evidence: {
-            edgeId: edge._id,
-            endpoint: current!.endpoint,
-            accountTestedAt: account.lastTestOkAt,
-            templateHash: edge.templateHash ?? '',
-            listenerId: listener._id as Id<'relayListeners'>,
-            listenerRevision: listener.revision,
-          },
-        });
-        accountTrusted = true;
+      if (!account) accountTrustReason = 'account_not_found';
+      else if (account.qualified) accountTrustReason = 'already_qualified';
+      else if (account.autoQualifyHold) accountTrustReason = 'hold';
+      else {
+        const trust = await accountTrustEvidence(ctx, account, edge);
+        if (!trust.ok) accountTrustReason = trust.code;
+        else {
+          await applyQualification(ctx, account, {
+            by: 'admin',
+            actorAdminId: a.actorAdminId,
+            evidence: {
+              edgeId: edge._id,
+              endpoint: current!.endpoint,
+              accountTestedAt: trust.testedAt,
+              templateHash: trust.templateHash,
+              listenerId: listener._id as Id<'relayListeners'>,
+              listenerRevision: listener.revision,
+            },
+          });
+          accountTrusted = true;
+        }
       }
     }
     return {
@@ -176,6 +195,41 @@ export const confirm = internalMutation({
       edgeId: edge._id as string,
       verifiedAt: new Date(now).toISOString(),
       accountTrusted,
+      accountTrustReason,
     };
   },
 });
+
+/**
+ * Whether a confirmed endpoint of `edge` is trust evidence for `account` NOW
+ * (docs/edges.md § "Publication" > account trust): a passing credential test
+ * AFTER the last credential / settings change, and the edge's template hash
+ * equal to the account's effective template hash. Codes mirror the L7
+ * auto-trust rule's (lib/edges/autoQualify.ts).
+ */
+async function accountTrustEvidence(
+  ctx: { db: DatabaseReader },
+  account: Doc<'edgeProviderAccounts'>,
+  edge: Doc<'edges'>,
+): Promise<
+  | { ok: true; testedAt: number; templateHash: string }
+  | {
+      ok: false;
+      code: 'account_untested' | 'tested_before_credential_change' | 'template_mismatch';
+    }
+> {
+  const testedAt = account.lastTestOkAt ?? 0;
+  if (!testedAt || account.lastTestError) return { ok: false, code: 'account_untested' };
+  if (testedAt <= (account.credentialsChangedAt ?? 0))
+    return { ok: false, code: 'tested_before_credential_change' };
+  const effective = await resolveTemplateFor(
+    ctx,
+    account.provider,
+    null,
+    account.defaultTemplateId ?? null,
+    account._id,
+  );
+  if (!edge.templateHash || edge.templateHash !== effective.hash)
+    return { ok: false, code: 'template_mismatch' };
+  return { ok: true, testedAt, templateHash: effective.hash };
+}

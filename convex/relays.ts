@@ -1801,11 +1801,16 @@ function udpProviderAvailable(): boolean {
  * matches the listener's scope and can carry the listener at the edge's layer,
  * and, for an L7 front, an authenticated end-to-end session has proven exactly
  * this configuration and has not expired.
+ *
+ * `skipVerification` takes ONLY the L4 endpoint-verification rule out (the
+ * verification-binding view asks "what else blocks this edge once tested?");
+ * no publish path passes it.
  */
 export async function checkPublishable(
   ctx: { db: DatabaseReader },
   edge: Doc<'edges'>,
   requireHealth: boolean,
+  opts: { skipVerification?: boolean } = {},
 ): Promise<PublishCheck> {
   if (edge.status !== 'active') return { ok: false, code: 'edge_not_active' };
   if (edge.publication === 'published') return { ok: false, code: 'already_published' };
@@ -1863,7 +1868,11 @@ export async function checkPublishable(
   // the configuration it holds now (lib/edges/verification.ts): nothing
   // server-side can prove an L4 address, and a stale tick (listener revision
   // bump, re-addressing) is no tick at all. The L7 proof above is the L7 form.
-  if (needsEndpointVerification(edge) && !verificationCurrent(edge, listener))
+  if (
+    !opts.skipVerification &&
+    needsEndpointVerification(edge) &&
+    !verificationCurrent(edge, listener)
+  )
     return { ok: false, code: 'unverified_endpoint' };
   if (edge.managed && !providerHealthSatisfies(edge.provider, edge.health, requireHealth))
     return { ok: false, code: 'edge_unhealthy' };

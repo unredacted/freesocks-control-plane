@@ -512,6 +512,12 @@ export const EdgeVerifyResponse = z.object({
   verifiedAt: iso,
   /** The first confirmed endpoint of an untrusted account also trusted the account. */
   accountTrusted: z.boolean(),
+  /**
+   * Why the account was NOT trusted by this tick (null when it was, or when
+   * the edge has no account): `already_qualified`, `hold`, `account_untested`,
+   * `tested_before_credential_change`, `template_mismatch`, `account_not_found`.
+   */
+  accountTrustReason: z.string().nullable().default(null),
 });
 export type EdgeVerifyResponse = z.infer<typeof EdgeVerifyResponse>;
 

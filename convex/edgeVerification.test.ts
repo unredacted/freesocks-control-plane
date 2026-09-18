@@ -328,7 +328,42 @@ describe('case 24: configuration-bound evidence', () => {
   });
 });
 
+describe('the verification binding', () => {
+  test('publishableAfter reports the remaining blocker of an unverified AND unhealthy edge', async () => {
+    const { t, relayId, listenerId, accountId } = await seed();
+    const { edgeId } = await adoptL4Edge(t, relayId, listenerId, {
+      ipv4: SPARE,
+      accountId,
+      verified: false,
+    });
+    const spare = edgeId as Id<'edges'>;
+    // A managed edge the provider reports offline (the health gate is on by default).
+    await t.run((ctx) => ctx.db.patch(spare, { managed: true, health: 'offline' }));
+    const binding = (await t.query(internal.edgeVerification.binding, { edgeId: spare }))!;
+    expect(binding).toMatchObject({
+      publishableAfter: false,
+      blocker: 'edge_unhealthy',
+      verification: { current: false },
+    });
+    // The tick is still recorded; the publish is then refused for the OTHER reason.
+    await verifyL4Edge(t, spare);
+    await expect(
+      t.mutation(internal.relays.publishEdge, { relayId, edgeId: spare, poolIndex: 1 }),
+    ).rejects.toThrow(/edge_unhealthy/);
+    await t.run((ctx) => ctx.db.patch(spare, { health: 'online' }));
+    expect(await t.query(internal.edgeVerification.binding, { edgeId: spare })).toMatchObject({
+      publishableAfter: true,
+      blocker: null,
+      verification: { current: true },
+    });
+  });
+});
+
 describe('account trust', () => {
+  /** The hash of the template the fixture's account provisions with NOW. */
+  const effectiveHash = (t: ReturnType<typeof convexTest>, accountId: Id<'edgeProviderAccounts'>) =>
+    t.run(async (ctx) => (await resolveTemplateFor(ctx, 'gcore', null, null, accountId)).hash);
+
   test('the first confirmed endpoint of an untrusted L4 account trusts it with endpoint evidence; a trusted account never exempts a new endpoint', async () => {
     const { t, relayId, listenerId, accountId } = await seed({ qualified: false });
     const { edgeId } = await adoptL4Edge(t, relayId, listenerId, {
@@ -337,16 +372,19 @@ describe('account trust', () => {
       verified: false,
     });
     const spare = edgeId as Id<'edges'>;
+    // Provisioned with the account's effective template (what a rotation stamps).
+    const hash = await effectiveHash(t, accountId);
+    await t.run((ctx) => ctx.db.patch(spare, { templateHash: hash }));
     expect((await t.run((ctx) => ctx.db.get(accountId)))!.qualified).toBe(false);
     const res = await verifyL4Edge(t, spare);
-    expect(res.accountTrusted).toBe(true);
+    expect(res).toMatchObject({ accountTrusted: true, accountTrustReason: null });
     const account = (await t.run((ctx) => ctx.db.get(accountId)))!;
     expect(account.qualified).toBe(true);
     expect(account.qualification).toMatchObject({
       by: 'admin',
       evidence: { edgeId: spare, endpoint: `${SPARE}:443`, listenerId },
     });
-    expect(account.qualifiedTemplateHash).toBeTruthy();
+    expect(account.qualifiedTemplateHash).toBe(hash);
     const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
     expect(audit.find((a) => a.action === 'edge.provider_account.qualified')?.payload).toEqual({
       name: 'acct-a',
@@ -368,7 +406,58 @@ describe('account trust', () => {
         poolIndex: 1,
       }),
     ).rejects.toThrow(/unverified_endpoint/);
-    expect((await verifyL4Edge(t, next.edgeId as Id<'edges'>)).accountTrusted).toBe(false);
+    expect(await verifyL4Edge(t, next.edgeId as Id<'edges'>)).toMatchObject({
+      accountTrusted: false,
+      accountTrustReason: 'already_qualified',
+    });
+  });
+
+  test('an endpoint is account evidence only for the account as it is NOW: an adopted (template-less) edge, a stale credential test or a moved template verify the endpoint but leave the account untrusted', async () => {
+    const { t, relayId, listenerId, accountId } = await seed({ qualified: false });
+    // An import with no template hash proves its own endpoint only.
+    const adopted = await adoptL4Edge(t, relayId, listenerId, {
+      ipv4: SPARE,
+      accountId,
+      verified: false,
+    });
+    expect(await verifyL4Edge(t, adopted.edgeId as Id<'edges'>)).toMatchObject({
+      accountTrusted: false,
+      accountTrustReason: 'template_mismatch',
+    });
+    expect(
+      (await t.query(internal.edges.get, { id: adopted.edgeId as Id<'edges'> }))!.verification
+        ?.rung,
+    ).toBe('verified');
+    expect((await t.run((ctx) => ctx.db.get(accountId)))!.qualified).toBe(false);
+    // A template-matching edge, but the credentials changed AFTER the last test.
+    const next = await adoptL4Edge(t, relayId, listenerId, {
+      ipv4: '198.51.100.3',
+      accountId,
+      verified: false,
+    });
+    const edge = next.edgeId as Id<'edges'>;
+    const hash = await effectiveHash(t, accountId);
+    await t.run((ctx) => ctx.db.patch(edge, { templateHash: hash }));
+    await t.run(async (ctx) => {
+      const acct = (await ctx.db.get(accountId))!;
+      await ctx.db.patch(accountId, { credentialsChangedAt: acct.lastTestOkAt! + 1 });
+    });
+    expect(await verifyL4Edge(t, edge)).toMatchObject({
+      accountTrusted: false,
+      accountTrustReason: 'tested_before_credential_change',
+    });
+    expect((await t.run((ctx) => ctx.db.get(accountId)))!.qualified).toBe(false);
+    // A passing test after the change, then a retest of the endpoint (the record
+    // is re-stamped; the binding is unchanged) trusts the account.
+    await t.run(async (ctx) => {
+      const acct = (await ctx.db.get(accountId))!;
+      await ctx.db.patch(accountId, { lastTestOkAt: acct.credentialsChangedAt! + 1 });
+    });
+    expect(await verifyL4Edge(t, edge)).toMatchObject({ accountTrusted: true });
+    expect((await t.run((ctx) => ctx.db.get(accountId)))!.qualification).toMatchObject({
+      by: 'admin',
+      evidence: { edgeId: edge },
+    });
   });
 
   test('a manual untrust holds automatic trust off; a manual trust records by:admin without evidence and clears the hold', async () => {
