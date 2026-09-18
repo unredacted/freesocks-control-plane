@@ -191,6 +191,26 @@ export const release = internalMutation({
   },
 });
 
+/**
+ * The operator closed or finished a test card: the temporary credential behind
+ * its link expires now (the sweep removes it). Scoped to the edge's relay so a
+ * caller cannot expire another relay's credential by id.
+ */
+export const releaseForEdge = internalMutation({
+  args: { edgeId: v.id('edges'), credentialId: v.id('edgeTestCredentials') },
+  handler: async (ctx, { edgeId, credentialId }) => {
+    const edge = await ctx.db.get(edgeId);
+    const row = await ctx.db.get(credentialId);
+    if (!edge || !row || row.relayId !== edge.relayId)
+      throw new ConvexError({ code: 'not_found', message: 'Test credential not found' });
+    if (row.removal !== 'pending') return { ok: true as const, released: false };
+    const now = Date.now();
+    if (row.expiresAt <= now) return { ok: true as const, released: false };
+    await ctx.db.patch(credentialId, { expiresAt: now, updatedAt: now });
+    return { ok: true as const, released: true };
+  },
+});
+
 /** Every pending credential of a relay expires now (a cancelled run, a deleted relay). */
 export const releaseForRelay = internalMutation({
   args: { relayId: v.id('relays') },

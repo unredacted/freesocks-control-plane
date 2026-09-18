@@ -202,7 +202,7 @@ and there is NO shortcut that binds it when an edge publishes. Only `claimDelive
 (the go-live step; not routed yet) upserts the binding, bumps its policy version, refreshes the
 mirrors and clears the flag. A by-slug registration always binds at once; a re-registration of a
 deferred relay keeps it deferred. While `setupOwned`, reconcile upkeep and the detector's
-automatic replacement (veto `setup_owned`) leave the relay alone, whatever the run's state.
+automatic replacement (veto `setup_owned`) leave the relay alone, whatever the run's state. A rotation start of any kind on an owned relay that does not come from the run itself (`setupRun`) is refused (`edge.setup_owned`): a manual publish, replace or burn would change the endpoint under the run's hides and rehearsal.
 `setup-status` warns `binding_deferred` on the publish step (never `members_dark`, which needs
 a binding); attention raises `go_live_pending` once an edge is published.
 
@@ -238,7 +238,7 @@ attention raises **`needs_test`** (critical). Importing a live front with `publi
 carries the operator's statement `verified: true` (recorded as method `named_connection`);
 without it the import is an untested spare.
 
-**The test link** (`POST edges/{id}/test-link`, `convex/edgeTestLinks.ts`, throttled) is the one
+**The test link** (`POST edges/{id}/test-link`, `convex/edgeTestLinks.ts`, throttled) (`POST edges/{id}/test-link/release {credentialId}` expires the temporary credential behind a link when the card closes or finishes, instead of at its TTL) is the one
 verification mechanism for an L4 candidate that is not yet published (setup stage 4b, spares,
 retests). It fetches the test credential's OWN subscription body and runs the real renderer with
 `published = [this candidate only]` in dry-run: no pool change, no epoch bump, no Host write, no

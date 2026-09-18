@@ -540,6 +540,15 @@ describe('edgeSetupRuns: the happy path (cases 1, 26)', () => {
     r = await pump(t, runId, settled);
     expect(r.need?.code).toBe('try_it');
     expect(r.generation).toBe(2);
+    // "One of them does not work": the untested candidate is cancelled and a
+    // fresh one provisioned; the run comes back to the card with a NEW edge.
+    const firstEdgeId = r.listeners[0]!.edgeId;
+    await t.mutation(internal.edgeSetupRuns.retry, { runId, tryAnotherAddress: true });
+    r = await pump(t, runId, settled);
+    expect(r.need?.code).toBe('try_it');
+    expect(r.listeners[0]!.edgeId).not.toBe(firstEdgeId);
+    expect(world.lbCreates()).toBe(2);
+    expect((await t.run((ctx) => ctx.db.get(firstEdgeId!)))!.status).toBe('cancelled');
     // The tick: the confirmation is forwarded to edgeVerification.confirm (account trust follows).
     const res = await tickAll(t, runId);
     expect(res.accountTrusted).toBe(true);
@@ -566,7 +575,8 @@ describe('edgeSetupRuns: the happy path (cases 1, 26)', () => {
     expect(finished.at(-1)?.payload).toMatchObject({ outcome: 'live' });
     // The rotation rows carry the run + generation they were started under.
     const rots = await t.run((ctx) => ctx.db.query('edgeRotations').collect());
-    expect(rots.map((x) => x.kind).sort()).toEqual(['provision', 'publish']);
+    // Two provisions: the first candidate was replaced from the card ("one of them does not work").
+    expect(rots.map((x) => x.kind).sort()).toEqual(['provision', 'provision', 'publish']);
     expect(rots.every((x) => x.setupRun?.runId === runId)).toBe(true);
     // After go-live there is no cancel.
     await expect(t.action(internal.edgeSetupRuns.cancel, { runId })).rejects.toThrow(

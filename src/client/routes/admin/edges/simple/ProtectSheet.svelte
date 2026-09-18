@@ -72,6 +72,9 @@
   const planM = createMutation(() => ({
     mutationFn: (uuid: string) => planSetupRun(serverId, uuid),
     onSuccess: (p) => {
+      // A slower answer for a node the operator has since moved away from is
+      // dropped: the review and the run must never use another node's plan.
+      if (p.nodeUuid !== nodeUuid || p.backendServerId !== serverId) return;
       plan = p;
       if (p.activeRunId) onRunCreated(p.activeRunId);
     },
@@ -132,7 +135,7 @@
 
   const canContinue = $derived(
     step === 'node'
-      ? plan !== null && !plan.tooManyInbounds
+      ? plan !== null && !plan.tooManyInbounds && plan.requiredListeners.length > 0
       : step === 'account'
         ? !!account
         : false,

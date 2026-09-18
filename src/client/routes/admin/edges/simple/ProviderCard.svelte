@@ -37,9 +37,11 @@
     if (a.qualified && a.qualification) {
       if (a.qualification.by === 'auto')
         return `Trusted automatically, checked with a real session on ${date(a.qualification.at)}.`;
-      return layer === 'l7'
-        ? `Trusted by you on ${date(a.qualification.at)}.`
-        : `Tried with a real session by you on ${date(a.qualification.at)}.`;
+      // An endpoint confirmation carries the edge it was tried on; the manual
+      // "Trust override" carries none and never claims a session happened.
+      return a.qualification.edgeId && layer !== 'l7'
+        ? `Tried with a real session by you on ${date(a.qualification.at)}.`
+        : `Trusted by you on ${date(a.qualification.at)}.`;
     }
     if (a.qualified) return 'Trusted.';
     if (isTested(a)) return 'Reached from outside. Not yet tried with a real session.';

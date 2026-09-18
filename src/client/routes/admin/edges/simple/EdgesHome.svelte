@@ -26,6 +26,7 @@
     providersQuery,
     rebalanceRelay,
     requireRelayEdges,
+    retrySetupRun,
     setEdgeAutomation,
     setupRunsQuery,
     thawMaintenance,
@@ -69,17 +70,22 @@
   // The test card opened from a "Needs you" row (a spare, a retest, a go-live check).
   let testEdgeIds = $state<string[]>([]);
   let testRelayId = $state<string | null>(null);
+  let testRunId = $state<string | null>(null);
 
   async function goLive(relayId: string, slug: string | null): Promise<void> {
     const res = await requireRelayEdges(relayId);
     if (res.pending.length > 0) {
+      // The server already opened the activation run (needs_you: try_it): the
+      // ticks go to that run, never to a second require-edges call.
       testEdgeIds = res.pending.map((p) => p.edgeId);
       testRelayId = relayId;
+      testRunId = res.runId;
       toast.message('Test each address first. Going live continues once every one works.');
       return;
     }
     testEdgeIds = [];
     testRelayId = null;
+    testRunId = null;
     toast.success('Going live.');
     if (slug) invalidateRelay(qc, slug);
     else invalidateOverview(qc);
@@ -179,8 +185,21 @@
             onClose={() => (testEdgeIds = [])}
             onAllDone={() => {
               const relayId = testRelayId;
+              const runId = testRunId;
               testEdgeIds = [];
-              if (relayId)
+              testRelayId = null;
+              testRunId = null;
+              // Every address ticked: resume the activation run the server opened
+              // (it re-checks the confirmations and carries on to go-live).
+              if (runId)
+                void retrySetupRun(runId, {})
+                  .then(() => {
+                    toast.success('Going live.');
+                    invalidateOverview(qc);
+                    runParam.value = runId;
+                  })
+                  .catch((e) => toast.error(edgeErrorMessage(e)));
+              else if (relayId)
                 void goLive(relayId, null).catch((e) => toast.error(edgeErrorMessage(e)));
             }}
           />

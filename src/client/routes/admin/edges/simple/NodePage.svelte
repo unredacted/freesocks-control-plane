@@ -30,6 +30,7 @@
     relayLookupQuery,
     relayTimelineQuery,
     requireRelayEdges,
+    retrySetupRun,
     setupRunsQuery,
     updateRelay,
   } from '@client/lib/edgesApi';
@@ -105,6 +106,8 @@
   let spareOpen = $state(false);
   let removeOpen = $state(false);
   let testEdgeIds = $state<string[]>([]);
+  // The activation run the server opened when go-live found untested addresses.
+  let testRunId = $state<string | null>(null);
   $effect(() => {
     if (testParam.value) testEdgeIds = [testParam.value];
   });
@@ -130,6 +133,7 @@
       const res = await requireRelayEdges(relay.id);
       if (res.pending.length > 0) {
         testEdgeIds = res.pending.map((p) => p.edgeId);
+        testRunId = res.runId;
         toast.message('Test each address first. Going live continues once every one works.');
       } else {
         toast.success('Going live.');
@@ -177,12 +181,15 @@
         </DropdownMenu.Trigger>
         <DropdownMenu.Content align="end" class="w-64">
           {#if published.length > 0}
-            <DropdownMenu.Item disabled={!!relay.activeRotationId} onSelect={() => replace('burn')}>
+            <DropdownMenu.Item
+              disabled={!!relay.activeRotationId || !!run}
+              onSelect={() => replace('burn')}
+            >
               Replace now, address is blocked
             </DropdownMenu.Item>
           {/if}
           <DropdownMenu.Item
-            disabled={!!relay.activeRotationId}
+            disabled={!!relay.activeRotationId || !!run}
             onSelect={() => (spareOpen = true)}
           >
             Add a spare address
@@ -230,9 +237,20 @@
           testParam.value = null;
         }}
         onAllDone={() => {
+          const runId = testRunId;
           testEdgeIds = [];
           testParam.value = null;
+          testRunId = null;
           invalidateRelay(qc, slug);
+          // Every address ticked: resume the activation run the server opened
+          // rather than asking for go-live a second time.
+          if (runId)
+            void retrySetupRun(runId, {})
+              .then(() => {
+                toast.success('Going live.');
+                router.navigate(edgesPaths.home({ run: runId }));
+              })
+              .catch((e) => toast.error(edgeErrorMessage(e)));
         }}
       />
     {/if}
@@ -241,6 +259,10 @@
       <h2 id="addresses" class="mb-3 text-base font-semibold">Addresses in use</h2>
       {#if listenersQ.isPending || edgesQ.isPending}
         <Skeleton class="h-20 w-full" />
+      {:else if listenersQ.isError}
+        <AdminListState error={listenersQ.error} onRetry={() => void listenersQ.refetch()} />
+      {:else if edgesQ.isError}
+        <AdminListState error={edgesQ.error} onRetry={() => void edgesQ.refetch()} />
       {:else if listeners.length === 0}
         <p class="text-muted-foreground text-sm">This node has no inbound FCP can protect yet.</p>
       {:else}

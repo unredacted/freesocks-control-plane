@@ -1694,6 +1694,17 @@ export const SetupRunAdmin = z.object({
     renderGlobal: z.object({ willEnable: z.boolean(), affectedRelays: z.array(z.string()) }),
     familiesDisabled: z.array(z.string()),
     emptyNode: z.boolean(),
+    /** The accounts the plan judged; `retry {accountId}` accepts only a compatible one. */
+    accounts: z
+      .array(
+        z.object({
+          id: z.string(),
+          name: z.string(),
+          provider: z.string(),
+          compatible: z.boolean(),
+        }),
+      )
+      .default([]),
   }),
   approvedHideUuids: z.array(z.string()),
   events: z.array(

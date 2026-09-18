@@ -14,7 +14,12 @@
   import { toast } from 'svelte-sonner';
   import { Button } from '@client/components/ui/button';
   import { Skeleton } from '@client/components/ui/skeleton';
-  import { invalidateOverview, testLinksQuery, verifyEdge } from '@client/lib/edgesApi';
+  import {
+    invalidateOverview,
+    releaseTestLink,
+    testLinksQuery,
+    verifyEdge,
+  } from '@client/lib/edgesApi';
   import AdminListState from '../../AdminListState.svelte';
   import { edgeErrorMessage } from '../lib/edgeErrors';
   import TestCard from './TestCard.svelte';
@@ -43,6 +48,20 @@
   let done = $state(new Set<string>());
   let busyId = $state<string | null>(null);
 
+  /**
+   * A link built on a temporary credential (an Outline key) is released the
+   * moment the card is closed or finished, instead of at its 24 h expiry.
+   * Best effort: the sweep still catches a release that never lands.
+   */
+  async function release(): Promise<void> {
+    const owed = (links.data ?? []).filter((l) => l.credentialId);
+    await Promise.allSettled(owed.map((l) => releaseTestLink(l.binding.edgeId, l.credentialId!)));
+  }
+  function close(): void {
+    void release();
+    onClose?.();
+  }
+
   async function works(item: TestItem): Promise<void> {
     busyId = item.edgeId;
     try {
@@ -59,7 +78,10 @@
           : 'Address tested.',
       );
       invalidateOverview(qc);
-      if (items.every((i) => done.has(i.edgeId))) onAllDone?.();
+      if (items.every((i) => done.has(i.edgeId))) {
+        void release();
+        onAllDone?.();
+      }
     } catch (e) {
       toast.error(edgeErrorMessage(e));
       // A stale binding: the link is rebuilt, never stamped as shown.
@@ -74,7 +96,7 @@
   <div class="mb-2 flex items-start justify-between gap-3">
     <p class="font-medium">Test the address</p>
     {#if onClose}
-      <Button variant="ghost" size="sm" onclick={onClose}>Close</Button>
+      <Button variant="ghost" size="sm" onclick={close}>Close</Button>
     {/if}
   </div>
   {#if links.isPending}

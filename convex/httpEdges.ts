@@ -1040,6 +1040,17 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           }),
         );
       case 'test-link':
+        if (d === 'release') {
+          // The card closed or finished: the temporary credential behind the
+          // link expires now instead of at its TTL (scoped to the edge's relay).
+          if (typeof body.credentialId !== 'string')
+            return errorJson('validation', 'credentialId is required', 400);
+          await ctx.runMutation(internal.edgeTestCredentials.releaseForEdge, {
+            edgeId,
+            credentialId: id<'edgeTestCredentials'>(body.credentialId),
+          });
+          return json({ ok: true });
+        }
         // The isolated test link: the candidate connection only, plus the same
         // binding `GET .../verification-binding` shows. A POST under the write
         // scope, not a GET: building it may mint the test credential (a panel

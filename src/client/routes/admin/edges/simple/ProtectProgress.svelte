@@ -21,7 +21,6 @@
     invalidateConfig,
     invalidateOverview,
     patchEdgeConfig,
-    providersQuery,
     retrySetupRun,
     setupRunQuery,
     testProviderCredentials,
@@ -99,7 +98,6 @@
   let choosingAccount = $state(false);
   let choosingMode = $state(false);
   let modeSlug = $state('');
-  const providers = providersQuery();
   const modes = adminConnectionModesQuery();
   const config = edgeConfigQuery();
   const family = $derived(need?.detail ?? run?.plan.familiesDisabled[0] ?? null);
@@ -261,7 +259,7 @@
       {#if choosingAccount}
         <fieldset class="space-y-2">
           <legend class="text-xs font-medium">Another account</legend>
-          {#each (providers.data?.accounts ?? []).filter((a) => a.enabled) as a (a.id)}
+          {#each run.plan.accounts.filter((a) => a.compatible) as a (a.id)}
             <Button
               size="sm"
               variant="outline"

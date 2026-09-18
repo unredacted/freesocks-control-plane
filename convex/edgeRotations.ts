@@ -477,6 +477,11 @@ export async function collectStartBlockers(
   // of any kind while it runs (the same rule every pool / listener write applies).
   if (origin.restore)
     push('edge.restore_in_progress', 'A restore workflow is running on this origin');
+  // A guided setup owns the relay until go-live: only the run's own starts
+  // (`setupRun`) touch its pool; a manual publish / replace / burn meanwhile
+  // would change the endpoint under the run's hides and rehearsal.
+  if (origin.setupOwned && !a.setupRun)
+    push('edge.setup_owned', 'A guided setup owns this origin; let it finish or cancel it');
   if (origin.deleting) push('edge.deleting', 'Origin is being deleted');
   if (origin.activeRotationId) {
     const active = await ctx.db.get(origin.activeRotationId);
