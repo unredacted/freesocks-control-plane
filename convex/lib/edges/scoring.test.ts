@@ -412,6 +412,8 @@ describe('autoRotateDecision', () => {
     expect(decide({ origin: { ...origin, autoRotate: false } })).toEqual({
       veto: 'auto_rotate_off',
     });
+    // A relay a guided setup owns is never replaced automatically, whatever the evidence.
+    expect(decide({ origin: { ...origin, setupOwned: true } })).toEqual({ veto: 'setup_owned' });
     expect(decide({ evaluation: evaluate(input()) })).toEqual({ veto: 'not_suspected' });
     // Evidence + outage gates come BEFORE the operational ones: a quarantined
     // relay without evidence reports the missing evidence, not the quarantine.

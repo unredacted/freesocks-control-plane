@@ -18,7 +18,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { isTerminalPhase } from './lib/edges/rotation';
 import { edgeProviderIdValidator } from './lib/edgeProviderIds';
-import { resolveEdgeConfig, edgeMs } from './lib/edgeConfig';
+import { resolveEdgeConfig, edgeMs, MAX_DESIRED_PUBLISHED } from './lib/edgeConfig';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import {
   isPublicIpLiteral,
@@ -49,7 +49,14 @@ import {
   qualificationRefusal,
   qualificationVerdict,
 } from './lib/edges/frontCheck/binding';
-import { nextFreePoolIndex, withEdgeAt, withoutEdge, publishedCount } from './lib/edges/pool';
+import {
+  allocatePoolIndex,
+  withEdgeAt,
+  withoutEdge,
+  publishedCount,
+  type PoolListener,
+} from './lib/edges/pool';
+import { ensurePoolCapacity } from './lib/edges/poolCapacity';
 import { assertAdmission } from './lib/edges/maintenance';
 import {
   deriveHostMode,
@@ -424,6 +431,9 @@ export function mapRelayAdmin(r: Doc<'relays'>) {
     providerPreference: r.providerPreference ?? null,
     desiredPublished: r.desiredPublished,
     standbyPerRelay: r.standbyPerRelay,
+    standbyPerListener: r.standbyPerListener ?? null,
+    bindingDeferred: r.bindingDeferred ?? false,
+    setupOwned: r.setupOwned ?? false,
     cooldownMinutes: Math.round(r.cooldownMs / 60_000),
     maxRotationsPerDay: r.maxRotationsPerDay,
     drainMinutes: Math.round(r.drainMs / 60_000),
@@ -620,6 +630,7 @@ function checkOriginFields(a: {
   label?: string | null;
   desiredPublished?: number;
   standbyPerRelay?: number;
+  standbyPerListener?: number;
   cooldownMinutes?: number;
   maxRotationsPerDay?: number;
   drainMinutes?: number;
@@ -640,10 +651,25 @@ function checkOriginFields(a: {
     (a.label.trim().length === 0 || a.label.length > 64)
   )
     throw new ConvexError({ code: 'validation', message: 'label must be 1..64 characters' });
-  if (a.desiredPublished !== undefined && (a.desiredPublished < 1 || a.desiredPublished > 4))
-    throw new ConvexError({ code: 'validation', message: 'desiredPublished must be 1..4' });
+  if (
+    a.desiredPublished !== undefined &&
+    (!Number.isInteger(a.desiredPublished) ||
+      a.desiredPublished < 1 ||
+      a.desiredPublished > MAX_DESIRED_PUBLISHED)
+  )
+    throw new ConvexError({
+      code: 'validation',
+      message: `desiredPublished must be 1..${MAX_DESIRED_PUBLISHED}`,
+    });
   if (a.standbyPerRelay !== undefined && (a.standbyPerRelay < 0 || a.standbyPerRelay > 2))
     throw new ConvexError({ code: 'validation', message: 'standbyPerRelay must be 0..2' });
+  if (
+    a.standbyPerListener !== undefined &&
+    (!Number.isInteger(a.standbyPerListener) ||
+      a.standbyPerListener < 0 ||
+      a.standbyPerListener > 2)
+  )
+    throw new ConvexError({ code: 'validation', message: 'standbyPerListener must be 0..2' });
   if (a.cooldownMinutes !== undefined && (a.cooldownMinutes < 10 || a.cooldownMinutes > 1440))
     throw new ConvexError({ code: 'validation', message: 'cooldownMinutes must be 10..1440' });
   if (a.maxRotationsPerDay !== undefined && (a.maxRotationsPerDay < 1 || a.maxRotationsPerDay > 12))
@@ -672,6 +698,7 @@ const originWriteArgs = {
   providerPreference: v.optional(v.union(edgeProviderIdValidator, v.null())),
   desiredPublished: v.optional(v.number()),
   standbyPerRelay: v.optional(v.number()),
+  standbyPerListener: v.optional(v.number()),
   cooldownMinutes: v.optional(v.number()),
   maxRotationsPerDay: v.optional(v.number()),
   drainMinutes: v.optional(v.number()),
@@ -692,6 +719,7 @@ type OriginWrite = {
   providerPreference?: Doc<'relays'>['providerPreference'] | null;
   desiredPublished?: number;
   standbyPerRelay?: number;
+  standbyPerListener?: number;
   cooldownMinutes?: number;
   maxRotationsPerDay?: number;
   drainMinutes?: number;
@@ -711,6 +739,7 @@ function patchFrom(a: OriginWrite): Partial<Doc<'relays'>> {
   if (a.providerPreference !== undefined) p.providerPreference = a.providerPreference ?? undefined;
   if (a.desiredPublished !== undefined) p.desiredPublished = a.desiredPublished;
   if (a.standbyPerRelay !== undefined) p.standbyPerRelay = a.standbyPerRelay;
+  if (a.standbyPerListener !== undefined) p.standbyPerListener = a.standbyPerListener;
   if (a.cooldownMinutes !== undefined) p.cooldownMs = a.cooldownMinutes * 60_000;
   if (a.maxRotationsPerDay !== undefined) p.maxRotationsPerDay = a.maxRotationsPerDay;
   if (a.drainMinutes !== undefined) p.drainMs = a.drainMinutes * 60_000;
@@ -746,11 +775,22 @@ async function backendCapsOf(db: Db, origin: RelayOrigin) {
   return server ? capabilitiesOf(server.backend) : null;
 }
 
+/**
+ * Insert-time options a guided setup passes (never a request body): defer the
+ * delivery binding to go-live (`claimDeliveryBinding`) and mark the relay as
+ * owned by the run (upkeep + the detector's automatic replacement skip it).
+ */
+export interface InsertRelayOptions {
+  deferBinding?: boolean;
+  setupOwned?: boolean;
+}
+
 async function insertRelay(
   ctx: MutationCtx,
   slug: string,
   origin: RelayOrigin,
   a: OriginWrite & { hostModeRequest?: HostMode },
+  opts: InsertRelayOptions = {},
 ): Promise<Id<'relays'>> {
   if (!SLUG_RE.test(slug)) throw new ConvexError({ code: 'validation', message: 'invalid slug' });
   if (!a.originAddress)
@@ -788,6 +828,7 @@ async function insertRelay(
     providerPreference: p.providerPreference,
     desiredPublished: p.desiredPublished ?? cfg.desiredPublishedDefault,
     standbyPerRelay: p.standbyPerRelay ?? cfg.standbyPerRelay,
+    standbyPerListener: p.standbyPerListener ?? cfg.standbyPerListener,
     cooldownMs: p.cooldownMs ?? edgeMs.cooldown(cfg),
     maxRotationsPerDay: p.maxRotationsPerDay ?? cfg.maxRotationsPerRelayPerDay,
     drainMs: p.drainMs ?? edgeMs.drain(cfg),
@@ -795,11 +836,27 @@ async function insertRelay(
     publishedEdgeIds: [],
     standbyEdgeIds: [],
     rotationsToday: 0,
+    ...(opts.deferBinding ? { bindingDeferred: true } : {}),
+    ...(opts.setupOwned ? { setupOwned: true } : {}),
     updatedAt: now,
   });
-  // From this moment the origin's subscriptions are edge-required.
-  await upsertDeliveryBinding(ctx, { origin, slug });
+  // From this moment the origin's subscriptions are edge-required, unless the
+  // binding is deferred to go-live (the origin keeps serving its raw body; there
+  // is NO shortcut that binds it when an edge publishes).
+  if (!opts.deferBinding) await upsertDeliveryBinding(ctx, { origin, slug });
   return id;
+}
+
+/**
+ * Claim the deferred delivery binding of a relay (the go-live step): upsert the
+ * binding (policy version bump + mirror refresh, exactly as an insert does) and
+ * clear `bindingDeferred`. Not wired to any route yet: the activation policy
+ * (`require-edges`) that decides WHEN this may run is a later release.
+ */
+export async function claimDeliveryBinding(ctx: MutationCtx, relay: Doc<'relays'>): Promise<void> {
+  await upsertDeliveryBinding(ctx, { origin: relay.origin, slug: relay.slug });
+  if (relay.bindingDeferred)
+    await ctx.db.patch(relay._id, { bindingDeferred: undefined, updatedAt: Date.now() });
 }
 
 /**
@@ -858,8 +915,14 @@ export const create = internalMutation({
     origin: adminOriginValidator,
     listeners: v.optional(v.array(listenerSpecValidator)),
     ...originWriteArgs,
+    // Internal callers only (a guided setup); the HTTP handler strips both.
+    deferBinding: v.optional(v.boolean()),
+    setupOwned: v.optional(v.boolean()),
   },
-  handler: async (ctx, { slug, origin: originArg, listeners, actorAdminId, ...a }) => {
+  handler: async (
+    ctx,
+    { slug, origin: originArg, listeners, actorAdminId, deferBinding, setupOwned, ...a },
+  ) => {
     await assertAdmission(ctx.db, 'registration');
     const dup = await ctx.db
       .query('relays')
@@ -867,13 +930,18 @@ export const create = internalMutation({
       .unique();
     if (dup) throw new ConvexError({ code: 'conflict', message: 'A relay with this slug exists' });
     const origin = await checkOrigin(ctx.db, originArg);
-    const id = await insertRelay(ctx, slug, origin, a);
+    const id = await insertRelay(ctx, slug, origin, a, {
+      deferBinding: deferBinding === true,
+      setupOwned: setupOwned === true,
+    });
+    let poolRaised = false;
     if (listeners && listeners.length > 0) {
       const row = (await ctx.db.get(id))!;
       await applyRegistration(ctx, row, listeners as ListenerSpecInput[], 'admin', {
         prune: false,
         actorAdminId,
       });
+      poolRaised = (await ensurePoolCapacity(ctx, (await ctx.db.get(id))!)).raised;
     }
     await writeAuditLog(ctx, {
       actorType: 'admin',
@@ -881,9 +949,14 @@ export const create = internalMutation({
       action: 'relay.create',
       targetType: 'relay',
       targetId: id,
-      payload: { slug, ...describeOrigin(origin) },
+      payload: {
+        slug,
+        ...describeOrigin(origin),
+        ...(deferBinding ? { bindingDeferred: true } : {}),
+        ...(poolRaised ? { poolRaised: true } : {}),
+      },
     });
-    return { id };
+    return { id, warnings: poolRaised ? ['edge.pool_raised'] : [] };
   },
 });
 
@@ -1057,7 +1130,10 @@ export const registerBySlug = internalMutation({
         lastRegisteredAt: now,
         updatedAt: changed.length ? now : existing.updatedAt,
       });
-      if (originChanged) await upsertDeliveryBinding(ctx, { origin, slug: a.slug });
+      // A deferred relay stays deferred through a re-registration: the binding
+      // is claimed at go-live only.
+      if (originChanged && !existing.bindingDeferred)
+        await upsertDeliveryBinding(ctx, { origin, slug: a.slug });
     } else {
       id = await insertRelay(ctx, a.slug, origin, {
         originAddress: a.originAddress,
@@ -1076,6 +1152,10 @@ export const registerBySlug = internalMutation({
     });
     let adopted: { edgeId: Id<'edges'>; poolIndex: number | null } | null = null;
     if (a.adoption) adopted = await applyLegacyAdoption(ctx, (await ctx.db.get(id))!, a.adoption);
+    // Coverage: one published slot per deployed listener (raised, never shrunk).
+    const capacity = await ensurePoolCapacity(ctx, (await ctx.db.get(id))!);
+    const warnings: string[] = [];
+    if (capacity.raised) warnings.push('edge.pool_raised');
     await writeAuditLog(ctx, {
       actorType: a.actorAdminId ? 'admin' : 'system',
       actorId: a.actorAdminId ?? undefined,
@@ -1090,14 +1170,16 @@ export const registerBySlug = internalMutation({
         listenersUpdated: reg.updated.length,
         listenersRetired: reg.retired.length,
         ...(adopted ? { adopted: true } : {}),
+        ...(capacity.raised ? { poolRaised: true } : {}),
       },
     });
     return {
       id,
       created,
-      changed: created || changed.length > 0 || reg.changed,
+      changed: created || changed.length > 0 || reg.changed || capacity.to !== capacity.from,
       listeners: reg,
       adopted,
+      warnings,
     };
   },
 });
@@ -1518,13 +1600,18 @@ async function insertAdoptedEdge(
   let poolIndex: number | null = null;
   const softRefusal = layer === 'l7' && managed;
   let refusedCode: string | null = null;
+  let allocated: number | null = null;
   if (a.publish) {
-    const idx = nextFreePoolIndex(origin.publishedEdgeIds, origin.desiredPublished);
-    if (idx === null) {
-      if (!softRefusal)
-        throw new ConvexError({ code: 'edge.pool_full', message: 'The published pool is full' });
-      refusedCode = 'pool_full';
-    }
+    const alloc = allocatePoolIndex(
+      origin.publishedEdgeIds,
+      origin.desiredPublished,
+      listener._id,
+      await poolListenersOf(ctx.db, origin._id),
+    );
+    if ('refused' in alloc) {
+      if (!softRefusal) throw poolRefusal(alloc.refused);
+      refusedCode = alloc.refused;
+    } else allocated = alloc.index;
     const cfg = await resolveEdgeConfig(ctx.db);
     const fresh = (await ctx.db.get(edgeId))!;
     const check = refusedCode
@@ -1539,8 +1626,8 @@ async function insertAdoptedEdge(
       refusedCode = check.code ?? 'not_publishable';
     }
   }
-  if (a.publish && !refusedCode) {
-    const idx = nextFreePoolIndex(origin.publishedEdgeIds, origin.desiredPublished)!;
+  if (a.publish && !refusedCode && allocated !== null) {
+    const idx = allocated;
     poolIndex = idx;
     await ctx.db.patch(edgeId, {
       publication: 'published',
@@ -1640,6 +1727,33 @@ export const adoptEdge = internalMutation({
 });
 
 // --- published pool -----------------------------------------------------------------------------
+
+/** The listener projection the reserved-allocation rule reads. */
+export async function poolListenersOf(db: Db, relayId: Id<'relays'>): Promise<PoolListener[]> {
+  const rows = await db
+    .query('relayListeners')
+    .withIndex('by_relay', (q) => q.eq('relayId', relayId))
+    .collect();
+  return rows.map((l) => ({
+    id: l._id as string,
+    templateEdgeId: (l.templateEdgeId as string | undefined) ?? null,
+    deployed: l.deployed,
+    enabled: l.enabled,
+    retired: l.retired,
+  }));
+}
+
+export function poolRefusal(
+  code: 'pool_full' | 'pool_reserved',
+): ConvexError<{ code: string; message: string }> {
+  return new ConvexError({
+    code: `edge.${code}`,
+    message:
+      code === 'pool_full'
+        ? 'The published pool is full'
+        : 'The free pool slots are reserved for listeners that have no published edge yet',
+  });
+}
 
 export interface PublishCheck {
   ok: boolean;
@@ -1760,11 +1874,24 @@ export const publishEdge = internalMutation({
         code: `edge.${check.code}`,
         message: `Edge cannot be published: ${check.code}`,
       });
-    let idx = poolIndex ?? nextFreePoolIndex(origin.publishedEdgeIds, origin.desiredPublished);
-    if (idx === null)
-      throw new ConvexError({ code: 'edge.pool_full', message: 'The published pool is full' });
+    // A named index that is occupied is refused as such, before any pool rule.
+    if (poolIndex !== undefined) {
+      const named = origin.publishedEdgeIds[poolIndex];
+      if (named && named !== edgeId)
+        throw new ConvexError({ code: 'edge.pool_index_taken', message: 'Pool index is occupied' });
+    }
+    // Reserved allocation applies whether or not an index was named: a free
+    // slot held for an uncovered listener is not this edge's to take.
+    const alloc = allocatePoolIndex(
+      origin.publishedEdgeIds,
+      origin.desiredPublished,
+      edge.listenerId,
+      await poolListenersOf(ctx.db, relayId),
+    );
+    if ('refused' in alloc) throw poolRefusal(alloc.refused);
+    let idx = poolIndex ?? alloc.index;
     if (idx < 0 || idx >= Math.max(origin.desiredPublished, origin.publishedEdgeIds.length))
-      idx = nextFreePoolIndex(origin.publishedEdgeIds, origin.desiredPublished) ?? 0;
+      idx = alloc.index;
     const occupant = origin.publishedEdgeIds[idx];
     if (occupant && occupant !== edgeId)
       throw new ConvexError({ code: 'edge.pool_index_taken', message: 'Pool index is occupied' });
@@ -1902,6 +2029,81 @@ export const dropFromPool = internalMutation({
     const r = await dropEdgeFromPool(ctx, origin, edge, { reason });
     await refreshTemplateEdges(ctx, origin);
     return { ok: true as const, dropped: r.dropped };
+  },
+});
+
+/**
+ * Coverage upkeep for the reconcile cron: raise / expand `desiredPublished`
+ * for the relay's listeners (lib/edges/poolCapacity.ts). Returns what changed
+ * and how many uncovered listeners no expansion can make room for.
+ */
+export const ensureCapacity = internalMutation({
+  args: { relayId: v.id('relays') },
+  handler: async (ctx, { relayId }) => {
+    const relay = await ctx.db.get(relayId);
+    if (!relay) return null;
+    return ensurePoolCapacity(ctx, relay);
+  },
+});
+
+/**
+ * Make room in a pool at its cap: unpublish ONE duplicate (a published edge
+ * that is not its listener's template edge, highest pool index first) back to
+ * standby so upkeep can publish an uncovered listener into the freed slot.
+ * Never automatic: it changes what members receive. Refusals: `edge.no_duplicate`
+ * (every published edge is a template edge), the usual rotation / quarantine guard.
+ */
+export const rebalance = internalMutation({
+  args: { relayId: v.id('relays'), actorAdminId: v.optional(v.id('adminUsers')) },
+  handler: async (ctx, { relayId, actorAdminId }) => {
+    const origin = await ctx.db.get(relayId);
+    if (!origin) throw new ConvexError({ code: 'not_found', message: 'Relay not found' });
+    await assertNoRotationOrQuarantine(ctx.db, origin);
+    const listeners = await listenersOf(ctx, relayId);
+    const templates = new Set(
+      listeners.map((l) => l.templateEdgeId as string | undefined).filter(Boolean),
+    );
+    let pick: Doc<'edges'> | null = null;
+    for (let i = origin.publishedEdgeIds.length - 1; i >= 0; i--) {
+      const edgeId = origin.publishedEdgeIds[i];
+      if (!edgeId || templates.has(edgeId as string)) continue;
+      const e = await ctx.db.get(edgeId);
+      if (e && e.publication === 'published') {
+        pick = e;
+        break;
+      }
+    }
+    if (!pick)
+      throw new ConvexError({
+        code: 'edge.no_duplicate',
+        message: 'Every published edge is the template edge of its listener; nothing to unpublish',
+      });
+    const picked = pick;
+    const now = Date.now();
+    const poolIndex = picked.poolIndex ?? null;
+    await ctx.db.patch(picked._id, {
+      publication: 'unpublished',
+      poolIndex: undefined,
+      updatedAt: now,
+    });
+    const epoch = origin.publicationEpoch + 1;
+    await ctx.db.patch(relayId, {
+      publishedEdgeIds: withoutEdge(origin.publishedEdgeIds, picked._id),
+      standbyEdgeIds: [...origin.standbyEdgeIds.filter((e) => e !== picked._id), picked._id],
+      publicationEpoch: epoch,
+      updatedAt: now,
+    });
+    await refreshTemplateEdges(ctx, origin);
+    await writeAuditLog(ctx, {
+      actorType: actorAdminId ? 'admin' : 'system',
+      actorId: actorAdminId ?? undefined,
+      action: 'edge.relay.rebalanced',
+      targetType: 'relay',
+      targetId: relayId,
+      payload: { relaySlug: origin.slug, edgeId: picked._id, poolIndex, epoch },
+    });
+    await scheduleMirrorRefresh(ctx);
+    return { ok: true as const, edgeId: picked._id, poolIndex, epoch };
   },
 });
 

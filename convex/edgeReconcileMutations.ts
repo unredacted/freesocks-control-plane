@@ -13,11 +13,12 @@ import {
   assertNoRotationOrQuarantine,
   checkPublishable,
   dropEdgeFromPool,
+  poolListenersOf,
   refreshTemplateEdges,
   scheduleMirrorRefresh,
 } from './relays';
 import { destroyedPatch } from './edges';
-import { nextFreePoolIndex, withEdgeAt } from './lib/edges/pool';
+import { allocatePoolIndex, withEdgeAt } from './lib/edges/pool';
 import { startRotation } from './edgeRotations';
 
 export const markDestroyed = internalMutation({
@@ -225,11 +226,20 @@ export const publishStandby = internalMutation({
       return { published: false, rotationId: null };
     }
     const cfg = await resolveEdgeConfig(ctx.db);
-    const idx = nextFreePoolIndex(origin.publishedEdgeIds, origin.desiredPublished);
-    if (idx === null) return { published: false, rotationId: null };
+    const poolListeners = await poolListenersOf(ctx.db, relayId);
     for (const edgeId of candidates) {
       const edge = await ctx.db.get(edgeId);
       if (!edge || edge.relayId !== relayId) continue;
+      // Reserved allocation is per listener: a candidate for a covered listener
+      // may not take a slot held for an uncovered one.
+      const alloc = allocatePoolIndex(
+        origin.publishedEdgeIds,
+        origin.desiredPublished,
+        edge.listenerId,
+        poolListeners,
+      );
+      if ('refused' in alloc) continue;
+      const idx = alloc.index;
       const check = await checkPublishable(ctx, edge, cfg.requireProviderHealth);
       if (!check.ok) continue;
       const listener = await ctx.db.get(edge.listenerId);

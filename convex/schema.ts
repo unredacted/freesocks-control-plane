@@ -1062,6 +1062,8 @@ export default defineSchema({
     providerPreference: v.optional(relayProviderId),
     desiredPublished: v.number(),
     standbyPerRelay: v.number(),
+    // Verified standbys kept per coverage listener (absent = the config default at read).
+    standbyPerListener: v.optional(v.number()),
     cooldownMs: v.number(),
     maxRotationsPerDay: v.number(),
     drainMs: v.number(),
@@ -1087,6 +1089,14 @@ export default defineSchema({
       v.object({ rotationId: v.id('edgeRotations'), since: v.number(), reason: v.string() }),
     ),
     deleting: v.optional(v.boolean()),
+    // Guided setup: the delivery binding is claimed at go-live, not at insert
+    // (`claimDeliveryBinding`); until then the origin serves its raw body.
+    bindingDeferred: v.optional(v.boolean()),
+    // A setup run owns this relay: reconcile upkeep and the detector's automatic
+    // replacement skip it until the run clears the flag (independent of the run's state).
+    setupOwned: v.optional(v.boolean()),
+    // The stage the setup run recorded last (informational; the run machine is a later release).
+    setupStage: v.optional(v.string()),
     // Block-detector state (convex/edgeDetector.ts).
     suspicion: v.optional(
       v.object({

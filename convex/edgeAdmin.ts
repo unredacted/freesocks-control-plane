@@ -13,6 +13,7 @@ import { writeAuditLog } from './lib/audit';
 import {
   EDGE_CONFIG_BOUNDS,
   EDGE_DEFAULTS,
+  EDGE_KEYS,
   RENDER_CLIENT_FAMILIES,
   flattenEdgeConfig,
   edgeConfigWrites,
@@ -225,6 +226,38 @@ export const patchConfig = internalMutation({
       });
     }
     return { changedKeys: changed };
+  },
+});
+
+/**
+ * The one automation switch (`POST /api/v1/admin/edges/automation {on}`): in
+ * ONE mutation set `edge.enabled`, `edge.autoRotate`, `edge.probe.enabled` and
+ * `edge.autoProvisionToDesired` to `on`, and keep one verified spare per
+ * listener (`edge.standbyPerListener = 1`) when turning on (left as-is when
+ * turning off, so nobody's bill changes twice). Never `render.enabled` or
+ * `l7.autoSelect`; no relay row is touched (a relay's own `autoRotate` keeps
+ * its meaning under the global gate). Audited as the boolean only.
+ */
+export const setAutomation = internalMutation({
+  args: { on: v.boolean(), actorAdminId: v.optional(v.id('adminUsers')) },
+  handler: async (ctx, { on, actorAdminId }) => {
+    const flag = JSON.stringify(on);
+    const writes: Array<{ key: string; value: string }> = [
+      { key: EDGE_KEYS.enabled, value: flag },
+      { key: EDGE_KEYS.autoRotate, value: flag },
+      { key: EDGE_KEYS['probe.enabled'], value: flag },
+      { key: EDGE_KEYS.autoProvisionToDesired, value: flag },
+      ...(on ? [{ key: EDGE_KEYS.standbyPerListener, value: '1' }] : []),
+    ];
+    for (const w of writes) await upsertSettingRow(ctx, w.key, w.value, actorAdminId);
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: actorAdminId ?? undefined,
+      action: 'edge.automation.set',
+      targetType: 'app_settings',
+      payload: { on },
+    });
+    return { on, changedKeys: writes.map((w) => w.key) };
   },
 });
 

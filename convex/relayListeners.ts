@@ -22,6 +22,7 @@ import { listenerProtoFields } from './lib/edgeProtocolIds';
 import { edgeProviderIdValidator } from './lib/edgeProviderIds';
 import { listenerLayers } from './lib/edges/layers';
 import { assertAdmission } from './lib/edges/maintenance';
+import { ensurePoolCapacity } from './lib/edges/poolCapacity';
 import {
   assertNoMatchOverlap,
   listenerConfigHash,
@@ -411,6 +412,8 @@ export const upsert = internalMutation({
       actorAdminId,
     });
     const row = await listenerByKey(ctx, relayId, spec.listenerKey);
+    // A new or re-deployed listener needs a published slot of its own.
+    const capacity = await ensurePoolCapacity(ctx, (await ctx.db.get(relayId))!);
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,
@@ -426,8 +429,9 @@ export const upsert = internalMutation({
     return {
       id: row!._id,
       created: r.created.length > 0,
-      changed: r.changed,
+      changed: r.changed || capacity.to !== capacity.from,
       templateHostRemark: row ? listenerRemark(row) : null,
+      warnings: capacity.raised ? ['edge.pool_raised'] : [],
     };
   },
 });
@@ -492,6 +496,8 @@ export const setEnabled = internalMutation({
     await assertNoRotationOrQuarantine(ctx.db, relay);
     await ctx.db.patch(id, { enabled, revision: l.revision + 1, updatedAt: Date.now() });
     await bumpEpochAndRefresh(ctx, relay);
+    // Re-enabling a deployed listener needs a published slot of its own.
+    if (enabled) await ensurePoolCapacity(ctx, (await ctx.db.get(relay._id))!);
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,

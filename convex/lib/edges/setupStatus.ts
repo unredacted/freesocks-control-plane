@@ -114,6 +114,8 @@ export interface SetupRelayFacts {
   edges: SetupEdgeFacts[];
   /** A delivery binding covers members on this origin (edge-required). */
   deliveryRequired: boolean;
+  /** The binding is deferred to go-live (a guided relay): members still get the raw body. */
+  bindingDeferred?: boolean;
   connectionPlanCount: number;
   mirrorsUnvalidated: number;
   qualificationCredential: boolean;
@@ -393,6 +395,9 @@ export function computeSetupStatus(input: SetupInput): SetupResult {
       if (relay.hostMode === 'operator') w.push(blocker('hosts_operator_managed', relay.slug));
     } else if (isManual && relay.connectionPlanCount === 0)
       b.push(blocker('no_publishable_edge', relay.slug));
+    // A guided relay serves the raw body until its binding is claimed at go-live:
+    // published edges reach nobody yet (never `members_dark`, which needs a binding).
+    if (relay?.bindingDeferred) w.push(blocker('binding_deferred', relay.slug));
     steps.push({
       id: 'publish',
       status: b.length === 0 ? 'done' : 'blocked',

@@ -33,6 +33,7 @@ import {
   checkPublishable,
   liveEdgesOfAccount,
   liveEdgesOfRelay,
+  poolListenersOf,
   refreshTemplateEdges,
   scheduleMirrorRefresh,
   todayKey,
@@ -49,7 +50,7 @@ import {
   type HostTarget,
 } from './lib/edges/hosts';
 import type { BackendHost } from './lib/backends/types';
-import { nextFreePoolIndex, withEdgeAt, withoutEdge } from './lib/edges/pool';
+import { allocatePoolIndex, withEdgeAt, withoutEdge } from './lib/edges/pool';
 import {
   appendEvent,
   isTerminalPhase,
@@ -1376,13 +1377,24 @@ export const applyPublish = internalMutation({
       });
       published = withoutEdge(published, target._id);
     } else {
-      poolIndex = nextFreePoolIndex(published, origin.desiredPublished);
-      if (poolIndex === null) {
-        // Pool full: keep the edge as a standby and finish.
+      // Reserved allocation: a free slot is held for a listener with no
+      // template edge; an extra copy for a covered listener stays a standby.
+      const alloc = allocatePoolIndex(
+        published,
+        origin.desiredPublished,
+        to.listenerId,
+        await poolListenersOf(ctx.db, r.relayId),
+      );
+      if ('refused' in alloc) {
+        // Pool full (or its free slots reserved): keep the edge as a standby and finish.
         await ctx.db.patch(rotationId, {
           phase: 'finalizing',
           stepVersion: next,
-          events: appendEvent(r.events, { at: now, level: 'warn', code: 'pool_full_standby' }),
+          events: appendEvent(r.events, {
+            at: now,
+            level: 'warn',
+            code: alloc.refused === 'pool_full' ? 'pool_full_standby' : 'pool_reserved_standby',
+          }),
           updatedAt: now,
         });
         await ctx.db.patch(r.relayId, {
@@ -1392,6 +1404,7 @@ export const applyPublish = internalMutation({
         await scheduleStep(ctx, rotationId, 0);
         return { ok: true as const, poolIndex: null, needsHostFlip: false };
       }
+      poolIndex = alloc.index;
     }
     await ctx.db.patch(to._id, {
       publication: 'published',

@@ -62,6 +62,8 @@ import {
   selectionContext,
 } from './edgeRotations';
 import { accountTested } from './edgeProviderAccounts';
+import { requiredPoolSize } from './lib/edges/poolCapacity';
+import { uncoveredListeners } from './lib/edges/pool';
 import { renderPreviewFor } from './edgeAdmin';
 import type { RelayOrigin } from './lib/edges/origin';
 
@@ -362,6 +364,7 @@ async function relayFacts(
         : null,
       edges: await edgeFacts(ctx, relay, cfg),
       deliveryRequired: !!binding,
+      bindingDeferred: relay.bindingDeferred === true,
       connectionPlanCount: endpoints,
       // Mirror validation is driven by the mirror refresh cron over every
       // subscription (no per-node index exists on a traffic-scaled table), so
@@ -658,10 +661,12 @@ const ATTENTION_RANK = [
   'needs_operator',
   'host_unresolved',
   'members_dark',
+  'go_live_pending',
   'rotation_failed',
   'qualification_lapsed',
   'block_suspected',
   'edge_unreachable',
+  'pool_rebalance',
   'pool_below_desired',
   'account_unqualified',
   'account_untested',
@@ -696,7 +701,9 @@ interface AttentionItem {
     | 'qualify_front'
     | 'rotate'
     | 'test_credentials'
-    | 'thaw';
+    | 'thaw'
+    | 'rebalance'
+    | 'require_edges';
   since: string | null;
 }
 
@@ -799,6 +806,20 @@ export const attention = internalQuery({
           });
         }
       }
+      // A guided relay with something published but its binding still deferred:
+      // members get the raw body until go-live claims the binding.
+      if (relay.bindingDeferred && published > 0 && relay.enabled) {
+        items.push({
+          ...base(relay),
+          id: `go_live_pending:${relay._id}`,
+          kind: 'go_live_pending',
+          severity: 'warning',
+          code: null,
+          facts: { published },
+          action: 'require_edges',
+          since: isoN(relay.updatedAt),
+        });
+      }
       const [last] = await lastRotations(ctx.db, relay._id);
       if (
         last &&
@@ -878,6 +899,43 @@ export const attention = internalQuery({
             since: isoN(e.reachability?.updatedAt),
           });
         }
+      }
+      // Coverage at the cap: a deployed listener has no published edge, every
+      // slot is taken and no expansion can make room. Only a rebalance
+      // (unpublishing a duplicate) frees a slot, and that is the operator's call.
+      const capacity = requiredPoolSize({
+        desiredPublished: relay.desiredPublished,
+        publishedEdgeIds: relay.publishedEdgeIds,
+        listeners: listeners.map((l) => ({
+          id: l._id as string,
+          templateEdgeId: (l.templateEdgeId as string | undefined) ?? null,
+          deployed: l.deployed,
+          enabled: l.enabled,
+          retired: l.retired,
+        })),
+      });
+      if (relay.enabled && capacity.blocked > 0) {
+        const waiting = uncoveredListeners(
+          listeners.map((l) => ({
+            id: l._id as string,
+            key: l.listenerKey,
+            templateEdgeId: (l.templateEdgeId as string | undefined) ?? null,
+            deployed: l.deployed,
+            enabled: l.enabled,
+            retired: l.retired,
+          })),
+        );
+        items.push({
+          ...base(relay),
+          id: `pool_rebalance:${relay._id}`,
+          kind: 'pool_rebalance',
+          severity: 'warning',
+          listenerKey: waiting[0]?.key ?? null,
+          code: null,
+          facts: { published, desired: relay.desiredPublished, uncovered: waiting.length },
+          action: 'rebalance',
+          since: null,
+        });
       }
       if (relay.enabled && published < relay.desiredPublished) {
         const idle = edges.filter((e) => e.status === 'active' && e.publication === 'unpublished');

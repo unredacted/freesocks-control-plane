@@ -290,7 +290,7 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'edge.profile.qualified': ['slug', 'provider', 'tlsOk', 'authOk'],
   'edge.profile.sni.retire': ['profileSlug', 'count'],
   'edge.profile.sni.reactivate': ['profileSlug', 'count'],
-  'relay.create': ['slug'],
+  'relay.create': ['slug', 'bindingDeferred', 'poolRaised'],
   // `changed` = names of the fields the write touched (never their values);
   // the three booleans are the operator-owned knob flips, when they changed.
   'relay.update': ['slug', 'changed', 'autoRotate', 'hostMode', 'enabled'],
@@ -298,6 +298,12 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'relay.qualification_credential': ['slug', 'minted', 'revoked', 'replaced'],
   'relay.delete': ['slug', 'force', 'disposition'],
   'relay.upsert': ['slug', 'created', 'changed'],
+  // Coverage: a full pool expanded (within the cap) for an uncovered listener; a
+  // rebalance unpublished a duplicate back to standby. Counts and ids only.
+  'edge.pool_expanded': ['relaySlug', 'from', 'to', 'blocked'],
+  'edge.relay.rebalanced': ['relaySlug', 'edgeId', 'poolIndex', 'epoch'],
+  // The automation switch: the one boolean it was set to.
+  'edge.automation.set': ['on'],
   'edge.adopted': ['slug', 'edgeId', 'managed', 'publication', 'refused', 'shared'],
   'relay.slot.upsert': ['relaySlug', 'slotKey', 'created'],
   'relay.slot.retire': ['relaySlug', 'slotKey'],
@@ -363,6 +369,7 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
     'listenersUpdated',
     'listenersRetired',
     'adopted',
+    'poolRaised',
   ],
   'relay.listener.upsert': ['relaySlug', 'listenerKey', 'created'],
   'relay.listener.retire': ['relaySlug', 'listenerKey'],
