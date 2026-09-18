@@ -51,6 +51,7 @@ import {
 } from './lib/edges/frontCheck/binding';
 import {
   allocatePoolIndex,
+  coverageListeners,
   withEdgeAt,
   withoutEdge,
   publishedCount,
@@ -833,7 +834,10 @@ async function insertRelay(
     providerPreference: p.providerPreference,
     desiredPublished: p.desiredPublished ?? cfg.desiredPublishedDefault,
     standbyPerRelay: p.standbyPerRelay ?? cfg.standbyPerRelay,
-    standbyPerListener: p.standbyPerListener ?? cfg.standbyPerListener,
+    // An OVERRIDE of the global `edge.standbyPerListener`: persisted only when
+    // the caller set it, so a later change of the global applies to this relay
+    // (the reconcile reads `origin.standbyPerListener ?? cfg.standbyPerListener`).
+    ...(p.standbyPerListener !== undefined ? { standbyPerListener: p.standbyPerListener } : {}),
     cooldownMs: p.cooldownMs ?? edgeMs.cooldown(cfg),
     maxRotationsPerDay: p.maxRotationsPerDay ?? cfg.maxRotationsPerRelayPerDay,
     drainMs: p.drainMs ?? edgeMs.drain(cfg),
@@ -974,6 +978,17 @@ export const update = internalMutation({
     await assertAddressChangeAllowed(ctx.db, row, p.originAddress);
     if (p.originAddress !== undefined) await assertOriginIsNotAnEdge(ctx.db, p.originAddress, id);
     if (p.hostMode !== undefined) await applyHostModeChange(ctx, row, p.hostMode);
+    // Capacity follows coverage (lib/edges/poolCapacity.ts): a pool that cannot
+    // give every deployed, enabled listener a slot is refused rather than
+    // silently raised back on the next tick.
+    if (p.desiredPublished !== undefined) {
+      const coverage = coverageListeners(await poolListenersOf(ctx.db, id)).length;
+      if (p.desiredPublished < coverage)
+        throw new ConvexError({
+          code: 'edge.pool_below_coverage',
+          message: `desiredPublished cannot go below the ${coverage} deployed, enabled listener(s) of this relay; retire or disable a listener first`,
+        });
+    }
     if (p.qualificationModeSlug) {
       const { modes } = await resolveModeCatalog(ctx.db);
       if (!modes.some((m) => m.id === p.qualificationModeSlug))

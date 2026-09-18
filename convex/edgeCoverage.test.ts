@@ -120,6 +120,77 @@ describe('coverage: capacity follows the deployed listeners', () => {
     ).rejects.toThrow(/1\.\.8/);
     await t.mutation(internal.relays.update, { id: relayId, desiredPublished: 8 });
     expect((await relayOf(t, relayId)).desiredPublished).toBe(8);
+    // Lowering the pool under the two coverage listeners is refused (the next
+    // tick would only raise it back); the coverage count itself is allowed.
+    await expect(
+      t.mutation(internal.relays.update, { id: relayId, desiredPublished: 1 }),
+    ).rejects.toThrow(/pool_below_coverage/);
+    await t.mutation(internal.relays.update, { id: relayId, desiredPublished: 2 });
+    expect((await relayOf(t, relayId)).desiredPublished).toBe(2);
+    // Once a listener is disabled it no longer counts.
+    await t.mutation(internal.relayListeners.setEnabled, { id: added.id, enabled: false });
+    await t.mutation(internal.relays.update, { id: relayId, desiredPublished: 1 });
+    expect((await relayOf(t, relayId)).desiredPublished).toBe(1);
+  });
+
+  test('a ninth deployed, enabled listener is refused (edge.listener_cap) at registration and at the CMS upsert; eight are fine', async () => {
+    forbidNetwork();
+    const t = convexTest(schema, modules);
+    await insertPanelServer(t);
+    const listener = (i: number) =>
+      realityListener({
+        listenerKey: `l${i}`,
+        originPort: 10000 + i,
+        panelBinding: {
+          inboundTag: `VLESS_RELAY_L${i}`,
+          configProfileUuid: FIXTURE_CONFIG_PROFILE,
+          configProfileInboundUuid: `44444444-4444-4444-8444-4444444444${String(i).padStart(2, '0')}`,
+        },
+      });
+    const body = (n: number) => ({
+      slug: 'node-cap',
+      origin: {
+        kind: 'panel-node' as const,
+        backendSlug: FIXTURE_PANEL_SLUG,
+        nodeName: FIXTURE_NODE,
+      },
+      originAddress: FIXTURE_ORIGIN,
+      listeners: Array.from({ length: n }, (_, i) => listener(i + 1)) as never,
+      source: 'role' as const,
+    });
+    await expect(t.mutation(internal.relays.registerBySlug, body(9))).rejects.toThrow(
+      /listener_cap.*at most 8|at most 8/,
+    );
+    const eight = await t.mutation(internal.relays.registerBySlug, body(8));
+    expect((await relayOf(t, eight.id)).desiredPublished).toBe(8);
+    // The identical body again is not "a ninth".
+    expect((await t.mutation(internal.relays.registerBySlug, body(8))).changed).toBe(false);
+    await expect(t.mutation(internal.relays.registerBySlug, body(9))).rejects.toThrow(
+      /listener_cap/,
+    );
+    await expect(
+      t.mutation(internal.relayListeners.upsert, { relayId: eight.id, spec: listener(9) as never }),
+    ).rejects.toThrow(/listener_cap/);
+    // An undeployed ninth is not a coverage listener and passes.
+    await t.mutation(internal.relayListeners.upsert, {
+      relayId: eight.id,
+      spec: { ...listener(9), deployed: false } as never,
+    });
+    expect((await relayOf(t, eight.id)).desiredPublished).toBe(8);
+  });
+
+  test('a new relay carries no standbyPerListener override: the global default applies until the relay sets its own', async () => {
+    const { t, relayId, listenerIds } = await world({ listeners: 'a', hostMode: 'operator' });
+    expect((await relayOf(t, relayId)).standbyPerListener).toBeUndefined();
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.enabled', 'true'));
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.autoProvisionToDesired', 'true'));
+    await t.mutation(internal.relays.update, { id: relayId, desiredPublished: 1 });
+    await adoptL4Edge(t, relayId, listenerIds.a, { ipv4: '198.51.100.1', publish: true });
+    expect((await run(t)).started).toBe(0);
+    // A later change of the GLOBAL applies to the relay (no stale copy on the row).
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.standbyPerListener', '1'));
+    expect((await run(t)).started).toBe(1);
+    expect((await relayOf(t, relayId)).standbyPerListener).toBeUndefined();
   });
 });
 
