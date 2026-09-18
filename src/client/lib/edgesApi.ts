@@ -74,6 +74,8 @@ import {
   RelayListenerUpsertResponse,
   RelayListenersResponse,
   RelayNodeCandidatesResponse,
+  InboundCandidatesResponse,
+  EdgeTestLinkResponse,
   ResolveQuarantineRequest,
   SetupDraft,
   SetupStatusResponse,
@@ -324,6 +326,15 @@ export const fetchNodeCandidates = (backendServerId: string) =>
     `${BASE}/relays/node-candidates?backendServerId=${enc(backendServerId)}`,
     RelayNodeCandidatesResponse,
   );
+/** Discovery with the origin probe applied (throttled: reaches the panel and opens sockets). */
+export const fetchInboundCandidates = (backendServerId: string, nodeUuid: string) =>
+  apiClient.get(
+    `${BASE}/relays/inbound-candidates?backendServerId=${enc(backendServerId)}&nodeUuid=${enc(nodeUuid)}`,
+    InboundCandidatesResponse,
+  );
+/** The isolated test link for an L4 candidate (throttled: fetches the credential body). */
+export const fetchTestLink = (edgeId: string) =>
+  apiClient.get(`${BASE}/edges/${enc(edgeId)}/test-link`, EdgeTestLinkResponse);
 export const refreshNodeCandidates = (backendServerId: string) =>
   apiClient.post(
     `${BASE}/relays/node-candidates/refresh`,

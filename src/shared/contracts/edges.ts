@@ -10,6 +10,7 @@ import {
   ATTENTION_ACTIONS,
   ATTENTION_KINDS,
   ATTENTION_SEVERITIES,
+  INBOUND_UNSUPPORTED_CODES,
   PREFLIGHT_KINDS,
   SETUP_STEP_IDS,
   SETUP_STEP_STATUSES,
@@ -498,6 +499,28 @@ export const EdgeVerificationBinding = z.object({
 });
 export type EdgeVerificationBinding = z.infer<typeof EdgeVerificationBinding>;
 
+/**
+ * `GET edges/{id}/test-link`: the isolated test link for an L4 candidate (the
+ * candidate connection only, rendered from the test credential's own body)
+ * plus the binding `POST edges/{id}/verify` must echo (the same one
+ * `verification-binding` derives).
+ */
+export const EdgeTestLinkResponse = z.object({
+  link: z.string(),
+  format: z.literal('links'),
+  binding: z.object({
+    edgeId: z.string(),
+    endpoint: z.string(),
+    listenerKey: z.string(),
+    listenerRevision: z.number(),
+    configHash: z.string(),
+    issuedAt: iso,
+  }),
+  /** The temporary credential behind the link (Outline), released when the sheet closes. */
+  credentialId: z.string().nullable(),
+});
+export type EdgeTestLinkResponse = z.infer<typeof EdgeTestLinkResponse>;
+
 export const EdgeVerifyRequest = z.object({
   endpoint: z.string(),
   listenerRevision: z.number(),
@@ -950,6 +973,44 @@ export const RelayNodeCandidatesResponse = z.object({
   nodes: z.array(RelayNodeCandidate),
 });
 export type RelayNodeCandidatesResponse = z.infer<typeof RelayNodeCandidatesResponse>;
+
+/**
+ * `GET relays/inbound-candidates?backendServerId=&nodeUuid=`: the node's
+ * inbounds mapped to listener candidates (docs/edges.md § "Listener
+ * catalogue", discovery), with `originTransport` filled where the origin probe
+ * succeeded and `layers` recomputed from it. Nothing is registered by this call.
+ */
+export const InboundCandidate = z.object({
+  listenerSpec: ListenerSpec,
+  /** The layers that can front the candidate, and why the others cannot (`LAYER_EXCLUSION_CODES`). */
+  layers: z.object({
+    layers: z.array(EdgeLayer),
+    excluded: z.record(z.string(), z.string()).default({}),
+  }),
+  formats: z.object({ links: z.boolean(), singbox: z.boolean(), clash: z.boolean() }),
+  needsName: z.boolean(),
+  sourceTag: z.string(),
+  originTransport: ListenerOriginTransport.nullable(),
+  /** The origin probe's verdict (HTTP-transport candidates only); `reason` is a short code, never an address. */
+  probe: z.object({ ok: z.boolean(), reason: z.string().nullable() }).nullable(),
+});
+export type InboundCandidate = z.infer<typeof InboundCandidate>;
+export const InboundCandidatesResponse = z.object({
+  node: z.object({ nodeUuid: z.string(), name: z.string(), address: z.string().nullable() }),
+  originAddress: z.string(),
+  /** The relay already registered on this node, when one exists. */
+  relaySlug: z.string().nullable(),
+  candidates: z.array(InboundCandidate),
+  unsupported: z.array(
+    z.object({
+      tag: z.string(),
+      reason: z.enum(INBOUND_UNSUPPORTED_CODES),
+      detail: z.string().optional(),
+    }),
+  ),
+  probedAt: iso,
+});
+export type InboundCandidatesResponse = z.infer<typeof InboundCandidatesResponse>;
 
 /**
  * The node role's view of `GET/PUT …/relays/by-slug/{slug}` (docs/edges.md § "Node
