@@ -14,6 +14,9 @@
    *   onCreated: (accountId: string) => void
    *   onCancel?: () => void                     shows a Cancel button on the first step
    *   provider?: EdgeProviderId                 preselect
+   *   compact?: boolean                         the protect flow: limits and priority keep their
+   *                                             defaults and are not shown; placement comes from
+   *                                             the discovered lists as usual
    */
   import { untrack } from 'svelte';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
@@ -61,8 +64,9 @@
     onCreated: (accountId: string) => void;
     onCancel?: () => void;
     provider?: EdgeProviderId;
+    compact?: boolean;
   }
-  let { onCreated, onCancel, provider: presetProvider }: Props = $props();
+  let { onCreated, onCancel, provider: presetProvider, compact = false }: Props = $props();
 
   const uid = $props.id();
   const qc = useQueryClient();
@@ -237,8 +241,10 @@
       },
       {
         id: 'placement',
-        title: 'Placement and limits',
-        description: 'Where edges are created, and how many this account may run.',
+        title: compact ? 'Placement' : 'Placement and limits',
+        description: compact
+          ? 'Where addresses are created.'
+          : 'Where edges are created, and how many this account may run.',
         status: status('placement'),
         ...(step !== 'placement' ? { note: 'after connecting' } : {}),
       },
@@ -478,7 +484,7 @@
             </div>
           {/if}
         {/if}
-        <div class="grid gap-4 sm:grid-cols-3">
+        <div class="grid gap-4 sm:grid-cols-3" class:hidden={compact}>
           <NumberField
             bind:value={maxLiveEdges}
             bind:invalid={limitsInvalid.max}
@@ -551,8 +557,13 @@
             </Button>
           </div>
           <p class="text-muted-foreground text-xs">
-            A new account is tested but not qualified: it can only be used for a test edge until you
-            mark it qualified.
+            {#if compact}
+              The account keeps the default limits (4 addresses at most, 6 new per day). Change them
+              later from Providers.
+            {:else}
+              A new account is tested but not trusted: it can only be used for a test edge until one
+              of its addresses is confirmed with a real session, or you trust it by hand.
+            {/if}
           </p>
         {/if}
       </div>

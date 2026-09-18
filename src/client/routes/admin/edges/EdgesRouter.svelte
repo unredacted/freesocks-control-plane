@@ -5,12 +5,17 @@
    * search-only change (`?tab=`, `?edge=`) does not: pages keep their view state
    * in the query string through `searchParam` (lib/urlState.svelte.ts).
    *
+   * Every page sits under the in-page header (Nodes | Providers | Advanced).
    * Routes: see EDGES_ROUTES in ./lib/routes.ts (the single list of patterns).
    */
   import { router } from '../../../stores/router.svelte';
   import Link from '../../../components/Link.svelte';
   import * as Card from '@client/components/ui/card';
-  import { resolveEdgesRoute, edgesPaths } from './lib/routes';
+  import { resolveEdgesRoute, edgesPaths, sectionTabOf } from './lib/routes';
+  import SectionNav from './components/SectionNav.svelte';
+  import EdgesHome from './simple/EdgesHome.svelte';
+  import NodePage from './simple/NodePage.svelte';
+  import EdgesAdvanced from './simple/EdgesAdvanced.svelte';
   import EdgesOverview from './EdgesOverview.svelte';
   import EdgesSetup from './EdgesSetup.svelte';
   import RelayPage from './RelayPage.svelte';
@@ -23,7 +28,15 @@
   const route = $derived(resolveEdgesRoute(router.pathname));
 </script>
 
-{#if route.page === 'overview'}
+<SectionNav current={sectionTabOf(route)} />
+
+{#if route.page === 'home'}
+  <EdgesHome />
+{:else if route.page === 'node'}
+  <NodePage slug={route.slug} />
+{:else if route.page === 'advanced'}
+  <EdgesAdvanced />
+{:else if route.page === 'overview'}
   <EdgesOverview />
 {:else if route.page === 'setup'}
   <EdgesSetup />
@@ -48,8 +61,8 @@
       </Card.Description>
     </Card.Header>
     <Card.Content>
-      <Link href={edgesPaths.overview()} class="text-primary text-sm underline underline-offset-4">
-        Back to the Edges overview
+      <Link href={edgesPaths.home()} class="text-primary text-sm underline underline-offset-4">
+        Back to the nodes
       </Link>
     </Card.Content>
   </Card.Root>
