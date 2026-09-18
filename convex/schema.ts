@@ -420,6 +420,35 @@ const relayRotationPhase = v.union(
   v.literal('quarantined'),
   v.literal('cancelled'),
 );
+// Guided setup ("Autopilot") run stages and states (convex/edgeSetupRuns.ts;
+// the vocabularies are pinned in src/shared/contracts/edgeCodes.ts).
+const setupRunStage = v.union(
+  v.literal('prepare'),
+  v.literal('credential'),
+  v.literal('provision'),
+  v.literal('verify'),
+  v.literal('try_it'),
+  v.literal('publish'),
+  v.literal('hide_direct_hosts'),
+  v.literal('rehearse'),
+  v.literal('go_live'),
+  v.literal('done'),
+);
+const setupRunState = v.union(
+  v.literal('running'),
+  v.literal('waiting'),
+  v.literal('needs_you'),
+  v.literal('done'),
+  v.literal('done_unbound'),
+  v.literal('failed'),
+  v.literal('cancelled'),
+);
+const setupRunVerify = v.union(
+  v.literal('pending'),
+  v.literal('partial'),
+  v.literal('verified'),
+  v.literal('unreachable'),
+);
 
 export default defineSchema({
   tiers: defineTable({
@@ -1572,6 +1601,10 @@ export default defineSchema({
     requestedAccountId: v.optional(v.id('edgeProviderAccounts')),
     requestedTemplateId: v.optional(v.id('edgeTemplates')),
     allowUnqualified: v.optional(v.boolean()),
+    // The guided setup run that started this rotation, with the run GENERATION
+    // it was started under: the terminal hook reports this stored generation,
+    // never the run's current one, so a retried run ignores the old rotation.
+    setupRun: v.optional(v.object({ runId: v.id('edgeSetupRuns'), generation: v.number() })),
     // Selection outcome: the new edge came from an existing standby (true) or was
     // provisioned by this run (`createdEdgeId`, the only edge a failure may mark).
     viaStandby: v.optional(v.boolean()),
@@ -1639,6 +1672,113 @@ export default defineSchema({
     .index('by_phase', ['phase', 'nextStepAt'])
     // Retention: terminal rows by finish time.
     .index('by_phase_finished', ['phase', 'finishedAt']),
+
+  // One guided setup ("Autopilot") run: protect a panel node with edges by
+  // walking the stage machine in convex/edgeSetupRuns.ts (docs/edges.md
+  // § "Guided setup runs"). One non-terminal run per origin; the relay it
+  // creates stays `setupOwned` until go-live. Control flow reads the row
+  // fields (`stage`, `state`, `expect`, `listeners[]`), never `events[]`.
+  edgeSetupRuns: defineTable({
+    relayId: v.optional(v.id('relays')),
+    relaySlug: v.string(),
+    backendServerId: v.id('backendServers'),
+    nodeName: v.string(),
+    nodeUuid: v.string(),
+    accountId: v.id('edgeProviderAccounts'),
+    // The plan snapshot (JSON, edgeSetupPlan.ts) + its hash and the consent revision.
+    plan: v.string(),
+    planHash: v.string(),
+    planRevision: v.number(),
+    // The EXACT uncovered direct-Host uuids the operator approved for hiding.
+    approvedHideUuids: v.array(v.string()),
+    // "Keep those members on the direct address": finish unbound after publish.
+    keepDirect: v.optional(v.boolean()),
+    stage: setupRunStage,
+    state: setupRunState,
+    need: v.optional(v.object({ code: v.string(), detail: v.optional(v.string()) })),
+    // Bumped by retry / continue: the terminal hook of a rotation started under
+    // an older generation is a no-op.
+    generation: v.number(),
+    // Fences the step action (bumped on every transition and re-kick).
+    stepVersion: v.number(),
+    // The rotation whose terminal outcome the run is waiting for.
+    expect: v.optional(v.object({ rotationId: v.id('edgeRotations'), generation: v.number() })),
+    listeners: v.array(
+      v.object({
+        listenerKey: v.string(),
+        layer: v.union(v.literal('l4'), v.literal('l7')),
+        edgeId: v.optional(v.id('edges')),
+        verify: setupRunVerify,
+        published: v.boolean(),
+        probeRequestedAt: v.optional(v.number()),
+        proofRequestedAt: v.optional(v.number()),
+      }),
+    ),
+    // The isolated test links shown for the `try_it` card (one per L4 endpoint).
+    testLinks: v.optional(
+      v.array(
+        v.object({
+          edgeId: v.id('edges'),
+          listenerKey: v.string(),
+          link: v.string(),
+          format: v.string(),
+          method: v.union(v.literal('test_link'), v.literal('named_connection')),
+          binding: v.object({
+            endpoint: v.string(),
+            listenerRevision: v.number(),
+            configHash: v.string(),
+            issuedAt: v.number(),
+          }),
+        }),
+      ),
+    ),
+    testedEndpoints: v.optional(
+      v.array(
+        v.object({
+          edgeId: v.id('edges'),
+          listenerKey: v.string(),
+          endpoint: v.string(),
+          at: v.number(),
+        }),
+      ),
+    ),
+    // Uncovered direct Hosts found at stage 6 that the consent did not name.
+    reviewDelta: v.optional(v.array(v.object({ uuid: v.string(), remark: v.string() }))),
+    // Stage 7's result: the version vector + the final Host observation stage 8 compares.
+    rehearsal: v.optional(
+      v.object({
+        at: v.number(),
+        attempts: v.number(),
+        vector: v.object({
+          listenerRevisions: v.record(v.string(), v.number()),
+          renderConfigHash: v.string(),
+          publicationEpoch: v.number(),
+          qualificationEvidenceIds: v.array(v.string()),
+        }),
+        hostsObservation: v.object({ at: v.number(), version: v.number(), hash: v.string() }),
+        darkCohortKeys: v.array(v.string()),
+      }),
+    ),
+    stageEnteredAt: v.number(),
+    stepStartedAt: v.optional(v.number()),
+    nextStepAt: v.optional(v.number()),
+    // Bounded live log for the progress view (display only).
+    events: v.array(
+      v.object({
+        at: v.number(),
+        level: v.union(v.literal('info'), v.literal('warn'), v.literal('error')),
+        code: v.string(),
+        detail: v.optional(v.string()),
+      }),
+    ),
+    actorAdminId: v.optional(v.id('adminUsers')),
+    startedAt: v.number(),
+    finishedAt: v.optional(v.number()),
+    updatedAt: v.number(),
+  })
+    .index('by_state', ['state', 'updatedAt'])
+    .index('by_relay', ['relayId'])
+    .index('by_origin', ['backendServerId', 'nodeName']),
 
   // Claims on EXTERNAL resources shared by several edges (a Cloudflare zone's
   // ruleset, a Fastly service's version chain). `claimOp` locks one edge; this

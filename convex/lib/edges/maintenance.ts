@@ -33,7 +33,16 @@ export type AdmissionKind =
   | 'profile.write'
   | 'probe.request'
   | 'detector'
-  | 'upkeep';
+  | 'upkeep'
+  // A guided setup run finishing work it was admitted for BEFORE the freeze
+  // (its publish rotations at stage 5): completion, not new work. Only a
+  // rotation start carrying `setupRun` may name this kind (edgeRotations.ts).
+  | 'setup.complete';
+
+/** Kinds that are completion of admitted work: never refused by a freeze. */
+export const COMPLETION_KINDS: ReadonlySet<AdmissionKind> = new Set<AdmissionKind>([
+  'setup.complete',
+]);
 
 export interface MaintenanceState {
   frozen: boolean;
@@ -87,6 +96,7 @@ export async function writeMaintenance(
 export async function assertAdmission(db: DatabaseReader, kind: AdmissionKind): Promise<void> {
   const m = await readMaintenance(db);
   if (!m.frozen) return;
+  if (COMPLETION_KINDS.has(kind)) return;
   throw new ConvexError({
     code: 'edge.maintenance',
     message: `Edges are in maintenance (${kind} is not admitted)${m.reason ? `: ${m.reason}` : ''}`,

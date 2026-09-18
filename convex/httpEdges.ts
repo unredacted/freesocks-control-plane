@@ -94,6 +94,7 @@ const RESERVED = new Set([
   'maintenance',
   'delivery-bindings',
   'automation',
+  'setup-runs',
 ]);
 
 /**
@@ -183,6 +184,8 @@ export function throttlePolicyFor(parts: string[]): RateLimitPolicyKey | null {
   if (a === 'relays' && b && c === 'qualification-credential' && !d)
     return 'admin.edges.provider-call';
   if (a === 'probes' && !b) return 'admin.edges.probe';
+  // The setup plan lists the node's inbounds and Hosts from the panel.
+  if (a === 'setup-runs' && b === 'plan' && !c) return 'admin.edges.provider-call';
   return null;
 }
 
@@ -299,6 +302,16 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
   if (a === 'maintenance' && !b) return json(await maintenanceView(ctx));
   if (a === 'delivery-bindings' && !b)
     return json(await ctx.runQuery(internal.edgeOperator.deliveryBindings, {}));
+  if (a === 'setup-runs') {
+    if (!b) return json(await ctx.runQuery(internal.edgeSetupRuns.listForAdmin, {}));
+    if (!c) {
+      const run = await ctx.runQuery(internal.edgeSetupRuns.getForAdmin, {
+        id: id<'edgeSetupRuns'>(b),
+      });
+      return run ? json(run) : notFound();
+    }
+    return notFound();
+  }
   if (a === 'providers') {
     if (b === 'usage' && !c)
       return json(await ctx.runQuery(internal.edgeOperator.providersUsage, {}));
@@ -551,6 +564,76 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
     if (typeof body.on !== 'boolean') return errorJson('validation', 'on must be a boolean', 400);
     return json(await ctx.runMutation(internal.edgeAdmin.setAutomation, { on: body.on, ...act }));
   }
+  // Guided setup runs: plan (read-only over the panel), create, and the three
+  // operator verbs on a run (cancel / retry / continue).
+  if (a === 'setup-runs') {
+    if (b === 'plan' && !c) {
+      return json(
+        await ctx.runAction(internal.edgeSetupPlan.plan, {
+          backendServerId: id<'backendServers'>(String(body.backendServerId ?? '')),
+          nodeUuid: String(body.nodeUuid ?? ''),
+        }),
+      );
+    }
+    if (!b) {
+      const uuids = Array.isArray(body.approvedHideUuids)
+        ? body.approvedHideUuids.filter((x): x is string => typeof x === 'string')
+        : [];
+      return json(
+        await ctx.runAction(internal.edgeSetupPlan.create, {
+          backendServerId: id<'backendServers'>(String(body.backendServerId ?? '')),
+          nodeUuid: String(body.nodeUuid ?? ''),
+          accountId: id<'edgeProviderAccounts'>(String(body.accountId ?? '')),
+          planHash: String(body.planHash ?? ''),
+          approvedHideUuids: uuids,
+          ...(body.keepDirect === true ? { keepDirect: true } : {}),
+          ...act,
+        }),
+      );
+    }
+    const runId = id<'edgeSetupRuns'>(b);
+    if (c === 'cancel' && !d)
+      return json(await ctx.runAction(internal.edgeSetupRuns.cancel, { runId, ...act }));
+    if (c === 'retry' && !d) {
+      return json(
+        await ctx.runMutation(internal.edgeSetupRuns.retry, {
+          runId,
+          ...(body.tryAnotherAddress === true ? { tryAnotherAddress: true } : {}),
+          ...(body.acceptPartial === true ? { acceptPartial: true } : {}),
+          ...(typeof body.accountId === 'string' && body.accountId
+            ? { accountId: id<'edgeProviderAccounts'>(body.accountId) }
+            : {}),
+          ...act,
+        }),
+      );
+    }
+    if (c === 'continue' && !d) {
+      const confirmations = Array.isArray(body.confirmations)
+        ? body.confirmations.map((x) => {
+            const o = (x ?? {}) as Record<string, unknown>;
+            return {
+              edgeId: id<'edges'>(String(o.edgeId ?? '')),
+              endpoint: String(o.endpoint ?? ''),
+              listenerRevision: Number(o.listenerRevision ?? -1),
+              configHash: String(o.configHash ?? ''),
+            };
+          })
+        : undefined;
+      const uuids = Array.isArray(body.approvedHideUuids)
+        ? body.approvedHideUuids.filter((x): x is string => typeof x === 'string')
+        : undefined;
+      return json(
+        await ctx.runMutation(internal.edgeSetupRuns.resume, {
+          runId,
+          ...(confirmations ? { confirmations } : {}),
+          ...(uuids ? { approvedHideUuids: uuids } : {}),
+          ...(body.keepDirect === true ? { keepDirect: true } : {}),
+          ...act,
+        }),
+      );
+    }
+    return notFound();
+  }
   if (a === 'providers') {
     if (!b) {
       const created = (await ctx.runMutation(internal.edgeProviderAccounts.create, {
@@ -756,6 +839,19 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
         // Coverage at the cap: unpublish ONE duplicate back to standby so
         // upkeep can publish the uncovered listener. Never automatic.
         return json(await ctx.runMutation(internal.relays.rebalance, { relayId, ...act }));
+      case 'require-edges':
+        // The only path besides a setup run's go-live to the deferred binding:
+        // the SAME activation policy (untested L4 endpoints come back as
+        // pending instead of binding; then rehearsal + go-live).
+        return json(
+          await ctx.runMutation(internal.edgeSetupRuns.requireEdges, {
+            relayId,
+            ...(typeof body.accountId === 'string' && body.accountId
+              ? { accountId: id<'edgeProviderAccounts'>(body.accountId) }
+              : {}),
+            ...act,
+          }),
+        );
       case 'qualification-credential':
         // Mint (or re-mint) the panel account the L7 front qualification
         // authenticates with; the credential never leaves the server.

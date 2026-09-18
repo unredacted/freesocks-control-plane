@@ -409,6 +409,10 @@ const startArgs = {
   allowUnqualified: v.optional(v.boolean()),
   reason: v.optional(v.string()),
   actorAdminId: v.optional(v.id('adminUsers')),
+  /** The guided setup run starting this rotation (+ its generation, reported by the terminal hook). */
+  setupRun: v.optional(v.object({ runId: v.id('edgeSetupRuns'), generation: v.number() })),
+  /** `setup.complete`: a setup run finishing admitted work; passes a maintenance freeze (needs `setupRun`). */
+  admission: v.optional(v.literal('setup.complete')),
 };
 
 export interface StartRotationArgs {
@@ -427,6 +431,8 @@ export interface StartRotationArgs {
   allowUnqualified?: boolean;
   reason?: string;
   actorAdminId?: Id<'adminUsers'>;
+  setupRun?: { runId: Id<'edgeSetupRuns'>; generation: number };
+  admission?: 'setup.complete';
 }
 
 /** One reason a start is refused: the code `startRotation` throws (`edge.*`, `validation`, `not_found`) + its message. */
@@ -680,8 +686,19 @@ export async function startRotation(
   const now = Date.now();
   const force = a.force ?? false;
   const g = await collectStartBlockers(ctx, a, { now });
-  if (g.blockers.length > 0) {
-    const first = g.blockers[0];
+  // A guided setup run finishing admitted work (its stage-5 publish, `setupRun`
+  // + `admission: 'setup.complete'`) maps the maintenance refusal through the
+  // completion kind: `assertAdmission` admits it while frozen, so the blocker
+  // is dropped and the other guards still apply. Any other start keeps the
+  // refusal (and its dated message).
+  const setupCompletion = a.admission === 'setup.complete' && !!a.setupRun;
+  let blockers = g.blockers;
+  if (setupCompletion && blockers.some((b) => b.code === 'edge.maintenance')) {
+    await assertAdmission(ctx.db, 'setup.complete');
+    blockers = blockers.filter((b) => b.code !== 'edge.maintenance');
+  }
+  if (blockers.length > 0) {
+    const first = blockers[0];
     // The maintenance gate throws its own (dated) message.
     if (first.code === 'edge.maintenance') await assertAdmission(ctx.db, 'rotation.start');
     throw new ConvexError({ code: first.code, message: first.message });
@@ -702,6 +719,7 @@ export async function startRotation(
     requestedAccountId: a.kind === 'provision' ? a.requestedAccountId : undefined,
     requestedTemplateId: a.kind === 'provision' ? a.requestedTemplateId : undefined,
     allowUnqualified: a.kind === 'provision' && a.allowUnqualified ? true : undefined,
+    setupRun: a.setupRun,
     viaStandby: a.kind === 'publish' ? true : undefined,
     phase: 'select',
     stepVersion: 1,
@@ -904,14 +922,30 @@ async function guard(
   return r;
 }
 
+/**
+ * Every terminal transition passes through here (the 5 call sites: failed,
+ * rolled_back, quarantined, cancelled, done). A rotation a guided setup run
+ * started reports its outcome to the run through the terminal hook, carrying
+ * the generation STORED on the rotation row: a run retried since then ignores
+ * it (edgeSetupRuns.onRotationTerminal). Scheduled from the same transaction,
+ * so a terminal rotation never goes unreported.
+ */
 async function releaseOrigin(ctx: MutationCtx, r: Rotation, patch: Partial<Origin> = {}) {
   const origin = await ctx.db.get(r.relayId);
-  if (!origin) return;
-  await ctx.db.patch(r.relayId, {
-    ...(origin.activeRotationId === r._id ? { activeRotationId: undefined } : {}),
-    ...patch,
-    updatedAt: Date.now(),
-  });
+  if (origin) {
+    await ctx.db.patch(r.relayId, {
+      ...(origin.activeRotationId === r._id ? { activeRotationId: undefined } : {}),
+      ...patch,
+      updatedAt: Date.now(),
+    });
+  }
+  if (r.setupRun) {
+    await ctx.scheduler.runAfter(0, internal.edgeSetupRuns.onRotationTerminal, {
+      runId: r.setupRun.runId,
+      rotationId: r._id,
+      generation: r.setupRun.generation,
+    });
+  }
 }
 
 async function auditFailure(

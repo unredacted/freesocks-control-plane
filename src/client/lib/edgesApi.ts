@@ -86,6 +86,17 @@ import {
   type RenderClientFamily,
   EdgeAutomationResponse,
   RelayRebalanceResponse,
+  RequireEdgesResponse,
+  SetupPlanResponse,
+  SetupRunAdmin,
+  SetupRunCancelResponse,
+  SetupRunContinueRequest,
+  SetupRunContinueResponse,
+  SetupRunCreateRequest,
+  SetupRunCreatedResponse,
+  SetupRunRetryRequest,
+  SetupRunRetryResponse,
+  SetupRunsResponse,
 } from '../../shared/contracts/edges';
 
 const BASE = '/api/v1/admin/edges';
@@ -269,6 +280,34 @@ export const thawMaintenance = (reason?: string) =>
 /** The one automation switch: `edge.enabled` + `autoRotate` + `probe.enabled` + `autoProvisionToDesired` (+ one spare per listener when on). */
 export const setEdgeAutomation = (on: boolean) =>
   apiClient.post(`${BASE}/automation`, { on }, EdgeAutomationResponse);
+
+// --- guided setup runs (Autopilot) ------------------------------------------------------------------
+
+export type SetupRunCreateBody = z.infer<typeof SetupRunCreateRequest>;
+export type SetupRunRetryBody = z.infer<typeof SetupRunRetryRequest>;
+export type SetupRunContinueBody = z.infer<typeof SetupRunContinueRequest>;
+
+/** The read-only plan for one panel node (throttled: it lists the node's inbounds and Hosts). */
+export const planSetupRun = (backendServerId: string, nodeUuid: string) =>
+  apiClient.post(`${BASE}/setup-runs/plan`, { backendServerId, nodeUuid }, SetupPlanResponse);
+export const createSetupRun = (body: SetupRunCreateBody) =>
+  apiClient.post(`${BASE}/setup-runs`, body, SetupRunCreatedResponse);
+export const fetchSetupRuns = () => apiClient.get(`${BASE}/setup-runs`, SetupRunsResponse);
+export const fetchSetupRun = (runId: string) =>
+  apiClient.get(`${BASE}/setup-runs/${enc(runId)}`, SetupRunAdmin);
+export const cancelSetupRun = (runId: string) =>
+  apiClient.post(`${BASE}/setup-runs/${enc(runId)}/cancel`, {}, SetupRunCancelResponse);
+export const retrySetupRun = (runId: string, body: SetupRunRetryBody = {}) =>
+  apiClient.post(`${BASE}/setup-runs/${enc(runId)}/retry`, body, SetupRunRetryResponse);
+export const continueSetupRun = (runId: string, body: SetupRunContinueBody = {}) =>
+  apiClient.post(`${BASE}/setup-runs/${enc(runId)}/continue`, body, SetupRunContinueResponse);
+/** The activation policy on a deferred relay: pending untested L4 endpoints come back instead of a binding. */
+export const requireRelayEdges = (relayId: string, accountId?: string) =>
+  apiClient.post(
+    `${BASE}/relays/${enc(relayId)}/require-edges`,
+    accountId ? { accountId } : {},
+    RequireEdgesResponse,
+  );
 
 // --- providers ------------------------------------------------------------------------------------
 

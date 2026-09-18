@@ -330,6 +330,23 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'edge.relay.rebalanced': ['relaySlug', 'edgeId', 'poolIndex', 'epoch'],
   // The automation switch: the one boolean it was set to.
   'edge.automation.set': ['on'],
+  // Guided setup runs (edgeSetupRuns.ts): slugs, run ids, stage / code words
+  // and counts only; never an address, a Host uuid or a test link.
+  'edge.setup_run.started': [
+    'relaySlug',
+    'runId',
+    'stage',
+    'listeners',
+    'accountName',
+    'provider',
+    'approvedHides',
+    'keepDirect',
+  ],
+  'edge.setup_run.needs_operator': ['relaySlug', 'runId', 'stage', 'code'],
+  'edge.setup_run.go_live': ['relaySlug', 'runId', 'listeners', 'renderEnabled'],
+  'edge.setup_run.finished': ['relaySlug', 'runId', 'outcome', 'stage', 'code', 'verdicts'],
+  'edge.setup_run.cancelled': ['relaySlug', 'runId', 'stage', 'disposition'],
+  'edge.render.enabled_by_setup': ['relaySlug', 'runId', 'affectedRelays'],
   'edge.adopted': ['slug', 'edgeId', 'managed', 'publication', 'refused', 'shared', 'verified'],
   'relay.slot.upsert': ['relaySlug', 'slotKey', 'created'],
   'relay.slot.retire': ['relaySlug', 'slotKey'],

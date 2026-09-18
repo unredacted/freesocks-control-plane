@@ -293,6 +293,8 @@ describe('relay admin routes', () => {
       'probes/summary',
       'probes/targets',
       'probes/audit',
+      'setup-runs',
+      'setup-runs/run1',
     ]) {
       expect(routePolicy(P + g.split('?')[0], 'GET')).toEqual(REVEAL);
     }
@@ -327,6 +329,12 @@ describe('relay admin routes', () => {
       'probes',
       'probes/targets',
       'render/preview',
+      'setup-runs/plan',
+      'setup-runs',
+      'setup-runs/run1/cancel',
+      'setup-runs/run1/retry',
+      'setup-runs/run1/continue',
+      'relays/r1/require-edges',
     ]) {
       expect(routePolicy(P + p, 'POST')).toEqual(BOTH);
     }
@@ -364,6 +372,13 @@ describe('relay admin routes', () => {
     expect(scopeFor(['listeners', 'retire-name'], 'POST')).toBe('admin:servers:write');
     // Qualifying writes a verdict onto the edge: a write scope, not a read one.
     expect(scopeFor(['edges', 'e1', 'qualify'], 'POST')).toBe('admin:servers:write');
+    // Guided setup runs: reads under the read scope, the plan (a panel call) and every verb under write.
+    expect(scopeFor(['setup-runs'], 'GET')).toBe('admin:servers:read');
+    expect(scopeFor(['setup-runs', 'run1'], 'GET')).toBe('admin:servers:read');
+    expect(scopeFor(['setup-runs', 'plan'], 'POST')).toBe('admin:servers:write');
+    expect(scopeFor(['setup-runs'], 'POST')).toBe('admin:servers:write');
+    expect(scopeFor(['setup-runs', 'run1', 'continue'], 'POST')).toBe('admin:servers:write');
+    expect(scopeFor(['relays', 'r1', 'require-edges'], 'POST')).toBe('admin:servers:write');
     // The registration routes: any-of (register OR the full servers scope).
     expect(scopeFor(['relays', 'by-slug', 'n'], 'GET')).toEqual([
       'admin:edges:register',
@@ -408,7 +423,12 @@ describe('relay admin routes', () => {
     expect(throttlePolicyFor(['edges', 'e1', 'probe'])).toBe('admin.edges.probe');
     expect(throttlePolicyFor(['relays', 'r1', 'probe'])).toBe('admin.edges.probe');
     expect(throttlePolicyFor(['probes'])).toBe('admin.edges.probe');
+    // The setup plan lists the node's inbounds and Hosts from the panel; the run verbs do not.
+    expect(throttlePolicyFor(['setup-runs', 'plan'])).toBe(P);
     for (const p of [
+      ['setup-runs'],
+      ['setup-runs', 'run1', 'continue'],
+      ['relays', 'r1', 'require-edges'],
       ['providers'],
       ['providers', 'a1', 'qualify'],
       ['templates'],

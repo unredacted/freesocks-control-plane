@@ -44,6 +44,7 @@ import {
 import { hasPublishableAddress } from './lib/edges/ip';
 import { parseIntent } from './lib/edges/intent';
 import { sharedTeardownLockKey, stepLockKey } from './edgeRotations';
+import { setupRunsPass } from './edgeSetupRuns';
 import { EDGE_PROVIDER_CAPABILITIES } from './lib/edges/providers/capabilities';
 import type {
   Discovery,
@@ -181,6 +182,16 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
   for (const rotationId of stale) {
     await ctx.runMutation(internal.edgeRotations.rekick, { rotationId });
     report.rekicked++;
+  }
+
+  // 1a. Guided setup runs: re-kick a run whose step never ran, re-fire a
+  // terminal hook that never landed (the run machine's own crash safety).
+  try {
+    const r = await setupRunsPass(ctx);
+    report.rekicked += r.rekicked + r.hooked;
+  } catch (err) {
+    report.errors++;
+    console.warn(`[edge-reconcile] setup runs: ${errText(err)}`);
   }
 
   // 1b. L7 auto-trust: an unqualified L7 account whose active edge now holds
