@@ -1062,6 +1062,10 @@ export default defineSchema({
     // When the credentials or locating settings last changed (an edit, not a
     // keep-qualification rotation): auto-trust needs a test AFTER this.
     credentialsChangedAt: v.optional(v.number()),
+    // When an account this one depends on (its DNS account) last changed its
+    // credentials or settings: a proof or test taken before this was taken
+    // through the OLD dependency, so auto-trust needs both AFTER it.
+    dependencyChangedAt: v.optional(v.number()),
     priority: v.number(),
     // Allocation limits: provider calls that create billable resources per UTC
     // day (0 = unlimited) and the number of not-yet-destroyed edges.

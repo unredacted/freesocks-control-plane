@@ -5,6 +5,8 @@ import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { EDGE_PROVIDER_IDS } from '../src/shared/contracts/edgeProviderIds';
+import { resolveTemplateFor } from './edgeTemplates';
+import { qualificationBinding } from './lib/edges/frontCheck/binding';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -1119,6 +1121,171 @@ describe('edgeProviderAccounts: the DNS-account reference', () => {
           (a.payload as { qualified?: boolean }).qualified === false,
       ),
     ).toHaveLength(1);
+  });
+
+  test('a DNS edit marks the dependent account: the auto-trust sweep does not re-trust it from the old proof until a fresh test AND a fresh proof land', async () => {
+    const { t, dnsId, fastlyId } = await pair();
+    await t.mutation(internal.edgeProviderAccounts.recordTest, { id: fastlyId, ok: true });
+    const template = await t.run((ctx) => resolveTemplateFor(ctx, 'fastly', null, null, fastlyId));
+    // A relay with a WebSocket listener and an active Fastly front of the account.
+    const { relayId, listenerId } = await t.run(async (ctx) => {
+      const serverId = await ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'panel-a',
+        slug: 'panel-a',
+        config: { type: 'remnawave', baseUrl: 'https://panel.example', apiToken: 'tok' },
+        isActive: true,
+        priority: 0,
+        keyCount: 0,
+        updatedAt: Date.now(),
+      });
+      const relayId = await ctx.db.insert('relays', {
+        slug: 'node-one',
+        backendServerId: serverId,
+        origin: { kind: 'panel-node', backendServerId: serverId, nodeName: 'node-one' },
+        nodeName: 'node-one',
+        originAddress: '203.0.113.10',
+        enabled: true,
+        autoRotate: false,
+        hostMode: 'fcp',
+        delivery: 'edge-required',
+        desiredPublished: 2,
+        standbyPerRelay: 0,
+        cooldownMs: 1,
+        maxRotationsPerDay: 4,
+        drainMs: 1,
+        publicationEpoch: 0,
+        publishedEdgeIds: [],
+        standbyEdgeIds: [],
+        rotationsToday: 0,
+        updatedAt: Date.now(),
+      });
+      const listenerId = await ctx.db.insert('relayListeners', {
+        relayId,
+        listenerKey: 'w',
+        protocol: 'vless',
+        streamTransport: 'ws',
+        security: 'tls',
+        transport: 'tcp',
+        originPort: 443,
+        tlsNames: [{ name: 'a.example', status: 'active' }],
+        transportParams: { path: '/ws' },
+        originTransport: {
+          scheme: 'https',
+          certPublic: true,
+          certNames: ['origin.example'],
+          acceptsHostHeader: 'any',
+        },
+        matchRule: { kind: 'remark', remark: 'node-one-relay-w' },
+        panelBinding: {
+          inboundTag: 'T',
+          configProfileUuid: '11111111-1111-4111-8111-111111111111',
+          configProfileInboundUuid: '22222222-2222-4222-8222-222222222222',
+        },
+        source: 'role',
+        configHash: 'h',
+        enabled: true,
+        deployed: true,
+        retired: false,
+        revision: 1,
+        updatedAt: Date.now(),
+      });
+      return { relayId, listenerId };
+    });
+    /** An active front of the account carrying a proof checked at `checkedAt`. */
+    const provenEdge = (checkedAt: number) =>
+      t.run(async (ctx) => {
+        const listener = (await ctx.db.get(listenerId))!;
+        const intent = {
+          hostname: 'x.example.org',
+          zoneId: 'a'.repeat(32),
+          zoneName: 'example.org',
+          dnsAccountId: dnsId,
+          originTransport: listener.originTransport!,
+          originPort: listener.originPort,
+          templateHash: template.hash,
+          templateParams: {},
+        };
+        const now = Date.now();
+        return ctx.db.insert('edges', {
+          relayId,
+          listenerId,
+          accountId: fastlyId,
+          provider: 'fastly',
+          templateHash: template.hash,
+          managed: true,
+          name: `fcp-relay-${checkedAt.toString(36)}`,
+          steps: [],
+          resources: [],
+          listeners: [{ edgePort: 443, originAddress: '203.0.113.10', originPort: 443 }],
+          addresses: { hostname: 'x.example.org' },
+          layer: 'l7',
+          provisionIntent: JSON.stringify(intent),
+          frontQualification: {
+            ok: true,
+            checkedAt,
+            expiresAt: now + 3_600_000,
+            binding: {
+              ...qualificationBinding({
+                listener,
+                intent,
+                params: listener.transportParams ?? {},
+              }),
+              listenerId,
+            },
+          },
+          publication: 'unpublished',
+          status: 'active',
+          statusChangedAt: now,
+          health: 'unknown',
+          destroyAttempts: 0,
+          updatedAt: now,
+        });
+      });
+    await provenEdge(Date.now() - 1000);
+    // The rule trusts the account from its proof (the DNS account, L7 and
+    // untrusted, is swept too: only the qualified count matters here).
+    expect(
+      (await t.mutation(internal.edgeProviderAccounts.reconcileAutoQualification, {})).qualified,
+    ).toBe(1);
+    const before = (await t.run((ctx) => ctx.db.get(fastlyId)))!;
+    expect(before.qualified).toBe(true);
+    expect(before.dependencyChangedAt).toBeUndefined();
+    // The DNS account changes its token: the qualification goes, the dependency is marked...
+    const r = await t.mutation(internal.edgeProviderAccounts.update, {
+      id: dnsId,
+      credentials: { apiToken: 'cf-2' },
+    });
+    expect(r.requalify).toBe(1);
+    const marked = (await t.run((ctx) => ctx.db.get(fastlyId)))!;
+    expect(marked.qualified).toBe(false);
+    expect(marked.dependencyChangedAt).toBeGreaterThan(0);
+    // ...and the next sweep does NOT re-trust it from the old proof.
+    expect(
+      (await t.mutation(internal.edgeProviderAccounts.reconcileAutoQualification, {})).qualified,
+    ).toBe(0);
+    expect(
+      await t.mutation(internal.edgeProviderAccounts.evaluateAutoQualification, {
+        accountId: fastlyId,
+      }),
+    ).toEqual({ qualified: false, code: 'tested_before_dependency_change' });
+    // A fresh credential test alone is not enough: the proof predates the change.
+    await t.run((ctx) => ctx.db.patch(fastlyId, { lastTestOkAt: marked.dependencyChangedAt! + 1 }));
+    expect(
+      await t.mutation(internal.edgeProviderAccounts.evaluateAutoQualification, {
+        accountId: fastlyId,
+      }),
+    ).toEqual({ qualified: false, code: 'proof_before_dependency_change' });
+    expect((await t.run((ctx) => ctx.db.get(fastlyId)))!.qualified).toBe(false);
+    // A proof taken through the NEW dependency lands: trusted again, on that proof.
+    const fresh = await provenEdge(marked.dependencyChangedAt! + 2);
+    expect(
+      (await t.mutation(internal.edgeProviderAccounts.reconcileAutoQualification, {})).qualified,
+    ).toBe(1);
+    expect((await t.run((ctx) => ctx.db.get(fastlyId)))!.qualification).toMatchObject({
+      by: 'auto',
+      evidence: { edgeId: fresh },
+    });
   });
 
   test('a DNS account with no referencing accounts is editable and removable', async () => {
