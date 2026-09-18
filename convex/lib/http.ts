@@ -400,6 +400,8 @@ export interface AdminAuth {
   adminUserId?: Id<'adminUsers'>;
   sid?: string;
   tokenScopes?: string[];
+  /** The `fsv1_` token that authenticated a bearer caller (per-token boundaries). */
+  tokenId?: Id<'apiTokens'>;
 }
 
 /**
@@ -450,7 +452,7 @@ export async function resolveAdminCookie(
 export async function resolveAdmin(
   ctx: ActionCtx,
   req: Request,
-  required?: string,
+  required?: string | string[],
 ): Promise<AdminAuth | null> {
   const viaCookie = await resolveAdminCookie(ctx, req);
   if (viaCookie) return viaCookie;
@@ -461,7 +463,7 @@ export async function resolveAdmin(
   } else if (!tok.scopes.some((s) => s.startsWith('admin:'))) {
     return null;
   }
-  return { tokenScopes: tok.scopes };
+  return { tokenScopes: tok.scopes, tokenId: tok.id };
 }
 
 /**
@@ -494,6 +496,8 @@ export async function adminSessionProbe(
   return adminRow?.isActive ? sess.adminUserId : null;
 }
 
-export function hasScope(scopes: string[] | undefined, required: string): boolean {
+/** A token satisfies `required` when it carries the scope, or ANY of a list (any-of). */
+export function hasScope(scopes: string[] | undefined, required: string | string[]): boolean {
+  if (Array.isArray(required)) return required.some((r) => Boolean(scopes?.includes(r)));
   return Boolean(scopes?.includes(required));
 }

@@ -5,7 +5,11 @@
  * every flag that has an observable adapter counterpart.
  */
 import type { EdgeProviderId } from '../../edgeProviderIds';
-import { protocolIsHttpTransport, type SlotProtocol } from '../protocols';
+import {
+  protocolIsHttpTransport,
+  type ListenerProto,
+  type ListenerStreamTransport,
+} from '../protocols';
 import type { EdgeSpec } from './types';
 
 export type EdgeLayer = 'l4' | 'l7';
@@ -23,8 +27,8 @@ export interface EdgeProviderCapabilities {
   layer: EdgeLayer;
   /** What members connect to: an IP literal (L4) or a hostname (L7). */
   addressKind: EdgeAddressKind;
-  /** HTTP-carried protocols an L7 front can carry (empty for L4: it carries any TCP protocol). */
-  l7Transports: readonly SlotProtocol[];
+  /** HTTP-carried stream transports an L7 front can carry (empty for L4: it carries any TCP listener). */
+  l7Transports: readonly ListenerStreamTransport[];
   /** Fastly-style: the hostnames' DNS lives in a referenced Cloudflare account. */
   needsDnsAccount: boolean;
   /** Cloudflare-style: can host DNS records for other providers' edges. */
@@ -64,7 +68,7 @@ const MIN = 60_000;
 const L4 = {
   layer: 'l4',
   addressKind: 'ip',
-  l7Transports: [] as readonly SlotProtocol[],
+  l7Transports: [] as readonly ListenerStreamTransport[],
   needsDnsAccount: false,
   providesDns: false,
   originPortMode: 'any',
@@ -204,10 +208,10 @@ export function zoneModeGovernsOrigin(id: EdgeProviderId | string | null | undef
  * origins is layers.ts's job); an L7 front carries only the HTTP transports it
  * declares.
  */
-export function protocolCarriedBy(id: EdgeProviderId, protocol: SlotProtocol): boolean {
+export function protocolCarriedBy(id: EdgeProviderId, proto: ListenerProto): boolean {
   const caps = EDGE_PROVIDER_CAPABILITIES[id];
-  if (caps.layer === 'l4') return true;
-  return protocolIsHttpTransport(protocol) && caps.l7Transports.includes(protocol);
+  if (caps.layer === 'l4') return proto.streamTransport !== 'udp' || caps.udp;
+  return protocolIsHttpTransport(proto) && caps.l7Transports.includes(proto.streamTransport);
 }
 
 /**

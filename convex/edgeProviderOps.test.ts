@@ -15,6 +15,10 @@ import { z } from 'zod';
 import { jsonRes, mockFetch } from './lib/edges/testing/mockFetch';
 import { __setEdgeProviderForTests, edgeProviderFor } from './lib/edges/providers/registry';
 import type { EdgeProviderOpsFailure } from './edgeProviderOps';
+import { insertPanelServer, registerRelay, wsListener } from './lib/edges/testing/fixtures';
+
+const WS = { protocol: 'vless', streamTransport: 'ws', security: 'tls' } as const;
+const GRPC = { protocol: 'vless', streamTransport: 'grpc', security: 'tls' } as const;
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -375,7 +379,7 @@ describe('edgeProviderOps: contract + layer refusals', () => {
         accountId: fastlyId,
         spec: l7Spec,
         templateParams: {},
-        protocol: 'grpc',
+        proto: GRPC,
       }),
     ).rejects.toThrow(/protocol_not_carried/);
     expect(calls).toEqual([]);
@@ -395,7 +399,7 @@ describe('edgeProviderOps: contract + layer refusals', () => {
         accountId: cfId,
         spec,
         templateParams: {},
-        protocol: 'ws',
+        proto: WS,
       }),
     ).rejects.toThrow(/hostname_missing/);
     await expect(
@@ -403,7 +407,7 @@ describe('edgeProviderOps: contract + layer refusals', () => {
         accountId: cfId,
         spec: { ...spec, hostname: 'front.example.org' },
         templateParams: {},
-        protocol: 'ws',
+        proto: WS,
       }),
     ).rejects.toThrow(/origin_transport_missing/);
   });
@@ -510,43 +514,27 @@ describe('edgeProviderOps: an existing edge is driven by its FROZEN intent', () 
     });
     const seen = recordingFastly();
     // An edge planned against the OLD subscription.
-    await t.run((ctx) =>
-      ctx.db.insert('backendServers', {
-        backend: 'remnawave',
-        name: 'panel-a',
-        slug: 'panel-a',
-        config: { type: 'remnawave', baseUrl: 'https://p.example', apiToken: 't' },
-        isActive: true,
-        priority: 0,
-        keyCount: 0,
-        updatedAt: Date.now(),
-      }),
-    );
-    await t.mutation(internal.protocolProfiles.create, {
-      slug: 'p-ws',
-      name: 'ws',
-      protocol: 'ws',
-      serverNames: [],
-    });
-    const { id: relayId } = await t.mutation(internal.relays.upsertBySlug, {
+    await insertPanelServer(t);
+    const { relayId, listenerId } = await registerRelay(t, {
       slug: 'o1',
-      backendServerSlug: 'panel-a',
-      nodeHostname: 'o1',
+      nodeName: 'o1',
       originAddress: '198.51.100.7',
-    });
-    const { id: slotId } = await t.mutation(internal.relaySlots.upsert, {
-      relayId,
-      slotKey: 'w',
-      profileSlug: 'p-ws',
-      inboundTag: 'T',
-      configProfileUuid: '11111111-1111-4111-8111-111111111111',
-      configProfileInboundUuid: '22222222-2222-4222-8222-222222222222',
-      originPort: 443,
+      listeners: [
+        wsListener({
+          tlsNames: ['ws.example'],
+          originTransport: {
+            scheme: 'https',
+            certPublic: true,
+            certNames: ['origin.example'],
+            acceptsHostHeader: 'any',
+          },
+        }),
+      ],
     });
     const edgeId = await t.run((ctx) =>
       ctx.db.insert('edges', {
         relayId,
-        slotId,
+        listenerId,
         accountId: fastlyId,
         provider: 'fastly',
         managed: true,
@@ -659,7 +647,7 @@ describe('edgeProviderOps: L7 plan-time refusals', () => {
           },
         }),
         templateParams: {},
-        protocol: 'ws',
+        proto: WS,
         zoneSslMode: 'full',
       }),
     ).rejects.toThrow(/host_header_rejected/);
@@ -676,7 +664,7 @@ describe('edgeProviderOps: L7 plan-time refusals', () => {
         accountId: cfId,
         spec: l7Spec(),
         templateParams: {},
-        protocol: 'ws',
+        proto: WS,
         zoneSslMode: 'flexible',
       }),
     ).rejects.toThrow(/origin_tls_mismatch/);
@@ -693,7 +681,7 @@ describe('edgeProviderOps: L7 plan-time refusals', () => {
           },
         }),
         templateParams: {},
-        protocol: 'ws',
+        proto: WS,
         zoneSslMode: 'strict',
       }),
     ).rejects.toThrow(/origin_tls_mismatch/);
@@ -725,7 +713,7 @@ describe('edgeProviderOps: L7 plan-time refusals', () => {
       accountId: fastlyId,
       spec: httpOrigin,
       templateParams: {},
-      protocol: 'ws',
+      proto: WS,
       zoneSslMode: 'strict',
     });
     expect(steps.length).toBeGreaterThan(0);
@@ -735,7 +723,7 @@ describe('edgeProviderOps: L7 plan-time refusals', () => {
         accountId: cfId,
         spec: httpOrigin,
         templateParams: {},
-        protocol: 'ws',
+        proto: WS,
         zoneSslMode: 'strict',
       }),
     ).rejects.toThrow(/origin_tls_mismatch/);
@@ -752,7 +740,7 @@ describe('edgeProviderOps: L7 plan-time refusals', () => {
       accountId: cfId,
       spec: l7Spec(),
       templateParams: {},
-      protocol: 'ws',
+      proto: WS,
       zoneSslMode: 'full',
     });
     expect(steps.map((s) => s.kind)).toEqual(['create_dns_record']);
@@ -768,7 +756,7 @@ describe('edgeProviderOps: L7 plan-time refusals', () => {
         },
       }),
       templateParams: {},
-      protocol: 'ws',
+      proto: WS,
       zoneSslMode: 'flexible',
     });
     expect(flexible.map((s) => s.kind)).toEqual(['create_dns_record']);

@@ -398,6 +398,37 @@ export const listHosts = internalAction({
   },
 });
 
+export const createHost = internalAction({
+  args: {
+    backendServerId: v.id('backendServers'),
+    remark: v.string(),
+    address: v.string(),
+    port: v.number(),
+    sni: v.optional(v.union(v.string(), v.null())),
+    host: v.optional(v.union(v.string(), v.null())),
+    inbound: v.object({ configProfileUuid: v.string(), configProfileInboundUuid: v.string() }),
+  },
+  handler: async (ctx, { backendServerId, ...h }): Promise<{ uuid: string }> => {
+    const server = await ctx.runQuery(internal.backendServers.getById, { id: backendServerId });
+    if (!server) throw new ConvexError({ code: 'backend.not_found' });
+    const provider = PROVIDERS[server.backend];
+    if (!provider.createHost) throw new ConvexError({ code: 'backend.hosts_unsupported' });
+    return provider.createHost(server.config as BackendConfig, h);
+  },
+});
+
+export const deleteHost = internalAction({
+  args: { backendServerId: v.id('backendServers'), uuid: v.string() },
+  handler: async (ctx, { backendServerId, uuid }): Promise<null> => {
+    const server = await ctx.runQuery(internal.backendServers.getById, { id: backendServerId });
+    if (!server) throw new ConvexError({ code: 'backend.not_found' });
+    const provider = PROVIDERS[server.backend];
+    if (!provider.deleteHost) throw new ConvexError({ code: 'backend.hosts_unsupported' });
+    await provider.deleteHost(server.config as BackendConfig, uuid);
+    return null;
+  },
+});
+
 export const updateHost = internalAction({
   args: {
     backendServerId: v.id('backendServers'),

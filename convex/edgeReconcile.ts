@@ -305,6 +305,15 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
     }
   }
 
+  // 4b. Panel Host operations: re-observe unresolved creates/deletes, remove the
+  // FCP-owned Hosts of retired listeners and deleting relays (read-back confirmed).
+  try {
+    await ctx.runAction(internal.hostOps.reconcileHosts, {});
+  } catch (err) {
+    report.errors++;
+    console.warn(`[edge-reconcile] host ops: ${errText(err)}`);
+  }
+
   // 5. Pool upkeep + 6. origin deletes. While the maintenance switch is on,
   // upkeep (new provisioning / publishing) is not admitted; deletes still finish.
   const maintenance = await ctx.runQuery(internal.edgeMaintenance.state, {});

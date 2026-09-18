@@ -5,7 +5,7 @@
  * capacity + budget).
  */
 
-import { protocolUsesSni, type SlotProtocol } from './protocols';
+import { protocolUsesSni, type ListenerProto } from './protocols';
 import {
   edgeLayerOf,
   protocolCarriedBy,
@@ -165,7 +165,7 @@ export function accountsForSlot<T extends { provider: string }>(
   accounts: readonly T[],
   opts: {
     layers: readonly EdgeLayer[];
-    protocol: SlotProtocol;
+    proto: ListenerProto;
     /** false = automatic selection with the L7 gate off: L7 accounts are excluded. */
     allowL7: boolean;
   },
@@ -174,7 +174,7 @@ export function accountsForSlot<T extends { provider: string }>(
     const layer = edgeLayerOf(a.provider);
     if (!opts.layers.includes(layer)) return false;
     if (layer === 'l7' && !opts.allowL7) return false;
-    return protocolCarriedBy(a.provider as EdgeProviderId, opts.protocol);
+    return protocolCarriedBy(a.provider as EdgeProviderId, opts.proto);
   });
 }
 
@@ -218,8 +218,8 @@ export function pickAccount(
 export interface SlotCandidate {
   slotId: string;
   slotKey: string;
-  /** The profile's protocol; SNI-presenting protocols need an active server name. */
-  protocol: SlotProtocol;
+  /** What the listener speaks; SNI-presenting listeners need an active server name. */
+  proto: ListenerProto;
   /** Provider the slot's profile is bound to ('' = any provider). */
   provider: string;
   deployed: boolean;
@@ -231,7 +231,7 @@ export interface SlotCandidate {
 /** A slot is publishable when deployed with an enabled profile that still has a name to present. */
 export function slotEligible(s: SlotCandidate): boolean {
   if (!s.deployed || s.retired || !s.profileEnabled) return false;
-  return !protocolUsesSni(s.protocol) || s.activeSnis > 0;
+  return !protocolUsesSni(s.proto) || s.activeSnis > 0;
 }
 
 /**

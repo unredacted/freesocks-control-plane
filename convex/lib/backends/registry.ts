@@ -23,6 +23,7 @@ import type {
   UserState,
   BackendHost,
   BackendHostPatch,
+  BackendHostCreate,
   NodeInventoryRow,
 } from './types';
 import {
@@ -44,6 +45,8 @@ import {
   type RemnawaveLoggingReport,
   remnawaveListHosts,
   remnawaveUpdateHost,
+  remnawaveCreateHost,
+  remnawaveDeleteHost,
   remnawaveGetNodeInventory,
 } from './remnawave';
 import {
@@ -120,6 +123,10 @@ export interface BackendProvider<C extends BackendConfig = BackendConfig> {
   // backends whose endpoint is the server itself (Outline).
   listHosts?(config: C): Promise<BackendHost[]>;
   updateHost?(config: C, patch: BackendHostPatch): Promise<void>;
+  /** Create one client-facing Host; returns its uuid. The caller confirms by re-listing. */
+  createHost?(config: C, host: BackendHostCreate): Promise<{ uuid: string }>;
+  /** Delete one Host by uuid (idempotent: a missing Host is success). The caller confirms by re-listing. */
+  deleteHost?(config: C, uuid: string): Promise<void>;
   // Optional: per-NODE load/online rows (Remnawave /api/nodes) for the relay
   // block detector; getNodeStats aggregates per placement and can't isolate a
   // node behind a shared squad.
@@ -154,6 +161,8 @@ const remnawaveProvider: BackendProvider<RemnawaveServerConfig> = {
   hardenLogging: (c, opts) => remnawaveHardenLogging(c, opts),
   listHosts: (c) => remnawaveListHosts(c),
   updateHost: (c, patch) => remnawaveUpdateHost(c, patch),
+  createHost: (c, host) => remnawaveCreateHost(c, host),
+  deleteHost: (c, uuid) => remnawaveDeleteHost(c, uuid),
   getNodeInventory: (c) => remnawaveGetNodeInventory(c),
   fetchContent: (c, shortId, ua, subUrl, hwid) =>
     remnawaveFetchSubscription(c, shortId, ua, subUrl, hwid),

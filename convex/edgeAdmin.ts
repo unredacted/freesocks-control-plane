@@ -24,6 +24,7 @@ import { assignEndpoints, edgeHostname, edgeLayer } from './lib/edges/assignment
 import { hostTargetFor } from './lib/edges/layers';
 import { parseIntent } from './lib/edges/intent';
 import { qualificationBinding, qualificationVerdict } from './lib/edges/frontCheck/binding';
+import { PREVIEW_DEFAULT_PROTO } from './lib/edges/preview';
 import { CLIENT_FAMILY_FORMATS } from './lib/edges/clientFamilies';
 import { previewBody } from './lib/edges/preview';
 import { applyEdgeRender } from './lib/edges/renderPipeline';
@@ -36,9 +37,11 @@ import {
   mapRelayAdmin,
   scheduleMirrorRefresh,
 } from './relays';
-import { mapSlotAdmin } from './relaySlots';
+import { activeNames, listenerRemark, listenersOf, mapListenerAdmin } from './relayListeners';
+import { EDGE_PROVIDER_CAPABILITIES } from './lib/edges/providers/capabilities';
+import { protocolLabel } from './lib/edges/protocols';
 import { destroyedPatch, mapEdgeAdmin } from './edges';
-import { publishedEdgesOf } from './edgeRender';
+import { deliveryStyleOf, publishedEdgesOf } from './edgeRender';
 import { EDGE_CREDENTIAL_FIELDS } from './lib/edges/accountSettings';
 
 const SAMPLE_RENDER_KEY = 'sample-subscriber-0000';
@@ -84,7 +87,13 @@ export const summary = internalQuery({
           edgeId: e._id as string,
           provider: e.provider ?? null,
           managed: e.managed,
-          addresses: { v4: e.addresses.v4 ?? null, v6: e.addresses.v6 ?? null },
+          addresses: {
+            v4: e.addresses.v4 ?? null,
+            v6: e.addresses.v6 ?? null,
+            hostname: e.addresses.hostname ?? null,
+          },
+          layer: e.layer ?? 'l4',
+          listenerId: e.listenerId as string,
           health: e.health,
           status: e.status,
           unreachableIn,
@@ -109,7 +118,7 @@ export const summary = internalQuery({
             percent: progressPercent({
               phase: r.phase,
               stepStates: edge?.steps.map((s) => s.state),
-              needsHostFlip: r.hostPlan.length > 0 || r.previousBinding?.poolIndex === 0,
+              needsHostFlip: r.hostPlan.length > 0 || r.phase === 'host_flipping',
             }),
           };
         }
@@ -221,18 +230,12 @@ async function publishedEndpoints(
   ctx: { db: import('./_generated/server').DatabaseReader },
   origin: Doc<'relays'>,
 ) {
-  // Role-usable endpoints ONLY: the node role bootstraps its template Host from
-  // publishedEndpoints[0]'s address/port/SNI, so an index-0 edge that lost its
-  // address, slot or profile must make it keep waiting, not configure a dud.
-  // (Assignment and preview use the full, flagged pool elsewhere.)
+  // Role-usable endpoints ONLY: an edge that lost its address or listener must
+  // make the role keep waiting, not configure a dud. (Assignment and preview
+  // use the full, flagged pool elsewhere.)
   const { published } = await publishedEdgesOf(ctx, origin);
-  const slots = await ctx.db
-    .query('relaySlots')
-    .withIndex('by_relay', (q) => q.eq('relayId', origin._id))
-    .collect();
-  // An L7 front answers DNS long before it carries the transport, so "published
-  // with a hostname" is not role-usable on its own: the role would point its
-  // template Host at a front nothing has been shown to pass through. Require a
+  const listeners = await listenersOf(ctx, origin._id);
+  // An L7 front answers DNS long before it carries the transport: require a
   // current, passing end-to-end proof, re-derived from the live rows.
   const usable = [];
   for (const p of published) {
@@ -241,30 +244,31 @@ async function publishedEndpoints(
       continue;
     }
     const edge = await ctx.db.get(p.edgeId as Id<'edges'>);
-    const slot = edge ? await ctx.db.get(edge.slotId) : null;
-    const profile = slot ? await ctx.db.get(slot.profileId) : null;
+    const listener = edge ? await ctx.db.get(edge.listenerId) : null;
     const intent = edge ? parseIntent(edge.provisionIntent) : null;
-    if (!edge || !slot || !profile || !intent) continue;
+    if (!edge || !listener || !intent) continue;
     const verdict = qualificationVerdict(
       edge.frontQualification,
-      qualificationBinding({ slot, profile, intent, params: slot.transportParams ?? {} }),
+      qualificationBinding({ listener, intent, params: listener.transportParams ?? {} }),
       Date.now(),
     );
     if (verdict === 'ok') usable.push(p);
   }
   return usable.map((p) => {
     const actives = p.serverNames.filter((s) => s.status === 'active').map((s) => s.sni);
-    // ONE source for the Host tuple, shared with the flip and with assignment,
-    // so what the role configures and what FCP writes can never disagree.
-    const target = hostTargetFor(p, p.protocol, actives[0] ?? null);
+    // ONE source for the Host tuple, shared with the flip and with assignment.
+    const target = hostTargetFor(p, p.proto, actives[0] ?? null);
     const layer = edgeLayer(p);
+    const listener = listeners.find((l) => (l._id as string) === p.listenerId);
     return {
       poolIndex: p.poolIndex,
       edgeId: p.edgeId,
       provider: p.provider,
-      slotKey: slots.find((s) => (s._id as string) === p.slotId)?.slotKey ?? '',
-      slotRemark: p.slotRemark,
-      protocol: p.protocol,
+      listenerKey: p.listenerKey,
+      templateHostRemark: listener ? listenerRemark(listener) : null,
+      protocol: p.proto.protocol,
+      streamTransport: p.proto.streamTransport,
+      security: p.proto.security,
       layer,
       port: p.edgePort,
       addresses: {
@@ -275,14 +279,83 @@ async function publishedEndpoints(
       hostname: edgeHostname(p),
       sni: target?.sni ?? null,
       hostHeader: target?.host ?? null,
-      // Behind an L7 front the edge HOSTNAME is the name the client presents;
-      // the profile's own names are not consulted, so reporting them here would
-      // have the role configure a name that is never sent.
-      activeServerNames: layer === 'l7' && p.addresses.hostname ? [p.addresses.hostname] : actives,
+      activeNames: layer === 'l7' && p.addresses.hostname ? [p.addresses.hostname] : actives,
     };
   });
 }
 
+/**
+ * What a client must dial per listener (every origin kind): the listener's
+ * template edge tuple. A manual origin lives off this alone.
+ */
+async function connectionPlan(
+  ctx: { db: import('./_generated/server').DatabaseReader },
+  origin: Doc<'relays'>,
+  endpoints: Awaited<ReturnType<typeof publishedEndpoints>>,
+) {
+  const listeners = (await listenersOf(ctx, origin._id)).filter((l) => !l.retired && l.deployed);
+  const out: Array<{
+    listenerKey: string;
+    address: string;
+    port: number;
+    sni: string | null;
+    host: string | null;
+  }> = [];
+  for (const l of listeners) {
+    const ep = endpoints
+      .filter((e) => e.listenerKey === l.listenerKey)
+      .sort((a, b) => a.poolIndex - b.poolIndex)[0];
+    if (!ep) continue;
+    const address = ep.hostname ?? ep.addresses.v4;
+    if (!address) continue;
+    out.push({
+      listenerKey: l.listenerKey,
+      address,
+      port: ep.port,
+      sni: ep.sni,
+      host: ep.hostHeader,
+    });
+  }
+  return out;
+}
+
+/** The Hosts the OPERATOR must create/keep when hostMode is `operator`. */
+function hostsPlan(
+  origin: Doc<'relays'>,
+  listeners: Doc<'relayListeners'>[],
+  plan: Awaited<ReturnType<typeof connectionPlan>>,
+) {
+  if (origin.hostMode !== 'operator') return { mode: origin.hostMode, hosts: [] };
+  const hosts = [];
+  for (const p of plan) {
+    const l = listeners.find((x) => x.listenerKey === p.listenerKey);
+    const remark = l ? listenerRemark(l) : null;
+    if (!l || !remark || !l.panelBinding) continue;
+    hosts.push({
+      listenerKey: p.listenerKey,
+      remark,
+      address: p.address,
+      port: p.port,
+      sni: p.sni,
+      host: p.host,
+      inbound: {
+        configProfileUuid: l.panelBinding.configProfileUuid,
+        configProfileInboundUuid: l.panelBinding.configProfileInboundUuid,
+      },
+    });
+  }
+  return { mode: origin.hostMode, hosts };
+}
+
+function udpProviderAvailable(): boolean {
+  return Object.values(EDGE_PROVIDER_CAPABILITIES).some((c) => c.udp);
+}
+
+/**
+ * The node role's view of a relay (`GET/PUT …/relays/by-slug/{slug}`): the
+ * minimal projection. No detector state, no rotation limits, no pool-wide
+ * provider names: a leaked register token learns none of them.
+ */
 export const relayBySlugView = internalQuery({
   args: { slug: v.string() },
   handler: async (ctx, { slug }) => {
@@ -291,17 +364,77 @@ export const relayBySlugView = internalQuery({
       .withIndex('by_slug', (q) => q.eq('slug', slug))
       .unique();
     if (!origin) return null;
-    const slots = await ctx.db
-      .query('relaySlots')
-      .withIndex('by_relay', (q) => q.eq('relayId', origin._id))
-      .collect();
-    const mapped = [];
-    for (const s of slots)
-      mapped.push(mapSlotAdmin(s, s.profileId ? await ctx.db.get(s.profileId) : null));
+    const listeners = await listenersOf(ctx, origin._id);
+    const endpoints = await publishedEndpoints(ctx, origin);
+    const plan = await connectionPlan(ctx, origin, endpoints);
+    const udp = udpProviderAvailable();
     return {
-      relay: mapRelayAdmin(origin),
-      slots: mapped.sort((a, b) => a.slotKey.localeCompare(b.slotKey)),
-      publishedEndpoints: await publishedEndpoints(ctx, origin),
+      relay: {
+        id: origin._id as string,
+        slug: origin.slug,
+        hostMode: origin.hostMode,
+        delivery: origin.delivery,
+        enabled: origin.enabled,
+        deleting: origin.deleting ?? false,
+        publicationEpoch: origin.publicationEpoch,
+        originAddress: origin.originAddress,
+        lastRegisteredAt: origin.lastRegisteredAt
+          ? new Date(origin.lastRegisteredAt).toISOString()
+          : null,
+      },
+      listeners: listeners
+        .map((l) => {
+          const m = mapListenerAdmin(l, { udpProviderAvailable: udp });
+          return {
+            listenerKey: m.listenerKey,
+            protocol: m.protocol,
+            streamTransport: m.streamTransport,
+            security: m.security,
+            transport: m.transport,
+            originPort: m.originPort,
+            layers: m.layers,
+            excluded: m.excluded,
+            deployed: m.deployed,
+            retired: m.retired,
+            templateHostRemark: m.templateHostRemark,
+          };
+        })
+        .sort((a, b) => a.listenerKey.localeCompare(b.listenerKey)),
+      publishedEndpoints: endpoints.map((e) => ({
+        listenerKey: e.listenerKey,
+        poolIndex: e.poolIndex,
+        layer: e.layer,
+        port: e.port,
+        addresses: e.addresses,
+        sni: e.sni,
+        hostHeader: e.hostHeader,
+      })),
+      connectionPlan: plan,
+      hostsPlan: hostsPlan(origin, listeners, plan),
+    };
+  },
+});
+
+/** The full admin view of a relay's listeners + endpoints (the CMS). */
+export const relayListenersView = internalQuery({
+  args: { relayId: v.id('relays') },
+  handler: async (ctx, { relayId }) => {
+    const origin = await ctx.db.get(relayId);
+    if (!origin) return null;
+    const listeners = await listenersOf(ctx, relayId);
+    const udp = udpProviderAvailable();
+    const endpoints = await publishedEndpoints(ctx, origin);
+    const plan = await connectionPlan(ctx, origin, endpoints);
+    return {
+      listeners: listeners
+        .map((l) => ({
+          ...mapListenerAdmin(l, { udpProviderAvailable: udp }),
+          label: protocolLabel(l),
+        }))
+        .sort((a, b) => a.listenerKey.localeCompare(b.listenerKey)),
+      publishedEndpoints: endpoints,
+      connectionPlan: plan,
+      hostsPlan: hostsPlan(origin, listeners, plan),
     };
   },
 });
@@ -353,20 +486,43 @@ export const renderPreview = internalQuery({
     const origin = await ctx.db.get(relayId);
     if (!origin) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     const cfg = await resolveEdgeConfig(ctx.db);
-    const { published, templateRemarks } = await publishedEdgesOf(ctx, origin, {
+    const { published, matchers } = await publishedEdgesOf(ctx, origin, {
       includeIneligible: true,
     });
     const format = CLIENT_FAMILY_FORMATS[fam];
-    // The preview body must speak the slot's own protocol: a `ws` slot previewed
-    // with a REALITY template would exercise a rewrite path the relay never uses.
-    const input = previewBody(format, templateRemarks, published[0]?.protocol ?? 'reality');
+    // The preview body must speak what the listeners speak: one template entry
+    // per listener (by its remark, or a synthetic one for an address-matched
+    // listener at the origin address:port), each in the listener's own shape.
+    const listeners = await listenersOf(ctx, origin._id);
+    const active = listeners.filter((l) => !l.retired && l.deployed && l.enabled);
+    const first = active[0];
+    const input = previewBody(
+      format,
+      active.map((l) => listenerRemark(l) ?? `${origin.slug}-${l.listenerKey}`),
+      first
+        ? {
+            protocol: first.protocol,
+            streamTransport: first.streamTransport,
+            security: first.security,
+          }
+        : PREVIEW_DEFAULT_PROTO,
+    );
+    // Address-matched listeners are found by origin address:port; the fixture
+    // carries the example origin, so give those matchers the fixture's address.
+    const previewMatchers = matchers.map((m) =>
+      m.rule.kind === 'remark' ? m : { ...m, originAddress: '192.0.2.10' },
+    );
     const out = applyEdgeRender(
       {
         epoch: origin.publicationEpoch,
-        templateRemarks,
+        matchers: previewMatchers,
         published,
         rule: effectiveRule(cfg.render, cfg.render.clients[fam]),
         preferDistinctProviders: cfg.render.preferDistinctProviders,
+        originAddress: '192.0.2.10',
+        deliveryStyle: origin.backendServerId
+          ? await deliveryStyleOf(ctx, origin.backendServerId)
+          : 'subscription',
       },
       input,
       sampleKey && sampleKey.length > 0 ? sampleKey : SAMPLE_RENDER_KEY,
@@ -380,6 +536,8 @@ export const renderPreview = internalQuery({
       applied: out.applied,
       reason: out.reason ?? null,
       emitted: out.emitted,
+      delivery: out.delivery,
+      listeners: out.listeners ?? [],
     };
   },
 });
@@ -619,7 +777,7 @@ export const nodeCandidates = internalQuery({
       .query('relays')
       .withIndex('by_backend_server', (q) => q.eq('backendServerId', backendServerId))
       .collect();
-    const bound = new Map(relays.map((r) => [r.nodeHostname, r.slug]));
+    const bound = new Map(relays.filter((r) => r.nodeName).map((r) => [r.nodeName!, r.slug]));
     return {
       fetchedAt: rows.length
         ? new Date(Math.max(...rows.map((r) => r.lastStatsAt))).toISOString()

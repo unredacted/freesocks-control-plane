@@ -323,20 +323,26 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   is per connection mode.)
 
 - **Edges** (`/admin/edges`, `docs/edges.md`; scopes `admin:servers:*` for
-  infrastructure, `admin:settings:*` for the `edge.*` config): provider accounts (write-only
-  credentials, qualification gate, live inventory), edge templates (form from the adapter's
-  field descriptors + raw JSON, server-validated), protocol profiles (`reality` / `tls` / `plain`; target + server
-  names with retire/drain, optionally provider-scoped), relays with their slots and
-  their published pool, adoption, provision / rotate / burn with a polled live progress view
-  and a per-rotation audit trail, edge detail with a live provider snapshot, the per-family
-  render preview and the detector settings. **Telemetry → Probes** (`/admin/telemetry/probes`)
-  holds the reachability matrix over every probe target (edges, opted-in relay nodes, custom
-  host:port targets), run history, "probe now" for any selection, the probe settings and a
-  probe audit feed. **Every route under
-  `/api/v1/admin/edges/` is HPKE-sealed by verb** (GET reveal, POST seal both legs, PATCH/PUT
-  seal). IaC: `PUT/GET/DELETE …/edges/relays/by-slug/{slug}` (+ `/slots/{slotKey}`), the
-  response carrying `publishedEndpoints` for the node role. **Dormant by default** (every
-  `edge.*` switch ships off).
+  infrastructure, `admin:settings:*` for the `edge.*` config, `admin:edges:register` for the
+  node role's by-slug registration, confined to the token's registration boundary): relays are
+  ANY origin (a panel node, a whole backend server such as Outline, or a manual address) with
+  **listeners** (protocol / stream transport / security from a catalogue, names with
+  retire/drain, REALITY target, origin transport, a match rule for the renderer, the panel
+  inbound and the panel Host FCP owns for it); provider accounts (write-only credentials,
+  qualification gate, live inventory); edge templates; the published pool with per-listener
+  template edges; adoption; provision / rotate / burn with a polled live progress view and a
+  per-rotation audit trail; a persisted Host state machine (`convex/hostOps.ts`); an
+  **edge-required delivery policy** (a covered subscription is served a rendered body or 503,
+  never the origin body; mirrors are revalidated or stubbed; the account view drops the raw
+  URL); a maintenance switch (`edgeMaintenance`) + reset drain (`seedEdgesReset`).
+  **Telemetry → Probes** (`/admin/telemetry/probes`) holds the reachability matrix over every
+  probe target, run history, "probe now", the probe settings and a probe audit feed. **Every
+  route under `/api/v1/admin/edges/` is HPKE-sealed by verb.** IaC: ONE idempotent
+  `PUT …/edges/relays/by-slug/{slug}` carrying origin + listeners (+ `GET`, `DELETE
+?disposition=`), the response carrying `publishedEndpoints`, `connectionPlan` and `hostsPlan`
+  for the node role. **The admin CMS section is a placeholder in this release** (the panels
+  that spoke the old slot / profile contract were removed; the rebuilt guided setup, per-relay
+  pages and dashboard follow). **Dormant by default** (every `edge.*` switch ships off).
 
 ### 1.7 Integrations & runtime
 

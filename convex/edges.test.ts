@@ -3,56 +3,39 @@ import { convexTest } from 'convex-test';
 import { describe, expect, test } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
+import {
+  createAccount,
+  insertPanelServer,
+  realityListener,
+  registerRelay,
+} from './lib/edges/testing/fixtures';
 
 const modules = import.meta.glob('./**/*.*s');
 
 async function seed(opts: { maxLiveEdges?: number; dailyAllocationBudget?: number } = {}) {
   const t = convexTest(schema, modules);
-  await t.run((ctx) =>
-    ctx.db.insert('backendServers', {
-      backend: 'remnawave',
-      name: 'panel-a',
-      slug: 'panel-a',
-      config: { type: 'remnawave', baseUrl: 'https://panel.example', apiToken: 'tok' },
-      isActive: true,
-      priority: 0,
-      keyCount: 0,
-      updatedAt: Date.now(),
-    }),
-  );
-  const { id: accountId } = await t.mutation(internal.edgeProviderAccounts.create, {
+  await insertPanelServer(t);
+  const accountId = await createAccount(t, {
     provider: 'upcloud',
     name: 'acct-u',
-    settings: { zone: 'de-fra1' },
-    credentials: { token: 'ucl_x' },
-    ...(opts.maxLiveEdges !== undefined ? { maxLiveEdges: opts.maxLiveEdges } : {}),
-    ...(opts.dailyAllocationBudget !== undefined
-      ? { dailyAllocationBudget: opts.dailyAllocationBudget }
-      : {}),
+    maxLiveEdges: opts.maxLiveEdges,
+    dailyAllocationBudget: opts.dailyAllocationBudget,
   });
-  await t.mutation(internal.protocolProfiles.create, {
-    slug: 'prof-u',
-    name: 'Profile U',
-    provider: 'upcloud',
-    targetAddress: 'target.example',
-    serverNames: ['a.example'],
+  const { relayId, listenerId } = await registerRelay(t, {
+    listeners: [
+      realityListener({
+        listenerKey: 'u',
+        tlsNames: ['a.example'],
+        providerScope: { provider: 'upcloud' },
+        panelBinding: {
+          inboundTag: 'VLESS_RELAY_U',
+          configProfileUuid: '11111111-1111-4111-8111-111111111111',
+          configProfileInboundUuid: '22222222-2222-4222-8222-222222222222',
+        },
+      }),
+    ],
   });
-  const { id: relayId } = await t.mutation(internal.relays.upsertBySlug, {
-    slug: 'node-one',
-    backendServerSlug: 'panel-a',
-    nodeHostname: 'node-one',
-    originAddress: '203.0.113.10',
-  });
-  const { id: slotId } = await t.mutation(internal.relaySlots.upsert, {
-    relayId,
-    slotKey: 'u',
-    profileSlug: 'prof-u',
-    inboundTag: 'VLESS_RELAY_U',
-    configProfileUuid: '11111111-1111-4111-8111-111111111111',
-    configProfileInboundUuid: '22222222-2222-4222-8222-222222222222',
-    originPort: 443,
-  });
-  return { t, accountId, relayId, slotId };
+  return { t, accountId, relayId, listenerId };
 }
 
 const plan = {
@@ -66,13 +49,13 @@ const plan = {
 
 describe('edges', () => {
   test('insertPlanned reserves capacity and budget atomically', async () => {
-    const { t, accountId, relayId, slotId } = await seed({
+    const { t, accountId, relayId, listenerId } = await seed({
       maxLiveEdges: 1,
       dailyAllocationBudget: 5,
     });
     const a = await t.mutation(internal.edges.insertPlanned, {
       relayId,
-      slotId,
+      listenerId,
       accountId,
       ...plan,
     });
@@ -81,33 +64,33 @@ describe('edges', () => {
     expect(row.status).toBe('planning');
     expect(row.steps.map((s) => s.state)).toEqual(['pending', 'pending']);
     await expect(
-      t.mutation(internal.edges.insertPlanned, { relayId, slotId, accountId, ...plan }),
+      t.mutation(internal.edges.insertPlanned, { relayId, listenerId, accountId, ...plan }),
     ).rejects.toThrow(/live-edge cap/);
     // Destroyed edges free capacity; the budget still counts.
     await t.mutation(internal.edges.patchEdge, { edgeId: a.id, status: 'destroyed' });
-    await t.mutation(internal.edges.insertPlanned, { relayId, slotId, accountId, ...plan });
+    await t.mutation(internal.edges.insertPlanned, { relayId, listenerId, accountId, ...plan });
     const acct = (await t.run((ctx) => ctx.db.get(accountId)))!;
     expect(acct.allocationsToday).toBe(2);
   });
 
   test('budget exhaustion refuses the insert without leaving a row behind', async () => {
-    const { t, accountId, relayId, slotId } = await seed({
+    const { t, accountId, relayId, listenerId } = await seed({
       maxLiveEdges: 10,
       dailyAllocationBudget: 1,
     });
-    await t.mutation(internal.edges.insertPlanned, { relayId, slotId, accountId, ...plan });
+    await t.mutation(internal.edges.insertPlanned, { relayId, listenerId, accountId, ...plan });
     await expect(
-      t.mutation(internal.edges.insertPlanned, { relayId, slotId, accountId, ...plan }),
+      t.mutation(internal.edges.insertPlanned, { relayId, listenerId, accountId, ...plan }),
     ).rejects.toThrow(/budget/);
     const rows = await t.query(internal.edges.listByRelay, { relayId });
     expect(rows).toHaveLength(1);
   });
 
   test('claimOp: one op at a time; an expired allocating op can only be followed by an observing op', async () => {
-    const { t, accountId, relayId, slotId } = await seed();
+    const { t, accountId, relayId, listenerId } = await seed();
     const { id } = await t.mutation(internal.edges.insertPlanned, {
       relayId,
-      slotId,
+      listenerId,
       accountId,
       ...plan,
     });
@@ -197,10 +180,10 @@ describe('edges', () => {
   });
 
   test('isDiscoverable + progress + describe(gone) transitions', async () => {
-    const { t, accountId, relayId, slotId } = await seed();
+    const { t, accountId, relayId, listenerId } = await seed();
     const { id } = await t.mutation(internal.edges.insertPlanned, {
       relayId,
-      slotId,
+      listenerId,
       accountId,
       ...plan,
     });
@@ -305,10 +288,10 @@ describe('edges', () => {
   });
 
   test('patchEdge → destroyed clears the live snapshot', async () => {
-    const { t, accountId, relayId, slotId } = await seed();
+    const { t, accountId, relayId, listenerId } = await seed();
     const { id } = await t.mutation(internal.edges.insertPlanned, {
       relayId,
-      slotId,
+      listenerId,
       accountId,
       ...plan,
     });
@@ -322,13 +305,13 @@ describe('edges', () => {
   });
 
   test('retention: destroyed edges past 30 days and terminal rotations past 90 days are swept; a live quarantine keeps its rotation', async () => {
-    const { t, accountId, relayId, slotId } = await seed();
+    const { t, accountId, relayId, listenerId } = await seed();
     const DAY = 86_400_000;
     const now = Date.now();
     const mk = async (statusChangedAt: number) => {
       const { id } = await t.mutation(internal.edges.insertPlanned, {
         relayId,
-        slotId,
+        listenerId,
         accountId,
         ...plan,
       });
@@ -341,7 +324,7 @@ describe('edges', () => {
     const recent = await mk(now - 2 * DAY);
     const live = await t.mutation(internal.edges.insertPlanned, {
       relayId,
-      slotId,
+      listenerId,
       accountId,
       ...plan,
     });
@@ -420,10 +403,10 @@ describe('edges', () => {
 
 describe('edges: the operation claim stamps the step', () => {
   test('a provision_step claim stamps startedAt, so a lost settle still leaves a reference time', async () => {
-    const { t, accountId, relayId, slotId } = await seed();
+    const { t, accountId, relayId, listenerId } = await seed();
     const { id } = await t.mutation(internal.edges.insertPlanned, {
       relayId,
-      slotId,
+      listenerId,
       accountId,
       ...plan,
     });
@@ -447,10 +430,10 @@ describe('edges: the operation claim stamps the step', () => {
   });
 
   test('an OBSERVING claim never stamps a step (it allocates nothing)', async () => {
-    const { t, accountId, relayId, slotId } = await seed();
+    const { t, accountId, relayId, listenerId } = await seed();
     const { id } = await t.mutation(internal.edges.insertPlanned, {
       relayId,
-      slotId,
+      listenerId,
       accountId,
       ...plan,
     });
@@ -469,13 +452,13 @@ describe('edges: external locks', () => {
     const s = await seed({ maxLiveEdges: 5 });
     const a = await s.t.mutation(internal.edges.insertPlanned, {
       relayId: s.relayId,
-      slotId: s.slotId,
+      listenerId: s.listenerId,
       accountId: s.accountId,
       ...plan,
     });
     const b = await s.t.mutation(internal.edges.insertPlanned, {
       relayId: s.relayId,
-      slotId: s.slotId,
+      listenerId: s.listenerId,
       accountId: s.accountId,
       ...plan,
     });
@@ -598,12 +581,12 @@ describe('edges: external locks', () => {
 
 describe('edges: capacity counts only what FCP provisioned', () => {
   test('an observe-only edge does not consume the account’s live-edge cap', async () => {
-    const { t, accountId, relayId, slotId } = await seed({ maxLiveEdges: 1 });
+    const { t, accountId, relayId, listenerId } = await seed({ maxLiveEdges: 1 });
     // An adopted edge recorded against the account, not provisioned by FCP.
     await t.run((ctx) =>
       ctx.db.insert('edges', {
         relayId,
-        slotId,
+        listenerId,
         accountId,
         provider: 'upcloud',
         managed: false,
@@ -621,9 +604,9 @@ describe('edges: capacity counts only what FCP provisioned', () => {
       }),
     );
     // The cap of 1 is still free: FCP never pays for or destroys that edge.
-    await t.mutation(internal.edges.insertPlanned, { relayId, slotId, accountId, ...plan });
+    await t.mutation(internal.edges.insertPlanned, { relayId, listenerId, accountId, ...plan });
     await expect(
-      t.mutation(internal.edges.insertPlanned, { relayId, slotId, accountId, ...plan }),
+      t.mutation(internal.edges.insertPlanned, { relayId, listenerId, accountId, ...plan }),
     ).rejects.toThrow(/capacity/);
   });
 });

@@ -25,8 +25,15 @@ const intent = {
 };
 
 const base = {
-  slot: { _id: 'slot1', revision: 2, originPort: 443, originTransport: intent.originTransport },
-  profile: { _id: 'prof1', revision: 4, protocol: 'ws' as const },
+  listener: {
+    _id: 'listener1',
+    revision: 2,
+    originPort: 443,
+    originTransport: intent.originTransport,
+    protocol: 'vless' as const,
+    streamTransport: 'ws' as const,
+    security: 'tls' as const,
+  },
   intent,
   params: { path: '/relay', upgradeToken: 'websocket' },
 };
@@ -53,26 +60,38 @@ describe('canonicalTransportParams', () => {
 });
 
 describe('qualificationBinding', () => {
-  test('is stable for the same configuration', () => {
+  test('is stable for the same configuration and carries the listener shape', () => {
     expect(qualificationBinding(base)).toEqual(qualificationBinding({ ...base }));
     expect(bindingsMatch(qualificationBinding(base), qualificationBinding({ ...base }))).toBe(true);
+    expect(qualificationBinding(base)).toMatchObject({
+      hostname: intent.hostname,
+      listenerId: 'listener1',
+      listenerRevision: 2,
+      protocol: 'vless',
+      streamTransport: 'ws',
+      security: 'tls',
+    });
   });
 
-  test('legacy rows without revision counters read as 0', () => {
+  test('legacy rows without a revision counter read as 0', () => {
     const legacy = qualificationBinding({
       ...base,
-      slot: { ...base.slot, revision: undefined },
-      profile: { ...base.profile, revision: undefined },
+      listener: { ...base.listener, revision: undefined },
     });
-    expect(legacy.slotRevision).toBe(0);
-    expect(legacy.profileRevision).toBe(0);
+    expect(legacy.listenerRevision).toBe(0);
   });
 
   test.each([
     ['a new hostname', { intent: { ...intent, hostname: 'other.edge.example' } }],
-    ['a slot write', { slot: { ...base.slot, revision: 3 } }],
-    ['a profile write', { profile: { ...base.profile, revision: 5 } }],
-    ['a different protocol', { profile: { ...base.profile, protocol: 'grpc' as const } }],
+    ['a listener write', { listener: { ...base.listener, revision: 3 } }],
+    ['a different listener', { listener: { ...base.listener, _id: 'listener2' } }],
+    [
+      'a different stream transport',
+      { listener: { ...base.listener, streamTransport: 'grpc' as const } },
+    ],
+    ['a different security', { listener: { ...base.listener, security: 'reality' as const } }],
+    ['a different protocol', { listener: { ...base.listener, protocol: 'trojan' as const } }],
+    ['a moved origin port', { listener: { ...base.listener, originPort: 8443 } }],
     ['a moved path', { params: { path: '/moved', upgradeToken: 'websocket' } }],
     ['a changed upgrade token', { params: { path: '/relay', upgradeToken: 'custom' } }],
     ['a re-planned intent', { intent: { ...intent, originPort: 8443 } }],

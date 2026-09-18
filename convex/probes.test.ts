@@ -8,6 +8,7 @@ import { convexTest } from 'convex-test';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
+import { realityListener, registerRelay } from './lib/edges/testing/fixtures';
 import type { Id } from './_generated/dataModel';
 import { upsertSettingRow } from './appSettings';
 import { __setGlobalpingFactory } from './probeOps';
@@ -116,31 +117,23 @@ async function seed(
     // check-host / ripe atlas off: this test drives globalping + internal only.
     await upsertSettingRow(ctx, 'edge.probe.sources.checkhost', 'false');
   });
-  await t.mutation(internal.protocolProfiles.create, {
-    slug: 'prof-u',
-    name: 'P',
-    provider: 'upcloud',
-    targetAddress: 'target.example',
-    serverNames: ['a.example'],
-  });
-  const { id: relayId } = await t.mutation(internal.relays.upsertBySlug, {
-    slug: 'node-one',
-    backendServerSlug: 'panel-a',
-    nodeHostname: 'node-one',
-    originAddress: '203.0.113.10',
-  });
-  const { id: slotId } = await t.mutation(internal.relaySlots.upsert, {
-    relayId,
-    slotKey: 'u',
-    profileSlug: 'prof-u',
-    inboundTag: 'VLESS_RELAY_U',
-    configProfileUuid: '11111111-1111-4111-8111-111111111111',
-    configProfileInboundUuid: '22222222-2222-4222-8222-222222222222',
-    originPort: 443,
+  const { relayId, listenerId } = await registerRelay(t, {
+    listeners: [
+      realityListener({
+        listenerKey: 'u',
+        tlsNames: ['a.example'],
+        providerScope: { provider: 'upcloud' },
+        panelBinding: {
+          inboundTag: 'VLESS_RELAY_U',
+          configProfileUuid: '11111111-1111-4111-8111-111111111111',
+          configProfileInboundUuid: '22222222-2222-4222-8222-222222222222',
+        },
+      }),
+    ],
   });
   const { edgeId } = await t.mutation(internal.relays.adoptEdge, {
     relayId,
-    slotId,
+    listenerId,
     ipv4: EDGE,
     publish: true,
   });
@@ -608,7 +601,7 @@ describe('relayProbes', () => {
     // A v6-only edge (no v4 address) is still a due target.
     const { edgeId: v6Only } = await t.mutation(internal.relays.adoptEdge, {
       relayId,
-      slotId: (await t.run((ctx) => ctx.db.get(edgeId)))!.slotId,
+      listenerId: (await t.run((ctx) => ctx.db.get(edgeId)))!.listenerId,
       ipv4: '198.51.100.10',
       ipv6: '2001:db8::10',
       publish: true,
@@ -1227,14 +1220,50 @@ describe('relayProbes', () => {
     const plan = await t.query(internal.probes.due, { now: Date.now() + 60 * 60_000 });
     expect(plan.dueTargets.map((d) => d.target.ref)).not.toContain(edgeId);
     expect(await t.run((ctx) => ctx.db.query('probeRuns').collect())).toEqual([]);
-    // A relay whose slots are all retired is the same case.
+    // A relay whose listeners are all undeployed is the same case.
     await t.mutation(internal.relays.update, { id: relayId, probeNode: true });
     await t.run(async (ctx) => {
-      for (const slot of await ctx.db.query('relaySlots').collect())
-        await ctx.db.patch(slot._id, { deployed: false });
+      for (const l of await ctx.db.query('relayListeners').collect())
+        await ctx.db.patch(l._id, { deployed: false });
     });
     const plan2 = await t.query(internal.probes.due, { now: Date.now() + 60 * 60_000 });
     expect(plan2.dueTargets.map((d) => d.target.kind)).not.toContain('relay');
+    // A UDP listener is not probeable (the probes are TCP connects): a relay
+    // whose only deployed listener is udp has no relay-node port either.
+    await t.run(async (ctx) => {
+      for (const l of await ctx.db.query('relayListeners').collect())
+        await ctx.db.patch(l._id, { deployed: true });
+    });
+    await t.mutation(internal.relayListeners.upsert, {
+      relayId,
+      spec: {
+        listenerKey: 'h',
+        protocol: 'hysteria2',
+        streamTransport: 'udp',
+        security: 'tls',
+        originPort: 8443,
+        tlsNames: ['h.example'],
+        panelBinding: {
+          inboundTag: 'HY2',
+          configProfileUuid: '11111111-1111-4111-8111-111111111111',
+          configProfileInboundUuid: '66666666-6666-4666-8666-666666666666',
+        },
+      },
+    });
+    const relayTarget = { kind: 'relay' as const, ref: relayId as string };
+    // Two deployed listeners, one tcp on 443 and one udp on 8443: only 443 is probed.
+    expect(await t.query(internal.probes.planFor, { target: relayTarget })).toEqual({
+      runsPerSource: 1,
+    });
+    await t.run(async (ctx) => {
+      for (const l of await ctx.db.query('relayListeners').collect())
+        if (l.transport === 'tcp') await ctx.db.patch(l._id, { deployed: false });
+    });
+    expect(await t.query(internal.probes.planFor, { target: relayTarget })).toEqual({
+      runsPerSource: 0,
+    });
+    const plan3 = await t.query(internal.probes.due, { now: Date.now() + 60 * 60_000 });
+    expect(plan3.dueTargets.map((d) => d.target.kind)).not.toContain('relay');
   });
 
   test('reachable history survives a disabled or aged-out source, and a degraded (mixed) verdict arms the transition too', async () => {

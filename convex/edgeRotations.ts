@@ -33,6 +33,7 @@ import {
   checkPublishable,
   liveEdgesOfAccount,
   liveEdgesOfRelay,
+  refreshTemplateEdges,
   scheduleMirrorRefresh,
   todayKey,
 } from './relays';
@@ -66,11 +67,13 @@ import {
   type RotationEvent,
 } from './lib/edges/rotation';
 import {
-  PROTOCOL_TRANSPORT,
   protocolIsHttpTransport,
+  protocolTransport,
   protocolUsesSni,
+  type ListenerProto,
 } from './lib/edges/protocols';
-import { hostTargetFor, slotLayers, zoneModeCarriesOrigin } from './lib/edges/layers';
+import { hostTargetFor, listenerLayers, zoneModeCarriesOrigin } from './lib/edges/layers';
+import { activeNames, listenerRemark, listenersOf } from './relayListeners';
 // The freshness window the DETECTOR scores on is the one this gate accepts
 // evidence on: one rule, imported, never a second copy of "two intervals".
 import { probeStaleAfterMs } from './lib/edges/scoring';
@@ -366,7 +369,7 @@ const startArgs = {
   forceGeoEvidence: v.optional(v.boolean()),
   targetEdgeId: v.optional(v.id('edges')),
   toEdgeId: v.optional(v.id('edges')),
-  slotId: v.optional(v.id('relaySlots')),
+  listenerId: v.optional(v.id('relayListeners')),
   publishOnDone: v.optional(v.boolean()),
   reason: v.optional(v.string()),
   actorAdminId: v.optional(v.id('adminUsers')),
@@ -381,7 +384,7 @@ export interface StartRotationArgs {
   forceGeoEvidence?: boolean;
   targetEdgeId?: Id<'edges'>;
   toEdgeId?: Id<'edges'>;
-  slotId?: Id<'relaySlots'>;
+  listenerId?: Id<'relayListeners'>;
   publishOnDone?: boolean;
   reason?: string;
   actorAdminId?: Id<'adminUsers'>;
@@ -391,6 +394,31 @@ export const start = internalMutation({
   args: startArgs,
   handler: (ctx, a) => startRotation(ctx, a),
 });
+
+/** Whether some listener's panel Host / plan points at this edge. */
+async function isTemplateEdge(ctx: { db: MutationCtx['db'] }, edge: Edge): Promise<boolean> {
+  const listener = await ctx.db.get(edge.listenerId);
+  return !!listener && listener.templateEdgeId === edge._id;
+}
+
+/**
+ * Whether publishing `to` (replacing `target`, when given) must flip the panel
+ * Host: FCP owns the Hosts AND `to` becomes its listener's template edge (the
+ * listener has none yet, or its current one is the edge being replaced).
+ */
+async function needsHostFlipFor(
+  ctx: { db: MutationCtx['db'] },
+  origin: Origin,
+  to: Edge,
+  target: Edge | null,
+): Promise<boolean> {
+  if (origin.hostMode !== 'fcp') return false;
+  const listener = await ctx.db.get(to.listenerId);
+  if (!listener) return false;
+  if (!listener.templateEdgeId) return true;
+  if (listener.templateEdgeId === to._id) return true;
+  return !!target && listener.templateEdgeId === target._id;
+}
 
 /**
  * The ONLY way a rotation row comes into being (the `start` mutation and the
@@ -432,7 +460,7 @@ export async function startRotation(
     throw new ConvexError({ code: 'edge.concurrency', message: 'Too many rotations in flight' });
   }
   let targetEdge: Edge | null = null;
-  let slotId: Id<'relaySlots'> | undefined = a.slotId;
+  let listenerId: Id<'relayListeners'> | undefined = a.listenerId;
   if (a.kind === 'replace') {
     if (!a.targetEdgeId)
       throw new ConvexError({ code: 'validation', message: 'targetEdgeId is required' });
@@ -443,10 +471,11 @@ export async function startRotation(
         message: 'The target edge is not published on this origin',
       });
     }
-    if (targetEdge.poolIndex === 0 && !origin.hostManaged) {
+    if (origin.hostMode === 'operator' && (await isTemplateEdge(ctx, targetEdge)) && !force) {
       throw new ConvexError({
-        code: 'edge.hosts_unmanaged',
-        message: 'This origin does not let FCP manage the template Host',
+        code: 'edge.hosts_operator_managed',
+        message:
+          'The operator manages this relay\u2019s panel Hosts; replacing a template edge needs force',
       });
     }
     if (!force) {
@@ -457,7 +486,7 @@ export async function startRotation(
       if (used >= origin.maxRotationsPerDay)
         throw new ConvexError({ code: 'edge.daily_cap', message: 'Daily rotation cap reached' });
     }
-    slotId = targetEdge.slotId;
+    listenerId = targetEdge.listenerId;
   }
   if (a.kind === 'publish') {
     if (!a.toEdgeId) throw new ConvexError({ code: 'validation', message: 'toEdgeId is required' });
@@ -470,38 +499,37 @@ export async function startRotation(
         code: `edge.${check.code}`,
         message: `Edge cannot be published: ${check.code}`,
       });
-    slotId = to.slotId;
+    listenerId = to.listenerId;
   }
-  if (slotId) {
-    const slot = await ctx.db.get(slotId);
-    if (!slot || slot.relayId !== a.relayId || slot.retired) {
+  if (listenerId) {
+    const listener = await ctx.db.get(listenerId);
+    if (!listener || listener.relayId !== a.relayId || listener.retired) {
       throw new ConvexError({
-        code: 'edge.slot_not_found',
-        message: 'The requested slot does not exist on this origin or is retired',
+        code: 'edge.listener_not_found',
+        message: 'The requested listener does not exist on this relay or is retired',
       });
     }
-    const profile = await ctx.db.get(slot.profileId);
     // A name-free HTTP-transport profile is usable: behind an L7 front the
     // member presents the edge HOSTNAME. It is only L4 that needs one of the
     // profile's own names, and `slotLayers` already excludes L4 for it.
     const usable =
-      slot.deployed &&
-      !!profile?.enabled &&
-      (!protocolUsesSni(profile.protocol) ||
-        protocolIsHttpTransport(profile.protocol) ||
-        profile.serverNames.some((s) => s.status === 'active'));
+      listener.deployed &&
+      listener.enabled &&
+      (!protocolUsesSni(listener) ||
+        protocolIsHttpTransport(listener) ||
+        activeNames(listener).length > 0);
     if (!usable) {
       throw new ConvexError({
-        code: 'edge.no_compatible_profile',
-        message: 'The slot is not deployed, or its profile is disabled or has no server name',
+        code: 'edge.listener_unusable',
+        message: 'The listener is not deployed, is disabled, or has no server name',
       });
     }
     // An L7-ONLY slot cannot be answered automatically while the L7 gate is
     // off: the run would have nothing compatible to pick, and silently routing
     // it to an L4 account would front a plaintext origin with a raw forwarder.
     // The veto is explicit so the operator sees why nothing happened.
-    if (a.trigger === 'detector' && profile) {
-      const layers = slotLayers(slot, profile).layers;
+    if (a.trigger === 'detector') {
+      const layers = listenerLayers(listener).layers;
       if (layers.length === 1 && layers[0] === 'l7' && !l7SelectionAllowed(cfg)) {
         throw new ConvexError({
           code: 'edge.l7_auto_select_disabled',
@@ -534,7 +562,7 @@ export async function startRotation(
     publishOnDone: a.kind === 'provision' ? (a.publishOnDone ?? false) : undefined,
     targetEdgeId: a.targetEdgeId,
     toEdgeId: a.kind === 'publish' ? a.toEdgeId : undefined,
-    slotId,
+    listenerId,
     viaStandby: a.kind === 'publish' ? true : undefined,
     phase: 'select',
     stepVersion: 1,
@@ -1070,7 +1098,7 @@ export const commitSelection = internalMutation({
   args: {
     rotationId: v.id('edgeRotations'),
     stepVersion: v.number(),
-    slotId: v.id('relaySlots'),
+    listenerId: v.id('relayListeners'),
     accountId: v.id('edgeProviderAccounts'),
     templateId: v.optional(v.union(v.id('edgeTemplates'), v.null())),
     templateHash: v.string(),
@@ -1099,8 +1127,8 @@ export const commitSelection = internalMutation({
     if (!r) return { ok: false as const, code: 'stale' as const };
     const origin = await ctx.db.get(r.relayId);
     const account = await ctx.db.get(a.accountId);
-    const slot = await ctx.db.get(a.slotId);
-    if (!origin || !account || !slot) return { ok: false as const, code: 'missing' as const };
+    const listener = await ctx.db.get(a.listenerId);
+    if (!origin || !account || !listener) return { ok: false as const, code: 'missing' as const };
     const layer = edgeLayerOf(account.provider);
     // Freeze the intent HERE, before any provider call: from this point on, an
     // operator editing the account's zone, its DNS account, the TLS
@@ -1137,7 +1165,7 @@ export const commitSelection = internalMutation({
           specName: edgeResourceName(origin.slug, a.nameNonce),
           templateParams: (a.templateParams as Record<string, unknown>) ?? {},
           templateHash: a.templateHash,
-          slot,
+          listener,
         });
       } catch (err) {
         return {
@@ -1150,7 +1178,7 @@ export const commitSelection = internalMutation({
     try {
       inserted = await insertPlannedEdge(ctx, {
         relayId: r.relayId,
-        slotId: a.slotId,
+        listenerId: a.listenerId,
         accountId: a.accountId,
         templateId: a.templateId,
         templateHash: a.templateHash,
@@ -1235,11 +1263,9 @@ export const applyPublish = internalMutation({
       if (!target || target.publication !== 'published' || target.poolIndex === undefined)
         return { ok: false as const, code: 'target_gone' as const };
       poolIndex = target.poolIndex;
-      const slot = await ctx.db.get(target.slotId);
       previousBinding = {
         edgeId: target._id,
-        slotId: target.slotId,
-        profileId: slot?.profileId ?? (await ctx.db.get(to.slotId))?.profileId,
+        listenerId: target.listenerId,
         poolIndex,
       };
       await ctx.db.patch(target._id, {
@@ -1304,7 +1330,16 @@ export const applyPublish = internalMutation({
         },
       });
     }
-    const needsHostFlip = poolIndex === 0 && origin.hostManaged;
+    // Each listener's template edge follows the pool it now describes, BEFORE
+    // the flip decision reads it: a stale pointer (at a drained edge) would
+    // otherwise let a replace of the real template edge skip the Host flip.
+    await refreshTemplateEdges(ctx, origin);
+    const needsHostFlip = await needsHostFlipFor(
+      ctx,
+      origin,
+      to,
+      r.kind === 'replace' && r.targetEdgeId ? await ctx.db.get(r.targetEdgeId) : null,
+    );
     await ctx.db.patch(rotationId, {
       phase: needsHostFlip ? 'host_flipping' : 'finalizing',
       stepVersion: next,
@@ -1313,7 +1348,7 @@ export const applyPublish = internalMutation({
         at: now,
         level: 'info',
         code: 'published',
-        detail: `pool index ${poolIndex}${needsHostFlip ? ', template Host flip follows' : poolIndex === 0 ? ', Host left to the operator (hostManaged=false)' : ''}`,
+        detail: `pool index ${poolIndex}${needsHostFlip ? ', panel Host flip follows' : origin.hostMode === 'operator' ? ', Host left to the operator' : origin.hostMode === 'none' ? ', no panel Host' : ''}`,
       }),
       updatedAt: now,
     });
@@ -1329,6 +1364,7 @@ export const setHostPlan = internalMutation({
     stepVersion: v.number(),
     hostPlan: v.array(
       v.object({
+        listenerKey: v.optional(v.string()),
         uuid: v.string(),
         oldAddress: v.string(),
         oldPort: v.number(),
@@ -1342,7 +1378,7 @@ export const setHostPlan = internalMutation({
         oldHost: v.optional(v.union(v.string(), v.null())),
       }),
     ),
-    slotId: v.id('relaySlots'),
+    listenerId: v.id('relayListeners'),
     templateHostUuid: v.optional(v.union(v.string(), v.null())),
   },
   handler: async (ctx, a) => {
@@ -1361,11 +1397,22 @@ export const setHostPlan = internalMutation({
       }),
       updatedAt: now,
     });
-    if (a.templateHostUuid !== undefined)
-      await ctx.db.patch(a.slotId, {
-        templateHostUuid: a.templateHostUuid ?? undefined,
-        updatedAt: now,
-      });
+    if (a.templateHostUuid) {
+      // The plan found the listener's Host on the panel: it is present and, if
+      // FCP had not created it, adopted.
+      const l = await ctx.db.get(a.listenerId);
+      if (l)
+        await ctx.db.patch(a.listenerId, {
+          host: {
+            ...(l.host ?? { state: 'present' as const }),
+            state: 'present',
+            uuid: a.templateHostUuid,
+            ownership: l.host?.ownership ?? 'adopted',
+            op: undefined,
+          },
+          updatedAt: now,
+        });
+    }
     await scheduleStep(ctx, a.rotationId, 0);
     return { ok: true as const, stepVersion: a.stepVersion + 1 };
   },
@@ -1501,6 +1548,7 @@ export const applyRollbackBinding = internalMutation({
         publicationEpoch: origin.publicationEpoch + 1,
         updatedAt: now,
       });
+      await refreshTemplateEdges(ctx, origin);
       const latest = (await ctx.db.get(rotationId)) ?? r;
       await ctx.db.patch(rotationId, {
         events: appendEvent(
@@ -1772,6 +1820,7 @@ export const resolveQuarantine = internalMutation({
       publicationEpoch: origin.publicationEpoch + 1,
       updatedAt: now,
     });
+    await refreshTemplateEdges(ctx, origin);
     if (rotation) {
       const latest = (await ctx.db.get(rotation._id)) ?? rotation;
       await ctx.db.patch(rotation._id, {
@@ -1814,17 +1863,15 @@ export const l7GateState = internalQuery({
     const r = await ctx.db.get(rotationId);
     const edge = await ctx.db.get(edgeId);
     if (!r || !edge) return null;
-    const slot = await ctx.db.get(edge.slotId);
-    const profile = slot ? await ctx.db.get(slot.profileId) : null;
+    const listener = await ctx.db.get(edge.listenerId);
     const intent = parseIntent(edge.provisionIntent);
     const q = edge.frontQualification;
     const qualified =
-      !!slot &&
-      !!profile &&
+      !!listener &&
       !!intent &&
       qualificationVerdict(
         q,
-        qualificationBinding({ slot, profile, intent, params: slot.transportParams ?? {} }),
+        qualificationBinding({ listener, intent, params: listener.transportParams ?? {} }),
         Date.now(),
       ) === 'ok';
     // Evidence is required only for a replacement the DETECTOR asked for: a
@@ -1909,22 +1956,20 @@ export const stepContext = internalQuery({
     const cfg = await resolveEdgeConfig(ctx.db);
     const toEdge = rotation.toEdgeId ? await ctx.db.get(rotation.toEdgeId) : null;
     const targetEdge = rotation.targetEdgeId ? await ctx.db.get(rotation.targetEdgeId) : null;
-    const slotId = toEdge?.slotId ?? targetEdge?.slotId ?? null;
-    const slot = slotId ? await ctx.db.get(slotId) : null;
-    const profile = slot ? await ctx.db.get(slot.profileId) : null;
+    const listenerId = toEdge?.listenerId ?? targetEdge?.listenerId ?? null;
+    const listener = listenerId ? await ctx.db.get(listenerId) : null;
     const prevEdge = rotation.previousBinding
       ? await ctx.db.get(rotation.previousBinding.edgeId)
       : null;
     let selection: SelectionContext | null = null;
     if (rotation.phase === 'select')
       selection = await selectionContext(ctx, rotation, origin, targetEdge, cfg);
-    return { rotation, origin, cfg, toEdge, targetEdge, slot, profile, prevEdge, selection };
+    return { rotation, origin, cfg, toEdge, targetEdge, listener, prevEdge, selection };
   },
 });
 
 interface SelectionContext {
-  slot: Doc<'relaySlots'> | null;
-  profile: Doc<'protocolProfiles'> | null;
+  listener: Doc<'relayListeners'> | null;
   standbyId: Id<'edges'> | null;
   account: {
     id: Id<'edgeProviderAccounts'>;
@@ -1954,71 +1999,58 @@ async function selectionContext(
   const publishedProviders = edges
     .filter((e) => e.publication === 'published' && e.provider)
     .map((e) => e.provider as string);
-  const slotRows = await ctx.db
-    .query('relaySlots')
-    .withIndex('by_relay', (q) => q.eq('relayId', origin._id))
-    .collect();
-  const profiles = new Map<string, Doc<'protocolProfiles'>>();
-  for (const s of slotRows) {
-    const p = await ctx.db.get(s.profileId);
-    if (p) profiles.set(s._id, p);
-  }
-  let slot: Doc<'relaySlots'> | null = null;
+  const slotRows = await listenersOf(ctx, origin._id);
+  let slot: Doc<'relayListeners'> | null = null;
   // A requested slot (the row field; `reason` carried it before the field
   // existed) is binding: a retired or vanished one FAILS the run instead of
   // silently falling back to another slot.
   const requestedSlotId: string | null =
-    (rotation.slotId as string | undefined) ??
+    (rotation.listenerId as string | undefined) ??
     (rotation.reason?.startsWith('slot:') ? rotation.reason.slice(5) : null);
   if (rotation.kind === 'replace' && targetEdge)
-    slot = slotRows.find((s) => s._id === targetEdge.slotId) ?? null;
+    slot = slotRows.find((s) => s._id === targetEdge.listenerId) ?? null;
   else if (requestedSlotId) {
     slot = slotRows.find((s) => (s._id as string) === requestedSlotId && !s.retired) ?? null;
     if (!slot)
       return {
-        slot: null,
-        profile: null,
+        listener: null,
         standbyId: null,
         account: null,
-        accountFailure: 'slot_not_found',
+        accountFailure: 'listener_not_found',
         template: null,
       };
   }
   if (!slot) {
     const pick = pickSlot(
-      slotRows.map((s) => {
-        const p = profiles.get(s._id);
-        return {
-          slotId: s._id,
-          slotKey: s.slotKey,
-          protocol: p?.protocol ?? 'reality',
-          provider: p?.provider ?? '',
-          deployed: s.deployed,
-          retired: s.retired,
-          profileEnabled: p?.enabled ?? false,
-          activeSnis: p?.serverNames.filter((n) => n.status === 'active').length ?? 0,
-        };
-      }),
+      slotRows.map((s) => ({
+        slotId: s._id,
+        slotKey: s.listenerKey,
+        proto: protoOf(s),
+        provider: s.providerScope?.provider ?? '',
+        deployed: s.deployed,
+        retired: s.retired,
+        profileEnabled: s.enabled,
+        activeSnis: activeNames(s).length,
+      })),
       publishedProviders,
       cfg.render.preferDistinctProviders,
       origin.providerPreference ?? null,
     );
     slot = pick ? (slotRows.find((s) => s._id === pick.slotId) ?? null) : null;
   }
-  const profile = slot ? (profiles.get(slot._id) ?? null) : null;
-  if (!slot || !profile)
+  if (!slot)
     return {
-      slot,
-      profile,
+      listener: null,
       standbyId: null,
       account: null,
-      accountFailure: 'no_compatible_profile',
+      accountFailure: 'no_compatible_listener',
       template: null,
     };
+  const listener = slot;
   const standby = pickStandby(
     edges.map((e) => ({
       id: e._id,
-      slotId: e.slotId,
+      slotId: e.listenerId,
       provider: e.provider ?? null,
       accountId: e.accountId ?? null,
       status: e.status,
@@ -2030,12 +2062,11 @@ async function selectionContext(
     publishedProviders,
     targetEdge?._id ?? null,
     cfg.requireProviderHealth,
-    profile.accountId ?? null,
+    (listener.providerScope?.accountId as Id<'edgeProviderAccounts'> | undefined) ?? null,
   );
   if (standby && (rotation.kind === 'replace' || rotation.publishOnDone)) {
     return {
-      slot,
-      profile,
+      listener,
       standbyId: standby.id as Id<'edges'>,
       account: null,
       accountFailure: null,
@@ -2047,20 +2078,19 @@ async function selectionContext(
   // cannot front the slot is not a candidate: picking it would provision an edge
   // that `checkPublishable` would then refuse (`layer_mismatch` /
   // `protocol_not_carried`) after the provider had already been paid.
-  const layers = slotLayers(slot, profile).layers;
+  const layers = listenerLayers(listener).layers;
   // Every trigger except an operator's own request is "automatic" for the L7
   // gate: an unproven front must not reach members because a cron or the
   // detector chose it.
   const allowL7 = rotation.trigger === 'manual' || l7SelectionAllowed(cfg);
   const eligibleAccounts = accountsForSlot(
     (await ctx.db.query('edgeProviderAccounts').collect()).filter((a) => a.enabled),
-    { layers, protocol: profile.protocol, allowL7 },
+    { layers, proto: protoOf(listener), allowL7 },
   );
   const accounts = eligibleAccounts;
   if (accounts.length === 0) {
     return {
-      slot,
-      profile,
+      listener,
       standbyId: null,
       account: null,
       accountFailure: layers.length === 0 ? 'no_compatible_layer' : 'no_account_for_layer',
@@ -2070,7 +2100,7 @@ async function selectionContext(
   const candidates = [];
   for (const a of accounts) {
     // An account-scoped profile provisions from that account only.
-    if (profile.accountId && a._id !== profile.accountId) continue;
+    if (listener.providerScope?.accountId && a._id !== listener.providerScope.accountId) continue;
     // Same rule as the insert-time capacity check: observe-only edges were not
     // provisioned by FCP and never consume its allocation.
     const live = (await liveEdgesOfAccount(ctx.db, a._id)).filter((e) => e.managed).length;
@@ -2087,8 +2117,8 @@ async function selectionContext(
   }
   // A provider-scoped profile binds the slot to that network; an unscoped one
   // takes the best qualified account of any provider.
-  const picked = profile.provider
-    ? pickAccount(candidates, profile.provider)
+  const picked = listener.providerScope?.provider
+    ? pickAccount(candidates, listener.providerScope.provider)
     : pickAccountAny(
         candidates,
         publishedProviders,
@@ -2097,8 +2127,7 @@ async function selectionContext(
       );
   if (!picked.ok)
     return {
-      slot,
-      profile,
+      listener,
       standbyId: null,
       account: null,
       accountFailure: picked.code,
@@ -2126,8 +2155,7 @@ async function selectionContext(
     if (dns) zoneHost = dns;
   }
   return {
-    slot,
-    profile,
+    listener,
     standbyId: null,
     account: {
       id: account._id,
@@ -2385,10 +2413,10 @@ async function phaseSelect(ctx: ActionCtx, c: Ctx) {
     await advanceCall(ctx, r._id, sv, { type: 'selected', toEdgeId: r.toEdgeId, viaStandby: true });
     return;
   }
-  if (!selection || !selection.slot || !selection.profile) {
+  if (!selection || !selection.listener) {
     await advanceCall(ctx, r._id, sv, {
       type: 'fail',
-      code: selection?.accountFailure ?? 'no_compatible_profile',
+      code: selection?.accountFailure ?? 'no_compatible_listener',
       rollback: false,
     });
     return;
@@ -2415,8 +2443,8 @@ async function phaseSelect(ctx: ActionCtx, c: Ctx) {
     {
       edgePort: 443,
       originAddress: origin.originAddress,
-      originPort: selection.slot.originPort,
-      transport: PROTOCOL_TRANSPORT[selection.profile.protocol],
+      originPort: selection.listener.originPort,
+      transport: protocolTransport(selection.listener),
     },
   ];
   // An L7 edge's hostname is minted HERE, from the resource name and the zone,
@@ -2426,7 +2454,7 @@ async function phaseSelect(ctx: ActionCtx, c: Ctx) {
   const fail = (code: string, detail?: string) =>
     advanceCall(ctx, r._id, sv, { type: 'fail', code, detail, rollback: false });
   let hostname: string | undefined;
-  const originTransport = selection.slot.originTransport ?? undefined;
+  const originTransport = selection.listener.originTransport ?? undefined;
   // The zone's mode describes the origin leg only when the front IS the zone's
   // proxy; for any other CDN the referenced zone merely holds unproxied CNAMEs.
   const zoneModeApplies = zoneModeGovernsOrigin(selection.account.provider);
@@ -2482,7 +2510,7 @@ async function phaseSelect(ctx: ActionCtx, c: Ctx) {
       accountId: selection.account.id,
       spec,
       templateParams: selection.template.params,
-      protocol: selection.profile.protocol,
+      proto: protoOf(selection.listener),
       ...(zoneSslMode ? { zoneSslMode } : {}),
     });
   } catch (err) {
@@ -2498,7 +2526,7 @@ async function phaseSelect(ctx: ActionCtx, c: Ctx) {
   const res = await ctx.runMutation(internal.edgeRotations.commitSelection, {
     rotationId: r._id,
     stepVersion: sv,
-    slotId: selection.slot._id,
+    listenerId: selection.listener._id,
     accountId: selection.account.id,
     templateId: selection.template.id,
     templateHash: selection.template.hash,
@@ -2700,7 +2728,7 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
           step,
           ledger,
           edgeId: edge._id,
-          protocol: c.profile?.protocol,
+          proto: c.listener ? protoOf(c.listener) : undefined,
         });
       } catch (err) {
         // The lock is deliberately NOT released: the write's outcome is
@@ -3164,7 +3192,7 @@ async function geoEvidenceGate(
 }
 
 async function listHosts(ctx: ActionCtx, origin: Origin): Promise<BackendHost[]> {
-  return ctx.runAction(internal.backends.listHosts, { backendServerId: origin.backendServerId });
+  return ctx.runAction(internal.backends.listHosts, { backendServerId: panelServerId(origin) });
 }
 
 /**
@@ -3174,22 +3202,32 @@ async function listHosts(ctx: ActionCtx, origin: Origin): Promise<BackendHost[]>
  * L7 hostname front or back), so members would present the previous layer's SNI
  * to the new one. `null` in the tuple means CLEAR the field.
  */
-function flipTargetFor(edge: Edge, profile: Doc<'protocolProfiles'> | null): HostTarget | null {
-  const protocol = profile?.protocol ?? 'plain';
-  const selectedSni = profile?.serverNames.find((s) => s.status === 'active')?.sni ?? null;
+function flipTargetFor(edge: Edge, listener: Doc<'relayListeners'> | null): HostTarget | null {
+  if (!listener) return null;
+  const selectedSni = activeNames(listener)[0] ?? null;
   return hostTargetFor(
     {
       layer: edge.layer,
       addresses: edge.addresses,
       edgePort: edge.listeners[0]?.edgePort ?? 443,
     },
-    protocol,
+    protoOf(listener),
     selectedSni,
   );
 }
 
+function protoOf(l: ListenerProto): ListenerProto {
+  return { protocol: l.protocol, streamTransport: l.streamTransport, security: l.security };
+}
+
+/** The panel behind a relay whose Hosts FCP manages (a panel-node origin). */
+function panelServerId(origin: Origin): Id<'backendServers'> {
+  if (!origin.backendServerId) throw new Error('relay has no panel');
+  return origin.backendServerId;
+}
+
 async function phaseHostFlip(ctx: ActionCtx, c: Ctx) {
-  const { rotation: r, cfg, toEdge: edge, origin, slot, profile } = c;
+  const { rotation: r, cfg, toEdge: edge, origin, listener: slot } = c;
   const sv = r.stepVersion;
   const poll = edgeMs.poll(cfg);
   if (!edge || !hasPublishableAddress(edge) || !slot) {
@@ -3200,20 +3238,27 @@ async function phaseHostFlip(ctx: ActionCtx, c: Ctx) {
     });
     return;
   }
-  if (!origin.hostManaged) {
-    if (r.kind === 'replace') {
-      // The flip was decided with hostManaged=true at publish time; an operator
-      // flipped it since. Replacing index 0 without a Host write would leave the
-      // panel pointing at the old edge: roll back rather than "converge".
+  if (origin.hostMode !== 'fcp') {
+    if (origin.hostMode === 'operator' && r.kind === 'replace' && !r.force) {
+      // The flip was decided with FCP-managed Hosts at publish time; an operator
+      // took them over since. Replacing the template edge without a Host write
+      // would leave the panel pointing at the old edge: roll back rather than
+      // "converge".
       await advanceCall(ctx, r._id, sv, {
         type: 'fail',
-        code: 'hosts_unmanaged',
-        detail: 'hostManaged turned off during the rotation',
+        code: 'hosts_operator_managed',
+        detail: 'hostMode changed to operator during the rotation',
         rollback: true,
       });
       return;
     }
-    // Publishing at index 0 on an unmanaged origin proceeds without a flip.
+    // No panel Host at all (Outline, manual), or the operator writes it.
+    await advanceCall(ctx, r._id, sv, { type: 'host_converged', flipped: 0 });
+    return;
+  }
+  const remark = listenerRemark(slot);
+  if (!remark) {
+    // An address-matched listener has no panel Host to flip.
     await advanceCall(ctx, r._id, sv, { type: 'host_converged', flipped: 0 });
     return;
   }
@@ -3239,9 +3284,9 @@ async function phaseHostFlip(ctx: ActionCtx, c: Ctx) {
     });
     return;
   }
-  const target = flipTargetFor(edge, profile);
+  const target = flipTargetFor(edge, slot);
   if (!target) {
-    // The edge lost the address (or the profile the name) the flip needs.
+    // The edge lost the address (or the listener the name) the flip needs.
     await advanceCall(ctx, r._id, sv, {
       type: 'fail',
       code: 'flip_context_missing',
@@ -3252,7 +3297,7 @@ async function phaseHostFlip(ctx: ActionCtx, c: Ctx) {
   if (!hostPlanCaptured(r)) {
     const matches = matchSlotHosts(
       hosts,
-      [{ slotId: slot._id, slotKey: slot.slotKey, templateHostRemark: slot.templateHostRemark }],
+      [{ slotId: slot._id, slotKey: slot.listenerKey, templateHostRemark: remark }],
       origin.originAddress,
     );
     const m = matches[0];
@@ -3260,7 +3305,7 @@ async function phaseHostFlip(ctx: ActionCtx, c: Ctx) {
       await advanceCall(ctx, r._id, sv, {
         type: 'fail',
         code: 'host_duplicates',
-        detail: slot.templateHostRemark,
+        detail: remark,
         rollback: true,
       });
       return;
@@ -3272,19 +3317,49 @@ async function phaseHostFlip(ctx: ActionCtx, c: Ctx) {
       await advanceCall(ctx, r._id, sv, {
         type: 'fail',
         code: 'host_leaks_origin',
-        detail: slot.templateHostRemark,
+        detail: remark,
         rollback: true,
       });
       return;
     }
     if (!m.host) {
-      // No template Host to flip (bootstrap: the role creates it from publishedEndpoints[0]).
+      // No panel Host yet: FCP owns the Hosts, so it CREATES this listener's
+      // Host at the target through the Host state machine (persisted intent,
+      // discovery after an uncertain outcome; convex/hostOps.ts). The plan is
+      // then empty: the Host is born at the target, nothing to flip.
+      const created = await ctx.runAction(internal.hostOps.ensureListenerHost, {
+        listenerId: slot._id,
+        target: {
+          address: target.address,
+          port: target.port,
+          sni: target.sni ?? null,
+          host: target.host ?? null,
+        },
+      });
+      if (created.state !== 'present') {
+        if (created.state === 'ambiguous' || created.state === 'failed') {
+          await advanceCall(ctx, r._id, sv, {
+            type: 'fail',
+            code: created.state === 'ambiguous' ? 'host_ambiguous' : 'host_create_failed',
+            detail: created.detail,
+            rollback: true,
+          });
+          return;
+        }
+        // creating / unresolved: wait for discovery to settle it.
+        await advanceCall(ctx, r._id, sv, {
+          type: 'progress',
+          delayMs: poll,
+          detail: `host ${created.state}`,
+        });
+        return;
+      }
       await ctx.runMutation(internal.edgeRotations.setHostPlan, {
         rotationId: r._id,
         stepVersion: sv,
         hostPlan: [],
-        slotId: slot._id,
-        templateHostUuid: null,
+        listenerId: slot._id,
+        templateHostUuid: created.uuid ?? null,
       });
       return;
     }
@@ -3292,8 +3367,8 @@ async function phaseHostFlip(ctx: ActionCtx, c: Ctx) {
     await ctx.runMutation(internal.edgeRotations.setHostPlan, {
       rotationId: r._id,
       stepVersion: sv,
-      hostPlan: planFromMatches(matches),
-      slotId: slot._id,
+      hostPlan: planFromMatches(matches).map((e) => ({ ...e, listenerKey: slot.listenerKey })),
+      listenerId: slot._id,
       templateHostUuid: m.host.uuid,
     });
     return;
@@ -3342,7 +3417,7 @@ async function phaseHostFlip(ctx: ActionCtx, c: Ctx) {
   }
   try {
     await ctx.runAction(internal.backends.updateHost, {
-      backendServerId: origin.backendServerId,
+      backendServerId: panelServerId(origin),
       uuid: entry.uuid,
       address: target.address,
       port: target.port,
@@ -3392,7 +3467,7 @@ export const bumpFlipAttempts = internalMutation({
 });
 
 async function phaseConfirming(ctx: ActionCtx, c: Ctx) {
-  const { rotation: r, cfg, toEdge: edge, origin, profile } = c;
+  const { rotation: r, cfg, toEdge: edge, origin, listener } = c;
   const sv = r.stepVersion;
   // The affected countries are asked ONCE MORE after the flip: the front is now
   // the one members actually receive, so a block that only shows up under real
@@ -3421,7 +3496,7 @@ async function phaseConfirming(ctx: ActionCtx, c: Ctx) {
       }
     }
   }
-  const confirmTarget = edge ? flipTargetFor(edge, profile) : null;
+  const confirmTarget = edge ? flipTargetFor(edge, listener) : null;
   if (r.hostPlan.length === 0 || !confirmTarget) {
     await advanceCall(ctx, r._id, sv, { type: 'confirmed' });
     return;
@@ -3541,7 +3616,7 @@ async function phaseRollingBack(ctx: ActionCtx, c: Ctx) {
   }
   try {
     await ctx.runAction(internal.backends.updateHost, {
-      backendServerId: origin.backendServerId,
+      backendServerId: panelServerId(origin),
       uuid: pendingEntry.uuid,
       address: rollbackTarget.address,
       port: rollbackTarget.port,

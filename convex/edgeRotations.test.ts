@@ -5,6 +5,16 @@ import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { jsonRes, mockFetch } from './lib/edges/testing/mockFetch';
+import {
+  adoptL4Edge,
+  createAccount,
+  FIXTURE_CONFIG_PROFILE,
+  insertPanelServer,
+  realityListener,
+  registerRelay,
+  shadowsocksListener,
+  type ListenerSpecFixture,
+} from './lib/edges/testing/fixtures';
 import { upsertSettingRow } from './appSettings';
 import { isStaleRotation, MAX_STEP_ERRORS } from './edgeRotations';
 
@@ -20,10 +30,23 @@ const OLD_EDGE = '198.51.100.1';
 const NEW_EDGE = '198.51.100.50';
 const HOST_UUID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const INBOUND = '22222222-2222-4222-8222-222222222222';
+const SS_INBOUND = '44444444-4444-4444-8444-444444444444';
+const SS_HOST_UUID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+const SS_OLD_EDGE = '198.51.100.2';
+
+interface PanelHost {
+  uuid: string;
+  remark: string;
+  address: string;
+  port: number;
+  sni?: string;
+  host?: string;
+  inbound: { configProfileUuid: string; configProfileInboundUuid: string };
+}
 
 /**
  * A fake UpCloud + a fake panel behind one fetch stub. The panel keeps Host
- * state so PATCHes are observable and the next GET reflects them.
+ * state so PATCHes / POSTs are observable and the next GET reflects them.
  */
 function fakeWorld(
   opts: {
@@ -32,17 +55,11 @@ function fakeWorld(
     panelDown?: boolean;
     /** The template Host points at the origin itself (leak). */
     hostLeaks?: boolean;
+    /** Extra Hosts the panel starts with (other listeners). */
+    extraHosts?: PanelHost[];
   } = {},
 ) {
-  const panelHosts: Array<{
-    uuid: string;
-    remark: string;
-    address: string;
-    port: number;
-    sni?: string;
-    host?: string;
-    inbound: { configProfileUuid: string; configProfileInboundUuid: string };
-  }> = [];
+  const panelHosts: PanelHost[] = [];
   if (opts.hostPresent !== false) {
     panelHosts.push({
       uuid: HOST_UUID,
@@ -50,16 +67,17 @@ function fakeWorld(
       address: opts.hostLeaks ? ORIGIN : OLD_EDGE,
       port: 443,
       sni: 'a.example',
-      inbound: {
-        configProfileUuid: '11111111-1111-4111-8111-111111111111',
-        configProfileInboundUuid: INBOUND,
-      },
+      inbound: { configProfileUuid: FIXTURE_CONFIG_PROFILE, configProfileInboundUuid: INBOUND },
     });
   }
+  panelHosts.push(...(opts.extraHosts ?? []));
   const lbs = new Map<string, { uuid: string; name: string; operational_state: string }>();
   let patches = 0;
+  let creates = 0;
+  let panelCalls = 0;
   const stub = mockFetch((c) => {
     if (new URL(c.url).hostname === 'panel.example') {
+      panelCalls++;
       if (opts.panelDown) return jsonRes({ message: 'down' }, 503);
       if (c.path === '/api/hosts' && c.method === 'GET') return jsonRes({ response: panelHosts });
       if (c.path === '/api/hosts' && c.method === 'PATCH') {
@@ -81,6 +99,28 @@ function fakeWorld(
           if (opts.vanishAfterFirstPatch) panelHosts.splice(panelHosts.indexOf(h), 1);
         }
         return jsonRes({ response: h ?? null });
+      }
+      if (c.path === '/api/hosts' && c.method === 'POST') {
+        creates++;
+        const body = c.body as {
+          remark: string;
+          address: string;
+          port: number;
+          sni?: string;
+          host?: string;
+          inbound: PanelHost['inbound'];
+        };
+        const uuid = `cccccccc-cccc-4ccc-8ccc-${String(creates).padStart(12, '0')}`;
+        panelHosts.push({
+          uuid,
+          remark: body.remark,
+          address: body.address,
+          port: body.port,
+          sni: body.sni,
+          host: body.host,
+          inbound: body.inbound,
+        });
+        return jsonRes({ response: { uuid } });
       }
       return jsonRes({ message: 'not found' }, 404);
     }
@@ -105,60 +145,57 @@ function fakeWorld(
     }
     throw new Error(`unexpected ${c.method} ${c.url}`);
   });
-  return { stub, panelHosts, lbs, patches: () => patches };
+  return {
+    stub,
+    panelHosts,
+    lbs,
+    patches: () => patches,
+    creates: () => creates,
+    panelCalls: () => panelCalls,
+  };
 }
 
-async function seed() {
+/** The REALITY listener `u` (remark `node-one-relay-u`, one name). */
+function listenerU(over: Partial<ListenerSpecFixture> = {}): ListenerSpecFixture {
+  return realityListener({
+    listenerKey: 'u',
+    tlsNames: ['a.example'],
+    panelBinding: {
+      inboundTag: 'VLESS_RELAY_U',
+      configProfileUuid: FIXTURE_CONFIG_PROFILE,
+      configProfileInboundUuid: INBOUND,
+    },
+    ...over,
+  });
+}
+
+/**
+ * panel-a + a qualified UpCloud account + relay node-one (panel-node → hostMode
+ * `fcp`) with the REALITY listener `u`, and a hand-made edge adopted and
+ * published at index 0.
+ */
+async function seed(opts: { listeners?: ListenerSpecFixture[] } = {}) {
   const t = convexTest(schema, modules);
-  await t.run((ctx) =>
-    ctx.db.insert('backendServers', {
-      backend: 'remnawave',
-      name: 'panel-a',
-      slug: 'panel-a',
-      config: { type: 'remnawave', baseUrl: 'https://panel.example', apiToken: 'tok' },
-      isActive: true,
-      priority: 0,
-      keyCount: 0,
-      updatedAt: Date.now(),
-    }),
-  );
-  const { id: accountId } = await t.mutation(internal.edgeProviderAccounts.create, {
+  await insertPanelServer(t);
+  const accountId = await createAccount(t, {
     provider: 'upcloud',
     name: 'acct-u',
-    settings: { zone: 'de-fra1' },
-    credentials: { token: 'ucl_x' },
+    qualified: true,
   });
-  await t.mutation(internal.edgeProviderAccounts.setQualified, { id: accountId, qualified: true });
-  const { id: profileId } = await t.mutation(internal.protocolProfiles.create, {
-    slug: 'prof-u',
-    name: 'Profile U',
-    provider: 'upcloud',
-    targetAddress: 'target.example',
-    serverNames: ['a.example'],
+  const { relayId, listenerIds } = await registerRelay(t, {
+    listeners: opts.listeners ?? [listenerU()],
   });
-  const { id: relayId } = await t.mutation(internal.relays.upsertBySlug, {
-    slug: 'node-one',
-    backendServerSlug: 'panel-a',
-    nodeHostname: 'node-one',
-    originAddress: ORIGIN,
-  });
-  const { id: slotId } = await t.mutation(internal.relaySlots.upsert, {
-    relayId,
-    slotKey: 'u',
-    profileSlug: 'prof-u',
-    inboundTag: 'VLESS_RELAY_U',
-    configProfileUuid: '11111111-1111-4111-8111-111111111111',
-    configProfileInboundUuid: INBOUND,
-    originPort: 443,
-  });
+  const listenerId = listenerIds.u;
   // The hand-made edge FCP adopts (observe-only) and publishes at index 0.
-  const { edgeId: oldEdgeId } = await t.mutation(internal.relays.adoptEdge, {
-    relayId,
-    slotId,
+  const { edgeId: oldEdgeId } = await adoptL4Edge(t, relayId, listenerId, {
     ipv4: OLD_EDGE,
     publish: true,
   });
-  return { t, accountId, profileId, relayId, slotId, oldEdgeId: oldEdgeId as Id<'edges'> };
+  return { t, accountId, relayId, listenerId, listenerIds, oldEdgeId: oldEdgeId as Id<'edges'> };
+}
+
+async function listenerRow(t: ReturnType<typeof convexTest>, id: Id<'relayListeners'>) {
+  return (await t.run((ctx) => ctx.db.get(id)))!;
 }
 
 /**
@@ -203,7 +240,7 @@ async function driveUntil(
 async function expectPoolWritersRefused(
   t: ReturnType<typeof convexTest>,
   relayId: Id<'relays'>,
-  slotId: Id<'relaySlots'>,
+  listenerId: Id<'relayListeners'>,
   edgeId: Id<'edges'>,
   code: RegExp,
 ) {
@@ -214,12 +251,7 @@ async function expectPoolWritersRefused(
     code,
   );
   await expect(
-    t.mutation(internal.relays.adoptEdge, {
-      relayId,
-      slotId,
-      ipv4: '198.51.100.77',
-      publish: true,
-    }),
+    adoptL4Edge(t, relayId, listenerId, { ipv4: '198.51.100.77', publish: true }),
   ).rejects.toThrow(code);
   await expect(
     t.mutation(internal.relays.dropFromPool, { relayId, edgeId, reason: 'test' }),
@@ -236,10 +268,12 @@ async function expectPoolWritersRefused(
 }
 
 describe('edgeRotations: replace', () => {
-  test('full replace: provisions, verifies, publishes at index 0, flips the template Host, drains the old edge', async () => {
+  test('full replace: provisions, verifies, publishes at index 0, flips the listener Host, drains the old edge', async () => {
     vi.useFakeTimers();
     const world = fakeWorld();
-    const { t, relayId, oldEdgeId, accountId } = await seed();
+    const { t, relayId, listenerId, oldEdgeId, accountId } = await seed();
+    // The adopted, published edge is the listener's template edge.
+    expect((await listenerRow(t, listenerId)).templateEdgeId).toBe(oldEdgeId);
     const { rotationId } = await t.mutation(internal.edgeRotations.start, {
       relayId,
       kind: 'replace',
@@ -248,6 +282,8 @@ describe('edgeRotations: replace', () => {
     });
     const started = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
     expect(started.phase).toBe('select');
+    // A replace binds to the target's listener.
+    expect(started.listenerId).toBe(listenerId);
     const originBusy = (await t.query(internal.relays.get, { id: relayId }))!;
     expect(originBusy.activeRotationId).toBe(rotationId);
     expect(originBusy.rotationsToday).toBe(1);
@@ -268,6 +304,7 @@ describe('edgeRotations: replace', () => {
     expect(r.outcome).toBe('published');
     expect(r.hostPlan).toEqual([
       {
+        listenerKey: 'u',
         uuid: HOST_UUID,
         oldAddress: OLD_EDGE,
         oldPort: 443,
@@ -279,7 +316,7 @@ describe('edgeRotations: replace', () => {
         oldHost: null,
       },
     ]);
-    expect(r.previousBinding).toMatchObject({ edgeId: oldEdgeId, poolIndex: 0 });
+    expect(r.previousBinding).toEqual({ edgeId: oldEdgeId, listenerId, poolIndex: 0 });
     const codes = r.events.map((e) => e.code);
     expect(codes).toEqual(
       expect.arrayContaining([
@@ -310,6 +347,7 @@ describe('edgeRotations: replace', () => {
       poolIndex: 0,
       managed: true,
       provider: 'upcloud',
+      listenerId,
       // This provider exposes no member health: a running service is `unknown`
       // (never `online`), which the verify gate accepts for it (capabilities.memberHealth).
       health: 'unknown',
@@ -328,13 +366,21 @@ describe('edgeRotations: replace', () => {
     expect(oldEdge.drainUntil).toBeGreaterThan(Date.now());
     expect(oldEdge.burnedAt).toBeUndefined();
 
-    // Panel: exactly one PATCH, Host now points at the new edge (never at the origin).
+    // Panel: exactly one PATCH, no create; the Host now points at the new edge (never at the origin).
     expect(world.patches()).toBe(1);
+    expect(world.creates()).toBe(0);
     expect(world.panelHosts[0]).toMatchObject({ address: NEW_EDGE, port: 443 });
     expect(world.panelHosts[0].address).not.toBe(ORIGIN);
-    // The slot remembers its template Host uuid.
-    const slot = (await t.query(internal.relaySlots.listByRelay, { relayId }))[0];
-    expect(slot.templateHostUuid).toBe(HOST_UUID);
+    // The listener records the Host the plan found: present, ADOPTED (the role
+    // created it, not FCP), and its template edge followed the pool.
+    const listener = await listenerRow(t, listenerId);
+    expect(listener.host).toMatchObject({
+      state: 'present',
+      uuid: HOST_UUID,
+      ownership: 'adopted',
+    });
+    expect(listener.host!.op).toBeUndefined();
+    expect(listener.templateEdgeId).toBe(r.toEdgeId);
     // Budget consumed exactly once.
     const acct = (await t.run((ctx) => ctx.db.get(accountId)))!;
     expect(acct.allocationsToday).toBe(1);
@@ -370,7 +416,34 @@ describe('edgeRotations: replace', () => {
     expect(r.createdEdgeId).toBe(r.toEdgeId);
     expect(r.hostPlanCaptured).toBe(true);
     expect(r.forwardWriteAttempted).toBe(true);
-    expect(r.slotId).toBeDefined();
+    expect(r.listenerId).toBe(listenerId);
+
+    // A SECOND replace (of the edge that is now the template) flips again: the
+    // listener's template edge followed the first rotation, so the machine
+    // still knows this listener's Host must move.
+    await t.run((ctx) => ctx.db.patch(relayId, { cooldownUntil: undefined }));
+    const second = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'replace',
+      trigger: 'manual',
+      targetEdgeId: r.toEdgeId!,
+    });
+    await drain(t, second.rotationId);
+    const r2 = (await t.query(internal.edgeRotations.get, { id: second.rotationId }))!;
+    expect([r2.phase, r2.outcome]).toEqual(['done', 'published']);
+    expect(r2.hostPlan).toHaveLength(1);
+    expect(r2.hostPlan[0]).toMatchObject({
+      listenerKey: 'u',
+      uuid: HOST_UUID,
+      oldAddress: NEW_EDGE,
+    });
+    // The fake provider mints the same address again, so the Host already sits
+    // at the target: planned, observed converged, and NOT rewritten.
+    expect(r2.events.map((e) => e.code)).toEqual(
+      expect.arrayContaining(['host_plan', 'hosts_converged']),
+    );
+    expect(world.patches()).toBe(1);
+    expect((await listenerRow(t, listenerId)).templateEdgeId).toBe(r2.toEdgeId);
   });
 
   test('burn: the old edge is marked burned with the shorter drain', async () => {
@@ -396,7 +469,7 @@ describe('edgeRotations: replace', () => {
   test('hosts_changed during the flip rolls back the complete binding; the new edge stays as a standby', async () => {
     vi.useFakeTimers();
     const world = fakeWorld({ vanishAfterFirstPatch: true });
-    const { t, relayId, oldEdgeId } = await seed();
+    const { t, relayId, listenerId, oldEdgeId } = await seed();
     const { rotationId } = await t.mutation(internal.edgeRotations.start, {
       relayId,
       kind: 'replace',
@@ -429,18 +502,11 @@ describe('edgeRotations: replace', () => {
         force: true,
       }),
     ).rejects.toThrow(/quarantined/);
-    await expect(t.mutation(internal.relays.requestDelete, { id: relayId })).rejects.toThrow(
-      /quarantine/,
-    );
+    await expect(
+      t.mutation(internal.relays.requestDelete, { id: relayId, disposition: 'restore-direct' }),
+    ).rejects.toThrow(/quarantine/);
     // ...including every other pool / edge writer.
-    const slot = (await t.query(internal.relaySlots.listByRelay, { relayId }))[0];
-    await expectPoolWritersRefused(
-      t,
-      relayId,
-      slot.id as Id<'relaySlots'>,
-      r.toEdgeId!,
-      /quarantin/,
-    );
+    await expectPoolWritersRefused(t, relayId, listenerId, r.toEdgeId!, /quarantin/);
     await expect(
       t.mutation(internal.edgeAdmin.deleteEdge, { edgeId: r.toEdgeId! }),
     ).rejects.toThrow(/quarantin/);
@@ -450,6 +516,7 @@ describe('edgeRotations: replace', () => {
     expect(after.quarantine).toBeUndefined();
     expect(after.publishedEdgeIds).toEqual([oldEdgeId]);
     expect((await t.query(internal.edges.get, { id: r.toEdgeId! }))!.status).toBe('active');
+    expect((await listenerRow(t, listenerId)).templateEdgeId).toBe(oldEdgeId);
     const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
     expect(audit.map((a) => a.action)).toEqual(
       expect.arrayContaining(['edge.quarantined', 'edge.quarantine_resolved']),
@@ -471,6 +538,7 @@ describe('edgeRotations: replace', () => {
     expect(r.outcome).toBe('host_leaks_origin');
     expect(['rolled_back', 'quarantined']).toContain(r.phase);
     expect(world.patches()).toBe(0);
+    expect(world.creates()).toBe(0);
     // The leaking Host is untouched and the previous binding is back.
     expect(world.panelHosts[0].address).toBe(ORIGIN);
     const origin = (await t.query(internal.relays.get, { id: relayId }))!;
@@ -480,7 +548,7 @@ describe('edgeRotations: replace', () => {
   test('resolving a quarantine with keep:current publishes the new edge at the saved index and drains the previous one', async () => {
     vi.useFakeTimers();
     fakeWorld({ vanishAfterFirstPatch: true });
-    const { t, relayId, oldEdgeId } = await seed();
+    const { t, relayId, listenerId, oldEdgeId } = await seed();
     const { rotationId } = await t.mutation(internal.edgeRotations.start, {
       relayId,
       kind: 'replace',
@@ -509,6 +577,8 @@ describe('edgeRotations: replace', () => {
     expect((await t.query(internal.edgeRotations.get, { id: rotationId }))!.outcome).toBe(
       'quarantine_resolved:current',
     );
+    // The listener's template edge follows the operator's choice.
+    expect((await listenerRow(t, listenerId)).templateEdgeId).toBe(r.toEdgeId);
   });
 
   test('panel down during the flip: attempts are capped, then a rollback restores the binding without Host writes', async () => {
@@ -535,10 +605,10 @@ describe('edgeRotations: replace', () => {
     expect(origin.standbyEdgeIds).toEqual([newEdge._id]);
   });
 
-  test('no template Host on the panel: publish proceeds without a flip (bootstrap)', async () => {
+  test('no Host on the panel yet (hostMode fcp): FCP CREATES the listener Host at the new edge instead of flipping', async () => {
     vi.useFakeTimers();
     const world = fakeWorld({ hostPresent: false });
-    const { t, relayId, oldEdgeId } = await seed();
+    const { t, relayId, listenerId, oldEdgeId } = await seed();
     const { rotationId } = await t.mutation(internal.edgeRotations.start, {
       relayId,
       kind: 'replace',
@@ -547,15 +617,103 @@ describe('edgeRotations: replace', () => {
     });
     await drain(t, rotationId);
     const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
-    expect(r.phase).toBe('done');
+    expect([r.phase, r.outcome]).toEqual(['done', 'published']);
+    // Born at the target: nothing to flip, so the plan is empty and no PATCH ran.
     expect(r.hostPlan).toEqual([]);
     expect(world.patches()).toBe(0);
+    expect(world.creates()).toBe(1);
+    expect(world.panelHosts).toHaveLength(1);
+    expect(world.panelHosts[0]).toMatchObject({
+      remark: 'node-one-relay-u',
+      address: NEW_EDGE,
+      port: 443,
+      sni: 'a.example',
+      inbound: { configProfileUuid: FIXTURE_CONFIG_PROFILE, configProfileInboundUuid: INBOUND },
+    });
+    expect(world.panelHosts[0].address).not.toBe(ORIGIN);
+    // The listener owns the Host it created (ownership fcp), with the persisted intent.
+    const listener = await listenerRow(t, listenerId);
+    expect(listener.host).toMatchObject({
+      state: 'present',
+      uuid: world.panelHosts[0].uuid,
+      ownership: 'fcp',
+      intended: { remark: 'node-one-relay-u', address: NEW_EDGE, port: 443, sni: 'a.example' },
+    });
+    expect(listener.host!.op).toBeUndefined();
+    expect(listener.templateEdgeId).toBe(r.toEdgeId);
+    const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
+    expect(audit.find((a) => a.action === 'relay.host.created')?.payload).toMatchObject({
+      relaySlug: 'node-one',
+      listenerKey: 'u',
+    });
+    expect(JSON.stringify(audit)).not.toContain(NEW_EDGE);
   });
 
-  test('start guards: hostManaged=false at index 0, cooldown, daily cap (force bypasses the last two only)', async () => {
+  test('a Host create whose outcome is unknown parks the flip; the next pass discovers the Host and finishes', async () => {
+    vi.useFakeTimers();
+    const world = fakeWorld({ hostPresent: false });
+    // The first POST dies after the panel created the row.
+    let failedOnce = false;
+    const inner = world.stub;
+    const original = (
+      globalThis.fetch as unknown as { getMockImplementation?: () => unknown }
+    ).getMockImplementation?.() as ((...a: unknown[]) => Promise<Response>) | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init: RequestInit = {}) => {
+        const url =
+          typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+        if (
+          !failedOnce &&
+          new URL(url).hostname === 'panel.example' &&
+          new URL(url).pathname === '/api/hosts' &&
+          (init.method ?? 'GET').toUpperCase() === 'POST'
+        ) {
+          failedOnce = true;
+          // Let the panel do the create, then answer as if the connection dropped.
+          await original!(input, init);
+          return jsonRes({ message: 'gateway timeout' }, 504);
+        }
+        return original!(input, init);
+      }),
+    );
+    void inner;
+    const { t, relayId, listenerId, oldEdgeId } = await seed();
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'replace',
+      trigger: 'manual',
+      targetEdgeId: oldEdgeId,
+    });
+    await driveUntil(t, rotationId, 'host_flipping');
+    // One pass: the create is claimed, the call "fails", the listener is parked.
+    await t.action(internal.edgeRotations.step, { rotationId });
+    expect((await listenerRow(t, listenerId)).host).toMatchObject({
+      state: 'unresolved',
+      op: { kind: 'create' },
+    });
+    expect((await t.query(internal.edgeRotations.get, { id: rotationId }))!.phase).toBe(
+      'host_flipping',
+    );
+    await drain(t, rotationId);
+    const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
+    expect([r.phase, r.outcome]).toEqual(['done', 'published']);
+    // Exactly one Host exists: discovery adopted the one the panel created,
+    // it was never created twice.
+    expect(world.creates()).toBe(1);
+    expect(world.panelHosts).toHaveLength(1);
+    expect((await listenerRow(t, listenerId)).host).toMatchObject({
+      state: 'present',
+      uuid: world.panelHosts[0].uuid,
+      ownership: 'fcp',
+    });
+  });
+
+  test('start guards: hostMode operator at the template edge, cooldown, daily cap (force bypasses all three)', async () => {
     fakeWorld();
-    const { t, relayId, oldEdgeId } = await seed();
-    await t.mutation(internal.relays.update, { id: relayId, hostManaged: false });
+    const { t, relayId, listenerId, oldEdgeId } = await seed();
+    // fcp → operator: FCP stops writing; a Host it knew becomes the operator's.
+    await t.mutation(internal.relays.update, { id: relayId, hostMode: 'operator' });
     await expect(
       t.mutation(internal.edgeRotations.start, {
         relayId,
@@ -563,8 +721,19 @@ describe('edgeRotations: replace', () => {
         trigger: 'manual',
         targetEdgeId: oldEdgeId,
       }),
-    ).rejects.toThrow(/template Host/);
-    await t.mutation(internal.relays.update, { id: relayId, hostManaged: true });
+    ).rejects.toThrow(/hosts_operator_managed|operator manages/);
+    // operator → fcp needs every remark listener's Host adopted first.
+    await expect(
+      t.mutation(internal.relays.update, { id: relayId, hostMode: 'fcp' }),
+    ).rejects.toThrow(/host_adopt_required/);
+    await t.run((ctx) =>
+      ctx.db.patch(listenerId, {
+        host: { state: 'present', uuid: HOST_UUID, ownership: 'adopted' },
+        updatedAt: Date.now(),
+      }),
+    );
+    await t.mutation(internal.relays.update, { id: relayId, hostMode: 'fcp' });
+    expect((await t.query(internal.relays.get, { id: relayId }))!.hostMode).toBe('fcp');
     await t.run((ctx) => ctx.db.patch(relayId, { cooldownUntil: Date.now() + 60_000 }));
     await expect(
       t.mutation(internal.edgeRotations.start, {
@@ -609,6 +778,32 @@ describe('edgeRotations: replace', () => {
     ).rejects.toThrow(/already running|Automatic rotation/);
   });
 
+  test('hostMode operator: force replaces the template edge WITHOUT a Host write (the operator moves it)', async () => {
+    vi.useFakeTimers();
+    const world = fakeWorld();
+    const { t, relayId, oldEdgeId } = await seed();
+    await t.mutation(internal.relays.update, { id: relayId, hostMode: 'operator' });
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'replace',
+      trigger: 'manual',
+      targetEdgeId: oldEdgeId,
+      force: true,
+    });
+    await drain(t, rotationId);
+    const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
+    expect([r.phase, r.outcome]).toEqual(['done', 'published']);
+    expect(r.hostPlan).toEqual([]);
+    expect(r.events.map((e) => e.code)).not.toContain('host_plan');
+    expect(r.events.find((e) => e.code === 'published')?.detail).toMatch(/left to the operator/);
+    expect(world.patches()).toBe(0);
+    expect(world.creates()).toBe(0);
+    expect(world.panelHosts[0].address).toBe(OLD_EDGE);
+    expect((await t.query(internal.relays.get, { id: relayId }))!.publishedEdgeIds).toEqual([
+      r.toEdgeId,
+    ]);
+  });
+
   test('cancel during provisioning stops the run and marks the new edge cancelled', async () => {
     vi.useFakeTimers();
     fakeWorld();
@@ -639,11 +834,173 @@ describe('edgeRotations: replace', () => {
   });
 });
 
-describe('edgeRotations: provision + publish kinds', () => {
-  test('provision with publishOnDone fills the next free pool index (index 1: no Host flip)', async () => {
+describe('edgeRotations: hostMode none (no panel Host at all)', () => {
+  test('a backend-server origin replaces its edge with no panel call whatsoever', async () => {
     vi.useFakeTimers();
     const world = fakeWorld();
-    const { t, relayId } = await seed();
+    const t = convexTest(schema, modules);
+    await insertPanelServer(t, { slug: 'panel-b' });
+    await createAccount(t, { provider: 'upcloud', name: 'acct-u', qualified: true });
+    const { relayId, listenerId } = await registerRelay(t, {
+      slug: 'server-b',
+      kind: 'backend-server',
+      backendSlug: 'panel-b',
+      originAddress: '203.0.113.20',
+      listeners: [listenerU()],
+    });
+    const relay = (await t.query(internal.relays.get, { id: relayId }))!;
+    expect(relay.hostMode).toBe('none');
+    // No panel binding on a whole-server origin: the listener matches by address.
+    expect((await listenerRow(t, listenerId)).matchRule).toEqual({ kind: 'address' });
+    const { edgeId: oldEdgeId } = await adoptL4Edge(t, relayId, listenerId, {
+      ipv4: OLD_EDGE,
+      publish: true,
+    });
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'replace',
+      trigger: 'manual',
+      targetEdgeId: oldEdgeId,
+    });
+    await drain(t, rotationId);
+    const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
+    expect([r.phase, r.outcome]).toEqual(['done', 'published']);
+    expect(r.hostPlan).toEqual([]);
+    // No Host to flip: the publish goes straight to finalizing, no flip phase at all.
+    const codes = r.events.map((e) => e.code);
+    expect(codes).not.toContain('host_plan');
+    expect(codes).not.toContain('host_forward_written');
+    expect(r.hostPlanCaptured).toBe(false);
+    expect(r.forwardWriteAttempted).toBe(false);
+    expect(r.events.find((e) => e.code === 'published')?.detail).toMatch(/no panel Host/);
+    expect(world.panelCalls()).toBe(0);
+    expect((await t.query(internal.relays.get, { id: relayId }))!.publishedEdgeIds).toEqual([
+      r.toEdgeId,
+    ]);
+    expect((await listenerRow(t, listenerId)).templateEdgeId).toBe(r.toEdgeId);
+  });
+});
+
+describe('edgeRotations: per-listener template edges', () => {
+  test('two listeners, two Hosts: replacing one re-plans ONLY its listener; the other Host is untouched', async () => {
+    vi.useFakeTimers();
+    const world = fakeWorld({
+      extraHosts: [
+        {
+          uuid: SS_HOST_UUID,
+          remark: 'node-one-relay-s',
+          address: SS_OLD_EDGE,
+          port: 8388,
+          inbound: {
+            configProfileUuid: FIXTURE_CONFIG_PROFILE,
+            configProfileInboundUuid: SS_INBOUND,
+          },
+        },
+      ],
+    });
+    const { t, relayId, listenerIds, oldEdgeId } = await seed({
+      listeners: [listenerU(), shadowsocksListener()],
+    });
+    const ssListenerId = listenerIds.s;
+    // The shadowsocks edge published at index 1 becomes ITS listener's template
+    // (the first published edge bound to `s`), though it is not at index 0.
+    const { edgeId: ssEdgeId, poolIndex } = await adoptL4Edge(t, relayId, ssListenerId, {
+      ipv4: SS_OLD_EDGE,
+      port: 8388,
+      publish: true,
+    });
+    expect(poolIndex).toBe(1);
+    expect((await listenerRow(t, listenerIds.u)).templateEdgeId).toBe(oldEdgeId);
+    expect((await listenerRow(t, ssListenerId)).templateEdgeId).toBe(ssEdgeId);
+
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'replace',
+      trigger: 'manual',
+      targetEdgeId: ssEdgeId as Id<'edges'>,
+    });
+    expect((await t.query(internal.edgeRotations.get, { id: rotationId }))!.listenerId).toBe(
+      ssListenerId,
+    );
+    await drain(t, rotationId);
+    const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
+    expect([r.phase, r.outcome]).toEqual(['done', 'published']);
+    // Only the `s` listener was planned and flipped.
+    expect(r.hostPlan).toEqual([
+      expect.objectContaining({
+        listenerKey: 's',
+        uuid: SS_HOST_UUID,
+        oldAddress: SS_OLD_EDGE,
+        oldPort: 8388,
+      }),
+    ]);
+    expect(r.previousBinding).toEqual({ edgeId: ssEdgeId, listenerId: ssListenerId, poolIndex: 1 });
+    expect(world.patches()).toBe(1);
+    const ssHost = world.panelHosts.find((h) => h.uuid === SS_HOST_UUID)!;
+    const newEdge = (await t.query(internal.edges.get, { id: r.toEdgeId! }))!;
+    expect(newEdge).toMatchObject({
+      listenerId: ssListenerId,
+      poolIndex: 1,
+      publication: 'published',
+    });
+    expect(ssHost.address).toBe(NEW_EDGE);
+    expect(ssHost.port).toBe(newEdge.listeners[0].edgePort);
+    // Shadowsocks presents no name: the flip cleared nothing it did not own and
+    // the REALITY listener's Host never moved.
+    const uHost = world.panelHosts.find((h) => h.uuid === HOST_UUID)!;
+    expect(uHost).toMatchObject({ address: OLD_EDGE, port: 443, sni: 'a.example' });
+    // Per-listener template edges: `u` keeps its own, `s` follows the rotation.
+    const pool = (await t.query(internal.relays.get, { id: relayId }))!.publishedEdgeIds;
+    expect(pool).toEqual([oldEdgeId, r.toEdgeId]);
+    expect((await listenerRow(t, listenerIds.u)).templateEdgeId).toBe(oldEdgeId);
+    const ss = await listenerRow(t, ssListenerId);
+    expect(ss.templateEdgeId).toBe(r.toEdgeId);
+    expect(ss.host).toMatchObject({ state: 'present', uuid: SS_HOST_UUID, ownership: 'adopted' });
+    expect((await listenerRow(t, listenerIds.u)).host?.state ?? 'absent').toBe('absent');
+  });
+
+  test('relays.refreshTemplateEdges: unpublish / drop / publish keep each listener pointing at its lowest published edge', async () => {
+    fakeWorld();
+    const { t, relayId, listenerIds, oldEdgeId } = await seed({
+      listeners: [listenerU(), shadowsocksListener()],
+    });
+    const { edgeId: ssEdgeId } = await adoptL4Edge(t, relayId, listenerIds.s, {
+      ipv4: SS_OLD_EDGE,
+      port: 8388,
+      publish: true,
+    });
+    // Unpublishing `u`'s only edge leaves that listener template-less; `s` is unaffected.
+    await t.mutation(internal.relays.unpublishEdge, {
+      relayId,
+      edgeId: oldEdgeId,
+      keepActive: true,
+    });
+    expect((await listenerRow(t, listenerIds.u)).templateEdgeId).toBeUndefined();
+    expect((await listenerRow(t, listenerIds.s)).templateEdgeId).toBe(ssEdgeId);
+    // Re-publishing it on a Host-managed relay is the rotation machine's job.
+    await expect(
+      t.mutation(internal.relays.publishEdge, { relayId, edgeId: oldEdgeId }),
+    ).rejects.toThrow(/needs_rotation/);
+    // With no Host to flip (hostMode operator), the direct publish is allowed and the template follows.
+    await t.mutation(internal.relays.update, { id: relayId, hostMode: 'operator' });
+    await t.mutation(internal.relays.publishEdge, { relayId, edgeId: oldEdgeId });
+    expect((await listenerRow(t, listenerIds.u)).templateEdgeId).toBe(oldEdgeId);
+    // Dropping `s`'s edge clears `s`.
+    await t.mutation(internal.relays.dropFromPool, {
+      relayId,
+      edgeId: ssEdgeId as Id<'edges'>,
+      reason: 'test',
+    });
+    expect((await listenerRow(t, listenerIds.s)).templateEdgeId).toBeUndefined();
+    expect((await listenerRow(t, listenerIds.u)).templateEdgeId).toBe(oldEdgeId);
+  });
+});
+
+describe('edgeRotations: provision + publish kinds', () => {
+  test('provision with publishOnDone fills the next free pool index (index 1, same listener: no Host flip)', async () => {
+    vi.useFakeTimers();
+    const world = fakeWorld();
+    const { t, relayId, listenerId, oldEdgeId } = await seed();
     const { rotationId } = await t.mutation(internal.edgeRotations.start, {
       relayId,
       kind: 'provision',
@@ -659,6 +1016,9 @@ describe('edgeRotations: provision + publish kinds', () => {
     expect(origin.publishedEdgeIds[1]).toBe(r.toEdgeId);
     expect(origin.cooldownUntil).toBeUndefined(); // not a rotation
     expect(world.patches()).toBe(0);
+    expect(world.creates()).toBe(0);
+    // The listener's template stays the lower-index edge.
+    expect((await listenerRow(t, listenerId)).templateEdgeId).toBe(oldEdgeId);
   });
 
   test('provision without publish leaves a standby; a later replace uses it instead of allocating', async () => {
@@ -699,7 +1059,7 @@ describe('edgeRotations: provision + publish kinds', () => {
     expect(world.patches()).toBe(1);
   });
 
-  test('selection fails cleanly when no qualified account exists for the slot provider', async () => {
+  test('selection fails cleanly when no qualified account exists for the listener', async () => {
     vi.useFakeTimers();
     fakeWorld();
     const { t, relayId, accountId } = await seed();
@@ -731,7 +1091,7 @@ describe('edgeRotations: recovery, guards and bounds', () => {
   async function rollingBackRow(
     t: ReturnType<typeof convexTest>,
     relayId: Id<'relays'>,
-    slotId: Id<'relaySlots'>,
+    listenerId: Id<'relayListeners'>,
     oldEdgeId: Id<'edges'>,
     extra: Record<string, unknown>,
     /** Absent = a LEGACY plan (no snapshot version): SNI/Host are unknown. */
@@ -739,11 +1099,7 @@ describe('edgeRotations: recovery, guards and bounds', () => {
       { uuid: HOST_UUID, oldAddress: OLD_EDGE, oldPort: 443, inboundUuid: INBOUND },
     ],
   ) {
-    const { edgeId: newEdgeId } = await t.mutation(internal.relays.adoptEdge, {
-      relayId,
-      slotId,
-      ipv4: NEW_EDGE,
-    });
+    const { edgeId: newEdgeId } = await adoptL4Edge(t, relayId, listenerId, { ipv4: NEW_EDGE });
     const now = Date.now();
     const rotationId = await t.run(async (ctx) => {
       const id = await ctx.db.insert('edgeRotations', {
@@ -754,6 +1110,7 @@ describe('edgeRotations: recovery, guards and bounds', () => {
         force: false,
         targetEdgeId: oldEdgeId,
         toEdgeId: newEdgeId,
+        listenerId,
         viaStandby: true,
         phase: 'rolling_back',
         stepVersion: 7,
@@ -761,7 +1118,7 @@ describe('edgeRotations: recovery, guards and bounds', () => {
         outcome: 'hosts_changed',
         hostPlan,
         hostPlanCaptured: true,
-        previousBinding: { edgeId: oldEdgeId, slotId, poolIndex: 0 },
+        previousBinding: { edgeId: oldEdgeId, listenerId, poolIndex: 0 },
         flipAttempts: 1,
         rollbackAttempts: 0,
         pollAttempts: 0,
@@ -791,12 +1148,12 @@ describe('edgeRotations: recovery, guards and bounds', () => {
   test('rollback after a forward PATCH that landed but never settled re-observes the panel and writes the old address back', async () => {
     vi.useFakeTimers();
     const world = fakeWorld();
-    const { t, relayId, slotId, oldEdgeId } = await seed();
+    const { t, relayId, listenerId, oldEdgeId } = await seed();
     // The PATCH reached the panel (Host now points at the new edge)...
     world.panelHosts[0].address = NEW_EDGE;
     // ...but the action died before settling: no flippedAt, no success event,
     // only the claim-time flag says a write was attempted.
-    const { rotationId } = await rollingBackRow(t, relayId, slotId, oldEdgeId, {
+    const { rotationId } = await rollingBackRow(t, relayId, listenerId, oldEdgeId, {
       forwardWriteAttempted: true,
     });
     // A cancel during the rollback is recorded, not honoured.
@@ -812,6 +1169,7 @@ describe('edgeRotations: recovery, guards and bounds', () => {
     const origin = (await t.query(internal.relays.get, { id: relayId }))!;
     expect(origin.publishedEdgeIds).toEqual([oldEdgeId]);
     expect(origin.activeRotationId).toBeUndefined();
+    expect((await listenerRow(t, listenerId)).templateEdgeId).toBe(oldEdgeId);
     const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
     expect(audit.find((a) => a.action === 'admin.edge.cancel')?.payload).toMatchObject({
       deferred: true,
@@ -821,8 +1179,8 @@ describe('edgeRotations: recovery, guards and bounds', () => {
   test('legacy rows without the flag still take the "nothing written" shortcut (event inference)', async () => {
     vi.useFakeTimers();
     const world = fakeWorld();
-    const { t, relayId, slotId, oldEdgeId } = await seed();
-    const { rotationId } = await rollingBackRow(t, relayId, slotId, oldEdgeId, {});
+    const { t, relayId, listenerId, oldEdgeId } = await seed();
+    const { rotationId } = await rollingBackRow(t, relayId, listenerId, oldEdgeId, {});
     await drain(t, rotationId);
     expect((await t.query(internal.edgeRotations.get, { id: rotationId }))!.phase).toBe(
       'rolled_back',
@@ -833,7 +1191,7 @@ describe('edgeRotations: recovery, guards and bounds', () => {
   test('a LEGACY plan restores address and port ONLY: unknown is never written as a clear', async () => {
     vi.useFakeTimers();
     const world = fakeWorld();
-    const { t, relayId, slotId, oldEdgeId } = await seed();
+    const { t, relayId, listenerId, oldEdgeId } = await seed();
     // The panel holds the new edge (the forward PATCH landed) with a name the
     // operator, not FCP, put there.
     world.panelHosts[0].address = NEW_EDGE;
@@ -841,7 +1199,7 @@ describe('edgeRotations: recovery, guards and bounds', () => {
     const { rotationId } = await rollingBackRow(
       t,
       relayId,
-      slotId,
+      listenerId,
       oldEdgeId,
       { forwardWriteAttempted: true },
       // A rotation captured before the full-tuple snapshot existed.
@@ -859,7 +1217,7 @@ describe('edgeRotations: recovery, guards and bounds', () => {
   test('a version-2 plan restores the WHOLE tuple, clears included (an L7 flip rolled back)', async () => {
     vi.useFakeTimers();
     const world = fakeWorld();
-    const { t, relayId, slotId, oldEdgeId } = await seed();
+    const { t, relayId, listenerId, oldEdgeId } = await seed();
     // The flip had pointed the Host at a CDN hostname: address, SNI and Host.
     world.panelHosts[0].address = 'front.example.org';
     world.panelHosts[0].sni = 'front.example.org';
@@ -867,11 +1225,12 @@ describe('edgeRotations: recovery, guards and bounds', () => {
     const { rotationId } = await rollingBackRow(
       t,
       relayId,
-      slotId,
+      listenerId,
       oldEdgeId,
       { forwardWriteAttempted: true },
       [
         {
+          listenerKey: 'u',
           uuid: HOST_UUID,
           oldAddress: OLD_EDGE,
           oldPort: 443,
@@ -896,30 +1255,30 @@ describe('edgeRotations: recovery, guards and bounds', () => {
     });
   });
 
-  test('a running rotation blocks every other pool writer and a hostManaged flip', async () => {
+  test('a running rotation blocks every other pool writer and a hostMode change', async () => {
     fakeWorld();
-    const { t, relayId, slotId, oldEdgeId } = await seed();
-    const { edgeId: standby } = await t.mutation(internal.relays.adoptEdge, {
-      relayId,
-      slotId,
-      ipv4: NEW_EDGE,
-    });
+    const { t, relayId, listenerId, oldEdgeId } = await seed();
+    const { edgeId: standby } = await adoptL4Edge(t, relayId, listenerId, { ipv4: NEW_EDGE });
     const { rotationId } = await t.mutation(internal.edgeRotations.start, {
       relayId,
       kind: 'replace',
       trigger: 'manual',
       targetEdgeId: oldEdgeId,
     });
-    await expectPoolWritersRefused(t, relayId, slotId, standby, /rotation is running/);
+    await expectPoolWritersRefused(t, relayId, listenerId, standby, /rotation is running/);
     await expect(
-      t.mutation(internal.relays.update, { id: relayId, hostManaged: false }),
-    ).rejects.toThrow(/rotation is running/);
+      t.mutation(internal.relays.update, { id: relayId, hostMode: 'operator' }),
+    ).rejects.toThrow(/rotation/);
+    // Listener writes are pool writes too.
+    await expect(
+      t.mutation(internal.relayListeners.setEnabled, { id: listenerId, enabled: false }),
+    ).rejects.toThrow(/rotation/);
     // Other relay edits are fine.
     await t.mutation(internal.relays.update, { id: relayId, probeNode: true });
     await t.mutation(internal.edgeRotations.requestCancel, { rotationId });
   });
 
-  test('hostManaged turned off mid-rotation fails the replace with a rollback instead of "converging"', async () => {
+  test('hostMode handed to the operator mid-rotation fails the replace with a rollback instead of "converging"', async () => {
     vi.useFakeTimers();
     const world = fakeWorld();
     const { t, relayId, oldEdgeId } = await seed();
@@ -930,20 +1289,20 @@ describe('edgeRotations: recovery, guards and bounds', () => {
       targetEdgeId: oldEdgeId,
     });
     await driveUntil(t, rotationId, 'host_flipping');
-    await t.run((ctx) => ctx.db.patch(relayId, { hostManaged: false }));
+    await t.run((ctx) => ctx.db.patch(relayId, { hostMode: 'operator' }));
     await drain(t, rotationId);
     const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
     expect(r.phase).toBe('rolled_back');
-    expect(r.outcome).toBe('hosts_unmanaged');
+    expect(r.outcome).toBe('hosts_operator_managed');
     expect(world.patches()).toBe(0);
     const origin = (await t.query(internal.relays.get, { id: relayId }))!;
     expect(origin.publishedEdgeIds).toEqual([oldEdgeId]);
   });
 
-  test('a standby provision is finalized even when its profile was disabled mid-run', async () => {
+  test('a standby provision is finalized even when its listener was disabled mid-run', async () => {
     vi.useFakeTimers();
     fakeWorld();
-    const { t, relayId, profileId } = await seed();
+    const { t, relayId, listenerId } = await seed();
     const { rotationId } = await t.mutation(internal.edgeRotations.start, {
       relayId,
       kind: 'provision',
@@ -951,13 +1310,13 @@ describe('edgeRotations: recovery, guards and bounds', () => {
       publishOnDone: false,
     });
     await driveUntil(t, rotationId, 'provisioning');
-    // The profile MUTATION is refused while a rotation runs (docs/edges.md), so
+    // The listener MUTATION is refused while a rotation runs (docs/edges.md), so
     // the row is patched directly: the point of this test is that the run
-    // survives observing a disabled profile, whatever put it there.
+    // survives observing a disabled listener, whatever put it there.
     await expect(
-      t.mutation(internal.protocolProfiles.update, { id: profileId, enabled: false }),
+      t.mutation(internal.relayListeners.setEnabled, { id: listenerId, enabled: false }),
     ).rejects.toThrow(/rotation_running/);
-    await t.run((ctx) => ctx.db.patch(profileId, { enabled: false }));
+    await t.run((ctx) => ctx.db.patch(listenerId, { enabled: false }));
     await drain(t, rotationId);
     const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
     expect(r.phase).toBe('done');
@@ -968,45 +1327,78 @@ describe('edgeRotations: recovery, guards and bounds', () => {
     expect(origin.standbyEdgeIds).toEqual([r.toEdgeId]);
   });
 
-  test('a requested slot that is retired fails the run (slot_not_found) instead of picking another slot', async () => {
+  test('a requested listener that is retired fails the run (listener_not_found) instead of picking another', async () => {
     vi.useFakeTimers();
     fakeWorld();
-    const { t, relayId, slotId, profileId } = await seed();
-    // A second, healthy slot the picker would otherwise fall back to.
-    await t.mutation(internal.relaySlots.upsert, {
+    const { t, relayId, listenerId } = await seed();
+    // A second, healthy listener the picker would otherwise fall back to.
+    await t.mutation(internal.relayListeners.upsert, {
       relayId,
-      slotKey: 'v',
-      profileSlug: 'prof-u',
-      inboundTag: 'VLESS_RELAY_V',
-      configProfileUuid: '11111111-1111-4111-8111-111111111111',
-      configProfileInboundUuid: '44444444-4444-4444-8444-444444444444',
-      originPort: 8443,
+      spec: listenerU({
+        listenerKey: 'v',
+        originPort: 8443,
+        panelBinding: {
+          inboundTag: 'VLESS_RELAY_V',
+          configProfileUuid: FIXTURE_CONFIG_PROFILE,
+          configProfileInboundUuid: SS_INBOUND,
+        },
+      }) as never,
     });
-    void profileId;
     const { rotationId } = await t.mutation(internal.edgeRotations.start, {
       relayId,
       kind: 'provision',
       trigger: 'manual',
       publishOnDone: false,
-      slotId,
+      listenerId,
     });
-    expect((await t.query(internal.edgeRotations.get, { id: rotationId }))!.slotId).toBe(slotId);
+    expect((await t.query(internal.edgeRotations.get, { id: rotationId }))!.listenerId).toBe(
+      listenerId,
+    );
     // Retire it between start and select.
-    await t.run((ctx) => ctx.db.patch(slotId, { retired: true, updatedAt: Date.now() }));
+    await t.run((ctx) => ctx.db.patch(listenerId, { retired: true, updatedAt: Date.now() }));
     await drain(t, rotationId);
     const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
     expect(r.phase).toBe('failed');
-    expect(r.outcome).toBe('slot_not_found');
+    expect(r.outcome).toBe('listener_not_found');
     expect(r.toEdgeId).toBeUndefined();
-    // And a start naming a retired slot is refused outright.
+    // And a start naming a retired listener is refused outright.
     await expect(
       t.mutation(internal.edgeRotations.start, {
         relayId,
         kind: 'provision',
         trigger: 'manual',
-        slotId,
+        listenerId,
       }),
-    ).rejects.toThrow(/slot_not_found|retired/);
+    ).rejects.toThrow(/listener_not_found|retired/);
+  });
+
+  test('a start naming a listener that is disabled, undeployed or nameless is refused (listener_unusable)', async () => {
+    fakeWorld();
+    const { t, relayId, listenerId } = await seed();
+    const start = () =>
+      t.mutation(internal.edgeRotations.start, {
+        relayId,
+        kind: 'provision',
+        trigger: 'manual',
+        listenerId,
+      });
+    await t.run((ctx) => ctx.db.patch(listenerId, { enabled: false }));
+    await expect(start()).rejects.toThrow(/listener_unusable/);
+    await t.run((ctx) => ctx.db.patch(listenerId, { enabled: true, deployed: false }));
+    await expect(start()).rejects.toThrow(/listener_unusable/);
+    // A REALITY listener behind an L4 forwarder needs one of its own names.
+    await t.run((ctx) =>
+      ctx.db.patch(listenerId, {
+        deployed: true,
+        tlsNames: [{ name: 'a.example', status: 'retired', retiredAt: Date.now() }],
+      }),
+    );
+    await expect(start()).rejects.toThrow(/listener_unusable/);
+    await t.run((ctx) =>
+      ctx.db.patch(listenerId, { tlsNames: [{ name: 'a.example', status: 'active' }] }),
+    );
+    const { rotationId } = await start();
+    await t.mutation(internal.edgeRotations.requestCancel, { rotationId });
   });
 
   test('wall-clock cap: an over-long flip rolls back; a confirming run past the cap quarantines', async () => {
@@ -1146,7 +1538,7 @@ describe('edgeRotations: recovery, guards and bounds', () => {
   test('keep:current at resolve time re-checks publishability of the new edge', async () => {
     vi.useFakeTimers();
     fakeWorld({ vanishAfterFirstPatch: true });
-    const { t, relayId, oldEdgeId, profileId } = await seed();
+    const { t, relayId, listenerId, oldEdgeId } = await seed();
     const { rotationId } = await t.mutation(internal.edgeRotations.start, {
       relayId,
       kind: 'replace',
@@ -1157,51 +1549,46 @@ describe('edgeRotations: recovery, guards and bounds', () => {
     expect((await t.query(internal.edgeRotations.get, { id: rotationId }))!.phase).toBe(
       'quarantined',
     );
-    // Nothing bypasses a quarantine, profile writes included, so the row is
+    // Nothing bypasses a quarantine, listener writes included, so the row is
     // patched directly to put the edge in the state the resolve must refuse.
     await expect(
-      t.mutation(internal.protocolProfiles.update, { id: profileId, enabled: false }),
+      t.mutation(internal.relayListeners.setEnabled, { id: listenerId, enabled: false }),
     ).rejects.toThrow(/quarantined/);
-    await t.run((ctx) => ctx.db.patch(profileId, { enabled: false }));
+    await t.run((ctx) => ctx.db.patch(listenerId, { enabled: false }));
     await expect(
       t.mutation(internal.edgeRotations.resolveQuarantine, { relayId, keep: 'current' }),
-    ).rejects.toThrow(/profile_disabled/);
-    await t.run((ctx) => ctx.db.patch(profileId, { enabled: true }));
+    ).rejects.toThrow(/listener_disabled/);
+    await t.run((ctx) => ctx.db.patch(listenerId, { enabled: true }));
     await t.mutation(internal.edgeRotations.resolveQuarantine, { relayId, keep: 'current' });
     expect((await t.query(internal.relays.get, { id: relayId }))!.quarantine).toBeUndefined();
   });
 
   test('publishStandby goes through the start guards: the concurrency cap holds and the run is audited as a publish', async () => {
     fakeWorld();
-    const { t, relayId, slotId } = await seed();
+    const { t, relayId, listenerId } = await seed();
     await t.run((ctx) => upsertSettingRow(ctx, 'edge.enabled', 'true'));
     await t.run((ctx) => upsertSettingRow(ctx, 'edge.maxConcurrentRotations', '1'));
-    // Free index 0 on a Host-managed origin + a publishable standby.
+    // Free the listener's template index on a Host-managed origin + a publishable standby.
     await t.mutation(internal.relays.unpublishEdge, {
       relayId,
       edgeId: (await t.query(internal.relays.get, { id: relayId }))!.publishedEdgeIds[0]!,
       keepActive: true,
     });
-    const { edgeId: standby } = await t.mutation(internal.relays.adoptEdge, {
-      relayId,
-      slotId,
-      ipv4: NEW_EDGE,
-    });
+    const { edgeId: standby } = await adoptL4Edge(t, relayId, listenerId, { ipv4: NEW_EDGE });
     // Another origin already holds the single allowed rotation.
-    const { id: other } = await t.mutation(internal.relays.upsertBySlug, {
+    const { relayId: other } = await registerRelay(t, {
       slug: 'node-two',
-      backendServerSlug: 'panel-a',
-      nodeHostname: 'node-two',
+      nodeName: 'node-two',
       originAddress: '203.0.113.11',
-    });
-    await t.mutation(internal.relaySlots.upsert, {
-      relayId: other,
-      slotKey: 'u',
-      profileSlug: 'prof-u',
-      inboundTag: 'VLESS_RELAY_U',
-      configProfileUuid: '11111111-1111-4111-8111-111111111111',
-      configProfileInboundUuid: '55555555-5555-4555-8555-555555555555',
-      originPort: 443,
+      listeners: [
+        listenerU({
+          panelBinding: {
+            inboundTag: 'VLESS_RELAY_U',
+            configProfileUuid: FIXTURE_CONFIG_PROFILE,
+            configProfileInboundUuid: '55555555-5555-4555-8555-555555555555',
+          },
+        }),
+      ],
     });
     const busy = await t.mutation(internal.edgeRotations.start, {
       relayId: other,
@@ -1224,7 +1611,12 @@ describe('edgeRotations: recovery, guards and bounds', () => {
     expect(started.published).toBe(false);
     expect(started.rotationId).not.toBeNull();
     const rot = (await t.query(internal.edgeRotations.get, { id: started.rotationId! }))!;
-    expect(rot).toMatchObject({ kind: 'publish', trigger: 'reconcile', toEdgeId: standby });
+    expect(rot).toMatchObject({
+      kind: 'publish',
+      trigger: 'reconcile',
+      toEdgeId: standby,
+      listenerId,
+    });
     const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
     expect(audit.find((a) => a.action === 'admin.edge.publish')?.payload).toMatchObject({
       slug: 'node-one',

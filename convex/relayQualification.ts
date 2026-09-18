@@ -44,20 +44,18 @@ export const mintContext = internalQuery({
   handler: async (ctx, { relayId }) => {
     const relay = await ctx.db.get(relayId);
     if (!relay) return null;
+    if (!relay.backendServerId) return null; // a manual origin has no panel to mint on
     const server = await ctx.db.get(relay.backendServerId);
     if (!server) return null;
-    // The relay's first mode decides the placement; every mode a node serves
-    // is homed on that node, so any of them reaches the inbound under test.
+    // The mode the operator chose at mint time decides the placement; absent =
+    // the placement resolver's default for this panel.
     let modeId: string | null = null;
-    for (const slug of relay.modeSlugs) {
+    if (relay.qualificationModeSlug) {
       const mode = await ctx.db
         .query('connectionModes')
-        .withIndex('by_slug', (q) => q.eq('slug', slug))
+        .withIndex('by_slug', (q) => q.eq('slug', relay.qualificationModeSlug!))
         .unique();
-      if (mode) {
-        modeId = mode._id as string;
-        break;
-      }
+      if (mode) modeId = mode._id as string;
     }
     const { placement } = await resolvePlacementTarget(ctx.db, modeId, {
       onlyServerId: server._id as string,

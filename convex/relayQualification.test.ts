@@ -2,30 +2,15 @@ import { convexTest } from 'convex-test';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
+import { insertPanelServer, realityListener, registerRelay } from './lib/edges/testing/fixtures';
 import { __setQualificationRemoverForTests, qualificationUsername } from './relayQualification';
 
 const modules = import.meta.glob('./**/*.*s');
 
 async function seed() {
   const t = convexTest(schema, modules);
-  await t.run((ctx) =>
-    ctx.db.insert('backendServers', {
-      backend: 'remnawave',
-      name: 'panel-a',
-      slug: 'panel-a',
-      config: { type: 'remnawave', baseUrl: 'https://panel.example', apiToken: 'tok' },
-      isActive: true,
-      priority: 0,
-      keyCount: 0,
-      updatedAt: Date.now(),
-    }),
-  );
-  const { id: relayId } = await t.mutation(internal.relays.upsertBySlug, {
-    slug: 'node-one',
-    backendServerSlug: 'panel-a',
-    nodeHostname: 'node-one',
-    originAddress: '203.0.113.10',
-  });
+  await insertPanelServer(t);
+  const { relayId } = await registerRelay(t);
   return { t, relayId };
 }
 
@@ -40,6 +25,41 @@ describe('relay qualification credential', () => {
     expect(u.startsWith('fcp-qualify-node-one-very-long-r')).toBe(true);
     expect(u.endsWith('-abcd1234')).toBe(true);
     expect(u).toMatch(/^[a-z0-9-]+$/);
+  });
+
+  test('mintContext: the relay’s panel + the placement of its qualificationModeSlug; a manual origin has nothing to mint on', async () => {
+    const { t, relayId } = await seed();
+    const c = (await t.query(internal.relayQualification.mintContext, { relayId }))!;
+    expect(c).toMatchObject({
+      slug: 'node-one',
+      backend: 'remnawave',
+      previousBackendUserId: null,
+      pendingRemovals: [],
+    });
+    expect(c.backendServerId).toBeDefined();
+    // An unknown mode slug falls back to the panel's default placement (fail-soft), never a throw.
+    await t.run((ctx) => ctx.db.patch(relayId, { qualificationModeSlug: 'no-such-mode' }));
+    expect(await t.query(internal.relayQualification.mintContext, { relayId })).toMatchObject({
+      slug: 'node-one',
+    });
+    // The admin projection exposes the slug (nullable), never the credential.
+    expect((await t.query(internal.relays.listForAdmin, {}))[0]).toMatchObject({
+      qualificationModeSlug: 'no-such-mode',
+      qualificationCredential: false,
+    });
+    // A manual origin: no panel, so no context and mint refuses.
+    const { relayId: manual } = await registerRelay(t, {
+      slug: 'hand-made',
+      kind: 'manual',
+      originAddress: '203.0.113.77',
+      listeners: [{ ...realityListener(), panelBinding: undefined }],
+    });
+    expect(await t.query(internal.relayQualification.mintContext, { relayId: manual })).toBeNull();
+    vi.stubEnv('DEV_MOCK_BACKEND', 'true');
+    vi.stubEnv('ENVIRONMENT', 'development');
+    await expect(t.action(internal.relayQualification.mint, { relayId: manual })).rejects.toThrow(
+      /not_found/,
+    );
   });
 
   test('mint stores only the protocol uuid + panel user id; revoke clears and deactivates', async () => {
@@ -124,7 +144,11 @@ describe('relay qualification credential', () => {
       relayId,
       pending: ['mock-owed-1', 'mock-owed-2'],
     });
-    await t.mutation(internal.relays.requestDelete, { id: relayId, force: true });
+    await t.mutation(internal.relays.requestDelete, {
+      id: relayId,
+      force: true,
+      disposition: 'restore-direct',
+    });
     const r = await t.mutation(internal.relays.finalizeDelete, { id: relayId });
     expect(r.removed).toBe(true);
     const scheduled = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());

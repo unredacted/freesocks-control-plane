@@ -22,6 +22,21 @@ import { EDGE_PROVIDERS } from './registry';
 import { __setScalewayApiFactory } from './scaleway';
 import { __resetOvhSkewCache } from './ovh';
 import type { EdgeSpec, EdgeProviderConfig, Ledger } from './types';
+import {
+  LISTENER_COMBOS,
+  LISTENER_STREAM_TRANSPORT_IDS,
+  protocolIsHttpTransport,
+  type ListenerProto,
+} from '../protocols';
+
+const proto = (
+  protocol: ListenerProto['protocol'],
+  streamTransport: ListenerProto['streamTransport'],
+  security: ListenerProto['security'],
+): ListenerProto => ({ protocol, streamTransport, security });
+const REALITY = proto('vless', 'raw', 'reality');
+const PLAIN = proto('shadowsocks', 'raw', 'none');
+const UDP = proto('hysteria2', 'udp', 'tls');
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -168,9 +183,21 @@ describe('relay capability record ⇔ adapters', () => {
     const caps = EDGE_PROVIDER_CAPABILITIES[id];
     expect(caps.addressKind).toBe('hostname');
     expect(caps.l7Transports.length).toBeGreaterThan(0);
-    for (const t of caps.l7Transports) expect(protocolCarriedBy(id, t)).toBe(true);
-    expect(protocolCarriedBy(id, 'reality')).toBe(false);
-    expect(protocolCarriedBy(id, 'plain')).toBe(false);
+    // l7Transports names STREAM transports from the catalogue, HTTP-carried ones only.
+    for (const t of caps.l7Transports) {
+      expect(LISTENER_STREAM_TRANSPORT_IDS).toContain(t);
+      expect(protocolIsHttpTransport(proto('vless', t, 'tls'))).toBe(true);
+      expect(protocolCarriedBy(id, proto('vless', t, 'tls'))).toBe(true);
+    }
+    // Every catalogued combination: carried iff its stream transport is declared.
+    for (const c of LISTENER_COMBOS) {
+      expect(protocolCarriedBy(id, c), `${id} ${c.key}`).toBe(
+        c.isHttpTransport && caps.l7Transports.includes(c.streamTransport),
+      );
+    }
+    expect(protocolCarriedBy(id, REALITY)).toBe(false);
+    expect(protocolCarriedBy(id, PLAIN)).toBe(false);
+    expect(protocolCarriedBy(id, UDP)).toBe(false);
     expect(caps.originPortMode).not.toBe('any');
     // DNS is provided by exactly the providers others can reference.
     expect(caps.needsDnsAccount && caps.providesDns).toBe(false);
@@ -179,15 +206,24 @@ describe('relay capability record ⇔ adapters', () => {
     expect(keys).toContain('labelLength');
   });
 
-  test.each([...L4_IDS])('%s: L4 flags are coherent and carry any protocol', (id) => {
-    const caps = EDGE_PROVIDER_CAPABILITIES[id];
-    expect(caps.addressKind).toBe('ip');
-    expect(caps.l7Transports).toEqual([]);
-    expect(caps.originPortMode).toBe('any');
-    expect(caps.needsDnsAccount).toBe(false);
-    for (const p of ['reality', 'tls', 'plain', 'ws', 'httpupgrade', 'grpc'] as const)
-      expect(protocolCarriedBy(id, p)).toBe(true);
-  });
+  test.each([...L4_IDS])(
+    '%s: L4 flags are coherent and carry any TCP listener; UDP only when declared',
+    (id) => {
+      const caps = EDGE_PROVIDER_CAPABILITIES[id];
+      expect(caps.addressKind).toBe('ip');
+      expect(caps.l7Transports).toEqual([]);
+      expect(caps.originPortMode).toBe('any');
+      expect(caps.needsDnsAccount).toBe(false);
+      for (const c of LISTENER_COMBOS) {
+        expect(protocolCarriedBy(id, c), `${id} ${c.key}`).toBe(c.transport === 'tcp' || caps.udp);
+      }
+      expect(protocolCarriedBy(id, REALITY)).toBe(true);
+      expect(protocolCarriedBy(id, PLAIN)).toBe(true);
+      expect(protocolCarriedBy(id, proto('vless', 'ws', 'tls'))).toBe(true);
+      expect(protocolCarriedBy(id, proto('vless', 'grpc', 'tls'))).toBe(true);
+      expect(protocolCarriedBy(id, UDP)).toBe(caps.udp);
+    },
+  );
 
   test('a DNS account reference always points at a providesDns provider', () => {
     const dnsProviders = EDGE_PROVIDER_IDS.filter(

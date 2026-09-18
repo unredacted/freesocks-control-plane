@@ -21,7 +21,6 @@ import {
   type QualifyFrontArgs,
   type FrontCheckDeps,
 } from './lib/edges/frontCheck';
-import type { SlotProtocol } from './lib/edges/protocols';
 
 type Checker = (args: QualifyFrontArgs, deps?: FrontCheckDeps) => Promise<FrontCheckResult>;
 
@@ -57,7 +56,7 @@ export const run = internalAction({
     else
       result = await checker({
         hostname: c.hostname,
-        protocol: c.protocol as SlotProtocol,
+        proto: c.proto,
         params: c.params,
         uuid: c.credential.uuid,
         stepTimeoutMs: c.stepTimeoutMs,

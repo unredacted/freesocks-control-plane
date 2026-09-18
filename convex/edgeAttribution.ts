@@ -12,6 +12,7 @@ import { assignEndpoints } from './lib/edges/assignment';
 import { CLIENT_FAMILY_FORMATS } from './lib/edges/clientFamilies';
 import { effectiveRule, formatHasAutoGroup, ruleCanEmitV6 } from './lib/edges/render';
 import { publishedEdgesOf } from './edgeRender';
+import { relayForBackendNode } from './relays';
 
 export const CONNECTION_CHOICES = ['primary', 'backup', 'auto', 'direct', 'unsure'] as const;
 export type ConnectionChoice = (typeof CONNECTION_CHOICES)[number];
@@ -42,11 +43,7 @@ export async function resolveEdgeAttribution(
   now: number,
 ): Promise<EdgeAttribution | null> {
   if (!sub || !sub.backendServerId || !sub.pinnedNode) return null;
-  const origins = await db
-    .query('relays')
-    .withIndex('by_node_hostname', (q) => q.eq('nodeHostname', sub.pinnedNode!))
-    .collect();
-  const origin = origins.find((o) => o.backendServerId === sub.backendServerId);
+  const origin = await relayForBackendNode(db, sub.backendServerId, sub.pinnedNode);
   if (!origin) return null;
   // Preferred: the publication epoch the key's content was last rendered
   // against (`subscriptions.lastRenderedEpoch`, stamped by the renderer) vs

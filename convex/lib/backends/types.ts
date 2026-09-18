@@ -263,6 +263,16 @@ export interface BackendHostPatch {
   host?: string | null;
 }
 
+/** A NEW client-facing Host FCP creates for a relay listener (hostMode `fcp`). */
+export interface BackendHostCreate {
+  remark: string;
+  address: string;
+  port: number;
+  sni?: string | null;
+  host?: string | null;
+  inbound: { configProfileUuid: string; configProfileInboundUuid: string };
+}
+
 /**
  * Per-NODE load snapshot (Remnawave: one row per panel node). Distinct from
  * NodeStats, which aggregates per PLACEMENT (squad): a shared relay squad

@@ -2,6 +2,7 @@ import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
 import { backendIdValidator } from './lib/backendIds';
 import { edgeProviderIdValidator } from './lib/edgeProviderIds';
+import { listenerProtoFields } from './lib/edgeProtocolIds';
 
 /**
  * Convex schema for FreeSocks Control Plane: the migration target. Ported from
@@ -77,6 +78,19 @@ const subscriptionMirror = v.object({
   publicUrl: v.string(),
   objectPath: v.optional(v.string()),
   status: v.optional(v.union(v.literal('ok'), v.literal('failed'))),
+  // What the object holds under the edge-required policy: the binding policy
+  // version + relay epoch the render passed under and the edges it carries;
+  // `stub` = an unavailable stub was written because nothing could render.
+  // Absent = raw / pre-policy content (to be replaced when a relay claims the node).
+  validated: v.optional(
+    v.object({
+      policyVersion: v.number(),
+      epoch: v.number(),
+      edgeIds: v.array(v.string()),
+      at: v.number(),
+      stub: v.optional(v.boolean()),
+    }),
+  ),
 });
 
 // Self-service membership payment processors (hosted-redirect rails). Keep in
@@ -159,14 +173,79 @@ const relayProviderSettings = v.union(
 // Layers an edge can be: an L4 forwarder (address = IP literal) or an L7 CDN
 // front (address = hostname). Absent on rows written before L7 = l4.
 const relayEdgeLayer = v.union(v.literal('l4'), v.literal('l7'));
-const relaySlotProtocol = v.union(
-  v.literal('reality'),
-  v.literal('tls'),
-  v.literal('plain'),
-  v.literal('ws'),
-  v.literal('httpupgrade'),
-  v.literal('grpc'),
+// What a listener speaks: three orthogonal fields with a validity matrix
+// (src/shared/contracts/edgeProtocolIds.ts). Client-facing security here is
+// separate from how a front dials the node (`originTransport` below).
+const listenerProto = v.object(listenerProtoFields);
+// One server name a listener presents (REALITY SNI or certificate name).
+// Retired names stay accepted by the node until `drainUntil`; `retiredBy`
+// says whether the node role may reactivate it (only its own retirements).
+const listenerName = v.object({
+  name: v.string(),
+  status: v.union(v.literal('active'), v.literal('retired')),
+  retiredAt: v.optional(v.number()),
+  drainUntil: v.optional(v.number()),
+  retiredBy: v.optional(v.union(v.literal('admin'), v.literal('role'))),
+});
+// How the renderer finds a listener's entry in a subscription body.
+const listenerMatchRule = v.union(
+  v.object({ kind: v.literal('remark'), remark: v.string() }),
+  v.object({ kind: v.literal('address') }),
+  v.object({ kind: v.literal('whole-body') }),
 );
+// The panel Host a listener owns (hostMode `fcp`), as a persisted state
+// machine: an uncertain create/delete is `unresolved` until discovery settles
+// it against the INTENDED binding (remark + inbound + address:port), never
+// remark alone; `ambiguous` parks it for an operator (lib/edges/hostOps.ts).
+const listenerHostState = v.union(
+  v.literal('absent'),
+  v.literal('creating'),
+  v.literal('present'),
+  v.literal('deleting'),
+  v.literal('unresolved'),
+  v.literal('ambiguous'),
+);
+const listenerHost = v.object({
+  state: listenerHostState,
+  uuid: v.optional(v.string()),
+  ownership: v.optional(v.union(v.literal('fcp'), v.literal('adopted'))),
+  intended: v.optional(
+    v.object({
+      remark: v.string(),
+      address: v.string(),
+      port: v.number(),
+      sni: v.union(v.string(), v.null()),
+      host: v.union(v.string(), v.null()),
+      inboundUuid: v.string(),
+    }),
+  ),
+  op: v.optional(
+    v.object({
+      kind: v.union(v.literal('create'), v.literal('delete')),
+      opId: v.string(),
+      claimedAt: v.number(),
+      expiresAt: v.number(),
+      attempts: v.number(),
+      lastLookAt: v.optional(v.number()),
+    }),
+  ),
+});
+// Where a relay's origin is: a panel node (FCP can own its Hosts and pin
+// subscriptions to it), a whole backend server (an Outline instance), or an
+// address the operator described by hand (provision / probe / rotate only).
+const relayOrigin = v.union(
+  v.object({
+    kind: v.literal('panel-node'),
+    backendServerId: v.id('backendServers'),
+    nodeName: v.string(),
+    nodeUuid: v.optional(v.string()),
+  }),
+  v.object({ kind: v.literal('backend-server'), backendServerId: v.id('backendServers') }),
+  v.object({ kind: v.literal('manual') }),
+);
+// Who writes the client-facing panel Hosts: FCP, the operator, or nobody
+// (there is no Host at all: Outline, manual).
+const relayHostMode = v.union(v.literal('fcp'), v.literal('operator'), v.literal('none'));
 // What the node speaks to whoever dials it behind an L7 front (declared by the
 // node role on the slot): scheme, whether its certificate is publicly trusted,
 // the names that certificate carries (wildcards allowed) and which Host header
@@ -507,6 +586,19 @@ export default defineSchema({
     lastDeliveredAt: v.optional(v.number()),
     lastDeliveredContentAt: v.optional(v.number()),
     lastRenderedEpoch: v.optional(v.number()),
+    // The eligibility snapshot of the last render (what this subscriber was
+    // handed): member connection labels and report attribution read it and
+    // never reconstruct an assignment without the body.
+    lastRender: v.optional(
+      v.object({
+        at: v.number(),
+        epoch: v.number(),
+        family: v.string(),
+        listenerKeys: v.array(v.string()),
+        primaryEdgeId: v.optional(v.id('edges')),
+        backupEdgeId: v.optional(v.id('edges')),
+      }),
+    ),
     // The node this key's subscription content is currently pinned to
     // (Remnawave node pinning), recorded at serve time.
     pinnedNode: v.optional(v.string()),
@@ -799,6 +891,15 @@ export default defineSchema({
     scopes: v.array(v.string()),
     subjectType: v.union(v.literal('service'), v.literal('user')),
     subjectUserId: v.optional(v.id('users')),
+    // Registration boundary for `admin:edges:register` tokens: the backend
+    // servers (and optionally node names) the node role may register relays
+    // for. Enforced on GET, PUT and DELETE of the by-slug relay routes.
+    edgeRegistration: v.optional(
+      v.object({
+        backendServerIds: v.array(v.id('backendServers')),
+        nodeNames: v.optional(v.array(v.string())),
+      }),
+    ),
     expiresAt: v.optional(v.number()),
     lastUsedAt: v.optional(v.number()),
     revokedAt: v.optional(v.number()),
@@ -940,66 +1041,24 @@ export default defineSchema({
     .index('by_provider', ['provider'])
     .index('by_account', ['accountId']),
 
-  // A REALITY camouflage profile: the target the origin inbound impersonates and
-  // the client SNIs approved for it. Provider-scoped because the target should
-  // sit in the edge's network neighbourhood; operator data, never adapter code.
-  protocolProfiles: defineTable({
-    slug: v.string(), // unique
-    name: v.string(),
-    // What the inbound speaks (lib/edges/protocols.ts): decides whether server
-    // names / a target are required and what the renderer rewrites.
-    protocol: relaySlotProtocol,
-    // Bound to one provider's network (REALITY server names are only plausible
-    // near the edge network); absent = usable behind any provider.
-    provider: v.optional(relayProviderId),
-    accountId: v.optional(v.id('edgeProviderAccounts')),
-    // REALITY only: the impersonated target.
-    targetAddress: v.optional(v.string()),
-    targetPort: v.optional(v.number()),
-    serverNames: v.array(
-      v.object({
-        sni: v.string(),
-        status: v.union(v.literal('active'), v.literal('retired')),
-        retiredAt: v.optional(v.number()),
-        // Retired names stay accepted server-side until this passes.
-        drainUntil: v.optional(v.number()),
-      }),
-    ),
-    enabled: v.boolean(),
-    qualification: v.optional(
-      v.object({
-        checkedAt: v.number(),
-        edgeAsn: v.optional(v.string()),
-        targetAsn: v.optional(v.string()),
-        sameAsn: v.optional(v.boolean()),
-        tlsOk: v.boolean(),
-        authOk: v.boolean(),
-        checkedFromEdgeId: v.optional(v.id('edges')),
-      }),
-    ),
-    notes: v.optional(v.string()),
-    // Bumped on every write; a front qualification binds to it (absent = 0).
-    revision: v.optional(v.number()),
-    updatedAt: v.number(),
-  })
-    .index('by_slug', ['slug'])
-    .index('by_provider', ['provider']),
-
-  // One REALITY node fronted by edges. `nodeHostname` is the panel node name ==
-  // the Host remark prefix == subscriptions.pinnedNode (the attribution key).
+  // One relay: an ORIGIN members reach only through edges. `origin` says what
+  // kind it is; `backendServerId` / `nodeName` are denormalised copies of the
+  // origin's fields for indexing (written only by relays.ts). `originAddress`
+  // is what edges dial and is never published.
   relays: defineTable({
     slug: v.string(), // unique; the IaC key
-    backendServerId: v.id('backendServers'),
-    nodeHostname: v.string(),
-    nodeUuid: v.optional(v.string()),
-    originAddress: v.string(), // what the load balancers dial (never published)
+    label: v.optional(v.string()),
+    origin: relayOrigin,
+    backendServerId: v.optional(v.id('backendServers')),
+    nodeName: v.optional(v.string()),
+    originAddress: v.string(),
     locationCode: v.optional(v.string()),
-    modeSlugs: v.array(v.string()),
+    hostMode: relayHostMode,
+    // The only delivery policy today: a subscription pinned to this origin is
+    // served a rendered body or an unavailable response, never the origin body.
+    delivery: v.literal('edge-required'),
     enabled: v.boolean(),
     autoRotate: v.boolean(),
-    // false = FCP never writes the panel's template Hosts (observe-only).
-    hostManaged: v.boolean(),
-    providerAffinity: v.union(v.literal('rotate'), v.literal('sticky')),
     providerPreference: v.optional(relayProviderId),
     desiredPublished: v.number(),
     standbyPerRelay: v.number(),
@@ -1075,37 +1134,36 @@ export default defineSchema({
     // credential): retried on the next mint/revoke and on relay delete, so a
     // capped account is never silently orphaned.
     qualificationRemovalPending: v.optional(v.array(v.string())),
+    // The connection mode the L7 qualification credential was minted on.
+    qualificationModeSlug: v.optional(v.string()),
+    // Stamped by every by-slug registration, changed or not (the role heartbeat).
+    lastRegisteredAt: v.optional(v.number()),
     updatedAt: v.number(),
   })
     .index('by_slug', ['slug'])
     .index('by_backend_server', ['backendServerId'])
-    .index('by_node_hostname', ['nodeHostname'])
+    .index('by_node', ['backendServerId', 'nodeName'])
     .index('by_enabled', ['enabled']),
 
-  // One origin inbound deployed (by Ansible) for one camouflage profile, with
-  // its single template Host (remark `<node>-relay-<slotKey>`). Edges bind to a
-  // slot; their listener forwards 443 → originPort.
-  relaySlots: defineTable({
+  // One LISTENER on a relay: a port the origin answers on, what it speaks,
+  // the names / REALITY target the renderer needs, how the renderer finds its
+  // entry in a subscription body, and (panel origins) the inbound it maps to
+  // plus the panel Host FCP owns for it. Edges bind to one listener; their
+  // provider listener forwards edgePort -> originPort.
+  relayListeners: defineTable({
     relayId: v.id('relays'),
-    slotKey: v.string(),
-    // The protocol profile: what the inbound speaks + its server names / target.
-    profileId: v.id('protocolProfiles'),
-    inboundTag: v.string(),
-    configProfileUuid: v.string(),
-    configProfileInboundUuid: v.string(),
+    listenerKey: v.string(), // [a-z0-9]{1,16}; the role's key
+    ...listenerProtoFields,
+    // Copied from the catalogue at write time (indexable; probes skip udp).
+    transport: v.union(v.literal('tcp'), v.literal('udp')),
     originPort: v.number(),
-    templateHostUuid: v.optional(v.string()),
-    templateHostRemark: v.string(),
-    deployed: v.boolean(),
-    deployedAt: v.optional(v.number()),
-    retired: v.boolean(),
-    // How the inbound is reached behind an L7 front (lib/edges/layers.ts).
-    originTransport: v.optional(relaySlotOriginTransport),
-    // HTTP-transport parameters of the inbound, as the node role deploys them:
-    // what the front qualification must send to reach it (path + upgrade token
-    // for ws/httpupgrade, service name for grpc) and what the renderer keeps in
-    // sync. Absent = the transport's defaults. A qualification binds to their
-    // hash, so changing one here expires the proof (lib/edges/frontCheck).
+    // Server names (REALITY SNIs / certificate names). Order is the body's
+    // order and is never re-sorted: SNI selection is index-based.
+    tlsNames: v.optional(v.array(listenerName)),
+    realityTarget: v.optional(v.object({ address: v.string(), port: v.number() })),
+    // HTTP-transport parameters as deployed (path + upgrade token for
+    // ws/httpupgrade, service name for grpc): what the front qualification must
+    // send. A qualification binds to their hash.
     transportParams: v.optional(
       v.object({
         path: v.optional(v.string()),
@@ -1114,12 +1172,43 @@ export default defineSchema({
         upgradeToken: v.optional(v.string()),
       }),
     ),
-    // Bumped on every write; a front qualification binds to it (absent = 0).
-    revision: v.optional(v.number()),
+    // How the inbound is reached behind an L7 front (lib/edges/layers.ts).
+    originTransport: v.optional(relaySlotOriginTransport),
+    // Only edges of this provider (account) may front the listener.
+    providerScope: v.optional(
+      v.object({ provider: relayProviderId, accountId: v.optional(v.id('edgeProviderAccounts')) }),
+    ),
+    matchRule: listenerMatchRule,
+    // Panel origins: the inbound this listener is (the node role deploys it).
+    panelBinding: v.optional(
+      v.object({
+        inboundTag: v.string(),
+        configProfileUuid: v.string(),
+        configProfileInboundUuid: v.string(),
+      }),
+    ),
+    host: v.optional(listenerHost),
+    // Legacy Hosts adopted from a manual deployment (never deleted by FCP).
+    legacyHosts: v.optional(
+      v.array(v.object({ uuid: v.string(), remark: v.string(), sni: v.optional(v.string()) })),
+    ),
+    // The published edge this listener's Host / plans point at (lowest pool
+    // index among the edges bound to it); absent = listener unavailable.
+    templateEdgeId: v.optional(v.id('edges')),
+    // Who owns the row: the node role (pruned by its registration) or an admin.
+    source: v.union(v.literal('role'), v.literal('admin')),
+    // Canonical configuration hash (registration idempotency).
+    configHash: v.string(),
+    enabled: v.boolean(),
+    deployed: v.boolean(),
+    deployedAt: v.optional(v.number()),
+    retired: v.boolean(),
+    // Bumped on every MATERIAL write; a front qualification binds to it.
+    revision: v.number(),
     updatedAt: v.number(),
   })
     .index('by_relay', ['relayId'])
-    .index('by_profile', ['profileId']),
+    .index('by_relay_key', ['relayId', 'listenerKey']),
 
   // One provider load balancer. `steps` is the provisioning plan; `resources` the
   // ledger of EVERY child resource a step created (compound steps record all of
@@ -1128,7 +1217,7 @@ export default defineSchema({
   // requested/unresolved, whatever its status.
   edges: defineTable({
     relayId: v.id('relays'),
-    slotId: v.id('relaySlots'),
+    listenerId: v.id('relayListeners'),
     accountId: v.optional(v.id('edgeProviderAccounts')),
     templateId: v.optional(v.id('edgeTemplates')),
     templateHash: v.optional(v.string()),
@@ -1205,11 +1294,9 @@ export default defineSchema({
         expiresAt: v.number(),
         binding: v.object({
           hostname: v.string(),
-          slotId: v.id('relaySlots'),
-          slotRevision: v.number(),
-          profileId: v.id('protocolProfiles'),
-          profileRevision: v.number(),
-          protocol: relaySlotProtocol,
+          listenerId: v.id('relayListeners'),
+          listenerRevision: v.number(),
+          ...listenerProtoFields,
           transportParamsHash: v.string(),
           intentHash: v.string(),
         }),
@@ -1303,9 +1390,9 @@ export default defineSchema({
     currentOp: v.optional(relayHostOp),
     outcome: v.optional(v.string()),
     reason: v.optional(v.string()),
-    // The slot the operator asked for (provision) / the target's slot (replace,
-    // publish). A retired or missing requested slot FAILS the run (slot_not_found).
-    slotId: v.optional(v.id('relaySlots')),
+    // The listener the operator asked for (provision) / the target's listener
+    // (replace, publish). A retired or missing listener FAILS the run.
+    listenerId: v.optional(v.id('relayListeners')),
     // Selection outcome: the new edge came from an existing standby (true) or was
     // provisioned by this run (`createdEdgeId`, the only edge a failure may mark).
     viaStandby: v.optional(v.boolean()),
@@ -1323,8 +1410,11 @@ export default defineSchema({
     stepStartedAt: v.optional(v.number()),
     // Every audit row this run produced (bounded), so the trail is complete.
     auditIds: v.optional(v.array(v.id('auditLog'))),
+    // Per LISTENER: only the listeners whose template edge is the one being
+    // replaced are planned, flipped and rolled back.
     hostPlan: v.array(
       v.object({
+        listenerKey: v.optional(v.string()),
         uuid: v.string(),
         oldAddress: v.string(),
         oldPort: v.number(),
@@ -1342,9 +1432,7 @@ export default defineSchema({
     previousBinding: v.optional(
       v.object({
         edgeId: v.id('edges'),
-        slotId: v.id('relaySlots'),
-        // Absent for a slot whose protocol carries no profile.
-        profileId: v.optional(v.id('protocolProfiles')),
+        listenerId: v.id('relayListeners'),
         poolIndex: v.number(),
       }),
     ),
@@ -1384,6 +1472,24 @@ export default defineSchema({
     claimedAt: v.number(),
     expiresAt: v.number(),
   }).index('by_key', ['key']),
+
+  // The DELIVERY policy a relay imposes on the subscriptions of its node /
+  // backend server, kept apart from the relay row so deleting the relay never
+  // silently restores raw delivery: a final delete must carry a disposition
+  // (`restore-direct` releases the binding, `keep-dark` keeps members at 503
+  // until another relay claims the node). `policyVersion` is part of the sub
+  // cache key. Absent `nodeName` = the whole backend server.
+  edgeDeliveryBindings: defineTable({
+    backendServerId: v.id('backendServers'),
+    nodeName: v.optional(v.string()),
+    policy: v.literal('edge-required'),
+    policyVersion: v.number(),
+    relaySlug: v.string(),
+    state: v.union(v.literal('active'), v.literal('released')),
+    updatedAt: v.number(),
+  })
+    .index('by_server_node', ['backendServerId', 'nodeName'])
+    .index('by_server', ['backendServerId']),
 
   // External / internal reachability probe requests against one edge.
   // Operator-entered probe targets (any host:port), alongside the derived ones

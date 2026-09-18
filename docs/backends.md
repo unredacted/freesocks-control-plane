@@ -563,15 +563,19 @@ an unverified one-tap import scheme.
 ## Host management and node inventory (edges)
 
 Two optional provider capabilities back `docs/edges.md`: `hostManagement`
-(`listHosts` / `updateHost`: list the panel's client-facing connection entries and
-repoint ONE of them by uuid) and `nodeInventory`
-(`getNodeInventory`: per-node online + users-online, cached in `backendNodeInventory`
-by the healthcheck cron). Remnawave implements both (`GET /api/hosts`,
-`PATCH /api/hosts { uuid, address, port, sni?, host? }`, `GET /api/nodes`); a backend
-without them throws `backend.hosts_unsupported` from the dispatch (`convex/backends.ts`).
-The relay layer only ever writes the ONE template Host per origin slot
-(remark `<node>-relay-<slotKey>`), observe-then-write, and never touches a Host's
-inbound, path or fingerprint.
+(`listHosts` / `updateHost` / `createHost` / `deleteHost`: list the panel's client-facing
+connection entries, repoint ONE of them by uuid, create one for a relay listener, delete
+one by uuid) and `nodeInventory` (`getNodeInventory`: per-node online + users-online, cached
+in `backendNodeInventory` by the healthcheck cron). Remnawave implements all of them
+(`GET /api/hosts`, `PATCH /api/hosts { uuid, address, port, sni?, host? }`,
+`POST /api/hosts { inbound, remark, address, port, sni?, host?, isDisabled }`,
+`DELETE /api/hosts/{uuid}` (404 = success), `GET /api/nodes`); a backend without them throws
+`backend.hosts_unsupported` from the dispatch (`convex/backends.ts`). The relay layer writes
+ONE Host per relay LISTENER (remark `<node>-relay-<listenerKey>`) and only when the relay's
+`hostMode` is `fcp`; every create and delete goes through the persisted Host state machine
+(`convex/hostOps.ts`: intent persisted before the call, discovery by remark AND inbound AND
+address:port after an uncertain outcome, deletes confirmed only by read-back), and FCP never
+touches a Host's inbound, path or fingerprint.
 
 `updateHost` takes `{ uuid, address, port, sni?, host? }`. `address` and `port`
 always move. `sni` and `host` are three-valued: **absent** leaves the field alone
@@ -583,6 +587,15 @@ PATCH, losing the address move with it. `''` and `null` read back alike
 whichever the panel returns. An edge layer change (an L4 IP front to an L7
 hostname front or back) rewrites the whole `{address, port, sni, host}` tuple, so
 no stale name from the previous layer is left behind.
+
+### Backends as relay origins
+
+A relay's origin may be a **panel node** (needs `nodePinning`; Hosts FCP-managed when
+`hostManagement` is present), a whole **backend server** (an Outline instance: FCP renders its
+single access key by address rewrite, there is no Host, delivery is a dynamic
+`ssconf://<fcp>/api/v1/sub/<token>` key and TCP-only because no edge provider forwards UDP), or
+a **manual** address. `accessKeyDelivery` selects single-key rendering (one entry, no backup, no
+auto group). See `docs/edges.md` § "Origins and Host modes".
 
 ## Sensitive data
 

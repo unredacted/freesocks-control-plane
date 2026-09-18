@@ -8,12 +8,12 @@
  * returns plain data — the same split probeOps.ts and edgeProviderOps.ts use.
  *
  * Two functions:
- *  - `context` gathers the edge, its frozen intent, the slot's transport
- *    parameters, the profile's protocol and the relay's qualification
- *    credential, and derives the BINDING the result will be valid for;
+ *  - `context` gathers the edge, its frozen intent, the listener's transport
+ *    parameters and what it speaks, and the relay's qualification credential,
+ *    and derives the BINDING the result will be valid for;
  *  - `record` writes `edges.frontQualification` and `edges.readiness.front`,
- *    re-deriving the binding from the live rows first: a slot, profile or
- *    intent write that landed while the session was in flight means the session
+ *    re-deriving the binding from the live rows first: a listener or intent
+ *    write that landed while the session was in flight means the session
  *    proved something that is no longer what would be published, so the result
  *    is stored as a failure (`config_changed`) rather than as a qualification.
  */
@@ -22,7 +22,8 @@ import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { resolveEdgeConfig, edgeMs } from './lib/edgeConfig';
-import { scheduleMirrorRefresh } from './relays';
+import { listenerProtoFields } from './lib/edgeProtocolIds';
+import { scheduleMirrorRefresh } from './lib/edges/relayGuards';
 import { parseIntent } from './lib/edges/intent';
 import {
   bindingsMatch,
@@ -30,22 +31,13 @@ import {
   type TransportParams,
 } from './lib/edges/frontCheck/binding';
 import { isUuid } from './lib/edges/frontCheck/vless';
-import { protocolIsHttpTransport } from './lib/edges/protocols';
+import { protocolIsHttpTransport, protocolL7Proof } from './lib/edges/protocols';
 
 const bindingValidator = v.object({
   hostname: v.string(),
-  slotId: v.string(),
-  slotRevision: v.number(),
-  profileId: v.string(),
-  profileRevision: v.number(),
-  protocol: v.union(
-    v.literal('reality'),
-    v.literal('tls'),
-    v.literal('plain'),
-    v.literal('ws'),
-    v.literal('httpupgrade'),
-    v.literal('grpc'),
-  ),
+  listenerId: v.string(),
+  listenerRevision: v.number(),
+  ...listenerProtoFields,
   transportParamsHash: v.string(),
   intentHash: v.string(),
 });
@@ -58,8 +50,8 @@ const resultValidator = v.object({
   checkedAt: v.number(),
 });
 
-function paramsOf(slot: Doc<'relaySlots'>): TransportParams {
-  const t = slot.transportParams ?? {};
+function paramsOf(listener: Doc<'relayListeners'>): TransportParams {
+  const t = listener.transportParams ?? {};
   return {
     path: t.path ?? null,
     host: t.host ?? null,
@@ -75,27 +67,27 @@ function paramsOf(slot: Doc<'relaySlots'>): TransportParams {
 async function gather(ctx: QueryCtx | MutationCtx, edgeId: Id<'edges'>) {
   const edge = await ctx.db.get(edgeId);
   if (!edge) return null;
-  const slot = await ctx.db.get(edge.slotId);
-  if (!slot) return null;
-  const profile = await ctx.db.get(slot.profileId);
-  if (!profile) return null;
+  const listener = await ctx.db.get(edge.listenerId);
+  if (!listener) return null;
   const relay = await ctx.db.get(edge.relayId);
   if (!relay) return null;
   const intent = parseIntent(edge.provisionIntent);
   if (!intent) return null;
-  const params = paramsOf(slot);
+  const params = paramsOf(listener);
   const binding = qualificationBinding({
-    slot: {
-      _id: slot._id,
-      revision: slot.revision,
-      originPort: slot.originPort,
-      originTransport: slot.originTransport ?? null,
+    listener: {
+      _id: listener._id,
+      revision: listener.revision,
+      originPort: listener.originPort,
+      originTransport: listener.originTransport ?? null,
+      protocol: listener.protocol,
+      streamTransport: listener.streamTransport,
+      security: listener.security,
     },
-    profile: { _id: profile._id, revision: profile.revision, protocol: profile.protocol },
     intent,
     params,
   });
-  return { edge, slot, profile, relay, intent, params, binding };
+  return { edge, listener, relay, intent, params, binding };
 }
 
 export const context = internalQuery({
@@ -109,10 +101,16 @@ export const context = internalQuery({
     // else (a composite id from a panel that separates them) is reported as a
     // missing credential rather than sent as a guess.
     const credentialId = g.relay.qualificationUserId ?? '';
+    const proto = {
+      protocol: g.listener.protocol,
+      streamTransport: g.listener.streamTransport,
+      security: g.listener.security,
+    };
     return {
       hostname: g.intent.hostname,
-      protocol: g.profile.protocol,
-      carried: protocolIsHttpTransport(g.profile.protocol),
+      proto,
+      // Only an HTTP-carried listener with an authenticated proof can be qualified.
+      carried: protocolIsHttpTransport(proto) && protocolL7Proof(proto) === 'vless',
       params: g.params,
       credential: isUuid(credentialId) ? { uuid: credentialId } : null,
       credentialConfigured: credentialId.length > 0,
@@ -134,12 +132,12 @@ export const record = internalMutation({
     { edgeId, result, binding },
   ): Promise<{ ok: boolean; code: string | null }> => {
     const g = await gather(ctx, edgeId);
-    // The edge, slot, profile or intent disappeared while the session ran.
+    // The edge, listener or intent disappeared while the session ran.
     if (!g) return { ok: false, code: 'not_qualifiable' };
     const cfg = await resolveEdgeConfig(ctx.db);
     const now = Date.now();
-    // Re-derive rather than trust: the slot, the profile or the intent may have
-    // been written while the session was in flight.
+    // Re-derive rather than trust: the listener or the intent may have been
+    // written while the session was in flight.
     const current = g.binding;
     const raced = !bindingsMatch(current, binding);
     const stored = raced
@@ -147,10 +145,8 @@ export const record = internalMutation({
       : { ok: result.ok, code: result.code, checkedAt: result.checkedAt };
     const previous = g.edge.readiness;
     // A PASSING proof is good for the configured TTL. A FAILED one is not a
-    // proof at all, so it must not sit on the row for a whole TTL before
-    // anything looks again: it expires after a few poll intervals, which is
-    // what makes the reconcile cron re-run the check soon (and, bounded, is
-    // still long enough that one tick does not re-run it in a loop).
+    // proof at all, so it expires after a few poll intervals, which makes the
+    // reconcile cron re-run the check soon.
     const failRetryMs = Math.min(
       Math.max(edgeMs.poll(cfg) * 10, 60_000),
       cfg.l7.qualificationTtlMinutes * 60_000,
@@ -164,11 +160,11 @@ export const record = internalMutation({
           stored.checkedAt + (stored.ok ? cfg.l7.qualificationTtlMinutes * 60_000 : failRetryMs),
         binding: {
           hostname: current.hostname,
-          slotId: current.slotId as Id<'relaySlots'>,
-          slotRevision: current.slotRevision,
-          profileId: current.profileId as Id<'protocolProfiles'>,
-          profileRevision: current.profileRevision,
+          listenerId: current.listenerId as Id<'relayListeners'>,
+          listenerRevision: current.listenerRevision,
           protocol: current.protocol,
+          streamTransport: current.streamTransport,
+          security: current.security,
           transportParamsHash: current.transportParamsHash,
           intentHash: current.intentHash,
         },
@@ -185,11 +181,8 @@ export const record = internalMutation({
       updatedAt: now,
     });
     // A PUBLISHED front that just failed its proof stops being rendered the
-    // moment this mutation commits (`edgeRender.publishedEdgesOf` marks it
-    // ineligible), so what subscribers should receive has changed: bump the
-    // epoch the /sub cache keys on and refresh the stored mirrors, exactly as
-    // an unpublish does. Without this, cached bodies and mirrors would keep
-    // handing out a front nothing passes through.
+    // moment this mutation commits, so what subscribers should receive has
+    // changed: bump the epoch and refresh the stored mirrors.
     if (!stored.ok && g.edge.publication === 'published') {
       const relay = await ctx.db.get(g.edge.relayId);
       if (relay) {

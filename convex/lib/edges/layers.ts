@@ -1,27 +1,32 @@
 /**
  * Layer compatibility: which edge LAYERS (an L4 TCP forwarder, an L7 CDN front)
- * can carry a relay slot, decided on the COMPLETE client-to-origin chain, never
- * on the protocol name alone. Pure; used by publishability, selection, adoption
- * and the detector's replacement choice.
+ * can carry a relay LISTENER, decided on the COMPLETE client-to-origin chain,
+ * never on the protocol name alone. Pure; used by publishability, selection,
+ * adoption and the detector's replacement choice.
  *
- *  - A slot whose origin speaks plaintext HTTP behind the CDN (`scheme:http`)
+ *  - A listener whose origin speaks plaintext HTTP behind the CDN (`scheme:http`)
  *    is L7-only: an L4 forwarder cannot add the TLS the CDN terminated.
- *  - An `https` origin is L7-frontable when the profile is an HTTP transport,
- *    and L4-frontable only when a member's TLS session to the node itself is
- *    sound: the certificate is publicly trusted (members do not pin) AND every
- *    active server name the renderer may emit is covered by a certificate name
- *    (RFC 6125 wildcard matching) AND the node accepts those names as Host.
- *  - Legacy slots (no originTransport) keep today's L4-only rules.
+ *  - An `https` origin is L7-frontable when the listener is an HTTP transport
+ *    with an authenticated proof, and L4-frontable only when a member's TLS
+ *    session to the node itself is sound: the certificate is publicly trusted
+ *    (members do not pin) AND every active server name the renderer may emit is
+ *    covered by a certificate name (RFC 6125 wildcard matching) AND the node
+ *    accepts those names as Host.
+ *  - A listener without `originTransport` keeps the L4-only rules.
+ *  - A UDP listener needs a provider that declares `udp`; none does today.
  *
  * `hostTargetFor` is the single source of the Host tuple written to the panel
  * and emitted by assignment, so a flip and a render never disagree.
  */
+import type { ListenerLayerExclusion } from '../../../src/shared/contracts/edgeProtocolIds';
 import type { EdgeLayer } from './providers/capabilities';
 import {
   protocolIsHttpTransport,
+  protocolL7Proof,
+  protocolTransport,
   protocolUsesHostHeader,
   protocolUsesSni,
-  type SlotProtocol,
+  type ListenerProto,
 } from './protocols';
 
 export interface OriginTransport {
@@ -31,12 +36,10 @@ export interface OriginTransport {
   acceptsHostHeader: 'any' | 'names';
 }
 
-export interface SlotLike {
+/** The listener fields the layer decision reads. */
+export interface ListenerLike extends ListenerProto {
   originTransport?: OriginTransport | null;
-}
-export interface ProfileLike {
-  protocol: SlotProtocol;
-  serverNames: ReadonlyArray<{ sni: string; status: 'active' | 'retired' }>;
+  tlsNames?: ReadonlyArray<{ name: string; status: 'active' | 'retired' }> | null;
 }
 
 /**
@@ -60,15 +63,9 @@ export function certCovers(name: string, certNames: readonly string[]): boolean 
   return certNames.some((c) => matchesCertName(name, c));
 }
 
-export type LayerExclusion =
-  | 'origin_plaintext'
-  | 'cert_not_public'
-  | 'cert_name_uncovered'
-  | 'host_header_rejected'
-  | 'no_server_names'
-  | 'protocol_not_http_transport';
+export type LayerExclusion = ListenerLayerExclusion;
 
-export interface SlotLayers {
+export interface ListenerLayers {
   layers: EdgeLayer[];
   /** Why a layer is excluded (empty when both are allowed). */
   excluded: Partial<Record<EdgeLayer, LayerExclusion>>;
@@ -115,7 +112,7 @@ export function l7HostHeaderFor(
 }
 
 /**
- * Whether a zone's encryption mode can carry the slot's origin transport. A
+ * Whether a zone's encryption mode can carry the listener's origin transport. A
  * plaintext origin needs the mode that dials the origin over HTTP; an HTTPS
  * origin needs one of the modes that dials it over HTTPS, and the strictest of
  * them validates the origin certificate, which a privately issued one fails.
@@ -127,35 +124,48 @@ export function zoneModeCarriesOrigin(mode: string, ot: OriginTransport): boolea
   return m !== 'strict' || ot.certPublic;
 }
 
-export interface SlotLayerOpts {
+export interface ListenerLayerOpts {
   /** The Host the front would send the origin (see `l7HostAccepted`). */
   l7Host?: L7HostHeader;
+  /** Some enabled provider declares `udp` (none does today). */
+  udpProviderAvailable?: boolean;
 }
 
-/** The layers that can front `slot` speaking `profile.protocol`. */
-export function slotLayers(
-  slot: SlotLike,
-  profile: ProfileLike,
-  opts: SlotLayerOpts = {},
-): SlotLayers {
-  const ot = slot.originTransport ?? null;
-  const http = protocolIsHttpTransport(profile.protocol);
-  const excluded: SlotLayers['excluded'] = {};
+/** The layers that can front `listener`. */
+export function listenerLayers(
+  listener: ListenerLike,
+  opts: ListenerLayerOpts = {},
+): ListenerLayers {
+  const excluded: ListenerLayers['excluded'] = {};
+  if (protocolTransport(listener) === 'udp') {
+    // No L7 front carries UDP; an L4 forwarder only when a provider declares it.
+    excluded.l7 = 'protocol_not_http_transport';
+    if (opts.udpProviderAvailable) return { layers: ['l4'], excluded };
+    excluded.l4 = 'no_udp_provider';
+    return { layers: [], excluded };
+  }
+  const ot = listener.originTransport ?? null;
+  const http = protocolIsHttpTransport(listener);
   if (!ot) {
-    // Legacy slot: raw TCP to the inbound; nothing an L7 front could dial.
+    // Raw TCP to the inbound; nothing an L7 front could dial.
     excluded.l7 = 'protocol_not_http_transport';
     return { layers: ['l4'], excluded };
   }
   const layers: EdgeLayer[] = [];
   if (!http) excluded.l7 = 'protocol_not_http_transport';
+  // Without an authenticated proof a front can never be qualified, and
+  // publication requires a current proof: never L7-frontable.
+  else if (protocolL7Proof(listener) === 'unsupported') excluded.l7 = 'l7_proof_unsupported';
   // A front that rewrites the Host to a name the node does not answer for is
   // not a front: the origin would reject every member connection.
   else if (!l7HostAccepted(ot, opts.l7Host)) excluded.l7 = 'host_header_rejected';
   else layers.push('l7');
   if (ot.scheme === 'http') excluded.l4 = 'origin_plaintext';
-  else if (protocolUsesSni(profile.protocol)) {
-    const active = profile.serverNames.filter((s) => s.status === 'active').map((s) => s.sni);
-    // Behind an L4 forwarder the renderer must SELECT one of the profile's own
+  else if (protocolUsesSni(listener)) {
+    const active = (listener.tlsNames ?? [])
+      .filter((s) => s.status === 'active')
+      .map((s) => s.name);
+    // Behind an L4 forwarder the renderer must SELECT one of the listener's own
     // names; with none left there is nothing to emit, and a coverage check over
     // an empty set is vacuously true rather than a pass.
     if (active.length === 0) excluded.l4 = 'no_server_names';
@@ -163,7 +173,7 @@ export function slotLayers(
     else if (active.some((n) => !certCovers(n, ot.certNames))) excluded.l4 = 'cert_name_uncovered';
     else if (
       http &&
-      protocolUsesHostHeader(profile.protocol) &&
+      protocolUsesHostHeader(listener) &&
       ot.acceptsHostHeader === 'names' &&
       active.some((n) => !certCovers(n, ot.certNames))
     )
@@ -175,13 +185,12 @@ export function slotLayers(
   return { layers, excluded };
 }
 
-export function slotAllowsLayer(
-  slot: SlotLike,
-  profile: ProfileLike,
+export function listenerAllowsLayer(
+  listener: ListenerLike,
   layer: EdgeLayer,
-  opts: SlotLayerOpts = {},
+  opts: ListenerLayerOpts = {},
 ): boolean {
-  return slotLayers(slot, profile, opts).layers.includes(layer);
+  return listenerLayers(listener, opts).layers.includes(layer);
 }
 
 export interface HostTuple {
@@ -194,7 +203,7 @@ export interface HostTuple {
 }
 
 /**
- * The complete Host tuple for one edge + slot protocol + selected server name.
+ * The complete Host tuple for one edge + listener + selected server name.
  * L7 → the hostname everywhere; L4 HTTP transport → SNI and Host = the selected
  * name; L4 reality/tls → SNI only; plain → neither.
  */
@@ -204,7 +213,7 @@ export function hostTargetFor(
     addresses: { v4?: string | null; hostname?: string | null };
     edgePort: number;
   },
-  protocol: SlotProtocol,
+  proto: ListenerProto,
   selectedSni: string | null,
 ): HostTuple | null {
   if ((edge.layer ?? 'l4') === 'l7') {
@@ -214,12 +223,12 @@ export function hostTargetFor(
   }
   const address = edge.addresses.v4;
   if (!address) return null;
-  if (!protocolUsesSni(protocol)) return { address, port: edge.edgePort, sni: null, host: null };
+  if (!protocolUsesSni(proto)) return { address, port: edge.edgePort, sni: null, host: null };
   if (!selectedSni) return null;
   return {
     address,
     port: edge.edgePort,
     sni: selectedSni,
-    host: protocolUsesHostHeader(protocol) ? selectedSni : null,
+    host: protocolUsesHostHeader(proto) ? selectedSni : null,
   };
 }

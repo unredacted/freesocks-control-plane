@@ -28,6 +28,22 @@ import { backendIdValidator, type BackendId } from './lib/backendIds';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import { NODE_STATS_STALE_MS } from './lib/remnawavePlacement';
 
+/**
+ * The member-facing raw subscription URL. Under edge-required delivery a
+ * backend server covered by a relay binding (an Outline instance behind edges)
+ * hands out ONLY the fronted token URL: its raw URL is the origin's own key.
+ * A panel URL names the panel, not a node, and passes through.
+ */
+async function memberFacingUrl(
+  ctx: ActionCtx,
+  backendServerId: Id<'backendServers'> | null | undefined,
+  url: string,
+): Promise<string> {
+  if (!backendServerId) return url;
+  const policy = await ctx.runQuery(internal.edgeRender.deliveryPolicy, { backendServerId });
+  return policy.required ? '' : url;
+}
+
 type Backend = BackendId;
 
 /**
@@ -333,6 +349,8 @@ interface AccountView {
     url: string;
     // Opaque FCP-fronted-URL token; the SPA builds `<origin>/api/v1/sub/<subToken>`.
     subToken: string | null;
+    /** A relay covers this key's place: only the fronted token URL is handed out. */
+    edgeRequired: boolean;
     shortUuid: string;
     mirrors: { provider: string; publicUrl: string }[];
     expiresAt: string | null;
@@ -442,11 +460,23 @@ export const getAccountView = internalAction({
       const server = sub.backendServerId
         ? await ctx.runQuery(internal.backendServers.getById, { id: sub.backendServerId })
         : null;
+      // Edge-required delivery (docs/edges.md): when a relay covers this key's
+      // place, the raw backend URL is the origin itself (for an Outline key it
+      // IS the `ss://` key at the origin address) and must never reach the
+      // member; only the fronted token URL is handed out.
+      const delivery = sub.backendServerId
+        ? await ctx.runQuery(internal.edgeRender.deliveryPolicy, {
+            backendServerId: sub.backendServerId,
+            nodeName: sub.pinnedNode ?? undefined,
+          })
+        : null;
+      const edgeRequired = delivery?.required === true;
       subscription = {
         // The raw backend URL (fallback) + the opaque token; the SPA builds the
         // FCP-fronted URL from the token + its own origin, so there's no
         // deployment-origin env dependency and every UI surface fronts uniformly.
-        url: sub.subscriptionUrl,
+        url: edgeRequired ? '' : sub.subscriptionUrl,
+        edgeRequired,
         subToken: sub.subToken ?? null,
         shortUuid: sub.backendShortId,
         // Don't advertise a mirror whose last refresh failed (Review #2): it's kept
@@ -728,7 +758,10 @@ export const regenerate = internalAction({
       targetId: issued.subscriptionId,
       requestId,
     });
-    return { subscriptionUrl: issued.subscriptionUrl, shortUuid: issued.backendShortId };
+    return {
+      subscriptionUrl: await memberFacingUrl(ctx, issued.backendServerId, issued.subscriptionUrl),
+      shortUuid: issued.backendShortId,
+    };
   },
 });
 
@@ -873,7 +906,7 @@ export const switchBackend = internalAction({
     });
     return {
       ok: true,
-      subscriptionUrl: issued.subscriptionUrl,
+      subscriptionUrl: await memberFacingUrl(ctx, issued.backendServerId, issued.subscriptionUrl),
       shortUuid: issued.backendShortId,
       backend: issued.backend,
       tier: {

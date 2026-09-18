@@ -4,7 +4,7 @@
  *
  * An L7 edge depends on things that live OUTSIDE its own row: the account's
  * zone, the referenced DNS account, a TLS configuration, a certificate
- * authority, the slot's origin transport, the rendered template. All of them
+ * authority, the listener's origin transport, the rendered template. All of them
  * may be edited while the edge exists. If a later step, a discovery, a describe
  * or a destroy re-read them, an operator's edit mid-rotation would make FCP
  * create one resource and then look for (or delete) a different one.
@@ -16,13 +16,13 @@
  *
  * The same reasoning gives the qualification BINDING: an authenticated test
  * session proves one exact configuration, so the publishing mutation re-derives
- * the binding from the current slot/profile/intent and refuses a qualification
+ * the binding from the current listener/intent and refuses a qualification
  * that no longer describes what would be published.
  */
 import { canonicalJson } from './providers/template';
 import { edgeHostnameFor } from './hostname';
 import { edgeLayerOf, zoneModeGovernsOrigin } from './providers/capabilities';
-import type { SlotProtocol } from './protocols';
+import type { ListenerProto } from './protocols';
 import { zoneModeCarriesOrigin, type OriginTransport } from './layers';
 
 /** FNV-1a 64-bit as 16 hex chars (isolate-safe, no WebCrypto; same function the template hash uses). */
@@ -36,7 +36,7 @@ export function intentFnv1a64Hex(input: string): string {
   return h.toString(16).padStart(16, '0');
 }
 
-/** The intent's own copy of the slot's declaration (mutable: it crosses the action boundary). */
+/** The intent's own copy of the listener's declaration (mutable: it crosses the action boundary). */
 export interface FrozenOriginTransport {
   scheme: 'http' | 'https';
   certPublic: boolean;
@@ -95,7 +95,7 @@ export function parseObservedSettings(json: string | null | undefined): Record<s
   return out;
 }
 
-export interface IntentSlotLike {
+export interface IntentListenerLike {
   originPort: number;
   originTransport?: OriginTransport | null;
 }
@@ -109,7 +109,7 @@ export interface BuildIntentArgs {
   /** The effective, already rendered template params. */
   templateParams: Record<string, unknown>;
   templateHash: string;
-  slot: IntentSlotLike;
+  listener: IntentListenerLike;
   /**
    * Overrides the observed zone mode (tests, an operator-forced re-plan).
    * Ignored for a provider the zone mode does not govern.
@@ -137,8 +137,8 @@ function str(v: unknown): string | undefined {
 
 /**
  * The frozen intent for one new edge, or `null` for an L4 provider (nothing to
- * freeze). Throws `IntentError` with a short code when the account or the slot
- * cannot describe an L7 edge at all.
+ * freeze). Throws `IntentError` with a short code when the account or the
+ * listener cannot describe an L7 edge at all.
  */
 export function buildProvisionIntent(a: BuildIntentArgs): ProvisionIntent | null {
   if (edgeLayerOf(a.account.provider) !== 'l7') return null;
@@ -148,7 +148,7 @@ export function buildProvisionIntent(a: BuildIntentArgs): ProvisionIntent | null
   const zoneId = str(zoneSource.settings.zoneId);
   const zoneName = str(zoneSource.settings.zoneName);
   if (!zoneId || !zoneName) throw new IntentError('dns_zone_missing');
-  const originTransport = a.slot.originTransport ?? null;
+  const originTransport = a.listener.originTransport ?? null;
   if (!originTransport) throw new IntentError('origin_transport_missing');
   const tpl = a.templateParams;
   const hostname =
@@ -191,7 +191,7 @@ export function buildProvisionIntent(a: BuildIntentArgs): ProvisionIntent | null
       certNames: [...originTransport.certNames],
       acceptsHostHeader: originTransport.acceptsHostHeader,
     },
-    originPort: a.slot.originPort,
+    originPort: a.listener.originPort,
     ...(zoneSslMode ? { zoneSslMode } : {}),
     templateHash: a.templateHash,
     templateParams: tpl,
@@ -222,27 +222,26 @@ export function parseIntent(json: string | null | undefined): ProvisionIntent | 
 
 export interface QualificationBinding {
   hostname: string;
-  slotId: string;
-  slotRevision: number;
-  profileId: string;
-  profileRevision: number;
-  protocol: SlotProtocol;
+  listenerId: string;
+  listenerRevision: number;
+  protocol: ListenerProto['protocol'];
+  streamTransport: ListenerProto['streamTransport'];
+  security: ListenerProto['security'];
   transportParamsHash: string;
   intentHash: string;
 }
 
 export interface BindingArgs {
-  slot: {
+  listener: {
     _id: string;
     revision?: number;
     originPort: number;
     originTransport?: OriginTransport | null;
-  };
-  profile: { _id: string; revision?: number; protocol: SlotProtocol };
+  } & ListenerProto;
   intent: ProvisionIntent;
   /**
-   * Transport parameters the deployed Host carries beyond what the slot row
-   * holds (path, service name, upgrade token). Absent = the slot's own shape is
+   * Transport parameters the deployed Host carries beyond what the listener row
+   * holds (path, service name, upgrade token). Absent = the listener's own shape is
    * the whole transport description.
    */
   transportParams?: Record<string, unknown>;
@@ -256,16 +255,18 @@ export interface BindingArgs {
 export function qualificationBinding(a: BindingArgs): QualificationBinding {
   return {
     hostname: a.intent.hostname,
-    slotId: a.slot._id,
-    slotRevision: a.slot.revision ?? 0,
-    profileId: a.profile._id,
-    profileRevision: a.profile.revision ?? 0,
-    protocol: a.profile.protocol,
+    listenerId: a.listener._id,
+    listenerRevision: a.listener.revision ?? 0,
+    protocol: a.listener.protocol,
+    streamTransport: a.listener.streamTransport,
+    security: a.listener.security,
     transportParamsHash: intentFnv1a64Hex(
       canonicalJson({
-        protocol: a.profile.protocol,
-        originPort: a.slot.originPort,
-        originTransport: a.slot.originTransport ?? null,
+        protocol: a.listener.protocol,
+        streamTransport: a.listener.streamTransport,
+        security: a.listener.security,
+        originPort: a.listener.originPort,
+        originTransport: a.listener.originTransport ?? null,
         ...(a.transportParams ?? {}),
       }),
     ),
@@ -299,11 +300,11 @@ export function qualificationVerdict(
   const b = stored.binding;
   const same =
     b.hostname === binding.hostname &&
-    b.slotId === binding.slotId &&
-    b.slotRevision === binding.slotRevision &&
-    b.profileId === binding.profileId &&
-    b.profileRevision === binding.profileRevision &&
+    b.listenerId === binding.listenerId &&
+    b.listenerRevision === binding.listenerRevision &&
     b.protocol === binding.protocol &&
+    b.streamTransport === binding.streamTransport &&
+    b.security === binding.security &&
     b.transportParamsHash === binding.transportParamsHash &&
     b.intentHash === binding.intentHash;
   return same ? 'ok' : 'stale';

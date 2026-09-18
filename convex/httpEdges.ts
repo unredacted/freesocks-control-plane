@@ -30,6 +30,7 @@ import {
 import type { RateLimitPolicyKey } from './lib/rateLimitPolicy';
 import type { InspectResult, Inventory } from './lib/edges/providers/types';
 import { parseTargetKey } from './probes';
+import { assertWithinBoundary, type RegistrationBoundary } from './relays';
 
 const PREFIX = '/api/v1/admin/edges/';
 
@@ -37,13 +38,15 @@ type Handler = (
   ctx: ActionCtx,
   req: Request,
   parts: string[],
-  admin: AdminAuth,
+  admin: EdgeAdminAuth,
   body: Record<string, unknown>,
   query: URLSearchParams,
 ) => Promise<Response>;
 
 function statusFromCode(code: string): number {
   if (code === 'not_found') return 404;
+  // A register-scoped token reaching outside its boundary is a permission refusal.
+  if (code === 'edge.registration_boundary') return 403;
   if (code === 'conflict' || code.startsWith('edge.')) return 409;
   // The hourly probe budget is a quota: answer like a rate limit.
   if (code === 'probe.budget_exhausted') return 429;
@@ -69,12 +72,17 @@ function fail(err: unknown): Response {
 const notFound = () => errorJson('not_found', 'Not found', 404);
 const unauth = () => errorJson('auth.unauthenticated', 'Authentication required', 401);
 
-/** First segments that are collections of their own; anything else is an edge id. */
+/**
+ * First segments that are collections of their own; anything else is an edge
+ * id. `profiles` (the removed protocol-profile collection) stays reserved so a
+ * stale caller gets a clean 404 instead of an invalid-edge-id error.
+ */
 const RESERVED = new Set([
   'summary',
   'config',
   'providers',
   'templates',
+  'listeners',
   'profiles',
   'relays',
   'rotations',
@@ -113,11 +121,23 @@ function isReadOnlyPost(parts: string[]): boolean {
   );
 }
 
-/** Config routes need the settings scope; everything else the servers scope. */
-export function scopeFor(parts: string[], method: string): string {
+/** The node role's registration routes: `relays/by-slug/{slug}[/listeners/{key}]`. */
+export function isRegistrationRoute(parts: string[]): boolean {
+  return parts[0] === 'relays' && parts[1] === 'by-slug' && !!parts[2];
+}
+
+/**
+ * Config routes need the settings scope; everything else the servers scope.
+ * The registration routes ALSO accept `admin:edges:register` (any-of), whose
+ * callers are additionally confined to their token's registration boundary.
+ */
+export function scopeFor(parts: string[], method: string): string | string[] {
   const ns = parts[0] === 'config' ? 'settings' : 'servers';
   const write = method !== 'GET' && !(method === 'POST' && isReadOnlyPost(parts));
-  return `admin:${ns}:${write ? 'write' : 'read'}`;
+  const full = `admin:${ns}:${write ? 'write' : 'read'}`;
+  if (isRegistrationRoute(parts) && method !== 'POST' && method !== 'PATCH')
+    return ['admin:edges:register', full];
+  return full;
 }
 
 /**
@@ -190,8 +210,21 @@ function wrap(handler: Handler, sealedRoute: boolean) {
     if (!seg) return errorJson('validation', 'Malformed path encoding', 400);
     const { parts, query } = seg;
     const method = req.method.toUpperCase();
-    const admin = await resolveAdmin(ctx, req, scopeFor(parts, method));
+    const required = scopeFor(parts, method);
+    const admin: EdgeAdminAuth | null = await resolveAdmin(ctx, req, required);
     if (!admin) return unauth();
+    // A bearer caller admitted ONLY by the register scope is confined to its
+    // token's registration boundary on every registration verb.
+    if (isRegistrationRoute(parts) && admin.tokenId && admin.tokenScopes) {
+      const fullScope = Array.isArray(required) ? required[1] : required;
+      if (!admin.tokenScopes.includes(fullScope)) {
+        const boundary = await ctx.runQuery(internal.apiTokens.registrationBoundary, {
+          tokenId: admin.tokenId,
+        });
+        // A register token without a boundary may register nothing.
+        admin.boundary = boundary ?? { backendServerIds: [] };
+      }
+    }
     if (method === 'POST') {
       const policyKey = throttlePolicyFor(parts);
       if (policyKey) {
@@ -214,6 +247,16 @@ function wrap(handler: Handler, sealedRoute: boolean) {
 
 const id = <T extends TableNames>(s: string | undefined) => (s ?? '') as Id<T>;
 const actor = (admin: AdminAuth) => ({ actorAdminId: admin.adminUserId ?? undefined });
+
+/** AdminAuth plus the registration boundary of a register-scoped token (undefined = unbounded). */
+type EdgeAdminAuth = AdminAuth & { boundary?: RegistrationBoundary };
+
+/** Refuse a bounded caller outside its boundary for an EXISTING relay (GET / DELETE / PUT update). */
+async function assertRelayWithinBoundary(ctx: ActionCtx, slug: string, admin: EdgeAdminAuth) {
+  if (!admin.boundary) return;
+  const relay = await ctx.runQuery(internal.relays.getBySlug, { slug });
+  if (relay) assertWithinBoundary(relay.origin, admin.boundary);
+}
 
 // --- GET ----------------------------------------------------------------------------------------
 
@@ -253,7 +296,6 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
     ]);
     return json({ templates, schemas });
   }
-  if (a === 'profiles' && !b) return json(await ctx.runQuery(internal.protocolProfiles.list, {}));
   if (a === 'relays') {
     if (!b) return json(await ctx.runQuery(internal.relays.listForAdmin, {}));
     if (b === 'node-candidates' && !c) {
@@ -266,11 +308,12 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
       );
     }
     if (b === 'by-slug' && c) {
+      await assertRelayWithinBoundary(ctx, c, _admin);
       const view = await ctx.runQuery(internal.edgeAdmin.relayBySlugView, { slug: c });
       if (!view) return notFound();
-      if (d === 'slots' && e) {
-        const slot = view.slots.find((s) => s.slotKey === e);
-        return slot ? json(slot) : notFound();
+      if (d === 'listeners' && e) {
+        const l = view.listeners.find((x) => x.listenerKey === e);
+        return l ? json(l) : notFound();
       }
       if (!d) return json(view);
       return notFound();
@@ -281,10 +324,11 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
       });
       return r ? json(r) : notFound();
     }
-    if (c === 'slots') {
-      return json(
-        await ctx.runQuery(internal.relaySlots.listByRelay, { relayId: id<'relays'>(b) }),
-      );
+    if (c === 'listeners' && !d) {
+      const r = await ctx.runQuery(internal.edgeAdmin.relayListenersView, {
+        relayId: id<'relays'>(b),
+      });
+      return r ? json(r) : notFound();
     }
     if (c === 'rotations') {
       return json(
@@ -473,33 +517,37 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
       return json(await ctx.runMutation(internal.edgeTemplates.ensureDefaults, {}));
     return notFound();
   }
-  if (a === 'profiles') {
-    if (!b)
+  if (a === 'listeners') {
+    // Fleet-wide retirement of a burned name: ONE transaction over every listener.
+    if (b === 'retire-name' && !c)
       return json(
-        await ctx.runMutation(internal.protocolProfiles.create, { ...body, ...act } as never),
-      );
-    const pid = id<'protocolProfiles'>(b);
-    if (c === 'qualify')
-      return json(
-        await ctx.runMutation(internal.protocolProfiles.recordQualification, {
-          ...body,
-          id: pid,
-          ...act,
-        } as never),
-      );
-    if (c === 'retire-sni')
-      return json(
-        await ctx.runMutation(internal.protocolProfiles.retireSni, {
-          id: pid,
-          snis: snis(body),
+        await ctx.runMutation(internal.relayListeners.retireNameEverywhere, {
+          name: String(body.name ?? ''),
           ...act,
         }),
       );
-    if (c === 'reactivate-sni')
+    const lid = id<'relayListeners'>(b);
+    if (c === 'retire-name')
       return json(
-        await ctx.runMutation(internal.protocolProfiles.reactivateSni, {
-          id: pid,
-          snis: snis(body),
+        await ctx.runMutation(internal.relayListeners.retireName, {
+          id: lid,
+          names: snis(body),
+          ...act,
+        }),
+      );
+    if (c === 'reactivate-name')
+      return json(
+        await ctx.runMutation(internal.relayListeners.reactivateName, {
+          id: lid,
+          names: snis(body),
+          ...act,
+        }),
+      );
+    if (c === 'enable' || c === 'disable')
+      return json(
+        await ctx.runMutation(internal.relayListeners.setEnabled, {
+          id: lid,
+          enabled: c === 'enable',
           ...act,
         }),
       );
@@ -572,6 +620,15 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           } as never),
         );
       }
+      case 'listeners':
+        // An admin-owned listener (never pruned by the role's registration).
+        return json(
+          await ctx.runMutation(internal.relayListeners.upsert, {
+            relayId,
+            spec: body as never,
+            ...act,
+          }),
+        );
       case 'provision':
         return json(
           await ctx.runMutation(internal.edgeRotations.start, {
@@ -579,7 +636,10 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
             kind: 'provision',
             trigger: 'manual',
             publishOnDone: body.publish !== false,
-            slotId: typeof body.slotId === 'string' ? id<'relaySlots'>(body.slotId) : undefined,
+            listenerId:
+              typeof body.listenerId === 'string'
+                ? id<'relayListeners'>(body.listenerId)
+                : undefined,
             ...act,
           }),
         );
@@ -812,14 +872,6 @@ const patchHandler: Handler = async (ctx, _req, parts, admin, body) => {
         ...act,
       } as never),
     );
-  if (a === 'profiles' && b)
-    return json(
-      await ctx.runMutation(internal.protocolProfiles.update, {
-        ...body,
-        id: id<'protocolProfiles'>(b),
-        ...act,
-      } as never),
-    );
   if (a === 'relays' && b)
     return json(
       await ctx.runMutation(internal.relays.update, {
@@ -834,36 +886,27 @@ const patchHandler: Handler = async (ctx, _req, parts, admin, body) => {
 // --- PUT (IaC upserts) -----------------------------------------------------------------------------
 
 const putHandler: Handler = async (ctx, _req, parts, admin, body) => {
-  const [a, b, c, d, e] = parts;
+  const [a, b, c, d] = parts;
   const act = actor(admin);
-  if (a !== 'relays' || b !== 'by-slug' || !c) return notFound();
-  if (!d) {
-    await ctx.runMutation(internal.relays.upsertBySlug, {
-      ...body,
-      slug: c,
-      ...act,
-    } as never);
-    const view = await ctx.runQuery(internal.edgeAdmin.relayBySlugView, { slug: c });
-    return view ? json(view) : notFound();
-  }
-  if (d === 'slots' && e) {
-    const origin = await ctx.runQuery(internal.relays.getBySlug, { slug: c });
-    if (!origin) return notFound();
-    return json(
-      await ctx.runMutation(internal.relaySlots.upsert, {
-        ...body,
-        relayId: origin._id,
-        slotKey: e,
-        ...act,
-      } as never),
-    );
-  }
-  return notFound();
+  if (a !== 'relays' || b !== 'by-slug' || !c || d) return notFound();
+  // ONE idempotent body: origin + every listener the caller owns (docs/edges.md
+  // § "Node role contract"). A bounded token is confined to its boundary for
+  // the existing row AND the body's origin (the mutation checks both).
+  const result = await ctx.runMutation(internal.relays.registerBySlug, {
+    ...body,
+    slug: c,
+    listeners: Array.isArray(body.listeners) ? body.listeners : [],
+    source: admin.adminUserId ? 'admin' : 'role',
+    ...(admin.boundary ? { boundary: admin.boundary } : {}),
+    ...act,
+  } as never);
+  const view = await ctx.runQuery(internal.edgeAdmin.relayBySlugView, { slug: c });
+  return view ? json({ ...view, registration: result }) : notFound();
 };
 
 // --- DELETE --------------------------------------------------------------------------------------------
 
-const deleteHandler: Handler = async (ctx, _req, parts, admin) => {
+const deleteHandler: Handler = async (ctx, _req, parts, admin, _body, query) => {
   const [a, b, c, d, e] = parts;
   const act = actor(admin);
   if (a === 'providers' && b && !c)
@@ -880,13 +923,6 @@ const deleteHandler: Handler = async (ctx, _req, parts, admin) => {
         ...act,
       }),
     );
-  if (a === 'profiles' && b && !c)
-    return json(
-      await ctx.runMutation(internal.protocolProfiles.remove, {
-        id: id<'protocolProfiles'>(b),
-        ...act,
-      }),
-    );
   if (a === 'edges' && b && !c)
     return json(
       await ctx.runMutation(internal.edgeAdmin.deleteEdge, {
@@ -900,22 +936,36 @@ const deleteHandler: Handler = async (ctx, _req, parts, admin) => {
     );
   if (a === 'relays' && b) {
     if (b === 'by-slug' && c) {
+      await assertRelayWithinBoundary(ctx, c, admin);
       const origin = await ctx.runQuery(internal.relays.getBySlug, { slug: c });
       if (!origin) return json({ ok: true, deleted: true });
-      if (d === 'slots' && e)
+      if (d === 'listeners' && e)
         return json(
-          await ctx.runMutation(internal.relaySlots.retire, {
+          await ctx.runMutation(internal.relayListeners.retire, {
             relayId: origin._id,
-            slotKey: e,
+            listenerKey: e,
             ...act,
           }),
         );
       if (!d)
+        // The node role decommissions the node: raw delivery returns unless it says otherwise.
         return json(
-          await ctx.runMutation(internal.relays.requestDelete, { id: origin._id, ...act }),
+          await ctx.runMutation(internal.relays.requestDelete, {
+            id: origin._id,
+            disposition: dispositionOf(query) ?? 'restore-direct',
+            ...act,
+          }),
         );
       return notFound();
     }
+    if (c === 'listeners' && d && !e)
+      return json(
+        await ctx.runMutation(internal.relayListeners.retire, {
+          relayId: id<'relays'>(b),
+          listenerKey: d,
+          ...act,
+        }),
+      );
     if (c === 'qualification-credential' && !d)
       return json(
         await ctx.runAction(internal.relayQualification.revoke, {
@@ -924,15 +974,23 @@ const deleteHandler: Handler = async (ctx, _req, parts, admin) => {
         }),
       );
     if (!c)
+      // The CMS says what happens to members of the origin (edge.delivery_disposition_required otherwise).
       return json(
         await ctx.runMutation(internal.relays.requestDelete, {
           id: id<'relays'>(b),
+          disposition: dispositionOf(query),
+          force: query.get('force') === 'true',
           ...act,
         }),
       );
   }
   return notFound();
 };
+
+function dispositionOf(query: URLSearchParams): 'restore-direct' | 'keep-dark' | undefined {
+  const d = query.get('disposition');
+  return d === 'restore-direct' || d === 'keep-dark' ? d : undefined;
+}
 
 export function registerEdgeRoutes(http: HttpRouter): void {
   http.route({ pathPrefix: PREFIX, method: 'GET', handler: wrap(getHandler, true) });

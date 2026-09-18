@@ -60,7 +60,6 @@ import {
   EdgeAdmin,
   EdgeDetail,
   RelayEndpointsResponse,
-  ProtocolProfileList,
   ProbeReachabilityMatrix,
   ProbeRunsResponse,
   RelayNodeCandidatesResponse,
@@ -69,7 +68,7 @@ import {
   ProbeSummary,
   EdgeRotationAdmin,
   EdgeRotationDetail,
-  RelaySlotAdmin,
+  RelayListenersResponse,
   EdgeSummary,
   EdgeTemplatesResponse,
   EdgeInventoryResponse,
@@ -121,10 +120,9 @@ export const queryKeys = {
   adminEdgeConfig: ['admin', 'edges', 'config'] as const,
   adminEdgeProviders: ['admin', 'edges', 'providers'] as const,
   adminEdgeTemplates: ['admin', 'edges', 'templates'] as const,
-  adminProtocolProfiles: ['admin', 'edges', 'profiles'] as const,
   adminRelayEdges: (relayId: string) => ['admin', 'edges', 'edges', relayId] as const,
   adminRelayEdgeDetail: (edgeId: string) => ['admin', 'edges', 'edge', edgeId] as const,
-  adminRelaySlots: (relayId: string) => ['admin', 'edges', 'slots', relayId] as const,
+  adminRelayListeners: (relayId: string) => ['admin', 'edges', 'listeners', relayId] as const,
   adminRelayRotations: (relayId: string) => ['admin', 'edges', 'rotations', relayId] as const,
   adminRelayRotation: (id: string) => ['admin', 'edges', 'rotation', id] as const,
   adminRelayNodeCandidates: (serverId: string) =>
@@ -736,13 +734,6 @@ export const adminEdgeTemplatesQuery = () =>
     staleTime: 60_000,
   }));
 
-export const adminProtocolProfilesQuery = () =>
-  createQuery(() => ({
-    queryKey: queryKeys.adminProtocolProfiles,
-    queryFn: () => apiClient.get('/api/v1/admin/edges/profiles', ProtocolProfileList),
-    staleTime: 30_000,
-  }));
-
 export const adminRelayEdgesQuery = (relayId: () => string | null) =>
   createQuery(() => ({
     queryKey: queryKeys.adminRelayEdges(relayId() ?? ''),
@@ -764,16 +755,16 @@ export const adminRelayEdgeDetailQuery = (edgeId: () => string | null) =>
     staleTime: 5_000,
   }));
 
-export const adminRelaySlotsQuery = (relayId: () => string | null) =>
+export const adminRelayListenersQuery = (relayId: () => string | null) =>
   createQuery(() => ({
-    queryKey: queryKeys.adminRelaySlots(relayId() ?? ''),
+    queryKey: queryKeys.adminRelayListeners(relayId() ?? ''),
     queryFn: () =>
       apiClient.get(
-        `/api/v1/admin/edges/relays/${encodeURIComponent(relayId() ?? '')}/slots`,
-        z.array(RelaySlotAdmin),
+        `/api/v1/admin/edges/relays/${encodeURIComponent(relayId() ?? '')}/listeners`,
+        RelayListenersResponse,
       ),
     enabled: relayId() !== null,
-    staleTime: 30_000,
+    staleTime: 10_000,
   }));
 
 export const adminRelayRotationsQuery = (relayId: () => string | null) =>

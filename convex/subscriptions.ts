@@ -15,6 +15,15 @@ const mirror = v.object({
   publicUrl: v.string(),
   objectPath: v.optional(v.string()),
   status: v.optional(v.union(v.literal('ok'), v.literal('failed'))),
+  validated: v.optional(
+    v.object({
+      policyVersion: v.number(),
+      epoch: v.number(),
+      edgeIds: v.array(v.string()),
+      at: v.number(),
+      stub: v.optional(v.boolean()),
+    }),
+  ),
 });
 
 /** Unique-index lookup by the backend's primary user id. */
@@ -206,25 +215,42 @@ const DELIVERY_STAMP_THROTTLE_MS = 60_000;
  * whether this key has seen the current pool; a null `renderedEpoch` (body
  * served unrendered) leaves the stored epoch alone.
  */
+/** The eligibility snapshot of a render (what the subscriber was handed). */
+export const renderSnapshotValidator = v.object({
+  epoch: v.number(),
+  family: v.string(),
+  listenerKeys: v.array(v.string()),
+  primaryEdgeId: v.optional(v.id('edges')),
+  backupEdgeId: v.optional(v.id('edges')),
+});
+
 export const markDelivered = internalMutation({
   args: {
     subscriptionId: v.id('subscriptions'),
     contentAt: v.number(),
     renderedEpoch: v.optional(v.union(v.number(), v.null())),
+    /** Present when this delivery was a relay render: persisted as `lastRender`. */
+    render: v.optional(v.union(renderSnapshotValidator, v.null())),
   },
-  handler: async (ctx, { subscriptionId, contentAt, renderedEpoch }) => {
+  handler: async (ctx, { subscriptionId, contentAt, renderedEpoch, render }) => {
     const sub = await ctx.db.get(subscriptionId);
     if (!sub) return null;
     const now = Date.now();
     const contentAdvanced = (sub.lastDeliveredContentAt ?? 0) < contentAt;
     const epochChanged =
       typeof renderedEpoch === 'number' && renderedEpoch !== sub.lastRenderedEpoch;
+    const snapshotChanged =
+      !!render &&
+      (sub.lastRender?.epoch !== render.epoch ||
+        sub.lastRender?.primaryEdgeId !== render.primaryEdgeId ||
+        sub.lastRender?.backupEdgeId !== render.backupEdgeId);
     const stale = now - (sub.lastDeliveredAt ?? 0) >= DELIVERY_STAMP_THROTTLE_MS;
-    if (!contentAdvanced && !epochChanged && !stale) return null;
+    if (!contentAdvanced && !epochChanged && !snapshotChanged && !stale) return null;
     await ctx.db.patch(subscriptionId, {
       lastDeliveredAt: now,
       lastDeliveredContentAt: Math.max(sub.lastDeliveredContentAt ?? 0, contentAt),
       ...(epochChanged ? { lastRenderedEpoch: renderedEpoch } : {}),
+      ...(render && snapshotChanged ? { lastRender: { ...render, at: now } } : {}),
     });
     return null;
   },

@@ -13,6 +13,7 @@ import {
   assertNoRotationOrQuarantine,
   checkPublishable,
   dropEdgeFromPool,
+  refreshTemplateEdges,
   scheduleMirrorRefresh,
 } from './relays';
 import { destroyedPatch } from './edges';
@@ -231,8 +232,12 @@ export const publishStandby = internalMutation({
       if (!edge || edge.relayId !== relayId) continue;
       const check = await checkPublishable(ctx, edge, cfg.requireProviderHealth);
       if (!check.ok) continue;
-      if (idx === 0 && origin.hostManaged) {
-        // Needs the template-Host flip: hand it to the rotation machine.
+      const listener = await ctx.db.get(edge.listenerId);
+      const becomesTemplate =
+        origin.hostMode === 'fcp' &&
+        (!listener?.templateEdgeId || listener.templateEdgeId === edge._id);
+      if (becomesTemplate) {
+        // Needs the panel-Host flip: hand it to the rotation machine.
         try {
           const { rotationId } = await startRotation(ctx, {
             relayId,
@@ -261,6 +266,7 @@ export const publishStandby = internalMutation({
         publicationEpoch: epoch,
         updatedAt: now,
       });
+      await refreshTemplateEdges(ctx, origin);
       await writeAuditLog(ctx, {
         actorType: 'system',
         action: 'edge.published',

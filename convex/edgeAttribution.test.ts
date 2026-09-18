@@ -14,7 +14,9 @@ import type { Id } from './_generated/dataModel';
 import { upsertSettingRow } from './appSettings';
 import { resolveEdgeAttribution } from './edgeAttribution';
 import { publishedEdgesOf } from './edgeRender';
+import { relayForBackendNode } from './relays';
 import { assignEndpoints } from './lib/edges/assignment';
+import { realityListener, registerRelay } from './lib/edges/testing/fixtures';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -40,32 +42,29 @@ async function seed() {
     await upsertSettingRow(ctx, 'edge.render.enabled', 'true');
     return serverId;
   });
-  await t.mutation(internal.protocolProfiles.create, {
-    slug: 'prof-u',
-    name: 'P',
-    provider: 'upcloud',
-    targetAddress: 'target.example',
-    serverNames: ['a.example', 'b.example'],
-  });
-  const { id: relayId } = await t.mutation(internal.relays.upsertBySlug, {
-    slug: 'node-one',
-    backendServerSlug: 'panel-a',
-    nodeHostname: 'node-one',
+  const { relayId, listenerId } = await registerRelay(t, {
     originAddress: ORIGIN,
-  });
-  const { id: slotId } = await t.mutation(internal.relaySlots.upsert, {
-    relayId,
-    slotKey: 'u',
-    profileSlug: 'prof-u',
-    inboundTag: 'VLESS_RELAY_U',
-    configProfileUuid: '11111111-1111-4111-8111-111111111111',
-    configProfileInboundUuid: '22222222-2222-4222-8222-222222222222',
-    originPort: 443,
+    listeners: [
+      realityListener({
+        listenerKey: 'u',
+        providerScope: { provider: 'upcloud' },
+        panelBinding: {
+          inboundTag: 'VLESS_RELAY_U',
+          configProfileUuid: '11111111-1111-4111-8111-111111111111',
+          configProfileInboundUuid: '22222222-2222-4222-8222-222222222222',
+        },
+      }),
+    ],
   });
   await t.run((ctx) => ctx.db.patch(relayId, { desiredPublished: 3 }));
   const ids: Id<'edges'>[] = [];
   for (const ipv4 of [EDGE_A, '198.51.100.2', EDGE_C]) {
-    const e = await t.mutation(internal.relays.adoptEdge, { relayId, slotId, ipv4, publish: true });
+    const e = await t.mutation(internal.relays.adoptEdge, {
+      relayId,
+      listenerId,
+      ipv4,
+      publish: true,
+    });
     ids.push(e.edgeId as Id<'edges'>);
   }
   // The middle edge lives on IPv6 only: a family whose rule cannot emit IPv6
@@ -134,6 +133,103 @@ async function seed() {
   expect(key).not.toBeNull();
   return { t, relayId, subId, edges: ids, now };
 }
+
+describe('resolveEdgeAttribution: which relay, and whether the member has the current pool', () => {
+  test('the origin is found by (backend server, pinned node); a whole-server relay covers unpinned keys; nothing else attributes', async () => {
+    const s = await seed();
+    await s.t.run(async (ctx) => {
+      const sub = (await ctx.db.get(s.subId))!;
+      // The panel-node relay by its node.
+      expect(await relayForBackendNode(ctx.db, sub.backendServerId!, 'node-one')).toMatchObject({
+        slug: 'node-one',
+      });
+      // Another node on the same panel: no relay (a node relay never covers its neighbours).
+      expect(await relayForBackendNode(ctx.db, sub.backendServerId!, 'node-two')).toBeNull();
+      // An unpinned key on the panel: no whole-server relay yet → null.
+      expect(await relayForBackendNode(ctx.db, sub.backendServerId!, undefined)).toBeNull();
+      expect(
+        await resolveEdgeAttribution(ctx.db, { ...sub, pinnedNode: 'node-two' }, 'primary', s.now),
+      ).toBeNull();
+      expect(
+        await resolveEdgeAttribution(ctx.db, { ...sub, pinnedNode: undefined }, 'primary', s.now),
+      ).toBeNull();
+      expect(await resolveEdgeAttribution(ctx.db, null, 'primary', s.now)).toBeNull();
+    });
+    // A whole-server relay on a SECOND panel covers every key of that panel, pinned or not.
+    await s.t.run((ctx) =>
+      ctx.db.insert('backendServers', {
+        backend: 'outline',
+        name: 'panel-b',
+        slug: 'panel-b',
+        config: {
+          type: 'outline',
+          apiUrl: 'https://outline.example/secret',
+          websocketEnabled: false,
+        },
+        isActive: true,
+        priority: 0,
+        keyCount: 0,
+        updatedAt: Date.now(),
+      }),
+    );
+    await registerRelay(s.t, {
+      slug: 'whole-b',
+      kind: 'backend-server',
+      backendSlug: 'panel-b',
+      originAddress: '203.0.113.20',
+      listeners: [{ ...realityListener(), panelBinding: undefined }],
+    });
+    await s.t.run(async (ctx) => {
+      const b = (await ctx.db
+        .query('backendServers')
+        .withIndex('by_slug', (q) => q.eq('slug', 'panel-b'))
+        .unique())!;
+      expect(await relayForBackendNode(ctx.db, b._id, undefined)).toMatchObject({
+        slug: 'whole-b',
+      });
+      expect(await relayForBackendNode(ctx.db, b._id, 'any-node')).toMatchObject({
+        slug: 'whole-b',
+      });
+    });
+  });
+
+  test('a key rendered against an OLDER epoch is on the old pool: origin-level only (refreshNotObserved)', async () => {
+    const s = await seed();
+    await s.t.run(async (ctx) => {
+      const sub = (await ctx.db.get(s.subId))!;
+      const stale = await resolveEdgeAttribution(
+        ctx.db,
+        { ...sub, lastRenderedEpoch: sub.lastRenderedEpoch! - 1 },
+        'primary',
+        s.now,
+      );
+      expect(stale).toEqual({ relaySlug: 'node-one', relayEdgeId: null, refreshNotObserved: true });
+      // Keys never rendered since the epoch field exists fall back to delivery vs last rotation.
+      const relay = (await ctx.db.get(s.relayId))!;
+      await ctx.db.patch(s.relayId, { lastRotatedAt: s.now });
+      const legacy = await resolveEdgeAttribution(
+        ctx.db,
+        { ...sub, lastRenderedEpoch: undefined, lastDeliveredContentAt: s.now - 1 },
+        'primary',
+        s.now,
+      );
+      expect(legacy!.refreshNotObserved).toBe(true);
+      const fresh = await resolveEdgeAttribution(
+        ctx.db,
+        { ...sub, lastRenderedEpoch: undefined, lastDeliveredContentAt: s.now + 1 },
+        'primary',
+        s.now,
+      );
+      expect(fresh!.refreshNotObserved).toBe(false);
+      await ctx.db.patch(s.relayId, { lastRotatedAt: relay.lastRotatedAt });
+      // `unsure` / `direct` never name an edge; `auto` only over a single-edge pool.
+      for (const choice of ['unsure', 'direct', 'auto'] as const) {
+        expect((await resolveEdgeAttribution(ctx.db, sub, choice, s.now))!.relayEdgeId).toBeNull();
+      }
+      expect((await resolveEdgeAttribution(ctx.db, sub, null, s.now))!.relayEdgeId).toBeNull();
+    });
+  });
+});
 
 describe('resolveEdgeAttribution across client-family rules', () => {
   test('every family able to emit IPv6 → the v6-only edge is named', async () => {

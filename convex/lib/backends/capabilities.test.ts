@@ -21,7 +21,15 @@ describe('capability record ⇔ provider methods', () => {
     expect(caps.bulkTrafficUpdate).toBe(!!provider.bulkUpdateTrafficLimit);
     expect(caps.usageHistory).toBe(!!provider.getUserUsage);
     expect(caps.nodeStats).toBe(!!provider.getNodeStats);
-    expect(caps.hostManagement).toBe(!!provider.listHosts && !!provider.updateHost);
+    // Host management = list + repoint + create + delete (the relay Host flip,
+    // the rotation machine's `ensureListenerHost` and the delete cleanup).
+    expect(caps.hostManagement).toBe(
+      !!provider.listHosts &&
+        !!provider.updateHost &&
+        !!provider.createHost &&
+        !!provider.deleteHost,
+    );
+    expect(!!provider.createHost).toBe(!!provider.deleteHost);
     expect(caps.nodeInventory).toBe(!!provider.getNodeInventory);
   });
 });

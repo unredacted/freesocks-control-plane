@@ -4,7 +4,7 @@
  * what is written back.
  *
  * The rules that matter are (a) a result is only a qualification for the exact
- * configuration it ran against, so a slot/profile/intent write that lands while
+ * configuration it ran against, so a listener/intent write that lands while
  * the session is in flight must not be recorded as a pass, and (b) a relay with
  * no usable qualification credential fails loudly rather than being skipped.
  */
@@ -14,6 +14,7 @@ import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { qualificationVerdict } from './lib/edges/intent';
+import { seedEdgeFixture, wsListener } from './lib/edges/testing/fixtures';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -39,86 +40,30 @@ async function seed(
   t: ReturnType<typeof convexTest>,
   opts: { qualificationUserId?: string; withIntent?: boolean } = {},
 ) {
-  return await t.run(async (ctx) => {
-    const now = Date.now();
-    const serverId = await ctx.db.insert('backendServers', {
-      backend: 'remnawave',
-      name: 'panel',
-      slug: 'panel',
-      config: { type: 'remnawave', baseUrl: 'https://panel.test', apiToken: 'tok' },
-      isActive: true,
-      priority: 0,
-      keyCount: 0,
-      updatedAt: now,
-    });
-    const relayId = await ctx.db.insert('relays', {
-      slug: 'relay-a',
-      backendServerId: serverId,
-      nodeHostname: 'node-a',
-      originAddress: 'node.example',
-      modeSlugs: [],
-      enabled: true,
-      autoRotate: false,
-      hostManaged: true,
-      providerAffinity: 'rotate',
-      desiredPublished: 1,
-      standbyPerRelay: 0,
-      cooldownMs: 1,
-      maxRotationsPerDay: 3,
-      drainMs: 1,
-      publicationEpoch: 0,
-      publishedEdgeIds: [],
-      standbyEdgeIds: [],
-      rotationsToday: 0,
-      ...(opts.qualificationUserId ? { qualificationUserId: opts.qualificationUserId } : {}),
-      updatedAt: now,
-    });
-    const profileId = await ctx.db.insert('protocolProfiles', {
-      slug: 'pf-ws',
-      name: 'ws profile',
-      protocol: 'ws' as const,
-      serverNames: [{ sni: 'node.example', status: 'active' as const }],
-      enabled: true,
-      revision: 3,
-      updatedAt: now,
-    });
-    const slotId = await ctx.db.insert('relaySlots', {
-      relayId,
-      slotKey: 'a1',
-      profileId,
-      inboundTag: 'T',
-      configProfileUuid: 'cp',
-      configProfileInboundUuid: 'in',
-      originPort: 443,
-      templateHostRemark: 'node-a-relay-a1',
-      deployed: true,
-      retired: false,
-      originTransport: intent.originTransport,
-      transportParams: { path: '/relay-ws', upgradeToken: 'websocket' },
-      revision: 5,
-      updatedAt: now,
-    });
-    const edgeId = await ctx.db.insert('edges', {
-      relayId,
-      slotId,
-      provider: 'cloudflare',
-      managed: true,
-      name: 'fcp-relay-a1-000000',
-      steps: [],
-      resources: [],
-      listeners: [],
-      addresses: { hostname: HOSTNAME },
-      layer: 'l7',
-      ...(opts.withIntent === false ? {} : { provisionIntent: JSON.stringify(intent) }),
-      publication: 'unpublished',
-      status: 'active',
-      statusChangedAt: now,
-      health: 'unknown',
-      destroyAttempts: 0,
-      updatedAt: now,
-    });
-    return { edgeId, slotId, profileId, relayId };
+  // A VLESS-over-WebSocket listener (the only kind with an authenticated
+  // proof), registered the way the node role does it, so its revision is 1.
+  const fx = await seedEdgeFixture(t, {
+    listeners: [
+      wsListener({
+        tlsNames: ['node.example'],
+        transportParams: { path: '/relay-ws', upgradeToken: 'websocket' },
+        originTransport: intent.originTransport,
+      }),
+    ],
   });
+  if (opts.qualificationUserId)
+    await t.run((ctx) =>
+      ctx.db.patch(fx.relayId, { qualificationUserId: opts.qualificationUserId }),
+    );
+  // An observe-only import of the front: a hostname edge on the ws listener.
+  const { edgeId } = await t.mutation(internal.relays.adoptEdge, {
+    relayId: fx.relayId,
+    listenerId: fx.listenerId,
+    hostname: HOSTNAME,
+  });
+  if (opts.withIntent !== false)
+    await t.run((ctx) => ctx.db.patch(edgeId, { provisionIntent: JSON.stringify(intent) }));
+  return { edgeId: edgeId as Id<'edges'>, listenerId: fx.listenerId, relayId: fx.relayId };
 }
 
 const passing = (checkedAt: number) => ({
@@ -133,13 +78,13 @@ const passing = (checkedAt: number) => ({
 });
 
 describe('frontQualify.context', () => {
-  test('hands the session the hostname, transport parameters and credential', async () => {
+  test('hands the session the hostname, what the listener speaks, its transport parameters and the credential', async () => {
     const t = convexTest(schema, modules);
-    const { edgeId, slotId, profileId } = await seed(t, { qualificationUserId: UUID });
+    const { edgeId, listenerId } = await seed(t, { qualificationUserId: UUID });
     const c = await t.query(internal.frontQualify.context, { edgeId });
     expect(c).not.toBeNull();
     expect(c!.hostname).toBe(HOSTNAME);
-    expect(c!.protocol).toBe('ws');
+    expect(c!.proto).toEqual({ protocol: 'vless', streamTransport: 'ws', security: 'tls' });
     expect(c!.carried).toBe(true);
     expect(c!.params).toEqual({
       path: '/relay-ws',
@@ -150,14 +95,26 @@ describe('frontQualify.context', () => {
     expect(c!.credential).toEqual({ uuid: UUID });
     expect(c!.stepTimeoutMs).toBe(10_000);
     expect(c!.ttlMinutes).toBe(60);
+    const listener = (await t.run((ctx) => ctx.db.get(listenerId)))!;
     expect(c!.binding).toMatchObject({
       hostname: HOSTNAME,
-      slotId,
-      slotRevision: 5,
-      profileId,
-      profileRevision: 3,
-      protocol: 'ws',
+      listenerId,
+      listenerRevision: listener.revision,
+      protocol: 'vless',
+      streamTransport: 'ws',
+      security: 'tls',
     });
+    expect(c!.binding.transportParamsHash).toMatch(/^[0-9a-f]{16}$/);
+    expect(c!.binding.intentHash).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  test('a listener without an authenticated proof is reported as not carried', async () => {
+    const t = convexTest(schema, modules);
+    const { edgeId, listenerId } = await seed(t, { qualificationUserId: UUID });
+    await t.run((ctx) => ctx.db.patch(listenerId, { protocol: 'trojan' }));
+    const c = await t.query(internal.frontQualify.context, { edgeId });
+    expect(c!.carried).toBe(false);
+    expect(c!.proto.protocol).toBe('trojan');
   });
 
   test('an id that is not a usable VLESS uuid is no credential', async () => {
@@ -190,6 +147,7 @@ describe('frontQualify.record', () => {
     const edge = await t.run((ctx) => ctx.db.get(edgeId));
     expect(edge!.frontQualification!.ok).toBe(true);
     expect(edge!.frontQualification!.expiresAt).toBe(checkedAt + 60 * 60_000);
+    expect(edge!.frontQualification!.binding).toEqual(c.binding);
     expect(edge!.readiness!.front).toBe('ready');
     expect(edge!.readiness!.dns).toBe('unknown');
     // Still a qualification for what would be published right now.
@@ -210,15 +168,16 @@ describe('frontQualify.record', () => {
     expect(edge!.readiness!.front).toBe('failed');
   });
 
-  test('a slot write during the session is not a qualification', async () => {
+  test('a listener write during the session is not a qualification (revision race)', async () => {
     const t = convexTest(schema, modules);
-    const { edgeId, slotId } = await seed(t, { qualificationUserId: UUID });
+    const { edgeId, listenerId } = await seed(t, { qualificationUserId: UUID });
     const c = (await t.query(internal.frontQualify.context, { edgeId }))!;
     // The node role redeploys the inbound on a different path mid-session.
+    const before = (await t.run((ctx) => ctx.db.get(listenerId)))!;
     await t.run((ctx) =>
-      ctx.db.patch(slotId, {
+      ctx.db.patch(listenerId, {
         transportParams: { path: '/moved', upgradeToken: 'websocket' },
-        revision: 6,
+        revision: before.revision + 1,
       }),
     );
     const out = await t.mutation(internal.frontQualify.record, {
@@ -230,8 +189,24 @@ describe('frontQualify.record', () => {
     const edge = await t.run((ctx) => ctx.db.get(edgeId));
     expect(edge!.frontQualification!.ok).toBe(false);
     // The stored binding describes the CURRENT configuration, not the proved one.
-    expect(edge!.frontQualification!.binding.slotRevision).toBe(6);
+    expect(edge!.frontQualification!.binding.listenerRevision).toBe(before.revision + 1);
+    expect(edge!.frontQualification!.binding.listenerId).toBe(listenerId);
     expect(edge!.readiness!.front).toBe('failed');
+  });
+
+  test('a revision bump alone (same parameters) also races: the proof is bound to the revision', async () => {
+    const t = convexTest(schema, modules);
+    const { edgeId, listenerId } = await seed(t, { qualificationUserId: UUID });
+    const c = (await t.query(internal.frontQualify.context, { edgeId }))!;
+    const before = (await t.run((ctx) => ctx.db.get(listenerId)))!;
+    await t.run((ctx) => ctx.db.patch(listenerId, { revision: before.revision + 1 }));
+    expect(
+      await t.mutation(internal.frontQualify.record, {
+        edgeId,
+        result: passing(Date.now()),
+        binding: c.binding,
+      }),
+    ).toEqual({ ok: false, code: 'config_changed' });
   });
 
   test('recording against a vanished edge is a no-op, not a crash', async () => {
@@ -263,12 +238,21 @@ describe('frontQualifyOps.run', () => {
     expect(edge!.readiness!.front).toBe('failed');
   });
 
-  test('an L4 profile is refused before any socket is opened', async () => {
+  test('a listener with no authenticated proof is refused before any socket is opened', async () => {
     const t = convexTest(schema, modules);
-    const { edgeId, profileId } = await seed(t, { qualificationUserId: UUID });
-    await t.run((ctx) => ctx.db.patch(profileId as Id<'protocolProfiles'>, { protocol: 'tls' }));
-    const out = await t.action(internal.frontQualifyOps.run, { edgeId });
-    expect(out).toEqual({ ok: false, code: 'unsupported_protocol' });
+    const { edgeId, listenerId } = await seed(t, { qualificationUserId: UUID });
+    // Raw TCP is not HTTP-carried (vless/raw/tls).
+    await t.run((ctx) => ctx.db.patch(listenerId, { streamTransport: 'raw' }));
+    expect(await t.action(internal.frontQualifyOps.run, { edgeId })).toEqual({
+      ok: false,
+      code: 'unsupported_protocol',
+    });
+    // Trojan over ws is HTTP-carried but has no VLESS proof.
+    await t.run((ctx) => ctx.db.patch(listenerId, { streamTransport: 'ws', protocol: 'trojan' }));
+    expect(await t.action(internal.frontQualifyOps.run, { edgeId })).toEqual({
+      ok: false,
+      code: 'unsupported_protocol',
+    });
   });
 
   test('a missing edge never reaches the network', async () => {
