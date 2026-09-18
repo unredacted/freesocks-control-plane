@@ -124,6 +124,8 @@ export const apiClient = {
     request(path, { method: 'POST', body: JSON.stringify(body) }, schema),
   patch: <S extends z.ZodTypeAny>(path: string, body: unknown, schema: S) =>
     request(path, { method: 'PATCH', body: JSON.stringify(body) }, schema),
+  put: <S extends z.ZodTypeAny>(path: string, body: unknown, schema: S) =>
+    request(path, { method: 'PUT', body: JSON.stringify(body) }, schema),
   delete: <S extends z.ZodTypeAny>(path: string, schema: S) =>
     request(path, { method: 'DELETE' }, schema),
 };

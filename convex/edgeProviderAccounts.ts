@@ -10,6 +10,7 @@
  * provider only.
  */
 import { ConvexError, v } from 'convex/values';
+import { fakeShadowedIds } from './lib/edges/providers/fake';
 import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
@@ -65,6 +66,9 @@ export function mapAccountAdmin(r: Doc<'edgeProviderAccounts'>) {
     observedSettings: r.observedSettings ? parseObservedSettings(r.observedSettings) : null,
     observedAt: r.observedAt ? new Date(r.observedAt).toISOString() : null,
     inventoryAt: r.inventoryAt ? new Date(r.inventoryAt).toISOString() : null,
+    // Dev only: the adapter behind this account is the in-memory fake, so the
+    // CMS can badge it and no screenshot shows a real adapter name for it.
+    fake: fakeShadowedIds().includes(r.provider),
     createdAt: new Date(r._creationTime).toISOString(),
     updatedAt: new Date(r.updatedAt).toISOString(),
   };

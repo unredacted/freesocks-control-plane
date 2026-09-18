@@ -102,6 +102,7 @@ import type * as edgeAttribution from "../edgeAttribution.js";
 import type * as edgeAdmin from "../edgeAdmin.js";
 import type * as edgeDetector from "../edgeDetector.js";
 import type * as edgeMaintenance from "../edgeMaintenance.js";
+import type * as edgeOperator from "../edgeOperator.js";
 import type * as frontQualify from "../frontQualify.js";
 import type * as frontQualifyOps from "../frontQualifyOps.js";
 import type * as probeOps from "../probeOps.js";
@@ -226,6 +227,7 @@ declare const fullApi: ApiFromModules<{
   edgeAdmin: typeof edgeAdmin;
   edgeDetector: typeof edgeDetector;
   edgeMaintenance: typeof edgeMaintenance;
+  edgeOperator: typeof edgeOperator;
   frontQualify: typeof frontQualify;
   frontQualifyOps: typeof frontQualifyOps;
   probeOps: typeof probeOps;

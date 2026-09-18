@@ -6,6 +6,14 @@
  */
 import { z } from 'zod';
 import { AuditEntry } from './admin';
+import {
+  ATTENTION_ACTIONS,
+  ATTENTION_KINDS,
+  ATTENTION_SEVERITIES,
+  PREFLIGHT_KINDS,
+  SETUP_STEP_IDS,
+  SETUP_STEP_STATUSES,
+} from './edgeCodes';
 import { EDGE_PROVIDER_IDS } from './edgeProviderIds';
 import {
   LISTENER_PROTOCOL_IDS,
@@ -42,6 +50,8 @@ export const EdgeProviderAccountAdmin = z.object({
   observedSettings: z.record(z.string(), z.string()).nullable().default(null),
   observedAt: isoN.default(null),
   inventoryAt: isoN,
+  /** Dev only: the adapter behind this account is the in-memory fake (never true outside development). */
+  fake: z.boolean().default(false),
   createdAt: iso,
   updatedAt: iso,
 });
@@ -1027,6 +1037,10 @@ export const EdgeConfigView = z.object({
     .passthrough(),
   secrets: z.object({ globalpingToken: z.boolean(), ripeAtlasKey: z.boolean() }),
   families: z.array(z.string()),
+  /** Per integer / ratio knob (flat path, e.g. `detect.windowMinutes`): the bounds the server clamps to. */
+  bounds: z.record(z.string(), z.object({ min: z.number(), max: z.number() })).default({}),
+  /** The compiled defaults (same flat paths), for the reset-to-default affordance. */
+  defaults: z.record(z.string(), z.unknown()).default({}),
 });
 export type EdgeConfigView = z.infer<typeof EdgeConfigView>;
 
@@ -1062,3 +1076,291 @@ export const RelayListenerUpsertResponse = z.object({
   changed: z.boolean(),
   templateHostRemark: z.string().nullable(),
 });
+
+// --- operator endpoints (guided setup, preflight, attention, quarantine, timeline, usage) ------------
+
+export const SetupStepId = z.enum(SETUP_STEP_IDS);
+export type SetupStepId = z.infer<typeof SetupStepId>;
+export const SetupStepStatus = z.enum(SETUP_STEP_STATUSES);
+export type SetupStepStatus = z.infer<typeof SetupStepStatus>;
+
+/** One reason a step is not done. `subject` names the thing (slug, account name, listener key); `detail` is a short server hint. */
+export const SetupBlocker = z.object({
+  code: z.string(),
+  subject: z.string().nullable().default(null),
+  detail: z.string().nullable().default(null),
+});
+export type SetupBlocker = z.infer<typeof SetupBlocker>;
+
+export const SetupStep = z.object({
+  id: SetupStepId,
+  status: SetupStepStatus,
+  blockers: z.array(SetupBlocker),
+  warnings: z.array(SetupBlocker).default([]),
+  /** Small facts the step body renders (counts, names, flags). Never secrets, never addresses of a deployment. */
+  facts: z.record(z.string(), z.unknown()).default({}),
+});
+export type SetupStep = z.infer<typeof SetupStep>;
+
+/** What the wizard has selected so far (server-derived: the relay's own rows, or the best candidate). */
+export const SetupContext = z.object({
+  relaySlug: z.string().nullable(),
+  relayId: z.string().nullable(),
+  originKind: z.enum(['panel-node', 'backend-server', 'manual']).nullable(),
+  backendServerId: z.string().nullable(),
+  accountId: z.string().nullable(),
+  templateId: z.string().nullable(),
+  listenerKey: z.string().nullable(),
+  edgeId: z.string().nullable(),
+});
+export type SetupContext = z.infer<typeof SetupContext>;
+
+/** A relay the wizard could resume (fleet scope). */
+export const SetupResumeEntry = z.object({
+  relaySlug: z.string(),
+  relayId: z.string(),
+  currentStep: SetupStepId.nullable(),
+  complete: z.boolean(),
+});
+
+/**
+ * `GET setup-status[?relay=<slug>]` / `POST setup-status { draft }`: the guided
+ * setup judged for ONE relay (or a draft before the relay exists). Without a
+ * relay it is the fleet aggregation: the overview checklist plus relays with an
+ * incomplete setup to resume.
+ */
+export const SetupStatusResponse = z.object({
+  scope: z.enum(['relay', 'draft', 'fleet']),
+  steps: z.array(SetupStep),
+  /** The first step that is not done or skipped (null = complete). */
+  currentStep: SetupStepId.nullable(),
+  complete: z.boolean(),
+  context: SetupContext,
+  /** Public values the node role needs (slug, listener keys, the by-slug URL path); never a token or an address. */
+  roleVars: z.record(z.string(), z.string()).nullable().default(null),
+  resume: z.array(SetupResumeEntry).default([]),
+  generatedAt: iso,
+});
+export type SetupStatusResponse = z.infer<typeof SetupStatusResponse>;
+
+/** The draft the wizard posts before the relay row exists (steps 1 to 3 judge layer compatibility against it). */
+export const SetupDraft = z.object({
+  origin: RelayWireOrigin.nullable(),
+  listeners: z
+    .array(
+      z.object({
+        protocol: ListenerProtocolId,
+        streamTransport: ListenerStreamTransport,
+        security: ListenerSecurity,
+        originPort: z.number().int().optional(),
+        originTransport: ListenerOriginTransport.optional(),
+        tlsNames: z.array(z.string()).optional(),
+      }),
+    )
+    .default([]),
+});
+export type SetupDraft = z.infer<typeof SetupDraft>;
+
+export const PreflightKind = z.enum(PREFLIGHT_KINDS);
+export type PreflightKind = z.infer<typeof PreflightKind>;
+
+/** `POST relays/{id}/preflight`: a dry run of the operation it names (writes nothing). */
+export const PreflightRequest = z.object({
+  kind: PreflightKind,
+  edgeId: z.string().optional(),
+  listenerKey: z.string().optional(),
+  accountId: z.string().optional(),
+  templateId: z.string().optional(),
+  trigger: z.enum(['manual', 'detector', 'api', 'reconcile']).optional(),
+});
+export type PreflightRequest = z.infer<typeof PreflightRequest>;
+
+export const PreflightIssue = z.object({
+  code: z.string(),
+  detail: z.string().nullable().default(null),
+});
+export const PreflightResponse = z.object({
+  ok: z.boolean(),
+  blockers: z.array(PreflightIssue),
+  warnings: z.array(PreflightIssue),
+  /** What the machine would pick (null when blocked before selection, or when the kind needs no pick). */
+  wouldSelect: z
+    .object({
+      listenerKey: z.string().nullable(),
+      standbyEdgeId: z.string().nullable(),
+      accountId: z.string().nullable(),
+      accountName: z.string().nullable(),
+      provider: EdgeProviderId.nullable(),
+      layer: EdgeLayer.nullable(),
+      templateId: z.string().nullable(),
+    })
+    .nullable(),
+});
+export type PreflightResponse = z.infer<typeof PreflightResponse>;
+
+/** `POST relays/{id}/test-provision`: the explicit bootstrap provision (a tested but unqualified account is allowed). */
+export const TestProvisionRequest = z.object({
+  accountId: z.string(),
+  listenerKey: z.string(),
+  templateId: z.string().optional(),
+});
+export type TestProvisionRequest = z.infer<typeof TestProvisionRequest>;
+
+export const AttentionKind = z.enum(ATTENTION_KINDS);
+export const AttentionSeverity = z.enum(ATTENTION_SEVERITIES);
+export const AttentionAction = z.enum(ATTENTION_ACTIONS);
+export const AttentionItem = z.object({
+  /** Stable per item: `<kind>:<subject id>`, for dismiss-free rendering keys. */
+  id: z.string(),
+  kind: AttentionKind,
+  severity: AttentionSeverity,
+  relaySlug: z.string().nullable(),
+  relayId: z.string().nullable(),
+  edgeId: z.string().nullable().default(null),
+  listenerKey: z.string().nullable().default(null),
+  accountId: z.string().nullable().default(null),
+  rotationId: z.string().nullable().default(null),
+  /** A short code the CMS maps to words (a veto, a failure code, a Host state); never free text from a provider. */
+  code: z.string().nullable().default(null),
+  /** Small facts for the row (counts, country codes, ages in ms). */
+  facts: z.record(z.string(), z.unknown()).default({}),
+  action: AttentionAction,
+  since: isoN.default(null),
+});
+export type AttentionItem = z.infer<typeof AttentionItem>;
+export const AttentionResponse = z.object({
+  items: z.array(AttentionItem),
+  generatedAt: iso,
+});
+export type AttentionResponse = z.infer<typeof AttentionResponse>;
+
+/** A client-facing Host as a tuple (what the panel serves for a listener). */
+export const HostTuple = z.object({
+  address: z.string(),
+  port: z.number(),
+  sni: z.string().nullable(),
+  host: z.string().nullable(),
+});
+export type HostTuple = z.infer<typeof HostTuple>;
+
+/**
+ * `GET relays/{id}/quarantine` (+ `POST …/quarantine/inspect` for the live
+ * column): both recorded bindings as Host tuples and, per listener, the Host
+ * the panel serves right now and which binding it matches.
+ */
+export const QuarantineView = z.object({
+  quarantine: z.object({ rotationId: z.string(), since: iso, reason: z.string() }).nullable(),
+  rotation: EdgeRotationAdmin.nullable(),
+  listeners: z.array(
+    z.object({
+      listenerKey: z.string(),
+      remark: z.string().nullable(),
+      /** The binding the rotation replaced (rollback target). */
+      previous: HostTuple.extend({ edgeId: z.string().nullable() }).nullable(),
+      /** The binding the rotation wrote (or meant to write). */
+      current: HostTuple.extend({ edgeId: z.string().nullable() }).nullable(),
+      /** What the panel serves for this listener's remark; null until inspected or when absent. */
+      live: HostTuple.extend({ uuid: z.string() }).nullable(),
+      match: z.enum(['previous', 'current', 'neither', 'absent', 'unknown']),
+    }),
+  ),
+  /** Hosts the panel serves under this relay's remarks that no listener claims (duplicates, legacy variants). */
+  extraHosts: z.array(HostTuple.extend({ uuid: z.string(), remark: z.string() })).default([]),
+  inspectedAt: isoN.default(null),
+});
+export type QuarantineView = z.infer<typeof QuarantineView>;
+
+/** `GET relays/{id}/timeline`: merged audit rows (relay, non-destroyed edges, rotations, probe verdicts), newest first. */
+export const TimelineResponse = z.object({
+  entries: z.array(
+    AuditEntry.extend({
+      /** Which row the entry came from (for the icon and the link). */
+      subject: z.enum(['relay', 'edge', 'rotation', 'probe', 'listener', 'other']),
+    }),
+  ),
+  /** More rows exist beyond the cap. */
+  truncated: z.boolean().default(false),
+});
+export type TimelineResponse = z.infer<typeof TimelineResponse>;
+
+/** `GET providers/usage`: capacity and budget per account, desired vs published per relay. */
+export const ProvidersUsageResponse = z.object({
+  accounts: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      provider: EdgeProviderId,
+      layer: EdgeLayer,
+      enabled: z.boolean(),
+      qualified: z.boolean(),
+      tested: z.boolean(),
+      fake: z.boolean().default(false),
+      liveEdges: z.number(),
+      maxLiveEdges: z.number(),
+      allocationsToday: z.number(),
+      dailyAllocationBudget: z.number(),
+      published: z.number(),
+      standby: z.number(),
+      draining: z.number(),
+    }),
+  ),
+  relays: z.array(
+    z.object({
+      id: z.string(),
+      slug: z.string(),
+      desiredPublished: z.number(),
+      published: z.number(),
+      standby: z.number(),
+      draining: z.number(),
+      /** Edges the reconcile cron would provision if `autoProvisionToDesired` were on. */
+      plannedIfAutoProvision: z.number(),
+    }),
+  ),
+  totals: z.object({
+    liveEdges: z.number(),
+    published: z.number(),
+    standby: z.number(),
+    draining: z.number(),
+    plannedIfAutoProvision: z.number(),
+  }),
+  generatedAt: iso,
+});
+export type ProvidersUsageResponse = z.infer<typeof ProvidersUsageResponse>;
+
+/** `POST relays/{id}/listeners/{key}/adopt-host { hostUuid }`: take over an operator-created Host. */
+export const AdoptHostRequest = z.object({ hostUuid: z.string() });
+export const AdoptHostResponse = z.object({
+  ok: z.boolean(),
+  listenerKey: z.string(),
+  host: z.object({ uuid: z.string(), ownership: z.literal('adopted') }),
+});
+export type AdoptHostResponse = z.infer<typeof AdoptHostResponse>;
+
+/** `POST relays/{id}/resolve-quarantine { keep, reason? }` (the reason is audited, never free-form provider text). */
+export const ResolveQuarantineRequest = z.object({
+  keep: z.enum(['current', 'previous']),
+  reason: z.string().max(200).optional(),
+});
+
+/** `GET edges/delivery-bindings`: bindings without a live relay (a `keep-dark` left behind, to release). */
+export const DeliveryBindingAdmin = z.object({
+  id: z.string(),
+  backendServerId: z.string(),
+  nodeName: z.string().nullable(),
+  relaySlug: z.string(),
+  /** True when a relay row still claims this binding. */
+  relayPresent: z.boolean(),
+  policyVersion: z.number(),
+  state: z.enum(['active', 'released']),
+  updatedAt: iso,
+});
+export const DeliveryBindingsResponse = z.object({ bindings: z.array(DeliveryBindingAdmin) });
+export type DeliveryBindingAdmin = z.infer<typeof DeliveryBindingAdmin>;
+
+/** `GET maintenance` / `POST maintenance/{freeze|thaw}`: the "pause new edge work" switch (docs/edges.md). */
+export const EdgeMaintenanceView = z.object({
+  frozen: z.boolean(),
+  reason: z.string().nullable().default(null),
+  since: isoN.default(null),
+});
+export type EdgeMaintenanceView = z.infer<typeof EdgeMaintenanceView>;

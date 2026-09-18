@@ -576,6 +576,8 @@ export type MessageKey =
   | "report.action"
   | "report.body"
   | "report.confirm"
+  | "report.connectionLegend"
+  | "report.connectionUnsure"
   | "report.done"
   | "report.doneBody"
   | "report.failed"

@@ -1053,6 +1053,8 @@
     "title": "Report a connection problem",
     "body": "Tell us what's going wrong. Nothing about your key or account changes.",
     "reasonLegend": "What's the problem?",
+    "connectionLegend": "Which connection were you using?",
+    "connectionUnsure": "Not sure",
     "reasonCantConnect": "I can't connect at all",
     "reasonSlow": "It connects, but it's very slow",
     "reasonDisconnects": "It keeps disconnecting",

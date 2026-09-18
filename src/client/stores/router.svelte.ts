@@ -4,7 +4,13 @@
  *
  * No external library: for our 9 routes a custom router is ~30 lines and
  * avoids pulling in another runtime dependency.
+ *
+ * Also re-exports the pure `matchRoute(pattern, pathname)` helper
+ * (`lib/matchRoute.ts`) for the prefix sections (Admin -> Edges) that dispatch
+ * on `:param` patterns instead of exact paths.
  */
+export { matchRoute, type RouteMatch } from '../lib/matchRoute';
+
 function createRouter() {
   let pathname = $state(typeof window !== 'undefined' ? window.location.pathname : '/');
   let search = $state(typeof window !== 'undefined' ? window.location.search : '');
@@ -42,7 +48,12 @@ function createRouter() {
     });
   }
 
-  function navigate(to: string, opts: { replace?: boolean } = {}) {
+  /**
+   * `replace` swaps the current history entry instead of pushing one.
+   * `scroll: false` keeps the scroll position: used for search-only changes
+   * (a drawer opening via `?edge=`), which App.svelte does not remount.
+   */
+  function navigate(to: string, opts: { replace?: boolean; scroll?: boolean } = {}) {
     if (opts.replace) {
       history.replaceState({ fsEntry: entryId }, '', to);
     } else {
@@ -54,7 +65,7 @@ function createRouter() {
     pathname = url.pathname;
     search = url.search;
     // Reset scroll, like a normal navigation would.
-    window.scrollTo(0, 0);
+    if (opts.scroll !== false) window.scrollTo(0, 0);
   }
 
   return {

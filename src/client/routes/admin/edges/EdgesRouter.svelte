@@ -1,0 +1,56 @@
+<script lang="ts">
+  /**
+   * Dispatches `/admin/edges/...` to its page with `matchRoute`. App.svelte keys
+   * the route on the pathname, so a path change remounts the page and a
+   * search-only change (`?tab=`, `?edge=`) does not: pages keep their view state
+   * in the query string through `searchParam` (lib/urlState.svelte.ts).
+   *
+   * Routes: see EDGES_ROUTES in ./lib/routes.ts (the single list of patterns).
+   */
+  import { router } from '../../../stores/router.svelte';
+  import Link from '../../../components/Link.svelte';
+  import * as Card from '@client/components/ui/card';
+  import { resolveEdgesRoute, edgesPaths } from './lib/routes';
+  import EdgesOverview from './EdgesOverview.svelte';
+  import EdgesSetup from './EdgesSetup.svelte';
+  import RelayPage from './RelayPage.svelte';
+  import EdgesProviders from './EdgesProviders.svelte';
+  import ProviderAccountPage from './ProviderAccountPage.svelte';
+  import EdgesTemplates from './EdgesTemplates.svelte';
+  import EdgesProbes from './EdgesProbes.svelte';
+  import EdgesSettings from './EdgesSettings.svelte';
+
+  const route = $derived(resolveEdgesRoute(router.pathname));
+</script>
+
+{#if route.page === 'overview'}
+  <EdgesOverview />
+{:else if route.page === 'setup'}
+  <EdgesSetup />
+{:else if route.page === 'relay'}
+  <RelayPage slug={route.slug} />
+{:else if route.page === 'providers'}
+  <EdgesProviders />
+{:else if route.page === 'provider'}
+  <ProviderAccountPage id={route.id} />
+{:else if route.page === 'templates'}
+  <EdgesTemplates />
+{:else if route.page === 'probes'}
+  <EdgesProbes />
+{:else if route.page === 'settings'}
+  <EdgesSettings />
+{:else}
+  <Card.Root class="mx-auto mt-10 max-w-md">
+    <Card.Header>
+      <Card.Title>Page not found</Card.Title>
+      <Card.Description>
+        There is no Edges page at this address. It may have been renamed, or the link is incomplete.
+      </Card.Description>
+    </Card.Header>
+    <Card.Content>
+      <Link href={edgesPaths.overview()} class="text-primary text-sm underline underline-offset-4">
+        Back to the Edges overview
+      </Link>
+    </Card.Content>
+  </Card.Root>
+{/if}

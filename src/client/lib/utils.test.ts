@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { formatBytes, daysUntil, copyText } from './utils';
+import { formatBytes, daysUntil, copyText, subscriptionDisplayUrl } from './utils';
 
 const DAY = 86_400_000;
 
@@ -68,5 +68,31 @@ describe('copyText', () => {
       clipboard: { writeText: vi.fn().mockRejectedValue(new Error('denied')) },
     });
     await expect(copyText('x')).resolves.toBe(false);
+  });
+});
+
+describe('subscriptionDisplayUrl', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const at = (href: string) => {
+    const u = new URL(href);
+    vi.stubGlobal('location', { origin: u.origin, host: u.host, protocol: u.protocol });
+  };
+
+  test('fronted token URL by default; the raw backend URL only without a token', () => {
+    at('https://fcp.example/account');
+    expect(subscriptionDisplayUrl('tok', 'ss://raw')).toBe('https://fcp.example/api/v1/sub/tok');
+    expect(subscriptionDisplayUrl(null, 'ss://raw')).toBe('ss://raw');
+  });
+
+  test('an edge-required single-key subscription shows an Outline dynamic access key (https only)', () => {
+    at('https://fcp.example/account');
+    expect(subscriptionDisplayUrl('tok', '', { dynamicAccessKey: true })).toBe(
+      'ssconf://fcp.example/api/v1/sub/tok#FreeSocks',
+    );
+    // ssconf implies HTTPS, so a plain-http dev origin keeps the ordinary URL.
+    at('http://localhost:5173/account');
+    expect(subscriptionDisplayUrl('tok', '', { dynamicAccessKey: true })).toBe(
+      'http://localhost:5173/api/v1/sub/tok',
+    );
   });
 });

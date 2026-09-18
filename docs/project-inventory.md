@@ -335,14 +335,22 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   **edge-required delivery policy** (a covered subscription is served a rendered body or 503,
   never the origin body; mirrors are revalidated or stubbed; the account view drops the raw
   URL); a maintenance switch (`edgeMaintenance`) + reset drain (`seedEdgesReset`).
-  **Telemetry → Probes** (`/admin/telemetry/probes`) holds the reachability matrix over every
-  probe target, run history, "probe now", the probe settings and a probe audit feed. **Every
+  **Edges → Probes** (`/admin/edges/probes`; the old `/admin/telemetry/probes` redirects) holds
+  the reachability matrix over every probe target, run history, "probe now" and a probe audit
+  feed; probe settings live under Edges → Settings. **Every
   route under `/api/v1/admin/edges/` is HPKE-sealed by verb.** IaC: ONE idempotent
   `PUT …/edges/relays/by-slug/{slug}` carrying origin + listeners (+ `GET`, `DELETE
 ?disposition=`), the response carrying `publishedEndpoints`, `connectionPlan` and `hostsPlan`
-  for the node role. **The admin CMS section is a placeholder in this release** (the panels
-  that spoke the old slot / profile contract were removed; the rebuilt guided setup, per-relay
-  pages and dashboard follow). **Dormant by default** (every `edge.*` switch ships off).
+  for the node role. **The admin CMS section** (own lazy chunk,
+  `src/client/routes/admin/edges/`, nav group Edges) is an overview dashboard (fleet tiles,
+  server-ranked attention list, readiness), a **guided setup** driven entirely by the
+  relay-scoped `setup-status` endpoint, per-relay pages (edges, listeners, rotations, probes,
+  timeline, quarantine resolver), providers (+ usage), templates, probes and settings, on top
+  of the operator endpoints `setup-status`, `test-provision` (first edge from a tested but
+  unqualified account), `preflight` (read-only dry run), `attention`, `timeline`, `quarantine`,
+  `providers/usage`, `adopt-host`, `maintenance` and `delivery-bindings`. Member side: the
+  report dialog asks which connection was in use when the key sits behind edges; an
+  edge-required single-key subscription is shown as a dynamic access key. **Dormant by default** (every `edge.*` switch ships off).
 
 ### 1.7 Integrations & runtime
 

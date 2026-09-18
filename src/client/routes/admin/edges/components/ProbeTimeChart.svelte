@@ -9,11 +9,11 @@
   } from '@client/components/ui/card';
   import { Button } from '@client/components/ui/button';
   import { Skeleton } from '@client/components/ui/skeleton';
-  import InlineError from '../../components/InlineError.svelte';
-  import AdminRangePicker from './AdminRangePicker.svelte';
-  import { apiErrorMessage } from '../../lib/errors';
-  import { adminProbeSummaryQuery, type TelemetryRange } from '../../lib/queries';
-  import { VIZ_PALETTE } from '../../lib/telemetryViz';
+  import InlineError from '../../../../components/InlineError.svelte';
+  import AdminRangePicker from '../../AdminRangePicker.svelte';
+  import { apiErrorMessage } from '../../../../lib/errors';
+  import { adminProbeSummaryQuery, type TelemetryRange } from '../../../../lib/queries';
+  import { VIZ_PALETTE } from '../../../../lib/telemetryViz';
 
   /**
    * Probe outcomes over time (Telemetry → Probes): one stacked bar per bucket
