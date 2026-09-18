@@ -842,6 +842,31 @@ but unqualified account per layer, so the first edge goes through the explicit t
 path rather than ordinary selection. Nothing about the fake is reachable when either variable
 is missing, and it never appears in the provider id lists or the wire contracts.
 
+## Provider accounts: names, test answers and offered regions
+
+**Name.** An account's name is a label for admins (1 to 63 letters, digits, spaces, dots,
+dashes and underscores). Edges reference the account by id, so `PATCH …/providers/{id}` with
+`name` renames it without touching the provider or the qualification (Rename on the account
+page). Names stay unique.
+
+**The provider's answer.** A provider error's message carries the HTTP status and a short
+code, never the response body: bodies of provisioning calls echo origins and fronted
+hostnames. The exception is the calls an admin makes by hand before anything exists, the
+credential test and the account form's listings (`DIAGNOSTIC_STEPS` in
+`convex/lib/edges/providers/http.ts`). Those requests carry no origin and no hostname, so
+their error keeps `meta.detail`: the provider's answer with address literals and the
+credential replaced, capped at 600 characters. It is returned by `test-credentials` and
+`rotate-credentials` (`detail`), by `discover` (`errorDetails`, per failed list), stored as
+`edgeProviderAccounts.lastTestErrorDetail` until the next passing test, and shown folded away
+under "Show the provider's answer". It never enters a thrown message, a log line or an audit
+row. A new adapter gets this by naming its test and listing steps from that set.
+
+**Offered regions.** A provider's region listing can include regions the account cannot use.
+The Gcore adapter keeps only `ACTIVE` regions and, once it knows a project, asks each one for
+its load balancers (the credential test's own call, 8 at a time). A region that answers with
+a definite refusal (a 4xx other than 401 and 429) is not offered; a timeout or a 5xx says
+nothing about the region, so it stays.
+
 ## Adding an edge provider
 
 Everything derives from the id tuple in `src/shared/contracts/edgeProviderIds.ts`; every
@@ -874,7 +899,7 @@ lifecycle runs in that test and its rows appear here.
 
 | provider   | method | path                                                                              | purpose                                                                                                           | source                                                                                                                                                                            |
 | ---------- | ------ | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| gcore      | GET    | `^/cloud/v1/loadbalancers/[^/]+/[^/]+$`                                           | list load balancers: credential test, discovery by name, inventory                                                | https://api.gcore.com/docs/cloud (Cloud API v1), 2026-09-16                                                                                                                       |
+| gcore      | GET    | `^/cloud/v1/loadbalancers/[^/]+/[^/]+$`                                           | list load balancers: credential test, region check, discovery by name, inventory                                  | https://api.gcore.com/docs/cloud (Cloud API v1), 2026-09-16                                                                                                                       |
 | gcore      | POST   | `^/cloud/v1/loadbalancers/[^/]+/[^/]+$`                                           | create the load balancer with its TCP listener, pool and health monitor                                           | https://api.gcore.com/docs/cloud (Cloud API v1), 2026-09-16                                                                                                                       |
 | gcore      | GET    | `^/cloud/v1/loadbalancers/[^/]+/[^/]+/[^/]+$`                                     | read one load balancer: describe, inspect, delete confirmation                                                    | https://api.gcore.com/docs/cloud (Cloud API v1), 2026-09-16                                                                                                                       |
 | gcore      | DELETE | `^/cloud/v1/loadbalancers/[^/]+/[^/]+/[^/]+$`                                     | delete the load balancer (answers with a task)                                                                    | https://api.gcore.com/docs/cloud (Cloud API v1), 2026-09-16                                                                                                                       |

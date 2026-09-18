@@ -1,11 +1,19 @@
 /**
  * Shared HTTP plumbing for the hand-rolled provider adapters.
  *
- * `EdgeProviderError` deliberately carries NO response body text, NO URL and
- * NO headers: provider error bodies echo request fields (which may include an
- * origin address) and URLs may embed project ids or tokens. The most detail an
- * error holds is the HTTP status and a short provider error CODE, when the JSON
- * body carried one under a conventional key.
+ * `EdgeProviderError` carries NO URL and NO headers: URLs may embed project ids
+ * or tokens. Its MESSAGE (what gets thrown, logged and audited) holds only the
+ * HTTP status and a short provider error CODE, when the JSON body carried one
+ * under a conventional key.
+ *
+ * `meta.detail` is the one exception, for the operator who has to debug a
+ * refusal: a bounded excerpt of the provider's error body, with address
+ * literals and the credential replaced. It is captured ONLY on the calls an
+ * admin makes by hand before anything exists (`DIAGNOSTIC_STEPS`: the
+ * credential test and the account form's listings). Those requests carry no
+ * origin and no fronted hostname, so the answer cannot echo one; every
+ * provisioning, describe and destroy error stays body-free. The detail is
+ * shown to admins and never goes into a message, a log line or an audit row.
  */
 import type { z } from 'zod';
 import type { EdgeProviderId } from '../../edgeProviderIds';
@@ -15,8 +23,83 @@ export interface RelayProviderErrorMeta {
   step: string;
   status?: number;
   code?: string;
+  /** Redacted excerpt of the provider's error body; admin display only. */
+  detail?: string;
   retryable: boolean;
   timedOut: boolean;
+}
+
+/**
+ * The step names of the read-only calls behind "Test credentials" and the
+ * account form's choice lists, across every adapter. Only these capture
+ * `meta.detail`.
+ */
+const DIAGNOSTIC_STEPS = new Set([
+  'test',
+  'token-self',
+  'customer',
+  'projects',
+  'project',
+  'regions',
+  'region-probe',
+  'zones',
+  'networks',
+  'subnets',
+  'tls-configurations',
+]);
+export const capturesErrorDetail = (step: string): boolean => DIAGNOSTIC_STEPS.has(step);
+
+/** Longest error-body excerpt kept on an error. */
+export const MAX_ERROR_DETAIL_CHARS = 600;
+
+const IPV4_RE = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
+const IPV6_RE = /(?<![A-Za-z0-9:])(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}(?![A-Za-z0-9:])/g;
+
+/**
+ * An error body made safe to show an admin: address literals and every secret
+ * in `secrets` (request header values, 8+ chars, and their scheme-less tails)
+ * are replaced, whitespace is collapsed, and the result is capped.
+ */
+export function redactErrorDetail(text: string, secrets: string[] = []): string | undefined {
+  let out = text;
+  for (const raw of secrets) {
+    for (const s of [raw, raw.split(' ').pop() ?? '']) {
+      if (s.length >= 8) out = out.split(s).join('[redacted]');
+    }
+  }
+  out = out
+    .replace(IPV4_RE, '[address]')
+    .replace(IPV6_RE, (m) => (m.replace(/:/g, '').length >= 4 ? '[address]' : m))
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (out.length === 0) return undefined;
+  return out.length > MAX_ERROR_DETAIL_CHARS ? `${out.slice(0, MAX_ERROR_DETAIL_CHARS)}…` : out;
+}
+
+/** The failing half of a credential test, from whatever the adapter caught. */
+export function credentialTestFailure(e: unknown): { ok: false; code: string; detail?: string } {
+  if (e instanceof EdgeProviderError) {
+    return {
+      ok: false,
+      code: e.meta.code ?? String(e.meta.status ?? 'error'),
+      ...(e.meta.detail ? { detail: e.meta.detail } : {}),
+    };
+  }
+  return { ok: false, code: 'error' };
+}
+
+/**
+ * Record one failed listing of the account form: its code under `errors`, and
+ * the provider's redacted answer (when there was one) under `errorDetails`.
+ */
+export function noteDiscoverError(
+  out: { errors?: Record<string, string>; errorDetails?: Record<string, string> },
+  list: string,
+  e: unknown,
+): void {
+  const f = credentialTestFailure(e);
+  (out.errors ??= {})[list] = f.code;
+  if (f.detail) (out.errorDetails ??= {})[list] = f.detail;
 }
 
 export class EdgeProviderError extends Error {
@@ -63,6 +146,8 @@ export interface ProviderFetchArgs<T> {
   timeoutMs?: number;
   /** Statuses treated as success with an `undefined` body (e.g. 404 on DELETE). */
   okStatuses?: number[];
+  /** Secrets that are NOT a request header value (a signing secret): redacted from `meta.detail`. */
+  secrets?: string[];
 }
 
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -192,6 +277,9 @@ export async function providerFetch<T>(a: ProviderFetchArgs<T>): Promise<T> {
         step: a.step,
         status: res.status,
         code,
+        detail: capturesErrorDetail(a.step)
+          ? redactErrorDetail(text, [...Object.values(a.headers), ...(a.secrets ?? [])])
+          : undefined,
         retryable: res.status === 429 || res.status >= 500,
         timedOut: false,
       },
@@ -223,6 +311,7 @@ export function toProviderError(
   provider: EdgeProviderId,
   step: string,
   err: unknown,
+  secrets: string[] = [],
 ): EdgeProviderError {
   if (err instanceof EdgeProviderError) return err;
   const anyErr = err as { status?: unknown; name?: unknown; message?: unknown } | null;
@@ -239,6 +328,11 @@ export function toProviderError(
       step,
       status,
       code,
+      // An SDK error's message is the provider's own explanation of the refusal.
+      detail:
+        capturesErrorDetail(step) && typeof anyErr?.message === 'string'
+          ? redactErrorDetail(anyErr.message, secrets)
+          : undefined,
       retryable: timedOut || status === 429 || (status !== undefined && status >= 500),
       timedOut,
     },

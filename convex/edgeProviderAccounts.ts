@@ -77,6 +77,7 @@ export function mapAccountAdmin(r: Doc<'edgeProviderAccounts'>) {
     maxLiveEdges: r.maxLiveEdges,
     lastTestOkAt: r.lastTestOkAt ? new Date(r.lastTestOkAt).toISOString() : null,
     lastTestError: r.lastTestError ?? null,
+    lastTestErrorDetail: r.lastTestErrorDetail ?? null,
     // What the last credential test read at the provider (e.g. the zone's
     // encryption mode). Planning needs it; the operator never types it.
     observedSettings: r.observedSettings ? parseObservedSettings(r.observedSettings) : null,
@@ -448,6 +449,7 @@ export const create = internalMutation({
 export const update = internalMutation({
   args: {
     id: v.id('edgeProviderAccounts'),
+    name: v.optional(v.string()),
     settings: v.optional(v.any()),
     credentials: v.optional(v.any()),
     enabled: v.optional(v.boolean()),
@@ -465,6 +467,18 @@ export const update = internalMutation({
     const patch: Partial<Doc<'edgeProviderAccounts'>> = { updatedAt: Date.now() };
     let credentialsChanged = false;
     let settingsChanged = false;
+    // The name is a label only (edges reference the account by id), so a rename
+    // never touches the qualification.
+    if (a.name !== undefined && a.name !== row.name) {
+      checkName(a.name);
+      const dup = await ctx.db
+        .query('edgeProviderAccounts')
+        .withIndex('by_name', (q) => q.eq('name', a.name!))
+        .unique();
+      if (dup && dup._id !== row._id)
+        throw new ConvexError({ code: 'conflict', message: 'An account with that name exists' });
+      patch.name = a.name;
+    }
     if (a.settings !== undefined) {
       const settings = validateSettings(row.provider, a.settings);
       if (!settings.ok)
@@ -563,7 +577,7 @@ export const update = internalMutation({
       action: 'edge.provider_account.update',
       targetType: 'edge_provider_account',
       targetId: a.id,
-      payload: { name: row.name, provider: row.provider },
+      payload: { name: patch.name ?? row.name, provider: row.provider },
     });
     return { ok: true as const, requalify };
   },
@@ -900,12 +914,13 @@ export const reconcileAutoQualification = internalMutation({
   },
 });
 
-/** Stamp a credential test outcome (code only, never a body). */
+/** Stamp a credential test outcome: a code, plus the redacted provider answer on a failure. */
 export const recordTest = internalMutation({
   args: {
     id: v.id('edgeProviderAccounts'),
     ok: v.boolean(),
     code: v.optional(v.string()),
+    detail: v.optional(v.string()),
     /**
      * Facts the test read at the provider that planning needs but the operator
      * never enters (a zone's encryption mode, its WebSocket switch). Stored so a
@@ -913,14 +928,17 @@ export const recordTest = internalMutation({
      */
     observed: v.optional(v.record(v.string(), v.string())),
   },
-  handler: async (ctx, { id, ok, code, observed }) => {
+  handler: async (ctx, { id, ok, code, detail, observed }) => {
     const row = await ctx.db.get(id);
     if (!row) return null;
     const now = Date.now();
     await ctx.db.patch(id, {
       ...(ok
-        ? { lastTestOkAt: now, lastTestError: undefined }
-        : { lastTestError: (code ?? 'error').slice(0, 64) }),
+        ? { lastTestOkAt: now, lastTestError: undefined, lastTestErrorDetail: undefined }
+        : {
+            lastTestError: (code ?? 'error').slice(0, 64),
+            lastTestErrorDetail: detail ? detail.slice(0, 700) : undefined,
+          }),
       // A test that observed nothing leaves the previous observation alone: an
       // adapter with no facts to report is not evidence that the zone changed.
       ...(observed && Object.keys(observed).length > 0

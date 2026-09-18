@@ -40,7 +40,13 @@ import type {
 } from './types';
 import { firstResource, orderByKind, stepOf } from './types';
 import { discoveryMaySettle } from './capabilities';
-import { isProviderNotFound, providerFetch, EdgeProviderError } from './http';
+import {
+  isProviderNotFound,
+  providerFetch,
+  EdgeProviderError,
+  credentialTestFailure,
+  noteDiscoverError,
+} from './http';
 import { OVH_ENDPOINTS, ovhSignedHeaders } from './ovhSign';
 import { OvhTemplate, OVH_TEMPLATE_FIELDS, type OvhTemplateParams } from './templates';
 
@@ -161,6 +167,7 @@ async function ovh<T>(
     body,
     schema,
     okStatuses,
+    secrets: [cfg.applicationSecret, cfg.consumerKey],
   });
 }
 
@@ -383,13 +390,7 @@ export const ovhProvider: EdgeProvider<OvhConfig, OvhTemplateParams> = {
       );
       return { ok: true };
     } catch (e) {
-      return {
-        ok: false,
-        code:
-          e instanceof EdgeProviderError
-            ? (e.meta.code ?? String(e.meta.status ?? 'error'))
-            : 'error',
-      };
+      return credentialTestFailure(e);
     }
   },
 
@@ -404,8 +405,6 @@ export const ovhProvider: EdgeProvider<OvhConfig, OvhTemplateParams> = {
   ): Promise<DiscoverResult> {
     const cfg = partial as OvhConfig;
     const out: DiscoverResult = { errors: {} };
-    const code = (e: unknown) =>
-      e instanceof EdgeProviderError ? (e.meta.code ?? String(e.meta.status ?? 'error')) : 'error';
     try {
       const ids = await ovh(cfg, 'projects', 'GET', `/cloud/project`, z.array(z.string()));
       const projects: Array<{ id: string; label: string }> = [];
@@ -425,13 +424,13 @@ export const ovhProvider: EdgeProvider<OvhConfig, OvhTemplateParams> = {
       }
       out.projects = projects;
     } catch (e) {
-      out.errors!.projects = code(e);
+      noteDiscoverError(out, 'projects', e);
     }
     if (cfg.serviceName) {
       try {
         out.regions = await ovhRegions(cfg);
       } catch (e) {
-        out.errors!.regions = code(e);
+        noteDiscoverError(out, 'regions', e);
       }
       try {
         const nets = await ovh(
@@ -468,7 +467,7 @@ export const ovhProvider: EdgeProvider<OvhConfig, OvhTemplateParams> = {
         }
         out.networks = networks;
       } catch (e) {
-        out.errors!.networks = code(e);
+        noteDiscoverError(out, 'networks', e);
       }
     }
     return out;

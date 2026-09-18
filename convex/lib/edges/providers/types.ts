@@ -364,8 +364,10 @@ export interface DiscoverResult {
   /** L7: DNS zones (Cloudflare) / TLS configurations (Fastly). */
   zones?: DiscoverOption[];
   tlsConfigurations?: DiscoverOption[];
-  /** Per-list failure codes (never bodies): the form shows the field as free text instead. */
+  /** Per-list failure codes: the form shows the field as free text instead. */
   errors?: Record<string, string>;
+  /** Per failed list, the provider's redacted answer (`EdgeProviderError.meta.detail`). */
+  errorDetails?: Record<string, string>;
 }
 
 // --- the adapter -----------------------------------------------------------------------------

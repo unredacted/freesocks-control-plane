@@ -56,7 +56,7 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
       {
         method: 'GET',
         path: '^/cloud/v1/loadbalancers/[^/]+/[^/]+$',
-        purpose: 'list load balancers: credential test, discovery by name, inventory',
+        purpose: 'list load balancers: credential test, region check, discovery by name, inventory',
       },
       {
         method: 'POST',

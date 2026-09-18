@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   extractErrorCode,
   providerFetch,
+  redactErrorDetail,
   EdgeProviderError,
   MAX_RESPONSE_BYTES,
   toProviderError,
@@ -169,5 +170,42 @@ describe('toProviderError', () => {
       retryable: false,
     });
     expect(out.message).not.toContain('https://api.x');
+  });
+});
+
+describe('error detail (the provider answer, for the admin)', () => {
+  const failing = async (step: string) => {
+    mockFetch(() =>
+      jsonRes({ message: 'region 112 refused SECRET_HEADER from 192.0.2.9 / 2001:db8::7' }, 400),
+    );
+    try {
+      await providerFetch(args({ step }));
+    } catch (e) {
+      return (e as EdgeProviderError).meta;
+    }
+    throw new Error('expected a failure');
+  };
+
+  test('a credential test keeps the redacted answer; the message stays body-free', async () => {
+    const m = await failing('test');
+    expect(m.detail).toContain('region 112 refused');
+    expect(m.detail).not.toContain('SECRET_HEADER');
+    expect(m.detail).not.toContain('192.0.2.9');
+    expect(m.detail).not.toContain('2001:db8::7');
+  });
+
+  test('a provisioning step never captures the answer', async () => {
+    expect((await failing('lb')).detail).toBeUndefined();
+    expect(toProviderError('scaleway', 'ip4', { status: 403, message: 'x' }).meta.detail).toBe(
+      undefined,
+    );
+  });
+
+  test('redaction replaces extra secrets and caps the length', () => {
+    expect(redactErrorDetail('bad SIGNING_SECRET_1 here', ['SIGNING_SECRET_1'])).toBe(
+      'bad [redacted] here',
+    );
+    expect(redactErrorDetail('x'.repeat(5_000))!.length).toBeLessThan(700);
+    expect(redactErrorDetail('  ')).toBeUndefined();
   });
 });

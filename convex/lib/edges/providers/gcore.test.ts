@@ -413,4 +413,46 @@ describe('gcore: describe / destroy', () => {
     expect(r.regions).toEqual([{ id: '22', label: 'R' }]);
     expect(r.errors?.projects).toBeDefined();
   });
+
+  test('discoverOptions offers only ACTIVE regions that answer the load balancer listing', async () => {
+    const probed: string[] = [];
+    mockFetch((c) => {
+      if (c.path === '/cloud/v1/projects') return jsonRes({ results: [{ id: 11, name: 'P' }] });
+      if (c.path === '/cloud/v1/regions')
+        return jsonRes({
+          results: [
+            { id: 26, display_name: 'Usable', state: 'ACTIVE' },
+            { id: 112, display_name: 'Refused', state: 'ACTIVE' },
+            { id: 7, display_name: 'Maintenance', state: 'MAINTENANCE' },
+            { id: 9, display_name: 'Flaky', state: 'ACTIVE' },
+          ],
+        });
+      const m = /^\/cloud\/v1\/loadbalancers\/11\/(\d+)$/.exec(c.path);
+      if (m) {
+        probed.push(m[1]);
+        if (m[1] === '112') return jsonRes({ message: 'Region is not available' }, 400);
+        if (m[1] === '9') return jsonRes({ message: 'try later' }, 503);
+        return jsonRes({ results: [] });
+      }
+      throw new Error(`unexpected ${c.method} ${c.url}`);
+    });
+    const r = await gcoreProvider.discoverOptions!({ type: 'gcore', apiKey: 'k' });
+    // Refused is dropped; a 5xx says nothing about the region, so Flaky stays.
+    expect(r.regions).toEqual([
+      { id: '26', label: 'Usable' },
+      { id: '9', label: 'Flaky' },
+    ]);
+    expect(probed.sort()).toEqual(['112', '26', '9']);
+  });
+
+  test('a failing credential test carries the redacted provider answer', async () => {
+    mockFetch(() =>
+      jsonRes({ message: 'Region 112 is not available for 203.0.113.9 key SECRET_GCORE_KEY' }, 400),
+    );
+    const r = await gcoreProvider.testCredentials(cfg);
+    expect(r).toMatchObject({ ok: false, code: '400' });
+    expect(r.detail).toContain('Region 112 is not available');
+    expect(r.detail).not.toContain('203.0.113.9');
+    expect(r.detail).not.toContain('SECRET_GCORE_KEY');
+  });
 });

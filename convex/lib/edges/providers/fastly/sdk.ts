@@ -43,7 +43,7 @@ import {
   type FastlyHttpInfo,
   type FastlyPlugin,
 } from 'fastly';
-import { EdgeProviderError } from '../http';
+import { EdgeProviderError, capturesErrorDetail, redactErrorDetail } from '../http';
 import type { FastlyConfig } from '../types';
 
 /** The one origin the SDK's generated methods target. Also the redirect-safety pin. */
@@ -241,7 +241,11 @@ interface SdkRejection {
 }
 
 /** SDK rejection → body-free `EdgeProviderError` (status + allowlisted code only). */
-export function toFastlyError(step: string, err: unknown): EdgeProviderError {
+export function toFastlyError(
+  step: string,
+  err: unknown,
+  secrets: string[] = [],
+): EdgeProviderError {
   if (err instanceof EdgeProviderError) return err;
   const e = (err ?? {}) as SdkRejection;
   const status =
@@ -266,6 +270,10 @@ export function toFastlyError(step: string, err: unknown): EdgeProviderError {
       step,
       status,
       code,
+      detail:
+        !capturesErrorDetail(step) || body === undefined || body === null
+          ? undefined
+          : redactErrorDetail(typeof body === 'string' ? body : JSON.stringify(body), secrets),
       retryable: timedOut || status === 429 || (status !== undefined && status >= 500),
       timedOut,
     },
@@ -313,6 +321,7 @@ async function call<T>(
   step: string,
   schema: z.ZodType<T>,
   fn: () => Promise<FastlyHttpInfo>,
+  secrets: string[] = [],
 ): Promise<T> {
   let raw: unknown;
   try {
@@ -328,7 +337,7 @@ async function call<T>(
     )
       raw = undefined;
   } catch (e) {
-    throw toFastlyError(step, e);
+    throw toFastlyError(step, e, secrets);
   }
   const parsed = schema.safeParse(raw);
   if (!parsed.success) {
@@ -586,14 +595,19 @@ export function fastlyApi(cfg: FastlyConfig, basePath?: string): FastlyApi {
       );
     },
     listTlsConfigurations: (include) =>
-      call('tls-configurations', JsonApiCollection, () =>
-        tlsConfigs.listTlsConfigsWithHttpInfo({ include, page_size: 100 }),
+      call(
+        'tls-configurations',
+        JsonApiCollection,
+        () => tlsConfigs.listTlsConfigsWithHttpInfo({ include, page_size: 100 }),
+        [cfg.apiToken],
       ),
 
     getTokenCurrent: () =>
-      call('token-self', TokenSelf, () => tokens.getTokenCurrentWithHttpInfo({})),
+      call('token-self', TokenSelf, () => tokens.getTokenCurrentWithHttpInfo({}), [cfg.apiToken]),
     getLoggedInCustomer: () =>
-      call('customer', Customer, () => customer.getLoggedInCustomerWithHttpInfo({})),
+      call('customer', Customer, () => customer.getLoggedInCustomerWithHttpInfo({}), [
+        cfg.apiToken,
+      ]),
   };
 }
 

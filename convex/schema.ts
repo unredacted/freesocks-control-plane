@@ -1108,6 +1108,9 @@ export default defineSchema({
     maxLiveEdges: v.number(),
     lastTestOkAt: v.optional(v.number()),
     lastTestError: v.optional(v.string()), // short code, never a body
+    // Redacted, capped excerpt of what the provider answered on the failing test
+    // (lib/edges/providers/http.ts redactErrorDetail). Admin display only.
+    lastTestErrorDetail: v.optional(v.string()),
     // Facts the credential test OBSERVED at the provider that planning needs but
     // the operator never enters (e.g. a zone's encryption mode). JSON, string
     // values only; frozen per edge into its provisionIntent.

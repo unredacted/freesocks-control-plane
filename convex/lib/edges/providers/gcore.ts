@@ -41,7 +41,13 @@ import type {
 } from './types';
 import { firstResource, metaOf, orderByKind, stepOf } from './types';
 import { discoveryMaySettle } from './capabilities';
-import { isProviderNotFound, providerFetch, EdgeProviderError } from './http';
+import {
+  isProviderNotFound,
+  providerFetch,
+  EdgeProviderError,
+  credentialTestFailure,
+  noteDiscoverError,
+} from './http';
 import { addressFamily, isPublicIpLiteral } from '../ip';
 import { GcoreTemplate, GCORE_TEMPLATE_FIELDS, type GcoreTemplateParams } from './templates';
 
@@ -129,7 +135,15 @@ const SubnetList = z
 const RegionList = z
   .object({
     results: z
-      .array(z.object({ id: z.number(), display_name: z.string().nullish() }).passthrough())
+      .array(
+        z
+          .object({
+            id: z.number(),
+            display_name: z.string().nullish(),
+            state: z.string().nullish(),
+          })
+          .passthrough(),
+      )
       .default([]),
   })
   .passthrough();
@@ -297,13 +311,7 @@ export const gcoreProvider: EdgeProvider<GcoreConfig, GcoreTemplateParams> = {
       await gcore(cfg, 'test', 'GET', `/cloud/v1/loadbalancers/${scope(cfg)}?limit=1`, LbList);
       return { ok: true };
     } catch (e) {
-      return {
-        ok: false,
-        code:
-          e instanceof EdgeProviderError
-            ? (e.meta.code ?? String(e.meta.status ?? 'error'))
-            : 'error',
-      };
+      return credentialTestFailure(e);
     }
   },
 
@@ -319,12 +327,18 @@ export const gcoreProvider: EdgeProvider<GcoreConfig, GcoreTemplateParams> = {
       const p = await gcore(cfg, 'projects', 'GET', `/cloud/v1/projects`, ProjectList);
       out.projects = p.results.map((x) => ({ id: String(x.id), label: x.name ?? String(x.id) }));
     } catch (e) {
-      out.errors!.projects = codeOf(e);
+      noteDiscoverError(out, 'projects', e);
     }
     try {
-      out.regions = await gcoreRegions(cfg);
+      // `/regions` lists every region the platform has, including ones this
+      // client cannot create anything in; offering those ends in a saved account
+      // whose credential test answers 400. With a project to ask in, keep only the
+      // regions that answer the credential test's own call.
+      const listed = await gcoreRegions(cfg);
+      const probeProject = cfg.projectId ? String(cfg.projectId) : out.projects?.[0]?.id;
+      out.regions = probeProject ? await usableRegions(cfg, probeProject, listed) : listed;
     } catch (e) {
-      out.errors!.regions = codeOf(e);
+      noteDiscoverError(out, 'regions', e);
     }
     if (cfg.projectId && cfg.regionId) {
       try {
@@ -350,7 +364,7 @@ export const gcoreProvider: EdgeProvider<GcoreConfig, GcoreTemplateParams> = {
             .map((s) => ({ id: s.id, label: `${s.name ?? s.id}${s.cidr ? ` (${s.cidr})` : ''}` })),
         }));
       } catch (e) {
-        out.errors!.networks = codeOf(e);
+        noteDiscoverError(out, 'networks', e);
       }
     }
     return out;
@@ -559,15 +573,59 @@ function destroyPath(cfg: GcoreConfig, kind: string, id: string): string | null 
       : null;
 }
 
+/** Regions that are not ACTIVE (maintenance, being deleted, new) cannot take a load balancer. */
 async function gcoreRegions(cfg: GcoreConfig): Promise<Array<{ id: string; label: string }>> {
-  const res = await gcore(cfg, 'regions', 'GET', `/cloud/v1/regions`, RegionList);
-  return res.results.map((r) => ({ id: String(r.id), label: r.display_name ?? String(r.id) }));
+  const res = await gcore(cfg, 'regions', 'GET', `/cloud/v1/regions?limit=1000`, RegionList);
+  return res.results
+    .filter((r) => !r.state || r.state.toUpperCase() === 'ACTIVE')
+    .map((r) => ({ id: String(r.id), label: r.display_name ?? String(r.id) }));
 }
 
-function codeOf(e: unknown): string {
-  return e instanceof EdgeProviderError
-    ? (e.meta.code ?? String(e.meta.status ?? 'error'))
-    : 'error';
+const REGION_PROBE_CONCURRENCY = 8;
+const REGION_PROBE_TIMEOUT_MS = 8_000;
+
+/**
+ * The regions whose load balancer listing answers for this key. A region is
+ * dropped only on a definite refusal (a non-retryable 4xx); a timeout, a 429 or
+ * a 5xx says nothing about the region, so it stays.
+ */
+async function usableRegions(
+  cfg: GcoreConfig,
+  projectId: string,
+  regions: Array<{ id: string; label: string }>,
+): Promise<Array<{ id: string; label: string }>> {
+  const keep = new Array<boolean>(regions.length).fill(true);
+  let next = 0;
+  const worker = async () => {
+    for (let i = next++; i < regions.length; i = next++) {
+      try {
+        await providerFetch({
+          provider: 'gcore',
+          step: 'region-probe',
+          url: `${BASE}/cloud/v1/loadbalancers/${encodeURIComponent(projectId)}/${encodeURIComponent(regions[i].id)}?limit=1`,
+          method: 'GET',
+          headers: headers(cfg),
+          schema: z.unknown(),
+          timeoutMs: REGION_PROBE_TIMEOUT_MS,
+        });
+      } catch (e) {
+        const status = e instanceof EdgeProviderError ? e.meta.status : undefined;
+        // 401 is the key, not the region: leave the list alone and let the test say so.
+        if (
+          status !== undefined &&
+          status >= 400 &&
+          status < 500 &&
+          status !== 401 &&
+          status !== 429
+        )
+          keep[i] = false;
+      }
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(REGION_PROBE_CONCURRENCY, regions.length) }, worker),
+  );
+  return regions.filter((_, i) => keep[i]);
 }
 
 function unknownStep(step: ResourceStep): EdgeProviderError {

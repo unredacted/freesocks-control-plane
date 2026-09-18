@@ -1087,14 +1087,16 @@ describe('fastly: live views', () => {
     });
   });
 
-  test('a failing discovery surfaces a code, never a body', async () => {
+  test('a failing discovery surfaces a code and the provider answer, never the token', async () => {
     await serve((c) =>
       c.path === '/tls/configurations'
-        ? { status: 403, body: { msg: 'Forbidden', detail: `token for ${HOST}` } }
+        ? { status: 403, body: { msg: 'Forbidden', detail: `bad ${cfg.apiToken}` } }
         : defaultReply(c),
     );
     const res = await fastlyProvider.discoverOptions!({ ...cfg });
-    expect(res).toEqual({ errors: { tlsConfigurations: 'forbidden' } });
+    expect(res.errors).toEqual({ tlsConfigurations: 'forbidden' });
+    expect(res.errorDetails?.tlsConfigurations).toContain('Forbidden');
+    expect(JSON.stringify(res)).not.toContain(cfg.apiToken);
   });
 });
 

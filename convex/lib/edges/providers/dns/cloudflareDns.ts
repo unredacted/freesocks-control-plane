@@ -27,7 +27,7 @@
  */
 import Cloudflare, { APIConnectionError, APIConnectionTimeoutError, APIError } from 'cloudflare';
 import type { CloudflareDnsConfig } from '../types';
-import { EdgeProviderError } from '../http';
+import { EdgeProviderError, capturesErrorDetail, redactErrorDetail } from '../http';
 import type { DnsClient, DnsCreateArgs, DnsRecord, DnsRecordType } from './types';
 
 export type FetchLike = typeof fetch;
@@ -76,17 +76,31 @@ export function cloudflareClient(cfg: CloudflareTokenConfig, fetchImpl?: FetchLi
 }
 
 /**
- * Reduce any SDK throwable to the body-free error class. Reads `status` and
- * the numeric `errors[0].code` ONLY: never `message`, `error`, headers or the
- * URL. See https://developers.cloudflare.com/api/ (error envelope).
+ * Reduce any SDK throwable to the provider error class. The message holds the
+ * `status` and the numeric `errors[0].code` only; `meta.detail` holds the
+ * envelope's redacted `errors[].message` texts for the admin. Never headers or
+ * the URL. See https://developers.cloudflare.com/api/ (error envelope).
  */
-export function cloudflareError(step: string, err: unknown): EdgeProviderError {
+export function cloudflareError(
+  step: string,
+  err: unknown,
+  secrets: string[] = [],
+): EdgeProviderError {
   if (err instanceof EdgeProviderError) return err;
   const status = err instanceof APIError && typeof err.status === 'number' ? err.status : undefined;
   let code: string | undefined;
+  let detail: string | undefined;
   if (err instanceof APIError && Array.isArray(err.errors)) {
     const first = err.errors[0]?.code;
     if (typeof first === 'number' && Number.isFinite(first)) code = String(first);
+    if (capturesErrorDetail(step))
+      detail = redactErrorDetail(
+        err.errors
+          .map((x) => (typeof x?.message === 'string' ? `${x.code ?? ''} ${x.message}`.trim() : ''))
+          .filter(Boolean)
+          .join('; '),
+        secrets,
+      );
   }
   const timedOut = err instanceof APIConnectionTimeoutError;
   const connection = err instanceof APIConnectionError;
@@ -97,6 +111,7 @@ export function cloudflareError(step: string, err: unknown): EdgeProviderError {
       step,
       status,
       code,
+      detail,
       retryable:
         timedOut || connection || status === 429 || (status !== undefined && status >= 500),
       timedOut,
@@ -105,11 +120,15 @@ export function cloudflareError(step: string, err: unknown): EdgeProviderError {
 }
 
 /** Every SDK call goes through here so no raw SDK error can escape. */
-export async function cfCall<T>(step: string, fn: () => Promise<T>): Promise<T> {
+export async function cfCall<T>(
+  step: string,
+  fn: () => Promise<T>,
+  secrets: string[] = [],
+): Promise<T> {
   try {
     return await fn();
   } catch (e) {
-    throw cloudflareError(step, e);
+    throw cloudflareError(step, e, secrets);
   }
 }
 

@@ -659,12 +659,8 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
     }
     if (b === 'test-credentials') {
       const accountId = id<'edgeProviderAccounts'>(String(body.accountId ?? ''));
+      // The action records the outcome itself (code, provider answer, observed facts).
       const res = await ctx.runAction(internal.edgeProviderOps.testCredentials, { accountId });
-      await ctx.runMutation(internal.edgeProviderAccounts.recordTest, {
-        id: accountId,
-        ok: res.ok,
-        code: res.code,
-      });
       let regions: Array<{ id: string; label: string }> = [];
       if (res.ok) {
         try {
@@ -673,7 +669,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           regions = [];
         }
       }
-      return json({ ok: res.ok, code: res.code ?? null, regions });
+      return json({ ok: res.ok, code: res.code ?? null, detail: res.detail ?? null, regions });
     }
     if (c === 'inventory' && d === 'refresh')
       return refreshInventory(ctx, id<'edgeProviderAccounts'>(b));

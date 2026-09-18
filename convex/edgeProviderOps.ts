@@ -476,17 +476,20 @@ export const effectiveTemplate = internalAction({
 
 export const testCredentials = internalAction({
   args: { accountId: v.id('edgeProviderAccounts') },
-  handler: (ctx, { accountId }): Promise<{ ok: boolean; code?: string }> =>
+  handler: (ctx, { accountId }): Promise<{ ok: boolean; code?: string; detail?: string }> =>
     run(async () => {
       const { provider, cfg } = await loadAdapter(ctx, accountId);
       const res = await provider.testCredentials(cfg);
+      // A passing test's `detail` is adapter prose about the zone, not a refusal.
+      const detail = res.ok ? undefined : res.detail;
       await ctx.runMutation(internal.edgeProviderAccounts.recordTest, {
         id: accountId,
         ok: res.ok,
         code: res.code,
+        detail,
         observed: res.observed,
       });
-      return { ok: res.ok, code: res.code };
+      return { ok: res.ok, code: res.code, detail };
     }),
 });
 
@@ -510,7 +513,7 @@ export const rotateCredentials = internalAction({
     a,
   ): Promise<
     | { ok: true; qualified: boolean; credentialsChanged: boolean; identifiersChanged: boolean }
-    | { ok: false; code: string }
+    | { ok: false; code: string; detail?: string }
   > =>
     run(async () => {
       const acct = await ctx.runQuery(internal.edgeProviderAccounts.getWithSecret, {
@@ -548,7 +551,7 @@ export const rotateCredentials = internalAction({
       );
       const res = await edgeProviderFor(acct.provider).testCredentials(cfg);
       // The stored (still valid) credentials are untouched on a failed test.
-      if (!res.ok) return { ok: false, code: res.code ?? 'error' };
+      if (!res.ok) return { ok: false, code: res.code ?? 'error', detail: res.detail };
       // Apply EXACTLY what was tested, against the row version it was built from.
       const applied = await ctx.runMutation(internal.edgeProviderAccounts.applyCredentialRotation, {
         id: a.accountId,
@@ -644,6 +647,7 @@ export const inventory = internalAction({
           id: accountId,
           ok: res.ok,
           code: res.code,
+          detail: res.ok ? undefined : res.detail,
           observed: res.observed,
         });
       } catch {
