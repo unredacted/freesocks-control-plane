@@ -74,6 +74,8 @@ import {
   RelayListenerUpsertResponse,
   RelayListenersResponse,
   RelayNodeCandidatesResponse,
+  InboundCandidatesResponse,
+  EdgeTestLinkResponse,
   ResolveQuarantineRequest,
   SetupDraft,
   SetupStatusResponse,
@@ -84,6 +86,17 @@ import {
   type RenderClientFamily,
   EdgeAutomationResponse,
   RelayRebalanceResponse,
+  RequireEdgesResponse,
+  SetupPlanResponse,
+  SetupRunAdmin,
+  SetupRunCancelResponse,
+  SetupRunContinueRequest,
+  SetupRunContinueResponse,
+  SetupRunCreateRequest,
+  SetupRunCreatedResponse,
+  SetupRunRetryRequest,
+  SetupRunRetryResponse,
+  SetupRunsResponse,
 } from '../../shared/contracts/edges';
 
 const BASE = '/api/v1/admin/edges';
@@ -268,6 +281,34 @@ export const thawMaintenance = (reason?: string) =>
 export const setEdgeAutomation = (on: boolean) =>
   apiClient.post(`${BASE}/automation`, { on }, EdgeAutomationResponse);
 
+// --- guided setup runs (Autopilot) ------------------------------------------------------------------
+
+export type SetupRunCreateBody = z.infer<typeof SetupRunCreateRequest>;
+export type SetupRunRetryBody = z.infer<typeof SetupRunRetryRequest>;
+export type SetupRunContinueBody = z.infer<typeof SetupRunContinueRequest>;
+
+/** The read-only plan for one panel node (throttled: it lists the node's inbounds and Hosts). */
+export const planSetupRun = (backendServerId: string, nodeUuid: string) =>
+  apiClient.post(`${BASE}/setup-runs/plan`, { backendServerId, nodeUuid }, SetupPlanResponse);
+export const createSetupRun = (body: SetupRunCreateBody) =>
+  apiClient.post(`${BASE}/setup-runs`, body, SetupRunCreatedResponse);
+export const fetchSetupRuns = () => apiClient.get(`${BASE}/setup-runs`, SetupRunsResponse);
+export const fetchSetupRun = (runId: string) =>
+  apiClient.get(`${BASE}/setup-runs/${enc(runId)}`, SetupRunAdmin);
+export const cancelSetupRun = (runId: string) =>
+  apiClient.post(`${BASE}/setup-runs/${enc(runId)}/cancel`, {}, SetupRunCancelResponse);
+export const retrySetupRun = (runId: string, body: SetupRunRetryBody = {}) =>
+  apiClient.post(`${BASE}/setup-runs/${enc(runId)}/retry`, body, SetupRunRetryResponse);
+export const continueSetupRun = (runId: string, body: SetupRunContinueBody = {}) =>
+  apiClient.post(`${BASE}/setup-runs/${enc(runId)}/continue`, body, SetupRunContinueResponse);
+/** The activation policy on a deferred relay: pending untested L4 endpoints come back instead of a binding. */
+export const requireRelayEdges = (relayId: string, accountId?: string) =>
+  apiClient.post(
+    `${BASE}/relays/${enc(relayId)}/require-edges`,
+    accountId ? { accountId } : {},
+    RequireEdgesResponse,
+  );
+
 // --- providers ------------------------------------------------------------------------------------
 
 export const fetchProviders = () =>
@@ -323,6 +364,24 @@ export const fetchNodeCandidates = (backendServerId: string) =>
   apiClient.get(
     `${BASE}/relays/node-candidates?backendServerId=${enc(backendServerId)}`,
     RelayNodeCandidatesResponse,
+  );
+/** Discovery with the origin probe applied (throttled: reaches the panel and opens sockets). */
+export const fetchInboundCandidates = (backendServerId: string, nodeUuid: string) =>
+  apiClient.get(
+    `${BASE}/relays/inbound-candidates?backendServerId=${enc(backendServerId)}&nodeUuid=${enc(nodeUuid)}`,
+    InboundCandidatesResponse,
+  );
+/** The isolated test link for an L4 candidate (throttled: fetches the credential body). */
+// A POST: building the link may mint the test credential (a panel user or a
+// temporary key), so it needs the write scope a GET would not carry.
+export const fetchTestLink = (edgeId: string) =>
+  apiClient.post(`${BASE}/edges/${enc(edgeId)}/test-link`, {}, EdgeTestLinkResponse);
+/** The card closed or finished: the temporary credential behind its link expires now. */
+export const releaseTestLink = (edgeId: string, credentialId: string) =>
+  apiClient.post(
+    `${BASE}/edges/${enc(edgeId)}/test-link/release`,
+    { credentialId },
+    EdgeOkResponse,
   );
 export const refreshNodeCandidates = (backendServerId: string) =>
   apiClient.post(

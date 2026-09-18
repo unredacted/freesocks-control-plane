@@ -108,7 +108,28 @@ export const confirm = internalMutation({
     method: methodValidator,
     actorAdminId: v.optional(v.id('adminUsers')),
   },
-  handler: async (ctx, a) => {
+  handler: (ctx, a) => confirmEndpoint(ctx, a),
+});
+
+/** The confirmation body, shared by the route mutation and the setup run's `continue`. */
+export async function confirmEndpoint(
+  ctx: MutationCtx,
+  a: {
+    edgeId: Id<'edges'>;
+    endpoint: string;
+    listenerRevision: number;
+    configHash: string;
+    method: 'test_link' | 'named_connection';
+    actorAdminId?: Id<'adminUsers'>;
+  },
+): Promise<{
+  ok: true;
+  edgeId: string;
+  verifiedAt: string;
+  accountTrusted: boolean;
+  accountTrustReason: string | null;
+}> {
+  {
     const edge = await ctx.db.get(a.edgeId);
     if (!edge) throw new ConvexError({ code: 'not_found', message: 'Edge not found' });
     if (!needsEndpointVerification(edge))
@@ -200,8 +221,8 @@ export const confirm = internalMutation({
       accountTrusted,
       accountTrustReason,
     };
-  },
-});
+  }
+}
 
 /**
  * Whether a confirmed endpoint of `edge` is trust evidence for `account` NOW

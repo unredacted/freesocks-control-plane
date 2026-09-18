@@ -666,6 +666,7 @@ const ATTENTION_RANK = [
   'needs_operator',
   'host_unresolved',
   'members_dark',
+  'direct_host_reappeared',
   'go_live_pending',
   'needs_test',
   'rotation_failed',
@@ -678,7 +679,9 @@ const ATTENTION_RANK = [
   'pool_below_desired',
   'account_unqualified',
   'account_untested',
+  'test_key_cleanup',
   'drift',
+  'restore_in_progress',
   'maintenance_frozen',
 ] as const;
 type AttentionKind = (typeof ATTENTION_RANK)[number];
@@ -815,9 +818,43 @@ export const attention = internalQuery({
           });
         }
       }
+      // A direct Host reappeared on a bound guided node and could not be
+      // re-hidden: delivery is fail-closed (`leak_detected`) until it is hidden.
+      if (relay.directHostAlert && relay.directHostAlert.hosts.length > 0) {
+        items.push({
+          ...base(relay),
+          id: `direct_host_reappeared:${relay._id}`,
+          kind: 'direct_host_reappeared',
+          severity: 'critical',
+          code: null,
+          facts: {
+            count: relay.directHostAlert.hosts.length,
+            remarks: relay.directHostAlert.hosts.map((h) => h.remark),
+          },
+          action: 'open_relay',
+          since: iso(relay.directHostAlert.at),
+        });
+      }
+      // The restore workflow: informational, one phase per reconcile tick.
+      if (relay.restore) {
+        items.push({
+          ...base(relay),
+          id: `restore_in_progress:${relay._id}`,
+          kind: 'restore_in_progress',
+          severity: 'info',
+          code: relay.restore.lastError ?? null,
+          facts: {
+            purpose: relay.restore.purpose,
+            phase: relay.restore.phase,
+            attempt: relay.restore.attempt,
+          },
+          action: 'open_relay',
+          since: iso(relay.restore.startedAt),
+        });
+      }
       // A guided relay with something published but its binding still deferred:
       // members get the raw body until go-live claims the binding.
-      if (relay.bindingDeferred && published > 0 && relay.enabled) {
+      if (relay.bindingDeferred && published > 0 && relay.enabled && !relay.restore) {
         items.push({
           ...base(relay),
           id: `go_live_pending:${relay._id}`,
@@ -1077,6 +1114,29 @@ export const attention = internalQuery({
           since: null,
         });
       }
+    }
+    // Temporary test keys whose panel delete kept failing (edgeTestCredentials.ts).
+    const failedKeys = await ctx.db
+      .query('edgeTestCredentials')
+      .withIndex('by_removal_expires', (q) => q.eq('removal', 'failed'))
+      .take(50);
+    for (const row of failedKeys) {
+      const relay = relays.find((r) => r._id === row.relayId) ?? null;
+      items.push({
+        id: `test_key_cleanup:${row._id}`,
+        kind: 'test_key_cleanup',
+        severity: 'warning',
+        relaySlug: relay?.slug ?? null,
+        relayId: relay ? (relay._id as string) : null,
+        edgeId: null,
+        listenerKey: null,
+        accountId: null,
+        rotationId: null,
+        code: row.backendUserId ? 'backend_delete_failed' : 'issuance_unobserved',
+        facts: { purpose: row.purpose, attempts: row.attempts, credentialId: row._id as string },
+        action: 'open_relay',
+        since: iso(row.updatedAt),
+      });
     }
     const maintenance = await readMaintenance(ctx.db);
     if (maintenance.frozen) {

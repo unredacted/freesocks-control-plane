@@ -10,7 +10,12 @@ import {
   ATTENTION_ACTIONS,
   ATTENTION_KINDS,
   ATTENTION_SEVERITIES,
+  INBOUND_UNSUPPORTED_CODES,
   PREFLIGHT_KINDS,
+  RESTORE_PHASES,
+  RESTORE_PURPOSES,
+  SETUP_RUN_STAGES,
+  SETUP_RUN_STATES,
   SETUP_STEP_IDS,
   SETUP_STEP_STATUSES,
 } from './edgeCodes';
@@ -193,6 +198,16 @@ export type ListenerSecurity = z.infer<typeof ListenerSecurity>;
 
 // --- relays / listeners / edges / rotations ----------------------------------------------------
 
+/** The restore workflow (docs/edges.md § "Direct-Host hides and the restore workflow") in progress on a relay. */
+export const RelayRestore = z.object({
+  purpose: z.enum(RESTORE_PURPOSES),
+  phase: z.enum(RESTORE_PHASES),
+  startedAt: z.string(),
+  attempt: z.number(),
+  lastError: z.string().nullable().default(null),
+});
+export type RelayRestore = z.infer<typeof RelayRestore>;
+
 export const RelaySuspicion = z.object({
   state: z.enum(['clear', 'suspected']),
   hintLevel: z.enum(['none', 'reports', 'probes', 'corroborated']),
@@ -277,6 +292,8 @@ export const RelayAdmin = z.object({
   lastRegisteredAt: isoN.default(null),
   quarantine: z.object({ rotationId: z.string(), since: iso, reason: z.string() }).nullable(),
   deleting: z.boolean(),
+  /** The persisted restore workflow in progress (hides settled, binding released, direct Hosts back), if any. */
+  restore: RelayRestore.nullable().default(null),
   suspicion: RelaySuspicion.nullable(),
   updatedAt: iso,
 });
@@ -498,6 +515,28 @@ export const EdgeVerificationBinding = z.object({
   blocker: z.string().nullable(),
 });
 export type EdgeVerificationBinding = z.infer<typeof EdgeVerificationBinding>;
+
+/**
+ * `GET edges/{id}/test-link`: the isolated test link for an L4 candidate (the
+ * candidate connection only, rendered from the test credential's own body)
+ * plus the binding `POST edges/{id}/verify` must echo (the same one
+ * `verification-binding` derives).
+ */
+export const EdgeTestLinkResponse = z.object({
+  link: z.string(),
+  format: z.literal('links'),
+  binding: z.object({
+    edgeId: z.string(),
+    endpoint: z.string(),
+    listenerKey: z.string(),
+    listenerRevision: z.number(),
+    configHash: z.string(),
+    issuedAt: iso,
+  }),
+  /** The temporary credential behind the link (Outline), released when the sheet closes. */
+  credentialId: z.string().nullable(),
+});
+export type EdgeTestLinkResponse = z.infer<typeof EdgeTestLinkResponse>;
 
 export const EdgeVerifyRequest = z.object({
   endpoint: z.string(),
@@ -957,6 +996,44 @@ export const RelayNodeCandidatesResponse = z.object({
   nodes: z.array(RelayNodeCandidate),
 });
 export type RelayNodeCandidatesResponse = z.infer<typeof RelayNodeCandidatesResponse>;
+
+/**
+ * `GET relays/inbound-candidates?backendServerId=&nodeUuid=`: the node's
+ * inbounds mapped to listener candidates (docs/edges.md § "Listener
+ * catalogue", discovery), with `originTransport` filled where the origin probe
+ * succeeded and `layers` recomputed from it. Nothing is registered by this call.
+ */
+export const InboundCandidate = z.object({
+  listenerSpec: ListenerSpec,
+  /** The layers that can front the candidate, and why the others cannot (`LAYER_EXCLUSION_CODES`). */
+  layers: z.object({
+    layers: z.array(EdgeLayer),
+    excluded: z.record(z.string(), z.string()).default({}),
+  }),
+  formats: z.object({ links: z.boolean(), singbox: z.boolean(), clash: z.boolean() }),
+  needsName: z.boolean(),
+  sourceTag: z.string(),
+  originTransport: ListenerOriginTransport.nullable(),
+  /** The origin probe's verdict (HTTP-transport candidates only); `reason` is a short code, never an address. */
+  probe: z.object({ ok: z.boolean(), reason: z.string().nullable() }).nullable(),
+});
+export type InboundCandidate = z.infer<typeof InboundCandidate>;
+export const InboundCandidatesResponse = z.object({
+  node: z.object({ nodeUuid: z.string(), name: z.string(), address: z.string().nullable() }),
+  originAddress: z.string(),
+  /** The relay already registered on this node, when one exists. */
+  relaySlug: z.string().nullable(),
+  candidates: z.array(InboundCandidate),
+  unsupported: z.array(
+    z.object({
+      tag: z.string(),
+      reason: z.enum(INBOUND_UNSUPPORTED_CODES),
+      detail: z.string().optional(),
+    }),
+  ),
+  probedAt: iso,
+});
+export type InboundCandidatesResponse = z.infer<typeof InboundCandidatesResponse>;
 
 /**
  * The node role's view of `GET/PUT …/relays/by-slug/{slug}` (docs/edges.md § "Node
@@ -1479,6 +1556,230 @@ export const DeliveryBindingAdmin = z.object({
 });
 export const DeliveryBindingsResponse = z.object({ bindings: z.array(DeliveryBindingAdmin) });
 export type DeliveryBindingAdmin = z.infer<typeof DeliveryBindingAdmin>;
+
+// --- guided setup runs (Autopilot) ------------------------------------------------------------------
+
+export const SetupRunStage = z.enum(SETUP_RUN_STAGES);
+export const SetupRunState = z.enum(SETUP_RUN_STATES);
+export type SetupRunStage = z.infer<typeof SetupRunStage>;
+export type SetupRunState = z.infer<typeof SetupRunState>;
+
+/** One discovered inbound in the plan: frontable ones become the required listeners. */
+export const SetupPlanInbound = z.object({
+  listenerKey: z.string(),
+  sourceTag: z.string(),
+  listenerSpec: z.unknown().nullable(),
+  layers: z.array(EdgeLayer),
+  frontable: z.boolean(),
+  formats: z.object({ links: z.boolean(), singbox: z.boolean(), clash: z.boolean() }),
+  needsName: z.boolean(),
+  /** An `INBOUND_UNSUPPORTED_CODES` reason, `needs_names`, or a layer exclusion. */
+  reason: z.string().optional(),
+  detail: z.string().optional(),
+});
+export const SetupPlanDirectHost = z.object({
+  uuid: z.string(),
+  remark: z.string(),
+  inboundUuid: z.string(),
+  /** Its inbound is frontable in every format (hidden without consent); else the operator consents by uuid. */
+  covered: z.boolean(),
+});
+export const SetupPlanAccount = z.object({
+  id: z.string(),
+  name: z.string(),
+  provider: EdgeProviderId,
+  layer: EdgeLayer,
+  compatible: z.boolean(),
+  /** `SETUP_ACCOUNT_REASONS` codes. */
+  reasons: z.array(z.string()),
+});
+
+/** `POST setup-runs/plan {backendServerId, nodeUuid}`: the read-only snapshot + its hash. */
+export const SetupPlanResponse = z.object({
+  backendServerId: z.string(),
+  backend: z.string(),
+  nodeUuid: z.string(),
+  nodeName: z.string(),
+  originAddress: z.string(),
+  relaySlug: z.string(),
+  inbounds: z.array(SetupPlanInbound),
+  requiredListeners: z.array(z.string()),
+  tooManyInbounds: z.boolean(),
+  directHosts: z.array(SetupPlanDirectHost),
+  accounts: z.array(SetupPlanAccount),
+  renderGlobal: z.object({ willEnable: z.boolean(), affectedRelays: z.array(z.string()) }),
+  familiesDisabled: z.array(z.string()),
+  emptyNode: z.boolean(),
+  existingRelay: z
+    .object({ id: z.string(), slug: z.string(), setupStage: z.string().nullable() })
+    .nullable(),
+  activeRunId: z.string().nullable(),
+  planHash: z.string(),
+  generatedAt: iso,
+});
+export type SetupPlanResponse = z.infer<typeof SetupPlanResponse>;
+
+/** `POST setup-runs`: the consent the run persists (the exact uncovered Host uuids, or keep them). */
+export const SetupRunCreateRequest = z.object({
+  backendServerId: z.string(),
+  nodeUuid: z.string(),
+  accountId: z.string(),
+  planHash: z.string(),
+  approvedHideUuids: z.array(z.string()).default([]),
+  keepDirect: z.boolean().optional(),
+});
+export type SetupRunCreateRequest = z.infer<typeof SetupRunCreateRequest>;
+export const SetupRunCreatedResponse = z.object({ runId: z.string(), stage: SetupRunStage });
+export type SetupRunCreatedResponse = z.infer<typeof SetupRunCreatedResponse>;
+
+/** The binding a `try_it` tick echoes back (what the card showed). */
+export const SetupRunTestLink = z.object({
+  edgeId: z.string(),
+  listenerKey: z.string(),
+  /** Empty for a `named_connection` retest of an already published address. */
+  link: z.string(),
+  format: z.string(),
+  method: z.enum(['test_link', 'named_connection']),
+  binding: z.object({
+    endpoint: z.string(),
+    listenerRevision: z.number(),
+    configHash: z.string(),
+    issuedAt: iso,
+  }),
+});
+export type SetupRunTestLink = z.infer<typeof SetupRunTestLink>;
+
+/** `GET setup-runs/{id}`: the run as the progress view polls it. */
+export const SetupRunAdmin = z.object({
+  id: z.string(),
+  relayId: z.string().nullable(),
+  relaySlug: z.string(),
+  backendServerId: z.string(),
+  nodeName: z.string(),
+  nodeUuid: z.string(),
+  accountId: z.string(),
+  stage: SetupRunStage,
+  state: SetupRunState,
+  /** The interruption (`SETUP_RUN_NEEDS`) when `state === 'needs_you'`. */
+  need: z.object({ code: z.string(), detail: z.string().nullable() }).nullable(),
+  generation: z.number(),
+  planRevision: z.number(),
+  keepDirect: z.boolean(),
+  listeners: z.array(
+    z.object({
+      listenerKey: z.string(),
+      layer: EdgeLayer,
+      edgeId: z.string().nullable(),
+      verify: z.enum(['pending', 'partial', 'verified', 'unreachable']),
+      published: z.boolean(),
+    }),
+  ),
+  testLinks: z.array(SetupRunTestLink).default([]),
+  testedEndpoints: z
+    .array(z.object({ edgeId: z.string(), listenerKey: z.string(), endpoint: z.string(), at: iso }))
+    .default([]),
+  /** Uncovered direct Hosts found at stage 6 that the consent did not name (`review_changed`). */
+  reviewDelta: z.array(z.object({ uuid: z.string(), remark: z.string() })).default([]),
+  rehearsal: z
+    .object({
+      at: iso,
+      attempts: z.number(),
+      hostsObservationAt: iso,
+      darkCohortKeys: z.array(z.string()),
+    })
+    .nullable(),
+  plan: z.object({
+    requiredListeners: z.array(z.string()),
+    directHosts: z.array(SetupPlanDirectHost),
+    renderGlobal: z.object({ willEnable: z.boolean(), affectedRelays: z.array(z.string()) }),
+    familiesDisabled: z.array(z.string()),
+    emptyNode: z.boolean(),
+    /** The accounts the plan judged; `retry {accountId}` accepts only a compatible one. */
+    accounts: z
+      .array(
+        z.object({
+          id: z.string(),
+          name: z.string(),
+          provider: z.string(),
+          compatible: z.boolean(),
+        }),
+      )
+      .default([]),
+  }),
+  approvedHideUuids: z.array(z.string()),
+  events: z.array(
+    z.object({
+      at: iso,
+      level: z.enum(['info', 'warn', 'error']),
+      code: z.string(),
+      detail: z.string().nullable(),
+    }),
+  ),
+  startedAt: iso,
+  updatedAt: iso,
+  finishedAt: isoN,
+});
+export type SetupRunAdmin = z.infer<typeof SetupRunAdmin>;
+export const SetupRunsResponse = z.object({ runs: z.array(SetupRunAdmin), generatedAt: iso });
+export type SetupRunsResponse = z.infer<typeof SetupRunsResponse>;
+
+/** `POST setup-runs/{id}/retry`: the card's secondary buttons. */
+export const SetupRunRetryRequest = z.object({
+  tryAnotherAddress: z.boolean().optional(),
+  acceptPartial: z.boolean().optional(),
+  accountId: z.string().optional(),
+});
+export type SetupRunRetryRequest = z.infer<typeof SetupRunRetryRequest>;
+export const SetupRunRetryResponse = z.object({
+  ok: z.literal(true),
+  generation: z.number(),
+  stage: SetupRunStage,
+});
+
+/** `POST setup-runs/{id}/continue`: ticks, a replaced consent, or keep-direct. */
+export const SetupRunContinueRequest = z.object({
+  confirmations: z
+    .array(
+      z.object({
+        edgeId: z.string(),
+        endpoint: z.string(),
+        listenerRevision: z.number(),
+        configHash: z.string(),
+      }),
+    )
+    .optional(),
+  approvedHideUuids: z.array(z.string()).optional(),
+  keepDirect: z.boolean().optional(),
+});
+export type SetupRunContinueRequest = z.infer<typeof SetupRunContinueRequest>;
+export const SetupRunContinueResponse = z.object({
+  ok: z.literal(true),
+  state: z.enum(['running', 'done_unbound']),
+  accountTrusted: z.boolean(),
+});
+
+/** `POST setup-runs/{id}/cancel`. */
+export const SetupRunCancelResponse = z.object({
+  ok: z.literal(true),
+  disposition: z.enum(['deleted', 'restore', 'none']),
+});
+
+/** `POST relays/{id}/require-edges`: pending endpoints instead of a binding when an L4 edge is untested. */
+export const RequireEdgesResponse = z.object({
+  runId: z.string(),
+  stage: SetupRunStage,
+  state: SetupRunState,
+  pending: z.array(
+    z.object({
+      edgeId: z.string(),
+      listenerKey: z.string(),
+      endpoint: z.string(),
+      listenerRevision: z.number(),
+      configHash: z.string(),
+    }),
+  ),
+});
+export type RequireEdgesResponse = z.infer<typeof RequireEdgesResponse>;
 
 /** `GET maintenance` / `POST maintenance/{freeze|thaw}`: the "pause new edge work" switch (docs/edges.md). */
 export const EdgeMaintenanceView = z.object({

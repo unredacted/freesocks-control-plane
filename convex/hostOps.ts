@@ -34,11 +34,11 @@ import { sameAddress } from './lib/edges/hosts';
 import type { BackendHost } from './lib/backends/types';
 import { listenerRemark } from './relayListeners';
 
-/** How long a Host op claim lives before it counts as unsettled. */
-const HOST_OP_TTL_MS = 60_000;
+/** How long a Host op claim lives before it counts as unsettled (shared with the hide ledger). */
+export const HOST_OP_TTL_MS = 60_000;
 /** Quiet looks + wall clock a listing must show nothing before a create is `absent` again. */
-const HOST_SETTLE_LOOKS = 2;
-const HOST_SETTLE_MS = 2 * 60_000;
+export const HOST_SETTLE_LOOKS = 2;
+export const HOST_SETTLE_MS = 2 * 60_000;
 
 export type HostState = NonNullable<Doc<'relayListeners'>['host']>;
 export type HostIntent = NonNullable<HostState['intended']>;
@@ -556,8 +556,12 @@ export const deleteListenerHost = internalAction({
 });
 
 /**
- * Reconcile pass: re-observe every unresolved Host op (all relays), and delete
- * the FCP-owned Hosts of retired listeners and deleting relays.
+ * Reconcile pass: re-observe every unresolved Host op (all relays), delete the
+ * FCP-owned Hosts of retired listeners and deleting relays, then the
+ * direct-Host ledger (convex/edgeHostHides.ts): settle its unsettled rows by
+ * observation and re-observe the direct Hosts of bound guided relays (a
+ * reappeared covered / approved one is re-hidden, any other raises attention
+ * `direct_host_reappeared`; both suppressed while a restore workflow runs).
  */
 export const reconcileHosts = internalAction({
   args: {},
@@ -580,6 +584,17 @@ export const reconcileHosts = internalAction({
         });
         if (r.state === 'absent') deleted++;
       }
+    }
+    // The direct-Host ledger (its own counters live in its own reports).
+    try {
+      await ctx.runAction(internal.edgeHostHides.settle, {});
+    } catch (err) {
+      console.warn(`[edge-reconcile] hide ledger: ${err instanceof Error ? err.name : 'error'}`);
+    }
+    try {
+      await ctx.runAction(internal.edgeHostHides.reobserveDirect, {});
+    } catch (err) {
+      console.warn(`[edge-reconcile] direct hosts: ${err instanceof Error ? err.name : 'error'}`);
     }
     return { looked, deleted };
   },

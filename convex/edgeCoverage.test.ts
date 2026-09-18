@@ -371,6 +371,16 @@ describe('coverage: listener-aware reconcile upkeep', () => {
     const r = await run(t);
     expect(r.published + r.started).toBe(0);
     expect((await relayOf(t, relayId)).publishedEdgeIds).toEqual([]);
+    // Nor can a hand-started rotation touch it: only the run's own starts do.
+    const adopted = await adoptL4Edge(t, relayId, listener!._id, { ipv4: '198.51.100.3' });
+    await expect(
+      t.mutation(internal.edgeRotations.start, {
+        relayId,
+        kind: 'publish',
+        trigger: 'manual',
+        toEdgeId: adopted.edgeId as Id<'edges'>,
+      }),
+    ).rejects.toMatchObject({ data: { code: 'edge.setup_owned' } });
   });
 });
 

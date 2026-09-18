@@ -42,11 +42,18 @@ export function assertNotQuarantined(origin: Doc<'relays'>) {
 
 /**
  * The shared gate for every pool / edge / listener write that is NOT the
- * running rotation itself: refused while the origin is quarantined or a
- * rotation is in flight.
+ * running rotation itself: refused while the origin is quarantined, a
+ * rotation is in flight, or a restore workflow runs (its raw-body checks
+ * assume the pool and the listeners hold still; `edge.restore_in_progress`).
  */
 export async function assertNoRotationOrQuarantine(db: DatabaseReader, origin: Doc<'relays'>) {
   assertNotQuarantined(origin);
+  if (origin.restore) {
+    throw new ConvexError({
+      code: 'edge.restore_in_progress',
+      message: 'A restore workflow is running on this origin; wait for it to finish',
+    });
+  }
   if (origin.activeRotationId) {
     const rot = await db.get(origin.activeRotationId);
     if (rot && !isTerminalPhase(rot.phase)) {

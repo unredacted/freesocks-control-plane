@@ -185,6 +185,7 @@ export const ATTENTION_KINDS = [
   'needs_operator',
   'host_unresolved',
   'members_dark',
+  'direct_host_reappeared',
   'go_live_pending',
   'needs_test',
   'rotation_failed',
@@ -197,7 +198,9 @@ export const ATTENTION_KINDS = [
   'pool_below_desired',
   'account_unqualified',
   'account_untested',
+  'test_key_cleanup',
   'drift',
+  'restore_in_progress',
   'maintenance_frozen',
 ] as const;
 export type AttentionKind = (typeof ATTENTION_KINDS)[number];
@@ -273,3 +276,133 @@ export const POOL_CODES = [
   'setup_owned',
 ] as const;
 export type PoolCode = (typeof POOL_CODES)[number];
+
+/**
+ * The restore workflow (`relays.restore`, convex/edgeRestore.ts): why it runs
+ * and where it is. `cancel_setup` = a guided setup cancelled after publication
+ * (relay retained, unbound); `release_requirement` = edge-required delivery
+ * switched off (everything retained, re-activatable); `delete_relay` = a
+ * `restore-direct` deletion of a guided relay (drained and removed at the end).
+ */
+export const RESTORE_PURPOSES = ['cancel_setup', 'release_requirement', 'delete_relay'] as const;
+export type RestorePurpose = (typeof RESTORE_PURPOSES)[number];
+
+export const RESTORE_PHASES = [
+  'freeze',
+  'settle',
+  'verify_fcp_raw',
+  'release_binding',
+  'restore',
+  'verify_direct',
+  'finish',
+] as const;
+export type RestorePhase = (typeof RESTORE_PHASES)[number];
+
+/** The direct-Host hide ledger's row states (`edgeHostHides.state`). */
+export const HOST_HIDE_STATES = [
+  'intended',
+  'written',
+  'confirmed',
+  'unresolved',
+  'released',
+] as const;
+export type HostHideState = (typeof HOST_HIDE_STATES)[number];
+
+/**
+ * Workflow refusals (`edge.<code>` on the wire): a second restore workflow, a
+ * direct-Host hide or a pool / listener write while one runs.
+ */
+export const WORKFLOW_CODES = [
+  'restore_in_progress',
+  // guided setup runs: a reused relay whose node inbounds changed, a consent
+  // withdrawal for a Host already hidden, an account switch after publication
+  'plan_changed',
+  'consent_withdrawn_hidden',
+  'account_switch_late',
+] as const;
+export type WorkflowCode = (typeof WORKFLOW_CODES)[number];
+
+/**
+ * The guided setup ("Autopilot") run stages, in order (convex/edgeSetupRuns.ts,
+ * docs/edges.md § "Guided setup runs"). `try_it` is the per-endpoint operator
+ * confirmation between verification and publication.
+ */
+export const SETUP_RUN_STAGES = [
+  'prepare',
+  'credential',
+  'provision',
+  'verify',
+  'try_it',
+  'publish',
+  'hide_direct_hosts',
+  'rehearse',
+  'go_live',
+  'done',
+] as const;
+export type SetupRunStage = (typeof SETUP_RUN_STAGES)[number];
+
+/**
+ * running = a step is scheduled; waiting = a rotation / Host settle / probe
+ * round is in flight; needs_you = an interruption (see `need`); done = live;
+ * done_unbound = finished without the binding (the operator kept members on the
+ * direct address); failed / cancelled = terminal, the relay stays setup-owned.
+ */
+export const SETUP_RUN_STATES = [
+  'running',
+  'waiting',
+  'needs_you',
+  'done',
+  'done_unbound',
+  'failed',
+  'cancelled',
+] as const;
+export type SetupRunState = (typeof SETUP_RUN_STATES)[number];
+
+/** Interruptions a run raises (`need.code`): one card, one sentence, one button each. */
+export const SETUP_RUN_NEEDS = [
+  'account_untested',
+  'account_incompatible',
+  'maintenance',
+  'too_many_inbounds',
+  'use_manual_setup',
+  'choose_mode',
+  'provider_failed',
+  'address_unreachable',
+  'coverage_incomplete',
+  'try_it',
+  'review_changed',
+  'hide_failed',
+  'family_disabled',
+  'rehearsal_failed',
+  'quarantined',
+] as const;
+export type SetupRunNeed = (typeof SETUP_RUN_NEEDS)[number];
+
+/** Why a provider account cannot be offered by the setup plan (`accounts[].reasons`). */
+export const SETUP_ACCOUNT_REASONS = [
+  'account_untested',
+  'account_disabled',
+  'layer_mismatch',
+  'account_capacity_reached',
+  'account_budget_exhausted',
+  'provider_mismatch',
+  'dns_zone_missing',
+] as const;
+export type SetupAccountReason = (typeof SETUP_ACCOUNT_REASONS)[number];
+
+/**
+ * Why a discovered panel inbound could not become a listener candidate
+ * (lib/edges/inboundMapping.ts). `inactive` = the node does not serve it;
+ * `tag` = the tag cannot be bound; `protocol` / `transport` / `security` =
+ * outside the listener catalogue; `invalid` = a valid-looking combination the
+ * registration validator still refused (detail carries the code).
+ */
+export const INBOUND_UNSUPPORTED_CODES = [
+  'inactive',
+  'tag',
+  'protocol',
+  'transport',
+  'security',
+  'invalid',
+] as const;
+export type InboundUnsupportedCode = (typeof INBOUND_UNSUPPORTED_CODES)[number];

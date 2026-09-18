@@ -427,6 +427,35 @@ const relayRotationPhase = v.union(
   v.literal('quarantined'),
   v.literal('cancelled'),
 );
+// Guided setup ("Autopilot") run stages and states (convex/edgeSetupRuns.ts;
+// the vocabularies are pinned in src/shared/contracts/edgeCodes.ts).
+const setupRunStage = v.union(
+  v.literal('prepare'),
+  v.literal('credential'),
+  v.literal('provision'),
+  v.literal('verify'),
+  v.literal('try_it'),
+  v.literal('publish'),
+  v.literal('hide_direct_hosts'),
+  v.literal('rehearse'),
+  v.literal('go_live'),
+  v.literal('done'),
+);
+const setupRunState = v.union(
+  v.literal('running'),
+  v.literal('waiting'),
+  v.literal('needs_you'),
+  v.literal('done'),
+  v.literal('done_unbound'),
+  v.literal('failed'),
+  v.literal('cancelled'),
+);
+const setupRunVerify = v.union(
+  v.literal('pending'),
+  v.literal('partial'),
+  v.literal('verified'),
+  v.literal('unreachable'),
+);
 
 export default defineSchema({
   tiers: defineTable({
@@ -686,6 +715,10 @@ export default defineSchema({
     .index('by_backend_server', ['backendServerId'])
     // Bounded "any live key on this panel?" probe for the instance-delete guard.
     .index('by_backend_server_state', ['backendServerId', 'state'])
+    // (backendServerId, pinnedNode, state): the relay layer's COHORTS (one
+    // representative per placement among the keys pinned to a node), walked
+    // page by page (convex/lib/edges/cohorts.ts), never collected.
+    .index('by_backend_server_pinned', ['backendServerId', 'pinnedNode', 'state'])
     // The FCP-fronted subscription route resolves the sub by its opaque token.
     .index('by_sub_token', ['subToken']),
 
@@ -1158,8 +1191,60 @@ export default defineSchema({
     // A setup run owns this relay: reconcile upkeep and the detector's automatic
     // replacement skip it until the run clears the flag (independent of the run's state).
     setupOwned: v.optional(v.boolean()),
+    // Member cohorts the operator knowingly left without protected delivery at
+    // go-live (their whole body went with the consented hides). The restore
+    // workflow's raw-body checks skip them; without this the relay could never
+    // release its binding or be removed.
+    darkCohortKeys: v.optional(v.array(v.string())),
     // The stage the setup run recorded last (informational; the run machine is a later release).
     setupStage: v.optional(v.string()),
+    // The persisted RESTORE workflow (convex/edgeRestore.ts): hides settled,
+    // the binding released with the relay enabled, direct Hosts re-enabled,
+    // then the purpose's finish. Present = in progress; a second workflow and
+    // every new direct-Host hide are refused (`edge.restore_in_progress`).
+    restore: v.optional(
+      v.object({
+        purpose: v.union(
+          v.literal('cancel_setup'),
+          v.literal('release_requirement'),
+          v.literal('delete_relay'),
+        ),
+        phase: v.union(
+          v.literal('freeze'),
+          v.literal('settle'),
+          v.literal('verify_fcp_raw'),
+          v.literal('release_binding'),
+          v.literal('restore'),
+          v.literal('verify_direct'),
+          v.literal('finish'),
+        ),
+        startedAt: v.number(),
+        updatedAt: v.number(),
+        // Passes of the current phase that could not advance it (bounded per phase).
+        attempt: v.number(),
+        lastError: v.optional(v.string()),
+        // Cohorts the operator approved to go dark (their raw bodies are not checked).
+        darkCohortKeys: v.array(v.string()),
+        // `delete_relay`: what the deletion body runs with once phase 7 is reached.
+        force: v.optional(v.boolean()),
+        actorAdminId: v.optional(v.id('adminUsers')),
+      }),
+    ),
+    // Direct Hosts (enabled, dialling the origin itself) the reconcile pass saw on
+    // a BOUND guided relay and could neither cover nor re-hide: attention
+    // `direct_host_reappeared`. Cleared when a pass sees none.
+    directHostAlert: v.optional(
+      v.object({
+        at: v.number(),
+        hosts: v.array(
+          v.object({
+            uuid: v.string(),
+            remark: v.string(),
+            inboundUuid: v.union(v.string(), v.null()),
+          }),
+        ),
+      }),
+    ),
     // Block-detector state (convex/edgeDetector.ts).
     suspicion: v.optional(
       v.object({
@@ -1209,6 +1294,34 @@ export default defineSchema({
     qualificationRemovalPending: v.optional(v.array(v.string())),
     // The connection mode the L7 qualification credential was minted on.
     qualificationModeSlug: v.optional(v.string()),
+    // The qualification credential as a PERSISTED OPERATION
+    // (relayQualification.ensure): written BEFORE any panel call with the
+    // deterministic username the panel user is re-found by, and the binding
+    // {backendServerId, placement, modeSlug} the credential covers once stored.
+    // A credential is reused only when the requested binding equals this one.
+    qualificationMint: v.optional(
+      v.object({
+        opId: v.string(),
+        username: v.string(),
+        backendServerId: v.id('backendServers'),
+        placement: v.union(v.string(), v.null()),
+        modeSlug: v.union(v.string(), v.null()),
+        state: v.union(
+          v.literal('intended'),
+          v.literal('issued'),
+          v.literal('stored'),
+          v.literal('unresolved'),
+        ),
+        claimedAt: v.number(),
+        // Quiet by-username looks since the claim (the settle rule before a re-issue).
+        looks: v.optional(v.number()),
+      }),
+    ),
+    // The credential's own subscription (short id + panel URL): what the test
+    // link and the empty-node rehearsal fetch. Never the credential itself.
+    qualificationSubscription: v.optional(
+      v.object({ backendShortId: v.string(), subscriptionUrl: v.string() }),
+    ),
     // Stamped by every by-slug registration, changed or not (the role heartbeat).
     lastRegisteredAt: v.optional(v.number()),
     updatedAt: v.number(),
@@ -1217,6 +1330,34 @@ export default defineSchema({
     .index('by_backend_server', ['backendServerId'])
     .index('by_node', ['backendServerId', 'nodeName'])
     .index('by_enabled', ['enabled']),
+
+  // Temporary test credentials (docs/edges.md § "Publication", the test link):
+  // a durable obligation to remove a backend user FCP minted for a test. The
+  // row is written BEFORE `issueUser` (`backendUserId` absent until issuance is
+  // observed) and settled by the reconcile sweep independently of any setup
+  // run: expired or released rows go through `deleteUser` with bounded
+  // retries; a delete that keeps failing is surfaced as attention
+  // `test_key_cleanup`. Remnawave tests reuse the relay's qualification user
+  // and write no row here; Outline has no name lookup, so its temporary keys
+  // live here.
+  edgeTestCredentials: defineTable({
+    relayId: v.id('relays'),
+    backendServerId: v.id('backendServers'),
+    backend: backendId,
+    username: v.string(),
+    backendUserId: v.optional(v.string()),
+    backendShortId: v.optional(v.string()),
+    subscriptionUrl: v.optional(v.string()),
+    purpose: v.union(v.literal('rehearsal'), v.literal('test_link')),
+    expiresAt: v.number(),
+    removal: v.union(v.literal('pending'), v.literal('done'), v.literal('failed')),
+    attempts: v.number(),
+    // Set when a delete attempt failed: the sweep waits for the backoff.
+    retryAfter: v.optional(v.number()),
+    updatedAt: v.number(),
+  })
+    .index('by_relay', ['relayId'])
+    .index('by_removal_expires', ['removal', 'expiresAt']),
 
   // One LISTENER on a relay: a port the origin answers on, what it speaks,
   // the names / REALITY target the renderer needs, how the renderer finds its
@@ -1476,6 +1617,10 @@ export default defineSchema({
     requestedAccountId: v.optional(v.id('edgeProviderAccounts')),
     requestedTemplateId: v.optional(v.id('edgeTemplates')),
     allowUnqualified: v.optional(v.boolean()),
+    // The guided setup run that started this rotation, with the run GENERATION
+    // it was started under: the terminal hook reports this stored generation,
+    // never the run's current one, so a retried run ignores the old rotation.
+    setupRun: v.optional(v.object({ runId: v.id('edgeSetupRuns'), generation: v.number() })),
     // Selection outcome: the new edge came from an existing standby (true) or was
     // provisioned by this run (`createdEdgeId`, the only edge a failure may mark).
     viaStandby: v.optional(v.boolean()),
@@ -1544,6 +1689,113 @@ export default defineSchema({
     // Retention: terminal rows by finish time.
     .index('by_phase_finished', ['phase', 'finishedAt']),
 
+  // One guided setup ("Autopilot") run: protect a panel node with edges by
+  // walking the stage machine in convex/edgeSetupRuns.ts (docs/edges.md
+  // § "Guided setup runs"). One non-terminal run per origin; the relay it
+  // creates stays `setupOwned` until go-live. Control flow reads the row
+  // fields (`stage`, `state`, `expect`, `listeners[]`), never `events[]`.
+  edgeSetupRuns: defineTable({
+    relayId: v.optional(v.id('relays')),
+    relaySlug: v.string(),
+    backendServerId: v.id('backendServers'),
+    nodeName: v.string(),
+    nodeUuid: v.string(),
+    accountId: v.id('edgeProviderAccounts'),
+    // The plan snapshot (JSON, edgeSetupPlan.ts) + its hash and the consent revision.
+    plan: v.string(),
+    planHash: v.string(),
+    planRevision: v.number(),
+    // The EXACT uncovered direct-Host uuids the operator approved for hiding.
+    approvedHideUuids: v.array(v.string()),
+    // "Keep those members on the direct address": finish unbound after publish.
+    keepDirect: v.optional(v.boolean()),
+    stage: setupRunStage,
+    state: setupRunState,
+    need: v.optional(v.object({ code: v.string(), detail: v.optional(v.string()) })),
+    // Bumped by retry / continue: the terminal hook of a rotation started under
+    // an older generation is a no-op.
+    generation: v.number(),
+    // Fences the step action (bumped on every transition and re-kick).
+    stepVersion: v.number(),
+    // The rotation whose terminal outcome the run is waiting for.
+    expect: v.optional(v.object({ rotationId: v.id('edgeRotations'), generation: v.number() })),
+    listeners: v.array(
+      v.object({
+        listenerKey: v.string(),
+        layer: v.union(v.literal('l4'), v.literal('l7')),
+        edgeId: v.optional(v.id('edges')),
+        verify: setupRunVerify,
+        published: v.boolean(),
+        probeRequestedAt: v.optional(v.number()),
+        proofRequestedAt: v.optional(v.number()),
+      }),
+    ),
+    // The isolated test links shown for the `try_it` card (one per L4 endpoint).
+    testLinks: v.optional(
+      v.array(
+        v.object({
+          edgeId: v.id('edges'),
+          listenerKey: v.string(),
+          link: v.string(),
+          format: v.string(),
+          method: v.union(v.literal('test_link'), v.literal('named_connection')),
+          binding: v.object({
+            endpoint: v.string(),
+            listenerRevision: v.number(),
+            configHash: v.string(),
+            issuedAt: v.number(),
+          }),
+        }),
+      ),
+    ),
+    testedEndpoints: v.optional(
+      v.array(
+        v.object({
+          edgeId: v.id('edges'),
+          listenerKey: v.string(),
+          endpoint: v.string(),
+          at: v.number(),
+        }),
+      ),
+    ),
+    // Uncovered direct Hosts found at stage 6 that the consent did not name.
+    reviewDelta: v.optional(v.array(v.object({ uuid: v.string(), remark: v.string() }))),
+    // Stage 7's result: the version vector + the final Host observation stage 8 compares.
+    rehearsal: v.optional(
+      v.object({
+        at: v.number(),
+        attempts: v.number(),
+        vector: v.object({
+          listenerRevisions: v.record(v.string(), v.number()),
+          renderConfigHash: v.string(),
+          publicationEpoch: v.number(),
+          qualificationEvidenceIds: v.array(v.string()),
+        }),
+        hostsObservation: v.object({ at: v.number(), version: v.number(), hash: v.string() }),
+        darkCohortKeys: v.array(v.string()),
+      }),
+    ),
+    stageEnteredAt: v.number(),
+    stepStartedAt: v.optional(v.number()),
+    nextStepAt: v.optional(v.number()),
+    // Bounded live log for the progress view (display only).
+    events: v.array(
+      v.object({
+        at: v.number(),
+        level: v.union(v.literal('info'), v.literal('warn'), v.literal('error')),
+        code: v.string(),
+        detail: v.optional(v.string()),
+      }),
+    ),
+    actorAdminId: v.optional(v.id('adminUsers')),
+    startedAt: v.number(),
+    finishedAt: v.optional(v.number()),
+    updatedAt: v.number(),
+  })
+    .index('by_state', ['state', 'updatedAt'])
+    .index('by_relay', ['relayId'])
+    .index('by_origin', ['backendServerId', 'nodeName']),
+
   // Claims on EXTERNAL resources shared by several edges (a Cloudflare zone's
   // ruleset, a Fastly service's version chain). `claimOp` locks one edge; this
   // locks the shared thing. An expired, unsettled lock blocks further writes
@@ -1573,6 +1825,58 @@ export default defineSchema({
   })
     .index('by_server_node', ['backendServerId', 'nodeName'])
     .index('by_server', ['backendServerId']),
+
+  // The direct-Host hide LEDGER (docs/edges.md § "Direct-Host hides and the
+  // restore workflow"): one row per panel Host FCP disables (intent `disable`)
+  // or re-enables (intent `restore`) on a guided relay's node, written BEFORE
+  // the panel call with the tuple that was observed. A row that holds an
+  // `opId` is possibly written and is settled only by observation: disabled =
+  // `confirmed`, gone = `released`, still enabled = `unresolved` until the
+  // settle floor and two quiet looks have passed since the lease expired. A
+  // lease expiry alone never releases or reverses anything.
+  edgeHostHides: defineTable({
+    relayId: v.id('relays'),
+    // The setup run that asked for the hide (its id as a string; absent for a
+    // reconcile re-hide).
+    runId: v.optional(v.string()),
+    backendServerId: v.id('backendServers'),
+    hostUuid: v.string(),
+    observed: v.object({
+      remark: v.string(),
+      address: v.string(),
+      port: v.number(),
+      sni: v.union(v.string(), v.null()),
+      host: v.union(v.string(), v.null()),
+      inboundUuid: v.union(v.string(), v.null()),
+      isDisabled: v.boolean(),
+    }),
+    intent: v.union(v.literal('disable'), v.literal('restore')),
+    state: v.union(
+      v.literal('intended'),
+      v.literal('written'),
+      v.literal('confirmed'),
+      v.literal('unresolved'),
+      v.literal('released'),
+    ),
+    opId: v.optional(v.string()),
+    attempt: v.number(),
+    claimedAt: v.optional(v.number()),
+    expiresAt: v.optional(v.number()),
+    confirmedAt: v.optional(v.number()),
+    // Quiet looks (the Host still enabled) taken since the lease expired.
+    quietLooks: v.optional(v.number()),
+    // The read-back found the uuid disabled but at a DIFFERENT tuple than the
+    // one observed before the write (an administrator repointed it meanwhile):
+    // never confirmed, surfaced as failed, and still re-enabled by a restore.
+    tupleDrifted: v.optional(v.boolean()),
+    lastLookAt: v.optional(v.number()),
+    // Why a row was released: `gone`, `changed`, `restored`, `never_written`, `settled`.
+    releasedReason: v.optional(v.string()),
+    updatedAt: v.number(),
+  })
+    .index('by_relay', ['relayId'])
+    .index('by_run', ['runId'])
+    .index('by_host', ['hostUuid']),
 
   // External / internal reachability probe requests against one edge.
   // Operator-entered probe targets (any host:port), alongside the derived ones

@@ -24,11 +24,16 @@ import type {
   AttentionKind,
   AttentionSeverity,
   DeliveryUnavailableCode,
+  InboundUnsupportedCode,
   LayerExclusionCode,
   PreflightBlockerCode,
   PoolCode,
   PreflightWarningCode,
+  SetupAccountReason,
   SetupBlockerCode,
+  SetupRunNeed,
+  SetupRunStage,
+  SetupRunState,
   SetupStepId,
   SetupStepStatus,
 } from '../../shared/contracts/edgeCodes';
@@ -610,10 +615,27 @@ const COPY = {
       'The listener or the address changed since you tested it, so the test no longer counts.',
     fix: 'Test the address again against its current configuration.',
   },
+  test_key_cleanup: {
+    label: 'Test key not removed',
+    explain: 'A temporary test key could not be removed from the server after several tries.',
+    fix: 'Check the server, remove the key by hand if it is still there, then retry the cleanup.',
+  },
   drift: {
     label: 'Drift',
     explain: 'What the provider reports differs from what FCP recorded for an edge.',
     fix: 'Open the edge and compare the live snapshot.',
+  },
+  direct_host_reappeared: {
+    label: 'Direct address back in the panel',
+    explain:
+      'A panel Host that hands out the node address itself was re-enabled or added on a protected node, so members on it are refused a body until it is hidden again.',
+    fix: 'Hide it in the panel, or add it to the protected node so FCP hides it for you.',
+  },
+  restore_in_progress: {
+    label: 'Restoring the direct address',
+    explain:
+      'FCP is settling its Host changes on this node, releasing edge-required delivery and putting the direct addresses back, one checked step at a time.',
+    fix: 'Nothing yet. Open the node to watch it finish; other changes to it wait until then.',
   },
   maintenance_frozen: {
     label: 'Maintenance freeze on',
@@ -743,6 +765,55 @@ const COPY = {
   },
 } as const satisfies Record<KnownCode, CodeCopy> & Record<string, CodeCopy>;
 
+// --- discovered inbounds that cannot become listeners --------------------------------------
+// Why a panel inbound found on the node was left out of the protection plan
+// (`INBOUND_UNSUPPORTED_CODES`). Kept apart from the flat table above: these words are
+// generic nouns, and a future status code with the same name must not inherit them.
+export const INBOUND_UNSUPPORTED_COPY: Record<InboundUnsupportedCode, CodeCopy> = {
+  inactive: {
+    label: 'Not served by this node',
+    explain: 'The inbound is in the config profile but the node does not have it active.',
+    fix: 'Enable it on the node in the panel if members should use it.',
+  },
+  tag: {
+    label: 'Tag cannot be bound',
+    explain:
+      'The inbound tag uses characters a panel Host cannot bind to (letters, digits and underscores only).',
+    fix: 'Rename the inbound tag in the config profile.',
+  },
+  protocol: {
+    label: 'Protocol not supported',
+    explain:
+      'Edges can carry VLESS, Trojan and Shadowsocks inbounds; this protocol is not one of them.',
+  },
+  transport: {
+    label: 'Transport not supported',
+    explain:
+      'Edges can carry raw TCP, WebSocket, HTTP Upgrade and gRPC streams; this transport is not one of them.',
+  },
+  security: {
+    label: 'Security layer not supported',
+    explain:
+      'Edges can carry REALITY, TLS and plain inbounds; this security setting is not one of them.',
+  },
+  invalid: {
+    label: 'Inbound cannot be described',
+    explain:
+      'The inbound looks supported but its settings could not be turned into a listener (the detail names what).',
+    fix: 'Check the port, the REALITY target and the server names in the config profile.',
+  },
+};
+
+export function inboundUnsupportedCopy(code: string): CodeCopy {
+  const known = (INBOUND_UNSUPPORTED_COPY as Record<string, CodeCopy>)[code];
+  return (
+    known ?? {
+      label: humanizeCode(code),
+      explain: `The inbound was skipped: ${humanizeCode(code)}.`,
+    }
+  );
+}
+
 // --- refusal codes ---------------------------------------------------------------------------
 // What a mutation is refused with (`edge.<code>` on the wire, keyed bare here) that no status
 // vocabulary above carries. An error line shows these as `explain` + `fix` (lib/edgeErrors.ts),
@@ -800,6 +871,66 @@ const REFUSAL_COPY = {
   l7_proof_required: {
     label: 'Proven automatically',
     explain: 'A CDN front is verified by its own end-to-end proof, not by hand.',
+  },
+  restore_in_progress: {
+    label: 'Restore in progress',
+    explain:
+      'This node is putting its direct addresses back, so a second workflow, a new hide and pool changes wait.',
+    fix: 'Let the restore finish (the node page shows its phase), then try again.',
+  },
+  plan_changed: {
+    label: 'Node changed since setup',
+    explain:
+      'The inbounds on this node are not the ones the earlier setup created listeners for, so the run cannot resume safely.',
+    fix: 'Remove protection from the node, then protect it again.',
+  },
+  consent_withdrawn_hidden: {
+    label: 'Host already hidden',
+    explain:
+      'A host you removed from the approval was already hidden; the run never re-enables a host on its own.',
+    fix: 'Keep it approved, or remove protection to put every host back.',
+  },
+  account_switch_late: {
+    label: 'Account fixed after publish',
+    explain: 'The account can only change while nothing is published for this node yet.',
+    fix: 'Cancel the run and start again with the other account.',
+  },
+  test_link_no_match: {
+    label: 'No entry for this inbound',
+    explain:
+      'The test credential receives no single connection entry for this inbound, so no test link can be built from it.',
+    fix: 'Check that the node has exactly one enabled panel Host on this inbound at its own address and port.',
+  },
+  test_link_render_failed: {
+    label: 'Test link not rendered',
+    explain: 'The candidate address could not be rendered into a connection for this inbound.',
+    fix: 'Check the listener names and the address, then fetch the test link again.',
+  },
+  use_manual_setup: {
+    label: 'Use manual setup',
+    explain: 'Outline servers with no members have no test credential path.',
+    fix: 'Use the manual setup for this server, or rehearse once it has members.',
+  },
+  choose_mode: {
+    label: 'Choose a connection mode',
+    explain: 'The node has no usable placement to mint the test credential on.',
+    fix: 'Choose the connection mode whose placement covers this node.',
+  },
+  credential_unresolved: {
+    label: 'Credential still settling',
+    explain:
+      'An earlier attempt to create the test credential may still land on the panel; FCP waits before creating another.',
+    fix: 'Try again in a couple of minutes.',
+  },
+  node_unknown: {
+    label: 'Node not in inventory',
+    explain: 'The panel inventory has no node with this identifier.',
+    fix: 'Refresh the node list, then try again.',
+  },
+  node_address_unknown: {
+    label: 'Node address unknown',
+    explain: 'The panel reports no address for this node, so its origin cannot be probed.',
+    fix: 'Set the node address on the panel, then refresh the node list.',
   },
 } as const satisfies Record<string, CodeCopy>;
 
@@ -1055,6 +1186,162 @@ export function severityTone(s: AttentionSeverity): Tone {
 }
 export const attentionSeverityTone = severityTone;
 
+// --- guided setup runs (Autopilot) -------------------------------------------------------------
+
+/** The four plain stages the progress view shows, mapped from the machine's ten. */
+export const SETUP_RUN_STAGE_LABELS: Record<SetupRunStage, string> = {
+  prepare: 'Creating the address',
+  credential: 'Creating the address',
+  provision: 'Creating the address',
+  verify: 'Checking from outside',
+  try_it: 'Checking it works',
+  publish: 'Going live',
+  hide_direct_hosts: 'Going live',
+  rehearse: 'Going live',
+  go_live: 'Going live',
+  done: 'Live',
+};
+
+export const SETUP_RUN_STATE_LABELS: Record<SetupRunState, string> = {
+  running: 'Working',
+  waiting: 'Waiting',
+  needs_you: 'Needs you',
+  done: 'Live',
+  done_unbound: 'Finished without going live',
+  failed: 'Stopped',
+  cancelled: 'Cancelled',
+};
+
+export function setupRunStateTone(s: SetupRunState): Tone {
+  if (s === 'done') return 'success';
+  if (s === 'needs_you') return 'warning';
+  if (s === 'failed') return 'danger';
+  if (s === 'cancelled' || s === 'done_unbound') return 'muted';
+  return 'info';
+}
+
+/** One card per interruption: `explain` is the sentence, `fix` the button (secondary in parentheses). */
+export const SETUP_RUN_NEED_COPY: Record<SetupRunNeed, CodeCopy> = {
+  account_untested: {
+    label: 'Account not tested',
+    explain: 'The provider account has not passed a credential test yet.',
+    fix: 'Test again (Choose another account).',
+  },
+  account_incompatible: {
+    label: 'Account cannot front this node',
+    explain: 'The provider account cannot carry every inbound this node serves.',
+    fix: 'Choose another account.',
+  },
+  maintenance: {
+    label: 'New work is paused',
+    explain: 'Edges are in maintenance, so the run cannot start new work.',
+    fix: 'Resume new work.',
+  },
+  too_many_inbounds: {
+    label: 'Too many inbounds',
+    explain: 'The node serves more frontable inbounds than a guided run protects.',
+    fix: 'Use manual setup.',
+  },
+  use_manual_setup: {
+    label: 'Manual setup needed',
+    explain: 'Outline servers with no members are outside the guided setup.',
+    fix: 'Use manual setup.',
+  },
+  choose_mode: {
+    label: 'Connection mode needed',
+    explain: 'The test account needs a connection mode with a placement on this panel.',
+    fix: 'Choose connection mode.',
+  },
+  provider_failed: {
+    label: 'Provider step failed',
+    explain: 'The provider could not create or publish the address (the detail names the step).',
+    fix: 'Try again (Choose another account).',
+  },
+  address_unreachable: {
+    label: 'Address unreachable',
+    explain: 'The new address could not be reached from outside.',
+    fix: 'Try another address (Go live anyway).',
+  },
+  coverage_incomplete: {
+    label: 'Not every inbound covered',
+    explain: 'The published pool had no room for one of the listeners.',
+    fix: 'Try again.',
+  },
+  try_it: {
+    label: 'Try each address',
+    explain:
+      'Import each test link into a client (it uses a test account of its own), connect, load a page, then tick Works.',
+    fix: 'Continue (One of them does not work).',
+  },
+  review_changed: {
+    label: 'Hosts changed',
+    explain: 'The panel now has unsupported Hosts the review did not show.',
+    fix: 'Review the change.',
+  },
+  hide_failed: {
+    label: 'Could not hide a Host',
+    explain: 'The panel refused to hide one of the old direct Hosts.',
+    fix: 'Check again (Hide them in the panel yourself).',
+  },
+  family_disabled: {
+    label: 'Client family off',
+    explain: 'Rendering is turned off for one client family, so its members would get nothing.',
+    fix: 'Turn on for that family.',
+  },
+  rehearsal_failed: {
+    label: 'Rehearsal failed',
+    explain: 'A member body did not render through the new address (the detail names the case).',
+    fix: 'Try again.',
+  },
+  quarantined: {
+    label: 'Paused for safety',
+    explain: 'A rotation could not converge and paused the relay.',
+    fix: 'Review.',
+  },
+};
+
+export const SETUP_ACCOUNT_REASON_COPY: Record<SetupAccountReason, CodeCopy> = {
+  account_untested: {
+    label: 'Not tested',
+    explain: 'The account has not passed a credential test.',
+    fix: 'Test the credentials.',
+  },
+  account_disabled: { label: 'Disabled', explain: 'The account is disabled.' },
+  layer_mismatch: {
+    label: 'Cannot carry every inbound',
+    explain: 'The account fronts at a layer one of the inbounds cannot use.',
+  },
+  account_capacity_reached: {
+    label: 'No room',
+    explain: 'The account has fewer free edges than this node needs.',
+    fix: 'Raise its edge limit or free an edge.',
+  },
+  account_budget_exhausted: {
+    label: 'Daily budget used',
+    explain: 'The account has fewer allocations left today than this node needs.',
+    fix: 'Wait for tomorrow or raise the budget.',
+  },
+  provider_mismatch: {
+    label: 'Other provider pinned',
+    explain: 'A listener on this node is pinned to another provider.',
+  },
+  dns_zone_missing: {
+    label: 'No DNS zone',
+    explain: 'The CDN account names no DNS account for its hostnames.',
+    fix: 'Set the DNS account on the provider.',
+  },
+};
+
+export function setupRunNeedCopy(code: string | null | undefined): CodeCopy {
+  const known = code ? (SETUP_RUN_NEED_COPY as Record<string, CodeCopy>)[code] : undefined;
+  return (
+    known ?? {
+      label: humanizeCode(code ?? ''),
+      explain: `The run needs you: ${humanizeCode(code ?? 'something')}.`,
+    }
+  );
+}
+
 // --- audit actions (Timeline) ----------------------------------------------------------------
 
 const AUDIT_ACTION_LABELS: Record<string, string> = {
@@ -1119,6 +1406,12 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'edge.pool_expanded': 'Pool expanded for an uncovered listener',
   'edge.relay.rebalanced': 'Duplicate edge sent back to standby',
   'edge.automation.set': 'Automatic protection switched',
+  'edge.setup_run.started': 'Guided setup started',
+  'edge.setup_run.needs_operator': 'Guided setup needs you',
+  'edge.setup_run.go_live': 'Guided setup went live',
+  'edge.setup_run.finished': 'Guided setup finished',
+  'edge.setup_run.cancelled': 'Guided setup cancelled',
+  'edge.render.enabled_by_setup': 'Rendering turned on by a guided setup',
   'probe.requested': 'Probe requested',
   'probe.run': 'Probe run finished',
   'probe.verdict': 'Reachability verdict changed',

@@ -86,7 +86,8 @@ export interface CanonicalListener extends ListenerProto {
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const INBOUND_TAG_RE = /^[A-Z0-9_]{1,64}$/;
+/** A panel inbound tag a listener may bind to (shared with inbound discovery). */
+export const INBOUND_TAG_RE = /^[A-Z0-9_]{1,64}$/;
 const MAX_NAMES = 32;
 
 function fail(message: string, code = 'validation'): never {

@@ -31,6 +31,7 @@ import type {
   BackendHostPatch,
   BackendHostCreate,
   NodeInventoryRow,
+  PanelInbound,
 } from './types';
 import { farFutureExpiryIso, isFarFutureExpiry } from './types';
 
@@ -537,6 +538,37 @@ export async function remnawaveIssueUser(
   };
 }
 
+/**
+ * Re-find a user FCP created, by username (`GET /api/users/by-username/{u}`:
+ * the same path on 2.x and 3.x, the one the health probe already relies on).
+ * Returns the issued shape (the raw provider id, the short uuid, the pinned
+ * subscription URL, the VLESS uuid) or null on a 404. Anything else throws:
+ * an unreachable panel is not "no such user".
+ */
+export async function remnawaveFindUserByUsername(
+  cfg: RemnawaveConfig,
+  username: string,
+): Promise<IssuedUser | null> {
+  let user: RemnawaveUser;
+  try {
+    user = await call(cfg, {
+      method: 'GET',
+      path: `/api/users/by-username/${encodeURIComponent(username)}`,
+      schema: RemnawaveUser,
+    });
+  } catch (err) {
+    if (isRemnawaveNotFound(err)) return null;
+    throw err;
+  }
+  return {
+    backendUserId: panelUserId(user),
+    backendShortId: user.shortUuid,
+    subscriptionUrl: pinnedSubscriptionUrl(cfg, user.subscriptionUrl, user.shortUuid),
+    raw: user,
+    protocolUuid: user.vlessUuid ?? undefined,
+  };
+}
+
 async function listDevices(cfg: RemnawaveConfig, backendUserId: string): Promise<BackendDevice[]> {
   try {
     const result = await call(cfg, {
@@ -766,6 +798,26 @@ export async function remnawaveCreateHost(
   return { uuid: 'uuid' in res ? res.uuid : res.response.uuid };
 }
 
+/**
+ * PATCH /api/hosts { uuid, isDisabled } flips ONE Host's disabled bit and
+ * nothing else: the panel's update DTO omits every field the body leaves out
+ * (see `remnawaveUpdateHost`), so the address, port, names, inbound and
+ * fingerprint are untouched. The caller confirms by re-listing and reading
+ * `isDisabled` back (observe-then-write); the echoed row is not trusted.
+ */
+export async function remnawaveSetHostDisabled(
+  cfg: RemnawaveConfig,
+  uuid: string,
+  disabled: boolean,
+): Promise<void> {
+  await call(cfg, {
+    method: 'PATCH',
+    path: '/api/hosts',
+    body: { uuid, isDisabled: disabled },
+    schema: z.unknown(),
+  });
+}
+
 /** DELETE /api/hosts/{uuid}; a 404 is success (idempotent). The caller confirms by re-listing. */
 export async function remnawaveDeleteHost(cfg: RemnawaveConfig, uuid: string): Promise<void> {
   try {
@@ -812,7 +864,19 @@ const InternalSquadsResponse = z.object({
   internalSquads: z.array(z.object({ uuid: z.string(), name: z.string() })),
 });
 
-// /api/nodes → (unwrapped) an array of nodes. Only the load-relevant fields.
+// A config-profile inbound row as the panel derives it from the profile's
+// Xray config (`ConfigProfileInboundsSchema` in remnawave/backend): the same
+// shape appears under a node's `configProfile.activeInbounds` and under a
+// profile's `inbounds`. Only `uuid` + `tag` are read; the row's `rawInbound`
+// (the complete inbound JSON, private key included) is DELIBERATELY not in
+// the schema, so zod strips it at the boundary.
+const ConfigProfileInboundRef = z.object({ uuid: z.string(), tag: z.string() });
+
+// /api/nodes → (unwrapped) an array of nodes. The load-relevant fields, plus
+// the node's active config profile for inbound discovery. Verified against
+// remnawave/backend `libs/contract/models/nodes.schema.ts`
+// (`configProfile.activeConfigProfileUuid` + `activeInbounds[]`); the
+// `configProfileUuid` spelling is accepted as a tolerance for older panels.
 const NodesResponse = z.array(
   z.object({
     uuid: z.string(),
@@ -824,8 +888,144 @@ const NodesResponse = z.array(
     isDisabled: z.boolean().nullish(),
     usersOnline: z.number().nullish(),
     trafficUsedBytes: z.number().nullish(),
+    configProfile: z
+      .object({
+        activeConfigProfileUuid: z.string().nullish(),
+        configProfileUuid: z.string().nullish(),
+        activeInbounds: z.array(ConfigProfileInboundRef).nullish(),
+      })
+      .nullish(),
   }),
 );
+
+// --- Node inbound discovery --------------------------------------------------
+
+/** A config profile with its derived inbound rows (`GET /api/config-profiles/{uuid}`). */
+const ConfigProfileWithInbounds = z.object({
+  uuid: z.string(),
+  name: z.string(),
+  config: z.unknown(),
+  inbounds: z.array(ConfigProfileInboundRef).nullish(),
+});
+
+function str(v: unknown): string | null {
+  return typeof v === 'string' && v.length > 0 ? v : null;
+}
+function obj(v: unknown): Record<string, unknown> | null {
+  return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
+
+/** One plain port (`443`, `"443"`); a range or list (`"1000-2000"`, `"443,8443"`) is null. */
+function plainPort(v: unknown): number | null {
+  if (typeof v === 'number') return Number.isInteger(v) && v >= 1 && v <= 65535 ? v : null;
+  if (typeof v === 'string' && /^\d{1,5}$/.test(v.trim())) return plainPort(Number(v.trim()));
+  return null;
+}
+
+/**
+ * Project one raw Xray inbound (a `config.inbounds[]` entry) onto the
+ * allowlisted `PanelInbound` shape. ONLY these paths are read: `tag`,
+ * `protocol`, `port`, `streamSettings.network`, `.security`,
+ * `.realitySettings.{dest,target,serverNames}`, `.tlsSettings.serverName`,
+ * `.wsSettings.{path,host,headers.Host}`, `.httpupgradeSettings.{path,host}`
+ * and `.grpcSettings.serviceName`. `settings` (the clients), the REALITY
+ * `privateKey` / `shortIds`, `tlsSettings.certificates` and every other key
+ * are never touched. Pure; exported for the redaction test. Returns null when
+ * the entry has no usable tag.
+ */
+export function projectXrayInbound(
+  raw: unknown,
+  binding: { configProfileUuid: string; configProfileInboundUuid: string; active: boolean },
+): PanelInbound | null {
+  const ib = obj(raw);
+  if (!ib) return null;
+  const tag = str(ib.tag);
+  if (!tag) return null;
+  const stream = obj(ib.streamSettings) ?? {};
+  const network = (str(stream.network) ?? 'tcp').toLowerCase();
+  const security = (str(stream.security) ?? 'none').toLowerCase();
+  const out: PanelInbound = {
+    tag,
+    configProfileUuid: binding.configProfileUuid,
+    configProfileInboundUuid: binding.configProfileInboundUuid,
+    protocol: (str(ib.protocol) ?? '').toLowerCase(),
+    port: plainPort(ib.port),
+    network,
+    security,
+    active: binding.active,
+  };
+  if (security === 'reality') {
+    const rs = obj(stream.realitySettings) ?? {};
+    const names = Array.isArray(rs.serverNames)
+      ? rs.serverNames.map(str).filter((n): n is string => n !== null)
+      : [];
+    // Xray renamed `dest` to `target` (both still accepted by the core).
+    out.reality = { target: str(rs.target) ?? str(rs.dest), serverNames: names };
+  } else if (security === 'tls') {
+    const ts = obj(stream.tlsSettings) ?? {};
+    out.tls = { serverName: str(ts.serverName) };
+  }
+  if (network === 'ws' || network === 'websocket') {
+    const ws = obj(stream.wsSettings) ?? {};
+    const headers = obj(ws.headers) ?? {};
+    out.ws = { path: str(ws.path), host: str(ws.host) ?? str(headers.Host) ?? str(headers.host) };
+  } else if (network === 'httpupgrade') {
+    const hu = obj(stream.httpupgradeSettings) ?? {};
+    out.httpupgrade = { path: str(hu.path), host: str(hu.host) };
+  } else if (network === 'grpc' || network === 'gun') {
+    const g = obj(stream.grpcSettings) ?? {};
+    out.grpc = { serviceName: str(g.serviceName) };
+  }
+  return out;
+}
+
+/**
+ * The inbounds one panel node serves, for relay listener discovery:
+ * `GET /api/nodes` finds the node's active config profile (+ which of its
+ * inbounds the node has active), `GET /api/config-profiles/{uuid}` supplies
+ * the profile's Xray `config.inbounds[]` and the derived inbound rows; the two
+ * are joined BY TAG (the inbound uuid a Host binds to lives only on the derived
+ * row; the stream settings only in the raw config). Every entry goes through
+ * `projectXrayInbound`, so nothing beyond the allowlist leaves this function.
+ * A node without an active profile answers `[]`; an unknown node uuid throws.
+ */
+export async function remnawaveListNodeInbounds(
+  cfg: RemnawaveConfig,
+  nodeUuid: string,
+): Promise<PanelInbound[]> {
+  const nodes = await call(cfg, { method: 'GET', path: '/api/nodes', schema: NodesResponse });
+  const node = nodes.find((n) => n.uuid === nodeUuid);
+  if (!node) throw new RemnawaveApiError('Remnawave node not found on /api/nodes', { status: 404 });
+  const profileUuid =
+    node.configProfile?.activeConfigProfileUuid ?? node.configProfile?.configProfileUuid ?? null;
+  if (!profileUuid) return [];
+  const activeUuids = new Set((node.configProfile?.activeInbounds ?? []).map((i) => i.uuid));
+  const activeTags = new Set((node.configProfile?.activeInbounds ?? []).map((i) => i.tag));
+  const profile = await call(cfg, {
+    method: 'GET',
+    path: `/api/config-profiles/${encodeURIComponent(profileUuid)}`,
+    schema: ConfigProfileWithInbounds,
+  });
+  const uuidByTag = new Map((profile.inbounds ?? []).map((i) => [i.tag, i.uuid]));
+  const config = obj(profile.config);
+  const rawInbounds = Array.isArray(config?.inbounds) ? config.inbounds : [];
+  const out: PanelInbound[] = [];
+  for (const raw of rawInbounds) {
+    const tag = str(obj(raw)?.tag);
+    if (!tag) continue;
+    const inboundUuid = uuidByTag.get(tag);
+    // No derived row = the panel has not indexed this inbound; a Host cannot
+    // bind to it, so there is nothing a listener could map to.
+    if (!inboundUuid) continue;
+    const projected = projectXrayInbound(raw, {
+      configProfileUuid: profile.uuid,
+      configProfileInboundUuid: inboundUuid,
+      active: activeUuids.has(inboundUuid) || activeTags.has(tag),
+    });
+    if (projected) out.push(projected);
+  }
+  return out;
+}
 
 // /api/internal-squads/{uuid}/accessible-nodes → (unwrapped) { accessibleNodes: [{ uuid, … }] }.
 const AccessibleNodesResponse = z.object({

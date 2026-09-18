@@ -349,6 +349,128 @@ describe('backends dispatch', () => {
   });
 });
 
+describe('backends dispatch: host disable + node inbound discovery', () => {
+  async function seedOutline(t: ReturnType<typeof convexTest>): Promise<Id<'backendServers'>> {
+    return t.run((ctx) =>
+      ctx.db.insert('backendServers', {
+        backend: 'outline',
+        name: 'Test Outline',
+        slug: 'test-outline',
+        config: {
+          type: 'outline',
+          apiUrl: 'https://outline.test.example/secret',
+          websocketEnabled: false,
+        },
+        isActive: true,
+        priority: 0,
+        keyCount: 0,
+        updatedAt: Date.now(),
+      }),
+    );
+  }
+
+  test('setHostDisabled sends exactly { uuid, isDisabled } to the instance', async () => {
+    const fetchSpy = vi.fn(
+      async (..._args: unknown[]) =>
+        new Response(JSON.stringify({ response: { uuid: 'h-1', isDisabled: true } }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    );
+    vi.stubGlobal('fetch', fetchSpy);
+    const t = convexTest(schema, modules);
+    const serverId = await seedServer(t);
+    await t.action(internal.backends.setHostDisabled, {
+      backendServerId: serverId,
+      uuid: 'h-1',
+      disabled: true,
+    });
+    expect(String(fetchSpy.mock.calls[0]?.[0])).toBe('https://panel.test.example/api/hosts');
+    const init = (fetchSpy.mock.calls[0]?.[1] ?? {}) as RequestInit;
+    expect(init.method).toBe('PATCH');
+    expect(JSON.parse(String(init.body))).toEqual({ uuid: 'h-1', isDisabled: true });
+  });
+
+  test('listNodeInbounds dispatches to the provider and returns its projection', async () => {
+    const profile = '0f1e2d3c-4b5a-4968-8776-655443322110';
+    const inboundUuid = '11111111-2222-4333-8444-555555555555';
+    const fetchSpy = vi.fn(async (input: string | URL) => {
+      const path = new URL(String(input)).pathname;
+      const body =
+        path === '/api/nodes'
+          ? [
+              {
+                uuid: 'node-1',
+                name: 'node-a',
+                configProfile: {
+                  activeConfigProfileUuid: profile,
+                  activeInbounds: [{ uuid: inboundUuid, tag: 'SS' }],
+                },
+              },
+            ]
+          : {
+              uuid: profile,
+              name: 'p',
+              config: {
+                inbounds: [
+                  {
+                    tag: 'SS',
+                    port: 8388,
+                    protocol: 'shadowsocks',
+                    settings: { clients: [{ password: 'PW_SECRET' }] },
+                  },
+                ],
+              },
+              inbounds: [{ uuid: inboundUuid, tag: 'SS' }],
+            };
+      return new Response(JSON.stringify({ response: body }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+    const t = convexTest(schema, modules);
+    const serverId = await seedServer(t);
+    const rows = await t.action(internal.backends.listNodeInbounds, {
+      backendServerId: serverId,
+      nodeUuid: 'node-1',
+    });
+    expect(rows).toEqual([
+      {
+        tag: 'SS',
+        configProfileUuid: profile,
+        configProfileInboundUuid: inboundUuid,
+        protocol: 'shadowsocks',
+        port: 8388,
+        network: 'tcp',
+        security: 'none',
+        active: true,
+      },
+    ]);
+    expect(JSON.stringify(rows)).not.toContain('PW_SECRET');
+  });
+
+  test('a backend without the capabilities throws the typed codes; a missing instance too', async () => {
+    const t = convexTest(schema, modules);
+    const outlineId = await seedOutline(t);
+    await expect(
+      t.action(internal.backends.setHostDisabled, {
+        backendServerId: outlineId,
+        uuid: 'h-1',
+        disabled: true,
+      }),
+    ).rejects.toThrow(/backend\.hosts_unsupported/);
+    await expect(
+      t.action(internal.backends.listNodeInbounds, { backendServerId: outlineId, nodeUuid: 'n' }),
+    ).rejects.toThrow(/backend\.inbounds_unsupported/);
+    const gone = await seedOutline(t);
+    await t.run((ctx) => ctx.db.delete(gone));
+    await expect(
+      t.action(internal.backends.listNodeInbounds, { backendServerId: gone, nodeUuid: 'n' }),
+    ).rejects.toThrow(/backend\.not_found/);
+  });
+});
+
 describe('refreshActiveMirrors (S3 mirror-refresh cron)', () => {
   const MOCK_CONTENT = '# mock subscription content (dev)\n';
 

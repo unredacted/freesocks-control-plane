@@ -313,8 +313,18 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // the three booleans are the operator-owned knob flips, when they changed.
   'relay.update': ['slug', 'changed', 'autoRotate', 'hostMode', 'enabled'],
   // Booleans only: the credential itself never reaches the audit log.
-  'relay.qualification_credential': ['slug', 'minted', 'revoked', 'replaced'],
-  'relay.delete': ['slug', 'force', 'disposition'],
+  'relay.qualification_credential': ['slug', 'minted', 'revoked', 'replaced', 'adopted'],
+  // Temporary test credentials (edgeTestCredentials.ts): booleans + counts only.
+  'edge.test_credential': ['relaySlug', 'purpose', 'issued', 'removed', 'failed', 'attempts'],
+  // `restore` = the delete entered the restore workflow first (a guided relay).
+  'relay.delete': ['slug', 'force', 'disposition', 'restore'],
+  // The direct-Host hide ledger + restore workflow (edgeHostHides.ts /
+  // edgeRestore.ts): counts, remarks, phases and purposes; never an address.
+  'edge.host.hidden': ['relaySlug', 'count', 'remarks', 'runId', 'rehidden'],
+  'edge.host.restored': ['relaySlug', 'count', 'remarks'],
+  'edge.host.reappeared': ['relaySlug', 'count', 'remarks'],
+  'edge.relay.restore_started': ['relaySlug', 'purpose'],
+  'edge.relay.restore_finished': ['relaySlug', 'purpose', 'hidesRestored'],
   'relay.upsert': ['slug', 'created', 'changed'],
   // Coverage: a full pool expanded (within the cap) for an uncovered listener; a
   // rebalance unpublished a duplicate back to standby. Counts and ids only.
@@ -322,6 +332,23 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'edge.relay.rebalanced': ['relaySlug', 'edgeId', 'poolIndex', 'epoch'],
   // The automation switch: the one boolean it was set to.
   'edge.automation.set': ['on'],
+  // Guided setup runs (edgeSetupRuns.ts): slugs, run ids, stage / code words
+  // and counts only; never an address, a Host uuid or a test link.
+  'edge.setup_run.started': [
+    'relaySlug',
+    'runId',
+    'stage',
+    'listeners',
+    'accountName',
+    'provider',
+    'approvedHides',
+    'keepDirect',
+  ],
+  'edge.setup_run.needs_operator': ['relaySlug', 'runId', 'stage', 'code'],
+  'edge.setup_run.go_live': ['relaySlug', 'runId', 'listeners', 'renderEnabled'],
+  'edge.setup_run.finished': ['relaySlug', 'runId', 'outcome', 'stage', 'code', 'verdicts'],
+  'edge.setup_run.cancelled': ['relaySlug', 'runId', 'stage', 'disposition'],
+  'edge.render.enabled_by_setup': ['relaySlug', 'runId', 'affectedRelays'],
   'edge.adopted': ['slug', 'edgeId', 'managed', 'publication', 'refused', 'shared', 'verified'],
   'relay.slot.upsert': ['relaySlug', 'slotKey', 'created'],
   'relay.slot.retire': ['relaySlug', 'slotKey'],

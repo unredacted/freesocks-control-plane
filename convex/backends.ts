@@ -40,6 +40,7 @@ import type {
   UsageSeries,
   UserState,
   BackendHost,
+  PanelInbound,
 } from './lib/backends/types';
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
 import { backendIdValidator } from './lib/backendIds';
@@ -457,6 +458,70 @@ export const updateHost = internalAction({
   },
 });
 
+/**
+ * Flip ONE Host's disabled bit (the relay hide/restore ledger: FCP hides a
+ * node's direct Hosts while its edges serve members, and restores them on
+ * cancel/release/delete). The bit alone travels; the caller confirms by
+ * re-listing. No dev mock branch: the Host ops above have none either (the
+ * fake edge provider stops at the provider layer).
+ */
+export const setHostDisabled = internalAction({
+  args: { backendServerId: v.id('backendServers'), uuid: v.string(), disabled: v.boolean() },
+  handler: async (ctx, { backendServerId, uuid, disabled }): Promise<null> => {
+    const server = await ctx.runQuery(internal.backendServers.getById, { id: backendServerId });
+    if (!server) throw new ConvexError({ code: 'backend.not_found' });
+    const provider = PROVIDERS[server.backend];
+    if (!provider.setHostDisabled) throw new ConvexError({ code: 'backend.hosts_unsupported' });
+    await provider.setHostDisabled(server.config as BackendConfig, uuid, disabled);
+    return null;
+  },
+});
+
+/**
+ * The inbounds one panel node serves (relay listener discovery), as the
+ * provider's allowlisted projection: never credentials, private keys, short
+ * ids or certificate material. A backend without the capability throws
+ * `backend.inbounds_unsupported`.
+ */
+export const listNodeInbounds = internalAction({
+  args: { backendServerId: v.id('backendServers'), nodeUuid: v.string() },
+  handler: async (ctx, { backendServerId, nodeUuid }): Promise<PanelInbound[]> => {
+    const server = await ctx.runQuery(internal.backendServers.getById, { id: backendServerId });
+    if (!server) throw new ConvexError({ code: 'backend.not_found' });
+    const provider = PROVIDERS[server.backend];
+    if (!provider.listNodeInbounds) throw new ConvexError({ code: 'backend.inbounds_unsupported' });
+    return provider.listNodeInbounds(server.config as BackendConfig, nodeUuid);
+  },
+});
+
+/**
+ * Re-find a user FCP created on ONE instance by its username (the persisted
+ * mint operations discover an issued user after a crash between the create
+ * and the store). Returns the issued shape with the STORED id form, or null
+ * when the panel has no such user. A backend without a name lookup throws
+ * `backend.lookup_unsupported`.
+ */
+export const findUserByUsername = internalAction({
+  args: { backendServerId: v.id('backendServers'), username: v.string() },
+  handler: async (
+    ctx,
+    { backendServerId, username },
+  ): Promise<(IssuedUser & { backendServerId: Id<'backendServers'> }) | null> => {
+    if (mockBackendEnabled()) return null;
+    const server = await ctx.runQuery(internal.backendServers.getById, { id: backendServerId });
+    if (!server) throw new ConvexError({ code: 'backend.not_found' });
+    const provider = PROVIDERS[server.backend];
+    if (!provider.findUserByUsername) throw new ConvexError({ code: 'backend.lookup_unsupported' });
+    const found = await provider.findUserByUsername(server.config as BackendConfig, username);
+    if (!found) return null;
+    return {
+      ...found,
+      backendUserId: toStoredBackendUserId(server._id, found.backendUserId),
+      backendServerId: server._id,
+    };
+  },
+});
+
 export const fetchSubscriptionContent = internalAction({
   args: {
     backend: backendId,
@@ -475,10 +540,22 @@ export const fetchSubscriptionContent = internalAction({
     // subscription's pinnedNode) — excluded from the pin pick when others
     // exist, so a regenerated key lands on a different node.
     excludeNode: v.optional(v.string()),
+    // Skip the node pin and return the panel body whole: the relay test link
+    // resolves ONE node's entry itself (by Host identity), so a pin that
+    // rendezvous-picked another node of the placement would hide it.
+    unpinned: v.optional(v.boolean()),
   },
   handler: async (
     ctx,
-    { backendServerId, backendShortId, userAgent, subscriptionUrl, hwidHeaders, excludeNode },
+    {
+      backendServerId,
+      backendShortId,
+      userAgent,
+      subscriptionUrl,
+      hwidHeaders,
+      excludeNode,
+      unpinned,
+    },
   ): Promise<SubscriptionContent> => {
     if (mockBackendEnabled()) return mockFetchContent();
     if (!backendServerId) throw new Error('backendServerId required to fetch subscription content');
@@ -497,7 +574,11 @@ export const fetchSubscriptionContent = internalAction({
       // subscription. Filter down to the pinned node's lines (deterministic
       // rendezvous pick on the panel user id — stable per key, moves only when
       // the pinned node disappears, e.g. rotation/teardown).
-      if (capabilitiesOf(server.backend).nodePinning && typeof fetched.content === 'string') {
+      if (
+        !unpinned &&
+        capabilitiesOf(server.backend).nodePinning &&
+        typeof fetched.content === 'string'
+      ) {
         const pinned = pinSubscriptionToNode(fetched.content, backendShortId, excludeNode);
         return { ...fetched, content: pinned.content, pinnedNode: pinned.node ?? undefined };
       }

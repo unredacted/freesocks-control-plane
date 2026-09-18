@@ -25,6 +25,7 @@ import type {
   BackendHostPatch,
   BackendHostCreate,
   NodeInventoryRow,
+  PanelInbound,
 } from './types';
 import {
   remnawaveDeleteDevice,
@@ -47,7 +48,10 @@ import {
   remnawaveUpdateHost,
   remnawaveCreateHost,
   remnawaveDeleteHost,
+  remnawaveSetHostDisabled,
   remnawaveGetNodeInventory,
+  remnawaveListNodeInbounds,
+  remnawaveFindUserByUsername,
 } from './remnawave';
 import {
   outlineDelete,
@@ -127,10 +131,21 @@ export interface BackendProvider<C extends BackendConfig = BackendConfig> {
   createHost?(config: C, host: BackendHostCreate): Promise<{ uuid: string }>;
   /** Delete one Host by uuid (idempotent: a missing Host is success). The caller confirms by re-listing. */
   deleteHost?(config: C, uuid: string): Promise<void>;
+  /** Flip ONE Host's disabled bit and nothing else (the relay hide/restore ledger). The caller confirms by re-listing. */
+  setHostDisabled?(config: C, uuid: string, disabled: boolean): Promise<void>;
   // Optional: per-NODE load/online rows (Remnawave /api/nodes) for the relay
   // block detector; getNodeStats aggregates per placement and can't isolate a
   // node behind a shared squad.
   getNodeInventory?(config: C): Promise<NodeInventoryRow[]>;
+  // Optional: the inbounds one node serves (allowlisted projection; never
+  // credentials or key material) for relay listener discovery.
+  listNodeInbounds?(config: C, nodeUuid: string): Promise<PanelInbound[]>;
+  // Optional: re-find a user FCP created by its username (the version-neutral
+  // by-username read). The persisted mint operations (relay qualification
+  // credential, temporary test credentials) discover an issued user after a
+  // crash between the create and the store with it; null = no such user.
+  // Absent for backends without a name lookup (Outline keys have no unique name).
+  findUserByUsername?(config: C, username: string): Promise<IssuedUser | null>;
   fetchContent(
     config: C,
     backendShortId: string,
@@ -163,7 +178,10 @@ const remnawaveProvider: BackendProvider<RemnawaveServerConfig> = {
   updateHost: (c, patch) => remnawaveUpdateHost(c, patch),
   createHost: (c, host) => remnawaveCreateHost(c, host),
   deleteHost: (c, uuid) => remnawaveDeleteHost(c, uuid),
+  setHostDisabled: (c, uuid, disabled) => remnawaveSetHostDisabled(c, uuid, disabled),
   getNodeInventory: (c) => remnawaveGetNodeInventory(c),
+  listNodeInbounds: (c, nodeUuid) => remnawaveListNodeInbounds(c, nodeUuid),
+  findUserByUsername: (c, username) => remnawaveFindUserByUsername(c, username),
   fetchContent: (c, shortId, ua, subUrl, hwid) =>
     remnawaveFetchSubscription(c, shortId, ua, subUrl, hwid),
   health: (c) => remnawaveHealth(c),
