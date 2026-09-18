@@ -473,6 +473,10 @@ export async function collectStartBlockers(
   // rekick, rollback, cancel, unpublish, destroy) never route through here.
   if (!(await admitted(ctx.db))) push('edge.maintenance', 'Edges are in maintenance');
   if (origin.quarantine) push('edge.quarantined', 'Origin is quarantined; resolve it first');
+  // A restore workflow's raw-body checks assume the pool holds still: no start
+  // of any kind while it runs (the same rule every pool / listener write applies).
+  if (origin.restore)
+    push('edge.restore_in_progress', 'A restore workflow is running on this origin');
   if (origin.deleting) push('edge.deleting', 'Origin is being deleted');
   if (origin.activeRotationId) {
     const active = await ctx.db.get(origin.activeRotationId);

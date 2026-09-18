@@ -357,8 +357,10 @@ describe('acceptance 5 + 25: cancel_setup after publication', () => {
     expect(before.status).toBe(200);
     expect(before.body).toContain(EDGE_A);
     expect(before.body).not.toContain(FIXTURE_ORIGIN);
-    // An administrator re-pointed D2 meanwhile.
-    w.panel.find(D2).address = '203.0.113.99';
+    // An administrator re-ENABLED D2 meanwhile: it is theirs again, released
+    // without a write. (A Host merely re-pointed while still disabled is NOT
+    // theirs: the bit is the one FCP wrote, and the restore re-enables it.)
+    w.panel.find(D2).isDisabled = false;
     await w.t.mutation(internal.edgeRestore.start, {
       relayId: w.relayId,
       purpose: 'cancel_setup',
@@ -379,7 +381,7 @@ describe('acceptance 5 + 25: cancel_setup after publication', () => {
     // D1 restored; D2 released without a write.
     expect(w.panel.patches.filter((p) => !p.isDisabled)).toEqual([{ uuid: D1, isDisabled: false }]);
     expect(w.panel.find(D1).isDisabled).toBe(false);
-    expect(w.panel.find(D2).isDisabled).toBe(true);
+    expect(w.panel.find(D2).isDisabled).toBe(false);
     const rows = await w.rows();
     expect(rows.find((r) => r.hostUuid === D2 && r.intent === 'disable')).toMatchObject({
       state: 'released',

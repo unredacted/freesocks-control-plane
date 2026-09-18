@@ -96,7 +96,14 @@ export interface LookVerdict {
   quietLooks?: number;
   /** The caller should re-issue the write (a new claim on the same row). */
   retry: boolean;
+  /** The uuid is in the wanted state but at a different tuple than observed (repointed). */
+  drifted?: boolean;
 }
+
+/** What one look at a live Host carries; the tuple is optional for callers that only know the bit. */
+export type LiveLook = { isDisabled: boolean } & Partial<
+  Pick<BackendHost, 'remark' | 'address' | 'port' | 'sni' | 'host' | 'inbound'>
+>;
 
 /**
  * What one observation of the live Host means for a row.
@@ -108,8 +115,9 @@ export interface LookVerdict {
  * `readback` is the look taken right after the write: it never settles.
  */
 export function judgeLook(
-  row: Pick<HideRow, 'intent' | 'state' | 'opId' | 'expiresAt' | 'quietLooks' | 'attempt'>,
-  live: { isDisabled: boolean } | null,
+  row: Pick<HideRow, 'intent' | 'state' | 'opId' | 'expiresAt' | 'quietLooks' | 'attempt'> &
+    Partial<Pick<HideRow, 'observed'>>,
+  live: LiveLook | null,
   now: number,
   mode: LookMode,
 ): LookVerdict {
@@ -117,9 +125,19 @@ export function judgeLook(
   if (!live) return { state: 'released', releasedReason: 'gone', retry: false };
   const wanted = row.intent === 'disable';
   if (live.isDisabled === wanted) {
-    return wanted
-      ? { state: 'confirmed', retry: false }
-      : { state: 'released', releasedReason: 'restored', retry: false };
+    if (!wanted) return { state: 'released', releasedReason: 'restored', retry: false };
+    // The uuid alone is not the Host: an administrator may have repointed or
+    // rebound it between the observation and this read-back. A disabled Host at
+    // a different tuple is never CONFIRMED (the ledger would claim a connection
+    // it never observed); it stays unresolved, counts as failed for the operator
+    // and is still re-enabled by a restore (the bit is ours either way).
+    const drifted =
+      live.address !== undefined && row.observed !== undefined
+        ? !sameTuple(live as BackendHost, row.observed)
+        : false;
+    return drifted
+      ? { state: 'unresolved', retry: false, drifted: true }
+      : { state: 'confirmed', retry: false };
   }
   // The Host is not in the wanted state.
   if (!row.opId) return { state: 'released', releasedReason: 'never_written', retry: false };
@@ -215,7 +233,11 @@ export async function hideStatusOf(db: DatabaseReader, relayId: Id<'relays'>): P
     outstanding: rows.filter((r) => isUnsettled(r)).length,
     confirmed: disables.filter((r) => r.state === 'confirmed').length,
     unresolved: rows.filter((r) => r.state === 'unresolved').length,
-    failed: rows.filter((r) => isUnsettled(r) && r.attempt >= HIDE_MAX_ATTEMPTS).length,
+    // At the retry cap, or disabled at a tuple the ledger never observed: the
+    // reconcile pass will not touch these again, so the operator must.
+    failed: rows.filter(
+      (r) => isUnsettled(r) && (r.attempt >= HIDE_MAX_ATTEMPTS || r.tupleDrifted === true),
+    ).length,
     rows: rows.map((r) => ({
       id: r._id as string,
       hostUuid: r.hostUuid,
@@ -376,6 +398,7 @@ export const applyLook = internalMutation({
     const verdict = judgeLook(row, live, now, mode);
     const patch: Partial<HideRow> = { lastLookAt: now, updatedAt: now };
     if (verdict.quietLooks !== undefined) patch.quietLooks = verdict.quietLooks;
+    if (verdict.drifted) patch.tupleDrifted = true;
     if (verdict.state) {
       patch.state = verdict.state;
       if (verdict.state === 'confirmed') patch.confirmedAt = now;
@@ -883,7 +906,11 @@ export async function restoreOne(
     });
     return 'released';
   }
-  if (!live.isDisabled || !sameTuple(live, a.row.observed)) {
+  // An administrator who re-enabled the Host owns it again: released without a
+  // write. A Host that is still DISABLED is re-enabled whatever its tuple says
+  // now: the bit is the one FCP wrote, and a repointed Host left disabled would
+  // stay disabled forever otherwise.
+  if (!live.isDisabled) {
     await ctx.runMutation(internal.edgeHostHides.releaseWithoutWrite, {
       rowId: a.row._id,
       reason: 'changed',

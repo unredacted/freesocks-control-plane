@@ -166,6 +166,8 @@ export function throttlePolicyFor(parts: string[]): RateLimitPolicyKey | null {
   if (a === 'providers' && b && c === 'rotate-credentials' && !d) {
     return 'admin.edges.provider-call';
   }
+  // The test link fetches the credential body and lists the panel Hosts.
+  if (a === 'edges' && b && c === 'test-link' && !d) return 'admin.edges.provider-call';
   if (a === 'relays' && b === 'node-candidates' && c === 'refresh') {
     return 'admin.edges.provider-call';
   }
@@ -197,7 +199,6 @@ export function throttlePolicyFor(parts: string[]): RateLimitPolicyKey | null {
 export function throttlePolicyForGet(parts: string[]): RateLimitPolicyKey | null {
   const [a, b, c, d] = parts;
   if (a === 'relays' && b === 'inbound-candidates' && !c) return 'admin.edges.provider-call';
-  if (a === 'edges' && b && c === 'test-link' && !d) return 'admin.edges.provider-call';
   return null;
 }
 
@@ -437,11 +438,6 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
       // echo it back (the test-link builder reuses this).
       const b2 = await ctx.runQuery(internal.edgeVerification.binding, { edgeId: id<'edges'>(b) });
       return b2 ? json(b2) : notFound();
-    }
-    if (c === 'test-link' && !d) {
-      // The isolated test link: the candidate connection only, plus the same
-      // binding as above (throttled: fetches the credential body + the Hosts).
-      return json(await ctx.runAction(internal.edgeTestLinks.build, { edgeId: id<'edges'>(b) }));
     }
     if (!c) {
       const detail = await ctx.runQuery(internal.edgeAdmin.edgeDetail, {
@@ -1043,6 +1039,13 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
             ...act,
           }),
         );
+      case 'test-link':
+        // The isolated test link: the candidate connection only, plus the same
+        // binding `GET .../verification-binding` shows. A POST under the write
+        // scope, not a GET: building it may mint the test credential (a panel
+        // user, or a temporary Outline key) and record it. Throttled like the
+        // other provider-calling POSTs.
+        return json(await ctx.runAction(internal.edgeTestLinks.build, { edgeId }));
       case 'qualify':
         // Run the authenticated end-to-end session through this L7 front now and
         // store the verdict with the configuration it proved.

@@ -984,6 +984,8 @@ export const update = internalMutation({
   handler: async (ctx, { id, actorAdminId, ...a }) => {
     const row = await ctx.db.get(id);
     if (!row) throw new ConvexError({ code: 'not_found', message: 'Relay not found' });
+    // A restore workflow's raw-body checks assume the relay holds still.
+    assertNoRestore(row);
     const p = patchFrom(a);
     await assertAddressChangeAllowed(ctx.db, row, p.originAddress);
     if (p.originAddress !== undefined) await assertOriginIsNotAnEdge(ctx.db, p.originAddress, id);
@@ -1336,6 +1338,9 @@ export const requestDelete = internalMutation({
       await startRestoreWorkflow(ctx, row, {
         purpose: 'delete_relay',
         force,
+        // The cohorts a completed guided setup left dark by consent have no FCP
+        // entry to verify; the raw-body checks must skip them or never pass.
+        darkCohortKeys: row.darkCohortKeys ?? [],
         ...(actorAdminId ? { actorAdminId } : {}),
       });
       await writeAuditLog(ctx, {
@@ -1608,6 +1613,7 @@ async function insertAdoptedEdge(
         message: 'the edge address is the origin itself (anti-leak)',
       });
   }
+  assertNoRestore(origin);
   if (a.publish) await assertNoRotationOrQuarantine(ctx.db, origin);
   if (unproxiedChild(a.resources))
     throw new ConvexError({
@@ -2159,6 +2165,8 @@ export const dropFromPool = internalMutation({
   handler: async (ctx, { relayId, edgeId, reason, force }) => {
     const origin = await ctx.db.get(relayId);
     if (!origin) return { ok: false as const };
+    // `force` waives the rotation guard, never the restore lock.
+    assertNoRestore(origin);
     if (!force) await assertNoRotationOrQuarantine(ctx.db, origin);
     const edge = await ctx.db.get(edgeId);
     if (!edge) {

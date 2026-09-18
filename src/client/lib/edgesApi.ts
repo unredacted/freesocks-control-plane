@@ -375,8 +375,10 @@ export const fetchInboundCandidates = (backendServerId: string, nodeUuid: string
     InboundCandidatesResponse,
   );
 /** The isolated test link for an L4 candidate (throttled: fetches the credential body). */
+// A POST: building the link may mint the test credential (a panel user or a
+// temporary key), so it needs the write scope a GET would not carry.
 export const fetchTestLink = (edgeId: string) =>
-  apiClient.get(`${BASE}/edges/${enc(edgeId)}/test-link`, EdgeTestLinkResponse);
+  apiClient.post(`${BASE}/edges/${enc(edgeId)}/test-link`, {}, EdgeTestLinkResponse);
 /** What the operator is about to test, exactly as `verifyEdge` must echo it. */
 export const fetchVerificationBinding = (edgeId: string) =>
   apiClient.get(`${BASE}/edges/${enc(edgeId)}/verification-binding`, EdgeVerificationBinding);
@@ -699,7 +701,10 @@ export const testLinksQuery = (edgeIds: () => readonly string[]) =>
     queryKey: edgeKeys.testLinks(edgeIds()),
     queryFn: () => Promise.all(edgeIds().map((id) => fetchTestLink(id))),
     enabled: edgeIds().length > 0,
-    staleTime: 60_000,
+    // The fetch is a POST that may mint the test credential and always reaches
+    // the panel: built once per card, never re-issued on a window focus.
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
     retry: false,
   }));
 

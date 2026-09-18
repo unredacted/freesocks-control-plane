@@ -81,6 +81,51 @@ export const nodeContext = internalQuery({
   },
 });
 
+/** The HTTP-transport candidates the origin probe must look at (pure; shared with the setup plan). */
+export function originProbeTargets(candidates: readonly InboundCandidate[], originAddress: string) {
+  return candidates
+    .filter((cand) => protocolIsHttpTransport(cand.listenerSpec))
+    .map((cand) => ({
+      listenerKey: cand.listenerSpec.listenerKey,
+      originAddress,
+      originPort: cand.listenerSpec.originPort,
+      streamTransport: cand.listenerSpec.streamTransport,
+      security: cand.listenerSpec.security,
+      tlsNames: cand.listenerSpec.tlsNames ?? [],
+    }));
+}
+
+/**
+ * Fold the probe outcomes back into the candidates: `originTransport` on the
+ * spec where the probe succeeded and the layers recomputed from it (pure;
+ * shared with the setup plan so a WS / HTTP-upgrade / gRPC origin can be
+ * offered an L7 account through the guided flow too).
+ */
+export function applyOriginProbes(
+  candidates: readonly InboundCandidate[],
+  outcomes: readonly OriginProbeOutcome[],
+): ProbedInboundCandidate[] {
+  const byKey = new Map(outcomes.map((o) => [o.listenerKey, o]));
+  return candidates.map((cand) => {
+    const o = byKey.get(cand.listenerSpec.listenerKey) ?? null;
+    const originTransport = o?.originTransport ?? null;
+    const spec = originTransport ? { ...cand.listenerSpec, originTransport } : cand.listenerSpec;
+    return {
+      ...cand,
+      listenerSpec: spec,
+      originTransport,
+      probe: o ? { ok: !!o.originTransport, reason: o.reason ?? null } : null,
+      layers: listenerLayers({
+        protocol: spec.protocol,
+        streamTransport: spec.streamTransport,
+        security: spec.security,
+        tlsNames: (spec.tlsNames ?? []).map((name) => ({ name, status: 'active' as const })),
+        originTransport,
+      }),
+    };
+  });
+}
+
 export const inboundCandidates = internalAction({
   args: { backendServerId: v.id('backendServers'), nodeUuid: v.string() },
   handler: async (ctx, { backendServerId, nodeUuid }): Promise<InboundCandidatesResult> => {
@@ -96,37 +141,10 @@ export const inboundCandidates = internalAction({
       existingKeys: c.existingKeys,
       origin: { kind: 'panel-node', backendServerId, nodeName: c.node.name, nodeUuid },
     });
-    const targets = mapped.candidates
-      .filter((cand) => protocolIsHttpTransport(cand.listenerSpec))
-      .map((cand) => ({
-        listenerKey: cand.listenerSpec.listenerKey,
-        originAddress: c.originAddress,
-        originPort: cand.listenerSpec.originPort,
-        streamTransport: cand.listenerSpec.streamTransport,
-        security: cand.listenerSpec.security,
-        tlsNames: cand.listenerSpec.tlsNames ?? [],
-      }));
+    const targets = originProbeTargets(mapped.candidates, c.originAddress);
     const outcomes: OriginProbeOutcome[] =
       targets.length > 0 ? await ctx.runAction(internal.edgeOriginProbeOps.probe, { targets }) : [];
-    const byKey = new Map(outcomes.map((o) => [o.listenerKey, o]));
-    const candidates: ProbedInboundCandidate[] = mapped.candidates.map((cand) => {
-      const o = byKey.get(cand.listenerSpec.listenerKey) ?? null;
-      const originTransport = o?.originTransport ?? null;
-      const spec = originTransport ? { ...cand.listenerSpec, originTransport } : cand.listenerSpec;
-      return {
-        ...cand,
-        listenerSpec: spec,
-        originTransport,
-        probe: o ? { ok: !!o.originTransport, reason: o.reason ?? null } : null,
-        layers: listenerLayers({
-          protocol: spec.protocol,
-          streamTransport: spec.streamTransport,
-          security: spec.security,
-          tlsNames: (spec.tlsNames ?? []).map((name) => ({ name, status: 'active' as const })),
-          originTransport,
-        }),
-      };
-    });
+    const candidates = applyOriginProbes(mapped.candidates, outcomes);
     return {
       node: c.node,
       originAddress: c.originAddress,

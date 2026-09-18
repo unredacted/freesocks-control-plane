@@ -274,6 +274,7 @@ async function seed(
       attempts: 1,
       cohorts: 1,
       source: 'members' as const,
+      formats: ['links' as const],
     }),
     vectorNow: (ctx, relayId) => ctx.runQuery(internal.edgeSetupRuns.localVector, { relayId }),
     restoreStart: async (_ctx, a) => {
@@ -698,11 +699,12 @@ describe('edgeSetupRuns: unsupported inbound with active users (case 3)', () => 
       { uuid: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9', remark: 'direct-new' },
     ]);
     expect(calls.hide.at(-1)).toEqual({ approvedUuids: [HOST_V] });
-    // The new consent replaces the old (revision bump) and stage 6 runs again.
+    // The new consent replaces the old EXACTLY (revision bump) and stage 6 runs
+    // again: the operator re-submits every Host they still approve.
     setHideResult({});
     await t.mutation(internal.edgeSetupRuns.resume, {
       runId: run2,
-      approvedHideUuids: ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9'],
+      approvedHideUuids: [HOST_V, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9'],
     });
     r2 = await pump(t, run2, settled);
     expect(r2.state).toBe('done');
@@ -1125,20 +1127,42 @@ describe('approvedDarkCohorts (case 3, the rehearsal side)', () => {
 
   test('a consented cohort whose every body is empty is dark; nothing is dark without consent', () => {
     const failures = [f('squad-b', 'empty_body'), f('squad-b', 'no_match')];
-    expect(approvedDarkCohorts({ failures }, run(['host-1']))).toEqual(['squad-b']);
-    expect(approvedDarkCohorts({ failures }, run([]))).toEqual([]);
+    expect(approvedDarkCohorts({ failures, formats: ['links'] }, run(['host-1']))).toEqual([
+      'squad-b',
+    ]);
+    expect(approvedDarkCohorts({ failures, formats: ['links'] }, run([]))).toEqual([]);
   });
 
   test('a genuine failure anywhere keeps the run at rehearsal_failed', () => {
     const failures = [f('squad-b', 'empty_body'), f('squad-a', 'leak_detected')];
-    expect(approvedDarkCohorts({ failures }, run(['host-1']))).toEqual([]);
-    expect(approvedDarkCohorts({ failures: [f('credential', 'empty_body')] }, run(['h']))).toEqual(
-      [],
-    );
+    expect(approvedDarkCohorts({ failures, formats: ['links'] }, run(['host-1']))).toEqual([]);
+    expect(
+      approvedDarkCohorts(
+        { failures: [f('credential', 'empty_body')], formats: ['links'] },
+        run(['h']),
+      ),
+    ).toEqual([]);
+  });
+
+  test('a cohort is dark only when EVERY rehearsed format failed dark', () => {
+    // links empty, but sing-box still renders: a real failure, not a dark cohort.
+    const failures = [{ cohortKey: 'squad-b', format: 'links' as const, reason: 'empty_body' }];
+    expect(
+      approvedDarkCohorts({ failures, formats: ['links', 'singbox'] }, run(['host-1'])),
+    ).toEqual([]);
+    const both = [
+      ...failures,
+      { cohortKey: 'squad-b', format: 'singbox' as const, reason: 'no_match' },
+    ];
+    expect(
+      approvedDarkCohorts({ failures: both, formats: ['links', 'singbox'] }, run(['host-1'])),
+    ).toEqual(['squad-b']);
   });
 
   test('a cohort already recorded dark is not reported twice', () => {
     const failures = [f('squad-b', 'empty_body')];
-    expect(approvedDarkCohorts({ failures }, run(['host-1'], ['squad-b']))).toEqual([]);
+    expect(
+      approvedDarkCohorts({ failures, formats: ['links'] }, run(['host-1'], ['squad-b'])),
+    ).toEqual([]);
   });
 });
