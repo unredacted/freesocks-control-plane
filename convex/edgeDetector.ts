@@ -344,6 +344,8 @@ export const run = internalAction({
       const now = Date.now();
       await ctx.runMutation(internal.edgeDetector.sweepMarks, { now });
       const origins: Origin[] = await ctx.runQuery(internal.relays.listEnabled, {});
+      // Maintenance: detection is new work (it can start a rotation); skip the tick.
+      if ((await ctx.runQuery(internal.edgeMaintenance.state, {})).frozen) return report;
       for (const o of origins) {
         if (o.deleting) continue;
         try {

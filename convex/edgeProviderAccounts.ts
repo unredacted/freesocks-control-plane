@@ -28,6 +28,7 @@ import { resolveTemplateFor } from './edgeTemplates';
 import { EDGE_PROVIDER_CAPABILITIES } from './lib/edges/providers/capabilities';
 import { parseIntent, parseObservedSettings } from './lib/edges/intent';
 import { liveEdgesOfAccount } from './relays';
+import { assertAdmission } from './lib/edges/maintenance';
 
 const NAME_RE = /^[a-z0-9][a-z0-9-]{1,62}$/;
 
@@ -352,6 +353,7 @@ export const create = internalMutation({
   handler: async (ctx, a) => {
     checkName(a.name);
     checkLimits(a);
+    await assertAdmission(ctx.db, 'provider.write');
     const dup = await ctx.db
       .query('edgeProviderAccounts')
       .withIndex('by_name', (q) => q.eq('name', a.name))
@@ -418,6 +420,7 @@ export const update = internalMutation({
     const row = await ctx.db.get(a.id);
     if (!row) throw new ConvexError({ code: 'not_found', message: 'Account not found' });
     checkLimits(a);
+    await assertAdmission(ctx.db, 'provider.write');
     const patch: Partial<Doc<'edgeProviderAccounts'>> = { updatedAt: Date.now() };
     let credentialsChanged = false;
     let settingsChanged = false;
@@ -521,6 +524,7 @@ export const update = internalMutation({
 export const remove = internalMutation({
   args: { id: v.id('edgeProviderAccounts'), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, { id, actorAdminId }) => {
+    await assertAdmission(ctx.db, 'provider.write');
     const row = await ctx.db.get(id);
     if (!row) return { ok: true as const };
     // Refuse while any edge still references the account (its resources would
@@ -563,6 +567,9 @@ export const remove = internalMutation({
  * change together; every LOCATING setting must be untouched, so the account
  * still points at the same resources and the qualification still holds.
  */
+// NOT gated by the maintenance switch on purpose: a destroy run that has to
+// finish during a drain needs working credentials, so rotating an expired or
+// revoked secret is a COMPLETION need, not new work.
 export const applyCredentialRotation = internalMutation({
   args: {
     id: v.id('edgeProviderAccounts'),
@@ -648,6 +655,7 @@ export const setQualified = internalMutation({
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, { id, qualified, actorAdminId }) => {
+    await assertAdmission(ctx.db, 'provider.write');
     const row = await ctx.db.get(id);
     if (!row) throw new ConvexError({ code: 'not_found', message: 'Account not found' });
     // The hash recorded is the one of the template this account provisions

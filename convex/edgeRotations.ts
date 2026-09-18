@@ -95,6 +95,7 @@ import type {
   EdgeDescription,
   ResourceStep,
 } from './lib/edges/providers/types';
+import { assertAdmission } from './lib/edges/maintenance';
 
 type Rotation = Doc<'edgeRotations'>;
 type Edge = Doc<'edges'>;
@@ -406,6 +407,9 @@ export async function startRotation(
   const cfg = await resolveEdgeConfig(ctx.db);
   const now = Date.now();
   const force = a.force ?? false;
+  // Admission gate: a start of ANY kind is new work; completion paths (step,
+  // rekick, rollback, cancel, unpublish, destroy) never route through here.
+  await assertAdmission(ctx.db, 'rotation.start');
   if (origin.quarantine)
     throw new ConvexError({
       code: 'edge.quarantined',

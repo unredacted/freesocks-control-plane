@@ -305,7 +305,9 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
     }
   }
 
-  // 5. Pool upkeep + 6. origin deletes.
+  // 5. Pool upkeep + 6. origin deletes. While the maintenance switch is on,
+  // upkeep (new provisioning / publishing) is not admitted; deletes still finish.
+  const maintenance = await ctx.runQuery(internal.edgeMaintenance.state, {});
   let starts = 0;
   for (const origin of origins) {
     try {
@@ -317,6 +319,7 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
       if (!origin.enabled || origin.quarantine || origin.activeRotationId) continue;
       // Automatic pool actions need the master switch; a manual start does not.
       if (!cfg.enabled) continue;
+      if (maintenance.frozen) continue;
       if (starts >= cfg.maxReconcileStartsPerTick) continue;
       const originEdges = edges.filter((e) => e.relayId === origin._id);
       const publishedNow = publishedCount(origin.publishedEdgeIds);

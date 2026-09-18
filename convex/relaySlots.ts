@@ -14,6 +14,7 @@ import { isSlotKey, templateHostRemark } from './lib/edges/hosts';
 import { isValidHostname } from './lib/edges/hostname';
 import { slotLayers } from './lib/edges/layers';
 import { assertNoRotationOrQuarantine, liveEdgesOfRelay, scheduleMirrorRefresh } from './relays';
+import { assertAdmission } from './lib/edges/maintenance';
 
 /**
  * A slot change alters what renders for the origin (its template remark set,
@@ -165,6 +166,7 @@ export const upsert = internalMutation({
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a) => {
+    await assertAdmission(ctx.db, 'registration');
     if (!isSlotKey(a.slotKey))
       throw new ConvexError({
         code: 'validation',

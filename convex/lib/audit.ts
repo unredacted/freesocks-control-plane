@@ -349,6 +349,8 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'probe.target.delete': ['label'],
   'edge.live.pulled': ['edgeId', 'accountId'],
   'admin.edge.config.change': ['changedKeys'],
+  'admin.edge.maintenance': ['frozen', 'reason'],
+  'admin.edge.reset': ['phase', 'deleted'],
   'admin.edge.render.change': ['changedKeys'],
   'admin.edge.probe.change': ['changedKeys'],
   // `forceGeoEvidence` records that an operator waived the affected-country

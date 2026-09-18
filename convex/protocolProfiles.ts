@@ -31,6 +31,7 @@ import {
   type SlotProtocol,
 } from './lib/edges/protocols';
 import { assertNoRotationOrQuarantine, liveEdgesOfRelay } from './relays';
+import { assertAdmission } from './lib/edges/maintenance';
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,62}$/;
 const HOSTNAME_RE = /^(?=.{1,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/i;
@@ -257,6 +258,7 @@ export const create = internalMutation({
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a) => {
+    await assertAdmission(ctx.db, 'profile.write');
     if (!SLUG_RE.test(a.slug))
       throw new ConvexError({ code: 'validation', message: 'invalid slug' });
     if (!a.name.trim() || a.name.length > 64)
@@ -347,6 +349,7 @@ export const update = internalMutation({
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a) => {
+    await assertAdmission(ctx.db, 'profile.write');
     const row = await ctx.db.get(a.id);
     if (!row) throw new ConvexError({ code: 'not_found', message: 'Profile not found' });
     await assertProfileWritable(ctx, a.id);
@@ -509,6 +512,7 @@ export const reactivateSni = internalMutation({
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, { id, snis, actorAdminId }) => {
+    await assertAdmission(ctx.db, 'profile.write');
     const row = await ctx.db.get(id);
     if (!row) throw new ConvexError({ code: 'not_found', message: 'Profile not found' });
     await assertProfileWritable(ctx, id);
@@ -550,6 +554,7 @@ export const recordQualification = internalMutation({
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a) => {
+    await assertAdmission(ctx.db, 'profile.write');
     const row = await ctx.db.get(a.id);
     if (!row) throw new ConvexError({ code: 'not_found', message: 'Profile not found' });
     await ctx.db.patch(a.id, {
@@ -579,6 +584,7 @@ export const recordQualification = internalMutation({
 export const remove = internalMutation({
   args: { id: v.id('protocolProfiles'), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, { id, actorAdminId }) => {
+    await assertAdmission(ctx.db, 'profile.write');
     const row = await ctx.db.get(id);
     if (!row) return { ok: true as const };
     const slot = await ctx.db
