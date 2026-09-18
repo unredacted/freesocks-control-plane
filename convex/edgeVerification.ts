@@ -21,18 +21,21 @@
  */
 import { ConvexError, v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
-import type { DatabaseReader } from './_generated/server';
+import type { DatabaseReader, MutationCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { resolveEdgeConfig } from './lib/edgeConfig';
 import { resolveTemplateFor } from './edgeTemplates';
+import { providerHealthSatisfies } from './lib/edges/providers/capabilities';
 import {
   bindingMatches,
   needsEndpointVerification,
+  recordMatchesBinding,
   verificationBinding,
   verificationCurrent,
   verificationStale,
 } from './lib/edges/verification';
+import { partialRungFor } from './lib/edges/verifyRung';
 import { checkPublishable } from './relays';
 import { applyQualification } from './edgeProviderAccounts';
 
@@ -233,3 +236,127 @@ async function accountTrustEvidence(
     return { ok: false, code: 'template_mismatch' };
   return { ok: true, testedAt, templateHash: effective.hash };
 }
+
+// --- the partial rung (probe evidence) -----------------------------------------------------------
+
+/** Newest probe runs read for the shape check (every source, every port, both families). */
+const RUNG_RUN_WINDOW = 40;
+
+/**
+ * Re-derive the `partial` rung of an active L4 edge from its probe evidence
+ * (lib/edges/verifyRung.ts) and persist it as `edges.verification` with
+ * `rung: 'partial', by: 'system', method: 'probe'`. Called after every probe
+ * run on an `edge` target settles, and by the reconcile pass below.
+ *
+ *   - a `verified` record is NEVER touched (the operator's tick outranks the
+ *     probes, and a stale one is what `retest_needed` reads);
+ *   - `partial` writes the record against the CURRENT binding (a matching
+ *     record is left alone);
+ *   - `unreachable` clears a `partial` record;
+ *   - `pending` leaves things as they are.
+ *
+ * The record never satisfies the publication gate: `verificationCurrent`
+ * answers false for any rung but `verified`.
+ */
+export async function refreshPartialRung(
+  ctx: MutationCtx,
+  edgeId: Id<'edges'>,
+  now = Date.now(),
+): Promise<'partial' | 'unreachable' | 'pending' | null> {
+  const edge = await ctx.db.get(edgeId);
+  if (!edge || edge.status !== 'active' || !needsEndpointVerification(edge)) return null;
+  if (edge.verification?.rung === 'verified') return null;
+  const listener = await ctx.db.get(edge.listenerId);
+  if (!listener || listener.retired) return null;
+  const binding = verificationBinding(edge, listener);
+  if (!binding) return null;
+  const cfg = await resolveEdgeConfig(ctx.db);
+  const reachability = await ctx.db
+    .query('probeReachability')
+    .withIndex('by_target_country', (q) => q.eq('targetKind', 'edge').eq('targetRef', edgeId))
+    .collect();
+  const runs = await ctx.db
+    .query('probeRuns')
+    .withIndex('by_target_requested', (q) => q.eq('targetKind', 'edge').eq('targetRef', edgeId))
+    .order('desc')
+    .take(RUNG_RUN_WINDOW);
+  const rung = partialRungFor(listener, {
+    // The gate's own health rule: an observe-only import has no provider to ask.
+    providerHealthy:
+      !edge.managed ||
+      providerHealthSatisfies(edge.provider, edge.health, cfg.requireProviderHealth),
+    reachability: reachability.map((r) => ({
+      country: r.country,
+      source: r.source,
+      verdict: r.verdict,
+      port: r.port,
+    })),
+    probeRuns: runs.map((r) => ({
+      source: r.source,
+      status: r.status,
+      probeProtocol: r.probeProtocol,
+      results: r.results,
+      requestedAt: r.requestedAt,
+    })),
+    agreementVantages: cfg.probe.agreementVantages,
+  });
+  const rec = edge.verification;
+  if (rung === 'partial') {
+    if (rec && rec.rung === 'partial' && recordMatchesBinding(rec, binding)) return rung;
+    await ctx.db.patch(edge._id, {
+      verification: { rung: 'partial', by: 'system', at: now, method: 'probe', ...binding },
+      updatedAt: now,
+    });
+    await auditRung(ctx, edge, listener.listenerKey, 'partial');
+  } else if (rung === 'unreachable' && rec) {
+    await ctx.db.patch(edge._id, { verification: undefined, updatedAt: now });
+    await auditRung(ctx, edge, listener.listenerKey, 'unreachable');
+  }
+  return rung;
+}
+
+async function auditRung(
+  ctx: MutationCtx,
+  edge: Doc<'edges'>,
+  listenerKey: string,
+  rung: 'partial' | 'unreachable' | 'cleared',
+) {
+  const relay = await ctx.db.get(edge.relayId);
+  await writeAuditLog(ctx, {
+    actorType: 'system',
+    action: 'edge.verification.rung',
+    targetType: 'edge',
+    targetId: edge._id,
+    payload: { relaySlug: relay?.slug ?? '', edgeId: edge._id, listenerKey, rung },
+  });
+}
+
+/**
+ * The reconcile pass: a `partial` record whose binding no longer matches the
+ * live rows (the edge was re-addressed or its listener changed and no probe
+ * has settled since) is cleared, so a system rung never outlives the
+ * configuration it was measured on. `verified` records are never touched.
+ * Bounded: active edges are operator-scale.
+ */
+export const reconcilePartialRungs = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    let cleared = 0;
+    const active = await ctx.db
+      .query('edges')
+      .withIndex('by_status', (q) => q.eq('status', 'active'))
+      .take(500);
+    for (const edge of active) {
+      const rec = edge.verification;
+      if (!rec || rec.rung !== 'partial' || !needsEndpointVerification(edge)) continue;
+      const listener = await ctx.db.get(edge.listenerId);
+      const binding = listener && !listener.retired ? verificationBinding(edge, listener) : null;
+      if (binding && recordMatchesBinding(rec, binding)) continue;
+      await ctx.db.patch(edge._id, { verification: undefined, updatedAt: now });
+      await auditRung(ctx, edge, listener?.listenerKey ?? rec.listenerKey, 'cleared');
+      cleared++;
+    }
+    return { cleared };
+  },
+});

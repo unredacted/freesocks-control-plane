@@ -289,6 +289,8 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   ],
   // An operator confirmed an L4 endpoint (lib/edges/verification.ts): never the address.
   'edge.verified': ['relaySlug', 'edgeId', 'listenerKey', 'method'],
+  // The system's `partial` rung moved (lib/edges/verifyRung.ts): the word only, never the address.
+  'edge.verification.rung': ['relaySlug', 'edgeId', 'listenerKey', 'rung'],
   // Rotation keeps the qualification: booleans only, never a key or identifier.
   'edge.provider_account.credentials_rotated': [
     'name',

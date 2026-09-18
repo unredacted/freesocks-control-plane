@@ -470,7 +470,8 @@ export const EdgeVerificationView = z.object({
       rung: z.enum(['partial', 'verified']),
       by: z.enum(['admin', 'system']),
       at: iso,
-      method: z.enum(['test_link', 'named_connection', 'l7_proof']),
+      /** `probe` = the system's `partial` rung from probe evidence (never satisfies the gate). */
+      method: z.enum(['test_link', 'named_connection', 'l7_proof', 'probe']),
       listenerKey: z.string(),
       listenerRevision: z.number(),
     })

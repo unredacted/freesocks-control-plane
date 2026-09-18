@@ -649,6 +649,154 @@ describe('L7 auto-trust (cases 7 and 13)', () => {
   });
 });
 
+describe('the partial rung (probe evidence)', () => {
+  const ok = (country: string, k: number) => ({
+    country,
+    asn: `AS${k}`,
+    network: `net-${k}`,
+    vantageClass: 'eyeball' as const,
+    ok: true,
+  });
+  const fail = (country: string, k: number) => ({ ...ok(country, k), ok: false });
+
+  async function world() {
+    const w = await seed();
+    await w.t.run(async (ctx) => {
+      await upsertSettingRow(ctx, 'edge.probe.enabled', 'true');
+      await upsertSettingRow(ctx, 'edge.probe.countries', JSON.stringify(['IR', 'TR']));
+    });
+    const { edgeId } = await adoptL4Edge(w.t, w.relayId, w.listenerId, {
+      ipv4: SPARE,
+      accountId: w.accountId,
+      verified: false,
+    });
+    const spare = edgeId as Id<'edges'>;
+    /** One probe round on the spare; returns the internal (shape) and globalping runs. */
+    const round = async () => {
+      const before = new Set(
+        (await w.t.run((ctx) => ctx.db.query('probeRuns').collect())).map((r) => r._id),
+      );
+      await w.t.mutation(internal.probes.requestMany, {
+        targets: [{ kind: 'edge', ref: spare }],
+        sources: ['internal', 'globalping'],
+      });
+      const runs = (await w.t.run((ctx) => ctx.db.query('probeRuns').collect())).filter(
+        (r) => !before.has(r._id) && r.targetRef === spare,
+      );
+      return {
+        shape: runs.find((r) => r.source === 'internal')!,
+        outside: runs.find((r) => r.source === 'globalping')!,
+      };
+    };
+    const record = async () => (await w.t.query(internal.edges.get, { id: spare }))!.verification;
+    return { ...w, spare, round, record };
+  }
+
+  test('probe evidence writes partial (by system, method probe); it never satisfies the gate; unreachable clears it; a verified record is never touched', async () => {
+    const { t, relayId, spare, round, record } = await world();
+    const r1 = await round();
+    expect(r1.shape.probeProtocol).toBe('tls-sni');
+    // The shape check passes but one outside vantage is below the agreement bar: pending.
+    await t.mutation(internal.probes.finishRun, {
+      runId: r1.shape._id,
+      results: [{ country: 'XX', vantageClass: 'datacenter', ok: true }],
+    });
+    expect(await record()).toBeUndefined();
+    await t.mutation(internal.probes.finishRun, {
+      runId: r1.outside._id,
+      results: [ok('IR', 1)],
+    });
+    expect(await record()).toBeUndefined();
+    // Two reachable vantages + a passing shape run: partial, against the current binding.
+    const r2 = await round();
+    await t.mutation(internal.probes.finishRun, {
+      runId: r2.shape._id,
+      results: [{ country: 'XX', vantageClass: 'datacenter', ok: true }],
+    });
+    await t.mutation(internal.probes.finishRun, {
+      runId: r2.outside._id,
+      results: [ok('IR', 1), ok('TR', 2)],
+    });
+    const shown = (await t.query(internal.edgeVerification.binding, { edgeId: spare }))!;
+    expect(await record()).toMatchObject({
+      rung: 'partial',
+      by: 'system',
+      method: 'probe',
+      listenerKey: 'a',
+      listenerRevision: shown.listenerRevision,
+      configHash: shown.configHash,
+      endpoint: shown.endpoint,
+    });
+    const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
+    expect(audit.find((a) => a.action === 'edge.verification.rung')?.payload).toEqual({
+      relaySlug: 'node-one',
+      edgeId: spare,
+      listenerKey: 'a',
+      rung: 'partial',
+    });
+    expect(JSON.stringify(audit)).not.toContain(SPARE);
+    // The ceiling: partial is not verified, for the gate, the binding view or attention.
+    await expect(
+      t.mutation(internal.relays.publishEdge, { relayId, edgeId: spare, poolIndex: 1 }),
+    ).rejects.toThrow(/unverified_endpoint/);
+    expect(shown.verification).toMatchObject({ current: false, stale: false });
+    expect(
+      (await t.query(internal.edgeVerification.binding, { edgeId: spare }))!.verification,
+    ).toMatchObject({ current: false, stale: false, record: { rung: 'partial', by: 'system' } });
+    const items = await attentionKinds(t);
+    expect(items.find((i) => i.kind === 'spare_untested' && i.edgeId === spare)).toBeTruthy();
+    expect(items.some((i) => i.kind === 'retest_needed' && i.edgeId === spare)).toBe(false);
+    // An agreed outside `unreachable` clears the partial record.
+    const r3 = await round();
+    await t.mutation(internal.probes.finishRun, {
+      runId: r3.outside._id,
+      results: [fail('IR', 1), fail('IR', 3)],
+    });
+    expect(await record()).toBeUndefined();
+    expect(
+      (await t.run((ctx) => ctx.db.query('auditLog').collect()))
+        .filter((a) => a.action === 'edge.verification.rung')
+        .map((a) => (a.payload as { rung: string }).rung),
+    ).toEqual(['partial', 'unreachable']);
+    // The operator's tick outranks the probes: a verified record is never touched.
+    await verifyL4Edge(t, spare);
+    const r4 = await round();
+    await t.mutation(internal.probes.finishRun, {
+      runId: r4.outside._id,
+      results: [fail('IR', 1), fail('IR', 3)],
+    });
+    expect(await record()).toMatchObject({ rung: 'verified', by: 'admin' });
+  });
+
+  test('the reconcile pass clears a partial record the live configuration no longer matches (re-addressed, never probed since)', async () => {
+    const { t, spare, round, record } = await world();
+    const r = await round();
+    await t.mutation(internal.probes.finishRun, {
+      runId: r.shape._id,
+      results: [{ country: 'XX', vantageClass: 'datacenter', ok: true }],
+    });
+    await t.mutation(internal.probes.finishRun, {
+      runId: r.outside._id,
+      results: [ok('IR', 1), ok('TR', 2)],
+    });
+    expect(await record()).toMatchObject({ rung: 'partial' });
+    // Nothing to do while the binding matches.
+    expect(await t.mutation(internal.edgeVerification.reconcilePartialRungs, {})).toEqual({
+      cleared: 0,
+    });
+    await t.run((ctx) => ctx.db.patch(spare, { addresses: { v4: '198.51.100.9' } }));
+    expect(await t.mutation(internal.edgeVerification.reconcilePartialRungs, {})).toEqual({
+      cleared: 1,
+    });
+    expect(await record()).toBeUndefined();
+    expect(
+      (await t.run((ctx) => ctx.db.query('auditLog').collect()))
+        .filter((a) => a.action === 'edge.verification.rung')
+        .map((a) => (a.payload as { rung: string }).rung),
+    ).toEqual(['partial', 'cleared']);
+  });
+});
+
 describe('probe protocol branching', () => {
   test('an L4 edge behind a REALITY listener runs tls-sni internally and tcp outside; a plaintext listener runs tcp everywhere', async () => {
     const { t, relayId, listenerId, accountId } = await seed();

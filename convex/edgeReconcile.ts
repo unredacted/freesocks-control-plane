@@ -193,6 +193,15 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
     console.warn(`[edge-reconcile] auto-qualification sweep: ${errText(err)}`);
   }
 
+  // 1c. A system `partial` rung that no longer describes the live configuration
+  // (re-addressed edge, changed listener, no probe settled since) is cleared.
+  try {
+    await ctx.runMutation(internal.edgeVerification.reconcilePartialRungs, {});
+  } catch (err) {
+    report.errors++;
+    console.warn(`[edge-reconcile] partial-rung sweep: ${errText(err)}`);
+  }
+
   const edges = await ctx.runQuery(internal.edges.listLive, {});
   const origins = await ctx.runQuery(internal.relays.listAll, {});
   const rotatingOrigins = new Set(

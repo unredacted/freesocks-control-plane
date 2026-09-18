@@ -345,8 +345,10 @@ const probeProtocolV = v.union(
 );
 // Configuration-bound endpoint verification of an L4 edge (lib/edges/verification.ts).
 // `verified` is set ONLY by an operator's confirmation against the exact
-// binding they were shown; `partial` is the probe ceiling. The record proves
-// nothing by itself: `verificationCurrent` compares revision + configHash.
+// binding they were shown; `partial` is the probe ceiling, written by the
+// system (`method: 'probe'`, lib/edges/verifyRung.ts) from probe evidence and
+// never satisfying the publication gate. The record proves nothing by itself:
+// `verificationCurrent` compares revision + configHash.
 const relayEdgeVerification = v.object({
   rung: v.union(v.literal('partial'), v.literal('verified')),
   by: v.union(v.literal('admin'), v.literal('system')),
@@ -355,7 +357,12 @@ const relayEdgeVerification = v.object({
   listenerKey: v.string(),
   listenerRevision: v.number(),
   configHash: v.string(),
-  method: v.union(v.literal('test_link'), v.literal('named_connection'), v.literal('l7_proof')),
+  method: v.union(
+    v.literal('test_link'),
+    v.literal('named_connection'),
+    v.literal('l7_proof'),
+    v.literal('probe'),
+  ),
 });
 // Provider-account trust evidence (lib/edges/autoQualify.ts): who trusted the
 // account and, when it came from an endpoint, the exact configuration that was
