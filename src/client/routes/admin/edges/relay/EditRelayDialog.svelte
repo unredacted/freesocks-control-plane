@@ -1,7 +1,8 @@
 <script lang="ts">
   /**
-   * Edit one relay: label, location, pool size, standbys and its own rotation
-   * limits. Number knobs use the server bounds (`edgeConfigQuery().bounds`); only
+   * Edit one relay: label, location, pool size, standbys, its own rotation
+   * limits and (panel origins) the connection mode whose placement the front
+   * qualification user is created on. Number knobs use the server bounds (`edgeConfigQuery().bounds`); only
    * changed fields are sent.
    *
    * Props: open (bindable); relay
@@ -14,6 +15,7 @@
   import { Input } from '@client/components/ui/input';
   import { Label } from '@client/components/ui/label';
   import { Switch } from '@client/components/ui/switch';
+  import * as Select from '@client/components/ui/select';
   import InlineError from '@client/components/InlineError.svelte';
   import {
     edgeConfigQuery,
@@ -21,6 +23,7 @@
     updateRelay,
     type RelayPatch,
   } from '@client/lib/edgesApi';
+  import { adminConnectionModesQuery } from '@client/lib/queries';
   import NumberField from '../components/NumberField.svelte';
   import { assertEdgeOk, edgeErrorMessage } from '../lib/edgeErrors';
 
@@ -44,6 +47,22 @@
   let maxRotationsPerDay = $state(4);
   let drainMinutes = $state(60);
   let probeNode = $state(false);
+  // '' = the panel's default placement.
+  let qualificationMode = $state('');
+  const DEFAULT_MODE = '__default__';
+  // Only a panel origin mints a qualification user; the mode list is fetched only then.
+  const hasPanel = $derived(relay.origin.kind === 'panel-node');
+  const modes = adminConnectionModesQuery();
+  const modeOptions = $derived(
+    (modes.data?.modes ?? []).filter(
+      (m) => m.backends.length === 0 || m.backends.includes('remnawave'),
+    ),
+  );
+  const modeLabel = $derived.by(() => {
+    if (qualificationMode === '') return 'Panel default';
+    const m = modeOptions.find((x) => x.id === qualificationMode);
+    return m ? (m.label ?? m.id) : qualificationMode;
+  });
   let invalid = $state({
     desired: false,
     standby: false,
@@ -66,6 +85,7 @@
       maxRotationsPerDay = relay.maxRotationsPerDay;
       drainMinutes = relay.drainMinutes;
       probeNode = relay.probeNode;
+      qualificationMode = relay.qualificationModeSlug ?? '';
       save.reset();
     } else if (!open) {
       seeded = false;
@@ -84,6 +104,8 @@
     if (maxRotationsPerDay !== relay.maxRotationsPerDay) p.maxRotationsPerDay = maxRotationsPerDay;
     if (drainMinutes !== relay.drainMinutes) p.drainMinutes = drainMinutes;
     if (probeNode !== relay.probeNode) p.probeNode = probeNode;
+    if (qualificationMode !== (relay.qualificationModeSlug ?? ''))
+      p.qualificationModeSlug = qualificationMode === '' ? null : qualificationMode;
     return p;
   });
   const dirty = $derived(Object.keys(patch).length > 0);
@@ -193,6 +215,38 @@
           helper="How long a replaced edge keeps forwarding before it is destroyed, so members who have not refreshed stay connected."
         />
       </div>
+      {#if hasPanel}
+        <div class="space-y-1.5">
+          <Label for="relay-qualification-mode">Connection mode for front qualification</Label>
+          <Select.Root
+            type="single"
+            value={qualificationMode === '' ? DEFAULT_MODE : qualificationMode}
+            onValueChange={(v) => (qualificationMode = v === DEFAULT_MODE ? '' : v)}
+          >
+            <Select.Trigger id="relay-qualification-mode" class="w-full">{modeLabel}</Select.Trigger
+            >
+            <Select.Content>
+              <Select.Item value={DEFAULT_MODE}>Panel default</Select.Item>
+              {#each modeOptions as m (m.id)}
+                <Select.Item value={m.id}>
+                  {m.label ?? m.id}{m.enabled ? '' : ' (disabled)'}
+                </Select.Item>
+              {/each}
+            </Select.Content>
+          </Select.Root>
+          <p class="text-xs text-muted-foreground">
+            Proving a CDN front needs a test user on this panel. It is created on the placement of
+            the mode chosen here, which must include this relay's node, or the proof fails although
+            the front works. Panel default suits a panel with one placement. It takes effect the
+            next time the qualification credential is created.
+          </p>
+          {#if modes.isError}
+            <p class="text-xs text-destructive">
+              The connection modes could not be loaded. The current choice is kept.
+            </p>
+          {/if}
+        </div>
+      {/if}
       {#if relay.origin.kind !== 'manual' || relay.probeNode}
         <div class="flex items-start justify-between gap-4 rounded-md border p-3">
           <div>

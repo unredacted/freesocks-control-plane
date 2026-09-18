@@ -101,6 +101,12 @@
       hint: HOST_MODE_WORDS[relay.hostMode].explain,
     });
     out.push({ label: 'Location', value: relay.locationCode ?? '' });
+    if (origin.kind === 'panel-node')
+      out.push({
+        label: 'Front qualification mode',
+        value: relay.qualificationModeSlug ?? 'Panel default',
+        hint: 'The connection mode whose placement the test user is created on. Change it under Edit.',
+      });
     out.push({
       label: 'Registered by the node role',
       value: relay.lastRegisteredAt
