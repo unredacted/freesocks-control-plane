@@ -8,7 +8,11 @@ import {
   POOL_CODES,
   PREFLIGHT_BLOCKER_CODES,
   PREFLIGHT_WARNING_CODES,
+  SETUP_ACCOUNT_REASONS,
   SETUP_BLOCKER_CODES,
+  SETUP_RUN_NEEDS,
+  SETUP_RUN_STAGES,
+  SETUP_RUN_STATES,
   SETUP_STEP_IDS,
   SETUP_STEP_STATUSES,
 } from '../../shared/contracts/edgeCodes';
@@ -20,6 +24,11 @@ import {
   INBOUND_UNSUPPORTED_COPY,
   inboundUnsupportedCopy,
   ROTATION_PHASE_LABELS,
+  SETUP_ACCOUNT_REASON_COPY,
+  SETUP_RUN_NEED_COPY,
+  SETUP_RUN_STAGE_LABELS,
+  SETUP_RUN_STATE_LABELS,
+  setupRunNeedCopy,
   SETUP_STATUS_LABELS,
   SETUP_STEP_TITLES,
   auditActionLabel,
@@ -128,6 +137,39 @@ describe('INBOUND_UNSUPPORTED_COPY', () => {
     expect(inboundUnsupportedCopy('protocol').label).toBe('Protocol not supported');
     expect(inboundUnsupportedCopy('brand_new_reason').label).toBe('Brand new reason');
     expect(inboundUnsupportedCopy('brand_new_reason').explain.endsWith('.')).toBe(true);
+  });
+});
+
+describe('guided setup run vocabularies', () => {
+  test('every stage, state, need and account reason is worded, in sentences, without an em-dash or an API path', () => {
+    for (const s of SETUP_RUN_STAGES) expect(SETUP_RUN_STAGE_LABELS[s].trim()).toBeTruthy();
+    for (const s of SETUP_RUN_STATES) expect(SETUP_RUN_STATE_LABELS[s].trim()).toBeTruthy();
+    const offenders: string[] = [];
+    const check = (code: string, e: { label: string; explain: string; fix?: string }) => {
+      expect(e.label.trim()).toBeTruthy();
+      expect(e.label.split(/\s+/).length).toBeLessThanOrEqual(6);
+      expect(e.explain.trim().endsWith('.')).toBe(true);
+      if (e.fix) expect(e.fix.trim().endsWith('.')).toBe(true);
+      for (const text of [e.label, e.explain, e.fix ?? '']) {
+        if (text.includes(EM_DASH) || text.includes('/api/')) offenders.push(`${code}: ${text}`);
+      }
+    };
+    for (const code of SETUP_RUN_NEEDS) check(code, SETUP_RUN_NEED_COPY[code]);
+    for (const code of SETUP_ACCOUNT_REASONS) check(code, SETUP_ACCOUNT_REASON_COPY[code]);
+    expect(offenders).toEqual([]);
+  });
+
+  test('every need has exactly one button and an unknown need is humanised', () => {
+    for (const code of SETUP_RUN_NEEDS) expect(SETUP_RUN_NEED_COPY[code].fix).toBeTruthy();
+    expect(setupRunNeedCopy('try_it').label).toBe('Try each address');
+    expect(setupRunNeedCopy('brand_new_need').label).toBe('Brand new need');
+    expect(setupRunNeedCopy(null).explain.endsWith('.')).toBe(true);
+    for (const a of [
+      'edge.setup_run.started',
+      'edge.setup_run.go_live',
+      'edge.render.enabled_by_setup',
+    ])
+      expect(auditActionLabel(a)).not.toMatch(/setup run|enabled by setup/i);
   });
 });
 
