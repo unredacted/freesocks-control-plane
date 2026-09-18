@@ -989,6 +989,75 @@ describe('relay admin routes', () => {
     ).toBeNull();
     const gone = await call('GET', 'relays/by-slug/missing');
     expect(gone.status).toBe(404);
+
+    // Legacy adoption (`operation_mode=adopt_relay`): the running proxy is the
+    // operator's statement that the address already serves, so the import is
+    // published at index 0 with a `named_connection` verification (not refused
+    // as an untested endpoint) and the legacy Host is recorded on its listener.
+    const legacy = await roleCall('PUT', 'relays/by-slug/node-legacy', {
+      origin: { ...ORIGIN_NODE_ONE, nodeName: 'node-legacy' },
+      originAddress: '203.0.113.11',
+      listeners: [LISTENER_U],
+      hostModeRequest: 'operator',
+      adoption: {
+        edge: { address: '198.51.100.8', port: 443 },
+        hosts: [
+          {
+            uuid: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+            remark: 'legacy-u',
+            inboundUuid: LISTENER_U.panelBinding.configProfileInboundUuid,
+            sni: 'a.example',
+          },
+        ],
+      },
+    });
+    expect(legacy.status).toBe(200);
+    const legacyView = (await legacy.json()) as BySlugView & {
+      registration: { adopted: { edgeId: string; poolIndex: number | null } | null };
+    };
+    expect(legacyView.relay.hostMode).toBe('operator');
+    expect(legacyView.registration.adopted).toMatchObject({ poolIndex: 0 });
+    expect(legacyView.publishedEndpoints).toEqual([
+      expect.objectContaining({
+        listenerKey: 'u',
+        poolIndex: 0,
+        addresses: { v4: '198.51.100.8', v6: null, hostname: null },
+      }),
+    ]);
+    const legacyEdge = (await t.query(internal.edges.get, {
+      id: legacyView.registration.adopted!.edgeId as Id<'edges'>,
+    }))!;
+    expect(legacyEdge).toMatchObject({
+      managed: false,
+      publication: 'published',
+      verification: { rung: 'verified', by: 'admin', method: 'named_connection' },
+    });
+    const legacyListener = (await t.run((ctx) => ctx.db.get(legacyEdge.listenerId)))!;
+    expect(legacyListener.legacyHosts).toEqual([
+      expect.objectContaining({ remark: 'legacy-u', sni: 'a.example' }),
+    ]);
+    // Idempotent: the same body again adopts nothing new.
+    const legacyAgain = (await (
+      await roleCall('PUT', 'relays/by-slug/node-legacy', {
+        origin: { ...ORIGIN_NODE_ONE, nodeName: 'node-legacy' },
+        originAddress: '203.0.113.11',
+        listeners: [LISTENER_U],
+        hostModeRequest: 'operator',
+        adoption: {
+          edge: { address: '198.51.100.8', port: 443 },
+          hosts: [
+            {
+              uuid: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+              remark: 'legacy-u',
+              inboundUuid: LISTENER_U.panelBinding.configProfileInboundUuid,
+              sni: 'a.example',
+            },
+          ],
+        },
+      })
+    ).json()) as BySlugView & { registration: { adopted: { edgeId: string } | null } };
+    expect(legacyAgain.registration.adopted?.edgeId).toBe(legacyEdge._id);
+    expect(legacyAgain.publishedEndpoints).toHaveLength(1);
   });
 
   test('listener routes: admin upsert, enable/disable, name retire/reactivate (per listener and fleet-wide), retire by key and by slug', async () => {

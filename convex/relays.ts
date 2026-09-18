@@ -1242,11 +1242,16 @@ async function applyLegacyAdoption(
   );
   if (already) return { edgeId: already._id, poolIndex: already.poolIndex ?? null };
   const fam = addressFamily(adoption.edge.address);
+  // The adoption payload IS the operator's statement that this proxy already
+  // serves members (the role only sends it for a running deployment): the
+  // import carries it as a `named_connection` verification, without which
+  // the publication gate would refuse the publish (`edge.unverified_endpoint`).
   const r = await insertAdoptedEdge(ctx, relay, target, {
     ipv4: fam === 'v4' ? adoption.edge.address : undefined,
     hostname: fam ? undefined : adoption.edge.address,
     port: adoption.edge.port,
     publish: true,
+    verified: true,
     accountRow: null,
     resources: [],
     inspection: undefined,
