@@ -10,9 +10,12 @@ import { wipeAllowedIn } from './seedEdgesReset';
 const modules = import.meta.glob('./**/*.*s');
 
 const ORIGINAL_ENV = process.env.ENVIRONMENT;
+const ORIGINAL_ALLOW = process.env.EDGE_RESET_ALLOW;
 afterEach(() => {
   if (ORIGINAL_ENV === undefined) delete process.env.ENVIRONMENT;
   else process.env.ENVIRONMENT = ORIGINAL_ENV;
+  if (ORIGINAL_ALLOW === undefined) delete process.env.EDGE_RESET_ALLOW;
+  else process.env.EDGE_RESET_ALLOW = ORIGINAL_ALLOW;
 });
 
 async function seed() {
@@ -137,14 +140,55 @@ describe('edge maintenance gate', () => {
   });
 });
 
+describe('edge maintenance gate: every admin configuration write and single-target probe', () => {
+  test('qualification flips, account / template deletes and cron or detector probes are refused; a qualification probe is not', async () => {
+    const { t, relayId, listenerId, accountId } = await seed();
+    const { edgeId } = await t.mutation(internal.relays.adoptEdge, {
+      relayId,
+      listenerId,
+      ipv4: '198.51.100.7',
+    });
+    await t.mutation(internal.edgeTemplates.ensureDefaults, {});
+    const templateId = await t.run(
+      async (ctx) => (await ctx.db.query('edgeTemplates').first())!._id,
+    );
+    await t.mutation(internal.edgeMaintenance.freeze, {});
+    const refused = /maintenance/;
+    await expect(
+      t.mutation(internal.edgeProviderAccounts.setQualified, { id: accountId, qualified: true }),
+    ).rejects.toThrow(refused);
+    await expect(
+      t.mutation(internal.edgeProviderAccounts.remove, { id: accountId }),
+    ).rejects.toThrow(refused);
+    await expect(t.mutation(internal.edgeTemplates.remove, { id: templateId })).rejects.toThrow(
+      refused,
+    );
+    const target = { kind: 'edge' as const, ref: edgeId as string };
+    for (const trigger of ['cron', 'detector', 'manual'] as const)
+      await expect(t.mutation(internal.probes.requestProbes, { target, trigger })).rejects.toThrow(
+        refused,
+      );
+    // A qualification probe belongs to a rotation already in flight (completion):
+    // whatever it answers, it is not the maintenance refusal.
+    const q = await t
+      .mutation(internal.probes.requestProbes, { target, trigger: 'qualification' })
+      .then(
+        () => 'admitted',
+        (e: unknown) => String(e),
+      );
+    expect(q).not.toMatch(refused);
+  });
+});
+
 describe('seedEdgesReset', () => {
-  test('wipeAllowedIn is an allowlist', () => {
-    expect(wipeAllowedIn('development')).toBe(true);
-    expect(wipeAllowedIn('beta')).toBe(true);
-    expect(wipeAllowedIn('production')).toBe(false);
-    expect(wipeAllowedIn('Beta')).toBe(false);
-    expect(wipeAllowedIn(undefined)).toBe(false);
-    expect(wipeAllowedIn('')).toBe(false);
+  test('wipeAllowedIn: development always, anything else only with the explicit opt-in', () => {
+    expect(wipeAllowedIn({ ENVIRONMENT: 'development' })).toBe(true);
+    // A beta stack runs ENVIRONMENT=production like prod: the opt-in decides, not the name.
+    expect(wipeAllowedIn({ ENVIRONMENT: 'production' })).toBe(false);
+    expect(wipeAllowedIn({ ENVIRONMENT: 'production', EDGE_RESET_ALLOW: 'wipe-edges' })).toBe(true);
+    expect(wipeAllowedIn({ ENVIRONMENT: 'production', EDGE_RESET_ALLOW: 'true' })).toBe(false);
+    expect(wipeAllowedIn({ ENVIRONMENT: 'beta' })).toBe(false);
+    expect(wipeAllowedIn({})).toBe(false);
   });
 
   test('status reports every blocker and empties once the drain is done', async () => {
@@ -175,27 +219,57 @@ describe('seedEdgesReset', () => {
     expect(s2.blockers).toEqual([]);
   });
 
-  test('wipe refuses a wrong confirm, a non-allowlisted environment and open blockers', async () => {
+  test('wipe refuses a wrong confirm, a deployment that did not opt in, and open blockers', async () => {
     const { t } = await seed();
-    process.env.ENVIRONMENT = 'beta';
+    process.env.ENVIRONMENT = 'production';
+    process.env.EDGE_RESET_ALLOW = 'wipe-edges';
     await expect(t.action(internal.seedEdgesReset.wipe, { confirm: 'nope' })).rejects.toThrow(
       /confirm/,
     );
-    process.env.ENVIRONMENT = 'production';
+    delete process.env.EDGE_RESET_ALLOW;
     await expect(t.action(internal.seedEdgesReset.wipe, { confirm: 'wipe-edges' })).rejects.toThrow(
-      /allowed only/,
+      /EDGE_RESET_ALLOW/,
     );
-    delete process.env.ENVIRONMENT;
-    await expect(t.action(internal.seedEdgesReset.wipe, { confirm: 'wipe-edges' })).rejects.toThrow(
-      /allowed only/,
-    );
-    process.env.ENVIRONMENT = 'beta';
+    process.env.EDGE_RESET_ALLOW = 'wipe-edges';
     // Not frozen yet -> blocked.
     await expect(t.action(internal.seedEdgesReset.wipe, { confirm: 'wipe-edges' })).rejects.toThrow(
       /not safe to wipe.*not frozen/,
     );
     const rows = await t.run((ctx) => ctx.db.query('relays').collect());
     expect(rows).toHaveLength(1);
+  });
+
+  test('every destructive batch enforces the guards itself: a direct wipeBatch bypasses nothing', async () => {
+    const { t } = await seed();
+    const direct = (confirm: string) =>
+      t.mutation(internal.seedEdgesReset.wipeBatch, { table: 'relays', confirm });
+    process.env.ENVIRONMENT = 'production';
+    await expect(direct('wipe-edges')).rejects.toThrow(/EDGE_RESET_ALLOW/);
+    process.env.EDGE_RESET_ALLOW = 'wipe-edges';
+    await expect(direct('nope')).rejects.toThrow(/confirm/);
+    await expect(direct('wipe-edges')).rejects.toThrow(/not frozen/);
+    await expect(
+      t.mutation(internal.seedEdgesReset.disableSwitches, { confirm: 'wipe-edges' }),
+    ).rejects.toThrow(/not frozen/);
+    expect(await t.run((ctx) => ctx.db.query('relays').collect())).toHaveLength(1);
+  });
+
+  test('a managed edge beyond any listing cap still blocks the wipe', async () => {
+    const { t, relayId, listenerId } = await seed();
+    await t.mutation(internal.relays.adoptEdge, { relayId, listenerId, ipv4: '198.51.100.7' });
+    const template = await t.run(async (ctx) => (await ctx.db.query('edges').first())!);
+    await t.run(async (ctx) => {
+      const { _id, _creationTime, ...row } = template;
+      void _id;
+      void _creationTime;
+      // 520 imported (observe-only) edges first, then ONE managed edge after them.
+      for (let i = 0; i < 520; i++) await ctx.db.insert('edges', { ...row, managed: false });
+      await ctx.db.insert('edges', { ...row, managed: true });
+    });
+    await t.mutation(internal.edgeMaintenance.freeze, {});
+    const st = await t.query(internal.seedEdgesReset.status, {});
+    expect(st.edgesOpenCount).toBe(1);
+    expect(st.blockers.join(' ')).toMatch(/1 managed edge\(s\) not destroyed/);
   });
 
   test('wipe deletes the edge tables, keeps operator data and turns the switches off', async () => {

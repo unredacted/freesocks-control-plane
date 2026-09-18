@@ -544,6 +544,11 @@ export const requestProbes = internalMutation({
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, { target, trigger, sources, actorAdminId, ...stagger }) => {
+    // The authoritative maintenance check for EVERY single-target admission
+    // (the cron, a detector tick that passed its own check just before a
+    // freeze, the per-edge admin button). A qualification probe belongs to a
+    // rotation already in flight: completion, so it stays admitted.
+    if (trigger !== 'qualification') await assertAdmission(ctx.db, 'probe.request');
     const { runIds, runsPerSource } = await requestProbesFor(
       ctx,
       target,

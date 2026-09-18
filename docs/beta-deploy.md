@@ -318,7 +318,8 @@ Swap the final command for whatever you need — the common ones:
   `seedEdgesReset:wipe '{"confirm":"wipe-edges"}'` / `edgeMaintenance:thaw '{}'` — the edge
   reset drain that precedes a breaking change to the edge tables (`docs/edges.md` §
   "Maintenance switch and reset drain"; the wipe refuses while `status` reports blockers
-  and outside the allow-listed environments).
+  and unless the deployment opted in with `bunx convex env set EDGE_RESET_ALLOW wipe-edges`,
+  which you remove again afterwards).
 
 Everything the deployer applies on `up` (deploy, env, seed) stays the normal path
 (§6) — this recipe is only for ad-hoc operator runs.

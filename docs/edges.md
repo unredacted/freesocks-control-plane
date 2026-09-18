@@ -347,14 +347,21 @@ flight** (`convex/lib/edges/maintenance.ts`). While frozen, nothing new is admit
 provider account / template writes, probe requests and detector evaluation. Completion paths
 keep running: rotation steps and re-kicks, rollback, cancel, unpublish, destroy runs, Host
 operations, quarantine / needs_operator resolution, relay delete finalisation, credential
-removal. `edgeMaintenance:thaw` lifts it.
+removal. Credential rotation of a provider account also stays admitted (a destroy that must
+finish during a drain needs working credentials), as do qualification probes of a rotation
+already in flight; every other admin configuration write (qualification flips, account and
+template deletes) and every cron, detector or manual probe request is refused.
+`edgeMaintenance:thaw` lifts it.
 
 `seedEdgesReset` is the one-shot drain that precedes a breaking change to the edge tables:
 `freeze` → `status` (read-only, every environment: non-terminal rotations, managed edges not
-destroyed, held external locks, quarantined or deleting relays, active or owed qualification
+destroyed (the whole table is walked, never a capped listing), held external locks, quarantined or deleting relays, active or owed qualification
 credentials) → finish that work through the ordinary machine until `blockers` is empty →
-`wipe '{"confirm":"wipe-edges"}'` (allow-listed environments only; refuses while any blocker
-remains; deletes `edgeRotations`, `edges`, `relayListeners`, `relays`, `edgeDeliveryBindings`,
+`bunx convex env set EDGE_RESET_ALLOW wipe-edges` then `wipe '{"confirm":"wipe-edges"}'` (the
+opt-in is a deployment env var, set for the reset and **removed afterwards**; `ENVIRONMENT`
+cannot be the guard because a beta stack runs `ENVIRONMENT=production` like prod; local
+`development` needs none; refuses while any blocker remains, and every destructive batch
+re-checks opt-in, confirm word, freeze and blockers itself; deletes `edgeRotations`, `edges`, `relayListeners`, `relays`, `edgeDeliveryBindings`,
 `externalLocks`, `relaySamples` and the edge/relay probe rows in bounded pages; turns the
 `edge.*` switches off; keeps probe targets, provider accounts, templates, node inventory, marks,
 the audit log) → deploy → `thaw`. The deploy entrypoint pushes the schema before it runs any
