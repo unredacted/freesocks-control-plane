@@ -85,6 +85,25 @@ adds the CODEC table (which subscription formats the renderer can rewrite per co
 pinned by a test: a combination without a codec for every format it claims never ships).
 `vmess` has no codec and is not in the catalogue.
 
+**Discovery.** A panel-node relay's listeners can be derived from the node instead of typed:
+`backends.listNodeInbounds` (capability `inboundDiscovery`; Remnawave: the node's active config
+profile joined with the profile's Xray `inbounds[]` by tag, allowlisted fields only, never
+clients, private keys, short ids or certificates; `docs/backends.md`) yields `PanelInbound[]`,
+and the pure `mapInboundsToListeners` (`convex/lib/edges/inboundMapping.ts`) turns each into a
+registration-shaped listener candidate or an `unsupported` row with a reason from
+`INBOUND_UNSUPPORTED_CODES` (`inactive`, `tag`, `protocol`, `transport`, `security`,
+`invalid`; worded in `src/client/lib/edgeCodes.ts`). vless / trojan / shadowsocks map; tcp or raw
+→ `raw`, ws / httpupgrade / grpc → themselves (xhttp, kcp, quic are `transport`); REALITY
+`dest`/`target` + `serverNames` → `realityTarget` + `tlsNames`; TLS `serverName` → `tlsNames`
+(none = `needsName`: the operator supplies one before registering); ws / httpupgrade path +
+host and gRPC serviceName → `transportParams`; the inbound tag + profile uuids → `panelBinding`
+with the default `remark` match rule. Every candidate passes `validateListenerSpec`, and carries
+`layers` and `formats`. The listener key is `slug10 + base36(sha256(tag))[0..6]` (the first ten
+lowercase alphanumerics of the tag plus six hash digits; at most 16 chars, deterministic, unique
+against the relay's existing keys). `originTransport` is never set by discovery: only an origin
+probe can say how an L7 front may dial the node, so a discovered HTTP-transport listener starts
+L4-only until that probe fills it in.
+
 ### Layers
 
 `listenerLayers(listener)` (`convex/lib/edges/layers.ts`) decides which layers can carry a

@@ -24,6 +24,7 @@ import type {
   AttentionKind,
   AttentionSeverity,
   DeliveryUnavailableCode,
+  InboundUnsupportedCode,
   LayerExclusionCode,
   PreflightBlockerCode,
   PreflightWarningCode,
@@ -653,6 +654,55 @@ const COPY = {
     explain: 'This origin kind reports no user load, so the detector uses reports and probes only.',
   },
 } as const satisfies Record<KnownCode, CodeCopy> & Record<string, CodeCopy>;
+
+// --- discovered inbounds that cannot become listeners --------------------------------------
+// Why a panel inbound found on the node was left out of the protection plan
+// (`INBOUND_UNSUPPORTED_CODES`). Kept apart from the flat table above: these words are
+// generic nouns, and a future status code with the same name must not inherit them.
+export const INBOUND_UNSUPPORTED_COPY: Record<InboundUnsupportedCode, CodeCopy> = {
+  inactive: {
+    label: 'Not served by this node',
+    explain: 'The inbound is in the config profile but the node does not have it active.',
+    fix: 'Enable it on the node in the panel if members should use it.',
+  },
+  tag: {
+    label: 'Tag cannot be bound',
+    explain:
+      'The inbound tag uses characters a panel Host cannot bind to (letters, digits and underscores only).',
+    fix: 'Rename the inbound tag in the config profile.',
+  },
+  protocol: {
+    label: 'Protocol not supported',
+    explain:
+      'Edges can carry VLESS, Trojan and Shadowsocks inbounds; this protocol is not one of them.',
+  },
+  transport: {
+    label: 'Transport not supported',
+    explain:
+      'Edges can carry raw TCP, WebSocket, HTTP Upgrade and gRPC streams; this transport is not one of them.',
+  },
+  security: {
+    label: 'Security layer not supported',
+    explain:
+      'Edges can carry REALITY, TLS and plain inbounds; this security setting is not one of them.',
+  },
+  invalid: {
+    label: 'Inbound cannot be described',
+    explain:
+      'The inbound looks supported but its settings could not be turned into a listener (the detail names what).',
+    fix: 'Check the port, the REALITY target and the server names in the config profile.',
+  },
+};
+
+export function inboundUnsupportedCopy(code: string): CodeCopy {
+  const known = (INBOUND_UNSUPPORTED_COPY as Record<string, CodeCopy>)[code];
+  return (
+    known ?? {
+      label: humanizeCode(code),
+      explain: `The inbound was skipped: ${humanizeCode(code)}.`,
+    }
+  );
+}
 
 // --- refusal codes ---------------------------------------------------------------------------
 // What a mutation is refused with (`edge.<code>` on the wire, keyed bare here) that no status
