@@ -183,7 +183,7 @@
         Rotate credentials
       </Button>
       <Button size="sm" onclick={() => (qualifyOpen = true)}>
-        {a.qualified ? 'Remove qualification' : 'Mark qualified'}
+        {a.qualified ? 'Remove trust' : 'Trust override'}
       </Button>
     {/snippet}
   </SectionHeader>
