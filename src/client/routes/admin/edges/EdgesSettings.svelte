@@ -20,6 +20,7 @@
   import ConfigField from './settings/ConfigField.svelte';
   import SettingsSectionCard, { type ExtraChanges } from './settings/SettingsSectionCard.svelte';
   import RenderRules from './settings/RenderRules.svelte';
+  import DeliveryBindingsCard from './settings/DeliveryBindingsCard.svelte';
   import MaintenanceCard from './settings/MaintenanceCard.svelte';
   import { ConfigForm } from './settings/form.svelte';
   import {
@@ -279,5 +280,6 @@
     </SettingsSectionCard>
 
     <MaintenanceCard />
+    <DeliveryBindingsCard />
   </div>
 {/if}

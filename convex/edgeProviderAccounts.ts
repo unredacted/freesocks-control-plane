@@ -352,6 +352,18 @@ async function assertDnsAccountUsable(
     });
 }
 
+/**
+ * "Tested" = a successful credential test on record AND the latest test did
+ * not fail. A failure keeps the older success timestamp (so the history stays
+ * readable), which must not keep the account usable: one rule for the guided
+ * status, the attention list and the explicit test provision.
+ */
+export function accountTested(
+  a: Pick<Doc<'edgeProviderAccounts'>, 'lastTestOkAt' | 'lastTestError'>,
+): boolean {
+  return !!a.lastTestOkAt && !a.lastTestError;
+}
+
 export const create = internalMutation({
   args: upsertArgs,
   handler: async (ctx, a) => {

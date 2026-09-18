@@ -117,18 +117,14 @@ export const AUTO_PROVISION: Field = {
     'On: the control plane creates edges on its own until every relay reaches its pool size. This spends provider budget without asking. Off: you provision each edge yourself.',
 };
 
+/**
+ * Server config keys deliberately NOT offered: `providerAffinity` is sanitized and
+ * stored but no selection path reads it (docs/edges.md), so a control for it
+ * would be a switch that changes nothing.
+ */
+export const UNEXPOSED_PATHS: readonly string[] = ['providerAffinity'];
+
 export const ROTATION_FIELDS: Field[] = [
-  {
-    kind: 'select',
-    path: 'providerAffinity',
-    label: 'Provider choice for a replacement',
-    helper:
-      'Move on: prefer a different provider than the edge being replaced. Stay: keep the same provider when it has room.',
-    options: [
-      { value: 'rotate', label: 'Move to another provider' },
-      { value: 'sticky', label: 'Stay with the same provider' },
-    ],
-  },
   {
     kind: 'switch',
     path: 'autoPublishStandby',

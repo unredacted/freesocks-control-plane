@@ -38,7 +38,7 @@ import {
   todayKey,
 } from './relays';
 import { insertPlannedEdge } from './edges';
-import { dayKey } from './edgeProviderAccounts';
+import { accountTested, dayKey } from './edgeProviderAccounts';
 import { edgeResourceName } from './lib/edges/accountSettings';
 import {
   matchSlotHosts,
@@ -2219,7 +2219,7 @@ export async function selectionContext(
     const a = await ctx.db.get(rotation.requestedAccountId);
     if (!a) return failure('account_not_found');
     if (!a.enabled) return failure('account_disabled');
-    if (!a.lastTestOkAt) return failure('account_untested');
+    if (!accountTested(a)) return failure('account_untested');
     if (!eligibleAccounts.some((e) => e._id === a._id)) return failure('account_incompatible');
     if (!a.qualified && !rotation.allowUnqualified) return failure('no_qualified_account');
     if (listener.providerScope?.accountId && a._id !== listener.providerScope.accountId)

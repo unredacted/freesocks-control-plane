@@ -26,6 +26,7 @@ import {
   ROTATION_FIELDS,
   RULE_FIELDS,
   SECTION_PATHS,
+  UNEXPOSED_PATHS,
   parseSection,
   type Field,
 } from './fields';
@@ -120,7 +121,8 @@ describe('settings fields', () => {
   it('puts every server config path in exactly one section', () => {
     const owned = Object.values(SECTION_PATHS).flat();
     expect(new Set(owned).size).toBe(owned.length);
-    expect([...owned].sort()).toEqual(Object.keys(EDGE_KEYS).sort());
+    // Everything the server has, minus the keys nothing reads (never a dead control).
+    expect([...owned, ...UNEXPOSED_PATHS].sort()).toEqual(Object.keys(EDGE_KEYS).sort());
   });
 
   it('gives every bounded path a number field and every number field bounds', () => {

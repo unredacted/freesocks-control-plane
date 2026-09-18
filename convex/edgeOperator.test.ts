@@ -596,6 +596,24 @@ describe('quarantine view and Host adoption', () => {
         }),
       ]);
       expect(live.inspectedAt).toBeTruthy();
+      // Same address and port as the current binding but ANOTHER server name:
+      // that is not the current tuple, and the verdict must not say it is.
+      const current = live.listeners[0].current!;
+      const other = await t.query(internal.edgeOperator.quarantineView, {
+        relayId,
+        live: [
+          {
+            uuid: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            remark: 'node-one-relay-a',
+            address: current.address,
+            port: current.port,
+            sni: 'some-other-name.example',
+            host: null,
+            inboundUuid: FIXTURE_INBOUND,
+          },
+        ],
+      });
+      expect(other.listeners[0].match).toBe('neither');
     } finally {
       vi.unstubAllGlobals();
     }
@@ -767,5 +785,117 @@ describe('operator-facing refusals and the rotation view', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { skipped: string[] };
     expect(body.skipped).toEqual([`relay:${udp.relayId}: probe.udp_unsupported`]);
+  });
+});
+
+describe('review fixes: attention targets, the tested rule, the quarantine verdict', () => {
+  test('a publish item names a publishable standby; with none it becomes navigation; a failed re-test makes a once-tested account untested again', async () => {
+    const { t, call, get, relayId, listenerId, accountId } = await seed();
+    await adoptL4Edge(t, relayId, listenerId, { publish: true });
+    const standby = await adoptL4Edge(t, relayId, listenerId, {
+      ipv4: '198.51.100.8',
+      publish: false,
+    });
+    let pool = (await get('attention', AttentionResponse)).items.find(
+      (i) => i.kind === 'pool_below_desired',
+    )!;
+    expect(pool).toMatchObject({ action: 'publish', edgeId: standby.edgeId });
+    // The standby stops being publishable (no address): nothing to call, so navigate.
+    await t.run((ctx) => ctx.db.patch(standby.edgeId as Id<'edges'>, { addresses: {} }));
+    pool = (await get('attention', AttentionResponse)).items.find(
+      (i) => i.kind === 'pool_below_desired',
+    )!;
+    expect(pool).toMatchObject({ action: 'open_relay', edgeId: null });
+
+    await markTested(t, accountId);
+    await t.mutation(internal.edgeProviderAccounts.recordTest, {
+      id: accountId,
+      ok: false,
+      code: 'unauthorized',
+    });
+    const kinds = (await get('attention', AttentionResponse)).items.map((i) => i.kind);
+    expect(kinds).toContain('account_untested');
+    const res = await call('POST', `relays/${relayId}/test-provision`, {
+      accountId,
+      listenerKey: 'a',
+    });
+    // The start is admitted; SELECTION (the machine's first step) refuses the account.
+    expect(res.status).toBe(200);
+    const { rotationId } = (await res.json()) as { rotationId: Id<'edgeRotations'> };
+    const step = await t.query(internal.edgeRotations.stepContext, { rotationId });
+    expect(step?.selection?.account).toBeNull();
+    expect(step?.selection?.accountFailure).toBe('account_untested');
+    // And the dry run says so before anyone starts it.
+    const pre = PreflightResponse.parse(
+      await (
+        await call('POST', `relays/${relayId}/preflight`, {
+          kind: 'test-provision',
+          accountId,
+          listenerKey: 'a',
+        })
+      ).json(),
+    );
+    expect(pre.blockers.map((b) => b.code)).toContain('account_untested');
+  });
+
+  test('a suspected relay offers a one-click rotate only when the evidence names exactly one published edge', async () => {
+    const { t, get, relayId, listenerId } = await seed();
+    const a = await adoptL4Edge(t, relayId, listenerId, { publish: true });
+    const suspicion = (edgeIds: string[]) => ({
+      state: 'suspected' as const,
+      hintLevel: 'none' as const,
+      score: 1,
+      reportScore: 1,
+      loadScore: 0,
+      probeScore: 0,
+      scope: null,
+      countries: [],
+      edgeEvidence: edgeIds.map((edgeId) => ({
+        edgeId: edgeId as Id<'edges'>,
+        source: 'reports' as const,
+        countries: ['IR'],
+      })),
+      firstSeenAt: Date.now(),
+      lastEvalAt: Date.now(),
+      quietEvals: 0,
+      baselineWarm: true,
+      veto: null,
+    });
+    await t.run((ctx) => ctx.db.patch(relayId, { suspicion: suspicion([a.edgeId]) as never }));
+    let item = (await get('attention', AttentionResponse)).items.find(
+      (i) => i.kind === 'block_suspected',
+    )!;
+    expect(item).toMatchObject({ action: 'rotate', edgeId: a.edgeId });
+    await t.run((ctx) => ctx.db.patch(relayId, { suspicion: suspicion([]) as never }));
+    item = (await get('attention', AttentionResponse)).items.find(
+      (i) => i.kind === 'block_suspected',
+    )!;
+    expect(item).toMatchObject({ action: 'open_relay', edgeId: null });
+  });
+
+  test('minting a register token: a malformed node list is refused, never dropped into "every node"', async () => {
+    const { t, cookie, serverId } = await seed();
+    const mint = (edgeRegistration: unknown) =>
+      t.fetch('/api/v1/admin/tokens', {
+        method: 'POST',
+        headers: { cookie, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          name: 'node-role',
+          scopes: ['admin:edges:register'],
+          edgeRegistration,
+        }),
+      });
+    const bad = await mint({ backendServerIds: [serverId], nodeNames: [42] });
+    expect(bad.status).toBe(400);
+    expect(((await bad.json()) as { error: { code: string } }).error.code).toBe('validation');
+    expect((await mint({ backendServerIds: [serverId], nodeNames: [''] })).status).toBe(400);
+    expect(await t.run(async (ctx) => (await ctx.db.query('apiTokens').collect()).length)).toBe(0);
+    const ok = await mint({ backendServerIds: [serverId], nodeNames: ['node-one'] });
+    expect(ok.status).toBe(200);
+    const row = await t.run(async (ctx) => (await ctx.db.query('apiTokens').first())!);
+    expect(row.edgeRegistration).toEqual({
+      backendServerIds: [serverId],
+      nodeNames: ['node-one'],
+    });
   });
 });

@@ -2846,8 +2846,23 @@ http.route({
       expiresInDays?: number | null;
       edgeRegistration?: { backendServerIds?: unknown; nodeNames?: unknown } | null;
     }>(req);
-    const strings = (x: unknown): string[] =>
-      Array.isArray(x) ? x.filter((s): s is string => typeof s === 'string') : [];
+    // Strict: a malformed entry is refused, never dropped. Dropping `[42]` from
+    // `nodeNames` would leave an EMPTY list, which means "every node" and would
+    // mint a broader credential than the caller asked for.
+    const strings = (x: unknown): string[] | null =>
+      x === undefined || x === null
+        ? []
+        : Array.isArray(x) && x.every((s) => typeof s === 'string' && s.trim() !== '')
+          ? (x as string[])
+          : null;
+    const boundaryServers = strings(body.edgeRegistration?.backendServerIds);
+    const boundaryNodes = strings(body.edgeRegistration?.nodeNames);
+    if (body.edgeRegistration && (!boundaryServers || !boundaryNodes))
+      return errorJson(
+        'validation',
+        'edgeRegistration.backendServerIds and nodeNames must be arrays of non-empty strings',
+        400,
+      );
     if (!body.name || !Array.isArray(body.scopes) || body.scopes.length === 0) {
       return errorJson('validation', 'name and at least one scope are required', 400);
     }
@@ -2862,8 +2877,8 @@ http.route({
         ...(body.edgeRegistration
           ? {
               edgeRegistration: {
-                backendServerIds: strings(body.edgeRegistration.backendServerIds),
-                nodeNames: strings(body.edgeRegistration.nodeNames),
+                backendServerIds: boundaryServers ?? [],
+                nodeNames: boundaryNodes ?? [],
               },
             }
           : {}),

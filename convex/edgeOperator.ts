@@ -61,6 +61,7 @@ import {
   rotationListenerKey,
   selectionContext,
 } from './edgeRotations';
+import { accountTested } from './edgeProviderAccounts';
 import { renderPreviewFor } from './edgeAdmin';
 import type { RelayOrigin } from './lib/edges/origin';
 
@@ -212,8 +213,8 @@ async function accountFacts(
       provider: a.provider,
       layer,
       enabled: a.enabled,
-      tested: !!a.lastTestOkAt,
-      testFailed: !a.lastTestOkAt && !!a.lastTestError,
+      tested: accountTested(a),
+      testFailed: !!a.lastTestError,
       qualified: a.qualified,
       qualificationCurrent: a.qualified && a.qualifiedTemplateHash === effective.hash,
       frontsListeners: fronts,
@@ -836,8 +837,16 @@ export const attention = internalQuery({
         }
       }
       if (relay.suspicion?.state === 'suspected') {
+        // A one-click replace needs ONE target: the single published edge the
+        // evidence names. Anything else (no edge-level evidence, several edges)
+        // is a decision for the relay page, not a blind call.
+        const evidenced = [
+          ...new Set(relay.suspicion.edgeEvidence.map((e) => e.edgeId as string)),
+        ].filter((id) => edges.some((e) => e._id === id && e.publication === 'published'));
+        const suspect = evidenced.length === 1 ? evidenced[0] : null;
         items.push({
           ...base(relay),
+          edgeId: suspect,
           id: `block_suspected:${relay._id}`,
           kind: 'block_suspected',
           severity: 'warning',
@@ -847,7 +856,7 @@ export const attention = internalQuery({
             hintLevel: relay.suspicion.hintLevel,
             countries: relay.suspicion.countries.map((c) => c.code),
           },
-          action: 'rotate',
+          action: suspect ? 'rotate' : 'open_relay',
           since: isoN(relay.suspicion.firstSeenAt),
         });
       }
@@ -871,17 +880,27 @@ export const attention = internalQuery({
         }
       }
       if (relay.enabled && published < relay.desiredPublished) {
-        const standbys = edges.filter(
-          (e) => e.status === 'active' && e.publication === 'unpublished',
-        ).length;
+        const idle = edges.filter((e) => e.status === 'active' && e.publication === 'unpublished');
+        const standbys = idle.length;
+        // The publish action names the first standby that would actually pass
+        // the publish checks; with none publishable the operator is sent to the
+        // relay page instead of a call that cannot run.
+        let publishable: string | null = null;
+        for (const e of idle) {
+          if ((await checkPublishable(ctx, e, cfg.requireProviderHealth)).ok) {
+            publishable = e._id as string;
+            break;
+          }
+        }
         items.push({
           ...base(relay),
+          edgeId: publishable,
           id: `pool_below_desired:${relay._id}`,
           kind: 'pool_below_desired',
           severity: published === 0 ? 'warning' : 'info',
           code: null,
           facts: { published, desired: relay.desiredPublished, standbys },
-          action: standbys > 0 ? 'publish' : 'provision',
+          action: publishable ? 'publish' : standbys > 0 ? 'open_relay' : 'provision',
           since: null,
         });
       }
@@ -889,7 +908,7 @@ export const attention = internalQuery({
     const accounts = await ctx.db.query('edgeProviderAccounts').collect();
     for (const a of accounts) {
       if (!a.enabled) continue;
-      if (!a.lastTestOkAt) {
+      if (!accountTested(a)) {
         items.push({
           id: `account_untested:${a._id}`,
           kind: 'account_untested',
@@ -1128,19 +1147,24 @@ export const timeline = internalQuery({
     };
     let truncated = await pull('relay', relayId as string, 40);
     const edges = await liveEdgesOfRelay(ctx.db, relayId);
+    // A subject left out by these caps is an incomplete timeline: say so.
+    if (edges.length > 12) truncated = true;
     for (const e of edges.slice(0, 12)) {
       truncated = (await pull('edge', e._id as string, 12)) || truncated;
       truncated = (await pull('probe_target', `edge:${e._id as string}`, 8)) || truncated;
     }
     const listeners = await listenersOf(ctx, relayId);
+    if (listeners.length > 12) truncated = true;
     for (const l of listeners.slice(0, 12))
       truncated = (await pull('relay_listener', l._id as string, 6)) || truncated;
     const rotations = await ctx.db
       .query('edgeRotations')
       .withIndex('by_relay', (q) => q.eq('relayId', relayId))
       .order('desc')
-      .take(8);
-    for (const r of rotations) {
+      .take(9);
+    // One extra row tells a ninth rotation exists without reading it.
+    if (rotations.length > 8) truncated = true;
+    for (const r of rotations.slice(0, 8)) {
       truncated = (await pull('edge_rotation', r._id as string, 10)) || truncated;
       for (const auditId of (r.auditIds ?? []).slice(-10)) {
         const row = await ctx.db.get(auditId);
@@ -1204,9 +1228,19 @@ function tupleOfEdge(edge: Edge, listener: Listener): HostTuple | null {
   return t ? { address: t.address, port: t.port, sni: t.sni, host: t.host } : null;
 }
 
+/**
+ * The COMPLETE tuple: two bindings can share address:port and differ only in
+ * SNI or Host header, and the verdict recommends which one to keep.
+ */
 function tupleMatches(a: HostTuple | null, b: HostTuple | null): boolean {
   if (!a || !b) return false;
-  return sameAddress(a.address, b.address) && a.port === b.port;
+  const n = (x: string | null | undefined) => (x ? x.trim().toLowerCase() : '');
+  return (
+    sameAddress(a.address, b.address) &&
+    a.port === b.port &&
+    n(a.sni) === n(b.sni) &&
+    n(a.host) === n(b.host)
+  );
 }
 
 type LiveHost = {
@@ -1435,7 +1469,7 @@ export const providersUsage = internalQuery({
         layer: edgeLayerOf(a.provider),
         enabled: a.enabled,
         qualified: a.qualified,
-        tested: !!a.lastTestOkAt,
+        tested: accountTested(a),
         fake: fake.includes(a.provider),
         liveEdges: live,
         maxLiveEdges: a.maxLiveEdges,
