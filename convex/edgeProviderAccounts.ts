@@ -10,6 +10,7 @@
  * provider only.
  */
 import { ConvexError, v } from 'convex/values';
+import { fakeShadowedIds } from './lib/edges/providers/fake';
 import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
@@ -65,6 +66,9 @@ export function mapAccountAdmin(r: Doc<'edgeProviderAccounts'>) {
     observedSettings: r.observedSettings ? parseObservedSettings(r.observedSettings) : null,
     observedAt: r.observedAt ? new Date(r.observedAt).toISOString() : null,
     inventoryAt: r.inventoryAt ? new Date(r.inventoryAt).toISOString() : null,
+    // Dev only: the adapter behind this account is the in-memory fake, so the
+    // CMS can badge it and no screenshot shows a real adapter name for it.
+    fake: fakeShadowedIds().includes(r.provider),
     createdAt: new Date(r._creationTime).toISOString(),
     updatedAt: new Date(r.updatedAt).toISOString(),
   };
@@ -348,6 +352,18 @@ async function assertDnsAccountUsable(
     });
 }
 
+/**
+ * "Tested" = a successful credential test on record AND the latest test did
+ * not fail. A failure keeps the older success timestamp (so the history stays
+ * readable), which must not keep the account usable: one rule for the guided
+ * status, the attention list and the explicit test provision.
+ */
+export function accountTested(
+  a: Pick<Doc<'edgeProviderAccounts'>, 'lastTestOkAt' | 'lastTestError'>,
+): boolean {
+  return !!a.lastTestOkAt && !a.lastTestError;
+}
+
 export const create = internalMutation({
   args: upsertArgs,
   handler: async (ctx, a) => {
@@ -453,7 +469,7 @@ export const update = internalMutation({
         const total = live.length + transitive;
         if (total > 0)
           throw new ConvexError({
-            code: 'conflict',
+            code: 'edge.account_in_use',
             message: `${total} edge(s) still reference this account; destroy them before changing its settings`,
           });
       }
@@ -535,7 +551,10 @@ export const remove = internalMutation({
       .filter((q) => q.neq(q.field('status'), 'destroyed'))
       .first();
     if (live) {
-      throw new ConvexError({ code: 'conflict', message: 'Edges still reference this account' });
+      throw new ConvexError({
+        code: 'edge.account_in_use',
+        message: 'Edges still reference this account',
+      });
     }
     // An account other accounts write DNS through cannot go either: their
     // records live in its zone and are addressed with its credentials.

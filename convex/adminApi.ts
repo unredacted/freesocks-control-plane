@@ -166,6 +166,12 @@ function mapToken(t: Doc<'apiTokens'>) {
     scopes: t.scopes,
     subjectType: t.subjectType,
     subjectUserId: (t.subjectUserId as string | undefined) ?? null,
+    edgeRegistration: t.edgeRegistration
+      ? {
+          backendServerIds: t.edgeRegistration.backendServerIds as string[],
+          nodeNames: t.edgeRegistration.nodeNames ?? [],
+        }
+      : null,
     expiresAt: t.expiresAt != null ? iso(t.expiresAt) : null,
     lastUsedAt: t.lastUsedAt != null ? iso(t.lastUsedAt) : null,
     revokedAt: t.revokedAt != null ? iso(t.revokedAt) : null,
@@ -994,6 +1000,8 @@ const AUTOMATION_ALLOWED_SCOPES = [
   'admin:servers:read',
   'admin:servers:write',
   'admin:status:read',
+  // The node role's relay registration; needs `registerBackendSlugs` (its boundary).
+  'admin:edges:register',
 ] as const;
 
 /**
@@ -1016,10 +1024,14 @@ export const mintAutomationToken = internalAction({
     scopes: v.array(v.string()),
     name: v.optional(v.string()),
     expiresInDays: v.optional(v.number()),
+    // The registration boundary of an `admin:edges:register` token: the backend
+    // servers (by slug) and optionally the node names the role may register for.
+    registerBackendSlugs: v.optional(v.array(v.string())),
+    registerNodeNames: v.optional(v.array(v.string())),
   },
   handler: async (
     ctx,
-    { scopes, name, expiresInDays },
+    { scopes, name, expiresInDays, registerBackendSlugs, registerNodeNames },
   ): Promise<{
     id: Id<'apiTokens'>;
     plaintext: string;
@@ -1051,6 +1063,14 @@ export const mintAutomationToken = internalAction({
       subjectType: 'service',
       expiresInDays,
       createdByAdminId: adminUserId,
+      ...(registerBackendSlugs || registerNodeNames
+        ? {
+            edgeRegistration: {
+              backendSlugs: registerBackendSlugs ?? [],
+              nodeNames: registerNodeNames,
+            },
+          }
+        : {}),
     });
 
     await ctx.runMutation(internal.audit.record, {

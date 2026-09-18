@@ -30,8 +30,15 @@ export type WithElementRef<T, U extends HTMLElement = HTMLElement> = T & { ref?:
 export function subscriptionDisplayUrl(
   subToken: string | null | undefined,
   backendUrl: string,
+  opts: { dynamicAccessKey?: boolean } = {},
 ): string {
   if (subToken && typeof location !== 'undefined') {
+    // A single-key backend behind relay edges (docs/edges.md): a static key
+    // would embed one edge address and break on rotation, so the member imports
+    // an Outline DYNAMIC access key that re-fetches this same fronted route.
+    if (opts.dynamicAccessKey && location.protocol === 'https:') {
+      return `ssconf://${location.host}/api/v1/sub/${subToken}#FreeSocks`;
+    }
     return `${location.origin}/api/v1/sub/${subToken}`;
   }
   return backendUrl;

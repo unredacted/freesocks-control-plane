@@ -39,6 +39,11 @@
   import GitBranch from '@lucide/svelte/icons/git-branch';
   import HeartPulse from '@lucide/svelte/icons/heart-pulse';
   import LogOut from '@lucide/svelte/icons/log-out';
+  import LayoutGrid from '@lucide/svelte/icons/layout-grid';
+  import CloudCog from '@lucide/svelte/icons/cloud-cog';
+  import FileCog from '@lucide/svelte/icons/file-cog';
+  import Activity from '@lucide/svelte/icons/activity';
+  import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import type { LucideIcon } from '@lucide/svelte';
   import * as Collapsible from '@client/components/ui/collapsible';
@@ -69,7 +74,10 @@
   // ({ group, icon, children: [...] }). Backend servers + Remnawave (both server
   // config) live under one "Servers" group; the router is unaffected (children keep
   // their flat paths).
-  type NavLeaf = { to: string; label: string; icon: LucideIcon };
+  // A leaf is active on its own path and on any sub-path (`/admin/edges/providers/<id>`
+  // keeps Providers lit); `exact` opts out for a leaf whose path is a prefix of
+  // its siblings (Edges -> Overview at `/admin/edges`).
+  type NavLeaf = { to: string; label: string; icon: LucideIcon; exact?: boolean };
   type NavGroup = { group: string; icon: LucideIcon; children: NavLeaf[] };
   const NAV: (NavLeaf | NavGroup)[] = [
     { to: '/admin/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -84,7 +92,6 @@
         { to: '/admin/backend-servers', label: 'Backend servers', icon: Server },
         { to: '/admin/connection-modes', label: 'Connection modes', icon: GitBranch },
         { to: '/admin/remnawave', label: 'Remnawave', icon: Waypoints },
-        { to: '/admin/edges', label: 'Edges', icon: Network },
         { to: '/admin/status', label: 'Status page', icon: HeartPulse },
       ],
     },
@@ -94,13 +101,17 @@
     { to: '/admin/billing', label: 'Billing', icon: CreditCard },
     { to: '/admin/rate-limits', label: 'Rate limits', icon: Gauge },
     {
-      group: 'Telemetry',
-      icon: Radar,
+      group: 'Edges',
+      icon: Network,
       children: [
-        { to: '/admin/telemetry', label: 'User reports', icon: Radar },
-        { to: '/admin/telemetry/probes', label: 'Probes', icon: Network },
+        { to: '/admin/edges', label: 'Overview', icon: LayoutGrid, exact: true },
+        { to: '/admin/edges/providers', label: 'Providers', icon: CloudCog },
+        { to: '/admin/edges/templates', label: 'Templates', icon: FileCog },
+        { to: '/admin/edges/probes', label: 'Probes', icon: Activity },
+        { to: '/admin/edges/settings', label: 'Settings', icon: SlidersHorizontal },
       ],
     },
+    { to: '/admin/telemetry', label: 'User reports', icon: Radar },
     { to: '/admin/audit', label: 'Audit log', icon: History },
     { to: '/admin/settings', label: 'Settings', icon: Settings },
     { to: '/admin/theme', label: 'Theme', icon: Palette },
@@ -111,7 +122,15 @@
   /** Is the active route one of this group's children? Derived from the group's OWN
    *  children — a second hand-maintained path list drifted once already (it omitted
    *  /admin/connection-modes, so that page rendered the group collapsed). */
-  const holdsActiveRoute = (item: NavGroup) => item.children.some((c) => c.to === router.pathname);
+  const leafActive = (leaf: NavLeaf) =>
+    router.pathname === leaf.to || (!leaf.exact && router.pathname.startsWith(`${leaf.to}/`));
+  /** The Overview leaf also owns the section's unlisted pages (setup, relay pages). */
+  const EDGES_OVERVIEW_EXTRA = ['/admin/edges/setup', '/admin/edges/relays/'];
+  const overviewOwns = (leaf: NavLeaf) =>
+    leaf.to === '/admin/edges' &&
+    EDGES_OVERVIEW_EXTRA.some((p) => router.pathname === p || router.pathname.startsWith(p));
+  const isActive = (leaf: NavLeaf) => leafActive(leaf) || overviewOwns(leaf);
+  const holdsActiveRoute = (item: NavGroup) => item.children.some(isActive);
 
   /** Open when the admin has toggled it, else whenever the active route lives in it
    *  (initial deep-link + navigating in). */
@@ -192,7 +211,7 @@
             </Collapsible.Trigger>
             <Collapsible.Content class="mt-0.5 ms-3 space-y-0.5 border-s border-border ps-2">
               {#each item.children as child (child.to)}
-                {@const active = child.to === router.pathname}
+                {@const active = isActive(child)}
                 <Link
                   href={child.to}
                   onclick={() => (mobileOpen = false)}
@@ -211,7 +230,7 @@
             </Collapsible.Content>
           </Collapsible.Root>
         {:else}
-          {@const active = item.to === router.pathname || router.pathname.startsWith(`${item.to}/`)}
+          {@const active = isActive(item)}
           <Link
             href={item.to}
             onclick={() => (mobileOpen = false)}

@@ -1393,6 +1393,12 @@ export default defineSchema({
     // The listener the operator asked for (provision) / the target's listener
     // (replace, publish). A retired or missing listener FAILS the run.
     listenerId: v.optional(v.id('relayListeners')),
+    // The explicit bootstrap provision (`test-provision`): the account and
+    // template the operator named, and whether an UNQUALIFIED account is
+    // admitted (only this path may say yes; the result is never published).
+    requestedAccountId: v.optional(v.id('edgeProviderAccounts')),
+    requestedTemplateId: v.optional(v.id('edgeTemplates')),
+    allowUnqualified: v.optional(v.boolean()),
     // Selection outcome: the new edge came from an existing standby (true) or was
     // provisioned by this run (`createdEdgeId`, the only edge a failure may mark).
     viaStandby: v.optional(v.boolean()),

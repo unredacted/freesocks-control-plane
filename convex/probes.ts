@@ -174,6 +174,8 @@ export interface ResolvedTarget {
   ports: number[];
   /** What the probe speaks against this target (see `ProbeProtocol`). */
   probeProtocol: ProbeProtocol;
+  /** Deployed UDP listeners left out of `ports` (relay targets; the probes are TCP connects). */
+  udpListeners?: number;
 }
 
 /** Resolve what a target ref points at right now, or null when it is gone. */
@@ -223,6 +225,8 @@ async function resolveTarget(
       addresses: splitByKind(relay.originAddress),
       ports: distinctPorts(deployed.map((s) => s.originPort)),
       probeProtocol: 'tcp',
+      udpListeners: listeners.filter((s) => s.deployed && !s.retired && s.transport === 'udp')
+        .length,
     };
   }
   const row = await ctx.db.get(t.ref as Id<'probeTargets'>);
@@ -409,6 +413,13 @@ async function planTarget(
   if (!resolved) throw new ConvexError({ code: 'not_found', message: 'Probe target not found' });
   if (!hasAddress(resolved)) {
     throw new ConvexError({ code: 'edge.no_address', message: 'The target has no address yet' });
+  }
+  if (resolved.ports.length === 0 && (resolved.udpListeners ?? 0) > 0) {
+    // Every deployed listener is UDP: say so instead of "no listeners".
+    throw new ConvexError({
+      code: 'probe.udp_unsupported',
+      message: 'The target only has UDP listeners; the probes are TCP connects',
+    });
   }
   if (resolved.ports.length === 0) {
     throw new ConvexError({

@@ -211,6 +211,42 @@ edge is **TCP-only** today (no adapter forwards UDP).
 `hostMode:'operator'` means FCP never writes the Hosts: publishing proceeds without a flip and
 replacing a template edge is refused (`edge.hosts_operator_managed`) unless forced.
 
+### Operator endpoints (what the admin section is built on)
+
+All under `/api/v1/admin/edges/`, sealed by verb like every other route; the read-only POSTs
+(`setup-status` with a draft, `preflight`) are admitted by the read scope, like `render/preview`.
+
+| Route                                                          | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET setup-status?relay=<slug>` / `POST setup-status {draft}`  | **Relay-scoped** readiness: nine steps (origin, account, template, relay, edge, qualification, publish, rendering, automation), each `done / ready / blocked / skipped` with blockers and warnings as codes, the selected context, `currentStep` and `roleVars` (public values only: never a token or an address). A draft (origin + listener triples) is judged before the relay exists. Without either, the fleet aggregate plus the relays whose setup can be resumed. Manual origins skip `rendering`. |
+| `POST relays/{id}/test-provision`                              | The bootstrap path: ordinary selection excludes unqualified accounts, so a fresh account could never get its first edge. Explicit `{accountId, templateId?, listenerKey}`; the account must be enabled and **tested** but may be unqualified; budgets, capacity and layer compatibility apply; the result is always unpublished. Audited `admin.edge.test_provision`.                                                                                                                                      |
+| `POST relays/{id}/preflight`                                   | Dry run of `provision / publish / replace / test-provision`: every guard a real start applies (the FIRST blocker is the code the start would throw), the selection the machine would make, plan-phase refusals that need no adapter, and delivery warnings (`render_disabled`, `members_dark`, ...). Writes nothing.                                                                                                                                                                                       |
+| `GET attention`                                                | Server-ranked list, one action per item: quarantine, needs operator, unsettled Host op, **members dark** (edge-required place with nothing to serve), failed or rolled-back rotation, lapsed front qualification, block suspected, unreachable edge, pool below desired, account untested or unqualified, drift, maintenance frozen.                                                                                                                                                                       |
+| `GET relays/{id}/quarantine` + `POST .../quarantine/inspect`   | The resolver view: per listener the previous and the current binding as Host tuples; `inspect` (throttled) fills the live column from the panel and says which one it matches. `resolve-quarantine` records a `reason`.                                                                                                                                                                                                                                                                                    |
+| `GET relays/{id}/timeline`                                     | Merged audit rows of the relay, its listeners, its non-destroyed edges and its rotations, newest first, capped.                                                                                                                                                                                                                                                                                                                                                                                            |
+| `GET providers/usage`                                          | Per account: live / max edges, allocations against the daily budget, published / standby / draining; per relay desired against published; totals including what auto-provision would add.                                                                                                                                                                                                                                                                                                                  |
+| `GET relays/lookup?slug=`                                      | The full admin view of one relay by slug (the per-relay page is addressed by slug).                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `POST relays/{id}/listeners/{key}/adopt-host`                  | The `operator` to `fcp` handoff: the named Host must exist, carry the listener's inbound and dial a published edge of that listener (`edge.host_adopt_mismatch` otherwise). `hostMode: fcp` is refused until every listener Host is adopted (`edge.host_adopt_required`).                                                                                                                                                                                                                                  |
+| `GET maintenance`, `POST maintenance/freeze`, `.../thaw`       | The maintenance switch (see below).                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `GET delivery-bindings`, `POST delivery-bindings/{id}/release` | The edge-required places, including ones whose relay was deleted with `keep-dark`.                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `GET config`                                                   | Also carries `bounds` and `defaults` per flat key, so the settings forms validate against the server's own limits.                                                                                                                                                                                                                                                                                                                                                                                         |
+
+### Admin section (Admin -> Edges)
+
+Its own lazy chunk under `src/client/routes/admin/edges/`, one nav group: **Overview**
+(`/admin/edges`: fleet tiles, attention list, readiness with resume links, relay table, probe
+chart), **guided setup** (`/admin/edges/setup?relay=<slug>`, driven entirely by `setup-status`:
+the page holds no progress state of its own), **per-relay page**
+(`/admin/edges/relays/<slug>`: overview, edges, listeners, rotations, probes; the quarantine
+resolver), **Providers** (+ per-account page), **Templates**, **Probes** (moved from Telemetry;
+the old path redirects) and **Settings** (Basics, Advanced sections, maintenance). Codes are
+never shown bare: `src/shared/contracts/edgeCodes.ts` holds the vocabularies and
+`src/client/lib/edgeCodes.ts` the words. Paths are built only in `src/client/lib/edgesApi.ts`.
+
+Member side: when the key sits behind edges the report dialog also asks which connection the
+member was using (optional; the labels the pass shows), and an edge-required single-key
+(Outline) subscription is shown as the dynamic access key.
+
 ### Host ownership (`hostMode: fcp`)
 
 `convex/hostOps.ts`. Each listener's Host is a persisted state machine
@@ -269,8 +305,8 @@ kinds the load score is 0 (`no_load_signal`) and `node_offline` reads the instan
 
 ## Configuration
 
-`edge.*` in `appSettings` (Admin → Edges → Settings, and the probe settings under Telemetry →
-Probes; both `GET/PATCH /api/v1/admin/edges/config`). Ships fully dormant: `enabled=false`,
+`edge.*` in `appSettings` (Admin → Edges → Settings, probe settings included;
+`GET/PATCH /api/v1/admin/edges/config`). Ships fully dormant: `enabled=false`,
 `autoRotate=false`, `render.enabled=false`, `probe.enabled=false`, `l7.autoSelect=false`.
 Probe credentials are write-only (`edge.secret.probe.*`). Defaults and bounds:
 `convex/lib/edgeConfig.ts`. `providerAffinity` was removed (never read).
@@ -291,7 +327,13 @@ an `fsv1_` token with `admin:edges:register`, minted with a **registration bound
 register for). Such a token may call only the by-slug routes below, and only for origins
 inside its boundary (`edge.registration_boundary` otherwise); a boundary-less register token
 may register nothing. Credential rotation = mint a new token with the same boundary and revoke
-the old one; nothing on the relay row references a token.
+the old one; nothing on the relay row references a token. The boundary is set at mint: in
+the CMS (Admin → API tokens; ticking the scope reveals the backend-server and node-name
+inputs, and the guided setup's "Mint role token" link presets them) or from the control plane
+with `adminApi:mintAutomationToken '{"scopes":["admin:edges:register"],
+"registerBackendSlugs":["<slug>"],"registerNodeNames":["<node>"]}'`. The mint refuses the
+scope without a boundary and a boundary without the scope (`validation`); the audit row
+carries counts only.
 
 1. `PUT /api/v1/admin/edges/relays/by-slug/{slug}` with
    `{ origin, originAddress, locationCode?, label?, listeners[], pruneListeners? }` where

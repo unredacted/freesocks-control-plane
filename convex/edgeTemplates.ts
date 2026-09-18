@@ -426,7 +426,7 @@ export const remove = internalMutation({
       .collect();
     if (siblings.length <= 1) {
       throw new ConvexError({
-        code: 'conflict',
+        code: 'edge.template_last_of_provider',
         message: 'A provider keeps at least one template',
       });
     }

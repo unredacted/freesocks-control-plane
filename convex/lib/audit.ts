@@ -198,9 +198,9 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'admin.invite.created': ['username'],
   'admin.invite.redeemed': ['username'],
   // Automation-token mint (bootstrap via `convex run`); never the token/secret.
-  'admin.automation_token.mint': ['name', 'scopeCount'],
+  'admin.automation_token.mint': ['name', 'scopeCount', 'boundaryServers', 'boundaryNodes'],
   // Human-admin API-token mint / revoke from the CMS; never the token/secret.
-  'admin.token.mint': ['name', 'scopeCount', 'subjectType'],
+  'admin.token.mint': ['name', 'scopeCount', 'subjectType', 'boundaryServers', 'boundaryNodes'],
   'admin.token.revoke': ['name'],
   // Admin tier lifecycle from the CMS (the by-slug IaC path audits separately).
   'admin.tier.create': ['slug', 'backend'],
@@ -328,7 +328,7 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'edge.rotation_failed': ['relaySlug', 'trigger', 'phase', 'outcome', 'step', 'code'],
   'edge.rolled_back': ['relaySlug', 'hosts'],
   'edge.quarantined': ['relaySlug', 'rotationId', 'reason'],
-  'edge.quarantine_resolved': ['relaySlug', 'keep', 'rotationId'],
+  'edge.quarantine_resolved': ['relaySlug', 'keep', 'rotationId', 'reason'],
   'edge.drift': ['relaySlug', 'edgeId', 'mismatched', 'total'],
   'edge.orphan_suspected': ['provider', 'name', 'step'],
   'edge.block_suspected': [
@@ -350,6 +350,11 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'edge.live.pulled': ['edgeId', 'accountId'],
   'admin.edge.config.change': ['changedKeys'],
   'admin.edge.maintenance': ['frozen', 'reason'],
+  // The explicit bootstrap provision from a tested but unqualified account.
+  'admin.edge.test_provision': ['slug', 'listenerKey', 'accountName', 'provider', 'rotationId'],
+  // An operator-created panel Host taken over for a listener (hostMode handoff).
+  'relay.host.adopt_requested': ['relaySlug', 'listenerKey'],
+  'edge.delivery.binding_released': ['relaySlug', 'backendServerId'],
   'relay.registered': [
     'slug',
     'created',

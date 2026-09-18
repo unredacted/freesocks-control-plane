@@ -11,8 +11,10 @@ import type { Doc, Id } from './_generated/dataModel';
 import { upsertSettingRow } from './appSettings';
 import { writeAuditLog } from './lib/audit';
 import {
+  EDGE_CONFIG_BOUNDS,
   EDGE_DEFAULTS,
   RENDER_CLIENT_FAMILIES,
+  flattenEdgeConfig,
   edgeConfigWrites,
   edgeSecretStatus,
   edgeSecretWrites,
@@ -172,7 +174,9 @@ export const configView = internalQuery({
       config,
       secrets: edgeSecretStatus(secrets),
       families: [...RENDER_CLIENT_FAMILIES],
-      defaults: EDGE_DEFAULTS,
+      // Flat paths: what the settings page diffs against and resets to.
+      defaults: flattenEdgeConfig(EDGE_DEFAULTS),
+      bounds: EDGE_CONFIG_BOUNDS,
     };
   },
 });
@@ -482,9 +486,20 @@ export const renderPreview = internalQuery({
     if (!(RENDER_CLIENT_FAMILIES as readonly string[]).includes(family)) {
       throw new ConvexError({ code: 'validation', message: 'unknown client family' });
     }
-    const fam = family as RenderClientFamily;
     const origin = await ctx.db.get(relayId);
     if (!origin) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
+    return renderPreviewFor(ctx, origin, family as RenderClientFamily, sampleKey);
+  },
+});
+
+/** The per-family preview over the sample body (shared with the setup-status rendering step). */
+export async function renderPreviewFor(
+  ctx: { db: import('./_generated/server').DatabaseReader },
+  origin: Doc<'relays'>,
+  fam: RenderClientFamily,
+  sampleKey?: string,
+) {
+  {
     const cfg = await resolveEdgeConfig(ctx.db);
     const { published, matchers } = await publishedEdgesOf(ctx, origin, {
       includeIneligible: true,
@@ -539,8 +554,8 @@ export const renderPreview = internalQuery({
       delivery: out.delivery,
       listeners: out.listeners ?? [],
     };
-  },
-});
+  }
+}
 
 // --- edges: detail, live, operator resolutions ---------------------------------------------------------
 

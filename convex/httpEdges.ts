@@ -89,6 +89,10 @@ const RESERVED = new Set([
   'probes',
   'render',
   'edges',
+  'attention',
+  'setup-status',
+  'maintenance',
+  'delivery-bindings',
 ]);
 
 /**
@@ -114,6 +118,8 @@ function segments(req: Request): { parts: string[]; query: URLSearchParams } | n
 
 /** POSTs that only compute over stored state (no write, no provider call): read scope. */
 function isReadOnlyPost(parts: string[]): boolean {
+  if (parts.length === 1 && parts[0] === 'setup-status') return true;
+  if (parts.length === 3 && parts[0] === 'relays' && parts[2] === 'preflight') return true;
   return (
     parts.length === 2 &&
     ((parts[0] === 'render' && parts[1] === 'preview') ||
@@ -162,6 +168,9 @@ export function throttlePolicyFor(parts: string[]): RateLimitPolicyKey | null {
   }
   // Importing a front inspects the provider resource first: an outbound call.
   if (a === 'relays' && b && c === 'adopt' && !d) return 'admin.edges.provider-call';
+  // The quarantine resolver's live column lists the panel's Hosts.
+  if (a === 'relays' && b && c === 'quarantine' && d === 'inspect')
+    return 'admin.edges.provider-call';
   if (a === 'edges' && b && c === 'live' && d === 'refresh') return 'admin.edges.provider-call';
   // An authenticated session through the front: an outbound call like any other.
   if (a === 'edges' && b && c === 'qualify' && !d) return 'admin.edges.provider-call';
@@ -264,7 +273,21 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
   const [a, b, c, d, e] = parts;
   if (!a || a === 'summary') return json(await ctx.runQuery(internal.edgeAdmin.summary, {}));
   if (a === 'config') return json(await ctx.runQuery(internal.edgeAdmin.configView, {}));
+  if (a === 'attention' && !b) return json(await ctx.runQuery(internal.edgeOperator.attention, {}));
+  if (a === 'setup-status' && !b) {
+    const relaySlug = query.get('relay') ?? undefined;
+    return json(
+      await ctx.runQuery(internal.edgeOperator.setupStatus, {
+        ...(relaySlug ? { relaySlug } : {}),
+      }),
+    );
+  }
+  if (a === 'maintenance' && !b) return json(await maintenanceView(ctx));
+  if (a === 'delivery-bindings' && !b)
+    return json(await ctx.runQuery(internal.edgeOperator.deliveryBindings, {}));
   if (a === 'providers') {
+    if (b === 'usage' && !c)
+      return json(await ctx.runQuery(internal.edgeOperator.providersUsage, {}));
     if (!b) {
       const [accounts, credentialFields] = await Promise.all([
         ctx.runQuery(internal.edgeProviderAccounts.listForAdmin, {}),
@@ -298,6 +321,13 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
   }
   if (a === 'relays') {
     if (!b) return json(await ctx.runQuery(internal.relays.listForAdmin, {}));
+    if (b === 'lookup' && !c) {
+      // The CMS's full admin view by slug (servers:read only; never the register scope).
+      const slug = query.get('slug');
+      if (!slug) return errorJson('validation', 'slug is required', 400);
+      const r = await ctx.runQuery(internal.edgeOperator.relayLookup, { slug });
+      return r ? json(r) : notFound();
+    }
     if (b === 'node-candidates' && !c) {
       const serverId = query.get('backendServerId');
       if (!serverId) return errorJson('validation', 'backendServerId is required', 400);
@@ -337,6 +367,17 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
         }),
       );
     }
+    if (c === 'timeline' && !d)
+      return json(
+        await ctx.runQuery(internal.edgeOperator.timeline, {
+          relayId: id<'relays'>(b),
+          take: Number(query.get('take') ?? 100) || 100,
+        }),
+      );
+    if (c === 'quarantine' && !d)
+      return json(
+        await ctx.runQuery(internal.edgeOperator.quarantineView, { relayId: id<'relays'>(b) }),
+      );
     return notFound();
   }
   if (a === 'edges') {
@@ -414,6 +455,15 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
   return notFound();
 };
 
+async function maintenanceView(ctx: ActionCtx) {
+  const m = await ctx.runQuery(internal.edgeMaintenance.state, {});
+  return {
+    frozen: m.frozen,
+    reason: m.reason,
+    since: m.since ? new Date(m.since).toISOString() : null,
+  };
+}
+
 // --- POST ----------------------------------------------------------------------------------------
 
 async function refreshInventory(
@@ -432,8 +482,32 @@ async function refreshInventory(
 }
 
 const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
-  const [a, b, c, d] = parts;
+  const [a, b, c, d, e] = parts;
   const act = actor(admin);
+  if (a === 'setup-status' && !b) {
+    // A draft: the wizard's intended origin + listeners before the relay exists (read-only).
+    return json(
+      await ctx.runQuery(internal.edgeOperator.setupStatus, {
+        draft: (body.draft ?? body) as never,
+      }),
+    );
+  }
+  if (a === 'maintenance' && (b === 'freeze' || b === 'thaw') && !c) {
+    if (b === 'freeze')
+      await ctx.runMutation(internal.edgeMaintenance.freeze, {
+        reason: typeof body.reason === 'string' ? body.reason : undefined,
+        ...act,
+      });
+    else await ctx.runMutation(internal.edgeMaintenance.thaw, { ...act });
+    return json(await maintenanceView(ctx));
+  }
+  if (a === 'delivery-bindings' && b && c === 'release' && !d)
+    return json(
+      await ctx.runMutation(internal.relays.releaseDeliveryBinding, {
+        id: id<'edgeDeliveryBindings'>(b),
+        ...act,
+      }),
+    );
   if (a === 'providers') {
     if (!b) {
       const created = (await ctx.runMutation(internal.edgeProviderAccounts.create, {
@@ -567,6 +641,70 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
       });
     }
     const relayId = id<'relays'>(b);
+    if (c === 'listeners' && d && e === 'adopt-host')
+      return json(
+        await ctx.runAction(internal.hostOps.adoptListenerHost, {
+          relayId,
+          listenerKey: d,
+          hostUuid: String(body.hostUuid ?? ''),
+          ...act,
+        }),
+      );
+    if (c === 'quarantine' && d === 'inspect')
+      return json(await ctx.runAction(internal.edgeOperator.quarantineInspect, { relayId }));
+    if (c === 'preflight' && !d) {
+      const kind = String(body.kind ?? '');
+      if (!['provision', 'publish', 'replace', 'test-provision'].includes(kind))
+        return errorJson(
+          'validation',
+          'kind must be provision, publish, replace or test-provision',
+          400,
+        );
+      return json(
+        await ctx.runQuery(internal.edgeOperator.preflight, {
+          relayId,
+          kind: kind as 'provision' | 'publish' | 'replace' | 'test-provision',
+          edgeId:
+            typeof body.edgeId === 'string' && body.edgeId ? id<'edges'>(body.edgeId) : undefined,
+          listenerKey: typeof body.listenerKey === 'string' ? body.listenerKey : undefined,
+          accountId:
+            typeof body.accountId === 'string' && body.accountId
+              ? id<'edgeProviderAccounts'>(body.accountId)
+              : undefined,
+          templateId:
+            typeof body.templateId === 'string' && body.templateId
+              ? id<'edgeTemplates'>(body.templateId)
+              : undefined,
+          trigger: triggerOf(body.trigger),
+        }),
+      );
+    }
+    if (c === 'test-provision' && !d) {
+      // The explicit bootstrap provision: a named, tested account (unqualified
+      // allowed) on a named listener; never published.
+      const listenerKey = String(body.listenerKey ?? '');
+      const listeners = await ctx.runQuery(internal.relayListeners.listByRelay, { relayId });
+      const l = listeners.find((x) => x.listenerKey === listenerKey && !x.retired);
+      if (!l) return errorJson('edge.listener_not_found', 'Unknown listener', 404);
+      if (typeof body.accountId !== 'string' || !body.accountId)
+        return errorJson('validation', 'accountId is required', 400);
+      return json(
+        await ctx.runMutation(internal.edgeRotations.start, {
+          relayId,
+          kind: 'provision',
+          trigger: 'manual',
+          publishOnDone: false,
+          listenerId: id<'relayListeners'>(l.id),
+          requestedAccountId: id<'edgeProviderAccounts'>(body.accountId),
+          requestedTemplateId:
+            typeof body.templateId === 'string' && body.templateId
+              ? id<'edgeTemplates'>(body.templateId)
+              : undefined,
+          allowUnqualified: true,
+          ...act,
+        }),
+      );
+    }
     switch (c) {
       case 'qualification-credential':
         // Mint (or re-mint) the panel account the L7 front qualification
@@ -686,6 +824,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           await ctx.runMutation(internal.edgeRotations.resolveQuarantine, {
             relayId,
             keep: body.keep === 'previous' ? 'previous' : 'current',
+            reason: typeof body.reason === 'string' ? body.reason.slice(0, 200) : undefined,
             ...act,
           }),
         );
@@ -828,6 +967,10 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
   }
   return notFound();
 };
+
+function triggerOf(v: unknown): 'manual' | 'detector' | 'api' | 'reconcile' | undefined {
+  return v === 'manual' || v === 'detector' || v === 'api' || v === 'reconcile' ? v : undefined;
+}
 
 function snis(body: Record<string, unknown>): string[] {
   const raw = body.snis ?? body.sni;

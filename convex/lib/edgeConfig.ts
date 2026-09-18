@@ -770,3 +770,81 @@ export const edgeMs = {
     return Math.min(Math.max(15 * MIN, ttl * 0.25), ttl / 2);
   },
 };
+
+// --- bounds (the CMS reads these; `edgeConfig.test.ts` pins them against the sanitizer) ---------
+
+/**
+ * Per integer / ratio knob (flat path): the range `sanitizeRelayConfig` clamps
+ * to. ONE table, read by the settings UI for its NumberFields and pinned by a
+ * test against the sanitizer, so a bound can never drift between the two.
+ */
+export const EDGE_CONFIG_BOUNDS: Readonly<Record<string, { min: number; max: number }>> = {
+  desiredPublishedDefault: { min: 1, max: 4 },
+  standbyPerRelay: { min: 0, max: 2 },
+  drainMinutes: { min: 1, max: 7 * 1440 },
+  burnedDrainMinutes: { min: 0, max: 7 * 1440 },
+  sniDrainMinutes: { min: 1, max: 30 * 1440 },
+  cooldownMinutes: { min: 10, max: 1440 },
+  maxRotationsPerRelayPerDay: { min: 1, max: 12 },
+  maxConcurrentRotations: { min: 1, max: 10 },
+  maxReconcileStartsPerTick: { min: 0, max: 5 },
+  provisionTimeoutMinutes: { min: 5, max: 120 },
+  pollSeconds: { min: 5, max: 300 },
+  verifyAttempts: { min: 1, max: 30 },
+  maxFlipAttempts: { min: 1, max: 20 },
+  maxRollbackAttempts: { min: 1, max: 20 },
+  maxRotationMinutes: { min: 10, max: 24 * 60 },
+  maxDestroyAttempts: { min: 1, max: 500 },
+  opClaimSeconds: { min: 15, max: 300 },
+  settleGraceSeconds: { min: 5, max: 600 },
+  discoveryTimeoutMinutes: { min: 5, max: 1440 },
+  'detect.windowMinutes': { min: 5, max: 180 },
+  'detect.minReporters': { min: 1, max: 500 },
+  'detect.minEdgeReporters': { min: 1, max: 500 },
+  'detect.spikeFactor': { min: 1.5, max: 20 },
+  'detect.loadDropPct': { min: 10, max: 95 },
+  'detect.minLoadUsers': { min: 1, max: 10_000 },
+  'detect.staleWeight': { min: 0, max: 1 },
+  'detect.suspectAt': { min: 0.3, max: 1 },
+  'detect.clearBelow': { min: 0, max: 1 },
+  'detect.clearAfterEvals': { min: 1, max: 24 },
+  'detect.minBaselineSamples': { min: 12, max: 1008 },
+  'detect.probeWeight': { min: 0, max: 1 },
+  'detect.maxReportRowsPerEval': { min: 100, max: 20_000 },
+  'l7.maxSameProviderReplacementsPerDay': { min: 0, max: 50 },
+  'l7.qualifyTimeoutMinutes': { min: 1, max: 120 },
+  'l7.qualifyStepTimeoutMs': { min: 1_000, max: 60_000 },
+  'l7.qualificationTtlMinutes': { min: 5, max: 1440 },
+  'l7.maxRequalifyPerTick': { min: 1, max: 50 },
+  'probe.intervalMinutes': { min: 5, max: 1440 },
+  'probe.suspectedIntervalMinutes': { min: 1, max: 1440 },
+  'probe.perCountryLimit': { min: 1, max: 10 },
+  'probe.hourlyBudget': { min: 0, max: 10_000 },
+  'probe.agreementVantages': { min: 2, max: 10 },
+  'probe.sourceSpacingMs': { min: 0, max: 60_000 },
+  'render.clients.maxEntries': { min: 0, max: 20 },
+};
+
+/**
+ * The config as flat `path: value` pairs (`detect.windowMinutes`, …), with the
+ * per-family render rules kept as objects under `render.clients.<family>`. The
+ * CMS diffs and resets against this shape.
+ */
+export function flattenEdgeConfig(cfg: EdgeConfig): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  const walk = (obj: Record<string, unknown>, prefix: string) => {
+    for (const [k, val] of Object.entries(obj)) {
+      const path = prefix ? `${prefix}.${k}` : k;
+      if (path === 'render.clients') {
+        for (const [fam, rule] of Object.entries(val as Record<string, unknown>))
+          out[`render.clients.${fam}`] = rule;
+        continue;
+      }
+      if (val && typeof val === 'object' && !Array.isArray(val))
+        walk(val as Record<string, unknown>, path);
+      else out[path] = val;
+    }
+  };
+  walk(cfg as unknown as Record<string, unknown>, '');
+  return out;
+}

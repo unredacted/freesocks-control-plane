@@ -172,6 +172,7 @@
   // Report-issue dialog (records the problem, changes nothing about the key).
   let reportIssueOpen = $state(false);
   let reportIssueReason = $state<ReportIssueReason | null>(null);
+  let reportIssueConnection = $state<'primary' | 'backup' | 'unsure' | null>(null);
 
   // Consent-block context (which fields + the CDN's editable prefill): fetched
   // only while one of the two dialogs that render it is open.
@@ -397,6 +398,7 @@
         '/api/v1/account/report-issue',
         {
           reason: reportIssueReason,
+          ...(reportIssueConnection ? { connection: reportIssueConnection } : {}),
           ...(telemetry ? { telemetry } : {}),
         },
         ReportIssueResponse,
@@ -405,6 +407,7 @@
     onSuccess: () => {
       reportIssueOpen = false;
       reportIssueReason = null;
+      reportIssueConnection = null;
       liveMessage = t('report.done');
       toast.success(t('report.done'), { description: t('report.doneBody') });
     },
@@ -956,6 +959,12 @@
             {@const subUrl = subscriptionDisplayUrl(
               data.subscription.subToken,
               data.subscription.url,
+              {
+                dynamicAccessKey:
+                  data.subscription.edgeRequired &&
+                  backendEntry(config.data?.backends, data.subscription.backend)?.capabilities
+                    .accessKeyOnly === true,
+              },
             )}
             <!-- Connection mode ABOVE the pass (it shapes what the pass shows);
                  compact cards - the longer copy sits behind each card's
@@ -1042,6 +1051,7 @@
                     <Button
                       onclick={() => {
                         reportIssueReason = null;
+                        reportIssueConnection = null;
                         reportIssueOpen = true;
                       }}
                       disabled={reportIssue.isPending || actionsDisabled}
@@ -1136,6 +1146,7 @@
                   ? undefined
                   : () => {
                       reportIssueReason = null;
+                      reportIssueConnection = null;
                       reportIssueOpen = true;
                     }}
               />
@@ -1456,12 +1467,15 @@
       <ReportIssueModal
         bind:open={reportIssueOpen}
         bind:reason={reportIssueReason}
+        bind:connection={reportIssueConnection}
+        connections={nodeStatus.data?.node?.relay?.connections ?? []}
         telemetryContext={telemetryContext.data}
         supportEmail={config.data?.site?.supportEmail}
         supportId={data.user.supportId}
         onCancel={() => {
           reportIssueOpen = false;
           reportIssueReason = null;
+          reportIssueConnection = null;
         }}
         onConfirm={(telemetry) => reportIssue.mutate(telemetry)}
         busy={reportIssue.isPending}

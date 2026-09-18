@@ -625,3 +625,153 @@ export const pendingListeners = internalQuery({
     return out;
   },
 });
+
+// --- operator adoption (hostMode handoff) --------------------------------------------------------
+
+/**
+ * Take over an operator-created panel Host for a listener (the `operator` ->
+ * `fcp` handoff, docs/edges.md § "Host ownership"). The named Host must exist
+ * on the panel, carry the listener's inbound uuid AND dial a published edge of
+ * that listener (`edge.host_adopt_mismatch` otherwise). Never by remark guessing.
+ * Ownership becomes `adopted`; FCP updates it on flips from then on and never
+ * deletes it. A Host whose remark differs from the listener's is remembered as
+ * a legacy remark so the renderer keeps matching the bodies members already hold.
+ */
+export const adoptHost = internalMutation({
+  args: {
+    listenerId: v.id('relayListeners'),
+    host: v.object({
+      uuid: v.string(),
+      remark: v.string(),
+      address: v.string(),
+      port: v.number(),
+      sni: v.union(v.string(), v.null()),
+      host: v.union(v.string(), v.null()),
+      inboundUuid: v.union(v.string(), v.null()),
+    }),
+    actorAdminId: v.optional(v.id('adminUsers')),
+  },
+  handler: async (ctx, { listenerId, host, actorAdminId }) => {
+    const l = await ctx.db.get(listenerId);
+    if (!l) throw new ConvexError({ code: 'not_found', message: 'Listener not found' });
+    const relay = await ctx.db.get(l.relayId);
+    if (!relay) throw new ConvexError({ code: 'not_found', message: 'Relay not found' });
+    if (!l.panelBinding)
+      throw new ConvexError({
+        code: 'edge.host_not_applicable',
+        message: 'listener has no panel inbound to adopt a Host for',
+      });
+    if (l.host?.op)
+      throw new ConvexError({
+        code: 'edge.host_op_unsettled',
+        message: 'a Host operation is still unsettled on this listener',
+      });
+    if (
+      (host.inboundUuid ?? '').toLowerCase() !==
+      l.panelBinding.configProfileInboundUuid.toLowerCase()
+    )
+      throw new ConvexError({
+        code: 'edge.host_adopt_mismatch',
+        message: 'the Host does not point at this listener’s inbound',
+      });
+    // Dials a published edge of THIS listener.
+    let dials: Id<'edges'> | null = null;
+    for (const edgeId of relay.publishedEdgeIds) {
+      if (!edgeId) continue;
+      const e = await ctx.db.get(edgeId);
+      if (!e || e.listenerId !== l._id || e.publication !== 'published') continue;
+      const addresses = [e.addresses.v4, e.addresses.v6, e.addresses.hostname].filter(
+        (x): x is string => !!x,
+      );
+      const portOk = e.listeners.some((x) => x.edgePort === host.port);
+      if (portOk && addresses.some((a) => sameAddress(a, host.address))) {
+        dials = e._id;
+        break;
+      }
+    }
+    if (!dials)
+      throw new ConvexError({
+        code: 'edge.host_adopt_mismatch',
+        message: 'the Host does not dial a published edge of this listener',
+      });
+    const now = Date.now();
+    const remark = listenerRemark(l);
+    const legacy = l.legacyHosts ?? [];
+    const addLegacy =
+      remark !== null &&
+      host.remark !== remark &&
+      !legacy.some((h) => h.uuid === host.uuid || h.remark === host.remark);
+    await ctx.db.patch(listenerId, {
+      host: {
+        state: 'present',
+        uuid: host.uuid,
+        ownership: 'adopted',
+        intended: {
+          remark: host.remark,
+          address: host.address,
+          port: host.port,
+          sni: host.sni,
+          host: host.host,
+          inboundUuid: l.panelBinding.configProfileInboundUuid,
+        },
+        op: undefined,
+      },
+      ...(addLegacy ? { legacyHosts: [...legacy, { uuid: host.uuid, remark: host.remark }] } : {}),
+      updatedAt: now,
+    });
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: actorAdminId ?? undefined,
+      action: 'relay.host.adopted',
+      targetType: 'relay_listener',
+      targetId: listenerId,
+      payload: { relaySlug: relay.slug, listenerKey: l.listenerKey },
+    });
+    return {
+      ok: true as const,
+      listenerKey: l.listenerKey,
+      host: { uuid: host.uuid, ownership: 'adopted' as const },
+    };
+  },
+});
+
+/** Look the named Host up on the panel, then adopt it (the CMS action). */
+export const adoptListenerHost = internalAction({
+  args: {
+    relayId: v.id('relays'),
+    listenerKey: v.string(),
+    hostUuid: v.string(),
+    actorAdminId: v.optional(v.id('adminUsers')),
+  },
+  handler: async (
+    ctx,
+    { relayId, listenerKey, hostUuid, actorAdminId },
+  ): Promise<{
+    ok: true;
+    listenerKey: string;
+    host: { uuid: string; ownership: 'adopted' };
+  }> => {
+    const relay = await ctx.runQuery(internal.relays.get, { id: relayId });
+    if (!relay) throw new ConvexError({ code: 'not_found', message: 'Relay not found' });
+    if (!relay.backendServerId)
+      throw new ConvexError({
+        code: 'edge.host_not_applicable',
+        message: 'this origin has no panel',
+      });
+    const listeners = await ctx.runQuery(internal.relayListeners.listByRelay, { relayId });
+    const l = listeners.find((x) => x.listenerKey === listenerKey && !x.retired);
+    if (!l) throw new ConvexError({ code: 'not_found', message: 'Listener not found' });
+    const hosts = await listPanelHosts(ctx, relay.backendServerId);
+    const host = hosts.find((h) => h.uuid === hostUuid.trim());
+    if (!host)
+      throw new ConvexError({
+        code: 'edge.host_not_found',
+        message: 'the panel lists no Host with that uuid',
+      });
+    return await ctx.runMutation(internal.hostOps.adoptHost, {
+      listenerId: l.id as Id<'relayListeners'>,
+      host,
+      ...(actorAdminId ? { actorAdminId } : {}),
+    });
+  },
+});

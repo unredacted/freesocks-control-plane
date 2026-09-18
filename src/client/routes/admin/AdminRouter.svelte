@@ -18,7 +18,6 @@
   import AdminBackendServers from './AdminBackendServers.svelte';
   import AdminRemnawave from './AdminRemnawave.svelte';
   import AdminConnectionModes from './AdminConnectionModes.svelte';
-  import AdminEdges from './AdminEdges.svelte';
   import AdminStatus from './AdminStatus.svelte';
   import AdminStorage from './AdminStorage.svelte';
   import AdminClients from './AdminClients.svelte';
@@ -52,6 +51,20 @@
   // admin handler in query-client.ts (same backstop, no flash).
   const popProbe = adminStatusQuery();
   let holdForPop = $derived(needsAuth && !!authStatus.data?.signedIn && popProbe.isPending);
+
+  // Admin -> Edges: one prefix branch, its own lazy chunk. EdgesRouter dispatches
+  // the sub-paths with matchRoute.
+  const EdgesSection = () => import('./edges/EdgesSection.svelte');
+  let onEdgesRoute = $derived(
+    router.pathname === '/admin/edges' || router.pathname.startsWith('/admin/edges/'),
+  );
+
+  // Probes moved from Telemetry into the Edges section; keep old links working.
+  $effect(() => {
+    if (router.pathname === '/admin/telemetry/probes') {
+      router.navigate(`/admin/edges/probes${router.search}`, { replace: true });
+    }
+  });
 
   // Bounce signed-out deep-links to /admin (which renders the login/bootstrap
   // flow). `replace: true` so the back button doesn't re-enter the guarded path.
@@ -92,8 +105,24 @@
   <AdminRemnawave />
 {:else if router.pathname === '/admin/connection-modes'}
   <AdminConnectionModes />
-{:else if router.pathname === '/admin/edges'}
-  <AdminEdges />
+{:else if onEdgesRoute}
+  <!-- Admin -> Edges is its own lazy chunk (section shell + every edges page). -->
+  {#await EdgesSection()}
+    <div class="max-w-md mx-auto py-12 text-muted-foreground text-center">Loading Edges…</div>
+  {:then mod}
+    {@const Edges = mod.default}
+    <Edges />
+  {:catch}
+    <div class="text-center py-16 space-y-3">
+      <h1 class="text-xl font-display font-bold">The Edges section did not load</h1>
+      <p class="text-sm text-muted-foreground">
+        The connection dropped or a new version was deployed. Reload to try again.
+      </p>
+      <button type="button" class="text-primary underline" onclick={() => window.location.reload()}>
+        Reload
+      </button>
+    </div>
+  {/await}
 {:else if router.pathname === '/admin/status'}
   <AdminStatus />
 {:else if router.pathname === '/admin/storage'}
@@ -109,7 +138,8 @@
 {:else if router.pathname === '/admin/telemetry'}
   <AdminTelemetry view="reports" />
 {:else if router.pathname === '/admin/telemetry/probes'}
-  <AdminTelemetry view="probes" />
+  <!-- Moved: the $effect above is replacing the URL with /admin/edges/probes. -->
+  <div class="max-w-md mx-auto py-12 text-muted-foreground text-center">Loading…</div>
 {:else if router.pathname === '/admin/audit'}
   <AdminAudit />
 {:else if router.pathname === '/admin/settings'}

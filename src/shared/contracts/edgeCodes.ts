@@ -1,0 +1,243 @@
+/**
+ * The code vocabularies the edges admin surface speaks (docs/edges.md
+ * § "Operations"). Pure tuples, no zod: the server types its refusals,
+ * blockers and attention items against these, and the CMS keeps one
+ * `{ label, explain, fix? }` entry per code (src/client/lib/edgeCodes.ts, pinned
+ * by a test so a new server code never renders as a bare identifier).
+ */
+
+/** The guided setup, in order. Every step is judged for ONE relay (or a draft). */
+export const SETUP_STEP_IDS = [
+  'origin',
+  'account',
+  'template',
+  'relay',
+  'edge',
+  'qualification',
+  'publish',
+  'rendering',
+  'automation',
+] as const;
+export type SetupStepId = (typeof SETUP_STEP_IDS)[number];
+
+/**
+ * done = satisfied; ready = the next thing to do, nothing blocks it;
+ * blocked = something earlier or external must change first;
+ * skipped = not applicable to this relay (manual origins skip rendering).
+ */
+export const SETUP_STEP_STATUSES = ['done', 'ready', 'blocked', 'skipped'] as const;
+export type SetupStepStatus = (typeof SETUP_STEP_STATUSES)[number];
+
+/** Blockers and warnings a setup step can carry (`subject` names the thing: a slug, an account, a listener key). */
+export const SETUP_BLOCKER_CODES = [
+  // origin
+  'no_origin',
+  'no_backend_server',
+  'backend_unreachable',
+  'backend_no_host_management',
+  'backend_no_node_inventory',
+  // account
+  'no_provider_account',
+  'no_compatible_account',
+  'credentials_untested',
+  'credentials_failed',
+  'dns_account_missing',
+  'zone_mode_unknown',
+  'zone_websockets_off',
+  // template
+  'no_default_template',
+  'template_invalid',
+  // relay + listener
+  'no_relay',
+  'relay_deleting',
+  'relay_without_listener',
+  'listener_not_deployed',
+  'listener_disabled',
+  'needs_target',
+  'needs_names',
+  'no_udp_provider',
+  'invalid_combination',
+  'members_dark',
+  // first edge
+  'no_edge',
+  'rotation_running',
+  'account_budget_exhausted',
+  'account_capacity_reached',
+  'provision_failed',
+  // qualification
+  'account_unqualified',
+  'qualification_stale',
+  'qualification_credential_missing',
+  'credential_unsupported',
+  'front_unqualified',
+  'front_failed',
+  // publish
+  'pool_empty',
+  'quarantined',
+  'hosts_operator_managed',
+  'no_publishable_edge',
+  // rendering
+  'render_disabled',
+  'relay_disabled',
+  'preview_not_applied',
+  'entry_mismatch',
+  'mirrors_unvalidated',
+  // automation
+  'probes_disabled',
+  'probe_sources_none',
+  'probe_countries_none',
+  'edge_layer_disabled',
+  'auto_rotate_off',
+  'l7_auto_select_blocked',
+] as const;
+export type SetupBlockerCode = (typeof SETUP_BLOCKER_CODES)[number];
+
+/** Operations a preflight can dry-run (the operation it predicts shares the validator). */
+export const PREFLIGHT_KINDS = ['provision', 'publish', 'replace', 'test-provision'] as const;
+export type PreflightKind = (typeof PREFLIGHT_KINDS)[number];
+
+/**
+ * Refusals `startRotation` throws (as `edge.<code>`), `checkPublishable`
+ * verdicts, selection failures, and the plan-phase refusals that need no
+ * adapter. Preflight returns them all; a start throws the first.
+ */
+export const PREFLIGHT_BLOCKER_CODES = [
+  // start guards
+  'maintenance',
+  'not_found',
+  'quarantined',
+  'deleting',
+  'busy',
+  'auto_rotate_disabled',
+  'concurrency',
+  'target_not_published',
+  'hosts_operator_managed',
+  'cooldown',
+  'daily_cap',
+  'listener_not_found',
+  'listener_unusable',
+  'l7_auto_select_disabled',
+  'l7_replacement_cap',
+  'validation',
+  // publishability (checkPublishable)
+  'edge_not_active',
+  'already_published',
+  'no_address',
+  'listener_retired',
+  'listener_not_deployed',
+  'listener_disabled',
+  'listener_no_active_name',
+  'provider_mismatch',
+  'transport_not_carried',
+  'protocol_not_carried',
+  'layer_mismatch',
+  'origin_tls_mismatch',
+  'front_unqualified',
+  'front_stale',
+  'front_failed',
+  'account_mismatch',
+  'edge_unhealthy',
+  // selection
+  'no_compatible_listener',
+  'no_compatible_layer',
+  'no_account_for_layer',
+  'no_account_for_provider',
+  'no_qualified_account',
+  'accounts_exhausted',
+  'account_not_found',
+  'account_disabled',
+  'account_untested',
+  'account_incompatible',
+  'account_budget_exhausted',
+  'account_capacity_reached',
+  'template_not_found',
+  'template_invalid',
+  // plan phase (no adapter call)
+  'dns_account_missing',
+  'dns_account_disabled',
+  'dns_zone_missing',
+  'origin_transport_missing',
+  'zone_mode_unknown',
+] as const;
+export type PreflightBlockerCode = (typeof PREFLIGHT_BLOCKER_CODES)[number];
+
+/** Things that will not stop the operation but the operator should know. */
+export const PREFLIGHT_WARNING_CODES = [
+  'render_disabled',
+  'edge_disabled',
+  'probe_disabled',
+  'mark_pepper_missing',
+  'members_dark',
+  'account_unqualified',
+  'unpublished_result',
+  'l7_manual_only',
+] as const;
+export type PreflightWarningCode = (typeof PREFLIGHT_WARNING_CODES)[number];
+
+/** Attention items, in the order the server ranks them (most urgent first). */
+export const ATTENTION_KINDS = [
+  'quarantine',
+  'needs_operator',
+  'host_unresolved',
+  'members_dark',
+  'rotation_failed',
+  'qualification_lapsed',
+  'block_suspected',
+  'edge_unreachable',
+  'pool_below_desired',
+  'account_unqualified',
+  'account_untested',
+  'drift',
+  'maintenance_frozen',
+] as const;
+export type AttentionKind = (typeof ATTENTION_KINDS)[number];
+
+export const ATTENTION_SEVERITIES = ['critical', 'warning', 'info'] as const;
+export type AttentionSeverity = (typeof ATTENTION_SEVERITIES)[number];
+
+/** The one action an attention item offers (the CMS maps each to a route or a call). */
+export const ATTENTION_ACTIONS = [
+  'resolve_quarantine',
+  'resolve_operator',
+  'look_at_host',
+  'open_setup',
+  'open_relay',
+  'open_edge',
+  'open_account',
+  'open_settings',
+  'publish',
+  'provision',
+  'qualify_front',
+  'rotate',
+  'test_credentials',
+  'thaw',
+] as const;
+export type AttentionAction = (typeof ATTENTION_ACTIONS)[number];
+
+/** Why a listener cannot be fronted by a layer (lib/edges/layers.ts). */
+export const LAYER_EXCLUSION_CODES = [
+  'protocol_not_http_transport',
+  'l7_proof_unsupported',
+  'host_header_rejected',
+  'origin_plaintext',
+  'no_server_names',
+  'cert_not_public',
+  'cert_name_uncovered',
+  'no_udp_provider',
+] as const;
+export type LayerExclusionCode = (typeof LAYER_EXCLUSION_CODES)[number];
+
+/** Why edge-required delivery answered 503 (edgeRender.ts / render.ts). */
+export const DELIVERY_UNAVAILABLE_CODES = [
+  'relay_missing',
+  'relay_disabled',
+  'render_disabled',
+  'no_render_key',
+  'empty_pool',
+  'unsupported_format',
+  'no_match',
+  'ambiguous_match',
+  'entry_mismatch',
+  'leak_detected',
+] as const;
+export type DeliveryUnavailableCode = (typeof DELIVERY_UNAVAILABLE_CODES)[number];

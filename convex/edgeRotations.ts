@@ -38,7 +38,7 @@ import {
   todayKey,
 } from './relays';
 import { insertPlannedEdge } from './edges';
-import { dayKey } from './edgeProviderAccounts';
+import { accountTested, dayKey } from './edgeProviderAccounts';
 import { edgeResourceName } from './lib/edges/accountSettings';
 import {
   matchSlotHosts,
@@ -98,7 +98,7 @@ import type {
   EdgeDescription,
   ResourceStep,
 } from './lib/edges/providers/types';
-import { assertAdmission } from './lib/edges/maintenance';
+import { admitted, assertAdmission } from './lib/edges/maintenance';
 
 type Rotation = Doc<'edgeRotations'>;
 type Edge = Doc<'edges'>;
@@ -153,7 +153,26 @@ function hostPlanCaptured(r: Rotation): boolean {
 
 // --- admin mapping -----------------------------------------------------------------------
 
-export function mapRotationAdmin(r: Rotation, edge: Edge | null) {
+/** Whether a cancel request would be accepted now (`requestCancel`'s own rule, so the CMS never guesses). */
+export function isCancellable(r: Pick<Rotation, 'phase' | 'cancelRequested'>): boolean {
+  if (isTerminalPhase(r.phase) || r.cancelRequested) return false;
+  return r.phase !== 'confirming' && r.phase !== 'finalizing' && r.phase !== 'rolling_back';
+}
+
+/** The key of the listener a run is for (null when it has none or the row is gone). */
+export async function rotationListenerKey(
+  db: QueryCtx['db'],
+  r: Pick<Rotation, 'listenerId'>,
+): Promise<string | null> {
+  if (!r.listenerId) return null;
+  return (await db.get(r.listenerId))?.listenerKey ?? null;
+}
+
+export function mapRotationAdmin(
+  r: Rotation,
+  edge: Edge | null,
+  listenerKey: string | null = null,
+) {
   const needsHostFlip =
     r.hostPlan.length > 0 || (r.previousBinding?.poolIndex === 0 && r.kind === 'replace');
   return {
@@ -169,6 +188,8 @@ export function mapRotationAdmin(r: Rotation, edge: Edge | null) {
     terminal: isTerminalPhase(r.phase),
     stepVersion: r.stepVersion,
     cancelRequested: r.cancelRequested,
+    cancellable: isCancellable(r),
+    listenerKey,
     outcome: r.outcome ?? null,
     reason: r.reason ?? null,
     steps: (edge?.steps ?? []).map((s) => ({
@@ -225,7 +246,10 @@ export const getForAdmin = internalQuery({
     const r = await ctx.db.get(id);
     if (!r) return null;
     const edge = r.toEdgeId ? await ctx.db.get(r.toEdgeId) : null;
-    return { ...mapRotationAdmin(r, edge), audit: await rotationAuditTrail(ctx, r) };
+    return {
+      ...mapRotationAdmin(r, edge, await rotationListenerKey(ctx.db, r)),
+      audit: await rotationAuditTrail(ctx, r),
+    };
   },
 });
 
@@ -292,7 +316,13 @@ export const listByRelay = internalQuery({
       .take(Math.min(take ?? 20, 100));
     const out = [];
     for (const r of rows)
-      out.push(mapRotationAdmin(r, r.toEdgeId ? await ctx.db.get(r.toEdgeId) : null));
+      out.push(
+        mapRotationAdmin(
+          r,
+          r.toEdgeId ? await ctx.db.get(r.toEdgeId) : null,
+          await rotationListenerKey(ctx.db, r),
+        ),
+      );
     return out;
   },
 });
@@ -371,6 +401,10 @@ const startArgs = {
   toEdgeId: v.optional(v.id('edges')),
   listenerId: v.optional(v.id('relayListeners')),
   publishOnDone: v.optional(v.boolean()),
+  /** The explicit bootstrap provision (`test-provision`): a named account (+ template); may be unqualified. */
+  requestedAccountId: v.optional(v.id('edgeProviderAccounts')),
+  requestedTemplateId: v.optional(v.id('edgeTemplates')),
+  allowUnqualified: v.optional(v.boolean()),
   reason: v.optional(v.string()),
   actorAdminId: v.optional(v.id('adminUsers')),
 };
@@ -386,8 +420,160 @@ export interface StartRotationArgs {
   toEdgeId?: Id<'edges'>;
   listenerId?: Id<'relayListeners'>;
   publishOnDone?: boolean;
+  requestedAccountId?: Id<'edgeProviderAccounts'>;
+  requestedTemplateId?: Id<'edgeTemplates'>;
+  allowUnqualified?: boolean;
   reason?: string;
   actorAdminId?: Id<'adminUsers'>;
+}
+
+/** One reason a start is refused: the code `startRotation` throws (`edge.*`, `validation`, `not_found`) + its message. */
+export interface StartBlocker {
+  code: string;
+  message: string;
+}
+
+/**
+ * Every guard `startRotation` applies, evaluated WITHOUT throwing and without
+ * writing: the preflight returns them all, a real start throws the first. The
+ * order here IS the order the start checks in (a test pins that the first
+ * blocker equals the thrown code). A check that depends on an earlier one that
+ * failed is skipped rather than reported twice.
+ */
+export async function collectStartBlockers(
+  ctx: { db: QueryCtx['db'] },
+  a: StartRotationArgs,
+  opts: { now?: number } = {},
+): Promise<{
+  blockers: StartBlocker[];
+  origin: Origin | null;
+  cfg: EdgeConfig | null;
+  targetEdge: Edge | null;
+  listenerId: Id<'relayListeners'> | undefined;
+}> {
+  const blockers: StartBlocker[] = [];
+  const push = (code: string, message: string) => blockers.push({ code, message });
+  const origin = await ctx.db.get(a.relayId);
+  if (!origin) {
+    push('not_found', 'Origin not found');
+    return { blockers, origin: null, cfg: null, targetEdge: null, listenerId: a.listenerId };
+  }
+  const cfg = await resolveEdgeConfig(ctx.db);
+  const now = opts.now ?? Date.now();
+  const force = a.force ?? false;
+  // Admission gate: a start of ANY kind is new work; completion paths (step,
+  // rekick, rollback, cancel, unpublish, destroy) never route through here.
+  if (!(await admitted(ctx.db))) push('edge.maintenance', 'Edges are in maintenance');
+  if (origin.quarantine) push('edge.quarantined', 'Origin is quarantined; resolve it first');
+  if (origin.deleting) push('edge.deleting', 'Origin is being deleted');
+  if (origin.activeRotationId) {
+    const active = await ctx.db.get(origin.activeRotationId);
+    if (active && !isTerminalPhase(active.phase))
+      push('edge.busy', 'A rotation is already running');
+  }
+  if (a.trigger === 'detector' && !(cfg.enabled && cfg.autoRotate && origin.autoRotate)) {
+    push('edge.auto_rotate_disabled', 'Automatic rotation is not enabled for this origin');
+  }
+  if ((await countActiveRotations(ctx)) >= cfg.maxConcurrentRotations) {
+    push('edge.concurrency', 'Too many rotations in flight');
+  }
+  let targetEdge: Edge | null = null;
+  let listenerId: Id<'relayListeners'> | undefined = a.listenerId;
+  if (a.kind === 'replace') {
+    if (!a.targetEdgeId) push('validation', 'targetEdgeId is required');
+    else {
+      targetEdge = await ctx.db.get(a.targetEdgeId);
+      if (
+        !targetEdge ||
+        targetEdge.relayId !== a.relayId ||
+        targetEdge.publication !== 'published'
+      ) {
+        push('edge.target_not_published', 'The target edge is not published on this origin');
+        targetEdge = null;
+      }
+    }
+    if (targetEdge) {
+      if (origin.hostMode === 'operator' && (await isTemplateEdge(ctx, targetEdge)) && !force) {
+        push(
+          'edge.hosts_operator_managed',
+          'The operator manages this relay\u2019s panel Hosts; replacing a template edge needs force',
+        );
+      }
+    }
+    if (!force) {
+      if (origin.cooldownUntil && origin.cooldownUntil > now)
+        push('edge.cooldown', 'Origin is cooling down');
+      const today = todayKey(now);
+      const used = origin.rotationsDayKey === today ? origin.rotationsToday : 0;
+      if (used >= origin.maxRotationsPerDay) push('edge.daily_cap', 'Daily rotation cap reached');
+    }
+    if (targetEdge) listenerId = targetEdge.listenerId;
+  }
+  if (a.kind === 'publish') {
+    if (!a.toEdgeId) push('validation', 'toEdgeId is required');
+    else {
+      const to = await ctx.db.get(a.toEdgeId);
+      if (!to || to.relayId !== a.relayId) push('not_found', 'Edge not found on this origin');
+      else {
+        const check = await checkPublishable(ctx, to, false);
+        if (!check.ok) push(`edge.${check.code}`, `Edge cannot be published: ${check.code}`);
+        listenerId = to.listenerId;
+      }
+    }
+  }
+  if (a.kind === 'provision' && a.requestedAccountId && !a.listenerId) {
+    push('validation', 'listenerId is required for an explicit account');
+  }
+  if (listenerId) {
+    const listener = await ctx.db.get(listenerId);
+    if (!listener || listener.relayId !== a.relayId || listener.retired) {
+      push(
+        'edge.listener_not_found',
+        'The requested listener does not exist on this relay or is retired',
+      );
+    } else {
+      // A name-free HTTP-transport listener is usable: behind an L7 front the
+      // member presents the edge HOSTNAME. It is only L4 that needs one of the
+      // listener's own names, and `listenerLayers` already excludes L4 for it.
+      const usable =
+        listener.deployed &&
+        listener.enabled &&
+        (!protocolUsesSni(listener) ||
+          protocolIsHttpTransport(listener) ||
+          activeNames(listener).length > 0);
+      if (!usable) {
+        push(
+          'edge.listener_unusable',
+          'The listener is not deployed, is disabled, or has no server name',
+        );
+      }
+      // An L7-ONLY listener cannot be answered automatically while the L7 gate
+      // is off: the run would have nothing compatible to pick, and silently
+      // routing it to an L4 account would front a plaintext origin with a raw
+      // forwarder. The veto is explicit so the operator sees why nothing happened.
+      if (a.trigger === 'detector') {
+        const layers = listenerLayers(listener).layers;
+        if (layers.length === 1 && layers[0] === 'l7' && !l7SelectionAllowed(cfg)) {
+          push(
+            'edge.l7_auto_select_disabled',
+            'Automatic selection of L7 edges is disabled; publish this listener by hand',
+          );
+        }
+      }
+    }
+  }
+  // A new CDN hostname is not a new frontend IP (shared anycast), so repeated
+  // automatic L7 replacements on one relay are bounded per day.
+  if (a.trigger === 'detector' && a.kind === 'replace' && targetEdge && !force) {
+    if ((targetEdge.layer ?? 'l4') === 'l7') {
+      const used =
+        origin.l7ReplacementsDayKey === todayKey(now) ? (origin.l7ReplacementsToday ?? 0) : 0;
+      if (used >= cfg.l7.maxSameProviderReplacementsPerDay) {
+        push('edge.l7_replacement_cap', 'Daily cap on L7 replacements for this relay reached');
+      }
+    }
+  }
+  return { blockers, origin, cfg, targetEdge, listenerId };
 }
 
 export const start = internalMutation({
@@ -396,7 +582,7 @@ export const start = internalMutation({
 });
 
 /** Whether some listener's panel Host / plan points at this edge. */
-async function isTemplateEdge(ctx: { db: MutationCtx['db'] }, edge: Edge): Promise<boolean> {
+async function isTemplateEdge(ctx: { db: QueryCtx['db'] }, edge: Edge): Promise<boolean> {
   const listener = await ctx.db.get(edge.listenerId);
   return !!listener && listener.templateEdgeId === edge._id;
 }
@@ -430,128 +616,17 @@ export async function startRotation(
   ctx: MutationCtx,
   a: StartRotationArgs,
 ): Promise<{ rotationId: Id<'edgeRotations'> }> {
-  const origin = await ctx.db.get(a.relayId);
-  if (!origin) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
-  const cfg = await resolveEdgeConfig(ctx.db);
   const now = Date.now();
   const force = a.force ?? false;
-  // Admission gate: a start of ANY kind is new work; completion paths (step,
-  // rekick, rollback, cancel, unpublish, destroy) never route through here.
-  await assertAdmission(ctx.db, 'rotation.start');
-  if (origin.quarantine)
-    throw new ConvexError({
-      code: 'edge.quarantined',
-      message: 'Origin is quarantined; resolve it first',
-    });
-  if (origin.deleting)
-    throw new ConvexError({ code: 'edge.deleting', message: 'Origin is being deleted' });
-  if (origin.activeRotationId) {
-    const active = await ctx.db.get(origin.activeRotationId);
-    if (active && !isTerminalPhase(active.phase))
-      throw new ConvexError({ code: 'edge.busy', message: 'A rotation is already running' });
+  const g = await collectStartBlockers(ctx, a, { now });
+  if (g.blockers.length > 0) {
+    const first = g.blockers[0];
+    // The maintenance gate throws its own (dated) message.
+    if (first.code === 'edge.maintenance') await assertAdmission(ctx.db, 'rotation.start');
+    throw new ConvexError({ code: first.code, message: first.message });
   }
-  if (a.trigger === 'detector' && !(cfg.enabled && cfg.autoRotate && origin.autoRotate)) {
-    throw new ConvexError({
-      code: 'edge.auto_rotate_disabled',
-      message: 'Automatic rotation is not enabled for this origin',
-    });
-  }
-  if ((await countActiveRotations(ctx)) >= cfg.maxConcurrentRotations) {
-    throw new ConvexError({ code: 'edge.concurrency', message: 'Too many rotations in flight' });
-  }
-  let targetEdge: Edge | null = null;
-  let listenerId: Id<'relayListeners'> | undefined = a.listenerId;
-  if (a.kind === 'replace') {
-    if (!a.targetEdgeId)
-      throw new ConvexError({ code: 'validation', message: 'targetEdgeId is required' });
-    targetEdge = await ctx.db.get(a.targetEdgeId);
-    if (!targetEdge || targetEdge.relayId !== a.relayId || targetEdge.publication !== 'published') {
-      throw new ConvexError({
-        code: 'edge.target_not_published',
-        message: 'The target edge is not published on this origin',
-      });
-    }
-    if (origin.hostMode === 'operator' && (await isTemplateEdge(ctx, targetEdge)) && !force) {
-      throw new ConvexError({
-        code: 'edge.hosts_operator_managed',
-        message:
-          'The operator manages this relay\u2019s panel Hosts; replacing a template edge needs force',
-      });
-    }
-    if (!force) {
-      if (origin.cooldownUntil && origin.cooldownUntil > now)
-        throw new ConvexError({ code: 'edge.cooldown', message: 'Origin is cooling down' });
-      const today = todayKey(now);
-      const used = origin.rotationsDayKey === today ? origin.rotationsToday : 0;
-      if (used >= origin.maxRotationsPerDay)
-        throw new ConvexError({ code: 'edge.daily_cap', message: 'Daily rotation cap reached' });
-    }
-    listenerId = targetEdge.listenerId;
-  }
-  if (a.kind === 'publish') {
-    if (!a.toEdgeId) throw new ConvexError({ code: 'validation', message: 'toEdgeId is required' });
-    const to = await ctx.db.get(a.toEdgeId);
-    if (!to || to.relayId !== a.relayId)
-      throw new ConvexError({ code: 'not_found', message: 'Edge not found on this origin' });
-    const check = await checkPublishable(ctx, to, false);
-    if (!check.ok)
-      throw new ConvexError({
-        code: `edge.${check.code}`,
-        message: `Edge cannot be published: ${check.code}`,
-      });
-    listenerId = to.listenerId;
-  }
-  if (listenerId) {
-    const listener = await ctx.db.get(listenerId);
-    if (!listener || listener.relayId !== a.relayId || listener.retired) {
-      throw new ConvexError({
-        code: 'edge.listener_not_found',
-        message: 'The requested listener does not exist on this relay or is retired',
-      });
-    }
-    // A name-free HTTP-transport profile is usable: behind an L7 front the
-    // member presents the edge HOSTNAME. It is only L4 that needs one of the
-    // profile's own names, and `slotLayers` already excludes L4 for it.
-    const usable =
-      listener.deployed &&
-      listener.enabled &&
-      (!protocolUsesSni(listener) ||
-        protocolIsHttpTransport(listener) ||
-        activeNames(listener).length > 0);
-    if (!usable) {
-      throw new ConvexError({
-        code: 'edge.listener_unusable',
-        message: 'The listener is not deployed, is disabled, or has no server name',
-      });
-    }
-    // An L7-ONLY slot cannot be answered automatically while the L7 gate is
-    // off: the run would have nothing compatible to pick, and silently routing
-    // it to an L4 account would front a plaintext origin with a raw forwarder.
-    // The veto is explicit so the operator sees why nothing happened.
-    if (a.trigger === 'detector') {
-      const layers = listenerLayers(listener).layers;
-      if (layers.length === 1 && layers[0] === 'l7' && !l7SelectionAllowed(cfg)) {
-        throw new ConvexError({
-          code: 'edge.l7_auto_select_disabled',
-          message: 'Automatic selection of L7 edges is disabled; publish this slot by hand',
-        });
-      }
-    }
-  }
-  // A new CDN hostname is not a new frontend IP (shared anycast), so repeated
-  // automatic L7 replacements on one relay are bounded per day.
-  if (a.trigger === 'detector' && a.kind === 'replace' && targetEdge && !force) {
-    if ((targetEdge.layer ?? 'l4') === 'l7') {
-      const used =
-        origin.l7ReplacementsDayKey === todayKey(now) ? (origin.l7ReplacementsToday ?? 0) : 0;
-      if (used >= cfg.l7.maxSameProviderReplacementsPerDay) {
-        throw new ConvexError({
-          code: 'edge.l7_replacement_cap',
-          message: 'Daily cap on L7 replacements for this relay reached',
-        });
-      }
-    }
-  }
+  const origin = g.origin!;
+  const listenerId = g.listenerId;
   const id = await ctx.db.insert('edgeRotations', {
     relayId: a.relayId,
     kind: a.kind,
@@ -563,6 +638,9 @@ export async function startRotation(
     targetEdgeId: a.targetEdgeId,
     toEdgeId: a.kind === 'publish' ? a.toEdgeId : undefined,
     listenerId,
+    requestedAccountId: a.kind === 'provision' ? a.requestedAccountId : undefined,
+    requestedTemplateId: a.kind === 'provision' ? a.requestedTemplateId : undefined,
+    allowUnqualified: a.kind === 'provision' && a.allowUnqualified ? true : undefined,
     viaStandby: a.kind === 'publish' ? true : undefined,
     phase: 'select',
     stepVersion: 1,
@@ -592,28 +670,48 @@ export async function startRotation(
       : {}),
     updatedAt: now,
   });
-  await auditRotation(ctx, id, {
-    actorType: a.actorAdminId ? 'admin' : 'system',
-    actorId: a.actorAdminId ?? undefined,
-    action:
-      a.kind === 'replace'
-        ? a.burn
-          ? 'admin.edge.burn'
-          : 'admin.edge.rotate'
-        : a.kind === 'publish'
-          ? 'admin.edge.publish'
-          : 'admin.edge.provision',
-    targetType: 'relay',
-    targetId: a.relayId,
-    payload: {
-      slug: origin.slug,
-      trigger: a.trigger,
-      force,
-      forceGeoEvidence: a.forceGeoEvidence === true,
-      rotationId: id,
-      edgeId: a.kind === 'publish' ? a.toEdgeId : undefined,
-    },
-  });
+  if (a.kind === 'provision' && a.allowUnqualified && a.requestedAccountId) {
+    // The explicit bootstrap provision: audited by name, never by credential.
+    const account = await ctx.db.get(a.requestedAccountId);
+    const listener = listenerId ? await ctx.db.get(listenerId) : null;
+    await auditRotation(ctx, id, {
+      actorType: a.actorAdminId ? 'admin' : 'system',
+      actorId: a.actorAdminId ?? undefined,
+      action: 'admin.edge.test_provision',
+      targetType: 'relay',
+      targetId: a.relayId,
+      payload: {
+        slug: origin.slug,
+        listenerKey: listener?.listenerKey,
+        accountName: account?.name,
+        provider: account?.provider,
+        rotationId: id,
+      },
+    });
+  } else {
+    await auditRotation(ctx, id, {
+      actorType: a.actorAdminId ? 'admin' : 'system',
+      actorId: a.actorAdminId ?? undefined,
+      action:
+        a.kind === 'replace'
+          ? a.burn
+            ? 'admin.edge.burn'
+            : 'admin.edge.rotate'
+          : a.kind === 'publish'
+            ? 'admin.edge.publish'
+            : 'admin.edge.provision',
+      targetType: 'relay',
+      targetId: a.relayId,
+      payload: {
+        slug: origin.slug,
+        trigger: a.trigger,
+        force,
+        forceGeoEvidence: a.forceGeoEvidence === true,
+        rotationId: id,
+        edgeId: a.kind === 'publish' ? a.toEdgeId : undefined,
+      },
+    });
+  }
   await scheduleStep(ctx, id, 0);
   return { rotationId: id };
 }
@@ -1687,9 +1785,11 @@ export const resolveQuarantine = internalMutation({
   args: {
     relayId: v.id('relays'),
     keep: v.union(v.literal('current'), v.literal('previous')),
+    /** The operator's justification (short; audited). */
+    reason: v.optional(v.string()),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
-  handler: async (ctx, { relayId, keep, actorAdminId }) => {
+  handler: async (ctx, { relayId, keep, reason, actorAdminId }) => {
     const origin = await ctx.db.get(relayId);
     if (!origin) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     if (!origin.quarantine) return { ok: true as const };
@@ -1840,7 +1940,12 @@ export const resolveQuarantine = internalMutation({
       action: 'edge.quarantine_resolved',
       targetType: 'relay',
       targetId: relayId,
-      payload: { relaySlug: origin.slug, keep, rotationId: rotation?._id ?? null },
+      payload: {
+        relaySlug: origin.slug,
+        keep,
+        rotationId: rotation?._id ?? null,
+        reason: reason?.slice(0, 200),
+      },
     };
     if (rotation) await auditRotation(ctx, rotation._id, entry);
     else await writeAuditLog(ctx, entry);
@@ -1968,7 +2073,19 @@ export const stepContext = internalQuery({
   },
 });
 
-interface SelectionContext {
+/** What selection needs to know about the run (a rotation row satisfies it; the preflight builds one). */
+export interface SelectionRequest {
+  kind: 'provision' | 'publish' | 'replace';
+  trigger: 'manual' | 'detector' | 'api' | 'reconcile';
+  listenerId?: Id<'relayListeners'>;
+  reason?: string;
+  publishOnDone?: boolean;
+  requestedAccountId?: Id<'edgeProviderAccounts'>;
+  requestedTemplateId?: Id<'edgeTemplates'>;
+  allowUnqualified?: boolean;
+}
+
+export interface SelectionContext {
   listener: Doc<'relayListeners'> | null;
   standbyId: Id<'edges'> | null;
   account: {
@@ -1988,9 +2105,9 @@ interface SelectionContext {
   } | null;
 }
 
-async function selectionContext(
-  ctx: QueryCtx,
-  rotation: Rotation,
+export async function selectionContext(
+  ctx: { db: QueryCtx['db'] },
+  rotation: SelectionRequest,
   origin: Origin,
   targetEdge: Edge | null,
   cfg: EdgeConfig,
@@ -2088,14 +2205,44 @@ async function selectionContext(
     { layers, proto: protoOf(listener), allowL7 },
   );
   const accounts = eligibleAccounts;
+  const failure = (code: string): SelectionContext => ({
+    listener,
+    standbyId: null,
+    account: null,
+    accountFailure: code,
+    template: null,
+  });
+  if (rotation.requestedAccountId) {
+    // The explicit bootstrap path: the operator named the account. It must be
+    // enabled, tested and able to front this listener; qualification is waived
+    // only when the request says so (the result is then never published).
+    const a = await ctx.db.get(rotation.requestedAccountId);
+    if (!a) return failure('account_not_found');
+    if (!a.enabled) return failure('account_disabled');
+    if (!accountTested(a)) return failure('account_untested');
+    if (!eligibleAccounts.some((e) => e._id === a._id)) return failure('account_incompatible');
+    if (!a.qualified && !rotation.allowUnqualified) return failure('no_qualified_account');
+    if (listener.providerScope?.accountId && a._id !== listener.providerScope.accountId)
+      return failure('account_mismatch');
+    const live = (await liveEdgesOfAccount(ctx.db, a._id)).filter((e) => e.managed).length;
+    if (live >= a.maxLiveEdges) return failure('account_capacity_reached');
+    const today = a.allocationsDayKey === todayKey() ? a.allocationsToday : 0;
+    if (a.dailyAllocationBudget !== 0 && today >= a.dailyAllocationBudget)
+      return failure('account_budget_exhausted');
+    const { resolveTemplateFor } = await import('./edgeTemplates');
+    const template = await resolveTemplateFor(
+      ctx,
+      a.provider,
+      rotation.requestedTemplateId ?? null,
+      a.defaultTemplateId ?? null,
+      a._id,
+    );
+    if (rotation.requestedTemplateId && template.id !== rotation.requestedTemplateId)
+      return failure('template_not_found');
+    return { listener, standbyId: null, ...(await describeAccount(ctx, a)), template };
+  }
   if (accounts.length === 0) {
-    return {
-      listener,
-      standbyId: null,
-      account: null,
-      accountFailure: layers.length === 0 ? 'no_compatible_layer' : 'no_account_for_layer',
-      template: null,
-    };
+    return failure(layers.length === 0 ? 'no_compatible_layer' : 'no_account_for_layer');
   }
   const candidates = [];
   for (const a of accounts) {
@@ -2142,6 +2289,14 @@ async function selectionContext(
     account.defaultTemplateId ?? null,
     account._id,
   );
+  return { listener, standbyId: null, ...(await describeAccount(ctx, account)), template };
+}
+
+/** The selection's view of an account, with the DNS zone facts an L7 plan needs. */
+async function describeAccount(
+  ctx: { db: QueryCtx['db'] },
+  account: Doc<'edgeProviderAccounts'>,
+): Promise<Pick<SelectionContext, 'account' | 'accountFailure'>> {
   // The zone the hostname will be minted under: the account's own (a provider
   // that hosts its DNS) or the referenced DNS account's.
   const settings = account.settings as { zoneName?: string; dnsAccountId?: string };
@@ -2155,8 +2310,6 @@ async function selectionContext(
     if (dns) zoneHost = dns;
   }
   return {
-    listener,
-    standbyId: null,
     account: {
       id: account._id,
       provider: account.provider,
@@ -2165,7 +2318,6 @@ async function selectionContext(
       zoneSslMode: parseObservedSettings(zoneHost.observedSettings).zoneSslMode ?? null,
     },
     accountFailure: null,
-    template,
   };
 }
 

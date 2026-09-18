@@ -9,11 +9,11 @@
   } from '@client/components/ui/card';
   import { Button } from '@client/components/ui/button';
   import { Skeleton } from '@client/components/ui/skeleton';
-  import InlineError from '../../components/InlineError.svelte';
-  import AdminRangePicker from './AdminRangePicker.svelte';
-  import { apiErrorMessage } from '../../lib/errors';
-  import { adminProbeSummaryQuery, type TelemetryRange } from '../../lib/queries';
-  import { VIZ_PALETTE } from '../../lib/telemetryViz';
+  import InlineError from '../../../../components/InlineError.svelte';
+  import AdminRangePicker from '../../AdminRangePicker.svelte';
+  import { apiErrorMessage } from '../../../../lib/errors';
+  import { probeSummaryQuery, type ProbeRange } from '../../../../lib/edgesApi';
+  import { VIZ_PALETTE } from '../../../../lib/telemetryViz';
 
   /**
    * Probe outcomes over time (Telemetry → Probes): one stacked bar per bucket
@@ -22,9 +22,16 @@
    * stopped answering. The toggle shows ok vs failing vantages instead. Colors
    * are assigned per country in a fixed order (the same `--viz-sN` slots the
    * other admin charts use), so a country keeps its hue across ranges.
+   *
+   * Props: `range` (optional, bindable). Unbound, the chart owns its range and
+   * starts on the trailing 7 days; a page that keeps the range in its URL binds
+   * it instead (the Probes page does).
    */
-  let range = $state<TelemetryRange>({ kind: 'window', windowMs: 7 * 86_400_000 });
-  const summary = adminProbeSummaryQuery(() => range);
+  interface Props {
+    range?: ProbeRange;
+  }
+  let { range = $bindable({ kind: 'window', windowMs: 7 * 86_400_000 }) }: Props = $props();
+  const summary = probeSummaryQuery(() => range);
   let mode = $state<'country' | 'outcome'>('country');
 
   const countries = $derived.by(() => {
