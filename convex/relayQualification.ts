@@ -258,3 +258,21 @@ export const revoke = internalAction({
     return { ok: true, pendingRemovals: stillOwed.length };
   },
 });
+
+// STUB: merged with agent R2 (`ensure`, plan 1.11). Signature per the PR A2
+// contract; refuses so an accidental call fails loudly. The setup run machine
+// reaches it only through its stage-ops seam (edgeSetupRuns.__setStageOpsForTests).
+export const ensure = internalAction({
+  args: {
+    relayId: v.id('relays'),
+    placement: v.optional(v.string()),
+    modeSlug: v.optional(v.string()),
+    purpose: v.union(v.literal('qualification'), v.literal('rehearsal')),
+  },
+  handler: async (): Promise<{ ok: boolean; code?: string; reused: boolean }> => {
+    throw new ConvexError({
+      code: 'edge.not_available',
+      message: 'relayQualification.ensure is a stub',
+    });
+  },
+});
