@@ -100,9 +100,18 @@ host and gRPC serviceName → `transportParams`; the inbound tag + profile uuids
 with the default `remark` match rule. Every candidate passes `validateListenerSpec`, and carries
 `layers` and `formats`. The listener key is `slug10 + base36(sha256(tag))[0..6]` (the first ten
 lowercase alphanumerics of the tag plus six hash digits; at most 16 chars, deterministic, unique
-against the relay's existing keys). `originTransport` is never set by discovery: only an origin
-probe can say how an L7 front may dial the node, so a discovered HTTP-transport listener starts
-L4-only until that probe fills it in.
+against the relay's existing keys). `originTransport` is never set by the mapper: only the
+**origin probe** can say how an L7 front may dial the node. `GET
+relays/inbound-candidates?backendServerId=&nodeUuid=` (throttled; `convex/edgeOriginProbe.ts`
+with the `"use node"` sockets in `edgeOriginProbeOps.ts`, pure rules in
+`lib/edges/originProbe.ts`) returns the mapper output with `originTransport` filled where the
+probe succeeded and `layers` recomputed: security `none` -> a TCP answer on the port gives
+`{scheme: http}` (L7-only); `tls` -> a handshake with SNI = the first name, `certPublic` = the
+chain verifies against the system store, `certNames` = the leaf's names, `acceptsHostHeader:
+names` unless a request with a foreign Host header still answers 2xx (`any`). Like the internal
+reachability probe it dials public literals only (a name is resolved first, every answer must be
+public, the literal is dialled). Without a successful probe the candidate stays L4-only and
+carries the probe's reason.
 
 ### Layers
 
@@ -220,6 +229,42 @@ attention raises **`needs_test`** (critical). Importing a live front with `publi
 carries the operator's statement `verified: true` (recorded as method `named_connection`);
 without it the import is an untested spare.
 
+**The test link** (`GET edges/{id}/test-link`, `convex/edgeTestLinks.ts`, throttled) is the one
+verification mechanism for an L4 candidate that is not yet published (setup stage 4b, spares,
+retests). It fetches the test credential's OWN subscription body and runs the real renderer with
+`published = [this candidate only]` in dry-run: no pool change, no epoch bump, no Host write, no
+snapshot, no persisted match rule touched. Before first publication the FCP Host does not exist
+in that body, so the builder uses a **test-only matcher**: the intended inbound
+(`panelBinding.configProfileInboundUuid`) names the enabled panel Hosts on it at
+`originAddress:originPort`, whose remarks identify the body's entry; the entry must agree with
+the listener's protocol facts (scheme, transport, security); once the direct Host is hidden the
+listener's own `<node>-relay-<key>` (or adopted legacy) remark names it instead; an Outline key
+is matched whole. A missing or ambiguous match is refused (`edge.test_link_no_match`), never
+guessed. The single entry is rendered through a transient whole-body context, so the output is
+ONLY the candidate connection (labelled `FCP test <slug> <key>`): no direct entry, no backup, no
+auto group. The response carries the binding `POST edges/{id}/verify` must echo (`{edgeId,
+endpoint, listenerKey, listenerRevision, configHash, issuedAt}`, the same one
+`verification-binding` derives) and records `method: test_link`. L7 edges refuse
+(`edge.l7_proof_required`).
+
+**Test credentials** (`convex/edgeTestCredentials.ts`). Remnawave tests reuse the relay's
+**qualification credential**, minted on demand through `relayQualification.ensure`: a
+**persisted operation** (`relays.qualificationMint`) whose deterministic username is written
+BEFORE any panel call, so a crash between `issueUser` and `store` is settled on the next call by
+re-finding the user by name (`backends.findUserByUsername`, the version-neutral
+`by-username` read; capability `userLookupByUsername`) and adopting it, never by minting a
+second one; a user not found waits for the settle rule (2 min + 2 quiet looks,
+`credential_unresolved`) before a fresh name is issued; a stored credential is reused only when
+its binding `{backendServerId, placement, modeSlug}` equals the request, otherwise it is
+replaced and the old user goes through the owed-removal ledger. The credential's own subscription
+locator is kept (`relays.qualificationSubscription`) so its body can be fetched. Outline has no
+name lookup: a test link mints a **temporary access key** whose `edgeTestCredentials` row is
+written before the create (`backendUserId` absent until issuance is observed) and is a durable
+obligation the reconcile sweep finishes (expired after 24 h or released when the sheet closes /
+the run is cancelled -> `deleteUser` with bounded retries; a delete that keeps failing is
+`failed` and raises attention `test_key_cleanup`, retried by hand); a rehearsal on an empty
+Outline server has no credential path (`use_manual_setup`).
+
 **Account trust is a separate record.** The first confirmed endpoint of an untrusted L4
 account also trusts the account (`edgeProviderAccounts.applyQualification`, with endpoint
 evidence `{edgeId, endpoint, accountTestedAt, templateHash, listenerId, listenerRevision}`,
@@ -274,6 +319,25 @@ token is `<bindingPolicyVersion>:<epoch>`). A place no relay covers passes the b
 Registering a relay therefore takes members on that origin dark until an edge is published and
 rendering is on; the setup flow and the node role say so.
 
+**Delivery rehearsal** (`convex/edgeRehearsal.ts`, the guided setup's stage before go-live).
+Before the binding is claimed, delivery is proven with the real renderer over **cohorts** derived
+from authoritative membership (`convex/lib/edges/cohorts.ts`: one representative subscription per
+distinct `backendPlacement` among the subscriptions pinned to the node, walked with `paginate`
+over every page; a backend-server origin is one cohort of the whole server), never from render
+snapshots. Each representative body is fetched FRESH per supported format (links, sing-box,
+Clash, through catalogued client user agents) and run through `applyEdgeRender` in dry-run: no
+persistence, no snapshot. Every non-dark cohort must yield `serve` in every format; an approved
+dark cohort (`darkCohortKeys`) is excluded. An empty panel node is rehearsed from the rehearsal
+credential (the qualification user on the node's placement; no usable placement ->
+`choose_mode`); an Outline server with members from its real single-key subscriptions. The
+result lists `familiesDisabled` (render rules off) and `proofsExpired` (published L7 fronts
+whose proof lapsed), the **vector** the go-live mutation compares with `vectorNow`
+(`listenerRevisions`, `renderConfigHash`, `publicationEpoch`, `qualificationEvidenceIds`), and
+the **observation boundary**: the panel Hosts are listed before and after
+(`edgeHostHides.observe`), the run is accepted only when both listings agree (else repeated, 3
+attempts, then `listingChanged`), and the FINAL listing is the observation the go-live clock
+starts from.
+
 Mirrors follow the same policy: each mirror row records what its object holds (`validated`:
 policy version, epoch, edges); registering a relay revalidates the origin's mirrors, replacing
 a raw object with a fresh render or, when nothing can render, with an **unavailable stub**
@@ -314,6 +378,8 @@ All under `/api/v1/admin/edges/`, sealed by verb like every other route; the rea
 | `GET relays/{id}/timeline`                                       | Merged audit rows of the relay, its listeners, its non-destroyed edges and its rotations, newest first, capped.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `GET providers/usage`                                            | Per account: live / max edges, allocations against the daily budget, published / standby / draining; per relay desired against published; totals including what auto-provision would add.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `GET relays/lookup?slug=`                                        | The full admin view of one relay by slug (the per-relay page is addressed by slug).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `GET edges/{id}/test-link`                                       | The isolated test link for an L4 candidate (throttled: fetches the test credential's body and the panel Hosts): the candidate connection only, plus the binding the confirmation must echo. See § "Publication".                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `GET relays/inbound-candidates?backendServerId=&nodeUuid=`       | Discovery with the origin probe applied (throttled): the node's inbounds as listener candidates, `originTransport` filled where probed, `unsupported` with reasons. Registers nothing. See § "Listener catalogue".                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `POST relays/{id}/listeners/{key}/adopt-host`                    | The `operator` to `fcp` handoff: the named Host must exist, carry the listener's inbound and dial a published edge of that listener (`edge.host_adopt_mismatch` otherwise). `hostMode: fcp` is refused until every listener Host is adopted (`edge.host_adopt_required`).                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `GET maintenance`, `POST maintenance/freeze`, `.../thaw`         | The maintenance switch (see below).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `GET delivery-bindings`, `POST delivery-bindings/{id}/release`   | The edge-required places, including ones whose relay was deleted with `keep-dark`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
@@ -379,7 +445,9 @@ CREATES it through the Host state machine instead of waiting for the role.
 
 Re-kicks stale rotations; settles edges with unknown outcomes by discovery; refreshes provider
 health; renews L7 proofs; re-observes unresolved Host operations and deletes the FCP-owned
-Hosts of retired listeners and deleting relays (read-back confirmed); turns drained / failed /
+Hosts of retired listeners and deleting relays (read-back confirmed); removes expired or released
+temporary test keys (`edgeTestCredentials.sweep`, bounded retries, then attention
+`test_key_cleanup`); turns drained / failed /
 cancelled edges into destroy runs; pool upkeep while `edge.enabled` is on and the maintenance
 switch is off (a `setupOwned` relay is skipped): first `ensureCapacity` (raise / expand
 `desiredPublished` for the deployed listeners), then **listener-aware** upkeep, one listener per
