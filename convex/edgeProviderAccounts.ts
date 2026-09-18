@@ -33,13 +33,15 @@ import { assertAdmission } from './lib/edges/maintenance';
 import { autoQualifyDecision, type AutoQualifyEvidence } from './lib/edges/autoQualify';
 import { verificationEndpoint } from './lib/edges/verification';
 
-const NAME_RE = /^[a-z0-9][a-z0-9-]{1,62}$/;
+// A display label (never a provider resource name or a URL segment): same shape as a
+// template name.
+const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,62}$/;
 
 function checkName(name: string): void {
-  if (!NAME_RE.test(name)) {
+  if (!NAME_RE.test(name) || name !== name.trim()) {
     throw new ConvexError({
       code: 'validation',
-      message: 'name must be 2-63 chars of lowercase letters, digits and dashes',
+      message: 'name must be 1-63 chars of letters, digits, spaces, dots, dashes and underscores',
     });
   }
 }

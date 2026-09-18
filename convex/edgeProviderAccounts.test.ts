@@ -156,6 +156,28 @@ describe('edgeProviderAccounts', () => {
     expect(secret?.credentials).toEqual({ type: 'gcore', apiKey: 'SECRET_KEY' });
   });
 
+  test('the account name is a display label: the form placeholder shape is accepted', async () => {
+    const t = convexTest(schema, modules);
+    for (const name of ['Main', 'Main account', 'eu_west.2']) {
+      await t.mutation(internal.edgeProviderAccounts.create, {
+        provider: 'gcore',
+        name,
+        settings: gcoreSettings,
+        credentials: { apiKey: 'k' },
+      });
+    }
+    for (const name of ['', ' Main', 'Main ', '-main', 'a/b', 'x'.repeat(64)]) {
+      await expect(
+        t.mutation(internal.edgeProviderAccounts.create, {
+          provider: 'gcore',
+          name,
+          settings: gcoreSettings,
+          credentials: { apiKey: 'k' },
+        }),
+      ).rejects.toThrow(/name must be/);
+    }
+  });
+
   test('update keeps the secret on blank, replaces on value, and drops qualification on credential/settings change', async () => {
     const t = convexTest(schema, modules);
     const { id } = await t.mutation(internal.edgeProviderAccounts.create, {

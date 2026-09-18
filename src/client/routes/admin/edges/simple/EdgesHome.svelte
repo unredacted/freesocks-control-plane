@@ -247,8 +247,8 @@
         spare address per listener, which your provider bills.
       </p>
       <p class="text-muted-foreground mt-2 max-w-prose text-sm">
-        Automatic replacement switches to a spare address you have already tested. Each new spare
-        address appears under Needs you until you test it.
+        Automatic replacement switches to a spare address you have already tested. FCP asks you to
+        test each new spare address at the top of this page before it can be used.
       </p>
       <Button class="mt-3" disabled={automationBusy} onclick={() => setAutomation(true)}>
         Turn on
