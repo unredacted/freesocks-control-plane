@@ -333,6 +333,15 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
     console.warn(`[edge-reconcile] host ops: ${errText(err)}`);
   }
 
+  // 4c. Temporary test credentials: remove expired or released keys (a durable
+  // obligation independent of any setup run; bounded retries, then attention).
+  try {
+    await ctx.runAction(internal.edgeTestCredentials.sweep, {});
+  } catch (err) {
+    report.errors++;
+    console.warn(`[edge-reconcile] test credential sweep: ${errText(err)}`);
+  }
+
   // 5. Pool upkeep + 6. origin deletes. While the maintenance switch is on,
   // upkeep (new provisioning / publishing) is not admitted; deletes still finish.
   const maintenance = await ctx.runQuery(internal.edgeMaintenance.state, {});
