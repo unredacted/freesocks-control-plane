@@ -512,6 +512,7 @@ export const reactivateSni = internalMutation({
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, { id, snis, actorAdminId }) => {
+    await assertAdmission(ctx.db, 'profile.write');
     const row = await ctx.db.get(id);
     if (!row) throw new ConvexError({ code: 'not_found', message: 'Profile not found' });
     await assertProfileWritable(ctx, id);
@@ -553,6 +554,7 @@ export const recordQualification = internalMutation({
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a) => {
+    await assertAdmission(ctx.db, 'profile.write');
     const row = await ctx.db.get(a.id);
     if (!row) throw new ConvexError({ code: 'not_found', message: 'Profile not found' });
     await ctx.db.patch(a.id, {
@@ -582,6 +584,7 @@ export const recordQualification = internalMutation({
 export const remove = internalMutation({
   args: { id: v.id('protocolProfiles'), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, { id, actorAdminId }) => {
+    await assertAdmission(ctx.db, 'profile.write');
     const row = await ctx.db.get(id);
     if (!row) return { ok: true as const };
     const slot = await ctx.db

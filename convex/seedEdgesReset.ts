@@ -10,9 +10,14 @@
  *   2. `status` (read-only, ANY environment): what still has to settle before
  *      a wipe is safe. The operator finishes that work through the ordinary
  *      machine; the report must come back empty.
- *   3. `wipe` (allow-listed environments only, explicit confirm): REFUSES while
- *      anything in the status report remains, otherwise deletes the edge
- *      tables in bounded pages and turns the edge.* switches off.
+ *   3. `wipe` (explicit opt-in + explicit confirm): REFUSES while anything in
+ *      the status report remains, otherwise deletes the edge tables in bounded
+ *      pages and turns the edge.* switches off. The opt-in is a deployment env
+ *      var the operator sets for the reset and removes afterwards
+ *      (`EDGE_RESET_ALLOW=wipe-edges`); `ENVIRONMENT` cannot serve, because a
+ *      beta stack runs `ENVIRONMENT=production` like prod does. EVERY
+ *      destructive batch re-checks opt-in, freeze and blockers itself, so
+ *      calling `wipeBatch` directly bypasses nothing.
  *   4. `thaw` (edgeMaintenance.thaw) after the new schema is deployed.
  *
  * Kept on purpose: probeTargets (operator data) and their custom rollups,
@@ -33,19 +38,29 @@ import { EDGE_KEYS } from './lib/edgeConfig';
 import { readMaintenance } from './lib/edges/maintenance';
 import { ROTATION_PHASES, isTerminalPhase } from './lib/edges/rotation';
 
-/** Environments where a wipe may run. An allowlist: a missing or misspelled value refuses. */
-const WIPE_ENVIRONMENTS: ReadonlySet<string> = new Set(['development', 'beta']);
 const CONFIRM = 'wipe-edges';
 const PAGE = 200;
+/** How many open rows the status report LISTS; the counts are always complete. */
+const LIST_CAP = 200;
 
-export function wipeAllowedIn(environment: string | undefined): boolean {
-  return environment !== undefined && WIPE_ENVIRONMENTS.has(environment);
+/**
+ * Whether this deployment opted in to a wipe: local development always, any
+ * other deployment only while the operator has set `EDGE_RESET_ALLOW` to the
+ * confirm word (a deliberate, reversible, per-deployment act).
+ */
+export function wipeAllowedIn(env: {
+  ENVIRONMENT?: string | undefined;
+  EDGE_RESET_ALLOW?: string | undefined;
+}): boolean {
+  return env.ENVIRONMENT === 'development' || env.EDGE_RESET_ALLOW === CONFIRM;
 }
 
 export interface ResetStatus {
   frozen: boolean;
   rotationsOpen: Array<{ id: string; phase: string; relayId: string }>;
+  /** The first LIST_CAP of them; `edgesOpenCount` is the complete figure. */
   edgesOpen: Array<{ id: string; status: string; relayId: string; reason: string }>;
+  edgesOpenCount: number;
   locksHeld: number;
   relaysQuarantined: string[];
   relaysDeleting: string[];
@@ -68,10 +83,14 @@ async function computeStatus(ctx: QueryCtx): Promise<ResetStatus> {
   }
   // Every managed edge must be `destroyed` (its provider resources confirmed
   // gone). Observe-only edges (`managed:false`) hold nothing at a provider.
+  // The WHOLE table is walked: a capped listing could hide a managed edge
+  // behind a run of imported ones and let the wipe drop its ledger.
   const edgesOpen: ResetStatus['edgesOpen'] = [];
-  const live = await ctx.runQuery(internal.edges.listLive, {});
-  for (const e of live) {
-    if (!e.managed) continue;
+  let edgesOpenCount = 0;
+  for await (const e of ctx.db.query('edges')) {
+    if (!e.managed || e.status === 'destroyed') continue;
+    edgesOpenCount++;
+    if (edgesOpen.length >= LIST_CAP) continue;
     const reason = e.currentOp
       ? 'open operation'
       : e.status === 'needs_operator'
@@ -92,7 +111,7 @@ async function computeStatus(ctx: QueryCtx): Promise<ResetStatus> {
   const blockers: string[] = [];
   if (!m.frozen) blockers.push('not frozen: run edgeMaintenance:freeze first');
   if (rotationsOpen.length) blockers.push(`${rotationsOpen.length} rotation(s) not terminal`);
-  if (edgesOpen.length) blockers.push(`${edgesOpen.length} managed edge(s) not destroyed`);
+  if (edgesOpenCount) blockers.push(`${edgesOpenCount} managed edge(s) not destroyed`);
   if (locks.length) blockers.push(`${locks.length} external lock(s) held`);
   if (relaysQuarantined.length) blockers.push(`quarantined: ${relaysQuarantined.join(', ')}`);
   if (relaysDeleting.length) blockers.push(`delete in progress: ${relaysDeleting.join(', ')}`);
@@ -106,6 +125,7 @@ async function computeStatus(ctx: QueryCtx): Promise<ResetStatus> {
     frozen: m.frozen,
     rotationsOpen,
     edgesOpen,
+    edgesOpenCount,
     locksHeld: locks.length,
     relaysQuarantined,
     relaysDeleting,
@@ -157,6 +177,31 @@ async function deleteProbePage(
   return rows.length;
 }
 
+/**
+ * The wipe's safety properties, checked by EVERY destructive mutation (not only
+ * by the action that loops over them): opt-in, confirm word, frozen, nothing
+ * left to settle. Deleting rows only removes blockers, so the check stays true
+ * for the whole run once it held at the start.
+ */
+async function assertWipeSafe(ctx: MutationCtx, confirm: string): Promise<void> {
+  if (confirm !== CONFIRM)
+    throw new ConvexError({
+      code: 'validation',
+      message: `pass {"confirm":"${CONFIRM}"} to wipe the edge tables`,
+    });
+  if (!wipeAllowedIn(process.env))
+    throw new ConvexError({
+      code: 'forbidden',
+      message: `edge wipe needs the deployment env EDGE_RESET_ALLOW=${CONFIRM} (remove it afterwards)`,
+    });
+  const st = await computeStatus(ctx);
+  if (st.blockers.length > 0)
+    throw new ConvexError({
+      code: 'edge.reset_blocked',
+      message: `not safe to wipe: ${st.blockers.join('; ')}`,
+    });
+}
+
 /** One bounded page of deletes; the action loops until every page is empty. */
 export const wipeBatch = internalMutation({
   args: {
@@ -166,8 +211,10 @@ export const wipeBatch = internalMutation({
       v.literal('probeReachability'),
     ),
     kind: v.optional(v.union(v.literal('edge'), v.literal('relay'))),
+    confirm: v.string(),
   },
-  handler: async (ctx, { table, kind }) => {
+  handler: async (ctx, { table, kind, confirm }) => {
+    await assertWipeSafe(ctx, confirm);
     if (table === 'probeRuns' || table === 'probeReachability') {
       if (!kind) throw new ConvexError({ code: 'validation', message: 'kind required' });
       return { deleted: await deleteProbePage(ctx, table, kind) };
@@ -178,8 +225,9 @@ export const wipeBatch = internalMutation({
 
 /** Turn every enabling switch off so the new model comes up dormant. */
 export const disableSwitches = internalMutation({
-  args: {},
-  handler: async (ctx) => {
+  args: { confirm: v.string() },
+  handler: async (ctx, { confirm }) => {
+    await assertWipeSafe(ctx, confirm);
     const keys = [
       EDGE_KEYS.enabled,
       EDGE_KEYS.autoRotate,
@@ -201,27 +249,12 @@ export const disableSwitches = internalMutation({
 export const wipe = internalAction({
   args: { confirm: v.string() },
   handler: async (ctx, { confirm }) => {
-    if (confirm !== CONFIRM)
-      throw new ConvexError({
-        code: 'validation',
-        message: `pass {"confirm":"${CONFIRM}"} to wipe the edge tables`,
-      });
-    if (!wipeAllowedIn(process.env.ENVIRONMENT))
-      throw new ConvexError({
-        code: 'forbidden',
-        message: `edge wipe is allowed only where ENVIRONMENT is one of ${[...WIPE_ENVIRONMENTS].join(', ')}`,
-      });
-    const before = await ctx.runQuery(internal.seedEdgesReset.status, {});
-    if (before.blockers.length > 0)
-      throw new ConvexError({
-        code: 'edge.reset_blocked',
-        message: `not safe to wipe: ${before.blockers.join('; ')}`,
-      });
+    // Each batch below re-checks opt-in, confirm, freeze and blockers itself.
     const deleted: Record<string, number> = {};
     for (const table of WIPE_TABLES) {
       let n = 0;
       for (;;) {
-        const r = await ctx.runMutation(internal.seedEdgesReset.wipeBatch, { table });
+        const r = await ctx.runMutation(internal.seedEdgesReset.wipeBatch, { table, confirm });
         n += r.deleted;
         if (r.deleted < PAGE) break;
       }
@@ -231,14 +264,18 @@ export const wipe = internalAction({
       let n = 0;
       for (const kind of ['edge', 'relay'] as const) {
         for (;;) {
-          const r = await ctx.runMutation(internal.seedEdgesReset.wipeBatch, { table, kind });
+          const r = await ctx.runMutation(internal.seedEdgesReset.wipeBatch, {
+            table,
+            kind,
+            confirm,
+          });
           n += r.deleted;
           if (r.deleted < PAGE) break;
         }
       }
       deleted[table] = n;
     }
-    await ctx.runMutation(internal.seedEdgesReset.disableSwitches, {});
+    await ctx.runMutation(internal.seedEdgesReset.disableSwitches, { confirm });
     await ctx.runMutation(internal.seedEdgesReset.recordWipe, { deleted });
     return { deleted };
   },

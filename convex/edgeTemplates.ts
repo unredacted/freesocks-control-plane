@@ -417,6 +417,7 @@ export const update = internalMutation({
 export const remove = internalMutation({
   args: { id: v.id('edgeTemplates'), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, { id, actorAdminId }) => {
+    await assertAdmission(ctx.db, 'template.write');
     const row = await ctx.db.get(id);
     if (!row) return { ok: true as const };
     const siblings = await ctx.db
