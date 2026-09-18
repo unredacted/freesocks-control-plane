@@ -198,6 +198,7 @@ export const ATTENTION_KINDS = [
   'pool_below_desired',
   'account_unqualified',
   'account_untested',
+  'test_key_cleanup',
   'drift',
   'restore_in_progress',
   'maintenance_frozen',

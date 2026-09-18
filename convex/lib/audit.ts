@@ -311,7 +311,9 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // the three booleans are the operator-owned knob flips, when they changed.
   'relay.update': ['slug', 'changed', 'autoRotate', 'hostMode', 'enabled'],
   // Booleans only: the credential itself never reaches the audit log.
-  'relay.qualification_credential': ['slug', 'minted', 'revoked', 'replaced'],
+  'relay.qualification_credential': ['slug', 'minted', 'revoked', 'replaced', 'adopted'],
+  // Temporary test credentials (edgeTestCredentials.ts): booleans + counts only.
+  'edge.test_credential': ['relaySlug', 'purpose', 'issued', 'removed', 'failed', 'attempts'],
   // `restore` = the delete entered the restore workflow first (a guided relay).
   'relay.delete': ['slug', 'force', 'disposition', 'restore'],
   // The direct-Host hide ledger + restore workflow (edgeHostHides.ts /

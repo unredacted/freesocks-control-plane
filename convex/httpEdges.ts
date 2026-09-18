@@ -187,6 +187,18 @@ export function throttlePolicyFor(parts: string[]): RateLimitPolicyKey | null {
 }
 
 /**
+ * The GETs that reach a panel or open sockets from the control plane (the
+ * inbound-candidates origin probe, the test link's credential body + Host
+ * listing): throttled under the same policy as the provider-calling POSTs.
+ */
+export function throttlePolicyForGet(parts: string[]): RateLimitPolicyKey | null {
+  const [a, b, c, d] = parts;
+  if (a === 'relays' && b === 'inbound-candidates' && !c) return 'admin.edges.provider-call';
+  if (a === 'edges' && b && c === 'test-link' && !d) return 'admin.edges.provider-call';
+  return null;
+}
+
+/**
  * Per-actor rate-limit subject: the admin id for a cookie session, a hash of
  * the bearer token for an `fsv1_` caller, else the (hashed) client IP. The
  * token plaintext is never the subject (bucket names land in the DB).
@@ -236,8 +248,8 @@ function wrap(handler: Handler, sealedRoute: boolean) {
         admin.boundary = boundary ?? { backendServerIds: [] };
       }
     }
-    if (method === 'POST') {
-      const policyKey = throttlePolicyFor(parts);
+    if (method === 'POST' || method === 'GET') {
+      const policyKey = method === 'POST' ? throttlePolicyFor(parts) : throttlePolicyForGet(parts);
       if (policyKey) {
         const limited = await throttle(ctx, req, admin, policyKey);
         if (limited) return limited;
@@ -339,6 +351,19 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
         }),
       );
     }
+    if (b === 'inbound-candidates' && !c) {
+      // Discovery with the origin probe applied (throttled: a panel call plus sockets).
+      const serverId = query.get('backendServerId');
+      const nodeUuid = query.get('nodeUuid');
+      if (!serverId || !nodeUuid)
+        return errorJson('validation', 'backendServerId and nodeUuid are required', 400);
+      return json(
+        await ctx.runAction(internal.edgeOriginProbe.inboundCandidates, {
+          backendServerId: id<'backendServers'>(serverId),
+          nodeUuid,
+        }),
+      );
+    }
     if (b === 'by-slug' && c) {
       await assertRelayWithinBoundary(ctx, c, _admin);
       const view = await ctx.runQuery(internal.edgeAdmin.relayBySlugView, { slug: c });
@@ -399,6 +424,11 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
       // echo it back (the test-link builder reuses this).
       const b2 = await ctx.runQuery(internal.edgeVerification.binding, { edgeId: id<'edges'>(b) });
       return b2 ? json(b2) : notFound();
+    }
+    if (c === 'test-link' && !d) {
+      // The isolated test link: the candidate connection only, plus the same
+      // binding as above (throttled: fetches the credential body + the Hosts).
+      return json(await ctx.runAction(internal.edgeTestLinks.build, { edgeId: id<'edges'>(b) }));
     }
     if (!c) {
       const detail = await ctx.runQuery(internal.edgeAdmin.edgeDetail, {

@@ -1249,6 +1249,34 @@ export default defineSchema({
     qualificationRemovalPending: v.optional(v.array(v.string())),
     // The connection mode the L7 qualification credential was minted on.
     qualificationModeSlug: v.optional(v.string()),
+    // The qualification credential as a PERSISTED OPERATION
+    // (relayQualification.ensure): written BEFORE any panel call with the
+    // deterministic username the panel user is re-found by, and the binding
+    // {backendServerId, placement, modeSlug} the credential covers once stored.
+    // A credential is reused only when the requested binding equals this one.
+    qualificationMint: v.optional(
+      v.object({
+        opId: v.string(),
+        username: v.string(),
+        backendServerId: v.id('backendServers'),
+        placement: v.union(v.string(), v.null()),
+        modeSlug: v.union(v.string(), v.null()),
+        state: v.union(
+          v.literal('intended'),
+          v.literal('issued'),
+          v.literal('stored'),
+          v.literal('unresolved'),
+        ),
+        claimedAt: v.number(),
+        // Quiet by-username looks since the claim (the settle rule before a re-issue).
+        looks: v.optional(v.number()),
+      }),
+    ),
+    // The credential's own subscription (short id + panel URL): what the test
+    // link and the empty-node rehearsal fetch. Never the credential itself.
+    qualificationSubscription: v.optional(
+      v.object({ backendShortId: v.string(), subscriptionUrl: v.string() }),
+    ),
     // Stamped by every by-slug registration, changed or not (the role heartbeat).
     lastRegisteredAt: v.optional(v.number()),
     updatedAt: v.number(),
@@ -1257,6 +1285,34 @@ export default defineSchema({
     .index('by_backend_server', ['backendServerId'])
     .index('by_node', ['backendServerId', 'nodeName'])
     .index('by_enabled', ['enabled']),
+
+  // Temporary test credentials (docs/edges.md § "Publication", the test link):
+  // a durable obligation to remove a backend user FCP minted for a test. The
+  // row is written BEFORE `issueUser` (`backendUserId` absent until issuance is
+  // observed) and settled by the reconcile sweep independently of any setup
+  // run: expired or released rows go through `deleteUser` with bounded
+  // retries; a delete that keeps failing is surfaced as attention
+  // `test_key_cleanup`. Remnawave tests reuse the relay's qualification user
+  // and write no row here; Outline has no name lookup, so its temporary keys
+  // live here.
+  edgeTestCredentials: defineTable({
+    relayId: v.id('relays'),
+    backendServerId: v.id('backendServers'),
+    backend: backendId,
+    username: v.string(),
+    backendUserId: v.optional(v.string()),
+    backendShortId: v.optional(v.string()),
+    subscriptionUrl: v.optional(v.string()),
+    purpose: v.union(v.literal('rehearsal'), v.literal('test_link')),
+    expiresAt: v.number(),
+    removal: v.union(v.literal('pending'), v.literal('done'), v.literal('failed')),
+    attempts: v.number(),
+    // Set when a delete attempt failed: the sweep waits for the backoff.
+    retryAfter: v.optional(v.number()),
+    updatedAt: v.number(),
+  })
+    .index('by_relay', ['relayId'])
+    .index('by_removal_expires', ['removal', 'expiresAt']),
 
   // One LISTENER on a relay: a port the origin answers on, what it speaks,
   // the names / REALITY target the renderer needs, how the renderer finds its

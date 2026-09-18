@@ -611,6 +611,11 @@ const COPY = {
       'The listener or the address changed since you tested it, so the test no longer counts.',
     fix: 'Test the address again against its current configuration.',
   },
+  test_key_cleanup: {
+    label: 'Test key not removed',
+    explain: 'A temporary test key could not be removed from the server after several tries.',
+    fix: 'Check the server, remove the key by hand if it is still there, then retry the cleanup.',
+  },
   drift: {
     label: 'Drift',
     explain: 'What the provider reports differs from what FCP recorded for an edge.',
@@ -856,6 +861,43 @@ const REFUSAL_COPY = {
     explain:
       'This node is putting its direct addresses back, so a second workflow, a new hide and pool changes wait.',
     fix: 'Let the restore finish (the node page shows its phase), then try again.',
+  },
+  test_link_no_match: {
+    label: 'No entry for this inbound',
+    explain:
+      'The test credential receives no single connection entry for this inbound, so no test link can be built from it.',
+    fix: 'Check that the node has exactly one enabled panel Host on this inbound at its own address and port.',
+  },
+  test_link_render_failed: {
+    label: 'Test link not rendered',
+    explain: 'The candidate address could not be rendered into a connection for this inbound.',
+    fix: 'Check the listener names and the address, then fetch the test link again.',
+  },
+  use_manual_setup: {
+    label: 'Use manual setup',
+    explain: 'Outline servers with no members have no test credential path.',
+    fix: 'Use the manual setup for this server, or rehearse once it has members.',
+  },
+  choose_mode: {
+    label: 'Choose a connection mode',
+    explain: 'The node has no usable placement to mint the test credential on.',
+    fix: 'Choose the connection mode whose placement covers this node.',
+  },
+  credential_unresolved: {
+    label: 'Credential still settling',
+    explain:
+      'An earlier attempt to create the test credential may still land on the panel; FCP waits before creating another.',
+    fix: 'Try again in a couple of minutes.',
+  },
+  node_unknown: {
+    label: 'Node not in inventory',
+    explain: 'The panel inventory has no node with this identifier.',
+    fix: 'Refresh the node list, then try again.',
+  },
+  node_address_unknown: {
+    label: 'Node address unknown',
+    explain: 'The panel reports no address for this node, so its origin cannot be probed.',
+    fix: 'Set the node address on the panel, then refresh the node list.',
   },
 } as const satisfies Record<string, CodeCopy>;
 

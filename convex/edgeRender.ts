@@ -127,38 +127,52 @@ export async function publishedEdgesOf(
       listener.enabled;
     if (!eligible && !opts.includeIneligible) continue;
     if (!listener) continue; // no listener at all: nothing to render from
-    const proto = {
-      protocol: listener.protocol,
-      streamTransport: listener.streamTransport,
-      security: listener.security,
-    };
-    published.push({
-      edgeId: edge._id,
-      poolIndex: edge.poolIndex ?? i,
-      provider: edge.provider ?? 'adopted',
-      listenerId: listener._id,
-      listenerKey: listener.listenerKey,
-      matchRule: listener.matchRule,
-      proto,
-      edgePort: edge.listeners[0]?.edgePort ?? 443,
-      layer: edge.layer ?? 'l4',
-      addresses: {
-        v4: edge.addresses.v4,
-        v6: edge.addresses.v6,
-        hostname: edge.addresses.hostname,
-      },
-      serverNames: protocolUsesSni(proto)
-        ? (listener.tlsNames ?? []).map((s) => ({
-            sni: s.name,
-            status: s.status,
-            retiredAt: s.retiredAt,
-            drainUntil: s.drainUntil,
-          }))
-        : [],
-      ...(eligible ? {} : { eligible: false }),
-    });
+    published.push(toPublishedEdge(edge, listener, edge.poolIndex ?? i, eligible));
   }
   return { published, matchers };
+}
+
+/**
+ * One edge as the assignment sees it. Shared by the published-pool read above
+ * and the test-link builder (which renders a single candidate through a
+ * transient context, never the pool).
+ */
+export function toPublishedEdge(
+  edge: Doc<'edges'>,
+  listener: Doc<'relayListeners'>,
+  poolIndex: number,
+  eligible: boolean,
+): PublishedEdge {
+  const proto = {
+    protocol: listener.protocol,
+    streamTransport: listener.streamTransport,
+    security: listener.security,
+  };
+  return {
+    edgeId: edge._id,
+    poolIndex,
+    provider: edge.provider ?? 'adopted',
+    listenerId: listener._id,
+    listenerKey: listener.listenerKey,
+    matchRule: listener.matchRule,
+    proto,
+    edgePort: edge.listeners[0]?.edgePort ?? 443,
+    layer: edge.layer ?? 'l4',
+    addresses: {
+      v4: edge.addresses.v4,
+      v6: edge.addresses.v6,
+      hostname: edge.addresses.hostname,
+    },
+    serverNames: protocolUsesSni(proto)
+      ? (listener.tlsNames ?? []).map((s) => ({
+          sni: s.name,
+          status: s.status,
+          retiredAt: s.retiredAt,
+          drainUntil: s.drainUntil,
+        }))
+      : [],
+    ...(eligible ? {} : { eligible: false }),
+  };
 }
 
 /** Delivery style of a backend: Outline hands out ONE key, a panel a subscription. */

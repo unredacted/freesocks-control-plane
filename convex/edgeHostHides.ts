@@ -770,22 +770,30 @@ export const row = internalQuery({
   handler: (ctx, { rowId }) => ctx.db.get(rowId),
 });
 
+/** What one fresh look at the panel's Hosts says (the rehearsal compares two of these). */
+export interface HostObservation {
+  listingHash: string;
+  observedAt: number;
+  direct: { covered: DirectHost[]; uncovered: DirectHost[] };
+}
+
 /**
  * A fresh listing of this node's direct + FCP Hosts (with `isDisabled`),
  * hashed, for the rehearsal's observation boundary and the run's final look.
  */
 export const observe = internalAction({
   args: { relayId: v.id('relays'), nodeInboundUuids: v.optional(v.array(v.string())) },
-  handler: async (
-    ctx,
-    a,
-  ): Promise<{
-    listingHash: string;
-    observedAt: number;
-    direct: { covered: DirectHost[]; uncovered: DirectHost[] };
-  }> => {
+  handler: async (ctx, a): Promise<HostObservation> => {
     const c = await ctx.runQuery(internal.edgeHostHides.context, { relayId: a.relayId });
     if (!c) throw new ConvexError({ code: 'not_found', message: 'Relay not found' });
+    // A backend without client-facing Hosts (Outline, a manual origin) has
+    // nothing to observe: a constant listing, never a `hosts_unsupported` throw.
+    if (c.relay.hostMode === 'none')
+      return {
+        listingHash: 'none',
+        observedAt: Date.now(),
+        direct: { covered: [], uncovered: [] },
+      };
     const hosts = await listPanelHosts(ctx, c.backendServerId);
     const inbounds = nodeInbounds(c, hosts, a.nodeInboundUuids);
     const dctx = directContextOf(c, inbounds, conventionRemarks(hosts, c.nodeName));

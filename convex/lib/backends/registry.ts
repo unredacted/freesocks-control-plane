@@ -51,6 +51,7 @@ import {
   remnawaveSetHostDisabled,
   remnawaveGetNodeInventory,
   remnawaveListNodeInbounds,
+  remnawaveFindUserByUsername,
 } from './remnawave';
 import {
   outlineDelete,
@@ -139,6 +140,12 @@ export interface BackendProvider<C extends BackendConfig = BackendConfig> {
   // Optional: the inbounds one node serves (allowlisted projection; never
   // credentials or key material) for relay listener discovery.
   listNodeInbounds?(config: C, nodeUuid: string): Promise<PanelInbound[]>;
+  // Optional: re-find a user FCP created by its username (the version-neutral
+  // by-username read). The persisted mint operations (relay qualification
+  // credential, temporary test credentials) discover an issued user after a
+  // crash between the create and the store with it; null = no such user.
+  // Absent for backends without a name lookup (Outline keys have no unique name).
+  findUserByUsername?(config: C, username: string): Promise<IssuedUser | null>;
   fetchContent(
     config: C,
     backendShortId: string,
@@ -174,6 +181,7 @@ const remnawaveProvider: BackendProvider<RemnawaveServerConfig> = {
   setHostDisabled: (c, uuid, disabled) => remnawaveSetHostDisabled(c, uuid, disabled),
   getNodeInventory: (c) => remnawaveGetNodeInventory(c),
   listNodeInbounds: (c, nodeUuid) => remnawaveListNodeInbounds(c, nodeUuid),
+  findUserByUsername: (c, username) => remnawaveFindUserByUsername(c, username),
   fetchContent: (c, shortId, ua, subUrl, hwid) =>
     remnawaveFetchSubscription(c, shortId, ua, subUrl, hwid),
   health: (c) => remnawaveHealth(c),

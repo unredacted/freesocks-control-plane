@@ -679,6 +679,7 @@ const ATTENTION_RANK = [
   'pool_below_desired',
   'account_unqualified',
   'account_untested',
+  'test_key_cleanup',
   'drift',
   'restore_in_progress',
   'maintenance_frozen',
@@ -1113,6 +1114,29 @@ export const attention = internalQuery({
           since: null,
         });
       }
+    }
+    // Temporary test keys whose panel delete kept failing (edgeTestCredentials.ts).
+    const failedKeys = await ctx.db
+      .query('edgeTestCredentials')
+      .withIndex('by_removal_expires', (q) => q.eq('removal', 'failed'))
+      .take(50);
+    for (const row of failedKeys) {
+      const relay = relays.find((r) => r._id === row.relayId) ?? null;
+      items.push({
+        id: `test_key_cleanup:${row._id}`,
+        kind: 'test_key_cleanup',
+        severity: 'warning',
+        relaySlug: relay?.slug ?? null,
+        relayId: relay ? (relay._id as string) : null,
+        edgeId: null,
+        listenerKey: null,
+        accountId: null,
+        rotationId: null,
+        code: row.backendUserId ? 'backend_delete_failed' : 'issuance_unobserved',
+        facts: { purpose: row.purpose, attempts: row.attempts, credentialId: row._id as string },
+        action: 'open_relay',
+        since: iso(row.updatedAt),
+      });
     }
     const maintenance = await readMaintenance(ctx.db);
     if (maintenance.frozen) {

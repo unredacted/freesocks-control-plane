@@ -538,6 +538,37 @@ export async function remnawaveIssueUser(
   };
 }
 
+/**
+ * Re-find a user FCP created, by username (`GET /api/users/by-username/{u}`:
+ * the same path on 2.x and 3.x, the one the health probe already relies on).
+ * Returns the issued shape (the raw provider id, the short uuid, the pinned
+ * subscription URL, the VLESS uuid) or null on a 404. Anything else throws:
+ * an unreachable panel is not "no such user".
+ */
+export async function remnawaveFindUserByUsername(
+  cfg: RemnawaveConfig,
+  username: string,
+): Promise<IssuedUser | null> {
+  let user: RemnawaveUser;
+  try {
+    user = await call(cfg, {
+      method: 'GET',
+      path: `/api/users/by-username/${encodeURIComponent(username)}`,
+      schema: RemnawaveUser,
+    });
+  } catch (err) {
+    if (isRemnawaveNotFound(err)) return null;
+    throw err;
+  }
+  return {
+    backendUserId: panelUserId(user),
+    backendShortId: user.shortUuid,
+    subscriptionUrl: pinnedSubscriptionUrl(cfg, user.subscriptionUrl, user.shortUuid),
+    raw: user,
+    protocolUuid: user.vlessUuid ?? undefined,
+  };
+}
+
 async function listDevices(cfg: RemnawaveConfig, backendUserId: string): Promise<BackendDevice[]> {
   try {
     const result = await call(cfg, {

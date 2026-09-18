@@ -86,6 +86,13 @@ describe('EDGE_REFUSAL_COPY', () => {
     'server_already_bound',
     'throttled',
     'restore_in_progress',
+    'test_link_no_match',
+    'test_link_render_failed',
+    'use_manual_setup',
+    'choose_mode',
+    'credential_unresolved',
+    'node_unknown',
+    'node_address_unknown',
   ];
 
   test('every refusal the pages meet is worded, and is part of the shared table', () => {

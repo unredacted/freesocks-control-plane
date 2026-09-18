@@ -46,7 +46,12 @@ import {
   RelayBySlugResponse,
   RelayEndpointsResponse,
 } from '../src/shared/contracts/edges';
-import { isRegistrationRoute, scopeFor, throttlePolicyFor } from './httpEdges';
+import {
+  isRegistrationRoute,
+  scopeFor,
+  throttlePolicyFor,
+  throttlePolicyForGet,
+} from './httpEdges';
 import { __setEdgeProviderForTests } from './lib/edges/providers/registry';
 import { qualificationBinding } from './lib/edges/frontCheck/binding';
 import type { AdoptionInspection } from './lib/edges/providers/types';
@@ -416,6 +421,20 @@ describe('relay admin routes', () => {
       ['probes', 'targets'],
     ]) {
       expect(throttlePolicyFor(p)).toBeNull();
+    }
+    // The two GETs that reach a panel or open sockets are throttled under the same policy.
+    expect(throttlePolicyForGet(['relays', 'inbound-candidates'])).toBe(P);
+    expect(throttlePolicyForGet(['edges', 'e1', 'test-link'])).toBe(P);
+    for (const p of [
+      ['relays'],
+      ['relays', 'node-candidates'],
+      ['relays', 'lookup'],
+      ['edges', 'e1'],
+      ['edges', 'e1', 'verification-binding'],
+      ['probes'],
+      ['attention'],
+    ]) {
+      expect(throttlePolicyForGet(p)).toBeNull();
     }
   });
 
