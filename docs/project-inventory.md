@@ -342,10 +342,13 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   `PUT …/edges/relays/by-slug/{slug}` carrying origin + listeners (+ `GET`, `DELETE
 ?disposition=`), the response carrying `publishedEndpoints`, `connectionPlan` and `hostsPlan`
   for the node role. **The admin CMS section** (own lazy chunk,
-  `src/client/routes/admin/edges/`, nav group Edges) is an overview dashboard (fleet tiles,
-  server-ranked attention list, readiness), a **guided setup** driven entirely by the
-  relay-scoped `setup-status` endpoint, per-relay pages (edges, listeners, rotations, probes,
-  timeline, quarantine resolver), providers (+ usage), templates, probes and settings, on top
+  `src/client/routes/admin/edges/`, one sidebar leaf under Servers with an in-page header
+  `Nodes | Providers | Advanced`) has a **simple face** in plain words (the nodes home with
+  "Protect a node" = the guided setup runs, a per-node page, provider cards; `simple/`) and,
+  under Advanced, the technical pages: the fleet dashboard (fleet tiles, server-ranked
+  attention list, readiness), the **manual setup** driven entirely by the relay-scoped
+  `setup-status` endpoint, per-relay pages (edges, listeners, rotations, probes, timeline,
+  quarantine resolver), the per-account page, templates, probes and settings, on top
   of the operator endpoints `setup-status`, `test-provision` (first edge from a tested but
   unqualified account), `preflight` (read-only dry run), `attention`, `timeline`, `quarantine`,
   `providers/usage`, `adopt-host`, `maintenance` and `delivery-bindings`. Member side: the
