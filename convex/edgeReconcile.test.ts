@@ -13,6 +13,17 @@ import { publishedEdgesOf } from './edgeRender';
 import { qualificationBinding } from './lib/edges/frontCheck/binding';
 import type { Id } from './_generated/dataModel';
 import { z } from 'zod';
+import {
+  adoptL4Edge,
+  createAccount,
+  FIXTURE_CONFIG_PROFILE,
+  insertPanelServer,
+  realityListener,
+  registerRelay,
+  shadowsocksListener,
+  wsListener,
+  type ListenerSpecFixture,
+} from './lib/edges/testing/fixtures';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -22,13 +33,43 @@ afterEach(() => {
 });
 
 const ORIGIN = '203.0.113.10';
+const INBOUND_U = '22222222-2222-4222-8222-222222222222';
+const INBOUND_G = '33333333-3333-4333-8333-333333333333';
+const HOST_UUID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 
-/** Fake UpCloud with a mutable LB table; records DELETEs. */
-function fakeUpcloud(initial: Array<{ uuid: string; name: string }>) {
+interface PanelHost {
+  uuid: string;
+  remark: string;
+  address: string;
+  port: number;
+  sni?: string | null;
+  inbound: { configProfileUuid: string; configProfileInboundUuid: string } | null;
+}
+
+/**
+ * Fake UpCloud with a mutable LB table; records DELETEs. The panel half keeps a
+ * Host table too (GET lists, DELETE removes) so the Host cleanup is observable.
+ */
+function fakeUpcloud(
+  initial: Array<{ uuid: string; name: string }>,
+  opts: { panelHosts?: PanelHost[] } = {},
+) {
   const lbs = new Map(initial.map((l) => [l.uuid, { ...l, operational_state: 'running' }]));
   const deletes: string[] = [];
+  const panelHosts = opts.panelHosts ?? [];
+  const panelCalls: string[] = [];
   const stub = mockFetch((c) => {
-    if (new URL(c.url).hostname === 'panel.example') return jsonRes({ response: [] });
+    if (new URL(c.url).hostname === 'panel.example') {
+      panelCalls.push(`${c.method} ${c.path}`);
+      if (c.path === '/api/hosts' && c.method === 'GET') return jsonRes({ response: panelHosts });
+      const del = c.path.match(/^\/api\/hosts\/([^/]+)$/);
+      if (del && c.method === 'DELETE') {
+        const i = panelHosts.findIndex((h) => h.uuid === del[1]);
+        if (i >= 0) panelHosts.splice(i, 1);
+        return new Response(null, { status: 204 });
+      }
+      return jsonRes({ response: [] });
+    }
     if (c.path === '/1.3/load-balancer' && c.method === 'GET') return jsonRes([...lbs.values()]);
     const one = c.path.match(/^\/1\.3\/load-balancer\/([^/]+)$/);
     if (one && c.method === 'GET') {
@@ -47,53 +88,67 @@ function fakeUpcloud(initial: Array<{ uuid: string; name: string }>) {
       return jsonRes({ ip_addresses: { ip_address: [] } });
     throw new Error(`unexpected ${c.method} ${c.url}`);
   });
-  return { stub, lbs, deletes };
+  return { stub, lbs, deletes, panelHosts, panelCalls };
+}
+
+/** The REALITY listener `u`, scoped to the UpCloud network (the old "profile U"). */
+function listenerU(over: Partial<ListenerSpecFixture> = {}): ListenerSpecFixture {
+  return realityListener({
+    listenerKey: 'u',
+    tlsNames: ['a.example'],
+    providerScope: { provider: 'upcloud' },
+    panelBinding: {
+      inboundTag: 'VLESS_RELAY_U',
+      configProfileUuid: FIXTURE_CONFIG_PROFILE,
+      configProfileInboundUuid: INBOUND_U,
+    },
+    ...over,
+  });
+}
+
+/** The REALITY listener `g` on 8443, scoped to the Gcore network (the old "profile G"). */
+function listenerG(): ListenerSpecFixture {
+  return realityListener({
+    listenerKey: 'g',
+    originPort: 8443,
+    tlsNames: ['g.example'],
+    realityTarget: { address: 'target-g.example', port: 443 },
+    providerScope: { provider: 'gcore' },
+    panelBinding: {
+      inboundTag: 'VLESS_RELAY_G',
+      configProfileUuid: FIXTURE_CONFIG_PROFILE,
+      configProfileInboundUuid: INBOUND_G,
+    },
+  });
 }
 
 async function seed() {
   const t = convexTest(schema, modules);
-  await t.run((ctx) =>
-    ctx.db.insert('backendServers', {
-      backend: 'remnawave',
-      name: 'panel-a',
-      slug: 'panel-a',
-      config: { type: 'remnawave', baseUrl: 'https://panel.example', apiToken: 'tok' },
-      isActive: true,
-      priority: 0,
-      keyCount: 0,
-      updatedAt: Date.now(),
-    }),
-  );
-  const { id: accountId } = await t.mutation(internal.edgeProviderAccounts.create, {
+  await insertPanelServer(t);
+  const accountId = await createAccount(t, {
     provider: 'upcloud',
     name: 'acct-u',
-    settings: { zone: 'de-fra1' },
-    credentials: { token: 'ucl_x' },
+    qualified: true,
   });
-  await t.mutation(internal.edgeProviderAccounts.setQualified, { id: accountId, qualified: true });
-  await t.mutation(internal.protocolProfiles.create, {
-    slug: 'prof-u',
-    name: 'Profile U',
-    provider: 'upcloud',
-    targetAddress: 'target.example',
-    serverNames: ['a.example'],
+  const { relayId, listenerId } = await registerRelay(t, { listeners: [listenerU()] });
+  return { t, accountId, relayId, listenerId };
+}
+
+/** An admin-added Gcore-scoped listener `g` on the seeded relay, plus a Gcore account. */
+async function gcoreListener(
+  s: Awaited<ReturnType<typeof seed>>,
+  opts: { qualified?: boolean } = {},
+) {
+  const accountId = await createAccount(s.t, {
+    provider: 'gcore',
+    name: 'acct-g',
+    qualified: opts.qualified,
   });
-  const { id: relayId } = await t.mutation(internal.relays.upsertBySlug, {
-    slug: 'node-one',
-    backendServerSlug: 'panel-a',
-    nodeHostname: 'node-one',
-    originAddress: ORIGIN,
+  const { id: listenerId } = await s.t.mutation(internal.relayListeners.upsert, {
+    relayId: s.relayId,
+    spec: listenerG() as never,
   });
-  const { id: slotId } = await t.mutation(internal.relaySlots.upsert, {
-    relayId,
-    slotKey: 'u',
-    profileSlug: 'prof-u',
-    inboundTag: 'VLESS_RELAY_U',
-    configProfileUuid: '11111111-1111-4111-8111-111111111111',
-    configProfileInboundUuid: '22222222-2222-4222-8222-222222222222',
-    originPort: 443,
-  });
-  return { t, accountId, relayId, slotId };
+  return { accountId, listenerId };
 }
 
 /** A managed edge whose single `lb` step is done with one lb resource, in the given status. */
@@ -101,10 +156,11 @@ async function managedEdge(
   s: Awaited<ReturnType<typeof seed>>,
   lbId: string,
   patch: Record<string, unknown>,
+  listenerId: Id<'relayListeners'> = s.listenerId,
 ) {
   const { id } = await s.t.mutation(internal.edges.insertPlanned, {
     relayId: s.relayId,
-    slotId: s.slotId,
+    listenerId,
     accountId: s.accountId,
     templateHash: 'h',
     listeners: [{ edgePort: 443, originAddress: ORIGIN, originPort: 443 }],
@@ -140,31 +196,10 @@ async function gcoreDestroyingEdge(
   deleteState: 'present' | 'delete_requested',
   opts: { kind?: string; destroyAttempts?: number } = {},
 ) {
-  const { id: accountId } = await s.t.mutation(internal.edgeProviderAccounts.create, {
-    provider: 'gcore',
-    name: 'acct-g',
-    settings: { projectId: 11, regionId: 22 },
-    credentials: { apiKey: 'k' },
-  });
-  await s.t.mutation(internal.protocolProfiles.create, {
-    slug: 'prof-g',
-    name: 'Profile G',
-    provider: 'gcore',
-    targetAddress: 'target-g.example',
-    serverNames: ['g.example'],
-  });
-  const { id: slotId } = await s.t.mutation(internal.relaySlots.upsert, {
-    relayId: s.relayId,
-    slotKey: 'g',
-    profileSlug: 'prof-g',
-    inboundTag: 'VLESS_RELAY_G',
-    configProfileUuid: '11111111-1111-4111-8111-111111111111',
-    configProfileInboundUuid: '33333333-3333-4333-8333-333333333333',
-    originPort: 8443,
-  });
+  const { accountId, listenerId } = await gcoreListener(s);
   const { id: edgeId } = await s.t.mutation(internal.edges.insertPlanned, {
     relayId: s.relayId,
-    slotId,
+    listenerId,
     accountId,
     templateHash: 'h',
     listeners: [{ edgePort: 443, originAddress: ORIGIN, originPort: 8443 }],
@@ -250,13 +285,14 @@ describe('edgeReconcile', () => {
     fakeUpcloud([]); // lb-1 does not exist any more
     const s = await seed();
     const edgeId = await managedEdge(s, 'lb-1', { lastHealthAt: undefined });
-    // Pool index 0 is the template Host's index: a direct publish there is the
-    // rotation machine's job on a Host-managed relay, and these tests are about
-    // the reconcile loop, not the flip.
-    await s.t.mutation(internal.relays.update, { id: s.relayId, hostManaged: false });
+    // The listener's template index is the rotation machine's job on a relay
+    // whose Hosts FCP owns; these tests are about the reconcile loop, not the
+    // flip, so the operator keeps the Hosts.
+    await s.t.mutation(internal.relays.update, { id: s.relayId, hostMode: 'operator' });
     await s.t.mutation(internal.relays.publishEdge, { relayId: s.relayId, edgeId });
     const before = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
     expect(before.publishedEdgeIds).toEqual([edgeId]);
+    expect((await s.t.run((ctx) => ctx.db.get(s.listenerId)))!.templateEdgeId).toBe(edgeId);
     // First gone: counted, nothing else moves (an auth-shaped 404 / a blip must not drop the pool).
     const r1 = await run(s.t);
     expect(r1.described).toBe(1);
@@ -286,6 +322,8 @@ describe('edgeReconcile', () => {
     expect(edge.status).toBe('destroyed');
     expect(edge.publication).toBe('unpublished');
     expect(edge.goneObservations).toBeUndefined();
+    // The listener lost its template edge with the drop.
+    expect((await s.t.run((ctx) => ctx.db.get(s.listenerId)))!.templateEdgeId).toBeUndefined();
     const audit = await s.t.run((ctx) => ctx.db.query('auditLog').collect());
     expect(audit.some((a) => a.action === 'edge.drift')).toBe(true);
     expect(audit.some((a) => a.action === 'edge.unpublished')).toBe(true);
@@ -295,10 +333,7 @@ describe('edgeReconcile', () => {
     const world = fakeUpcloud([]);
     const s = await seed();
     const edgeId = await managedEdge(s, 'lb-1', { lastHealthAt: undefined });
-    // Pool index 0 is the template Host's index: a direct publish there is the
-    // rotation machine's job on a Host-managed relay, and these tests are about
-    // the reconcile loop, not the flip.
-    await s.t.mutation(internal.relays.update, { id: s.relayId, hostManaged: false });
+    await s.t.mutation(internal.relays.update, { id: s.relayId, hostMode: 'operator' });
     await s.t.mutation(internal.relays.publishEdge, { relayId: s.relayId, edgeId });
     const rotationId = await s.t.run((ctx) =>
       ctx.db.insert('edgeRotations', {
@@ -339,7 +374,7 @@ describe('edgeReconcile', () => {
     const s = await seed();
     const { id: edgeId } = await s.t.mutation(internal.edges.insertPlanned, {
       relayId: s.relayId,
-      slotId: s.slotId,
+      listenerId: s.listenerId,
       accountId: s.accountId,
       templateHash: 'h',
       listeners: [{ edgePort: 443, originAddress: ORIGIN, originPort: 443 }],
@@ -363,9 +398,11 @@ describe('edgeReconcile', () => {
     expect(edge.steps[0].state).toBe('done');
     expect(edge.status).toBe('failed');
     // Only the LIST (discovery) was called; never a POST.
-    expect(world.stub.calls.map((c) => `${c.method} ${c.path}`)).toEqual([
-      'GET /1.3/load-balancer',
-    ]);
+    expect(
+      world.stub.calls
+        .filter((c) => c.path.startsWith('/1.3/'))
+        .map((c) => `${c.method} ${c.path}`),
+    ).toEqual(['GET /1.3/load-balancer']);
     const r2 = await run(s.t);
     expect(r2.destroying).toBe(1);
     const r3 = await run(s.t);
@@ -380,7 +417,7 @@ describe('edgeReconcile', () => {
     const s = await seed();
     const { id: edgeId, name } = await s.t.mutation(internal.edges.insertPlanned, {
       relayId: s.relayId,
-      slotId: s.slotId,
+      listenerId: s.listenerId,
       accountId: s.accountId,
       templateHash: 'h',
       listeners: [{ edgePort: 443, originAddress: ORIGIN, originPort: 443 }],
@@ -510,12 +547,10 @@ describe('edgeReconcile', () => {
     expect(rot.nextStepAt).toBeGreaterThan(Date.now() - 1000);
   });
 
-  test('pool upkeep: a publishable standby fills a free non-zero index directly (only with edge.enabled)', async () => {
+  test('pool upkeep: a publishable standby of a listener that already has a template edge fills a free index directly (only with edge.enabled)', async () => {
     fakeUpcloud([{ uuid: 'lb-1', name: 'x' }]);
     const s = await seed();
-    await s.t.mutation(internal.relays.adoptEdge, {
-      relayId: s.relayId,
-      slotId: s.slotId,
+    const { edgeId: adopted } = await adoptL4Edge(s.t, s.relayId, s.listenerId, {
       ipv4: '198.51.100.1',
       publish: true,
     });
@@ -530,9 +565,11 @@ describe('edgeReconcile', () => {
     const origin = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
     expect(origin.publishedEdgeIds[1]).toBe(standby);
     expect(origin.activeRotationId).toBeUndefined();
+    // The listener's template stays its lower-index edge.
+    expect((await s.t.run((ctx) => ctx.db.get(s.listenerId)))!.templateEdgeId).toBe(adopted);
   });
 
-  test('pool upkeep: index 0 on a Host-managed origin goes through a publish rotation, not a direct write', async () => {
+  test('pool upkeep: a standby that would become its LISTENER’s template edge goes through a publish rotation, not a direct write', async () => {
     fakeUpcloud([{ uuid: 'lb-1', name: 'x' }]);
     const s = await seed();
     await s.t.run((ctx) => upsertSettingRow(ctx, 'edge.enabled', 'true'));
@@ -545,6 +582,7 @@ describe('edgeReconcile', () => {
     expect(origin.publishedEdgeIds).toEqual([]);
     const rot = (await s.t.query(internal.edgeRotations.get, { id: origin.activeRotationId! }))!;
     expect(rot.kind).toBe('publish');
+    expect(rot.listenerId).toBe(s.listenerId);
     // Started through `startRotation`: audited as a publish with the rotation id.
     const audit = await s.t.run((ctx) => ctx.db.query('auditLog').collect());
     expect(audit.find((a) => a.action === 'admin.edge.publish')?.payload).toMatchObject({
@@ -556,26 +594,65 @@ describe('edgeReconcile', () => {
     expect(r2.started + r2.published).toBe(0);
   });
 
+  test('pool upkeep: the template rule is PER LISTENER: a free non-zero index still needs the rotation when the standby’s listener has no template yet', async () => {
+    fakeUpcloud([{ uuid: 'lb-1', name: 'x' }]);
+    const t = convexTest(schema, modules);
+    await insertPanelServer(t);
+    const accountId = await createAccount(t, {
+      provider: 'upcloud',
+      name: 'acct-u',
+      qualified: true,
+    });
+    const { relayId, listenerIds } = await registerRelay(t, {
+      listeners: [listenerU(), shadowsocksListener()],
+    });
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.enabled', 'true'));
+    // `u` holds index 0 (its template); `s` has nothing published yet.
+    await adoptL4Edge(t, relayId, listenerIds.u, { ipv4: '198.51.100.1', publish: true });
+    const s = { t, accountId, relayId, listenerId: listenerIds.u };
+    const standbyS = await managedEdge(s, 'lb-1', {}, listenerIds.s);
+    const r = await run(t);
+    // Index 1 is free, but this edge becomes `s`'s template: the flip is owed.
+    expect(r.published).toBe(0);
+    expect(r.started).toBe(1);
+    const origin = (await t.query(internal.relays.get, { id: relayId }))!;
+    const rot = (await t.query(internal.edgeRotations.get, { id: origin.activeRotationId! }))!;
+    expect(rot).toMatchObject({ kind: 'publish', toEdgeId: standbyS, listenerId: listenerIds.s });
+  });
+
+  test('pool upkeep: with the operator managing the Hosts, even the template index is a direct publish', async () => {
+    fakeUpcloud([{ uuid: 'lb-1', name: 'x' }]);
+    const s = await seed();
+    await s.t.run((ctx) => upsertSettingRow(ctx, 'edge.enabled', 'true'));
+    await s.t.mutation(internal.relays.update, { id: s.relayId, hostMode: 'operator' });
+    const standby = await managedEdge(s, 'lb-1', {});
+    const r = await run(s.t);
+    expect(r.published).toBe(1);
+    expect(r.started).toBe(0);
+    const origin = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
+    expect(origin.publishedEdgeIds).toEqual([standby]);
+    expect(origin.activeRotationId).toBeUndefined();
+    expect((await s.t.run((ctx) => ctx.db.get(s.listenerId)))!.templateEdgeId).toBe(standby);
+  });
+
   test('pool upkeep: autoProvisionToDesired starts at most maxReconcileStartsPerTick provisions', async () => {
     fakeUpcloud([]);
     const s = await seed();
     await s.t.run((ctx) => upsertSettingRow(ctx, 'edge.enabled', 'true'));
     await s.t.run((ctx) => upsertSettingRow(ctx, 'edge.autoProvisionToDesired', 'true'));
-    await s.t.mutation(internal.relays.upsertBySlug, {
+    await registerRelay(s.t, {
       slug: 'node-two',
-      backendServerSlug: 'panel-a',
-      nodeHostname: 'node-two',
+      nodeName: 'node-two',
       originAddress: '203.0.113.11',
-    });
-    const two = (await s.t.query(internal.relays.getBySlug, { slug: 'node-two' }))!;
-    await s.t.mutation(internal.relaySlots.upsert, {
-      relayId: two._id,
-      slotKey: 'u',
-      profileSlug: 'prof-u',
-      inboundTag: 'VLESS_RELAY_U',
-      configProfileUuid: '11111111-1111-4111-8111-111111111111',
-      configProfileInboundUuid: '33333333-3333-4333-8333-333333333333',
-      originPort: 443,
+      listeners: [
+        listenerU({
+          panelBinding: {
+            inboundTag: 'VLESS_RELAY_U',
+            configProfileUuid: FIXTURE_CONFIG_PROFILE,
+            configProfileInboundUuid: INBOUND_G,
+          },
+        }),
+      ],
     });
     const r = await run(s.t);
     expect(r.started).toBe(1);
@@ -593,19 +670,63 @@ describe('edgeReconcile', () => {
     expect(r2.started).toBe(0);
   });
 
-  test('deleting origin is finalized once nothing managed remains', async () => {
+  test('maintenance: while frozen, upkeep admits nothing (no publish, no provision) but deletes still finish', async () => {
+    fakeUpcloud([{ uuid: 'lb-1', name: 'x' }]);
+    const s = await seed();
+    await s.t.run((ctx) => upsertSettingRow(ctx, 'edge.enabled', 'true'));
+    await s.t.run((ctx) => upsertSettingRow(ctx, 'edge.autoProvisionToDesired', 'true'));
+    await adoptL4Edge(s.t, s.relayId, s.listenerId, { ipv4: '198.51.100.1', publish: true });
+    const standby = await managedEdge(s, 'lb-1', {});
+    // A second relay already marked for deletion, with nothing left to tear down.
+    const { relayId: doomed } = await registerRelay(s.t, {
+      slug: 'node-two',
+      nodeName: 'node-two',
+      originAddress: '203.0.113.11',
+      listeners: [
+        listenerU({
+          panelBinding: {
+            inboundTag: 'VLESS_RELAY_U',
+            configProfileUuid: FIXTURE_CONFIG_PROFILE,
+            configProfileInboundUuid: INBOUND_G,
+          },
+        }),
+      ],
+    });
+    await s.t.mutation(internal.relays.requestDelete, {
+      id: doomed,
+      disposition: 'restore-direct',
+    });
+    await s.t.mutation(internal.edgeMaintenance.freeze, { reason: 'test' });
+    const frozen = await run(s.t);
+    expect(frozen.published + frozen.started).toBe(0);
+    expect(frozen.finalizedDeletes).toBe(1);
+    expect(await s.t.query(internal.relays.get, { id: doomed })).toBeNull();
+    let origin = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
+    expect(origin.publishedEdgeIds).toHaveLength(1);
+    expect(origin.activeRotationId).toBeUndefined();
+    // Thawed: the very next tick publishes the standby.
+    await s.t.mutation(internal.edgeMaintenance.thaw, {});
+    const thawed = await run(s.t);
+    expect(thawed.published).toBe(1);
+    origin = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
+    expect(origin.publishedEdgeIds[1]).toBe(standby);
+  });
+
+  test('deleting origin is finalized once nothing managed remains and no FCP Host is left', async () => {
     fakeUpcloud([]);
     const s = await seed();
-    await s.t.mutation(internal.relays.adoptEdge, {
-      relayId: s.relayId,
-      slotId: s.slotId,
-      ipv4: '198.51.100.1',
-      publish: true,
+    await adoptL4Edge(s.t, s.relayId, s.listenerId, { ipv4: '198.51.100.1', publish: true });
+    await expect(s.t.mutation(internal.relays.requestDelete, { id: s.relayId })).rejects.toThrow(
+      /delivery_disposition_required/,
+    );
+    await s.t.mutation(internal.relays.requestDelete, {
+      id: s.relayId,
+      disposition: 'restore-direct',
     });
-    await s.t.mutation(internal.relays.requestDelete, { id: s.relayId });
     const r = await run(s.t);
     expect(r.finalizedDeletes).toBe(1);
     expect(await s.t.query(internal.relays.get, { id: s.relayId })).toBeNull();
+    expect(await s.t.run((ctx) => ctx.db.get(s.listenerId))).toBeNull();
   });
 
   test('the cron stamps a heartbeat outcome', async () => {
@@ -627,35 +748,10 @@ describe('edgeReconcile', () => {
       throw new Error(`unexpected ${c.method} ${c.url}`);
     });
     const s = await seed();
-    const { id: accountId } = await s.t.mutation(internal.edgeProviderAccounts.create, {
-      provider: 'gcore',
-      name: 'acct-g',
-      settings: { projectId: 11, regionId: 22 },
-      credentials: { apiKey: 'k' },
-    });
-    await s.t.mutation(internal.edgeProviderAccounts.setQualified, {
-      id: accountId,
-      qualified: true,
-    });
-    await s.t.mutation(internal.protocolProfiles.create, {
-      slug: 'prof-g',
-      name: 'Profile G',
-      provider: 'gcore',
-      targetAddress: 'target-g.example',
-      serverNames: ['g.example'],
-    });
-    const { id: slotId } = await s.t.mutation(internal.relaySlots.upsert, {
-      relayId: s.relayId,
-      slotKey: 'g',
-      profileSlug: 'prof-g',
-      inboundTag: 'VLESS_RELAY_G',
-      configProfileUuid: '11111111-1111-4111-8111-111111111111',
-      configProfileInboundUuid: '33333333-3333-4333-8333-333333333333',
-      originPort: 8443,
-    });
+    const { accountId, listenerId } = await gcoreListener(s, { qualified: true });
     const { id: edgeId } = await s.t.mutation(internal.edges.insertPlanned, {
       relayId: s.relayId,
-      slotId,
+      listenerId,
       accountId,
       templateHash: 'h',
       listeners: [{ edgePort: 443, originAddress: ORIGIN, originPort: 8443 }],
@@ -789,53 +885,7 @@ describe('edgeReconcile', () => {
       throw new Error(`unexpected ${c.method} ${c.url}`);
     });
     const s = await seed();
-    const { id: accountId } = await s.t.mutation(internal.edgeProviderAccounts.create, {
-      provider: 'gcore',
-      name: 'acct-g',
-      settings: { projectId: 11, regionId: 22 },
-      credentials: { apiKey: 'k' },
-    });
-    await s.t.mutation(internal.protocolProfiles.create, {
-      slug: 'prof-g',
-      name: 'Profile G',
-      provider: 'gcore',
-      targetAddress: 'target-g.example',
-      serverNames: ['g.example'],
-    });
-    const { id: slotId } = await s.t.mutation(internal.relaySlots.upsert, {
-      relayId: s.relayId,
-      slotKey: 'g',
-      profileSlug: 'prof-g',
-      inboundTag: 'VLESS_RELAY_G',
-      configProfileUuid: '11111111-1111-4111-8111-111111111111',
-      configProfileInboundUuid: '33333333-3333-4333-8333-333333333333',
-      originPort: 8443,
-    });
-    const { id: edgeId } = await s.t.mutation(internal.edges.insertPlanned, {
-      relayId: s.relayId,
-      slotId,
-      accountId,
-      templateHash: 'h',
-      listeners: [{ edgePort: 443, originAddress: ORIGIN, originPort: 8443 }],
-      steps: [{ id: 'lb', kind: 'create_lb', resourceName: 'x', discoverability: 'by_name' }],
-    });
-    await s.t.run(async (ctx) => {
-      const e = (await ctx.db.get(edgeId))!;
-      await ctx.db.patch(edgeId, {
-        steps: e.steps.map((st) => ({ ...st, state: 'done' as const })),
-        resources: [
-          {
-            stepId: 'lb',
-            kind: 'lb',
-            resourceId: 'lb-g',
-            ownership: 'created' as const,
-            deleteState: 'delete_requested' as const,
-          },
-        ],
-        status: 'destroying',
-        publication: 'unpublished',
-      });
-    });
+    const edgeId = await gcoreDestroyingEdge(s, 'delete_requested');
     for (let i = 1; i <= MAX_CONFIRM_ATTEMPTS; i++) {
       await run(s.t);
       const e = (await s.t.query(internal.edges.get, { id: edgeId }))!;
@@ -851,6 +901,7 @@ describe('edgeReconcile', () => {
     expect(e.resources[0].deleteState).toBe('delete_requested');
     expect(e.status).toBe('destroying');
   });
+
   test('a read-back that is NOT deleting (still_present) sends the resource back to present and the delete is re-issued', async () => {
     // Gcore: the resource is `delete_requested` (a thrown runDestroy earlier) but
     // the LB reads back ACTIVE → the delete never landed. Confirming would wait
@@ -938,14 +989,131 @@ describe('edgeReconcile', () => {
   });
 });
 
+describe('edgeReconcile: panel Host operations run every tick', () => {
+  const presentHost = (ownership: 'fcp' | 'adopted' = 'fcp') => ({
+    state: 'present' as const,
+    uuid: HOST_UUID,
+    ownership,
+  });
+  const panelHost = (): PanelHost => ({
+    uuid: HOST_UUID,
+    remark: 'node-one-relay-u',
+    address: '198.51.100.1',
+    port: 443,
+    sni: 'a.example',
+    inbound: { configProfileUuid: FIXTURE_CONFIG_PROFILE, configProfileInboundUuid: INBOUND_U },
+  });
+
+  test('nothing pending: the pass neither calls the panel nor errors', async () => {
+    const world = fakeUpcloud([], { panelHosts: [panelHost()] });
+    const s = await seed();
+    await s.t.run((ctx) =>
+      ctx.db.patch(s.listenerId, { host: presentHost(), updatedAt: Date.now() }),
+    );
+    const r = await run(s.t);
+    expect(r.errors).toBe(0);
+    expect(world.panelCalls).toEqual([]);
+    expect(world.panelHosts).toHaveLength(1);
+  });
+
+  test('a retired listener’s FCP-owned Host is deleted, confirmed by the read-back, and the relay delete can then finish', async () => {
+    const world = fakeUpcloud([], { panelHosts: [panelHost()] });
+    const s = await seed();
+    // The role dropped the listener from its body (pruned = retired) while FCP
+    // still owned its Host.
+    await s.t.run((ctx) =>
+      ctx.db.patch(s.listenerId, {
+        host: presentHost(),
+        retired: true,
+        deployed: false,
+        updatedAt: Date.now(),
+      }),
+    );
+    const r = await run(s.t);
+    expect(r.errors).toBe(0);
+    expect(world.panelCalls).toEqual([`DELETE /api/hosts/${HOST_UUID}`, 'GET /api/hosts']);
+    expect(world.panelHosts).toEqual([]);
+    expect((await s.t.run((ctx) => ctx.db.get(s.listenerId)))!.host).toEqual({ state: 'absent' });
+    const audit = await s.t.run((ctx) => ctx.db.query('auditLog').collect());
+    expect(audit.find((a) => a.action === 'relay.host.deleted')?.payload).toMatchObject({
+      relaySlug: 'node-one',
+      listenerKey: 'u',
+    });
+  });
+
+  test('a deleting relay waits on its FCP Host: the tick removes the Host first, the row goes on the next', async () => {
+    const world = fakeUpcloud([], { panelHosts: [panelHost()] });
+    const s = await seed();
+    await s.t.run((ctx) =>
+      ctx.db.patch(s.listenerId, { host: presentHost(), updatedAt: Date.now() }),
+    );
+    await s.t.mutation(internal.relays.requestDelete, {
+      id: s.relayId,
+      disposition: 'keep-dark',
+    });
+    // Before the Host is gone the finalize refuses (hosts), and the pass runs
+    // the Host cleanup before it tries.
+    expect(await s.t.mutation(internal.relays.finalizeDelete, { id: s.relayId })).toEqual({
+      removed: false,
+      waitingOn: 'hosts',
+    });
+    const r = await run(s.t);
+    expect(world.panelHosts).toEqual([]);
+    // Same tick: the Host cleanup (step 4b) ran BEFORE the origin walk (step 6).
+    expect(r.finalizedDeletes).toBe(1);
+    expect(await s.t.query(internal.relays.get, { id: s.relayId })).toBeNull();
+  });
+
+  test('an adopted Host on a deleting relay is released, never deleted', async () => {
+    const world = fakeUpcloud([], { panelHosts: [panelHost()] });
+    const s = await seed();
+    await s.t.run((ctx) =>
+      ctx.db.patch(s.listenerId, { host: presentHost('adopted'), updatedAt: Date.now() }),
+    );
+    await s.t.mutation(internal.relays.requestDelete, {
+      id: s.relayId,
+      disposition: 'keep-dark',
+    });
+    const r = await run(s.t);
+    expect(r.finalizedDeletes).toBe(1);
+    expect(world.panelCalls.filter((c) => c.startsWith('DELETE'))).toEqual([]);
+    expect(world.panelHosts).toHaveLength(1);
+  });
+
+  test('an EXPIRED unresolved create gets a discovery look each tick until it settles', async () => {
+    vi.useFakeTimers({ now: 1_800_000_000_000 });
+    const world = fakeUpcloud([], { panelHosts: [] });
+    const s = await seed();
+    const claim = await s.t.mutation(internal.hostOps.claimCreate, {
+      listenerId: s.listenerId,
+      target: { address: '198.51.100.1', port: 443, sni: 'a.example', host: null },
+    });
+    if (!claim.claimed) throw new Error('unreachable');
+    await s.t.mutation(internal.hostOps.markUnresolved, {
+      listenerId: s.listenerId,
+      opId: claim.opId,
+    });
+    // Still inside the op's TTL: no look.
+    await run(s.t);
+    expect(world.panelCalls).toEqual([]);
+    // Expired: a look; the panel holds the Host after all → present, owned by FCP.
+    vi.setSystemTime(1_800_000_000_000 + 61_000);
+    world.panelHosts.push(panelHost());
+    await run(s.t);
+    expect(world.panelCalls).toEqual(['GET /api/hosts']);
+    const l = (await s.t.run((ctx) => ctx.db.get(s.listenerId)))!;
+    expect(l.host).toMatchObject({ state: 'present', uuid: HOST_UUID, ownership: 'fcp' });
+    expect(l.host!.op).toBeUndefined();
+    // Settled: nothing more to look at.
+    await run(s.t);
+    expect(world.panelCalls).toEqual(['GET /api/hosts']);
+  });
+});
+
 describe('edgeReconcile: observe-only edges', () => {
   /** An adopted, unmanaged edge in the given state. */
   async function adopted(s: Awaited<ReturnType<typeof seed>>, patch: Record<string, unknown>) {
-    const { edgeId } = await s.t.mutation(internal.relays.adoptEdge, {
-      relayId: s.relayId,
-      slotId: s.slotId,
-      ipv4: '198.51.100.60',
-    });
+    const { edgeId } = await adoptL4Edge(s.t, s.relayId, s.listenerId, { ipv4: '198.51.100.60' });
     await s.t.run((ctx) => ctx.db.patch(edgeId, patch));
     return edgeId;
   }
@@ -1038,43 +1206,25 @@ describe('edgeReconcile: tearing a hostname off a SHARED resource', () => {
   /** A destroying L7 edge whose ledger holds a shared service + the children FCP owns. */
   async function sharedEdge() {
     const t = convexTest(schema, modules);
-    await t.run((ctx) =>
-      ctx.db.insert('backendServers', {
-        backend: 'remnawave',
-        name: 'panel-a',
-        slug: 'panel-a',
-        config: { type: 'remnawave', baseUrl: 'https://panel.example', apiToken: 'tok' },
-        isActive: true,
-        priority: 0,
-        keyCount: 0,
-        updatedAt: Date.now(),
-      }),
-    );
+    await insertPanelServer(t);
     const { id: accountId } = await t.mutation(internal.edgeProviderAccounts.create, {
       provider: 'cloudflare',
       name: 'acct-cf',
       settings: { zoneId: 'a'.repeat(32), zoneName: 'example.org' },
       credentials: { apiToken: 'cf' },
     });
-    await t.mutation(internal.protocolProfiles.create, {
-      slug: 'prof-ws',
-      name: 'WS',
-      protocol: 'ws',
-    });
-    const { id: relayId } = await t.mutation(internal.relays.upsertBySlug, {
-      slug: 'node-one',
-      backendServerSlug: 'panel-a',
-      nodeHostname: 'node-one',
-      originAddress: ORIGIN,
-    });
-    const { id: slotId } = await t.mutation(internal.relaySlots.upsert, {
-      relayId,
-      slotKey: 'w',
-      profileSlug: 'prof-ws',
-      inboundTag: 'VLESS_RELAY_W',
-      configProfileUuid: '11111111-1111-4111-8111-111111111111',
-      configProfileInboundUuid: '22222222-2222-4222-8222-222222222222',
-      originPort: 443,
+    const { relayId, listenerId } = await registerRelay(t, {
+      listeners: [
+        wsListener({
+          listenerKey: 'w',
+          tlsNames: ['a.example'],
+          panelBinding: {
+            inboundTag: 'VLESS_RELAY_W',
+            configProfileUuid: FIXTURE_CONFIG_PROFILE,
+            configProfileInboundUuid: INBOUND_U,
+          },
+        }),
+      ],
     });
     const child = (kind: string, resourceId: string, meta?: string) => ({
       stepId: 'adopted',
@@ -1087,7 +1237,7 @@ describe('edgeReconcile: tearing a hostname off a SHARED resource', () => {
     const edgeId = await t.run((ctx) =>
       ctx.db.insert('edges', {
         relayId,
-        slotId,
+        listenerId,
         accountId,
         provider: 'cloudflare',
         managed: true,
@@ -1284,34 +1434,12 @@ describe('edgeReconcile: renewing a front qualification before it lapses', () =>
    */
   async function frontedRelay(expiresInMs: number[]) {
     const t = convexTest(schema, modules);
-    await t.run((ctx) =>
-      ctx.db.insert('backendServers', {
-        backend: 'remnawave',
-        name: 'panel-a',
-        slug: 'panel-a',
-        config: { type: 'remnawave', baseUrl: 'https://panel.example', apiToken: 'tok' },
-        isActive: true,
-        priority: 0,
-        keyCount: 0,
-        updatedAt: Date.now(),
-      }),
-    );
+    await insertPanelServer(t);
     const { id: accountId } = await t.mutation(internal.edgeProviderAccounts.create, {
       provider: 'cloudflare',
       name: 'acct-cf',
       settings: { zoneId: 'a'.repeat(32), zoneName: 'example.org' },
       credentials: { apiToken: 'cf' },
-    });
-    await t.mutation(internal.protocolProfiles.create, {
-      slug: 'prof-ws',
-      name: 'WS',
-      protocol: 'ws',
-    });
-    const { id: relayId } = await t.mutation(internal.relays.upsertBySlug, {
-      slug: 'node-one',
-      backendServerSlug: 'panel-a',
-      nodeHostname: 'node-one',
-      originAddress: ORIGIN,
     });
     const originTransport = {
       scheme: 'https' as const,
@@ -1319,22 +1447,25 @@ describe('edgeReconcile: renewing a front qualification before it lapses', () =>
       certNames: ['node-one.origin.example'],
       acceptsHostHeader: 'any' as const,
     };
-    const { id: slotId } = await t.mutation(internal.relaySlots.upsert, {
-      relayId,
-      slotKey: 'w',
-      profileSlug: 'prof-ws',
-      inboundTag: 'VLESS_RELAY_W',
-      configProfileUuid: '11111111-1111-4111-8111-111111111111',
-      configProfileInboundUuid: '22222222-2222-4222-8222-222222222222',
-      originPort: 443,
-      originTransport,
-      transportParams: { path: '/ws' },
+    const { relayId, listenerId } = await registerRelay(t, {
+      listeners: [
+        wsListener({
+          listenerKey: 'w',
+          tlsNames: ['a.example'],
+          originTransport,
+          transportParams: { path: '/ws' },
+          panelBinding: {
+            inboundTag: 'VLESS_RELAY_W',
+            configProfileUuid: FIXTURE_CONFIG_PROFILE,
+            configProfileInboundUuid: INBOUND_U,
+          },
+        }),
+      ],
     });
     await t.run((ctx) => ctx.db.patch(relayId, { qualificationUserId: QUALIFY_UUID }));
     const edgeIds = await t.run(async (ctx) => {
       const now = Date.now();
-      const slot = (await ctx.db.get(slotId))!;
-      const profile = (await ctx.db.get(slot.profileId))!;
+      const listener = (await ctx.db.get(listenerId))!;
       const ids: Id<'edges'>[] = [];
       for (const [i, ms] of expiresInMs.entries()) {
         const hostname = i === 0 ? HOSTNAME : `${i}${HOSTNAME}`;
@@ -1349,15 +1480,14 @@ describe('edgeReconcile: renewing a front qualification before it lapses', () =>
           templateParams: {},
         };
         const binding = qualificationBinding({
-          slot,
-          profile,
+          listener,
           intent,
-          params: slot.transportParams ?? {},
+          params: listener.transportParams ?? {},
         });
         ids.push(
           await ctx.db.insert('edges', {
             relayId,
-            slotId,
+            listenerId,
             accountId,
             provider: 'cloudflare',
             managed: true,
@@ -1374,8 +1504,7 @@ describe('edgeReconcile: renewing a front qualification before it lapses', () =>
               expiresAt: now + ms,
               binding: {
                 ...binding,
-                slotId: binding.slotId as Id<'relaySlots'>,
-                profileId: binding.profileId as Id<'protocolProfiles'>,
+                listenerId: binding.listenerId as Id<'relayListeners'>,
               },
             },
             publication: 'published',

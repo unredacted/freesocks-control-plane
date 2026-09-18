@@ -12,7 +12,7 @@ import {
   EDGE_PROVIDER_IDS,
   type EdgeLayer,
   type EdgeProviderId,
-  type SlotProtocol,
+  type ListenerStreamTransport,
 } from '../../shared/contracts/edges';
 
 export type EdgeAddressKind = 'ip' | 'hostname';
@@ -23,7 +23,7 @@ export interface EdgeProviderMeta {
   layer: EdgeLayer;
   addressKind: EdgeAddressKind;
   /** HTTP-carried protocols this front can carry; empty for an L4 forwarder. */
-  l7Transports: readonly SlotProtocol[];
+  l7Transports: readonly ListenerStreamTransport[];
   /** The account needs a DNS account of another provider (Fastly → Cloudflare). */
   needsDnsAccount: boolean;
   /** The account can host DNS records for other providers' edges. */

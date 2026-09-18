@@ -1,78 +1,126 @@
 /**
- * Slot protocols: what the inbound behind a relay slot speaks. The protocol
- * (carried by the slot's PROFILE) decides what the renderer must rewrite in a
- * subscriber's connection, what the profile must hold, and which edge LAYERS
- * can front the slot (lib/edges/layers.ts).
+ * Listener protocol helpers over the shared catalogue
+ * (src/shared/contracts/edgeProtocolIds.ts): what a listener speaks decides
+ * what the renderer must rewrite in a subscriber's connection, what the
+ * listener must hold (names, a REALITY target), which edge LAYERS can front it
+ * (lib/edges/layers.ts) and which authenticated proof an L7 front has.
  *
- *  - `reality`: VLESS+REALITY. The profile carries the impersonated target and
- *    the approved server names; the renderer swaps address, port AND the SNI.
- *  - `tls`: any protocol the node terminates with a real certificate (VLESS/
- *    Trojan over TLS). The profile carries the certificate's names; the
- *    renderer swaps address, port and SNI (one of those names).
- *  - `plain`: no TLS name to present (Shadowsocks, plain VLESS…). No server
- *    names; the renderer swaps address and port only.
- *  - `ws` / `httpupgrade` / `grpc`: TLS + that HTTP transport. Behind an L4
- *    edge they behave like `tls` (the profile names are the certificate's).
- *    Behind an L7 edge (a CDN front) the edge HOSTNAME is the SNI and the HTTP
- *    Host header; the renderer swaps address, port, SNI and Host.
+ * Every helper takes the listener's three fields. The single-word `legacy`
+ * id survives only inside the renderer codecs and the preview fixtures.
  *
- * `PROTOCOL_TRANSPORT` is what an L4 edge listener must carry; every provider
- * adapter forwards TCP today, so a UDP protocol is refused at selection until
- * an adapter declares `udp` in its capabilities.
+ * `CODECS` says, per combination, which subscription formats the renderer can
+ * rewrite. A combination is not shippable without a codec for every format it
+ * claims; `protocols.test.ts` pins the table against the catalogue.
  */
-export const SLOT_PROTOCOLS = ['reality', 'tls', 'plain', 'ws', 'httpupgrade', 'grpc'] as const;
-export type SlotProtocol = (typeof SLOT_PROTOCOLS)[number];
+import {
+  LISTENER_COMBOS,
+  comboKey,
+  listenerCombo,
+  type ListenerCombo,
+  type ListenerComboKey,
+  type ListenerProto,
+} from '../../../src/shared/contracts/edgeProtocolIds';
+
+export {
+  LISTENER_COMBOS,
+  LISTENER_PROTOCOL_IDS,
+  LISTENER_SECURITY_IDS,
+  LISTENER_STREAM_TRANSPORT_IDS,
+  comboKey,
+  isValidListenerCombo,
+  listenerCombo,
+} from '../../../src/shared/contracts/edgeProtocolIds';
+export type {
+  ListenerCombo,
+  ListenerComboKey,
+  ListenerProto,
+  ListenerProtocolId,
+  ListenerSecurity,
+  ListenerStreamTransport,
+} from '../../../src/shared/contracts/edgeProtocolIds';
 
 export type ListenerTransport = 'tcp' | 'udp';
 
-export const PROTOCOL_TRANSPORT: Record<SlotProtocol, ListenerTransport> = {
-  reality: 'tcp',
-  tls: 'tcp',
-  plain: 'tcp',
-  ws: 'tcp',
-  httpupgrade: 'tcp',
-  grpc: 'tcp',
-};
-
-export const PROTOCOL_LABELS: Record<SlotProtocol, string> = {
-  reality: 'REALITY',
-  tls: 'TLS (real certificate)',
-  plain: 'Plain (no TLS name)',
-  ws: 'WebSocket over TLS',
-  httpupgrade: 'HTTP Upgrade over TLS',
-  grpc: 'gRPC over TLS',
-};
-
-/** The HTTP-carried transports an L7 (CDN) edge can front. */
-export const HTTP_TRANSPORT_PROTOCOLS = [
-  'ws',
-  'httpupgrade',
-  'grpc',
-] as const satisfies readonly SlotProtocol[];
-
-export function isSlotProtocol(v: unknown): v is SlotProtocol {
-  return typeof v === 'string' && (SLOT_PROTOCOLS as readonly string[]).includes(v);
+/** The descriptor, or a throw: callers only ever hold validated listeners. */
+export function protocolDescriptor(p: ListenerProto): ListenerCombo {
+  const c = listenerCombo(p);
+  if (!c) throw new Error(`invalid listener combination ${comboKey(p)}`);
+  return c;
 }
 
-/** The renderer selects and writes a server name for these protocols. */
-export function protocolUsesSni(p: SlotProtocol): boolean {
-  return p !== 'plain';
+/** What an L4 edge listener must carry. */
+export function protocolTransport(p: ListenerProto): ListenerTransport {
+  return protocolDescriptor(p).transport;
 }
 
-/** Only REALITY impersonates a target (address:port the node dials for the handshake). */
-export function protocolNeedsTarget(p: SlotProtocol): boolean {
-  return p === 'reality';
+/** The renderer selects and writes a server name for these listeners. */
+export function protocolUsesSni(p: ListenerProto): boolean {
+  return protocolDescriptor(p).usesSni;
 }
 
-/** True for the HTTP-carried transports (the only protocols an L7 edge can front). */
-export function protocolIsHttpTransport(p: SlotProtocol): boolean {
-  return (HTTP_TRANSPORT_PROTOCOLS as readonly string[]).includes(p);
+/** Only REALITY impersonates a target. */
+export function protocolNeedsTarget(p: ListenerProto): boolean {
+  return protocolDescriptor(p).needsTarget;
 }
+
+/** True for the HTTP-carried streams (the only listeners an L7 front can carry). */
+export function protocolIsHttpTransport(p: ListenerProto): boolean {
+  return protocolDescriptor(p).isHttpTransport;
+}
+
+/** The renderer writes an HTTP Host header for these (ws, httpupgrade). */
+export function protocolUsesHostHeader(p: ListenerProto): boolean {
+  return protocolDescriptor(p).usesHostHeader;
+}
+
+/** Which authenticated end-to-end proof an L7 front of this listener has. */
+export function protocolL7Proof(p: ListenerProto): ListenerCombo['l7Proof'] {
+  return protocolDescriptor(p).l7Proof;
+}
+
+export function protocolLabel(p: ListenerProto): string {
+  return listenerCombo(p)?.label ?? comboKey(p);
+}
+
+/** Subscription formats the renderer knows (render/*.ts). */
+export const RENDER_FORMATS = ['links', 'singbox', 'clash'] as const;
+export type RenderFormat = (typeof RENDER_FORMATS)[number];
 
 /**
- * The renderer writes an HTTP Host header for these protocols (`ws`,
- * `httpupgrade`; gRPC carries the name in `:authority`, which follows the SNI).
+ * Per format, the entry shapes a codec can rewrite for a combination:
+ *   links   URI scheme(s) of the share link
+ *   singbox `outbounds[].type`
+ *   clash   `proxies[].type`
+ * An empty list means the format has no codec for the combination; such an
+ * entry in a body is left alone and reported as `entry_unsupported`.
  */
-export function protocolUsesHostHeader(p: SlotProtocol): boolean {
-  return p === 'ws' || p === 'httpupgrade';
+export interface CodecSupport {
+  links: readonly string[];
+  singbox: readonly string[];
+  clash: readonly string[];
+}
+
+export const CODECS: Partial<Record<ListenerComboKey, CodecSupport>> = {
+  'vless/raw/reality': { links: ['vless'], singbox: ['vless'], clash: ['vless'] },
+  'vless/raw/tls': { links: ['vless'], singbox: ['vless'], clash: ['vless'] },
+  'vless/ws/tls': { links: ['vless'], singbox: ['vless'], clash: ['vless'] },
+  'vless/httpupgrade/tls': { links: ['vless'], singbox: ['vless'], clash: ['vless'] },
+  'vless/grpc/tls': { links: ['vless'], singbox: ['vless'], clash: ['vless'] },
+  'trojan/raw/tls': { links: ['trojan'], singbox: ['trojan'], clash: ['trojan'] },
+  'trojan/ws/tls': { links: ['trojan'], singbox: ['trojan'], clash: ['trojan'] },
+  'shadowsocks/raw/none': { links: ['ss'], singbox: ['shadowsocks'], clash: ['ss'] },
+  'hysteria2/udp/tls': {
+    links: ['hysteria2', 'hy2'],
+    singbox: ['hysteria2'],
+    clash: ['hysteria2'],
+  },
+  'tuic/udp/tls': { links: ['tuic'], singbox: ['tuic'], clash: ['tuic'] },
+};
+
+export function codecFor(p: ListenerProto, format: RenderFormat): readonly string[] {
+  return CODECS[comboKey(p)]?.[format] ?? [];
+}
+
+export function formatSupported(p: ListenerProto, format: RenderFormat): boolean {
+  return codecFor(p, format).length > 0;
 }

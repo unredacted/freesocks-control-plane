@@ -15,6 +15,7 @@ import { scalewayProvider } from './scaleway';
 import { ovhProvider } from './ovh';
 import { cloudflareProvider } from './cloudflare';
 import { fastlyProvider } from './fastly';
+import { FAKE_L4_SHADOW, FAKE_L7_SHADOW, fakeEdgeProvider, fakeEdgeProviderEnabled } from './fake';
 
 export const EDGE_PROVIDERS: Record<EdgeProviderId, EdgeProvider> = {
   gcore: gcoreProvider as unknown as EdgeProvider,
@@ -41,7 +42,15 @@ export function __setEdgeProviderForTests(id: EdgeProviderId, provider: EdgeProv
 }
 
 export function edgeProviderFor(id: EdgeProviderId): EdgeProvider {
-  return overrides.get(id) ?? EDGE_PROVIDERS[id];
+  const o = overrides.get(id);
+  if (o) return o;
+  // DEV ONLY (double env gate): the fake shadows one real adapter per layer so
+  // the setup flow can be walked without cloud credentials (providers/fake.ts).
+  if (fakeEdgeProviderEnabled()) {
+    if (id === FAKE_L4_SHADOW) return fakeEdgeProvider(EDGE_PROVIDERS[id], 'l4') as EdgeProvider;
+    if (id === FAKE_L7_SHADOW) return fakeEdgeProvider(EDGE_PROVIDERS[id], 'l7') as EdgeProvider;
+  }
+  return EDGE_PROVIDERS[id];
 }
 
 /** Merge an account's credentials + settings into the adapter config shape. */

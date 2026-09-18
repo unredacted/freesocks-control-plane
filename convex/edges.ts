@@ -96,7 +96,7 @@ export function mapEdgeAdmin(e: Edge) {
   return {
     id: e._id as string,
     relayId: e.relayId as string,
-    slotId: e.slotId as string,
+    listenerId: e.listenerId as string,
     accountId: (e.accountId as string | undefined) ?? null,
     templateId: (e.templateId as string | undefined) ?? null,
     templateHash: e.templateHash ?? null,
@@ -283,7 +283,7 @@ export async function liveCountForAccount(
 
 export interface PlannedEdgeInput {
   relayId: Id<'relays'>;
-  slotId: Id<'relaySlots'>;
+  listenerId: Id<'relayListeners'>;
   accountId: Id<'edgeProviderAccounts'>;
   templateId?: Id<'edgeTemplates'> | null;
   templateHash: string;
@@ -331,7 +331,7 @@ export async function insertPlannedEdge(
   const name = edgeResourceName(origin.slug, a.nameNonce ?? randomHex(4));
   const id = await ctx.db.insert('edges', {
     relayId: a.relayId,
-    slotId: a.slotId,
+    listenerId: a.listenerId,
     accountId: a.accountId,
     templateId: a.templateId ?? undefined,
     templateHash: a.templateHash,
@@ -366,7 +366,7 @@ export async function insertPlannedEdge(
 export const insertPlanned = internalMutation({
   args: {
     relayId: v.id('relays'),
-    slotId: v.id('relaySlots'),
+    listenerId: v.id('relayListeners'),
     accountId: v.id('edgeProviderAccounts'),
     templateId: v.optional(v.union(v.id('edgeTemplates'), v.null())),
     templateHash: v.string(),

@@ -156,6 +156,18 @@ and the inbound/Reality settings remain Ansible-only. See `docs/backends.md`
 - **Verify (live):** on a node `docker logs <xray>` shows no connection/IP lines;
   the panel "IP Management" / online view is empty; a client still connects.
 
+## 5b. Edges (relays behind replaceable fronts)
+
+- **Edge-required delivery never leaks an origin.** A subscription whose node or backend
+  server is covered by a relay is served a rendered body (edge addresses only) or a 503,
+  never the origin body; every outgoing entry is checked against the origin address; the
+  account view and the issuance responses hand out only the fronted token URL; stored S3
+  mirrors are re-rendered or replaced by an unavailable stub. `docs/edges.md` § "Rendering".
+- **No member data in the edges area.** Probes measure FCP's own addresses; report
+  attribution uses a peppered per-member dedupe mark and the member's own render snapshot
+  (`subscriptions.lastRender`: epoch + edge ids, no addresses); audit payloads carry relay
+  slugs, listener keys and codes, never addresses, hostnames or provider account names.
+
 ## 6. Analytics (optional self-hosted Umami relay)
 
 FCP can report **anonymous pageview counts** to an operator-run

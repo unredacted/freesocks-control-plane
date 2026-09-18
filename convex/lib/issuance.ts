@@ -25,6 +25,8 @@ export interface IssueResult {
   backend: BackendId;
   backendUserId: string;
   backendShortId: string;
+  /** The instance the key was issued on (null for a backend without instances). */
+  backendServerId: Id<'backendServers'> | null;
   subscriptionUrl: string;
   mirrors: { provider: string; publicUrl: string; objectPath?: string; status?: 'ok' | 'failed' }[];
 }
@@ -96,6 +98,7 @@ export async function issueNewSubscription(
       backend: input.backend,
       backendUserId: issued.backendUserId,
       backendShortId: issued.backendShortId,
+      backendServerId: issued.backendServerId ?? null,
       subscriptionUrl: issued.subscriptionUrl,
       mirrors: [],
     };

@@ -42,7 +42,7 @@ const args = {
   specName: 'fcp-relay-node-one-abcd1234',
   templateParams: { labelLength: 12 },
   templateHash: 'h1',
-  slot: { originPort: 443, originTransport },
+  listener: { originPort: 443, originTransport },
 };
 
 describe('buildProvisionIntent', () => {
@@ -50,7 +50,7 @@ describe('buildProvisionIntent', () => {
     expect(
       buildProvisionIntent({
         ...args,
-        account: { id: 'a', provider: 'upcloud', settings: { zone: 'de-fra1' } },
+        account: { id: 'a', provider: 'upcloud', settings: { zone: 'zone-1' } },
       }),
     ).toBeNull();
   });
@@ -100,7 +100,7 @@ describe('buildProvisionIntent', () => {
     }
   });
 
-  test('a zone mode that cannot carry the slot origin is refused before anything exists', () => {
+  test('a zone mode that cannot carry the listener origin is refused before anything exists', () => {
     // `flexible` dials the origin over plain HTTP; this origin speaks HTTPS.
     try {
       buildProvisionIntent({
@@ -116,7 +116,7 @@ describe('buildProvisionIntent', () => {
       buildProvisionIntent({
         ...args,
         account: { ...cloudflare, observedSettings: { zoneSslMode: 'strict' } },
-        slot: { originPort: 443, originTransport: { ...originTransport, certPublic: false } },
+        listener: { originPort: 443, originTransport: { ...originTransport, certPublic: false } },
       });
       throw new Error('expected a refusal');
     } catch (err) {
@@ -137,7 +137,7 @@ describe('buildProvisionIntent', () => {
       ...args,
       account: fastly,
       dnsAccount: strictZone,
-      slot: plaintext,
+      listener: plaintext,
     })!;
     expect(intent.zoneSslMode).toBeUndefined();
     expect(intent.originTransport.scheme).toBe('http');
@@ -147,13 +147,13 @@ describe('buildProvisionIntent', () => {
         ...args,
         account: fastly,
         dnsAccount: strictZone,
-        slot: plaintext,
+        listener: plaintext,
         zoneSslMode: 'strict',
       })!.zoneSslMode,
     ).toBeUndefined();
     // The same zone in front of ITS OWN proxy still refuses the plaintext origin.
     try {
-      buildProvisionIntent({ ...args, account: strictZone, slot: plaintext });
+      buildProvisionIntent({ ...args, account: strictZone, listener: plaintext });
       throw new Error('expected a refusal');
     } catch (err) {
       expect((err as IntentError).code).toBe('origin_tls_mismatch');
@@ -189,7 +189,7 @@ describe('buildProvisionIntent', () => {
       }),
     ).toThrow(IntentError);
     try {
-      buildProvisionIntent({ ...args, account: cloudflare, slot: { originPort: 443 } });
+      buildProvisionIntent({ ...args, account: cloudflare, listener: { originPort: 443 } });
       throw new Error('expected a refusal');
     } catch (err) {
       expect((err as IntentError).code).toBe('origin_transport_missing');
@@ -213,10 +213,33 @@ describe('parseIntent', () => {
 
 describe('qualification binding', () => {
   const intent = buildProvisionIntent({ ...args, account: cloudflare })!;
-  const slot = { _id: 's1', revision: 3, originPort: 443, originTransport };
-  const profile = { _id: 'p1', revision: 2, protocol: 'ws' as const };
-  const binding = qualificationBinding({ slot, profile, intent });
+  const listener = {
+    _id: 'l1',
+    revision: 3,
+    originPort: 443,
+    originTransport,
+    protocol: 'vless' as const,
+    streamTransport: 'ws' as const,
+    security: 'tls' as const,
+  };
+  const binding = qualificationBinding({ listener, intent });
   const stored = { ok: true, checkedAt: 0, expiresAt: 10_000, binding };
+
+  test('the binding names the listener, its revision and what it speaks', () => {
+    expect(binding).toMatchObject({
+      hostname: intent.hostname,
+      listenerId: 'l1',
+      listenerRevision: 3,
+      protocol: 'vless',
+      streamTransport: 'ws',
+      security: 'tls',
+    });
+    expect(binding.intentHash).toBe(intentHash(intent));
+    expect(
+      qualificationBinding({ listener: { ...listener, revision: undefined }, intent })
+        .listenerRevision,
+    ).toBe(0);
+  });
 
   test('a current, passing proof of this exact configuration is ok', () => {
     expect(qualificationVerdict(stored, binding, 5_000)).toBe('ok');
@@ -232,39 +255,31 @@ describe('qualification binding', () => {
     expect(qualificationRefusal('stale')).toBe('front_qualification_stale');
   });
 
-  test('a slot, profile or intent write since the proof makes it STALE', () => {
-    const slotWritten = qualificationBinding({
-      slot: { ...slot, revision: 4 },
-      profile,
+  test('a listener write, a changed proto or an intent write since the proof makes it STALE', () => {
+    const listenerWritten = qualificationBinding({
+      listener: { ...listener, revision: 4 },
       intent,
     });
-    expect(qualificationVerdict(stored, slotWritten, 5_000)).toBe('stale');
-    const profileWritten = qualificationBinding({
-      slot,
-      profile: { ...profile, revision: 3 },
+    expect(qualificationVerdict(stored, listenerWritten, 5_000)).toBe('stale');
+    const protoChanged = qualificationBinding({
+      listener: { ...listener, streamTransport: 'grpc' as const },
       intent,
     });
-    expect(qualificationVerdict(stored, profileWritten, 5_000)).toBe('stale');
+    expect(qualificationVerdict(stored, protoChanged, 5_000)).toBe('stale');
     const movedIntent: ProvisionIntent = { ...intent, originPort: 8443 };
     expect(
-      qualificationVerdict(
-        stored,
-        qualificationBinding({ slot, profile, intent: movedIntent }),
-        5_000,
-      ),
+      qualificationVerdict(stored, qualificationBinding({ listener, intent: movedIntent }), 5_000),
     ).toBe('stale');
   });
 
   test('different transport parameters hash differently (an absent one is not an empty one)', () => {
     const withPath = qualificationBinding({
-      slot,
-      profile,
+      listener,
       intent,
       transportParams: { path: '/a', host: null, serviceName: null, upgradeToken: null },
     });
     const withOther = qualificationBinding({
-      slot,
-      profile,
+      listener,
       intent,
       transportParams: { path: '/b', host: null, serviceName: null, upgradeToken: null },
     });

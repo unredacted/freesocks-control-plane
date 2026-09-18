@@ -144,9 +144,9 @@ export const status = internalQuery({
 const WIPE_TABLES = [
   'edgeRotations',
   'edges',
-  'relaySlots',
-  'protocolProfiles',
+  'relayListeners',
   'relays',
+  'edgeDeliveryBindings',
   'externalLocks',
   'relaySamples',
 ] as const;

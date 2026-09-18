@@ -16,6 +16,8 @@ import {
   DEFAULT_CONNECTION_MODE_FAMILIES,
   resolveModeCatalog,
 } from './lib/connectionModes';
+import { fakeEdgeProviderEnabled } from './lib/edges/providers/fake';
+import { mockBackendEnabled } from './lib/backends/mock';
 
 /** Insert the default-free tier if absent; return its id. */
 export const seedDefaultFreeTier = internalMutation({
@@ -538,5 +540,89 @@ export const seedCutover = internalAction({
       modeFamiliesInserted: modes.familiesInserted,
       modesInserted: modes.modesInserted,
     };
+  },
+});
+
+/**
+ * DEV ONLY: the starting state for walking the edges setup flow locally with
+ * the fake edge provider (lib/edges/providers/fake.ts): one panel row the mock
+ * backend answers for, and one TESTED-but-unqualified account per layer (the
+ * fake shadows `upcloud` for L4 and `cloudflare` for L7), so the flow exercised
+ * is the bootstrap from zero qualified accounts. Refuses outside the double gate
+ * (`ENVIRONMENT=development` + `DEV_FAKE_EDGE_PROVIDER=true`). Idempotent.
+ */
+export const seedDevEdges = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    if (!fakeEdgeProviderEnabled() || !mockBackendEnabled()) {
+      throw new Error(
+        'seedDevEdges needs ENVIRONMENT=development, DEV_FAKE_EDGE_PROVIDER=true and DEV_MOCK_BACKEND=true',
+      );
+    }
+    const now = Date.now();
+    let panel = await ctx.db
+      .query('backendServers')
+      .withIndex('by_slug', (q) => q.eq('slug', 'dev-panel'))
+      .unique();
+    if (!panel) {
+      const id = await ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'Dev panel (mock)',
+        slug: 'dev-panel',
+        config: { type: 'remnawave', baseUrl: 'https://panel.example', apiToken: 'dev' },
+        isActive: true,
+        priority: 0,
+        keyCount: 0,
+        updatedAt: now,
+      });
+      panel = (await ctx.db.get(id))!;
+    }
+    const accounts: Array<{
+      provider: 'upcloud' | 'cloudflare';
+      name: string;
+      credentials: Record<string, unknown>;
+      settings: Record<string, unknown>;
+    }> = [
+      {
+        provider: 'upcloud',
+        name: 'FAKE (dev) L4',
+        credentials: { type: 'upcloud', token: 'fake' },
+        settings: { type: 'upcloud', zone: 'zone-1' },
+      },
+      {
+        provider: 'cloudflare',
+        name: 'FAKE (dev) L7',
+        credentials: { type: 'cloudflare', apiToken: 'fake' },
+        settings: { type: 'cloudflare', zoneId: 'zone1234', zoneName: 'edge.example' },
+      },
+    ];
+    let created = 0;
+    for (const a of accounts) {
+      const existing = await ctx.db
+        .query('edgeProviderAccounts')
+        .withIndex('by_name', (q) => q.eq('name', a.name))
+        .unique();
+      if (existing) continue;
+      await ctx.db.insert('edgeProviderAccounts', {
+        provider: a.provider,
+        name: a.name,
+        credentials: a.credentials as never,
+        settings: a.settings as never,
+        enabled: true,
+        qualified: false,
+        priority: 10,
+        dailyAllocationBudget: 20,
+        allocationsToday: 0,
+        maxLiveEdges: 4,
+        // "Tested": the fake always passes; the wizard's bootstrap starts here.
+        lastTestOkAt: now,
+        observedSettings:
+          a.provider === 'cloudflare' ? JSON.stringify({ zoneSslMode: 'full' }) : undefined,
+        observedAt: a.provider === 'cloudflare' ? now : undefined,
+        updatedAt: now,
+      });
+      created++;
+    }
+    return { panelSlug: panel.slug, accountsCreated: created };
   },
 });

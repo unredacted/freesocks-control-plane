@@ -1,14 +1,16 @@
 /**
- * Relay rendering, DB half: resolve what a subscription's pinned node publishes
- * (edges, slots, profiles, the client-family rule) so the fronted /sub route,
- * the mirror refresh and the admin preview can apply the pure renderer.
+ * Relay rendering, DB half: resolve what a subscription's origin publishes
+ * (edges, listeners, the client-family rule) so the fronted /sub route, the
+ * mirror refresh and the admin preview can apply the pure renderer, and judge
+ * the EDGE-REQUIRED delivery policy.
  *
- * Rendering is ACTIVE for a (panel, node) pair when the global render switch is
- * on, an enabled origin exists for the node and it has at least one published
- * edge with an eligible slot/profile. `epochFor` returns the cache token the
- * /sub route stores on each cache entry: the origin's publication epoch while
- * active, null otherwise — so a cache hit is only served when nothing about the
- * published pool or the switch changed since the entry was written.
+ * A subscription is edge-required when a delivery binding (relays.ts) covers
+ * the node it actually resolved to or its whole backend server. For such a
+ * subscription the route serves a rendered body that passed every check, or an
+ * unavailable response: never the origin body, whatever switch is off.
+ * `epochFor` is the cache token: the origin's publication epoch together with
+ * the binding's policy version while the subscription is edge-required, null
+ * for a subscription no relay covers.
  */
 import { v } from 'convex/values';
 import { internalQuery } from './_generated/server';
@@ -19,13 +21,21 @@ import {
   RENDER_CLIENT_FAMILIES,
   type RenderClientFamily,
 } from './lib/edgeConfig';
-import { effectiveRule, renderEntries } from './lib/edges/render';
+import { capabilitiesOf } from './lib/backends/capabilities';
+import {
+  effectiveRule,
+  renderEntries,
+  type DeliveryStyle,
+  type RenderMatcher,
+} from './lib/edges/render';
 import { assignEndpoints } from './lib/edges/assignment';
 import type { PublishedEdge } from './lib/edges/assignment';
 import { protocolUsesSni } from './lib/edges/protocols';
 import { parseIntent } from './lib/edges/intent';
 import { qualificationBinding, qualificationVerdict } from './lib/edges/frontCheck/binding';
 import type { EdgeRenderContext } from './lib/edges/renderPipeline';
+import { deliveryBindingFor, relayForBackendNode } from './relays';
+import { listenersOf } from './relayListeners';
 
 const familyValidator = v.union(
   ...(RENDER_CLIENT_FAMILIES.map((f) => v.literal(f)) as [
@@ -33,18 +43,6 @@ const familyValidator = v.union(
     ...ReturnType<typeof v.literal>[],
   ]),
 );
-
-async function relayFor(
-  ctx: QueryCtx,
-  backendServerId: Id<'backendServers'>,
-  nodeHostname: string,
-): Promise<Doc<'relays'> | null> {
-  const rows = await ctx.db
-    .query('relays')
-    .withIndex('by_node_hostname', (q) => q.eq('nodeHostname', nodeHostname))
-    .collect();
-  return rows.find((r) => r.backendServerId === backendServerId) ?? null;
-}
 
 async function renderEnabled(ctx: QueryCtx): Promise<boolean> {
   const row = await ctx.db
@@ -61,83 +59,87 @@ async function renderEnabled(ctx: QueryCtx): Promise<boolean> {
 
 /**
  * Whether an L7 edge's stored qualification still proves what would be RENDERED
- * for it: the binding is re-derived from the live slot/profile/intent, exactly
- * as publication does, so a failed or expired requalification and a mid-flight
- * configuration write reach the renderer through one rule.
+ * for it: the binding is re-derived from the live listener/intent, exactly as
+ * publication does.
  */
-async function l7QualificationCurrent(
-  ctx: QueryCtx | { db: import('./_generated/server').DatabaseReader },
+export async function l7QualificationCurrent(
   edge: Doc<'edges'>,
-  slot: Doc<'relaySlots'> | null | undefined,
-  profile: Doc<'protocolProfiles'> | null | undefined,
+  listener: Doc<'relayListeners'> | null | undefined,
   now: number,
 ): Promise<boolean> {
-  if (!slot || !profile) return false;
+  if (!listener) return false;
   const intent = parseIntent(edge.provisionIntent);
   if (!intent) return false;
   return (
     qualificationVerdict(
       edge.frontQualification,
-      qualificationBinding({ slot, profile, intent, params: slot.transportParams ?? {} }),
+      qualificationBinding({ listener, intent, params: listener.transportParams ?? {} }),
       now,
     ) === 'ok'
   );
 }
 
+export function matcherOf(l: Doc<'relayListeners'>, originAddress: string): RenderMatcher {
+  return {
+    listenerKey: l.listenerKey,
+    rule: l.matchRule,
+    legacyRemarks: (l.legacyHosts ?? []).map((h) => h.remark),
+    proto: { protocol: l.protocol, streamTransport: l.streamTransport, security: l.security },
+    originAddress,
+    originPort: l.originPort,
+  };
+}
+
 /**
- * Published edges in pool order. By default only edges with an eligible slot +
- * profile (and an address) are returned. With `includeIneligible` every
- * published, active edge is returned and the ineligible ones (slot retired or
- * undeployed, profile disabled, no address) carry `eligible:false`: they keep
- * their pool index in the assignment modulus, so one edge losing eligibility
- * moves only its own subscribers (`lib/edges/assignment.ts`).
+ * Published edges in pool order. By default only edges with an eligible
+ * listener (and an address) are returned. With `includeIneligible` every
+ * published, active edge is returned and the ineligible ones (listener
+ * retired, undeployed or disabled, no address, lapsed L7 proof) carry
+ * `eligible:false`: they keep their pool index in the assignment modulus.
  */
 export async function publishedEdgesOf(
-  ctx: QueryCtx | { db: import('./_generated/server').DatabaseReader },
+  ctx: { db: QueryCtx['db'] },
   origin: Doc<'relays'>,
   opts: { includeIneligible?: boolean } = {},
-): Promise<{ published: PublishedEdge[]; templateRemarks: string[] }> {
-  const slots = await ctx.db
-    .query('relaySlots')
-    .withIndex('by_relay', (q) => q.eq('relayId', origin._id))
-    .collect();
-  const templateRemarks = slots.map((s) => s.templateHostRemark);
+): Promise<{ published: PublishedEdge[]; matchers: RenderMatcher[] }> {
+  const listeners = await listenersOf(ctx, origin._id);
+  const matchers = listeners
+    .filter((l) => !l.retired && l.deployed && l.enabled)
+    .map((l) => matcherOf(l, origin.originAddress));
   const published: PublishedEdge[] = [];
+  const now = Date.now();
   for (let i = 0; i < origin.publishedEdgeIds.length; i++) {
     const edgeId = origin.publishedEdgeIds[i];
     if (!edgeId) continue;
     const edge = await ctx.db.get(edgeId);
     if (!edge || edge.publication !== 'published' || edge.status !== 'active') continue;
-    const slot = slots.find((s) => s._id === edge.slotId);
-    const profile = slot ? await ctx.db.get(slot.profileId) : null;
-    // An edge is only usable once it has an address to publish: an IP literal
-    // for an L4 forwarder, the fronted hostname for an L7 (CDN) edge.
+    const listener = listeners.find((l) => l._id === edge.listenerId) ?? null;
     const hasAddress = !!edge.addresses.v4 || !!edge.addresses.v6 || !!edge.addresses.hostname;
-    // An L7 front is only as good as its last PROOF: DNS keeps answering long
-    // after the front stopped carrying the transport, so a requalification that
-    // came back `ok:false` (or `config_changed`), or one that expired, takes the
-    // edge out of assignment at once. It keeps its pool index, so only its own
-    // subscribers move (`lib/edges/assignment.ts`).
+    // An L7 front is only as good as its last PROOF.
     const l7Proven =
-      (edge.layer ?? 'l4') !== 'l7' ||
-      (await l7QualificationCurrent(ctx, edge, slot, profile, Date.now()));
+      (edge.layer ?? 'l4') !== 'l7' || (await l7QualificationCurrent(edge, listener, now));
     const eligible =
       hasAddress &&
       l7Proven &&
-      !!slot &&
-      !slot.retired &&
-      slot.deployed &&
-      !!profile &&
-      profile.enabled;
+      !!listener &&
+      !listener.retired &&
+      listener.deployed &&
+      listener.enabled;
     if (!eligible && !opts.includeIneligible) continue;
-    const protocol = profile?.protocol ?? 'plain';
+    if (!listener) continue; // no listener at all: nothing to render from
+    const proto = {
+      protocol: listener.protocol,
+      streamTransport: listener.streamTransport,
+      security: listener.security,
+    };
     published.push({
       edgeId: edge._id,
       poolIndex: edge.poolIndex ?? i,
       provider: edge.provider ?? 'adopted',
-      slotId: slot?._id ?? (edge.slotId as string),
-      slotRemark: slot?.templateHostRemark ?? '',
-      protocol,
+      listenerId: listener._id,
+      listenerKey: listener.listenerKey,
+      matchRule: listener.matchRule,
+      proto,
       edgePort: edge.listeners[0]?.edgePort ?? 443,
       layer: edge.layer ?? 'l4',
       addresses: {
@@ -145,35 +147,78 @@ export async function publishedEdgesOf(
         v6: edge.addresses.v6,
         hostname: edge.addresses.hostname,
       },
-      serverNames:
-        profile && protocolUsesSni(protocol)
-          ? profile.serverNames.map((s) => ({
-              sni: s.sni,
-              status: s.status,
-              retiredAt: s.retiredAt,
-              drainUntil: s.drainUntil,
-            }))
-          : [],
+      serverNames: protocolUsesSni(proto)
+        ? (listener.tlsNames ?? []).map((s) => ({
+            sni: s.name,
+            status: s.status,
+            retiredAt: s.retiredAt,
+            drainUntil: s.drainUntil,
+          }))
+        : [],
       ...(eligible ? {} : { eligible: false }),
     });
   }
-  return { published, templateRemarks };
+  return { published, matchers };
+}
+
+/** Delivery style of a backend: Outline hands out ONE key, a panel a subscription. */
+export async function deliveryStyleOf(
+  ctx: { db: QueryCtx['db'] },
+  backendServerId: Id<'backendServers'>,
+): Promise<DeliveryStyle> {
+  const server = await ctx.db.get(backendServerId);
+  return server && capabilitiesOf(server.backend).accessKeyDelivery ? 'single-key' : 'subscription';
+}
+
+export interface DeliveryPolicy {
+  /** The subscription's resolved place is covered by an active binding. */
+  required: boolean;
+  bindingVersion: number | null;
+  relayId: Id<'relays'> | null;
+  relaySlug: string | null;
 }
 
 /**
- * Cache token for a (panel, node): the publication epoch while rendering is
- * active for it, else null. Cheap: a few point reads, no config resolve.
+ * The delivery policy for a subscription at the place it RESOLVED to (the node
+ * the body was pinned to, or the whole server). Evaluated AFTER the fetch by
+ * the route, so a first fetch with no stored pin and a pin that moved onto a
+ * relay node are both classified by the node the body belongs to.
+ */
+export async function deliveryPolicyFor(
+  ctx: { db: QueryCtx['db'] },
+  backendServerId: Id<'backendServers'>,
+  nodeName: string | undefined,
+): Promise<DeliveryPolicy> {
+  const binding = await deliveryBindingFor(ctx.db, backendServerId, nodeName);
+  if (!binding) return { required: false, bindingVersion: null, relayId: null, relaySlug: null };
+  const relay = await relayForBackendNode(ctx.db, backendServerId, nodeName);
+  return {
+    required: true,
+    bindingVersion: binding.policyVersion,
+    relayId: relay?._id ?? null,
+    relaySlug: binding.relaySlug,
+  };
+}
+
+export const deliveryPolicy = internalQuery({
+  args: { backendServerId: v.id('backendServers'), nodeName: v.optional(v.string()) },
+  handler: (ctx, { backendServerId, nodeName }) =>
+    deliveryPolicyFor(ctx, backendServerId, nodeName),
+});
+
+/**
+ * Cache token for a subscription's place: `<policyVersion>:<epoch>` while the
+ * place is edge-required (the epoch is the relay's, or -1 when the binding has
+ * no live relay), null for a place no relay covers (raw delivery, no token).
  */
 export const epochFor = internalQuery({
-  args: { backendServerId: v.id('backendServers'), nodeHostname: v.string() },
-  handler: async (ctx, { backendServerId, nodeHostname }): Promise<number | null> => {
-    if (!(await renderEnabled(ctx))) return null;
-    const origin = await relayFor(ctx, backendServerId, nodeHostname);
-    if (!origin || !origin.enabled) return null;
-    // The epoch stands even for an empty pool: the body is then rendered with
-    // the template entries dropped, and that render must be cached/invalidated
-    // like any other.
-    return origin.publicationEpoch;
+  args: { backendServerId: v.id('backendServers'), nodeName: v.optional(v.string()) },
+  handler: async (ctx, { backendServerId, nodeName }): Promise<string | null> => {
+    const policy = await deliveryPolicyFor(ctx, backendServerId, nodeName);
+    if (!policy.required) return null;
+    const relay = policy.relayId ? await ctx.db.get(policy.relayId) : null;
+    const renderOn = await renderEnabled(ctx);
+    return `${policy.bindingVersion}:${relay && relay.enabled && renderOn ? relay.publicationEpoch : -1}`;
   },
 });
 
@@ -182,52 +227,75 @@ export interface SubscriptionRenderContext extends EdgeRenderContext {
   renderKey: string | null;
 }
 
+export type SubscriptionRenderDecision =
+  | { kind: 'raw' }
+  | { kind: 'render'; context: SubscriptionRenderContext }
+  | {
+      kind: 'unavailable';
+      reason: 'render_disabled' | 'relay_disabled' | 'relay_missing' | 'no_render_key';
+      relaySlug: string | null;
+    };
+
 /**
- * Everything the renderer needs for one subscription + client family, or null
- * when rendering is inactive for its node (the body then passes through).
- * `nodeHostname` overrides the stored pin (the /sub route knows the node it
- * just pinned before the row is updated).
+ * What the route must do with a fetched body for one subscription + client
+ * family at the place it resolved to: pass it through (no relay covers the
+ * place), render it, or refuse it (edge-required but nothing can render).
+ * `nodeName` is the node the body was pinned to (the route knows it before the
+ * row is updated); absent = the whole backend server.
  */
-export const contextForSubscription = internalQuery({
+export const decideForSubscription = internalQuery({
   args: {
     subscriptionId: v.id('subscriptions'),
     family: familyValidator,
-    nodeHostname: v.optional(v.string()),
+    nodeName: v.optional(v.string()),
   },
-  handler: async (ctx, a): Promise<SubscriptionRenderContext | null> => {
+  handler: async (ctx, a): Promise<SubscriptionRenderDecision> => {
     const sub = await ctx.db.get(a.subscriptionId);
-    if (!sub || !sub.backendServerId) return null;
-    const node = a.nodeHostname ?? sub.pinnedNode;
-    if (!node) return null;
-    if (!(await renderEnabled(ctx))) return null;
-    const origin = await relayFor(ctx, sub.backendServerId, node);
-    if (!origin || !origin.enabled) return null;
+    if (!sub || !sub.backendServerId) return { kind: 'raw' };
+    const node = a.nodeName ?? sub.pinnedNode ?? undefined;
+    const policy = await deliveryPolicyFor(ctx, sub.backendServerId, node);
+    if (!policy.required) return { kind: 'raw' };
+    const relay = policy.relayId ? await ctx.db.get(policy.relayId) : null;
+    if (!relay)
+      return { kind: 'unavailable', reason: 'relay_missing', relaySlug: policy.relaySlug };
+    if (!relay.enabled)
+      return { kind: 'unavailable', reason: 'relay_disabled', relaySlug: relay.slug };
+    if (!(await renderEnabled(ctx)))
+      return { kind: 'unavailable', reason: 'render_disabled', relaySlug: relay.slug };
     const cfg = await resolveEdgeConfig(ctx.db);
-    if (!cfg.render.enabled) return null;
-    // An empty eligible pool (every edge unpublished, draining, or behind a
-    // disabled profile) still renders: the template entries carry the former
-    // index-0 address and must be dropped, not distributed. Ineligible edges
-    // are handed in flagged so the assignment modulus stays stable.
-    const { published, templateRemarks } = await publishedEdgesOf(ctx, origin, {
-      includeIneligible: true,
-    });
+    if (!cfg.render.enabled)
+      return { kind: 'unavailable', reason: 'render_disabled', relaySlug: relay.slug };
     const family = a.family as RenderClientFamily;
+    const rule = effectiveRule(cfg.render, cfg.render.clients[family]);
+    // A family whose rule is off used to pass the panel body through; under
+    // edge-required delivery there is no passthrough, so it is unavailable.
+    if (!rule.enabled)
+      return { kind: 'unavailable', reason: 'render_disabled', relaySlug: relay.slug };
+    // A key that has never been rendered has no render key yet: the caller
+    // mints one (`subscriptions.ensureRenderKey`) and refuses only if that fails.
+    const { published, matchers } = await publishedEdgesOf(ctx, relay, { includeIneligible: true });
     return {
-      relayId: origin._id,
-      epoch: origin.publicationEpoch,
-      templateRemarks,
-      published,
-      rule: effectiveRule(cfg.render, cfg.render.clients[family]),
-      preferDistinctProviders: cfg.render.preferDistinctProviders,
-      renderKey: sub.renderKey ?? null,
+      kind: 'render',
+      context: {
+        relayId: relay._id,
+        epoch: relay.publicationEpoch,
+        matchers,
+        published,
+        rule,
+        preferDistinctProviders: cfg.render.preferDistinctProviders,
+        renderKey: sub.renderKey ?? null,
+        originAddress: relay.originAddress,
+        deliveryStyle: await deliveryStyleOf(ctx, sub.backendServerId),
+      },
     };
   },
 });
 
 /**
  * The member-facing nudge (account node status): whether this key has fetched
- * content since its origin last rotated, and the LABELS of the connections its
- * current subscription carries (roles + address family only, never addresses).
+ * content since its origin last changed, and the LABELS of the connections its
+ * last render carried (roles + address family only, never addresses). Read
+ * from the persisted render snapshot: never reconstructed without the body.
  */
 export const memberView = internalQuery({
   args: { subscriptionId: v.id('subscriptions') },
@@ -236,50 +304,43 @@ export const memberView = internalQuery({
     { subscriptionId },
   ): Promise<{
     refreshSuggested: boolean;
-    // `name` = a hostname-fronted (L7) connection: one entry, no address family.
-    connections: Array<{
-      label: string;
-      role: 'primary' | 'backup';
-      family: 'v4' | 'v6' | 'name';
-    }>;
+    /** `unknown` = the key has no render snapshot yet (labels cannot be trusted). */
+    known: boolean;
+    connections: Array<{ label: string; role: 'primary' | 'backup'; family: 'v4' | 'v6' | 'name' }>;
   } | null> => {
     const sub = await ctx.db.get(subscriptionId);
-    if (!sub || !sub.backendServerId || !sub.pinnedNode) return null;
-    if (!(await renderEnabled(ctx))) return null;
-    const origin = await relayFor(ctx, sub.backendServerId, sub.pinnedNode);
+    if (!sub || !sub.backendServerId) return null;
+    const policy = await deliveryPolicyFor(ctx, sub.backendServerId, sub.pinnedNode ?? undefined);
+    if (!policy.required || !policy.relayId) return null;
+    const origin = await ctx.db.get(policy.relayId);
     if (!origin || !origin.enabled) return null;
     const cfg = await resolveEdgeConfig(ctx.db);
-    const { published } = await publishedEdgesOf(ctx, origin, { includeIneligible: true });
-    if (published.length === 0) return null;
-    // The nudge compares the epoch this key's content was last RENDERED against
-    // with the origin's current one: publish/unpublish/standby swaps bump the
-    // epoch without stamping `lastRotatedAt`, so a timestamp comparison misses
-    // them. The legacy timestamp check stays as a fallback for rows that were
-    // delivered before the epoch stamp existed.
+    const snap = sub.lastRender;
     const refreshSuggested =
-      (sub.lastRenderedEpoch !== undefined && sub.lastRenderedEpoch < origin.publicationEpoch) ||
-      (sub.lastRenderedEpoch === undefined &&
+      (snap !== undefined && snap.epoch < origin.publicationEpoch) ||
+      (snap === undefined &&
         origin.lastRotatedAt !== undefined &&
         (sub.lastDeliveredContentAt ?? 0) < origin.lastRotatedAt);
-    let connections: Array<{
-      label: string;
-      role: 'primary' | 'backup';
-      family: 'v4' | 'v6' | 'name';
-    }> = [];
-    if (sub.renderKey) {
-      const rule = effectiveRule(cfg.render, cfg.render.clients.other);
-      const assigned = assignEndpoints(sub.renderKey, published, {
-        now: Date.now(),
-        preferDistinctProviders: cfg.render.preferDistinctProviders,
-        includeBackup: rule.includeBackup,
-        canEmitV6: rule.ipv6Mode === 'both',
-      });
-      connections = renderEntries(assigned, rule, false).map((e) => ({
-        label: e.label,
-        role: e.role,
-        family: e.family,
-      }));
-    }
-    return { refreshSuggested, connections };
+    if (!snap || snap.epoch !== origin.publicationEpoch)
+      return { refreshSuggested, known: false, connections: [] };
+    // Rebuild the labels from the snapshot's edges only (no body needed).
+    const { published } = await publishedEdgesOf(ctx, origin, { includeIneligible: true });
+    const byId = new Map(published.map((p) => [p.edgeId, p]));
+    const primary = snap.primaryEdgeId ? byId.get(snap.primaryEdgeId) : undefined;
+    const backup = snap.backupEdgeId ? byId.get(snap.backupEdgeId) : undefined;
+    if (!primary) return { refreshSuggested: true, known: false, connections: [] };
+    const rule = effectiveRule(cfg.render, cfg.render.clients.other);
+    const assigned = assignEndpoints(sub.renderKey ?? '', [primary, ...(backup ? [backup] : [])], {
+      now: Date.now(),
+      preferDistinctProviders: cfg.render.preferDistinctProviders,
+      includeBackup: rule.includeBackup && !!backup,
+      canEmitV6: rule.ipv6Mode === 'both',
+    });
+    const connections = renderEntries(assigned, rule, false, origin.originAddress).map((e) => ({
+      label: e.label,
+      role: e.role,
+      family: e.family,
+    }));
+    return { refreshSuggested, known: true, connections };
   },
 });

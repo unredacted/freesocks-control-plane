@@ -1,20 +1,33 @@
 import { describe, expect, test } from 'vitest';
 import { assignEndpoints, edgeAssignable, pickSni, type PublishedEdge } from './assignment';
+import type { ListenerProto } from './protocols';
 
 const NOW = 1_700_000_000_000;
 const sha = (i: number) => ((i * 2654435761) >>> 0).toString(16).padStart(8, '0') + 'ab'.repeat(28);
 
 const snis = (...names: string[]) => names.map((sni) => ({ sni, status: 'active' as const }));
 
+const REALITY: ListenerProto = { protocol: 'vless', streamTransport: 'raw', security: 'reality' };
+const TLS: ListenerProto = { protocol: 'vless', streamTransport: 'raw', security: 'tls' };
+const WS: ListenerProto = { protocol: 'vless', streamTransport: 'ws', security: 'tls' };
+const HTTPUPGRADE: ListenerProto = {
+  protocol: 'vless',
+  streamTransport: 'httpupgrade',
+  security: 'tls',
+};
+const GRPC: ListenerProto = { protocol: 'vless', streamTransport: 'grpc', security: 'tls' };
+const SS: ListenerProto = { protocol: 'shadowsocks', streamTransport: 'raw', security: 'none' };
+
 const edge = (
   over: Partial<PublishedEdge> & { edgeId: string; poolIndex: number },
 ): PublishedEdge => ({
   provider: 'gcore',
-  slotId: 's1',
-  slotRemark: 'node-a-relay-a1',
+  listenerId: 'l1',
+  listenerKey: 'a1',
+  matchRule: { kind: 'remark', remark: 'node-a-relay-a1' },
   edgePort: 443,
   addresses: { v4: `203.0.113.${over.poolIndex + 1}` },
-  protocol: 'reality',
+  proto: REALITY,
   serverNames: snis('a.example', 'b.example', 'c.example'),
   ...over,
 });
@@ -99,7 +112,7 @@ describe('assignEndpoints', () => {
     ];
     // Three ways an edge stops being assignable while staying in the pool.
     const variants = [
-      [before[0], { ...before[1], eligible: false }, before[2]], // profile disabled / slot retired
+      [before[0], { ...before[1], eligible: false }, before[2]], // listener disabled / retired / no template entry
       [before[0], { ...before[1], serverNames: [] }, before[2]], // no active name
       [before[0], { ...before[1], addresses: {} }, before[2]], // no address
     ];
@@ -139,12 +152,36 @@ describe('assignEndpoints', () => {
     }
   });
 
-  test('a pool whose every name is retired yields no assignment (nothing renders, templates drop)', () => {
+  test('a pool whose every name is retired yields no assignment (nothing renders)', () => {
     const retired = [
       { sni: 'a.example', status: 'retired' as const, retiredAt: NOW - 1, drainUntil: NOW + 1e6 },
     ];
     const e = edge({ edgeId: 'e0', poolIndex: 0, serverNames: retired });
     expect(assignEndpoints(sha(1), [e], opts)).toEqual({ primary: null, backup: null });
+  });
+
+  test('every endpoint carries the listener it was assigned on (the renderer clones that template)', () => {
+    const pool = [
+      edge({ edgeId: 'e0', poolIndex: 0, listenerId: 'l1', listenerKey: 'a' }),
+      edge({
+        edgeId: 'e1',
+        poolIndex: 1,
+        provider: 'ovh',
+        listenerId: 'l2',
+        listenerKey: 's',
+        matchRule: { kind: 'address' },
+        proto: SS,
+        serverNames: [],
+      }),
+    ];
+    for (let i = 0; i < 200; i++) {
+      const a = assignEndpoints(sha(i), pool, opts);
+      const keys = new Set([a.primary!.edge.listenerKey, a.backup!.edge.listenerKey]);
+      expect(keys).toEqual(new Set(['a', 's']));
+      const ss = [a.primary!, a.backup!].find((ep) => ep.edge.listenerKey === 's')!;
+      expect(ss.sni).toBeNull();
+      expect(ss.edge.matchRule).toEqual({ kind: 'address' });
+    }
   });
 });
 
@@ -207,19 +244,19 @@ describe('pickSni', () => {
 });
 
 // An L7 edge is a hostname fronted by a CDN: the hostname is the address, the
-// SNI and the Host header at once, so the profile's (origin-facing) server
+// SNI and the Host header at once, so the listener's (origin-facing) server
 // names play no part in it.
 describe('hostname (L7) edges', () => {
   const l7 = (over: Partial<PublishedEdge> & { edgeId: string; poolIndex: number }) =>
     edge({
       layer: 'l7',
-      protocol: 'ws',
+      proto: WS,
       serverNames: [],
       addresses: { hostname: `front-${over.poolIndex}.example` },
       ...over,
     });
 
-  test('assignable without any profile server name; the hostname is the SNI and the Host header', () => {
+  test('assignable without any listener server name; the hostname is the SNI and the Host header', () => {
     const e = l7({ edgeId: 'h0', poolIndex: 0 });
     const a = assignEndpoints(sha(1), [e], opts);
     expect(a.primary).toMatchObject({
@@ -242,37 +279,33 @@ describe('hostname (L7) edges', () => {
     expect(edgeAssignable(l7({ edgeId: 'h2', poolIndex: 0, addresses: {} }))).toBe(false);
   });
 
-  test('hostHeader follows the protocol: the hostname for L7, the selected name for L4 ws/httpupgrade, null otherwise', () => {
-    for (const protocol of ['ws', 'httpupgrade', 'grpc', 'reality', 'tls', 'plain'] as const) {
-      const hosted = assignEndpoints(sha(1), [l7({ edgeId: 'h0', poolIndex: 0, protocol })], opts);
+  test('hostHeader follows the listener: the hostname for L7, the selected name for L4 ws/httpupgrade, null otherwise', () => {
+    for (const proto of [WS, HTTPUPGRADE, GRPC, REALITY, TLS, SS]) {
+      const hosted = assignEndpoints(sha(1), [l7({ edgeId: 'h0', poolIndex: 0, proto })], opts);
       expect(hosted.primary!.hostHeader).toBe('front-0.example');
       expect(hosted.primary!.sni).toBe('front-0.example');
     }
-    const expected: Record<string, 'sni' | null> = {
-      ws: 'sni',
-      httpupgrade: 'sni',
-      grpc: null,
-      reality: null,
-      tls: null,
-    };
-    for (const [protocol, want] of Object.entries(expected)) {
-      const a = assignEndpoints(
-        sha(1),
-        [edge({ edgeId: 'e0', poolIndex: 0, protocol: protocol as PublishedEdge['protocol'] })],
-        opts,
-      );
+    const expected: Array<[ListenerProto, 'sni' | null]> = [
+      [WS, 'sni'],
+      [HTTPUPGRADE, 'sni'],
+      [GRPC, null],
+      [REALITY, null],
+      [TLS, null],
+    ];
+    for (const [proto, want] of expected) {
+      const a = assignEndpoints(sha(1), [edge({ edgeId: 'e0', poolIndex: 0, proto })], opts);
       expect(a.primary!.hostHeader).toBe(want === 'sni' ? a.primary!.sni : null);
     }
     const plain = assignEndpoints(
       sha(1),
-      [edge({ edgeId: 'e0', poolIndex: 0, protocol: 'plain', serverNames: [] })],
+      [edge({ edgeId: 'e0', poolIndex: 0, proto: SS, serverNames: [] })],
       opts,
     );
     expect(plain.primary!.hostHeader).toBeNull();
     // A v6-only L4 ws edge still gets its Host header (assignment is family agnostic).
     const v6 = assignEndpoints(
       sha(1),
-      [edge({ edgeId: 'e6', poolIndex: 0, protocol: 'ws', addresses: { v6: '2001:db8::6' } })],
+      [edge({ edgeId: 'e6', poolIndex: 0, proto: WS, addresses: { v6: '2001:db8::6' } })],
       opts,
     );
     expect(v6.primary!.hostHeader).toBe(v6.primary!.sni);
@@ -316,11 +349,11 @@ describe('hostname (L7) edges', () => {
     }
   });
 
-  test('an L4 ws/httpupgrade edge behaves exactly like a tls one (names picked the same way)', () => {
+  test('an L4 ws/httpupgrade/grpc edge behaves exactly like a tls one (names picked the same way)', () => {
     const names = snis('a.example', 'b.example', 'c.example');
-    for (const protocol of ['ws', 'httpupgrade', 'grpc'] as const) {
-      const tls = edge({ edgeId: 'e0', poolIndex: 0, protocol: 'tls', serverNames: names });
-      const http = edge({ edgeId: 'e0', poolIndex: 0, protocol, serverNames: names });
+    for (const proto of [WS, HTTPUPGRADE, GRPC]) {
+      const tls = edge({ edgeId: 'e0', poolIndex: 0, proto: TLS, serverNames: names });
+      const http = edge({ edgeId: 'e0', poolIndex: 0, proto, serverNames: names });
       for (let i = 0; i < 200; i++) {
         expect(assignEndpoints(sha(i), [http], opts).primary!.sni).toBe(
           assignEndpoints(sha(i), [tls], opts).primary!.sni,
@@ -330,15 +363,15 @@ describe('hostname (L7) edges', () => {
       expect(
         assignEndpoints(
           sha(1),
-          [edge({ edgeId: 'e0', poolIndex: 0, protocol, serverNames: [] })],
+          [edge({ edgeId: 'e0', poolIndex: 0, proto, serverNames: [] })],
           opts,
         ).primary,
       ).toBeNull();
     }
   });
 
-  test('a plain-protocol edge is assignable without server names and carries a null sni', () => {
-    const tcp = edge({ edgeId: 't1', poolIndex: 0, protocol: 'plain', serverNames: [] });
+  test('a no-name listener (shadowsocks) is assignable without server names and carries a null sni', () => {
+    const tcp = edge({ edgeId: 't1', poolIndex: 0, proto: SS, serverNames: [] });
     const a = assignEndpoints(sha(1), [tcp], opts);
     expect(a.primary).toMatchObject({ edge: { edgeId: 't1' }, sni: null });
     // A REALITY edge without an active name stays unassignable.

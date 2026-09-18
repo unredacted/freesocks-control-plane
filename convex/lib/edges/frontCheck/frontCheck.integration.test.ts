@@ -54,7 +54,7 @@ describe.skipIf(!BASE)('front qualification against pinned Xray-core', () => {
     qualifyFront(
       {
         hostname: HOSTNAME,
-        protocol,
+        proto: { protocol: 'vless', streamTransport: protocol, security: 'tls' },
         params,
         uuid,
         stepTimeoutMs: 10_000,

@@ -13,6 +13,13 @@ import { upsertSettingRow } from './appSettings';
 import { resolveEdgeAttribution } from './edgeAttribution';
 import { publishedEdgesOf } from './edgeRender';
 import { assignEndpoints } from './lib/edges/assignment';
+import {
+  adoptL4Edge,
+  FIXTURE_CONFIG_PROFILE,
+  insertPanelServer,
+  realityListener,
+  registerRelay,
+} from './lib/edges/testing/fixtures';
 
 const modules = import.meta.glob('./**/*.*s');
 const SIGN_KEY = 'test-sign';
@@ -33,10 +40,23 @@ const ORIGIN = '203.0.113.10';
 const EDGE_A = '198.51.100.1';
 const EDGE_B = '198.51.100.2';
 
+/** The REALITY listener `u`, scoped to the UpCloud network (the old "profile U"). */
+const listenerU = () =>
+  realityListener({
+    listenerKey: 'u',
+    tlsNames: ['a.example'],
+    providerScope: { provider: 'upcloud' },
+    panelBinding: {
+      inboundTag: 'VLESS_RELAY_U',
+      configProfileUuid: FIXTURE_CONFIG_PROFILE,
+      configProfileInboundUuid: '22222222-2222-4222-8222-222222222222',
+    },
+  });
+
 async function seed() {
   const t = convexTest(schema, modules);
-  const base = await t.run(async (ctx) => {
-    const tierId = await ctx.db.insert('tiers', {
+  const tierId = await t.run((ctx) =>
+    ctx.db.insert('tiers', {
       slug: 'free',
       name: 'Free',
       backend: 'remnawave',
@@ -50,59 +70,19 @@ async function seed() {
       priority: 0,
       expirationDaysAfterMembershipLapse: 0,
       updatedAt: Date.now(),
-    });
-    const serverId = await ctx.db.insert('backendServers', {
-      backend: 'remnawave',
-      name: 'panel-a',
-      slug: 'panel-a',
-      config: { type: 'remnawave', baseUrl: 'https://panel.example', apiToken: 'tok' },
-      isActive: true,
-      priority: 0,
-      keyCount: 0,
-      updatedAt: Date.now(),
-    });
-    await upsertSettingRow(ctx, 'edge.render.enabled', 'true');
-    return { tierId, serverId };
-  });
-  await t.mutation(internal.protocolProfiles.create, {
-    slug: 'prof-u',
-    name: 'P',
-    provider: 'upcloud',
-    targetAddress: 'target.example',
-    serverNames: ['a.example'],
-  });
-  const { id: relayId } = await t.mutation(internal.relays.upsertBySlug, {
-    slug: 'node-one',
-    backendServerSlug: 'panel-a',
-    nodeHostname: 'node-one',
-    originAddress: ORIGIN,
-  });
-  const { id: slotId } = await t.mutation(internal.relaySlots.upsert, {
-    relayId,
-    slotKey: 'u',
-    profileSlug: 'prof-u',
-    inboundTag: 'VLESS_RELAY_U',
-    configProfileUuid: '11111111-1111-4111-8111-111111111111',
-    configProfileInboundUuid: '22222222-2222-4222-8222-222222222222',
-    originPort: 443,
-  });
-  const a = await t.mutation(internal.relays.adoptEdge, {
-    relayId,
-    slotId,
-    ipv4: EDGE_A,
-    publish: true,
-  });
-  const b = await t.mutation(internal.relays.adoptEdge, {
-    relayId,
-    slotId,
-    ipv4: EDGE_B,
-    publish: true,
-  });
+    }),
+  );
+  const serverId = await insertPanelServer(t);
+  await t.run((ctx) => upsertSettingRow(ctx, 'edge.render.enabled', 'true'));
+  const { relayId, listenerId } = await registerRelay(t, { listeners: [listenerU()] });
+  const a = await adoptL4Edge(t, relayId, listenerId, { ipv4: EDGE_A, publish: true });
+  const b = await adoptL4Edge(t, relayId, listenerId, { ipv4: EDGE_B, publish: true });
   return {
     t,
-    ...base,
+    tierId,
+    serverId,
     relayId,
-    slotId,
+    listenerId,
     edgeA: a.edgeId as Id<'edges'>,
     edgeB: b.edgeId as Id<'edges'>,
   };
@@ -157,10 +137,35 @@ async function report(
   });
 }
 
+/** Record what the renderer handed this subscriber (attribution reads ONLY this snapshot). */
+async function handed(
+  t: ReturnType<typeof convexTest>,
+  subId: Id<'subscriptions'>,
+  relayId: Id<'relays'>,
+  primaryEdgeId: Id<'edges'>,
+  backupEdgeId?: Id<'edges'>,
+) {
+  await t.run(async (ctx) => {
+    const epoch = (await ctx.db.get(relayId))!.publicationEpoch;
+    await ctx.db.patch(subId, {
+      lastRenderedEpoch: epoch,
+      lastRender: {
+        at: Date.now(),
+        epoch,
+        family: 'mihomo',
+        listenerKeys: ['a'],
+        primaryEdgeId,
+        backupEdgeId,
+      },
+    });
+  });
+}
+
 describe('relay attribution on member reports', () => {
   test('a report carries the origin slug; the edge only for an explicit choice; the first report per window weighs 1', async () => {
     const s = await seed();
     const m = await member(s.t, s.tierId, s.serverId, 1);
+    await handed(s.t, m.subId, s.relayId, s.edgeA, s.edgeB);
     const r1 = await report(s.t, m.cookie, { reason: 'cant-connect', connection: 'primary' });
     expect(r1.status).toBe(200);
     const r2 = await report(s.t, m.cookie, { reason: 'cant-connect', connection: 'unsure' });
@@ -173,7 +178,7 @@ describe('relay attribution on member reports', () => {
       detectorWeight: 1,
       refreshNotObserved: false,
     });
-    expect([s.edgeA, s.edgeB]).toContain(rows[0].relayEdgeId);
+    expect(rows[0].relayEdgeId).toBe(s.edgeA);
     // Second report by the same member inside the window: no edge (unsure), weight 0.
     expect(rows[1]).toMatchObject({
       relaySlug: 'node-one',
@@ -188,6 +193,7 @@ describe('relay attribution on member reports', () => {
     expect(marks[0].key).toMatch(/^[0-9a-f]{64}$/);
     // Primary vs backup resolve to DIFFERENT edges for the same member.
     const m2 = await member(s.t, s.tierId, s.serverId, 2);
+    await handed(s.t, m2.subId, s.relayId, s.edgeB, s.edgeA);
     await report(s.t, m2.cookie, { reason: 'cant-connect', connection: 'primary' });
     await report(s.t, m2.cookie, { reason: 'cant-connect', connection: 'backup' });
     const rows2 = (await s.t.run((ctx) => ctx.db.query('issueReports').collect())).slice(2);
@@ -201,44 +207,13 @@ describe('relay attribution on member reports', () => {
     expect(JSON.stringify(issue)).not.toContain('node-one');
   });
 
-  test('attribution recomputes the assignment over the FULL pool (ineligible edges keep their index), exactly as the renderer did', async () => {
+  test('a member never rendered gets NO edge attribution: nothing is recomputed from the pool', async () => {
     const s = await seed();
-    // A third edge, then the middle one loses its address: the renderer keeps
-    // it in the modulus and walks forward; attribution must do the same.
-    await s.t.run((ctx) => ctx.db.patch(s.relayId, { desiredPublished: 3 }));
-    const c = await s.t.mutation(internal.relays.adoptEdge, {
-      relayId: s.relayId,
-      slotId: s.slotId,
-      ipv4: '198.51.100.99',
-      publish: true,
-    });
-    await s.t.run((ctx) => ctx.db.patch(s.edgeB, { addresses: {} }));
-    const now = Date.now();
-    let discriminating = false;
-    for (let i = 40; i < 56; i++) {
-      const m = await member(s.t, s.tierId, s.serverId, i);
-      await s.t.run(async (ctx) => {
-        const origin = (await ctx.db.get(s.relayId))!;
-        const sub = (await ctx.db.get(m.subId))!;
-        const full = (await publishedEdgesOf(ctx, origin, { includeIneligible: true })).published;
-        const compressed = (await publishedEdgesOf(ctx, origin)).published;
-        expect(full.map((e) => e.edgeId)).toEqual([s.edgeA, s.edgeB, c.edgeId]);
-        expect(compressed.map((e) => e.edgeId)).toEqual([s.edgeA, c.edgeId]);
-        const opts = { now, preferDistinctProviders: false, includeBackup: true };
-        const expectFull = assignEndpoints(sub.renderKey!, full, opts);
-        const wrong = assignEndpoints(sub.renderKey!, compressed, opts);
-        const current = { ...sub, lastRenderedEpoch: origin.publicationEpoch } as typeof sub;
-        const primary = await resolveEdgeAttribution(ctx.db, current, 'primary', now);
-        const backup = await resolveEdgeAttribution(ctx.db, current, 'backup', now);
-        expect(primary!.relayEdgeId).toBe(expectFull.primary!.edge.edgeId);
-        expect(backup!.relayEdgeId).toBe(expectFull.backup?.edge.edgeId ?? null);
-        expect(primary!.relayEdgeId).not.toBe(s.edgeB);
-        if (wrong.primary!.edge.edgeId !== expectFull.primary!.edge.edgeId) discriminating = true;
-      });
-    }
-    // At least one member's compressed-pool answer differs, so the assertion
-    // above genuinely pins the full-pool behaviour.
-    expect(discriminating).toBe(true);
+    const m = await member(s.t, s.tierId, s.serverId, 40);
+    await report(s.t, m.cookie, { reason: 'cant-connect', connection: 'primary' });
+    const row = (await s.t.run((ctx) => ctx.db.query('issueReports').collect()))[0];
+    expect(row).toMatchObject({ relaySlug: 'node-one', connectionChoice: 'primary' });
+    expect(row.relayEdgeId).toBeUndefined();
   });
 
   test('refreshNotObserved when the key has not fetched content since the origin last rotated', async () => {
@@ -263,7 +238,17 @@ describe('relay attribution on member reports', () => {
       const sub = (await ctx.db.get(m.subId))!;
       const epoch = (await ctx.db.get(s.relayId))!.publicationEpoch;
       const withEpoch = (lastRenderedEpoch: number) =>
-        ({ ...sub, lastRenderedEpoch }) as typeof sub;
+        ({
+          ...sub,
+          lastRenderedEpoch,
+          lastRender: {
+            at: now,
+            epoch: lastRenderedEpoch,
+            family: 'mihomo',
+            listenerKeys: ['a'],
+            primaryEdgeId: s.edgeA,
+          },
+        }) as typeof sub;
       // Rendered against an older epoch → still on the old pool → no edge attribution.
       const behind = await resolveEdgeAttribution(ctx.db, withEpoch(epoch - 1), 'primary', now);
       expect(behind).toMatchObject({ relaySlug: 'node-one', refreshNotObserved: true });
@@ -371,6 +356,7 @@ describe('relay block detector', () => {
       weighted: number;
       edgeId?: Id<'edges'>;
       weightedFirst?: boolean;
+      relaySlug?: string;
     },
   ) {
     const insert = (
@@ -381,7 +367,7 @@ describe('relay block detector', () => {
         kind: 'report',
         reason: 'cant-connect',
         backend: 'remnawave',
-        relaySlug: 'node-one',
+        relaySlug: opts.relaySlug ?? 'node-one',
         country: 'IR',
         detectorWeight: weight,
         ...(weight === 1 && opts.edgeId
@@ -559,6 +545,24 @@ describe('relay block detector', () => {
     );
   }
 
+  /** Six edge-attributed IR reporters against `edgeId` (enough to rotate on their own). */
+  async function edgeReports(t: ReturnType<typeof convexTest>, edgeId: Id<'edges'>, n = 6) {
+    await t.run(async (ctx) => {
+      for (let i = 0; i < n; i++) {
+        await ctx.db.insert('issueReports', {
+          kind: 'report',
+          reason: 'cant-connect',
+          backend: 'remnawave',
+          relaySlug: 'node-one',
+          country: 'IR',
+          detectorWeight: 1,
+          connectionChoice: 'primary',
+          relayEdgeId: edgeId,
+        });
+      }
+    });
+  }
+
   test('an OFFLINE node is an outage: suspected, but the veto is node_offline and no sample joins the baseline', async () => {
     vi.useFakeTimers({ now: NOW });
     const s = await seed();
@@ -568,19 +572,8 @@ describe('relay block detector', () => {
       await upsertSettingRow(ctx, 'edge.enabled', 'true');
       await upsertSettingRow(ctx, 'edge.autoRotate', 'true');
       await ctx.db.patch(s.relayId, { autoRotate: true });
-      for (let i = 0; i < 6; i++) {
-        await ctx.db.insert('issueReports', {
-          kind: 'report',
-          reason: 'cant-connect',
-          backend: 'remnawave',
-          relaySlug: 'node-one',
-          country: 'IR',
-          detectorWeight: 1,
-          connectionChoice: 'primary',
-          relayEdgeId: s.edgeA,
-        });
-      }
     });
+    await edgeReports(s.t, s.edgeA);
     const r = await s.t.action(internal.edgeDetector.run, {});
     expect(r).toMatchObject({ suspected: 1, rotated: 0 });
     const o = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
@@ -619,17 +612,8 @@ describe('relay block detector', () => {
       await upsertSettingRow(ctx, 'edge.enabled', 'true');
       await upsertSettingRow(ctx, 'edge.probe.enabled', 'true');
       await upsertSettingRow(ctx, 'edge.probe.sourceSpacingMs', '1500');
-      for (let i = 0; i < 10; i++) {
-        await ctx.db.insert('issueReports', {
-          kind: 'report',
-          reason: 'cant-connect',
-          backend: 'remnawave',
-          relaySlug: 'node-one',
-          country: 'IR',
-          detectorWeight: 1,
-        });
-      }
     });
+    await bulkReports(s.t, { zeroWeight: 0, weighted: 10 });
     const r = await s.t.action(internal.edgeDetector.run, {});
     expect(r.suspected).toBe(1);
     expect(r.probesRequested).toBeGreaterThan(0);
@@ -657,17 +641,8 @@ describe('relay block detector', () => {
       await upsertSettingRow(ctx, 'edge.enabled', 'true');
       await upsertSettingRow(ctx, 'edge.autoRotate', 'true');
       await ctx.db.patch(s.relayId, { autoRotate: true });
-      for (let i = 0; i < 10; i++) {
-        await ctx.db.insert('issueReports', {
-          kind: 'report',
-          reason: 'cant-connect',
-          backend: 'remnawave',
-          relaySlug: 'node-one',
-          country: 'IR',
-          detectorWeight: 1,
-        });
-      }
     });
+    await bulkReports(s.t, { zeroWeight: 0, weighted: 10 });
     const r = await s.t.action(internal.edgeDetector.run, {});
     expect(r).toMatchObject({ evaluated: 1, suspected: 1, rotated: 0 });
     const o = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
@@ -677,6 +652,7 @@ describe('relay block detector', () => {
       scope: 'regional',
       veto: 'no_edge_evidence',
     });
+    expect(o.suspicion!.loadScore).toBeGreaterThan(0);
     expect(o.suspicion!.countries[0]).toEqual({ code: 'IR', count: 10 });
     expect(o.suspicion!.hint).toMatch(/Possible block \(mostly IR\)/);
     expect(o.activeRotationId).toBeUndefined();
@@ -688,6 +664,67 @@ describe('relay block detector', () => {
       topCountry: 'IR',
       autoRotate: true,
     });
+  });
+
+  test('a backend-server origin has NO load / online signal: the window carries none and the load score is 0', async () => {
+    vi.useFakeTimers({ now: NOW });
+    const t = convexTest(schema, modules);
+    const serverB = await insertPanelServer(t, { slug: 'panel-b' });
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.render.enabled', 'true'));
+    // A whole-server origin: the listener has no panel binding, so the fixture
+    // strips it and the relay derives hostMode `none`.
+    const { relayId, listenerId } = await registerRelay(t, {
+      slug: 'server-b',
+      kind: 'backend-server',
+      backendSlug: 'panel-b',
+      originAddress: '203.0.113.20',
+      listeners: [listenerU()],
+    });
+    expect((await t.query(internal.relays.get, { id: relayId }))!.hostMode).toBe('none');
+    await adoptL4Edge(t, relayId, listenerId, { ipv4: EDGE_A, publish: true });
+    await warmBaseline(t, relayId, 100);
+    // Node inventory rows exist on the server, yet a server-wide origin is not
+    // one node: none of them is ITS load.
+    await t.run((ctx) =>
+      ctx.db.insert('backendNodeInventory', {
+        backendServerId: serverB,
+        nodeUuid: 'n1',
+        name: 'some-node',
+        usersOnline: 0,
+        online: false,
+        lastStatsAt: NOW - 60_000,
+      }),
+    );
+    const w = (await t.query(internal.edgeDetector.relayWindow, { relayId, now: NOW }))!;
+    expect(w.usersOnline).toBeNull();
+    expect(w.nodeOnline).toBeNull();
+    expect(w.loadStale).toBe(true);
+    await t.run(async (ctx) => {
+      await upsertSettingRow(ctx, 'edge.enabled', 'true');
+      await upsertSettingRow(ctx, 'edge.autoRotate', 'true');
+      await ctx.db.patch(relayId, { autoRotate: true });
+    });
+    await bulkReports(t, { zeroWeight: 0, weighted: 10, relaySlug: 'server-b' });
+    // Default `detect.requireLoadCorroboration`: reports alone cannot be
+    // corroborated by a load signal that does not exist, so the origin stays
+    // CLEAR (score capped at half) with the reports visible in the score parts.
+    const r = await t.action(internal.edgeDetector.run, {});
+    expect(r).toMatchObject({ evaluated: 1, suspected: 0, rotated: 0 });
+    let o = (await t.query(internal.relays.get, { id: relayId }))!;
+    expect(o.suspicion).toMatchObject({ state: 'clear', loadScore: 0 });
+    expect(o.suspicion!.reportScore).toBeGreaterThan(0);
+    // The offline bit of an unrelated node is never this origin's veto.
+    expect(o.suspicion!.veto).not.toBe('node_offline');
+    // Nor does an absent load signal ever produce a baseline sample.
+    const samples = await t.run((ctx) => ctx.db.query('relaySamples').collect());
+    expect(samples.some((x) => x.at === NOW)).toBe(false);
+    // Without the corroboration requirement, the same reports suspect it.
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.detect.requireLoadCorroboration', 'false'));
+    const r2 = await t.action(internal.edgeDetector.run, {});
+    expect(r2).toMatchObject({ evaluated: 1, suspected: 1, rotated: 0 });
+    o = (await t.query(internal.relays.get, { id: relayId }))!;
+    expect(o.suspicion).toMatchObject({ state: 'suspected', hintLevel: 'reports', loadScore: 0 });
+    expect(o.suspicion!.hint).not.toMatch(/Node offline/);
   });
 
   test('edge evidence from probes + every gate open → a detector burn rotation of that edge; gates closed → veto recorded', async () => {
@@ -731,18 +768,7 @@ describe('relay block detector', () => {
     await reachableHistory(s.t, s.edgeB, ['IR', 'RU']);
     // Probe evidence counts only while probes are enabled (stale/legacy summaries never do).
     await s.t.run((ctx) => upsertSettingRow(ctx, 'edge.probe.enabled', 'true'));
-    await s.t.run(async (ctx) => {
-      for (let i = 0; i < 10; i++) {
-        await ctx.db.insert('issueReports', {
-          kind: 'report',
-          reason: 'cant-connect',
-          backend: 'remnawave',
-          relaySlug: 'node-one',
-          country: 'IR',
-          detectorWeight: 1,
-        });
-      }
-    });
+    await bulkReports(s.t, { zeroWeight: 0, weighted: 10 });
     // Gates closed (global switch off): suspected with a veto, no rotation.
     const r1 = await s.t.action(internal.edgeDetector.run, {});
     expect(r1).toMatchObject({ suspected: 1, rotated: 0 });
@@ -775,6 +801,7 @@ describe('relay block detector', () => {
       trigger: 'detector',
       burn: true,
       targetEdgeId: s.edgeB,
+      listenerId: s.listenerId,
       reason: 'detector:probes',
     });
     // Next tick: the running rotation is itself a veto.
@@ -829,18 +856,6 @@ describe('relay block detector', () => {
       await upsertSettingRow(ctx, 'edge.enabled', 'true');
       await upsertSettingRow(ctx, 'edge.autoRotate', 'true');
       await ctx.db.patch(s.relayId, { autoRotate: true });
-      for (let i = 0; i < 6; i++) {
-        await ctx.db.insert('issueReports', {
-          kind: 'report',
-          reason: 'cant-connect',
-          backend: 'remnawave',
-          relaySlug: 'node-one',
-          country: 'IR',
-          detectorWeight: 1,
-          connectionChoice: 'primary',
-          relayEdgeId: s.edgeA,
-        });
-      }
       await ctx.db.insert('relayReportMarks', {
         key: 'k-old',
         firstAt: NOW - 3_600_000,
@@ -852,6 +867,7 @@ describe('relay block detector', () => {
         expiresAt: NOW + 3_600_000,
       });
     });
+    await edgeReports(s.t, s.edgeA);
     const r = await s.t.action(internal.edgeDetector.run, {});
     expect(r.rotated).toBe(1);
     const o = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
@@ -863,5 +879,59 @@ describe('relay block detector', () => {
     expect(rot.reason).toBe('detector:reports');
     const marks = await s.t.run((ctx) => ctx.db.query('relayReportMarks').collect());
     expect(marks.map((m) => m.key)).toEqual(['k-live']);
+  });
+
+  test('the Host veto is ONLY for operator-managed Hosts: hostMode operator holds a template-edge rotation, fcp and none do not', async () => {
+    vi.useFakeTimers({ now: NOW });
+    const s = await seed();
+    await warmBaseline(s.t, s.relayId, 100);
+    await nodeLoad(s.t, s.serverId, 0);
+    await s.t.run(async (ctx) => {
+      await upsertSettingRow(ctx, 'edge.enabled', 'true');
+      await upsertSettingRow(ctx, 'edge.autoRotate', 'true');
+      await ctx.db.patch(s.relayId, { autoRotate: true });
+    });
+    // edgeA sits at index 0 and is the listener's template edge.
+    expect((await s.t.run((ctx) => ctx.db.get(s.listenerId)))!.templateEdgeId).toBe(s.edgeA);
+    await edgeReports(s.t, s.edgeA);
+    // The operator owns the panel Hosts: the detector may not move the template
+    // edge (its Host would keep pointing at the burned address).
+    await s.t.mutation(internal.relays.update, { id: s.relayId, hostMode: 'operator' });
+    const held = await s.t.action(internal.edgeDetector.run, {});
+    expect(held.rotated).toBe(0);
+    let o = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
+    expect(o.suspicion).toMatchObject({ state: 'suspected', veto: 'hosts_unmanaged' });
+    expect(o.suspicion!.hint).toMatch(/hosts_unmanaged/);
+    expect(o.activeRotationId).toBeUndefined();
+    // Back to FCP-owned Hosts: the same evidence rotates (the machine flips the Host).
+    await s.t.run((ctx) => ctx.db.patch(s.relayId, { hostMode: 'fcp' }));
+    const rotated = await s.t.action(internal.edgeDetector.run, {});
+    expect(rotated.rotated).toBe(1);
+    o = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
+    expect(o.suspicion!.veto).toBeNull();
+    expect(o.activeRotationId).toBeDefined();
+    expect(
+      (await s.t.query(internal.edgeRotations.get, { id: o.activeRotationId! }))!.targetEdgeId,
+    ).toBe(s.edgeA);
+  });
+
+  test('maintenance: while frozen the detector evaluates nothing (a tick may start a rotation)', async () => {
+    vi.useFakeTimers({ now: NOW });
+    const s = await seed();
+    await warmBaseline(s.t, s.relayId, 100);
+    await nodeLoad(s.t, s.serverId, 0);
+    await s.t.run(async (ctx) => {
+      await upsertSettingRow(ctx, 'edge.enabled', 'true');
+      await upsertSettingRow(ctx, 'edge.autoRotate', 'true');
+      await ctx.db.patch(s.relayId, { autoRotate: true });
+    });
+    await edgeReports(s.t, s.edgeA);
+    await s.t.mutation(internal.edgeMaintenance.freeze, { reason: 'test' });
+    const frozen = await s.t.action(internal.edgeDetector.run, {});
+    expect(frozen).toMatchObject({ evaluated: 0, suspected: 0, rotated: 0 });
+    expect((await s.t.query(internal.relays.get, { id: s.relayId }))!.suspicion).toBeUndefined();
+    await s.t.mutation(internal.edgeMaintenance.thaw, {});
+    const thawed = await s.t.action(internal.edgeDetector.run, {});
+    expect(thawed).toMatchObject({ evaluated: 1, suspected: 1, rotated: 1 });
   });
 });

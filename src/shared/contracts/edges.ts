@@ -7,6 +7,11 @@
 import { z } from 'zod';
 import { AuditEntry } from './admin';
 import { EDGE_PROVIDER_IDS } from './edgeProviderIds';
+import {
+  LISTENER_PROTOCOL_IDS,
+  LISTENER_SECURITY_IDS,
+  LISTENER_STREAM_TRANSPORT_IDS,
+} from './edgeProtocolIds';
 
 export { EDGE_PROVIDER_IDS, isRelayProviderId } from './edgeProviderIds';
 export type EdgeProviderId = import('./edgeProviderIds').EdgeProviderId;
@@ -155,46 +160,16 @@ export const EdgeTemplateValidateResponse = z.union([
 ]);
 export type EdgeTemplateValidateResponse = z.infer<typeof EdgeTemplateValidateResponse>;
 
-// --- camouflage profiles ------------------------------------------------------------------
+// --- listener catalogue -------------------------------------------------------------------------
 
-export const ProfileServerName = z.object({
-  sni: z.string(),
-  status: z.enum(['active', 'retired']),
-  retiredAt: isoN,
-  drainUntil: isoN,
-});
-export const ProtocolProfileAdmin = z.object({
-  id: z.string(),
-  slug: z.string(),
-  name: z.string(),
-  /** What the inbound speaks; decides whether server names / a target apply. */
-  protocol: z.enum(['reality', 'tls', 'plain', 'ws', 'httpupgrade', 'grpc']),
-  /** null = usable behind any provider. */
-  provider: EdgeProviderId.nullable(),
-  accountId: z.string().nullable(),
-  /** REALITY only. */
-  targetAddress: z.string().nullable(),
-  targetPort: z.number().nullable(),
-  serverNames: z.array(ProfileServerName),
-  enabled: z.boolean(),
-  qualification: z
-    .object({
-      checkedAt: iso,
-      edgeAsn: z.string().nullable(),
-      targetAsn: z.string().nullable(),
-      sameAsn: z.boolean().nullable(),
-      tlsOk: z.boolean(),
-      authOk: z.boolean(),
-    })
-    .nullable(),
-  notes: z.string().nullable(),
-  revision: z.number().default(0),
-  updatedAt: iso,
-});
-export type ProtocolProfileAdmin = z.infer<typeof ProtocolProfileAdmin>;
-export const ProtocolProfileList = z.array(ProtocolProfileAdmin);
+export const ListenerProtocolId = z.enum(LISTENER_PROTOCOL_IDS);
+export const ListenerStreamTransport = z.enum(LISTENER_STREAM_TRANSPORT_IDS);
+export const ListenerSecurity = z.enum(LISTENER_SECURITY_IDS);
+export type ListenerProtocolId = z.infer<typeof ListenerProtocolId>;
+export type ListenerStreamTransport = z.infer<typeof ListenerStreamTransport>;
+export type ListenerSecurity = z.infer<typeof ListenerSecurity>;
 
-// --- origins / slots / edges / rotations -----------------------------------------------------
+// --- relays / listeners / edges / rotations ----------------------------------------------------
 
 export const RelaySuspicion = z.object({
   state: z.enum(['clear', 'suspected']),
@@ -221,26 +196,42 @@ export const RelaySuspicion = z.object({
   lastRotateError: z.string().optional(),
 });
 
+/** Where a relay's origin is (lib/edges/origin.ts). */
+export const RelayOrigin = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('panel-node'),
+    backendServerId: z.string(),
+    nodeName: z.string(),
+    nodeUuid: z.string().nullable(),
+  }),
+  z.object({ kind: z.literal('backend-server'), backendServerId: z.string() }),
+  z.object({ kind: z.literal('manual') }),
+]);
+export type RelayOrigin = z.infer<typeof RelayOrigin>;
+export const HOST_MODE_IDS = ['fcp', 'operator', 'none'] as const;
+export const HostMode = z.enum(HOST_MODE_IDS);
+export type HostMode = z.infer<typeof HostMode>;
+
 export const RelayAdmin = z.object({
   id: z.string(),
   slug: z.string(),
-  backendServerId: z.string(),
-  nodeHostname: z.string(),
-  nodeUuid: z.string().nullable(),
+  label: z.string().nullable().default(null),
+  origin: RelayOrigin,
   originAddress: z.string(),
   locationCode: z.string().nullable(),
-  modeSlugs: z.array(z.string()),
+  /** Who writes the client-facing panel Hosts: FCP, the operator, or nobody (no Host). */
+  hostMode: HostMode,
+  delivery: z.literal('edge-required'),
   enabled: z.boolean(),
   autoRotate: z.boolean(),
-  hostManaged: z.boolean(),
   probeNode: z.boolean().default(false),
   /** An L7 front-qualification credential is minted for this relay. */
   qualificationCredential: z.boolean().default(false),
+  qualificationModeSlug: z.string().nullable().default(null),
   reachability: z
     .object({ byCountry: z.array(z.unknown()), updatedAt: isoN })
     .nullable()
     .default(null),
-  providerAffinity: z.enum(['rotate', 'sticky']),
   providerPreference: EdgeProviderId.nullable(),
   desiredPublished: z.number(),
   standbyPerRelay: z.number(),
@@ -255,6 +246,7 @@ export const RelayAdmin = z.object({
   cooldownUntil: isoN,
   rotationsToday: z.number(),
   lastRotatedAt: isoN,
+  lastRegisteredAt: isoN.default(null),
   quarantine: z.object({ rotationId: z.string(), since: iso, reason: z.string() }).nullable(),
   deleting: z.boolean(),
   suspicion: RelaySuspicion.nullable(),
@@ -262,45 +254,150 @@ export const RelayAdmin = z.object({
 });
 export type RelayAdmin = z.infer<typeof RelayAdmin>;
 
-export const SLOT_PROTOCOL_IDS = ['reality', 'tls', 'plain', 'ws', 'httpupgrade', 'grpc'] as const;
 export const EDGE_LAYER_IDS = ['l4', 'l7'] as const;
 export const EdgeLayer = z.enum(EDGE_LAYER_IDS);
 export type EdgeLayer = z.infer<typeof EdgeLayer>;
-/** How a slot's inbound is reached behind an L7 front (declared by the node role). */
-export const SlotOriginTransport = z.object({
+/** How a listener's inbound is reached behind an L7 front (declared by the node role). */
+export const ListenerOriginTransport = z.object({
   scheme: z.enum(['http', 'https']),
   certPublic: z.boolean(),
   certNames: z.array(z.string()),
   acceptsHostHeader: z.enum(['any', 'names']),
 });
-export type SlotOriginTransport = z.infer<typeof SlotOriginTransport>;
-export const SlotProtocol = z.enum(SLOT_PROTOCOL_IDS);
-export type SlotProtocol = z.infer<typeof SlotProtocol>;
+export type ListenerOriginTransport = z.infer<typeof ListenerOriginTransport>;
+export const ListenerMatchRule = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('remark'), remark: z.string() }),
+  z.object({ kind: z.literal('address') }),
+  z.object({ kind: z.literal('whole-body') }),
+]);
+export type ListenerMatchRule = z.infer<typeof ListenerMatchRule>;
+export const ListenerName = z.object({
+  name: z.string(),
+  status: z.enum(['active', 'retired']),
+  retiredAt: isoN,
+  drainUntil: isoN,
+  retiredBy: z.enum(['admin', 'role']).nullable().default(null),
+});
+export const LISTENER_HOST_STATES = [
+  'absent',
+  'creating',
+  'present',
+  'deleting',
+  'unresolved',
+  'ambiguous',
+] as const;
+export const ListenerHostState = z.enum(LISTENER_HOST_STATES);
 
-export const RelaySlotAdmin = z.object({
+/** One listener as the CMS sees it. */
+export const RelayListenerAdmin = z.object({
   id: z.string(),
   relayId: z.string(),
-  slotKey: z.string(),
-  protocol: SlotProtocol,
-  profileId: z.string(),
-  profileSlug: z.string().nullable(),
-  provider: EdgeProviderId.nullable(),
-  inboundTag: z.string(),
-  configProfileUuid: z.string(),
-  configProfileInboundUuid: z.string(),
+  listenerKey: z.string(),
+  protocol: ListenerProtocolId,
+  streamTransport: ListenerStreamTransport,
+  security: ListenerSecurity,
+  label: z.string().optional(),
+  transport: z.enum(['tcp', 'udp']),
   originPort: z.number(),
-  templateHostUuid: z.string().nullable(),
-  templateHostRemark: z.string(),
+  tlsNames: z.array(ListenerName),
+  realityTarget: z.object({ address: z.string(), port: z.number() }).nullable(),
+  transportParams: z
+    .object({
+      path: z.string().optional(),
+      host: z.string().optional(),
+      serviceName: z.string().optional(),
+      upgradeToken: z.string().optional(),
+    })
+    .nullable(),
+  originTransport: ListenerOriginTransport.nullable(),
+  providerScope: z
+    .object({ provider: EdgeProviderId, accountId: z.string().nullable() })
+    .nullable(),
+  matchRule: ListenerMatchRule,
+  panelBinding: z
+    .object({
+      inboundTag: z.string(),
+      configProfileUuid: z.string(),
+      configProfileInboundUuid: z.string(),
+    })
+    .nullable(),
+  host: z
+    .object({
+      state: ListenerHostState,
+      uuid: z.string().nullable(),
+      ownership: z.enum(['fcp', 'adopted']).nullable(),
+      pendingOp: z.object({ kind: z.enum(['create', 'delete']), attempts: z.number() }).nullable(),
+    })
+    .nullable(),
+  legacyHosts: z.array(z.object({ uuid: z.string(), remark: z.string() })).default([]),
+  templateEdgeId: z.string().nullable(),
+  templateHostRemark: z.string().nullable(),
+  source: z.enum(['role', 'admin']),
+  /** Layers that can front this listener given its complete chain, and why the others cannot. */
+  layers: z.array(EdgeLayer),
+  excluded: z.record(z.string(), z.string()).default({}),
+  enabled: z.boolean(),
   deployed: z.boolean(),
   deployedAt: isoN,
   retired: z.boolean(),
-  originTransport: SlotOriginTransport.nullable().default(null),
-  /** Layers that can front this slot given its complete chain (lib/edges/layers.ts). */
-  layers: z.array(EdgeLayer).default(['l4']),
-  revision: z.number().default(0),
+  revision: z.number(),
   updatedAt: iso,
 });
-export type RelaySlotAdmin = z.infer<typeof RelaySlotAdmin>;
+export type RelayListenerAdmin = z.infer<typeof RelayListenerAdmin>;
+
+/** One listener as a registration body (the node role's PUT, the admin form) carries it. */
+export const ListenerSpec = z.object({
+  listenerKey: z.string(),
+  protocol: ListenerProtocolId,
+  streamTransport: ListenerStreamTransport,
+  security: ListenerSecurity,
+  originPort: z.number().int(),
+  tlsNames: z.array(z.string()).nullish(),
+  realityTarget: z.object({ address: z.string(), port: z.number().int() }).nullish(),
+  transportParams: z
+    .object({
+      path: z.string().optional(),
+      host: z.string().optional(),
+      serviceName: z.string().optional(),
+      upgradeToken: z.string().optional(),
+    })
+    .nullish(),
+  originTransport: ListenerOriginTransport.nullish(),
+  panelBinding: z
+    .object({
+      inboundTag: z.string(),
+      configProfileUuid: z.string(),
+      configProfileInboundUuid: z.string(),
+    })
+    .nullish(),
+  matchRule: ListenerMatchRule.nullish(),
+  providerScope: z.object({ provider: EdgeProviderId, accountId: z.string().optional() }).nullish(),
+  deployed: z.boolean().optional(),
+});
+export type ListenerSpec = z.infer<typeof ListenerSpec>;
+
+/** The wire origin of a registration body: the backend by SLUG (the role never knows ids). */
+export const RelayWireOrigin = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('panel-node'),
+    backendSlug: z.string(),
+    nodeName: z.string(),
+    nodeUuid: z.string().nullish(),
+  }),
+  z.object({ kind: z.literal('backend-server'), backendSlug: z.string() }),
+  z.object({ kind: z.literal('manual') }),
+]);
+/** `PUT /api/v1/admin/edges/relays/by-slug/{slug}`: one idempotent body (docs/edges.md). */
+export const RelayRegisterBody = z.object({
+  origin: RelayWireOrigin,
+  originAddress: z.string(),
+  locationCode: z.string().nullish(),
+  label: z.string().nullish(),
+  listeners: z.array(ListenerSpec),
+  pruneListeners: z.boolean().optional(),
+  hostModeRequest: z.literal('operator').optional(),
+});
+export type RelayRegisterBody = z.infer<typeof RelayRegisterBody>;
 
 /** Edge addresses: IP literals for an L4 edge, the fronted hostname for an L7 edge. */
 export const EdgeAddresses = z.object({
@@ -337,7 +434,7 @@ export const ProbeReachabilityCountry = z.object({
 export const EdgeAdmin = z.object({
   id: z.string(),
   relayId: z.string(),
-  slotId: z.string(),
+  listenerId: z.string(),
   accountId: z.string().nullable(),
   templateId: z.string().nullable(),
   templateHash: z.string().nullable(),
@@ -384,7 +481,7 @@ export const EdgeAdmin = z.object({
       code: z.string().nullable(),
       checkedAt: iso,
       expiresAt: iso,
-      /** True when the binding still matches the current slot/profile/intent and has not expired. */
+      /** True when the binding still matches the current listener/intent and has not expired. */
       current: z.boolean(),
     })
     .nullable()
@@ -644,6 +741,7 @@ export const RelayPoolEntry = z.object({
   managed: z.boolean(),
   addresses: EdgeAddresses,
   layer: EdgeLayer.default('l4'),
+  listenerId: z.string().optional(),
   health: z.string(),
   status: z.string(),
   unreachableIn: z.array(z.string()),
@@ -678,9 +776,11 @@ export const RelayPublishedEndpoint = z.object({
   poolIndex: z.number(),
   edgeId: z.string(),
   provider: z.string(),
-  slotKey: z.string(),
-  slotRemark: z.string(),
-  protocol: SlotProtocol,
+  listenerKey: z.string(),
+  templateHostRemark: z.string().nullable().default(null),
+  protocol: ListenerProtocolId,
+  streamTransport: ListenerStreamTransport,
+  security: ListenerSecurity,
   port: z.number(),
   addresses: EdgeAddresses,
   layer: EdgeLayer.default('l4'),
@@ -689,9 +789,10 @@ export const RelayPublishedEndpoint = z.object({
   /** What the template Host must present: the SNI and the HTTP Host header (null = none / clear). */
   sni: z.string().nullable().default(null),
   hostHeader: z.string().nullable().default(null),
-  /** Empty for a `plain` slot; for an L7 edge the hostname is the only name. */
-  activeServerNames: z.array(z.string()),
+  /** Empty for a listener that presents no name; for an L7 edge the hostname is the only name. */
+  activeNames: z.array(z.string()),
 });
+export type RelayPublishedEndpoint = z.infer<typeof RelayPublishedEndpoint>;
 export const RelayEndpointsResponse = z.object({
   relaySlug: z.string(),
   epoch: z.number(),
@@ -703,6 +804,33 @@ export const RelayEndpointsResponse = z.object({
   }),
 });
 export type RelayEndpointsResponse = z.infer<typeof RelayEndpointsResponse>;
+
+/** What a client must dial per listener (every origin kind; a manual origin lives off this). */
+export const RelayConnectionPlanEntry = z.object({
+  listenerKey: z.string(),
+  address: z.string(),
+  port: z.number(),
+  sni: z.string().nullable(),
+  host: z.string().nullable(),
+});
+/** The Hosts the OPERATOR must create/keep when hostMode is `operator`. */
+export const RelayHostsPlan = z.object({
+  mode: HostMode,
+  hosts: z.array(
+    RelayConnectionPlanEntry.extend({
+      remark: z.string(),
+      inbound: z.object({ configProfileUuid: z.string(), configProfileInboundUuid: z.string() }),
+    }),
+  ),
+});
+/** The CMS view of a relay's listeners + what is published for them. */
+export const RelayListenersResponse = z.object({
+  listeners: z.array(RelayListenerAdmin),
+  publishedEndpoints: z.array(RelayPublishedEndpoint),
+  connectionPlan: z.array(RelayConnectionPlanEntry),
+  hostsPlan: RelayHostsPlan,
+});
+export type RelayListenersResponse = z.infer<typeof RelayListenersResponse>;
 
 /** Panel nodes the relay picker offers (inventory cache), with any relay already bound. */
 export const RelayNodeCandidate = z.object({
@@ -722,65 +850,74 @@ export const RelayNodeCandidatesResponse = z.object({
 });
 export type RelayNodeCandidatesResponse = z.infer<typeof RelayNodeCandidatesResponse>;
 
-/** The IaC (Ansible) view of a relay: relay + slots + what is published. */
-export const RelayBySlugResponse = z.object({
-  relay: RelayAdmin,
-  slots: z.array(RelaySlotAdmin),
-  publishedEndpoints: z.array(RelayPublishedEndpoint),
-});
-export type RelayBySlugResponse = z.infer<typeof RelayBySlugResponse>;
-
 /**
- * What the node role actually needs from `GET/PUT …/relays/by-slug/{slug}`
- * (docs/edges.md § "Node role contract"): per slot, the index-0 IPv4, its port
- * and the first active server name — nothing else. The full RelayBySlugResponse
- * also ships the relay's detector state (suspicion / quarantine / veto), its
- * rotation limits and the pool-wide provider names, none of which the role
- * reads; a leaked role token should not learn them either. Proposed narrower
- * projection for the by-slug route (the CMS does not consume that route, so the
- * server can switch to it without a client change; the role's parser must
- * tolerate both while the two coexist). Every field is a strict subset of the
- * full response, so this schema also parses today's payload.
+ * The node role's view of `GET/PUT …/relays/by-slug/{slug}` (docs/edges.md § "Node
+ * role contract"): the MINIMAL projection. No detector state, no rotation
+ * limits, no pool-wide provider names, so a leaked register token learns none.
  */
-export const RelayBySlugMinimalResponse = z.object({
+export const RelayBySlugResponse = z.object({
   relay: z.object({
     id: z.string(),
     slug: z.string(),
-    nodeHostname: z.string(),
-    originAddress: z.string(),
-    publicationEpoch: z.number(),
+    hostMode: HostMode,
+    delivery: z.literal('edge-required'),
     enabled: z.boolean(),
-    hostManaged: z.boolean(),
     deleting: z.boolean(),
+    publicationEpoch: z.number(),
+    originAddress: z.string(),
+    lastRegisteredAt: isoN,
   }),
-  slots: z.array(
+  listeners: z.array(
     z.object({
-      slotKey: z.string(),
-      protocol: SlotProtocol,
-      profileSlug: z.string().nullable(),
+      listenerKey: z.string(),
+      protocol: ListenerProtocolId,
+      streamTransport: ListenerStreamTransport,
+      security: ListenerSecurity,
+      transport: z.enum(['tcp', 'udp']),
       originPort: z.number(),
-      templateHostRemark: z.string(),
+      layers: z.array(EdgeLayer),
+      excluded: z.record(z.string(), z.string()).default({}),
       deployed: z.boolean(),
       retired: z.boolean(),
+      templateHostRemark: z.string().nullable(),
     }),
   ),
   publishedEndpoints: z.array(
     z.object({
+      listenerKey: z.string(),
       poolIndex: z.number(),
-      slotKey: z.string(),
-      slotRemark: z.string(),
-      protocol: SlotProtocol,
+      layer: EdgeLayer.default('l4'),
       port: z.number(),
       addresses: EdgeAddresses,
-      layer: EdgeLayer.default('l4'),
-      hostname: z.string().nullable().default(null),
       sni: z.string().nullable().default(null),
       hostHeader: z.string().nullable().default(null),
-      activeServerNames: z.array(z.string()),
     }),
   ),
+  connectionPlan: z.array(RelayConnectionPlanEntry),
+  hostsPlan: RelayHostsPlan,
+  /** Present on a PUT: what the registration changed. */
+  registration: z
+    .object({
+      id: z.string(),
+      created: z.boolean(),
+      changed: z.boolean(),
+      listeners: z.object({
+        created: z.array(z.string()),
+        updated: z.array(z.string()),
+        unchanged: z.array(z.string()),
+        retired: z.array(z.string()),
+        owned: z.array(z.string()),
+        blockedNames: z.array(z.string()),
+        changed: z.boolean(),
+      }),
+    })
+    .passthrough()
+    .optional(),
 });
-export type RelayBySlugMinimalResponse = z.infer<typeof RelayBySlugMinimalResponse>;
+export type RelayBySlugResponse = z.infer<typeof RelayBySlugResponse>;
+/** @deprecated alias: the by-slug response IS the minimal projection now. */
+export const RelayBySlugMinimalResponse = RelayBySlugResponse;
+export type RelayBySlugMinimalResponse = RelayBySlugResponse;
 
 export const RENDER_CLIENT_FAMILY_IDS = [
   'singbox',
@@ -803,6 +940,19 @@ export const EdgeRenderPreviewResponse = z.object({
   applied: z.boolean(),
   reason: z.string().nullable(),
   emitted: z.number(),
+  /** The edge-required verdict this render would get on the fronted route. */
+  delivery: z
+    .discriminatedUnion('kind', [
+      z.object({ kind: z.literal('serve') }),
+      z.object({ kind: z.literal('unavailable'), reason: z.string() }),
+    ])
+    .optional(),
+  /** Per listener, whether its template entry resolved in the preview body. */
+  listeners: z
+    .array(
+      z.object({ listenerKey: z.string(), matched: z.boolean(), reason: z.string().optional() }),
+    )
+    .default([]),
 });
 export type EdgeRenderPreviewResponse = z.infer<typeof EdgeRenderPreviewResponse>;
 
@@ -906,8 +1056,9 @@ export const EdgeAdoptResponse = z.object({
   code: z.string().nullable().default(null),
 });
 export const ProbeRequestedResponse = z.object({ runIds: z.array(z.string()) });
-export const RelaySlotUpsertResponse = z.object({
+export const RelayListenerUpsertResponse = z.object({
   id: z.string(),
   created: z.boolean(),
-  templateHostRemark: z.string(),
+  changed: z.boolean(),
+  templateHostRemark: z.string().nullable(),
 });

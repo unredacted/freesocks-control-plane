@@ -533,6 +533,77 @@ describe('account.switchMode saga', () => {
   // The live-provider test stubs fetch; unstub after each so the dev-mock tests stay clean.
   afterEach(() => vi.unstubAllGlobals());
 
+  test('an edge-required single-key subscription never gets its raw origin key back from a mode switch', async () => {
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t, { backend: 'outline' });
+    const userId = await seedUser(t, tierId);
+    const RAW = 'ss://Y2hhY2hhMjA6c2VjcmV0@203.0.113.10:8388/?outline=1';
+    const serverId = await t.run(async (ctx) => {
+      const serverId = await ctx.db.insert('backendServers', {
+        backend: 'outline',
+        name: 'out',
+        slug: 'out',
+        config: {
+          type: 'outline',
+          apiUrl: 'https://outline.test/secret/',
+          websocketEnabled: false,
+        },
+        isActive: true,
+        priority: 0,
+        keyCount: 1,
+        updatedAt: Date.now(),
+      });
+      const subId = await ctx.db.insert('subscriptions', {
+        userId,
+        backend: 'outline',
+        backendUserId: 'key-1',
+        backendShortId: 'key-1',
+        backendServerId: serverId,
+        subscriptionUrl: RAW,
+        subscriptionMirrors: [],
+        state: 'active',
+        updatedAt: Date.now(),
+      });
+      await ctx.db.patch(userId, { currentSubscriptionId: subId, connectionModeId: 'out-a' });
+      // Two modes offered on the Outline backend (the tables ARE the catalog once non-empty).
+      await ctx.db.insert('connectionModeFamilies', {
+        slug: 'out',
+        label: 'Outline',
+        iconId: 'globe',
+        enabled: true,
+        order: 0,
+        updatedAt: Date.now(),
+      });
+      for (const [i, slug] of ['out-a', 'out-b'].entries())
+        await ctx.db.insert('connectionModes', {
+          slug,
+          familySlug: 'out',
+          deliveryStyle: 'url',
+          label: slug,
+          enabled: true,
+          isFamilyDefault: i === 0,
+          backends: ['outline'],
+          order: i,
+          updatedAt: Date.now(),
+        });
+      return serverId;
+    });
+    // Covered by a whole-server delivery binding: the raw origin key is withheld.
+    await t.run((ctx) =>
+      ctx.db.insert('edgeDeliveryBindings', {
+        backendServerId: serverId,
+        policy: 'edge-required',
+        policyVersion: 1,
+        relaySlug: 'whole-out',
+        state: 'active',
+        updatedAt: Date.now(),
+      }),
+    );
+    const covered = await t.action(internal.account.switchMode, { userId, target: 'out-b' });
+    expect(JSON.stringify(covered)).not.toContain('203.0.113.10');
+    expect(covered).toMatchObject({ ok: true, subscriptionUrl: '' });
+  });
+
   test('choosing the mode you already have is a no-op validation error (no key churn)', async () => {
     const t = convexTest(schema, modules);
     const tierId = await seedTier(t);

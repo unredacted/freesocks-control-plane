@@ -29,33 +29,78 @@ import type { ActiveMirrorPage } from './subscriptions';
 import { applyEdgeRender } from './lib/edges/renderPipeline';
 import type { Id } from './_generated/dataModel';
 
+/** The body a mirror holds when its place is edge-required and nothing can render. */
+export const MIRROR_UNAVAILABLE_STUB =
+  '# FreeSocks: this mirror is temporarily unavailable. Refresh later.\n';
+
+export interface MirrorValidation {
+  policyVersion: number;
+  epoch: number;
+  edgeIds: string[];
+  at: number;
+  stub?: boolean;
+}
+
 /**
- * Relay rendering for a mirror body (docs/edges.md): a mirror serves the same
- * rendered endpoints as the fronted route (link-list family: no User-Agent
- * here). Returns the body to upload plus the origin's publication epoch it was
- * rendered against (null when rendering is inactive for the node).
+ * Relay rendering for a mirror body under the EDGE-REQUIRED policy
+ * (docs/edges.md): a mirror serves the same rendered endpoints as the fronted
+ * route (link-list family: no User-Agent here). Returns the body to upload, the
+ * origin's publication epoch it was rendered against, and the validation record
+ * for the mirror row. A place no relay covers passes the body through
+ * (`validated: null`). A covered place whose render is refused gets the
+ * UNAVAILABLE STUB, never the origin body: the mirror URL is already
+ * distributed, so the object itself must stop serving the origin.
  */
 async function renderMirrorBody(
   ctx: ActionCtx,
   sub: { id: Id<'subscriptions'>; backendServerId: Id<'backendServers'> | null | undefined },
   node: string | undefined,
   content: string,
-): Promise<{ content: string; renderedEpoch: number | null }> {
-  if (!node || !sub.backendServerId) return { content, renderedEpoch: null };
-  const rctx = await ctx.runQuery(internal.edgeRender.contextForSubscription, {
+): Promise<{ content: string; renderedEpoch: number | null; validated: MirrorValidation | null }> {
+  if (!sub.backendServerId) return { content, renderedEpoch: null, validated: null };
+  const decision = await ctx.runQuery(internal.edgeRender.decideForSubscription, {
     subscriptionId: sub.id,
     family: 'other',
-    nodeHostname: node,
+    nodeName: node,
   });
-  if (!rctx) return { content, renderedEpoch: null };
+  if (decision.kind === 'raw') return { content, renderedEpoch: null, validated: null };
+  const policy = await ctx.runQuery(internal.edgeRender.deliveryPolicy, {
+    backendServerId: sub.backendServerId,
+    nodeName: node,
+  });
+  const stub = (
+    epoch: number,
+  ): { content: string; renderedEpoch: number | null; validated: MirrorValidation } => ({
+    content: MIRROR_UNAVAILABLE_STUB,
+    renderedEpoch: null,
+    validated: {
+      policyVersion: policy.bindingVersion ?? 0,
+      epoch,
+      edgeIds: [],
+      at: Date.now(),
+      stub: true,
+    },
+  });
+  if (decision.kind === 'unavailable') return stub(-1);
+  const rctx = decision.context;
   const renderKey =
     rctx.renderKey ??
     (await ctx.runMutation(internal.subscriptions.ensureRenderKey, { subscriptionId: sub.id }));
-  if (!renderKey) return { content, renderedEpoch: null };
+  if (!renderKey) return stub(rctx.epoch);
   const out = applyEdgeRender(rctx, content, renderKey, { now: Date.now() });
-  // A failed-open render (unknown shape, no template entry) is the panel's
-  // body: it must not be recorded as having received the current pool.
-  return { content: out.body, renderedEpoch: out.applied ? rctx.epoch : null };
+  if (out.delivery.kind !== 'serve') return stub(rctx.epoch);
+  return {
+    content: out.body,
+    renderedEpoch: rctx.epoch,
+    validated: {
+      policyVersion: policy.bindingVersion ?? 0,
+      epoch: rctx.epoch,
+      edgeIds: [out.snapshot.primaryEdgeId, out.snapshot.backupEdgeId].filter(
+        (x): x is string => !!x,
+      ),
+      at: Date.now(),
+    },
+  };
 }
 
 export interface S3Provider {
@@ -73,6 +118,7 @@ export interface SubscriptionMirror {
   publicUrl: string;
   objectPath: string;
   status: 'ok';
+  validated?: MirrorValidation;
 }
 
 function clientFor(p: S3Provider): S3Client {
@@ -238,6 +284,7 @@ export const provisionMirror = internalAction({
         contentType: fetched.contentType,
       });
       entry = mirrors[0];
+      if (entry && rendered.validated) entry = { ...entry, validated: rendered.validated };
     } catch {
       return { status: 'error', remaining: Math.max(0, cap - used) };
     }
@@ -441,20 +488,23 @@ async function refreshOneSubMirrors(
         renderedEpoch: rendered.renderedEpoch,
       });
     const hash = await sha256Hex(content);
-    if (hash === sub.rawContentHash) {
-      // Nothing to re-upload — but the pin can move while the bytes stay
-      // identical, and the mirror is already correct, so record it.
+    if (hash === sub.rawContentHash && !force) {
+      // Nothing to re-upload: the pin can move while the bytes stay identical,
+      // and the mirror is already correct, so record it.
       await recordPin();
       await stampContent();
       return false;
     }
     // Throws only if EVERY provider failed (caught below → sub skipped,
     // pin deliberately unrecorded: the mirror still serves the old node).
-    const mirrors = await uploadToProviders(targets, {
+    const uploaded = await uploadToProviders(targets, {
       objectPath: sub.objectPath,
       content,
       contentType: fetched.contentType,
     });
+    const mirrors = uploaded.map((m) =>
+      rendered.validated ? { ...m, validated: rendered.validated } : m,
+    );
     // Providers we attempted but that didn't come back a success this round →
     // updateMirrors keeps their existing entry marked failed (Review #2),
     // rather than dropping it. (uploadToProviders throws only if ALL fail,

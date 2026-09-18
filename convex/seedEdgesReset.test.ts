@@ -4,6 +4,7 @@ import { afterEach, describe, expect, test } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import { parseMaintenance } from './lib/edges/maintenance';
+import { realityListener, registerRelay, seedEdgeFixture } from './lib/edges/testing/fixtures';
 import { wipeAllowedIn } from './seedEdgesReset';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -19,47 +20,8 @@ afterEach(() => {
 
 async function seed() {
   const t = convexTest(schema, modules);
-  await t.run((ctx) =>
-    ctx.db.insert('backendServers', {
-      backend: 'remnawave',
-      name: 'panel-a',
-      slug: 'panel-a',
-      config: { type: 'remnawave', baseUrl: 'https://panel.example', apiToken: 'tok' },
-      isActive: true,
-      priority: 0,
-      keyCount: 0,
-      updatedAt: Date.now(),
-    }),
-  );
-  const { id: accountId } = await t.mutation(internal.edgeProviderAccounts.create, {
-    provider: 'gcore',
-    name: 'acct-a',
-    settings: { projectId: 11, regionId: 22 },
-    credentials: { apiKey: 'k' },
-  });
-  await t.mutation(internal.protocolProfiles.create, {
-    slug: 'prof-a',
-    name: 'Profile A',
-    provider: 'gcore',
-    targetAddress: 'target.example',
-    serverNames: ['a.example'],
-  });
-  const { id: relayId } = await t.mutation(internal.relays.upsertBySlug, {
-    slug: 'node-one',
-    backendServerSlug: 'panel-a',
-    nodeHostname: 'node-one',
-    originAddress: '203.0.113.10',
-  });
-  const { id: slotId } = await t.mutation(internal.relaySlots.upsert, {
-    relayId,
-    slotKey: 'a',
-    profileSlug: 'prof-a',
-    inboundTag: 'VLESS_RELAY_A',
-    configProfileUuid: '11111111-1111-4111-8111-111111111111',
-    configProfileInboundUuid: '22222222-2222-4222-8222-222222222222',
-    originPort: 443,
-  });
-  return { t, accountId, relayId, slotId };
+  const { accountId, relayId, listenerId } = await seedEdgeFixture(t);
+  return { t, accountId, relayId, listenerId };
 }
 
 describe('edge maintenance gate', () => {
@@ -75,10 +37,10 @@ describe('edge maintenance gate', () => {
   });
 
   test('freeze refuses every admission entry point and audits once', async () => {
-    const { t, relayId, slotId } = await seed();
+    const { t, relayId, listenerId } = await seed();
     const { edgeId } = await t.mutation(internal.relays.adoptEdge, {
       relayId,
-      slotId,
+      listenerId,
       ipv4: '198.51.100.7',
     });
     const before = await t.mutation(internal.edgeMaintenance.freeze, { reason: 'reset drain' });
@@ -103,26 +65,31 @@ describe('edge maintenance gate', () => {
       }),
     ).rejects.toThrow(refused);
     await expect(
-      t.mutation(internal.relays.upsertBySlug, {
-        slug: 'node-two',
-        backendServerSlug: 'panel-a',
-        nodeHostname: 'node-two',
-        originAddress: '203.0.113.11',
+      registerRelay(t, { slug: 'node-two', nodeName: 'node-two', originAddress: '203.0.113.11' }),
+    ).rejects.toThrow(refused);
+    await expect(
+      t.mutation(internal.relays.create, {
+        slug: 'node-three',
+        origin: { kind: 'manual' },
+        originAddress: '203.0.113.12',
       }),
     ).rejects.toThrow(refused);
     await expect(
-      t.mutation(internal.relaySlots.upsert, {
+      t.mutation(internal.relayListeners.upsert, {
         relayId,
-        slotKey: 'b',
-        profileSlug: 'prof-a',
-        inboundTag: 'VLESS_RELAY_B',
-        configProfileUuid: '11111111-1111-4111-8111-111111111111',
-        configProfileInboundUuid: '33333333-3333-4333-8333-333333333333',
-        originPort: 8443,
+        spec: realityListener({
+          listenerKey: 'b',
+          originPort: 8443,
+          panelBinding: {
+            inboundTag: 'VLESS_RELAY_B',
+            configProfileUuid: '11111111-1111-4111-8111-111111111111',
+            configProfileInboundUuid: '33333333-3333-4333-8333-333333333333',
+          },
+        }),
       }),
     ).rejects.toThrow(refused);
     await expect(
-      t.mutation(internal.relays.adoptEdge, { relayId, slotId, ipv4: '198.51.100.8' }),
+      t.mutation(internal.relays.adoptEdge, { relayId, listenerId, ipv4: '198.51.100.8' }),
     ).rejects.toThrow(refused);
     await expect(t.mutation(internal.relays.publishEdge, { relayId, edgeId })).rejects.toThrow(
       refused,
@@ -143,58 +110,48 @@ describe('edge maintenance gate', () => {
       }),
     ).rejects.toThrow(refused);
     await expect(
-      t.mutation(internal.protocolProfiles.create, {
-        slug: 'prof-b',
-        name: 'B',
-        targetAddress: 'target.example',
-        serverNames: ['b.example'],
-      }),
-    ).rejects.toThrow(refused);
-    await expect(
       t.mutation(internal.probes.requestMany, { targets: [{ kind: 'relay', ref: relayId }] }),
     ).rejects.toThrow(refused);
   });
 
   test('freeze still admits completion paths: unpublish, relay delete, thaw', async () => {
-    const { t, relayId, slotId } = await seed();
+    const { t, relayId, listenerId } = await seed();
     const { edgeId } = await t.mutation(internal.relays.adoptEdge, {
       relayId,
-      slotId,
+      listenerId,
       ipv4: '198.51.100.7',
       publish: true,
     });
     await t.mutation(internal.edgeMaintenance.freeze, {});
     await t.mutation(internal.relays.unpublishEdge, { relayId, edgeId });
-    const del = await t.mutation(internal.relays.requestDelete, { id: relayId, force: true });
+    const del = await t.mutation(internal.relays.requestDelete, {
+      id: relayId,
+      force: true,
+      disposition: 'restore-direct',
+    });
     expect(del.ok).toBe(true);
     const fin = await t.mutation(internal.relays.finalizeDelete, { id: relayId });
     expect(fin.removed).toBe(true);
     const thawed = await t.mutation(internal.edgeMaintenance.thaw, {});
     expect(thawed.frozen).toBe(false);
     // Admission works again.
-    const again = await t.mutation(internal.relays.upsertBySlug, {
-      slug: 'node-one',
-      backendServerSlug: 'panel-a',
-      nodeHostname: 'node-one',
-      originAddress: '203.0.113.10',
-    });
+    const again = await registerRelay(t);
     expect(again.created).toBe(true);
   });
 });
 
 describe('edge maintenance gate: every admin configuration write and single-target probe', () => {
-  test('qualification flips, account / template / profile deletes and cron or detector probes are refused; a qualification probe is not', async () => {
-    const { t, relayId, slotId, accountId } = await seed();
+  test('qualification flips, account / template deletes and cron or detector probes are refused; a qualification probe is not', async () => {
+    const { t, relayId, listenerId, accountId } = await seed();
     const { edgeId } = await t.mutation(internal.relays.adoptEdge, {
       relayId,
-      slotId,
+      listenerId,
       ipv4: '198.51.100.7',
     });
     await t.mutation(internal.edgeTemplates.ensureDefaults, {});
-    const { templateId, profileId } = await t.run(async (ctx) => ({
-      templateId: (await ctx.db.query('edgeTemplates').first())!._id,
-      profileId: (await ctx.db.query('protocolProfiles').first())!._id,
-    }));
+    const templateId = await t.run(
+      async (ctx) => (await ctx.db.query('edgeTemplates').first())!._id,
+    );
     await t.mutation(internal.edgeMaintenance.freeze, {});
     const refused = /maintenance/;
     await expect(
@@ -204,9 +161,6 @@ describe('edge maintenance gate: every admin configuration write and single-targ
       t.mutation(internal.edgeProviderAccounts.remove, { id: accountId }),
     ).rejects.toThrow(refused);
     await expect(t.mutation(internal.edgeTemplates.remove, { id: templateId })).rejects.toThrow(
-      refused,
-    );
-    await expect(t.mutation(internal.protocolProfiles.remove, { id: profileId })).rejects.toThrow(
       refused,
     );
     const target = { kind: 'edge' as const, ref: edgeId as string };
@@ -238,9 +192,9 @@ describe('seedEdgesReset', () => {
   });
 
   test('status reports every blocker and empties once the drain is done', async () => {
-    const { t, relayId, slotId } = await seed();
+    const { t, relayId, listenerId } = await seed();
     // An observe-only edge holds nothing at a provider and never blocks.
-    await t.mutation(internal.relays.adoptEdge, { relayId, slotId, ipv4: '198.51.100.7' });
+    await t.mutation(internal.relays.adoptEdge, { relayId, listenerId, ipv4: '198.51.100.7' });
     await t.run(async (ctx) => {
       await ctx.db.patch(relayId, {
         qualificationUserId: 'q-user',
@@ -301,8 +255,8 @@ describe('seedEdgesReset', () => {
   });
 
   test('a managed edge beyond any listing cap still blocks the wipe', async () => {
-    const { t, relayId, slotId } = await seed();
-    await t.mutation(internal.relays.adoptEdge, { relayId, slotId, ipv4: '198.51.100.7' });
+    const { t, relayId, listenerId } = await seed();
+    await t.mutation(internal.relays.adoptEdge, { relayId, listenerId, ipv4: '198.51.100.7' });
     const template = await t.run(async (ctx) => (await ctx.db.query('edges').first())!);
     await t.run(async (ctx) => {
       const { _id, _creationTime, ...row } = template;
@@ -319,8 +273,8 @@ describe('seedEdgesReset', () => {
   });
 
   test('wipe deletes the edge tables, keeps operator data and turns the switches off', async () => {
-    const { t, relayId, slotId, accountId } = await seed();
-    await t.mutation(internal.relays.adoptEdge, { relayId, slotId, ipv4: '198.51.100.7' });
+    const { t, relayId, listenerId, accountId } = await seed();
+    await t.mutation(internal.relays.adoptEdge, { relayId, listenerId, ipv4: '198.51.100.7' });
     await t.mutation(internal.edgeTemplates.ensureDefaults, {});
     await t.mutation(internal.probeTargets.create, {
       label: 'custom',
@@ -356,14 +310,27 @@ describe('seedEdgesReset', () => {
     const r = await t.action(internal.seedEdgesReset.wipe, { confirm: 'wipe-edges' });
     expect(r.deleted.relays).toBe(1);
     expect(r.deleted.edges).toBe(1);
-    expect(r.deleted.relaySlots).toBe(1);
-    expect(r.deleted.protocolProfiles).toBe(1);
+    expect(r.deleted.relayListeners).toBe(1);
+    expect(r.deleted.edgeDeliveryBindings).toBe(1);
     expect(r.deleted.probeReachability).toBe(1);
+    expect(Object.keys(r.deleted).sort()).toEqual(
+      [
+        'edgeRotations',
+        'edges',
+        'relayListeners',
+        'relays',
+        'edgeDeliveryBindings',
+        'externalLocks',
+        'relaySamples',
+        'probeRuns',
+        'probeReachability',
+      ].sort(),
+    );
     const after = await t.run(async (ctx) => ({
       relays: await ctx.db.query('relays').collect(),
       edges: await ctx.db.query('edges').collect(),
-      slots: await ctx.db.query('relaySlots').collect(),
-      profiles: await ctx.db.query('protocolProfiles').collect(),
+      listeners: await ctx.db.query('relayListeners').collect(),
+      bindings: await ctx.db.query('edgeDeliveryBindings').collect(),
       accounts: await ctx.db.query('edgeProviderAccounts').collect(),
       templates: await ctx.db.query('edgeTemplates').collect(),
       probeTargets: await ctx.db.query('probeTargets').collect(),
@@ -373,8 +340,8 @@ describe('seedEdgesReset', () => {
     }));
     expect(after.relays).toEqual([]);
     expect(after.edges).toEqual([]);
-    expect(after.slots).toEqual([]);
-    expect(after.profiles).toEqual([]);
+    expect(after.listeners).toEqual([]);
+    expect(after.bindings).toEqual([]);
     expect(after.accounts.map((a) => a._id)).toEqual([accountId]);
     expect(after.templates.length).toBeGreaterThan(0);
     expect(after.probeTargets).toHaveLength(1);

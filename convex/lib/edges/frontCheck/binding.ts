@@ -28,7 +28,7 @@ export {
 
 /**
  * How the inbound behind the slot is addressed over its HTTP transport, as the
- * node role declares it (`relaySlots.transportParams`). Each transport uses a
+ * node role declares it (`relayListeners.transportParams`). Each transport uses a
  * different subset: `ws` and `httpupgrade` need the path (and the upgrade
  * token), `grpc` needs the service name. Absent is distinct from empty.
  */
@@ -61,8 +61,7 @@ export function qualificationBinding(
   args: Omit<BindingArgs, 'transportParams'> & { params: TransportParams },
 ): QualificationBinding {
   return buildQualificationBinding({
-    slot: args.slot,
-    profile: args.profile,
+    listener: args.listener,
     intent: args.intent,
     transportParams: canonicalTransportParams(args.params),
   });
@@ -75,11 +74,11 @@ export function qualificationBinding(
 export function bindingsMatch(a: QualificationBinding, b: QualificationBinding): boolean {
   return (
     a.hostname === b.hostname &&
-    a.slotId === b.slotId &&
-    a.slotRevision === b.slotRevision &&
-    a.profileId === b.profileId &&
-    a.profileRevision === b.profileRevision &&
+    a.listenerId === b.listenerId &&
+    a.listenerRevision === b.listenerRevision &&
     a.protocol === b.protocol &&
+    a.streamTransport === b.streamTransport &&
+    a.security === b.security &&
     a.transportParamsHash === b.transportParamsHash &&
     a.intentHash === b.intentHash
   );

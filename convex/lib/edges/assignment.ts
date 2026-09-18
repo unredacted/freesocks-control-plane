@@ -4,8 +4,8 @@
  * Inputs: the subscriber's opaque `renderKey` (a random 64-hex secret minted
  * per subscription and never exposed — passed RAW, its first 32 bits seed the
  * pool pick and the whole string feeds the SNI PRF) and the origin's PUBLISHED
- * edges ordered by pool index, each with its slot's camouflage profile (the
- * ordered serverNames list, active + retired). Output: a primary and, when
+ * edges ordered by pool index, each with its listener (the ordered server
+ * names list, active + retired). Output: a primary and, when
  * another assignable edge exists, a backup (preferring a different provider),
  * each with exactly ONE SNI.
  *
@@ -29,7 +29,8 @@
 
 import { hostTargetFor } from './layers';
 import type { EdgeLayer } from './providers/capabilities';
-import { protocolUsesSni, type SlotProtocol } from './protocols';
+import { protocolUsesSni, type ListenerProto } from './protocols';
+import type { MatchRule } from './registration';
 
 export interface AssignableSni {
   sni: string;
@@ -42,20 +43,22 @@ export interface PublishedEdge {
   edgeId: string;
   poolIndex: number;
   provider: string;
-  slotId: string;
-  slotRemark: string;
-  /** The slot profile's protocol: SNI-presenting ones select a name per connection, `plain` rewrites address/port only. */
-  protocol: SlotProtocol;
+  listenerId: string;
+  listenerKey: string;
+  /** How the renderer finds this listener's template entry in a body. */
+  matchRule: MatchRule;
+  /** What the listener speaks: SNI-presenting ones select a name per connection, `none` security rewrites address/port only. */
+  proto: ListenerProto;
   edgePort: number;
   /** Absent = `l4` (rows written before edges could be L7 fronts). */
   layer?: EdgeLayer;
   /** L4: IP literals. L7: the fronted hostname members connect to. */
   addresses: { v4?: string; v6?: string; hostname?: string };
-  /** Empty for a non-REALITY slot. */
+  /** Empty for a listener that presents no name. */
   serverNames: AssignableSni[];
   /**
-   * False when the edge is published but must not be selected (slot retired or
-   * undeployed, profile disabled). It still occupies its pool index so the
+   * False when the edge is published but must not be selected (listener retired,
+   * undeployed or disabled, no codec for the body, no template entry). It still occupies its pool index so the
    * modulus does not shift the other subscribers. Absent = eligible.
    */
   eligible?: boolean;
@@ -105,7 +108,7 @@ export function edgeAssignable(e: PublishedEdge, opts: AssignableOptions = {}): 
   if (edgeLayer(e) === 'l7') return !!e.addresses.hostname;
   const hasAddress = !!e.addresses.v4 || (opts.canEmitV6 !== false && !!e.addresses.v6);
   if (!hasAddress) return false;
-  return !protocolUsesSni(e.protocol) || e.serverNames.some((s) => s.status === 'active');
+  return !protocolUsesSni(e.proto) || e.serverNames.some((s) => s.status === 'active');
 }
 
 function sniFor(
@@ -116,7 +119,7 @@ function sniFor(
   // the SNI, whatever the profile's (origin-facing) names say.
   const hostname = edgeHostname(edge);
   if (hostname) return { ok: true, sni: hostname };
-  if (!protocolUsesSni(edge.protocol)) return { ok: true, sni: null };
+  if (!protocolUsesSni(edge.proto)) return { ok: true, sni: null };
   const sni = pickSni(subscriberKey, edge.edgeId, edge.serverNames);
   return sni ? { ok: true, sni } : { ok: false };
 }
@@ -138,7 +141,7 @@ function hostHeaderFor(edge: PublishedEdge, sni: string | null): string | null {
         },
         edgePort: edge.edgePort,
       },
-      edge.protocol,
+      edge.proto,
       sni,
     )?.host ?? null
   );

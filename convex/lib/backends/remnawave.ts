@@ -29,6 +29,7 @@ import type {
   UserState,
   BackendHost,
   BackendHostPatch,
+  BackendHostCreate,
   NodeInventoryRow,
 } from './types';
 import { farFutureExpiryIso, isFarFutureExpiry } from './types';
@@ -727,6 +728,60 @@ export async function remnawaveUpdateHost(
   if (patch.sni !== undefined) body.sni = patch.sni ?? '';
   if (patch.host !== undefined) body.host = patch.host ?? '';
   await call(cfg, { method: 'PATCH', path: '/api/hosts', body, schema: z.unknown() });
+}
+
+/**
+ * POST /api/hosts creates one client-facing Host. Body fields verified against
+ * remnawave/backend `CreateHostRequestDto` (3.x): `inbound {configProfileUuid,
+ * configProfileInboundUuid}`, `remark`, `address`, `port`, optional `sni`,
+ * `host`, `isDisabled`. The response echoes the row; only its uuid is read, and
+ * the caller confirms by re-listing (observe-then-write). `''` clears like the
+ * update contract.
+ */
+export async function remnawaveCreateHost(
+  cfg: RemnawaveConfig,
+  h: BackendHostCreate,
+): Promise<{ uuid: string }> {
+  const body: Record<string, unknown> = {
+    inbound: {
+      configProfileUuid: h.inbound.configProfileUuid,
+      configProfileInboundUuid: h.inbound.configProfileInboundUuid,
+    },
+    remark: h.remark,
+    address: h.address,
+    port: h.port,
+    isDisabled: false,
+  };
+  if (h.sni !== undefined) body.sni = h.sni ?? '';
+  if (h.host !== undefined) body.host = h.host ?? '';
+  const res = await call(cfg, {
+    method: 'POST',
+    path: '/api/hosts',
+    body,
+    schema: z.union([
+      z.object({ uuid: z.string() }),
+      z.object({ response: z.object({ uuid: z.string() }) }),
+    ]),
+  });
+  return { uuid: 'uuid' in res ? res.uuid : res.response.uuid };
+}
+
+/** DELETE /api/hosts/{uuid}; a 404 is success (idempotent). The caller confirms by re-listing. */
+export async function remnawaveDeleteHost(cfg: RemnawaveConfig, uuid: string): Promise<void> {
+  try {
+    await call(cfg, {
+      method: 'DELETE',
+      path: `/api/hosts/${encodeURIComponent(uuid)}`,
+      schema: z.unknown(),
+    });
+  } catch (err) {
+    if (
+      err instanceof RemnawaveApiError &&
+      (err.meta as { status?: number } | undefined)?.status === 404
+    )
+      return;
+    throw err;
+  }
 }
 
 /** GET /api/nodes → one row per panel node (name, users online, connected). */

@@ -99,12 +99,16 @@ export const relayWindow = internalQuery({
       distinctReporters: s.distinctReporters,
       usersOnline: s.usersOnline,
     }));
-    const inv = await ctx.db
-      .query('backendNodeInventory')
-      .withIndex('by_server_name', (q) =>
-        q.eq('backendServerId', origin.backendServerId).eq('name', origin.nodeHostname),
-      )
-      .unique();
+    // Only a panel node has a load / online signal (backend node inventory).
+    const panelNode = origin.origin.kind === 'panel-node' ? origin.origin : null;
+    const inv = panelNode
+      ? await ctx.db
+          .query('backendNodeInventory')
+          .withIndex('by_server_name', (q) =>
+            q.eq('backendServerId', panelNode.backendServerId).eq('name', panelNode.nodeName),
+          )
+          .unique()
+      : null;
     const usersOnline = inv ? inv.usersOnline : null;
     const loadStale = inv ? now - inv.lastStatsAt > LOAD_STALE_MS : true;
     const nodeOnline = inv ? inv.online : null;
@@ -384,7 +388,8 @@ export const run = internalAction({
               rotationsToday:
                 w.origin.rotationsDayKey === todayKey(now) ? w.origin.rotationsToday : 0,
               maxRotationsPerDay: w.origin.maxRotationsPerDay,
-              hostManaged: w.origin.hostManaged,
+              // Only an operator-managed Host blocks a rotation at index 0.
+              hostManaged: w.origin.hostMode !== 'operator',
             },
             published: w.published,
             now,

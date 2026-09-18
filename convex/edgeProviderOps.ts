@@ -39,7 +39,8 @@ import {
 import { renderTemplateValue } from './lib/edges/providers/template';
 import { isRelayProviderId, type EdgeProviderId } from './lib/edgeProviderIds';
 import { parseIntent, type ProvisionIntent } from './lib/edges/intent';
-import type { SlotProtocol } from './lib/edges/protocols';
+import type { ListenerProto } from './lib/edges/protocols';
+import { listenerProtoFields } from './lib/edgeProtocolIds';
 import {
   buildCredentials,
   pickCredentialIdentifiers,
@@ -359,10 +360,14 @@ function checkTransport(providerId: EdgeProviderId, spec: EdgeSpec): void {
  * (Fastly's WebSocket path, for instance, is not a gRPC path). The spec carries
  * no protocol, so the caller passes it.
  */
-function checkProtocolCarried(providerId: EdgeProviderId, protocol?: string): void {
-  if (!protocol) return;
-  if (!protocolCarriedBy(providerId, protocol as SlotProtocol))
-    refuse('protocol_not_carried', `${providerId} edges cannot carry ${protocol}`, providerId);
+function checkProtocolCarried(providerId: EdgeProviderId, proto?: ListenerProto): void {
+  if (!proto) return;
+  if (!protocolCarriedBy(providerId, proto))
+    refuse(
+      'protocol_not_carried',
+      `${providerId} edges cannot carry ${proto.protocol}/${proto.streamTransport}/${proto.security}`,
+      providerId,
+    );
 }
 
 /**
@@ -418,7 +423,7 @@ function checkOriginTransport(
  * port override; a `default-or-override` provider accepts any port but not for
  * gRPC, which needs 443 end to end.
  */
-function checkOriginPort(providerId: EdgeProviderId, spec: EdgeSpec, protocol?: string): void {
+function checkOriginPort(providerId: EdgeProviderId, spec: EdgeSpec, proto?: ListenerProto): void {
   const caps = EDGE_PROVIDER_CAPABILITIES[providerId];
   if (caps.layer !== 'l7') return;
   const port = spec.listeners[0]?.members[0]?.port;
@@ -434,22 +439,22 @@ function checkOriginPort(providerId: EdgeProviderId, spec: EdgeSpec, protocol?: 
   }
   // gRPC is carried end to end over HTTP/2 on 443; a destination-port override
   // would break the h2 path the front negotiates.
-  if (protocol === 'grpc' && port !== 443)
-    refuse('grpc_requires_443', 'a gRPC profile needs origin port 443', providerId);
+  if (proto?.streamTransport === 'grpc' && port !== 443)
+    refuse('grpc_requires_443', 'a gRPC listener needs origin port 443', providerId);
 }
 
 /** Every pre-call refusal in one place, so plan and run apply the same rules. */
 function checkSpec(
   providerId: EdgeProviderId,
   spec: EdgeSpec,
-  protocol?: string,
+  proto?: ListenerProto,
   tpl?: Record<string, unknown>,
   zoneSslMode?: string,
 ): void {
   checkTransport(providerId, spec);
-  checkProtocolCarried(providerId, protocol);
+  checkProtocolCarried(providerId, proto);
   checkOriginTransport(providerId, spec, tpl, zoneSslMode);
-  checkOriginPort(providerId, spec, protocol);
+  checkOriginPort(providerId, spec, proto);
 }
 
 /**
@@ -655,8 +660,8 @@ export const planProvision = internalAction({
     accountId: v.id('edgeProviderAccounts'),
     spec: edgeSpec,
     templateParams: v.any(),
-    /** The slot profile's protocol, so the carriage / port rules can be checked. */
-    protocol: v.optional(v.string()),
+    /** What the listener speaks, so the carriage / port rules can be checked. */
+    proto: v.optional(v.object(listenerProtoFields)),
     /** The zone's observed encryption mode (L7), checked against the origin transport. */
     zoneSslMode: v.optional(v.string()),
   },
@@ -664,7 +669,7 @@ export const planProvision = internalAction({
     run(async () => {
       const { provider, cfg, providerId } = await loadAdapter(ctx, a.accountId);
       const tpl = renderedTemplate(provider, a.templateParams, a.spec, a.zoneSslMode);
-      checkSpec(providerId, a.spec, a.protocol, tpl, a.zoneSslMode);
+      checkSpec(providerId, a.spec, a.proto, tpl, a.zoneSslMode);
       return provider.planProvision(cfg, a.spec, tpl);
     }),
 });
@@ -677,13 +682,13 @@ export const runStep = internalAction({
     step: resourceStep,
     ledger,
     edgeId: v.optional(v.id('edges')),
-    protocol: v.optional(v.string()),
+    proto: v.optional(v.object(listenerProtoFields)),
   },
   handler: (ctx, a): Promise<StepOutcome> =>
     run(async () => {
       const { provider, cfg, providerId, intent } = await loadAdapter(ctx, a.accountId, a.edgeId);
       const tpl = renderedTemplate(provider, a.templateParams, a.spec, intent?.zoneSslMode);
-      checkSpec(providerId, a.spec, a.protocol, tpl, intent?.zoneSslMode);
+      checkSpec(providerId, a.spec, a.proto, tpl, intent?.zoneSslMode);
       return provider.runStep(cfg, a.step as ResourceStep, a.spec, tpl, a.ledger as Ledger);
     }),
 });

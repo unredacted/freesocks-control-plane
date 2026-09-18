@@ -78,6 +78,8 @@ export const AccountResponse = z.object({
       // (`<origin>/api/v1/sub/<subToken>`). Sealed in this reveal-leg response like
       // the rest of the subscription. Nullish for legacy subs / rolling deploys.
       subToken: z.string().nullish(),
+      /** A relay covers this key's place: only the fronted token URL is handed out (`url` is ''). */
+      edgeRequired: z.boolean().optional().default(false),
       shortUuid: z.string(),
       mirrors: z.array(SubscriptionMirror),
       expiresAt: z.string().datetime().nullable(),

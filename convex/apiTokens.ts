@@ -63,6 +63,16 @@ export const resolveToken = internalAction({
   },
 });
 
+/** The registration boundary an `admin:edges:register` token carries (null = none set). */
+export const registrationBoundary = internalQuery({
+  args: { tokenId: v.id('apiTokens') },
+  handler: async (ctx, { tokenId }) => {
+    const row = await ctx.db.get(tokenId);
+    if (!row || row.revokedAt) return null;
+    return row.edgeRegistration ?? null;
+  },
+});
+
 /** Debounced last-used write (≤ once per 5 min) to avoid hot-row updates. */
 export const touchLastUsed = internalMutation({
   args: { tokenId: v.id('apiTokens') },

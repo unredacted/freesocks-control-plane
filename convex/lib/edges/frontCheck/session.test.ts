@@ -25,10 +25,17 @@ import { createHash } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:net';
 import { qualifyFront, type FrontCheckResult } from './index';
+import type { ListenerProto } from '../protocols';
 import { createWsDecoder, WS_GUID, WS_OPCODE } from './ws';
 import { createGrpcDecoder, decodeHunk, encodeHunkFrame } from './grpc';
 
 const UUID = '01234567-89ab-cdef-0123-456789abcdef';
+/** The VLESS listener behind the front, per HTTP stream transport. */
+const VLESS = (stream: 'ws' | 'httpupgrade' | 'grpc'): ListenerProto => ({
+  protocol: 'vless',
+  streamTransport: stream,
+  security: 'tls',
+});
 const OTHER_UUID = 'ffffffff-ffff-ffff-ffff-ffffffffffff';
 const HOSTNAME = 'front.test';
 const SERVICE = 'relay-svc';
@@ -328,13 +335,13 @@ async function track(p: Promise<Running>): Promise<Running> {
 
 function run(
   port: number,
-  protocol: 'ws' | 'httpupgrade' | 'grpc',
+  stream: 'ws' | 'httpupgrade' | 'grpc',
   overrides: { uuid?: string; trust?: boolean; stepTimeoutMs?: number } = {},
 ): Promise<FrontCheckResult> {
   return qualifyFront(
     {
       hostname: HOSTNAME,
-      protocol,
+      proto: VLESS(stream),
       params: { path: '/relay', serviceName: SERVICE, upgradeToken: 'websocket' },
       uuid: overrides.uuid ?? UUID,
       stepTimeoutMs: overrides.stepTimeoutMs ?? 2_000,
@@ -436,7 +443,7 @@ describe('the transport is broken even though the status says 101', () => {
     const result = await qualifyFront(
       {
         hostname: HOSTNAME,
-        protocol: 'grpc',
+        proto: VLESS('grpc'),
         params: {},
         uuid: UUID,
         stepTimeoutMs: 2_000,
@@ -495,15 +502,25 @@ describe('the connection itself', () => {
     expectNoSecrets(result);
   });
 
-  test('a non-HTTP transport protocol is refused before any socket is opened', async () => {
-    const result = await qualifyFront({
-      hostname: HOSTNAME,
-      protocol: 'reality',
-      params: {},
-      uuid: UUID,
-      stepTimeoutMs: 1_000,
-    });
-    expect(result).toMatchObject({ ok: false, code: 'unsupported_protocol' });
-    expect(result.steps).toEqual([]);
+  test('a listener without an authenticated proof is refused before any socket is opened', async () => {
+    // Raw TCP (REALITY) is not HTTP-carried; trojan over ws has no VLESS proof;
+    // a plaintext ws listener terminates no TLS the front could carry.
+    const refused: ListenerProto[] = [
+      { protocol: 'vless', streamTransport: 'raw', security: 'reality' },
+      { protocol: 'trojan', streamTransport: 'ws', security: 'tls' },
+      { protocol: 'shadowsocks', streamTransport: 'raw', security: 'none' },
+      { protocol: 'hysteria2', streamTransport: 'udp', security: 'tls' },
+    ];
+    for (const proto of refused) {
+      const result = await qualifyFront({
+        hostname: HOSTNAME,
+        proto,
+        params: {},
+        uuid: UUID,
+        stepTimeoutMs: 1_000,
+      });
+      expect(result).toMatchObject({ ok: false, code: 'unsupported_protocol' });
+      expect(result.steps).toEqual([]);
+    }
   });
 });

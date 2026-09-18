@@ -23,7 +23,7 @@
 import type { TLSSocket } from 'node:tls';
 import { connect as http2Connect, constants as h2, type ClientHttp2Stream } from 'node:http2';
 import { randomBytes as nodeRandomBytes } from 'node:crypto';
-import { protocolIsHttpTransport, type SlotProtocol } from '../protocols';
+import { protocolIsHttpTransport, protocolL7Proof, type ListenerProto } from '../protocols';
 import type { TransportParams } from './binding';
 import { parseHttpHead, tunnelProbeRequest, type HttpHead } from './http1';
 import {
@@ -66,7 +66,8 @@ export interface QualifyFrontArgs {
   /** The fronted hostname: the dial name, the SNI and the HTTP Host. */
   hostname: string;
   port?: number;
-  protocol: SlotProtocol;
+  /** What the listener speaks; only a `vless` HTTP-transport `tls` listener has a proof. */
+  proto: ListenerProto;
   params: TransportParams;
   /** The qualification account's VLESS UUID. */
   uuid: string;
@@ -576,8 +577,9 @@ export async function qualifyFront(
     );
   };
 
-  if (!protocolIsHttpTransport(args.protocol))
+  if (!protocolIsHttpTransport(args.proto) || protocolL7Proof(args.proto) !== 'vless')
     return { ok: false, code: 'unsupported_protocol', steps, checkedAt };
+  const stream = args.proto.streamTransport;
 
   let socket: TLSSocket | null = null;
   let tunnel: Tunnel | null = null;
@@ -588,7 +590,7 @@ export async function qualifyFront(
           host: deps.dial?.host ?? args.hostname,
           port: deps.dial?.port ?? args.port ?? 443,
           servername: args.hostname,
-          alpn: args.protocol === 'grpc' ? ['h2'] : ['http/1.1'],
+          alpn: stream === 'grpc' ? ['h2'] : ['http/1.1'],
           timeoutMs: budget(),
           ca: deps.dial?.ca,
           rejectUnauthorized: deps.dial?.rejectUnauthorized,
@@ -600,10 +602,10 @@ export async function qualifyFront(
         throw new StepError('tls_failed', 'chain');
       }),
     );
-    const pump = args.protocol === 'grpc' ? null : new SocketPump(socket);
+    const pump = stream === 'grpc' ? null : new SocketPump(socket);
     tunnel = await record('transport', () => {
-      if (args.protocol === 'ws') return openWsTunnel(socket!, pump!, args, randomBytes, budget());
-      if (args.protocol === 'httpupgrade') return openUpgradeTunnel(socket!, pump!, args, budget());
+      if (stream === 'ws') return openWsTunnel(socket!, pump!, args, randomBytes, budget());
+      if (stream === 'httpupgrade') return openUpgradeTunnel(socket!, pump!, args, budget());
       return openGrpcTunnel(socket!, args);
     });
     await record('vless', () => runSession(tunnel!, args, budget()));

@@ -241,15 +241,18 @@ Highlights:
   (country × connection mode), and operator-published **incidents** — all edited in
   the CMS (**Admin → Status**) with no redeploy. The member's Access Pass shows which
   node its key is on and deep-links to that location's card.
-- **Edges**: nodes sit behind replaceable fronts ("edges") that FCP provisions,
-  publishes as a per-relay pool (primary + backup), renders into each member's
-  subscription with a stable assignment, probes from the countries that matter, and
-  rotates when blocked, all with a recovery-first ledger, per-rotation audit trails
-  and a sealed admin surface. An edge is either an L4 provider-managed load balancer
-  (REALITY, TLS or plain TCP inbounds) or an L7 CDN front (a hostname carrying
-  WebSocket, HTTP Upgrade or gRPC), with DNS records and certificates managed end to
-  end and an authenticated end-to-end check before an L7 edge is published. Ships
-  dormant ([`docs/edges.md`](docs/edges.md)).
+- **Edges**: any origin (a panel node, a whole Outline server, or a hand-described
+  address) sits behind replaceable fronts ("edges") that FCP provisions, publishes as a
+  per-relay pool (primary + backup), renders into each member's subscription with a
+  stable assignment, probes from the countries that matter, and rotates when blocked,
+  all with a recovery-first ledger, per-rotation audit trails and a sealed admin
+  surface. What the origin speaks is described per listener (VLESS, Trojan,
+  Shadowsocks and more, over raw TCP or an HTTP transport, with REALITY, TLS or no
+  security); an edge is either an L4 provider-managed load balancer or an L7 CDN front
+  (a hostname carrying WebSocket, HTTP Upgrade or gRPC), with DNS records and
+  certificates managed end to end and an authenticated end-to-end check before an L7
+  edge is published. Delivery is edge-required: a covered key is served edge addresses
+  or nothing, never the origin. Ships dormant ([`docs/edges.md`](docs/edges.md)).
 - **Referral program**: every member has a shareable `FSR-…` code; a sign-up through
   it binds the new account. Rewards vest only on the referee's **first paid
   membership** (any rail, gift codes included): the referee gets bonus days instantly,

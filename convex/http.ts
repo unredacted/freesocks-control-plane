@@ -253,12 +253,12 @@ interface SubCacheEntry {
   headers?: Record<string, string>;
   ua: string;
   at: number;
-  // Edge-render cache token (edgeRender.epochFor): the pinned node's
-  // publication epoch when the body was rendered with relay endpoints, null
-  // when it was served as the panel sent it. A hit is only valid while the
-  // current token is identical, so a pool/switch change re-renders within one
-  // request instead of one TTL.
-  relay?: number | null;
+  // Edge-render cache token (edgeRender.epochFor): `<bindingVersion>:<epoch>`
+  // for the place the body was rendered for while a relay covers it, null when
+  // it was served as the panel sent it (no relay). A hit is only valid while
+  // the current token is identical, so a pool/switch/policy change re-renders
+  // within one request instead of one TTL.
+  relay?: string | number | null;
   // The epoch the body was actually RENDERED against (relay endpoints applied
   // or template entries dropped), null when the render failed open and the
   // body is the panel's. Only this is stamped on the subscription: a
@@ -296,6 +296,23 @@ function subscriptionResponse(
     headers['vary'] = 'User-Agent';
   }
   return new Response(entry.content, { status: 200, headers });
+}
+
+/**
+ * Edge-required delivery refusal: a 503 with Retry-After keeps the member's
+ * client on its last configuration (an empty 200 would wipe it). The reason is
+ * a short code for the operator's counters; never a name or an address.
+ */
+function unavailableResponse(reason: string): Response {
+  return new Response(`Subscription temporarily unavailable (${reason})`, {
+    status: 503,
+    headers: {
+      'cache-control': 'private, no-store',
+      'retry-after': '120',
+      vary: 'User-Agent',
+      'x-fcp-delivery': reason,
+    },
+  });
 }
 
 /** Parse the bounded per-UA subCache blob; tolerates a legacy single-entry blob. */
@@ -1061,15 +1078,16 @@ http.route({
     }
     const hasHwid = 'x-hwid' in hwidHeaders;
     const cached = hasHwid ? [] : parseSubCache(sub.subCache);
-    // Relay rendering (docs/edges.md): the cache token for this key's pinned
-    // node, compared against the token stored on the entry.
-    const edgeToken =
-      sub.backendServerId && sub.pinnedNode
-        ? await ctx.runQuery(internal.edgeRender.epochFor, {
-            backendServerId: sub.backendServerId,
-            nodeHostname: sub.pinnedNode,
-          })
-        : null;
+    // Edge-required delivery (docs/edges.md): the cache token for this key's
+    // resolved place (`<bindingVersion>:<epoch>` while a relay covers it, null
+    // otherwise), compared against the token stored on the entry. Only bodies
+    // that PASSED the delivery policy are ever cached, so a hit is safe.
+    const edgeToken = sub.backendServerId
+      ? await ctx.runQuery(internal.edgeRender.epochFor, {
+          backendServerId: sub.backendServerId,
+          nodeName: sub.pinnedNode ?? undefined,
+        })
+      : null;
     const fresh = cached.find(
       (e) =>
         e.ua === ua && now - e.at < SUBSCRIPTION_CACHE_TTL_MS && (e.relay ?? null) === edgeToken,
@@ -1114,30 +1132,57 @@ http.route({
           node: fetched.pinnedNode,
         });
       }
-      // Relay rendering: replace the pinned node's template entries with this
-      // subscriber's assigned primary/backup edges (one SNI each). Fail-open:
-      // any unknown shape passes through unchanged.
+      // Edge-required delivery: the policy is judged against the place the body
+      // ACTUALLY resolved to (the node it was pinned to, else the whole server),
+      // after the fetch. A place no relay covers passes through; a covered
+      // place is served a rendered body that passed every check or an
+      // unavailable response (503 keeps the client's last config; an empty 200
+      // would wipe it), never the origin body.
       let content = fetched.content;
-      let relay: number | null = null;
+      let relay: string | null = null;
       let renderedEpoch: number | null = null;
-      if (node && sub.backendServerId) {
-        const rctx = await ctx.runQuery(internal.edgeRender.contextForSubscription, {
+      let renderSnapshot: {
+        epoch: number;
+        family: string;
+        listenerKeys: string[];
+        primaryEdgeId?: Id<'edges'>;
+        backupEdgeId?: Id<'edges'>;
+      } | null = null;
+      if (sub.backendServerId) {
+        const family = classifyClient(ua).family;
+        const decision = await ctx.runQuery(internal.edgeRender.decideForSubscription, {
           subscriptionId: sub._id,
-          family: classifyClient(ua).family,
-          nodeHostname: node,
+          family,
+          nodeName: node ?? undefined,
         });
-        if (rctx) {
+        if (decision.kind === 'unavailable') {
+          return unavailableResponse(decision.reason);
+        }
+        if (decision.kind === 'render') {
+          const rctx = decision.context;
           const renderKey =
             rctx.renderKey ??
             (await ctx.runMutation(internal.subscriptions.ensureRenderKey, {
               subscriptionId: sub._id,
             }));
-          if (renderKey) {
-            const out = applyEdgeRender(rctx, content, renderKey, { now });
-            content = out.body;
-            relay = rctx.epoch;
-            renderedEpoch = out.applied ? rctx.epoch : null;
-          }
+          if (!renderKey) return unavailableResponse('no_render_key');
+          const out = applyEdgeRender(rctx, content, renderKey, { now });
+          if (out.delivery.kind !== 'serve') return unavailableResponse(out.delivery.reason);
+          content = out.body;
+          renderedEpoch = rctx.epoch;
+          renderSnapshot = {
+            epoch: rctx.epoch,
+            family,
+            listenerKeys: out.snapshot.listenerKeys,
+            primaryEdgeId: (out.snapshot.primaryEdgeId as Id<'edges'> | null) ?? undefined,
+            backupEdgeId: (out.snapshot.backupEdgeId as Id<'edges'> | null) ?? undefined,
+          };
+          // The token this body is valid under: re-read for the node it was
+          // rendered for, so the next request's comparison is like for like.
+          relay = await ctx.runQuery(internal.edgeRender.epochFor, {
+            backendServerId: sub.backendServerId,
+            nodeName: node ?? undefined,
+          });
         }
       }
       const entry: SubCacheEntry = {
@@ -1164,6 +1209,7 @@ http.route({
         subscriptionId: sub._id,
         contentAt: now,
         renderedEpoch,
+        render: renderSnapshot,
       });
       // hwid'd → `private, no-store` (device-specific); otherwise public + Vary: UA.
       return subscriptionResponse(entry, { hwid: hasHwid });

@@ -25,6 +25,9 @@ export const ApiScope = z.enum([
   'admin:settings:write',
   'admin:servers:read',
   'admin:servers:write',
+  // Node-role registration of relays + listeners (edges): the by-slug routes
+  // only, confined to the token's registration boundary (apiTokens.edgeRegistration).
+  'admin:edges:register',
   'admin:status:read',
 ]);
 export type ApiScope = z.infer<typeof ApiScope>;
@@ -47,6 +50,7 @@ export const SCOPE_GROUPS = {
     'admin:settings:write',
     'admin:servers:read',
     'admin:servers:write',
+    'admin:edges:register',
     'admin:status:read',
   ] as const,
 };

@@ -206,13 +206,14 @@ async function resolveTarget(
   if (t.kind === 'relay') {
     const relay = await ctx.db.get(t.ref as Id<'relays'>);
     if (!relay) return null;
-    const slots = await ctx.db
-      .query('relaySlots')
+    const listeners = await ctx.db
+      .query('relayListeners')
       .withIndex('by_relay', (q) => q.eq('relayId', relay._id))
       .collect();
-    const deployed = slots
-      .filter((s) => s.deployed && !s.retired)
-      .sort((a, b) => a.slotKey.localeCompare(b.slotKey));
+    // UDP listeners are not probeable (the probes are TCP connects).
+    const deployed = listeners
+      .filter((s) => s.deployed && !s.retired && s.transport === 'tcp')
+      .sort((a, b) => a.listenerKey.localeCompare(b.listenerKey));
     return {
       kind: t.kind,
       label: `${relay.slug} node`,

@@ -20,6 +20,13 @@ import { jsonRes, mockFetch } from './lib/edges/testing/mockFetch';
 import { __setEdgeProviderForTests } from './lib/edges/providers/registry';
 import { __setFrontChecker } from './frontQualifyOps';
 import type { EdgeProvider, EdgeSpec, Ledger, LedgerResource } from './lib/edges/providers/types';
+import {
+  FIXTURE_CONFIG_PROFILE,
+  insertPanelServer,
+  registerRelay,
+  wsListener,
+  type ListenerSpecFixture,
+} from './lib/edges/testing/fixtures';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -108,7 +115,7 @@ function fakePanel() {
       sni: 'a.example',
       host: '',
       inbound: {
-        configProfileUuid: '11111111-1111-4111-8111-111111111111',
+        configProfileUuid: FIXTURE_CONFIG_PROFILE,
         configProfileInboundUuid: INBOUND,
       },
     },
@@ -144,19 +151,31 @@ const originTransport = {
   acceptsHostHeader: 'any' as const,
 };
 
+/** The VLESS-over-WebSocket listener `w` behind the HTTPS origin (remark `node-one-relay-w`). */
+function listenerW(over: Partial<ListenerSpecFixture> = {}): ListenerSpecFixture {
+  return wsListener({
+    listenerKey: 'w',
+    tlsNames: ['a.example'],
+    originTransport,
+    transportParams: { path: '/ws' },
+    panelBinding: {
+      inboundTag: 'VLESS_RELAY_W',
+      configProfileUuid: FIXTURE_CONFIG_PROFILE,
+      configProfileInboundUuid: INBOUND,
+    },
+    ...over,
+  });
+}
+
+/** Register (or re-register) node-one with one listener body, the way the role does. */
+async function register(t: ReturnType<typeof convexTest>, listeners: ListenerSpecFixture[]) {
+  return registerRelay(t, { originAddress: ORIGIN, listeners });
+}
+
 async function seed(opts: { autoSelect?: boolean; zoneSslMode?: string } = {}) {
   const t = convexTest(schema, modules);
+  await insertPanelServer(t);
   await t.run(async (ctx) => {
-    await ctx.db.insert('backendServers', {
-      backend: 'remnawave',
-      name: 'panel-a',
-      slug: 'panel-a',
-      config: { type: 'remnawave', baseUrl: 'https://panel.example', apiToken: 'tok' },
-      isActive: true,
-      priority: 0,
-      keyCount: 0,
-      updatedAt: Date.now(),
-    });
     for (const [key, value] of [
       ['edge.enabled', 'true'],
       ['edge.l7.autoSelect', opts.autoSelect ? 'true' : 'false'],
@@ -179,32 +198,10 @@ async function seed(opts: { autoSelect?: boolean; zoneSslMode?: string } = {}) {
       observedAt: Date.now(),
     }),
   );
-  const { id: profileId } = await t.mutation(internal.protocolProfiles.create, {
-    slug: 'prof-ws',
-    name: 'Profile WS',
-    protocol: 'ws',
-    serverNames: ['a.example'],
-  });
-  const { id: relayId } = await t.mutation(internal.relays.upsertBySlug, {
-    slug: 'node-one',
-    backendServerSlug: 'panel-a',
-    nodeHostname: 'node-one',
-    originAddress: ORIGIN,
-  });
-  const { id: slotId } = await t.mutation(internal.relaySlots.upsert, {
-    relayId,
-    slotKey: 'w',
-    profileSlug: 'prof-ws',
-    inboundTag: 'VLESS_RELAY_W',
-    configProfileUuid: '11111111-1111-4111-8111-111111111111',
-    configProfileInboundUuid: INBOUND,
-    originPort: 443,
-    originTransport,
-    transportParams: { path: '/ws' },
-  });
+  const { relayId, listenerId } = await register(t, [listenerW()]);
   // The credential the qualification session authenticates with.
   await t.run((ctx) => ctx.db.patch(relayId, { qualificationUserId: QUALIFY_UUID }));
-  return { t, accountId, profileId, relayId, slotId };
+  return { t, accountId, relayId, listenerId };
 }
 
 async function drain(t: ReturnType<typeof convexTest>, rotationId: Id<'edgeRotations'>) {
@@ -221,25 +218,55 @@ async function drain(t: ReturnType<typeof convexTest>, rotationId: Id<'edgeRotat
   throw new Error('drain: the rotation did not settle');
 }
 
+/** An adopted, published L7 (or L4) front on the relay's listener. */
+async function insertPublishedFront(
+  t: ReturnType<typeof convexTest>,
+  relayId: Id<'relays'>,
+  listenerId: Id<'relayListeners'>,
+  over: Record<string, unknown> = {},
+) {
+  return t.run((ctx) =>
+    ctx.db.insert('edges', {
+      relayId,
+      listenerId,
+      managed: false,
+      name: 'adopted-x',
+      steps: [],
+      resources: [],
+      listeners: [],
+      addresses: { hostname: 'old.example.org' },
+      layer: 'l7',
+      publication: 'published',
+      poolIndex: 0,
+      status: 'active',
+      statusChangedAt: Date.now(),
+      health: 'unknown',
+      destroyAttempts: 0,
+      updatedAt: Date.now(),
+      ...over,
+    }),
+  );
+}
+
 describe('edgeRotations: an L7 edge end to end', () => {
   test('provision → qualify → publish → flip writes the hostname into address, SNI and Host', async () => {
     vi.useFakeTimers();
     const adapter = fakeL7();
     const hosts = fakePanel();
     __setFrontChecker(async (args) => {
-      // The session is handed the minted hostname and the slot's transport
-      // parameters, never a guess.
-      expect(args.protocol).toBe('ws');
+      // The session is handed the minted hostname and the listener's protocol
+      // triple + transport parameters, never a guess.
+      expect(args.proto).toEqual({ protocol: 'vless', streamTransport: 'ws', security: 'tls' });
       expect(args.params.path).toBe('/ws');
       expect(args.uuid).toBe(QUALIFY_UUID);
       return { ok: true, steps: [], checkedAt: Date.now() };
     });
-    const { t, relayId, slotId } = await seed();
+    const { t, relayId, listenerId } = await seed();
     const { rotationId } = await t.mutation(internal.edgeRotations.start, {
       relayId,
       kind: 'provision',
       trigger: 'manual',
-      slotId,
+      listenerId,
       publishOnDone: true,
     });
     await drain(t, rotationId);
@@ -249,13 +276,21 @@ describe('edgeRotations: an L7 edge end to end', () => {
     expect(r.outcome).toBe('published');
     const edge = (await t.query(internal.edges.get, { id: r.toEdgeId! }))!;
     expect(edge.layer).toBe('l7');
+    expect(edge.listenerId).toBe(listenerId);
     expect(edge.addresses.hostname).toMatch(new RegExp(`^[a-z0-9]+\\.${ZONE}$`));
     expect(edge.addresses.v4).toBeUndefined();
     expect(edge.publication).toBe('published');
     expect(edge.poolIndex).toBe(0);
-    // The proof is stored against exactly what was published.
+    // The proof is stored against exactly what was published: the hostname and
+    // the listener's protocol / revision / transport parameters.
     expect(edge.frontQualification?.ok).toBe(true);
-    expect(edge.frontQualification?.binding.hostname).toBe(edge.addresses.hostname);
+    expect(edge.frontQualification?.binding).toMatchObject({
+      hostname: edge.addresses.hostname,
+      listenerId,
+      protocol: 'vless',
+      streamTransport: 'ws',
+      security: 'tls',
+    });
     expect(edge.readiness).toMatchObject({ dns: 'ready', certificate: 'ready', front: 'ready' });
     // The flip wrote the WHOLE tuple: behind a CDN the hostname is the address,
     // the SNI and the Host header.
@@ -265,19 +300,31 @@ describe('edgeRotations: an L7 edge end to end', () => {
       sni: edge.addresses.hostname,
       host: edge.addresses.hostname,
     });
+    // The listener records the Host the plan found (adopted: the role made it)
+    // and its template edge is the new front.
+    const listener = (await t.run((ctx) => ctx.db.get(listenerId)))!;
+    expect(listener.host).toMatchObject({
+      state: 'present',
+      uuid: HOST_UUID,
+      ownership: 'adopted',
+    });
+    expect(listener.templateEdgeId).toBe(edge._id);
     // The adapter was driven with the hostname from the frozen intent.
     expect(adapter.seen.find((s) => s.call === 'runStep')?.hostname).toBe(edge.addresses.hostname);
     // What the node role reads: the hostname is the address, the SNI and the
-    // Host header, and the profile's own names are not offered (they are never
+    // Host header, and the listener's own names are not offered (they are never
     // sent behind a front).
     const view = (await t.query(internal.edgeAdmin.relayBySlugView, { slug: 'node-one' }))!;
+    expect(view.relay).toMatchObject({ hostMode: 'fcp', delivery: 'edge-required' });
     expect(view.publishedEndpoints).toHaveLength(1);
     expect(view.publishedEndpoints[0]).toMatchObject({
+      listenerKey: 'w',
+      poolIndex: 0,
       layer: 'l7',
-      hostname: edge.addresses.hostname,
+      port: 443,
+      addresses: { hostname: edge.addresses.hostname },
       sni: edge.addresses.hostname,
       hostHeader: edge.addresses.hostname,
-      activeServerNames: [edge.addresses.hostname],
     });
 
     // An expired proof takes the endpoint OUT of the role-usable list: the role
@@ -293,7 +340,7 @@ describe('edgeRotations: an L7 edge end to end', () => {
 
   test('an L7 edge whose front qualification FAILS is never published', async () => {
     vi.useFakeTimers();
-    const adapter = fakeL7();
+    fakeL7();
     fakePanel();
     __setFrontChecker(async () => ({
       // A CDN error page instead of the transport: not a front, whatever DNS says.
@@ -302,12 +349,12 @@ describe('edgeRotations: an L7 edge end to end', () => {
       steps: [],
       checkedAt: Date.now(),
     }));
-    const { t, relayId, slotId } = await seed();
+    const { t, relayId, listenerId } = await seed();
     const { rotationId } = await t.mutation(internal.edgeRotations.start, {
       relayId,
       kind: 'provision',
       trigger: 'manual',
-      slotId,
+      listenerId,
       publishOnDone: true,
     });
     await drain(t, rotationId);
@@ -323,12 +370,12 @@ describe('edgeRotations: an L7 edge end to end', () => {
     const adapter = fakeL7();
     fakePanel();
     __setFrontChecker(async () => ({ ok: true, steps: [], checkedAt: Date.now() }));
-    const { t, accountId, relayId, slotId } = await seed();
+    const { t, accountId, relayId, listenerId } = await seed();
     const { rotationId } = await t.mutation(internal.edgeRotations.start, {
       relayId,
       kind: 'provision',
       trigger: 'manual',
-      slotId,
+      listenerId,
       publishOnDone: false,
     });
     // One step: enough to plan and freeze the intent.
@@ -360,87 +407,61 @@ describe('edgeRotations: an L7 edge end to end', () => {
     ).toBe(true);
   });
 
-  test('a stale binding is not a qualification: a slot write expires the proof', async () => {
+  test('a stale binding is not a qualification: a listener re-registration expires the proof', async () => {
     vi.useFakeTimers();
     fakeL7();
     fakePanel();
     __setFrontChecker(async () => ({ ok: true, steps: [], checkedAt: Date.now() }));
-    const { t, relayId, slotId } = await seed();
+    const { t, relayId, listenerId } = await seed();
     const { rotationId } = await t.mutation(internal.edgeRotations.start, {
       relayId,
       kind: 'provision',
       trigger: 'manual',
-      slotId,
+      listenerId,
       publishOnDone: false,
     });
     await drain(t, rotationId);
     const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
     const edgeId = r.toEdgeId!;
+    const before = (await t.run((ctx) => ctx.db.get(listenerId)))!.revision;
     expect((await t.query(internal.edges.get, { id: edgeId }))!.frontQualification?.ok).toBe(true);
     // The node role redeploys the inbound on a different path: what the proof
-    // exercised is no longer what a member would speak.
-    await t.mutation(internal.relaySlots.upsert, {
-      relayId,
-      slotKey: 'w',
-      profileSlug: 'prof-ws',
-      inboundTag: 'VLESS_RELAY_W',
-      configProfileUuid: '11111111-1111-4111-8111-111111111111',
-      configProfileInboundUuid: INBOUND,
-      originPort: 443,
-      originTransport,
-      transportParams: { path: '/other' },
-    });
-    await t.mutation(internal.relays.update, { id: relayId, hostManaged: false });
+    // exercised is no longer what a member would speak. (Not a rebind: the
+    // standby may stay bound; the listener's revision moves.)
+    const reg = await register(t, [listenerW({ transportParams: { path: '/other' } })]);
+    expect(reg.changed).toBe(true);
+    expect((await t.run((ctx) => ctx.db.get(listenerId)))!.revision).toBeGreaterThan(before);
+    // No Host flip is owed on an operator-managed relay, so the direct publish
+    // reaches the publishability check, which refuses the stale proof.
+    await t.mutation(internal.relays.update, { id: relayId, hostMode: 'operator' });
     await expect(t.mutation(internal.relays.publishEdge, { relayId, edgeId })).rejects.toThrow(
       /front_qualification_stale/,
     );
-    expect(slotId).toBeDefined();
   });
 });
 
 describe('edgeRotations: the L7 automatic-selection gate', () => {
-  test('a detector replacement for an L7-only slot is vetoed while the gate is off', async () => {
+  test('a detector replacement for an L7-only listener is vetoed while the gate is off', async () => {
     fakeL7();
     fakePanel();
     __setFrontChecker(async () => ({ ok: true, steps: [], checkedAt: Date.now() }));
-    const { t, relayId, slotId } = await seed();
-    // A plaintext origin makes the slot L7-only: an L4 forwarder cannot add the
-    // TLS the front terminated, so there is no L4 fallback to route to.
-    await t.mutation(internal.relaySlots.upsert, {
-      relayId,
-      slotKey: 'w',
-      profileSlug: 'prof-ws',
-      inboundTag: 'VLESS_RELAY_W',
-      configProfileUuid: '11111111-1111-4111-8111-111111111111',
-      configProfileInboundUuid: INBOUND,
-      originPort: 80,
-      originTransport: {
-        scheme: 'http',
-        certPublic: false,
-        certNames: [],
-        acceptsHostHeader: 'any',
-      },
-    });
-    const edgeId = await t.run((ctx) =>
-      ctx.db.insert('edges', {
-        relayId,
-        slotId,
-        managed: false,
-        name: 'adopted-x',
-        steps: [],
-        resources: [],
-        listeners: [],
-        addresses: { hostname: 'old.example.org' },
-        layer: 'l7',
-        publication: 'published',
-        poolIndex: 0,
-        status: 'active',
-        statusChangedAt: Date.now(),
-        health: 'unknown',
-        destroyAttempts: 0,
-        updatedAt: Date.now(),
+    const { t, relayId } = await seed();
+    // A plaintext origin makes the listener L7-only: an L4 forwarder cannot add
+    // the TLS the front terminated, so there is no L4 fallback to route to.
+    // (Port + transport change = a rebind; nothing is bound to `w` yet.)
+    const { listenerId } = await register(t, [
+      listenerW({
+        originPort: 80,
+        tlsNames: [],
+        originTransport: {
+          scheme: 'http',
+          certPublic: false,
+          certNames: [],
+          acceptsHostHeader: 'any',
+        },
       }),
-    );
+    ]);
+    const edgeId = await insertPublishedFront(t, relayId, listenerId);
     await t.run((ctx) => ctx.db.patch(relayId, { publishedEdgeIds: [edgeId], autoRotate: true }));
     await t.run(async (ctx) => {
       const row = await ctx.db
@@ -474,27 +495,8 @@ describe('edgeRotations: the L7 automatic-selection gate', () => {
   test('the daily bound stops repeated same-provider L7 replacements', async () => {
     fakeL7();
     fakePanel();
-    const { t, relayId, slotId } = await seed({ autoSelect: true });
-    const edgeId = await t.run((ctx) =>
-      ctx.db.insert('edges', {
-        relayId,
-        slotId,
-        managed: false,
-        name: 'adopted-x',
-        steps: [],
-        resources: [],
-        listeners: [],
-        addresses: { hostname: 'old.example.org' },
-        layer: 'l7',
-        publication: 'published',
-        poolIndex: 0,
-        status: 'active',
-        statusChangedAt: Date.now(),
-        health: 'unknown',
-        destroyAttempts: 0,
-        updatedAt: Date.now(),
-      }),
-    );
+    const { t, relayId, listenerId } = await seed({ autoSelect: true });
+    const edgeId = await insertPublishedFront(t, relayId, listenerId);
     const today = new Date().toISOString().slice(0, 10);
     await t.run((ctx) =>
       ctx.db.patch(relayId, {
@@ -534,31 +536,15 @@ describe('edgeRotations: the L7 automatic-selection gate', () => {
   async function publishedFront(
     t: ReturnType<typeof convexTest>,
     relayId: Id<'relays'>,
-    slotId: Id<'relaySlots'>,
+    listenerId: Id<'relayListeners'>,
     over: Record<string, unknown> = {},
   ) {
-    const edgeId = await t.run((ctx) =>
-      ctx.db.insert('edges', {
-        relayId,
-        slotId,
-        managed: false,
-        provider: 'cloudflare',
-        name: 'adopted-old',
-        steps: [],
-        resources: [],
-        listeners: [{ edgePort: 443, originAddress: ORIGIN, originPort: 443 }],
-        addresses: { hostname: 'old.example.org' },
-        layer: 'l7',
-        publication: 'published',
-        poolIndex: 0,
-        status: 'active',
-        statusChangedAt: Date.now(),
-        health: 'unknown',
-        destroyAttempts: 0,
-        updatedAt: Date.now(),
-        ...over,
-      }),
-    );
+    const edgeId = await insertPublishedFront(t, relayId, listenerId, {
+      provider: 'cloudflare',
+      name: 'adopted-old',
+      listeners: [{ edgePort: 443, originAddress: ORIGIN, originPort: 443 }],
+      ...over,
+    });
     await t.run(async (ctx) => {
       await ctx.db.patch(relayId, { publishedEdgeIds: [edgeId], autoRotate: true });
       await ctx.db.insert('appSettings', {
@@ -575,8 +561,8 @@ describe('edgeRotations: the L7 automatic-selection gate', () => {
     fakeL7();
     fakePanel();
     __setFrontChecker(async () => ({ ok: true, steps: [], checkedAt: Date.now() }));
-    const { t, relayId, slotId } = await seed({ autoSelect: true });
-    const oldEdge = await publishedFront(t, relayId, slotId);
+    const { t, relayId, listenerId } = await seed({ autoSelect: true });
+    const oldEdge = await publishedFront(t, relayId, listenerId);
     // The affected-country evidence is waived here (audited); everything else
     // about the replacement is the ordinary detector path.
     const { rotationId } = await t.mutation(internal.edgeRotations.start, {
@@ -604,9 +590,9 @@ describe('edgeRotations: the L7 automatic-selection gate', () => {
     fakeL7();
     fakePanel();
     __setFrontChecker(async () => ({ ok: true, steps: [], checkedAt: Date.now() }));
-    const { t, relayId, slotId } = await seed({ autoSelect: true });
+    const { t, relayId, listenerId } = await seed({ autoSelect: true });
     // An L4 forwarder replaced by a front IS a new frontend address.
-    const oldEdge = await publishedFront(t, relayId, slotId, {
+    const oldEdge = await publishedFront(t, relayId, listenerId, {
       layer: 'l4',
       addresses: { v4: '198.51.100.9' },
       provider: undefined,
@@ -645,26 +631,11 @@ describe('edgeRotations: the L7 automatic-selection gate', () => {
 describe('edgeRotations: affected-country evidence must be FRESH', () => {
   /** The stored per-country verdicts, with the freshness the gate reads. */
   test('a verdict older than the freshness window reports `stale`, never its old value', async () => {
-    const { t, relayId, slotId } = await seed();
-    const edgeId = await t.run((ctx) =>
-      ctx.db.insert('edges', {
-        relayId,
-        slotId,
-        managed: false,
-        name: 'adopted-x',
-        steps: [],
-        resources: [],
-        listeners: [],
-        addresses: { hostname: 'old.example.org' },
-        layer: 'l7',
-        publication: 'unpublished',
-        status: 'active',
-        statusChangedAt: Date.now(),
-        health: 'unknown',
-        destroyAttempts: 0,
-        updatedAt: Date.now(),
-      }),
-    );
+    const { t, relayId, listenerId } = await seed();
+    const edgeId = await insertPublishedFront(t, relayId, listenerId, {
+      publication: 'unpublished',
+      poolIndex: undefined,
+    });
     const weeksAgo = Date.now() - 21 * 24 * 60 * 60_000;
     await t.run((ctx) =>
       ctx.db.patch(edgeId, {
@@ -708,7 +679,7 @@ describe('edgeRotations: affected-country evidence must be FRESH', () => {
       fakeL7();
       fakePanel();
       __setFrontChecker(async () => ({ ok: true, steps: [], checkedAt: Date.now() }));
-      const { t, relayId, slotId } = await seed({ autoSelect: true });
+      const { t, relayId, listenerId } = await seed({ autoSelect: true });
       await t.run(async (ctx) => {
         for (const [key, value] of [
           ['edge.autoRotate', 'true'],
@@ -720,26 +691,10 @@ describe('edgeRotations: affected-country evidence must be FRESH', () => {
           await ctx.db.insert('appSettings', { key, value, updatedAt: Date.now() });
         }
       });
-      const oldEdge = await t.run((ctx) =>
-        ctx.db.insert('edges', {
-          relayId,
-          slotId,
-          managed: false,
-          name: 'adopted-old',
-          steps: [],
-          resources: [],
-          listeners: [{ edgePort: 443, originAddress: ORIGIN, originPort: 443 }],
-          addresses: { hostname: 'old.example.org' },
-          layer: 'l7',
-          publication: 'published',
-          poolIndex: 0,
-          status: 'active',
-          statusChangedAt: Date.now(),
-          health: 'unknown',
-          destroyAttempts: 0,
-          updatedAt: Date.now(),
-        }),
-      );
+      const oldEdge = await insertPublishedFront(t, relayId, listenerId, {
+        name: 'adopted-old',
+        listeners: [{ edgePort: 443, originAddress: ORIGIN, originPort: 443 }],
+      });
       await t.run((ctx) =>
         ctx.db.patch(relayId, {
           publishedEdgeIds: [oldEdge],
@@ -831,11 +786,11 @@ describe('edgeReconcile: a published front whose proof failed is re-proven soon'
       sessions++;
       return { ok: false, code: 'front_error', steps: [], checkedAt: Date.now() };
     });
-    const { t, accountId, relayId, slotId } = await seed();
+    const { t, accountId, relayId, listenerId } = await seed();
     const edgeId = await t.run((ctx) =>
       ctx.db.insert('edges', {
         relayId,
-        slotId,
+        listenerId,
         accountId,
         provider: 'cloudflare',
         managed: true,
