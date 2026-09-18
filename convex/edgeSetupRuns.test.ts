@@ -21,7 +21,7 @@ import {
   insertPanelServer,
   registerRelay,
 } from './lib/edges/testing/fixtures';
-import { __setStageOpsForTests, type StageOps } from './edgeSetupRuns';
+import { __setStageOpsForTests, approvedDarkCohorts, type StageOps } from './edgeSetupRuns';
 import { __setPlanOpsForTests } from './edgeSetupPlan';
 import type { PanelInbound } from './lib/backends/types';
 import { MAX_OBSERVATION_AGE_MS, slugForNode, vectorsEqual } from './lib/edges/setupRuns';
@@ -1096,5 +1096,49 @@ describe('edgeSetupRuns: maintenance', () => {
     await tickAll(t, runId);
     r = await pump(t, runId, settled);
     expect(r.state).toBe('done');
+  });
+});
+
+describe('approvedDarkCohorts (case 3, the rehearsal side)', () => {
+  const run = (approved: string[], dark: string[] = []) => ({
+    approvedHideUuids: approved,
+    rehearsal: dark.length
+      ? {
+          at: 0,
+          attempts: 1,
+          vector: {
+            listenerRevisions: {},
+            renderConfigHash: '',
+            publicationEpoch: 0,
+            qualificationEvidenceIds: [],
+          },
+          hostsObservation: { at: 0, version: 0, hash: '' },
+          darkCohortKeys: dark,
+        }
+      : undefined,
+  });
+  const f = (cohortKey: string, reason: string) => ({
+    cohortKey,
+    format: 'links' as const,
+    reason,
+  });
+
+  test('a consented cohort whose every body is empty is dark; nothing is dark without consent', () => {
+    const failures = [f('squad-b', 'empty_body'), f('squad-b', 'no_match')];
+    expect(approvedDarkCohorts({ failures }, run(['host-1']))).toEqual(['squad-b']);
+    expect(approvedDarkCohorts({ failures }, run([]))).toEqual([]);
+  });
+
+  test('a genuine failure anywhere keeps the run at rehearsal_failed', () => {
+    const failures = [f('squad-b', 'empty_body'), f('squad-a', 'leak_detected')];
+    expect(approvedDarkCohorts({ failures }, run(['host-1']))).toEqual([]);
+    expect(approvedDarkCohorts({ failures: [f('credential', 'empty_body')] }, run(['h']))).toEqual(
+      [],
+    );
+  });
+
+  test('a cohort already recorded dark is not reported twice', () => {
+    const failures = [f('squad-b', 'empty_body')];
+    expect(approvedDarkCohorts({ failures }, run(['host-1'], ['squad-b']))).toEqual([]);
   });
 });

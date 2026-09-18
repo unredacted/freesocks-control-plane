@@ -1508,6 +1508,24 @@ async function stageRehearse(ctx: ActionCtx, run: Run): Promise<null> {
     });
   }
   if (!res.ok) {
+    // An APPROVED dark cohort: the operator consented to hiding the Hosts of an
+    // unsupported-only inbound set, so a member group whose whole body went
+    // with them now receives nothing FCP can serve. That cohort is excluded
+    // from the `serve` requirement (plan 1.6) instead of blocking go-live for
+    // everyone else; it is derived from the bodies themselves, after the
+    // hides, never guessed from squad membership. Any other failure stays a
+    // failure.
+    const dark = approvedDarkCohorts(res, run);
+    if (dark.length > 0 && attempts < MAX_REHEARSAL_ATTEMPTS)
+      return tr(ctx, run, {
+        state: 'running',
+        rehearsal: {
+          ...rehearsalRecord(res, attempts, run),
+          darkCohortKeys: [...(run.rehearsal?.darkCohortKeys ?? []), ...dark],
+        },
+        event: { level: 'warn', code: 'dark_cohorts', detail: dark.join(',') },
+        scheduleMs: 0,
+      });
     const f = res.failures[0];
     return needsYou(
       ctx,
@@ -1523,6 +1541,31 @@ async function stageRehearse(ctx: ActionCtx, run: Run): Promise<null> {
     rehearsal: rehearsalRecord(res, attempts, run),
     event: { level: 'info', code: 'rehearsed', detail: `attempt ${attempts}` },
   });
+}
+
+/** Body outcomes that mean "nothing is left to serve", the signature of a hidden-out cohort. */
+const DARK_BODY_REASONS = new Set(['empty_body', 'no_match', 'empty_pool']);
+
+/**
+ * Cohorts whose EVERY failure says their body is empty of anything FCP can
+ * serve, on a run whose operator approved hiding uncovered Hosts. Exported for
+ * the unit test; pure.
+ */
+export function approvedDarkCohorts(
+  res: Pick<RehearsalResult, 'failures'>,
+  run: Pick<Run, 'approvedHideUuids' | 'rehearsal'>,
+): string[] {
+  if (run.approvedHideUuids.length === 0) return [];
+  const already = new Set(run.rehearsal?.darkCohortKeys ?? []);
+  const byCohort = new Map<string, boolean>();
+  for (const f of res.failures) {
+    if (f.cohortKey === 'credential') return [];
+    const darkish = DARK_BODY_REASONS.has(f.reason);
+    byCohort.set(f.cohortKey, (byCohort.get(f.cohortKey) ?? true) && darkish);
+  }
+  const dark = [...byCohort.entries()].filter(([k, d]) => d && !already.has(k)).map(([k]) => k);
+  // Only when EVERY failing cohort is dark: a genuine failure elsewhere still stops the run.
+  return dark.length === byCohort.size ? dark : [];
 }
 
 function rehearsalRecord(
