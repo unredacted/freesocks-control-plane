@@ -62,7 +62,7 @@ import { partialRungFor } from './lib/edges/verifyRung';
 import { edgeLayerOf, providerHealthSatisfies } from './lib/edges/providers/capabilities';
 import { qualificationBinding, qualificationVerdict } from './lib/edges/frontCheck/binding';
 import { parseIntent } from './lib/edges/intent';
-import { fnv1a64Hex } from './lib/edges/registration';
+import { fnv1a64Hex, listenerConfigHash, validateListenerSpec } from './lib/edges/registration';
 import type { ListenerSpecInput } from './lib/edges/registration';
 import { MAX_DESIRED_PUBLISHED } from './lib/edgeConfig';
 import {
@@ -189,6 +189,7 @@ export interface StageOps {
       relayId: Id<'relays'>;
       purpose: 'cancel_setup' | 'release_requirement' | 'delete_relay';
       actorAdminId?: Id<'adminUsers'>;
+      darkCohortKeys?: string[];
     },
   ): Promise<void>;
 }
@@ -580,6 +581,11 @@ export const insert = internalMutation({
     if (plan.existingRelay) {
       const relay = await ctx.db.get(plan.existingRelay.id as Id<'relays'>);
       if (relay && relay.setupOwned && !relay.deleting) {
+        // The relay's listeners must still be what the new plan discovered:
+        // an inbound added, removed or changed on the panel since the previous
+        // run would otherwise resume at a stage that never provisions, tests
+        // or hides for it. Refused rather than reconciled in place.
+        await assertPlanMatchesRelay(ctx, relay, plan);
         relayId = relay._id;
         slug = relay.slug;
         const recorded = relay.setupStage as SetupRunStage | undefined;
@@ -1470,8 +1476,13 @@ async function stageHide(ctx: ActionCtx, run: Run): Promise<null> {
       reviewDelta: res.reviewChanged.map((h) => ({ uuid: h.uuid, remark: h.remark })),
     });
   if (res.failed > 0) return needsYou(ctx, run, 'hide_failed', `${res.failed} host(s)`);
-  if (res.pending > 0 || res.state === 'pending')
+  if (res.pending > 0 || res.state === 'pending') {
+    // A row the reconcile pass gave up on (retry cap, or a Host repointed under
+    // the write) still reads as pending here; the ledger's own status knows.
+    const status = await ops.hideStatus(ctx as unknown as QueryRunner, run.relayId);
+    if (status.failed > 0) return needsYou(ctx, run, 'hide_failed', `${status.failed} host(s)`);
     return waitPoll(ctx, run, c.cfg, `hides pending ${res.pending}`);
+  }
   return advance(ctx, run, {
     event: { level: 'info', code: 'hosts_hidden', detail: `${res.hidden} host(s)` },
   });
@@ -1543,6 +1554,64 @@ async function stageRehearse(ctx: ActionCtx, run: Run): Promise<null> {
   });
 }
 
+/** Stages at which the run may still switch provider accounts (nothing published yet). */
+const SWITCHABLE_STAGES = new Set<SetupRunStage>([
+  'prepare',
+  'credential',
+  'provision',
+  'verify',
+  'try_it',
+]);
+const STAGE_INDEX = Object.fromEntries(SETUP_RUN_STAGES.map((s, i) => [s, i])) as Record<
+  SetupRunStage,
+  number
+>;
+
+/**
+ * A reused (still setup-owned) relay must carry exactly the listeners the new
+ * plan discovered, at the same configuration: the required keys must exist,
+ * non-retired, with the canonical hash of the plan's spec, and the relay must
+ * hold no extra deployed listener the plan no longer lists. Otherwise
+ * `edge.plan_changed`: the operator removes protection and starts again.
+ */
+async function assertPlanMatchesRelay(
+  ctx: { db: QueryCtx['db'] },
+  relay: Relay,
+  plan: SetupPlanSnapshot,
+): Promise<void> {
+  const listeners = (await listenersOf(ctx, relay._id)).filter((l) => !l.retired);
+  const byKey = new Map(listeners.map((l) => [l.listenerKey, l]));
+  const origin = relay.origin;
+  const changed: string[] = [];
+  for (const key of plan.requiredListeners) {
+    const inbound = plan.inbounds.find((i) => i.listenerKey === key);
+    const existing = byKey.get(key);
+    if (!inbound || !existing) {
+      changed.push(key);
+      continue;
+    }
+    let hash: string;
+    try {
+      hash = listenerConfigHash(
+        validateListenerSpec(inbound.listenerSpec as ListenerSpecInput, { origin }),
+      );
+    } catch {
+      changed.push(key);
+      continue;
+    }
+    if (hash !== existing.configHash) changed.push(key);
+  }
+  for (const l of listeners) {
+    if (l.deployed && l.enabled && !plan.requiredListeners.includes(l.listenerKey))
+      changed.push(l.listenerKey);
+  }
+  if (changed.length > 0)
+    throw new ConvexError({
+      code: 'edge.plan_changed',
+      message: `The node's inbounds changed since this relay was set up (${[...new Set(changed)].join(', ')}); remove protection and start again`,
+    });
+}
+
 /** Body outcomes that mean "nothing is left to serve", the signature of a hidden-out cohort. */
 const DARK_BODY_REASONS = new Set(['empty_body', 'no_match', 'empty_pool']);
 
@@ -1552,18 +1621,28 @@ const DARK_BODY_REASONS = new Set(['empty_body', 'no_match', 'empty_pool']);
  * the unit test; pure.
  */
 export function approvedDarkCohorts(
-  res: Pick<RehearsalResult, 'failures'>,
+  res: Pick<RehearsalResult, 'failures' | 'formats'>,
   run: Pick<Run, 'approvedHideUuids' | 'rehearsal'>,
 ): string[] {
-  if (run.approvedHideUuids.length === 0) return [];
+  if (run.approvedHideUuids.length === 0 || res.formats.length === 0) return [];
   const already = new Set(run.rehearsal?.darkCohortKeys ?? []);
-  const byCohort = new Map<string, boolean>();
+  const byCohort = new Map<string, { allDark: boolean; formats: Set<string> }>();
   for (const f of res.failures) {
     if (f.cohortKey === 'credential') return [];
-    const darkish = DARK_BODY_REASONS.has(f.reason);
-    byCohort.set(f.cohortKey, (byCohort.get(f.cohortKey) ?? true) && darkish);
+    const cur = byCohort.get(f.cohortKey) ?? { allDark: true, formats: new Set<string>() };
+    cur.allDark = cur.allDark && DARK_BODY_REASONS.has(f.reason);
+    cur.formats.add(f.format);
+    byCohort.set(f.cohortKey, cur);
   }
-  const dark = [...byCohort.entries()].filter(([k, d]) => d && !already.has(k)).map(([k]) => k);
+  // Dark = EVERY rehearsed format of the cohort failed for a dark reason. A
+  // cohort whose links body is empty while its sing-box body still renders is
+  // a real failure, not a dark cohort.
+  const wanted = new Set(res.formats);
+  const dark = [...byCohort.entries()]
+    .filter(
+      ([k, v]) => v.allDark && !already.has(k) && [...wanted].every((fmt) => v.formats.has(fmt)),
+    )
+    .map(([k]) => k);
   // Only when EVERY failing cohort is dark: a genuine failure elsewhere still stops the run.
   return dark.length === byCohort.size ? dark : [];
 }
@@ -1708,7 +1787,14 @@ export const goLive = internalMutation({
       });
     }
     await claimDeliveryBinding(ctx, relay);
-    await ctx.db.patch(relay._id, { setupOwned: undefined, setupStage: undefined, updatedAt: now });
+    await ctx.db.patch(relay._id, {
+      setupOwned: undefined,
+      setupStage: undefined,
+      // The consented dark cohorts outlive the run: a later restore (remove
+      // protection, release the requirement) must skip them or never pass.
+      darkCohortKeys: r.rehearsal?.darkCohortKeys ?? [],
+      updatedAt: now,
+    });
     const verified = r.listeners.map((l) => ({
       ...l,
       verify:
@@ -1784,6 +1870,32 @@ export const retry = internalMutation({
       const account = await ctx.db.get(a.accountId);
       if (!account) throw new ConvexError({ code: 'not_found', message: 'Account not found' });
       const layer = edgeLayerOf(account.provider);
+      if (a.accountId !== r.accountId) {
+        // Switching accounts only while nothing is published: a candidate of
+        // the old account (its layer, its bill) is cancelled, never re-labelled,
+        // and provisioning starts over for that listener.
+        if (!SWITCHABLE_STAGES.has(r.stage))
+          throw new ConvexError({
+            code: 'edge.account_switch_late',
+            message: 'The account can only change before anything is published',
+          });
+        for (const entry of listeners) {
+          if (!entry.edgeId) continue;
+          const e = await ctx.db.get(entry.edgeId);
+          if (e && e.accountId === a.accountId) continue;
+          if (e && e.publication === 'unpublished' && LIVE_CANDIDATE.has(e.status))
+            await ctx.db.patch(e._id, {
+              status: 'cancelled',
+              statusChangedAt: now,
+              updatedAt: now,
+            });
+          entry.edgeId = undefined;
+          entry.verify = 'pending';
+          entry.probeRequestedAt = undefined;
+          entry.proofRequestedAt = undefined;
+        }
+        if (STAGE_INDEX[r.stage] > STAGE_INDEX.provision) stage = 'provision';
+      }
       listeners = listeners.map((l) => ({ ...l, layer }));
     }
     const failedKey = r.need?.detail?.split(':')[0] ?? null;
@@ -1920,7 +2032,29 @@ export const resume = internalMutation({
           code: 'validation',
           message: 'The run is not waiting for a review',
         });
-      approved = [...new Set([...r.approvedHideUuids, ...a.approvedHideUuids])];
+      // The submitted set REPLACES the consent, exactly. Withdrawing a Host that
+      // the ledger already disabled cannot be honoured silently (the run never
+      // re-enables a Host on its own): refused with a code that points at the
+      // one path that does, Remove protection.
+      approved = [...new Set(a.approvedHideUuids)];
+      const withdrawn = r.approvedHideUuids.filter((u) => !approved.includes(u));
+      if (withdrawn.length > 0 && r.relayId) {
+        const rows = await ctx.db
+          .query('edgeHostHides')
+          .withIndex('by_relay', (q) => q.eq('relayId', r.relayId!))
+          .collect(); // one row per direct Host of one node: operator-scale
+        const hidden = rows.filter(
+          (h) =>
+            withdrawn.includes(h.hostUuid) &&
+            h.intent === 'disable' &&
+            (h.state === 'confirmed' || h.state === 'written' || h.state === 'unresolved'),
+        );
+        if (hidden.length > 0)
+          throw new ConvexError({
+            code: 'edge.consent_withdrawn_hidden',
+            message: `${hidden.length} host(s) are already hidden; use Remove protection to put them back`,
+          });
+      }
       planRevision = r.planRevision + 1;
       events.push({
         at: now,
@@ -2010,9 +2144,18 @@ export const cancel = internalAction({
       });
       disposition = 'deleted';
     } else if (r.relayId && cancelRestores(r.stage)) {
-      await ops.restoreStart(ctx, { relayId: r.relayId, purpose: 'cancel_setup', actorAdminId });
+      await ops.restoreStart(ctx, {
+        relayId: r.relayId,
+        purpose: 'cancel_setup',
+        actorAdminId,
+        darkCohortKeys: r.rehearsal?.darkCohortKeys ?? [],
+      });
       disposition = 'restore';
     }
+    // A temporary test credential minted for this run expires now rather than
+    // at its 24 h TTL (the sweep removes it; a relay delete releases too).
+    if (r.relayId)
+      await ctx.runMutation(internal.edgeTestCredentials.releaseForRelay, { relayId: r.relayId });
     await ctx.runMutation(internal.edgeSetupRuns.markCancelled, {
       runId,
       disposition,
@@ -2196,7 +2339,10 @@ export const requireEdges = internalMutation({
       },
       activeRunId: null,
     };
-    const stage: SetupRunStage = pending.length > 0 ? 'try_it' : 'rehearse';
+    // A relay left deferred by a cancel or a released requirement has its direct
+    // Hosts back: the run re-enters at the Host review / hide stage, never
+    // straight at the rehearsal (those origin entries would be `leak_detected`).
+    const stage: SetupRunStage = pending.length > 0 ? 'try_it' : 'hide_direct_hosts';
     const id = await ctx.db.insert('edgeSetupRuns', {
       relayId,
       relaySlug: relay.slug,

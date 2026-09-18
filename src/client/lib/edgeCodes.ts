@@ -878,6 +878,23 @@ const REFUSAL_COPY = {
       'This node is putting its direct addresses back, so a second workflow, a new hide and pool changes wait.',
     fix: 'Let the restore finish (the node page shows its phase), then try again.',
   },
+  plan_changed: {
+    label: 'Node changed since setup',
+    explain:
+      'The inbounds on this node are not the ones the earlier setup created listeners for, so the run cannot resume safely.',
+    fix: 'Remove protection from the node, then protect it again.',
+  },
+  consent_withdrawn_hidden: {
+    label: 'Host already hidden',
+    explain:
+      'A host you removed from the approval was already hidden; the run never re-enables a host on its own.',
+    fix: 'Keep it approved, or remove protection to put every host back.',
+  },
+  account_switch_late: {
+    label: 'Account fixed after publish',
+    explain: 'The account can only change while nothing is published for this node yet.',
+    fix: 'Cancel the run and start again with the other account.',
+  },
   test_link_no_match: {
     label: 'No entry for this inbound',
     explain:

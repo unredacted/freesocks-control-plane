@@ -1191,6 +1191,11 @@ export default defineSchema({
     // A setup run owns this relay: reconcile upkeep and the detector's automatic
     // replacement skip it until the run clears the flag (independent of the run's state).
     setupOwned: v.optional(v.boolean()),
+    // Member cohorts the operator knowingly left without protected delivery at
+    // go-live (their whole body went with the consented hides). The restore
+    // workflow's raw-body checks skip them; without this the relay could never
+    // release its binding or be removed.
+    darkCohortKeys: v.optional(v.array(v.string())),
     // The stage the setup run recorded last (informational; the run machine is a later release).
     setupStage: v.optional(v.string()),
     // The persisted RESTORE workflow (convex/edgeRestore.ts): hides settled,
@@ -1860,6 +1865,10 @@ export default defineSchema({
     confirmedAt: v.optional(v.number()),
     // Quiet looks (the Host still enabled) taken since the lease expired.
     quietLooks: v.optional(v.number()),
+    // The read-back found the uuid disabled but at a DIFFERENT tuple than the
+    // one observed before the write (an administrator repointed it meanwhile):
+    // never confirmed, surfaced as failed, and still re-enabled by a restore.
+    tupleDrifted: v.optional(v.boolean()),
     lastLookAt: v.optional(v.number()),
     // Why a row was released: `gone`, `changed`, `restored`, `never_written`, `settled`.
     releasedReason: v.optional(v.string()),

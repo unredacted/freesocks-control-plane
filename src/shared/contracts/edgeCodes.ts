@@ -312,7 +312,14 @@ export type HostHideState = (typeof HOST_HIDE_STATES)[number];
  * Workflow refusals (`edge.<code>` on the wire): a second restore workflow, a
  * direct-Host hide or a pool / listener write while one runs.
  */
-export const WORKFLOW_CODES = ['restore_in_progress'] as const;
+export const WORKFLOW_CODES = [
+  'restore_in_progress',
+  // guided setup runs: a reused relay whose node inbounds changed, a consent
+  // withdrawal for a Host already hidden, an account switch after publication
+  'plan_changed',
+  'consent_withdrawn_hidden',
+  'account_switch_late',
+] as const;
 export type WorkflowCode = (typeof WORKFLOW_CODES)[number];
 
 /**

@@ -35,6 +35,8 @@ export const TEST_CREDENTIAL_MAX_ATTEMPTS = 5;
 /** `done` rows are kept this long as a record, then dropped. */
 const DONE_RETENTION_MS = 7 * 24 * 60 * 60_000;
 const SWEEP_BATCH = 50;
+/** Index pages one sweep walks past rows still in backoff before giving up for the tick. */
+const SWEEP_PAGES = 10;
 export const TEST_CREDENTIAL_TAG = 'fcp-test';
 
 const purposeValidator = v.union(v.literal('rehearsal'), v.literal('test_link'));
@@ -320,20 +322,31 @@ export const ensure = internalAction({
 export const due = internalQuery({
   args: { now: v.number() },
   handler: async (ctx, { now }) => {
-    const pending = await ctx.db
-      .query('edgeTestCredentials')
-      .withIndex('by_removal_expires', (q) => q.eq('removal', 'pending').lte('expiresAt', now))
-      .take(SWEEP_BATCH);
+    // Rows in backoff sit at the head of the index (they expired first), so one
+    // `take` could return the same not-yet-due rows forever and starve every
+    // later expired key. Walk pages until a batch of DUE rows is collected
+    // (bounded: SWEEP_PAGES pages per tick).
+    const pending: Doc<'edgeTestCredentials'>[] = [];
+    let cursor: string | null = null;
+    for (let page = 0; page < SWEEP_PAGES && pending.length < SWEEP_BATCH; page++) {
+      const res = await ctx.db
+        .query('edgeTestCredentials')
+        .withIndex('by_removal_expires', (q) => q.eq('removal', 'pending').lte('expiresAt', now))
+        .paginate({ cursor, numItems: SWEEP_BATCH });
+      for (const r of res.page) {
+        if ((r.retryAfter ?? 0) <= now) pending.push(r);
+        if (pending.length >= SWEEP_BATCH) break;
+      }
+      if (res.isDone) break;
+      cursor = res.continueCursor;
+    }
     const done = await ctx.db
       .query('edgeTestCredentials')
       .withIndex('by_removal_expires', (q) =>
         q.eq('removal', 'done').lte('expiresAt', now - DONE_RETENTION_MS),
       )
       .take(SWEEP_BATCH);
-    return {
-      pending: pending.filter((r) => (r.retryAfter ?? 0) <= now),
-      doneIds: done.map((r) => r._id),
-    };
+    return { pending, doneIds: done.map((r) => r._id) };
   },
 });
 

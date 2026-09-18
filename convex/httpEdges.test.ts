@@ -442,9 +442,11 @@ describe('relay admin routes', () => {
     ]) {
       expect(throttlePolicyFor(p)).toBeNull();
     }
-    // The two GETs that reach a panel or open sockets are throttled under the same policy.
+    // The GET that reaches a panel and opens sockets is throttled under the same
+    // policy; the test link is a POST (it may mint a credential) and is throttled there.
     expect(throttlePolicyForGet(['relays', 'inbound-candidates'])).toBe(P);
-    expect(throttlePolicyForGet(['edges', 'e1', 'test-link'])).toBe(P);
+    expect(throttlePolicyFor(['edges', 'e1', 'test-link'])).toBe(P);
+    expect(throttlePolicyForGet(['edges', 'e1', 'test-link'])).toBeNull();
     for (const p of [
       ['relays'],
       ['relays', 'node-candidates'],

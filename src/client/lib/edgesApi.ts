@@ -372,8 +372,10 @@ export const fetchInboundCandidates = (backendServerId: string, nodeUuid: string
     InboundCandidatesResponse,
   );
 /** The isolated test link for an L4 candidate (throttled: fetches the credential body). */
+// A POST: building the link may mint the test credential (a panel user or a
+// temporary key), so it needs the write scope a GET would not carry.
 export const fetchTestLink = (edgeId: string) =>
-  apiClient.get(`${BASE}/edges/${enc(edgeId)}/test-link`, EdgeTestLinkResponse);
+  apiClient.post(`${BASE}/edges/${enc(edgeId)}/test-link`, {}, EdgeTestLinkResponse);
 export const refreshNodeCandidates = (backendServerId: string) =>
   apiClient.post(
     `${BASE}/relays/node-candidates/refresh`,

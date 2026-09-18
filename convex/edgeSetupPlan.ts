@@ -26,6 +26,8 @@ import type { Id } from './_generated/dataModel';
 import type { BackendHost, PanelInbound } from './lib/backends/types';
 import { RENDER_CLIENT_FAMILIES, resolveEdgeConfig } from './lib/edgeConfig';
 import { mapInboundsToListeners } from './lib/edges/inboundMapping';
+import { applyOriginProbes, originProbeTargets } from './edgeOriginProbe';
+import type { OriginProbeOutcome } from './lib/edges/originProbe';
 import { classifyDirectHosts } from './lib/edges/directHosts';
 import { cohortReportForOrigin } from './lib/edges/cohorts';
 import { listenerLayers } from './lib/edges/layers';
@@ -48,11 +50,17 @@ export interface PlanOps {
     a: { backendServerId: Id<'backendServers'>; nodeUuid: string },
   ): Promise<PanelInbound[]>;
   listHosts(ctx: ActionCtx, a: { backendServerId: Id<'backendServers'> }): Promise<BackendHost[]>;
+  /** The origin probe for HTTP-transport inbounds (fills `originTransport`; lib/edges/originProbe.ts). */
+  probeOrigins(
+    ctx: ActionCtx,
+    a: { targets: ReturnType<typeof originProbeTargets> },
+  ): Promise<OriginProbeOutcome[]>;
 }
 
 const defaultPlanOps: PlanOps = {
   listNodeInbounds: (ctx, a) => ctx.runAction(internal.backends.listNodeInbounds, a),
   listHosts: (ctx, a) => ctx.runAction(internal.backends.listHosts, a),
+  probeOrigins: (ctx, a) => ctx.runAction(internal.edgeOriginProbeOps.probe, a),
 };
 
 let planOps: PlanOps = defaultPlanOps;
@@ -240,8 +248,14 @@ export async function buildPlan(
     existingKeys: [],
     origin,
   });
+  // The mapper leaves HTTP-transport inbounds without `originTransport` (L4
+  // only); the origin probe fills it in, exactly as the inbound-candidates
+  // route does, so a WS / HTTP-upgrade / gRPC origin can be offered an L7 account.
+  const targets = originProbeTargets(mapped.candidates, originAddress);
+  const outcomes = targets.length > 0 ? await planOps.probeOrigins(ctx, { targets }) : [];
+  const candidates = applyOriginProbes(mapped.candidates, outcomes);
   const planInbounds: SetupPlanInbound[] = [];
-  for (const cand of mapped.candidates) {
+  for (const cand of candidates) {
     const frontable = cand.layers.layers.length > 0 && !cand.needsName;
     planInbounds.push({
       listenerKey: cand.listenerSpec.listenerKey,

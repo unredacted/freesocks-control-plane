@@ -85,6 +85,8 @@ export interface RehearsalResult {
   /** Cohorts rehearsed (dark ones excluded) and the source of the representative bodies. */
   cohorts: number;
   source: 'members' | 'credential';
+  /** Every format each cohort was rehearsed in (a dark cohort must fail in ALL of them). */
+  formats: RenderFormat[];
 }
 
 function canonicalJson(x: unknown): string {
@@ -356,6 +358,7 @@ export const run = internalAction({
         attempts,
         cohorts: c.cohorts.length,
         source,
+        formats: c.formats,
       };
       if (!listingChanged) return last;
     }
