@@ -679,6 +679,10 @@ export default defineSchema({
     .index('by_backend_server', ['backendServerId'])
     // Bounded "any live key on this panel?" probe for the instance-delete guard.
     .index('by_backend_server_state', ['backendServerId', 'state'])
+    // (backendServerId, pinnedNode, state): the relay layer's COHORTS (one
+    // representative per placement among the keys pinned to a node), walked
+    // page by page (convex/lib/edges/cohorts.ts), never collected.
+    .index('by_backend_server_pinned', ['backendServerId', 'pinnedNode', 'state'])
     // The FCP-fronted subscription route resolves the sub by its opaque token.
     .index('by_sub_token', ['subToken']),
 
@@ -1149,6 +1153,53 @@ export default defineSchema({
     setupOwned: v.optional(v.boolean()),
     // The stage the setup run recorded last (informational; the run machine is a later release).
     setupStage: v.optional(v.string()),
+    // The persisted RESTORE workflow (convex/edgeRestore.ts): hides settled,
+    // the binding released with the relay enabled, direct Hosts re-enabled,
+    // then the purpose's finish. Present = in progress; a second workflow and
+    // every new direct-Host hide are refused (`edge.restore_in_progress`).
+    restore: v.optional(
+      v.object({
+        purpose: v.union(
+          v.literal('cancel_setup'),
+          v.literal('release_requirement'),
+          v.literal('delete_relay'),
+        ),
+        phase: v.union(
+          v.literal('freeze'),
+          v.literal('settle'),
+          v.literal('verify_fcp_raw'),
+          v.literal('release_binding'),
+          v.literal('restore'),
+          v.literal('verify_direct'),
+          v.literal('finish'),
+        ),
+        startedAt: v.number(),
+        updatedAt: v.number(),
+        // Passes of the current phase that could not advance it (bounded per phase).
+        attempt: v.number(),
+        lastError: v.optional(v.string()),
+        // Cohorts the operator approved to go dark (their raw bodies are not checked).
+        darkCohortKeys: v.array(v.string()),
+        // `delete_relay`: what the deletion body runs with once phase 7 is reached.
+        force: v.optional(v.boolean()),
+        actorAdminId: v.optional(v.id('adminUsers')),
+      }),
+    ),
+    // Direct Hosts (enabled, dialling the origin itself) the reconcile pass saw on
+    // a BOUND guided relay and could neither cover nor re-hide: attention
+    // `direct_host_reappeared`. Cleared when a pass sees none.
+    directHostAlert: v.optional(
+      v.object({
+        at: v.number(),
+        hosts: v.array(
+          v.object({
+            uuid: v.string(),
+            remark: v.string(),
+            inboundUuid: v.union(v.string(), v.null()),
+          }),
+        ),
+      }),
+    ),
     // Block-detector state (convex/edgeDetector.ts).
     suspicion: v.optional(
       v.object({
@@ -1562,6 +1613,54 @@ export default defineSchema({
   })
     .index('by_server_node', ['backendServerId', 'nodeName'])
     .index('by_server', ['backendServerId']),
+
+  // The direct-Host hide LEDGER (docs/edges.md § "Direct-Host hides and the
+  // restore workflow"): one row per panel Host FCP disables (intent `disable`)
+  // or re-enables (intent `restore`) on a guided relay's node, written BEFORE
+  // the panel call with the tuple that was observed. A row that holds an
+  // `opId` is possibly written and is settled only by observation: disabled =
+  // `confirmed`, gone = `released`, still enabled = `unresolved` until the
+  // settle floor and two quiet looks have passed since the lease expired. A
+  // lease expiry alone never releases or reverses anything.
+  edgeHostHides: defineTable({
+    relayId: v.id('relays'),
+    // The setup run that asked for the hide (its id as a string; absent for a
+    // reconcile re-hide).
+    runId: v.optional(v.string()),
+    backendServerId: v.id('backendServers'),
+    hostUuid: v.string(),
+    observed: v.object({
+      remark: v.string(),
+      address: v.string(),
+      port: v.number(),
+      sni: v.union(v.string(), v.null()),
+      host: v.union(v.string(), v.null()),
+      inboundUuid: v.union(v.string(), v.null()),
+      isDisabled: v.boolean(),
+    }),
+    intent: v.union(v.literal('disable'), v.literal('restore')),
+    state: v.union(
+      v.literal('intended'),
+      v.literal('written'),
+      v.literal('confirmed'),
+      v.literal('unresolved'),
+      v.literal('released'),
+    ),
+    opId: v.optional(v.string()),
+    attempt: v.number(),
+    claimedAt: v.optional(v.number()),
+    expiresAt: v.optional(v.number()),
+    confirmedAt: v.optional(v.number()),
+    // Quiet looks (the Host still enabled) taken since the lease expired.
+    quietLooks: v.optional(v.number()),
+    lastLookAt: v.optional(v.number()),
+    // Why a row was released: `gone`, `changed`, `restored`, `never_written`, `settled`.
+    releasedReason: v.optional(v.string()),
+    updatedAt: v.number(),
+  })
+    .index('by_relay', ['relayId'])
+    .index('by_run', ['runId'])
+    .index('by_host', ['hostUuid']),
 
   // External / internal reachability probe requests against one edge.
   // Operator-entered probe targets (any host:port), alongside the derived ones

@@ -312,7 +312,15 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'relay.update': ['slug', 'changed', 'autoRotate', 'hostMode', 'enabled'],
   // Booleans only: the credential itself never reaches the audit log.
   'relay.qualification_credential': ['slug', 'minted', 'revoked', 'replaced'],
-  'relay.delete': ['slug', 'force', 'disposition'],
+  // `restore` = the delete entered the restore workflow first (a guided relay).
+  'relay.delete': ['slug', 'force', 'disposition', 'restore'],
+  // The direct-Host hide ledger + restore workflow (edgeHostHides.ts /
+  // edgeRestore.ts): counts, remarks, phases and purposes; never an address.
+  'edge.host.hidden': ['relaySlug', 'count', 'remarks', 'runId', 'rehidden'],
+  'edge.host.restored': ['relaySlug', 'count', 'remarks'],
+  'edge.host.reappeared': ['relaySlug', 'count', 'remarks'],
+  'edge.relay.restore_started': ['relaySlug', 'purpose'],
+  'edge.relay.restore_finished': ['relaySlug', 'purpose', 'hidesRestored'],
   'relay.upsert': ['slug', 'created', 'changed'],
   // Coverage: a full pool expanded (within the cap) for an uncovered listener; a
   // rebalance unpublished a duplicate back to standby. Counts and ids only.
