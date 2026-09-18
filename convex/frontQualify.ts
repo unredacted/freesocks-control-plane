@@ -32,6 +32,7 @@ import {
 } from './lib/edges/frontCheck/binding';
 import { isUuid } from './lib/edges/frontCheck/vless';
 import { protocolIsHttpTransport, protocolL7Proof } from './lib/edges/protocols';
+import { evaluateAutoQualificationFor } from './edgeProviderAccounts';
 
 const bindingValidator = v.object({
   hostname: v.string(),
@@ -191,6 +192,16 @@ export const record = internalMutation({
           updatedAt: now,
         });
         await scheduleMirrorRefresh(ctx);
+      }
+    }
+    // A PASSING proof is the L7 trust evidence: let the auto-trust rule look
+    // at the edge's account now (it only ever sets `qualified: true`; a
+    // refusal is silent and the proof itself is already recorded).
+    if (stored.ok && g.edge.accountId) {
+      try {
+        await evaluateAutoQualificationFor(ctx, g.edge.accountId, now);
+      } catch {
+        // The proof stands on its own; the reconcile sweep evaluates again.
       }
     }
     return { ok: stored.ok, code: stored.code ?? null };
