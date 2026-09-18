@@ -66,6 +66,9 @@ export const ATTENTION_ACTION_PLAN = {
     },
   },
   test_credentials: { type: 'call', confirm: null },
+  // The endpoint test is a page (import the test link, connect, tick), never a
+  // one-click call: the tick must echo the binding the operator was shown.
+  verify_endpoint: { type: 'navigate' },
   thaw: {
     type: 'call',
     confirm: {
@@ -94,6 +97,7 @@ export function attentionTarget(item: AttentionItem): string {
     case 'publish':
     case 'qualify_front':
     case 'rotate':
+    case 'verify_endpoint':
       return relay({ tab: 'edges', edge: item.edgeId });
     case 'look_at_host':
       return relay({ tab: 'listeners', listener: item.listenerKey });

@@ -174,6 +174,16 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
     report.rekicked++;
   }
 
+  // 1b. L7 auto-trust: an unqualified L7 account whose active edge now holds
+  // a current proof for its effective template is trusted (bounded: the
+  // accounts table is operator-scale; L4 accounts are never looked at).
+  try {
+    await ctx.runMutation(internal.edgeProviderAccounts.reconcileAutoQualification, {});
+  } catch (err) {
+    report.errors++;
+    console.warn(`[edge-reconcile] auto-qualification sweep: ${errText(err)}`);
+  }
+
   const edges = await ctx.runQuery(internal.edges.listLive, {});
   const origins = await ctx.runQuery(internal.relays.listAll, {});
   const rotatingOrigins = new Set(
@@ -350,6 +360,10 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
             starts++;
             continue;
           }
+          // A spare that only the operator's endpoint confirmation keeps out of
+          // the pool (attention `spare_untested`): provisioning another would
+          // pile up untested candidates every tick.
+          if (res.awaitingVerification) continue;
         }
         if (cfg.autoProvisionToDesired) {
           await ctx.runMutation(internal.edgeRotations.start, {

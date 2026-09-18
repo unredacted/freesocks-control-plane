@@ -136,7 +136,10 @@ export const PREFLIGHT_BLOCKER_CODES = [
   'front_stale',
   'front_failed',
   'account_mismatch',
+  'unverified_endpoint',
   'edge_unhealthy',
+  // replace: no tested spare on the listener (L4)
+  'no_verified_spare',
   // selection
   'no_compatible_listener',
   'no_compatible_layer',
@@ -180,10 +183,13 @@ export const ATTENTION_KINDS = [
   'needs_operator',
   'host_unresolved',
   'members_dark',
+  'needs_test',
   'rotation_failed',
   'qualification_lapsed',
+  'retest_needed',
   'block_suspected',
   'edge_unreachable',
+  'spare_untested',
   'pool_below_desired',
   'account_unqualified',
   'account_untested',
@@ -210,6 +216,7 @@ export const ATTENTION_ACTIONS = [
   'qualify_front',
   'rotate',
   'test_credentials',
+  'verify_endpoint',
   'thaw',
 ] as const;
 export type AttentionAction = (typeof ATTENTION_ACTIONS)[number];

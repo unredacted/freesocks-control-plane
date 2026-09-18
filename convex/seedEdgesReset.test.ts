@@ -121,6 +121,7 @@ describe('edge maintenance gate', () => {
       listenerId,
       ipv4: '198.51.100.7',
       publish: true,
+      verified: true,
     });
     await t.mutation(internal.edgeMaintenance.freeze, {});
     await t.mutation(internal.relays.unpublishEdge, { relayId, edgeId });

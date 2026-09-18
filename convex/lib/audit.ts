@@ -272,7 +272,23 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'edge.provider_account.update': ['name', 'provider'],
   'edge.provider_account.delete': ['name', 'provider'],
   'edge.provider_account.upsert': ['name', 'provider', 'created'],
-  'edge.provider_account.qualified': ['name', 'provider', 'qualified'],
+  'edge.provider_account.qualified': [
+    'name',
+    'provider',
+    'qualified',
+    'edgeId',
+    'endpointEvidence',
+  ],
+  // The L7 auto-trust rule (lib/edges/autoQualify.ts): ids only, never the endpoint.
+  'edge.provider_account.auto_qualified': [
+    'name',
+    'provider',
+    'qualified',
+    'edgeId',
+    'endpointEvidence',
+  ],
+  // An operator confirmed an L4 endpoint (lib/edges/verification.ts): never the address.
+  'edge.verified': ['relaySlug', 'edgeId', 'listenerKey', 'method'],
   // Rotation keeps the qualification: booleans only, never a key or identifier.
   'edge.provider_account.credentials_rotated': [
     'name',
@@ -298,7 +314,7 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'relay.qualification_credential': ['slug', 'minted', 'revoked', 'replaced'],
   'relay.delete': ['slug', 'force', 'disposition'],
   'relay.upsert': ['slug', 'created', 'changed'],
-  'edge.adopted': ['slug', 'edgeId', 'managed', 'publication', 'refused', 'shared'],
+  'edge.adopted': ['slug', 'edgeId', 'managed', 'publication', 'refused', 'shared', 'verified'],
   'relay.slot.upsert': ['relaySlug', 'slotKey', 'created'],
   'relay.slot.retire': ['relaySlug', 'slotKey'],
   'edge.published': ['relaySlug', 'edgeId', 'poolIndex', 'epoch', 'rotationId'],

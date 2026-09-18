@@ -572,7 +572,7 @@ export const edgeDetail = internalQuery({
       .order('desc')
       .take(10);
     return {
-      edge: mapEdgeAdmin(e),
+      edge: mapEdgeAdmin(e, await ctx.db.get(e.listenerId)),
       live: parseLive(e),
       probes: probes.map((r) => ({
         id: r._id as string,

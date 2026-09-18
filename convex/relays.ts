@@ -52,6 +52,11 @@ import {
 import { nextFreePoolIndex, withEdgeAt, withoutEdge, publishedCount } from './lib/edges/pool';
 import { assertAdmission } from './lib/edges/maintenance';
 import {
+  needsEndpointVerification,
+  verificationBinding,
+  verificationCurrent,
+} from './lib/edges/verification';
+import {
   deriveHostMode,
   describeOrigin,
   hostModeAllowed,
@@ -1354,6 +1359,13 @@ interface AdoptInput {
   }>;
   inspection?: { hostnames: string[]; shared: boolean; content?: string };
   publish?: boolean;
+  /**
+   * The operator's statement that this L4 address ALREADY serves members (an
+   * import of a live front): recorded as an `edges.verification` of method
+   * `named_connection` against the configuration adopted here. Without it an
+   * adopted L4 edge is a spare that needs its own test before publication.
+   */
+  verified?: boolean;
   actorAdminId?: Id<'adminUsers'>;
 }
 
@@ -1515,6 +1527,21 @@ async function insertAdoptedEdge(
     destroyAttempts: 0,
     updatedAt: now,
   });
+  if (a.verified && layer !== 'l7') {
+    const inserted = (await ctx.db.get(edgeId))!;
+    const binding = verificationBinding(inserted, listener);
+    if (binding)
+      await ctx.db.patch(edgeId, {
+        verification: {
+          rung: 'verified',
+          by: 'admin',
+          at: now,
+          method: 'named_connection',
+          ...binding,
+        },
+        updatedAt: now,
+      });
+  }
   let poolIndex: number | null = null;
   const softRefusal = layer === 'l7' && managed;
   let refusedCode: string | null = null;
@@ -1570,6 +1597,7 @@ async function insertAdoptedEdge(
       publication: poolIndex !== null ? 'published' : 'unpublished',
       ...(refusedCode ? { refused: refusedCode } : {}),
       ...(sharedService ? { shared: true } : {}),
+      ...(a.verified && layer !== 'l7' ? { verified: true } : {}),
     },
   });
   return { edgeId, poolIndex, code: refusedCode };
@@ -1608,6 +1636,7 @@ export const adoptEdge = internalMutation({
       }),
     ),
     publish: v.optional(v.boolean()),
+    verified: v.optional(v.boolean()),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a) => {
@@ -1634,6 +1663,7 @@ export const adoptEdge = internalMutation({
       resources: a.resources ?? [],
       inspection: a.inspection,
       publish: a.publish,
+      verified: a.verified,
       actorAdminId: a.actorAdminId,
     });
   },
@@ -1715,6 +1745,12 @@ export async function checkPublishable(
     listener.providerScope.accountId !== edge.accountId
   )
     return { ok: false, code: 'account_mismatch' };
+  // An L4 endpoint goes live only with the operator's OWN confirmation against
+  // the configuration it holds now (lib/edges/verification.ts): nothing
+  // server-side can prove an L4 address, and a stale tick (listener revision
+  // bump, re-addressing) is no tick at all. The L7 proof above is the L7 form.
+  if (needsEndpointVerification(edge) && !verificationCurrent(edge, listener))
+    return { ok: false, code: 'unverified_endpoint' };
   if (edge.managed && !providerHealthSatisfies(edge.provider, edge.health, requireHealth))
     return { ok: false, code: 'edge_unhealthy' };
   return { ok: true };

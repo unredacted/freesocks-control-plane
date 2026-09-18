@@ -434,6 +434,18 @@ const COPY = {
     label: 'Edge unhealthy',
     explain: 'The edge health is offline or degraded.',
   },
+  unverified_endpoint: {
+    label: 'Address not yet tested',
+    explain:
+      'An address goes live only after you have tried it with a real session against its current configuration.',
+    fix: 'Import the test link into a client, connect, then mark the address as working.',
+  },
+  no_verified_spare: {
+    label: 'No tested spare',
+    explain:
+      'Replacing this address needs a spare you have already tested; a new address cannot go live untested.',
+    fix: 'Create a spare address, test it, then replace.',
+  },
   // --- preflight: selection -------------------------------------------------------------
   no_compatible_listener: {
     label: 'No compatible listener',
@@ -560,6 +572,23 @@ const COPY = {
     label: 'Pool below desired',
     explain: 'Fewer edges are published than the relay wants.',
     fix: 'Provision or publish an edge.',
+  },
+  needs_test: {
+    label: 'Blocked and the spare is untested',
+    explain:
+      'The address on this node looks blocked and automatic replacement has no spare you have tested.',
+    fix: 'Test the spare address with a real session, then replace.',
+  },
+  spare_untested: {
+    label: 'Spare address untested',
+    explain: 'A spare address exists but has not been tried with a real session yet.',
+    fix: 'Test it once; automatic replacement can then use it.',
+  },
+  retest_needed: {
+    label: 'Retest needed',
+    explain:
+      'The listener or the address changed since you tested it, so the test no longer counts.',
+    fix: 'Test the address again against its current configuration.',
   },
   drift: {
     label: 'Drift',
@@ -702,6 +731,15 @@ const REFUSAL_COPY = {
     label: 'Asked too often',
     explain: 'That was asked too often. This call reaches a panel or a provider, so it is limited.',
     fix: 'Wait a minute and try again.',
+  },
+  verification_stale: {
+    label: 'Configuration changed',
+    explain: 'The address or its listener changed since this test link was shown.',
+    fix: 'Fetch the test link again and retest the address.',
+  },
+  l7_proof_required: {
+    label: 'Proven automatically',
+    explain: 'A CDN front is verified by its own end-to-end proof, not by hand.',
   },
 } as const satisfies Record<string, CodeCopy>;
 
@@ -944,6 +982,7 @@ export const ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
   qualify_front: 'Qualify front',
   rotate: 'Rotate',
   test_credentials: 'Test credentials',
+  verify_endpoint: 'Test the address',
   thaw: 'Thaw',
 };
 

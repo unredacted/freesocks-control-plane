@@ -392,6 +392,12 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
     }
     if (c === 'live')
       return json(await ctx.runQuery(internal.edgeAdmin.liveView, { edgeId: id<'edges'>(b) }));
+    if (c === 'verification-binding' && !d) {
+      // What the operator is about to test, exactly as `POST .../verify` must
+      // echo it back (the test-link builder reuses this).
+      const b2 = await ctx.runQuery(internal.edgeVerification.binding, { edgeId: id<'edges'>(b) });
+      return b2 ? json(b2) : notFound();
+    }
     if (!c) {
       const detail = await ctx.runQuery(internal.edgeAdmin.edgeDetail, {
         edgeId: id<'edges'>(b),
@@ -901,6 +907,32 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
         // Run the authenticated end-to-end session through this L7 front now and
         // store the verdict with the configuration it proved.
         return json(await ctx.runAction(internal.frontQualifyOps.run, { edgeId }));
+      case 'verify': {
+        // The operator's per-endpoint confirmation of an L4 edge: the body
+        // echoes the binding `GET .../verification-binding` showed; the
+        // mutation recomputes it and refuses a mismatch (`edge.verification_stale`).
+        const method = body.method === 'named_connection' ? 'named_connection' : 'test_link';
+        if (
+          typeof body.endpoint !== 'string' ||
+          typeof body.listenerRevision !== 'number' ||
+          typeof body.configHash !== 'string'
+        )
+          return errorJson(
+            'validation',
+            'endpoint, listenerRevision and configHash are required',
+            400,
+          );
+        return json(
+          await ctx.runMutation(internal.edgeVerification.confirm, {
+            edgeId,
+            endpoint: body.endpoint,
+            listenerRevision: body.listenerRevision,
+            configHash: body.configHash,
+            method,
+            ...act,
+          }),
+        );
+      }
       case 'retry-destroy':
         return json(
           await ctx.runMutation(internal.edgeReconcileMutations.retryDestroy, { edgeId, ...act }),

@@ -64,6 +64,7 @@ async function seed() {
       listenerId,
       ipv4,
       publish: true,
+      verified: true,
     });
     ids.push(e.edgeId as Id<'edges'>);
   }

@@ -216,22 +216,32 @@ export const publishStandby = internalMutation({
   handler: async (
     ctx,
     { relayId, candidates },
-  ): Promise<{ published: boolean; rotationId: Id<'edgeRotations'> | null }> => {
+  ): Promise<{
+    published: boolean;
+    rotationId: Id<'edgeRotations'> | null;
+    /** A spare exists that only the operator's endpoint confirmation keeps out of the pool. */
+    awaitingVerification: boolean;
+  }> => {
+    const none = { published: false, rotationId: null, awaitingVerification: false };
     const origin = await ctx.db.get(relayId);
-    if (!origin || origin.deleting) return { published: false, rotationId: null };
+    if (!origin || origin.deleting) return none;
     try {
       await assertNoRotationOrQuarantine(ctx.db, origin);
     } catch {
-      return { published: false, rotationId: null };
+      return none;
     }
     const cfg = await resolveEdgeConfig(ctx.db);
     const idx = nextFreePoolIndex(origin.publishedEdgeIds, origin.desiredPublished);
-    if (idx === null) return { published: false, rotationId: null };
+    if (idx === null) return none;
+    let awaitingVerification = false;
     for (const edgeId of candidates) {
       const edge = await ctx.db.get(edgeId);
       if (!edge || edge.relayId !== relayId) continue;
       const check = await checkPublishable(ctx, edge, cfg.requireProviderHealth);
-      if (!check.ok) continue;
+      if (!check.ok) {
+        if (check.code === 'unverified_endpoint') awaitingVerification = true;
+        continue;
+      }
       const listener = await ctx.db.get(edge.listenerId);
       const becomesTemplate =
         origin.hostMode === 'fcp' &&
@@ -245,10 +255,11 @@ export const publishStandby = internalMutation({
             trigger: 'reconcile',
             toEdgeId: edgeId,
           });
-          return { published: false, rotationId };
+          return { published: false, rotationId, awaitingVerification };
         } catch (err) {
           // Concurrency cap / a guard the pre-check missed: try again next tick.
-          if (err instanceof ConvexError) return { published: false, rotationId: null };
+          if (err instanceof ConvexError)
+            return { published: false, rotationId: null, awaitingVerification };
           throw err;
         }
       }
@@ -275,9 +286,9 @@ export const publishStandby = internalMutation({
         payload: { relaySlug: origin.slug, edgeId, poolIndex: idx, epoch },
       });
       await scheduleMirrorRefresh(ctx);
-      return { published: true, rotationId: null };
+      return { published: true, rotationId: null, awaitingVerification };
     }
-    return { published: false, rotationId: null };
+    return { published: false, rotationId: null, awaitingVerification };
   },
 });
 

@@ -13,6 +13,7 @@ import {
   realityListener,
   registerRelay,
   shadowsocksListener,
+  verifyL4Edge,
   type ListenerSpecFixture,
 } from './lib/edges/testing/fixtures';
 import { upsertSettingRow } from './appSettings';
@@ -236,6 +237,32 @@ async function driveUntil(
   throw new Error(`driveUntil: never reached ${phase}`);
 }
 
+/**
+ * A TESTED spare on the listener: provisioned through the machine (the fake
+ * provider mints NEW_EDGE), then confirmed by the operator. An L4 replace
+ * switches only to such a spare (`edge.no_verified_spare` otherwise): the
+ * publication gate never lets an untested L4 address into the pool.
+ */
+async function provisionSpare(
+  t: ReturnType<typeof convexTest>,
+  relayId: Id<'relays'>,
+  listenerId?: Id<'relayListeners'>,
+): Promise<Id<'edges'>> {
+  const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+    relayId,
+    kind: 'provision',
+    trigger: 'manual',
+    publishOnDone: false,
+    ...(listenerId ? { listenerId } : {}),
+  });
+  await drain(t, rotationId);
+  const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
+  if (r.phase !== 'done' || !r.toEdgeId)
+    throw new Error(`provisionSpare: ${r.phase} ${r.outcome ?? ''}`);
+  await verifyL4Edge(t, r.toEdgeId);
+  return r.toEdgeId;
+}
+
 /** Every rotation start-guard (quarantine / running rotation) must hold for these writers too. */
 async function expectPoolWritersRefused(
   t: ReturnType<typeof convexTest>,
@@ -274,6 +301,16 @@ describe('edgeRotations: replace', () => {
     const { t, relayId, listenerId, oldEdgeId, accountId } = await seed();
     // The adopted, published edge is the listener's template edge.
     expect((await listenerRow(t, listenerId)).templateEdgeId).toBe(oldEdgeId);
+    // Without a tested spare an L4 replace is refused before anything is paid for.
+    await expect(
+      t.mutation(internal.edgeRotations.start, {
+        relayId,
+        kind: 'replace',
+        trigger: 'manual',
+        targetEdgeId: oldEdgeId,
+      }),
+    ).rejects.toThrow(/no_verified_spare/);
+    const spare = await provisionSpare(t, relayId);
     const { rotationId } = await t.mutation(internal.edgeRotations.start, {
       relayId,
       kind: 'replace',
@@ -321,8 +358,7 @@ describe('edgeRotations: replace', () => {
     expect(codes).toEqual(
       expect.arrayContaining([
         'started',
-        'selected_provision',
-        'provisioned',
+        'selected_standby',
         'verified',
         'published',
         'host_plan',
@@ -412,8 +448,10 @@ describe('edgeRotations: replace', () => {
     expect(JSON.stringify(admin.audit)).not.toContain(NEW_EDGE);
     // The row remembers every audit id it produced (the trail no longer scans "newest N").
     expect(r.auditIds!.length).toBeGreaterThanOrEqual(4);
-    expect(r.viaStandby).toBe(false);
-    expect(r.createdEdgeId).toBe(r.toEdgeId);
+    // The replace switched to the tested spare; the provision run created it.
+    expect(r.toEdgeId).toBe(spare);
+    expect(r.viaStandby).toBe(true);
+    expect(r.createdEdgeId).toBeUndefined();
     expect(r.hostPlanCaptured).toBe(true);
     expect(r.forwardWriteAttempted).toBe(true);
     expect(r.listenerId).toBe(listenerId);
@@ -422,6 +460,7 @@ describe('edgeRotations: replace', () => {
     // listener's template edge followed the first rotation, so the machine
     // still knows this listener's Host must move.
     await t.run((ctx) => ctx.db.patch(relayId, { cooldownUntil: undefined }));
+    await provisionSpare(t, relayId);
     const second = await t.mutation(internal.edgeRotations.start, {
       relayId,
       kind: 'replace',
@@ -450,6 +489,7 @@ describe('edgeRotations: replace', () => {
     vi.useFakeTimers();
     fakeWorld();
     const { t, relayId, oldEdgeId } = await seed();
+    await provisionSpare(t, relayId);
     const { rotationId } = await t.mutation(internal.edgeRotations.start, {
       relayId,
       kind: 'replace',
@@ -470,6 +510,7 @@ describe('edgeRotations: replace', () => {
     vi.useFakeTimers();
     const world = fakeWorld({ vanishAfterFirstPatch: true });
     const { t, relayId, listenerId, oldEdgeId } = await seed();
+    await provisionSpare(t, relayId);
     const { rotationId } = await t.mutation(internal.edgeRotations.start, {
       relayId,
       kind: 'replace',
@@ -527,6 +568,7 @@ describe('edgeRotations: replace', () => {
     vi.useFakeTimers();
     const world = fakeWorld({ hostLeaks: true });
     const { t, relayId, oldEdgeId } = await seed();
+    await provisionSpare(t, relayId);
     const { rotationId } = await t.mutation(internal.edgeRotations.start, {
       relayId,
       kind: 'replace',
@@ -549,6 +591,7 @@ describe('edgeRotations: replace', () => {
     vi.useFakeTimers();
     fakeWorld({ vanishAfterFirstPatch: true });
     const { t, relayId, listenerId, oldEdgeId } = await seed();
+    await provisionSpare(t, relayId);
     const { rotationId } = await t.mutation(internal.edgeRotations.start, {
       relayId,
       kind: 'replace',
@@ -585,6 +628,7 @@ describe('edgeRotations: replace', () => {
     vi.useFakeTimers();
     const world = fakeWorld({ panelDown: true });
     const { t, relayId, oldEdgeId } = await seed();
+    await provisionSpare(t, relayId);
     const { rotationId } = await t.mutation(internal.edgeRotations.start, {
       relayId,
       kind: 'replace',
@@ -609,6 +653,7 @@ describe('edgeRotations: replace', () => {
     vi.useFakeTimers();
     const world = fakeWorld({ hostPresent: false });
     const { t, relayId, listenerId, oldEdgeId } = await seed();
+    await provisionSpare(t, relayId);
     const { rotationId } = await t.mutation(internal.edgeRotations.start, {
       relayId,
       kind: 'replace',
@@ -679,6 +724,7 @@ describe('edgeRotations: replace', () => {
     );
     void inner;
     const { t, relayId, listenerId, oldEdgeId } = await seed();
+    await provisionSpare(t, relayId);
     const { rotationId } = await t.mutation(internal.edgeRotations.start, {
       relayId,
       kind: 'replace',
@@ -711,7 +757,9 @@ describe('edgeRotations: replace', () => {
 
   test('start guards: hostMode operator at the template edge, cooldown, daily cap (force bypasses all three)', async () => {
     fakeWorld();
-    const { t, relayId, listenerId, oldEdgeId } = await seed();
+    const { t, relayId, listenerId, oldEdgeId, accountId } = await seed();
+    // A tested, managed spare so the replace guards (not the spare rule) are what refuse.
+    await adoptL4Edge(t, relayId, listenerId, { ipv4: NEW_EDGE, accountId });
     // fcp → operator: FCP stops writing; a Host it knew becomes the operator's.
     await t.mutation(internal.relays.update, { id: relayId, hostMode: 'operator' });
     await expect(
@@ -782,6 +830,7 @@ describe('edgeRotations: replace', () => {
     vi.useFakeTimers();
     const world = fakeWorld();
     const { t, relayId, oldEdgeId } = await seed();
+    await provisionSpare(t, relayId);
     await t.mutation(internal.relays.update, { id: relayId, hostMode: 'operator' });
     const { rotationId } = await t.mutation(internal.edgeRotations.start, {
       relayId,
@@ -808,11 +857,12 @@ describe('edgeRotations: replace', () => {
     vi.useFakeTimers();
     fakeWorld();
     const { t, relayId, oldEdgeId } = await seed();
+    // Provisioning happens in a `provision` run (a replace switches to a tested spare).
     const { rotationId } = await t.mutation(internal.edgeRotations.start, {
       relayId,
-      kind: 'replace',
+      kind: 'provision',
       trigger: 'manual',
-      targetEdgeId: oldEdgeId,
+      publishOnDone: false,
     });
     // Run just the first scheduled step (select → commitSelection).
     await t.finishInProgressScheduledFunctions();
@@ -856,6 +906,7 @@ describe('edgeRotations: hostMode none (no panel Host at all)', () => {
       ipv4: OLD_EDGE,
       publish: true,
     });
+    await provisionSpare(t, relayId);
     const { rotationId } = await t.mutation(internal.edgeRotations.start, {
       relayId,
       kind: 'replace',
@@ -912,6 +963,7 @@ describe('edgeRotations: per-listener template edges', () => {
     expect(poolIndex).toBe(1);
     expect((await listenerRow(t, listenerIds.u)).templateEdgeId).toBe(oldEdgeId);
     expect((await listenerRow(t, ssListenerId)).templateEdgeId).toBe(ssEdgeId);
+    await provisionSpare(t, relayId, ssListenerId);
 
     const { rotationId } = await t.mutation(internal.edgeRotations.start, {
       relayId,
@@ -1009,9 +1061,31 @@ describe('edgeRotations: provision + publish kinds', () => {
     });
     await drain(t, rotationId);
     const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
+    // A freshly provisioned L4 edge is never published untested: the run ends
+    // with the edge as a spare (`unverified_standby`), nothing destroyed.
     expect(r.phase).toBe('done');
-    expect(r.outcome).toBe('published');
-    const origin = (await t.query(internal.relays.get, { id: relayId }))!;
+    expect(r.outcome).toBe('standby');
+    expect(r.events.map((e) => e.code)).toContain('unverified_standby');
+    let origin = (await t.query(internal.relays.get, { id: relayId }))!;
+    expect(origin.publishedEdgeIds).toEqual([oldEdgeId]);
+    expect(origin.standbyEdgeIds).toEqual([r.toEdgeId]);
+    expect((await t.query(internal.edges.get, { id: r.toEdgeId! }))!).toMatchObject({
+      status: 'active',
+      publication: 'unpublished',
+    });
+    // Once the operator confirms it, a publish run fills the next free index.
+    await verifyL4Edge(t, r.toEdgeId!);
+    const pub = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'publish',
+      trigger: 'manual',
+      toEdgeId: r.toEdgeId!,
+    });
+    await drain(t, pub.rotationId);
+    expect((await t.query(internal.edgeRotations.get, { id: pub.rotationId }))!.outcome).toBe(
+      'published',
+    );
+    origin = (await t.query(internal.relays.get, { id: relayId }))!;
     expect(origin.publishedEdgeIds).toHaveLength(2);
     expect(origin.publishedEdgeIds[1]).toBe(r.toEdgeId);
     expect(origin.cooldownUntil).toBeUndefined(); // not a rotation
@@ -1039,6 +1113,16 @@ describe('edgeRotations: provision + publish kinds', () => {
     expect(origin.standbyEdgeIds).toEqual([r1.toEdgeId]);
     expect(origin.publishedEdgeIds).toEqual([oldEdgeId]);
 
+    // Untested, the spare does not count: the replace is refused, not provisioned.
+    await expect(
+      t.mutation(internal.edgeRotations.start, {
+        relayId,
+        kind: 'replace',
+        trigger: 'manual',
+        targetEdgeId: oldEdgeId,
+      }),
+    ).rejects.toThrow(/no_verified_spare/);
+    await verifyL4Edge(t, r1.toEdgeId!);
     const second = await t.mutation(internal.edgeRotations.start, {
       relayId,
       kind: 'replace',
@@ -1257,8 +1341,12 @@ describe('edgeRotations: recovery, guards and bounds', () => {
 
   test('a running rotation blocks every other pool writer and a hostMode change', async () => {
     fakeWorld();
-    const { t, relayId, listenerId, oldEdgeId } = await seed();
-    const { edgeId: standby } = await adoptL4Edge(t, relayId, listenerId, { ipv4: NEW_EDGE });
+    const { t, relayId, listenerId, oldEdgeId, accountId } = await seed();
+    // A tested, managed spare: what the replace will switch to.
+    const { edgeId: standby } = await adoptL4Edge(t, relayId, listenerId, {
+      ipv4: NEW_EDGE,
+      accountId,
+    });
     const { rotationId } = await t.mutation(internal.edgeRotations.start, {
       relayId,
       kind: 'replace',
@@ -1282,6 +1370,7 @@ describe('edgeRotations: recovery, guards and bounds', () => {
     vi.useFakeTimers();
     const world = fakeWorld();
     const { t, relayId, oldEdgeId } = await seed();
+    await provisionSpare(t, relayId);
     const { rotationId } = await t.mutation(internal.edgeRotations.start, {
       relayId,
       kind: 'replace',
@@ -1405,6 +1494,7 @@ describe('edgeRotations: recovery, guards and bounds', () => {
     vi.useFakeTimers();
     const world = fakeWorld();
     const { t, relayId, oldEdgeId } = await seed();
+    await provisionSpare(t, relayId);
     const { rotationId } = await t.mutation(internal.edgeRotations.start, {
       relayId,
       kind: 'replace',
@@ -1539,6 +1629,7 @@ describe('edgeRotations: recovery, guards and bounds', () => {
     vi.useFakeTimers();
     fakeWorld({ vanishAfterFirstPatch: true });
     const { t, relayId, listenerId, oldEdgeId } = await seed();
+    await provisionSpare(t, relayId);
     const { rotationId } = await t.mutation(internal.edgeRotations.start, {
       relayId,
       kind: 'replace',
@@ -1599,7 +1690,7 @@ describe('edgeRotations: recovery, guards and bounds', () => {
       relayId,
       candidates: [standby],
     });
-    expect(blocked).toEqual({ published: false, rotationId: null });
+    expect(blocked).toEqual({ published: false, rotationId: null, awaitingVerification: false });
     await t.mutation(internal.edgeRotations.requestCancel, { rotationId: busy.rotationId });
     await t.run((ctx) =>
       ctx.db.patch(busy.rotationId, { phase: 'cancelled', finishedAt: Date.now() }),

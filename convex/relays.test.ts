@@ -18,6 +18,7 @@ import {
   FIXTURE_PANEL_SLUG,
   FIXTURE_RELAY_SLUG,
   adoptL4Edge,
+  verifyL4Edge,
   createAccount,
   insertPanelServer,
   realityListener,
@@ -898,6 +899,7 @@ describe('relays: adoption and the published pool', () => {
       ipv4: '198.51.100.1',
       ipv6: '2001:db8::1',
       publish: true,
+      verified: true,
     });
     const b = await adoptL4Edge(t, relayId, listenerId, { ipv4: '198.51.100.2', publish: true });
     expect(a.poolIndex).toBe(0);
@@ -1190,6 +1192,11 @@ describe('relays: adoption and the published pool', () => {
     await expect(
       t.mutation(internal.relays.publishEdge, { relayId, edgeId: wrongProvider }),
     ).rejects.toThrow(/provider_mismatch/);
+    // An L4 endpoint publishes only once the operator confirmed it (the gate's last rule).
+    await expect(t.mutation(internal.relays.publishEdge, { relayId, edgeId: own })).rejects.toThrow(
+      /unverified_endpoint/,
+    );
+    await verifyL4Edge(t, own);
     await t.mutation(internal.relays.publishEdge, { relayId, edgeId: own });
     expect((await t.query(internal.relays.get, { id: relayId }))!.publishedEdgeIds).toEqual([own]);
     // Adoption checks the scope up front: an account of another provider is refused.

@@ -35,6 +35,11 @@ import {
 import { isValidListenerCombo } from '../src/shared/contracts/edgeProtocolIds';
 import { parseIntent, parseObservedSettings } from './lib/edges/intent';
 import { sameAddress } from './lib/edges/hosts';
+import {
+  needsEndpointVerification,
+  verificationCurrent,
+  verificationStale,
+} from './lib/edges/verification';
 import { publishedCount } from './lib/edges/pool';
 import { EDGE_TEMPLATES, validateTemplateParams } from './lib/edges/providers/templates';
 import { fakeShadowedIds } from './lib/edges/providers/fake';
@@ -658,10 +663,13 @@ const ATTENTION_RANK = [
   'needs_operator',
   'host_unresolved',
   'members_dark',
+  'needs_test',
   'rotation_failed',
   'qualification_lapsed',
+  'retest_needed',
   'block_suspected',
   'edge_unreachable',
+  'spare_untested',
   'pool_below_desired',
   'account_unqualified',
   'account_untested',
@@ -696,6 +704,7 @@ interface AttentionItem {
     | 'qualify_front'
     | 'rotate'
     | 'test_credentials'
+    | 'verify_endpoint'
     | 'thaw';
   since: string | null;
 }
@@ -859,6 +868,75 @@ export const attention = internalQuery({
           action: suspect ? 'rotate' : 'open_relay',
           since: isoN(relay.suspicion.firstSeenAt),
         });
+      }
+      // Endpoint verification (lib/edges/verification.ts). Three cards, one
+      // action each (`verify_endpoint` on the edge that needs the test):
+      //  needs_test     critical: the relay is suspected AND its automatic
+      //                 replacement was refused for want of a TESTED spare
+      //                 (`edge.no_verified_spare`), or a suspected relay has
+      //                 only untested L4 spares;
+      //  retest_needed  warning: a published / standby L4 edge whose tick went
+      //                 stale (listener revision or configuration changed);
+      //  spare_untested warning: an active unpublished L4 edge never confirmed.
+      const l4Edges = edges.filter((e) => e.status === 'active' && needsEndpointVerification(e));
+      const listenerOf = (e: (typeof edges)[number]) =>
+        listeners.find((l) => l._id === e.listenerId) ?? null;
+      const untestedSpares = l4Edges.filter((e) => {
+        const l = listenerOf(e);
+        return e.publication === 'unpublished' && !!l && !verificationCurrent(e, l);
+      });
+      const replaceRefused = relay.suspicion?.lastRotateError === 'edge.no_verified_spare';
+      if (relay.suspicion?.state === 'suspected' && (replaceRefused || untestedSpares.length > 0)) {
+        const first = untestedSpares[0] ?? null;
+        items.push({
+          ...base(relay),
+          id: `needs_test:${relay._id}`,
+          kind: 'needs_test',
+          severity: 'critical',
+          edgeId: first ? (first._id as string) : null,
+          listenerKey: first ? (listenerOf(first)?.listenerKey ?? null) : null,
+          code: replaceRefused ? 'no_verified_spare' : 'unverified_endpoint',
+          facts: { untestedSpares: untestedSpares.length },
+          action: first ? 'verify_endpoint' : 'provision',
+          since: isoN(relay.suspicion.firstSeenAt),
+        });
+      }
+      for (const e of l4Edges) {
+        const l = listenerOf(e);
+        if (!l || l.retired) continue;
+        if (verificationCurrent(e, l)) continue;
+        const stale = verificationStale(e, l);
+        if (e.publication === 'unpublished' && !stale) {
+          items.push({
+            ...base(relay),
+            id: `spare_untested:${e._id}`,
+            kind: 'spare_untested',
+            severity: 'warning',
+            edgeId: e._id as string,
+            listenerKey: l.listenerKey,
+            code: 'unverified_endpoint',
+            facts: { publication: e.publication },
+            action: 'verify_endpoint',
+            since: iso(e.statusChangedAt),
+          });
+        } else if (stale) {
+          items.push({
+            ...base(relay),
+            id: `retest_needed:${e._id}`,
+            kind: 'retest_needed',
+            severity: 'warning',
+            edgeId: e._id as string,
+            listenerKey: l.listenerKey,
+            code: 'verification_stale',
+            facts: {
+              publication: e.publication,
+              verifiedRevision: e.verification?.listenerRevision ?? null,
+              listenerRevision: l.revision,
+            },
+            action: 'verify_endpoint',
+            since: isoN(e.verification?.at),
+          });
+        }
       }
       for (const e of edges) {
         if (e.publication !== 'published') continue;
