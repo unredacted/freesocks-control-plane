@@ -51,6 +51,7 @@ import {
 } from './lib/edges/frontCheck/binding';
 import {
   allocatePoolIndex,
+  coverageListeners,
   withEdgeAt,
   withoutEdge,
   publishedCount,
@@ -843,7 +844,10 @@ async function insertRelay(
     providerPreference: p.providerPreference,
     desiredPublished: p.desiredPublished ?? cfg.desiredPublishedDefault,
     standbyPerRelay: p.standbyPerRelay ?? cfg.standbyPerRelay,
-    standbyPerListener: p.standbyPerListener ?? cfg.standbyPerListener,
+    // An OVERRIDE of the global `edge.standbyPerListener`: persisted only when
+    // the caller set it, so a later change of the global applies to this relay
+    // (the reconcile reads `origin.standbyPerListener ?? cfg.standbyPerListener`).
+    ...(p.standbyPerListener !== undefined ? { standbyPerListener: p.standbyPerListener } : {}),
     cooldownMs: p.cooldownMs ?? edgeMs.cooldown(cfg),
     maxRotationsPerDay: p.maxRotationsPerDay ?? cfg.maxRotationsPerRelayPerDay,
     drainMs: p.drainMs ?? edgeMs.drain(cfg),
@@ -984,6 +988,17 @@ export const update = internalMutation({
     await assertAddressChangeAllowed(ctx.db, row, p.originAddress);
     if (p.originAddress !== undefined) await assertOriginIsNotAnEdge(ctx.db, p.originAddress, id);
     if (p.hostMode !== undefined) await applyHostModeChange(ctx, row, p.hostMode);
+    // Capacity follows coverage (lib/edges/poolCapacity.ts): a pool that cannot
+    // give every deployed, enabled listener a slot is refused rather than
+    // silently raised back on the next tick.
+    if (p.desiredPublished !== undefined) {
+      const coverage = coverageListeners(await poolListenersOf(ctx.db, id)).length;
+      if (p.desiredPublished < coverage)
+        throw new ConvexError({
+          code: 'edge.pool_below_coverage',
+          message: `desiredPublished cannot go below the ${coverage} deployed, enabled listener(s) of this relay; retire or disable a listener first`,
+        });
+    }
     if (p.qualificationModeSlug) {
       const { modes } = await resolveModeCatalog(ctx.db);
       if (!modes.some((m) => m.id === p.qualificationModeSlug))
@@ -1252,11 +1267,16 @@ async function applyLegacyAdoption(
   );
   if (already) return { edgeId: already._id, poolIndex: already.poolIndex ?? null };
   const fam = addressFamily(adoption.edge.address);
+  // The adoption payload IS the operator's statement that this proxy already
+  // serves members (the role only sends it for a running deployment): the
+  // import carries it as a `named_connection` verification, without which
+  // the publication gate would refuse the publish (`edge.unverified_endpoint`).
   const r = await insertAdoptedEdge(ctx, relay, target, {
     ipv4: fam === 'v4' ? adoption.edge.address : undefined,
     hostname: fam ? undefined : adoption.edge.address,
     port: adoption.edge.port,
     publish: true,
+    verified: true,
     accountRow: null,
     resources: [],
     inspection: undefined,
@@ -1885,11 +1905,16 @@ function udpProviderAvailable(): boolean {
  * matches the listener's scope and can carry the listener at the edge's layer,
  * and, for an L7 front, an authenticated end-to-end session has proven exactly
  * this configuration and has not expired.
+ *
+ * `skipVerification` takes ONLY the L4 endpoint-verification rule out (the
+ * verification-binding view asks "what else blocks this edge once tested?");
+ * no publish path passes it.
  */
 export async function checkPublishable(
   ctx: { db: DatabaseReader },
   edge: Doc<'edges'>,
   requireHealth: boolean,
+  opts: { skipVerification?: boolean } = {},
 ): Promise<PublishCheck> {
   if (edge.status !== 'active') return { ok: false, code: 'edge_not_active' };
   if (edge.publication === 'published') return { ok: false, code: 'already_published' };
@@ -1947,7 +1972,11 @@ export async function checkPublishable(
   // the configuration it holds now (lib/edges/verification.ts): nothing
   // server-side can prove an L4 address, and a stale tick (listener revision
   // bump, re-addressing) is no tick at all. The L7 proof above is the L7 form.
-  if (needsEndpointVerification(edge) && !verificationCurrent(edge, listener))
+  if (
+    !opts.skipVerification &&
+    needsEndpointVerification(edge) &&
+    !verificationCurrent(edge, listener)
+  )
     return { ok: false, code: 'unverified_endpoint' };
   if (edge.managed && !providerHealthSatisfies(edge.provider, edge.health, requireHealth))
     return { ok: false, code: 'edge_unhealthy' };

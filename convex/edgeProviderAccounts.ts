@@ -315,7 +315,10 @@ async function edgesDependingOnDnsAccount(
 /**
  * Editing a DNS account's credentials or settings invalidates every Fastly
  * account that writes through it: their qualification was taken with the old
- * token against the old zone, and neither is what would be used now.
+ * token against the old zone, and neither is what would be used now. Every
+ * dependent account (qualified or not) is stamped `dependencyChangedAt`, so
+ * the auto-trust rule (lib/edges/autoQualify.ts) cannot re-trust it from a
+ * proof or a credential test taken through the old dependency.
  */
 async function clearQualificationOfReferencing(
   ctx: { db: import('./_generated/server').DatabaseWriter },
@@ -324,13 +327,18 @@ async function clearQualificationOfReferencing(
   write: (entry: Parameters<typeof writeAuditLog>[1]) => Promise<void>,
 ): Promise<number> {
   let n = 0;
+  const now = Date.now();
   for (const r of await fastlyAccountsUsing(ctx.db, id)) {
-    if (!r.qualified) continue;
+    if (!r.qualified) {
+      await ctx.db.patch(r._id, { dependencyChangedAt: now, updatedAt: now });
+      continue;
+    }
     await ctx.db.patch(r._id, {
       qualified: false,
       qualifiedTemplateHash: undefined,
       qualification: undefined,
-      updatedAt: Date.now(),
+      dependencyChangedAt: now,
+      updatedAt: now,
     });
     n++;
     await write({
@@ -853,6 +861,7 @@ export async function evaluateAutoQualificationFor(
       lastTestOkAt: row.lastTestOkAt ?? null,
       lastTestError: row.lastTestError ?? null,
       credentialsChangedAt: row.credentialsChangedAt ?? null,
+      dependencyChangedAt: row.dependencyChangedAt ?? null,
       effectiveTemplateHash: effective.hash,
     },
     candidates,

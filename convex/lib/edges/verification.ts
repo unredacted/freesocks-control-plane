@@ -47,7 +47,8 @@ export interface VerificationRecord {
   listenerKey: string;
   listenerRevision: number;
   configHash: string;
-  method: 'test_link' | 'named_connection' | 'l7_proof';
+  /** `probe` = the system's `partial` rung from probe evidence (lib/edges/verifyRung.ts). */
+  method: 'test_link' | 'named_connection' | 'l7_proof' | 'probe';
 }
 
 /** What a confirmation must echo back: the binding the operator was shown. */
@@ -161,9 +162,16 @@ export function verificationCurrent(
 ): boolean {
   const rec = edge.verification;
   if (!rec || rec.rung !== 'verified') return false;
-  const current = verificationBinding(edge, listener);
-  if (!current) return false;
+  return recordMatchesBinding(rec, verificationBinding(edge, listener));
+}
+
+/** Whether a record was taken against exactly the binding the live rows derive now. */
+export function recordMatchesBinding(
+  rec: Pick<VerificationRecord, 'endpoint' | 'listenerKey' | 'listenerRevision' | 'configHash'>,
+  current: VerificationBinding | null,
+): boolean {
   return (
+    !!current &&
     rec.listenerKey === current.listenerKey &&
     rec.listenerRevision === current.listenerRevision &&
     rec.configHash === current.configHash &&

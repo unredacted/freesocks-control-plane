@@ -16,7 +16,7 @@ import { resolveEdgeAttribution } from './edgeAttribution';
 import { publishedEdgesOf } from './edgeRender';
 import { relayForBackendNode } from './relays';
 import { assignEndpoints } from './lib/edges/assignment';
-import { realityListener, registerRelay } from './lib/edges/testing/fixtures';
+import { realityListener, registerRelay, verifyL4Edge } from './lib/edges/testing/fixtures';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -69,8 +69,10 @@ async function seed() {
     ids.push(e.edgeId as Id<'edges'>);
   }
   // The middle edge lives on IPv6 only: a family whose rule cannot emit IPv6
-  // walks past it, a family that can lands on it.
+  // walks past it, a family that can lands on it. Re-addressing stales its
+  // confirmation (nothing renders for it until retested), so the tick is redone.
   await t.run((ctx) => ctx.db.patch(ids[1], { addresses: { v6: EDGE_B6 } }));
+  await verifyL4Edge(t, ids[1]);
   const subId = await t.run(async (ctx) => {
     const tierId = await ctx.db.insert('tiers', {
       slug: 'free',

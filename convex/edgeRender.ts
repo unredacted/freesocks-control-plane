@@ -33,6 +33,7 @@ import type { PublishedEdge } from './lib/edges/assignment';
 import { protocolUsesSni } from './lib/edges/protocols';
 import { parseIntent } from './lib/edges/intent';
 import { qualificationBinding, qualificationVerdict } from './lib/edges/frontCheck/binding';
+import { needsEndpointVerification, verificationCurrent } from './lib/edges/verification';
 import type { EdgeRenderContext } from './lib/edges/renderPipeline';
 import { deliveryBindingFor, relayForBackendNode } from './relays';
 import { listenersOf } from './relayListeners';
@@ -94,8 +95,15 @@ export function matcherOf(l: Doc<'relayListeners'>, originAddress: string): Rend
  * Published edges in pool order. By default only edges with an eligible
  * listener (and an address) are returned. With `includeIneligible` every
  * published, active edge is returned and the ineligible ones (listener
- * retired, undeployed or disabled, no address, lapsed L7 proof) carry
- * `eligible:false`: they keep their pool index in the assignment modulus.
+ * retired, undeployed or disabled, no address, lapsed L7 proof, L4
+ * verification no longer current) carry `eligible:false`: they keep their
+ * pool index in the assignment modulus.
+ *
+ * The verification condition is the publication gate's own
+ * (`verificationCurrent`), applied again at render time: a listener revision
+ * bump or a re-addressing after the publish leaves the edge published (an
+ * operator decision) but nothing is rendered for it until it is retested
+ * (attention `retest_needed`), exactly as a stale L7 proof is handled.
  */
 export async function publishedEdgesOf(
   ctx: { db: QueryCtx['db'] },
@@ -118,9 +126,13 @@ export async function publishedEdgesOf(
     // An L7 front is only as good as its last PROOF.
     const l7Proven =
       (edge.layer ?? 'l4') !== 'l7' || (await l7QualificationCurrent(edge, listener, now));
+    // An L4 endpoint is only as good as the operator's CURRENT confirmation.
+    const l4Verified =
+      !needsEndpointVerification(edge) || (!!listener && verificationCurrent(edge, listener));
     const eligible =
       hasAddress &&
       l7Proven &&
+      l4Verified &&
       !!listener &&
       !listener.retired &&
       listener.deployed &&

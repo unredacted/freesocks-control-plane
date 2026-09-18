@@ -261,13 +261,17 @@ export type DeliveryUnavailableCode = (typeof DELIVERY_UNAVAILABLE_CODES)[number
 /**
  * Published-pool refusals and notices (`edge.<code>` on the wire): reserved
  * allocation (`pool_reserved`), a full pool, a rebalance with nothing to
- * unpublish, a pool raised at registration (`pool_raised`, a warning), and the
- * detector veto for a setup-owned relay.
+ * unpublish, a pool raised at registration (`pool_raised`, a warning), the
+ * coverage cap (`listener_cap`: a ninth deployed, enabled listener;
+ * `pool_below_coverage`: `desiredPublished` lowered under the coverage-listener
+ * count), and the detector veto for a setup-owned relay.
  */
 export const POOL_CODES = [
   'pool_full',
   'pool_reserved',
   'pool_raised',
+  'listener_cap',
+  'pool_below_coverage',
   'no_duplicate',
   'setup_owned',
 ] as const;

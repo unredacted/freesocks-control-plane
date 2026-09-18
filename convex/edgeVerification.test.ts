@@ -328,7 +328,42 @@ describe('case 24: configuration-bound evidence', () => {
   });
 });
 
+describe('the verification binding', () => {
+  test('publishableAfter reports the remaining blocker of an unverified AND unhealthy edge', async () => {
+    const { t, relayId, listenerId, accountId } = await seed();
+    const { edgeId } = await adoptL4Edge(t, relayId, listenerId, {
+      ipv4: SPARE,
+      accountId,
+      verified: false,
+    });
+    const spare = edgeId as Id<'edges'>;
+    // A managed edge the provider reports offline (the health gate is on by default).
+    await t.run((ctx) => ctx.db.patch(spare, { managed: true, health: 'offline' }));
+    const binding = (await t.query(internal.edgeVerification.binding, { edgeId: spare }))!;
+    expect(binding).toMatchObject({
+      publishableAfter: false,
+      blocker: 'edge_unhealthy',
+      verification: { current: false },
+    });
+    // The tick is still recorded; the publish is then refused for the OTHER reason.
+    await verifyL4Edge(t, spare);
+    await expect(
+      t.mutation(internal.relays.publishEdge, { relayId, edgeId: spare, poolIndex: 1 }),
+    ).rejects.toThrow(/edge_unhealthy/);
+    await t.run((ctx) => ctx.db.patch(spare, { health: 'online' }));
+    expect(await t.query(internal.edgeVerification.binding, { edgeId: spare })).toMatchObject({
+      publishableAfter: true,
+      blocker: null,
+      verification: { current: true },
+    });
+  });
+});
+
 describe('account trust', () => {
+  /** The hash of the template the fixture's account provisions with NOW. */
+  const effectiveHash = (t: ReturnType<typeof convexTest>, accountId: Id<'edgeProviderAccounts'>) =>
+    t.run(async (ctx) => (await resolveTemplateFor(ctx, 'gcore', null, null, accountId)).hash);
+
   test('the first confirmed endpoint of an untrusted L4 account trusts it with endpoint evidence; a trusted account never exempts a new endpoint', async () => {
     const { t, relayId, listenerId, accountId } = await seed({ qualified: false });
     const { edgeId } = await adoptL4Edge(t, relayId, listenerId, {
@@ -337,16 +372,19 @@ describe('account trust', () => {
       verified: false,
     });
     const spare = edgeId as Id<'edges'>;
+    // Provisioned with the account's effective template (what a rotation stamps).
+    const hash = await effectiveHash(t, accountId);
+    await t.run((ctx) => ctx.db.patch(spare, { templateHash: hash }));
     expect((await t.run((ctx) => ctx.db.get(accountId)))!.qualified).toBe(false);
     const res = await verifyL4Edge(t, spare);
-    expect(res.accountTrusted).toBe(true);
+    expect(res).toMatchObject({ accountTrusted: true, accountTrustReason: null });
     const account = (await t.run((ctx) => ctx.db.get(accountId)))!;
     expect(account.qualified).toBe(true);
     expect(account.qualification).toMatchObject({
       by: 'admin',
       evidence: { edgeId: spare, endpoint: `${SPARE}:443`, listenerId },
     });
-    expect(account.qualifiedTemplateHash).toBeTruthy();
+    expect(account.qualifiedTemplateHash).toBe(hash);
     const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
     expect(audit.find((a) => a.action === 'edge.provider_account.qualified')?.payload).toEqual({
       name: 'acct-a',
@@ -368,7 +406,58 @@ describe('account trust', () => {
         poolIndex: 1,
       }),
     ).rejects.toThrow(/unverified_endpoint/);
-    expect((await verifyL4Edge(t, next.edgeId as Id<'edges'>)).accountTrusted).toBe(false);
+    expect(await verifyL4Edge(t, next.edgeId as Id<'edges'>)).toMatchObject({
+      accountTrusted: false,
+      accountTrustReason: 'already_qualified',
+    });
+  });
+
+  test('an endpoint is account evidence only for the account as it is NOW: an adopted (template-less) edge, a stale credential test or a moved template verify the endpoint but leave the account untrusted', async () => {
+    const { t, relayId, listenerId, accountId } = await seed({ qualified: false });
+    // An import with no template hash proves its own endpoint only.
+    const adopted = await adoptL4Edge(t, relayId, listenerId, {
+      ipv4: SPARE,
+      accountId,
+      verified: false,
+    });
+    expect(await verifyL4Edge(t, adopted.edgeId as Id<'edges'>)).toMatchObject({
+      accountTrusted: false,
+      accountTrustReason: 'template_mismatch',
+    });
+    expect(
+      (await t.query(internal.edges.get, { id: adopted.edgeId as Id<'edges'> }))!.verification
+        ?.rung,
+    ).toBe('verified');
+    expect((await t.run((ctx) => ctx.db.get(accountId)))!.qualified).toBe(false);
+    // A template-matching edge, but the credentials changed AFTER the last test.
+    const next = await adoptL4Edge(t, relayId, listenerId, {
+      ipv4: '198.51.100.3',
+      accountId,
+      verified: false,
+    });
+    const edge = next.edgeId as Id<'edges'>;
+    const hash = await effectiveHash(t, accountId);
+    await t.run((ctx) => ctx.db.patch(edge, { templateHash: hash }));
+    await t.run(async (ctx) => {
+      const acct = (await ctx.db.get(accountId))!;
+      await ctx.db.patch(accountId, { credentialsChangedAt: acct.lastTestOkAt! + 1 });
+    });
+    expect(await verifyL4Edge(t, edge)).toMatchObject({
+      accountTrusted: false,
+      accountTrustReason: 'tested_before_credential_change',
+    });
+    expect((await t.run((ctx) => ctx.db.get(accountId)))!.qualified).toBe(false);
+    // A passing test after the change, then a retest of the endpoint (the record
+    // is re-stamped; the binding is unchanged) trusts the account.
+    await t.run(async (ctx) => {
+      const acct = (await ctx.db.get(accountId))!;
+      await ctx.db.patch(accountId, { lastTestOkAt: acct.credentialsChangedAt! + 1 });
+    });
+    expect(await verifyL4Edge(t, edge)).toMatchObject({ accountTrusted: true });
+    expect((await t.run((ctx) => ctx.db.get(accountId)))!.qualification).toMatchObject({
+      by: 'admin',
+      evidence: { edgeId: edge },
+    });
   });
 
   test('a manual untrust holds automatic trust off; a manual trust records by:admin without evidence and clears the hold', async () => {
@@ -557,6 +646,154 @@ describe('L7 auto-trust (cases 7 and 13)', () => {
       qualified: 0,
     });
     expect((await t.run((ctx) => ctx.db.get(accountId)))!.qualified).toBe(false);
+  });
+});
+
+describe('the partial rung (probe evidence)', () => {
+  const ok = (country: string, k: number) => ({
+    country,
+    asn: `AS${k}`,
+    network: `net-${k}`,
+    vantageClass: 'eyeball' as const,
+    ok: true,
+  });
+  const fail = (country: string, k: number) => ({ ...ok(country, k), ok: false });
+
+  async function world() {
+    const w = await seed();
+    await w.t.run(async (ctx) => {
+      await upsertSettingRow(ctx, 'edge.probe.enabled', 'true');
+      await upsertSettingRow(ctx, 'edge.probe.countries', JSON.stringify(['IR', 'TR']));
+    });
+    const { edgeId } = await adoptL4Edge(w.t, w.relayId, w.listenerId, {
+      ipv4: SPARE,
+      accountId: w.accountId,
+      verified: false,
+    });
+    const spare = edgeId as Id<'edges'>;
+    /** One probe round on the spare; returns the internal (shape) and globalping runs. */
+    const round = async () => {
+      const before = new Set(
+        (await w.t.run((ctx) => ctx.db.query('probeRuns').collect())).map((r) => r._id),
+      );
+      await w.t.mutation(internal.probes.requestMany, {
+        targets: [{ kind: 'edge', ref: spare }],
+        sources: ['internal', 'globalping'],
+      });
+      const runs = (await w.t.run((ctx) => ctx.db.query('probeRuns').collect())).filter(
+        (r) => !before.has(r._id) && r.targetRef === spare,
+      );
+      return {
+        shape: runs.find((r) => r.source === 'internal')!,
+        outside: runs.find((r) => r.source === 'globalping')!,
+      };
+    };
+    const record = async () => (await w.t.query(internal.edges.get, { id: spare }))!.verification;
+    return { ...w, spare, round, record };
+  }
+
+  test('probe evidence writes partial (by system, method probe); it never satisfies the gate; unreachable clears it; a verified record is never touched', async () => {
+    const { t, relayId, spare, round, record } = await world();
+    const r1 = await round();
+    expect(r1.shape.probeProtocol).toBe('tls-sni');
+    // The shape check passes but one outside vantage is below the agreement bar: pending.
+    await t.mutation(internal.probes.finishRun, {
+      runId: r1.shape._id,
+      results: [{ country: 'XX', vantageClass: 'datacenter', ok: true }],
+    });
+    expect(await record()).toBeUndefined();
+    await t.mutation(internal.probes.finishRun, {
+      runId: r1.outside._id,
+      results: [ok('IR', 1)],
+    });
+    expect(await record()).toBeUndefined();
+    // Two reachable vantages + a passing shape run: partial, against the current binding.
+    const r2 = await round();
+    await t.mutation(internal.probes.finishRun, {
+      runId: r2.shape._id,
+      results: [{ country: 'XX', vantageClass: 'datacenter', ok: true }],
+    });
+    await t.mutation(internal.probes.finishRun, {
+      runId: r2.outside._id,
+      results: [ok('IR', 1), ok('TR', 2)],
+    });
+    const shown = (await t.query(internal.edgeVerification.binding, { edgeId: spare }))!;
+    expect(await record()).toMatchObject({
+      rung: 'partial',
+      by: 'system',
+      method: 'probe',
+      listenerKey: 'a',
+      listenerRevision: shown.listenerRevision,
+      configHash: shown.configHash,
+      endpoint: shown.endpoint,
+    });
+    const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
+    expect(audit.find((a) => a.action === 'edge.verification.rung')?.payload).toEqual({
+      relaySlug: 'node-one',
+      edgeId: spare,
+      listenerKey: 'a',
+      rung: 'partial',
+    });
+    expect(JSON.stringify(audit)).not.toContain(SPARE);
+    // The ceiling: partial is not verified, for the gate, the binding view or attention.
+    await expect(
+      t.mutation(internal.relays.publishEdge, { relayId, edgeId: spare, poolIndex: 1 }),
+    ).rejects.toThrow(/unverified_endpoint/);
+    expect(shown.verification).toMatchObject({ current: false, stale: false });
+    expect(
+      (await t.query(internal.edgeVerification.binding, { edgeId: spare }))!.verification,
+    ).toMatchObject({ current: false, stale: false, record: { rung: 'partial', by: 'system' } });
+    const items = await attentionKinds(t);
+    expect(items.find((i) => i.kind === 'spare_untested' && i.edgeId === spare)).toBeTruthy();
+    expect(items.some((i) => i.kind === 'retest_needed' && i.edgeId === spare)).toBe(false);
+    // An agreed outside `unreachable` clears the partial record.
+    const r3 = await round();
+    await t.mutation(internal.probes.finishRun, {
+      runId: r3.outside._id,
+      results: [fail('IR', 1), fail('IR', 3)],
+    });
+    expect(await record()).toBeUndefined();
+    expect(
+      (await t.run((ctx) => ctx.db.query('auditLog').collect()))
+        .filter((a) => a.action === 'edge.verification.rung')
+        .map((a) => (a.payload as { rung: string }).rung),
+    ).toEqual(['partial', 'unreachable']);
+    // The operator's tick outranks the probes: a verified record is never touched.
+    await verifyL4Edge(t, spare);
+    const r4 = await round();
+    await t.mutation(internal.probes.finishRun, {
+      runId: r4.outside._id,
+      results: [fail('IR', 1), fail('IR', 3)],
+    });
+    expect(await record()).toMatchObject({ rung: 'verified', by: 'admin' });
+  });
+
+  test('the reconcile pass clears a partial record the live configuration no longer matches (re-addressed, never probed since)', async () => {
+    const { t, spare, round, record } = await world();
+    const r = await round();
+    await t.mutation(internal.probes.finishRun, {
+      runId: r.shape._id,
+      results: [{ country: 'XX', vantageClass: 'datacenter', ok: true }],
+    });
+    await t.mutation(internal.probes.finishRun, {
+      runId: r.outside._id,
+      results: [ok('IR', 1), ok('TR', 2)],
+    });
+    expect(await record()).toMatchObject({ rung: 'partial' });
+    // Nothing to do while the binding matches.
+    expect(await t.mutation(internal.edgeVerification.reconcilePartialRungs, {})).toEqual({
+      cleared: 0,
+    });
+    await t.run((ctx) => ctx.db.patch(spare, { addresses: { v4: '198.51.100.9' } }));
+    expect(await t.mutation(internal.edgeVerification.reconcilePartialRungs, {})).toEqual({
+      cleared: 1,
+    });
+    expect(await record()).toBeUndefined();
+    expect(
+      (await t.run((ctx) => ctx.db.query('auditLog').collect()))
+        .filter((a) => a.action === 'edge.verification.rung')
+        .map((a) => (a.payload as { rung: string }).rung),
+    ).toEqual(['partial', 'cleared']);
   });
 });
 
