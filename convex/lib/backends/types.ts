@@ -274,6 +274,34 @@ export interface BackendHostCreate {
 }
 
 /**
+ * One inbound a panel node serves, as the relay layer needs it for listener
+ * discovery (Remnawave: an Xray inbound of the node's active config profile).
+ * An ALLOWLIST projection: the protocol, port, stream/security kind and the
+ * client-facing names/paths only. Credentials (`clients`), the REALITY private
+ * key and short ids, and certificate material are never read into this shape.
+ * `port` is null when the panel's value is not one plain port (a range/list).
+ */
+export interface PanelInbound {
+  tag: string;
+  configProfileUuid: string;
+  configProfileInboundUuid: string;
+  /** Xray protocol id as the panel reports it (`vless`, `trojan`, `vmess`, ...). */
+  protocol: string;
+  port: number | null;
+  /** `streamSettings.network` (`tcp`, `raw`, `ws`, `httpupgrade`, `grpc`, `xhttp`, ...); `tcp` when absent. */
+  network: string;
+  /** `streamSettings.security` (`none`, `tls`, `reality`); `none` when absent. */
+  security: string;
+  reality?: { target: string | null; serverNames: string[] };
+  tls?: { serverName: string | null };
+  ws?: { path: string | null; host: string | null };
+  httpupgrade?: { path: string | null; host: string | null };
+  grpc?: { serviceName: string | null };
+  /** Whether the node currently serves this inbound (it is in the node's active inbound set). */
+  active: boolean;
+}
+
+/**
  * Per-NODE load snapshot (Remnawave: one row per panel node). Distinct from
  * NodeStats, which aggregates per PLACEMENT (squad): a shared relay squad
  * spans several nodes, so the relay block detector needs the node grain.

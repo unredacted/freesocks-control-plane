@@ -3,6 +3,7 @@ import {
   ATTENTION_ACTIONS,
   ATTENTION_KINDS,
   DELIVERY_UNAVAILABLE_CODES,
+  INBOUND_UNSUPPORTED_CODES,
   LAYER_EXCLUSION_CODES,
   POOL_CODES,
   PREFLIGHT_BLOCKER_CODES,
@@ -16,6 +17,8 @@ import {
   EDGE_CODE_COPY,
   EDGE_REFUSAL_COPY,
   EDGE_STATUS_LABELS,
+  INBOUND_UNSUPPORTED_COPY,
+  inboundUnsupportedCopy,
   ROTATION_PHASE_LABELS,
   SETUP_STATUS_LABELS,
   SETUP_STEP_TITLES,
@@ -102,6 +105,29 @@ describe('EDGE_REFUSAL_COPY', () => {
       if (e.fix) expect(e.fix.trim().endsWith('.')).toBe(true);
     }
     expect(offenders).toEqual([]);
+  });
+});
+
+describe('INBOUND_UNSUPPORTED_COPY', () => {
+  test('every reason is worded, in sentences, without an em-dash or an API path', () => {
+    const offenders: string[] = [];
+    for (const code of INBOUND_UNSUPPORTED_CODES) {
+      const e = INBOUND_UNSUPPORTED_COPY[code];
+      expect(e.label.trim()).toBeTruthy();
+      expect(e.label.split(/\s+/).length).toBeLessThanOrEqual(6);
+      expect(e.explain.trim().endsWith('.')).toBe(true);
+      if (e.fix) expect(e.fix.trim().endsWith('.')).toBe(true);
+      for (const text of [e.label, e.explain, e.fix ?? '']) {
+        if (text.includes(EM_DASH) || text.includes('/api/')) offenders.push(`${code}: ${text}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  test('an unknown reason is humanised, never returned bare', () => {
+    expect(inboundUnsupportedCopy('protocol').label).toBe('Protocol not supported');
+    expect(inboundUnsupportedCopy('brand_new_reason').label).toBe('Brand new reason');
+    expect(inboundUnsupportedCopy('brand_new_reason').explain.endsWith('.')).toBe(true);
   });
 });
 

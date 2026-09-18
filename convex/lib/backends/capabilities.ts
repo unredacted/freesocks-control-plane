@@ -50,6 +50,11 @@ export interface BackendCapabilities {
   hostManagement: boolean;
   /** Per-NODE load rows (the relay block detector's load signal). */
   nodeInventory: boolean;
+  /** A Host's disabled bit can be flipped on its own (the relay hide/restore
+   *  ledger hides a node's direct Hosts without rewriting them). */
+  hostDisable: boolean;
+  /** The inbounds a node serves can be listed (relay listener discovery). */
+  inboundDiscovery: boolean;
 }
 
 export const CAPABILITIES: Record<BackendId, BackendCapabilities> = {
@@ -65,6 +70,8 @@ export const CAPABILITIES: Record<BackendId, BackendCapabilities> = {
     accessKeyDelivery: false,
     hostManagement: true,
     nodeInventory: true,
+    hostDisable: true,
+    inboundDiscovery: true,
   },
   outline: {
     placement: false,
@@ -78,6 +85,8 @@ export const CAPABILITIES: Record<BackendId, BackendCapabilities> = {
     accessKeyDelivery: true,
     hostManagement: false,
     nodeInventory: false,
+    hostDisable: false,
+    inboundDiscovery: false,
   },
 };
 

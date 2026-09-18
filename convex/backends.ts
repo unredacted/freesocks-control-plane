@@ -40,6 +40,7 @@ import type {
   UsageSeries,
   UserState,
   BackendHost,
+  PanelInbound,
 } from './lib/backends/types';
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
 import { backendIdValidator } from './lib/backendIds';
@@ -454,6 +455,42 @@ export const updateHost = internalAction({
       ...(host !== undefined ? { host } : {}),
     });
     return null;
+  },
+});
+
+/**
+ * Flip ONE Host's disabled bit (the relay hide/restore ledger: FCP hides a
+ * node's direct Hosts while its edges serve members, and restores them on
+ * cancel/release/delete). The bit alone travels; the caller confirms by
+ * re-listing. No dev mock branch: the Host ops above have none either (the
+ * fake edge provider stops at the provider layer).
+ */
+export const setHostDisabled = internalAction({
+  args: { backendServerId: v.id('backendServers'), uuid: v.string(), disabled: v.boolean() },
+  handler: async (ctx, { backendServerId, uuid, disabled }): Promise<null> => {
+    const server = await ctx.runQuery(internal.backendServers.getById, { id: backendServerId });
+    if (!server) throw new ConvexError({ code: 'backend.not_found' });
+    const provider = PROVIDERS[server.backend];
+    if (!provider.setHostDisabled) throw new ConvexError({ code: 'backend.hosts_unsupported' });
+    await provider.setHostDisabled(server.config as BackendConfig, uuid, disabled);
+    return null;
+  },
+});
+
+/**
+ * The inbounds one panel node serves (relay listener discovery), as the
+ * provider's allowlisted projection: never credentials, private keys, short
+ * ids or certificate material. A backend without the capability throws
+ * `backend.inbounds_unsupported`.
+ */
+export const listNodeInbounds = internalAction({
+  args: { backendServerId: v.id('backendServers'), nodeUuid: v.string() },
+  handler: async (ctx, { backendServerId, nodeUuid }): Promise<PanelInbound[]> => {
+    const server = await ctx.runQuery(internal.backendServers.getById, { id: backendServerId });
+    if (!server) throw new ConvexError({ code: 'backend.not_found' });
+    const provider = PROVIDERS[server.backend];
+    if (!provider.listNodeInbounds) throw new ConvexError({ code: 'backend.inbounds_unsupported' });
+    return provider.listNodeInbounds(server.config as BackendConfig, nodeUuid);
   },
 });
 

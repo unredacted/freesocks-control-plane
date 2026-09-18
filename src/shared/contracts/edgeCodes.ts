@@ -269,3 +269,20 @@ export const POOL_CODES = [
   'setup_owned',
 ] as const;
 export type PoolCode = (typeof POOL_CODES)[number];
+
+/**
+ * Why a discovered panel inbound could not become a listener candidate
+ * (lib/edges/inboundMapping.ts). `inactive` = the node does not serve it;
+ * `tag` = the tag cannot be bound; `protocol` / `transport` / `security` =
+ * outside the listener catalogue; `invalid` = a valid-looking combination the
+ * registration validator still refused (detail carries the code).
+ */
+export const INBOUND_UNSUPPORTED_CODES = [
+  'inactive',
+  'tag',
+  'protocol',
+  'transport',
+  'security',
+  'invalid',
+] as const;
+export type InboundUnsupportedCode = (typeof INBOUND_UNSUPPORTED_CODES)[number];
