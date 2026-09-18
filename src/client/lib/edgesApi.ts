@@ -173,6 +173,8 @@ export interface RelayPatch {
   maxRotationsPerDay?: number;
   drainMinutes?: number;
   probeNode?: boolean;
+  /** The connection mode whose placement the L7 qualification user is minted on; null = default. */
+  qualificationModeSlug?: string | null;
 }
 export type RelayDeleteDisposition = 'restore-direct' | 'keep-dark';
 export interface ProvisionBody {
