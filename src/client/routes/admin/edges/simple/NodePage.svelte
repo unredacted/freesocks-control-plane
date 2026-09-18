@@ -365,7 +365,9 @@
     {relay}
     {listeners}
     onStarted={() =>
-      toast.success('Creating a spare address. Test it once it appears under Needs you.')}
+      toast.success(
+        'Creating a spare address. The Edges overview will ask you to test it once it is ready.',
+      )}
   />
   <ActionConfirm
     bind:open={removeOpen}
