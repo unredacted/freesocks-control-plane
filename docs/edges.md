@@ -256,7 +256,16 @@ covers the listener's idempotency hash, the edge's template hash and its address
 ports. Refusal code `edge.unverified_endpoint`. The record proves nothing by itself:
 `verificationCurrent` compares revision and hash, so a listener revision bump or a
 re-addressing returns the endpoint to "needs a test" (attention `retest_needed`) without
-anybody clearing anything. The same condition is applied again **at render time**
+anybody clearing anything. One name change is deliberately **not** a revision bump:
+**retiring a server name on a REALITY listener** bumps `namesRevision` and the publication
+epoch instead (`nameRetireKeepsVerification`, `convex/lib/edges/verification.ts`). On REALITY
+the names are an allowlist the node checks; removing one changes neither the path nor the key
+material the operator's test proved, and the names that remain are the ones that were already
+accepted. Without this, reacting to a blocked name would stop every L4 edge of that listener
+rendering until a human retested it. It does not extend to a TLS listener (its names decide
+certificate coverage and an L7 proof binds to them), nor to adding or reactivating a name,
+which stay revision bumps until something has proven the node accepts the name. The same
+condition is applied again **at render time**
 (`edgeRender.publishedEdgesOf`): a published L4 edge whose confirmation is no longer current
 is ineligible exactly like a stale L7 proof, so nothing is rendered for it until it is
 retested; it stays published (nothing unpublishes automatically). Nothing server-side can
@@ -349,7 +358,15 @@ mirror refresh) fetches a body, it pins the node as before, then, in this order:
 3. assigns primary (+ backup) with a stable PRF keyed on the subscription's `renderKey` over
    the FULL pool order, walking forward past ineligible positions; one server name per emitted
    connection for name-presenting listeners, chosen from the listener's active names (a
-   retired name is never selected again);
+   retired name is never selected again). How it is chosen is per listener (`sniPick`): the
+   default PRF is a modulus over the stored list, stable when a name is retired but
+   reshuffling nearly every subscriber when one is **appended**; `hrw1` is rendezvous hashing
+   (`rankSniHrw`), where each name scores independently, so a new name moves only the
+   subscribers it wins (about 1 in N+1) and a retired one moves only its holders. A listener
+   whose name list is meant to grow should be on `hrw1`. Switching is an explicit operator
+   action (`POST listeners/{id}/sni-pick {"version": "hrw1" | null}`): every member of that
+   listener gets a different one of the names the node already accepts at their next refresh,
+   so it is never a side effect;
 4. rewrites: address, port, SNI, HTTP Host header (and Clash `servername`); never the
    credentials or routing (`pbk`, `sid`, `flow`, `path`, `serviceName`, SIP002 userinfo,
    `hy2`/`tuic` auth). Per **client family** (`render.clients.<family>`): auto-capable

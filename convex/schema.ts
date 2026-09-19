@@ -1374,9 +1374,18 @@ export default defineSchema({
     // Copied from the catalogue at write time (indexable; probes skip udp).
     transport: v.union(v.literal('tcp'), v.literal('udp')),
     originPort: v.number(),
-    // Server names (REALITY SNIs / certificate names). Order is the body's
-    // order and is never re-sorted: SNI selection is index-based.
+    // Server names (REALITY SNIs / certificate names). APPEND-ONLY order: a
+    // stored name keeps its index and new names are appended, never re-sorted
+    // (the legacy SNI selection is index-based).
     tlsNames: v.optional(v.array(listenerName)),
+    // How one name is chosen per subscriber. Absent = the legacy modulus PRF
+    // (stable under retirement, reshuffles on growth); `hrw1` = rendezvous
+    // hashing, stable under growth too. Set explicitly per listener.
+    sniPick: v.optional(v.literal('hrw1')),
+    // Bumped by a name change that does NOT invalidate what an operator's
+    // endpoint test proved (today: retiring a REALITY name). Every other
+    // name change is a `revision` bump. See lib/edges/verification.ts.
+    namesRevision: v.optional(v.number()),
     realityTarget: v.optional(v.object({ address: v.string(), port: v.number() })),
     // HTTP-transport parameters as deployed (path + upgrade token for
     // ws/httpupgrade, service name for grpc, path + mode for xhttp): what the

@@ -426,6 +426,16 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     expect(cacheOf((await t.run((ctx) => ctx.db.get(subId)))!)[0].relay).toBe(`2:${epoch}`);
   });
 
+  test('the listener sni pick version reaches the renderer, and is absent by default', async () => {
+    stubPanel();
+    const { t, relayId, listenerId } = await seed();
+    const pool = async () =>
+      (await t.run(async (ctx) => publishedEdgesOf(ctx, (await ctx.db.get(relayId))!))).published;
+    expect((await pool())[0].sniPick).toBeUndefined();
+    await t.mutation(internal.relayListeners.setSniPick, { id: listenerId, version: 'hrw1' });
+    expect((await pool())[0].sniPick).toBe('hrw1');
+  });
+
   test('publishedEdgesOf returns the pool with listener matchers; decideForSubscription hands the route a render context', async () => {
     stubPanel();
     const { t, subId, relayId, listenerId, edgeA } = await seed();

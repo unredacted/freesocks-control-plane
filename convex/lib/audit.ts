@@ -421,6 +421,7 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'relay.listener.update': ['relaySlug', 'listenerKey', 'enabled'],
   'relay.listener.name.retire': ['relaySlug', 'listenerKey', 'count', 'everywhere'],
   'relay.listener.name.reactivate': ['relaySlug', 'listenerKey', 'count'],
+  'relay.listener.sni_pick': ['relaySlug', 'listenerKey', 'version'],
   'relay.host.created': ['relaySlug', 'listenerKey', 'discovered'],
   'relay.host.deleted': ['relaySlug', 'listenerKey'],
   // A Host the ledger called present was gone from the panel on re-observation.

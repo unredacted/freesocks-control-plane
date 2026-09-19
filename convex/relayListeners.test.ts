@@ -11,6 +11,7 @@ import { describe, expect, test } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
+import { verificationCurrent } from './lib/edges/verification';
 import {
   FIXTURE_CONFIG_PROFILE,
   adoptL4Edge,
@@ -300,7 +301,9 @@ describe('relayListeners: server names', () => {
       retiredBy: 'admin',
     });
     expect(l.tlsNames![0].drainUntil).toBeGreaterThan(Date.now());
-    expect(l.revision).toBe(2);
+    // A REALITY retire is a NAMES revision, not a material one (see the verification tests below).
+    expect(l.revision).toBe(1);
+    expect(l.namesRevision).toBe(1);
     expect(await epochOf(t, relayId)).toBe(e0 + 1);
     // Retiring an already-retired or unknown name changes nothing.
     expect(
@@ -322,7 +325,8 @@ describe('relayListeners: server names', () => {
     ).toEqual({ ok: true, reactivated: 1 });
     l = (await row(t, listenerId))!;
     expect(l.tlsNames![0]).toEqual({ name: 'a.example', status: 'active' });
-    expect(l.revision).toBe(3);
+    // Reactivating ADDS a name nothing has proven the node accepts: material.
+    expect(l.revision).toBe(2);
     expect(await epochOf(t, relayId)).toBe(e0 + 2);
     // Reactivating an active name changes nothing.
     expect(
@@ -495,6 +499,89 @@ describe('relayListeners: server names', () => {
         names: ['a.example'],
       }),
     ).toBeNull();
+  });
+});
+
+describe('relayListeners: a name retire and the endpoint confirmation', () => {
+  const current = async (t: T, edgeId: Id<'edges'>, listenerId: Id<'relayListeners'>) => {
+    const [e, l] = await t.run(async (ctx) => [
+      await ctx.db.get(edgeId),
+      await ctx.db.get(listenerId),
+    ]);
+    return verificationCurrent(e as never, l as never);
+  };
+
+  test('REALITY: retiring a name keeps the verified L4 edge current (no retest, still rendered)', async () => {
+    const { t, relayId, listenerId } = await seed();
+    const { edgeId } = await adoptL4Edge(t, relayId, listenerId, { publish: true });
+    expect(await current(t, edgeId, listenerId)).toBe(true);
+    const e0 = await epochOf(t, relayId);
+    await t.mutation(internal.relayListeners.retireName, { id: listenerId, names: ['a.example'] });
+    // The name is gone from renders (epoch moved), the human test still stands.
+    expect(await epochOf(t, relayId)).toBe(e0 + 1);
+    expect(await current(t, edgeId, listenerId)).toBe(true);
+    // ADDING one back is material: nothing has proven the node accepts it.
+    await t.mutation(internal.relayListeners.reactivateName, {
+      id: listenerId,
+      names: ['a.example'],
+    });
+    expect(await current(t, edgeId, listenerId)).toBe(false);
+  });
+
+  test('a TLS listener is NOT exempt: its names decide certificate coverage', async () => {
+    const { t, relayId } = await seed();
+    const tls = await t.mutation(internal.relayListeners.upsert, {
+      relayId,
+      spec: wsListener({ tlsNames: ['one.example', 'two.example'] }) as never,
+    });
+    const before = (await row(t, tls.id))!.revision;
+    await t.mutation(internal.relayListeners.retireName, { id: tls.id, names: ['one.example'] });
+    const after = (await row(t, tls.id))!;
+    expect(after.revision).toBe(before + 1);
+    expect(after.namesRevision ?? 0).toBe(0);
+  });
+});
+
+describe('relayListeners: sni pick version', () => {
+  test('setSniPick switches the PRF, bumps the epoch once, never the material revision', async () => {
+    const { t, relayId, listenerId } = await seed();
+    const e0 = await epochOf(t, relayId);
+    expect(
+      await t.mutation(internal.relayListeners.setSniPick, { id: listenerId, version: 'hrw1' }),
+    ).toEqual({ ok: true, changed: true, sniPick: 'hrw1' });
+    let l = (await row(t, listenerId))!;
+    expect(l.sniPick).toBe('hrw1');
+    expect(l.revision).toBe(1);
+    expect(await epochOf(t, relayId)).toBe(e0 + 1);
+    // Idempotent: no second epoch bump.
+    expect(
+      (await t.mutation(internal.relayListeners.setSniPick, { id: listenerId, version: 'hrw1' }))
+        .changed,
+    ).toBe(false);
+    expect(await epochOf(t, relayId)).toBe(e0 + 1);
+    await t.mutation(internal.relayListeners.setSniPick, { id: listenerId, version: null });
+    l = (await row(t, listenerId))!;
+    expect(l.sniPick).toBeUndefined();
+    expect((await audits(t, 'relay.listener.sni_pick')).map((a) => a.payload)).toEqual([
+      { relaySlug: 'node-one', listenerKey: 'a', version: 'hrw1' },
+      { relaySlug: 'node-one', listenerKey: 'a', version: 'hrw1' },
+      { relaySlug: 'node-one', listenerKey: 'a', version: 'legacy' },
+    ]);
+  });
+
+  test('refused on a listener that presents no name, and while a rotation runs', async () => {
+    const { t, relayId, listenerId } = await seed();
+    const ss = await t.mutation(internal.relayListeners.upsert, {
+      relayId,
+      spec: shadowsocksListener() as never,
+    });
+    await expect(
+      t.mutation(internal.relayListeners.setSniPick, { id: ss.id, version: 'hrw1' }),
+    ).rejects.toThrow(/presents no server name/);
+    await fakeRotation(t, relayId);
+    await expect(
+      t.mutation(internal.relayListeners.setSniPick, { id: listenerId, version: 'hrw1' }),
+    ).rejects.toThrow(/rotation_running/);
   });
 });
 

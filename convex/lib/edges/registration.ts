@@ -354,8 +354,10 @@ export interface MergeNamesResult {
 }
 
 /**
- * Merge the names a body carries into the stored list. Body order wins for
- * the persisted order of the names it names; names the body omits are retired
+ * Merge the names a body carries into the stored list. The stored order is
+ * APPEND-ONLY: a name already stored keeps its index whatever order the body
+ * lists it in, and names new to the list are appended in body order (the
+ * legacy SNI selection is index-based). Names the body omits are retired
  * (with a drain) when the caller may retire them, and kept otherwise. A `role`
  * caller can only reactivate names it retired itself.
  */

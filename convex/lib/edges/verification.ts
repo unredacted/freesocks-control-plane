@@ -87,9 +87,31 @@ export function verificationEndpoint(edge: VerificationEdgeLike): string | null 
 }
 
 /**
+ * Whether RETIRING a server name leaves an operator's endpoint confirmation
+ * standing. True for a REALITY listener only.
+ *
+ * The confirmation proves "this endpoint forwards to this inbound, with this
+ * key material, over this path". On REALITY the names are an allowlist the
+ * node checks: taking one away changes neither the path nor the keys, and the
+ * names that remain are exactly the ones that were accepted when the test was
+ * made. So the retire bumps `namesRevision` (and the publication epoch) and
+ * leaves `revision` alone. Without this every retire would stop the listener's
+ * L4 edges rendering until a human retested them, which under edge-required
+ * delivery is an outage caused by reacting to a block.
+ *
+ * Deliberately NOT extended to: a TLS listener (its names decide certificate
+ * coverage, and an L7 front's proof binds to them), or ADDING or reactivating
+ * a name by any path that has not proven the node accepts it. Those remain
+ * `revision` bumps.
+ */
+export function nameRetireKeepsVerification(listener: { security: string }): boolean {
+  return listener.security === 'reality';
+}
+
+/**
  * The configuration token a confirmation binds to. Names are NOT part of it
- * beyond what the listener hash already carries (a name retire is a listener
- * revision bump, caught by the revision compare).
+ * beyond what the listener hash already carries. A name change is caught by
+ * the revision compare instead, except the one case above.
  */
 export function verificationConfigHash(input: {
   listenerConfigHash: string;
