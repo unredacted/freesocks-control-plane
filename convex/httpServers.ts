@@ -21,6 +21,7 @@ import { internal } from './_generated/api';
 import { makeFail, notFound, throttle, unauth } from './lib/adminHttp';
 import { sealed } from './lib/hpke';
 import { errorJson, json, readJson, resolveAdmin, type AdminAuth } from './lib/http';
+import { PanelSetupInput } from '../src/shared/contracts/servers';
 
 const PREFIX = '/api/v1/admin/servers/';
 
@@ -95,7 +96,9 @@ function wrap(handler: Handler, sealedRoute: boolean) {
       : parts[0] !== 'config' &&
         parts[1] !== 'handoff' &&
         parts[1] !== 'reservations' &&
-        parts[3] !== 'acknowledge';
+        parts[3] !== 'acknowledge' &&
+        // A takeover records an attestation; the setup run reaches the panel from its own action.
+        !(parts[1] === 'setup' && parts[2] === 'takeover');
     if (reachesPanel) {
       const limited = await throttle(
         ctx,
@@ -167,6 +170,10 @@ const getHandler: Handler = async (ctx, parts) => {
         backendServerId: instance.id,
       }),
     });
+  }
+  if (a && b === 'setup' && !c) {
+    const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
+    return json(await ctx.runQuery(internal.panelSetup.view, { backendServerId: instance.id }));
   }
   return notFound();
 };
@@ -334,6 +341,25 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
     await ctx.runAction(internal.panelObserve.refresh, { backendServerId: instance.id });
     return json(await ctx.runQuery(internal.serverAdmin.tree, { slug: a }));
+  }
+  // Setting up a panel (docs/servers.md): start or resume, or take over an existing one.
+  if (a && b === 'setup' && (!c || (c === 'takeover' && !d))) {
+    const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
+    if (c === 'takeover') {
+      await ctx.runMutation(internal.panelSetup.takeover, {
+        backendServerId: instance.id,
+        ...actorOf(admin),
+      });
+    } else {
+      const parsed = PanelSetupInput.safeParse(body);
+      if (!parsed.success) return errorJson('validation', 'The setup input is not usable', 400);
+      await ctx.runMutation(internal.panelSetup.start, {
+        backendServerId: instance.id,
+        input: parsed.data,
+        ...actorOf(admin),
+      });
+    }
+    return json(await ctx.runQuery(internal.panelSetup.view, { backendServerId: instance.id }));
   }
   if (a && b === 'placements' && c === 'validate')
     return json(await ctx.runQuery(internal.serverAdmin.validatePlacements, { slug: a }));

@@ -243,6 +243,73 @@ export const ProfilePatchOp = z.discriminatedUnion('op', [
 ]);
 export type ProfilePatchOp = z.infer<typeof ProfilePatchOp>;
 
+// --- bootstrap contract v2: panel setup ----------------------------------------------------
+
+const RealityTemplateInput = z.object({
+  target: z.object({ address: z.string().min(1), port: z.number().int().min(1).max(65535) }),
+  serverNames: z.array(z.string().min(1)).min(1).max(64),
+  minClientVer: z.string().optional(),
+});
+
+/** What "Set up this panel" is asked for. Non-secret: names, targets, ports. */
+export const PanelSetupInput = z.object({
+  profileName: z.string().min(1).max(60).default('FreeSocks-Config'),
+  cdn: z
+    .object({ path: z.string().min(1), port: z.number().int().min(1024).max(65535) })
+    .default({ path: '/ws', port: 8443 }),
+  reality: RealityTemplateInput,
+  relay: RealityTemplateInput.extend({ acceptProxyProtocol: z.boolean().default(false) }),
+  squads: z
+    .object({ fronted: z.string(), reality: z.string(), relay: z.string() })
+    .default({
+      fronted: 'FreeSocks-Fronted',
+      reality: 'FreeSocks-Reality',
+      relay: 'FreeSocks-Relay',
+    }),
+  /** The Cloudflare account whose zone front nodes get their origin names in; null = the role gives explicit hostnames. */
+  originDns: z.object({ accountId: z.string() }).nullable().default(null),
+});
+export type PanelSetupInput = z.infer<typeof PanelSetupInput>;
+
+export const PanelSetupState = z.enum(['pending', 'needs_takeover', 'ready', 'failed']);
+
+export const PanelSetupView = z.object({
+  exists: z.boolean(),
+  state: PanelSetupState.nullable(),
+  step: z.string().nullable(),
+  code: z.string().nullable(),
+  generation: z.number(),
+  running: z.boolean(),
+  profile: z.object({ name: z.string(), uuid: z.string().nullable() }).nullable(),
+  inbounds: z
+    .object({
+      cdn: z.object({ tag: z.string(), listen: z.string(), port: z.number(), path: z.string() }),
+      reality: z.object({
+        tag: z.string(),
+        port: z.number(),
+        serverNames: z.array(z.string()),
+        target: z.string(),
+      }),
+      relay: z.object({
+        tag: z.string(),
+        port: z.number(),
+        serverNames: z.array(z.string()),
+        target: z.string(),
+      }),
+    })
+    .nullable(),
+  squads: z.array(z.object({ kind: z.string(), name: z.string(), bound: z.boolean() })),
+  placements: z.array(z.object({ mode: z.string(), state: z.enum(['bound', 'skipped']) })),
+  templates: z.array(
+    z.object({ family: z.string(), state: z.enum(['matched', 'drifted', 'refused']) }),
+  ),
+  privacy: z.enum(['ok', 'drifted']).nullable(),
+  originDns: z.object({ accountId: z.string(), zoneName: z.string() }).nullable(),
+  handoff: z.enum(['fresh', 'taken_over']).nullable(),
+  updatedAt: z.string().nullable(),
+});
+export type PanelSetupView = z.infer<typeof PanelSetupView>;
+
 /** What a typed profile edit would do. Non-secret: names, targets, counts. */
 export const ProfilePatchPreview = z.object({
   profileName: z.string(),
