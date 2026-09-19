@@ -600,6 +600,17 @@ export const status = internalQuery({
             .map((e) => ({ id: e._id as string, name: e.name, status: e.status as string })),
         );
       }
+    // Only the FAMILY's usable names count: a receipt activates nothing else
+    // (`confirmReceipt`), so a name retained for another listener, or one that
+    // stopped qualifying, must not be shown as "waiting for a test" forever.
+    const usable = new Set<string>();
+    if (b)
+      for (const n of await ctx.db
+        .query('sniNames')
+        .withIndex('by_family_seq', (q) => q.eq('familyId', b.familyId))
+        .collect())
+        if (n.status === 'active' && n.qualification.state === 'ok') usable.add(n.name);
+    const provable = r.names.filter((n) => usable.has(n));
     const nodes = b
       ? (await boundListeners(ctx as never, b)).map(({ relay, listener }) => {
           const active = new Set(
@@ -609,8 +620,8 @@ export const status = internalQuery({
             relaySlug: relay.slug,
             listenerKey: listener.listenerKey,
             edges: edgesBy.get(listener._id as string) ?? [],
-            proven: r.names.filter((n) => active.has(n)).length,
-            pending: r.names.filter((n) => !active.has(n)).length,
+            proven: provable.filter((n) => active.has(n)).length,
+            pending: provable.filter((n) => !active.has(n)).length,
             generationProven: receipts.some(
               (x) => x.listenerId === listener._id && x.state === 'confirmed' && x.isWitness,
             ),

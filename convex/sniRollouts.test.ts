@@ -220,8 +220,10 @@ describe('rollout', () => {
     // The panel lists them. No node has proven anything: the relay hands out what it did before.
     expect(await activeNames(t, listenerId)).toEqual(['a.example', 'b.example']);
     const status = await t.query(internal.sniRollouts.status, { rolloutId: out.rolloutId! });
+    // Only the family's usable names are counted: a.example and b.example were
+    // on the inbound before the family and no receipt can activate them.
     expect(status.nodes).toMatchObject([
-      { relaySlug: 'node-one', listenerKey: 'a', proven: 2, pending: 2, generationProven: false },
+      { relaySlug: 'node-one', listenerKey: 'a', proven: 0, pending: 2, generationProven: false },
     ]);
     // The live addresses a test link can be built through, by name and state only.
     expect(status.nodes[0]!.edges).toMatchObject([{ status: 'active' }]);

@@ -218,6 +218,12 @@
           <Button type="button" variant="ghost" size="sm" onclick={() => (bindOpen = false)}>
             Cancel
           </Button>
+          {#if backendSlug && !busy && inbounds.length === 0}
+            <p class="basis-full rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2">
+              No REALITY inbound has been read from this server yet. Refresh it under Servers, then
+              come back here.
+            </p>
+          {/if}
           <p class="text-muted-foreground basis-full">
             The inbound's target site has to be this family's target. Binding writes nothing: the
             names already on the inbound are remembered as having been there.
