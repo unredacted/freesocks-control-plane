@@ -27,6 +27,7 @@ import type {
   NodeInventoryRow,
   PanelInbound,
   PanelObservation,
+  PanelWrites,
 } from './types';
 import {
   remnawaveDeleteDevice,
@@ -53,6 +54,15 @@ import {
   remnawaveGetNodeInventory,
   remnawaveListNodeInbounds,
   remnawaveObservePanel,
+  remnawaveManageCreateHost,
+  remnawaveManageUpdateHost,
+  remnawaveReorderHosts,
+  remnawaveCreateSquad,
+  remnawaveUpdateSquad,
+  remnawaveDeleteSquad,
+  remnawaveReadHosts,
+  remnawaveReadSquads,
+  remnawaveReadNodeStatus,
   remnawaveFindUserByUsername,
 } from './remnawave';
 import {
@@ -148,6 +158,8 @@ export interface BackendProvider<C extends BackendConfig = BackendConfig> {
    * projection plus digests keyed with `digestKey` before they are returned.
    */
   observePanel?(config: C, digestKey: string): Promise<PanelObservation>;
+  /** Server-management WRITES (Hosts, squads). One call each, never retried here. */
+  panelWrites?: PanelWrites<C>;
   // Optional: re-find a user FCP created by its username (the version-neutral
   // by-username read). The persisted mint operations (relay qualification
   // credential, temporary test credentials) discover an issued user after a
@@ -190,6 +202,18 @@ const remnawaveProvider: BackendProvider<RemnawaveServerConfig> = {
   getNodeInventory: (c) => remnawaveGetNodeInventory(c),
   listNodeInbounds: (c, nodeUuid) => remnawaveListNodeInbounds(c, nodeUuid),
   observePanel: (c, digestKey) => remnawaveObservePanel(c, digestKey),
+  panelWrites: {
+    createHost: remnawaveManageCreateHost,
+    updateHost: remnawaveManageUpdateHost,
+    deleteHost: (c, uuid) => remnawaveDeleteHost(c, uuid),
+    reorderHosts: remnawaveReorderHosts,
+    createSquad: remnawaveCreateSquad,
+    updateSquad: remnawaveUpdateSquad,
+    deleteSquad: remnawaveDeleteSquad,
+    readHosts: remnawaveReadHosts,
+    readSquads: remnawaveReadSquads,
+    readNodeStatus: remnawaveReadNodeStatus,
+  },
   findUserByUsername: (c, username) => remnawaveFindUserByUsername(c, username),
   fetchContent: (c, shortId, ua, subUrl, hwid) =>
     remnawaveFetchSubscription(c, shortId, ua, subUrl, hwid),

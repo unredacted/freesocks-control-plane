@@ -125,6 +125,11 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
     description: 'Prune member passkey registration challenges',
   },
   {
+    name: 'panel-reconcile',
+    everyMs: 5 * MIN,
+    description: 'Server management: settle open panel changes by looking at the panel',
+  },
+  {
     name: 'edge-reconcile',
     everyMs: 5 * MIN,
     description:

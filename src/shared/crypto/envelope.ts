@@ -329,6 +329,7 @@ export const SEALED_PREFIXES: { method: string; prefix: string; policy: RoutePol
   { method: 'GET', prefix: '/api/v1/admin/servers/', policy: REVEAL },
   { method: 'POST', prefix: '/api/v1/admin/servers/', policy: SEAL_BOTH },
   { method: 'PATCH', prefix: '/api/v1/admin/servers/', policy: SEAL_REQ },
+  { method: 'PUT', prefix: '/api/v1/admin/servers/', policy: SEAL_REQ },
 ];
 
 export function routePolicy(path: string, method: string): RoutePolicy | undefined {

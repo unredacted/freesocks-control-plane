@@ -32,9 +32,14 @@ import type {
   BackendHostCreate,
   NodeInventoryRow,
   PanelInbound,
+  PanelHostCreate,
+  PanelHostFields,
+  PanelNodeStatus,
   PanelObservation,
+  PanelObservedHost,
   PanelObservedInbound,
   PanelObservedProfile,
+  PanelObservedSquad,
 } from './types';
 import { farFutureExpiryIso, isFarFutureExpiry } from './types';
 import { changeToken, realityAuthDigest, shapeHash } from '../panel/digest';
@@ -1640,30 +1645,182 @@ export async function remnawaveObservePanel(
       tags: n.tags ?? [],
     })),
     profiles,
-    hosts: (Array.isArray(hostRows) ? hostRows : hostRows.hosts).map((h) => ({
-      hostUuid: h.uuid,
-      remark: h.remark,
-      address: h.address,
-      port: h.port,
-      sni: h.sni || null,
-      host: h.host || null,
-      path: h.path || null,
-      alpn: h.alpn || null,
-      fingerprint: h.fingerprint || null,
-      securityLayer: h.securityLayer || null,
-      isDisabled: h.isDisabled === true,
-      isHidden: h.isHidden === true,
-      tag: h.tag || null,
-      viewPosition: h.viewPosition ?? null,
-      configProfileUuid: h.inbound?.configProfileUuid ?? null,
-      configProfileInboundUuid: h.inbound?.configProfileInboundUuid ?? null,
-      nodeUuids: h.nodes ?? [],
-    })),
-    squads: squadRows.internalSquads.map((sq) => ({
-      squadUuid: sq.uuid,
-      name: sq.name,
-      inboundUuids: (sq.inbounds ?? []).map((i) => i.uuid),
-      membersCount: sq.info?.membersCount ?? null,
-    })),
+    hosts: mapObservedHosts(hostRows),
+    squads: mapObservedSquads(squadRows),
   };
+}
+
+function mapObservedHosts(rows: z.infer<typeof ObservedHostsResponse>): PanelObservedHost[] {
+  return (Array.isArray(rows) ? rows : rows.hosts).map((h) => ({
+    hostUuid: h.uuid,
+    remark: h.remark,
+    address: h.address,
+    port: h.port,
+    sni: h.sni || null,
+    host: h.host || null,
+    path: h.path || null,
+    alpn: h.alpn || null,
+    fingerprint: h.fingerprint || null,
+    securityLayer: h.securityLayer || null,
+    isDisabled: h.isDisabled === true,
+    isHidden: h.isHidden === true,
+    tag: h.tag || null,
+    viewPosition: h.viewPosition ?? null,
+    configProfileUuid: h.inbound?.configProfileUuid ?? null,
+    configProfileInboundUuid: h.inbound?.configProfileInboundUuid ?? null,
+    nodeUuids: h.nodes ?? [],
+  }));
+}
+
+function mapObservedSquads(rows: z.infer<typeof ObservedSquadsResponse>): PanelObservedSquad[] {
+  return rows.internalSquads.map((sq) => ({
+    squadUuid: sq.uuid,
+    name: sq.name,
+    inboundUuids: (sq.inbounds ?? []).map((i) => i.uuid),
+    membersCount: sq.info?.membersCount ?? null,
+  }));
+}
+
+// --- Panel writes (server management) ------------------------------------------
+//
+// ONE outbound call each, no retry: a write whose answer is lost must be settled
+// by the operations ledger LOOKING at the panel, never by sending it again (an
+// identical Host create is a second Host, measured). Shapes are the ones the
+// management contract probe pins against a live panel.
+
+/** `null` clears a text field (the panel takes ''), absent leaves it. */
+function hostBody(f: PanelHostFields): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+  const text = (k: 'sni' | 'host' | 'path' | 'tag') => {
+    if (f[k] !== undefined) body[k] = f[k] ?? '';
+  };
+  if (f.remark !== undefined) body.remark = f.remark;
+  if (f.address !== undefined) body.address = f.address;
+  if (f.port !== undefined) body.port = f.port;
+  text('sni');
+  text('host');
+  text('path');
+  text('tag');
+  // Enumerations: null is the panel's own "unset".
+  if (f.alpn !== undefined) body.alpn = f.alpn;
+  if (f.fingerprint !== undefined) body.fingerprint = f.fingerprint;
+  if (f.securityLayer !== undefined) body.securityLayer = f.securityLayer ?? 'DEFAULT';
+  if (f.isDisabled !== undefined) body.isDisabled = f.isDisabled;
+  if (f.isHidden !== undefined) body.isHidden = f.isHidden;
+  if (f.inbound !== undefined) body.inbound = f.inbound;
+  if (f.nodeUuids !== undefined) body.nodes = f.nodeUuids;
+  return body;
+}
+
+const CreatedUuid = z.object({ uuid: z.string() });
+
+export async function remnawaveManageCreateHost(
+  cfg: RemnawaveConfig,
+  spec: PanelHostCreate,
+): Promise<{ hostUuid: string }> {
+  const made = await call(cfg, {
+    method: 'POST',
+    path: '/api/hosts',
+    body: hostBody(spec),
+    schema: CreatedUuid,
+  });
+  return { hostUuid: made.uuid };
+}
+
+export async function remnawaveManageUpdateHost(
+  cfg: RemnawaveConfig,
+  hostUuid: string,
+  fields: PanelHostFields,
+): Promise<void> {
+  await call(cfg, {
+    method: 'PATCH',
+    path: '/api/hosts',
+    body: { uuid: hostUuid, ...hostBody(fields) },
+    schema: z.unknown(),
+  });
+}
+
+export async function remnawaveReorderHosts(
+  cfg: RemnawaveConfig,
+  order: { hostUuid: string; viewPosition: number }[],
+): Promise<void> {
+  await call(cfg, {
+    method: 'POST',
+    path: '/api/hosts/actions/reorder',
+    body: { hosts: order.map((o) => ({ uuid: o.hostUuid, viewPosition: o.viewPosition })) },
+    schema: z.unknown(),
+  });
+}
+
+export async function remnawaveCreateSquad(
+  cfg: RemnawaveConfig,
+  spec: { name: string; inboundUuids: string[] },
+): Promise<{ squadUuid: string }> {
+  const made = await call(cfg, {
+    method: 'POST',
+    path: '/api/internal-squads',
+    body: { name: spec.name, inbounds: spec.inboundUuids },
+    schema: CreatedUuid,
+  });
+  return { squadUuid: made.uuid };
+}
+
+export async function remnawaveUpdateSquad(
+  cfg: RemnawaveConfig,
+  squadUuid: string,
+  fields: { name?: string; inboundUuids?: string[] },
+): Promise<void> {
+  const body: Record<string, unknown> = { uuid: squadUuid };
+  if (fields.name !== undefined) body.name = fields.name;
+  if (fields.inboundUuids !== undefined) body.inbounds = fields.inboundUuids;
+  await call(cfg, { method: 'PATCH', path: '/api/internal-squads', body, schema: z.unknown() });
+}
+
+export async function remnawaveDeleteSquad(cfg: RemnawaveConfig, squadUuid: string): Promise<void> {
+  await call(cfg, {
+    method: 'DELETE',
+    path: `/api/internal-squads/${encodeURIComponent(squadUuid)}`,
+    schema: z.unknown(),
+  });
+}
+
+export async function remnawaveReadHosts(cfg: RemnawaveConfig): Promise<PanelObservedHost[]> {
+  return mapObservedHosts(
+    await call(cfg, { method: 'GET', path: '/api/hosts', schema: ObservedHostsResponse }),
+  );
+}
+
+export async function remnawaveReadSquads(cfg: RemnawaveConfig): Promise<PanelObservedSquad[]> {
+  return mapObservedSquads(
+    await call(cfg, {
+      method: 'GET',
+      path: '/api/internal-squads',
+      schema: ObservedSquadsResponse,
+    }),
+  );
+}
+
+const NodeStatusResponse = z.array(
+  z.object({
+    uuid: z.string(),
+    isDisabled: z.boolean().nullish(),
+    lastStatusChange: z.string().nullish(),
+    configProfile: z
+      .object({
+        activeConfigProfileUuid: z.string().nullish(),
+        configProfileUuid: z.string().nullish(),
+      })
+      .nullish(),
+  }),
+);
+
+export async function remnawaveReadNodeStatus(cfg: RemnawaveConfig): Promise<PanelNodeStatus[]> {
+  const rows = await call(cfg, { method: 'GET', path: '/api/nodes', schema: NodeStatusResponse });
+  return rows.map((n) => ({
+    nodeUuid: n.uuid,
+    lastStatusChange: n.lastStatusChange ?? null,
+    isDisabled: n.isDisabled === true,
+    configProfileUuid:
+      n.configProfile?.activeConfigProfileUuid ?? n.configProfile?.configProfileUuid ?? null,
+  }));
 }

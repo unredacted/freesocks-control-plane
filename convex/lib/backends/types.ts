@@ -401,3 +401,64 @@ export interface PanelObservation {
   hosts: PanelObservedHost[];
   squads: PanelObservedSquad[];
 }
+
+// --- Panel writes (server management) ------------------------------------------
+
+/** Every Host field an operator may set. Absent = leave; `null` = clear (sent as ''). */
+export interface PanelHostFields {
+  remark?: string;
+  address?: string;
+  port?: number;
+  sni?: string | null;
+  host?: string | null;
+  path?: string | null;
+  alpn?: string | null;
+  fingerprint?: string | null;
+  securityLayer?: string | null;
+  isDisabled?: boolean;
+  isHidden?: boolean;
+  tag?: string | null;
+  inbound?: { configProfileUuid: string; configProfileInboundUuid: string };
+  /** Node uuids the Host is pinned to; empty = every node serving the inbound. */
+  nodeUuids?: string[];
+}
+
+export type PanelHostCreate = PanelHostFields & {
+  remark: string;
+  address: string;
+  port: number;
+  inbound: { configProfileUuid: string; configProfileInboundUuid: string };
+};
+
+/** What the panel says about a node's application state; the only field read is its own clock. */
+export interface PanelNodeStatus {
+  nodeUuid: string;
+  lastStatusChange: string | null;
+  isDisabled: boolean;
+  configProfileUuid: string | null;
+}
+
+/**
+ * The management writes of one backend type. Each is ONE outbound call, never
+ * retried by the provider: whether it may be repeated is the ledger's decision.
+ */
+export interface PanelWrites<C> {
+  createHost(config: C, spec: PanelHostCreate): Promise<{ hostUuid: string }>;
+  updateHost(config: C, hostUuid: string, fields: PanelHostFields): Promise<void>;
+  deleteHost(config: C, hostUuid: string): Promise<void>;
+  reorderHosts(config: C, order: { hostUuid: string; viewPosition: number }[]): Promise<void>;
+  createSquad(
+    config: C,
+    spec: { name: string; inboundUuids: string[] },
+  ): Promise<{ squadUuid: string }>;
+  updateSquad(
+    config: C,
+    squadUuid: string,
+    fields: { name?: string; inboundUuids?: string[] },
+  ): Promise<void>;
+  deleteSquad(config: C, squadUuid: string): Promise<void>;
+  /** Targeted read-backs: the ledger settles an op by LOOKING, never by trusting a response. */
+  readHosts(config: C): Promise<PanelObservedHost[]>;
+  readSquads(config: C): Promise<PanelObservedSquad[]>;
+  readNodeStatus(config: C): Promise<PanelNodeStatus[]>;
+}

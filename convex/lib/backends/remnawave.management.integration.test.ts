@@ -26,6 +26,7 @@
  */
 import { generateKeyPairSync, randomUUID } from 'node:crypto';
 import { afterAll, describe, expect, test } from 'vitest';
+import { PROVIDERS } from './registry';
 import { remnawaveObservePanel } from './remnawave';
 
 const BASE_URL = process.env.REMNAWAVE_TEST_URL;
@@ -322,6 +323,65 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave management contract (integra
     const after = await api('GET', `config-profiles/${profileUuid}`);
     expect(uuidOfTag(after.data, tagA)).toBe(uuidOfTag(before.data, tagA));
     expect(uuidOfTag(after.data, tagB)).not.toBe(uuidOfTag(before.data, tagB));
+  });
+
+  test("FCP's management writes drive the live panel, and every result is read back", async () => {
+    const cfg = {
+      type: 'remnawave' as const,
+      baseUrl: BASE_URL!,
+      apiToken: API_TOKEN!,
+      timeoutMs: 20_000,
+    };
+    const w = PROVIDERS.remnawave.panelWrites!;
+    const profile = await api('GET', `config-profiles/${profileUuid}`);
+    const a = uuidOfTag(profile.data, tagA)!;
+    const inbound = { configProfileUuid: profileUuid, configProfileInboundUuid: a };
+
+    const { hostUuid } = await w.createHost(cfg, {
+      remark: `fcp-w-${run}`,
+      address: '192.0.2.30',
+      port: 443,
+      sni: 'a.example',
+      fingerprint: 'chrome',
+      alpn: 'h2',
+      inbound,
+    });
+    created.hosts.push(hostUuid);
+    await w.updateHost(cfg, hostUuid, {
+      sni: null,
+      fingerprint: 'firefox',
+      remark: `fcp-w-${run}-b`,
+    });
+    let seen = (await w.readHosts(cfg)).find((h) => h.hostUuid === hostUuid)!;
+    // `null` clears a text field; an untouched field keeps its value.
+    expect(seen).toMatchObject({
+      remark: `fcp-w-${run}-b`,
+      sni: null,
+      fingerprint: 'firefox',
+      alpn: 'h2',
+      address: '192.0.2.30',
+      configProfileInboundUuid: a,
+    });
+    await w.reorderHosts(cfg, [{ hostUuid, viewPosition: 7 }]);
+    seen = (await w.readHosts(cfg)).find((h) => h.hostUuid === hostUuid)!;
+    expect(seen.viewPosition).toBe(7);
+    await w.deleteHost(cfg, hostUuid);
+    expect((await w.readHosts(cfg)).some((h) => h.hostUuid === hostUuid)).toBe(false);
+    created.hosts = created.hosts.filter((u) => u !== hostUuid);
+
+    const { squadUuid } = await w.createSquad(cfg, { name: `fcpw-${run}`, inboundUuids: [a] });
+    created.squads.push(squadUuid);
+    await w.updateSquad(cfg, squadUuid, { name: `fcpw-${run}-b` });
+    let squad = (await w.readSquads(cfg)).find((x) => x.squadUuid === squadUuid)!;
+    expect(squad).toMatchObject({ name: `fcpw-${run}-b`, inboundUuids: [a] });
+    await w.updateSquad(cfg, squadUuid, { inboundUuids: [] });
+    squad = (await w.readSquads(cfg)).find((x) => x.squadUuid === squadUuid)!;
+    expect(squad.inboundUuids).toEqual([]);
+    await w.deleteSquad(cfg, squadUuid);
+    expect((await w.readSquads(cfg)).some((x) => x.squadUuid === squadUuid)).toBe(false);
+    created.squads = created.squads.filter((u) => u !== squadUuid);
+
+    expect(Array.isArray(await w.readNodeStatus(cfg))).toBe(true);
   });
 
   test('squads: create, rename, change inbounds, delete', async () => {

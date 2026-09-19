@@ -25,6 +25,10 @@ export const ApiScope = z.enum([
   'admin:settings:write',
   'admin:servers:read',
   'admin:servers:write',
+  // Server management WRITES to a panel (Hosts, squads, later nodes and
+  // profiles). Separate from `admin:servers:write` on purpose: the node role's
+  // token holds that one and must not gain the power to change a panel here.
+  'admin:servers:manage',
   // Node-role registration of relays + listeners (edges): the by-slug routes
   // only, confined to the token's registration boundary (apiTokens.edgeRegistration).
   'admin:edges:register',
@@ -50,6 +54,7 @@ export const SCOPE_GROUPS = {
     'admin:settings:write',
     'admin:servers:read',
     'admin:servers:write',
+    'admin:servers:manage',
     'admin:edges:register',
     'admin:status:read',
   ] as const,

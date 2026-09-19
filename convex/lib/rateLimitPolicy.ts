@@ -157,6 +157,9 @@ export const RATE_LIMIT_DEFAULTS = {
   // Server management: an on-demand re-read of one panel (several panel GETs
   // per call). The scheduled read rides the healthcheck and is not throttled.
   'admin.servers.panel-read': { max: 30, windowMs: MINUTE, enabled: true },
+  // A management WRITE: one panel call plus read-backs. Interactive use is a
+  // handful a minute; this bounds a leaked token or a looping script.
+  'admin.servers.panel-write': { max: 12, windowMs: MINUTE, enabled: true },
 } as const satisfies Record<string, RateLimitPolicy>;
 
 export type RateLimitPolicyKey = keyof typeof RATE_LIMIT_DEFAULTS;

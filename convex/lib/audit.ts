@@ -251,6 +251,14 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'admin.remnawave.logging_hardened': ['instances', 'profilesChanged', 'profilesTotal'],
   // Server management: which switches moved, never a value from a panel.
   'servers.config.update': ['changedKeys'],
+  'servers.host.create': ['backendSlug', 'label', 'outcome', 'code'],
+  'servers.host.update': ['backendSlug', 'label', 'outcome', 'code'],
+  'servers.host.delete': ['backendSlug', 'label', 'outcome', 'code'],
+  'servers.host.reorder': ['backendSlug', 'label', 'outcome', 'code'],
+  'servers.squad.create': ['backendSlug', 'label', 'outcome', 'code'],
+  'servers.squad.update': ['backendSlug', 'label', 'outcome', 'code'],
+  'servers.squad.delete': ['backendSlug', 'label', 'outcome', 'code'],
+  'servers.handoff.report': ['backendSlug', 'roleContractVersion', 'current'],
   // Operator-run 2.x→3.x key-id remap on one upgraded panel (counts only).
   'admin.remnawave.user_ids_migrated': [
     'panelVersion',
