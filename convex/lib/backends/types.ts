@@ -446,9 +446,33 @@ export type PanelHostCreate = PanelHostFields & {
 /** What the panel says about a node's application state; the only field read is its own clock. */
 export interface PanelNodeStatus {
   nodeUuid: string;
+  name: string;
+  address: string | null;
+  port: number | null;
+  countryCode: string | null;
   lastStatusChange: string | null;
   isDisabled: boolean;
   configProfileUuid: string | null;
+  activeInboundUuids: string[];
+}
+
+/** A node row FCP creates on the panel. The node's own secret is never FCP's to fetch. */
+export interface PanelNodeCreate {
+  name: string;
+  address: string;
+  port?: number;
+  countryCode?: string;
+  configProfileUuid: string;
+  activeInboundUuids: string[];
+}
+
+/** Absent = leave. Profile and inbounds travel together (the panel takes them as one). */
+export interface PanelNodeFields {
+  name?: string;
+  address?: string;
+  port?: number;
+  countryCode?: string;
+  profile?: { configProfileUuid: string; activeInboundUuids: string[] };
 }
 
 /**
@@ -470,6 +494,12 @@ export interface PanelWrites<C> {
     fields: { name?: string; inboundUuids?: string[] },
   ): Promise<void>;
   deleteSquad(config: C, squadUuid: string): Promise<void>;
+  createNode(config: C, spec: PanelNodeCreate): Promise<{ nodeUuid: string }>;
+  updateNode(config: C, nodeUuid: string, fields: PanelNodeFields): Promise<void>;
+  setNodeEnabled(config: C, nodeUuid: string, enabled: boolean): Promise<void>;
+  /** Always a FORCED restart: a node otherwise skips it when its config hashes are unchanged. */
+  restartNode(config: C, nodeUuid: string): Promise<void>;
+  deleteNode(config: C, nodeUuid: string): Promise<void>;
   /**
    * What a typed profile edit WOULD do, from a fresh read: the token of the
    * config as it is, the token it would have afterwards, and the non-secret

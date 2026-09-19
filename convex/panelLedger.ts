@@ -322,6 +322,13 @@ export const applyLook = internalMutation({
           nodeUuid: v.string(),
           lastStatusChange: v.union(v.string(), v.null()),
           isDisabled: v.boolean(),
+          // Present for node ops, which are settled against the node row itself.
+          name: v.optional(v.string()),
+          address: v.optional(v.union(v.string(), v.null())),
+          port: v.optional(v.union(v.number(), v.null())),
+          countryCode: v.optional(v.union(v.string(), v.null())),
+          configProfileUuid: v.optional(v.union(v.string(), v.null())),
+          activeInboundUuids: v.optional(v.array(v.string())),
         }),
       ),
     ),
@@ -372,6 +379,26 @@ export const applyLook = internalMutation({
           Object.entries(before).some(([tag, uuid]) => profile.inboundUuids[tag] !== uuid)
         )
           patch.errorCode = 'servers.inbound_uuid_changed';
+      }
+      if (op.kind === 'node' && nodes) {
+        if (op.verb === 'create') {
+          const matches = nodes.filter((n) => n.name === op.identity);
+          if (matches.length === 1) {
+            seen = true;
+            objectUuid = matches[0].nodeUuid;
+          } else if (matches.length > 1) patch.errorCode = 'servers.duplicate_object';
+        } else if (op.verb === 'delete') {
+          const gone = !nodes.some((n) => n.nodeUuid === op.objectUuid);
+          patch.quietLooks = gone ? op.quietLooks + 1 : 0;
+          seen = gone && patch.quietLooks >= GONE_LOOKS_REQUIRED;
+        } else
+          // update / enable / disable / restart: the named fields of the row. A
+          // restart names none, so the row alone never settles it: its evidence
+          // is the node's own clock, below.
+          seen = fieldsMatch(
+            nodes.find((n) => n.nodeUuid === op.objectUuid) as Record<string, unknown> | undefined,
+            expected,
+          );
       }
       if (op.kind === 'squad' && squads) {
         if (op.verb === 'create') {

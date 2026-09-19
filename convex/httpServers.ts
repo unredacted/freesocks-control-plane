@@ -29,6 +29,7 @@ type Handler = (
   parts: string[],
   admin: AdminAuth,
   body: Record<string, unknown>,
+  query: URLSearchParams,
 ) => Promise<Response>;
 
 function statusFromCode(code: string): number {
@@ -102,7 +103,7 @@ function wrap(handler: Handler, sealedRoute: boolean) {
     if (method !== 'GET' && method !== 'DELETE')
       body = await readJson<Record<string, unknown>>(req);
     try {
-      return await handler(ctx, parts, admin, body);
+      return await handler(ctx, parts, admin, body, new URL(req.url).searchParams);
     } catch (err) {
       return fail(err);
     }
@@ -181,6 +182,35 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
     });
     return runOp(ctx, opId);
   }
+  if (a && b === 'nodes') {
+    const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
+    if (!c) {
+      const { opId } = await ctx.runMutation(internal.panelWrites.requestNodeCreate, {
+        backendServerId: instance.id,
+        name: String(body.name ?? ''),
+        address: String(body.address ?? ''),
+        port: typeof body.port === 'number' ? body.port : undefined,
+        countryCode: typeof body.countryCode === 'string' ? body.countryCode : undefined,
+        configProfileUuid: String(body.configProfileUuid ?? ''),
+        activeInboundUuids: Array.isArray(body.activeInboundUuids)
+          ? body.activeInboundUuids.map(String)
+          : [],
+        restore: body.restore === true,
+        ...actorOf(admin),
+      });
+      return runOp(ctx, opId);
+    }
+    if (d === 'enable' || d === 'disable' || d === 'restart') {
+      const { opId } = await ctx.runMutation(internal.panelWrites.requestNodeAction, {
+        backendServerId: instance.id,
+        nodeUuid: c,
+        action: d,
+        ...actorOf(admin),
+      });
+      return runOp(ctx, opId);
+    }
+    return notFound();
+  }
   if (a && (b === 'hosts' || b === 'squads' || b === 'ops')) {
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
     const sid = instance.id;
@@ -247,6 +277,24 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
 
 const patchHandler: Handler = async (ctx, parts, admin, body) => {
   const [a, b, c, d] = parts;
+  if (a && b === 'nodes' && c && !d) {
+    const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
+    const { opId } = await ctx.runMutation(internal.panelWrites.requestNodeUpdate, {
+      backendServerId: instance.id,
+      nodeUuid: c,
+      name: typeof body.name === 'string' ? body.name : undefined,
+      address: typeof body.address === 'string' ? body.address : undefined,
+      port: typeof body.port === 'number' ? body.port : undefined,
+      countryCode: typeof body.countryCode === 'string' ? body.countryCode : undefined,
+      configProfileUuid:
+        typeof body.configProfileUuid === 'string' ? body.configProfileUuid : undefined,
+      activeInboundUuids: Array.isArray(body.activeInboundUuids)
+        ? body.activeInboundUuids.map(String)
+        : undefined,
+      ...actorOf(admin),
+    });
+    return runOp(ctx, opId);
+  }
   if (a && c && !d && (b === 'hosts' || b === 'squads')) {
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
     const { opId } =
@@ -278,8 +326,19 @@ const patchHandler: Handler = async (ctx, parts, admin, body) => {
   return notFound();
 };
 
-const deleteHandler: Handler = async (ctx, parts, admin) => {
+const deleteHandler: Handler = async (ctx, parts, admin, _body, query) => {
   const [a, b, c, d] = parts;
+  if (a && b === 'nodes' && c && !d) {
+    const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
+    const { opId } = await ctx.runMutation(internal.panelWrites.requestNodeDelete, {
+      backendServerId: instance.id,
+      nodeUuid: c,
+      // "Remove from panel" only; the default is "stop and remove".
+      removeOnly: query.get('removeOnly') === '1',
+      ...actorOf(admin),
+    });
+    return runOp(ctx, opId);
+  }
   if (!a || !c || d || (b !== 'hosts' && b !== 'squads')) return notFound();
   const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
   const { opId } =
