@@ -84,6 +84,31 @@ baseline, never a "change".
 `tokenChangedAt` records that a profile's token moved between two looks. _Who_ moved it is a
 question for the operations ledger that comes with the write routes, not for this cache.
 
+## What a node does with a profile (measured)
+
+`bun run test:integration:remnawave-node` (needs Docker) stands up the test panel **plus a real
+panel-managed node** (`remnawave/node:3.4.1`), a TLS 1.3 target that serves any name, and a
+client that is the node image's own Xray, then opens **authenticated REALITY sessions** through
+the node (`convex/lib/backends/remnawave.node-integration.test.ts`,
+`docker-compose.remnawave-node-test.yml`). Two networks separate panel-to-node from
+client-to-node traffic, so the node can be cut off from the panel while clients still reach it.
+Every write route that touches a profile is designed around what this run shows:
+
+| Question                                                        | Measured                                                                                                                                                                                                                         |
+| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Does a server name work as soon as the **panel** stores it?     | **No.** With the node held off the panel: the panel lists the name, a plain TLS 1.3 handshake with that name **completes** (REALITY forwards an unauthenticated handshake to the target), and **no member can connect with it**. |
+| So what does a TLS probe of a node prove?                       | That the target answers for that name. **Never** that the node accepts it. Only an authenticated session proves acceptance.                                                                                                      |
+| An unlisted name                                                | Falls through to the target; the client's own REALITY verification fails.                                                                                                                                                        |
+| When does the held-back name start working?                     | About 4 s after the node can reach the panel again: the panel re-delivers the profile on reconnect.                                                                                                                              |
+| How long until a **connected** node serves a changed name list? | 1 to 3 s from the `PATCH` (the `PATCH` itself answers in 10 to 20 ms: application is asynchronous).                                                                                                                              |
+| How many server names does production Xray take on one inbound? | 64, 256, 512 and **1024** all work: first, middle and last name authenticate, a name beyond the list does not.                                                                                                                   |
+| Is `xrayUptime` evidence that Xray (re)started?                 | **No.** It read `0` or `2` on every read, before and after every change.                                                                                                                                                         |
+| Is `isConnected` evidence that a node applied a change?         | **No.** It stayed `true` for a node that was cut off (only `isConnecting` flipped). `lastStatusChange` moves on each application, but it is the panel's own clock about the panel's own view.                                    |
+
+One harness detail worth knowing when building on it: current Xray refuses to proxy to private
+addresses, so the test's data network deliberately uses a non-private subnet; the REALITY
+handshake succeeds on a private one but nothing comes back through the tunnel.
+
 ## Admin surface
 
 `/api/v1/admin/servers/*` (`convex/httpServers.ts`), sealed by verb class like the edges

@@ -21,6 +21,10 @@ export default defineConfig({
     // `*.integration.test.ts` hit a REAL backend (a live Remnawave panel) and
     // run under their own node-env config (vitest.integration.config.ts) via
     // `bun run test:integration:remnawave` — never in the fast, offline suite.
-    exclude: [...configDefaults.exclude, '**/*.integration.test.ts'],
+    exclude: [
+      ...configDefaults.exclude,
+      '**/*.integration.test.ts',
+      '**/*.node-integration.test.ts',
+    ],
   },
 });

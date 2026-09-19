@@ -1,0 +1,24 @@
+# The REALITY target of the managed-node test stack. `tls internal` with
+# on-demand issuance answers a TLS 1.3 handshake for ANY server name, so a test
+# may list hundreds of names and each is genuinely served here.
+{
+	admin off
+	on_demand_tls {
+		ask http://127.0.0.1:9123/ok
+	}
+}
+
+http://127.0.0.1:9123 {
+	respond /ok 200
+}
+
+:8443 {
+	tls internal {
+		on_demand
+	}
+	respond "origin-tls"
+}
+
+:80 {
+	respond "through-the-tunnel"
+}
