@@ -269,7 +269,7 @@ export function assertNoMatchOverlap(
   const wholeBody = live.filter((l) => l.matchRule.kind === 'whole-body');
   if (wholeBody.length > 0 && live.length > 1)
     fail(
-      `listener ${wholeBody[0].listenerKey} matches the whole body; it cannot share a relay with other listeners`,
+      `listener ${wholeBody[0]?.listenerKey ?? ''} matches the whole body; it cannot share a relay with other listeners`,
       'edge.match_rule_overlap',
     );
   const seenPorts = new Map<number, string>();
