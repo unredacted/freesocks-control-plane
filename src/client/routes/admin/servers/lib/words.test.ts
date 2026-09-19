@@ -1,6 +1,19 @@
 import { describe, expect, test } from 'vitest';
 import { pickInstance, serversPaths } from './routes';
-import { ago, inboundSummary, nodeWords, notices, observedWords, serverNamesLabel } from './words';
+import {
+  WORDED_CODES,
+  ago,
+  inboundSummary,
+  namesDelta,
+  nodeWords,
+  notices,
+  observedWords,
+  opTitle,
+  opWords,
+  parseNames,
+  serverErrorWords,
+  serverNamesLabel,
+} from './words';
 
 const inbound = (over: Record<string, unknown> = {}) => ({
   tag: 'reality-in',
@@ -153,5 +166,68 @@ describe('routes', () => {
     expect(pickInstance('', list)).toBe('panel-a');
     expect(pickInstance('', [{ slug: 'outline-a', observable: false }])).toBe('outline-a');
     expect(pickInstance('', [])).toBeNull();
+  });
+});
+
+describe('write wording', () => {
+  // Codes that are never shown as a refusal: an op's own outcome notes, an
+  // internal guard, and answers only the node role's token ever receives.
+  const NOT_SHOWN = new Set([
+    'servers.adopted_existing',
+    'servers.never_sent',
+    'servers.recovered',
+    'servers.claim_not_held',
+    'servers.observe_failed',
+    'servers.reservation_conflict',
+  ]);
+
+  test('every refusal the server can answer has its own words', () => {
+    const sources = import.meta.glob(
+      [
+        '../../../../../../convex/panel*.ts',
+        '../../../../../../convex/lib/panel/*.ts',
+        '!**/*.test.ts',
+      ],
+      { query: '?raw', import: 'default', eager: true },
+    ) as Record<string, string>;
+    const codes = new Set<string>();
+    for (const text of Object.values(sources))
+      for (const m of text.matchAll(/'(servers\.[a-z_]+)'/g)) codes.add(m[1]!);
+    expect(codes.size).toBeGreaterThan(20);
+    const unworded = [...codes].filter((c) => !NOT_SHOWN.has(c) && !WORDED_CODES.includes(c));
+    expect(unworded).toEqual([]);
+  });
+
+  test('no em-dashes, and no code leaks into the copy', () => {
+    for (const code of WORDED_CODES) {
+      const words = serverErrorWords(code);
+      expect(words).not.toMatch(/—|servers\./);
+    }
+  });
+
+  test('a change in words', () => {
+    const op = { kind: 'node', verb: 'restart', label: 'node-one', errorCode: null } as const;
+    expect(opTitle({ ...op, state: 'done' })).toBe('Restart node node-one');
+    expect(opTitle({ ...op, kind: 'host', verb: 'reorder', state: 'done' })).toBe(
+      'Reorder addresses',
+    );
+    expect(opWords({ ...op, state: 'waiting_for_nodes' }).dot).toBe('amber');
+    expect(opWords({ ...op, state: 'outcome_unknown' }).dot).toBe('red');
+    expect(
+      opWords({ ...op, state: 'done', errorCode: 'servers.adopted_existing' }).sentence,
+    ).toMatch(/already there/);
+    expect(opWords({ ...op, state: 'refused', errorCode: 'servers.never_sent' }).sentence).toMatch(
+      /Never sent/,
+    );
+  });
+
+  test('server names are parsed from lines or commas, in order, without repeats', () => {
+    expect(parseNames(' a.example\nb.example, a.example\n\n c.example ')).toEqual([
+      'a.example',
+      'b.example',
+      'c.example',
+    ]);
+    expect(namesDelta(['a', 'b'], ['b', 'c', 'd'])).toBe('2 added, 1 removed');
+    expect(namesDelta(['a', 'b'], ['b', 'a'])).toBe('Same names, new order');
   });
 });

@@ -8,6 +8,7 @@
  * profile it runs, the inbounds it serves, the Hosts members are handed for
  * those inbounds and the squads that grant them.
  */
+import { REQUIRED_ROLE_CONTRACT_VERSION } from './lib/panel/ops';
 import { ConvexError, v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc } from './_generated/dataModel';
@@ -61,12 +62,14 @@ function mapState(s: Doc<'panelObserveState'> | null) {
 export const summary = internalQuery({
   args: {},
   handler: async (ctx) => {
-    const [servers, states, cfg] = await Promise.all([
+    const [servers, states, handoffs, cfg] = await Promise.all([
       ctx.db.query('backendServers').collect(),
       ctx.db.query('panelObserveState').collect(),
+      ctx.db.query('panelHandoff').collect(),
       resolveServerConfig(ctx.db),
     ]);
     const stateBy = new Map(states.map((s) => [s.backendServerId as string, s]));
+    const handoffBy = new Map(handoffs.map((h) => [h.backendServerId as string, h]));
     return {
       config: flattenServerConfig(cfg),
       instances: servers
@@ -78,6 +81,11 @@ export const summary = internalQuery({
           backend: s.backend,
           isActive: s.isActive,
           observable: capabilitiesOf(s.backend).panelObservation,
+          writable: capabilitiesOf(s.backend).panelWrites,
+          // Whether the node role has said it follows the ownership protocol.
+          handoffCurrent:
+            (handoffBy.get(s._id as string)?.roleContractVersion ?? 0) >=
+            REQUIRED_ROLE_CONTRACT_VERSION,
           ...mapState(stateBy.get(s._id as string) ?? null),
         })),
     };

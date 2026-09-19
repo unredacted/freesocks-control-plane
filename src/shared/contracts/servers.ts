@@ -38,6 +38,10 @@ export const ServerSummary = z.object({
       isActive: z.boolean(),
       /** Whether this backend type can be observed at all. */
       observable: z.boolean(),
+      /** Whether this backend type can be written to at all. */
+      writable: z.boolean(),
+      /** The node role has reported that it follows the ownership protocol. */
+      handoffCurrent: z.boolean(),
     }),
   ),
 });
@@ -152,3 +156,115 @@ export const PlacementValidation = z.object({
   ),
 });
 export type PlacementValidation = z.infer<typeof PlacementValidation>;
+
+// --- writes: the operations ledger ------------------------------------------------------------
+
+export const PanelOpState = z.enum([
+  'working',
+  'waiting_for_nodes',
+  'done',
+  'refused',
+  'outcome_unknown',
+  'recovered',
+]);
+export type PanelOpState = z.infer<typeof PanelOpState>;
+
+/** One change to a panel: sent once, then looked at until it is seen (docs/servers.md). */
+export const PanelOpView = z.object({
+  id: z.string(),
+  kind: z.enum(['host', 'squad', 'node', 'profile']),
+  verb: z.string(),
+  label: z.string(),
+  state: PanelOpState,
+  request: z.string(),
+  panelState: z.string(),
+  asyncEffect: z.string(),
+  open: z.boolean(),
+  errorCode: z.string().nullable(),
+  createdAt: z.string(),
+  settledAt: z.string().nullable(),
+  recovered: z.boolean(),
+});
+export type PanelOpView = z.infer<typeof PanelOpView>;
+export const PanelOpList = z.object({ ops: z.array(PanelOpView) });
+
+export const ReservationList = z.object({
+  reservations: z.array(
+    z.object({ roleOpId: z.string(), kind: z.string(), label: z.string(), at: z.number() }),
+  ),
+});
+export type ReservationList = z.infer<typeof ReservationList>;
+
+/** The four conditions an unknown outcome is released on, each attested by name. */
+export const RecoveryAttestation = z.object({
+  credentialsRevoked: z.boolean(),
+  noInFlightExecutor: z.boolean(),
+  queueDrained: z.boolean(),
+  freshReadAt: z.number(),
+  note: z.string().optional(),
+});
+export type RecoveryAttestation = z.infer<typeof RecoveryAttestation>;
+
+export const HostWrite = z.object({
+  remark: z.string(),
+  address: z.string(),
+  port: z.number(),
+  inboundUuid: z.string(),
+  sni: z.string().nullable().optional(),
+  host: z.string().nullable().optional(),
+  path: z.string().nullable().optional(),
+  alpn: z.string().nullable().optional(),
+  fingerprint: z.string().nullable().optional(),
+  isDisabled: z.boolean().optional(),
+  restore: z.boolean().optional(),
+});
+export type HostWrite = z.infer<typeof HostWrite>;
+
+export const NodeWrite = z.object({
+  name: z.string(),
+  address: z.string(),
+  port: z.number().optional(),
+  countryCode: z.string().optional(),
+  configProfileUuid: z.string(),
+  activeInboundUuids: z.array(z.string()),
+  restore: z.boolean().optional(),
+});
+export type NodeWrite = z.infer<typeof NodeWrite>;
+
+export const ProfilePatchOp = z.discriminatedUnion('op', [
+  z.object({
+    op: z.literal('setRealityServerNames'),
+    inboundTag: z.string(),
+    names: z.array(z.string()),
+  }),
+  z.object({ op: z.literal('setRealityTarget'), inboundTag: z.string(), target: z.string() }),
+]);
+export type ProfilePatchOp = z.infer<typeof ProfilePatchOp>;
+
+/** What a typed profile edit would do. Non-secret: names, targets, counts. */
+export const ProfilePatchPreview = z.object({
+  profileName: z.string(),
+  baseToken: z.string(),
+  expectedToken: z.string(),
+  changed: z.boolean(),
+  changes: z.array(
+    z.object({
+      inboundTag: z.string(),
+      field: z.enum(['serverNames', 'target']),
+      before: z.union([z.array(z.string()), z.string(), z.null()]),
+      after: z.union([z.array(z.string()), z.string()]),
+    }),
+  ),
+  touchedTags: z.array(z.string()),
+  inboundUuids: z.record(z.string(), z.string()),
+  ops: z.array(ProfilePatchOp),
+  restartsNodes: z.array(z.string()),
+  affectedRelays: z.array(
+    z.object({
+      relaySlug: z.string(),
+      listenerKeys: z.array(z.string()),
+      publishedEdges: z.number(),
+    }),
+  ),
+});
+export type ProfilePatchPreview = z.infer<typeof ProfilePatchPreview>;

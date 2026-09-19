@@ -329,6 +329,26 @@ write-only over HTTP). `unknownHere` is a count to look into, not a verdict: sev
 can share a backend type, and a uuid missing on this panel may live on another.
 `withoutInbounds` names squads that would issue keys connecting to nothing.
 
+### The page
+
+Admin -> Servers -> Nodes and inbounds shows the tree. With `servers.manage.enabled` on and the
+role's handoff in place it also edits it, and every control maps to one route above:
+
+- on a node: Edit (only changed fields are sent, so an untouched address cannot restart it),
+  Restart, Turn off / Turn on, **Stop and remove** (offered only once the node is off) and
+  **Remove from the panel only** (says the process may keep running). Both removes are typed;
+- on an inbound: add, change or remove an address members get; edit a REALITY inbound's names
+  and target as write -> preview -> apply, typed when more than one node restarts;
+- squads: add, rename, change inbounds, remove;
+- **Recent changes**: the ops of the instance in words, "Look again" on an open one, and
+  "Settle by hand" on an unknown outcome, which asks for each recovery condition by name;
+- **Changing panels from here**: the switch, a notice when the handoff is missing, and the
+  role's open reservations.
+
+The page hides what the server would refuse anyway; the server is what decides. All wording is
+in `src/client/routes/admin/servers/lib/words.ts`, and a test pins that every `servers.*`
+refusal the server can answer has its own sentence there.
+
 ## Adding an observed backend
 
 1. Implement `observePanel(config, digestKey)` on the provider and return `PanelObservation`
