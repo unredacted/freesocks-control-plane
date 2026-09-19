@@ -92,7 +92,10 @@ function wrap(handler: Handler, sealedRoute: boolean) {
     const readOnly = method === 'GET' || (method === 'POST' && isReadOnlyPost(parts));
     const reachesPanel = readOnly
       ? method === 'POST' && parts[1] !== 'placements'
-      : parts[0] !== 'config' && parts[1] !== 'handoff' && parts[1] !== 'reservations';
+      : parts[0] !== 'config' &&
+        parts[1] !== 'handoff' &&
+        parts[1] !== 'reservations' &&
+        parts[3] !== 'acknowledge';
     if (reachesPanel) {
       const limited = await throttle(
         ctx,
@@ -207,6 +210,16 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
         noInFlightExecutor: body.noInFlightExecutor === true,
         queueDrained: body.queueDrained === true,
         freshReadAt: Number(body.freshReadAt),
+        ...actorOf(admin),
+      }),
+    );
+  }
+  if (a && b === 'profiles' && c && d === 'acknowledge') {
+    const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
+    return json(
+      await ctx.runMutation(internal.panelObserve.acknowledgeForeignEdit, {
+        backendServerId: instance.id,
+        profileUuid: c,
         ...actorOf(admin),
       }),
     );

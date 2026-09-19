@@ -119,6 +119,11 @@ function list(names: readonly string[]): string {
   return `${names.slice(0, 3).join(', ')} and ${names.length - 3} more`;
 }
 
+/** A profile was edited on the panel by something other than this page. */
+export function foreignEditWords(name: string, agoWords: string): string {
+  return `${name} was changed on the panel ${agoWords}, and not from here. What this page believes about it, such as which server names are on it, may be out of date. Look at the profile, then say you have seen it.`;
+}
+
 /** One line for a toast when a server call failed, from its error code. */
 const ERROR_WORDS: Record<string, string> = {
   'backend.panel_read_failed':

@@ -265,6 +265,7 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'servers.node.disable': ['backendSlug', 'label', 'outcome', 'code'],
   'servers.node.restart': ['backendSlug', 'label', 'outcome', 'code'],
   'servers.profile.patch': ['backendSlug', 'label', 'outcome', 'code'],
+  'servers.profile.foreign_edit_seen': ['backendSlug', 'label'],
   'servers.reservation.recover': ['backendSlug', 'kind'],
   'servers.handoff.report': ['backendSlug', 'roleContractVersion', 'current'],
   // Operator-run 2.x→3.x key-id remap on one upgraded panel (counts only).

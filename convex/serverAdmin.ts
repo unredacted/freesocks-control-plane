@@ -248,6 +248,7 @@ export const tree = internalQuery({
           name: p.name,
           shapeHash: p.shapeHash,
           changedAt: iso(p.tokenChangedAt),
+          foreignEditAt: iso(p.foreignEditAt),
           nodeCount: nodes.filter((n) => n.configProfileUuid === p.profileUuid).length,
           inbounds: p.inbounds.map(mapInbound),
         })),

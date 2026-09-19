@@ -9,6 +9,7 @@
  * code word on `panelObserveState`, never as the provider's message, and never
  * marks the instance unhealthy.
  */
+import { writeAuditLog } from './lib/audit';
 import { adoptObservedReservations } from './panelReservations';
 import { ConvexError, v } from 'convex/values';
 import type { ActionCtx } from './_generated/server';
@@ -66,6 +67,9 @@ const opt = <T>(x: T | null): T | undefined => (x === null ? undefined : x);
 export const record = internalMutation({
   args: {
     backendServerId: v.id('backendServers'),
+    // FCP itself just edited profiles outside the ledger (the logging harden):
+    // a moved token is a new baseline, not somebody else's edit.
+    ownEdit: v.optional(v.boolean()),
     digestKeyId: v.string(),
     nodes: v.array(
       v.object({
@@ -158,6 +162,23 @@ export const record = internalMutation({
       .withIndex('by_server', (q) => q.eq('backendServerId', sid))
       .collect();
     const profileBy = new Map(profileRows.map((r) => [r.profileUuid, r]));
+    // Every token a change made from FCP said the profile would end up with.
+    // An edit that lands on one of them is ours, whenever it is first seen.
+    const expectedTokens = new Set<string>();
+    if (!a.ownEdit)
+      for (const op of await ctx.db
+        .query('panelOps')
+        .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+        .order('desc')
+        .take(200)) {
+        if (op.kind !== 'profile') continue;
+        try {
+          const token = (JSON.parse(op.postcondition) as { expectedToken?: unknown }).expectedToken;
+          if (typeof token === 'string') expectedTokens.add(token);
+        } catch {
+          // An unreadable postcondition expects nothing.
+        }
+      }
     for (const p of a.profiles) {
       const prev = profileBy.get(p.profileUuid);
       // A token made with another key is a new baseline, not a change.
@@ -171,6 +192,8 @@ export const record = internalMutation({
         changeToken: p.changeToken,
         digestKeyId: a.digestKeyId,
         tokenChangedAt: moved ? now : prev?.tokenChangedAt,
+        foreignEditAt:
+          moved && !a.ownEdit && !expectedTokens.has(p.changeToken) ? now : prev?.foreignEditAt,
         inbounds: p.inbounds,
         observedAt: now,
       };
@@ -322,6 +345,7 @@ function toRecordArgs(o: PanelObservation) {
 export async function observeInstance(
   ctx: ActionCtx,
   server: { _id: Id<'backendServers'>; backend: Doc<'backendServers'>['backend']; config: unknown },
+  opts: { ownEdit?: boolean } = {},
 ): Promise<boolean> {
   const provider = PROVIDERS[server.backend];
   if (!provider.observePanel) return false;
@@ -331,6 +355,7 @@ export async function observeInstance(
     await ctx.runMutation(internal.panelObserve.record, {
       backendServerId: server._id,
       digestKeyId: keyId,
+      ownEdit: opts.ownEdit,
       ...toRecordArgs(seen),
     });
     return true;
@@ -345,9 +370,38 @@ export async function observeInstance(
 }
 
 /** Observe one instance now (Admin -> Servers, "Refresh"). A failure is reported to the caller. */
+/** An operator has seen that a profile was edited elsewhere, and looked at it. */
+export const acknowledgeForeignEdit = internalMutation({
+  args: {
+    backendServerId: v.id('backendServers'),
+    profileUuid: v.string(),
+    actorAdminId: v.optional(v.id('adminUsers')),
+  },
+  handler: async (ctx, a) => {
+    const rows = await ctx.db
+      .query('panelProfiles')
+      .withIndex('by_server', (q) => q.eq('backendServerId', a.backendServerId))
+      .collect();
+    const row = rows.find((r) => r.profileUuid === a.profileUuid);
+    if (!row) throw new ConvexError({ code: 'not_found', message: 'No such profile' });
+    if (row.foreignEditAt === undefined) return { ok: true as const };
+    await ctx.db.patch(row._id, { foreignEditAt: undefined });
+    const server = await ctx.db.get(a.backendServerId);
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: a.actorAdminId ?? undefined,
+      action: 'servers.profile.foreign_edit_seen',
+      targetType: 'backend_server',
+      targetId: a.backendServerId,
+      payload: { backendSlug: server?.slug ?? '', label: row.name },
+    });
+    return { ok: true as const };
+  },
+});
+
 export const refresh = internalAction({
-  args: { backendServerId: v.id('backendServers') },
-  handler: async (ctx, { backendServerId }): Promise<{ ok: true }> => {
+  args: { backendServerId: v.id('backendServers'), ownEdit: v.optional(v.boolean()) },
+  handler: async (ctx, { backendServerId, ownEdit }): Promise<{ ok: true }> => {
     const server = await ctx.runQuery(internal.backendServers.getById, { id: backendServerId });
     if (!server) throw new ConvexError({ code: 'not_found', message: 'Backend server not found' });
     if (!capabilitiesOf(server.backend).panelObservation)
@@ -355,7 +409,7 @@ export const refresh = internalAction({
         code: 'servers.unsupported_backend',
         message: 'This backend type has nothing to observe',
       });
-    if (!(await observeInstance(ctx, server)))
+    if (!(await observeInstance(ctx, server, { ownEdit })))
       throw new ConvexError({
         code: 'backend.panel_read_failed',
         message: 'The panel could not be read',

@@ -113,6 +113,14 @@ export const applyProfilePatch = (
     PanelOpView,
   );
 
+/** "I have looked at it": clears the edited-elsewhere flag of one profile. */
+export const acknowledgeForeignEdit = (slug: string, profileUuid: string) =>
+  apiClient.post(
+    `${slugPath(slug)}/profiles/${encodeURIComponent(profileUuid)}/acknowledge`,
+    {},
+    Ok,
+  );
+
 export const fetchReservations = (slug: string) =>
   apiClient.get(`${slugPath(slug)}/reservations`, ReservationList);
 export const recoverReservation = (slug: string, roleOpId: string, attest: RecoveryAttestation) =>

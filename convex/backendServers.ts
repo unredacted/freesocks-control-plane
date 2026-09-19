@@ -347,6 +347,12 @@ export const hardenRemnawaveLogging = internalAction({
       if (!provider.hardenLogging) continue; // no config-profile concept (Outline)
       try {
         const report = await provider.hardenLogging(s.config as BackendConfig, { dryRun });
+        // This edit is FCP's own but does not go through the ops ledger: read the
+        // panel again as a new baseline so it is not flagged as somebody else's.
+        if (!dryRun && report.profiles.some((p) => p.changed) && provider.observePanel)
+          await ctx
+            .runAction(internal.panelObserve.refresh, { backendServerId: s._id, ownEdit: true })
+            .catch(() => undefined);
         instances.push({
           serverId: s._id as string,
           name: s.name,

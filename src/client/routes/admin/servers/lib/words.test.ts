@@ -3,6 +3,7 @@ import { pickInstance, serversPaths } from './routes';
 import {
   WORDED_CODES,
   ago,
+  foreignEditWords,
   inboundSummary,
   namesDelta,
   nodeWords,
@@ -203,6 +204,12 @@ describe('write wording', () => {
       const words = serverErrorWords(code);
       expect(words).not.toMatch(/—|servers\./);
     }
+  });
+
+  test('an edit made elsewhere says what may now be wrong, without blame', () => {
+    const words = foreignEditWords('Default', '5 minutes ago');
+    expect(words).toMatch(/^Default was changed on the panel 5 minutes ago, and not from here/);
+    expect(words).not.toMatch(/—/);
   });
 
   test('a change in words', () => {
