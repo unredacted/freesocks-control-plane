@@ -58,6 +58,48 @@ function mapState(s: Doc<'panelObserveState'> | null) {
   };
 }
 
+/**
+ * The enrolled nodes of an instance (docs/servers.md "Node lifecycle"): what
+ * the Servers page shows beside each node row and on its page. Never a
+ * secret: stages, dispositions, revisions, the origin name, the retirement.
+ */
+export const intentsView = internalQuery({
+  args: { backendServerId: v.id('backendServers') },
+  handler: async (ctx, { backendServerId }) => {
+    const intents = await ctx.db
+      .query('panelNodeIntents')
+      .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
+      .collect();
+    const out = [];
+    for (const i of intents) {
+      const retirement = i.retirementId ? await ctx.db.get(i.retirementId) : null;
+      const run = i.activation.currentRunId ? await ctx.db.get(i.activation.currentRunId) : null;
+      out.push({
+        id: i._id as string,
+        name: i.name,
+        purpose: i.purpose,
+        state: i.state,
+        code: i.code ?? null,
+        stage: i.activation.stage,
+        disposition: i.delivery.disposition,
+        machineRevision: i.machineRevision,
+        appliedRevision: i.appliedRevision ?? null,
+        nodeUuid: i.nodeUuid ?? null,
+        hostUuid: i.hostUuid ?? null,
+        origin: { hostname: i.origin.hostname ?? null, dns: i.origin.dns },
+        maintenance: !!i.maintenance,
+        run: run
+          ? { id: run._id as string, state: run.state, stage: run.stage, code: run.code ?? null }
+          : null,
+        retirement: retirement ? { stage: retirement.stage, code: retirement.code ?? null } : null,
+        registeredAt: new Date(i.registeredAt).toISOString(),
+        updatedAt: new Date(i.updatedAt).toISOString(),
+      });
+    }
+    return out;
+  },
+});
+
 /** Every instance with whether it can be observed and how its last look went. */
 export const summary = internalQuery({
   args: {},

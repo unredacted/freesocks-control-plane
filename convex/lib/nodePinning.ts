@@ -78,11 +78,24 @@ function fnv1a(s: string): number {
 }
 
 /** The node a pin key maps to (highest rendezvous score wins). */
-export function pickNode(pinKey: string, nodes: string[], excludeNode?: string): string | null {
+/** One node, or several (the node a key was pinned to before, plus every node whose delivery gate is closed). */
+export type ExcludeNodes = string | readonly string[] | undefined;
+
+function excludedSet(ex: ExcludeNodes): Set<string> {
+  return new Set(typeof ex === 'string' ? [ex] : (ex ?? []));
+}
+
+export function pickNode(
+  pinKey: string,
+  nodes: string[],
+  excludeNode?: ExcludeNodes,
+): string | null {
   let pool = nodes;
-  if (excludeNode) {
-    const filtered = nodes.filter((n) => n !== excludeNode);
-    // Exclusion never empties the pool (a single-node fleet still serves).
+  const ex = excludedSet(excludeNode);
+  if (ex.size > 0) {
+    const filtered = nodes.filter((n) => !ex.has(n));
+    // Exclusion never empties the pool (a single-node fleet still serves; a
+    // gated node that is the only one is refused by the delivery policy, not here).
     if (filtered.length > 0) pool = filtered;
   }
   let best: string | null = null;
@@ -114,7 +127,7 @@ export interface PinResult {
 export function pinSubscriptionToNode(
   content: string,
   pinKey: string,
-  excludeNode?: string,
+  excludeNode?: ExcludeNodes,
 ): PinResult {
   try {
     const trimmed = content.trim();
@@ -205,7 +218,7 @@ function groupByNode(entries: unknown[], nameKey: 'tag' | 'name'): Map<string, s
 function chooseAndDrop(
   byNode: Map<string, string[]>,
   pinKey: string,
-  excludeNode?: string,
+  excludeNode?: ExcludeNodes,
 ): { chosen: string; dropped: Set<string> } | null {
   const chosen = pickNode(pinKey, [...byNode.keys()], excludeNode);
   if (!chosen) return null;
@@ -228,7 +241,7 @@ function chooseAndDrop(
  * rules) after pruning. Emitting a broken config is the one unacceptable
  * outcome; the whole-fleet fallback merely weakens endpoint hygiene.
  */
-function pinSingboxConfig(trimmed: string, pinKey: string, excludeNode?: string): ConfigPin {
+function pinSingboxConfig(trimmed: string, pinKey: string, excludeNode?: ExcludeNodes): ConfigPin {
   let cfg: unknown;
   try {
     cfg = JSON.parse(trimmed);
@@ -280,7 +293,7 @@ function pinSingboxConfig(trimmed: string, pinKey: string, excludeNode?: string)
  * an empty group or a surviving reference. Comments are lost in the YAML round
  * trip (the panel's template comments are operator notes, not client input).
  */
-function pinClashConfig(trimmed: string, pinKey: string, excludeNode?: string): ConfigPin {
+function pinClashConfig(trimmed: string, pinKey: string, excludeNode?: ExcludeNodes): ConfigPin {
   let doc: unknown;
   try {
     doc = YAML.parse(trimmed);

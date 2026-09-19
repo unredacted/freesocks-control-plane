@@ -82,6 +82,7 @@ import { SETUP_RUN_STAGES, type SetupRunStage } from '../src/shared/contracts/ed
 import type { HideResult, HideStatus } from './edgeHostHides';
 import type { RehearsalResult } from './edgeRehearsal';
 import type { TestLinkResult } from './edgeTestLinks';
+import { activatingRunFor, promoteCandidate } from './panelActivation';
 
 type Run = Doc<'edgeSetupRuns'>;
 type Relay = Doc<'relays'>;
@@ -1793,6 +1794,18 @@ export const goLive = internalMutation({
         targetType: 'app_settings',
         payload: { relaySlug: relay.slug, runId: r._id, affectedRelays: others.length - 1 },
       });
+    }
+    // An enrolled node goes live through its delivery commit, in this same
+    // transaction (docs/servers.md "Node lifecycle"): no independent go-live
+    // exists while its activation is unapproved, blocked or superseded.
+    if (relay.origin.kind === 'panel-node' && relay.backendServerId) {
+      const act = await activatingRunFor(ctx, relay.backendServerId, relay.origin.nodeName);
+      if (act) {
+        if (!act.run) return need('node_not_approved', act.intent.activation.stage);
+        const edgeIds = r.listeners.map((l) => l.edgeId).filter((e): e is Id<'edges'> => !!e);
+        const p = await promoteCandidate(ctx, act.run, { edgeIds });
+        if (!p.ok) return need('node_not_approved', p.code);
+      }
     }
     await claimDeliveryBinding(ctx, relay);
     await ctx.db.patch(relay._id, {

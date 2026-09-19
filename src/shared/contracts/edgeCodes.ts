@@ -376,6 +376,8 @@ export const SETUP_RUN_NEEDS = [
   'family_disabled',
   'rehearsal_failed',
   'quarantined',
+  // The node behind the relay is enrolled and its activation is not approved (docs/servers.md).
+  'node_not_approved',
 ] as const;
 export type SetupRunNeed = (typeof SETUP_RUN_NEEDS)[number];
 

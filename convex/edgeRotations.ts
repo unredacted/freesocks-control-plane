@@ -103,6 +103,8 @@ import type {
   ResourceStep,
 } from './lib/edges/providers/types';
 import { admitted, assertAdmission } from './lib/edges/maintenance';
+import { publicationAdmitted } from './lib/panel/activation';
+import { activatingRunFor, recordCandidateEdge } from './panelActivation';
 
 type Rotation = Doc<'edgeRotations'>;
 type Edge = Doc<'edges'>;
@@ -450,6 +452,29 @@ export interface StartBlocker {
  * blocker equals the thrown code). A check that depends on an earlier one that
  * failed is skipped rather than reported twice.
  */
+/**
+ * The node approval a publication needs (docs/servers.md "Node lifecycle"):
+ * `unmanaged` for an origin that is not an enrolled node; `committed` for a
+ * live node with no run open; `candidate` for a node whose one activating run
+ * this publication belongs to; `refused` otherwise (unapproved, maintenance,
+ * retiring).
+ */
+async function publicationApproval(
+  ctx: { db: QueryCtx['db'] },
+  origin: Origin,
+): Promise<'unmanaged' | 'committed' | 'candidate' | 'refused'> {
+  if (origin.origin.kind !== 'panel-node' || !origin.backendServerId) return 'unmanaged';
+  const act = await activatingRunFor(ctx, origin.backendServerId, origin.origin.nodeName);
+  if (!act) return 'unmanaged';
+  const admitted = publicationAdmitted({
+    disposition: act.intent.delivery.disposition,
+    underMaintenance: !!act.intent.maintenance,
+    matchesCommitted: !act.run,
+    matchesApprovedCandidate: !!act.run,
+  });
+  return admitted ?? 'refused';
+}
+
 export async function collectStartBlockers(
   ctx: { db: QueryCtx['db'] },
   a: StartRotationArgs,
@@ -560,6 +585,17 @@ export async function collectStartBlockers(
         const check = await checkPublishable(ctx, to, false);
         if (!check.ok) push(`edge.${check.code}`, `Edge cannot be published: ${check.code}`);
         listenerId = to.listenerId;
+        // The node's approval (docs/servers.md "Node lifecycle"): an enrolled
+        // node's edge is published under its committed approval, or as a
+        // candidate of its one activating run; never while it is unapproved,
+        // under maintenance or retiring. Manual, reconcile and setup publishes
+        // all pass through here.
+        const approval = await publicationApproval(ctx, origin);
+        if (approval === 'refused')
+          push(
+            'servers.node_not_approved',
+            'The node behind this relay is not approved for delivery',
+          );
       }
     }
   }
@@ -717,6 +753,17 @@ export async function startRotation(
   const origin = g.origin!;
   // Not waived by anything: a server change holds this relay's listeners still.
   await assertNoRelayPanelClaim(ctx.db, origin);
+  // An edge published for an activating node is one of that run's candidate
+  // resources: members never see it before the delivery commit.
+  if (
+    a.kind === 'publish' &&
+    a.toEdgeId &&
+    origin.origin.kind === 'panel-node' &&
+    origin.backendServerId
+  ) {
+    const act = await activatingRunFor(ctx, origin.backendServerId, origin.origin.nodeName);
+    if (act?.run) await recordCandidateEdge(ctx, act.run, a.toEdgeId);
+  }
   const listenerId = g.listenerId;
   const id = await ctx.db.insert('edgeRotations', {
     relayId: a.relayId,

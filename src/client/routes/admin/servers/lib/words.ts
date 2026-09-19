@@ -268,6 +268,71 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.panel_refused': 'The panel refused it. Nothing was changed.',
   'servers.outcome_unknown':
     'The panel did not answer clearly, so it is not known whether this happened.',
+  // Setting up a panel.
+  'servers.setup_running': 'The panel is being set up right now. Wait for it to finish.',
+  'servers.setup_failed': 'Setting up stopped on an error. Look at the panel, then try again.',
+  'servers.handoff_needs_takeover':
+    'This panel already has nodes or Hosts. Take it over to make FCP its only writer.',
+  'servers.obligation_unresolved':
+    'A call to the panel or the DNS provider did not answer clearly. It is looked at again shortly.',
+  'servers.observe_lag': 'The panel does not show it yet. It is looked at again shortly.',
+  'servers.profile_incompatible':
+    'A profile with this name exists but is not the shape nodes need. Rename it on the panel or pick another name.',
+  'servers.privacy_drifted':
+    'The profile logs more than it may. Harden it from the backend server page.',
+  'servers.placement_skipped':
+    'A connection mode this panel feeds does not exist, so its squad is not bound.',
+  'servers.template_drifted':
+    'A subscription template on the panel is not what it should be, and could not be set.',
+  // Enrolling a node.
+  'servers.contract_version': 'The node role is too old for this panel. Update the role.',
+  'servers.panel_not_set_up': 'Set up this panel first.',
+  'servers.node_retiring': 'This node is being retired.',
+  'servers.not_retiring': 'This node is not being retired.',
+  'servers.retirement_stage': 'The node is not at that point of its retirement yet.',
+  'servers.purpose_change_needs_admin':
+    'A node keeps its purpose. Change it from here, then run the role again.',
+  'servers.node_exists_unowned':
+    'The panel already has this node or Host. Adopt it here before the role enrolls it.',
+  'servers.origin_label_invalid': 'The name cannot be made into a DNS label.',
+  'servers.registration_boundary': 'This token may not act for that node.',
+  'servers.revision_stale': 'The machine settings changed. Run the role again.',
+  'servers.revision_unknown': 'That machine revision was never handed out.',
+  'servers.reconcile_failed': 'The node could not be reconciled with the panel.',
+  'servers.maintenance_required':
+    'This change rewrites the running path. Start it as a maintenance transition: the node is closed until it is approved again.',
+  'servers.maintenance_open': 'A maintenance transition is open on this node.',
+  // Machine readiness.
+  'servers.config_moved': 'The profile changed under this node. It is checked again.',
+  'servers.foreign_profile_edit': 'The profile was edited outside FCP. See it, then try again.',
+  'servers.node_offline': 'The node is not connected to the panel.',
+  'servers.origin_hostname_missing':
+    'This front node has no origin name yet. Set one under Settings.',
+  'servers.origin_name_taken':
+    'Something else holds a DNS record at the origin name. Free it in the zone, then try again.',
+  'servers.origin_not_resolving': 'The origin name does not resolve to the node yet.',
+  'servers.origin_certificate':
+    'The node does not present a valid certificate for its origin name yet.',
+  'servers.ingress_path': 'The WebSocket path is not proxied to the inbound.',
+  'servers.ingress_host_header': 'The node does not answer a foreign Host header.',
+  // Activation.
+  'servers.machine_not_ready': 'The machine is not ready yet.',
+  'servers.direct_unconfirmed': 'Test the direct connection and tick it first.',
+  'servers.confirmation_stale':
+    'What you tested is not what the node serves now. Build a new test link.',
+  'servers.credential_unavailable': 'No test credential could be made on the panel.',
+  'servers.inbound_missing': 'The REALITY inbound is gone from the profile.',
+  'servers.stage': 'The node is not at the point where this can be done.',
+  'servers.review_stale': 'The review changed since you read it. Read it again.',
+  'servers.host_missing': 'The node has no Host to enable.',
+  'servers.rehearsal_failed':
+    'The panel bodies did not carry this node as expected. Nothing was released.',
+  'servers.rehearsal_missing': 'The rehearsal has not run.',
+  'servers.activation_failed': 'Activation stopped on an error.',
+  'servers.run_superseded': 'A newer approval replaced this one.',
+  'servers.run_not_running': 'This activation is not running.',
+  'servers.revision_moved': 'Something changed since the approval. Review and approve again.',
+  'servers.node_not_approved': 'The node behind this relay is not approved for delivery yet.',
 };
 export function serverErrorWords(code: string | null | undefined): string {
   return (code && ERROR_WORDS[code]) || 'That did not work. Try again in a moment.';

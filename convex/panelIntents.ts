@@ -17,6 +17,7 @@ import { internalAction, internalMutation, internalQuery } from './_generated/se
 import type { ActionCtx, MutationCtx, QueryCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
+import { runWithCronOutcome } from './cronHeartbeat';
 import { writeAuditLog } from './lib/audit';
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
 import {
@@ -936,6 +937,20 @@ export async function nodeGateFor(
   return nodeGateOf(intent, runs, gateVersion, false);
 }
 
+/** The names of every enrolled node of a panel whose gate is closed (the pinner never picks one while another exists). */
+export const blockedNodeNames = internalQuery({
+  args: { backendServerId: v.id('backendServers') },
+  handler: async (ctx, { backendServerId }) => {
+    const intents = await ctx.db
+      .query('panelNodeIntents')
+      .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
+      .collect();
+    return intents
+      .filter((i) => i.delivery.disposition !== 'live' || !!i.maintenance)
+      .map((i) => i.name);
+  },
+});
+
 export const nodeGate = internalQuery({
   args: { backendServerId: v.id('backendServers'), nodeName: v.optional(v.string()) },
   handler: (ctx, { backendServerId, nodeName }) => nodeGateFor(ctx, backendServerId, nodeName),
@@ -1121,18 +1136,19 @@ export const resumeSetup = internalMutation({
 /** On `panel-reconcile`: resume what an interrupted attempt left pending. */
 export const sweep = internalAction({
   args: {},
-  handler: async (ctx): Promise<{ intents: number; setups: number }> => {
-    const { intents, setups } = await ctx.runQuery(internal.panelIntents.stale, {
-      now: Date.now(),
-    });
-    let a = 0;
-    let b = 0;
-    for (const id of intents)
-      if (await ctx.runMutation(internal.panelIntents.resume, { intentId: id })) a++;
-    for (const id of setups)
-      if (await ctx.runMutation(internal.panelIntents.resumeSetup, { setupId: id })) b++;
-    return { intents: a, setups: b };
-  },
+  handler: async (ctx): Promise<{ intents: number; setups: number }> =>
+    runWithCronOutcome(ctx, 'panel-bootstrap-sweep', async () => {
+      const { intents, setups } = await ctx.runQuery(internal.panelIntents.stale, {
+        now: Date.now(),
+      });
+      let a = 0;
+      let b = 0;
+      for (const id of intents)
+        if (await ctx.runMutation(internal.panelIntents.resume, { intentId: id })) a++;
+      for (const id of setups)
+        if (await ctx.runMutation(internal.panelIntents.resumeSetup, { setupId: id })) b++;
+      return { intents: a, setups: b };
+    }),
 });
 
 export { BOOTSTRAP_TAGS };

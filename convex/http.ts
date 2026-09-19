@@ -1180,40 +1180,74 @@ http.route({
       } | null = null;
       if (sub.backendServerId) {
         const family = classifyClient(ua).family;
-        const decision = await ctx.runQuery(internal.edgeRender.decideForSubscription, {
-          subscriptionId: sub._id,
-          family,
-          nodeName: node ?? undefined,
-        });
-        if (decision.kind === 'unavailable') {
-          return unavailableResponse(decision.reason);
-        }
-        if (decision.kind === 'render') {
-          const rctx = decision.context;
-          const renderKey =
-            rctx.renderKey ??
-            (await ctx.runMutation(internal.subscriptions.ensureRenderKey, {
-              subscriptionId: sub._id,
-            }));
-          if (!renderKey) return unavailableResponse('no_render_key');
-          const out = applyEdgeRender(rctx, content, renderKey, { now, where: located.where });
-          if (out.delivery.kind !== 'serve') return unavailableResponse(out.delivery.reason);
-          content = out.body;
-          renderedEpoch = rctx.epoch;
-          renderSnapshot = {
-            epoch: rctx.epoch,
-            family,
-            listenerKeys: out.snapshot.listenerKeys,
-            primaryEdgeId: (out.snapshot.primaryEdgeId as Id<'edges'> | null) ?? undefined,
-            backupEdgeId: (out.snapshot.backupEdgeId as Id<'edges'> | null) ?? undefined,
-          };
-          // The token this body is valid under: re-read for the node it was
-          // rendered for, so the next request's comparison is like for like.
-          relay = await ctx.runQuery(internal.edgeRender.epochFor, {
+        // The token is read BEFORE the decision and again AFTER the render: a
+        // policy that moved meanwhile (a node's gate closed, a rotation) means
+        // the body was rendered under an older policy, and it is never served
+        // or cached under the newer token. One re-render is allowed; a second
+        // move refuses (docs/servers.md "Node lifecycle").
+        let renderedUnder: string | null = null;
+        for (let pass = 0; pass < 2; pass++) {
+          const before = await ctx.runQuery(internal.edgeRender.epochFor, {
             backendServerId: sub.backendServerId,
             nodeName: node ?? undefined,
           });
+          const decision = await ctx.runQuery(internal.edgeRender.decideForSubscription, {
+            subscriptionId: sub._id,
+            family,
+            nodeName: node ?? undefined,
+          });
+          if (decision.kind === 'unavailable') {
+            return unavailableResponse(decision.reason);
+          }
+          let body = fetched.content;
+          let epoch: number | null = null;
+          let snapshot: {
+            epoch: number;
+            family: string;
+            listenerKeys: string[];
+            primaryEdgeId?: Id<'edges'>;
+            backupEdgeId?: Id<'edges'>;
+          } | null = null;
+          if (decision.kind === 'render') {
+            const rctx = decision.context;
+            const renderKey =
+              rctx.renderKey ??
+              (await ctx.runMutation(internal.subscriptions.ensureRenderKey, {
+                subscriptionId: sub._id,
+              }));
+            if (!renderKey) return unavailableResponse('no_render_key');
+            const out = applyEdgeRender(rctx, body, renderKey, { now, where: located.where });
+            if (out.delivery.kind !== 'serve') return unavailableResponse(out.delivery.reason);
+            body = out.body;
+            epoch = rctx.epoch;
+            snapshot = {
+              epoch: rctx.epoch,
+              family,
+              listenerKeys: out.snapshot.listenerKeys,
+              primaryEdgeId: (out.snapshot.primaryEdgeId as Id<'edges'> | null) ?? undefined,
+              backupEdgeId: (out.snapshot.backupEdgeId as Id<'edges'> | null) ?? undefined,
+            };
+          }
+          const after = await ctx.runQuery(internal.edgeRender.epochFor, {
+            backendServerId: sub.backendServerId,
+            nodeName: node ?? undefined,
+          });
+          if (after !== before) continue;
+          content = body;
+          renderedEpoch = epoch;
+          renderSnapshot = snapshot;
+          renderedUnder = after;
+          break;
         }
+        if (
+          renderedUnder === null &&
+          (await ctx.runQuery(internal.edgeRender.epochFor, {
+            backendServerId: sub.backendServerId,
+            nodeName: node ?? undefined,
+          })) !== null
+        )
+          return unavailableResponse('policy_moved');
+        relay = renderedUnder;
       }
       const entry: SubCacheEntry = {
         content,

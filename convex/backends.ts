@@ -608,7 +608,17 @@ export const fetchSubscriptionContent = internalAction({
         capabilitiesOf(server.backend).nodePinning &&
         typeof fetched.content === 'string'
       ) {
-        const pinned = pinSubscriptionToNode(fetched.content, backendShortId, excludeNode);
+        // Nodes whose delivery gate is closed (enrolled but not live, under
+        // maintenance, retiring; docs/servers.md "Node lifecycle") are never
+        // picked while another node exists; a body that can only resolve to one
+        // is refused by the delivery policy afterwards.
+        const gated = await ctx.runQuery(internal.panelIntents.blockedNodeNames, {
+          backendServerId,
+        });
+        const pinned = pinSubscriptionToNode(fetched.content, backendShortId, [
+          ...(excludeNode ? [excludeNode] : []),
+          ...gated,
+        ]);
         return { ...fetched, content: pinned.content, pinnedNode: pinned.node ?? undefined };
       }
       return fetched;

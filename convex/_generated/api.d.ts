@@ -122,6 +122,7 @@ import type * as memberPasskeys from "../memberPasskeys.js";
 import type * as memberWebauthn from "../memberWebauthn.js";
 import type * as membershipCodes from "../membershipCodes.js";
 import type * as mirrorProviders from "../mirrorProviders.js";
+import type * as panelActivation from "../panelActivation.js";
 import type * as panelIntentOps from "../panelIntentOps.js";
 import type * as panelIntents from "../panelIntents.js";
 import type * as panelLedger from "../panelLedger.js";
@@ -281,6 +282,7 @@ declare const fullApi: ApiFromModules<{
   memberWebauthn: typeof memberWebauthn;
   membershipCodes: typeof membershipCodes;
   mirrorProviders: typeof mirrorProviders;
+  panelActivation: typeof panelActivation;
   panelIntentOps: typeof panelIntentOps;
   panelIntents: typeof panelIntents;
   panelLedger: typeof panelLedger;

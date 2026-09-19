@@ -288,6 +288,21 @@ const getHandler: Handler = async (ctx, parts) => {
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
     return json(await ctx.runQuery(internal.panelSetup.view, { backendServerId: instance.id }));
   }
+  // The enrolled nodes of an instance, and one node's review card.
+  if (a && b === 'nodes' && c === 'intents' && !parts[4]) {
+    const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
+    return json({
+      intents: await ctx.runQuery(internal.serverAdmin.intentsView, {
+        backendServerId: instance.id,
+      }),
+    });
+  }
+  if (a && b === 'nodes' && c === 'intents' && parts[4] === 'review')
+    return json(
+      await ctx.runQuery(internal.panelActivation.review, {
+        intentId: parts[3] as Id<'panelNodeIntents'>,
+      }),
+    );
   return notFound();
 };
 
@@ -454,6 +469,47 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
     await ctx.runAction(internal.panelObserve.refresh, { backendServerId: instance.id });
     return json(await ctx.runQuery(internal.serverAdmin.tree, { slug: a }));
+  }
+  // Node activation (docs/servers.md "Node lifecycle"): the isolated direct
+  // test link, its bound confirmation, and the approval of a review.
+  if (a && b === 'nodes' && c === 'intents' && d) {
+    const [, , , , intentIdRaw, verb] = parts;
+    const intentId = intentIdRaw as Id<'panelNodeIntents'>;
+    if (verb === 'test-link')
+      return json(await ctx.runAction(internal.panelActivation.buildDirectTestLink, { intentId }));
+    if (verb === 'confirm')
+      return json(
+        await ctx.runMutation(internal.panelActivation.confirmDirect, {
+          intentId,
+          binding: body.binding as never,
+          ...actorOf(admin),
+        }),
+      );
+    if (verb === 'approve')
+      return json(
+        await ctx.runMutation(internal.panelActivation.approve, {
+          intentId,
+          reviewHash: String(body.reviewHash ?? ''),
+          ...actorOf(admin),
+        }),
+      );
+    if (verb === 'retire')
+      return json(
+        await ctx.runMutation(internal.panelIntents.requestRetirement, {
+          intentId,
+          requestedBy: 'admin',
+        }),
+      );
+    if (verb === 'settings')
+      return json(
+        await ctx.runMutation(internal.panelIntents.patchSettings, {
+          intentId,
+          patch: body.patch as never,
+          maintenance: body.maintenance === true,
+          ...actorOf(admin),
+        }),
+      );
+    return notFound();
   }
   // Setting up a panel (docs/servers.md): start or resume, or take over an existing one.
   if (a && b === 'setup' && (!c || (c === 'takeover' && !d))) {
