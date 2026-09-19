@@ -87,7 +87,12 @@ async function renderMirrorBody(
     rctx.renderKey ??
     (await ctx.runMutation(internal.subscriptions.ensureRenderKey, { subscriptionId: sub.id }));
   if (!renderKey) return stub(rctx.epoch);
-  const out = applyEdgeRender(rctx, content, renderKey, { now: Date.now() });
+  // A mirror is fetched with no request FCP can see: never a name known
+  // blocked in a curated country, unless the member said where they are.
+  const out = applyEdgeRender(rctx, content, renderKey, {
+    now: Date.now(),
+    where: rctx.storedWhere,
+  });
   if (out.delivery.kind !== 'serve') return stub(rctx.epoch);
   return {
     content: out.body,

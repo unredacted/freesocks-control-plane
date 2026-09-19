@@ -762,6 +762,13 @@
     "confirmBody": "These connection details are a snapshot and can change at any time, so a copied configuration may stop working without warning. In Freedom Mode, your subscription link is the best way to connect - it updates automatically when servers change.",
     "confirmCta": "Show configuration"
   },
+  "region": {
+    "title": "Where are you connecting from?",
+    "help": "Leave this on Automatic unless connecting is unreliable. In a few countries some of the website names a key uses are blocked. Choosing yours makes your key use names known to work there. Your choice is saved with your account and is never used for anything else.",
+    "automatic": "Automatic",
+    "saved": "Saved. Refresh your app to pick up the change.",
+    "failed": "That did not save. Try again."
+  },
   "delivery": {
     "title": "Connection mode",
     "subtitle": "Pick what fits where you are. Saved on this device only - change it anytime.",

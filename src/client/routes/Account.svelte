@@ -16,6 +16,7 @@
   import GiftRevealModal from '../components/GiftRevealModal.svelte';
   import PasskeyManager from '../components/PasskeyManager.svelte';
   import ConnectionModeSwitcher from '../components/ConnectionModeSwitcher.svelte';
+  import ConnectionRegion from '../components/ConnectionRegion.svelte';
   import { connectionModePref } from '../lib/connectionModePref.svelte';
   import { FALLBACK_CONNECTION_MODE, resolveEffectiveModeId } from '../lib/connectionMode';
   import { availableOn } from '../lib/connectionModeGroups';
@@ -979,6 +980,9 @@
               deviceCount={data.subscription.devices.length}
               disabled={actionsDisabled}
             />
+            <!-- Where the member is, for server names known to work there. Renders
+                 nothing unless the deployment curates any country. -->
+            <ConnectionRegion disabled={actionsDisabled} />
 
             {@const keyLocCode =
               nodeStatus.data?.node?.location?.code ?? data.subscription.location?.code ?? null}

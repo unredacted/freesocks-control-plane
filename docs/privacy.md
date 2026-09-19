@@ -40,6 +40,16 @@ accidentally regress it).
   IP **transiently** and returns it `no-store`; it is never persisted or audited.
 - The country used to suggest a delivery profile is read transiently from
   `CF-IPCountry` (only when `CF_FRONTED=true`) and **never stored**.
+- The same transient country also picks **server names** for a key fetched from a heavily
+  filtered country (`docs/edges.md` § Names for the member's country), and the same rule holds:
+  it is used for that one response and **kept nowhere**. A subscription body shaped by an
+  inferred country is not written to the key's content cache (that would record the country on
+  the row), is served `private, no-store` (a shared cache would hand one country's body to
+  another), and is not part of the render snapshot. The one country FCP does store is the
+  member's **own answer** to "Where are you connecting from?" on the account page
+  (`subscriptions.sniRegion`): they chose to say it, it is one of a short curated list, they can
+  set it back to Automatic (which removes it), it follows them to a re-issued key, and it is sent
+  to no analytics or telemetry.
 - **Device identification (HWID) is opt-in and panel-side.** When the admin
   enables device-limit enforcement, a proxy app that sends `x-hwid` gets that
   device id forwarded to the Remnawave panel, which keeps its own device rows;

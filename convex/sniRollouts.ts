@@ -36,6 +36,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { bumpEpochAndRefresh } from './lib/edges/relayGuards';
 import { planAllowlist } from './lib/edges/sni/family';
+import { countryMarks } from './sniFamilies';
 import { verificationBinding, verificationCurrent } from './lib/edges/verification';
 import { resolveSniConfig } from './lib/sniConfig';
 
@@ -487,15 +488,23 @@ export const confirmReceipt = internalMutation({
     );
     const proven = (rc.isWitness ? r.names : [rc.sni]).filter((n) => usable.has(n));
     const existing = listener.tlsNames ?? [];
+    const marks = new Map<string, Awaited<ReturnType<typeof countryMarks>>>();
+    for (const name of proven) marks.set(name, await countryMarks(ctx, name));
     const next = existing.map((n) =>
       proven.includes(n.name) && n.status !== 'active'
-        ? { name: n.name, status: 'active' as const, origin: 'family' as const }
+        ? {
+            name: n.name,
+            status: 'active' as const,
+            origin: 'family' as const,
+            ...marks.get(n.name),
+          }
         : n,
     );
     const have = new Set(existing.map((n) => n.name));
     // Appended in the rollout's own order, never re-sorted.
     for (const name of proven)
-      if (!have.has(name)) next.push({ name, status: 'active', origin: 'family' });
+      if (!have.has(name))
+        next.push({ name, status: 'active', origin: 'family', ...marks.get(name) });
     const wasActive = new Set(existing.filter((n) => n.status === 'active').map((n) => n.name));
     const activated = proven.filter((n) => !wasActive.has(n)).length;
     await ctx.db.patch(listener._id, {

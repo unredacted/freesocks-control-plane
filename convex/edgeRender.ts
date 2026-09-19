@@ -29,7 +29,7 @@ import {
   type RenderMatcher,
 } from './lib/edges/render';
 import { assignEndpoints } from './lib/edges/assignment';
-import type { PublishedEdge } from './lib/edges/assignment';
+import type { CountryContext, PublishedEdge } from './lib/edges/assignment';
 import { protocolUsesSni } from './lib/edges/protocols';
 import { parseIntent } from './lib/edges/intent';
 import { qualificationBinding, qualificationVerdict } from './lib/edges/frontCheck/binding';
@@ -37,6 +37,8 @@ import { needsEndpointVerification, verificationCurrent } from './lib/edges/veri
 import type { EdgeRenderContext } from './lib/edges/renderPipeline';
 import { deliveryBindingFor, relayForBackendNode } from './relays';
 import { listenersOf } from './relayListeners';
+import { resolveSniConfig } from './lib/sniConfig';
+import { resolveWhere } from './lib/edges/sni/country';
 
 const familyValidator = v.union(
   ...(RENDER_CLIENT_FAMILIES.map((f) => v.literal(f)) as [
@@ -182,6 +184,8 @@ export function toPublishedEdge(
           status: s.status,
           retiredAt: s.retiredAt,
           drainUntil: s.drainUntil,
+          ...(s.blockedIn?.length ? { blockedIn: s.blockedIn } : {}),
+          ...(s.provenIn?.length ? { provenIn: s.provenIn } : {}),
         }))
       : [],
     ...(listener.sniPick ? { sniPick: listener.sniPick } : {}),
@@ -239,6 +243,34 @@ export const deliveryPolicy = internalQuery({
  * place is edge-required (the epoch is the relay's, or -1 when the binding has
  * no live relay), null for a place no relay covers (raw delivery, no token).
  */
+/**
+ * Whether names are judged per country for the place a key resolves to, and
+ * the curated countries. The fronted route asks BEFORE it looks at its content
+ * cache: a cached body must not reach a request that infers a curated country
+ * when it could carry a name blocked there (lib/edges/sni/country.ts).
+ */
+export const countryPolicyFor = internalQuery({
+  args: { backendServerId: v.id('backendServers'), nodeName: v.optional(v.string()) },
+  handler: async (ctx, { backendServerId, nodeName }) => {
+    const { curatedCountries } = await resolveSniConfig(ctx.db);
+    const policy = await deliveryPolicyFor(ctx, backendServerId, nodeName);
+    const relay = policy.required && policy.relayId ? await ctx.db.get(policy.relayId) : null;
+    if (!relay || curatedCountries.length === 0)
+      return { curated: curatedCountries, sensitive: false };
+    const listeners = await listenersOf(ctx, relay._id);
+    const sensitive = listeners.some(
+      (l) =>
+        l.sniPick === 'hrw1' &&
+        (l.tlsNames ?? []).some(
+          (n) =>
+            n.status === 'active' &&
+            ((n.blockedIn?.length ?? 0) > 0 || (n.provenIn?.length ?? 0) > 0),
+        ),
+    );
+    return { curated: curatedCountries, sensitive };
+  },
+});
+
 export const epochFor = internalQuery({
   args: { backendServerId: v.id('backendServers'), nodeName: v.optional(v.string()) },
   handler: async (ctx, { backendServerId, nodeName }): Promise<string | null> => {
@@ -253,6 +285,8 @@ export const epochFor = internalQuery({
 export interface SubscriptionRenderContext extends EdgeRenderContext {
   relayId: Id<'relays'>;
   renderKey: string | null;
+  /** The country context of a render that has no request behind it (a mirror). */
+  storedWhere: CountryContext;
 }
 
 export type SubscriptionRenderDecision =
@@ -312,6 +346,14 @@ export const decideForSubscription = internalQuery({
         rule,
         preferDistinctProviders: cfg.render.preferDistinctProviders,
         renderKey: sub.renderKey ?? null,
+        // For a render with NO request behind it (a mirror): the member's own
+        // stored answer when it is a curated country, else no country at all,
+        // which selects the universal pool.
+        storedWhere: resolveWhere({
+          override: sub.sniRegion,
+          inferred: null,
+          curated: (await resolveSniConfig(ctx.db)).curatedCountries,
+        }).where,
         originAddress: relay.originAddress,
         deliveryStyle: await deliveryStyleOf(ctx, sub.backendServerId),
       },

@@ -445,6 +445,7 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'edge.sni.names.recheck': ['slug', 'count'],
   'edge.sni.inbound.bind': ['slug', 'backendSlug', 'inboundTag'],
   'edge.sni.inbound.unbind': ['slug', 'backendSlug', 'inboundTag'],
+  'edge.sni.names.country': ['slug', 'country', 'state', 'count'],
   'edge.sni.names.accepted': ['relaySlug', 'listenerKey', 'generation', 'count', 'witness'],
   'relay.host.created': ['relaySlug', 'listenerKey', 'discovered'],
   'relay.host.deleted': ['relaySlug', 'listenerKey'],

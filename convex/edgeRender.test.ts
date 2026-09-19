@@ -26,7 +26,10 @@ import {
 
 const modules = import.meta.glob('./**/*.*s');
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
 
 const NODE = FIXTURE_NODE;
 const ORIGIN = FIXTURE_ORIGIN;
@@ -697,6 +700,128 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
 // ONE node. Pinning must still report that node (there is nothing to filter)
 // or the pin is never recorded and the delivery policy never sees the place.
 // Each body family is exercised with a sub that has NO stored pin.
+describe("edgeRender: server names for the member's country", () => {
+  // Distinct names in entry order (the IPv6 sibling repeats the first name).
+  const sniOf = (body: string) => [
+    ...new Set(
+      proxyLines(body).map((l) =>
+        new URLSearchParams(l.slice(l.indexOf('?') + 1).split('#')[0]).get('sni'),
+      ),
+    ),
+  ];
+  const from = (t: ReturnType<typeof convexTest>, country?: string) =>
+    t.fetch('/api/v1/sub/tok_abc', {
+      headers: { 'user-agent': 'v2rayNG/1.9.0', ...(country ? { 'cf-ipcountry': country } : {}) },
+    });
+
+  /** A listener on hrw1 with four names: two proven in CN, one blocked in CN, one unjudged. */
+  async function seedCountry() {
+    const s = await seed({
+      listeners: [
+        realityListener({
+          tlsNames: ['cn-ok-1.example', 'cn-ok-2.example', 'cn-blocked.example', 'plain.example'],
+        }),
+      ],
+    });
+    await s.t.run(async (ctx) => {
+      const l = (await ctx.db.get(s.listenerId))!;
+      const mark: Record<string, { provenIn?: string[]; blockedIn?: string[] }> = {
+        'cn-ok-1.example': { provenIn: ['CN'] },
+        'cn-ok-2.example': { provenIn: ['CN'] },
+        'cn-blocked.example': { blockedIn: ['CN'] },
+      };
+      await ctx.db.patch(s.listenerId, {
+        sniPick: 'hrw1',
+        tlsNames: l.tlsNames!.map((n) => ({ ...n, ...mark[n.name] })),
+      });
+    });
+    return s;
+  }
+
+  test('a member in a curated country gets names proven there, never one blocked there, and nothing is stored', async () => {
+    stubPanel();
+    vi.stubEnv('CF_FRONTED', 'true');
+    const { t, subId } = await seedCountry();
+    const res = await from(t, 'CN');
+    expect(res.status).toBe(200);
+    const names = sniOf(await res.text());
+    expect(names).not.toContain('cn-blocked.example');
+    // Both proven names come first; the third slot is filled by an unjudged one.
+    expect(names.slice(0, 2).sort()).toEqual(['cn-ok-1.example', 'cn-ok-2.example']);
+    expect(names[2]).toBe('plain.example');
+    // The inferred country shaped this body: not cached, not shareable, kept nowhere.
+    expect(res.headers.get('cache-control')).toBe('private, no-store');
+    const sub = (await t.run((ctx) => ctx.db.get(subId)))!;
+    expect(sub.subCache ?? '[]').not.toContain('CN');
+    expect(JSON.stringify(sub)).not.toContain('"CN"');
+    expect(sub.sniRegion).toBeUndefined();
+  });
+
+  test('no country: the universal pool, never a name blocked somewhere curated; and it caches as ever', async () => {
+    stubPanel();
+    vi.stubEnv('CF_FRONTED', 'true');
+    const { t, subId } = await seedCountry();
+    const res = await from(t);
+    expect(sniOf(await res.text())).not.toContain('cn-blocked.example');
+    expect(res.headers.get('cache-control')).toMatch(/^public/);
+    expect(cacheOf((await t.run((ctx) => ctx.db.get(subId)))!)).toHaveLength(1);
+    // A later request from a curated country is NOT served that cached body.
+    const cn = await from(t, 'CN');
+    expect(cn.headers.get('cache-control')).toBe('private, no-store');
+    expect(
+      sniOf(await cn.text())
+        .slice(0, 2)
+        .sort(),
+    ).toEqual(['cn-ok-1.example', 'cn-ok-2.example']);
+  });
+
+  test('the country header counts only behind the CDN; otherwise a client could forge it', async () => {
+    stubPanel();
+    const { t } = await seedCountry();
+    const res = await from(t, 'CN');
+    expect(res.headers.get('cache-control')).toMatch(/^public/);
+  });
+
+  test("the member's own answer wins over the request, and caches under that answer only", async () => {
+    stubPanel();
+    vi.stubEnv('CF_FRONTED', 'true');
+    const { t, subId } = await seedCountry();
+    const userId = (await t.run((ctx) => ctx.db.get(subId)))!.userId;
+    expect(await t.query(internal.subscriptions.connectionRegion, { userId })).toEqual({
+      region: null,
+      options: ['CN', 'RU', 'IR', 'MM'],
+    });
+    await expect(
+      t.mutation(internal.subscriptions.setConnectionRegion, { userId, region: 'DE' }),
+    ).rejects.toThrow(/unknown region/);
+    await t.mutation(internal.subscriptions.setConnectionRegion, { userId, region: 'cn' });
+    // The request says RU; the member said CN.
+    const res = await from(t, 'RU');
+    const names = sniOf(await res.text());
+    expect(names.slice(0, 2).sort()).toEqual(['cn-ok-1.example', 'cn-ok-2.example']);
+    expect(res.headers.get('cache-control')).toMatch(/^public/);
+    const entries = JSON.parse((await t.run((ctx) => ctx.db.get(subId)))!.subCache!) as {
+      region?: string;
+    }[];
+    expect(entries.map((e) => e.region)).toEqual(['CN']);
+    // Back to automatic: the answer is gone from the row, and the CN body is not reused.
+    await t.mutation(internal.subscriptions.setConnectionRegion, { userId, region: null });
+    expect((await t.run((ctx) => ctx.db.get(subId)))!.sniRegion).toBeUndefined();
+    const auto = await from(t);
+    expect(auto.headers.get('cache-control')).toMatch(/^public/);
+    expect(sniOf(await auto.text())).not.toContain('cn-blocked.example');
+  });
+
+  test('a listener nobody judged per country behaves exactly as before', async () => {
+    stubPanel();
+    vi.stubEnv('CF_FRONTED', 'true');
+    const { t, subId } = await seed();
+    const res = await from(t, 'CN');
+    expect(res.headers.get('cache-control')).toMatch(/^public/);
+    expect(cacheOf((await t.run((ctx) => ctx.db.get(subId)))!)).toHaveLength(1);
+  });
+});
+
 describe('edgeRender: single-node bodies (one squad per node)', () => {
   const singleLinks = panelBody;
   const singleSingbox = JSON.stringify({

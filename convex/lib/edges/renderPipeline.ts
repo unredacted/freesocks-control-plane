@@ -12,7 +12,7 @@
  * ineligible BEFORE the PRF pick, keeping its pool index so the walk stays
  * stable for everyone else.
  */
-import { assignEndpoints, type PublishedEdge } from './assignment';
+import { assignEndpoints, type CountryContext, type PublishedEdge } from './assignment';
 import { detectBodyFormat } from './clientFamilies';
 import { formatSupported } from './protocols';
 import {
@@ -60,7 +60,7 @@ export function applyEdgeRender(
   rctx: EdgeRenderContext,
   body: string,
   renderKey: string,
-  opts: { now: number },
+  opts: { now: number; where?: CountryContext },
 ): PipelineResult {
   const format = detectBodyFormat(body);
   const renderFormat =
@@ -87,6 +87,7 @@ export function applyEdgeRender(
     canEmitV6,
     namesPerEndpoint: rule.namesPerEndpoint,
     backupNames: rule.backupNames,
+    where: opts.where,
   });
   // (5): render + the edge-required verdict.
   const out = renderEdgeEndpoints({
