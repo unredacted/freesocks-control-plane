@@ -519,6 +519,8 @@ export const requestProfilePatch = internalMutation({
     baseToken: v.string(),
     expectedToken: v.string(),
     inboundUuids: v.record(v.string(), v.string()),
+    /** Set by the server-name rollout only; no HTTP route can pass it. */
+    sniRollout: v.optional(v.boolean()),
     ...actor,
   },
   handler: async (ctx, a) => {
@@ -546,6 +548,24 @@ export const requestProfilePatch = internalMutation({
       touched.set(op.inboundTag, uuid);
     }
     const touchedUuids = new Set(touched.values());
+
+    // A family-managed inbound has ONE author of its allowlist and target: the
+    // rollout, which hands names to members only after each node proved it
+    // accepts them. A manual edit would bypass exactly that.
+    if (!a.sniRollout)
+      for (const uuid of touchedUuids) {
+        const managed = await ctx.db
+          .query('sniInboundBindings')
+          .withIndex('by_server_inbound', (q) =>
+            q.eq('backendServerId', sid).eq('inboundUuid', uuid),
+          )
+          .unique();
+        if (managed)
+          refuse(
+            'servers.inbound_sni_managed',
+            'A server-name family manages this inbound. Change its names in the family',
+          );
+      }
 
     // Relays whose listeners are bound to a touched inbound.
     const relays = await ctx.db

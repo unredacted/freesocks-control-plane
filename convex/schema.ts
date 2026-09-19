@@ -2021,6 +2021,93 @@ export default defineSchema({
     .index('by_server_name', ['backendServerId', 'name'])
     .index('by_server', ['backendServerId']),
 
+  // --- Server-name families (REALITY) ------------------------------------------
+  // A REALITY inbound accepts an exact allowlist of server names, and forwards
+  // every other handshake to ONE target. A name is only safe to hand out if that
+  // target genuinely serves it (TLS 1.3, a certificate valid for the name):
+  // otherwise an active probe presenting the name sees a mismatch and the node
+  // stands out. A FAMILY is therefore a target plus the names it serves, each
+  // checked against that target before it may be used.
+  sniFamilies: defineTable({
+    slug: v.string(),
+    label: v.string(),
+    // `static` = one fixed site. `sni-router` (a target on the node that follows
+    // the presented name) is reserved so adding it needs no migration.
+    target: v.object({
+      kind: v.union(v.literal('static'), v.literal('sni-router')),
+      address: v.string(),
+      port: v.number(),
+    }),
+    enabled: v.boolean(),
+    // Require HTTP/2 from the target for a name to qualify (preferred, not default).
+    requireH2: v.boolean(),
+    // Monotonic per family and never reused: the order names are taken in.
+    nextSeq: v.number(),
+    updatedAt: v.number(),
+  }).index('by_slug', ['slug']),
+
+  sniNames: defineTable({
+    familyId: v.id('sniFamilies'),
+    // Lowercase, no trailing dot. Fleet-unique: a name belongs to ONE family.
+    name: v.string(),
+    seq: v.number(),
+    // active    may be used once it qualifies
+    // suspended stopped qualifying (the target no longer serves it); recovers by itself
+    // retired   an operator took it out of use
+    // burned    known blocked; removed everywhere and never offered again
+    status: v.union(
+      v.literal('active'),
+      v.literal('suspended'),
+      v.literal('retired'),
+      v.literal('burned'),
+    ),
+    qualification: v.object({
+      state: v.union(v.literal('pending'), v.literal('ok'), v.literal('failed')),
+      tlsVersion: v.optional(v.string()),
+      alpn: v.optional(v.string()),
+      // A code word (`q_cert`, `q_tls12`, ...), never a handshake error string.
+      code: v.optional(v.string()),
+      consecutiveFails: v.number(),
+    }),
+    // 0 = never checked; the qualify cron takes the oldest first.
+    checkedAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_family_seq', ['familyId', 'seq'])
+    .index('by_name', ['name'])
+    .index('by_checked', ['checkedAt']),
+
+  // A family bound to ONE panel inbound: the single authoritative allowlist for
+  // it. Every relay listener whose `panelBinding` is that inbound inherits it;
+  // what each NODE has been proven to accept is tracked per listener.
+  sniInboundBindings: defineTable({
+    backendServerId: v.id('backendServers'),
+    profileUuid: v.string(),
+    inboundTag: v.string(),
+    inboundUuid: v.string(),
+    familyId: v.id('sniFamilies'),
+    // Bumped by every rollout that changes the panel allowlist.
+    generation: v.number(),
+    // The generation the PANEL was last seen to hold (a read-back, not a node).
+    panelConfirmedGeneration: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_server_inbound', ['backendServerId', 'inboundUuid'])
+    .index('by_family', ['familyId']),
+
+  // Every name an inbound has EVER listed, keyed by the inbound and the name and
+  // independent of any family binding (it survives unbind / rebind and is never
+  // reset). A name absent from here has never been accepted by any earlier
+  // config of that inbound, which is what makes it a WITNESS: a node that
+  // authenticates it must be running the generation that introduced it.
+  sniInboundNameHistory: defineTable({
+    backendServerId: v.id('backendServers'),
+    inboundUuid: v.string(),
+    name: v.string(),
+    // 0 = already there when FCP first looked (history before that is unknown).
+    firstSeenGeneration: v.number(),
+  }).index('by_inbound_name', ['backendServerId', 'inboundUuid', 'name']),
+
   // --- Panel observation (server management) ---------------------------------
   // What an operator sees of a panel BEFORE any write: its nodes, config
   // profiles, Hosts and squads, as last read by `panelObserve`. Read caches

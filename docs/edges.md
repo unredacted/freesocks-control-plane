@@ -715,6 +715,64 @@ listener (relay field, default from `edge.standbyPerListener`; the automation sw
 config key to 1). Finishes relay deletes. Daily sweeps prune `destroyed` edges after 30 days
 and terminal rotations after 90.
 
+## Server-name families (REALITY)
+
+A REALITY inbound accepts an **exact allowlist** of server names (no wildcards) and forwards
+every other handshake, and every handshake that fails authentication, to **one target**. So
+"any hostname" is not a setting: it is a long, managed list. And a name is only safe to hand out
+if the inbound's target **genuinely serves it** (TLS 1.3, a certificate valid for that name):
+otherwise an active probe presenting the name sees a mismatch and the node stands out. A
+**family** is therefore a target plus the names it serves, each checked against that target
+before it may be used. More targets means more families, and more inbounds on other ports (an L4
+edge maps its own port to the inbound's).
+
+Ships dormant: `edge.sni.enabled` is off. Off, nothing is qualified and no family can be bound.
+
+| Table                   | Holds                                                                                                                                                                                                                                                                                                                                       |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sniFamilies`           | `slug`, `label`, `target {kind: static, address, port}`, `enabled`, `requireH2`. The **target is immutable**: every name was checked against it, and an allowlist is only safe for the target it was built for. A different target is a new family. `sni-router` (a target on the node that follows the presented name) is a reserved kind. |
+| `sniNames`              | `name` (fleet-unique: one family per name), `seq` (monotonic per family, never reused: the order names are taken in), `status`, `qualification`.                                                                                                                                                                                            |
+| `sniInboundBindings`    | One family bound to one panel inbound: the single authoritative allowlist for it, with its `generation`.                                                                                                                                                                                                                                    |
+| `sniInboundNameHistory` | Every name an inbound has **ever** listed, keyed by inbound and name, independent of any binding (it survives unbind and rebind and is never reset). Binding records everything the inbound lists at that moment as seen.                                                                                                                   |
+
+**Name states.** `active` (usable once it qualifies), `suspended` (it stopped qualifying; it
+comes back by itself when it qualifies again), `retired` (an operator took it out), `burned`
+(known blocked: never offered again, by any family; an import answers `burned` for it).
+
+**Qualification** (`convex/sniQualifyOps.ts`, cron `sni-qualify` every 5 min, or
+`POST sni/qualify`): one TLS handshake per name **against the family's target, never against a
+node**, presenting that name. It qualifies on TLS 1.3 with a chain valid for the name; ALPN is
+recorded and HTTP/2 required only when the family asks. That is exactly what an unauthenticated
+prober presenting the name to a node would be shown, since REALITY forwards it to the target.
+The target is operator-supplied, so the dial is guarded like the internal probe: a hostname is
+resolved, **every** answer must be public, and the connection goes to a verified literal. At
+most two handshakes a second, oldest-checked first, `qualifyPerTick` per run, again after
+`requalifyHours`; `suspendAfterFails` consecutive failures suspend a name. Failures are code
+words (`q_cert`, `q_tls12`, `q_no_h2`, `q_timeout`, `q_resolve`, `q_private_target`,
+`q_unreachable`), never a handshake error string.
+
+**Binding** (`POST sni/families/{slug}/bind {backendSlug, inboundTag}`) is refused unless the
+inbound is REALITY, is on the panel as Servers last read it, has no family yet, and its target
+**is** the family's target (`edge.sni.target_mismatch`). From then on the inbound's names and
+target are no longer edited by hand (`servers.inbound_sni_managed`): they have one author.
+Unbinding keeps the names on the panel and on the relays, and keeps the history.
+
+**What goes onto an inbound** (`planAllowlist`, `convex/lib/edges/sni/family.ts`). The panel
+allowlist is one list with one cap (512; production Xray takes 1024, measured) and three kinds
+of tenant: the family's names; names that are not the family's but that a relay still hands
+out; and names that were retired but are still inside their drain. The cap is over **all** of
+them. The family's share is what is left after the other two and a **headroom of 64** kept free
+for the next drain, because retiring one name and adding its replacement needs both on the panel
+at once. The family fills its share in `seq` order, so every node on the inbound sees the same
+choice.
+
+Routes, under `/api/v1/admin/edges/sni/`: `GET|PATCH config` (settings scope),
+`GET|POST families`, `GET|PATCH|DELETE families/{slug}`, `POST families/{slug}/names` (a pasted
+list, up to 1000 lines, answered with a verdict per line: `added`, `duplicate`, `invalid`,
+`in_other_family`, `burned`), `POST families/{slug}/names/{retire|reactivate|burn|recheck}`,
+`POST families/{slug}/bind`, `DELETE bindings/{id}`, `POST qualify`. Audit rows
+(`edge.sni.*`) carry slugs and **counts only, never a hostname**.
+
 ## Probes and the block detector
 
 Unchanged in substance from the previous release: probe targets are the published edges of

@@ -433,6 +433,18 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'relay.listener.name.retire': ['relaySlug', 'listenerKey', 'count', 'everywhere'],
   'relay.listener.name.reactivate': ['relaySlug', 'listenerKey', 'count'],
   'relay.listener.sni_pick': ['relaySlug', 'listenerKey', 'version'],
+  // Server-name families: slugs and COUNTS only, never a hostname.
+  'edge.sni.config.update': ['changedKeys'],
+  'edge.sni.family.create': ['slug', 'targetKind'],
+  'edge.sni.family.update': ['slug'],
+  'edge.sni.family.delete': ['slug', 'nameCount'],
+  'edge.sni.names.import': ['slug', 'added', 'rejected'],
+  'edge.sni.names.retire': ['slug', 'count'],
+  'edge.sni.names.reactivate': ['slug', 'count'],
+  'edge.sni.names.burn': ['slug', 'count'],
+  'edge.sni.names.recheck': ['slug', 'count'],
+  'edge.sni.inbound.bind': ['slug', 'backendSlug', 'inboundTag'],
+  'edge.sni.inbound.unbind': ['slug', 'backendSlug', 'inboundTag'],
   'relay.host.created': ['relaySlug', 'listenerKey', 'discovered'],
   'relay.host.deleted': ['relaySlug', 'listenerKey'],
   // A Host the ledger called present was gone from the panel on re-observation.

@@ -71,6 +71,7 @@ const RESERVED = new Set([
   'delivery-bindings',
   'automation',
   'setup-runs',
+  'sni',
 ]);
 
 /**
@@ -117,7 +118,12 @@ export function isRegistrationRoute(parts: string[]): boolean {
  */
 export function scopeFor(parts: string[], method: string): string | string[] {
   // The automation switch writes `edge.*` config: the settings scope, like `config`.
-  const ns = parts[0] === 'config' || parts[0] === 'automation' ? 'settings' : 'servers';
+  const ns =
+    parts[0] === 'config' ||
+    parts[0] === 'automation' ||
+    (parts[0] === 'sni' && parts[1] === 'config')
+      ? 'settings'
+      : 'servers';
   const write = method !== 'GET' && !(method === 'POST' && isReadOnlyPost(parts));
   const full = `admin:${ns}:${write ? 'write' : 'read'}`;
   if (isRegistrationRoute(parts) && method !== 'POST' && method !== 'PATCH')
@@ -132,6 +138,8 @@ export function scopeFor(parts: string[], method: string): string | string[] {
  */
 export function throttlePolicyFor(parts: string[]): RateLimitPolicyKey | null {
   const [a, b, c, d] = parts;
+  // Qualifying server names opens sockets from the control plane.
+  if (a === 'sni' && b === 'qualify' && !c) return 'admin.edges.provider-call';
   if (a === 'providers' && (b === 'discover' || b === 'test-credentials') && !c) {
     return 'admin.edges.provider-call';
   }
@@ -237,6 +245,14 @@ async function assertRelayWithinBoundary(ctx: ActionCtx, slug: string, admin: Ed
 const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
   const [a, b, c, d, e] = parts;
   if (!a || a === 'summary') return json(await ctx.runQuery(internal.edgeAdmin.summary, {}));
+  // Server-name families (docs/edges.md "Server-name families").
+  if (a === 'sni') {
+    if (b === 'config' && !c) return json(await ctx.runQuery(internal.sniFamilies.configView, {}));
+    if (b === 'families' && !c) return json(await ctx.runQuery(internal.sniFamilies.list, {}));
+    if (b === 'families' && c && !d)
+      return json(await ctx.runQuery(internal.sniFamilies.detail, { slug: c }));
+    return notFound();
+  }
   if (a === 'config') return json(await ctx.runQuery(internal.edgeAdmin.configView, {}));
   if (a === 'attention' && !b) return json(await ctx.runQuery(internal.edgeOperator.attention, {}));
   if (a === 'setup-status' && !b) {
@@ -478,6 +494,51 @@ async function refreshInventory(
 const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
   const [a, b, c, d, e] = parts;
   const act = actor(admin);
+  if (a === 'sni') {
+    if (b === 'families' && !c)
+      return json(
+        await ctx.runMutation(internal.sniFamilies.create, {
+          slug: String(body.slug ?? ''),
+          label: String(body.label ?? ''),
+          targetAddress: String(body.targetAddress ?? ''),
+          targetPort: Number(body.targetPort ?? 443),
+          requireH2: body.requireH2 === true,
+          ...act,
+        }),
+      );
+    if (b === 'families' && c && d === 'names' && !e)
+      return json(
+        await ctx.runMutation(internal.sniFamilies.importNames, {
+          slug: c,
+          lines: Array.isArray(body.lines)
+            ? body.lines.map(String)
+            : String(body.text ?? '').split(/\r?\n/),
+          ...act,
+        }),
+      );
+    const NAME_ACTIONS = ['retire', 'reactivate', 'burn', 'recheck'] as const;
+    const action = NAME_ACTIONS.find((x) => x === e);
+    if (b === 'families' && c && d === 'names' && action)
+      return json(
+        await ctx.runMutation(internal.sniFamilies.setNames, {
+          slug: c,
+          names: snis(body),
+          action,
+          ...act,
+        }),
+      );
+    if (b === 'families' && c && d === 'bind' && !e)
+      return json(
+        await ctx.runMutation(internal.sniFamilies.bind, {
+          slug: c,
+          backendSlug: String(body.backendSlug ?? ''),
+          inboundTag: String(body.inboundTag ?? ''),
+          ...act,
+        }),
+      );
+    if (b === 'qualify' && !c) return json(await ctx.runAction(internal.sniQualifyOps.run, {}));
+    return notFound();
+  }
   if (a === 'setup-status' && !b) {
     // A draft: the wizard's intended origin + listeners before the relay exists (read-only).
     return json(
@@ -1122,6 +1183,18 @@ const patchHandler: Handler = async (ctx, _req, parts, admin, body) => {
   const act = actor(admin);
   if (a === 'config' && !b)
     return json(await ctx.runMutation(internal.edgeAdmin.patchConfig, { patch: body, ...act }));
+  if (a === 'sni' && b === 'config' && !c)
+    return json(await ctx.runMutation(internal.sniFamilies.patchConfig, { patch: body, ...act }));
+  if (a === 'sni' && b === 'families' && c && !parts[3])
+    return json(
+      await ctx.runMutation(internal.sniFamilies.update, {
+        slug: c,
+        label: typeof body.label === 'string' ? body.label : undefined,
+        enabled: typeof body.enabled === 'boolean' ? body.enabled : undefined,
+        requireH2: typeof body.requireH2 === 'boolean' ? body.requireH2 : undefined,
+        ...act,
+      }),
+    );
   if (a === 'probes' && b === 'targets' && c && !parts[3])
     return json(
       await ctx.runMutation(internal.probeTargets.update, {
@@ -1189,6 +1262,15 @@ const putHandler: Handler = async (ctx, _req, parts, admin, body) => {
 const deleteHandler: Handler = async (ctx, _req, parts, admin, _body, query) => {
   const [a, b, c, d, e] = parts;
   const act = actor(admin);
+  if (a === 'sni' && b === 'families' && c && !d)
+    return json(await ctx.runMutation(internal.sniFamilies.remove, { slug: c, ...act }));
+  if (a === 'sni' && b === 'bindings' && c && !d)
+    return json(
+      await ctx.runMutation(internal.sniFamilies.unbind, {
+        bindingId: id<'sniInboundBindings'>(c),
+        ...act,
+      }),
+    );
   if (a === 'providers' && b && !c)
     return json(
       await ctx.runMutation(internal.edgeProviderAccounts.remove, {
