@@ -388,6 +388,27 @@ export const getUserUsage = internalAction({
  * connection entries, and repoint ONE of them. Both are thin dispatches over the
  * optional provider capability; a backend without it throws a typed error.
  */
+/**
+ * A read-only panel listing that failed, as a coded error an admin route can
+ * show. The Remnawave error class is written to be loggable (path, status and
+ * a short slice of the panel's own error text; never the URL or the token), so
+ * its message is passed on. Anything else is reduced to its class name:
+ * validator and network errors can embed values.
+ */
+function panelReadFailure(
+  what: string,
+  err: unknown,
+): ConvexError<{ code: string; message: string }> {
+  if (err instanceof ConvexError) return err as ConvexError<{ code: string; message: string }>;
+  const name = err instanceof Error ? err.name : typeof err;
+  const words =
+    err instanceof Error && name === 'RemnawaveApiError' ? err.message.slice(0, 400) : name;
+  return new ConvexError({
+    code: 'backend.panel_read_failed',
+    message: `The panel did not answer ${what}: ${words}`,
+  });
+}
+
 export const listHosts = internalAction({
   args: { backendServerId: v.id('backendServers') },
   handler: async (ctx, { backendServerId }): Promise<BackendHost[]> => {
@@ -395,7 +416,11 @@ export const listHosts = internalAction({
     if (!server) throw new ConvexError({ code: 'backend.not_found' });
     const provider = PROVIDERS[server.backend];
     if (!provider.listHosts) throw new ConvexError({ code: 'backend.hosts_unsupported' });
-    return provider.listHosts(server.config as BackendConfig);
+    try {
+      return await provider.listHosts(server.config as BackendConfig);
+    } catch (err) {
+      throw panelReadFailure('the Host listing', err);
+    }
   },
 });
 
@@ -490,7 +515,11 @@ export const listNodeInbounds = internalAction({
     if (!server) throw new ConvexError({ code: 'backend.not_found' });
     const provider = PROVIDERS[server.backend];
     if (!provider.listNodeInbounds) throw new ConvexError({ code: 'backend.inbounds_unsupported' });
-    return provider.listNodeInbounds(server.config as BackendConfig, nodeUuid);
+    try {
+      return await provider.listNodeInbounds(server.config as BackendConfig, nodeUuid);
+    } catch (err) {
+      throw panelReadFailure("the node's inbound listing", err);
+    }
   },
 });
 
