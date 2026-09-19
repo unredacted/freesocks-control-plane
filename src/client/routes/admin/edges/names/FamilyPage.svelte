@@ -177,7 +177,7 @@
     <div>
       <label for={`${uid}-enabled`} class="font-medium">Use this family</label>
       <p id={`${uid}-enabled-help`} class="text-muted-foreground">
-        Off, nothing new is written for it. The names members already have keep working.
+        Off, nothing new is written. Names members already have keep working.
       </p>
     </div>
   </div>
@@ -225,8 +225,7 @@
             </p>
           {/if}
           <p class="text-muted-foreground basis-full">
-            The inbound's target site has to be this family's target. Binding writes nothing: the
-            names already on the inbound are remembered as having been there.
+            The inbound's target site has to be this family's. Binding writes nothing yet.
           </p>
         </form>
       {/if}
@@ -377,8 +376,7 @@
         class="border-input focus-visible:ring-ring/50 w-full rounded-md border bg-transparent px-3 py-2 font-mono text-sm outline-none focus-visible:ring-3"
       ></textarea>
       <p class="text-muted-foreground">
-        Only add names the target site really serves, with a valid certificate. Each one is checked
-        before it can be used, and a name belongs to one family only.
+        Each name is checked against the target site before it can be used.
       </p>
       <Button size="sm" disabled={busy || importText.trim() === ''} onclick={doImport}>Add</Button>
       {#if importResult.length > 0}
@@ -395,7 +393,7 @@
 <ConfirmDialog
   bind:open={burnOpen}
   title={`Burn ${picked.length} ${picked.length === 1 ? 'name' : 'names'}?`}
-  body="A burned name stops being given to members at once, on every node, even when it is a node's last name. It can never be used again, in this family or any other."
+  body="A burned name leaves every member's list at once and can never be used again."
   typed="burn"
   confirmLabel="Burn"
   danger
@@ -407,7 +405,7 @@
 <ConfirmDialog
   bind:open={removeOpen}
   title="Remove this family?"
-  body="A family an inbound still uses is not removed. Unbind it first."
+  body="Unbind it from every inbound first."
   confirmLabel="Remove"
   danger
   onConfirm={remove}

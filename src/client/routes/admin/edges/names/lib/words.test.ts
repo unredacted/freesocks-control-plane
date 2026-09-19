@@ -152,13 +152,13 @@ describe('rollouts', () => {
 
   test('the plan says whether one test proves everything', () => {
     expect(planWords(plan()).join(' ')).toMatch(/One test per node will prove all/);
-    expect(planWords(plan({ witness: null })).join(' ')).toMatch(/each has to be tested by itself/);
+    expect(planWords(plan({ witness: null })).join(' ')).toMatch(/has to be tested by itself/);
     expect(planWords(plan({ changed: false, added: [] }))).toHaveLength(1);
     expect(planWords(plan({ overflow: 3 })).join(' ')).toMatch(/3 ready names will wait/);
   });
 
   test('being on the panel is not being given to members', () => {
-    expect(rolloutWords(status()).sentence).toMatch(/until that node has proven it/);
+    expect(rolloutWords(status()).sentence).toMatch(/once it has proven it/);
     expect(rolloutWords(status()).dot).toBe('amber');
     const proven = status({
       nodes: [

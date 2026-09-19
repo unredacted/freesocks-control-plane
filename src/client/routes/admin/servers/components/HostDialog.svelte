@@ -92,8 +92,7 @@
     <Dialog.Header>
       <Dialog.Title>{host ? `Change ${host.remark}` : 'Add an address'}</Dialog.Title>
       <Dialog.Description>
-        What members are given to reach <span class="break-all">{inboundTag}</span>. It shows up in
-        their apps the next time they update.
+        For <span class="break-all">{inboundTag}</span>. Members see it at their next update.
       </Dialog.Description>
     </Dialog.Header>
     <form
@@ -145,7 +144,7 @@
         <div class="flex items-start gap-2">
           <Checkbox id={`${uid}-restore`} bind:checked={restore} />
           <Label for={`${uid}-restore`} class="leading-snug font-normal">
-            Bring it back if this exact address was removed on purpose before
+            Bring back this exact address if it was removed on purpose
           </Label>
         </div>
       {/if}
@@ -167,7 +166,7 @@
 <ConfirmDialog
   bind:open={removeOpen}
   title={`Remove ${host?.remark ?? ''}?`}
-  body="Members stop being given this address the next time their app updates. The node role will not create it again."
+  body="Members stop getting it at their next update."
   confirmLabel="Remove"
   danger
   onConfirm={remove}

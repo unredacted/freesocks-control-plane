@@ -91,10 +91,7 @@
   <Dialog.Content class="sm:max-w-lg">
     <Dialog.Header>
       <Dialog.Title>Server names of <span class="break-all">{inbound.tag}</span></Dialog.Title>
-      <Dialog.Description>
-        The names this inbound answers to, and the site it borrows them from. Every name must be a
-        name that site really serves.
-      </Dialog.Description>
+      <Dialog.Description>Every name must be one the target site really serves.</Dialog.Description>
     </Dialog.Header>
 
     {#if !preview}
@@ -169,18 +166,16 @@
             {/if}
           </p>
           {#if preview.affectedRelays.length > 0}
-            <p class="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2">
+            <p class="text-muted-foreground">
               {preview.affectedRelays.map((r) => r.relaySlug).join(', ')}
-              {preview.affectedRelays.length === 1 ? 'forwards' : 'forward'} to this inbound.
-              {#if targetChanged}
-                A new target means every edge address in front of it is due a fresh test.
-              {/if}
+              {preview.affectedRelays.length === 1 ? 'forwards' : 'forward'} to this inbound{targetChanged
+                ? ', and a new target means its addresses are due a fresh test'
+                : ''}.
             </p>
           {/if}
           {#if namesChanged}
             <p class="text-muted-foreground">
-              New names are not given to members by this. A node has to prove it accepts a name
-              first.
+              New names reach members only after a node has proven it accepts them.
             </p>
           {/if}
           {#if needsTyped}

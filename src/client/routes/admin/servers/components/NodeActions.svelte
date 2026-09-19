@@ -1,15 +1,17 @@
 <script lang="ts">
   /**
-   * What can be done to one node's panel row: restart, turn off or on, edit the
-   * row, remove. Removing is two different things and both are named: "stop and
-   * remove" needs the node to be off already; "remove from the panel only" says
-   * that the node process may keep running.
+   * The header actions of a node page: Edit, Restart (or Turn on), and a More
+   * menu with Turn off and the two removes. Removing is two different things
+   * and both are named: "Stop and remove" needs the node to be off already;
+   * "Remove from the panel only" says that the node process may keep running.
    *
    * Props: slug, node
    */
   import { useQueryClient } from '@tanstack/svelte-query';
+  import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import { Button } from '@client/components/ui/button';
   import * as Dialog from '@client/components/ui/dialog';
+  import * as DropdownMenu from '@client/components/ui/dropdown-menu';
   import { Input } from '@client/components/ui/input';
   import { Label } from '@client/components/ui/label';
   import { deleteNode, nodeAction, updateNode } from '@client/lib/serversApi';
@@ -55,9 +57,7 @@
     if (name.trim() !== node.name) fields.name = name.trim();
     if (address.trim() !== (node.address ?? '')) fields.address = address.trim();
     if (port.trim() !== '' && Number(port) !== node.port) fields.port = Number(port);
-    // A blank country is "leave it": the panel has no "no country", so an empty
-    // field must not be sent (it would fail validation and take the other edits with it).
-    if (country.trim() !== '' && country.trim().toUpperCase() !== (node.countryCode ?? ''))
+    if (country.trim().toUpperCase() !== (node.countryCode ?? ''))
       fields.countryCode = country.trim().toUpperCase();
     editOpen = false;
     if (Object.keys(fields).length === 0) return;
@@ -69,37 +69,42 @@
   );
 </script>
 
-<div class="flex flex-wrap gap-2">
-  <Button variant="outline" size="sm" disabled={busy} onclick={startEdit}>Edit</Button>
-  {#if node.isDisabled}
-    <Button
-      variant="outline"
-      size="sm"
-      disabled={busy}
-      onclick={() => act(() => nodeAction(slug, node.nodeUuid, 'enable'))}
-    >
-      Turn on
-    </Button>
-    <Button variant="outline" size="sm" disabled={busy} onclick={() => (removeOpen = true)}>
-      Stop and remove
-    </Button>
-  {:else}
-    <Button variant="outline" size="sm" disabled={busy} onclick={() => (restartOpen = true)}>
-      Restart
-    </Button>
-    <Button variant="outline" size="sm" disabled={busy} onclick={() => (offOpen = true)}>
-      Turn off
-    </Button>
-  {/if}
-  <Button variant="ghost" size="sm" disabled={busy} onclick={() => (removeOnlyOpen = true)}>
-    Remove from the panel only
+<Button variant="outline" disabled={busy} onclick={startEdit}>Edit</Button>
+{#if node.isDisabled}
+  <Button disabled={busy} onclick={() => act(() => nodeAction(slug, node.nodeUuid, 'enable'))}>
+    Turn on
   </Button>
-</div>
+{:else}
+  <Button disabled={busy} onclick={() => (restartOpen = true)}>Restart</Button>
+{/if}
+<DropdownMenu.Root>
+  <DropdownMenu.Trigger>
+    {#snippet child({ props })}
+      <Button {...props} variant="outline" disabled={busy}>
+        More <ChevronDown aria-hidden="true" />
+      </Button>
+    {/snippet}
+  </DropdownMenu.Trigger>
+  <DropdownMenu.Content align="end" class="w-64">
+    {#if !node.isDisabled}
+      <DropdownMenu.Item onSelect={() => (offOpen = true)}>Turn off</DropdownMenu.Item>
+    {/if}
+    <DropdownMenu.Separator />
+    {#if node.isDisabled}
+      <DropdownMenu.Item variant="destructive" onSelect={() => (removeOpen = true)}>
+        Stop and remove
+      </DropdownMenu.Item>
+    {/if}
+    <DropdownMenu.Item variant="destructive" onSelect={() => (removeOnlyOpen = true)}>
+      Remove from the panel only
+    </DropdownMenu.Item>
+  </DropdownMenu.Content>
+</DropdownMenu.Root>
 
 <ConfirmDialog
   bind:open={restartOpen}
   title={`Restart ${node.name}?`}
-  body="Everyone connected through this node is cut off for a few seconds and reconnects by themselves."
+  body="People connected through it are cut off for a few seconds and reconnect on their own."
   confirmLabel="Restart"
   onConfirm={() => {
     restartOpen = false;
@@ -109,7 +114,7 @@
 <ConfirmDialog
   bind:open={offOpen}
   title={`Turn ${node.name} off?`}
-  body="Nobody can connect through this node while it is off. Their other servers keep working."
+  body="Nobody can connect through it until it is turned on again."
   confirmLabel="Turn off"
   danger
   onConfirm={() => {
@@ -120,7 +125,7 @@
 <ConfirmDialog
   bind:open={removeOpen}
   title={`Remove ${node.name}?`}
-  body="The node is already off. This takes it off the panel. It is not created again by the node role unless you bring it back."
+  body="It is off, so nobody is on it. The panel forgets it, and the node role will not add it back unless you say so."
   typed={node.name}
   confirmLabel="Remove"
   danger
@@ -132,7 +137,7 @@
 <ConfirmDialog
   bind:open={removeOnlyOpen}
   title={`Remove ${node.name} from the panel only?`}
-  body="This removes the panel's record of the node and nothing else. The node itself may keep running and serving people until someone stops it on the machine. To stop it first, turn it off and then choose Stop and remove."
+  body="The panel forgets it, but the node keeps running and serving people until someone stops it on the machine. To stop it first, turn it off and choose Stop and remove."
   typed={node.name}
   confirmLabel="Remove from the panel"
   danger
@@ -146,10 +151,9 @@
   <Dialog.Content class="sm:max-w-md">
     <Dialog.Header>
       <Dialog.Title>Edit {node.name}</Dialog.Title>
-      <Dialog.Description>
-        This is the panel's record of the node: where the panel reaches it, not where members
-        connect.
-      </Dialog.Description>
+      <Dialog.Description
+        >Where the panel reaches the node, not where members connect.</Dialog.Description
+      >
     </Dialog.Header>
     <form
       class="space-y-3"
@@ -178,19 +182,12 @@
           id={`${uid}-country`}
           bind:value={country}
           maxlength={2}
-          placeholder="XX"
           class="w-24 uppercase"
           autocomplete="off"
-          aria-describedby={`${uid}-country-help`}
         />
-        <p id={`${uid}-country-help`} class="text-muted-foreground text-sm">
-          Two letters. Leave it blank to keep the current one.
-        </p>
       </div>
       {#if restarts}
-        <p class="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm">
-          Changing the address or the port makes the panel restart this node.
-        </p>
+        <p class="text-muted-foreground text-sm">A new address or port restarts the node.</p>
       {/if}
       <Dialog.Footer>
         <Button type="button" variant="outline" onclick={() => (editOpen = false)}>Cancel</Button>

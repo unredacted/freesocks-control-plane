@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { pickInstance, serversPaths } from './routes';
+import { pickInstance, resolveServersRoute, serversPaths } from './routes';
 import {
   WORDED_CODES,
   ago,
@@ -7,7 +7,11 @@ import {
   inboundSummary,
   namesDelta,
   nodeWords,
-  notices,
+  needsYou,
+  quietNotes,
+  nodeNotes,
+  fleetSentence,
+  countryLabel,
   observedWords,
   opTitle,
   opWords,
@@ -37,6 +41,7 @@ const inbound = (over: Record<string, unknown> = {}) => ({
 });
 
 const node = (over: Record<string, unknown> = {}) => ({
+  nodeUuid: 'n-1',
   name: 'node-one',
   online: true,
   isDisabled: false,
@@ -113,44 +118,109 @@ describe('observedWords', () => {
   });
 });
 
-describe('notices', () => {
-  test('nothing to say about a healthy instance', () => {
-    expect(notices({ nodes: [node()] as never, unattached: { profiles: [], hosts: [] } })).toEqual(
-      [],
+describe('what the page says', () => {
+  const tree = (nodes: unknown[], over: Record<string, unknown> = {}) =>
+    ({ nodes, profiles: [], unattached: { profiles: [], hosts: [] }, ...over }) as never;
+
+  test('the instance in one sentence', () => {
+    expect(fleetSentence([])).toEqual({ dot: 'grey', text: 'No nodes on this panel yet.' });
+    expect(fleetSentence([node({ usersOnline: 3 }), node()] as never)).toEqual({
+      dot: 'green',
+      text: 'All 2 nodes are online, 7 people connected.',
+    });
+    expect(fleetSentence([node({ usersOnline: 1 })] as never).text).toBe(
+      'The node is online, 1 person connected.',
+    );
+    expect(fleetSentence([node({ usersOnline: 1 }), node({ online: false })] as never)).toEqual({
+      dot: 'amber',
+      text: '1 of 2 nodes online, 1 person connected. The panel cannot reach the other one.',
+    });
+    expect(fleetSentence([node({ online: false })] as never).dot).toBe('red');
+    // A node turned off on purpose is not "unreachable".
+    expect(fleetSentence([node(), node({ isDisabled: true, online: false })] as never).dot).toBe(
+      'green',
     );
   });
 
-  test('names what is wrong in plain words', () => {
-    const out = notices({
-      nodes: [
-        node({
-          inbounds: [inbound({ realityPublicKeyMismatch: true, hosts: [], squads: [] })],
-        }),
-      ] as never,
-      unattached: { profiles: ['Old profile'], hosts: ['a', 'b', 'c', 'd', 'e'] },
-    });
-    expect(out.map((n) => n.tone)).toEqual(['warn', 'info', 'info', 'warn', 'info']);
-    expect(out[0]!.text).toMatch(/does not match its private key/);
-    expect(out[3]!.text).toBe(
+  test('needs you: only what is broken, one line each', () => {
+    expect(needsYou(tree([node()]))).toEqual([]);
+    const rows = needsYou(
+      tree(
+        [node({ inbounds: [inbound({ realityPublicKeyMismatch: true, hosts: [], squads: [] })] })],
+        {
+          profiles: [
+            { profileUuid: 'p-1', name: 'Default', foreignEditAt: '2026-01-01T00:00:00Z' },
+          ],
+          unattached: { profiles: ['Old profile'], hosts: ['a', 'b', 'c', 'd', 'e'] },
+        },
+      ),
+    );
+    expect(rows.map((r) => r.key)).toEqual(['key:n-1:reality-in', 'edit:p-1', 'unattached-hosts']);
+    expect(rows[0]!.nodeUuid).toBe('n-1');
+    expect(rows[2]!.text).toBe(
       'a, b, c and 2 more point at an inbound no node serves. People given them cannot connect.',
     );
-    expect(out[4]!.text).toBe('No node runs Old profile.');
+  });
+
+  test('quiet notes: one unused inbound on three nodes is one line', () => {
+    const unused = (name: string) =>
+      node({
+        nodeUuid: name,
+        name,
+        inbounds: [inbound({ tag: 'VLESS_XHTTP_CDN', hosts: [], squads: [] })],
+      });
+    expect(quietNotes(tree([unused('a'), unused('b'), unused('c')]))).toEqual([
+      'VLESS_XHTTP_CDN is unused on every node: no address and no squad.',
+    ]);
+    expect(
+      quietNotes(
+        tree([unused('a'), node({ nodeUuid: 'b', name: 'b' })], {
+          unattached: { profiles: ['Default-Profile'], hosts: [] },
+        }),
+      ),
+    ).toEqual([
+      'VLESS_XHTTP_CDN is unused on a: no address and no squad.',
+      'No node runs Default-Profile.',
+    ]);
+    expect(quietNotes(tree([node({ inbounds: [inbound({ squads: [] })] })]))).toEqual([
+      'reality-in is unused on node-one: in no squad.',
+    ]);
+    expect(quietNotes(tree([node()]))).toEqual([]);
+  });
+
+  test("a node's own notes, and its country", () => {
+    expect(nodeNotes(node({ inbounds: [inbound({ hosts: [] })] }) as never)).toEqual([
+      'reality-in has no address for members.',
+    ]);
+    expect(countryLabel('XX')).toBeNull();
+    expect(countryLabel(null)).toBeNull();
+    expect(countryLabel('nl')).toBe('Netherlands');
   });
 
   test('house style: no em-dash, no API path, no bare code word', () => {
     const all = [
-      ...notices({
-        nodes: [
-          node({ inbounds: [inbound({ realityPublicKeyMismatch: true, hosts: [], squads: [] })] }),
-        ] as never,
-        unattached: { profiles: ['p'], hosts: ['h'] },
-      }).map((n) => n.text),
+      ...needsYou(
+        tree(
+          [
+            node({
+              inbounds: [inbound({ realityPublicKeyMismatch: true, hosts: [], squads: [] })],
+            }),
+          ],
+          {
+            profiles: [{ profileUuid: 'p', name: 'Default', foreignEditAt: 'x' }],
+            unattached: { profiles: ['p'], hosts: ['h'] },
+          },
+        ),
+      ).map((n) => n.text),
+      ...quietNotes(tree([node({ inbounds: [inbound({ hosts: [], squads: [] })] })])),
+      fleetSentence([node(), node({ online: false })] as never).text,
       nodeWords(node({ online: false }) as never).sentence,
       nodeWords(node({ profile: null }) as never).sentence,
     ].join('\n');
     expect(all).not.toMatch(/—|–/);
     expect(all).not.toMatch(/\/api\//);
-    expect(all).not.toMatch(/[a-z]+_[a-z]+/);
+    // (inbound tags such as reality-in are the panel's own names, not code words)
+    expect(all.replace(/reality-in/g, '')).not.toMatch(/[a-z]+_[a-z]+/);
   });
 });
 
@@ -158,6 +228,15 @@ describe('routes', () => {
   test('paths and instance selection', () => {
     expect(serversPaths.home()).toBe('/admin/servers');
     expect(serversPaths.home({ instance: 'panel a' })).toBe('/admin/servers?instance=panel%20a');
+    expect(serversPaths.node('n 1', { instance: 'p' })).toBe(
+      '/admin/servers/nodes/n%201?instance=p',
+    );
+    expect(resolveServersRoute('/admin/servers')).toEqual({ page: 'home' });
+    expect(resolveServersRoute('/admin/servers/nodes/n%201')).toEqual({
+      page: 'node',
+      uuid: 'n 1',
+    });
+    expect(resolveServersRoute('/admin/servers/x')).toEqual({ page: 'not-found' });
     const list = [
       { slug: 'outline-a', observable: false },
       { slug: 'panel-a', observable: true },
@@ -208,7 +287,7 @@ describe('write wording', () => {
 
   test('an edit made elsewhere says what may now be wrong, without blame', () => {
     const words = foreignEditWords('Default', '5 minutes ago');
-    expect(words).toMatch(/^Default was changed on the panel 5 minutes ago, and not from here/);
+    expect(words).toMatch(/^Default was changed on the panel 5 minutes ago, not from here/);
     expect(words).not.toMatch(/—/);
   });
 
