@@ -25,6 +25,12 @@ export const observeEnabled = internalQuery({
   handler: async (ctx) => (await resolveServerConfig(ctx.db)).manage.observe,
 });
 
+/** The write-off switch, re-read by resumed workflows before any provider side effect. */
+export const manageEnabled = internalQuery({
+  args: {},
+  handler: async (ctx) => (await resolveServerConfig(ctx.db)).manage.enabled,
+});
+
 export const configView = internalQuery({
   args: {},
   handler: async (ctx) => ({ config: flattenServerConfig(await resolveServerConfig(ctx.db)) }),

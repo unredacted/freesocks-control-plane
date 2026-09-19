@@ -239,17 +239,20 @@ export const advance = internalAction({
       ctx.runMutation(internal.panelRetirement.mark, { retirementId, code });
     try {
       // 1. The relay and its edges (publication withdrawn by the delete; edges destroyed by reconcile).
-      if (c.relay && !c.relay.deleting) {
-        await ctx.runMutation(internal.relays.requestDelete, {
-          id: c.relay._id,
-          disposition: 'keep-dark',
-          force: true,
-        });
-        await ctx.runMutation(internal.edgeTestCredentials.releaseForRelay, {
-          relayId: c.relay._id,
-        });
-      }
-      if (c.relay?.deleting) {
+      if (c.relay) {
+        if (!c.relay.deleting) {
+          await ctx.runMutation(internal.relays.requestDelete, {
+            id: c.relay._id,
+            disposition: 'keep-dark',
+            force: true,
+          });
+          await ctx.runMutation(internal.edgeTestCredentials.releaseForRelay, {
+            relayId: c.relay._id,
+          });
+        }
+        // Requested or already under way: the row is `deleting` until edge
+        // reconcile has destroyed the edges and finalized it. Nothing below
+        // runs while anything of the node is still out there; next pass.
         await stop('servers.relay_draining');
         return null;
       }

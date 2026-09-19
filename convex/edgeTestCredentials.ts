@@ -250,7 +250,9 @@ export const releaseForIntent = internalMutation({
     let released = 0;
     let outstanding = 0;
     for (const r of rows) {
-      if (r.removal === 'pending') outstanding++;
+      // A row whose cleanup exhausted its retries still names a user that may
+      // exist on the panel: outstanding until an operator retries or resolves it.
+      if (r.removal === 'pending' || r.removal === 'failed') outstanding++;
       if (r.removal !== 'pending' || r.expiresAt <= now) continue;
       await ctx.db.patch(r._id, { expiresAt: now, updatedAt: now });
       released++;

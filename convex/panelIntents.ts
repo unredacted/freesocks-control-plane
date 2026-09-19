@@ -588,6 +588,91 @@ const progressPatch = v.object({
 
 type ProgressPatch = Infer<typeof progressPatch>;
 
+/**
+ * Record the revisions a run observed. A move under evidence already taken
+ * (the profile token, the inbound, the REALITY material) or a direct node's
+ * endpoint moving under its Host is OBSERVED DRIFT (docs/servers.md "Node
+ * lifecycle"): the invalidated evidence goes, running activations are
+ * superseded, and a live node closes under a maintenance transition until it
+ * is re-verified and re-approved. FCP never claims the approved configuration
+ * is still served.
+ */
+export const observeRevisions = internalMutation({
+  args: {
+    ...fence,
+    configRevision: v.string(),
+    authRevision: v.union(v.string(), v.null()),
+    hostMoved: v.boolean(),
+  },
+  handler: async (ctx, { configRevision, authRevision, hostMoved, ...f }) => {
+    const intent = await ctx.db.get(f.intentId);
+    if (!intent || !fenceHolds(intent, f)) return { ok: false as const, drift: false };
+    const now = Date.now();
+    const revisionMoved =
+      intent.configRevision !== undefined &&
+      (intent.configRevision !== configRevision || (intent.authRevision ?? null) !== authRevision);
+    const patch: Partial<Intent> = {
+      configRevision,
+      authRevision: authRevision ?? undefined,
+      claim: { attemptId: f.attemptId, expiresAt: now + CLAIM_LEASE_MS },
+      updatedAt: now,
+    };
+    const revs: Revisions = {
+      machineRevision: intent.machineRevision,
+      configRevision,
+      authRevision: authRevision ?? undefined,
+      deliveryRevision: intent.deliveryRevision ?? '',
+    };
+    const evidence = retainEvidence(intent.activation.evidence, revs).filter(
+      (e) => !(hostMoved && e.kind === 'direct_confirmed'),
+    );
+    const d = intent.delivery.disposition;
+    const drift =
+      evidence.length < intent.activation.evidence.length ||
+      ((revisionMoved || hostMoved) &&
+        (!!intent.activation.currentRunId || d === 'live' || d === 'activating'));
+    if (drift) {
+      patch.activation = {
+        ...intent.activation,
+        evidence,
+        stage: stageAfterChange(intent.activation.stage, evidence),
+        reviewHash: undefined,
+        currentRunId: undefined,
+      };
+      for (const r of await ctx.db
+        .query('panelActivationRuns')
+        .withIndex('by_intent', (q) => q.eq('intentId', intent._id))
+        .collect())
+        if (r.state === 'running' || r.state === 'blocked' || r.state === 'review')
+          await ctx.db.patch(r._id, { state: 'superseded', updatedAt: now });
+      if (d === 'live') {
+        patch.delivery = { ...intent.delivery, disposition: 'unavailable' };
+        patch.maintenance = intent.maintenance ?? {
+          id: crypto.randomUUID(),
+          reason: 'drift',
+          since: now,
+        };
+      } else if (d === 'activating') patch.delivery = { ...intent.delivery, disposition: 'staged' };
+      await bumpGateVersion(ctx, intent.backendServerId);
+      const server = await ctx.db.get(intent.backendServerId);
+      await writeAuditLog(ctx, {
+        actorType: 'system',
+        action: 'servers.node.drift',
+        targetType: 'panel_node_intent',
+        targetId: intent._id,
+        payload: {
+          backendSlug: server?.slug ?? '',
+          name: intent.name,
+          kind: revisionMoved ? 'revision' : 'endpoint',
+          wasLive: d === 'live',
+        },
+      });
+    }
+    await ctx.db.patch(f.intentId, patch);
+    return { ok: true as const, drift };
+  },
+});
+
 /** Record progress of the fenced run; extends the lease, or releases it when the run is done. */
 export const progress = internalMutation({
   args: { ...fence, patch: progressPatch },
@@ -645,6 +730,12 @@ export const reconcile = internalAction({
       if (!writes) return stop('blocked', 'servers.unsupported_backend').then(() => null);
       const setup = c.setup;
       const ib = inboundFor(setup, c.intent.purpose);
+      // A run scheduled or resumed after the write-off switch was turned off
+      // parks: the origin DNS writes below do not go through the ledger.
+      if (!(await ctx.runQuery(internal.serverAdmin.manageEnabled, {}))) {
+        await stop('pending', 'servers.manage_disabled');
+        return null;
+      }
       // The observation the row is compared against must be fresh.
       if (!(await observeInstance(ctx, c.server))) {
         await stop('pending', 'servers.observe_failed');
@@ -714,25 +805,59 @@ export const reconcile = internalAction({
       }
       await record({ nodeUuid: c.node!.nodeUuid });
 
-      // 2. Revisions the evidence is bound to.
+      // 2. Revisions the evidence is bound to. A move under evidence already
+      //    taken, or a direct node's endpoint moving under its Host, is
+      //    observed drift: evidence goes, a live node closes (observeRevisions).
       const configRevision = `${c.profile?.changeToken ?? ''}:${ib.uuid}`;
       const authRevision = c.inbound?.realityAuth?.digest ?? null;
-      await record({ configRevision, authRevision });
+      const reality = setup.inbounds!.reality;
+      const hostWant = {
+        address: c.originAddress,
+        port: reality.port,
+        sni: reality.serverNames[0] ?? null,
+      };
+      const hostMoved =
+        c.intent.purpose === 'direct' &&
+        !!c.directHost &&
+        (c.directHost.address !== hostWant.address ||
+          c.directHost.port !== hostWant.port ||
+          (c.directHost.sni ?? null) !== hostWant.sni);
+      const rev = await ctx.runMutation(internal.panelIntents.observeRevisions, {
+        ...f,
+        configRevision,
+        authRevision,
+        hostMoved,
+      });
+      if (!rev.ok) throw new Fenced();
+      c = await load();
 
-      // 3. A direct node's Host: created DISABLED; activation enables it.
+      // 3. A direct node's Host: created DISABLED; activation enables it. A
+      //    moved endpoint is written to the existing Host: the gate closed
+      //    above when that Host was committed, so members never hold a dead
+      //    tuple as approved.
       if (c.intent.purpose === 'direct') {
-        const reality = setup.inbounds!.reality;
         if (!c.directHost) {
           const { opId } = await ctx.runMutation(internal.panelWrites.requestHostCreate, {
             backendServerId: sid,
             remark: `${c.intent.name}-reality`,
-            address: c.originAddress,
-            port: reality.port,
-            sni: reality.serverNames[0] ?? null,
+            ...hostWant,
             fingerprint: 'chrome',
             securityLayer: 'DEFAULT',
             isDisabled: true,
             inboundUuid: reality.uuid,
+          });
+          const r = await ctx.runAction(internal.panelWrites.run, { opId });
+          if (r.open) {
+            await stop('pending', 'servers.op_running');
+            return null;
+          }
+          await observeInstance(ctx, c.server);
+          c = await load();
+        } else if (hostMoved) {
+          const { opId } = await ctx.runMutation(internal.panelWrites.requestHostUpdate, {
+            backendServerId: sid,
+            hostUuid: c.directHost.hostUuid,
+            ...hostWant,
           });
           const r = await ctx.runAction(internal.panelWrites.run, { opId });
           if (r.open) {

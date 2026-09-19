@@ -385,11 +385,76 @@ describe('activating a direct node', () => {
     expect(run.code).toBe('servers.rehearsal_failed');
     expect(run.rehearsal?.ok).toBe(false);
     expect(panel.hosts[0]!.isDisabled).toBe(true);
+    // The node is parked where it can be approved again; nothing is served.
     const intent = (await t.run((ctx) => ctx.db.get(intentId)))!;
-    expect(intent.activation.stage).toBe('activating');
-    expect(intent.delivery.disposition).toBe('activating');
+    expect(intent.activation.stage).toBe('awaiting_approval');
+    expect(intent.activation.currentRunId).toBeUndefined();
+    expect(intent.delivery.disposition).toBe('staged');
     expect(intent.approved).toBeUndefined();
     expect((await gateOf(t, serverId)).state).toBe('blocked');
+
+    // With the cause fixed, a fresh approval starts a fresh run and commits.
+    const { realityPublicKey } = await import('./lib/panel/digest');
+    panel.profiles[0].publicKeyByTag.VLESS_REALITY = realityPublicKey(
+      panel.profiles[0].config.inbounds[1].streamSettings.realitySettings.privateKey,
+    );
+    const again = await t.query(internal.panelActivation.review, { intentId });
+    expect(again.blockers).toEqual([]);
+    const { runId: runId2 } = await t.mutation(internal.panelActivation.approve, {
+      intentId,
+      reviewHash: again.reviewHash,
+    });
+    expect(runId2).not.toBe(runId);
+    const run2 = await runUntil(
+      () => t.run((ctx) => ctx.db.get(runId2)),
+      (s) => s !== 'running',
+    );
+    expect(run2.state).toBe('committed');
+    expect((await t.run((ctx) => ctx.db.get(runId)))!.state).toBe('superseded');
+    expect((await gateOf(t, serverId)).state).toBe('open');
+  });
+
+  test('a moved endpoint under a live node is observed drift: the gate closes, the Host follows, the tick is gone', async () => {
+    const { t, serverId, panel, intentId } = await seedLiveDirect();
+    const built = await t.action(internal.panelActivation.buildDirectTestLink, { intentId });
+    const { intentId: _i, issuedAt: _t, ...binding } = built.binding;
+    await t.mutation(internal.panelActivation.confirmDirect, { intentId, binding });
+    const review = await t.query(internal.panelActivation.review, { intentId });
+    const { runId } = await t.mutation(internal.panelActivation.approve, {
+      intentId,
+      reviewHash: review.reviewHash,
+    });
+    await runUntil(
+      () => t.run((ctx) => ctx.db.get(runId)),
+      (s) => s !== 'running',
+    );
+    expect((await gateOf(t, serverId)).state).toBe('open');
+
+    // The role reports a new public address: the committed Host's tuple is dead.
+    await t.mutation(internal.panelIntents.enroll, {
+      backendServerId: serverId,
+      name: 'node-a',
+      purpose: 'direct',
+      contractVersion: 2,
+      observed: {
+        management: { address: '192.0.2.10', port: 2222 },
+        publicIps: { v4: '203.0.113.11' },
+        capabilities: { caddy: false, ipv6: false },
+      },
+    });
+    const intent = await settled(() => t.run((ctx) => ctx.db.get(intentId)));
+    expect(intent.delivery.disposition).toBe('unavailable');
+    expect(intent.maintenance?.reason).toBe('drift');
+    expect(intent.activation.currentRunId).toBeUndefined();
+    expect(intent.activation.evidence.some((e) => e.kind === 'direct_confirmed')).toBe(false);
+    expect(intent.activation.stage).not.toBe('live');
+    expect((await gateOf(t, serverId)).state).toBe('blocked');
+    // The existing Host now carries the new endpoint; the approved snapshot is untouched.
+    expect(panel.hosts).toHaveLength(1);
+    expect(panel.hosts[0]!.address).toBe('203.0.113.11');
+    expect(intent.approved?.reviewHash).toBe(review.reviewHash);
+    const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
+    expect(audit.some((a) => a.action === 'servers.node.drift')).toBe(true);
   });
 
   test('a moved observation supersedes the run and a stale commit is refused', async () => {

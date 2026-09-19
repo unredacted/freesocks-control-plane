@@ -173,7 +173,7 @@ export const start = internalMutation({
         updatedAt: now,
       });
       row = (await ctx.db.get(row._id))!;
-    } else if (row.state === 'ready') {
+    } else if (row.state === 'ready' && !setupNeedsRefresh(row)) {
       return { setupId: row._id, generation: row.generation, state: row.state, started: false };
     }
     const attemptId = crypto.randomUUID();
@@ -204,6 +204,20 @@ export const start = internalMutation({
     };
   },
 });
+
+/**
+ * A ready row that still records a blocker (drifted privacy after a
+ * hardening, a drifted or refused template, a skipped placement) is re-run on
+ * request so the blocker can clear: the run adopts everything it finds and
+ * recomputes those fields from the panel.
+ */
+function setupNeedsRefresh(row: Doc<'panelSetups'>): boolean {
+  return (
+    row.privacy === 'drifted' ||
+    row.templates.some((t) => t.state !== 'matched') ||
+    row.placements.some((p) => p.state === 'skipped')
+  );
+}
 
 /**
  * An existing panel becomes FCP's to write: the operator attests that no
@@ -467,6 +481,14 @@ export const run = internalAction({
       if (!next) throw new Fenced();
       return next;
     };
+    // The write-off switch is re-read before every provider write this run
+    // makes outside the ledger: a run scheduled or resumed after the switch
+    // was turned off parks instead of writing.
+    const writable = async (step: string): Promise<boolean> => {
+      if (await ctx.runQuery(internal.serverAdmin.manageEnabled, {})) return true;
+      await finish('pending', 'servers.manage_disabled', step);
+      return false;
+    };
     const provider = PROVIDERS[c.server.backend];
     const writes = provider.panelWrites;
     if (!writes) {
@@ -525,6 +547,14 @@ export const run = internalAction({
         });
         if (!opened.ok) {
           await finish('pending', 'servers.obligation_unresolved', 'profile');
+          return null;
+        }
+        if (!(await writable('profile'))) {
+          await ctx.runMutation(internal.panelObligations.mark, {
+            id: opened.id,
+            state: 'failed',
+            code: 'servers.manage_disabled',
+          });
           return null;
         }
         const outcome = await createProfile(writes, config, input, opened.id, ctx);
@@ -661,6 +691,7 @@ export const run = internalAction({
 
       // 6. Subscription templates: reconcile on drift; a refused write blocks activation later.
       await record({ step: 'templates' });
+      if (!(await writable('templates'))) return null;
       const listed = await writes.listSubscriptionTemplates(config);
       const templates: {
         family: string;

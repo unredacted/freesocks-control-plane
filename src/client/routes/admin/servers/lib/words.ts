@@ -333,6 +333,13 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.run_not_running': 'This activation is not running.',
   'servers.revision_moved': 'Something changed since the approval. Review and approve again.',
   'servers.node_not_approved': 'The node behind this relay is not approved for delivery yet.',
+  'servers.standbys_missing': 'Protect this node in Edges first: its standbys come from there.',
+  'servers.standbys_unverified':
+    'Not every standby of this node is verified yet. Finish the Edges setup up to publish.',
+  'servers.credential_unresolved':
+    'A test credential of this node has an unknown outcome on the panel. Look at its users.',
+  'servers.delete_not_applied': 'An origin record was not removed. It is tried again.',
+  'servers.create_not_observed': 'An origin record was not created. It is tried again.',
   // Retirement.
   'servers.relay_draining': 'Its edges are still being taken down.',
   'servers.credentials_pending': 'Its test credentials are still being removed from the panel.',

@@ -130,13 +130,47 @@ export const review = internalQuery({
     const setup = await setupOf(ctx, intent.backendServerId);
     const shape = await reviewShapeOf(ctx, intent, setup);
     const reviewHash = await reviewHashOf(shape);
-    const blockers = activationBlockers(intent, setup);
+    const standbys = intent.purpose === 'direct' ? null : await standbysOf(ctx, intent);
+    const blockers = activationBlockers(intent, setup, standbys);
     return { shape, reviewHash, blockers, stage: intent.activation.stage };
   },
 });
 
+// --- a fronted node's candidates: the standbys of its Autopilot run ---------------------------------
+
+const OPEN_SETUP_RUN = new Set(['running', 'waiting', 'needs_you']);
+
+/**
+ * A front or relay node's candidates are the listeners of the Autopilot run
+ * protecting it, each with a live, verified standby (an L7 proof; an L4
+ * revision-bound confirmation) before that run reaches publish and waits for
+ * this approval. `code` null = verified now.
+ */
+async function standbysOf(
+  ctx: { db: QueryCtx['db'] },
+  intent: Intent,
+): Promise<{ code: string | null; listenerKeys: string[] }> {
+  const run = (
+    await ctx.db
+      .query('edgeSetupRuns')
+      .withIndex('by_origin', (q) =>
+        q.eq('backendServerId', intent.backendServerId).eq('nodeName', intent.name),
+      )
+      .collect()
+  ).find((r) => OPEN_SETUP_RUN.has(r.state));
+  if (!run) return { code: 'servers.standbys_missing', listenerKeys: [] };
+  const listenerKeys = run.listeners.map((l) => l.listenerKey).sort();
+  if (run.listeners.length === 0 || run.listeners.some((l) => !l.edgeId || l.verify !== 'verified'))
+    return { code: 'servers.standbys_unverified', listenerKeys };
+  return { code: null, listenerKeys };
+}
+
 /** What keeps a node from being approved, as code words. */
-function activationBlockers(intent: Intent, setup: Doc<'panelSetups'>): string[] {
+function activationBlockers(
+  intent: Intent,
+  setup: Doc<'panelSetups'>,
+  standbys: { code: string | null } | null,
+): string[] {
   const out: string[] = [];
   const revs = revisionsOf(intent);
   const has = (k: string) =>
@@ -144,6 +178,8 @@ function activationBlockers(intent: Intent, setup: Doc<'panelSetups'>): string[]
   if (!has('machine_ready')) out.push('servers.machine_not_ready');
   if (intent.purpose === 'direct' && !has('direct_confirmed'))
     out.push('servers.direct_unconfirmed');
+  if (intent.purpose !== 'direct' && !has('standbys_verified') && standbys?.code)
+    out.push(standbys.code);
   if (setup.placements.some((p) => p.state === 'skipped')) out.push('servers.placement_skipped');
   if (setup.templates.some((t) => t.state !== 'matched')) out.push('servers.template_drifted');
   if (setup.privacy === 'drifted') out.push('servers.privacy_drifted');
@@ -174,6 +210,8 @@ async function credentialContextOf(ctx: QueryCtx, intentId: Id<'panelNodeIntents
         !!r.backendShortId &&
         !!r.subscriptionUrl,
     ) ?? null;
+  // An issuance whose answer was lost: the row holds no panel identity.
+  const unresolved = rows.find((r) => r.removal === 'pending' && !r.backendUserId) ?? null;
   const hostname = originHostnameOf(intent, setup);
   return {
     intent,
@@ -188,6 +226,9 @@ async function credentialContextOf(ctx: QueryCtx, intentId: Id<'panelNodeIntents
           backendShortId: reusable.backendShortId!,
           subscriptionUrl: reusable.subscriptionUrl!,
         }
+      : null,
+    unresolved: unresolved
+      ? { id: unresolved._id, username: unresolved.username, expiresAt: unresolved.expiresAt }
       : null,
   };
 }
@@ -210,9 +251,45 @@ async function ensureIntentCredential(
       backendShortId: string;
       subscriptionUrl: string;
     } | null;
+    unresolved: { id: Id<'edgeTestCredentials'>; username: string; expiresAt: number } | null;
   },
 ) {
   if (c.reusable) return c.reusable;
+  if (c.unresolved) {
+    // Discovery by name settles the lost issuance before anything is minted
+    // again: found = adopted (and reused while it lasts), absent = it never
+    // landed. A panel without lookup keeps the block for the operator.
+    let found: { backendUserId: string; backendShortId: string; subscriptionUrl: string } | null;
+    try {
+      found = await ctx.runAction(internal.backends.findUserByUsername, {
+        backendServerId: c.server._id,
+        username: c.unresolved.username,
+      });
+    } catch (err) {
+      const code = err instanceof ConvexError ? (err.data as { code?: string })?.code : undefined;
+      if (code === 'backend.lookup_unsupported')
+        return refuse(
+          'servers.credential_unresolved',
+          'A test credential of this node has an unknown outcome on the panel',
+        );
+      throw err;
+    }
+    if (found) {
+      const adopted = {
+        backendUserId: found.backendUserId,
+        backendShortId: found.backendShortId,
+        subscriptionUrl: found.subscriptionUrl,
+      };
+      await ctx.runMutation(internal.edgeTestCredentials.markIssued, {
+        id: c.unresolved.id,
+        ...adopted,
+      });
+      if (c.unresolved.expiresAt > Date.now() + 60_000) return { id: c.unresolved.id, ...adopted };
+      // Expired meanwhile: the sweep removes it now that it has an id.
+    } else {
+      await ctx.runMutation(internal.edgeTestCredentials.dropUnissued, { id: c.unresolved.id });
+    }
+  }
   if (!c.squadUuid) refuse('servers.panel_not_set_up', 'The reality squad is not set up');
   const username = testCredentialUsername(c.intent.name, 'test_link', randomHex(4));
   const id = await ctx.runMutation(internal.edgeTestCredentials.insertPending, {
@@ -427,16 +504,32 @@ export const approve = internalMutation({
     const intent = await ctx.db.get(a.intentId);
     if (!intent) return refuse('not_found', 'No such node');
     const setup = await setupOf(ctx, intent.backendServerId);
-    const blockers = activationBlockers(intent, setup);
+    const standbys = intent.purpose === 'direct' ? null : await standbysOf(ctx, intent);
+    const blockers = activationBlockers(intent, setup, standbys);
     if (blockers.length > 0) refuse(blockers[0]!, 'The node is not ready for approval');
-    const stage = intent.activation.stage;
+    const now = Date.now();
+    let stage = intent.activation.stage;
+    let evidence = intent.activation.evidence;
+    if (intent.purpose !== 'direct' && stage === 'machine_ready' && standbys && !standbys.code) {
+      // The standbys hold now: recorded as evidence bound to the revisions
+      // (the commit re-checks it), and the ladder reaches candidates_verified.
+      evidence = [
+        ...evidence.filter((e) => e.kind !== 'standbys_verified'),
+        {
+          kind: 'standbys_verified',
+          ...revisionsOf(intent),
+          at: now,
+          detail: standbys.listenerKeys.join(','),
+        },
+      ];
+      stage = 'candidates_verified';
+    }
     if (stage !== 'candidates_verified' && stage !== 'awaiting_approval')
       refuse('servers.stage', `The node is at ${stage}, not ready for approval`);
     const shape = await reviewShapeOf(ctx, intent, setup);
     const reviewHash = await reviewHashOf(shape);
     if (reviewHash !== a.reviewHash)
       refuse('servers.review_stale', 'The review changed since you read it. Read it again');
-    const now = Date.now();
     // Any older run of this node is superseded: it never commits.
     for (const r of await ctx.db
       .query('panelActivationRuns')
@@ -469,7 +562,13 @@ export const approve = internalMutation({
       updatedAt: now,
     });
     await ctx.db.patch(intent._id, {
-      activation: { ...intent.activation, stage: 'activating', currentRunId: runId, reviewHash },
+      activation: {
+        ...intent.activation,
+        evidence,
+        stage: 'activating',
+        currentRunId: runId,
+        reviewHash,
+      },
       delivery: {
         ...intent.delivery,
         disposition: intent.delivery.disposition === 'live' ? 'live' : 'activating',
@@ -576,6 +675,7 @@ export const step = internalMutation({
       events: [...run.events, { at: now, code: a.code ?? a.stage ?? a.state ?? 'step' }],
       updatedAt: now,
     });
+    if (a.state === 'blocked' || a.state === 'failed') await parkAfterBlock(ctx, run);
     if (a.schedule)
       await ctx.scheduler.runAfter(0, internal.panelActivation.runDirect, {
         runId: a.runId,
@@ -584,6 +684,34 @@ export const step = internalMutation({
     return { ok: true as const, stepVersion: next };
   },
 });
+
+/**
+ * A run that blocked or failed parks the node where it can be approved
+ * again: the run keeps its record, the intent drops it as current, and a
+ * node that was only `activating` is `staged` again (a live node keeps its
+ * committed delivery). The next approval supersedes this run and starts a
+ * fresh one; nothing of the candidate is served meanwhile.
+ */
+async function parkAfterBlock(ctx: MutationCtx, run: Run): Promise<void> {
+  const intent = await ctx.db.get(run.intentId);
+  if (!intent || intent.activation.currentRunId !== run._id) return;
+  const now = Date.now();
+  await ctx.db.patch(intent._id, {
+    activation: {
+      ...intent.activation,
+      stage:
+        intent.activation.stage === 'activating' ? 'awaiting_approval' : intent.activation.stage,
+      currentRunId: undefined,
+    },
+    delivery: {
+      ...intent.delivery,
+      disposition:
+        intent.delivery.disposition === 'activating' ? 'staged' : intent.delivery.disposition,
+    },
+    updatedAt: now,
+  });
+  await bumpGateVersion(ctx, intent.backendServerId);
+}
 
 export const runDirect = internalAction({
   args: { runId: v.id('panelActivationRuns'), stepVersion: v.number() },
@@ -733,7 +861,7 @@ export async function promoteCandidate(
   if (intent.purpose === 'direct') {
     if (!has('direct_confirmed')) return { ok: false, code: 'servers.direct_unconfirmed' };
     if (!run.rehearsal?.ok) return { ok: false, code: 'servers.rehearsal_missing' };
-  }
+  } else if (!has('standbys_verified')) return { ok: false, code: 'servers.standbys_unverified' };
   const open = (
     await ctx.db
       .query('panelObligations')
@@ -804,6 +932,7 @@ export const commit = internalMutation({
         events: [...run.events, { at: now, code: r.code }],
         updatedAt: now,
       });
+      await parkAfterBlock(ctx, run);
     }
     return r;
   },

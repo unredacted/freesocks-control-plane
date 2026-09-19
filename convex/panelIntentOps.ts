@@ -12,8 +12,9 @@ import * as https from 'node:https';
 import * as tls from 'node:tls';
 import { v } from 'convex/values';
 import { internalAction } from './_generated/server';
+import type { ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
-import type { Id } from './_generated/dataModel';
+import type { Doc, Id } from './_generated/dataModel';
 import { cloudflareDnsClient } from './lib/edges/providers/dns/cloudflareDns';
 import type { DnsClient } from './lib/edges/providers/dns/types';
 import {
@@ -79,6 +80,18 @@ export const ensureOriginDns = internalAction({
       desired.push({ type: 'A', name: c.hostname, content: c.intent.observed.publicIps.v4 });
     if (c.intent.settings.publishV6 && c.intent.observed.publicIps.v6)
       desired.push({ type: 'AAAA', name: c.hostname, content: c.intent.observed.publicIps.v6 });
+
+    // A record FCP owns for a family no longer desired (v6 withdrawn, an
+    // address family gone from the observations) is deleted first, so what
+    // resolves is exactly what is desired.
+    const owned = await ctx.runQuery(internal.panelObligations.listForOwner, {
+      ownerKind: 'intent',
+      ownerId: f.intentId,
+    });
+    for (const o of owned) {
+      if (!ownsRecord(o) || desired.some((d) => `${d.type}:${d.name}` === o.identity)) continue;
+      if ((await withdrawRecord(ctx, o)) === 'unresolved') return { state: 'unresolved' };
+    }
     if (desired.length === 0) return { state: 'none' };
 
     let created = false;
@@ -94,20 +107,33 @@ export const ensureOriginDns = internalAction({
       const plan = planRecord(existing, d, marker);
       if (blocking) {
         const mine = existing.find((r) => r.type === d.type && r.comment === marker);
-        if (mine) {
-          await ctx.runMutation(internal.panelObligations.mark, {
+        const settle = (patch: {
+          state: 'confirmed' | 'failed';
+          code?: string;
+          recordId?: string;
+        }) =>
+          ctx.runMutation(internal.panelObligations.mark, {
             id: blocking._id,
-            state: 'confirmed',
-            resourceRef: mine.id,
-            recordId: mine.id,
+            ...patch,
+            ...(patch.recordId ? { resourceRef: patch.recordId } : {}),
           });
+        if (blocking.verb === 'delete') {
+          // A delete whose answer was lost: the record's ABSENCE is its
+          // postcondition; its presence means the delete never applied (a
+          // fresh delete may run, the same action after discovery).
+          if (mine && mine.id === blocking.dns?.recordId)
+            await settle({ state: 'failed', code: 'servers.delete_not_applied' });
+          else await settle({ state: 'confirmed' });
+        } else if (mine) {
+          await settle({ state: 'confirmed', recordId: mine.id });
         } else if (plan.action === 'conflict') {
-          await ctx.runMutation(internal.panelObligations.mark, {
-            id: blocking._id,
-            state: 'failed',
-            code: `servers.origin_name_taken:${plan.reason}`,
-          });
-        } else return { state: 'unresolved' };
+          await settle({ state: 'failed', code: `servers.origin_name_taken:${plan.reason}` });
+        } else {
+          // A create whose answer was lost and whose record the zone does not
+          // hold (the listing is read-after-write): it never landed. Settled,
+          // so a fresh create may run; never a second create on an unknown.
+          await settle({ state: 'failed', code: 'servers.create_not_observed' });
+        }
       }
       if (plan.action === 'conflict') {
         await ctx.runMutation(internal.panelIntents.progress, {
@@ -136,6 +162,15 @@ export const ensureOriginDns = internalAction({
         try {
           await client.deleteRecord(plan.deleteId);
           await ctx.runMutation(internal.panelObligations.mark, { id: del.id, state: 'confirmed' });
+          // The create obligation that owned the replaced record is settled
+          // with it: retirement must not try to delete a record twice.
+          for (const o of owned)
+            if (ownsRecord(o) && o.dns?.recordId === plan.deleteId)
+              await ctx.runMutation(internal.panelObligations.mark, {
+                id: o._id,
+                state: 'failed',
+                code: 'replaced',
+              });
         } catch {
           await ctx.runMutation(internal.panelObligations.mark, {
             id: del.id,
@@ -181,6 +216,50 @@ export const ensureOriginDns = internalAction({
   },
 });
 
+type Obligation = Doc<'panelObligations'>;
+
+/** A confirmed create obligation holding a record id: FCP owns that record. */
+function ownsRecord(o: Obligation): boolean {
+  return (
+    o.kind === 'dns.record' && o.verb === 'create' && o.state === 'confirmed' && !!o.dns?.recordId
+  );
+}
+
+/**
+ * Delete a record an obligation owns. Ownership (the marker) is re-checked on
+ * the obligation's OWN account and zone, never the setup's current one; a
+ * record already gone counts as withdrawn.
+ */
+async function withdrawRecord(ctx: ActionCtx, o: Obligation): Promise<'removed' | 'unresolved'> {
+  const d = o.dns!;
+  const acct = await ctx.runQuery(internal.edgeProviderAccounts.getWithSecret, {
+    id: d.accountId as Id<'edgeProviderAccounts'>,
+  });
+  const apiToken = (acct?.credentials as { apiToken?: string } | undefined)?.apiToken;
+  if (!apiToken) return 'unresolved';
+  const client = dnsFactory({
+    apiToken,
+    zoneId: d.zoneId,
+    zoneName: d.zoneName,
+    accountId: d.accountId,
+  });
+  const rec = await client.getRecord(d.recordId!);
+  if (rec && rec.comment !== d.marker) return 'unresolved';
+  if (rec) {
+    try {
+      await client.deleteRecord(d.recordId!);
+    } catch {
+      return 'unresolved';
+    }
+  }
+  await ctx.runMutation(internal.panelObligations.mark, {
+    id: o._id,
+    state: 'failed',
+    code: 'withdrawn',
+  });
+  return 'removed';
+}
+
 /** Delete the origin records an intent's obligations own (retirement). Ownership re-checked first. */
 export const withdrawOriginDns = internalAction({
   args: { intentId: v.id('panelNodeIntents') },
@@ -192,44 +271,9 @@ export const withdrawOriginDns = internalAction({
     let removed = 0;
     let unresolved = 0;
     for (const o of rows) {
-      if (
-        o.kind !== 'dns.record' ||
-        o.verb !== 'create' ||
-        o.state !== 'confirmed' ||
-        !o.dns?.recordId
-      )
-        continue;
-      const acct = await ctx.runQuery(internal.edgeProviderAccounts.getWithSecret, {
-        id: o.dns.accountId as Id<'edgeProviderAccounts'>,
-      });
-      const apiToken = (acct?.credentials as { apiToken?: string } | undefined)?.apiToken;
-      if (!apiToken) {
-        unresolved++;
-        continue;
-      }
-      // Cleanup uses the obligation's own account and zone, never the setup's current one.
-      const client = dnsFactory({
-        apiToken,
-        zoneId: o.dns.zoneId,
-        zoneName: o.dns.zoneName,
-        accountId: o.dns.accountId,
-      });
-      const rec = await client.getRecord(o.dns.recordId);
-      if (rec && rec.comment !== o.dns.marker) {
-        unresolved++;
-        continue;
-      }
-      try {
-        await client.deleteRecord(o.dns.recordId);
-        await ctx.runMutation(internal.panelObligations.mark, {
-          id: o._id,
-          state: 'failed',
-          code: 'withdrawn',
-        });
-        removed++;
-      } catch {
-        unresolved++;
-      }
+      if (!ownsRecord(o)) continue;
+      if ((await withdrawRecord(ctx, o)) === 'removed') removed++;
+      else unresolved++;
     }
     return { removed, unresolved };
   },
