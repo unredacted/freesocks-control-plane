@@ -315,6 +315,20 @@ describe('mapInboundsToListeners: unsupported reasons', () => {
     ]);
   });
 
+  test('a loopback-bound inbound is reported as such, with the address it listens on', async () => {
+    const { candidates, unsupported } = await map([
+      inbound({ tag: 'VLESS_WS_CDN', network: 'ws', security: 'none', listen: '127.0.0.1' }),
+      inbound({ tag: 'V6', listen: '[::1]' }),
+      inbound({ tag: 'PUBLIC', listen: '0.0.0.0' }),
+    ]);
+    expect(unsupported.slice(0, 2)).toEqual([
+      { tag: 'VLESS_WS_CDN', reason: 'loopback', detail: '127.0.0.1' },
+      { tag: 'V6', reason: 'loopback', detail: '[::1]' },
+    ]);
+    expect(unsupported.some((u) => u.tag === 'PUBLIC' && u.reason === 'loopback')).toBe(false);
+    expect(candidates.some((c) => c.sourceTag === 'PUBLIC')).toBe(true);
+  });
+
   test('inactive wins over every other reason (nothing to fix on a served-nowhere inbound)', async () => {
     const { unsupported } = await map([
       inbound({ tag: 'vmess-off', protocol: 'vmess', active: false }),

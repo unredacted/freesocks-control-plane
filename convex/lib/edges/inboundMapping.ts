@@ -139,6 +139,15 @@ function skip(tag: string, reason: InboundUnsupportedCode, detail?: string): Uns
   return detail ? { tag, reason, detail } : { tag, reason };
 }
 
+function isLoopbackListen(listen: string | null | undefined): boolean {
+  if (!listen) return false;
+  const l = listen
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, '');
+  return l === 'localhost' || l === '::1' || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(l);
+}
+
 function refusalDetail(err: unknown): string {
   if (err && typeof err === 'object' && 'data' in err) {
     const data = (err as { data?: unknown }).data;
@@ -164,6 +173,13 @@ export async function mapInboundsToListeners(
     const tag = ib.tag;
     if (!ib.active) {
       unsupported.push(skip(tag, 'inactive'));
+      continue;
+    }
+    // Bound to loopback: the node's public address never reaches it. Something
+    // else on the node (a TLS terminator) does, and only the operator or the
+    // node role can describe that hop (the listener's origin port + transport).
+    if (isLoopbackListen(ib.listen)) {
+      unsupported.push(skip(tag, 'loopback', ib.listen ?? undefined));
       continue;
     }
     if (!INBOUND_TAG_RE.test(tag)) {

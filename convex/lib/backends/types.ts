@@ -288,6 +288,8 @@ export interface PanelInbound {
   /** Xray protocol id as the panel reports it (`vless`, `trojan`, `vmess`, ...). */
   protocol: string;
   port: number | null;
+  /** Xray `listen` when set (an inbound bound to loopback is reached only through something else on the node). */
+  listen?: string | null;
   /** `streamSettings.network` (`tcp`, `raw`, `ws`, `httpupgrade`, `grpc`, `xhttp`, ...); `tcp` when absent. */
   network: string;
   /** `streamSettings.security` (`none`, `tls`, `reality`); `none` when absent. */

@@ -320,6 +320,14 @@ describe('projectXrayInbound', () => {
     for (const w of SECRET_WORDS) expect(json).not.toContain(w);
   });
 
+  test('carries the `listen` address (a loopback-bound inbound is not reachable from outside)', () => {
+    const base = { tag: 'W', port: 8443, protocol: 'vless', streamSettings: { network: 'ws' } };
+    expect(projectXrayInbound({ ...base, listen: '127.0.0.1' }, binding)).toMatchObject({
+      listen: '127.0.0.1',
+    });
+    expect(projectXrayInbound(base, binding)).not.toHaveProperty('listen');
+  });
+
   test('httpupgrade, grpc and the ws host field vs the legacy Host header', () => {
     expect(
       projectXrayInbound(

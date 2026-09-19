@@ -954,6 +954,8 @@ export function projectXrayInbound(
     security,
     active: binding.active,
   };
+  const listen = str(ib.listen);
+  if (listen) out.listen = listen;
   if (security === 'reality') {
     const rs = obj(stream.realitySettings) ?? {};
     const names = Array.isArray(rs.serverNames)
