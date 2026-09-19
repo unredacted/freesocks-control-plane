@@ -224,6 +224,23 @@ function accountCompatibility(
 }
 
 /** Build the snapshot for one node. Throws `not_found` / `edge.node_not_found`. */
+/**
+ * One step of the plan. A coded refusal passes through; anything else becomes
+ * `edge.plan_step_failed` naming the step, so the admin never gets an anonymous
+ * failure. Only the error's class name is quoted: messages can embed values.
+ */
+async function planStage<T>(doing: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err instanceof ConvexError) throw err;
+    throw new ConvexError({
+      code: 'edge.plan_step_failed',
+      message: `The plan stopped while ${doing} (${err instanceof Error ? err.name : 'error'}).`,
+    });
+  }
+}
+
 export async function buildPlan(
   ctx: ActionCtx,
   args: { backendServerId: Id<'backendServers'>; nodeUuid: string },
@@ -243,16 +260,24 @@ export async function buildPlan(
     nodeName: c.node.name,
     nodeUuid: a.nodeUuid,
   };
-  const inbounds = await planOps.listNodeInbounds(ctx, a);
-  const mapped = await mapInboundsToListeners(inbounds, {
-    existingKeys: [],
-    origin,
-  });
+  const inbounds = await planStage("reading the node's inbounds from the panel", () =>
+    planOps.listNodeInbounds(ctx, a),
+  );
+  const mapped = await planStage('mapping the inbounds to listeners', () =>
+    mapInboundsToListeners(inbounds, { existingKeys: [], origin }),
+  );
   // The mapper leaves HTTP-transport inbounds without `originTransport` (L4
   // only); the origin probe fills it in, exactly as the inbound-candidates
   // route does, so a WS / HTTP-upgrade / gRPC origin can be offered an L7 account.
   const targets = originProbeTargets(mapped.candidates, originAddress);
-  const outcomes = targets.length > 0 ? await planOps.probeOrigins(ctx, { targets }) : [];
+  // The probe handles an unreachable origin per target; a throw here is a fault
+  // of the probe itself, so it is reported rather than hidden as "L4 only".
+  const outcomes =
+    targets.length > 0
+      ? await planStage('probing how the origin answers HTTP transports', () =>
+          planOps.probeOrigins(ctx, { targets }),
+        )
+      : [];
   const candidates = applyOriginProbes(mapped.candidates, outcomes);
   const planInbounds: SetupPlanInbound[] = [];
   for (const cand of candidates) {
@@ -293,7 +318,9 @@ export async function buildPlan(
   const coveredInboundUuids = required
     .filter((i) => i.formats.links && i.formats.singbox && i.formats.clash)
     .map((i) => (i.listenerSpec as ListenerSpecInput).panelBinding!.configProfileInboundUuid);
-  const hosts = await planOps.listHosts(ctx, { backendServerId: a.backendServerId });
+  const hosts = await planStage('reading the Hosts from the panel', () =>
+    planOps.listHosts(ctx, { backendServerId: a.backendServerId }),
+  );
   const classified = classifyDirectHosts(hosts, {
     originAddress,
     nodeInboundUuids,

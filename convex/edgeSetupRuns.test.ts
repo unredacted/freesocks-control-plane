@@ -7,6 +7,7 @@
  * stage-ops seam. Acceptance cases 1, 2, 3, 6, 9, 10, 11, 12, 20, 21 and 26 of
  * the plan. Fixtures only (RFC 5737 / 3849, `*.example`).
  */
+import { ConvexError } from 'convex/values';
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
@@ -440,6 +441,34 @@ async function audits(t: T, action: string) {
 }
 
 describe('edgeSetupPlan', () => {
+  test('a panel call that throws names the step instead of an anonymous failure; a coded refusal passes through', async () => {
+    const { t, serverId } = await seed();
+    __setPlanOpsForTests({
+      listNodeInbounds: async () => {
+        throw new TypeError('secret-bearing text 203.0.113.9');
+      },
+    });
+    const err = await planFor(t, serverId).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(ConvexError);
+    const data = (err as ConvexError<{ code: string; message: string }>).data;
+    expect(data.code).toBe('edge.plan_step_failed');
+    expect(data.message).toContain("reading the node's inbounds");
+    expect(data.message).toContain('TypeError');
+    expect(data.message).not.toContain('203.0.113.9');
+    __setPlanOpsForTests({
+      listNodeInbounds: async () => [inboundA],
+      listHosts: async () => {
+        throw new ConvexError({ code: 'backend.panel_read_failed', message: 'x' });
+      },
+    });
+    await expect(planFor(t, serverId)).rejects.toMatchObject({
+      data: { code: 'backend.panel_read_failed' },
+    });
+  });
+
   test('the plan lists frontable inbounds, classifies the direct Hosts, judges accounts, and hashes what the run must echo', async () => {
     const { t, serverId, accountId } = await seed({
       inbounds: [inboundA, inboundS, inboundV],
