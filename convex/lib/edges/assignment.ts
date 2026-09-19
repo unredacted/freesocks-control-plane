@@ -45,6 +45,10 @@ export type SniPickVersion = 'hrw1';
 export interface AssignableSni {
   sni: string;
   status: 'active' | 'retired';
+  /** Curated countries where this name is KNOWN blocked: never offered there. */
+  blockedIn?: string[];
+  /** Curated countries where this name is proven to work. */
+  provenIn?: string[];
   retiredAt?: number;
   drainUntil?: number;
 }
@@ -134,13 +138,14 @@ export function edgeAssignable(e: PublishedEdge, opts: AssignableOptions = {}): 
 function sniFor(
   subscriberKey: string,
   edge: PublishedEdge,
+  where?: CountryContext,
 ): { ok: true; sni: string | null } | { ok: false } {
   // An L7 front terminates TLS on the CDN under its own hostname: that name is
   // the SNI, whatever the profile's (origin-facing) names say.
   const hostname = edgeHostname(edge);
   if (hostname) return { ok: true, sni: hostname };
   if (!protocolUsesSni(edge.proto)) return { ok: true, sni: null };
-  const sni = pickSni(subscriberKey, edge.edgeId, edge.serverNames, edge.sniPick);
+  const sni = pickSni(subscriberKey, edge.edgeId, edge.serverNames, edge.sniPick, where);
   return sni ? { ok: true, sni } : { ok: false };
 }
 
@@ -153,11 +158,14 @@ function backupSniFor(
   subscriberKey: string,
   edge: PublishedEdge,
   taken: ReadonlySet<string>,
+  where?: CountryContext,
 ): { ok: true; sni: string | null } | { ok: false } {
-  const plain = sniFor(subscriberKey, edge);
+  const plain = sniFor(subscriberKey, edge, where);
   if (!plain.ok || plain.sni === null) return plain;
   if (edge.sniPick !== 'hrw1' || edgeHostname(edge) || taken.size === 0) return plain;
-  const fresh = rankSniHrw(subscriberKey, edge.edgeId, edge.serverNames).find((n) => !taken.has(n));
+  const fresh = rankSniHrw(subscriberKey, edge.edgeId, edge.serverNames, where).find(
+    (n) => !taken.has(n),
+  );
   return { ok: true, sni: fresh ?? plain.sni };
 }
 
@@ -212,10 +220,11 @@ function namesFor(
   first: string | null,
   want: number,
   avoid: ReadonlySet<string> = new Set(),
+  where?: CountryContext,
 ): string[] {
   if (first === null || want <= 1) return [];
   if (edge.sniPick !== 'hrw1' || edgeHostname(edge) || !protocolUsesSni(edge.proto)) return [];
-  const ranked = rankSniHrw(subscriberKey, edge.edgeId, edge.serverNames).filter(
+  const ranked = rankSniHrw(subscriberKey, edge.edgeId, edge.serverNames, where).filter(
     (n) => n !== first,
   );
   const fresh = ranked.filter((n) => !avoid.has(n));
@@ -255,14 +264,45 @@ export function pickSni(
   edgeId: string,
   serverNames: readonly AssignableSni[],
   version?: SniPickVersion,
+  where?: CountryContext,
 ): string | null {
-  if (version === 'hrw1') return rankSniHrw(subscriberKey, edgeId, serverNames)[0] ?? null;
+  if (version === 'hrw1') return rankSniHrw(subscriberKey, edgeId, serverNames, where)[0] ?? null;
   if (serverNames.length === 0) return null;
   const pick = serverNames[fnv1a32(`${subscriberKey}:${edgeId}`) % serverNames.length];
   if (pick.status === 'active') return pick.sni;
   const active = serverNames.filter((s) => s.status === 'active');
   if (active.length === 0) return null;
   return active[fnv1a32(`${subscriberKey}:${edgeId}:active`) % active.length].sni;
+}
+
+/**
+ * Where the member is, for name selection. `country` is a CURATED country code
+ * (a place where names are known to be blocked selectively), or null when it is
+ * unknown, not curated, or there is no request to infer it from (a mirror).
+ */
+export interface CountryContext {
+  country: string | null;
+  curated: readonly string[];
+}
+
+/**
+ * 0 = preferred, 1 = acceptable, null = never offer.
+ *
+ *  - in a curated country: a name blocked THERE is never offered; names proven
+ *    there come first, names nobody has judged there fill the rest;
+ *  - anywhere else, or with no country at all: the UNIVERSAL pool, names that
+ *    are not blocked in ANY curated country. A mirror has no request country
+ *    and exists for exactly the people who are blocked, so it must never carry
+ *    a name known blocked somewhere curated.
+ */
+export function countryTier(s: AssignableSni, where?: CountryContext): 0 | 1 | null {
+  if (!where) return 0;
+  const blocked = s.blockedIn ?? [];
+  if (where.country) {
+    if (blocked.includes(where.country)) return null;
+    return (s.provenIn ?? []).includes(where.country) ? 0 : 1;
+  }
+  return blocked.some((c) => where.curated.includes(c)) ? null : 0;
 }
 
 /**
@@ -277,15 +317,23 @@ export function rankSniHrw(
   subscriberKey: string,
   edgeId: string,
   serverNames: readonly AssignableSni[],
+  where?: CountryContext,
 ): string[] {
-  const scored: { sni: string; score: number }[] = [];
+  const scored: { sni: string; score: number; tier: number }[] = [];
   const seen = new Set<string>();
   for (const s of serverNames) {
     if (s.status !== 'active' || seen.has(s.sni)) continue;
+    const tier = countryTier(s, where);
+    if (tier === null) continue;
     seen.add(s.sni);
-    scored.push({ sni: s.sni, score: fnv1a32(`${subscriberKey}:${edgeId}:${s.sni}`) });
+    scored.push({ sni: s.sni, score: fnv1a32(`${subscriberKey}:${edgeId}:${s.sni}`), tier });
   }
-  scored.sort((a, b) => b.score - a.score || (a.sni < b.sni ? -1 : a.sni > b.sni ? 1 : 0));
+  // Proven names first, each tier in its own rendezvous order: a member in a
+  // curated country holds proven names while enough exist, and the ranking
+  // inside a tier is as stable as ever.
+  scored.sort(
+    (a, b) => a.tier - b.tier || b.score - a.score || (a.sni < b.sni ? -1 : a.sni > b.sni ? 1 : 0),
+  );
   return scored.map((x) => x.sni);
 }
 
@@ -299,6 +347,8 @@ export interface AssignOptions {
   namesPerEndpoint?: number;
   /** Server names on the backup endpoint (default 1). */
   backupNames?: number;
+  /** Where the member is, for listeners on `hrw1`. Absent = no country logic at all. */
+  where?: CountryContext;
   /**
    * @deprecated No longer consulted: a retired server name is never selected,
    * whoever held it. Kept so existing callers type-check; remove at will.
@@ -320,7 +370,15 @@ export function assignEndpoints(
 ): Assignment {
   const pool = [...published].sort((a, b) => a.poolIndex - b.poolIndex);
   if (pool.length === 0) return { primary: null, backup: null };
-  const assignable = (e: PublishedEdge) => edgeAssignable(e, { canEmitV6: opts.canEmitV6 });
+  // An edge every one of whose names is excluded for this member's country is
+  // not assignable FOR THEM: the walk moves on to the next edge.
+  const assignable = (e: PublishedEdge) =>
+    edgeAssignable(e, { canEmitV6: opts.canEmitV6 }) &&
+    (!opts.where ||
+      e.sniPick !== 'hrw1' ||
+      !!edgeHostname(e) ||
+      !protocolUsesSni(e.proto) ||
+      rankSniHrw(subscriberKey, e.edgeId, e.serverNames, opts.where).length > 0);
   const start = poolSeed(subscriberKey) % pool.length;
   // Walk forward (wrapping) from the seeded index to the first assignable edge.
   let pIdx = -1;
@@ -333,13 +391,15 @@ export function assignEndpoints(
   }
   if (pIdx < 0) return { primary: null, backup: null };
   const primaryEdge = pool[pIdx];
-  const primarySni = sniFor(subscriberKey, primaryEdge);
+  const primarySni = sniFor(subscriberKey, primaryEdge, opts.where);
   if (!primarySni.ok) return { primary: null, backup: null };
   const primaryAlts = namesFor(
     subscriberKey,
     primaryEdge,
     primarySni.sni,
     opts.namesPerEndpoint ?? 1,
+    undefined,
+    opts.where,
   );
   const primary = endpointFor('primary', primaryEdge, primarySni.sni, primaryAlts);
   if (!opts.includeBackup) return { primary, backup: null };
@@ -358,7 +418,7 @@ export function assignEndpoints(
   // The backup's names avoid the primary's where the list allows it: two
   // edges sharing a blocked name would fail together.
   const taken = new Set([primarySni.sni, ...primaryAlts].filter((n): n is string => n !== null));
-  const backupSni = backupSniFor(subscriberKey, backupEdge, taken);
+  const backupSni = backupSniFor(subscriberKey, backupEdge, taken, opts.where);
   if (!backupSni.ok) return { primary, backup: null };
   const backupAlts = namesFor(
     subscriberKey,
@@ -366,6 +426,7 @@ export function assignEndpoints(
     backupSni.sni,
     opts.backupNames ?? 1,
     taken,
+    opts.where,
   );
   return { primary, backup: endpointFor('backup', backupEdge, backupSni.sni, backupAlts) };
 }

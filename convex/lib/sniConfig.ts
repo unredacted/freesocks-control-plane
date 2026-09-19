@@ -14,6 +14,12 @@ export interface SniConfig {
   requalifyHours: number;
   /** Consecutive failures after which an active name is suspended. */
   suspendAfterFails: number;
+  /**
+   * Countries where names are blocked selectively, so a member there is given
+   * names proven to work there, and a name blocked there is never offered.
+   * ISO 3166-1 alpha-2, uppercase.
+   */
+  curatedCountries: string[];
 }
 
 export const SNI_DEFAULTS: SniConfig = {
@@ -21,6 +27,7 @@ export const SNI_DEFAULTS: SniConfig = {
   qualifyPerTick: 40,
   requalifyHours: 24,
   suspendAfterFails: 2,
+  curatedCountries: ['CN', 'RU', 'IR', 'MM'],
 };
 
 export const SNI_BOUNDS = {
@@ -34,6 +41,7 @@ export const SNI_KEYS = {
   qualifyPerTick: 'edge.sni.qualifyPerTick',
   requalifyHours: 'edge.sni.requalifyHours',
   suspendAfterFails: 'edge.sni.suspendAfterFails',
+  curatedCountries: 'edge.sni.curatedCountries',
 } as const;
 type Path = keyof typeof SNI_KEYS;
 
@@ -77,7 +85,16 @@ export async function resolveSniConfig(db: DatabaseReader): Promise<SniConfig> {
       B.suspendAfterFails.max,
       D.suspendAfterFails,
     ),
+    curatedCountries: sanitizeCountries(raw.curatedCountries, D.curatedCountries),
   };
+}
+
+export function sanitizeCountries(v: unknown, dflt: string[]): string[] {
+  if (!Array.isArray(v)) return dflt;
+  const out = [...new Set(v.map((c) => String(c).trim().toUpperCase()))].filter((c) =>
+    /^[A-Z]{2}$/.test(c),
+  );
+  return out.slice(0, 32);
 }
 
 /** The appSettings writes for a patch; unknown keys and wrong types are ignored. */
@@ -89,10 +106,17 @@ export function sniConfigWrites(patch: Record<string, unknown>): {
   const changedKeys: Path[] = [];
   for (const p of Object.keys(SNI_KEYS) as Path[]) {
     const v = patch[p];
-    if (p === 'enabled' ? typeof v !== 'boolean' : typeof v !== 'number' || !Number.isFinite(v))
-      continue;
-    const value =
-      p === 'enabled' ? v : sanitizeInt(v, SNI_BOUNDS[p].min, SNI_BOUNDS[p].max, SNI_DEFAULTS[p]);
+    let value: unknown;
+    if (p === 'enabled') {
+      if (typeof v !== 'boolean') continue;
+      value = v;
+    } else if (p === 'curatedCountries') {
+      if (!Array.isArray(v)) continue;
+      value = sanitizeCountries(v, []);
+    } else {
+      if (typeof v !== 'number' || !Number.isFinite(v)) continue;
+      value = sanitizeInt(v, SNI_BOUNDS[p].min, SNI_BOUNDS[p].max, SNI_DEFAULTS[p]);
+    }
     writes.push({ key: SNI_KEYS[p], value: JSON.stringify(value) });
     changedKeys.push(p);
   }

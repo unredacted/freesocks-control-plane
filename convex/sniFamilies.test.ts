@@ -297,6 +297,68 @@ describe('binding a family to an inbound', () => {
   });
 });
 
+describe('judging names per country', () => {
+  test('marks are recorded, copied onto the relay listeners that carry the name, and the renders move on', async () => {
+    const { t, call } = await seed();
+    const { registerRelay, realityListener } = await import('./lib/edges/testing/fixtures');
+    const { relayId, listenerIds } = await registerRelay(t, {
+      listeners: [realityListener({ tlsNames: ['works.example', 'big-site.example'] })],
+    });
+    await call('POST', 'families', family);
+    await call('POST', 'families/fam-a/names', { lines: ['works.example', 'big-site.example'] });
+    const epoch0 = (await t.run((ctx) => ctx.db.get(relayId)))!.publicationEpoch;
+    const mark = (snis: string[], country: string, state: string) =>
+      call('POST', 'families/fam-a/names/country', { snis, country, state });
+    expect(await (await mark(['big-site.example'], 'cn', 'blocked')).json()).toEqual({
+      count: 1,
+      relays: 1,
+    });
+    await mark(['works.example', 'big-site.example'], 'RU', 'proven');
+    const names = (await t.run((ctx) => ctx.db.get(listenerIds.a)))!.tlsNames!;
+    expect(names).toEqual([
+      { name: 'works.example', status: 'active', provenIn: ['RU'] },
+      { name: 'big-site.example', status: 'active', blockedIn: ['CN'], provenIn: ['RU'] },
+    ]);
+    expect((await t.run((ctx) => ctx.db.get(relayId)))!.publicationEpoch).toBe(epoch0 + 2);
+    // Judging a name does not stale the operator's endpoint test.
+    expect((await t.run((ctx) => ctx.db.get(listenerIds.a)))!.revision).toBe(1);
+    const detail = await (await call('GET', 'families/fam-a')).json();
+    expect(detail.curatedCountries).toEqual(['CN', 'RU', 'IR', 'MM']);
+    expect(detail.names.find((n: { name: string }) => n.name === 'big-site.example')).toMatchObject(
+      {
+        blockedIn: ['CN'],
+        provenIn: ['RU'],
+      },
+    );
+    // Back to unjudged.
+    await mark(['big-site.example'], 'CN', 'unknown');
+    expect((await t.run((ctx) => ctx.db.get(listenerIds.a)))!.tlsNames![1]).toEqual({
+      name: 'big-site.example',
+      status: 'active',
+      provenIn: ['RU'],
+    });
+  });
+
+  test('only curated countries are judged, and the audit row has no hostname', async () => {
+    const { t, call } = await seed();
+    await call('POST', 'families', family);
+    await call('POST', 'families/fam-a/names', { lines: ['hidden-name.example'] });
+    const bad = await call('POST', 'families/fam-a/names/country', {
+      snis: ['hidden-name.example'],
+      country: 'DE',
+      state: 'blocked',
+    });
+    expect((await bad.json()).error.code).toBe('edge.sni.country_not_curated');
+    await call('POST', 'families/fam-a/names/country', {
+      snis: ['hidden-name.example'],
+      country: 'IR',
+      state: 'blocked',
+    });
+    const row = (await auditRows(t)).find((r) => r.action === 'edge.sni.names.country')!;
+    expect(row.payload).toEqual({ slug: 'fam-a', country: 'IR', state: 'blocked', count: 1 });
+  });
+});
+
 describe('audit and scopes', () => {
   test('audit rows carry slugs and counts, never a hostname', async () => {
     const { t, call } = await seed();

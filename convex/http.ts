@@ -13,6 +13,7 @@ import { httpAction } from './_generated/server';
 import type { ActionCtx } from './_generated/server';
 import { api, internal } from './_generated/api';
 import { registerEdgeRoutes } from './httpEdges';
+import { bodyIsCacheable, cacheIsServable, resolveWhere } from './lib/edges/sni/country';
 import { registerServerRoutes } from './httpServers';
 import { hmacSha256Hex } from './lib/crypto';
 import { sanitizeConnectionChoice } from './edgeAttribution';
@@ -260,6 +261,8 @@ interface SubCacheEntry {
   // the current token is identical, so a pool/switch/policy change re-renders
   // within one request instead of one TTL.
   relay?: string | number | null;
+  /** The member's own stored country answer this body was rendered for; never an inferred one. */
+  region?: string | null;
   // The epoch the body was actually RENDERED against (relay endpoints applied
   // or template entries dropped), null when the render failed open and the
   // body is the panel's. Only this is stamped on the subscription: a
@@ -1089,10 +1092,33 @@ http.route({
           nodeName: sub.pinnedNode ?? undefined,
         })
       : null;
-    const fresh = cached.find(
-      (e) =>
-        e.ua === ua && now - e.at < SUBSCRIPTION_CACHE_TTL_MS && (e.relay ?? null) === edgeToken,
-    );
+    // Where the member is, for server-name selection: their OWN stored answer,
+    // else the country the CDN reports for this request (null unless fronted),
+    // and only when it is a curated one. An INFERRED country is used for this
+    // response and kept nowhere: a body shaped by it is neither read from nor
+    // written to the content cache, and is served `private, no-store`
+    // (lib/edges/sni/country.ts).
+    const countryPolicy = sub.backendServerId
+      ? await ctx.runQuery(internal.edgeRender.countryPolicyFor, {
+          backendServerId: sub.backendServerId,
+          nodeName: sub.pinnedNode ?? undefined,
+        })
+      : { curated: [] as string[], sensitive: false };
+    const located = resolveWhere({
+      override: sub.sniRegion,
+      inferred: resolveCountry(req),
+      curated: countryPolicy.curated,
+    });
+    const useCache = cacheIsServable(located.source, countryPolicy.sensitive);
+    const fresh = useCache
+      ? cached.find(
+          (e) =>
+            e.ua === ua &&
+            now - e.at < SUBSCRIPTION_CACHE_TTL_MS &&
+            (e.relay ?? null) === edgeToken &&
+            (e.region ?? null) === (located.source === 'override' ? located.where.country : null),
+        )
+      : undefined;
     if (fresh) {
       // Cache hit: the served body was generated at the entry's fetch time and
       // rendered against the entry's epoch token.
@@ -1108,7 +1134,15 @@ http.route({
     // …and its edge-render token must still be current: a body rendered before
     // a rotation/burn/unpublish carries a removed edge and must never be served
     // as a fallback, however long the panel stays down.
-    const stale = cached.find((e) => e.ua === ua && (e.relay ?? null) === edgeToken) ?? null;
+    const stale =
+      (useCache
+        ? cached.find(
+            (e) =>
+              e.ua === ua &&
+              (e.relay ?? null) === edgeToken &&
+              (e.region ?? null) === (located.source === 'override' ? located.where.country : null),
+          )
+        : null) ?? null;
     try {
       const fetched = await ctx.runAction(internal.backends.fetchSubscriptionContent, {
         backend: sub.backend,
@@ -1167,7 +1201,7 @@ http.route({
               subscriptionId: sub._id,
             }));
           if (!renderKey) return unavailableResponse('no_render_key');
-          const out = applyEdgeRender(rctx, content, renderKey, { now });
+          const out = applyEdgeRender(rctx, content, renderKey, { now, where: located.where });
           if (out.delivery.kind !== 'serve') return unavailableResponse(out.delivery.reason);
           content = out.body;
           renderedEpoch = rctx.epoch;
@@ -1194,10 +1228,13 @@ http.route({
         at: now,
         relay,
         renderedEpoch,
+        // Only ever the member's OWN answer; an inferred country is not cached at all.
+        ...(located.source === 'override' ? { region: located.where.country } : {}),
       };
       // Don't cache an hwid'd response — the next device (different hwid, same
       // UA) must reach the panel too, for its own registration + enforcement.
-      if (!hasHwid) {
+      const cacheable = bodyIsCacheable(located.source, countryPolicy.sensitive);
+      if (!hasHwid && cacheable) {
         await ctx.runMutation(internal.subscriptions.writeContentCache, {
           subscriptionId: sub._id,
           entry: JSON.stringify(entry),
@@ -1213,7 +1250,8 @@ http.route({
         render: renderSnapshot,
       });
       // hwid'd → `private, no-store` (device-specific); otherwise public + Vary: UA.
-      return subscriptionResponse(entry, { hwid: hasHwid });
+      // An inferred country shaped this body: it is this member's, here, now.
+      return subscriptionResponse(entry, { hwid: hasHwid || !cacheable });
     } catch (err) {
       // A HWID rejection (panel 404 for a device-limited key fetched without a
       // valid x-hwid) is authoritative — pass 404 through, and never serve a
@@ -1342,6 +1380,53 @@ http.route({
 // the first key exists, so that first key is issued into the chosen mode's
 // placement. A member who already HAS a key changes it via /switch-mode (which
 // re-issues); this plain set only records the preference. Not sealed (the mode
+// "Where are you connecting from?" The member's own answer (a curated country or
+// automatic). It picks server names known to work there; it is the only country
+// FCP stores, because they chose to say it (docs/privacy.md).
+http.route({
+  path: '/api/v1/account/connection-region',
+  method: 'GET',
+  handler: guard(async (ctx, req) => {
+    const member = await resolveMember(ctx, req, 'account:read');
+    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    return json(
+      await ctx.runQuery(internal.subscriptions.connectionRegion, { userId: member.userId }),
+    );
+  }),
+});
+
+http.route({
+  path: '/api/v1/account/connection-region',
+  method: 'POST',
+  handler: guard(async (ctx, req) => {
+    const member = await resolveMember(ctx, req, 'subscription:write');
+    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    const rl = await ctx.runMutation(internal.rateLimits.enforce, {
+      policyKey: 'account.connection-region',
+      subject: member.userId,
+    });
+    if (!rl.allowed) {
+      return errorJson('rate_limit.exceeded', 'Too many requests. Please slow down.', 429, {
+        retryAfterMs: rl.retryAfterMs,
+      });
+    }
+    const body = await readJson<{ region?: string | null }>(req);
+    const region = typeof body.region === 'string' && body.region.length <= 2 ? body.region : null;
+    if (body.region !== null && body.region !== undefined && region === null)
+      return errorJson('validation', 'unknown region', 400);
+    try {
+      return json(
+        await ctx.runMutation(internal.subscriptions.setConnectionRegion, {
+          userId: member.userId,
+          region,
+        }),
+      );
+    } catch {
+      return errorJson('validation', 'unknown region', 400);
+    }
+  }),
+});
+
 // id is not a secret). The id is validated against the live mode catalog.
 http.route({
   path: '/api/v1/account/connection-mode',

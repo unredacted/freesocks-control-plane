@@ -409,3 +409,14 @@ export type PasskeyEntry = z.infer<typeof PasskeyEntry>;
 
 export const PasskeyListResponse = z.object({ passkeys: z.array(PasskeyEntry) });
 export type PasskeyListResponse = z.infer<typeof PasskeyListResponse>;
+
+/**
+ * "Where are you connecting from?": the member's own answer. `region` is one of
+ * `options` (curated country codes) or null for automatic. It is the only
+ * country the service stores, because the member chose to say it.
+ */
+export const ConnectionRegionResponse = z.object({
+  region: z.string().nullable(),
+  options: z.array(z.string()),
+});
+export type ConnectionRegionResponse = z.infer<typeof ConnectionRegionResponse>;

@@ -3,10 +3,11 @@
 // on the raw Convex channel. The old public `get` / `activeForUser` queries
 // were dead code and were deleted outright.
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
+import { resolveSniConfig } from './lib/sniConfig';
 import type { DatabaseReader } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
-import { v } from 'convex/values';
+import { ConvexError, v } from 'convex/values';
 import { randomHex } from './lib/crypto';
 import { backendIdValidator, type BackendId } from './lib/backendIds';
 
@@ -137,8 +138,12 @@ export const insertSubscription = internalMutation({
     // them with the new key's config (the new row has no rawContentHash, so it
     // cannot short-circuit) well inside the old key's 24h grace.
     let carriedMirrors: typeof a.subscriptionMirrors | null = null;
+    // The member's answer to "where are you connecting from?" follows them to
+    // a re-issued key, like the stable URL does.
+    let carriedRegion: string | undefined;
     if (a.carrySubTokenFromId) {
       const old = await ctx.db.get(a.carrySubTokenFromId);
+      carriedRegion = old?.sniRegion;
       if (old?.subToken) {
         subToken = old.subToken;
       }
@@ -171,6 +176,7 @@ export const insertSubscription = internalMutation({
     const inserted = await ctx.db.insert('subscriptions', {
       ...rest,
       ...(carriedMirrors ? { subscriptionMirrors: carriedMirrors } : {}),
+      ...(carriedRegion ? { sniRegion: carriedRegion } : {}),
       // Map the generic arg onto the schema field name.
       backendPlacement: placement,
       subToken,
@@ -188,6 +194,45 @@ export const insertSubscription = internalMutation({
  * Lazily mint the relay-edge assignment key for rows that predate it (every new
  * row gets one at insert). Returns the key; idempotent.
  */
+/**
+ * "Where are you connecting from?": the member's own answer, one of the
+ * curated countries or null for automatic. Stored because they said so, on
+ * every active key of theirs; it is the ONLY country FCP keeps (one inferred
+ * from a request is used for that response and kept nowhere). It selects server
+ * names known to work there, and is sent to no analytics or telemetry.
+ */
+export const connectionRegion = internalQuery({
+  args: { userId: v.id('users') },
+  handler: async (ctx, { userId }) => {
+    const { curatedCountries } = await resolveSniConfig(ctx.db);
+    const subs = await ctx.db
+      .query('subscriptions')
+      .withIndex('by_user_state', (q) => q.eq('userId', userId).eq('state', 'active'))
+      .collect();
+    const region = subs.find((s) => s.sniRegion)?.sniRegion ?? null;
+    return {
+      region: region && curatedCountries.includes(region) ? region : null,
+      options: curatedCountries,
+    };
+  },
+});
+
+export const setConnectionRegion = internalMutation({
+  args: { userId: v.id('users'), region: v.union(v.string(), v.null()) },
+  handler: async (ctx, { userId, region }) => {
+    const { curatedCountries } = await resolveSniConfig(ctx.db);
+    const next = region ? region.trim().toUpperCase() : null;
+    if (next && !curatedCountries.includes(next))
+      throw new ConvexError({ code: 'validation', message: 'unknown region' });
+    const subs = await ctx.db
+      .query('subscriptions')
+      .withIndex('by_user_state', (q) => q.eq('userId', userId).eq('state', 'active'))
+      .collect();
+    for (const s of subs) await ctx.db.patch(s._id, { sniRegion: next ?? undefined });
+    return { region: next };
+  },
+});
+
 export const ensureRenderKey = internalMutation({
   args: { subscriptionId: v.id('subscriptions') },
   handler: async (ctx, { subscriptionId }): Promise<string | null> => {

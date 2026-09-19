@@ -20,6 +20,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { upsertSettingRow } from './appSettings';
 import { writeAuditLog } from './lib/audit';
 import { isPublicIpLiteral } from './lib/edges/ip';
+import { bumpEpochAndRefresh } from './lib/edges/relayGuards';
 import { normalizeName } from './lib/edges/registration';
 import {
   MAX_NAMES_PER_FAMILY,
@@ -150,9 +151,21 @@ export const detail = internalQuery({
       const s = await ctx.db.get(b.backendServerId);
       servers.set(b.backendServerId as string, s?.slug ?? '');
     }
+    // One read for the whole judgement table (small: names x curated countries).
+    const judged = new Map<string, { blockedIn: string[]; provenIn: string[] }>();
+    const mine = new Set(names.map((n) => n.name));
+    for (const row of await ctx.db.query('sniNameCountry').collect()) {
+      if (!mine.has(row.name)) continue;
+      const at = judged.get(row.name) ?? { blockedIn: [], provenIn: [] };
+      (row.state === 'blocked' ? at.blockedIn : at.provenIn).push(row.country);
+      judged.set(row.name, at);
+    }
     return {
       family: summarize(f, names, bindings.length),
+      curatedCountries: (await resolveSniConfig(ctx.db)).curatedCountries,
       names: names.map((n) => ({
+        blockedIn: (judged.get(n.name)?.blockedIn ?? []).sort(),
+        provenIn: (judged.get(n.name)?.provenIn ?? []).sort(),
         name: n.name,
         seq: n.seq,
         status: n.status,
@@ -343,6 +356,108 @@ export const setNames = internalMutation({
     }
     await audit(ctx, `edge.sni.names.${a.action}`, a.actorAdminId, { slug: f.slug, count });
     return { count };
+  },
+});
+
+// --- per-country judgement ----------------------------------------------------------------------------
+
+/** The marks of one name, as they are copied onto a listener's entry for it. */
+export async function countryMarks(ctx: { db: QueryCtx['db'] }, name: string) {
+  const rows = await ctx.db
+    .query('sniNameCountry')
+    .withIndex('by_name', (q) => q.eq('name', name))
+    .collect();
+  const blockedIn = rows
+    .filter((r) => r.state === 'blocked')
+    .map((r) => r.country)
+    .sort();
+  const provenIn = rows
+    .filter((r) => r.state === 'proven')
+    .map((r) => r.country)
+    .sort();
+  return {
+    ...(blockedIn.length ? { blockedIn } : {}),
+    ...(provenIn.length ? { provenIn } : {}),
+  };
+}
+
+/**
+ * An operator's judgement: these names work / are blocked / are unjudged in one
+ * curated country. A name that is fine elsewhere can be blocked in one place, so
+ * "usable" is per country. The marks are copied onto every relay listener that
+ * carries the name (a render reads them from there, with no extra reads), and
+ * those relays' renders move on at once.
+ */
+export const setCountry = internalMutation({
+  args: {
+    slug: v.string(),
+    names: v.array(v.string()),
+    country: v.string(),
+    state: v.union(v.literal('proven'), v.literal('blocked'), v.literal('unknown')),
+    ...actor,
+  },
+  handler: async (ctx, a) => {
+    const f = await familyBySlug(ctx, a.slug);
+    const country = a.country.trim().toUpperCase();
+    const { curatedCountries } = await resolveSniConfig(ctx.db);
+    if (!curatedCountries.includes(country))
+      refuse('edge.sni.country_not_curated', 'That country is not on the curated list');
+    const mine = new Set((await namesOf(ctx, f._id)).map((n) => n.name));
+    const wanted = [
+      ...new Set(a.names.map((n) => normalizeName(n)).filter((n): n is string => !!n)),
+    ].filter((n) => mine.has(n));
+    const now = Date.now();
+    for (const name of wanted) {
+      const row = await ctx.db
+        .query('sniNameCountry')
+        .withIndex('by_name_country', (q) => q.eq('name', name).eq('country', country))
+        .unique();
+      if (a.state === 'unknown') {
+        if (row) await ctx.db.delete(row._id);
+      } else if (row)
+        await ctx.db.patch(row._id, { state: a.state, source: 'operator', updatedAt: now });
+      else
+        await ctx.db.insert('sniNameCountry', {
+          name,
+          country,
+          state: a.state,
+          source: 'operator',
+          updatedAt: now,
+        });
+    }
+    // Copy the marks onto every listener entry for these names.
+    const touched = new Set(wanted);
+    const listeners = await ctx.db.query('relayListeners').collect();
+    const relays = new Set<Id<'relays'>>();
+    for (const l of listeners) {
+      if (l.retired || !(l.tlsNames ?? []).some((n) => touched.has(n.name))) continue;
+      const next = [];
+      for (const n of l.tlsNames ?? []) {
+        if (!touched.has(n.name)) {
+          next.push(n);
+          continue;
+        }
+        const { blockedIn: _b, provenIn: _p, ...rest } = n;
+        next.push({ ...rest, ...(await countryMarks(ctx, n.name)) });
+      }
+      await ctx.db.patch(l._id, {
+        tlsNames: next,
+        namesRevision: (l.namesRevision ?? 0) + 1,
+        updatedAt: now,
+      });
+      relays.add(l.relayId);
+    }
+    for (const relayId of relays) {
+      const relay = await ctx.db.get(relayId);
+      if (relay) await bumpEpochAndRefresh(ctx, relay);
+    }
+    await audit(ctx, 'edge.sni.names.country', a.actorAdminId, {
+      slug: f.slug,
+      country,
+      state: a.state,
+      count: wanted.length,
+    });
+    return { count: wanted.length, relays: relays.size };
   },
 });
 

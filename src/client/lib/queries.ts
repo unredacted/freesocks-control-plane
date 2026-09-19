@@ -14,6 +14,7 @@ import {
   AccountResponse,
   AccountUsageResponse,
   AccountReferralsResponse,
+  ConnectionRegionResponse,
   NodeStatusResponse,
   PasskeyListResponse,
   SubscriptionContentResponse,
@@ -109,6 +110,7 @@ export const queryKeys = {
   adminBillingRevenue: (range: string) => ['admin', 'billing-revenue', range] as const,
   adminTelemetryEvents: ['admin', 'telemetry', 'events'] as const,
   nodeStatus: ['account', 'node-status'] as const,
+  connectionRegion: ['account', 'connection-region'] as const,
   passkeys: ['account', 'passkeys'] as const,
   networkStatus: ['network-status'] as const,
   adminStatusPage: ['admin', 'status-page'] as const,
@@ -239,6 +241,23 @@ export const nodeStatusQuery = (enabled: () => boolean) =>
     enabled: enabled(),
     retry: false,
   }));
+
+/** "Where are you connecting from?": the member's own answer and the choices. */
+export const connectionRegionQuery = (enabled: () => boolean) =>
+  createQuery(() => ({
+    queryKey: queryKeys.connectionRegion,
+    queryFn: () => apiClient.get('/api/v1/account/connection-region', ConnectionRegionResponse),
+    staleTime: 5 * 60_000,
+    enabled: enabled(),
+    retry: false,
+  }));
+
+export const setConnectionRegion = (region: string | null) =>
+  apiClient.post(
+    '/api/v1/account/connection-region',
+    { region },
+    z.object({ region: z.string().nullable() }),
+  );
 
 /**
  * Raw subscription content (the proxy config), delivered SEALED. Lazy: only

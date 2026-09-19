@@ -813,10 +813,47 @@ on the panel every name a relay still hands out or that is still draining, whoev
 and whatever its family says, and a later rollout drops it once nothing holds it. A burn is
 immediate on the relays and restarts nothing.
 
+### Names for the member's country
+
+A name that works almost everywhere can be blocked in one place: a large site that is itself
+censored there. So in the **curated countries** (`edge.sni.curatedCountries`, default
+`CN, RU, IR, MM`) "usable" is judged per country.
+
+**Judging.** `POST sni/families/{slug}/names/country {snis, country, state}` records an
+operator's judgement (`proven`, `blocked`, or `unknown` to clear it) in `sniNameCountry`, for a
+curated country only. The marks are **copied onto every relay listener entry** for that name
+(`blockedIn`, `provenIn`), so a render needs no extra reads, and those relays' renders move on
+at once. It is a names change, not a material one: no retest. Audit rows carry the country, the
+state and a count, never a hostname.
+
+**Selecting** (`countryTier`, `convex/lib/edges/assignment.ts`; only for a listener on `hrw1`):
+
+| The member is             | They are offered                                                                                                                                                              |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| in a curated country      | **Never** a name blocked there. Names proven there first; names nobody has judged there fill the remaining slots. With three or more proven names they hold only proven ones. |
+| anywhere else, or unknown | The **universal pool**: names not blocked in **any** curated country.                                                                                                         |
+| reading an S3 mirror      | The same universal pool (a mirror has no request to infer anything from, and exists for exactly the people who are blocked), unless they said where they are.                 |
+
+Each tier keeps the rendezvous order, so the stability properties hold inside it. If every name
+of an edge is excluded for a member's country, that edge is not assignable **for them** and the
+walk moves to the next edge; with none left the existing edge-required behaviour applies.
+
+**Where the member is.** Their own answer first (`subscriptions.sniRegion`, set on the account
+page: "Where are you connecting from?", Automatic by default), else the country the CDN reports
+for the request (`resolveCountry`: only when the deployment is fronted by it, otherwise it is a
+header a client could forge and it is ignored). Either counts only when it is a curated country.
+
+**What is stored.** Only the member's own answer. An inferred country is used for that one
+response and kept nowhere: such a body is neither read from nor written to the content cache, is
+served `private, no-store`, and a cached body is never handed to a request that infers a curated
+country (`convex/lib/edges/sni/country.ts`). A body for the member's own answer caches under that
+answer. When no listener has any judged name, caching is exactly as before.
+
 Routes, under `/api/v1/admin/edges/sni/`: `GET|PATCH config` (settings scope),
 `GET|POST families`, `GET|PATCH|DELETE families/{slug}`, `POST families/{slug}/names` (a pasted
 list, up to 1000 lines, answered with a verdict per line: `added`, `duplicate`, `invalid`,
 `in_other_family`, `burned`), `POST families/{slug}/names/{retire|reactivate|burn|recheck}`,
+`POST families/{slug}/names/country`,
 `POST families/{slug}/bind`, `DELETE bindings/{id}`, `POST qualify`,
 `POST bindings/{id}/plan`, `POST bindings/{id}/rollout`, `GET rollouts/{id}`,
 `POST rollouts/{id}/test-link`, `POST receipts/{id}/confirm`. Audit rows

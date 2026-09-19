@@ -540,6 +540,18 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           ...act,
         }),
       );
+    // An operator's judgement of names in one curated country.
+    if (b === 'families' && c && d === 'names' && e === 'country')
+      return json(
+        await ctx.runMutation(internal.sniFamilies.setCountry, {
+          slug: c,
+          names: snis(body),
+          country: String(body.country ?? ''),
+          state:
+            body.state === 'proven' || body.state === 'blocked' ? body.state : ('unknown' as const),
+          ...act,
+        }),
+      );
     if (b === 'families' && c && d === 'bind' && !e)
       return json(
         await ctx.runMutation(internal.sniFamilies.bind, {

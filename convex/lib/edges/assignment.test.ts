@@ -493,6 +493,111 @@ describe('several server names per endpoint (hrw1 only)', () => {
   });
 });
 
+describe("names proven for the member's country (hrw1 only)", () => {
+  const CURATED = ['CN', 'RU', 'IR', 'MM'];
+  const mk = (sni: string, over: { blockedIn?: string[]; provenIn?: string[] } = {}) => ({
+    sni,
+    status: 'active' as const,
+    ...over,
+  });
+  const list = [
+    mk('cn-ok-1.example', { provenIn: ['CN'] }),
+    mk('cn-ok-2.example', { provenIn: ['CN', 'RU'] }),
+    mk('cn-ok-3.example', { provenIn: ['CN'] }),
+    mk('cn-blocked.example', { blockedIn: ['CN'], provenIn: ['RU'] }),
+    mk('unjudged-1.example'),
+    mk('unjudged-2.example'),
+    mk('ir-blocked.example', { blockedIn: ['IR'] }),
+  ];
+  const three = { ...opts, namesPerEndpoint: 3, backupNames: 1 };
+  const held = (key: string, l: typeof list, country: string | null) => {
+    const a = assignEndpoints(
+      key,
+      [edge({ edgeId: 'e0', poolIndex: 0, serverNames: l, sniPick: 'hrw1' })],
+      { ...three, where: { country, curated: CURATED } },
+    ).primary;
+    return a ? [a.sni!, ...(a.alternates ?? []).map((x) => x.sni)] : [];
+  };
+
+  test('a name blocked in the country is NEVER offered there; with three proven names, only those', () => {
+    for (let i = 0; i < 500; i++) {
+      const names = held(sha(i), list, 'CN');
+      expect(names).toHaveLength(3);
+      expect(names).not.toContain('cn-blocked.example');
+      expect(names.sort()).toEqual(['cn-ok-1.example', 'cn-ok-2.example', 'cn-ok-3.example']);
+    }
+  });
+
+  test('fewer than three proven: the proven ones, then names nobody has judged there, never a blocked one', () => {
+    for (let i = 0; i < 300; i++) {
+      const names = held(sha(i), list, 'RU');
+      // RU-proven: cn-ok-2 and cn-blocked (blocked in CN, fine in RU).
+      expect(names.slice(0, 2).sort()).toEqual(['cn-blocked.example', 'cn-ok-2.example']);
+      expect(names).toHaveLength(3);
+    }
+    for (let i = 0; i < 300; i++)
+      expect(held(sha(i), list, 'IR')).not.toContain('ir-blocked.example');
+  });
+
+  test('no country (a mirror, or somewhere not curated): nothing blocked in ANY curated country', () => {
+    const seen = new Set<string>();
+    for (let i = 0; i < 1000; i++) for (const n of held(sha(i), list, null)) seen.add(n);
+    expect(seen.has('cn-blocked.example')).toBe(false);
+    expect(seen.has('ir-blocked.example')).toBe(false);
+    expect(seen.size).toBe(5);
+  });
+
+  test('every name excluded for that country: the walk moves to the next edge, else nothing is assigned', () => {
+    const allBlocked = [
+      mk('x.example', { blockedIn: ['CN'] }),
+      mk('y.example', { blockedIn: ['CN'] }),
+    ];
+    const bad = edge({ edgeId: 'e0', poolIndex: 0, serverNames: allBlocked, sniPick: 'hrw1' });
+    const good = edge({ edgeId: 'e1', poolIndex: 1, serverNames: list, sniPick: 'hrw1' });
+    const where = { country: 'CN', curated: CURATED };
+    for (let i = 0; i < 100; i++)
+      expect(assignEndpoints(sha(i), [bad, good], { ...three, where }).primary?.edge.edgeId).toBe(
+        'e1',
+      );
+    expect(assignEndpoints(sha(1), [bad], { ...three, where }).primary).toBeNull();
+    // The same edge serves a member elsewhere perfectly well.
+    expect(
+      assignEndpoints(sha(1), [bad], { ...three, where: { country: 'RU', curated: CURATED } })
+        .primary,
+    ).not.toBeNull();
+  });
+
+  test('without a country context, and on a legacy listener, marks are ignored entirely', () => {
+    const noWhere = assignEndpoints(
+      sha(1),
+      [edge({ edgeId: 'e0', poolIndex: 0, serverNames: list, sniPick: 'hrw1' })],
+      three,
+    );
+    expect(noWhere.primary?.sni).toBe(pickSni(sha(1), 'e0', list, 'hrw1'));
+    const legacy = assignEndpoints(
+      sha(1),
+      [edge({ edgeId: 'e0', poolIndex: 0, serverNames: list })],
+      {
+        ...three,
+        where: { country: 'CN', curated: CURATED },
+      },
+    );
+    expect(legacy.primary?.sni).toBe(pickSni(sha(1), 'e0', list));
+  });
+
+  test("stable inside a tier: a new proven name changes at most one of a member's names", () => {
+    const many = Array.from({ length: 12 }, (_, i) => mk(`p${i}.example`, { provenIn: ['CN'] }));
+    const more = [...many, mk('p-new.example', { provenIn: ['CN'] })];
+    for (let i = 0; i < 1000; i++) {
+      const a = held(sha(i), many, 'CN');
+      const b = held(sha(i), more, 'CN');
+      const gained = b.filter((n) => !a.includes(n));
+      expect(gained.length).toBeLessThanOrEqual(1);
+      if (gained.length) expect(gained[0]).toBe('p-new.example');
+    }
+  });
+});
+
 // An L7 edge is a hostname fronted by a CDN: the hostname is the address, the
 // SNI and the Host header at once, so the listener's (origin-facing) server
 // names play no part in it.
