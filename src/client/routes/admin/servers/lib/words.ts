@@ -75,42 +75,127 @@ export function ago(ms: number): string {
   return `${d} days ago`;
 }
 
-export interface Notice {
-  tone: 'warn' | 'info';
-  text: string;
+/** The country under a node name; the panel's `XX` placeholder is nothing. */
+export function countryLabel(code: string | null | undefined): string | null {
+  if (!code || code.toUpperCase() === 'XX') return null;
+  try {
+    return new Intl.DisplayNames(['en'], { type: 'region' }).of(code.toUpperCase()) ?? code;
+  } catch {
+    return code;
+  }
 }
 
-/** What is worth a second look on this instance. Empty when nothing is. */
-export function notices(tree: Pick<ServerTree, 'nodes' | 'unattached'>): Notice[] {
-  const out: Notice[] = [];
+/** The instance in one sentence: how many nodes are up, and how many people are on them. */
+export function fleetSentence(
+  nodes: readonly Pick<PanelNodeView, 'online' | 'isDisabled' | 'usersOnline'>[],
+): {
+  dot: Dot;
+  text: string;
+} {
+  if (nodes.length === 0) return { dot: 'grey', text: 'No nodes on this panel yet.' };
+  const on = nodes.filter((n) => !n.isDisabled);
+  const online = on.filter((n) => n.online);
+  const people = online.reduce((a, n) => a + n.usersOnline, 0);
+  const who = people === 1 ? '1 person connected' : `${people} people connected`;
+  if (online.length === on.length && on.length > 0)
+    return {
+      dot: 'green',
+      text: `${on.length === 1 ? 'The node is' : `All ${on.length} nodes are`} online, ${who}.`,
+    };
+  if (online.length === 0) return { dot: 'red', text: 'No node is reachable from the panel.' };
+  return {
+    dot: 'amber',
+    text: `${online.length} of ${on.length} nodes online, ${who}. The panel cannot reach the ${on.length - online.length === 1 ? 'other one' : 'others'}.`,
+  };
+}
+
+export interface AttentionRow {
+  /** Stable key for lists. */
+  key: string;
+  text: string;
+  /** Where the row leads; absent = the text is the whole point. */
+  nodeUuid?: string;
+}
+
+/**
+ * What needs an operator, in one line each: a stored key that does not match,
+ * addresses pointing at nothing, a profile edited elsewhere. Everything else is
+ * a quiet note (`quietNotes`), not a call to action.
+ */
+export function needsYou(
+  tree: Pick<ServerTree, 'nodes' | 'unattached' | 'profiles'>,
+): AttentionRow[] {
+  const out: AttentionRow[] = [];
   for (const n of tree.nodes)
-    for (const i of n.inbounds) {
+    for (const i of n.inbounds)
       if (i.realityPublicKeyMismatch)
         out.push({
-          tone: 'warn',
-          text: `On ${n.name}, the public key stored for ${i.tag} does not match its private key. People who were given the stored key cannot connect.`,
+          key: `key:${n.nodeUuid}:${i.tag}`,
+          text: `The public key stored for ${i.tag} on ${n.name} is not the one its private key makes. People given the stored key cannot connect.`,
+          nodeUuid: n.nodeUuid,
         });
-      if (i.hosts.length === 0)
-        out.push({
-          tone: 'info',
-          text: `On ${n.name}, ${i.tag} has no Host, so nobody is given an address for it.`,
-        });
-      if (i.squads.length === 0)
-        out.push({
-          tone: 'info',
-          text: `On ${n.name}, ${i.tag} is in no squad, so no key can use it.`,
-        });
-    }
+  for (const p of tree.profiles)
+    if (p.foreignEditAt)
+      out.push({
+        key: `edit:${p.profileUuid}`,
+        text: `${p.name} was changed on the panel, not from here. What this page shows of it may be out of date.`,
+      });
   if (tree.unattached.hosts.length > 0)
     out.push({
-      tone: 'warn',
+      key: 'unattached-hosts',
       text: `${list(tree.unattached.hosts)} ${tree.unattached.hosts.length === 1 ? 'points' : 'point'} at an inbound no node serves. People given ${tree.unattached.hosts.length === 1 ? 'it' : 'them'} cannot connect.`,
     });
+  return out;
+}
+
+/**
+ * Leftovers worth knowing, grouped so one unused inbound on three nodes is one
+ * line, not six. Nothing here is broken.
+ */
+export function quietNotes(tree: Pick<ServerTree, 'nodes' | 'unattached'>): string[] {
+  const out: string[] = [];
+  // tag -> the nodes on which it has nobody to serve (no address, or no squad).
+  const unused = new Map<string, { nodes: string[]; noHost: boolean; noSquad: boolean }>();
+  for (const n of tree.nodes)
+    for (const i of n.inbounds) {
+      const noHost = i.hosts.length === 0;
+      const noSquad = i.squads.length === 0;
+      if (!noHost && !noSquad) continue;
+      const at = unused.get(i.tag) ?? { nodes: [], noHost: false, noSquad: false };
+      at.nodes.push(n.name);
+      at.noHost ||= noHost;
+      at.noSquad ||= noSquad;
+      unused.set(i.tag, at);
+    }
+  for (const [tag, u] of unused) {
+    const why =
+      u.noHost && u.noSquad
+        ? 'no address and no squad'
+        : u.noHost
+          ? 'no address for members'
+          : 'in no squad';
+    const where =
+      u.nodes.length === tree.nodes.length && tree.nodes.length > 1
+        ? 'every node'
+        : u.nodes.length === 1
+          ? u.nodes[0]!
+          : `${u.nodes.length} nodes`;
+    out.push(`${tag} is unused on ${where}: ${why}.`);
+  }
   if (tree.unattached.profiles.length > 0)
-    out.push({
-      tone: 'info',
-      text: `No node runs ${list(tree.unattached.profiles)}.`,
-    });
+    out.push(`No node runs ${list(tree.unattached.profiles)}.`);
+  return out;
+}
+
+/** The notes of one node only, for its page. */
+export function nodeNotes(n: Pick<PanelNodeView, 'inbounds'>): string[] {
+  const out: string[] = [];
+  for (const i of n.inbounds) {
+    if (i.hosts.length === 0 && i.squads.length === 0)
+      out.push(`${i.tag} has no address for members and is in no squad.`);
+    else if (i.hosts.length === 0) out.push(`${i.tag} has no address for members.`);
+    else if (i.squads.length === 0) out.push(`${i.tag} is in no squad, so no key can use it.`);
+  }
   return out;
 }
 
@@ -121,7 +206,7 @@ function list(names: readonly string[]): string {
 
 /** A profile was edited on the panel by something other than this page. */
 export function foreignEditWords(name: string, agoWords: string): string {
-  return `${name} was changed on the panel ${agoWords}, and not from here. What this page believes about it, such as which server names are on it, may be out of date. Look at the profile, then say you have seen it.`;
+  return `${name} was changed on the panel ${agoWords}, not from here. What this page shows of it may be out of date.`;
 }
 
 /** One line for a toast when a server call failed, from its error code. */

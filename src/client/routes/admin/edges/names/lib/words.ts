@@ -69,7 +69,7 @@ export function nameWords(n: SniNameRow): { dot: Dot; sentence: string } {
 
 /** The report hint under a name. It suggests; the operator judges. */
 export function suspectWords(countries: readonly string[]): string {
-  return `Members in ${countries.join(', ')} report problems with this name more than with the others. It may be blocked there.`;
+  return `Members in ${countries.join(', ')} report this name more than the others. It may be blocked there.`;
 }
 
 export const NAME_FILTERS = ['all', 'ready', 'problems', 'off'] as const;
@@ -120,8 +120,8 @@ export function planWords(p: SniRolloutPlan): string[] {
   if (p.added.length)
     out.push(
       p.witness
-        ? 'One test per node will prove all of the new names at once, because one of them has never been on this inbound before.'
-        : 'Every new name has been on this inbound before, so each has to be tested by itself on each node.',
+        ? 'One test per node will prove all of the new names at once.'
+        : 'Each new name has to be tested by itself on each node, because each has been on this inbound before.',
     );
   out.push(
     'The panel pushes this to every node on the profile. People connected there are cut off for a few seconds.',
@@ -144,8 +144,7 @@ export function rolloutWords(s: SniRolloutStatus): { dot: Dot; sentence: string 
         ? { dot: 'green', sentence: 'On the panel, and every node has proven the new names.' }
         : {
             dot: 'amber',
-            sentence:
-              'On the panel. Members do not get a new name from a node until that node has proven it with a test link.',
+            sentence: 'On the panel. A node hands out a new name once it has proven it.',
           };
     }
   }

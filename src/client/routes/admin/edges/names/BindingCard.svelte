@@ -178,12 +178,10 @@
             {#if test?.nodeKey === key}
               <div class="bg-muted/30 space-y-2 rounded-md border p-3">
                 <p>
-                  Add this link to a client app and connect. It uses the name
-                  <span class="font-medium break-all">{test.sni}</span> and an account made only for
-                  this test.
-                  {test.isWitness
-                    ? 'If it connects, this node has taken the whole new list.'
-                    : 'If it connects, this node accepts this one name.'}
+                  Import this link into a client, connect, load a page. It uses
+                  <span class="font-medium break-all">{test.sni}</span>{test.isWitness
+                    ? ', and proves the whole new list on this node.'
+                    : '.'}
                 </p>
                 <div class="flex gap-2">
                   <Input
@@ -201,8 +199,8 @@
                   </Button>
                 </div>
                 <p class="text-muted-foreground">
-                  A check from outside cannot stand in for this: a node that has not taken the list
-                  still completes a plain secure connection for the name.
+                  Only a real connection proves it: a node that has not taken the list still answers
+                  a plain check.
                 </p>
               </div>
             {/if}
@@ -216,14 +214,14 @@
 <ConfirmDialog
   bind:open={writeOpen}
   title="Write these names to the panel?"
-  body="The panel pushes the new list to every node on this profile. People connected there are cut off for a few seconds and reconnect by themselves."
+  body="Every node on this profile restarts. People there reconnect in a few seconds."
   confirmLabel="Write"
   onConfirm={write}
 />
 <ConfirmDialog
   bind:open={unbindOpen}
   title={`Unbind ${binding.inboundTag}?`}
-  body="The names stay on the panel and members keep theirs. The family just stops managing this inbound."
+  body="Names on the panel and with members stay as they are."
   confirmLabel="Unbind"
   danger
   onConfirm={unbind}

@@ -1,26 +1,22 @@
 <script lang="ts">
   /**
-   * Admin -> Servers (`/admin/servers[?instance=<slug>]`): what already exists
-   * on one panel, node by node. For each node: the config profile it runs, the
-   * inbounds it serves, the Hosts members are given for each inbound and the
-   * squads that grant it. With "Allow changes" on (and the node role's handoff
-   * in place) the same page edits them; every change goes through the
-   * operations ledger and answers the op it became (docs/servers.md).
+   * Servers home (`/admin/servers[?instance=<slug>]`): one status sentence,
+   * what needs you, one row per node, the quiet leftovers, squads, recent
+   * changes, and the two switches in the footer. A node's details and every
+   * action on it live on its own page (NodePage).
    *
-   * Everything shown is non-secret by construction (docs/servers.md): server
-   * names, targets and the PUBLIC key of a REALITY inbound, never the private
-   * key, the short ids or the clients.
-   *
-   * All wording and status logic lives in ./lib/words.ts (pure, unit-tested).
+   * Everything shown is non-secret by construction (docs/servers.md). All
+   * wording lives in ./lib/words.ts (pure, unit-tested).
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
   import RefreshCw from '@lucide/svelte/icons/refresh-cw';
-  import ChevronDown from '@lucide/svelte/icons/chevron-down';
+  import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import { Button } from '@client/components/ui/button';
-  import { Card, CardContent, CardHeader, CardTitle } from '@client/components/ui/card';
+  import { Label } from '@client/components/ui/label';
+  import { Skeleton } from '@client/components/ui/skeleton';
   import { Switch } from '@client/components/ui/switch';
-  import { ApiCallError } from '@client/lib/api';
+  import Link from '@client/components/Link.svelte';
   import {
     acknowledgeForeignEdit,
     invalidateServers,
@@ -31,25 +27,20 @@
     serverTreeQuery,
   } from '@client/lib/serversApi';
   import { router } from '@client/stores/router.svelte';
-  import type { PanelHostView, PanelInboundView } from '../../../../shared/contracts/servers';
   import SectionHeader from '../edges/components/SectionHeader.svelte';
-  import HostDialog from './components/HostDialog.svelte';
-  import ManageCard from './components/ManageCard.svelte';
-  import NamesDialog from './components/NamesDialog.svelte';
-  import NodeActions from './components/NodeActions.svelte';
+  import StatusDot from '../edges/simple/StatusDot.svelte';
   import OpsList from './components/OpsList.svelte';
   import SquadsCard from './components/SquadsCard.svelte';
+  import { codeOf } from './lib/run';
   import { pickInstance, serversPaths } from './lib/routes';
   import {
     ago,
-    foreignEditWords,
-    inboundSummary,
+    countryLabel,
+    fleetSentence,
+    needsYou,
     nodeWords,
-    notices,
-    observedWords,
+    quietNotes,
     serverErrorWords,
-    serverNamesLabel,
-    type Dot,
   } from './lib/words';
 
   const qc = useQueryClient();
@@ -60,29 +51,12 @@
   let instance = $derived(summary.data?.instances.find((i) => i.slug === slug) ?? null);
   let observeOn = $derived(summary.data?.config['manage.observe'] ?? false);
   let manageOn = $derived(summary.data?.config['manage.enabled'] ?? false);
-  // The server decides; this only hides what it would refuse anyway.
   let canWrite = $derived(manageOn && !!instance?.writable && !!instance?.handoffCurrent);
   let refreshing = $state(false);
-
-  let hostOpen = $state(false);
-  let hostFor = $state<{ inbound: PanelInboundView; host: PanelHostView | null } | null>(null);
-  let namesOpen = $state(false);
-  let namesFor = $state<{ profileUuid: string; inbound: PanelInboundView } | null>(null);
-  const editHost = (inbound: PanelInboundView, host: PanelHostView | null) => {
-    hostFor = { inbound, host };
-    hostOpen = true;
-  };
   let saving = $state(false);
-  let open = $state<Record<string, boolean>>({});
 
-  const DOT: Record<Dot, string> = {
-    green: 'bg-emerald-500',
-    amber: 'bg-amber-500',
-    red: 'bg-destructive',
-    grey: 'bg-muted-foreground/50',
-  };
-
-  const codeOf = (e: unknown) => (e instanceof ApiCallError ? e.payload.error.code : null);
+  const ROW =
+    'bg-card hover:bg-accent/40 focus-visible:ring-ring/50 flex min-h-14 w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-start outline-none focus-visible:ring-3';
 
   async function refresh() {
     if (!slug || refreshing) return;
@@ -90,11 +64,22 @@
     try {
       qc.setQueryData(serverKeys.tree(slug), await refreshServer(slug));
       void qc.invalidateQueries({ queryKey: serverKeys.summary });
-      toast.success('Read the panel again.');
     } catch (e) {
       toast.error(serverErrorWords(codeOf(e)));
     } finally {
       refreshing = false;
+    }
+  }
+
+  async function setConfig(key: 'manage.enabled' | 'manage.observe', on: boolean) {
+    saving = true;
+    try {
+      await patchServerConfig({ [key]: on });
+    } catch (e) {
+      toast.error(serverErrorWords(codeOf(e)));
+    } finally {
+      saving = false;
+      invalidateServers(qc);
     }
   }
 
@@ -108,25 +93,9 @@
       invalidateServers(qc);
     }
   }
-
-  async function setObserve(on: boolean) {
-    saving = true;
-    try {
-      await patchServerConfig({ 'manage.observe': on });
-      invalidateServers(qc);
-      toast.success(on ? 'Panels are now read every ten minutes.' : 'Regular reading is off.');
-    } catch (e) {
-      toast.error(serverErrorWords(codeOf(e)));
-    } finally {
-      saving = false;
-    }
-  }
 </script>
 
-<SectionHeader
-  title="Servers"
-  description="What is on a panel right now: its nodes, what each one serves, and what members are given."
->
+<SectionHeader title="Servers">
   {#snippet actions()}
     <Button
       variant="outline"
@@ -140,19 +109,9 @@
   {/snippet}
 </SectionHeader>
 
-{#if summary.isPending}
-  <p class="text-muted-foreground text-sm">Loading…</p>
-{:else if summary.isError}
-  <p class="text-destructive text-sm">{serverErrorWords(codeOf(summary.error))}</p>
-{:else if (summary.data?.instances.length ?? 0) === 0}
-  <Card>
-    <CardContent class="text-muted-foreground py-8 text-center text-sm">
-      No backend server is set up yet. Add one under Backend servers first.
-    </CardContent>
-  </Card>
-{:else}
+<div class="space-y-8">
   {#if (summary.data?.instances.length ?? 0) > 1}
-    <nav class="mb-4 flex flex-wrap gap-2" aria-label="Backend servers">
+    <nav class="-mt-2 flex flex-wrap gap-2" aria-label="Backend servers">
       {#each summary.data?.instances ?? [] as i (i.slug)}
         <Button
           variant={i.slug === slug ? 'default' : 'outline'}
@@ -166,238 +125,156 @@
     </nav>
   {/if}
 
-  {#if instance && !instance.observable}
-    <Card>
-      <CardContent class="text-muted-foreground py-8 text-center text-sm">
-        This kind of server has nothing to show here.
-      </CardContent>
-    </Card>
-  {:else if tree.isPending}
-    <p class="text-muted-foreground text-sm">Loading…</p>
+  {#if summary.isPending || (slug && tree.isPending)}
+    <Skeleton class="h-6 w-64" />
+  {:else if summary.isError}
+    <p class="text-destructive text-sm">{serverErrorWords(codeOf(summary.error))}</p>
+  {:else if (summary.data?.instances.length ?? 0) === 0}
+    <div class="rounded-lg border border-dashed p-8 text-center">
+      <p class="text-muted-foreground text-sm">No backend server is set up yet.</p>
+      <Link
+        href="/admin/backend-servers"
+        class="text-primary mt-2 inline-block text-sm underline underline-offset-4"
+      >
+        Add one
+      </Link>
+    </div>
+  {:else if instance && !instance.observable}
+    <p class="text-muted-foreground text-sm">This kind of server has nothing to show here.</p>
   {:else if tree.isError}
     <p class="text-destructive text-sm">{serverErrorWords(codeOf(tree.error))}</p>
   {:else if tree.data}
     {@const t = tree.data}
-    <p class="text-muted-foreground mb-4 text-sm" aria-live="polite">
-      {observedWords(t.state, observeOn, Date.now())}
-    </p>
+    {@const headline = fleetSentence(t.nodes)}
+    {@const attention = needsYou(t)}
+    {@const notes = quietNotes(t)}
 
-    {#each notices(t) as n (n.text)}
-      <p
-        class={n.tone === 'warn'
-          ? 'border-amber-500/40 bg-amber-500/10 mb-2 rounded-md border px-3 py-2 text-sm'
-          : 'bg-muted/50 mb-2 rounded-md border px-3 py-2 text-sm'}
-      >
-        {n.text}
+    <div>
+      <p class="flex items-center gap-2 text-lg font-medium" role="status">
+        <StatusDot dot={t.state.ok === false ? 'red' : headline.dot} class="size-3" />
+        {t.state.ok === false ? 'The panel could not be read.' : headline.text}
       </p>
-    {/each}
+      <p class="text-muted-foreground mt-1 text-sm">
+        {#if t.state.observedAt}
+          Read {ago(Date.now() - Date.parse(t.state.observedAt))}{observeOn
+            ? ''
+            : '. Regular reading is off'}.
+        {:else}
+          Not read yet.
+        {/if}
+      </p>
+    </div>
 
-    {#each t.profiles.filter((p) => p.foreignEditAt) as p (p.profileUuid)}
-      <div
-        class="mb-2 flex flex-wrap items-center gap-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm"
-      >
-        <p class="min-w-0 flex-1">
-          {foreignEditWords(p.name, ago(Date.now() - Date.parse(p.foreignEditAt ?? '')))}
-        </p>
-        <Button variant="outline" size="sm" onclick={() => seen(p.profileUuid)}
-          >I have seen it</Button
-        >
-      </div>
-    {/each}
-
-    {#if t.nodes.length === 0 && t.state.ok}
-      <Card>
-        <CardContent class="text-muted-foreground py-8 text-center text-sm">
-          This panel has no nodes yet.
-        </CardContent>
-      </Card>
-    {/if}
-
-    <ul class="space-y-3" aria-label="Nodes">
-      {#each t.nodes as node (node.nodeUuid)}
-        {@const w = nodeWords(node)}
-        {@const isOpen = open[node.nodeUuid] ?? t.nodes.length === 1}
-        <li class="rounded-lg border">
-          <button
-            type="button"
-            class="hover:bg-accent/40 focus-visible:ring-ring/50 flex min-h-14 w-full items-center gap-3 rounded-lg px-4 py-3 text-start outline-none focus-visible:ring-3 focus-visible:ring-inset"
-            aria-expanded={isOpen}
-            onclick={() => (open[node.nodeUuid] = !isOpen)}
-          >
-            <span
-              class={`inline-block size-2.5 shrink-0 rounded-full ${DOT[w.dot]}`}
-              aria-hidden="true"
-            ></span>
-            <span class="min-w-0 flex-1">
-              <span class="block truncate font-medium">{node.name}</span>
-              <span class="text-muted-foreground block text-sm">{w.sentence}</span>
-            </span>
-            <span class="text-muted-foreground hidden text-sm sm:block">
-              {node.address ?? ''}{node.countryCode ? ` · ${node.countryCode}` : ''}
-            </span>
-            <ChevronDown
-              class={isOpen ? 'size-4 shrink-0 rotate-180' : 'size-4 shrink-0'}
-              aria-hidden="true"
-            />
-          </button>
-
-          {#if isOpen}
-            <div class="space-y-4 border-t px-4 py-4 text-sm">
-              <dl class="grid gap-x-6 gap-y-1 sm:grid-cols-2">
-                <div class="flex gap-2">
-                  <dt class="text-muted-foreground">Address</dt>
-                  <dd class="break-all">{node.address ?? 'Not set'}</dd>
-                </div>
-                <div class="flex gap-2">
-                  <dt class="text-muted-foreground">Config profile</dt>
-                  <dd>{node.profile?.name ?? 'None'}</dd>
-                </div>
-              </dl>
-              {#if canWrite && slug}
-                <NodeActions {slug} {node} />
-              {/if}
-
-              {#each node.inbounds as inbound (inbound.inboundUuid)}
-                {@const names = serverNamesLabel(inbound)}
-                <section class="bg-muted/30 rounded-md border p-3" aria-label={inbound.tag}>
-                  <h3 class="font-medium break-all">{inbound.tag}</h3>
-                  <p class="text-muted-foreground">{inboundSummary(inbound)}</p>
-
-                  {#if names}
-                    <details class="mt-2">
-                      <summary class="cursor-pointer">{names}</summary>
-                      <ul class="mt-1 columns-1 gap-x-6 sm:columns-2">
-                        {#each inbound.serverNames ?? [] as name (name)}
-                          <li class="break-all">{name}</li>
-                        {/each}
-                      </ul>
-                      {#if inbound.realityTarget}
-                        <p class="text-muted-foreground mt-1">
-                          Target site: <span class="break-all">{inbound.realityTarget}</span>
-                        </p>
-                      {/if}
-                    </details>
-                    {#if canWrite && node.profile}
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        class="mt-2"
-                        onclick={() => {
-                          namesFor = { profileUuid: node.profile!.profileUuid, inbound };
-                          namesOpen = true;
-                        }}
-                      >
-                        Edit names and target
-                      </Button>
-                    {/if}
-                  {/if}
-
-                  <div class="mt-3 grid gap-3 sm:grid-cols-2">
-                    <div>
-                      <h4 class="text-muted-foreground text-xs font-medium uppercase">
-                        Addresses members get
-                      </h4>
-                      {#if inbound.hosts.length === 0}
-                        <p class="text-muted-foreground">None</p>
-                      {:else}
-                        <ul>
-                          {#each inbound.hosts as host (host.hostUuid)}
-                            <li class={host.isDisabled ? 'text-muted-foreground line-through' : ''}>
-                              {#if canWrite}
-                                <button
-                                  type="button"
-                                  class="hover:text-foreground focus-visible:ring-ring/50 rounded text-start underline-offset-2 outline-none hover:underline focus-visible:ring-3"
-                                  onclick={() => editHost(inbound, host)}
-                                >
-                                  <span class="break-all">{host.remark}</span>
-                                </button>
-                              {:else}
-                                <span class="break-all">{host.remark}</span>
-                              {/if}
-                              <span class="text-muted-foreground break-all">
-                                {host.address}:{host.port}{host.sni ? ` · ${host.sni}` : ''}
-                              </span>
-                            </li>
-                          {/each}
-                        </ul>
-                      {/if}
-                      {#if canWrite}
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          class="mt-1 -ms-2"
-                          onclick={() => editHost(inbound, null)}
-                        >
-                          Add an address
-                        </Button>
-                      {/if}
-                    </div>
-                    <div>
-                      <h4 class="text-muted-foreground text-xs font-medium uppercase">Squads</h4>
-                      {#if inbound.squads.length === 0}
-                        <p class="text-muted-foreground">None</p>
-                      {:else}
-                        <p>{inbound.squads.map((s) => s.name).join(', ')}</p>
-                      {/if}
-                    </div>
-                  </div>
-                </section>
-              {/each}
-            </div>
+    {#if attention.length > 0 || (manageOn && instance && !instance.handoffCurrent)}
+      <section aria-labelledby="needs-you">
+        <h2 id="needs-you" class="mb-3 text-base font-semibold">Needs you</h2>
+        <ul class="space-y-2">
+          {#if manageOn && instance && !instance.handoffCurrent}
+            <li class="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm">
+              Changes are allowed, but the node role has not handed this panel over yet, so they are
+              refused. Run the role with fcp_managed set.
+            </li>
           {/if}
-        </li>
-      {/each}
-    </ul>
-
-    {#if canWrite && slug}
-      <SquadsCard {slug} tree={t} />
+          {#each attention as row (row.key)}
+            <li
+              class="flex flex-wrap items-center gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm"
+            >
+              <span class="min-w-0 flex-1">{row.text}</span>
+              {#if row.key.startsWith('edit:') && canWrite}
+                <Button variant="outline" size="sm" onclick={() => seen(row.key.slice(5))}>
+                  Seen it
+                </Button>
+              {:else if row.nodeUuid && slug}
+                <Link
+                  href={serversPaths.node(row.nodeUuid, { instance: slug })}
+                  class="text-primary text-sm underline underline-offset-4"
+                >
+                  Open
+                </Link>
+              {/if}
+            </li>
+          {/each}
+        </ul>
+      </section>
     {/if}
-  {/if}
 
-  {#if slug && instance?.writable}
-    {#if manageOn}
+    <section aria-label="Nodes">
+      {#if t.nodes.length === 0}
+        <p class="text-muted-foreground text-sm">
+          A node appears here once the node role has registered it with the panel.
+        </p>
+      {:else}
+        <ul class="space-y-2">
+          {#each t.nodes as node (node.nodeUuid)}
+            {@const w = nodeWords(node)}
+            {@const country = countryLabel(node.countryCode)}
+            <li>
+              <Link
+                href={serversPaths.node(node.nodeUuid, { instance: slug ?? undefined })}
+                class={ROW}
+              >
+                <StatusDot dot={w.dot} />
+                <span class="min-w-0 flex-1">
+                  <span class="flex flex-wrap items-baseline gap-x-2">
+                    <span class="font-medium">{node.name}</span>
+                    {#if country}<span class="text-muted-foreground text-xs">{country}</span>{/if}
+                  </span>
+                  <span class="text-muted-foreground block text-sm">{w.sentence}</span>
+                </span>
+                <ChevronRight
+                  class="text-muted-foreground size-4 shrink-0 rtl:rotate-180"
+                  aria-hidden="true"
+                />
+              </Link>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+      {#if notes.length > 0}
+        <ul class="text-muted-foreground mt-3 space-y-1 text-sm" aria-label="Notes">
+          {#each notes as n (n)}
+            <li>{n}</li>
+          {/each}
+        </ul>
+      {/if}
+    </section>
+
+    {#if slug}
+      <SquadsCard {slug} tree={t} {canWrite} />
+    {/if}
+    {#if slug && manageOn && instance?.writable}
       <OpsList {slug} />
     {/if}
-    <ManageCard {slug} {manageOn} handoffCurrent={instance.handoffCurrent} />
   {/if}
 
-  <Card class="mt-6">
-    <CardHeader>
-      <CardTitle class="text-base">Regular reading</CardTitle>
-    </CardHeader>
-    <CardContent class="flex items-start gap-3 text-sm">
-      <Switch
-        id="servers-observe"
-        class="mt-0.5"
-        disabled={saving}
-        aria-describedby="servers-observe-help"
-        bind:checked={() => observeOn, (v) => void setObserve(v)}
-      />
-      <div>
-        <label for="servers-observe" class="font-medium">Read every panel every ten minutes</label>
-        <p id="servers-observe-help" class="text-muted-foreground">
-          Off, a panel is only read when you press Refresh. Reading never changes a panel, and no
-          key, password or member detail is copied out of it.
-        </p>
+  {#if instance?.observable}
+    <footer
+      class="text-muted-foreground flex flex-wrap items-center gap-x-8 gap-y-3 border-t pt-4 text-sm"
+    >
+      <div class="flex items-center gap-3">
+        <Switch
+          id="servers-observe"
+          checked={observeOn}
+          disabled={saving}
+          onCheckedChange={(v) => void setConfig('manage.observe', v)}
+        />
+        <Label for="servers-observe" class="font-normal">
+          Panels are read every ten minutes{observeOn ? '' : ': off'}
+        </Label>
       </div>
-    </CardContent>
-  </Card>
-{/if}
-
-{#if slug && hostFor}
-  <HostDialog
-    bind:open={hostOpen}
-    {slug}
-    inboundUuid={hostFor.inbound.inboundUuid}
-    inboundTag={hostFor.inbound.tag}
-    host={hostFor.host}
-  />
-{/if}
-{#if slug && namesFor}
-  <NamesDialog
-    bind:open={namesOpen}
-    {slug}
-    profileUuid={namesFor.profileUuid}
-    inbound={namesFor.inbound}
-  />
-{/if}
+      {#if instance.writable}
+        <div class="flex items-center gap-3">
+          <Switch
+            id="servers-manage"
+            checked={manageOn}
+            disabled={saving}
+            onCheckedChange={(v) => void setConfig('manage.enabled', v)}
+          />
+          <Label for="servers-manage" class="font-normal">
+            Changes from here are {manageOn ? 'on' : 'off'}
+          </Label>
+        </div>
+      {/if}
+    </footer>
+  {/if}
+</div>

@@ -4,11 +4,10 @@
    * inbounds makes the panel push to the nodes that serve them, so that change
    * stays open until those nodes have picked it up.
    *
-   * Props: slug, tree
+   * Props: slug, tree, canWrite (false = list only)
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import { Button } from '@client/components/ui/button';
-  import { Card, CardContent, CardHeader, CardTitle } from '@client/components/ui/card';
   import { Checkbox } from '@client/components/ui/checkbox';
   import * as Dialog from '@client/components/ui/dialog';
   import { Input } from '@client/components/ui/input';
@@ -18,7 +17,7 @@
   import ConfirmDialog from '../../edges/components/ConfirmDialog.svelte';
   import { runWrite } from '../lib/run';
 
-  let { slug, tree }: { slug: string; tree: ServerTree } = $props();
+  let { slug, tree, canWrite }: { slug: string; tree: ServerTree; canWrite: boolean } = $props();
   type Squad = ServerTree['squads'][number];
   const qc = useQueryClient();
   const uid = $props.id();
@@ -79,42 +78,42 @@
   }
 </script>
 
-<Card class="mt-6">
-  <CardHeader class="flex flex-row items-center justify-between">
-    <CardTitle class="text-base">Squads</CardTitle>
-    <Button variant="outline" size="sm" onclick={() => start(null)}>Add a squad</Button>
-  </CardHeader>
-  <CardContent class="text-sm">
-    {#if tree.squads.length === 0}
-      <p class="text-muted-foreground">This panel has no squads.</p>
-    {:else}
-      <ul class="divide-y">
-        {#each tree.squads as squad (squad.squadUuid)}
-          <li class="flex flex-wrap items-center gap-3 py-2">
-            <span class="min-w-0 flex-1">
-              <span class="block font-medium break-all">{squad.name}</span>
-              <span class="text-muted-foreground block break-all">
-                {squad.inboundTags.filter(Boolean).join(', ') || 'No inbounds'}
-                {#if squad.membersCount !== null}
-                  · {squad.membersCount} {squad.membersCount === 1 ? 'member' : 'members'}
-                {/if}
-              </span>
-            </span>
-            <Button variant="outline" size="sm" onclick={() => start(squad)}>Change</Button>
-          </li>
-        {/each}
-      </ul>
+<section aria-labelledby="squads">
+  <div class="mb-3 flex items-center justify-between gap-3">
+    <h2 id="squads" class="text-base font-semibold">Squads</h2>
+    {#if canWrite}
+      <Button variant="outline" size="sm" onclick={() => start(null)}>Add a squad</Button>
     {/if}
-  </CardContent>
-</Card>
+  </div>
+  {#if tree.squads.length === 0}
+    <p class="text-muted-foreground text-sm">No squads yet.</p>
+  {:else}
+    <ul class="divide-y rounded-lg border text-sm">
+      {#each tree.squads as squad (squad.squadUuid)}
+        <li class="flex flex-wrap items-center gap-3 px-3 py-2.5">
+          <span class="min-w-0 flex-1">
+            <span class="block font-medium break-all">{squad.name}</span>
+            <span class="text-muted-foreground block break-all">
+              {squad.inboundTags.filter(Boolean).join(', ') || 'No inbounds'}
+              {#if squad.membersCount !== null}
+                · {squad.membersCount} {squad.membersCount === 1 ? 'member' : 'members'}
+              {/if}
+            </span>
+          </span>
+          {#if canWrite}
+            <Button variant="ghost" size="sm" onclick={() => start(squad)}>Change</Button>
+          {/if}
+        </li>
+      {/each}
+    </ul>
+  {/if}
+</section>
 
 <Dialog.Root bind:open>
   <Dialog.Content class="sm:max-w-md">
     <Dialog.Header>
       <Dialog.Title>{editing ? `Change ${editing.name}` : 'Add a squad'}</Dialog.Title>
-      <Dialog.Description>
-        A key in this squad can use the inbounds ticked here, on every node that serves them.
-      </Dialog.Description>
+      <Dialog.Description>Keys in a squad can use the inbounds ticked here.</Dialog.Description>
     </Dialog.Header>
     <form
       class="space-y-3"
@@ -152,15 +151,15 @@
         {/each}
       </fieldset>
       {#if editing && !sameInbounds}
-        <p class="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm">
-          Changing the inbounds makes the panel push to the nodes that serve them.
+        <p class="text-muted-foreground text-sm">
+          New inbounds are pushed to the nodes that serve them.
         </p>
       {/if}
       {#if !editing}
         <div class="flex items-start gap-2">
           <Checkbox id={`${uid}-restore`} bind:checked={restore} />
           <Label for={`${uid}-restore`} class="leading-snug font-normal">
-            Bring it back if a squad with this name was removed on purpose before
+            Bring back a squad of this name that was removed on purpose
           </Label>
         </div>
       {/if}
@@ -182,7 +181,7 @@
 <ConfirmDialog
   bind:open={removeOpen}
   title={`Remove ${editing?.name ?? ''}?`}
-  body="A squad that still has members, or that new keys are issued into, is not removed. The node role will not create it again."
+  body="Only an empty squad that no connection mode issues into can be removed."
   typed={editing?.name}
   confirmLabel="Remove"
   danger

@@ -9,7 +9,7 @@
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
   import { Button } from '@client/components/ui/button';
-  import { Card, CardContent, CardHeader, CardTitle } from '@client/components/ui/card';
+  import { Card, CardContent } from '@client/components/ui/card';
   import { Checkbox } from '@client/components/ui/checkbox';
   import * as Dialog from '@client/components/ui/dialog';
   import { Input } from '@client/components/ui/input';
@@ -93,7 +93,7 @@
 
 <SectionHeader
   title="Server names"
-  description="Pools of names a node answers to behind a pass-through address. Each family is one target site and the names that site really serves. Members are spread across them, and a blocked name is dropped without touching anyone else."
+  description="Names a REALITY node answers to, in families: one target site and the names it really serves."
 >
   {#snippet actions()}
     <Button size="sm" onclick={() => (open = true)}>Add a family</Button>
@@ -106,9 +106,7 @@
   <p class="text-destructive text-sm">{sniErrorWords(codeOf(families.error))}</p>
 {:else if (families.data?.families.length ?? 0) === 0}
   <Card>
-    <CardContent class="text-muted-foreground py-8 text-center text-sm">
-      No family yet. Add one for the site your REALITY inbound borrows its names from.
-    </CardContent>
+    <CardContent class="text-muted-foreground py-8 text-center text-sm">No family yet.</CardContent>
   </Card>
 {:else}
   <ul class="space-y-3" aria-label="Families">
@@ -135,36 +133,21 @@
   </ul>
 {/if}
 
-<Card class="mt-6">
-  <CardHeader>
-    <CardTitle class="text-base">Families</CardTitle>
-  </CardHeader>
-  <CardContent class="flex items-start gap-3 text-sm">
-    <Switch
-      id={`${uid}-on`}
-      class="mt-0.5"
-      disabled={saving || config.isPending}
-      aria-describedby={`${uid}-on-help`}
-      bind:checked={() => on, (v) => void setOn(v)}
-    />
-    <div>
-      <label for={`${uid}-on`} class="font-medium">Use server name families</label>
-      <p id={`${uid}-on-help`} class="text-muted-foreground">
-        On, names are checked against their target site on a schedule and a family can be bound to
-        an inbound. Off, nothing is checked and nothing new is bound. Names members already have
-        keep working either way.
-      </p>
-    </div>
-  </CardContent>
-</Card>
+<footer class="text-muted-foreground mt-8 flex items-center gap-3 border-t pt-4 text-sm">
+  <Switch
+    id={`${uid}-on`}
+    checked={on}
+    disabled={saving || config.isPending}
+    onCheckedChange={(v) => void setOn(v)}
+  />
+  <Label for={`${uid}-on`} class="font-normal">Server name families are {on ? 'on' : 'off'}</Label>
+</footer>
 
 <Dialog.Root bind:open>
   <Dialog.Content class="sm:max-w-md">
     <Dialog.Header>
       <Dialog.Title>Add a family</Dialog.Title>
-      <Dialog.Description>
-        The target cannot be changed later: every name in a family is checked against it.
-      </Dialog.Description>
+      <Dialog.Description>The target site cannot be changed later.</Dialog.Description>
     </Dialog.Header>
     <form
       class="space-y-3"
