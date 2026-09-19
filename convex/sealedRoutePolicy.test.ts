@@ -93,11 +93,14 @@ function parseHttpRoutes(): RegisteredRoute[] {
   return out;
 }
 
-/** The edges surface registers one prefix route per verb via `wrap(handler, sealed)`. */
-function parseEdgeRoutes(): RegisteredRoute[] {
-  const src = read('./httpEdges.ts');
+/**
+ * A prefix-dispatcher surface (edges, servers) registers one prefix route per
+ * verb via `wrap(handler, sealed)`.
+ */
+function parsePrefixRoutes(file: string): RegisteredRoute[] {
+  const src = read(`./${file}`);
   const prefix = /^const PREFIX = '([^']+)';/m.exec(src)?.[1];
-  expect(prefix, 'httpEdges.ts PREFIX const').toBeTruthy();
+  expect(prefix, `${file} PREFIX const`).toBeTruthy();
   const re =
     /http\.route\(\{\s*pathPrefix:\s*PREFIX,\s*method:\s*'([A-Z]+)',\s*handler:\s*wrap\(\w+,\s*(true|false)\)/g;
   const out: RegisteredRoute[] = [];
@@ -107,15 +110,19 @@ function parseEdgeRoutes(): RegisteredRoute[] {
       path: prefix!,
       isPrefix: true,
       sealed: m[2] === 'true',
-      source: 'httpEdges.ts',
+      source: file,
     });
   }
   const declared = (src.match(/http\.route\(/g) ?? []).length;
-  expect(out.length, 'every http.route({...}) in httpEdges.ts must be parsed').toBe(declared);
+  expect(out.length, `every http.route({...}) in ${file} must be parsed`).toBe(declared);
   return out;
 }
 
-const routes = [...parseHttpRoutes(), ...parseEdgeRoutes()];
+const routes = [
+  ...parseHttpRoutes(),
+  ...parsePrefixRoutes('httpEdges.ts'),
+  ...parsePrefixRoutes('httpServers.ts'),
+];
 const sealedRoutes = routes.filter((r) => r.sealed);
 
 /** The policy a registered route resolves to (a prefix route is probed with a dummy tail). */
@@ -127,6 +134,7 @@ describe('sealed() wrappers vs the envelope.ts policy table', () => {
     expect(sealedRoutes.length).toBeGreaterThan(20);
     expect(routes.some((r) => key(r) === 'POST /api/v1/auth/account-login' && r.sealed)).toBe(true);
     expect(routes.some((r) => key(r) === 'GET /api/v1/admin/edges/*' && r.sealed)).toBe(true);
+    expect(routes.some((r) => key(r) === 'GET /api/v1/admin/servers/*' && r.sealed)).toBe(true);
   });
 
   test('every sealed()-wrapped route has a policy entry or is explicitly listed as intentionally unsealed', () => {

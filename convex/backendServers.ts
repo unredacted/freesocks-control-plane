@@ -15,6 +15,7 @@ import type { QueryCtx } from './_generated/server';
 import type { Id } from './_generated/dataModel';
 import type { BackendConfig, RemnawaveServerConfig } from './lib/backends/registry';
 import { PROVIDERS } from './lib/backends/registry';
+import { observeInstance } from './panelObserve';
 import {
   remnawaveFleetStats,
   remnawaveMajorVersion,
@@ -245,6 +246,7 @@ export const healthcheck = internalAction({
   handler: async (ctx): Promise<{ checked: number; healthy: number }> =>
     runWithCronOutcome(ctx, 'backend-healthcheck', async () => {
       const servers = await ctx.runQuery(internal.backendServers.listActiveWithSecret, {});
+      const observe = await ctx.runQuery(internal.serverAdmin.observeEnabled, {});
       let healthy = 0;
       for (const s of servers) {
         try {
@@ -298,6 +300,9 @@ export const healthcheck = internalAction({
               /* inventory unavailable this cycle; the detector reads stale/unknown */
             }
           }
+          // Best-effort panel observation for server management (read-only, and
+          // only when an operator turned it on): the same isolation again.
+          if (observe && provider.observePanel) await observeInstance(ctx, s);
         } catch {
           /* unhealthy: ages out of the fresh window; secret config never logged */
         }

@@ -150,6 +150,8 @@ Detailed companions, referenced rather than duplicated here:
 
 - [`docs/convex-self-hosting.md`](convex-self-hosting.md): self-hosting + fresh-deploy cutover runbook + env checklist.
 - [`docs/backends.md`](backends.md): proxy-backend dispatch (Convex actions) + adding a backend.
+- [`docs/servers.md`](servers.md): server management (read-only today): panel observation, the
+  non-secret caches and digests, the `/api/v1/admin/servers/` surface. Ships dormant.
 - [`docs/outline-setup.md`](outline-setup.md): registering/operating Outline servers via the admin CMS.
 - [`docs/account-number-design.md`](account-number-design.md): account-number auth design + implementation status.
 - [`docs/secrets.md`](secrets.md): every secret/credential — who generates it (deployer auto-gen / `bun run bootstrap` / external), rotation, and blast radius.

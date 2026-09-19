@@ -38,6 +38,7 @@ wire protocol is pluggable.
      getFleetStats?(config) -> FleetStats                      // optional: admin dashboard stats
      getNodeStats?(config) -> NodeStats[]                      // optional: per-placement node load
      hardenLogging?(config, dryRun) -> report                  // optional: no-IP-log enforcement
+     observePanel?(config, digestKey) -> PanelObservation      // optional: server management reads (docs/servers.md)
      fetchContent(config, backendShortId, ua?, subUrl?, hwid?) -> SubscriptionContent
      health(config) -> { keyCount: number | null, rttMs }
      testConnection(config) -> { ok, keyCount } | { ok:false, error }

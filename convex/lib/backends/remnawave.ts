@@ -32,8 +32,12 @@ import type {
   BackendHostCreate,
   NodeInventoryRow,
   PanelInbound,
+  PanelObservation,
+  PanelObservedInbound,
+  PanelObservedProfile,
 } from './types';
 import { farFutureExpiryIso, isFarFutureExpiry } from './types';
+import { changeToken, realityAuthDigest, shapeHash } from '../panel/digest';
 
 export interface RemnawaveConfig {
   baseUrl: string;
@@ -1475,4 +1479,191 @@ export async function remnawaveTestConnection(
     const status = (err as { meta?: { status?: number } }).meta?.status;
     return { ok: false, error: status ? `Remnawave returned HTTP ${status}` : 'Connection failed' };
   }
+}
+
+// --- Panel observation (server management) -----------------------------------
+
+// The observation schemas are SEPARATE from the ones above on purpose: those
+// parse exactly what their feature reads, and widening them would widen what
+// every existing caller accepts. All extra fields are nullish (a panel that
+// lacks one degrades to "unknown", never to a parse failure).
+const ObservedHostRow = z.object({
+  uuid: z.string(),
+  remark: z.string(),
+  address: z.string(),
+  port: z.number().int(),
+  sni: z.string().nullish(),
+  host: z.string().nullish(),
+  path: z.string().nullish(),
+  alpn: z.string().nullish(),
+  fingerprint: z.string().nullish(),
+  securityLayer: z.string().nullish(),
+  isDisabled: z.boolean().nullish(),
+  isHidden: z.boolean().nullish(),
+  tag: z.string().nullish(),
+  viewPosition: z.number().nullish(),
+  inbound: z
+    .object({
+      configProfileUuid: z.string().nullish(),
+      configProfileInboundUuid: z.string().nullish(),
+    })
+    .nullish(),
+  nodes: z.array(z.string()).nullish(),
+});
+const ObservedHostsResponse = z.union([
+  z.array(ObservedHostRow),
+  z.object({ hosts: z.array(ObservedHostRow) }),
+]);
+
+const ObservedSquadsResponse = z.object({
+  internalSquads: z.array(
+    z.object({
+      uuid: z.string(),
+      name: z.string(),
+      inbounds: z.array(ConfigProfileInboundRef).nullish(),
+      info: z.object({ membersCount: z.number().nullish() }).nullish(),
+    }),
+  ),
+});
+
+const ObservedNodesResponse = z.array(
+  z.object({
+    uuid: z.string(),
+    name: z.string().nullish(),
+    address: z.string().nullish(),
+    port: z.number().nullish(),
+    countryCode: z.string().nullish(),
+    isConnected: z.boolean().nullish(),
+    isDisabled: z.boolean().nullish(),
+    usersOnline: z.number().nullish(),
+    tags: z.array(z.string()).nullish(),
+    configProfile: z
+      .object({
+        activeConfigProfileUuid: z.string().nullish(),
+        configProfileUuid: z.string().nullish(),
+        activeInbounds: z.array(ConfigProfileInboundRef).nullish(),
+      })
+      .nullish(),
+  }),
+);
+
+/**
+ * One config profile reduced to what may be stored: the allowlisted inbound
+ * projection plus the three digests. The raw config (private keys, short ids)
+ * exists only inside this function's scope. Pure apart from WebCrypto;
+ * exported for the redaction test.
+ */
+export async function observeConfigProfile(
+  profile: {
+    uuid: string;
+    name: string;
+    config: unknown;
+    inbounds?: { uuid: string; tag: string }[] | null;
+  },
+  digestKey: string,
+): Promise<PanelObservedProfile> {
+  const uuidByTag = new Map((profile.inbounds ?? []).map((i) => [i.tag, i.uuid]));
+  const config = obj(profile.config);
+  const rawInbounds = Array.isArray(config?.inbounds) ? config.inbounds : [];
+  const inbounds: PanelObservedInbound[] = [];
+  for (const raw of rawInbounds) {
+    const tag = str(obj(raw)?.tag);
+    if (!tag) continue;
+    const projected = projectXrayInbound(raw, {
+      configProfileUuid: profile.uuid,
+      configProfileInboundUuid: uuidByTag.get(tag) ?? '',
+      active: false,
+    });
+    if (!projected) continue;
+    const { active: _active, ...inbound } = projected;
+    const out: PanelObservedInbound = inbound;
+    if (inbound.security === 'reality') {
+      const rs = obj(obj(obj(raw)?.streamSettings)?.realitySettings);
+      out.realityAuth = await realityAuthDigest(rs, digestKey);
+    }
+    inbounds.push(out);
+  }
+  return {
+    profileUuid: profile.uuid,
+    name: profile.name,
+    shapeHash: await shapeHash(profile.config),
+    changeToken: await changeToken(profile.config, digestKey),
+    inbounds,
+  };
+}
+
+/**
+ * Read everything server management shows: nodes, config profiles, Hosts and
+ * internal squads. READ-ONLY. Each profile is fetched by uuid (the list row is
+ * never trusted to be complete) and reduced by `observeConfigProfile` before
+ * anything leaves this function. `digestKey` keys the digests; it is the
+ * caller's to supply so this module stays free of environment access.
+ */
+export async function remnawaveObservePanel(
+  cfg: RemnawaveConfig,
+  digestKey: string,
+): Promise<PanelObservation> {
+  const [nodeRows, hostRows, squadRows, listed] = await Promise.all([
+    call(cfg, { method: 'GET', path: '/api/nodes', schema: ObservedNodesResponse }),
+    call(cfg, { method: 'GET', path: '/api/hosts', schema: ObservedHostsResponse }),
+    call(cfg, { method: 'GET', path: '/api/internal-squads', schema: ObservedSquadsResponse }),
+    call(cfg, {
+      method: 'GET',
+      path: '/api/config-profiles',
+      schema: ConfigProfilesList,
+      sensitive: true,
+    }),
+  ]);
+  const profiles: PanelObservedProfile[] = [];
+  for (const p of Array.isArray(listed) ? listed : listed.configProfiles) {
+    const full = await call(cfg, {
+      method: 'GET',
+      path: `/api/config-profiles/${encodeURIComponent(p.uuid)}`,
+      schema: ConfigProfileWithInbounds,
+      sensitive: true,
+    });
+    profiles.push(await observeConfigProfile(full, digestKey));
+  }
+  return {
+    nodes: nodeRows.map((n) => ({
+      nodeUuid: n.uuid,
+      name: n.name ?? n.uuid,
+      address: n.address ?? null,
+      port: n.port ?? null,
+      countryCode: n.countryCode ?? null,
+      online: n.isConnected === true && n.isDisabled !== true,
+      isDisabled: n.isDisabled === true,
+      usersOnline: n.usersOnline ?? 0,
+      configProfileUuid:
+        n.configProfile?.activeConfigProfileUuid ?? n.configProfile?.configProfileUuid ?? null,
+      activeInboundUuids: (n.configProfile?.activeInbounds ?? []).map((i) => i.uuid),
+      tags: n.tags ?? [],
+    })),
+    profiles,
+    hosts: (Array.isArray(hostRows) ? hostRows : hostRows.hosts).map((h) => ({
+      hostUuid: h.uuid,
+      remark: h.remark,
+      address: h.address,
+      port: h.port,
+      sni: h.sni || null,
+      host: h.host || null,
+      path: h.path || null,
+      alpn: h.alpn || null,
+      fingerprint: h.fingerprint || null,
+      securityLayer: h.securityLayer || null,
+      isDisabled: h.isDisabled === true,
+      isHidden: h.isHidden === true,
+      tag: h.tag || null,
+      viewPosition: h.viewPosition ?? null,
+      configProfileUuid: h.inbound?.configProfileUuid ?? null,
+      configProfileInboundUuid: h.inbound?.configProfileInboundUuid ?? null,
+      nodeUuids: h.nodes ?? [],
+    })),
+    squads: squadRows.internalSquads.map((sq) => ({
+      squadUuid: sq.uuid,
+      name: sq.name,
+      inboundUuids: (sq.inbounds ?? []).map((i) => i.uuid),
+      membersCount: sq.info?.membersCount ?? null,
+    })),
+  };
 }

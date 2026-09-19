@@ -323,6 +323,12 @@ export const SEALED_PREFIXES: { method: string; prefix: string; policy: RoutePol
   { method: 'POST', prefix: '/api/v1/admin/edges/', policy: SEAL_BOTH },
   { method: 'PATCH', prefix: '/api/v1/admin/edges/', policy: SEAL_REQ },
   { method: 'PUT', prefix: '/api/v1/admin/edges/', policy: SEAL_REQ },
+  // Server management (docs/servers.md): the same verb classes as edges. The
+  // responses carry node and Host addresses; nothing under it is secret-bearing
+  // by construction, but an operator's fleet layout is not for a CDN to read.
+  { method: 'GET', prefix: '/api/v1/admin/servers/', policy: REVEAL },
+  { method: 'POST', prefix: '/api/v1/admin/servers/', policy: SEAL_BOTH },
+  { method: 'PATCH', prefix: '/api/v1/admin/servers/', policy: SEAL_REQ },
 ];
 
 export function routePolicy(path: string, method: string): RoutePolicy | undefined {

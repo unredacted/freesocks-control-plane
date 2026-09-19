@@ -2021,6 +2021,130 @@ export default defineSchema({
     .index('by_server_name', ['backendServerId', 'name'])
     .index('by_server', ['backendServerId']),
 
+  // --- Panel observation (server management) ---------------------------------
+  // What an operator sees of a panel BEFORE any write: its nodes, config
+  // profiles, Hosts and squads, as last read by `panelObserve`. Read caches
+  // with ONE writer each (the observe mutation); a row the panel no longer
+  // lists is deleted. NOTHING here is secret by construction: an inbound is the
+  // allowlist projection discovery uses, and a profile is that plus digests
+  // (lib/panel/digest.ts) that say "this changed" without carrying what did.
+  // Kept apart from `backendNodeInventory` so neither writer clobbers the other.
+  panelNodes: defineTable({
+    backendServerId: v.id('backendServers'),
+    nodeUuid: v.string(),
+    name: v.string(),
+    address: v.optional(v.string()),
+    port: v.optional(v.number()),
+    countryCode: v.optional(v.string()),
+    online: v.boolean(),
+    isDisabled: v.boolean(),
+    usersOnline: v.number(),
+    configProfileUuid: v.optional(v.string()),
+    activeInboundUuids: v.array(v.string()),
+    tags: v.array(v.string()),
+    observedAt: v.number(),
+  })
+    .index('by_server', ['backendServerId'])
+    .index('by_server_uuid', ['backendServerId', 'nodeUuid']),
+
+  panelProfiles: defineTable({
+    backendServerId: v.id('backendServers'),
+    profileUuid: v.string(),
+    name: v.string(),
+    // SHA-256 over the REDACTED config: storable, drives diffs.
+    shapeHash: v.string(),
+    // Keyed digest over the COMPLETE config (moves on a key rotation too), and
+    // the id of the key it was made with: a different key re-baselines, it
+    // never reads as a change.
+    changeToken: v.string(),
+    digestKeyId: v.string(),
+    // When the token last moved under the SAME key. Who moved it is the ops
+    // ledger's question, not this cache's.
+    tokenChangedAt: v.optional(v.number()),
+    inbounds: v.array(
+      v.object({
+        tag: v.string(),
+        inboundUuid: v.string(),
+        protocol: v.string(),
+        port: v.union(v.number(), v.null()),
+        listen: v.optional(v.string()),
+        network: v.string(),
+        security: v.string(),
+        reality: v.optional(
+          v.object({ target: v.union(v.string(), v.null()), serverNames: v.array(v.string()) }),
+        ),
+        tlsServerName: v.optional(v.union(v.string(), v.null())),
+        path: v.optional(v.union(v.string(), v.null())),
+        serviceName: v.optional(v.union(v.string(), v.null())),
+        // REALITY authentication identity: a keyed, value-free digest plus the
+        // PUBLIC key derived from the private one.
+        realityAuth: v.optional(
+          v.object({
+            digest: v.union(v.string(), v.null()),
+            publicKey: v.union(v.string(), v.null()),
+            publicKeyMismatch: v.boolean(),
+          }),
+        ),
+      }),
+    ),
+    observedAt: v.number(),
+  })
+    .index('by_server', ['backendServerId'])
+    .index('by_server_uuid', ['backendServerId', 'profileUuid']),
+
+  panelHosts: defineTable({
+    backendServerId: v.id('backendServers'),
+    hostUuid: v.string(),
+    remark: v.string(),
+    address: v.string(),
+    port: v.number(),
+    sni: v.optional(v.string()),
+    host: v.optional(v.string()),
+    path: v.optional(v.string()),
+    alpn: v.optional(v.string()),
+    fingerprint: v.optional(v.string()),
+    securityLayer: v.optional(v.string()),
+    isDisabled: v.boolean(),
+    isHidden: v.boolean(),
+    tag: v.optional(v.string()),
+    viewPosition: v.optional(v.number()),
+    configProfileUuid: v.optional(v.string()),
+    configProfileInboundUuid: v.optional(v.string()),
+    nodeUuids: v.array(v.string()),
+    observedAt: v.number(),
+  })
+    .index('by_server', ['backendServerId'])
+    .index('by_server_uuid', ['backendServerId', 'hostUuid']),
+
+  panelSquads: defineTable({
+    backendServerId: v.id('backendServers'),
+    squadUuid: v.string(),
+    name: v.string(),
+    inboundUuids: v.array(v.string()),
+    membersCount: v.optional(v.number()),
+    observedAt: v.number(),
+  })
+    .index('by_server', ['backendServerId'])
+    .index('by_server_uuid', ['backendServerId', 'squadUuid']),
+
+  // One row per instance: when it was last observed and whether that worked.
+  // `errorCode` is a code word, never the provider's message.
+  panelObserveState: defineTable({
+    backendServerId: v.id('backendServers'),
+    attemptedAt: v.number(),
+    observedAt: v.optional(v.number()),
+    ok: v.boolean(),
+    errorCode: v.optional(v.string()),
+    counts: v.optional(
+      v.object({
+        nodes: v.number(),
+        profiles: v.number(),
+        hosts: v.number(),
+        squads: v.number(),
+      }),
+    ),
+  }).index('by_server', ['backendServerId']),
+
   // Detector dedupe marks: one contribution per member per detector window,
   // ACROSS relays: the key is a peppered HMAC of the member alone (see
   // `http.ts`: `relay-mark:<userId>`), with no relay in it, so a member who
