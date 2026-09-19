@@ -123,7 +123,8 @@ export function applyPatchOps(config: unknown, rawOps: readonly PatchOp[]): Patc
     if (at.length === 0) refuse('servers.unknown_inbound', `No inbound is tagged ${op.inboundTag}`);
     if (at.length > 1)
       refuse('servers.profile_malformed', `Two inbounds are tagged ${op.inboundTag}`);
-    const ib = next[at[0]] as Record<string, unknown>;
+    const index = at[0] ?? -1;
+    const ib = next[index] as Record<string, unknown>;
     const stream = isObj(ib.streamSettings) ? ib.streamSettings : null;
     const rs = stream && isObj(stream.realitySettings) ? stream.realitySettings : null;
     if (!stream || !rs || String(stream.security ?? '').toLowerCase() !== 'reality')
@@ -150,7 +151,7 @@ export function applyPatchOps(config: unknown, rawOps: readonly PatchOp[]): Patc
       }
     }
     if (nextRs !== rs)
-      next[at[0]] = { ...ib, streamSettings: { ...stream, realitySettings: nextRs } };
+      next[index] = { ...ib, streamSettings: { ...stream, realitySettings: nextRs } };
   }
 
   const changed = changes.length > 0;
