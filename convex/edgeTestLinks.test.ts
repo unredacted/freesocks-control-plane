@@ -158,6 +158,30 @@ describe('the isolated test link', () => {
     void fx;
   });
 
+  test('a candidate server name: the link presents exactly that name, and nothing else changes', async () => {
+    const { t, edgeId } = await seed();
+    const plain = await t.action(internal.edgeTestLinks.build, { edgeId });
+    const candidate = await t.action(internal.edgeTestLinks.build, {
+      edgeId,
+      candidateSni: 'never-handed-out.example',
+    });
+    const sni = (link: string) =>
+      new URLSearchParams(link.slice(link.indexOf('?') + 1).split('#')[0]).get('sni');
+    expect(sni(candidate.link)).toBe('never-handed-out.example');
+    expect(sni(plain.link)).not.toBe('never-handed-out.example');
+    // Same endpoint, same credential material, same binding: only the name differs.
+    const strip = (link: string) => link.replace(/sni=[^&#]*/, 'sni=X');
+    expect(strip(candidate.link)).toBe(strip(plain.link));
+    expect(candidate.binding).toMatchObject({
+      endpoint: plain.binding.endpoint,
+      listenerRevision: plain.binding.listenerRevision,
+      configHash: plain.binding.configHash,
+    });
+    // The name reached no listener: a test link hands nothing to members.
+    const listeners = await t.run((ctx) => ctx.db.query('relayListeners').collect());
+    expect(JSON.stringify(listeners)).not.toContain('never-handed-out.example');
+  });
+
   test('an ambiguous body (two direct Hosts on the inbound at the origin) is refused; a body with no entry for the inbound too', async () => {
     const { t, edgeId } = await seed({
       hosts: [directHost(), directHost({ uuid: H(2), remark: 'node-one-reality-copy' })],

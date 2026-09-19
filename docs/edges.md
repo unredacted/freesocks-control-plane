@@ -766,11 +766,60 @@ for the next drain, because retiring one name and adding its replacement needs b
 at once. The family fills its share in `seq` order, so every node on the inbound sees the same
 choice.
 
+### Rollout and acceptance
+
+A family's names reach members in two separate steps, because they answer two separate
+questions.
+
+**1. The panel holds the names** (`POST sni/bindings/{id}/rollout`; `.../plan` shows it first).
+The allowlist is planned, previewed against the live panel and written through the server
+operations ledger ([servers.md](servers.md) § Editing a config profile), which is the only path
+that may edit a managed inbound. When the read-back shows the predicted token the rollout is
+`panel_confirmed`. **Members are handed nothing by this step.** Rolling out again with nothing
+new writes nothing.
+
+**2. Each node accepts them.** A panel read-back says nothing about a node. Measured against a
+real node: with the node held off the panel, the panel lists the new name, a plain TLS
+handshake with it **completes** (REALITY forwards it to the target), and **no member can connect
+with it**. So a TLS probe is never acceptance. Acceptance is a **receipt**:
+
+- `POST sni/rollouts/{id}/test-link {edgeId, sni?}` builds the existing isolated test link
+  through one of that node's edges, presenting **one name of the rollout** (a test-only override;
+  the name reaches no subscription through it). The edge must already hold a current endpoint
+  confirmation, so a failure is unambiguous: it is the name, not the path.
+- The operator connects with it and calls `POST sni/receipts/{id}/confirm`. Everything the
+  receipt is bound to is derived again from the live rows: the rollout is still the binding's
+  latest generation, the profile still has the token that generation wrote, the edge's endpoint
+  confirmation is current and unchanged, and the link has not lapsed (one hour). Any difference
+  voids it.
+- Then the name is handed to **that node's members, and only that node's**: nodes sharing a
+  profile progress independently.
+
+**One proof, how much it covers.** A receipt always proves its own name on that node. If the
+name is a **witness**, an added name this inbound has **never listed before** (per
+`sniInboundNameHistory`), a node that authenticates it must be running the generation that
+introduced it, so the one receipt activates **every** name of the generation there. A name that
+was listed at some point (removed and added again, or present before FCP managed the inbound)
+is never a witness: a node stuck on an older config could accept it too, so it proves only
+itself. Only names that still qualify are activated, whatever was proven.
+
+Activation appends to the listener's names in the rollout's order, switches the listener to the
+growth-stable `hrw1` selection, moves `namesRevision` and the publication epoch, and leaves
+`revision` alone: acceptance was **proven**, so the endpoint confirmation still describes the
+path. That is the only way a name is added without a retest.
+
+**Removal is the reverse.** A name leaves the relays first, with its drain. The plan **retains**
+on the panel every name a relay still hands out or that is still draining, whoever it belongs to
+and whatever its family says, and a later rollout drops it once nothing holds it. A burn is
+immediate on the relays and restarts nothing.
+
 Routes, under `/api/v1/admin/edges/sni/`: `GET|PATCH config` (settings scope),
 `GET|POST families`, `GET|PATCH|DELETE families/{slug}`, `POST families/{slug}/names` (a pasted
 list, up to 1000 lines, answered with a verdict per line: `added`, `duplicate`, `invalid`,
 `in_other_family`, `burned`), `POST families/{slug}/names/{retire|reactivate|burn|recheck}`,
-`POST families/{slug}/bind`, `DELETE bindings/{id}`, `POST qualify`. Audit rows
+`POST families/{slug}/bind`, `DELETE bindings/{id}`, `POST qualify`,
+`POST bindings/{id}/plan`, `POST bindings/{id}/rollout`, `GET rollouts/{id}`,
+`POST rollouts/{id}/test-link`, `POST receipts/{id}/confirm`. Audit rows
 (`edge.sni.*`) carry slugs and **counts only, never a hostname**.
 
 ## Probes and the block detector

@@ -186,9 +186,28 @@ export function selectTestEntry(
 }
 
 export const build = internalAction({
-  args: { edgeId: v.id('edges') },
-  handler: async (ctx, { edgeId }): Promise<TestLinkResult> => {
-    const c = await ctx.runQuery(internal.edgeTestLinks.context, { edgeId });
+  args: {
+    edgeId: v.id('edges'),
+    /**
+     * TEST-ONLY: render the link with exactly this server name instead of the
+     * listener's own. It lets an operator prove, with the isolated test
+     * credential, that the NODE accepts a name before any member is given it.
+     * The name reaches no subscription through this path.
+     */
+    candidateSni: v.optional(v.string()),
+  },
+  handler: async (ctx, { edgeId, candidateSni }): Promise<TestLinkResult> => {
+    const base = await ctx.runQuery(internal.edgeTestLinks.context, { edgeId });
+    const c = candidateSni
+      ? {
+          ...base,
+          published: {
+            ...base.published,
+            serverNames: [{ sni: candidateSni, status: 'active' as const }],
+            sniPick: undefined,
+          },
+        }
+      : base;
     const cred = await ctx.runAction(internal.edgeTestCredentials.ensure, {
       relayId: c.relayId as Id<'relays'>,
       purpose: 'test_link',

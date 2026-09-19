@@ -181,6 +181,9 @@ const relayEdgeLayer = v.union(v.literal('l4'), v.literal('l7'));
 // Retired names stay accepted by the node until `drainUntil`; `retiredBy`
 // says whether the node role may reactivate it (only its own retirements).
 const listenerName = v.object({
+  // `family` = activated by a server-name rollout after a node proved it
+  // accepts the name. Absent = came from a registration body or an admin edit.
+  origin: v.optional(v.literal('family')),
   name: v.string(),
   status: v.union(v.literal('active'), v.literal('retired')),
   retiredAt: v.optional(v.number()),
@@ -2107,6 +2110,74 @@ export default defineSchema({
     // 0 = already there when FCP first looked (history before that is unknown).
     firstSeenGeneration: v.number(),
   }).index('by_inbound_name', ['backendServerId', 'inboundUuid', 'name']),
+
+  // One push of a family's allowlist to its inbound. `names` is the COMPLETE list
+  // written (family names + names a relay still hands out + names still
+  // draining). The panel write runs through the operations ledger (`opId`);
+  // what members get is decided afterwards, per node, by receipts.
+  sniRollouts: defineTable({
+    bindingId: v.id('sniInboundBindings'),
+    backendServerId: v.id('backendServers'),
+    generation: v.number(),
+    names: v.array(v.string()),
+    added: v.array(v.string()),
+    removed: v.array(v.string()),
+    // An added name this inbound has NEVER listed before. A node that
+    // authenticates it must be running this generation, so one test of it
+    // proves the whole generation on that node. Absent = every added name was
+    // listed at some point: each is then proven on its own.
+    witness: v.optional(v.string()),
+    // The token the profile must have once the write has landed.
+    expectedToken: v.string(),
+    opId: v.optional(v.id('panelOps')),
+    phase: v.union(
+      v.literal('writing'),
+      v.literal('panel_confirmed'),
+      v.literal('failed'),
+      v.literal('superseded'),
+    ),
+    errorCode: v.optional(v.string()),
+    startedAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_binding', ['bindingId'])
+    .index('by_op', ['opId']),
+
+  // The proof that ONE node accepts a name: an authenticated REALITY session,
+  // made by an operator with an isolated test link through one of that node's
+  // verified edges. Bound to everything it proves; a change to any of it, an
+  // expiry, or a newer generation voids it. A TLS probe never creates one.
+  sniAcceptanceReceipts: defineTable({
+    rolloutId: v.id('sniRollouts'),
+    generation: v.number(),
+    relayId: v.id('relays'),
+    listenerId: v.id('relayListeners'),
+    edgeId: v.id('edges'),
+    sni: v.string(),
+    isWitness: v.boolean(),
+    expectedToken: v.string(),
+    // The endpoint confirmation the edge held when the link was issued.
+    endpoint: v.string(),
+    listenerRevision: v.number(),
+    configHash: v.string(),
+    evidenceKind: v.union(
+      v.literal('operator_test_link'),
+      v.literal('auth_probe'),
+      v.literal('adopted'),
+    ),
+    state: v.union(
+      v.literal('issued'),
+      v.literal('confirmed'),
+      v.literal('expired'),
+      v.literal('superseded'),
+    ),
+    issuedAt: v.number(),
+    expiresAt: v.number(),
+    confirmedAt: v.optional(v.number()),
+    actorAdminId: v.optional(v.id('adminUsers')),
+  })
+    .index('by_rollout', ['rolloutId'])
+    .index('by_listener', ['listenerId']),
 
   // --- Panel observation (server management) ---------------------------------
   // What an operator sees of a panel BEFORE any write: its nodes, config
