@@ -76,7 +76,7 @@ import {
   type ListenerProto,
 } from './lib/edges/protocols';
 import { hostTargetFor, listenerLayers, zoneModeCarriesOrigin } from './lib/edges/layers';
-import { activeNames, listenerRemark, listenersOf } from './relayListeners';
+import { activeNames, hostSniOf, listenerRemark, listenersOf } from './relayListeners';
 // The freshness window the DETECTOR scores on is the one this gate accepts
 // evidence on: one rule, imported, never a second copy of "two intervals".
 import { probeStaleAfterMs } from './lib/edges/scoring';
@@ -3498,7 +3498,7 @@ async function listHosts(ctx: ActionCtx, origin: Origin): Promise<BackendHost[]>
  */
 function flipTargetFor(edge: Edge, listener: Doc<'relayListeners'> | null): HostTarget | null {
   if (!listener) return null;
-  const selectedSni = activeNames(listener)[0] ?? null;
+  const selectedSni = hostSniOf(listener);
   return hostTargetFor(
     {
       layer: edge.layer,
