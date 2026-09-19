@@ -168,6 +168,7 @@ const ERROR_WORDS: Record<string, string> = {
   // Profile edits.
   'servers.profile_changed':
     'The profile changed on the panel since the preview. Preview again before applying.',
+  'servers.nothing_to_change': 'The panel already had exactly this, so nothing was sent.',
   'servers.name_in_use':
     'Members are still given one of the names being removed. Retire it on the relay first.',
   'servers.inbound_sni_managed':
@@ -237,10 +238,14 @@ export function opWords(op: OpLike): { dot: Dot; sentence: string } {
       return op.errorCode === 'servers.adopted_existing'
         ? { dot: 'green', sentence: 'Done. It was already there, so nothing was created twice.' }
         : { dot: 'green', sentence: 'Done, and seen on the panel.' };
-    case 'refused':
-      return op.errorCode === 'servers.never_sent'
-        ? { dot: 'grey', sentence: 'Never sent. Nothing was changed.' }
-        : { dot: 'grey', sentence: 'The panel refused it. Nothing was changed.' };
+    case 'refused': {
+      if (op.errorCode === 'servers.never_sent')
+        return { dot: 'grey', sentence: 'Never sent. Nothing was changed.' };
+      // Most refusals are FCP's own (the profile moved since the preview, the
+      // panel already had it, two matches): say which, never "the panel refused".
+      const reason = op.errorCode ? ERROR_WORDS[op.errorCode] : undefined;
+      return { dot: 'grey', sentence: reason ?? 'The panel refused it. Nothing was changed.' };
+    }
     case 'outcome_unknown':
       return {
         dot: 'red',

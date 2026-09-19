@@ -226,6 +226,16 @@ describe('write wording', () => {
     expect(opWords({ ...op, state: 'refused', errorCode: 'servers.never_sent' }).sentence).toMatch(
       /Never sent/,
     );
+    // A refusal FCP made itself names its reason; only the panel's own is "the panel refused it".
+    expect(
+      opWords({ ...op, state: 'refused', errorCode: 'servers.profile_changed' }).sentence,
+    ).toMatch(/Preview again/);
+    expect(
+      opWords({ ...op, state: 'refused', errorCode: 'servers.nothing_to_change' }).sentence,
+    ).toMatch(/already had exactly this/);
+    expect(
+      opWords({ ...op, state: 'refused', errorCode: 'servers.panel_refused' }).sentence,
+    ).toMatch(/panel refused/);
   });
 
   test('server names are parsed from lines or commas, in order, without repeats', () => {
