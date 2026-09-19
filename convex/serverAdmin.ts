@@ -262,6 +262,50 @@ export const tree = internalQuery({
 });
 
 /**
+ * Who feels a change to these inbounds of a profile: the nodes the panel will
+ * re-apply it to, and the relays whose listeners are bound to them.
+ */
+export const profileBlastRadius = internalQuery({
+  args: {
+    backendServerId: v.id('backendServers'),
+    profileUuid: v.string(),
+    inboundUuids: v.array(v.string()),
+  },
+  handler: async (ctx, { backendServerId: sid, profileUuid, inboundUuids }) => {
+    const nodes = (
+      await ctx.db
+        .query('panelNodes')
+        .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+        .collect()
+    ).filter((n) => !n.isDisabled && n.configProfileUuid === profileUuid);
+    const wanted = new Set(inboundUuids);
+    const relays = await ctx.db
+      .query('relays')
+      .withIndex('by_backend_server', (q) => q.eq('backendServerId', sid))
+      .collect();
+    const affected: { relaySlug: string; listenerKeys: string[]; publishedEdges: number }[] = [];
+    for (const r of relays) {
+      const listeners = (
+        await ctx.db
+          .query('relayListeners')
+          .withIndex('by_relay', (q) => q.eq('relayId', r._id))
+          .collect()
+      ).filter(
+        (l) =>
+          !l.retired && !!l.panelBinding && wanted.has(l.panelBinding.configProfileInboundUuid),
+      );
+      if (listeners.length > 0)
+        affected.push({
+          relaySlug: r.slug,
+          listenerKeys: listeners.map((l) => l.listenerKey),
+          publishedEdges: r.publishedEdgeIds.length,
+        });
+    }
+    return { restartsNodes: nodes.map((n) => n.name), affectedRelays: affected };
+  },
+});
+
+/**
  * Check the squad pools operators pasted into mode placements against the
  * squads the panel really has. A pool is write-only over HTTP (it is never
  * echoed), so this answers in COUNTS and squad names, never the pasted uuids:

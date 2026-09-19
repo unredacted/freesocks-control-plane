@@ -18,7 +18,7 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { runWithCronOutcome } from './cronHeartbeat';
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
-import type { PanelHostCreate, PanelHostFields } from './lib/backends/types';
+import type { PanelHostCreate, PanelHostFields, ProfilePatchPreview } from './lib/backends/types';
 import {
   callResultOf,
   claimKey,
@@ -29,7 +29,12 @@ import {
   looksLikeRelayRemark,
 } from './lib/panel/ops';
 import { poolFromConfig } from './lib/remnawavePlacement';
+import { parseRealityTarget } from './lib/edges/inboundMapping';
+import { assertNoRotationOrQuarantine } from './lib/edges/relayGuards';
+import { panelDigestKey } from './lib/panel/key';
+import { PatchRefused, checkPatchOps, type PatchOp } from './lib/panel/patchOps';
 import { claimOp } from './panelLedger';
+import { observeInstance } from './panelObserve';
 
 const refuse = (code: string, message: string): never => {
   throw new ConvexError({ code, message });
@@ -482,6 +487,151 @@ export const requestSquadDelete = internalMutation({
   },
 });
 
+// --- config profiles --------------------------------------------------------------------------------
+
+const patchOp = v.union(
+  v.object({
+    op: v.literal('setRealityServerNames'),
+    inboundTag: v.string(),
+    names: v.array(v.string()),
+  }),
+  v.object({ op: v.literal('setRealityTarget'), inboundTag: v.string(), target: v.string() }),
+);
+
+/**
+ * Claim a typed profile edit that was just previewed against the live panel.
+ * Everything that could strand members or fight another workflow is refused
+ * HERE, before anything is sent:
+ *
+ *  - a server name that a bound relay listener still hands out (or that is
+ *    still draining there) may not be removed: retire it on the relay first;
+ *  - a relay that is rotating, restoring, quarantined or mid-setup holds still;
+ *  - the profile, every enabled node on it and every affected relay are claimed
+ *    together, and the relay claims are what rotations, restores, registrations
+ *    and setup runs refuse against (`assertNoRelayPanelClaim`).
+ */
+export const requestProfilePatch = internalMutation({
+  args: {
+    backendServerId: v.id('backendServers'),
+    profileUuid: v.string(),
+    ops: v.array(patchOp),
+    /** From the preview the operator confirmed. */
+    baseToken: v.string(),
+    expectedToken: v.string(),
+    inboundUuids: v.record(v.string(), v.string()),
+    ...actor,
+  },
+  handler: async (ctx, a) => {
+    const sid = a.backendServerId;
+    let ops: PatchOp[];
+    try {
+      ops = checkPatchOps(a.ops as PatchOp[]);
+    } catch (e) {
+      if (e instanceof PatchRefused) return refuse(e.code, e.message);
+      throw e;
+    }
+    const cached = await ctx.db
+      .query('panelProfiles')
+      .withIndex('by_server_uuid', (q) =>
+        q.eq('backendServerId', sid).eq('profileUuid', a.profileUuid),
+      )
+      .unique();
+    if (!cached) return refuse('not_found', 'That profile is not on this panel. Refresh and retry');
+    if (a.baseToken === a.expectedToken) refuse('validation', 'Nothing to change');
+
+    const touched = new Map<string, string>();
+    for (const op of ops) {
+      const uuid = a.inboundUuids[op.inboundTag];
+      if (!uuid) return refuse('servers.unknown_inbound', `No inbound is tagged ${op.inboundTag}`);
+      touched.set(op.inboundTag, uuid);
+    }
+    const touchedUuids = new Set(touched.values());
+
+    // Relays whose listeners are bound to a touched inbound.
+    const relays = await ctx.db
+      .query('relays')
+      .withIndex('by_backend_server', (q) => q.eq('backendServerId', sid))
+      .collect();
+    const now = Date.now();
+    const affected: Id<'relays'>[] = [];
+    for (const relay of relays) {
+      const listeners = (
+        await ctx.db
+          .query('relayListeners')
+          .withIndex('by_relay', (q) => q.eq('relayId', relay._id))
+          .collect()
+      ).filter(
+        (l) =>
+          !l.retired &&
+          !!l.panelBinding &&
+          touchedUuids.has(l.panelBinding.configProfileInboundUuid),
+      );
+      if (listeners.length === 0) continue;
+      await assertNoRotationOrQuarantine(ctx.db, relay);
+      const runs = await ctx.db
+        .query('edgeSetupRuns')
+        .withIndex('by_relay', (q) => q.eq('relayId', relay._id))
+        .collect();
+      if (
+        runs.some((r) => r.state === 'running' || r.state === 'waiting' || r.state === 'needs_you')
+      )
+        refuse('servers.relay_setup_running', `A guided setup is still running on ${relay.slug}`);
+      for (const op of ops) {
+        if (op.op !== 'setRealityServerNames') continue;
+        const keep = new Set(op.names);
+        for (const l of listeners) {
+          if (l.panelBinding!.configProfileInboundUuid !== touched.get(op.inboundTag)) continue;
+          const stranded = (l.tlsNames ?? []).filter(
+            (n) =>
+              !keep.has(n.name) &&
+              (n.status === 'active' || (n.drainUntil !== undefined && n.drainUntil > now)),
+          );
+          if (stranded.length > 0)
+            refuse(
+              'servers.name_in_use',
+              `${relay.slug} still hands out ${stranded[0].name}. Retire it on the relay and let it drain first`,
+            );
+        }
+      }
+      affected.push(relay._id);
+    }
+
+    const nodes = (
+      await ctx.db
+        .query('panelNodes')
+        .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+        .collect()
+    ).filter((n) => !n.isDisabled && n.configProfileUuid === a.profileUuid);
+
+    const targets: Record<string, { address: string; port: number }> = {};
+    for (const op of ops)
+      if (op.op === 'setRealityTarget') targets[op.inboundTag] = parseRealityTarget(op.target)!;
+
+    const opId = await claimOp(ctx, {
+      backendServerId: sid,
+      kind: 'profile',
+      verb: 'patch',
+      label: cached.name,
+      objectUuid: a.profileUuid,
+      claimKeys: [
+        claimKey.profile(a.profileUuid),
+        ...nodes.map((n) => claimKey.node(n.nodeUuid)),
+        ...affected.map((r) => `relay:${r}`),
+      ],
+      intent: { ops, baseToken: a.baseToken },
+      postcondition: {
+        expectedToken: a.expectedToken,
+        inboundUuids: a.inboundUuids,
+        targets,
+        relayIds: affected,
+      },
+      asyncNodeUuids: nodes.map((n) => n.nodeUuid),
+      actorAdminId: a.actorAdminId,
+    });
+    return { opId, restartsNodes: nodes.length, affectedRelays: affected.length };
+  },
+});
+
 // --- run: send once, then look -------------------------------------------------------------------------
 
 async function writesFor(ctx: ActionCtx, backendServerId: Id<'backendServers'>) {
@@ -504,6 +654,16 @@ async function look(ctx: ActionCtx, opId: Id<'panelOps'>): Promise<boolean> {
     const { writes, config } = await writesFor(ctx, op.backendServerId);
     const hosts = op.kind === 'host' ? await writes.readHosts(config) : undefined;
     const squads = op.kind === 'squad' ? await writes.readSquads(config) : undefined;
+    let profile: { changeToken: string; inboundUuids: Record<string, string> } | undefined;
+    if (op.kind === 'profile') {
+      const seen = await writes.readProfile(config, op.objectUuid!, (await panelDigestKey()).key);
+      profile = {
+        changeToken: seen.changeToken,
+        inboundUuids: Object.fromEntries(
+          seen.inbounds.map((i) => [i.tag, i.configProfileInboundUuid]),
+        ),
+      };
+    }
     const nodes =
       op.asyncEffect === 'pending'
         ? (await writes.readNodeStatus(config)).map((n) => ({
@@ -516,8 +676,16 @@ async function look(ctx: ActionCtx, opId: Id<'panelOps'>): Promise<boolean> {
       opId,
       hosts,
       squads,
+      profile,
       nodes,
     });
+    // A settled profile edit is shown at once, not at the next scheduled read.
+    if (!out.open && op.kind === 'profile') {
+      const server = await ctx.runQuery(internal.backendServers.getById, {
+        id: op.backendServerId,
+      });
+      if (server) await observeInstance(ctx, server);
+    }
     return out.open;
   } catch {
     return true;
@@ -578,7 +746,25 @@ export const run = internalAction({
     let outcome: ReturnType<typeof classifyRequest>;
     let errorCode: string | undefined;
     try {
-      if (op.kind === 'host') {
+      if (op.kind === 'profile') {
+        const sent = await writes.applyProfilePatch(
+          config,
+          op.objectUuid!,
+          intent.ops,
+          intent.baseToken,
+          (await panelDigestKey()).key,
+        );
+        if (!sent.sent) {
+          // Someone else changed the profile since the preview (or there is
+          // nothing to do): the PATCH was never made.
+          await ctx.runMutation(internal.panelLedger.recordOutcome, {
+            opId,
+            request: 'rejected_pre_mutation',
+            errorCode: `servers.${sent.reason}`,
+          });
+          return { open: false };
+        }
+      } else if (op.kind === 'host') {
         if (op.verb === 'create') objectUuid = (await writes.createHost(config, intent)).hostUuid;
         else if (op.verb === 'update') await writes.updateHost(config, op.objectUuid!, intent);
         else if (op.verb === 'delete') await writes.deleteHost(config, op.objectUuid!);
@@ -603,6 +789,47 @@ export const run = internalAction({
     });
     if (outcome === 'rejected_pre_mutation') return { open: false };
     return { open: await look(ctx, opId) };
+  },
+});
+
+/**
+ * What a typed profile edit WOULD do, read from the live panel: the non-secret
+ * before/after, and who feels it. Writes nothing. The tokens it returns are
+ * what `requestProfilePatch` then conditions the write on.
+ */
+export type ProfilePatchPreviewView = ProfilePatchPreview & {
+  ops: PatchOp[];
+  restartsNodes: string[];
+  affectedRelays: { relaySlug: string; listenerKeys: string[]; publishedEdges: number }[];
+};
+
+export const previewProfilePatch = internalAction({
+  args: { backendServerId: v.id('backendServers'), profileUuid: v.string(), ops: v.any() },
+  handler: async (ctx, { backendServerId, profileUuid, ops }): Promise<ProfilePatchPreviewView> => {
+    const { writes, config } = await writesFor(ctx, backendServerId);
+    try {
+      const checked = checkPatchOps(ops as PatchOp[]);
+      const preview = await writes.previewProfilePatch(
+        config,
+        profileUuid,
+        checked,
+        (await panelDigestKey()).key,
+      );
+      const blast = await ctx.runQuery(internal.serverAdmin.profileBlastRadius, {
+        backendServerId,
+        profileUuid,
+        inboundUuids: preview.touchedTags.map((t) => preview.inboundUuids[t]).filter(Boolean),
+      });
+      return { ...preview, ops: checked, ...blast };
+    } catch (e) {
+      if (e instanceof PatchRefused) throw new ConvexError({ code: e.code, message: e.message });
+      if (e instanceof ConvexError) throw e;
+      // A panel fault while reading a profile: status and path only ever reach here.
+      throw new ConvexError({
+        code: 'backend.panel_read_failed',
+        message: 'The panel could not be read',
+      });
+    }
   },
 });
 

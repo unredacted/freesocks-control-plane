@@ -40,9 +40,11 @@ import type {
   PanelObservedInbound,
   PanelObservedProfile,
   PanelObservedSquad,
+  ProfilePatchPreview,
 } from './types';
 import { farFutureExpiryIso, isFarFutureExpiry } from './types';
 import { changeToken, realityAuthDigest, shapeHash } from '../panel/digest';
+import { applyPatchOps, type PatchOp } from '../panel/patchOps';
 
 export interface RemnawaveConfig {
   baseUrl: string;
@@ -1823,4 +1825,77 @@ export async function remnawaveReadNodeStatus(cfg: RemnawaveConfig): Promise<Pan
     configProfileUuid:
       n.configProfile?.activeConfigProfileUuid ?? n.configProfile?.configProfileUuid ?? null,
   }));
+}
+
+// --- Guarded config-profile edit (server management) ---------------------------------------
+//
+// The panel replaces a profile's config WHOLESALE and offers no conditional
+// update (measured: stale preconditions are ignored). So: read the full config,
+// refuse unless it is still the one the operator previewed, apply a CLOSED set
+// of typed edits (lib/panel/patchOps.ts), send once. The config, key material
+// included, exists only inside these functions; what leaves them is digests and
+// the non-secret before/after.
+
+async function readFullProfile(cfg: RemnawaveConfig, profileUuid: string) {
+  return call(cfg, {
+    method: 'GET',
+    path: `/api/config-profiles/${encodeURIComponent(profileUuid)}`,
+    schema: ConfigProfileWithInbounds,
+    sensitive: true,
+  });
+}
+
+export async function remnawavePreviewProfilePatch(
+  cfg: RemnawaveConfig,
+  profileUuid: string,
+  ops: readonly PatchOp[],
+  digestKey: string,
+): Promise<ProfilePatchPreview> {
+  const full = await readFullProfile(cfg, profileUuid);
+  const out = applyPatchOps(full.config, ops);
+  const baseToken = await changeToken(full.config, digestKey);
+  return {
+    profileName: full.name,
+    baseToken,
+    expectedToken: out.changed ? await changeToken(out.config, digestKey) : baseToken,
+    changed: out.changed,
+    changes: out.changes,
+    touchedTags: out.touchedTags,
+    inboundUuids: Object.fromEntries((full.inbounds ?? []).map((i) => [i.tag, i.uuid])),
+  };
+}
+
+export async function remnawaveApplyProfilePatch(
+  cfg: RemnawaveConfig,
+  profileUuid: string,
+  ops: readonly PatchOp[],
+  baseToken: string,
+  digestKey: string,
+): Promise<{ sent: true } | { sent: false; reason: 'profile_changed' | 'nothing_to_change' }> {
+  // Read again, as late as possible: the window in which another writer can
+  // slip in is this function, and nothing the panel offers can close it.
+  const full = await readFullProfile(cfg, profileUuid);
+  if ((await changeToken(full.config, digestKey)) !== baseToken)
+    return { sent: false, reason: 'profile_changed' };
+  const out = applyPatchOps(full.config, ops);
+  if (!out.changed) return { sent: false, reason: 'nothing_to_change' };
+  await call(cfg, {
+    method: 'PATCH',
+    path: '/api/config-profiles',
+    body: { uuid: profileUuid, config: out.config },
+    schema: z.unknown(),
+    sensitive: true,
+    // A profile with hundreds of names and several nodes answers in tens of
+    // milliseconds (measured), but the write must not be cut short by the
+    // default read timeout.
+  });
+  return { sent: true };
+}
+
+export async function remnawaveReadProfile(
+  cfg: RemnawaveConfig,
+  profileUuid: string,
+  digestKey: string,
+): Promise<PanelObservedProfile> {
+  return observeConfigProfile(await readFullProfile(cfg, profileUuid), digestKey);
 }

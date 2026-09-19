@@ -28,6 +28,7 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { sanitizeAuditPayload, writeAuditLog, type AuditEntry } from './lib/audit';
 import { randomHex } from './lib/crypto';
+import { assertNoRelayPanelClaim } from './lib/edges/relayGuards';
 import { resolveEdgeConfig, edgeMs, type EdgeConfig } from './lib/edgeConfig';
 import {
   checkPublishable,
@@ -714,6 +715,8 @@ export async function startRotation(
     throw new ConvexError({ code: first.code, message: first.message });
   }
   const origin = g.origin!;
+  // Not waived by anything: a server change holds this relay's listeners still.
+  await assertNoRelayPanelClaim(ctx.db, origin);
   const listenerId = g.listenerId;
   const id = await ctx.db.insert('edgeRotations', {
     relayId: a.relayId,

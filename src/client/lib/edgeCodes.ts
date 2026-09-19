@@ -375,6 +375,12 @@ const COPY = {
     label: 'Listener not found',
     explain: 'The listener key does not exist on this relay.',
   },
+  panel_op_running: {
+    label: 'A server change is running',
+    explain:
+      'Servers is updating the node this relay serves, and holds its listeners still meanwhile.',
+    fix: 'Wait for the change under Servers to finish, then try again.',
+  },
   listener_unusable: {
     label: 'Listener unusable',
     explain: 'The listener is retired, disabled or not deployed.',

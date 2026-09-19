@@ -35,6 +35,7 @@ import {
   type ListenerSpecInput,
 } from './lib/edges/registration';
 import {
+  assertNoRelayPanelClaim,
   assertNoRotationOrQuarantine,
   bumpEpochAndRefresh,
   liveEdgesOfRelay,
@@ -273,6 +274,8 @@ export async function applyRegistration(
   source: 'role' | 'admin',
   opts: { prune: boolean; actorAdminId?: Id<'adminUsers'> },
 ): Promise<ApplyRegistrationResult> {
+  // A server change that is bringing this relay's listeners back in step owns them meanwhile.
+  await assertNoRelayPanelClaim(ctx.db, relay);
   const specs = inputs.map((s) => validateListenerSpec(s, { origin: relay.origin }));
   const existing = await listenersOf(ctx, relay._id);
   const diff = diffListeners(existing, specs, source, opts.prune);
