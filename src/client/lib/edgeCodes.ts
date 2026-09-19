@@ -1305,6 +1305,11 @@ export const SETUP_RUN_NEED_COPY: Record<SetupRunNeed, CodeCopy> = {
     explain: 'A member body did not render through the new address (the detail names the case).',
     fix: 'Try again.',
   },
+  node_not_approved: {
+    label: 'Node not approved',
+    explain: 'The node behind this relay is enrolled and its activation has not been approved.',
+    fix: 'Approve the node in Servers, then check again.',
+  },
   quarantined: {
     label: 'Paused for safety',
     explain: 'A rotation could not converge and paused the relay.',
