@@ -181,6 +181,9 @@ crons.daily(
 // published pool / standbys up (config-gated), and finish origin deletes.
 // Server management: release ops that never sent, mark interrupted ones as
 // unknown, and look again at every open op. It never sends anything.
+// Server-name families: check due names against their family's target (rate-limited).
+crons.interval('sni-qualify', { minutes: 5 }, internal.sniQualifyOps.run, {});
+
 crons.interval('panel-reconcile', { minutes: 5 }, internal.panelWrites.reconcile, {});
 
 crons.interval('edge-reconcile', { minutes: 5 }, internal.edgeReconcile.run, {});
