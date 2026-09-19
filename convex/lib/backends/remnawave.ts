@@ -152,7 +152,22 @@ class RemnawaveApiError extends Error {
     this.name = 'RemnawaveApiError';
     this.meta = meta;
   }
-  static async fromResponse(res: Response, path: string): Promise<RemnawaveApiError> {
+  static async fromResponse(
+    res: Response,
+    path: string,
+    sensitive = false,
+  ): Promise<RemnawaveApiError> {
+    // A SENSITIVE call carries key material in its request or response (a
+    // config profile holds the REALITY private key, short ids and the client
+    // list), and a panel rejection can echo fragments of what was submitted.
+    // Such an error names the status and the path and nothing else: the body is
+    // not even read, so it cannot reach the message, the meta or the logs.
+    if (sensitive) {
+      return new RemnawaveApiError(`Remnawave ${res.status} on ${path}`, {
+        status: res.status,
+        path,
+      });
+    }
     let body: string | undefined;
     try {
       body = await res.text();
@@ -205,6 +220,13 @@ async function call<T>(
     path: string;
     body?: unknown;
     schema: z.ZodType<T>;
+    /**
+     * The exchange carries key material (every config-profile call). Errors
+     * then name status + path only: no response-body slice, and a schema
+     * mismatch lists the failing PATHS without zod's messages (an enum or
+     * literal mismatch message quotes the received value).
+     */
+    sensitive?: boolean;
   },
 ): Promise<T> {
   const url = joinUrl(cfg.baseUrl, args.path);
@@ -221,7 +243,7 @@ async function call<T>(
       body: args.body !== undefined ? JSON.stringify(args.body) : undefined,
       signal: controller.signal,
     });
-    if (!res.ok) throw await RemnawaveApiError.fromResponse(res, args.path);
+    if (!res.ok) throw await RemnawaveApiError.fromResponse(res, args.path, args.sensitive);
     // 3.x answers some writes with NO body (bulk/update → 202, DELETE → 204;
     // 2.x returned `{ response: {...} }` for both). An empty 2xx parses as
     // `undefined` — the callers of those routes use `z.unknown()` — while a
@@ -245,7 +267,10 @@ async function call<T>(
       // cause of a 2xx that still fails issuance.
       const issues = parsed.error.issues
         .slice(0, 6)
-        .map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`)
+        .map((i) => {
+          const at = i.path.join('.') || '(root)';
+          return args.sensitive ? at : `${at}: ${i.message}`;
+        })
         .join('; ');
       throw new RemnawaveApiError(`Remnawave schema mismatch on ${args.path} (${issues})`, {
         path: args.path,
@@ -354,6 +379,7 @@ export async function remnawaveHardenLogging(
     method: 'GET',
     path: '/api/config-profiles',
     schema: ConfigProfilesList,
+    sensitive: true,
   });
   const rows = Array.isArray(listed) ? listed : listed.configProfiles;
   const report: RemnawaveLoggingReport = { profiles: [] };
@@ -367,6 +393,7 @@ export async function remnawaveHardenLogging(
         method: 'GET',
         path: `/api/config-profiles/${p.uuid}`,
         schema: ConfigProfileRow,
+        sensitive: true,
       });
       const merged = hardenXrayLoggingConfig(full.config);
       if (merged.changed && !opts.dryRun) {
@@ -375,6 +402,7 @@ export async function remnawaveHardenLogging(
           path: '/api/config-profiles',
           body: { uuid: p.uuid, config: merged.config },
           schema: z.unknown(),
+          sensitive: true,
         });
       }
       report.profiles.push({
@@ -1011,6 +1039,7 @@ export async function remnawaveListNodeInbounds(
     method: 'GET',
     path: `/api/config-profiles/${encodeURIComponent(profileUuid)}`,
     schema: ConfigProfileWithInbounds,
+    sensitive: true,
   });
   const uuidByTag = new Map((profile.inbounds ?? []).map((i) => [i.tag, i.uuid]));
   const config = obj(profile.config);

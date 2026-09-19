@@ -359,6 +359,42 @@ Two Remnawave quirks the harness handles (both bit us / would bite a naive calle
 When adding a new backend read/write (§"Adding a backend type"), extend the integration
 test so the real contract stays pinned by an executable check, not just a comment.
 
+### Management contract (nodes, config profiles, squads, Hosts)
+
+The same command also runs `remnawave.management.integration.test.ts`, a **contract probe**
+for the panel's management writes. FCP has no provider functions for most of these yet; the
+probe speaks the panel API directly so the behaviours are established before any code depends
+on them. Measured on the pinned panel (`remnawave/backend:3.4.4`), no node connected:
+
+| Behaviour                                                                | Result                                         | Consequence for a caller                                                                                               |
+| ------------------------------------------------------------------------ | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Inbound uuid across a config `PATCH`, tag and protocol unchanged         | **stable**                                     | Listener bindings, Hosts and squads survive a `serverNames` / target edit                                              |
+| Inbound protocol changed under the same tag                              | accepted (200), **uuid replaced**              | A patch op must never change an inbound's protocol                                                                     |
+| Conditional update (`If-Match`, `If-Unmodified-Since` with stale values) | **ignored** (200, not 412)                     | The panel offers no precondition. One writer at a time is the caller's job                                             |
+| Profile-name-only `PATCH` (`{uuid, name}`)                               | accepted; `config` and inbound uuids untouched | A rename is not a config change                                                                                        |
+| Invalid `config` (`inbounds` not an array)                               | refused with **500**; nothing stored           | Not a 4xx. A 5xx is never proof that nothing happened, so settle it by reading back. Validate the shape before sending |
+| Wrong bearer token                                                       | **401**; nothing stored                        | Safe to treat as rejected before any change                                                                            |
+| Same inbound tag in a second profile                                     | **409**                                        | Tags are unique **panel-wide**, not per profile                                                                        |
+| Identical Host created twice                                             | second create succeeds (**201**), new uuid     | Host attributes enforce no uniqueness. A lost create response must be resolved by discovery, never by a second create  |
+| Partial Host `PATCH` (`remark`, `fingerprint`)                           | only the named fields change                   | Address, port and SNI need not be re-sent                                                                              |
+| `POST /api/hosts/actions/reorder` `{hosts:[{uuid, viewPosition}]}`       | 200                                            |                                                                                                                        |
+| Squad rename (`PATCH {uuid, name}`)                                      | inbound assignment kept                        |                                                                                                                        |
+| Squad `PATCH {uuid, inbounds}`                                           | replaces the assignment                        |                                                                                                                        |
+| Node `PATCH {uuid, name, tags}`                                          | profile assignment kept; tags stored verbatim  |                                                                                                                        |
+| Repeat `actions/disable` on a disabled node                              | **200** again                                  | Not an error, and not a guaranteed no-op: read the state first and skip the call                                       |
+| `actions/restart` with `{forceRestart: true}`                            | **202**                                        | The answer means "queued", not "restarted"                                                                             |
+| `xrayUptime` on a node that never connected                              | **`0`**                                        | A zero or missing uptime says nothing about when Xray started                                                          |
+
+What the panel **normalises** on a config write: it trims whitespace around each
+`serverNames` entry, and it clears `settings.clients`. It does **not** lowercase or
+de-duplicate names (`C.Example` and `c.example` are both kept), and it keeps a submitted
+`realitySettings.publicKey`. Anything that compares a written config with a read-back must
+apply the same normalisation first.
+
+Nothing in this probe proves a **node-side** effect (whether a node applied a profile,
+whether a restart finished): no node is attached to the test panel. Those are separate
+checks against a panel-managed node.
+
 ## Node placement (issuance-time, per-backend)
 
 FCP's instance pool (`convex/backendServers.ts`) spreads keys across distinct
@@ -622,3 +658,11 @@ Backends need credentials that must never leak:
 - Never write a raw secret into a log line or an audit `payload`. The healthcheck + the
   `OutlineApiError` / `RemnawaveApiError` classes deliberately avoid the config.
 - Custom error classes for backend HTTP calls record only status + path, never the URL.
+- A Remnawave error normally also carries a short slice of the panel's own error text (useful:
+  validation and auth messages). **Config-profile calls are the exception.** A profile holds the
+  REALITY private key, the short ids and the client list, and a rejection can echo what was
+  submitted, so every such call is made with `sensitive: true` (`call()` in `remnawave.ts`): the
+  response body is not read, the error is `Remnawave <status> on <path>` and nothing more, and a
+  schema mismatch lists the failing paths without zod's messages (an enum or literal mismatch
+  quotes the received value). Any new call whose request or response can carry key material must
+  set it too.
