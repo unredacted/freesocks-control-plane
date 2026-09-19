@@ -207,5 +207,8 @@ describe('error detail (the provider answer, for the admin)', () => {
     );
     expect(redactErrorDetail('x'.repeat(5_000))!.length).toBeLessThan(700);
     expect(redactErrorDetail('  ')).toBeUndefined();
+    // A credential too short to replace safely suppresses the whole answer.
+    expect(redactErrorDetail('invalid token secret1', ['secret1'])).toBeUndefined();
+    expect(redactErrorDetail('invalid token', ['Bearer abc'])).toBeUndefined();
   });
 });

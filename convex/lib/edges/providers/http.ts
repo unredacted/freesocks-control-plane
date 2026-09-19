@@ -52,19 +52,28 @@ export const capturesErrorDetail = (step: string): boolean => DIAGNOSTIC_STEPS.h
 /** Longest error-body excerpt kept on an error. */
 export const MAX_ERROR_DETAIL_CHARS = 600;
 
+/** Shortest secret that is replaced in place; a shorter one suppresses the detail. */
+const MIN_REDACTABLE_SECRET_CHARS = 8;
+
 const IPV4_RE = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
 const IPV6_RE = /(?<![A-Za-z0-9:])(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}(?![A-Za-z0-9:])/g;
 
 /**
  * An error body made safe to show an admin: address literals and every secret
- * in `secrets` (request header values, 8+ chars, and their scheme-less tails)
- * are replaced, whitespace is collapsed, and the result is capped.
+ * in `secrets` (request header values and their scheme-less tails) are
+ * replaced, whitespace is collapsed, and the result is capped.
+ *
+ * A secret too short to replace safely (under 8 characters: replacing it would
+ * shred the text, and leaving it would show it) means NO detail at all. An
+ * echoed short credential must never reach the UI or `lastTestErrorDetail`.
  */
 export function redactErrorDetail(text: string, secrets: string[] = []): string | undefined {
   let out = text;
   for (const raw of secrets) {
-    for (const s of [raw, raw.split(' ').pop() ?? '']) {
-      if (s.length >= 8) out = out.split(s).join('[redacted]');
+    for (const s of new Set([raw, raw.split(' ').pop() ?? ''])) {
+      if (s.length === 0) continue;
+      if (s.length < MIN_REDACTABLE_SECRET_CHARS) return undefined;
+      out = out.split(s).join('[redacted]');
     }
   }
   out = out

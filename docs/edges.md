@@ -855,7 +855,8 @@ hostnames. The exception is the calls an admin makes by hand before anything exi
 credential test and the account form's listings (`DIAGNOSTIC_STEPS` in
 `convex/lib/edges/providers/http.ts`). Those requests carry no origin and no hostname, so
 their error keeps `meta.detail`: the provider's answer with address literals and the
-credential replaced, capped at 600 characters. It is returned by `test-credentials` and
+credential replaced, capped at 600 characters (a credential under 8 characters cannot be
+replaced safely, so the answer is withheld entirely). It is returned by `test-credentials` and
 `rotate-credentials` (`detail`), by `discover` (`errorDetails`, per failed list), stored as
 `edgeProviderAccounts.lastTestErrorDetail` until the next passing test, and shown folded away
 under "Show the provider's answer". It never enters a thrown message, a log line or an audit
