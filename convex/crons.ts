@@ -179,6 +179,10 @@ crons.daily(
 // unknown external outcome (discover before anything allocating runs again),
 // refresh provider health, turn drained edges into destroy runs, top the
 // published pool / standbys up (config-gated), and finish origin deletes.
+// Server management: release ops that never sent, mark interrupted ones as
+// unknown, and look again at every open op. It never sends anything.
+crons.interval('panel-reconcile', { minutes: 5 }, internal.panelWrites.reconcile, {});
+
 crons.interval('edge-reconcile', { minutes: 5 }, internal.edgeReconcile.run, {});
 // Reachability probes of FCP's own edge addresses from the configured countries
 // (Globalping / check-host.net / RIPE Atlas / internal), within an hourly budget.

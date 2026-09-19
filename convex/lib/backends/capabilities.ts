@@ -58,6 +58,9 @@ export interface BackendCapabilities {
   /** The panel's nodes, config profiles, Hosts and squads can be read for
    *  server management (a non-secret projection plus digests; read-only). */
   panelObservation: boolean;
+  /** Hosts and squads can be created, changed and removed through the
+   *  operations ledger (server management). */
+  panelWrites: boolean;
   /** A user FCP created can be re-found by its username (the persisted mint
    *  operations settle a crashed create through it). */
   userLookupByUsername: boolean;
@@ -79,6 +82,7 @@ export const CAPABILITIES: Record<BackendId, BackendCapabilities> = {
     hostDisable: true,
     inboundDiscovery: true,
     panelObservation: true,
+    panelWrites: true,
     userLookupByUsername: true,
   },
   outline: {
@@ -96,6 +100,7 @@ export const CAPABILITIES: Record<BackendId, BackendCapabilities> = {
     hostDisable: false,
     inboundDiscovery: false,
     panelObservation: false,
+    panelWrites: false,
     userLookupByUsername: false,
   },
 };

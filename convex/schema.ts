@@ -2145,6 +2145,140 @@ export default defineSchema({
     ),
   }).index('by_server', ['backendServerId']),
 
+  // --- Panel writes (server management) ---------------------------------------
+  // The operations ledger. One row per management write, inserted BEFORE the
+  // panel is called, together with its claims, in one mutation. Three facts are
+  // recorded SEPARATELY and never collapsed into one "known" flag:
+  //   request      what happened to the HTTP exchange;
+  //   panelState   whether the non-secret postcondition was SEEN on a later read;
+  //   asyncEffect  whether work the panel queued behind the write has finished.
+  // Claims are released only when the request was provably rejected before any
+  // change, or the postcondition was observed AND the queued work is done. There
+  // is NO timed release, NO re-assert and NO administrative abandonment: an
+  // attempt whose outcome is unknown stays fenced until a recorded recovery
+  // (`recovery`) establishes that it can no longer change anything.
+  panelOps: defineTable({
+    backendServerId: v.id('backendServers'),
+    kind: v.union(v.literal('host'), v.literal('squad')),
+    verb: v.union(
+      v.literal('create'),
+      v.literal('update'),
+      v.literal('delete'),
+      v.literal('reorder'),
+    ),
+    // Fences every mutation made on the op's behalf.
+    generation: v.number(),
+    claimKeys: v.array(v.string()),
+    // Names for display and audit (remark, squad name); never a secret.
+    label: v.string(),
+    // The panel uuid being changed; absent for a create until it is known.
+    objectUuid: v.optional(v.string()),
+    // A create's reserved identity: what discovery looks for after a lost response.
+    identity: v.optional(v.string()),
+    // JSON of the intended call, and of what a later read must show. Non-secret.
+    intent: v.string(),
+    postcondition: v.string(),
+    request: v.union(
+      v.literal('pending'),
+      v.literal('rejected_pre_mutation'),
+      v.literal('acknowledged'),
+      v.literal('uncertain'),
+    ),
+    panelState: v.union(v.literal('observed'), v.literal('unobserved')),
+    asyncEffect: v.union(
+      v.literal('none'),
+      v.literal('pending'),
+      v.literal('complete'),
+      v.literal('unresolved'),
+    ),
+    // Nodes whose application work the panel queued behind this write, with
+    // the panel's `lastStatusChange` for each as read BEFORE the call.
+    asyncNodes: v.optional(
+      v.array(v.object({ nodeUuid: v.string(), before: v.union(v.string(), v.null()) })),
+    ),
+    // True while the op holds its claims (indexable "needs settling").
+    open: v.boolean(),
+    // At most one outstanding attempt, ever: a create is never sent twice.
+    attemptId: v.optional(v.string()),
+    sentAt: v.optional(v.number()),
+    lastLookAt: v.optional(v.number()),
+    quietLooks: v.number(),
+    settledAt: v.optional(v.number()),
+    // A code word, never the panel's text.
+    errorCode: v.optional(v.string()),
+    // The recorded recovery of an attempt whose outcome could not be observed:
+    // an operator's attestation to EACH condition, by name.
+    recovery: v.optional(
+      v.object({
+        credentialsRevoked: v.boolean(),
+        noInFlightExecutor: v.boolean(),
+        queueDrained: v.boolean(),
+        freshReadAt: v.number(),
+        note: v.optional(v.string()),
+        byAdminId: v.optional(v.id('adminUsers')),
+        at: v.number(),
+      }),
+    ),
+    actorAdminId: v.optional(v.id('adminUsers')),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_server', ['backendServerId'])
+    .index('by_open', ['open', 'backendServerId']),
+
+  // One row per claimed resource (`host:<uuid>`, `hostid:<identity>`,
+  // `squad:<uuid>`, `profile:<uuid>`, `node:<uuid>`), scoped by instance.
+  // Written with the op, in the same mutation; a second op touching a claimed
+  // key is refused. Other workflows reject a claim in the reverse direction.
+  panelClaims: defineTable({
+    backendServerId: v.id('backendServers'),
+    key: v.string(),
+    opId: v.id('panelOps'),
+    generation: v.number(),
+    claimedAt: v.number(),
+  })
+    .index('by_server_key', ['backendServerId', 'key'])
+    .index('by_op', ['opId']),
+
+  // What FCP owns on a panel, what is reserved for creation, and what was
+  // DELIBERATELY removed. Durable: independent of any switch and of FCP being
+  // reachable. `lookup` keeps every identity the object ever had (name,
+  // composite), so a tombstone rejects recreation by name after a rename, not
+  // only by the former uuid.
+  panelOwnership: defineTable({
+    backendServerId: v.id('backendServers'),
+    kind: v.union(
+      v.literal('node'),
+      v.literal('host'),
+      v.literal('inbound'),
+      v.literal('squad'),
+      v.literal('profile'),
+    ),
+    identity: v.string(),
+    lookup: v.array(v.string()),
+    panelUuid: v.optional(v.string()),
+    state: v.union(v.literal('owned'), v.literal('reserved'), v.literal('tombstoned')),
+    // An open reservation by the node role: blocks tombstoning until settled.
+    reservation: v.optional(
+      v.object({ roleOpId: v.string(), at: v.number(), tokenId: v.optional(v.id('apiTokens')) }),
+    ),
+    since: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_server_kind_identity', ['backendServerId', 'kind', 'identity'])
+    .index('by_server_uuid', ['backendServerId', 'panelUuid'])
+    .index('by_reservation', ['reservation.roleOpId']),
+
+  // The node role's declaration that it follows the ownership protocol for
+  // this instance (it no longer rewrites what FCP owns). Writes are refused
+  // without a current one.
+  panelHandoff: defineTable({
+    backendServerId: v.id('backendServers'),
+    roleContractVersion: v.number(),
+    reportedAt: v.number(),
+    reportedBy: v.optional(v.string()),
+  }).index('by_server', ['backendServerId']),
+
   // Detector dedupe marks: one contribution per member per detector window,
   // ACROSS relays: the key is a peppered HMAC of the member alone (see
   // `http.ts`: `relay-mark:<userId>`), with no relay in it, so a member who
