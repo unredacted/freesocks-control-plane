@@ -297,7 +297,10 @@
                     Not supported yet ({unsupported.length})
                   </Collapsible.Trigger>
                   <Collapsible.Content class="space-y-2 pt-2">
-                    {#each unsupported as i (i.listenerKey)}
+                    <!-- Unsupported inbounds have no listener key (the plan sends ''), so the
+                         tag with its position is the key: two of them would otherwise collide
+                         and Svelte refuses duplicate keys at render time. -->
+                    {#each unsupported as i, idx (`${i.sourceTag}#${idx}`)}
                       {@const copy = inboundUnsupportedCopy(i.reason ?? 'invalid')}
                       <p>
                         <span class="font-medium">{i.sourceTag}</span>: {copy.label}.
