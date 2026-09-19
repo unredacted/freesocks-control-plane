@@ -129,6 +129,7 @@ import type * as panelLedger from "../panelLedger.js";
 import type * as panelObligations from "../panelObligations.js";
 import type * as panelObserve from "../panelObserve.js";
 import type * as panelReservations from "../panelReservations.js";
+import type * as panelRetirement from "../panelRetirement.js";
 import type * as panelSetup from "../panelSetup.js";
 import type * as panelWrites from "../panelWrites.js";
 import type * as probeOps from "../probeOps.js";
@@ -289,6 +290,7 @@ declare const fullApi: ApiFromModules<{
   panelObligations: typeof panelObligations;
   panelObserve: typeof panelObserve;
   panelReservations: typeof panelReservations;
+  panelRetirement: typeof panelRetirement;
   panelSetup: typeof panelSetup;
   panelWrites: typeof panelWrites;
   probeOps: typeof probeOps;

@@ -411,6 +411,14 @@ export const patchSettings = internalMutation({
       }
       patch.desiredHash = await desiredHashOf({ observed: intent.observed, settings: next });
       patch.generation = intent.generation + 1;
+      // A revision moved: no activation run of the old revisions may commit.
+      for (const r of await ctx.db
+        .query('panelActivationRuns')
+        .withIndex('by_intent', (q) => q.eq('intentId', intent._id))
+        .collect())
+        if (r.state === 'running' || r.state === 'blocked' || r.state === 'review')
+          await ctx.db.patch(r._id, { state: 'superseded', updatedAt: now });
+      patch.activation = { ...patch.activation!, currentRunId: undefined };
     }
     await ctx.db.patch(intent._id, patch);
     const server = await ctx.db.get(intent.backendServerId);
@@ -1000,6 +1008,8 @@ export const requestRetirement = internalMutation({
       updatedAt: now,
     });
     await bumpGateVersion(ctx, intent.backendServerId);
+    if (stage === 'requested')
+      await ctx.scheduler.runAfter(0, internal.panelRetirement.startIfPlain, { retirementId: id });
     const server = await ctx.db.get(intent.backendServerId);
     await writeAuditLog(ctx, {
       actorType: requestedBy === 'admin' ? 'admin' : 'system',
@@ -1009,6 +1019,38 @@ export const requestRetirement = internalMutation({
       payload: { backendSlug: server?.slug ?? '', name: intent.name, stage },
     });
     return { retirementId: id, stage };
+  },
+});
+
+/**
+ * Finish a maintenance transition: the node is re-verified from the earliest
+ * affected stage and approved again before it is served; nothing reopens here.
+ */
+export const finishMaintenance = internalMutation({
+  args: { intentId: v.id('panelNodeIntents'), actorAdminId: v.optional(v.id('adminUsers')) },
+  handler: async (ctx, { intentId, actorAdminId }) => {
+    const intent = await ctx.db.get(intentId);
+    if (!intent) return refuse('not_found', 'No such node');
+    if (!intent.maintenance) return { ok: true as const, stage: intent.activation.stage };
+    const now = Date.now();
+    await ctx.db.patch(intentId, {
+      maintenance: undefined,
+      delivery: { ...intent.delivery, disposition: intent.approved ? 'staged' : 'staged' },
+      approved: undefined,
+      updatedAt: now,
+    });
+    await bumpGateVersion(ctx, intent.backendServerId);
+    const server = await ctx.db.get(intent.backendServerId);
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: actorAdminId ?? undefined,
+      action: 'servers.node.maintenance_finished',
+      targetType: 'panel_node_intent',
+      targetId: intentId,
+      payload: { backendSlug: server?.slug ?? '', name: intent.name },
+    });
+    await scheduleReconcile(ctx, (await ctx.db.get(intentId))!);
+    return { ok: true as const, stage: intent.activation.stage };
   },
 });
 
@@ -1147,6 +1189,7 @@ export const sweep = internalAction({
         if (await ctx.runMutation(internal.panelIntents.resume, { intentId: id })) a++;
       for (const id of setups)
         if (await ctx.runMutation(internal.panelIntents.resumeSetup, { setupId: id })) b++;
+      await ctx.runAction(internal.panelRetirement.sweep, {});
       return { intents: a, setups: b };
     }),
 });

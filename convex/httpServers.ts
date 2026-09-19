@@ -493,11 +493,33 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
           ...actorOf(admin),
         }),
       );
-    if (verb === 'retire')
+    if (verb === 'retire') {
+      // With a disposition this is the admin's decision; without, a request.
+      const disposition = body.disposition;
+      if (disposition === 'keep-dark' || disposition === 'migrate')
+        return json(
+          await ctx.runMutation(internal.panelRetirement.decide, {
+            intentId,
+            disposition,
+            targetIntentId:
+              typeof body.targetIntentId === 'string'
+                ? (body.targetIntentId as Id<'panelNodeIntents'>)
+                : undefined,
+            ...actorOf(admin),
+          }),
+        );
       return json(
         await ctx.runMutation(internal.panelIntents.requestRetirement, {
           intentId,
           requestedBy: 'admin',
+        }),
+      );
+    }
+    if (verb === 'maintenance')
+      return json(
+        await ctx.runMutation(internal.panelIntents.finishMaintenance, {
+          intentId,
+          ...actorOf(admin),
         }),
       );
     if (verb === 'settings')

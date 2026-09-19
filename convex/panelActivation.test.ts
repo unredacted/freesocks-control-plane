@@ -228,10 +228,10 @@ async function settled<R extends { claim?: unknown }>(get: () => Promise<R | nul
   throw new Error('workflow did not settle');
 }
 
-async function runUntil(
-  get: () => Promise<{ state: string } | null>,
+async function runUntil<R extends { state: string }>(
+  get: () => Promise<R | null>,
   done: (s: string) => boolean,
-) {
+): Promise<R> {
   for (let i = 0; i < 500; i++) {
     await new Promise((r) => setTimeout(r, 5));
     const row = await get();

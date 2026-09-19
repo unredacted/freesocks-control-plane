@@ -238,6 +238,27 @@ export const releaseForEdge = internalMutation({
   },
 });
 
+/** Every pending credential of an enrolled node expires now (retirement). */
+export const releaseForIntent = internalMutation({
+  args: { nodeIntentId: v.id('panelNodeIntents') },
+  handler: async (ctx, { nodeIntentId }) => {
+    const now = Date.now();
+    const rows = await ctx.db
+      .query('edgeTestCredentials')
+      .withIndex('by_intent', (q) => q.eq('nodeIntentId', nodeIntentId))
+      .collect();
+    let released = 0;
+    let outstanding = 0;
+    for (const r of rows) {
+      if (r.removal === 'pending') outstanding++;
+      if (r.removal !== 'pending' || r.expiresAt <= now) continue;
+      await ctx.db.patch(r._id, { expiresAt: now, updatedAt: now });
+      released++;
+    }
+    return { released, outstanding };
+  },
+});
+
 /** Every pending credential of a relay expires now (a cancelled run, a deleted relay). */
 export const releaseForRelay = internalMutation({
   args: { relayId: v.id('relays') },
