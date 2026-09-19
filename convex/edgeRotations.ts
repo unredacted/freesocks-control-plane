@@ -51,6 +51,7 @@ import {
 } from './lib/edges/hosts';
 import type { BackendHost } from './lib/backends/types';
 import { allocatePoolIndex, withEdgeAt, withoutEdge } from './lib/edges/pool';
+import { resolveTemplateFor } from './edgeTemplates';
 import {
   appendEvent,
   isTerminalPhase,
@@ -2369,7 +2370,6 @@ export async function selectionContext(
     const today = a.allocationsDayKey === todayKey() ? a.allocationsToday : 0;
     if (a.dailyAllocationBudget !== 0 && today >= a.dailyAllocationBudget)
       return failure('account_budget_exhausted');
-    const { resolveTemplateFor } = await import('./edgeTemplates');
     const template = await resolveTemplateFor(
       ctx,
       a.provider,
@@ -2421,7 +2421,6 @@ export async function selectionContext(
       template: null,
     };
   const account = accounts.find((a) => (a._id as string) === picked.account.id)!;
-  const { resolveTemplateFor } = await import('./edgeTemplates');
   const template = await resolveTemplateFor(
     ctx,
     account.provider,

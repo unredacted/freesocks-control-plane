@@ -50,6 +50,8 @@ import {
   qualificationVerdict,
 } from './lib/edges/frontCheck/binding';
 import {
+  EDGE_LIVE_STATUSES,
+  LIVE_EDGE_SCAN_LIMIT,
   allocatePoolIndex,
   coverageListeners,
   withEdgeAt,
@@ -58,6 +60,7 @@ import {
   type PoolListener,
 } from './lib/edges/pool';
 import { ensurePoolCapacity } from './lib/edges/poolCapacity';
+import { resolveTemplateFor } from './edgeTemplates';
 import { assertAdmission } from './lib/edges/maintenance';
 import { assertNoRestore, hasHideRows, startRestoreWorkflow } from './lib/edges/restore';
 import {
@@ -103,7 +106,6 @@ export async function liveEdgesOfAccount(
   db: Db,
   accountId: Id<'edgeProviderAccounts'>,
 ): Promise<Doc<'edges'>[]> {
-  const { EDGE_LIVE_STATUSES, LIVE_EDGE_SCAN_LIMIT } = await import('./lib/edges/pool');
   const out: Doc<'edges'>[] = [];
   for (const status of EDGE_LIVE_STATUSES) {
     out.push(
@@ -1642,7 +1644,6 @@ async function insertAdoptedEdge(
         message: 'the resource does not serve this hostname',
       });
     sharedService = insp.shared;
-    const { resolveTemplateFor } = await import('./edgeTemplates');
     const template = await resolveTemplateFor(
       ctx,
       accountRow!.provider,
