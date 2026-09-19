@@ -14,7 +14,7 @@
  */
 import { ConvexError, v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
-import type { ActionCtx } from './_generated/server';
+import type { ActionCtx, QueryCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
@@ -268,75 +268,77 @@ async function writeHandoff(
 
 // --- what the run reads and records ---------------------------------------------------------------------
 
+async function loadSetupContext(ctx: QueryCtx, f: Fence) {
+  const row = await ctx.db.get(f.setupId);
+  if (!row || !fenceHolds(row, f)) return null;
+  const sid = row.backendServerId;
+  const server = await ctx.db.get(sid);
+  if (!server) return null;
+  const [nodes, hosts, profiles, squads, ownership, handoff] = await Promise.all([
+    ctx.db
+      .query('panelNodes')
+      .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+      .collect(),
+    ctx.db
+      .query('panelHosts')
+      .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+      .collect(),
+    ctx.db
+      .query('panelProfiles')
+      .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+      .collect(),
+    ctx.db
+      .query('panelSquads')
+      .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+      .collect(),
+    ctx.db
+      .query('panelOwnership')
+      .withIndex('by_server_kind_identity', (q) => q.eq('backendServerId', sid))
+      .collect(),
+    ctx.db
+      .query('panelHandoff')
+      .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+      .unique(),
+  ]);
+  const { modes } = await resolveModeCatalog(ctx.db);
+  return {
+    row,
+    input: JSON.parse(row.desired) as SetupInput,
+    server: {
+      _id: server._id,
+      backend: server.backend,
+      config: server.config,
+      slug: server.slug,
+    },
+    snapshot: {
+      nodes: nodes.length,
+      hosts: hosts.length,
+      profiles: profiles.map((p) => ({
+        profileUuid: p.profileUuid,
+        name: p.name,
+        inbounds: p.inbounds.map((i) => ({
+          ...i,
+          configProfileUuid: p.profileUuid,
+          configProfileInboundUuid: i.inboundUuid,
+          reality: i.reality,
+          ws: i.path !== undefined ? { path: i.path ?? null, host: null } : undefined,
+        })),
+      })),
+      squads: squads.map((s) => ({
+        squadUuid: s.squadUuid,
+        name: s.name,
+        inboundUuids: s.inboundUuids,
+      })),
+      openReservations: ownership.filter((o) => o.state === 'reserved').length,
+      handoff: handoff ? { version: handoff.roleContractVersion } : null,
+      knownModes: modes.map((m) => m.id),
+    },
+  };
+}
+
 export const loadForRun = internalQuery({
   args: fence,
-  handler: async (ctx, f) => {
-    const row = await ctx.db.get(f.setupId);
-    if (!row || !fenceHolds(row, f)) return null;
-    const sid = row.backendServerId;
-    const server = await ctx.db.get(sid);
-    if (!server) return null;
-    const [nodes, hosts, profiles, squads, ownership, handoff] = await Promise.all([
-      ctx.db
-        .query('panelNodes')
-        .withIndex('by_server', (q) => q.eq('backendServerId', sid))
-        .collect(),
-      ctx.db
-        .query('panelHosts')
-        .withIndex('by_server', (q) => q.eq('backendServerId', sid))
-        .collect(),
-      ctx.db
-        .query('panelProfiles')
-        .withIndex('by_server', (q) => q.eq('backendServerId', sid))
-        .collect(),
-      ctx.db
-        .query('panelSquads')
-        .withIndex('by_server', (q) => q.eq('backendServerId', sid))
-        .collect(),
-      ctx.db
-        .query('panelOwnership')
-        .withIndex('by_server_kind_identity', (q) => q.eq('backendServerId', sid))
-        .collect(),
-      ctx.db
-        .query('panelHandoff')
-        .withIndex('by_server', (q) => q.eq('backendServerId', sid))
-        .unique(),
-    ]);
-    const { modes } = await resolveModeCatalog(ctx.db);
-    return {
-      row,
-      input: JSON.parse(row.desired) as SetupInput,
-      server: {
-        _id: server._id,
-        backend: server.backend,
-        config: server.config,
-        slug: server.slug,
-      },
-      snapshot: {
-        nodes: nodes.length,
-        hosts: hosts.length,
-        profiles: profiles.map((p) => ({
-          profileUuid: p.profileUuid,
-          name: p.name,
-          inbounds: p.inbounds.map((i) => ({
-            ...i,
-            configProfileUuid: p.profileUuid,
-            configProfileInboundUuid: i.inboundUuid,
-            reality: i.reality,
-            ws: i.path !== undefined ? { path: i.path ?? null, host: null } : undefined,
-          })),
-        })),
-        squads: squads.map((s) => ({
-          squadUuid: s.squadUuid,
-          name: s.name,
-          inboundUuids: s.inboundUuids,
-        })),
-        openReservations: ownership.filter((o) => o.state === 'reserved').length,
-        handoff: handoff ? { version: handoff.roleContractVersion } : null,
-        knownModes: modes.map((m) => m.id),
-      },
-    };
-  },
+  handler: (ctx, f) => loadSetupContext(ctx, f),
 });
 
 const stepPatch = v.object({
@@ -442,9 +444,9 @@ export const bumpGate = internalMutation({
 
 // --- the run ------------------------------------------------------------------------------------------
 
-type Loaded = NonNullable<Awaited<ReturnType<typeof loadForRunHandler>>>;
-async function loadForRunHandler(ctx: ActionCtx, f: Fence) {
-  return ctx.runQuery(internal.panelSetup.loadForRun, f);
+type Loaded = NonNullable<Awaited<ReturnType<typeof loadSetupContext>>>;
+async function loadForRunHandler(ctx: ActionCtx, f: Fence): Promise<Loaded | null> {
+  return (await ctx.runQuery(internal.panelSetup.loadForRun, f)) as Loaded | null;
 }
 
 export const run = internalAction({

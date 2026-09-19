@@ -259,13 +259,11 @@ export const PanelSetupInput = z.object({
     .default({ path: '/ws', port: 8443 }),
   reality: RealityTemplateInput,
   relay: RealityTemplateInput.extend({ acceptProxyProtocol: z.boolean().default(false) }),
-  squads: z
-    .object({ fronted: z.string(), reality: z.string(), relay: z.string() })
-    .default({
-      fronted: 'FreeSocks-Fronted',
-      reality: 'FreeSocks-Reality',
-      relay: 'FreeSocks-Relay',
-    }),
+  squads: z.object({ fronted: z.string(), reality: z.string(), relay: z.string() }).default({
+    fronted: 'FreeSocks-Fronted',
+    reality: 'FreeSocks-Reality',
+    relay: 'FreeSocks-Relay',
+  }),
   /** The Cloudflare account whose zone front nodes get their origin names in; null = the role gives explicit hostnames. */
   originDns: z.object({ accountId: z.string() }).nullable().default(null),
 });
@@ -309,6 +307,87 @@ export const PanelSetupView = z.object({
   updatedAt: z.string().nullable(),
 });
 export type PanelSetupView = z.infer<typeof PanelSetupView>;
+
+// --- bootstrap contract v2: node enrollment (the role) --------------------------------------
+
+export const NodePurpose = z.enum(['direct', 'front', 'relay']);
+export type NodePurpose = z.infer<typeof NodePurpose>;
+
+/**
+ * `PUT {slug}/nodes/by-name/{name}`: the enrollment input (purpose, label) is
+ * taken once; the observations are taken on every run. The role never sends
+ * FCP-owned machine settings.
+ */
+export const NodeRegistration = z.object({
+  roleContractVersion: z.number().int().min(1),
+  purpose: NodePurpose,
+  label: z.string().min(1).max(63).optional(),
+  observed: z.object({
+    management: z.object({ address: z.string().min(2), port: z.number().int().min(1).max(65535) }),
+    publicIps: z.object({ v4: z.string().optional(), v6: z.string().optional() }).default({}),
+    capabilities: z
+      .object({ caddy: z.boolean().default(false), ipv6: z.boolean().default(false) })
+      .default({ caddy: false, ipv6: false }),
+  }),
+});
+export type NodeRegistration = z.infer<typeof NodeRegistration>;
+
+export const NodeAppliedReport = z.object({
+  appliedRevision: z.number().int().min(1),
+  caddy: z.object({ certificateReady: z.boolean().optional() }).optional(),
+  nodeStarted: z.boolean(),
+});
+export type NodeAppliedReport = z.infer<typeof NodeAppliedReport>;
+
+export const NodeStage = z.enum([
+  'registered',
+  'bootstrap_available',
+  'machine_applied',
+  'machine_ready',
+  'candidates_verified',
+  'awaiting_approval',
+  'activating',
+  'live',
+]);
+export type NodeStage = z.infer<typeof NodeStage>;
+
+export const NodeDisposition = z.enum(['staged', 'activating', 'live', 'unavailable', 'retiring']);
+
+/** What the role may read about its own node. Never a secret, never another node. */
+export const NodeRoleView = z.object({
+  name: z.string(),
+  purpose: NodePurpose,
+  registration: z.object({
+    state: z.string(),
+    code: z.string().nullable(),
+    generation: z.number(),
+  }),
+  stage: NodeStage,
+  delivery: NodeDisposition,
+  machineRevision: z.number(),
+  appliedRevision: z.number().nullable(),
+  node: z.object({ uuid: z.string().nullable(), port: z.number() }),
+  origin: z.object({ hostname: z.string().nullable(), dns: z.string() }),
+  retirement: z.object({ stage: z.string(), code: z.string().nullable() }).nullable(),
+  updatedAt: z.string(),
+});
+export type NodeRoleView = z.infer<typeof NodeRoleView>;
+
+/** `POST …/bootstrap`: the machine configuration plus the node secret, served once per call. */
+export const NodeBootstrap = z.object({
+  machineRevision: z.number(),
+  secretKey: z.string(),
+  node: z.object({ port: z.number(), name: z.string(), purpose: NodePurpose }),
+  ingress: z
+    .object({
+      hostname: z.string(),
+      externalPort: z.number(),
+      routes: z.array(z.object({ path: z.string(), port: z.number() })),
+    })
+    .nullable(),
+  origin: z.object({ hostname: z.string().nullable(), dns: z.string() }),
+});
+export type NodeBootstrap = z.infer<typeof NodeBootstrap>;
 
 /** What a typed profile edit would do. Non-secret: names, targets, counts. */
 export const ProfilePatchPreview = z.object({
