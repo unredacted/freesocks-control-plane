@@ -11,6 +11,7 @@
  * squad, and every Host write, do not. The first kind also claims those
  * profiles and nodes and holds the claims until the nodes show the work ran.
  */
+import { assertNotReserved } from './panelReservations';
 import { ConvexError, v } from 'convex/values';
 import type { ActionCtx, MutationCtx } from './_generated/server';
 import { internalAction, internalMutation } from './_generated/server';
@@ -174,6 +175,8 @@ async function assertNotTombstoned(
   identity: string,
   allow: boolean,
 ) {
+  // A role run holding this identity is not overridden by "I want it back".
+  await assertNotReserved(ctx, sid, kind, identity);
   if (allow) return;
   const rows = await ctx.db
     .query('panelOwnership')

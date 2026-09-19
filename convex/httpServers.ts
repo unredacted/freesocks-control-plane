@@ -65,6 +65,9 @@ export function scopeFor(parts: string[], method: string): string | string[] {
   if (method === 'GET' || (method === 'POST' && isReadOnlyPost(parts))) return 'admin:servers:read';
   if (method === 'PUT' && parts.length === 2 && parts[1] === 'handoff')
     return ['admin:servers:write', 'admin:servers:manage'];
+  // The role reserves and settles; releasing an unanswered one is an operator's call.
+  if (parts[1] === 'reservations' && parts[3] !== 'recover')
+    return ['admin:servers:write', 'admin:servers:manage'];
   return 'admin:servers:manage';
 }
 
@@ -89,7 +92,7 @@ function wrap(handler: Handler, sealedRoute: boolean) {
     const readOnly = method === 'GET' || (method === 'POST' && isReadOnlyPost(parts));
     const reachesPanel = readOnly
       ? method === 'POST' && parts[1] !== 'placements'
-      : parts[0] !== 'config' && parts[1] !== 'handoff';
+      : parts[0] !== 'config' && parts[1] !== 'handoff' && parts[1] !== 'reservations';
     if (reachesPanel) {
       const limited = await throttle(
         ctx,
@@ -154,11 +157,60 @@ const getHandler: Handler = async (ctx, parts) => {
       ops: await ctx.runQuery(internal.panelLedger.listForServer, { backendServerId: instance.id }),
     });
   }
+  if (a && b === 'reservations' && !c) {
+    const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
+    return json({
+      reservations: await ctx.runQuery(internal.panelReservations.list, {
+        backendServerId: instance.id,
+      }),
+    });
+  }
   return notFound();
 };
 
 const postHandler: Handler = async (ctx, parts, admin, body) => {
   const [a, b, c, d] = parts;
+  if (a && b === 'reservations' && !c) {
+    const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
+    const kind = String(body.kind ?? '');
+    if (!['node', 'host', 'inbound', 'squad', 'profile'].includes(kind))
+      return errorJson('validation', 'kind is node, host, inbound, squad or profile', 400);
+    const h = (body.host ?? null) as Record<string, unknown> | null;
+    return json(
+      await ctx.runMutation(internal.panelReservations.reserve, {
+        backendServerId: instance.id,
+        roleOpId: String(body.roleOpId ?? ''),
+        kind: kind as 'node',
+        identity: typeof body.identity === 'string' ? body.identity : undefined,
+        host: h
+          ? {
+              remark: String(h.remark ?? ''),
+              inboundUuid: String(h.inboundUuid ?? ''),
+              address: String(h.address ?? ''),
+              port: Number(h.port),
+            }
+          : undefined,
+        tokenId: admin.tokenId ?? undefined,
+      }),
+    );
+  }
+  if (a && b === 'reservations' && c && d === 'recover') {
+    // When the fresh read was made is part of the attestation, never assumed.
+    if (!Number.isFinite(Number(body.freshReadAt)))
+      return errorJson('validation', 'freshReadAt is required', 400);
+    const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
+    return json(
+      await ctx.runMutation(internal.panelReservations.recover, {
+        backendServerId: instance.id,
+        roleOpId: c,
+        credentialsRevoked: body.credentialsRevoked === true,
+        noInFlightExecutor: body.noInFlightExecutor === true,
+        queueDrained: body.queueDrained === true,
+        freshReadAt: Number(body.freshReadAt),
+        ...actorOf(admin),
+      }),
+    );
+  }
   if (a && b === 'profiles' && c && (d === 'preview' || d === 'apply')) {
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
     if (d === 'preview')
@@ -358,7 +410,25 @@ const deleteHandler: Handler = async (ctx, parts, admin, _body, query) => {
 
 /** The node role declares that it follows the ownership protocol for this instance. */
 const putHandler: Handler = async (ctx, parts, admin, body) => {
-  const [a, b, c] = parts;
+  const [a, b, c, d] = parts;
+  if (a && b === 'reservations' && c && !d) {
+    const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
+    const created = typeof body.created === 'string' ? body.created : undefined;
+    if (!created && body.rejected_pre_mutation !== true)
+      return errorJson(
+        'validation',
+        'Settle with {"created": "<panel uuid>"} or {"rejected_pre_mutation": true}',
+        400,
+      );
+    return json(
+      await ctx.runMutation(internal.panelReservations.settle, {
+        backendServerId: instance.id,
+        roleOpId: c,
+        outcome: created ? 'created' : 'rejected_pre_mutation',
+        panelUuid: created,
+      }),
+    );
+  }
   if (!a || b !== 'handoff' || c) return notFound();
   const version = Number(body.roleContractVersion);
   if (!Number.isInteger(version) || version < 1)
