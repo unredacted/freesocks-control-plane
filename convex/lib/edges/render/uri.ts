@@ -80,7 +80,8 @@ export function uriAgrees(u: ParsedUri, proto: ListenerProto): boolean {
       ? type === 'tcp' || type === 'raw' || type === 'none'
       : stream === 'udp'
         ? true
-        : type === stream;
+        : // `splithttp` was XHTTP's name before Xray 1.8.24; older links still carry it.
+          type === stream || (stream === 'xhttp' && type === 'splithttp');
   switch (proto.protocol) {
     case 'vless': {
       const security = (p.get('security') ?? 'none').toLowerCase();
@@ -110,7 +111,7 @@ export interface UriTarget {
 /**
  * Rewrite one link's host, port, label, SNI and HTTP Host. A null `sni` leaves
  * the line's own TLS parameters alone. `hostHeader` is written to `host=` for an
- * HTTP transport (always for `type=ws|httpupgrade`, otherwise only when the
+ * HTTP transport (always for `type=ws|httpupgrade|xhttp`, otherwise only when the
  * template carried the parameter) and to `authority=` for `type=grpc` when the
  * template carried one.
  */
@@ -125,7 +126,13 @@ export function rewriteProxyUri(u: ParsedUri, target: UriTarget): string {
   }
   if (hostHeader !== null) {
     const type = (params.get('type') ?? '').toLowerCase();
-    if (params.has('host') || type === 'ws' || type === 'httpupgrade')
+    if (
+      params.has('host') ||
+      type === 'ws' ||
+      type === 'httpupgrade' ||
+      type === 'xhttp' ||
+      type === 'splithttp'
+    )
       params.set('host', hostHeader);
     if (type === 'grpc' && params.has('authority')) params.set('authority', hostHeader);
   }

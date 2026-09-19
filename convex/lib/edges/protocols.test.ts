@@ -37,11 +37,18 @@ const TROJAN_WS: ListenerProto = { protocol: 'trojan', streamTransport: 'ws', se
 
 describe('listener catalogue ⇔ codec table', () => {
   test.each(LISTENER_COMBOS.map((c) => [c.key, c] as const))(
-    '%s has a non-empty codec for every render format',
+    '%s has a codec row, non-empty for every format a client can speak',
     (_key, combo) => {
       const codecs = CODECS[combo.key];
       expect(codecs).toBeDefined();
+      // Xray and Mihomo speak XHTTP; sing-box has no transport for it.
+      const clientless = combo.streamTransport === 'xhttp' ? ['singbox'] : [];
       for (const format of RENDER_FORMATS) {
+        if (clientless.includes(format)) {
+          expect(codecs![format], `${combo.key} ${format}`).toEqual([]);
+          expect(formatSupported(combo, format)).toBe(false);
+          continue;
+        }
         expect(codecs![format].length, `${combo.key} ${format}`).toBeGreaterThan(0);
         expect(codecFor(combo, format)).toEqual(codecs![format]);
         expect(formatSupported(combo, format)).toBe(true);
@@ -55,7 +62,7 @@ describe('listener catalogue ⇔ codec table', () => {
     expect(Object.keys(CODECS).sort()).toEqual([...keys].sort());
   });
 
-  test('the catalogue is exactly the ten supported combinations, keyed uniquely', () => {
+  test('the catalogue is exactly the eleven supported combinations, keyed uniquely', () => {
     expect(LISTENER_COMBOS.map((c) => c.key).sort()).toEqual(
       [
         'vless/raw/reality',
@@ -63,6 +70,7 @@ describe('listener catalogue ⇔ codec table', () => {
         'vless/ws/tls',
         'vless/httpupgrade/tls',
         'vless/grpc/tls',
+        'vless/xhttp/tls',
         'trojan/raw/tls',
         'trojan/ws/tls',
         'shadowsocks/raw/none',
@@ -123,7 +131,8 @@ describe('protocol helpers derive from the three fields', () => {
         c.protocol === 'vless' &&
         (c.streamTransport === 'ws' ||
           c.streamTransport === 'httpupgrade' ||
-          c.streamTransport === 'grpc') &&
+          c.streamTransport === 'grpc' ||
+          c.streamTransport === 'xhttp') &&
         c.security === 'tls'
           ? 'vless'
           : 'unsupported';
@@ -179,6 +188,7 @@ describe('protocol helpers derive from the three fields', () => {
       'vless/ws/tls': 'ws',
       'vless/httpupgrade/tls': 'httpupgrade',
       'vless/grpc/tls': 'grpc',
+      'vless/xhttp/tls': 'xhttp',
       'trojan/raw/tls': 'tls',
       'trojan/ws/tls': 'ws',
       'shadowsocks/raw/none': 'plain',

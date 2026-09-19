@@ -288,7 +288,9 @@ export interface PanelInbound {
   /** Xray protocol id as the panel reports it (`vless`, `trojan`, `vmess`, ...). */
   protocol: string;
   port: number | null;
-  /** `streamSettings.network` (`tcp`, `raw`, `ws`, `httpupgrade`, `grpc`, `xhttp`, ...); `tcp` when absent. */
+  /** Xray `listen` when set (an inbound bound to loopback is reached only through something else on the node). */
+  listen?: string | null;
+  /** `streamSettings.network` (`tcp`, `raw`, `ws`, `httpupgrade`, `grpc`, `xhttp`, `kcp`, ...); `tcp` when absent. */
   network: string;
   /** `streamSettings.security` (`none`, `tls`, `reality`); `none` when absent. */
   security: string;
@@ -297,6 +299,8 @@ export interface PanelInbound {
   ws?: { path: string | null; host: string | null };
   httpupgrade?: { path: string | null; host: string | null };
   grpc?: { serviceName: string | null };
+  /** `xhttpSettings` (Xray 1.8.24+): path, host and the mode the inbound serves. */
+  xhttp?: { path: string | null; host: string | null; mode: string | null };
   /** Whether the node currently serves this inbound (it is in the node's active inbound set). */
   active: boolean;
 }

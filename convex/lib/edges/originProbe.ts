@@ -73,7 +73,7 @@ export interface OriginProbeOutcome {
 
 /** A Host header no origin serves for on purpose: does the node answer for ANY name? */
 export const FOREIGN_HOST_HEADER = 'origin-probe.invalid';
-const HTTP_TRANSPORTS: ReadonlySet<string> = new Set(['ws', 'httpupgrade', 'grpc']);
+const HTTP_TRANSPORTS: ReadonlySet<string> = new Set(['ws', 'httpupgrade', 'grpc', 'xhttp']);
 
 function shortReason(s: string | undefined, fallback: string): string {
   const r = (s ?? '').trim();

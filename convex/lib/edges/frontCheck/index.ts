@@ -38,6 +38,15 @@ import {
 } from './ws';
 import { buildUpgradeRequest, checkUpgradeResponse, DEFAULT_UPGRADE_TOKEN } from './httpupgrade';
 import { createGrpcDecoder, decodeHunk, encodeHunkFrame, grpcPath } from './grpc';
+import {
+  checkXhttpDownResponse,
+  XHTTP_DEFAULT_MODE,
+  XHTTP_PACKET_UP_MODES,
+  xhttpReferer,
+  xhttpSessionId,
+  xhttpSessionPath,
+  xhttpUploadPath,
+} from './xhttp';
 import { buildVlessRequest, parseVlessResponse } from './vless';
 import { tlsConnect, type ConnectFn } from './tls';
 
@@ -369,6 +378,73 @@ class GrpcTunnel extends Tunnel {
   }
 }
 
+/**
+ * XHTTP packet-up as a byte pipe over one HTTP/2 session: the downstream GET
+ * stream delivers bytes as they come (no framing), each `send` is one POST
+ * with the next sequence number. The downstream response head is checked when
+ * it arrives (Xray answers it at once); an upload whose POST is refused fails
+ * the tunnel with the status the front gave.
+ */
+class XhttpTunnel extends Tunnel {
+  private seq = 0;
+  private downClosed = false;
+  constructor(
+    private readonly session: ReturnType<typeof http2Connect>,
+    private readonly down: ClientHttp2Stream,
+    private readonly hostname: string,
+    private readonly path: string,
+    private readonly sessionId: string,
+    private readonly randomBytes: (n: number) => Uint8Array,
+  ) {
+    super();
+    down.on('response', (headers: Record<string, unknown>) => {
+      const verdict = checkXhttpDownResponse(
+        Number(headers[h2.HTTP2_HEADER_STATUS]),
+        typeof headers['content-type'] === 'string' ? headers['content-type'] : undefined,
+      );
+      if (!verdict.ok) this.emitError(new StepError('front_error', String(verdict.status)));
+    });
+    down.on('data', (d: Buffer) => this.emitData(new Uint8Array(d)));
+    const close = () => {
+      this.downClosed = true;
+      this.emitClose();
+    };
+    down.on('end', close);
+    down.on('close', close);
+    down.on('error', () => this.emitError(new StepError('front_error', 'h2')));
+  }
+  /** Raise a failure the caller already classified (an HTTP/2 session error). */
+  fail(err: Error): void {
+    this.emitError(err);
+  }
+  send(data: Uint8Array): void {
+    const up = this.session.request({
+      [h2.HTTP2_HEADER_METHOD]: 'POST',
+      [h2.HTTP2_HEADER_PATH]: xhttpUploadPath(this.path, this.sessionId, this.seq++),
+      [h2.HTTP2_HEADER_AUTHORITY]: this.hostname,
+      'content-type': 'application/octet-stream',
+      'content-length': String(data.length),
+      referer: xhttpReferer(this.hostname, this.path, this.randomBytes),
+    });
+    up.on('response', (headers: Record<string, unknown>) => {
+      const status = Number(headers[h2.HTTP2_HEADER_STATUS]);
+      // Xray answers every accepted packet with 200 and an empty body.
+      if (status !== 200) this.emitError(new StepError('front_error', String(status)));
+    });
+    up.on('error', () => this.emitError(new StepError('front_error', 'h2')));
+    up.end(Buffer.from(data));
+  }
+  closeOrderly(): void {
+    // The session ends when its downstream does: Xray closes the proxied
+    // connection once the GET stream is gone.
+    if (!this.downClosed) this.down.close();
+  }
+  destroy(): void {
+    this.down.destroy();
+    this.session.close();
+  }
+}
+
 /** Read one HTTP/1.1 response head off the socket, keeping any trailing bytes. */
 function readResponseHead(pump: SocketPump): Promise<{ head: HttpHead; rest: Uint8Array }> {
   return new Promise((resolve, reject) => {
@@ -448,6 +524,31 @@ function openGrpcTunnel(socket: TLSSocket, args: QualifyFrontArgs): Promise<Tunn
     te: 'trailers',
   });
   const tunnel = new GrpcTunnel(stream, () => session.close());
+  session.on('error', () => tunnel.fail(new StepError('front_error', 'h2')));
+  return Promise.resolve(tunnel);
+}
+
+function openXhttpTunnel(
+  socket: TLSSocket,
+  args: QualifyFrontArgs,
+  randomBytes: (n: number) => Uint8Array,
+): Promise<Tunnel> {
+  const mode = args.params.mode || XHTTP_DEFAULT_MODE;
+  // A stream-only inbound refuses packet-up uploads: say so instead of failing
+  // the authenticated step with a status that looks like a front problem.
+  if (!XHTTP_PACKET_UP_MODES.has(mode))
+    return Promise.reject(new StepError('transport_failed', 'mode'));
+  const path = args.params.path || '/';
+  const sessionId = xhttpSessionId(randomBytes);
+  const session = http2Connect(`https://${args.hostname}`, { createConnection: () => socket });
+  const down = session.request({
+    [h2.HTTP2_HEADER_METHOD]: 'GET',
+    [h2.HTTP2_HEADER_PATH]: xhttpSessionPath(path, sessionId),
+    [h2.HTTP2_HEADER_AUTHORITY]: args.hostname,
+    accept: 'text/event-stream',
+    referer: xhttpReferer(args.hostname, path, randomBytes),
+  });
+  const tunnel = new XhttpTunnel(session, down, args.hostname, path, sessionId, randomBytes);
   session.on('error', () => tunnel.fail(new StepError('front_error', 'h2')));
   return Promise.resolve(tunnel);
 }
@@ -590,7 +691,7 @@ export async function qualifyFront(
           host: deps.dial?.host ?? args.hostname,
           port: deps.dial?.port ?? args.port ?? 443,
           servername: args.hostname,
-          alpn: stream === 'grpc' ? ['h2'] : ['http/1.1'],
+          alpn: stream === 'grpc' || stream === 'xhttp' ? ['h2'] : ['http/1.1'],
           timeoutMs: budget(),
           ca: deps.dial?.ca,
           rejectUnauthorized: deps.dial?.rejectUnauthorized,
@@ -602,10 +703,11 @@ export async function qualifyFront(
         throw new StepError('tls_failed', 'chain');
       }),
     );
-    const pump = stream === 'grpc' ? null : new SocketPump(socket);
+    const pump = stream === 'grpc' || stream === 'xhttp' ? null : new SocketPump(socket);
     tunnel = await record('transport', () => {
       if (stream === 'ws') return openWsTunnel(socket!, pump!, args, randomBytes, budget());
       if (stream === 'httpupgrade') return openUpgradeTunnel(socket!, pump!, args, budget());
+      if (stream === 'xhttp') return openXhttpTunnel(socket!, args, randomBytes);
       return openGrpcTunnel(socket!, args);
     });
     await record('vless', () => runSession(tunnel!, args, budget()));

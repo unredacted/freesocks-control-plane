@@ -173,6 +173,13 @@ export function renderClash(input: RenderInput): RenderOutput {
       wsOpts.headers = headers;
       clone['ws-opts'] = wsOpts;
     }
+    // Mihomo's XHTTP carries the Host in `xhttp-opts.host`; `path` and `mode`
+    // are the node's and stay untouched.
+    if (ep.hostHeader !== null && clone.network === 'xhttp') {
+      const opts = isObj(clone['xhttp-opts']) ? { ...clone['xhttp-opts'] } : {};
+      opts.host = ep.hostHeader;
+      clone['xhttp-opts'] = opts;
+    }
     emitted.push(clone);
   }
   const dropOnly = emitted.length === 0;

@@ -1379,14 +1379,15 @@ export default defineSchema({
     tlsNames: v.optional(v.array(listenerName)),
     realityTarget: v.optional(v.object({ address: v.string(), port: v.number() })),
     // HTTP-transport parameters as deployed (path + upgrade token for
-    // ws/httpupgrade, service name for grpc): what the front qualification must
-    // send. A qualification binds to their hash.
+    // ws/httpupgrade, service name for grpc, path + mode for xhttp): what the
+    // front qualification must send. A qualification binds to their hash.
     transportParams: v.optional(
       v.object({
         path: v.optional(v.string()),
         host: v.optional(v.string()),
         serviceName: v.optional(v.string()),
         upgradeToken: v.optional(v.string()),
+        mode: v.optional(v.string()),
       }),
     ),
     // How the inbound is reached behind an L7 front (lib/edges/layers.ts).

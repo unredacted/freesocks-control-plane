@@ -7,7 +7,7 @@
  * protocols.ts` the server-side codec table.
  *
  *   protocol        what carries the payload (vless, trojan, shadowsocks, hysteria2, tuic)
- *   streamTransport the client-to-node stream (raw TCP, WebSocket, HTTP Upgrade, gRPC, or UDP)
+ *   streamTransport the client-to-node stream (raw TCP, WebSocket, HTTP Upgrade, gRPC, XHTTP, or UDP)
  *   security        the client-facing security layer (none, TLS, REALITY)
  *
  * Client-to-edge security is NOT edge-to-origin security: how a CDN front
@@ -22,7 +22,14 @@ export const LISTENER_PROTOCOL_IDS = [
 ] as const;
 export type ListenerProtocolId = (typeof LISTENER_PROTOCOL_IDS)[number];
 
-export const LISTENER_STREAM_TRANSPORT_IDS = ['raw', 'ws', 'httpupgrade', 'grpc', 'udp'] as const;
+export const LISTENER_STREAM_TRANSPORT_IDS = [
+  'raw',
+  'ws',
+  'httpupgrade',
+  'grpc',
+  'xhttp',
+  'udp',
+] as const;
 export type ListenerStreamTransport = (typeof LISTENER_STREAM_TRANSPORT_IDS)[number];
 
 export const LISTENER_SECURITY_IDS = ['none', 'tls', 'reality'] as const;
@@ -54,12 +61,12 @@ export interface ListenerCombo extends ListenerProto {
   needsTarget: boolean;
   /** HTTP-carried stream: the only kind an L7 (CDN) front can carry. */
   isHttpTransport: boolean;
-  /** The renderer writes an HTTP Host header (ws / httpupgrade; gRPC follows the SNI). */
+  /** The renderer writes an HTTP Host header (ws / httpupgrade / xhttp; gRPC follows the SNI). */
   usesHostHeader: boolean;
   /** Which authenticated end-to-end proof exists for an L7 front of this listener. */
   l7Proof: 'vless' | 'unsupported';
   /** Legacy single-word protocol id the renderer codecs and Host logic used (kept for fixtures). */
-  legacy: 'reality' | 'tls' | 'plain' | 'ws' | 'httpupgrade' | 'grpc' | 'udp';
+  legacy: 'reality' | 'tls' | 'plain' | 'ws' | 'httpupgrade' | 'grpc' | 'xhttp' | 'udp';
 }
 
 function combo(
@@ -69,7 +76,10 @@ function combo(
   label: string,
 ): ListenerCombo {
   const isHttpTransport =
-    streamTransport === 'ws' || streamTransport === 'httpupgrade' || streamTransport === 'grpc';
+    streamTransport === 'ws' ||
+    streamTransport === 'httpupgrade' ||
+    streamTransport === 'grpc' ||
+    streamTransport === 'xhttp';
   const transport: 'tcp' | 'udp' = streamTransport === 'udp' ? 'udp' : 'tcp';
   const legacy: ListenerCombo['legacy'] =
     transport === 'udp'
@@ -79,7 +89,7 @@ function combo(
         : security === 'none'
           ? 'plain'
           : isHttpTransport
-            ? (streamTransport as 'ws' | 'httpupgrade' | 'grpc')
+            ? (streamTransport as 'ws' | 'httpupgrade' | 'grpc' | 'xhttp')
             : 'tls';
   return {
     key: `${protocol}/${streamTransport}/${security}`,
@@ -91,7 +101,8 @@ function combo(
     usesSni: security !== 'none',
     needsTarget: security === 'reality',
     isHttpTransport,
-    usesHostHeader: streamTransport === 'ws' || streamTransport === 'httpupgrade',
+    usesHostHeader:
+      streamTransport === 'ws' || streamTransport === 'httpupgrade' || streamTransport === 'xhttp',
     l7Proof:
       protocol === 'vless' && isHttpTransport && security === 'tls' ? 'vless' : 'unsupported',
     legacy,
@@ -110,6 +121,10 @@ export const LISTENER_COMBOS: readonly ListenerCombo[] = [
   combo('vless', 'ws', 'tls', 'VLESS over WebSocket (TLS)'),
   combo('vless', 'httpupgrade', 'tls', 'VLESS over HTTP Upgrade (TLS)'),
   combo('vless', 'grpc', 'tls', 'VLESS over gRPC (TLS)'),
+  // XHTTP (Xray 1.8.24+): plain HTTP requests carry the stream, so any CDN that
+  // passes HTTP can front it; an L4 forwarder carries it like any TCP listener.
+  // Only behind a real certificate: with REALITY there is no Caddy in front.
+  combo('vless', 'xhttp', 'tls', 'VLESS over XHTTP (TLS)'),
   combo('trojan', 'raw', 'tls', 'Trojan over TLS'),
   combo('trojan', 'ws', 'tls', 'Trojan over WebSocket (TLS)'),
   combo('shadowsocks', 'raw', 'none', 'Shadowsocks'),

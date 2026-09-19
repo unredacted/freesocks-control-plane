@@ -117,6 +117,8 @@ const TRANSPORTS: Readonly<Record<string, ListenerStreamTransport>> = {
   httpupgrade: 'httpupgrade',
   grpc: 'grpc',
   gun: 'grpc',
+  xhttp: 'xhttp',
+  splithttp: 'xhttp',
 };
 const SECURITIES: Readonly<Record<string, ListenerSecurity>> = {
   none: 'none',
@@ -137,6 +139,15 @@ export function parseRealityTarget(v: string | null): { address: string; port: n
 
 function skip(tag: string, reason: InboundUnsupportedCode, detail?: string): UnsupportedInbound {
   return detail ? { tag, reason, detail } : { tag, reason };
+}
+
+function isLoopbackListen(listen: string | null | undefined): boolean {
+  if (!listen) return false;
+  const l = listen
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, '');
+  return l === 'localhost' || l === '::1' || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(l);
 }
 
 function refusalDetail(err: unknown): string {
@@ -164,6 +175,13 @@ export async function mapInboundsToListeners(
     const tag = ib.tag;
     if (!ib.active) {
       unsupported.push(skip(tag, 'inactive'));
+      continue;
+    }
+    // Bound to loopback: the node's public address never reaches it. Something
+    // else on the node (a TLS terminator) does, and only the operator or the
+    // node role can describe that hop (the listener's origin port + transport).
+    if (isLoopbackListen(ib.listen)) {
+      unsupported.push(skip(tag, 'loopback', ib.listen ?? undefined));
       continue;
     }
     if (!INBOUND_TAG_RE.test(tag)) {
@@ -230,6 +248,12 @@ export async function mapInboundsToListeners(
     } else if (streamTransport === 'grpc') {
       transportParams = {};
       if (ib.grpc?.serviceName) transportParams.serviceName = ib.grpc.serviceName;
+    } else if (streamTransport === 'xhttp') {
+      transportParams = {};
+      if (ib.xhttp?.path) transportParams.path = ib.xhttp.path;
+      if (ib.xhttp?.host) transportParams.host = ib.xhttp.host;
+      // Xray's default when the inbound declares none.
+      transportParams.mode = ib.xhttp?.mode ?? 'auto';
     }
 
     const spec: ListenerSpecInput = {

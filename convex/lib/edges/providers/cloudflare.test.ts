@@ -1020,7 +1020,7 @@ describe('cloudflare: capability cross-check + error hygiene', () => {
     expect(caps.providesDns).toBe(true);
     expect(caps.needsDnsAccount).toBe(false);
     expect(caps.originPortMode).toBe('default-or-override');
-    expect([...caps.l7Transports]).toEqual(['ws', 'httpupgrade', 'grpc']);
+    expect([...caps.l7Transports]).toEqual(['ws', 'httpupgrade', 'grpc', 'xhttp']);
   });
 
   test('an L7 describe reports a hostname and never an IP literal', async () => {

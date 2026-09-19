@@ -31,9 +31,9 @@ fi
 docker compose -p fcp-frontcheck -f docker-compose.compat.yml up -d \
   compat-frontcheck-origin compat-frontcheck-xray
 
-# Xray listens on all three ports at once, so waiting for the last one is enough
+# Xray listens on all four ports at once, so waiting for the last one is enough
 # to know the config parsed; poll anyway, the container starts asynchronously.
-for port in 18443 18444 18445; do
+for port in 18443 18444 18445 18446; do
   ready=''
   for _ in $(seq 1 100); do
     if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then

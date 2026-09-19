@@ -5,7 +5,7 @@
  * The fake servers in session.test.ts prove the checker handles every answer a
  * chain can give, but a fake written beside the checker can agree with it on
  * the same wrong bytes without anyone noticing. This test removes that risk:
- * real Xray inbounds over `ws`, `httpupgrade` and `grpc`, a real VLESS client
+ * real Xray inbounds over `ws`, `httpupgrade`, `grpc` and `xhttp`, a real VLESS client
  * id, a real proxied request, and the same `qualifyFront` production calls.
  *
  * It runs only under the compat harness, which starts the container and mints
@@ -28,16 +28,21 @@ function basePort(): number {
   return Number(new URL(BASE!).port || 443);
 }
 
-/** The harness publishes ws, httpupgrade and grpc on three consecutive ports. */
-function portFor(protocol: 'ws' | 'httpupgrade' | 'grpc'): number {
+type Transport = 'ws' | 'httpupgrade' | 'grpc' | 'xhttp';
+const OFFSET: Record<Transport, number> = { ws: 0, httpupgrade: 1, grpc: 2, xhttp: 3 };
+
+/** The harness publishes ws, httpupgrade, grpc and xhttp on four consecutive ports. */
+function portFor(protocol: Transport): number {
   const explicit =
     protocol === 'httpupgrade'
       ? process.env.FCP_FRONTCHECK_XRAY_HTTPUPGRADE_URL
       : protocol === 'grpc'
         ? process.env.FCP_FRONTCHECK_XRAY_GRPC_URL
-        : BASE;
+        : protocol === 'xhttp'
+          ? process.env.FCP_FRONTCHECK_XRAY_XHTTP_URL
+          : BASE;
   if (explicit) return Number(new URL(explicit).port || 443);
-  return basePort() + (protocol === 'httpupgrade' ? 1 : 2);
+  return basePort() + OFFSET[protocol];
 }
 
 describe.skipIf(!BASE)('front qualification against pinned Xray-core', () => {
@@ -47,7 +52,7 @@ describe.skipIf(!BASE)('front qualification against pinned Xray-core', () => {
   });
 
   const run = (
-    protocol: 'ws' | 'httpupgrade' | 'grpc',
+    protocol: Transport,
     params: Record<string, string>,
     uuid = UUID,
   ): Promise<FrontCheckResult> =>
@@ -82,6 +87,20 @@ describe.skipIf(!BASE)('front qualification against pinned Xray-core', () => {
     const result = await run('grpc', { serviceName: 'relay-svc' });
     expect(result.code).toBeUndefined();
     expect(result.ok).toBe(true);
+  });
+
+  test('xhttp inbound (packet-up) accepts our GET stream and sequenced POSTs', async () => {
+    const result = await run('xhttp', { path: '/relay-xh', mode: 'packet-up' });
+    expect(result.code).toBeUndefined();
+    expect(result.ok).toBe(true);
+    expect(result.steps.map((s) => s.step)).toEqual(['tls', 'transport', 'vless', 'close']);
+  });
+
+  test('xhttp: an inbound declared stream-only is reported as unsupported, never tried', async () => {
+    const result = await run('xhttp', { path: '/relay-xh', mode: 'stream-one' });
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe('transport_failed');
+    expect(result.detail).toBe('mode');
   });
 
   test('real Xray refuses an unknown client id: auth_failed, not a false pass', async () => {

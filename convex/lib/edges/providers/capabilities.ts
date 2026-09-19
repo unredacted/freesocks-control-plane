@@ -129,7 +129,9 @@ export const EDGE_PROVIDER_CAPABILITIES: Record<EdgeProviderId, EdgeProviderCapa
   cloudflare: {
     layer: 'l7',
     addressKind: 'hostname',
-    l7Transports: ['ws', 'httpupgrade', 'grpc'],
+    // XHTTP packet-up is plain GET + POST requests; the stream modes would need
+    // the zone's gRPC switch, which the packet-up proof never depends on.
+    l7Transports: ['ws', 'httpupgrade', 'grpc', 'xhttp'],
     needsDnsAccount: false,
     providesDns: true,
     originPortMode: 'default-or-override',

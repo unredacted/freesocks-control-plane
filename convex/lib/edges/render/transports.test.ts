@@ -16,8 +16,10 @@ import { previewBody } from '../preview';
 import {
   LISTENER_COMBOS,
   comboKey,
+  formatSupported,
   protocolUsesHostHeader,
   type ListenerProto,
+  type RenderFormat,
 } from '../protocols';
 import { effectiveRule, renderEdgeEndpoints, renderEntries } from '../render';
 import { orderEndpoints, type RenderEndpoint, type RenderMatcher } from './types';
@@ -42,6 +44,12 @@ const rules = {
 } as const;
 type Format = keyof typeof rules;
 const FORMATS = Object.keys(rules) as Format[];
+/** The body format's name in the codec table. */
+const FORMAT_OF: Record<Format, RenderFormat> = {
+  links: 'links',
+  'singbox-json': 'singbox',
+  'clash-yaml': 'clash',
+};
 
 const proto = (p: ListenerProto): ListenerProto => ({
   protocol: p.protocol,
@@ -155,12 +163,13 @@ function emittedClash(body: string): Emitted {
   const p = doc.proxies.find((x) => String(x.name).startsWith('FreeSocks Primary'))!;
   const ws = (p['ws-opts'] ?? null) as { path?: string; headers?: Record<string, string> } | null;
   const grpc = (p['grpc-opts'] ?? null) as Record<string, string> | null;
+  const xhttp = (p['xhttp-opts'] ?? null) as { path?: string; host?: string } | null;
   return {
     address: String(p.server),
     port: Number(p.port),
     sni: (p.servername ?? p.sni ?? null) as string | null,
-    host: ws?.headers?.Host ?? null,
-    path: ws?.path ?? null,
+    host: ws?.headers?.Host ?? xhttp?.host ?? null,
+    path: ws?.path ?? xhttp?.path ?? null,
     service: grpc?.['grpc-service-name'] ?? null,
   };
 }
@@ -172,12 +181,35 @@ const READ: Record<Format, (body: string) => Emitted> = {
 };
 
 const isHttp = (p: ListenerProto) =>
-  p.streamTransport === 'ws' || p.streamTransport === 'httpupgrade';
+  p.streamTransport === 'ws' ||
+  p.streamTransport === 'httpupgrade' ||
+  p.streamTransport === 'xhttp';
 
 describe('every listener combination x every format', () => {
   for (const combo of LISTENER_COMBOS) {
     const key = comboKey(combo);
     for (const format of FORMATS) {
+      // A format with no codec for the combination (sing-box has no XHTTP) is never served through an edge: the origin entry must not leak,
+      // so delivery is unavailable rather than a body with the node in it.
+      if (!formatSupported(combo, FORMAT_OF[format])) {
+        test(`${key} / ${format}: no codec, so delivery is unavailable and the origin never leaves`, () => {
+          const assigned = assignEndpoints(KEY, [l4(combo)], {
+            now: Date.now(),
+            preferDistinctProviders: false,
+            includeBackup: false,
+          });
+          const out = renderEdgeEndpoints({
+            body: previewBody(format, [TEMPLATE], proto(combo)),
+            matchers: [matcherFor(combo)],
+            assigned,
+            rule: rules[format],
+            originAddress: ORIGIN,
+          });
+          expect(out.delivery).toEqual({ kind: 'unavailable', reason: 'entry_mismatch' });
+          expect(out.applied).toBe(false);
+        });
+        continue;
+      }
       test(`${key} / ${format}: L4 edge swaps address, port and name only`, () => {
         const { out } = render(l4(combo), format, combo);
         const e = READ[format](out.body);

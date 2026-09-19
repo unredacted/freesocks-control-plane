@@ -78,6 +78,19 @@ const passing = (checkedAt: number) => ({
 });
 
 describe('frontQualify.context', () => {
+  test('an XHTTP listener hands the session its stored mode (a stream-only inbound must be refused, not probed)', async () => {
+    const t = convexTest(schema, modules);
+    const { edgeId, listenerId } = await seed(t, { qualificationUserId: UUID });
+    await t.run((ctx) =>
+      ctx.db.patch(listenerId, {
+        streamTransport: 'xhttp',
+        transportParams: { path: '/xh', mode: 'stream-one' },
+      }),
+    );
+    const c = await t.query(internal.frontQualify.context, { edgeId });
+    expect(c!.params).toMatchObject({ path: '/xh', mode: 'stream-one' });
+  });
+
   test('hands the session the hostname, what the listener speaks, its transport parameters and the credential', async () => {
     const t = convexTest(schema, modules);
     const { edgeId, listenerId } = await seed(t, { qualificationUserId: UUID });

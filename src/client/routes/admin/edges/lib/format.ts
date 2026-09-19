@@ -27,6 +27,7 @@ export const TRANSPORT_LABELS: Record<ListenerStreamTransport, string> = {
   ws: 'WebSocket',
   httpupgrade: 'HTTP Upgrade',
   grpc: 'gRPC',
+  xhttp: 'XHTTP',
   udp: 'UDP',
 };
 export const SECURITY_LABELS: Record<ListenerSecurity, string> = {
