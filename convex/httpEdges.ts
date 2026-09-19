@@ -9,24 +9,14 @@
  * rate-limited per actor (`admin.edges.provider-call` / `admin.edges.probe`).
  * Responses are the shapes in src/shared/contracts/edges.ts.
  */
-import { ConvexError } from 'convex/values';
 import type { HttpRouter } from 'convex/server';
 import { httpAction } from './_generated/server';
 import type { ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Id, TableNames } from './_generated/dataModel';
 import { sealed } from './lib/hpke';
-import { sha256Hex } from './lib/crypto';
-import {
-  errorJson,
-  ipHashSubject,
-  json,
-  newRequestId,
-  readJson,
-  resolveAdmin,
-  resolveClientIp,
-  type AdminAuth,
-} from './lib/http';
+import { makeFail, notFound, throttle, unauth } from './lib/adminHttp';
+import { errorJson, json, readJson, resolveAdmin, type AdminAuth } from './lib/http';
 import type { RateLimitPolicyKey } from './lib/rateLimitPolicy';
 import type { InspectResult, Inventory } from './lib/edges/providers/types';
 import { parseTargetKey } from './probes';
@@ -56,23 +46,7 @@ function statusFromCode(code: string): number {
   return 400;
 }
 
-function fail(err: unknown): Response {
-  if (err instanceof ConvexError) {
-    const data = err.data as { code?: string; message?: string };
-    const code = data.code ?? 'error';
-    return errorJson(code, data.message ?? 'Request failed', statusFromCode(code));
-  }
-  // Never log the message of a non-ConvexError: Convex's ArgumentValidationError
-  // text embeds the offending argument VALUES (addresses, credentials, ids the
-  // caller typed). The class name + a request id is enough to correlate.
-  const requestId = newRequestId();
-  const kind = err instanceof Error ? err.constructor.name || err.name : typeof err;
-  console.error(`[edges] unhandled error kind=${kind} requestId=${requestId}`);
-  return errorJson('admin.error', 'The request could not be completed.', 400, { requestId });
-}
-
-const notFound = () => errorJson('not_found', 'Not found', 404);
-const unauth = () => errorJson('auth.unauthenticated', 'Authentication required', 401);
+const fail = makeFail('edges', statusFromCode);
 
 /**
  * First segments that are collections of their own; anything else is an edge
@@ -202,35 +176,6 @@ export function throttlePolicyForGet(parts: string[]): RateLimitPolicyKey | null
   const [a, b, c, d] = parts;
   if (a === 'relays' && b === 'inbound-candidates' && !c) return 'admin.edges.provider-call';
   return null;
-}
-
-/**
- * Per-actor rate-limit subject: the admin id for a cookie session, a hash of
- * the bearer token for an `fsv1_` caller, else the (hashed) client IP. The
- * token plaintext is never the subject (bucket names land in the DB).
- */
-async function actorSubject(req: Request, admin: AdminAuth): Promise<string> {
-  if (admin.adminUserId) return `admin:${admin.adminUserId}`;
-  const m = /^Bearer\s+(\S+)$/i.exec((req.headers.get('authorization') ?? '').trim());
-  if (m) return `tok:${(await sha256Hex(m[1])).slice(0, 32)}`;
-  const ip = resolveClientIp(req);
-  return ip ? `ip:${await ipHashSubject(ip)}` : 'unknown';
-}
-
-async function throttle(
-  ctx: ActionCtx,
-  req: Request,
-  admin: AdminAuth,
-  policyKey: RateLimitPolicyKey,
-): Promise<Response | null> {
-  const rl = await ctx.runMutation(internal.rateLimits.enforce, {
-    policyKey,
-    subject: await actorSubject(req, admin),
-  });
-  if (rl.allowed) return null;
-  return errorJson('rate_limit.exceeded', 'Too many requests. Please slow down.', 429, {
-    retryAfterMs: rl.retryAfterMs,
-  });
 }
 
 function wrap(handler: Handler, sealedRoute: boolean) {

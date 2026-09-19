@@ -6,7 +6,9 @@ import {
   remnawaveDeleteUser,
   remnawaveFetchSubscription,
   remnawaveGetUser,
+  remnawaveHardenLogging,
   remnawaveHealth,
+  remnawaveListNodeInbounds,
   remnawaveIssueUser,
   remnawaveMajorVersion,
   remnawaveResetTraffic,
@@ -792,6 +794,75 @@ describe('error redaction', () => {
     expect(blob).not.toContain('panel.internal');
     // The path alone is safe and useful for debugging.
     expect((err as Error).message).toContain(`/api/users/${UUID}`);
+  });
+
+  // A config profile carries the REALITY private key, the short ids and the
+  // client list, and a panel rejection can echo what was submitted. Every
+  // config-profile call is therefore SENSITIVE: status + path, nothing else.
+  const KEY = 'REALITY_PRIVATE_KEY_DO_NOT_LEAK';
+  const profile = {
+    uuid: 'p-1',
+    name: 'Default',
+    config: {
+      log: { loglevel: 'info' },
+      inbounds: [
+        { tag: 'r', streamSettings: { realitySettings: { privateKey: KEY, shortIds: ['ab12'] } } },
+      ],
+    },
+  };
+
+  test('a rejected config-profile PATCH never echoes the submitted config', async () => {
+    mockFetch((path, method) => {
+      if (method === 'PATCH')
+        return new Response(`invalid config: {"privateKey":"${KEY}"}`, { status: 400 });
+      if (path === '/api/config-profiles') return jsonRes({ response: [profile] });
+      return jsonRes({ response: profile });
+    });
+    const report = await remnawaveHardenLogging(cfg, { dryRun: false });
+    const blob = JSON.stringify(report);
+    expect(report.profiles[0].error).toBe('Remnawave 400 on /api/config-profiles');
+    expect(blob).not.toContain(KEY);
+    expect(blob).not.toContain('ab12');
+  });
+
+  test('a failed config-profile read carries no body slice in the message or the meta', async () => {
+    mockFetch((path) => {
+      if (path === '/api/nodes')
+        return jsonRes({
+          response: [
+            { uuid: 'n-1', configProfile: { activeConfigProfileUuid: 'p-1', activeInbounds: [] } },
+          ],
+        });
+      return new Response(`boom {"privateKey":"${KEY}"}`, { status: 500 });
+    });
+    let err: unknown;
+    try {
+      await remnawaveListNodeInbounds(cfg, 'n-1');
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(Error);
+    const blob = `${(err as Error).message} ${JSON.stringify((err as { meta?: unknown }).meta ?? {})}`;
+    expect(blob).not.toContain(KEY);
+    expect((err as Error).message).toBe('Remnawave 500 on /api/config-profiles/p-1');
+  });
+
+  test('a config-profile schema mismatch names the failing paths only', async () => {
+    mockFetch((path) => {
+      if (path === '/api/config-profiles') return jsonRes({ response: [profile] });
+      // `name` is the wrong type; the received value must not be quoted.
+      return jsonRes({ response: { uuid: 'p-1', name: { leaked: KEY }, config: {} } });
+    });
+    const report = await remnawaveHardenLogging(cfg, { dryRun: true });
+    expect(report.profiles[0].error).toBe(
+      'Remnawave schema mismatch on /api/config-profiles/p-1 (name)',
+    );
+    expect(JSON.stringify(report)).not.toContain(KEY);
+  });
+
+  test("a non-sensitive call still reports the panel's own error text", async () => {
+    mockFetch(() => new Response('User not found', { status: 404 }));
+    await expect(remnawaveGetUser(cfg, UUID)).rejects.toThrow(/User not found/);
   });
 });
 

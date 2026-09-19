@@ -1,0 +1,430 @@
+// @vitest-environment node
+/**
+ * MANAGEMENT CONTRACT PROBE: pins, against a REAL Remnawave panel, the write
+ * behaviours that server management is designed around (docs/backends.md,
+ * "Management contract"). These are not FCP provider functions yet; the probe
+ * speaks the panel API directly so the facts are established BEFORE any code
+ * depends on them:
+ *
+ *  - an inbound keeps its uuid across a config PATCH while its tag and
+ *    protocol are unchanged (listener bindings, Hosts and squads hang off it);
+ *  - the panel has no conditional update (a bogus precondition is ignored), so
+ *    exclusive-writer coordination is FCP's job;
+ *  - an auth rejection (401) stores nothing, so it may sit on the pre-mutation
+ *    allowlist; an INVALID CONFIG also stores nothing but answers 500, and a
+ *    5xx can never be on that list, so that outcome is settled by reading back;
+ *  - what the panel normalises on write (the change token must apply the same
+ *    normalisation or every verify would false-fail);
+ *  - inbound tags are unique panel-wide, not per profile;
+ *  - the node, squad and Host write shapes.
+ *
+ * No node is connected to this panel, so nothing here proves node-side effects
+ * (application, restart completion): that is the managed-node harness's job.
+ *
+ * Gated like the user-lifecycle test; run via `bun run test:integration:remnawave`.
+ * Fixture values are RFC 5737 / `.example` only.
+ */
+import { generateKeyPairSync, randomUUID } from 'node:crypto';
+import { afterAll, describe, expect, test } from 'vitest';
+
+const BASE_URL = process.env.REMNAWAVE_TEST_URL;
+const API_TOKEN = process.env.REMNAWAVE_TEST_TOKEN;
+
+interface Answer {
+  status: number;
+  /** The unwrapped `response`, or the raw JSON when the panel did not wrap it. */
+  data: any;
+}
+
+/** Raw panel call that never throws on a status: the probe asserts on it. */
+async function api(
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+  path: string,
+  body?: unknown,
+  opts: { token?: string; headers?: Record<string, string> } = {},
+): Promise<Answer> {
+  const res = await fetch(new URL(`/api/${path}`, BASE_URL), {
+    method,
+    headers: {
+      authorization: `Bearer ${opts.token ?? API_TOKEN}`,
+      'content-type': 'application/json',
+      accept: 'application/json',
+      ...opts.headers,
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(20_000),
+  });
+  const text = await res.text();
+  let json: any = undefined;
+  try {
+    json = text.trim() ? JSON.parse(text) : undefined;
+  } catch {
+    json = undefined;
+  }
+  return { status: res.status, data: json && 'response' in json ? json.response : json };
+}
+
+const ok = (a: Answer) => a.status >= 200 && a.status < 300;
+
+function realityKeypair(): { privateKey: string; publicKey: string } {
+  const keys = generateKeyPairSync('x25519');
+  return {
+    privateKey: keys.privateKey
+      .export({ type: 'pkcs8', format: 'der' })
+      .subarray(-32)
+      .toString('base64url'),
+    publicKey: keys.publicKey
+      .export({ type: 'spki', format: 'der' })
+      .subarray(-32)
+      .toString('base64url'),
+  };
+}
+
+function realityInbound(tag: string, port: number, serverNames: string[]) {
+  const { privateKey } = realityKeypair();
+  return {
+    tag,
+    port,
+    protocol: 'vless',
+    settings: { clients: [], decryption: 'none' },
+    streamSettings: {
+      network: 'tcp',
+      security: 'reality',
+      realitySettings: {
+        target: 'target.example:443',
+        serverNames,
+        privateKey,
+        shortIds: ['0123456789abcdef'],
+      },
+    },
+  };
+}
+
+const profileConfig = (inbounds: unknown[]) => ({
+  log: { loglevel: 'none' },
+  inbounds,
+  outbounds: [{ protocol: 'freedom', tag: 'DIRECT' }],
+});
+
+const inboundsOf = (profile: any): { uuid: string; tag: string }[] => profile?.inbounds ?? [];
+const uuidOfTag = (profile: any, tag: string) =>
+  inboundsOf(profile).find((i) => i.tag === tag)?.uuid ?? null;
+const rawInbound = (profile: any, tag: string) =>
+  (profile?.config?.inbounds ?? []).find((i: any) => i.tag === tag);
+
+describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave management contract (integration)', () => {
+  // Tags are unique panel-wide, so every run uses its own.
+  const run = randomUUID().slice(0, 8);
+  const tagA = `fcp-a-${run}`;
+  const tagB = `fcp-b-${run}`;
+  const created = {
+    profiles: [] as string[],
+    squads: [] as string[],
+    hosts: [] as string[],
+    nodes: [] as string[],
+  };
+  let profileUuid = '';
+  /** Behaviours that are recorded rather than required; printed once at the end. */
+  const observed: Record<string, unknown> = {};
+
+  afterAll(async () => {
+    for (const u of created.hosts) await api('DELETE', `hosts/${u}`);
+    for (const u of created.nodes) await api('DELETE', `nodes/${u}`);
+    for (const u of created.squads) await api('DELETE', `internal-squads/${u}`);
+    for (const u of created.profiles) await api('DELETE', `config-profiles/${u}`);
+    console.info(`[management-contract] observed ${JSON.stringify(observed)}`);
+  });
+
+  test('profile create returns one derived inbound row per tag', async () => {
+    const made = await api('POST', 'config-profiles', {
+      name: `FCP contract ${run}`,
+      config: profileConfig([
+        realityInbound(tagA, 20443, ['a.example', 'b.example']),
+        realityInbound(tagB, 20444, ['c.example']),
+      ]),
+    });
+    expect(made.status).toBe(201);
+    profileUuid = made.data.uuid;
+    created.profiles.push(profileUuid);
+    expect(
+      inboundsOf(made.data)
+        .map((i) => i.tag)
+        .sort(),
+    ).toEqual([tagA, tagB].sort());
+    expect(uuidOfTag(made.data, tagA)).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  test('an inbound keeps its uuid across a config PATCH while tag and protocol hold', async () => {
+    const before = await api('GET', `config-profiles/${profileUuid}`);
+    const config = structuredClone(before.data.config);
+    rawInbound({ config }, tagA).streamSettings.realitySettings.serverNames = [
+      'a.example',
+      'b.example',
+      'd.example',
+    ];
+    const patched = await api('PATCH', 'config-profiles', { uuid: profileUuid, config });
+    expect(ok(patched)).toBe(true);
+    const after = await api('GET', `config-profiles/${profileUuid}`);
+    expect(uuidOfTag(after.data, tagA)).toBe(uuidOfTag(before.data, tagA));
+    expect(uuidOfTag(after.data, tagB)).toBe(uuidOfTag(before.data, tagB));
+    expect(rawInbound(after.data, tagA).streamSettings.realitySettings.serverNames).toEqual([
+      'a.example',
+      'b.example',
+      'd.example',
+    ]);
+  });
+
+  test('records what the panel normalises on write', async () => {
+    const before = await api('GET', `config-profiles/${profileUuid}`);
+    const config = structuredClone(before.data.config);
+    const rs = rawInbound({ config }, tagB).streamSettings.realitySettings;
+    const { publicKey } = realityKeypair();
+    rs.serverNames = ['C.Example', 'c.example', ' e.example '];
+    rs.publicKey = publicKey;
+    rawInbound({ config }, tagB).settings.clients = [
+      { id: randomUUID(), email: 'probe', flow: 'xtls-rprx-vision' },
+    ];
+    const patched = await api('PATCH', 'config-profiles', { uuid: profileUuid, config });
+    observed.normalisingPatchStatus = patched.status;
+    const after = await api('GET', `config-profiles/${profileUuid}`);
+    const stored = rawInbound(after.data, tagB);
+    observed.serverNamesStored = stored?.streamSettings?.realitySettings?.serverNames;
+    observed.publicKeyStored = 'publicKey' in (stored?.streamSettings?.realitySettings ?? {});
+    observed.clientsStored = stored?.settings?.clients?.length ?? null;
+    // Whatever it normalises, the panel must never hand back the client list it was sent.
+    expect(JSON.stringify(after.data)).not.toContain('"email":"probe"');
+  });
+
+  test('there is no conditional update: a bogus precondition is ignored', async () => {
+    const before = await api('GET', `config-profiles/${profileUuid}`);
+    const patched = await api(
+      'PATCH',
+      'config-profiles',
+      { uuid: profileUuid, config: before.data.config },
+      {
+        headers: {
+          'if-match': '"not-the-current-version"',
+          'if-unmodified-since': 'Thu, 01 Jan 1970 00:00:00 GMT',
+        },
+      },
+    );
+    // A panel that honoured preconditions would answer 412 here.
+    expect(patched.status).not.toBe(412);
+    expect(ok(patched)).toBe(true);
+  });
+
+  test('a profile-name-only PATCH is accepted and leaves the config alone', async () => {
+    const before = await api('GET', `config-profiles/${profileUuid}`);
+    const renamed = await api('PATCH', 'config-profiles', {
+      uuid: profileUuid,
+      name: `FCP contract ${run} b`,
+    });
+    expect(ok(renamed)).toBe(true);
+    const after = await api('GET', `config-profiles/${profileUuid}`);
+    expect(after.data.name).toBe(`FCP contract ${run} b`);
+    expect(after.data.config).toEqual(before.data.config);
+    expect(uuidOfTag(after.data, tagA)).toBe(uuidOfTag(before.data, tagA));
+  });
+
+  test('an invalid config is refused and nothing is stored', async () => {
+    const before = await api('GET', `config-profiles/${profileUuid}`);
+    const bad = await api('PATCH', 'config-profiles', {
+      uuid: profileUuid,
+      config: { inbounds: 'not-an-array' },
+    });
+    // The status is RECORDED, not required: 3.4.4 answers 500 here, not a 4xx.
+    // A 5xx can never sit on the pre-mutation allowlist (a gateway can answer
+    // one while upstream commits), so a caller must treat this outcome as
+    // uncertain and settle it by reading back, exactly as this test does. FCP
+    // validates a config's shape itself before it ever sends one.
+    expect(bad.status).toBeGreaterThanOrEqual(400);
+    observed.invalidConfigStatus = bad.status;
+    const after = await api('GET', `config-profiles/${profileUuid}`);
+    expect(after.data.config).toEqual(before.data.config);
+  });
+
+  test('an auth rejection stores nothing', async () => {
+    const before = await api('GET', `config-profiles/${profileUuid}`);
+    const denied = await api(
+      'PATCH',
+      'config-profiles',
+      { uuid: profileUuid, name: 'should never land' },
+      { token: 'not-a-valid-token' },
+    );
+    expect([401, 403]).toContain(denied.status);
+    observed.badTokenStatus = denied.status;
+    const after = await api('GET', `config-profiles/${profileUuid}`);
+    expect(after.data.name).toBe(before.data.name);
+  });
+
+  test('inbound tags are unique panel-wide, not per profile', async () => {
+    const clash = await api('POST', 'config-profiles', {
+      name: `FCP contract ${run} clash`,
+      config: profileConfig([realityInbound(tagA, 20450, ['z.example'])]),
+    });
+    if (ok(clash)) created.profiles.push(clash.data.uuid);
+    observed.duplicateTagStatus = clash.status;
+    expect(ok(clash)).toBe(false);
+  });
+
+  test('changing an inbound protocol under the same tag replaces its uuid', async () => {
+    const before = await api('GET', `config-profiles/${profileUuid}`);
+    const config = structuredClone(before.data.config);
+    const idx = config.inbounds.findIndex((i: any) => i.tag === tagB);
+    config.inbounds[idx] = {
+      tag: tagB,
+      port: 20444,
+      protocol: 'trojan',
+      settings: { clients: [] },
+      streamSettings: { network: 'tcp', security: 'none' },
+    };
+    const patched = await api('PATCH', 'config-profiles', { uuid: profileUuid, config });
+    observed.protocolChangeStatus = patched.status;
+    // Recorded, not required: a panel that refuses the change is the safer answer.
+    if (!ok(patched)) return;
+    const after = await api('GET', `config-profiles/${profileUuid}`);
+    expect(uuidOfTag(after.data, tagA)).toBe(uuidOfTag(before.data, tagA));
+    expect(uuidOfTag(after.data, tagB)).not.toBe(uuidOfTag(before.data, tagB));
+  });
+
+  test('squads: create, rename, change inbounds, delete', async () => {
+    const profile = await api('GET', `config-profiles/${profileUuid}`);
+    const a = uuidOfTag(profile.data, tagA)!;
+    const b = uuidOfTag(profile.data, tagB)!;
+    const made = await api('POST', 'internal-squads', { name: `fcp-${run}`, inbounds: [a] });
+    expect(made.status).toBe(201);
+    const squadUuid = made.data.uuid as string;
+    created.squads.push(squadUuid);
+    expect(made.data.inbounds.map((i: any) => i.uuid)).toEqual([a]);
+
+    const renamed = await api('PATCH', 'internal-squads', {
+      uuid: squadUuid,
+      name: `fcp-${run}-b`,
+    });
+    expect(ok(renamed)).toBe(true);
+    expect(renamed.data.name).toBe(`fcp-${run}-b`);
+    // A rename alone must not drop the inbound assignment.
+    expect(renamed.data.inbounds.map((i: any) => i.uuid)).toEqual([a]);
+
+    const moved = await api('PATCH', 'internal-squads', { uuid: squadUuid, inbounds: [a, b] });
+    expect(ok(moved)).toBe(true);
+    expect(moved.data.inbounds.map((i: any) => i.uuid).sort()).toEqual([a, b].sort());
+
+    const gone = await api('DELETE', `internal-squads/${squadUuid}`);
+    expect(ok(gone)).toBe(true);
+    created.squads = created.squads.filter((u) => u !== squadUuid);
+    const list = await api('GET', 'internal-squads');
+    const rows = list.data.internalSquads ?? list.data;
+    expect(rows.some((s: any) => s.uuid === squadUuid)).toBe(false);
+  });
+
+  test('hosts: create with the full field set, edit, rebind, reorder, delete', async () => {
+    const profile = await api('GET', `config-profiles/${profileUuid}`);
+    const a = uuidOfTag(profile.data, tagA)!;
+    const made = await api('POST', 'hosts', {
+      inbound: { configProfileUuid: profileUuid, configProfileInboundUuid: a },
+      remark: `fcp-${run}`,
+      address: '192.0.2.10',
+      port: 443,
+      sni: 'a.example',
+      fingerprint: 'chrome',
+      alpn: 'h2',
+      isDisabled: false,
+    });
+    expect(made.status).toBe(201);
+    const hostUuid = made.data.uuid as string;
+    created.hosts.push(hostUuid);
+    expect(made.data.fingerprint).toBe('chrome');
+    expect(made.data.alpn).toBe('h2');
+
+    // A partial PATCH changes only what it names.
+    const edited = await api('PATCH', 'hosts', {
+      uuid: hostUuid,
+      remark: `fcp-${run}-b`,
+      fingerprint: 'firefox',
+    });
+    expect(ok(edited)).toBe(true);
+    expect(edited.data.remark).toBe(`fcp-${run}-b`);
+    expect(edited.data.fingerprint).toBe('firefox');
+    expect(edited.data.address).toBe('192.0.2.10');
+    expect(edited.data.sni).toBe('a.example');
+
+    // Host attributes do not enforce uniqueness: an identical create is a second Host.
+    const twin = await api('POST', 'hosts', {
+      inbound: { configProfileUuid: profileUuid, configProfileInboundUuid: a },
+      remark: `fcp-${run}-b`,
+      address: '192.0.2.10',
+      port: 443,
+    });
+    observed.duplicateHostStatus = twin.status;
+    if (ok(twin)) {
+      created.hosts.push(twin.data.uuid);
+      expect(twin.data.uuid).not.toBe(hostUuid);
+    }
+
+    const reordered = await api('POST', 'hosts/actions/reorder', {
+      hosts: created.hosts.map((uuid, i) => ({ uuid, viewPosition: created.hosts.length - i })),
+    });
+    observed.reorderStatus = reordered.status;
+    expect(ok(reordered)).toBe(true);
+
+    for (const u of [...created.hosts]) {
+      const gone = await api('DELETE', `hosts/${u}`);
+      expect(ok(gone)).toBe(true);
+    }
+    created.hosts = [];
+  });
+
+  test('nodes: create a panel row, rename, disable, enable, restart, delete', async () => {
+    const profile = await api('GET', `config-profiles/${profileUuid}`);
+    const a = uuidOfTag(profile.data, tagA)!;
+    const made = await api('POST', 'nodes', {
+      name: `fcp-${run}`,
+      address: '192.0.2.20',
+      port: 2222,
+      countryCode: 'XX',
+      configProfile: { activeConfigProfileUuid: profileUuid, activeInbounds: [a] },
+    });
+    expect(made.status).toBe(201);
+    const nodeUuid = made.data.uuid as string;
+    created.nodes.push(nodeUuid);
+    expect(made.data.configProfile.activeConfigProfileUuid).toBe(profileUuid);
+    // The fields a lifecycle observation would have to be built from (recorded).
+    observed.nodeStatusFields = ['isConnected', 'isConnecting', 'xrayUptime', 'lastStatusChange']
+      .filter((k) => k in made.data)
+      .sort();
+    observed.xrayUptimeOnNeverConnectedNode = made.data.xrayUptime ?? null;
+
+    const renamed = await api('PATCH', 'nodes', {
+      uuid: nodeUuid,
+      name: `fcp-${run}-b`,
+      tags: ['FCP_MANAGED'],
+    });
+    expect(ok(renamed)).toBe(true);
+    expect(renamed.data.name).toBe(`fcp-${run}-b`);
+    expect(renamed.data.tags).toEqual(['FCP_MANAGED']);
+    expect(renamed.data.configProfile.activeConfigProfileUuid).toBe(profileUuid);
+
+    const disabled = await api('POST', `nodes/${nodeUuid}/actions/disable`);
+    expect(ok(disabled)).toBe(true);
+    expect(disabled.data.isDisabled).toBe(true);
+    // Not a no-op contract: a repeat is recorded so the caller knows to check state first.
+    const disabledAgain = await api('POST', `nodes/${nodeUuid}/actions/disable`);
+    observed.repeatDisableStatus = disabledAgain.status;
+
+    const enabled = await api('POST', `nodes/${nodeUuid}/actions/enable`);
+    expect(ok(enabled)).toBe(true);
+    expect(enabled.data.isDisabled).toBe(false);
+
+    const restarted = await api('POST', `nodes/${nodeUuid}/actions/restart`, {
+      forceRestart: true,
+    });
+    observed.restartStatus = restarted.status;
+    observed.restartBody = restarted.data;
+    expect(ok(restarted)).toBe(true);
+
+    const gone = await api('DELETE', `nodes/${nodeUuid}`);
+    expect(ok(gone)).toBe(true);
+    created.nodes = [];
+  });
+});
