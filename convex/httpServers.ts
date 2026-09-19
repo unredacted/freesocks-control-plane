@@ -46,6 +46,8 @@ const fail = makeFail('servers', statusFromCode);
 function isReadOnlyPost(parts: string[]): boolean {
   if (parts.length === 2 && parts[1] === 'refresh') return true;
   if (parts.length === 3 && parts[1] === 'placements' && parts[2] === 'validate') return true;
+  // A preview reads the profile and computes; it writes nothing.
+  if (parts.length === 4 && parts[1] === 'profiles' && parts[3] === 'preview') return true;
   // Looking at the panel again for an open op changes nothing on the panel.
   return parts.length === 4 && parts[1] === 'ops' && parts[3] === 'observe';
 }
@@ -156,6 +158,29 @@ const getHandler: Handler = async (ctx, parts) => {
 
 const postHandler: Handler = async (ctx, parts, admin, body) => {
   const [a, b, c, d] = parts;
+  if (a && b === 'profiles' && c && (d === 'preview' || d === 'apply')) {
+    const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
+    if (d === 'preview')
+      return json(
+        await ctx.runAction(internal.panelWrites.previewProfilePatch, {
+          backendServerId: instance.id,
+          profileUuid: c,
+          ops: body.ops,
+        }),
+      );
+    // Apply takes what the preview answered, verbatim: the write is conditioned
+    // on the profile still having THAT token.
+    const { opId } = await ctx.runMutation(internal.panelWrites.requestProfilePatch, {
+      backendServerId: instance.id,
+      profileUuid: c,
+      ops: body.ops as never,
+      baseToken: String(body.baseToken ?? ''),
+      expectedToken: String(body.expectedToken ?? ''),
+      inboundUuids: (body.inboundUuids ?? {}) as Record<string, string>,
+      ...actorOf(admin),
+    });
+    return runOp(ctx, opId);
+  }
   if (a && (b === 'hosts' || b === 'squads' || b === 'ops')) {
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
     const sid = instance.id;

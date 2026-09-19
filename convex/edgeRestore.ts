@@ -46,7 +46,7 @@ import { parseProxyUri } from './lib/edges/render/uri';
 import { cohortReportForRelay } from './lib/edges/cohorts';
 import { startRestoreWorkflow, type RestorePhase, type RestorePurpose } from './lib/edges/restore';
 import { applyDeleteBody, deliveryBindingFor } from './relays';
-import { scheduleMirrorRefresh } from './lib/edges/relayGuards';
+import { assertNoRelayPanelClaim, scheduleMirrorRefresh } from './lib/edges/relayGuards';
 import { listenerRemark, listenersOf } from './relayListeners';
 import { listPanelHosts, restoreOne, type HideRow } from './edgeHostHides';
 
@@ -114,6 +114,7 @@ export const start = internalMutation({
   handler: async (ctx, { relayId, purpose, actorAdminId, darkCohortKeys, force }) => {
     const relay = await ctx.db.get(relayId);
     if (!relay) throw new ConvexError({ code: 'not_found', message: 'Relay not found' });
+    await assertNoRelayPanelClaim(ctx.db, relay);
     await startRestoreWorkflow(ctx, relay, {
       purpose,
       ...(actorAdminId ? { actorAdminId } : {}),

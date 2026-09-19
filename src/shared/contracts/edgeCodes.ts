@@ -117,6 +117,7 @@ export const PREFLIGHT_BLOCKER_CODES = [
   'cooldown',
   'daily_cap',
   'listener_not_found',
+  'panel_op_running',
   'listener_unusable',
   'l7_auto_select_disabled',
   'l7_replacement_cap',

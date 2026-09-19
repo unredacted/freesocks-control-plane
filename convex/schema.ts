@@ -2159,12 +2159,13 @@ export default defineSchema({
   // (`recovery`) establishes that it can no longer change anything.
   panelOps: defineTable({
     backendServerId: v.id('backendServers'),
-    kind: v.union(v.literal('host'), v.literal('squad')),
+    kind: v.union(v.literal('host'), v.literal('squad'), v.literal('profile')),
     verb: v.union(
       v.literal('create'),
       v.literal('update'),
       v.literal('delete'),
       v.literal('reorder'),
+      v.literal('patch'),
     ),
     // Fences every mutation made on the op's behalf.
     generation: v.number(),

@@ -321,6 +321,8 @@ export interface NodeInventoryRow {
   countryCode?: string;
 }
 
+import type { PatchChange, PatchOp } from '../panel/patchOps';
+
 // --- Panel observation (server management) -----------------------------------
 //
 // What FCP reads from a panel to show an operator the nodes, config profiles,
@@ -404,6 +406,17 @@ export interface PanelObservation {
 
 // --- Panel writes (server management) ------------------------------------------
 
+export interface ProfilePatchPreview {
+  profileName: string;
+  baseToken: string;
+  expectedToken: string;
+  changed: boolean;
+  changes: PatchChange[];
+  touchedTags: string[];
+  /** tag -> inbound uuid as read: a settled edit must leave every one of them as it was. */
+  inboundUuids: Record<string, string>;
+}
+
 /** Every Host field an operator may set. Absent = leave; `null` = clear (sent as ''). */
 export interface PanelHostFields {
   remark?: string;
@@ -457,6 +470,30 @@ export interface PanelWrites<C> {
     fields: { name?: string; inboundUuids?: string[] },
   ): Promise<void>;
   deleteSquad(config: C, squadUuid: string): Promise<void>;
+  /**
+   * What a typed profile edit WOULD do, from a fresh read: the token of the
+   * config as it is, the token it would have afterwards, and the non-secret
+   * before/after. Writes nothing.
+   */
+  previewProfilePatch(
+    config: C,
+    profileUuid: string,
+    ops: readonly PatchOp[],
+    digestKey: string,
+  ): Promise<ProfilePatchPreview>;
+  /**
+   * Re-read, refuse unless the config still has `baseToken` (someone else
+   * changed it: nothing is sent), apply the edit, send it ONCE. Key material
+   * passes through this call in memory and nowhere else.
+   */
+  applyProfilePatch(
+    config: C,
+    profileUuid: string,
+    ops: readonly PatchOp[],
+    baseToken: string,
+    digestKey: string,
+  ): Promise<{ sent: true } | { sent: false; reason: 'profile_changed' | 'nothing_to_change' }>;
+  readProfile(config: C, profileUuid: string, digestKey: string): Promise<PanelObservedProfile>;
   /** Targeted read-backs: the ledger settles an op by LOOKING, never by trusting a response. */
   readHosts(config: C): Promise<PanelObservedHost[]>;
   readSquads(config: C): Promise<PanelObservedSquad[]>;

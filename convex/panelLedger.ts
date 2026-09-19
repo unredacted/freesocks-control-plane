@@ -292,6 +292,11 @@ const observedHost = v.object({
   configProfileInboundUuid: v.union(v.string(), v.null()),
   nodeUuids: v.array(v.string()),
 });
+const observedProfile = v.object({
+  changeToken: v.string(),
+  /** tag -> inbound uuid as read now. */
+  inboundUuids: v.record(v.string(), v.string()),
+});
 const observedSquad = v.object({
   squadUuid: v.string(),
   name: v.string(),
@@ -310,6 +315,7 @@ export const applyLook = internalMutation({
     opId: v.id('panelOps'),
     hosts: v.optional(v.array(observedHost)),
     squads: v.optional(v.array(observedSquad)),
+    profile: v.optional(observedProfile),
     nodes: v.optional(
       v.array(
         v.object({
@@ -320,7 +326,7 @@ export const applyLook = internalMutation({
       ),
     ),
   },
-  handler: async (ctx, { opId, hosts, squads, nodes }) => {
+  handler: async (ctx, { opId, hosts, squads, profile, nodes }) => {
     const op = await ctx.db.get(opId);
     if (!op || !op.open) return { open: false };
     // A look only means something once the attempt exists (or was never needed).
@@ -353,6 +359,20 @@ export const applyLook = internalMutation({
             expected,
           );
       }
+      if (op.kind === 'profile' && profile) {
+        // The whole config, key material included, is what the token covers:
+        // equal tokens mean the edit landed AND nothing else moved.
+        seen = profile.changeToken === expected.expectedToken;
+        // The panel keeps an inbound's uuid while tag and protocol hold. If one
+        // moved anyway, every binding to it (listeners, Hosts, squads) is stale:
+        // say so loudly rather than carry on as if nothing happened.
+        const before = (expected.inboundUuids ?? {}) as Record<string, string>;
+        if (
+          seen &&
+          Object.entries(before).some(([tag, uuid]) => profile.inboundUuids[tag] !== uuid)
+        )
+          patch.errorCode = 'servers.inbound_uuid_changed';
+      }
       if (op.kind === 'squad' && squads) {
         if (op.verb === 'create') {
           const matches = squads.filter((s) => s.name === op.identity);
@@ -382,6 +402,11 @@ export const applyLook = internalMutation({
     patch.asyncEffect = asyncEffect;
 
     const next = { ...op, ...patch } as Op;
+    // Bring the bound listeners back in step as soon as the result is seen, in
+    // THIS transaction: it either happens with the observation or not at all,
+    // and a later look simply tries again. It runs under the op's own claims.
+    if (seen && op.kind === 'profile' && op.panelState !== 'observed')
+      await bridgeProfilePatch(ctx, next);
     if (claimsReleasable(next)) {
       await own(ctx, next);
       await syncCache(ctx, next, hosts, squads);
@@ -393,6 +418,57 @@ export const applyLook = internalMutation({
     return { open: true };
   },
 });
+
+/**
+ * After a profile edit is SEEN on the panel, the relay listeners bound to the
+ * touched inbounds follow. Ownership, not a bypass: the op must hold the claim
+ * on every relay it is about to touch, exactly.
+ *
+ *  - a new TARGET is descriptive state of the listener: it is updated, and the
+ *    listener's `revision` moves, so every L4 endpoint confirmation on it is
+ *    due a retest (the material an operator tested against changed);
+ *  - new SERVER NAMES are NOT activated here. The panel listing a name does not
+ *    mean the node accepts it (measured), so a name reaches members only
+ *    through a path that proves acceptance. Removed names were refused at claim
+ *    time while a listener still handed them out, so nothing is left to retire.
+ */
+async function bridgeProfilePatch(ctx: MutationCtx, op: Op) {
+  const expected = JSON.parse(op.postcondition) as {
+    targets?: Record<string, { address: string; port: number }>;
+    relayIds?: string[];
+    inboundUuids?: Record<string, string>;
+  };
+  const relayIds = (expected.relayIds ?? []) as Id<'relays'>[];
+  if (relayIds.length === 0) return;
+  await assertNoPanelClaim(
+    ctx.db,
+    op.backendServerId,
+    relayIds.map((r) => `relay:${r}`),
+    { opId: op._id, generation: op.generation },
+  );
+  const targets = expected.targets ?? {};
+  for (const relayId of relayIds) {
+    const listeners = await ctx.db
+      .query('relayListeners')
+      .withIndex('by_relay', (q) => q.eq('relayId', relayId))
+      .collect();
+    for (const l of listeners) {
+      if (l.retired || !l.panelBinding) continue;
+      const tag = Object.entries(expected.inboundUuids ?? {}).find(
+        ([, uuid]) => uuid === l.panelBinding!.configProfileInboundUuid,
+      )?.[0];
+      const target = tag ? targets[tag] : undefined;
+      if (!target) continue;
+      if (l.realityTarget?.address === target.address && l.realityTarget?.port === target.port)
+        continue;
+      await ctx.db.patch(l._id, {
+        realityTarget: target,
+        revision: l.revision + 1,
+        updatedAt: Date.now(),
+      });
+    }
+  }
+}
 
 /** The page shows the result at once instead of waiting for the next scheduled look. */
 async function syncCache(

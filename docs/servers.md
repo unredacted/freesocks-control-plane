@@ -8,7 +8,8 @@ one bounded provider call per action, one HTTP prefix with a dispatcher, contrac
 `src/shared/contracts/servers.ts`.
 
 **It ships dormant.** Reading a panel and changing it are separate switches, both off. Today
-the writes cover **Hosts** and **internal squads**; nodes and config profiles follow.
+the writes cover **Hosts**, **internal squads** and two typed edits of a **config profile**
+(REALITY server names and target); node writes follow.
 
 Backends: a type takes part when its provider implements `observePanel` and declares the
 `panelObservation` capability (`convex/lib/backends/capabilities.ts`). Remnawave 3.x does;
@@ -170,6 +171,55 @@ attempt but no outcome becomes `uncertain`; everything open is looked at again.
 follow-up work passes the same guard by **ownership**, never by a bypass flag: every required
 key must have a claim row held by that op at that generation, so a missing claim fails.
 
+### Editing a config profile
+
+The panel takes a profile's config **wholesale** and offers **no conditional update** (measured:
+stale preconditions are ignored). An edit is therefore a read-modify-write, in two calls:
+
+1. `POST {slug}/profiles/{uuid}/preview {ops}` reads the live profile, applies the edit in
+   memory and answers the non-secret before/after, the nodes the panel will re-apply it to, the
+   relays whose listeners are bound to the touched inbounds, and two tokens: the profile as it
+   is, and as it would be. It writes nothing.
+2. `POST {slug}/profiles/{uuid}/apply` takes that answer back verbatim. The write is
+   conditioned on the profile **still having the previewed token**: FCP re-reads immediately
+   before the `PATCH`, and a profile someone else changed in between is refused
+   (`servers.profile_changed`) with nothing sent. The result is confirmed by reading the
+   profile back: its token must equal the predicted one, which means the edit landed **and
+   nothing else moved**, key material included.
+
+The edit itself is `convex/lib/panel/patchOps.ts`: a **closed set** of operations
+(`setRealityServerNames`, `setRealityTarget`), no raw JSON. It refuses a config that is not an
+object, an empty `inbounds` (writing that back would strip the nodes), a missing or duplicated
+tag, a non-REALITY inbound. Everything it does not name is carried over by reference, the
+private key and short ids included; they exist only inside the provider call. It never changes
+an inbound's tag, protocol or position, because the panel keeps an inbound's uuid only while
+tag and protocol hold (measured) and listener bindings, Hosts and squads hang off that uuid. A
+uuid that moved anyway is flagged (`servers.inbound_uuid_changed`). Port changes and new
+inbounds are not offered yet: they need the node's firewall to be ready first.
+
+The residual race is stated plainly: between FCP's last read and its `PATCH`, another writer's
+change would be overwritten and cannot be detected afterwards. That is why every FCP writer of
+a profile takes the same claim, why the node role may not `PATCH` a managed profile, and why a
+token that moves without an FCP op is recorded (`tokenChangedAt`).
+
+**Claims.** One edit claims the profile, every enabled node on it and every affected relay
+together, and holds them until each node's `lastStatusChange` has moved (the `PATCH` answers in
+tens of milliseconds while application is asynchronous, measured). Rotations, restores,
+registrations and listener edits on a claimed relay refuse with `edge.panel_op_running`
+(`assertNoRelayPanelClaim`). A relay that is rotating, restoring, quarantined or mid-setup is
+left alone instead: the edit is refused.
+
+**The relay listeners follow, under the op's own claims** (ownership with exact coverage, in
+the same transaction that records the observation):
+
+- a new **target** is written to the bound listeners and their `revision` moves, so every L4
+  endpoint confirmation on them is due a retest;
+- new **server names are not activated** on any listener. The panel listing a name does not
+  mean a node accepts it (measured), so a name reaches members only through a path that proves
+  acceptance per node;
+- a name a bound listener still hands out, or that is still inside its drain, **may not be
+  removed** (`servers.name_in_use`): retire it on the relay first.
+
 ### What is refused
 
 | Refusal                                                 | When                                                                                                                          |
@@ -209,6 +259,8 @@ surface (`src/shared/crypto/envelope.ts`): the responses carry node and Host add
 | `GET config`, `PATCH config`                                                             | `admin:settings:*`                 | The switches. Audited as `servers.config.update {changedKeys}`.                                                |
 | `POST {slug}/hosts`, `PATCH` / `DELETE {slug}/hosts/{uuid}`, `POST {slug}/hosts/reorder` | `admin:servers:manage`             | Host writes. Answer the op. Rate-limited (`admin.servers.panel-write`).                                        |
 | `POST {slug}/squads`, `PATCH` / `DELETE {slug}/squads/{uuid}`                            | `admin:servers:manage`             | Squad writes.                                                                                                  |
+| `POST {slug}/profiles/{uuid}/preview`                                                    | `admin:servers:read`               | What a typed profile edit would do. Writes nothing.                                                            |
+| `POST {slug}/profiles/{uuid}/apply`                                                      | `admin:servers:manage`             | Apply a previewed edit, conditioned on the previewed token.                                                    |
 | `GET {slug}/ops`                                                                         | `admin:servers:read`               | The last 50 ops of an instance.                                                                                |
 | `POST {slug}/ops/{id}/observe`                                                           | `admin:servers:read`               | Look at the panel again for an open op. Changes nothing on the panel.                                          |
 | `POST {slug}/ops/{id}/recover`                                                           | `admin:servers:manage`             | The attested recovery of an unknown outcome.                                                                   |

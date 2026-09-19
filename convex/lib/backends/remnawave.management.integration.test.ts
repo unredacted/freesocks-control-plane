@@ -212,6 +212,66 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave management contract (integra
     );
   });
 
+  test('a guarded profile edit lands with exactly the token FCP predicted', async () => {
+    const cfg = {
+      type: 'remnawave' as const,
+      baseUrl: BASE_URL!,
+      apiToken: API_TOKEN!,
+      timeoutMs: 20_000,
+    };
+    const w = PROVIDERS.remnawave.panelWrites!;
+    const KEY = 'integration-digest-key';
+    const ops = [
+      {
+        op: 'setRealityServerNames' as const,
+        inboundTag: tagA,
+        names: ['a.example', 'b.example', 'd.example', 'e.example'],
+      },
+      { op: 'setRealityTarget' as const, inboundTag: tagA, target: 'target.example:8443' },
+    ];
+    const before = await api('GET', `config-profiles/${profileUuid}`);
+    const sk = rawInbound(before.data, tagA).streamSettings.realitySettings.privateKey;
+    const preview = await w.previewProfilePatch(cfg, profileUuid, ops, KEY);
+    expect(preview.changed).toBe(true);
+    expect(JSON.stringify(preview)).not.toContain(sk);
+
+    // A stale token is refused and nothing is sent.
+    expect(await w.applyProfilePatch(cfg, profileUuid, ops, 'not-the-token', KEY)).toEqual({
+      sent: false,
+      reason: 'profile_changed',
+    });
+    expect((await w.readProfile(cfg, profileUuid, KEY)).changeToken).toBe(preview.baseToken);
+
+    expect(await w.applyProfilePatch(cfg, profileUuid, ops, preview.baseToken, KEY)).toEqual({
+      sent: true,
+    });
+    const after = await w.readProfile(cfg, profileUuid, KEY);
+    // The panel normalises on write; the prediction must survive that exactly.
+    expect(after.changeToken).toBe(preview.expectedToken);
+    const a = after.inbounds.find((i) => i.tag === tagA)!;
+    expect(a.reality).toEqual({ target: 'target.example:8443', serverNames: ops[0].names });
+    expect(a.configProfileInboundUuid).toBe(preview.inboundUuids[tagA]);
+    // Key material went through untouched.
+    const raw = await api('GET', `config-profiles/${profileUuid}`);
+    expect(rawInbound(raw.data, tagA).streamSettings.realitySettings.privateKey).toBe(sk);
+    // Applying the same edit again is a no-op: no write, no node work.
+    expect(await w.applyProfilePatch(cfg, profileUuid, ops, after.changeToken, KEY)).toEqual({
+      sent: false,
+      reason: 'nothing_to_change',
+    });
+    // Leave the names as the next test expects them.
+    const reset = [
+      {
+        op: 'setRealityServerNames' as const,
+        inboundTag: tagA,
+        names: ['a.example', 'b.example', 'd.example'],
+      },
+      { op: 'setRealityTarget' as const, inboundTag: tagA, target: 'target.example:443' },
+    ];
+    const back = await w.previewProfilePatch(cfg, profileUuid, reset, KEY);
+    await w.applyProfilePatch(cfg, profileUuid, reset, back.baseToken, KEY);
+  });
+
   test('records what the panel normalises on write', async () => {
     const before = await api('GET', `config-profiles/${profileUuid}`);
     const config = structuredClone(before.data.config);

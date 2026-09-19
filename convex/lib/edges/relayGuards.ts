@@ -41,6 +41,29 @@ export function assertNotQuarantined(origin: Doc<'relays'>) {
 }
 
 /**
+ * Server management claims a relay (`relay:<id>` in `panelClaims`) while it
+ * changes the config profile one of the relay's listeners is bound to, and
+ * holds the claim until the listeners are back in step. Every workflow that
+ * moves the pool, the listeners or the Hosts refuses meanwhile: a rotation
+ * started between the panel write and the listener update would snapshot a
+ * listener that is about to change under it.
+ */
+export async function assertNoRelayPanelClaim(db: DatabaseReader, origin: Doc<'relays'>) {
+  if (!origin.backendServerId) return;
+  const claim = await db
+    .query('panelClaims')
+    .withIndex('by_server_key', (q) =>
+      q.eq('backendServerId', origin.backendServerId!).eq('key', `relay:${origin._id}`),
+    )
+    .unique();
+  if (claim)
+    throw new ConvexError({
+      code: 'edge.panel_op_running',
+      message: 'A server change is updating this node; wait for it to finish',
+    });
+}
+
+/**
  * The shared gate for every pool / edge / listener write that is NOT the
  * running rotation itself: refused while the origin is quarantined, a
  * rotation is in flight, or a restore workflow runs (its raw-body checks
@@ -48,6 +71,7 @@ export function assertNotQuarantined(origin: Doc<'relays'>) {
  */
 export async function assertNoRotationOrQuarantine(db: DatabaseReader, origin: Doc<'relays'>) {
   assertNotQuarantined(origin);
+  await assertNoRelayPanelClaim(db, origin);
   if (origin.restore) {
     throw new ConvexError({
       code: 'edge.restore_in_progress',
