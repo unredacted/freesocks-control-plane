@@ -9,6 +9,7 @@
  * code word on `panelObserveState`, never as the provider's message, and never
  * marks the instance unhealthy.
  */
+import { adoptObservedReservations } from './panelReservations';
 import { ConvexError, v } from 'convex/values';
 import type { ActionCtx } from './_generated/server';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
@@ -233,6 +234,9 @@ export const record = internalMutation({
       squadBy.delete(sq.squadUuid);
     }
     for (const gone of squadBy.values()) await ctx.db.delete(gone._id);
+
+    // A reserved identity that now exists was made by the run that reserved it.
+    await adoptObservedReservations(ctx, sid);
 
     await stampState(ctx, sid, {
       attemptedAt: now,

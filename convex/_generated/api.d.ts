@@ -124,6 +124,7 @@ import type * as membershipCodes from "../membershipCodes.js";
 import type * as mirrorProviders from "../mirrorProviders.js";
 import type * as panelLedger from "../panelLedger.js";
 import type * as panelObserve from "../panelObserve.js";
+import type * as panelReservations from "../panelReservations.js";
 import type * as panelWrites from "../panelWrites.js";
 import type * as probeOps from "../probeOps.js";
 import type * as probeTargets from "../probeTargets.js";
@@ -277,6 +278,7 @@ declare const fullApi: ApiFromModules<{
   mirrorProviders: typeof mirrorProviders;
   panelLedger: typeof panelLedger;
   panelObserve: typeof panelObserve;
+  panelReservations: typeof panelReservations;
   panelWrites: typeof panelWrites;
   probeOps: typeof probeOps;
   probeTargets: typeof probeTargets;

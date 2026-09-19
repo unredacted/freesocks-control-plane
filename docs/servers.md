@@ -270,6 +270,32 @@ instance, the role reports that it follows the ownership protocol:
 longer rewrites Hosts or squads it did not create in that run, and never recreates one FCP
 removed. Turning `servers.manage.enabled` off does not hand anything back to the role.
 
+**Reservations.** "Create it if it is absent" is how two writers make duplicates, and how one
+recreates what the other removed on purpose. So on an instance FCP manages the role asks first:
+
+| Call                                                                                                                            | Who                    | What                                                                                       |
+| ------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------ |
+| `POST {slug}/reservations {roleOpId, kind, identity}` (`kind: host` sends `host: {remark, inboundUuid, address, port}` instead) | the role's token       | One mutation decides. The same call again is the same answer.                              |
+| `PUT {slug}/reservations/{roleOpId} {"created": "<panel uuid>"}` or `{"rejected_pre_mutation": true}`                           | the role's token       | How the create ended. `created` makes the object owned; a pre-mutation refusal forgets it. |
+| `GET {slug}/reservations`                                                                                                       | `admin:servers:read`   | The open ones. A Host is listed by its remark only.                                        |
+| `POST {slug}/reservations/{roleOpId}/recover`                                                                                   | `admin:servers:manage` | The attested exit, with the same named conditions as an op's unknown outcome. Audited.     |
+
+`kind` is `node`, `squad` or `profile` (identity = the name), `inbound` (identity = the tag,
+unique panel-wide) or `host`. A reservation is refused with `servers.tombstoned` (removed on
+purpose, under any name it ever had), `servers.exists` (look it up instead),
+`servers.reservation_open` (another run holds it) or `servers.op_running` (the admin is creating
+it right now). While a reservation is open FCP does not create that identity either, not even
+with `restore: true`.
+
+A reservation **never times out**. If the role's answer is lost, it closes when FCP next sees
+the object on the panel (nobody else could have created it, so it is adopted as owned), or by
+the attested recovery. The role must treat an FCP it cannot reach as a refusal: with
+`fcp_managed` set it creates nothing and rewrites no profile.
+
+Not built yet: the firewall acknowledgement (FCP publishing the ports an edit needs and the role
+confirming them). Nothing FCP writes today opens a port: the typed profile edits change names
+and targets only.
+
 ## Admin surface
 
 `/api/v1/admin/servers/*` (`convex/httpServers.ts`), sealed by verb class like the edges
