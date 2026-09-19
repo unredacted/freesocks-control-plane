@@ -240,11 +240,13 @@ async function call<T>(
      * literal mismatch message quotes the received value).
      */
     sensitive?: boolean;
+    /** Per-call override of the instance's read timeout (a write that must not be cut short). */
+    timeoutMs?: number;
   },
 ): Promise<T> {
   const url = joinUrl(cfg.baseUrl, args.path);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), cfg.timeoutMs ?? 8000);
+  const timer = setTimeout(() => controller.abort(), args.timeoutMs ?? cfg.timeoutMs ?? 8000);
   try {
     const res = await fetch(url, {
       method: args.method,
@@ -1985,10 +1987,15 @@ export async function remnawaveApplyProfilePatch(
     sensitive: true,
     // A profile with hundreds of names and several nodes answers in tens of
     // milliseconds (measured), but the write must not be cut short by the
-    // default read timeout.
+    // default read timeout: an abort while the panel commits is an `uncertain`
+    // outcome that fences the profile, its nodes and its relays until settled.
+    timeoutMs: Math.max(cfg.timeoutMs ?? 8000, PROFILE_WRITE_TIMEOUT_MS),
   });
   return { sent: true };
 }
+
+/** How long a profile PATCH may take before it is given up on (never below the instance's own). */
+const PROFILE_WRITE_TIMEOUT_MS = 30_000;
 
 export async function remnawaveReadProfile(
   cfg: RemnawaveConfig,

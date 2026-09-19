@@ -55,7 +55,9 @@
     if (name.trim() !== node.name) fields.name = name.trim();
     if (address.trim() !== (node.address ?? '')) fields.address = address.trim();
     if (port.trim() !== '' && Number(port) !== node.port) fields.port = Number(port);
-    if (country.trim().toUpperCase() !== (node.countryCode ?? ''))
+    // A blank country is "leave it": the panel has no "no country", so an empty
+    // field must not be sent (it would fail validation and take the other edits with it).
+    if (country.trim() !== '' && country.trim().toUpperCase() !== (node.countryCode ?? ''))
       fields.countryCode = country.trim().toUpperCase();
     editOpen = false;
     if (Object.keys(fields).length === 0) return;
@@ -176,9 +178,14 @@
           id={`${uid}-country`}
           bind:value={country}
           maxlength={2}
+          placeholder="XX"
           class="w-24 uppercase"
           autocomplete="off"
+          aria-describedby={`${uid}-country-help`}
         />
+        <p id={`${uid}-country-help`} class="text-muted-foreground text-sm">
+          Two letters. Leave it blank to keep the current one.
+        </p>
       </div>
       {#if restarts}
         <p class="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm">

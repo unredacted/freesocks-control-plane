@@ -185,10 +185,16 @@ export const begin = internalMutation({
   },
 });
 
-/** Follow the panel op: confirmed when its result was SEEN on the panel, failed when it was refused. */
-export const sync = internalMutation({
-  args: { rolloutId: v.id('sniRollouts') },
-  handler: async (ctx, { rolloutId }) => {
+/**
+ * Follow the panel op: confirmed when its result was SEEN on the panel, failed
+ * when it was refused. Called from every place a look can settle the op, not
+ * only from `start`: the run's own look may fail (a panel read timeout) and the
+ * op then settles minutes later under the reconcile cron, so the rollout must
+ * follow it from there too or it stays `writing` with the panel already holding
+ * its names.
+ */
+async function syncRollout(ctx: MutationCtx, rolloutId: Id<'sniRollouts'>) {
+  {
     const r = await ctx.db.get(rolloutId);
     if (!r || r.phase !== 'writing' || !r.opId) return r?.phase ?? null;
     const op = await ctx.db.get(r.opId);
@@ -244,6 +250,23 @@ export const sync = internalMutation({
     }
     await ctx.db.patch(r._id, { phase: 'panel_confirmed', updatedAt: now });
     return 'panel_confirmed';
+  }
+}
+
+export const sync = internalMutation({
+  args: { rolloutId: v.id('sniRollouts') },
+  handler: (ctx, { rolloutId }) => syncRollout(ctx, rolloutId),
+});
+
+/** The same, from the ledger's side: the rollout that owns `opId`, if any (`panelWrites.look`). */
+export const syncByOp = internalMutation({
+  args: { opId: v.id('panelOps') },
+  handler: async (ctx, { opId }) => {
+    const r = await ctx.db
+      .query('sniRollouts')
+      .withIndex('by_op', (q) => q.eq('opId', opId))
+      .unique();
+    return r ? syncRollout(ctx, r._id) : null;
   },
 });
 
@@ -507,15 +530,28 @@ export const confirmReceipt = internalMutation({
         next.push({ name, status: 'active', origin: 'family', ...marks.get(name) });
     const wasActive = new Set(existing.filter((n) => n.status === 'active').map((n) => n.name));
     const activated = proven.filter((n) => !wasActive.has(n)).length;
+    // A growing list needs the growth-stable selection. Moving a listener onto
+    // it changes every member's name at their next refresh, so it is a
+    // publication epoch bump and an audited change of its own (the same entry
+    // `relayListeners.setSniPick` writes), whether or not a name was activated.
+    const pickChanged = listener.sniPick !== 'hrw1';
     await ctx.db.patch(listener._id, {
       tlsNames: next,
-      // A growing list needs the growth-stable selection.
-      sniPick: 'hrw1',
+      ...(pickChanged ? { sniPick: 'hrw1' as const } : {}),
       namesRevision: (listener.namesRevision ?? 0) + 1,
       updatedAt: now,
     });
     await ctx.db.patch(rc._id, { state: 'confirmed', confirmedAt: now, actorAdminId });
-    if (activated > 0) await bumpEpochAndRefresh(ctx, relay);
+    if (activated > 0 || pickChanged) await bumpEpochAndRefresh(ctx, relay);
+    if (pickChanged)
+      await writeAuditLog(ctx, {
+        actorType: 'admin',
+        actorId: actorAdminId ?? undefined,
+        action: 'relay.listener.sni_pick',
+        targetType: 'relay_listener',
+        targetId: listener._id,
+        payload: { relaySlug: relay.slug, listenerKey: listener.listenerKey, version: 'hrw1' },
+      });
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,
@@ -564,6 +600,17 @@ export const status = internalQuery({
             .map((e) => ({ id: e._id as string, name: e.name, status: e.status as string })),
         );
       }
+    // Only the FAMILY's usable names count: a receipt activates nothing else
+    // (`confirmReceipt`), so a name retained for another listener, or one that
+    // stopped qualifying, must not be shown as "waiting for a test" forever.
+    const usable = new Set<string>();
+    if (b)
+      for (const n of await ctx.db
+        .query('sniNames')
+        .withIndex('by_family_seq', (q) => q.eq('familyId', b.familyId))
+        .collect())
+        if (n.status === 'active' && n.qualification.state === 'ok') usable.add(n.name);
+    const provable = r.names.filter((n) => usable.has(n));
     const nodes = b
       ? (await boundListeners(ctx as never, b)).map(({ relay, listener }) => {
           const active = new Set(
@@ -573,8 +620,8 @@ export const status = internalQuery({
             relaySlug: relay.slug,
             listenerKey: listener.listenerKey,
             edges: edgesBy.get(listener._id as string) ?? [],
-            proven: r.names.filter((n) => active.has(n)).length,
-            pending: r.names.filter((n) => !active.has(n)).length,
+            proven: provable.filter((n) => active.has(n)).length,
+            pending: provable.filter((n) => !active.has(n)).length,
             generationProven: receipts.some(
               (x) => x.listenerId === listener._id && x.state === 'confirmed' && x.isWitness,
             ),

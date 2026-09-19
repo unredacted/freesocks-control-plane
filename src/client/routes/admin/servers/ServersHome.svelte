@@ -22,6 +22,7 @@
   import { Switch } from '@client/components/ui/switch';
   import { ApiCallError } from '@client/lib/api';
   import {
+    acknowledgeForeignEdit,
     invalidateServers,
     patchServerConfig,
     refreshServer,
@@ -40,6 +41,8 @@
   import SquadsCard from './components/SquadsCard.svelte';
   import { pickInstance, serversPaths } from './lib/routes';
   import {
+    ago,
+    foreignEditWords,
     inboundSummary,
     nodeWords,
     notices,
@@ -92,6 +95,17 @@
       toast.error(serverErrorWords(codeOf(e)));
     } finally {
       refreshing = false;
+    }
+  }
+
+  async function seen(profileUuid: string) {
+    if (!slug) return;
+    try {
+      await acknowledgeForeignEdit(slug, profileUuid);
+    } catch (e) {
+      toast.error(serverErrorWords(codeOf(e)));
+    } finally {
+      invalidateServers(qc);
     }
   }
 
@@ -176,6 +190,19 @@
       >
         {n.text}
       </p>
+    {/each}
+
+    {#each t.profiles.filter((p) => p.foreignEditAt) as p (p.profileUuid)}
+      <div
+        class="mb-2 flex flex-wrap items-center gap-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm"
+      >
+        <p class="min-w-0 flex-1">
+          {foreignEditWords(p.name, ago(Date.now() - Date.parse(p.foreignEditAt ?? '')))}
+        </p>
+        <Button variant="outline" size="sm" onclick={() => seen(p.profileUuid)}
+          >I have seen it</Button
+        >
+      </div>
     {/each}
 
     {#if t.nodes.length === 0 && t.state.ok}

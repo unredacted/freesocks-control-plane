@@ -220,6 +220,23 @@ the same transaction that records the observation):
 - a name a bound listener still hands out, or that is still inside its drain, **may not be
   removed** (`servers.name_in_use`): retire it on the relay first.
 
+### An edit made somewhere else
+
+The panel has no conditional update, so an edit that lands between FCP's read and its write is
+overwritten, and one made at any other time is simply there. FCP cannot prevent either; it can
+notice. Every look compares each profile's keyed token with the last one. When it moved, and
+**no change made from FCP expected that token** (the `expectedToken` of the instance's recent
+profile ops), the profile is flagged `foreignEditAt`: the panel UI, the node role, another tool.
+The token covers the complete config, so this catches what no redacted view shows, such as a
+short id or a private key.
+
+The flag is a warning at the top of the Servers page and stays, across looks, until an operator
+says they have seen it (`POST {slug}/profiles/{uuid}/acknowledge`, audited as
+`servers.profile.foreign_edit_seen` with the profile name only). It changes nothing by itself:
+what to do about an edit is a judgement. A token made with another digest key is a new
+baseline, never a flag, and so is the logging harden, which is FCP's own edit outside the
+ledger and re-reads the panel as a baseline when it changed something.
+
 ### Node writes
 
 FCP writes the panel **row** of a node: its name, address, port, country, the profile it runs
@@ -313,6 +330,7 @@ surface (`src/shared/crypto/envelope.ts`): the responses carry node and Host add
 | `POST {slug}/squads`, `PATCH` / `DELETE {slug}/squads/{uuid}`                                                    | `admin:servers:manage`             | Squad writes.                                                                                                  |
 | `POST {slug}/nodes`, `PATCH` / `DELETE {slug}/nodes/{uuid}`, `POST {slug}/nodes/{uuid}/enable\|disable\|restart` | `admin:servers:manage`             | Node writes. `DELETE ...?removeOnly=1` is "remove from panel".                                                 |
 | `POST {slug}/profiles/{uuid}/preview`                                                                            | `admin:servers:read`               | What a typed profile edit would do. Writes nothing.                                                            |
+| `POST {slug}/profiles/{uuid}/acknowledge`                                                                        | `admin:servers:manage`             | An operator has seen that the profile was edited elsewhere.                                                    |
 | `POST {slug}/profiles/{uuid}/apply`                                                                              | `admin:servers:manage`             | Apply a previewed edit, conditioned on the previewed token.                                                    |
 | `GET {slug}/ops`                                                                                                 | `admin:servers:read`               | The last 50 ops of an instance.                                                                                |
 | `POST {slug}/ops/{id}/observe`                                                                                   | `admin:servers:read`               | Look at the panel again for an open op. Changes nothing on the panel.                                          |

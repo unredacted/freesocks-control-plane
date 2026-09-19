@@ -479,6 +479,17 @@ describe('Hosts', () => {
     ).toBe('done');
   });
 
+  test('clearing the security layer settles: the postcondition expects what the panel will SHOW', async () => {
+    const { t, call, panel } = await seed();
+    const op = await (await call('PATCH', 'panel-a/hosts/h-1', { securityLayer: null })).json();
+    // The provider sends the panel's own default word for "cleared", and the
+    // panel reads it back as that word: the op must not wait for a null that
+    // will never be seen.
+    expect((panel.hosts[0] as { securityLayer?: string }).securityLayer).toBe('DEFAULT');
+    expect(op).toMatchObject({ state: 'done', panelState: 'observed', open: false });
+    expect(await claims(t)).toEqual([]);
+  });
+
   test('reorder, validation and unknown references', async () => {
     const { call, panel } = await seed();
     const op = await (

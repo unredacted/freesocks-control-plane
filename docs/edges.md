@@ -803,10 +803,17 @@ was listed at some point (removed and added again, or present before FCP managed
 is never a witness: a node stuck on an older config could accept it too, so it proves only
 itself. Only names that still qualify are activated, whatever was proven.
 
-Activation appends to the listener's names in the rollout's order, switches the listener to the
-growth-stable `hrw1` selection, moves `namesRevision` and the publication epoch, and leaves
-`revision` alone: acceptance was **proven**, so the endpoint confirmation still describes the
-path. That is the only way a name is added without a retest.
+Activation appends to the listener's names in the rollout's order, moves `namesRevision` and
+the publication epoch, and leaves `revision` alone: acceptance was **proven**, so the endpoint
+confirmation still describes the path. That is the only way a name is added without a retest.
+A listener still on the legacy selection is switched to the growth-stable `hrw1` selection by
+its first confirmed receipt; that switch is recorded like an operator's
+(`relay.listener.sni_pick`) and bumps the epoch on its own, even when the receipt activated
+nothing new, because every member's name changes with it.
+
+A rollout follows its ledger op from **whichever** look settles it (the run's own, the
+`panel-reconcile` cron's, an operator's "look again"), so a panel read that fails right after
+the write leaves the rollout `writing` only until the next successful look, never for good.
 
 **Removal is the reverse.** A name leaves the relays first, with its drain. The plan **retains**
 on the panel every name a relay still hands out or that is still draining, whoever it belongs to

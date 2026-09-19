@@ -49,6 +49,9 @@ interface Panel {
   names: string[];
   node: { lastStatusChange: string };
   patches: number;
+  /** Profile reads answer 500 from the next PATCH on, until cleared (the run's own look fails). */
+  failReadsAfterPatch: boolean;
+  failReads: boolean;
 }
 
 function installPanel(): Panel {
@@ -56,6 +59,8 @@ function installPanel(): Panel {
     names: ['a.example', 'b.example'],
     node: { lastStatusChange: 't0' },
     patches: 0,
+    failReadsAfterPatch: false,
+    failReads: false,
   };
   const config = () => ({
     inbounds: [
@@ -95,8 +100,11 @@ function installPanel(): Panel {
         const body = JSON.parse(init.body as string);
         panel.names = body.config.inbounds[0].streamSettings.realitySettings.serverNames;
         panel.patches++;
+        if (panel.failReadsAfterPatch) panel.failReads = true;
         return json({});
       }
+      if (panel.failReads && path.startsWith('/api/config-profiles'))
+        return new Response('', { status: 500 });
       if (path === '/api/nodes')
         return json([
           {
@@ -212,8 +220,10 @@ describe('rollout', () => {
     // The panel lists them. No node has proven anything: the relay hands out what it did before.
     expect(await activeNames(t, listenerId)).toEqual(['a.example', 'b.example']);
     const status = await t.query(internal.sniRollouts.status, { rolloutId: out.rolloutId! });
+    // Only the family's usable names are counted: a.example and b.example were
+    // on the inbound before the family and no receipt can activate them.
     expect(status.nodes).toMatchObject([
-      { relaySlug: 'node-one', listenerKey: 'a', proven: 2, pending: 2, generationProven: false },
+      { relaySlug: 'node-one', listenerKey: 'a', proven: 0, pending: 2, generationProven: false },
     ]);
     // The live addresses a test link can be built through, by name and state only.
     expect(status.nodes[0]!.edges).toMatchObject([{ status: 'active' }]);
@@ -222,6 +232,32 @@ describe('rollout', () => {
     expect((await t.action(internal.sniRollouts.start, { bindingId })).phase).toBe(
       'nothing_to_change',
     );
+    expect(panel.patches).toBe(1);
+  });
+
+  test("the rollout follows the ledger from a LATER look when the run's own read-back failed", async () => {
+    const { t, panel, bindingId } = await seed();
+    panel.failReadsAfterPatch = true;
+    const out = await t.action(internal.sniRollouts.start, { bindingId });
+    // The PATCH landed; the look right after it could not read the profile.
+    expect(out).toMatchObject({ phase: 'writing', added: 2 });
+    expect(panel.patches).toBe(1);
+    const before = await t.query(internal.sniRollouts.status, { rolloutId: out.rolloutId! });
+    expect(before.phase).toBe('writing');
+    await expect(
+      t.query(internal.sniRollouts.receiptContext, {
+        rolloutId: out.rolloutId!,
+        edgeId: (await t.run((ctx) => ctx.db.query('edges').first()))!._id,
+      }),
+    ).rejects.toThrow(/rollout_not_confirmed/);
+    // The panel is readable again; the scheduled reconcile settles the op...
+    panel.failReads = false;
+    panel.node.lastStatusChange = 't1';
+    await t.action(internal.panelWrites.reconcile, {});
+    // ...and the rollout followed it, without anyone starting it again.
+    const after = await t.query(internal.sniRollouts.status, { rolloutId: out.rolloutId! });
+    expect(after.phase).toBe('panel_confirmed');
+    expect((await t.run((ctx) => ctx.db.get(bindingId)))!.panelConfirmedGeneration).toBe(1);
     expect(panel.patches).toBe(1);
   });
 
@@ -277,6 +313,31 @@ describe('acceptance', () => {
     await expect(
       t.mutation(internal.sniRollouts.confirmReceipt, { receiptId: rc.receiptId }),
     ).rejects.toThrow(/already used/);
+  });
+
+  test('moving a listener onto the growth-stable selection is an epoch bump and an audited change, even with nothing new to activate', async () => {
+    const { t, bindingId, listenerId, edgeId, relayId } = await seed();
+    const { rolloutId } = await t.action(internal.sniRollouts.start, { bindingId });
+    const epoch0 = (await t.run((ctx) => ctx.db.get(relayId)))!.publicationEpoch;
+    expect((await t.run((ctx) => ctx.db.get(listenerId)))!.sniPick).toBeUndefined();
+    // a.example is already active on the listener: the receipt activates nothing...
+    const rc = await receipt(t, rolloutId!, edgeId, 'a.example');
+    const out = await t.mutation(internal.sniRollouts.confirmReceipt, { receiptId: rc.receiptId });
+    expect(out).toEqual({ ok: true, activated: 0, witness: false });
+    // ...yet every member's name selection changed, so the renders must move on
+    // and the change must be on the record, as `setSniPick` would write it.
+    expect((await t.run((ctx) => ctx.db.get(listenerId)))!.sniPick).toBe('hrw1');
+    expect((await t.run((ctx) => ctx.db.get(relayId)))!.publicationEpoch).toBe(epoch0 + 1);
+    const audits = (await t.run((ctx) => ctx.db.query('auditLog').collect())).filter(
+      (a) => a.action === 'relay.listener.sni_pick',
+    );
+    expect(audits.map((a) => a.payload)).toEqual([
+      { relaySlug: 'node-one', listenerKey: 'a', version: 'hrw1' },
+    ]);
+    // A second receipt on the same listener changes the selection no further.
+    const rc2 = await receipt(t, rolloutId!, edgeId, 'b.example');
+    await t.mutation(internal.sniRollouts.confirmReceipt, { receiptId: rc2.receiptId });
+    expect((await t.run((ctx) => ctx.db.get(relayId)))!.publicationEpoch).toBe(epoch0 + 1);
   });
 
   test('a name the inbound listed BEFORE proves only itself', async () => {

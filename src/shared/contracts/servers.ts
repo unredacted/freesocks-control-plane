@@ -125,6 +125,8 @@ export const ServerTree = z.object({
       name: z.string(),
       shapeHash: z.string(),
       changedAt: z.string().nullable(),
+      /** Edited on the panel by something other than FCP, and not yet acknowledged. */
+      foreignEditAt: z.string().nullable(),
       nodeCount: z.number(),
       inbounds: z.array(PanelInboundView),
     }),

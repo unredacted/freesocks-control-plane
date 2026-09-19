@@ -2241,6 +2241,10 @@ export default defineSchema({
     // When the token last moved under the SAME key. Who moved it is the ops
     // ledger's question, not this cache's.
     tokenChangedAt: v.optional(v.number()),
+    // The token moved to something NO change made from FCP expected: the panel
+    // UI, the node role, another tool. Stays until an operator acknowledges it,
+    // because what FCP believes about this profile may no longer hold.
+    foreignEditAt: v.optional(v.number()),
     inbounds: v.array(
       v.object({
         tag: v.string(),

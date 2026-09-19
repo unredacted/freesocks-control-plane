@@ -742,6 +742,23 @@ describe('relay admin routes', () => {
     expect((await call('POST', `${publishedEdgeId}/probe`, {})).status).toBe(429);
   });
 
+  test('sni-pick: the version is REQUIRED; a missing field is never read as the legacy null', async () => {
+    const { t, call, listenerId } = await fixture();
+    for (const body of [{}, { versoin: 'hrw1' }, { version: 'nope' }]) {
+      const res = await call('POST', `listeners/${listenerId}/sni-pick`, body);
+      expect(res.status).toBe(400);
+      expect((await res.json()).error.code).toBe('validation');
+    }
+    expect(
+      ((await t.run((ctx) => ctx.db.get(listenerId as never))) as { sniPick?: string }).sniPick,
+    ).toBeUndefined();
+    const on = await call('POST', `listeners/${listenerId}/sni-pick`, { version: 'hrw1' });
+    expect(await on.json()).toMatchObject({ ok: true, changed: true, sniPick: 'hrw1' });
+    // An explicit null is the deliberate way back.
+    const off = await call('POST', `listeners/${listenerId}/sni-pick`, { version: null });
+    expect(await off.json()).toMatchObject({ ok: true, changed: true, sniPick: null });
+  });
+
   test('per-edge probe: audited with the actor, returns the run ids; a skipped-only target is an error', async () => {
     const { t, call, publishedEdgeId, relayId, listenerId } = await fixture();
     const res = await call('POST', `${publishedEdgeId}/probe`, {});

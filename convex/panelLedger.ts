@@ -20,6 +20,8 @@ import { internalMutation, internalQuery, type MutationCtx } from './_generated/
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { capabilitiesOf } from './lib/backends/capabilities';
+import type { PanelObservedHost, PanelObservedSquad } from './lib/backends/types';
+import { upsertObservedHosts, upsertObservedSquads } from './panelObserve';
 import {
   GONE_LOOKS_REQUIRED,
   REQUIRED_ROLE_CONTRACT_VERSION,
@@ -497,73 +499,21 @@ async function bridgeProfilePatch(ctx: MutationCtx, op: Op) {
   }
 }
 
-/** The page shows the result at once instead of waiting for the next scheduled look. */
+/**
+ * The page shows the result at once instead of waiting for the next scheduled
+ * look. The same replace-the-instance's-rows step the observation makes, so
+ * the two writers of the cache cannot disagree on a row's shape.
+ */
 async function syncCache(
   ctx: MutationCtx,
   op: Op,
-  hosts?: { hostUuid: string }[],
-  squads?: { squadUuid: string }[],
+  hosts?: readonly PanelObservedHost[],
+  squads?: readonly PanelObservedSquad[],
 ) {
   const now = Date.now();
-  if (op.kind === 'host' && hosts) {
-    const rows = await ctx.db
-      .query('panelHosts')
-      .withIndex('by_server', (q) => q.eq('backendServerId', op.backendServerId))
-      .collect();
-    const by = new Map(rows.map((r) => [r.hostUuid, r]));
-    for (const raw of hosts) {
-      const h = raw as Doc<'panelHosts'> & Record<string, unknown>;
-      const row = {
-        backendServerId: op.backendServerId,
-        hostUuid: h.hostUuid,
-        remark: h.remark,
-        address: h.address,
-        port: h.port,
-        sni: (h.sni as string | null) ?? undefined,
-        host: (h.host as string | null) ?? undefined,
-        path: (h.path as string | null) ?? undefined,
-        alpn: (h.alpn as string | null) ?? undefined,
-        fingerprint: (h.fingerprint as string | null) ?? undefined,
-        securityLayer: (h.securityLayer as string | null) ?? undefined,
-        isDisabled: h.isDisabled,
-        isHidden: h.isHidden,
-        tag: (h.tag as string | null) ?? undefined,
-        viewPosition: (h.viewPosition as number | null) ?? undefined,
-        configProfileUuid: (h.configProfileUuid as string | null) ?? undefined,
-        configProfileInboundUuid: (h.configProfileInboundUuid as string | null) ?? undefined,
-        nodeUuids: h.nodeUuids,
-        observedAt: now,
-      };
-      const prev = by.get(h.hostUuid);
-      if (prev) await ctx.db.replace(prev._id, row);
-      else await ctx.db.insert('panelHosts', row);
-      by.delete(h.hostUuid);
-    }
-    for (const gone of by.values()) await ctx.db.delete(gone._id);
-  }
-  if (op.kind === 'squad' && squads) {
-    const rows = await ctx.db
-      .query('panelSquads')
-      .withIndex('by_server', (q) => q.eq('backendServerId', op.backendServerId))
-      .collect();
-    const by = new Map(rows.map((r) => [r.squadUuid, r]));
-    for (const raw of squads) {
-      const s = raw as Doc<'panelSquads'> & { membersCount: number | null };
-      const row = {
-        backendServerId: op.backendServerId,
-        squadUuid: s.squadUuid,
-        name: s.name,
-        inboundUuids: s.inboundUuids,
-        membersCount: s.membersCount ?? undefined,
-        observedAt: now,
-      };
-      const prev = by.get(s.squadUuid);
-      if (prev) await ctx.db.replace(prev._id, row);
-      else await ctx.db.insert('panelSquads', row);
-      by.delete(s.squadUuid);
-    }
-    for (const gone of by.values()) await ctx.db.delete(gone._id);
-  }
+  if (op.kind === 'host' && hosts) await upsertObservedHosts(ctx, op.backendServerId, hosts, now);
+  if (op.kind === 'squad' && squads)
+    await upsertObservedSquads(ctx, op.backendServerId, squads, now);
 }
 
 /** Ownership follows the settled op: a create is owned, a delete leaves a tombstone. */
@@ -658,6 +608,7 @@ export const sweepInterrupted = internalMutation({
       .withIndex('by_open', (q) => q.eq('open', true))
       .collect();
     const toLook: Id<'panelOps'>[] = [];
+    const released: Id<'panelOps'>[] = [];
     for (const op of open) {
       if (op.request === 'pending' && op.updatedAt < cutoff) {
         if (!op.attemptId) {
@@ -667,13 +618,14 @@ export const sweepInterrupted = internalMutation({
           };
           await release(ctx, op, next);
           await audit(ctx, { ...op, ...next }, 'refused');
+          released.push(op._id);
           continue;
         }
         await ctx.db.patch(op._id, { request: 'uncertain', updatedAt: Date.now() });
       }
       if (op.request !== 'pending' || op.attemptId) toLook.push(op._id);
     }
-    return { toLook };
+    return { toLook, released };
   },
 });
 

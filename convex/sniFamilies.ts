@@ -18,12 +18,13 @@ import {
   type QueryCtx,
 } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
+import { internal } from './_generated/api';
 import { upsertSettingRow } from './appSettings';
 import { writeAuditLog } from './lib/audit';
 import { isPublicIpLiteral } from './lib/edges/ip';
 import { bumpEpochAndRefresh } from './lib/edges/relayGuards';
 import { normalizeName } from './lib/edges/registration';
-import { retireFamilyNames } from './relayListeners';
+import { hostSniOf, retireFamilyNames } from './relayListeners';
 import {
   MAX_NAMES_PER_FAMILY,
   judgeImport,
@@ -471,6 +472,8 @@ export const setCountry = internalMutation({
     const touched = new Set(wanted);
     const listeners = await ctx.db.query('relayListeners').collect();
     const relays = new Set<Id<'relays'>>();
+    // Listeners whose panel Host name (`hostSniOf`) moves with the marks.
+    const hostMoved = new Map<Id<'relayListeners'>, Id<'relays'>>();
     for (const l of listeners) {
       if (l.retired || !(l.tlsNames ?? []).some((n) => touched.has(n.name))) continue;
       const next = [];
@@ -488,10 +491,20 @@ export const setCountry = internalMutation({
         updatedAt: now,
       });
       relays.add(l.relayId);
+      if (l.host?.uuid && hostSniOf(l) !== hostSniOf({ tlsNames: next }))
+        hostMoved.set(l._id, l.relayId);
     }
     for (const relayId of relays) {
       const relay = await ctx.db.get(relayId);
-      if (relay) await bumpEpochAndRefresh(ctx, relay);
+      if (!relay) continue;
+      await bumpEpochAndRefresh(ctx, relay);
+      // The Host follows its name (as it does on a retire): a name just judged
+      // blocked must not stay on the panel Host, which is what a member who
+      // copies the raw config gets.
+      if (relay.hostMode !== 'fcp') continue;
+      for (const [listenerId, rid] of hostMoved)
+        if (rid === relayId)
+          await ctx.scheduler.runAfter(0, internal.hostOps.resyncSni, { listenerId });
     }
     await audit(ctx, 'edge.sni.names.country', a.actorAdminId, {
       slug: f.slug,

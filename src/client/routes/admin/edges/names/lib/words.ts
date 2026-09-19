@@ -178,6 +178,10 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.op_uncertain':
     'An earlier change to this profile has an unknown outcome. Settle it under Servers.',
   'servers.name_in_use': 'Members are still given one of the names being removed.',
+  // Binding to an inbound reads the Servers cache.
+  'servers.unknown_inbound':
+    'That inbound is not on this panel as last read. Refresh under Servers, then pick again.',
+  'servers.not_reality': 'Only a REALITY inbound takes a family.',
   'edge.panel_op_running': 'A server change is still running on this relay.',
   conflict: 'That already exists, or it is already settled. Reload and look again.',
   not_found: 'That no longer exists. Reload and look again.',

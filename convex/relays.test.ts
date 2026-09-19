@@ -252,7 +252,9 @@ describe('relays: registration by slug', () => {
       originAddress: FIXTURE_ORIGIN,
       listeners: [realityListener()] as never,
     });
-    expect(full.listeners.blockedNames).toEqual([]); // hash-equal body: not even re-merged
+    // Judged on what the body would change (nothing), yet the role is told, every
+    // time, which name it wanted that an admin keeps retired.
+    expect(full.listeners.blockedNames).toEqual(['a.example']);
     expect(full.changed).toBe(false);
     const l = (await listenerRow(t, listenerId))!;
     expect(l.tlsNames?.find((n) => n.name === 'a.example')).toMatchObject({

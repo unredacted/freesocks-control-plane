@@ -3,6 +3,7 @@ import { pickInstance, serversPaths } from './routes';
 import {
   WORDED_CODES,
   ago,
+  foreignEditWords,
   inboundSummary,
   namesDelta,
   nodeWords,
@@ -205,6 +206,12 @@ describe('write wording', () => {
     }
   });
 
+  test('an edit made elsewhere says what may now be wrong, without blame', () => {
+    const words = foreignEditWords('Default', '5 minutes ago');
+    expect(words).toMatch(/^Default was changed on the panel 5 minutes ago, and not from here/);
+    expect(words).not.toMatch(/—/);
+  });
+
   test('a change in words', () => {
     const op = { kind: 'node', verb: 'restart', label: 'node-one', errorCode: null } as const;
     expect(opTitle({ ...op, state: 'done' })).toBe('Restart node node-one');
@@ -219,6 +226,16 @@ describe('write wording', () => {
     expect(opWords({ ...op, state: 'refused', errorCode: 'servers.never_sent' }).sentence).toMatch(
       /Never sent/,
     );
+    // A refusal FCP made itself names its reason; only the panel's own is "the panel refused it".
+    expect(
+      opWords({ ...op, state: 'refused', errorCode: 'servers.profile_changed' }).sentence,
+    ).toMatch(/Preview again/);
+    expect(
+      opWords({ ...op, state: 'refused', errorCode: 'servers.nothing_to_change' }).sentence,
+    ).toMatch(/already had exactly this/);
+    expect(
+      opWords({ ...op, state: 'refused', errorCode: 'servers.panel_refused' }).sentence,
+    ).toMatch(/panel refused/);
   });
 
   test('server names are parsed from lines or commas, in order, without repeats', () => {

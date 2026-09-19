@@ -1085,25 +1085,20 @@ http.route({
     // Edge-required delivery (docs/edges.md): the cache token for this key's
     // resolved place (`<bindingVersion>:<epoch>` while a relay covers it, null
     // otherwise), compared against the token stored on the entry. Only bodies
-    // that PASSED the delivery policy are ever cached, so a hit is safe.
-    const edgeToken = sub.backendServerId
-      ? await ctx.runQuery(internal.edgeRender.epochFor, {
+    // that PASSED the delivery policy are ever cached, so a hit is safe. The
+    // same read answers whether names are judged per country at that place.
+    const { token: edgeToken, ...countryPolicy } = sub.backendServerId
+      ? await ctx.runQuery(internal.edgeRender.renderContextFor, {
           backendServerId: sub.backendServerId,
           nodeName: sub.pinnedNode ?? undefined,
         })
-      : null;
+      : { token: null as string | null, curated: [] as string[], sensitive: false };
     // Where the member is, for server-name selection: their OWN stored answer,
     // else the country the CDN reports for this request (null unless fronted),
     // and only when it is a curated one. An INFERRED country is used for this
     // response and kept nowhere: a body shaped by it is neither read from nor
     // written to the content cache, and is served `private, no-store`
     // (lib/edges/sni/country.ts).
-    const countryPolicy = sub.backendServerId
-      ? await ctx.runQuery(internal.edgeRender.countryPolicyFor, {
-          backendServerId: sub.backendServerId,
-          nodeName: sub.pinnedNode ?? undefined,
-        })
-      : { curated: [] as string[], sensitive: false };
     const located = resolveWhere({
       override: sub.sniRegion,
       inferred: resolveCountry(req),
@@ -1421,8 +1416,12 @@ http.route({
           region,
         }),
       );
-    } catch {
-      return errorJson('validation', 'unknown region', 400);
+    } catch (err) {
+      // Only the mutation's own refusal is the member's mistake; anything else
+      // (a write conflict, a fault) is the server's and is reported as such.
+      if (err instanceof ConvexError && (err.data as { code?: string }).code === 'validation')
+        return errorJson('validation', 'unknown region', 400);
+      throw err;
     }
   }),
 });

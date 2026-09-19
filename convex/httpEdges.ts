@@ -796,7 +796,12 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
         }),
       );
     if (c === 'sni-pick') {
-      const version = body.version ?? null;
+      // The field is REQUIRED: `null` means "back to the legacy PRF", which
+      // reshuffles nearly every member's name, so an empty body or a missing
+      // field must never be read as that.
+      if (!('version' in body))
+        return errorJson('validation', "version is required: 'hrw1' or null", 400);
+      const version = body.version;
       if (version !== null && version !== 'hrw1')
         return errorJson('validation', "version must be 'hrw1' or null", 400);
       return json(
