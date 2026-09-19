@@ -18,6 +18,38 @@ import { errorJson, ipHashSubject, newRequestId, resolveClientIp, type AdminAuth
 import type { RateLimitPolicyKey } from './rateLimitPolicy';
 
 export const notFound = () => errorJson('not_found', 'Not found', 404);
+
+/**
+ * A bearer caller admitted ONLY by the register scope is confined to its
+ * token's registration boundary (docs/edges.md "Node role contract"): the
+ * backend servers and, optionally, the node names it may act for. A register
+ * token without a boundary may act for nothing. Returns null for a caller
+ * holding the full scope or a cookie session.
+ */
+export async function registrationBoundaryOf(
+  ctx: ActionCtx,
+  admin: AdminAuth,
+  fullScope: string,
+): Promise<{ backendServerIds: string[]; nodeNames?: string[] } | null> {
+  if (!admin.tokenId || !admin.tokenScopes) return null;
+  if (admin.tokenScopes.includes(fullScope)) return null;
+  const boundary = await ctx.runQuery(internal.apiTokens.registrationBoundary, {
+    tokenId: admin.tokenId,
+  });
+  return boundary ?? { backendServerIds: [] };
+}
+
+export function nodeWithinBoundary(
+  boundary: { backendServerIds: string[]; nodeNames?: string[] } | null,
+  backendServerId: string,
+  nodeName: string,
+): boolean {
+  if (!boundary) return true;
+  if (!boundary.backendServerIds.includes(backendServerId)) return false;
+  if (boundary.nodeNames && boundary.nodeNames.length > 0 && !boundary.nodeNames.includes(nodeName))
+    return false;
+  return true;
+}
 export const unauth = () => errorJson('auth.unauthenticated', 'Authentication required', 401);
 
 /**

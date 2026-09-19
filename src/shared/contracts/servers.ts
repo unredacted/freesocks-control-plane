@@ -243,6 +243,219 @@ export const ProfilePatchOp = z.discriminatedUnion('op', [
 ]);
 export type ProfilePatchOp = z.infer<typeof ProfilePatchOp>;
 
+// --- bootstrap contract v2: panel setup ----------------------------------------------------
+
+const RealityTemplateInput = z.object({
+  target: z.object({ address: z.string().min(1), port: z.number().int().min(1).max(65535) }),
+  serverNames: z.array(z.string().min(1)).min(1).max(64),
+  minClientVer: z.string().optional(),
+});
+
+/** What "Set up this panel" is asked for. Non-secret: names, targets, ports. */
+export const PanelSetupInput = z.object({
+  profileName: z.string().min(1).max(60).default('FreeSocks-Config'),
+  cdn: z
+    .object({ path: z.string().min(1), port: z.number().int().min(1024).max(65535) })
+    .default({ path: '/ws', port: 8443 }),
+  reality: RealityTemplateInput,
+  relay: RealityTemplateInput.extend({ acceptProxyProtocol: z.boolean().default(false) }),
+  squads: z.object({ fronted: z.string(), reality: z.string(), relay: z.string() }).default({
+    fronted: 'FreeSocks-Fronted',
+    reality: 'FreeSocks-Reality',
+    relay: 'FreeSocks-Relay',
+  }),
+  /** The Cloudflare account whose zone front nodes get their origin names in; null = the role gives explicit hostnames. */
+  originDns: z.object({ accountId: z.string() }).nullable().default(null),
+});
+export type PanelSetupInput = z.infer<typeof PanelSetupInput>;
+
+export const PanelSetupState = z.enum(['pending', 'needs_takeover', 'ready', 'failed']);
+
+export const PanelSetupView = z.object({
+  exists: z.boolean(),
+  state: PanelSetupState.nullable(),
+  step: z.string().nullable(),
+  code: z.string().nullable(),
+  generation: z.number(),
+  running: z.boolean(),
+  profile: z.object({ name: z.string(), uuid: z.string().nullable() }).nullable(),
+  inbounds: z
+    .object({
+      cdn: z.object({ tag: z.string(), listen: z.string(), port: z.number(), path: z.string() }),
+      reality: z.object({
+        tag: z.string(),
+        port: z.number(),
+        serverNames: z.array(z.string()),
+        target: z.string(),
+      }),
+      relay: z.object({
+        tag: z.string(),
+        port: z.number(),
+        serverNames: z.array(z.string()),
+        target: z.string(),
+      }),
+    })
+    .nullable(),
+  squads: z.array(z.object({ kind: z.string(), name: z.string(), bound: z.boolean() })),
+  placements: z.array(z.object({ mode: z.string(), state: z.enum(['bound', 'skipped']) })),
+  templates: z.array(
+    z.object({ family: z.string(), state: z.enum(['matched', 'drifted', 'refused']) }),
+  ),
+  privacy: z.enum(['ok', 'drifted']).nullable(),
+  originDns: z.object({ accountId: z.string(), zoneName: z.string() }).nullable(),
+  handoff: z.enum(['fresh', 'taken_over']).nullable(),
+  updatedAt: z.string().nullable(),
+});
+export type PanelSetupView = z.infer<typeof PanelSetupView>;
+
+// --- bootstrap contract v2: node enrollment (the role) --------------------------------------
+
+export const NodePurpose = z.enum(['direct', 'front', 'relay']);
+export type NodePurpose = z.infer<typeof NodePurpose>;
+
+/**
+ * `PUT {slug}/nodes/by-name/{name}`: the enrollment input (purpose, label) is
+ * taken once; the observations are taken on every run. The role never sends
+ * FCP-owned machine settings.
+ */
+export const NodeRegistration = z.object({
+  roleContractVersion: z.number().int().min(1),
+  purpose: NodePurpose,
+  label: z.string().min(1).max(63).optional(),
+  observed: z.object({
+    management: z.object({ address: z.string().min(2), port: z.number().int().min(1).max(65535) }),
+    publicIps: z.object({ v4: z.string().optional(), v6: z.string().optional() }).default({}),
+    capabilities: z
+      .object({ caddy: z.boolean().default(false), ipv6: z.boolean().default(false) })
+      .default({ caddy: false, ipv6: false }),
+  }),
+});
+export type NodeRegistration = z.infer<typeof NodeRegistration>;
+
+export const NodeAppliedReport = z.object({
+  appliedRevision: z.number().int().min(1),
+  caddy: z.object({ certificateReady: z.boolean().optional() }).optional(),
+  nodeStarted: z.boolean(),
+});
+export type NodeAppliedReport = z.infer<typeof NodeAppliedReport>;
+
+export const NodeStage = z.enum([
+  'registered',
+  'bootstrap_available',
+  'machine_applied',
+  'machine_ready',
+  'candidates_verified',
+  'awaiting_approval',
+  'activating',
+  'live',
+]);
+export type NodeStage = z.infer<typeof NodeStage>;
+
+export const NodeDisposition = z.enum(['staged', 'activating', 'live', 'unavailable', 'retiring']);
+
+/** What the role may read about its own node. Never a secret, never another node. */
+export const NodeRoleView = z.object({
+  name: z.string(),
+  purpose: NodePurpose,
+  registration: z.object({
+    state: z.string(),
+    code: z.string().nullable(),
+    generation: z.number(),
+  }),
+  stage: NodeStage,
+  delivery: NodeDisposition,
+  machineRevision: z.number(),
+  appliedRevision: z.number().nullable(),
+  node: z.object({ uuid: z.string().nullable(), port: z.number() }),
+  origin: z.object({ hostname: z.string().nullable(), dns: z.string() }),
+  retirement: z.object({ stage: z.string(), code: z.string().nullable() }).nullable(),
+  updatedAt: z.string(),
+});
+export type NodeRoleView = z.infer<typeof NodeRoleView>;
+
+/** One enrolled node as the Servers page shows it (`GET {slug}/nodes/intents`). */
+export const NodeIntentView = z.object({
+  id: z.string(),
+  name: z.string(),
+  purpose: NodePurpose,
+  state: z.enum(['pending', 'ready', 'blocked', 'retiring', 'retired']),
+  code: z.string().nullable(),
+  stage: NodeStage,
+  disposition: NodeDisposition,
+  machineRevision: z.number(),
+  appliedRevision: z.number().nullable(),
+  nodeUuid: z.string().nullable(),
+  hostUuid: z.string().nullable(),
+  origin: z.object({ hostname: z.string().nullable(), dns: z.string() }),
+  maintenance: z.boolean(),
+  run: z
+    .object({ id: z.string(), state: z.string(), stage: z.string(), code: z.string().nullable() })
+    .nullable(),
+  retirement: z.object({ stage: z.string(), code: z.string().nullable() }).nullable(),
+  registeredAt: z.string(),
+  updatedAt: z.string(),
+});
+export type NodeIntentView = z.infer<typeof NodeIntentView>;
+export const NodeIntentList = z.object({ intents: z.array(NodeIntentView) });
+
+/** The review card an approval names (`GET …/intents/{id}/review`). */
+export const ActivationReview = z.object({
+  shape: z.object({
+    purpose: NodePurpose,
+    ingress: z.unknown().nullable(),
+    configRevision: z.string(),
+    authRevision: z.string().nullable(),
+    listenerKeys: z.array(z.string()),
+    provider: z.object({ accountId: z.string().nullable(), templateHash: z.string().nullable() }),
+    subscriptionTemplates: z.record(z.string(), z.string()),
+    hostTuple: z
+      .object({ address: z.string(), port: z.number(), sni: z.string().nullable() })
+      .nullable(),
+  }),
+  reviewHash: z.string(),
+  blockers: z.array(z.string()),
+  stage: NodeStage,
+});
+export type ActivationReview = z.infer<typeof ActivationReview>;
+
+/** The isolated direct test link and the binding its confirmation must echo. */
+export const DirectTestLink = z.object({
+  link: z.string(),
+  binding: z.object({
+    intentId: z.string(),
+    inboundUuid: z.string(),
+    endpoint: z.string(),
+    machineRevision: z.number(),
+    configRevision: z.string(),
+    authRevision: z.string().nullable(),
+    params: z.object({
+      sni: z.string(),
+      fingerprint: z.string(),
+      shortIdRef: z.number(),
+      publicKey: z.string(),
+    }),
+    credentialRef: z.string(),
+    issuedAt: z.string(),
+  }),
+});
+export type DirectTestLink = z.infer<typeof DirectTestLink>;
+
+/** `POST …/bootstrap`: the machine configuration plus the node secret, served once per call. */
+export const NodeBootstrap = z.object({
+  machineRevision: z.number(),
+  secretKey: z.string(),
+  node: z.object({ port: z.number(), name: z.string(), purpose: NodePurpose }),
+  ingress: z
+    .object({
+      hostname: z.string(),
+      externalPort: z.number(),
+      routes: z.array(z.object({ path: z.string(), port: z.number() })),
+    })
+    .nullable(),
+  origin: z.object({ hostname: z.string().nullable(), dns: z.string() }),
+});
+export type NodeBootstrap = z.infer<typeof NodeBootstrap>;
+
 /** What a typed profile edit would do. Non-secret: names, targets, counts. */
 export const ProfilePatchPreview = z.object({
   profileName: z.string(),

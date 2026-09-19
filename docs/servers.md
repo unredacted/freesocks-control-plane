@@ -280,6 +280,13 @@ of FCP being reachable.
 
 ### The node role
 
+Two contracts exist. **Contract v2** (below, "Setting up a panel" and "Node lifecycle") is the
+one new deployments use: the role bootstraps the machine and reports, FCP writes the panel.
+**Contract v1** is what the previous role followed while both wrote the panel; its reservation
+routes stay for panels still on it.
+
+#### Contract v1 (legacy role)
+
 The Ansible role and FCP must not both write the same things. Before FCP accepts a write for an
 instance, the role reports that it follows the ownership protocol:
 `PUT /api/v1/admin/servers/{slug}/handoff {"roleContractVersion": 1}` (the role's existing
@@ -312,6 +319,130 @@ the attested recovery. The role must treat an FCP it cannot reach as a refusal: 
 Not built yet: the firewall acknowledgement (FCP publishing the ports an edit needs and the role
 confirming them). Nothing FCP writes today opens a port: the typed profile edits change names
 and targets only.
+
+## Setting up a panel
+
+`convex/panelSetup.ts`. One durable workflow per backend server (`panelSetups`), started from
+Admin -> Servers ("Set up this panel") with names, targets and ports only: never a secret. Each
+step is idempotent and re-enterable; an interrupted attempt is resumed by the
+`panel-bootstrap-sweep` cron once its lease has expired.
+
+| Step       | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| observe    | A fresh look at the panel; everything below reads the cache.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| handoff    | `panelHandoff` v2 (`reportedBy: fcp-setup`) is written **only for a fresh panel**: no nodes, no Hosts, no open v1 reservation. Anything else stops at `needs_takeover`; `POST {slug}/setup/takeover` (typed, audited) records the operator's attestation that no v1 role writes remain, and is refused while a v1 reservation is open.                                                                                                                                                                                                                                                                                                                               |
+| profile    | The profile by name: adopted when compatible (`lib/panel/profileCompat.ts`: per tag the protocol, transport, security, listen, port, path, names, target and a usable key; its keys and short ids are never touched, the effective values come from it), otherwise created from the template (`lib/panel/profileTemplate.ts`, the role's shape, born with the privacy posture). The create is an obligation persisted first; the REALITY keys are generated inside the claimed attempt right before the call and exist nowhere else; a lost answer is discovered by name, never sent again. An incompatible profile is `servers.profile_incompatible:<tag>:<field>`. |
+| squads     | Three squads (fronted, direct, relay), each carrying its inbound, through the ledger.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| placements | `freedom-ws` ← fronted, `privacy-reality` ← direct, `freedom-reality` ← relay (`addSquadUuids`). A mode that does not exist is recorded `skipped` and blocks activation.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| templates  | The four subscription templates (`lib/panel/subscriptionTemplates/`, moved from the role, YAML byte-exact) reconciled on drift; a refused write (401/403) blocks activation unless the live template already matches.                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+
+The setup row also carries the panel-wide **delivery gate version** (below).
+
+## Node lifecycle
+
+The bootstrap contract v2 (`convex/panelIntents.ts`, `panelActivation.ts`, `panelRetirement.ts`):
+the node role bootstraps the **machine** and reports; FCP owns the machine settings, the panel
+row, the direct Host, the origin DNS record and the release to members. Nothing about a node
+reaches a member before its **delivery commit**.
+
+```
+registered → bootstrap_available → machine_applied → machine_ready → candidates_verified
+          → awaiting_approval → activating → live
+```
+
+| Stage                 | Evidence (each row bound to the revisions it was taken for)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `registered`          | The intent exists; the node row is created or brought in line through the ledger; a direct node's Host is created **disabled**; a front node's origin record is written (obligations, below).                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `bootstrap_available` | `POST …/bootstrap` served the machine configuration and the panel's node secret. The secret is read from the panel on the call and returned to the caller; FCP never persists, audits or logs it (the machine holds it in its compose file).                                                                                                                                                                                                                                                                                                                                                                                    |
+| `machine_applied`     | The role reported `appliedRevision == machineRevision`. Idempotent; a lower revision is `servers.revision_stale` (run the role again), a higher one `servers.revision_unknown`; a report never regresses a stage.                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `machine_ready`       | The node op that applied the current profile and inbound is done by its own ledger evidence, the node is online, the profile token has not moved; a front node's origin name resolves to the intended addresses, presents a publicly valid certificate naming it, proxies the WebSocket path and answers a foreign Host header.                                                                                                                                                                                                                                                                                                 |
+| `candidates_verified` | Direct: the isolated **direct test link** (the node's own test credential, the inbound's live parameters) confirmed against a **binding** recomputed from live rows: endpoint, machine, config and authentication revisions, the parameters tested, the credential. A moved endpoint refuses (`servers.confirmation_stale`). Fronted: every listener of the open Autopilot run (the one waiting at publish for this approval) has a live, verified standby (L7 proof; L4 confirmation); recorded as `standbys_verified` evidence at approval, refused as `servers.standbys_missing` / `servers.standbys_unverified` until then. |
+| `awaiting_approval`   | The review card hashes the delivery **shape** (purpose, ingress, profile revision, listeners, provider account + template, subscription templates, the Host tuple), never individual addresses.                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `activating`          | Approval creates one run with an **immutable candidate snapshot** (`panelActivationRuns`); older runs are superseded. A direct run enables the Host as a **candidate resource**, rehearses the panel's real bodies in every client family (`lib/panel/rehearsal.ts`), and commits. A failed rehearsal disables the Host again and releases nothing. A run that blocks or fails **parks** the node at `awaiting_approval` with no current run (`staged` again unless it was live): the next approval supersedes it and starts a fresh run.                                                                                       |
+| `live`                | `panelActivation.commit`: one mutation that re-validates the approval, the evidence, the rehearsal and open obligations, then **promotes the snapshot** (`intent.approved`, the committed resources), opens the gate, bumps the gate version. A fronted node's Autopilot go-live calls the same promotion inside its own mutation; no independent go-live exists while an activation is unapproved, blocked or superseded.                                                                                                                                                                                                      |
+
+Three revision sets: `desired` (what the next review approves), `committed` (`intent.approved`,
+what members are served; moves only at a commit) and, per run, the candidate. `patchSettings`
+classifies a change (`lib/panel/activation.ts` `classifyChange`): one that only adds a path is
+prepared beside the committed one; one that rewrites the running path (a port or path rewrite, a
+re-address, a profile edit) is applied in place and needs an explicit **maintenance transition**,
+which closes the node (`unavailable`) until it is verified and approved again. The previous
+configuration is not claimed to remain served in that case.
+
+**Observed drift** is the same transition without anyone asking for it. When a reconcile finds
+the profile token, the inbound or the REALITY material moved under evidence already taken, or a
+direct node's endpoint moved under its Host (`panelIntents.observeRevisions`), the invalidated
+evidence goes, running activations are superseded, and a live node closes under a maintenance
+transition (reason `drift`, audited as `servers.node.drift`) until it is re-verified and approved
+again; the existing Host is brought to the new endpoint meanwhile. A lost DNS answer is settled by
+discovery on the next run (an absent record confirms a delete and fails a create, so the ladder
+never waits forever), and a record FCP owns for an address family no longer desired is withdrawn.
+Every resumed workflow re-reads `servers.manage.enabled` before a provider write outside the
+ledger (the profile create, the subscription templates, origin DNS) and parks while it is off.
+
+**The delivery gate** (`lib/panel/deliveryGate.ts`, enforced in `edgeRender.deliveryPolicyFor`,
+the pinner's exclusion list, the subscription route, the mirror refresh): closed for an enrolled
+node that is not live, under maintenance or retiring, open for an unmanaged node. Every render
+carries the gate version; the route and the mirror refresh re-read it after rendering and never
+attach content rendered under an older policy to a newer token. **Publication** is admitted by
+`edgeRotations` only under a node's committed approval or as a candidate of its one activating
+run (`servers.node_not_approved` otherwise), for manual, reconcile and setup publishes alike.
+
+**Authorization decision.** A staged node serves a shared inbound: an existing credential could
+authenticate on it if someone learned its address. That is accepted (REALITY keys are per inbound
+by design); what approval gates is exposure. Panel subscription URLs are not a member-facing
+surface; the direct Host is enabled only during the run's rehearsal and disabled again on failure.
+
+### Node registration (contract v2)
+
+Routes on `{slug}/nodes/by-name/{name}`, scope `admin:servers:write` or `admin:edges:register`
+confined to the token's registration boundary (backend servers and, optionally, node names):
+
+| Route              | What                                                                                                                                                                                        |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PUT`              | Enroll (`purpose`, `label`; taken once) or report observations (`management`, `publicIps`, `capabilities`; every run). The role never sends FCP-owned settings.                             |
+| `GET`              | The node's own view: stage, disposition, revisions, the origin name, the retirement.                                                                                                        |
+| `POST …/bootstrap` | The machine configuration (node port, the Caddy routes of a front node, the origin hostname) and the node secret. `SEAL_BOTH`; bearer callers get plaintext over TLS as on every IaC route. |
+| `POST …/applied`   | `{appliedRevision, caddy.certificateReady, nodeStarted}`.                                                                                                                                   |
+| `DELETE`           | A retirement request (below).                                                                                                                                                               |
+| `POST …/wiped`     | The role's acknowledgement that the machine is cleaned up (`ready_to_wipe → retired`).                                                                                                      |
+
+Refusals: `servers.panel_not_set_up`, `servers.contract_version`, `servers.node_exists_unowned`
+(a panel node or Host of that name no intent owns: an admin adopts first), `servers.tombstoned`
+(an admin restores), `servers.purpose_change_needs_admin`, `servers.node_retiring`,
+`servers.registration_boundary`.
+
+Admin routes on `{slug}/nodes/intents/{id}`: `GET review`, `POST test-link`, `POST confirm`,
+`POST approve {reviewHash}`, `POST settings {patch, maintenance}`, `POST maintenance` (finish),
+`POST retire [{disposition}]`.
+
+### Origin names
+
+A front node's origin name is `<label>.<zone>` in the Cloudflare zone chosen at setup (or an
+explicit hostname the admin sets). Records are **obligations** (`panelObligations`, kind
+`dns.record`) persisted before the call with the account, zone, marker
+`fcp-origin:<slug>:<name>` and expected content; an uncertain answer is discovered by name and
+marker before anything is sent again; a record FCP did not write, or a CNAME at the name, is
+`servers.origin_name_taken`, never replaced; FCP's own record with other content is replaced.
+Cleanup uses the obligation's own account and zone. `created` and `resolves` are distinct.
+
+### Obligations
+
+External side effects of every workflow are rows persisted before the call. A superseded
+generation never releases an unresolved one; a lease expiry resumes discovery of the same
+attempt; settlement reconciles the result against what is wanted now (`lib/panel/obligations.ts`:
+reuse, retain, delete), so a late create generation B still needs is adopted, an update never
+authorises a delete, and a shared object is never disposable.
+
+### Retirement and migration
+
+`DELETE …/by-name/{name}` only records the request. Whenever the node was ever live or anything
+of it is still out there, the retirement is `needs_admin`; the admin chooses `keep-dark` (its
+members get the edge-required unavailable answer) or `migrate` (refused in this version with
+`servers.migration_not_built`). Never `restore-direct`. The ladder: `draining` (the relay
+deleted keep-dark, credentials released, the direct Host deleted, DNS withdrawn) →
+`panel_removed` (the row removed with `removeOnly`, the name tombstoned) → `ready_to_wipe` →
+the role's `wiped` ack → `retired`.
 
 ## Admin surface
 

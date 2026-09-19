@@ -475,11 +475,70 @@ export interface PanelNodeFields {
   profile?: { configProfileUuid: string; activeInboundUuids: string[] };
 }
 
+/** A subscription template row as the panel lists it (type + uuid only). */
+export interface PanelSubscriptionTemplateRef {
+  uuid: string;
+  templateType: string;
+}
+
+/** One subscription template in full: JSON body or the base64 YAML body, whichever the type uses. */
+export interface PanelSubscriptionTemplate extends PanelSubscriptionTemplateRef {
+  templateJson: unknown | null;
+  encodedTemplateYaml: string | null;
+}
+
+/**
+ * What an isolated test link of a REALITY inbound needs, read live and held in
+ * memory only: the derived PUBLIC key, ONE short id, the names and the target,
+ * plus the digests the resulting confirmation is bound to. The short id is the
+ * one value here that is not public; it is never stored, logged or answered
+ * over HTTP (docs/servers.md, "Node lifecycle").
+ */
+export interface PanelInboundTestParams {
+  tag: string;
+  inboundUuid: string;
+  port: number | null;
+  publicKey: string;
+  shortId: string;
+  serverNames: string[];
+  /** `host:port` as the profile states it, or null. */
+  target: string | null;
+  authDigest: string | null;
+  changeToken: string;
+}
+
 /**
  * The management writes of one backend type. Each is ONE outbound call, never
  * retried by the provider: whether it may be repeated is the ledger's decision.
  */
 export interface PanelWrites<C> {
+  /** Create a config profile from a complete Xray config. Key material passes through in memory only. */
+  createProfile(
+    config: C,
+    spec: { name: string; config: unknown },
+  ): Promise<{ profileUuid: string }>;
+  /**
+   * The panel-wide node secret (`SECRET_KEY`), for handing to a node the role
+   * is bootstrapping. Returned to the caller and nowhere else: never persisted
+   * by FCP, never logged, never audited.
+   */
+  nodeSecret(config: C): Promise<string>;
+  listSubscriptionTemplates(config: C): Promise<PanelSubscriptionTemplateRef[]>;
+  readSubscriptionTemplate(config: C, uuid: string): Promise<PanelSubscriptionTemplate>;
+  updateSubscriptionTemplate(
+    config: C,
+    uuid: string,
+    body: { templateJson?: unknown; encodedTemplateYaml?: string },
+  ): Promise<void>;
+  /** Live parameters of one REALITY inbound for an isolated test link; null when the tag is not REALITY. */
+  readInboundForTest(
+    config: C,
+    profileUuid: string,
+    tag: string,
+    digestKey: string,
+  ): Promise<PanelInboundTestParams | null>;
+  /** The protocol credential (VLESS uuid) of a panel user FCP issued, in memory only. */
+  userCredential(config: C, backendUserId: string): Promise<{ protocolUuid: string | null }>;
   createHost(config: C, spec: PanelHostCreate): Promise<{ hostUuid: string }>;
   updateHost(config: C, hostUuid: string, fields: PanelHostFields): Promise<void>;
   deleteHost(config: C, hostUuid: string): Promise<void>;

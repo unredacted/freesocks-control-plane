@@ -18,9 +18,21 @@ import { httpAction } from './_generated/server';
 import type { ActionCtx } from './_generated/server';
 import type { Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
-import { makeFail, notFound, throttle, unauth } from './lib/adminHttp';
+import {
+  makeFail,
+  nodeWithinBoundary,
+  notFound,
+  registrationBoundaryOf,
+  throttle,
+  unauth,
+} from './lib/adminHttp';
 import { sealed } from './lib/hpke';
 import { errorJson, json, readJson, resolveAdmin, type AdminAuth } from './lib/http';
+import {
+  NodeAppliedReport,
+  NodeRegistration,
+  PanelSetupInput,
+} from '../src/shared/contracts/servers';
 
 const PREFIX = '/api/v1/admin/servers/';
 
@@ -59,9 +71,19 @@ function isReadOnlyPost(parts: string[]): boolean {
  * `admin:servers:write`: the node role's token holds that one. The role's
  * handoff report is the one write it may make here (it changes no panel).
  */
+/** `{slug}/nodes/by-name/{name}[/verb]`: the node role's own routes (docs/servers.md "Node lifecycle"). */
+export function isByNameRoute(parts: string[]): boolean {
+  return parts.length >= 4 && parts[1] === 'nodes' && parts[2] === 'by-name' && !!parts[3];
+}
+
 export function scopeFor(parts: string[], method: string): string | string[] {
   if (parts[0] === 'config')
     return method === 'GET' ? 'admin:settings:read' : 'admin:settings:write';
+  // The role's routes: its fleet token, or a register token confined to its boundary.
+  if (isByNameRoute(parts))
+    return method === 'GET'
+      ? ['admin:servers:read', 'admin:edges:register', 'admin:servers:manage']
+      : ['admin:servers:write', 'admin:edges:register', 'admin:servers:manage'];
   if (method === 'GET' || (method === 'POST' && isReadOnlyPost(parts))) return 'admin:servers:read';
   if (method === 'PUT' && parts.length === 2 && parts[1] === 'handoff')
     return ['admin:servers:write', 'admin:servers:manage'];
@@ -90,12 +112,19 @@ function wrap(handler: Handler, sealedRoute: boolean) {
     if (!admin) return unauth();
     // Whatever reaches a panel is throttled per actor: reads and writes apart.
     const readOnly = method === 'GET' || (method === 'POST' && isReadOnlyPost(parts));
+    // Of the role's routes only `bootstrap` reaches the panel (the node secret);
+    // enrollment and reports are records, reconciled from FCP's own actions.
+    const byName = isByNameRoute(parts);
     const reachesPanel = readOnly
       ? method === 'POST' && parts[1] !== 'placements'
-      : parts[0] !== 'config' &&
-        parts[1] !== 'handoff' &&
-        parts[1] !== 'reservations' &&
-        parts[3] !== 'acknowledge';
+      : byName
+        ? parts[4] === 'bootstrap'
+        : parts[0] !== 'config' &&
+          parts[1] !== 'handoff' &&
+          parts[1] !== 'reservations' &&
+          parts[3] !== 'acknowledge' &&
+          // A takeover records an attestation; the setup run reaches the panel from its own action.
+          !(parts[1] === 'setup' && parts[2] === 'takeover');
     if (reachesPanel) {
       const limited = await throttle(
         ctx,
@@ -109,12 +138,99 @@ function wrap(handler: Handler, sealedRoute: boolean) {
     if (method !== 'GET' && method !== 'DELETE')
       body = await readJson<Record<string, unknown>>(req);
     try {
+      if (byName) return await byNameHandler(ctx, parts, admin, body, method);
       return await handler(ctx, parts, admin, body, new URL(req.url).searchParams);
     } catch (err) {
       return fail(err);
     }
   };
   return sealedRoute ? sealed(inner) : httpAction(inner);
+}
+
+/**
+ * The node role's routes on `{slug}/nodes/by-name/{name}`: PUT enrolls or
+ * reports observations, GET reads the node's own view, POST bootstrap serves
+ * the machine configuration and the node secret, POST applied and POST wiped
+ * are the role's reports, DELETE asks for retirement. A register-scoped token
+ * is confined to its boundary; nothing here is an admin decision.
+ */
+async function byNameHandler(
+  ctx: ActionCtx,
+  parts: string[],
+  admin: AdminAuth,
+  body: Record<string, unknown>,
+  method: string,
+): Promise<Response> {
+  const [slug, , , name, verb, extra] = parts;
+  if (!slug || !name || extra) return notFound();
+  const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug });
+  const boundary = await registrationBoundaryOf(
+    ctx,
+    admin,
+    method === 'GET' ? 'admin:servers:read' : 'admin:servers:write',
+  );
+  if (!nodeWithinBoundary(boundary, instance.id, name))
+    return errorJson('servers.registration_boundary', 'This token may not act for that node', 403);
+  const view = async () => {
+    const out = await ctx.runQuery(internal.panelIntents.roleViewByName, {
+      backendServerId: instance.id,
+      name,
+    });
+    return out ? json(out) : notFound();
+  };
+  if (method === 'GET' && !verb) return view();
+  if (method === 'PUT' && !verb) {
+    const parsed = NodeRegistration.safeParse(body);
+    if (!parsed.success) return errorJson('validation', 'The registration body is not usable', 400);
+    await ctx.runMutation(internal.panelIntents.enroll, {
+      backendServerId: instance.id,
+      name,
+      label: parsed.data.label,
+      purpose: parsed.data.purpose,
+      contractVersion: parsed.data.roleContractVersion,
+      observed: parsed.data.observed,
+      tokenId: admin.tokenId ?? undefined,
+    });
+    return view();
+  }
+  if (method === 'DELETE' && !verb) {
+    const intent = await ctx.runQuery(internal.panelIntents.byName, {
+      backendServerId: instance.id,
+      name,
+    });
+    if (!intent) return notFound();
+    await ctx.runMutation(internal.panelIntents.requestRetirement, {
+      intentId: intent._id,
+      requestedBy: 'role',
+    });
+    return view();
+  }
+  if (method !== 'POST') return notFound();
+  const intent = await ctx.runQuery(internal.panelIntents.byName, {
+    backendServerId: instance.id,
+    name,
+  });
+  if (!intent) return notFound();
+  if (verb === 'bootstrap') {
+    // The one answer that carries a secret: never persisted by FCP, never audited.
+    return json(await ctx.runAction(internal.panelIntents.bootstrap, { intentId: intent._id }));
+  }
+  if (verb === 'applied') {
+    const parsed = NodeAppliedReport.safeParse(body);
+    if (!parsed.success) return errorJson('validation', 'The applied report is not usable', 400);
+    await ctx.runMutation(internal.panelIntents.applied, {
+      intentId: intent._id,
+      appliedRevision: parsed.data.appliedRevision,
+      certificateReady: parsed.data.caddy?.certificateReady,
+      nodeStarted: parsed.data.nodeStarted,
+    });
+    return view();
+  }
+  if (verb === 'wiped') {
+    await ctx.runMutation(internal.panelIntents.markWiped, { intentId: intent._id });
+    return view();
+  }
+  return notFound();
 }
 
 const actorOf = (admin: AdminAuth) => ({ actorAdminId: admin.adminUserId ?? undefined });
@@ -168,6 +284,25 @@ const getHandler: Handler = async (ctx, parts) => {
       }),
     });
   }
+  if (a && b === 'setup' && !c) {
+    const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
+    return json(await ctx.runQuery(internal.panelSetup.view, { backendServerId: instance.id }));
+  }
+  // The enrolled nodes of an instance, and one node's review card.
+  if (a && b === 'nodes' && c === 'intents' && !parts[4]) {
+    const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
+    return json({
+      intents: await ctx.runQuery(internal.serverAdmin.intentsView, {
+        backendServerId: instance.id,
+      }),
+    });
+  }
+  if (a && b === 'nodes' && c === 'intents' && parts[4] === 'review')
+    return json(
+      await ctx.runQuery(internal.panelActivation.review, {
+        intentId: parts[3] as Id<'panelNodeIntents'>,
+      }),
+    );
   return notFound();
 };
 
@@ -246,6 +381,70 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
       ...actorOf(admin),
     });
     return runOp(ctx, opId);
+  }
+  // Node activation (docs/servers.md "Node lifecycle"): the isolated direct
+  // test link, its bound confirmation, and the approval of a review. Before
+  // the generic node writes: `nodes/intents/{id}/{verb}` is not a node uuid.
+  if (a && b === 'nodes' && c === 'intents' && d) {
+    const [, , , , intentIdRaw, verb] = parts;
+    const intentId = intentIdRaw as Id<'panelNodeIntents'>;
+    if (verb === 'test-link')
+      return json(await ctx.runAction(internal.panelActivation.buildDirectTestLink, { intentId }));
+    if (verb === 'confirm')
+      return json(
+        await ctx.runMutation(internal.panelActivation.confirmDirect, {
+          intentId,
+          binding: body.binding as never,
+          ...actorOf(admin),
+        }),
+      );
+    if (verb === 'approve')
+      return json(
+        await ctx.runMutation(internal.panelActivation.approve, {
+          intentId,
+          reviewHash: String(body.reviewHash ?? ''),
+          ...actorOf(admin),
+        }),
+      );
+    if (verb === 'retire') {
+      // With a disposition this is the admin's decision; without, a request.
+      const disposition = body.disposition;
+      if (disposition === 'keep-dark' || disposition === 'migrate')
+        return json(
+          await ctx.runMutation(internal.panelRetirement.decide, {
+            intentId,
+            disposition,
+            targetIntentId:
+              typeof body.targetIntentId === 'string'
+                ? (body.targetIntentId as Id<'panelNodeIntents'>)
+                : undefined,
+            ...actorOf(admin),
+          }),
+        );
+      return json(
+        await ctx.runMutation(internal.panelIntents.requestRetirement, {
+          intentId,
+          requestedBy: 'admin',
+        }),
+      );
+    }
+    if (verb === 'maintenance')
+      return json(
+        await ctx.runMutation(internal.panelIntents.finishMaintenance, {
+          intentId,
+          ...actorOf(admin),
+        }),
+      );
+    if (verb === 'settings')
+      return json(
+        await ctx.runMutation(internal.panelIntents.patchSettings, {
+          intentId,
+          patch: body.patch as never,
+          maintenance: body.maintenance === true,
+          ...actorOf(admin),
+        }),
+      );
+    return notFound();
   }
   if (a && b === 'nodes') {
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
@@ -334,6 +533,25 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
     await ctx.runAction(internal.panelObserve.refresh, { backendServerId: instance.id });
     return json(await ctx.runQuery(internal.serverAdmin.tree, { slug: a }));
+  }
+  // Setting up a panel (docs/servers.md): start or resume, or take over an existing one.
+  if (a && b === 'setup' && (!c || (c === 'takeover' && !d))) {
+    const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
+    if (c === 'takeover') {
+      await ctx.runMutation(internal.panelSetup.takeover, {
+        backendServerId: instance.id,
+        ...actorOf(admin),
+      });
+    } else {
+      const parsed = PanelSetupInput.safeParse(body);
+      if (!parsed.success) return errorJson('validation', 'The setup input is not usable', 400);
+      await ctx.runMutation(internal.panelSetup.start, {
+        backendServerId: instance.id,
+        input: parsed.data,
+        ...actorOf(admin),
+      });
+    }
+    return json(await ctx.runQuery(internal.panelSetup.view, { backendServerId: instance.id }));
   }
   if (a && b === 'placements' && c === 'validate')
     return json(await ctx.runQuery(internal.serverAdmin.validatePlacements, { slug: a }));

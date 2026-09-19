@@ -17,23 +17,28 @@
   import { Skeleton } from '@client/components/ui/skeleton';
   import { Switch } from '@client/components/ui/switch';
   import Link from '@client/components/Link.svelte';
+  import { providersQuery } from '@client/lib/edgesApi';
   import {
     acknowledgeForeignEdit,
+    intentsQuery,
     invalidateServers,
     patchServerConfig,
     refreshServer,
     serverKeys,
     serverSummaryQuery,
     serverTreeQuery,
+    setupQuery,
   } from '@client/lib/serversApi';
   import { router } from '@client/stores/router.svelte';
   import SectionHeader from '../edges/components/SectionHeader.svelte';
   import StatusDot from '../edges/simple/StatusDot.svelte';
   import OpsList from './components/OpsList.svelte';
+  import SetupSheet from './components/SetupSheet.svelte';
   import SquadsCard from './components/SquadsCard.svelte';
   import { codeOf } from './lib/run';
   import { pickInstance, serversPaths } from './lib/routes';
   import {
+    PURPOSE_WORDS,
     ago,
     countryLabel,
     fleetSentence,
@@ -41,12 +46,27 @@
     nodeWords,
     quietNotes,
     serverErrorWords,
+    setupWords,
+    stageWords,
   } from './lib/words';
 
   const qc = useQueryClient();
   const summary = serverSummaryQuery();
   let slug = $derived(pickInstance(router.search, summary.data?.instances ?? []));
   const tree = serverTreeQuery(() => slug);
+  // The bootstrap contract: the panel's setup and its enrolled nodes.
+  const setup = setupQuery(() => slug);
+  const intents = intentsQuery(() => slug);
+  const providers = providersQuery();
+  let setupOpen = $state(false);
+  let setupRow = $derived(setup.data ? setupWords(setup.data) : null);
+  let originAccounts = $derived(
+    (providers.data?.accounts ?? [])
+      .filter((a) => a.provider === 'cloudflare' && typeof a.settings.zoneName === 'string')
+      .map((a) => ({ id: a.id, name: a.name, zoneName: String(a.settings.zoneName) })),
+  );
+  const intentOf = (node: { nodeUuid: string; name: string }) =>
+    intents.data?.intents.find((i) => i.nodeUuid === node.nodeUuid || i.name === node.name) ?? null;
 
   let instance = $derived(summary.data?.instances.find((i) => i.slug === slug) ?? null);
   let observeOn = $derived(summary.data?.config['manage.observe'] ?? false);
@@ -165,14 +185,23 @@
       </p>
     </div>
 
-    {#if attention.length > 0 || (manageOn && instance && !instance.handoffCurrent)}
+    {#if attention.length > 0 || (manageOn && setupRow) || (manageOn && instance && !instance.handoffCurrent && !setupRow)}
       <section aria-labelledby="needs-you">
         <h2 id="needs-you" class="mb-3 text-base font-semibold">Needs you</h2>
         <ul class="space-y-2">
-          {#if manageOn && instance && !instance.handoffCurrent}
+          {#if manageOn && setupRow}
+            <li
+              class="flex flex-wrap items-center gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm"
+            >
+              <span class="min-w-0 flex-1">{setupRow}</span>
+              <Button variant="outline" size="sm" onclick={() => (setupOpen = true)}>
+                {setup.data?.state === 'needs_takeover' ? 'Take over' : 'Set up'}
+              </Button>
+            </li>
+          {:else if manageOn && instance && !instance.handoffCurrent}
             <li class="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm">
-              Changes are allowed, but the node role has not handed this panel over yet, so they are
-              refused. Run the role with fcp_managed set.
+              Changes are allowed, but this panel is not set up yet, so they are refused. Set it up
+              first.
             </li>
           {/if}
           {#each attention as row (row.key)}
@@ -208,18 +237,27 @@
           {#each t.nodes as node (node.nodeUuid)}
             {@const w = nodeWords(node)}
             {@const country = countryLabel(node.countryCode)}
+            {@const intent = intentOf(node)}
+            {@const st = intent ? stageWords(intent) : null}
             <li>
               <Link
                 href={serversPaths.node(node.nodeUuid, { instance: slug ?? undefined })}
                 class={ROW}
               >
-                <StatusDot dot={w.dot} />
+                <StatusDot dot={st && st.dot !== 'green' ? st.dot : w.dot} />
                 <span class="min-w-0 flex-1">
                   <span class="flex flex-wrap items-baseline gap-x-2">
                     <span class="font-medium">{node.name}</span>
+                    {#if intent}
+                      <span class="text-muted-foreground text-xs"
+                        >{PURPOSE_WORDS[intent.purpose]}</span
+                      >
+                    {/if}
                     {#if country}<span class="text-muted-foreground text-xs">{country}</span>{/if}
                   </span>
-                  <span class="text-muted-foreground block text-sm">{w.sentence}</span>
+                  <span class="text-muted-foreground block text-sm">
+                    {st && st.dot !== 'green' ? st.sentence : w.sentence}
+                  </span>
                 </span>
                 <ChevronRight
                   class="text-muted-foreground size-4 shrink-0 rtl:rotate-180"
@@ -241,6 +279,12 @@
 
     {#if slug}
       <SquadsCard {slug} tree={t} {canWrite} />
+      <SetupSheet
+        bind:open={setupOpen}
+        {slug}
+        setup={setup.data ?? null}
+        accounts={originAccounts}
+      />
     {/if}
     {#if slug && manageOn && instance?.writable}
       <OpsList {slug} />

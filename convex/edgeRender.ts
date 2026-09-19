@@ -35,6 +35,8 @@ import { parseIntent } from './lib/edges/intent';
 import { qualificationBinding, qualificationVerdict } from './lib/edges/frontCheck/binding';
 import { needsEndpointVerification, verificationCurrent } from './lib/edges/verification';
 import type { EdgeRenderContext } from './lib/edges/renderPipeline';
+import { gateToken, type NodeGate } from './lib/panel/deliveryGate';
+import { nodeGateFor } from './panelIntents';
 import { deliveryBindingFor, relayForBackendNode } from './relays';
 import { listenersOf } from './relayListeners';
 import { resolveSniConfig } from './lib/sniConfig';
@@ -208,6 +210,13 @@ export interface DeliveryPolicy {
   bindingVersion: number | null;
   relayId: Id<'relays'> | null;
   relaySlug: string | null;
+  /**
+   * The node delivery gate at this place (docs/servers.md "Node lifecycle"):
+   * closed for an enrolled node that is not live, under maintenance or
+   * retiring. `gateToken` is part of every cache token so a body rendered
+   * under an older gate is never served under a newer one.
+   */
+  gate: NodeGate;
 }
 
 /**
@@ -221,14 +230,17 @@ export async function deliveryPolicyFor(
   backendServerId: Id<'backendServers'>,
   nodeName: string | undefined,
 ): Promise<DeliveryPolicy> {
+  const gate = await nodeGateFor(ctx, backendServerId, nodeName);
   const binding = await deliveryBindingFor(ctx.db, backendServerId, nodeName);
-  if (!binding) return { required: false, bindingVersion: null, relayId: null, relaySlug: null };
+  if (!binding)
+    return { required: false, bindingVersion: null, relayId: null, relaySlug: null, gate };
   const relay = await relayForBackendNode(ctx.db, backendServerId, nodeName);
   return {
     required: true,
     bindingVersion: binding.policyVersion,
     relayId: relay?._id ?? null,
     relaySlug: binding.relaySlug,
+    gate,
   };
 }
 
@@ -247,11 +259,19 @@ async function epochTokenFor(
   ctx: { db: QueryCtx['db'] },
   policy: DeliveryPolicy,
 ): Promise<{ token: string | null; relay: Doc<'relays'> | null }> {
-  if (!policy.required) return { token: null, relay: null };
+  // A place with a managed node carries the gate in its token even under raw
+  // delivery, so a gate change re-keys the cache; a place with none keeps the
+  // null token (no relay, no gate: nothing to re-key on).
+  const gate = policy.gate.disposition !== null ? `g${gateToken(policy.gate)}` : null;
+  if (!policy.required) return { token: gate, relay: null };
   const relay = policy.relayId ? await ctx.db.get(policy.relayId) : null;
   const renderOn = await renderEnabled(ctx);
   return {
-    token: `${policy.bindingVersion}:${relay && relay.enabled && renderOn ? relay.publicationEpoch : -1}`,
+    token: [
+      policy.bindingVersion,
+      ...(gate ? [gate] : []),
+      relay && relay.enabled && renderOn ? relay.publicationEpoch : -1,
+    ].join(':'),
     relay,
   };
 }
@@ -308,7 +328,13 @@ export type SubscriptionRenderDecision =
   | { kind: 'render'; context: SubscriptionRenderContext }
   | {
       kind: 'unavailable';
-      reason: 'render_disabled' | 'relay_disabled' | 'relay_missing' | 'no_render_key';
+      reason:
+        | 'render_disabled'
+        | 'relay_disabled'
+        | 'relay_missing'
+        | 'no_render_key'
+        | 'node_gated'
+        | 'policy_moved';
       relaySlug: string | null;
     };
 
@@ -330,6 +356,10 @@ export const decideForSubscription = internalQuery({
     if (!sub || !sub.backendServerId) return { kind: 'raw' };
     const node = a.nodeName ?? sub.pinnedNode ?? undefined;
     const policy = await deliveryPolicyFor(ctx, sub.backendServerId, node);
+    // The node's gate is authoritative whatever the binding says: a body that
+    // resolved to a node that is not live reaches no member.
+    if (policy.gate.state === 'blocked')
+      return { kind: 'unavailable', reason: 'node_gated', relaySlug: policy.relaySlug };
     if (!policy.required) return { kind: 'raw' };
     const relay = policy.relayId ? await ctx.db.get(policy.relayId) : null;
     if (!relay)

@@ -472,6 +472,18 @@ async function refreshOneSubMirrors(
         node: fetched.pinnedNode,
       });
     };
+    // The delivery token is read before the render and again before the upload:
+    // a policy that moved meanwhile (a node gate, a rotation) means this body
+    // was rendered under an older policy, and it never reaches the object; the
+    // next refresh renders under the new one (docs/servers.md "Node lifecycle").
+    const tokenOf = () =>
+      sub.backendServerId
+        ? ctx.runQuery(internal.edgeRender.epochFor, {
+            backendServerId: sub.backendServerId,
+            nodeName: fetched.pinnedNode ?? undefined,
+          })
+        : Promise.resolve(null);
+    const tokenBefore = await tokenOf();
     // Relay rendering (docs/edges.md): a mirror serves the same rendered
     // endpoints as the fronted route (link-list family: no User-Agent here).
     const rendered = await renderMirrorBody(
@@ -492,6 +504,7 @@ async function refreshOneSubMirrors(
         contentAt,
         renderedEpoch: rendered.renderedEpoch,
       });
+    if ((await tokenOf()) !== tokenBefore) return false;
     const hash = await sha256Hex(content);
     if (hash === sub.rawContentHash && !force) {
       // Nothing to re-upload: the pin can move while the bytes stay identical,

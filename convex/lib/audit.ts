@@ -268,6 +268,21 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'servers.profile.foreign_edit_seen': ['backendSlug', 'label'],
   'servers.reservation.recover': ['backendSlug', 'kind'],
   'servers.handoff.report': ['backendSlug', 'roleContractVersion', 'current'],
+  // The bootstrap contract v2 (docs/servers.md "Node lifecycle"): setting up a
+  // panel, an enrolled node's ladder, its retirement. Names and stages only.
+  'servers.setup.started': ['backendSlug', 'generation'],
+  'servers.setup.finished': ['backendSlug', 'state', 'code', 'step'],
+  'servers.setup.takeover': ['backendSlug'],
+  'servers.node.registered': ['backendSlug', 'name', 'purpose'],
+  'servers.node.settings': ['backendSlug', 'name', 'change'],
+  'servers.node.direct_confirmed': ['backendSlug', 'name'],
+  'servers.node.approved': ['backendSlug', 'name', 'purpose'],
+  'servers.node.live': ['backendSlug', 'name', 'purpose'],
+  'servers.node.drift': ['backendSlug', 'name', 'kind', 'wasLive'],
+  'servers.node.maintenance_finished': ['backendSlug', 'name'],
+  'servers.node.retire_requested': ['backendSlug', 'name', 'stage'],
+  'servers.node.retire_decided': ['backendSlug', 'name', 'disposition'],
+  'servers.node.retired': ['backendSlug', 'name'],
   // Operator-run 2.x→3.x key-id remap on one upgraded panel (counts only).
   'admin.remnawave.user_ids_migrated': [
     'panelVersion',

@@ -140,6 +140,12 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
     description: 'Server management: settle open panel changes by looking at the panel',
   },
   {
+    name: 'panel-bootstrap-sweep',
+    everyMs: 5 * MIN,
+    description:
+      'Server management: resume bootstrap workflows an interrupted attempt left pending',
+  },
+  {
     name: 'edge-reconcile',
     everyMs: 5 * MIN,
     description:

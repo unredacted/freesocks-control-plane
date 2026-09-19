@@ -268,7 +268,162 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.panel_refused': 'The panel refused it. Nothing was changed.',
   'servers.outcome_unknown':
     'The panel did not answer clearly, so it is not known whether this happened.',
+  // Setting up a panel.
+  'servers.setup_running': 'The panel is being set up right now. Wait for it to finish.',
+  'servers.setup_failed': 'Setting up stopped on an error. Look at the panel, then try again.',
+  'servers.handoff_needs_takeover':
+    'This panel already has nodes or Hosts. Take it over to make FCP its only writer.',
+  'servers.obligation_unresolved':
+    'A call to the panel or the DNS provider did not answer clearly. It is looked at again shortly.',
+  'servers.observe_lag': 'The panel does not show it yet. It is looked at again shortly.',
+  'servers.profile_incompatible':
+    'A profile with this name exists but is not the shape nodes need. Rename it on the panel or pick another name.',
+  'servers.privacy_drifted':
+    'The profile logs more than it may. Harden it from the backend server page.',
+  'servers.placement_skipped':
+    'A connection mode this panel feeds does not exist, so its squad is not bound.',
+  'servers.template_drifted':
+    'A subscription template on the panel is not what it should be, and could not be set.',
+  // Enrolling a node.
+  'servers.contract_version': 'The node role is too old for this panel. Update the role.',
+  'servers.panel_not_set_up': 'Set up this panel first.',
+  'servers.node_retiring': 'This node is being retired.',
+  'servers.not_retiring': 'This node is not being retired.',
+  'servers.retirement_stage': 'The node is not at that point of its retirement yet.',
+  'servers.purpose_change_needs_admin':
+    'A node keeps its purpose. Change it from here, then run the role again.',
+  'servers.node_exists_unowned':
+    'The panel already has this node or Host. Adopt it here before the role enrolls it.',
+  'servers.origin_label_invalid': 'The name cannot be made into a DNS label.',
+  'servers.registration_boundary': 'This token may not act for that node.',
+  'servers.revision_stale': 'The machine settings changed. Run the role again.',
+  'servers.revision_unknown': 'That machine revision was never handed out.',
+  'servers.reconcile_failed': 'The node could not be reconciled with the panel.',
+  'servers.maintenance_required':
+    'This change rewrites the running path. Start it as a maintenance transition: the node is closed until it is approved again.',
+  'servers.maintenance_open': 'A maintenance transition is open on this node.',
+  // Machine readiness.
+  'servers.config_moved': 'The profile changed under this node. It is checked again.',
+  'servers.foreign_profile_edit': 'The profile was edited outside FCP. See it, then try again.',
+  'servers.node_offline': 'The node is not connected to the panel.',
+  'servers.origin_hostname_missing':
+    'This front node has no origin name yet. Set one under Settings.',
+  'servers.origin_name_taken':
+    'Something else holds a DNS record at the origin name. Free it in the zone, then try again.',
+  'servers.origin_not_resolving': 'The origin name does not resolve to the node yet.',
+  'servers.origin_certificate':
+    'The node does not present a valid certificate for its origin name yet.',
+  'servers.ingress_path': 'The WebSocket path is not proxied to the inbound.',
+  'servers.ingress_host_header': 'The node does not answer a foreign Host header.',
+  // Activation.
+  'servers.machine_not_ready': 'The machine is not ready yet.',
+  'servers.direct_unconfirmed': 'Test the direct connection and tick it first.',
+  'servers.confirmation_stale':
+    'What you tested is not what the node serves now. Build a new test link.',
+  'servers.credential_unavailable': 'No test credential could be made on the panel.',
+  'servers.inbound_missing': 'The REALITY inbound is gone from the profile.',
+  'servers.stage': 'The node is not at the point where this can be done.',
+  'servers.review_stale': 'The review changed since you read it. Read it again.',
+  'servers.host_missing': 'The node has no Host to enable.',
+  'servers.rehearsal_failed':
+    'The panel bodies did not carry this node as expected. Nothing was released.',
+  'servers.rehearsal_missing': 'The rehearsal has not run.',
+  'servers.activation_failed': 'Activation stopped on an error.',
+  'servers.run_superseded': 'A newer approval replaced this one.',
+  'servers.run_not_running': 'This activation is not running.',
+  'servers.revision_moved': 'Something changed since the approval. Review and approve again.',
+  'servers.node_not_approved': 'The node behind this relay is not approved for delivery yet.',
+  'servers.standbys_missing': 'Protect this node in Edges first: its standbys come from there.',
+  'servers.standbys_unverified':
+    'Not every standby of this node is verified yet. Finish the Edges setup up to publish.',
+  'servers.credential_unresolved':
+    'A test credential of this node has an unknown outcome on the panel. Look at its users.',
+  'servers.delete_not_applied': 'An origin record was not removed. It is tried again.',
+  'servers.create_not_observed': 'An origin record was not created. It is tried again.',
+  // Retirement.
+  'servers.relay_draining': 'Its edges are still being taken down.',
+  'servers.credentials_pending': 'Its test credentials are still being removed from the panel.',
+  'servers.retirement_failed': 'Retiring stopped on an error. It is tried again shortly.',
+  'servers.migration_target': 'The target node must be live.',
+  'servers.migration_not_built':
+    'Moving members to another node is not available yet. Choose to keep them dark.',
 };
+// --- the bootstrap contract: enrolled nodes and their ladder -----------------------------------
+// (stageWords / setupWords / PURPOSE_WORDS; tested in words.test.ts)
+
+export const PURPOSE_WORDS: Record<string, string> = {
+  direct: 'Direct',
+  front: 'Front',
+  relay: 'Relay',
+};
+
+/** One sentence and a dot for where an enrolled node is on its way to members. */
+export function stageWords(i: {
+  stage: string;
+  disposition: string;
+  state: string;
+  code: string | null;
+  maintenance: boolean;
+  retirement: { stage: string } | null;
+}): { dot: Dot; sentence: string } {
+  if (i.retirement) {
+    const s = i.retirement.stage;
+    if (s === 'needs_admin') return { dot: 'amber', sentence: 'Retiring. Needs your decision.' };
+    if (s === 'ready_to_wipe')
+      return { dot: 'grey', sentence: 'Retired here. Waiting for the machine to be wiped.' };
+    if (s === 'retired') return { dot: 'grey', sentence: 'Retired.' };
+    return { dot: 'grey', sentence: 'Retiring.' };
+  }
+  if (i.maintenance)
+    return { dot: 'amber', sentence: 'Closed for maintenance. Finish it, then approve again.' };
+  if (i.state === 'blocked')
+    return { dot: 'red', sentence: `Stopped: ${serverErrorWords(i.code)}` };
+  switch (i.stage) {
+    case 'registered':
+      return {
+        dot: 'grey',
+        sentence: 'Enrolled. Waiting for the role to fetch its configuration.',
+      };
+    case 'bootstrap_available':
+      return { dot: 'grey', sentence: 'Configuration served. Waiting for the role to apply it.' };
+    case 'machine_applied':
+      return { dot: 'amber', sentence: 'The role applied it. Checking the machine.' };
+    case 'machine_ready':
+      return { dot: 'amber', sentence: 'The machine is ready. Test the connection, then approve.' };
+    case 'candidates_verified':
+      return { dot: 'amber', sentence: 'Tested. Review and approve to release it to members.' };
+    case 'awaiting_approval':
+      return { dot: 'amber', sentence: 'Waiting for your approval.' };
+    case 'activating':
+      return {
+        dot: 'amber',
+        sentence: 'Releasing to members. Nobody sees it until this finishes.',
+      };
+    case 'live':
+      return i.disposition === 'live'
+        ? { dot: 'green', sentence: 'Live for members.' }
+        : { dot: 'amber', sentence: 'Approved, but not served right now.' };
+    default:
+      return { dot: 'grey', sentence: 'Enrolled.' };
+  }
+}
+
+/** The setup row in Needs you, or null when there is nothing to do. */
+export function setupWords(s: {
+  exists: boolean;
+  state: string | null;
+  code: string | null;
+  running: boolean;
+}): string | null {
+  if (!s.exists) return 'This panel is not set up yet. Set it up so nodes can enroll.';
+  if (s.running) return 'Setting up the panel.';
+  if (s.state === 'needs_takeover')
+    return 'This panel already has nodes or Hosts. Take it over so FCP becomes its only writer.';
+  if (s.state === 'failed') return `Setting up stopped: ${serverErrorWords(s.code)}`;
+  if (s.state === 'pending') return `Setting up paused: ${serverErrorWords(s.code)}`;
+  return null;
+}
+
 export function serverErrorWords(code: string | null | undefined): string {
   return (code && ERROR_WORDS[code]) || 'That did not work. Try again in a moment.';
 }

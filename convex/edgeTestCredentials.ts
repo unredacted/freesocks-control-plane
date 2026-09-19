@@ -115,10 +115,34 @@ export const context = internalQuery({
   },
 });
 
-/** The obligation lands before the create. */
+/**
+ * Who a credential row belongs to, for the audit trail: the relay's slug or
+ * the enrolled node's name (a direct node's isolated test link,
+ * docs/servers.md "Node lifecycle").
+ */
+async function ownerOf(
+  ctx: { db: { get: (id: Id<'relays'> | Id<'panelNodeIntents'>) => Promise<unknown> } },
+  row: Pick<Doc<'edgeTestCredentials'>, 'relayId' | 'nodeIntentId'>,
+): Promise<{ targetType: 'relay' | 'panel_node_intent'; targetId: string; label: string }> {
+  if (row.relayId) {
+    const relay = (await ctx.db.get(row.relayId)) as Doc<'relays'> | null;
+    return { targetType: 'relay', targetId: row.relayId, label: relay?.slug ?? '' };
+  }
+  const intent = row.nodeIntentId
+    ? ((await ctx.db.get(row.nodeIntentId)) as Doc<'panelNodeIntents'> | null)
+    : null;
+  return {
+    targetType: 'panel_node_intent',
+    targetId: row.nodeIntentId ?? '',
+    label: intent?.name ?? '',
+  };
+}
+
+/** The obligation lands before the create. Exactly one owner is set. */
 export const insertPending = internalMutation({
   args: {
-    relayId: v.id('relays'),
+    relayId: v.optional(v.id('relays')),
+    nodeIntentId: v.optional(v.id('panelNodeIntents')),
     backendServerId: v.id('backendServers'),
     username: v.string(),
     purpose: purposeValidator,
@@ -126,9 +150,12 @@ export const insertPending = internalMutation({
   handler: async (ctx, a) => {
     const server = await ctx.db.get(a.backendServerId);
     if (!server) throw new ConvexError({ code: 'backend.not_found' });
+    if (!!a.relayId === !!a.nodeIntentId)
+      throw new ConvexError({ code: 'validation', message: 'One owner: a relay or a node' });
     const now = Date.now();
     return ctx.db.insert('edgeTestCredentials', {
       relayId: a.relayId,
+      nodeIntentId: a.nodeIntentId,
       backendServerId: a.backendServerId,
       backend: server.backend,
       username: a.username,
@@ -152,13 +179,13 @@ export const markIssued = internalMutation({
     const row = await ctx.db.get(id);
     if (!row) return null;
     await ctx.db.patch(id, { ...issued, updatedAt: Date.now() });
-    const relay = await ctx.db.get(row.relayId);
+    const owner = await ownerOf(ctx, row);
     await writeAuditLog(ctx, {
       actorType: 'system',
       action: 'edge.test_credential',
-      targetType: 'relay',
-      targetId: row.relayId,
-      payload: { relaySlug: relay?.slug ?? '', purpose: row.purpose, issued: true },
+      targetType: owner.targetType,
+      targetId: owner.targetId,
+      payload: { relaySlug: owner.label, purpose: row.purpose, issued: true },
     });
     return null;
   },
@@ -208,6 +235,29 @@ export const releaseForEdge = internalMutation({
     if (row.expiresAt <= now) return { ok: true as const, released: false };
     await ctx.db.patch(credentialId, { expiresAt: now, updatedAt: now });
     return { ok: true as const, released: true };
+  },
+});
+
+/** Every pending credential of an enrolled node expires now (retirement). */
+export const releaseForIntent = internalMutation({
+  args: { nodeIntentId: v.id('panelNodeIntents') },
+  handler: async (ctx, { nodeIntentId }) => {
+    const now = Date.now();
+    const rows = await ctx.db
+      .query('edgeTestCredentials')
+      .withIndex('by_intent', (q) => q.eq('nodeIntentId', nodeIntentId))
+      .collect();
+    let released = 0;
+    let outstanding = 0;
+    for (const r of rows) {
+      // A row whose cleanup exhausted its retries still names a user that may
+      // exist on the panel: outstanding until an operator retries or resolves it.
+      if (r.removal === 'pending' || r.removal === 'failed') outstanding++;
+      if (r.removal !== 'pending' || r.expiresAt <= now) continue;
+      await ctx.db.patch(r._id, { expiresAt: now, updatedAt: now });
+      released++;
+    }
+    return { released, outstanding };
   },
 });
 
@@ -380,15 +430,15 @@ export const settleRemoval = internalMutation({
     const row = await ctx.db.get(id);
     if (!row || row.removal !== 'pending') return null;
     const now = Date.now();
-    const relay = await ctx.db.get(row.relayId);
-    const relaySlug = relay?.slug ?? '';
+    const owner = await ownerOf(ctx, row);
+    const relaySlug = owner.label;
     if (removed) {
       await ctx.db.patch(id, { removal: 'done', retryAfter: undefined, updatedAt: now });
       await writeAuditLog(ctx, {
         actorType: 'system',
         action: 'edge.test_credential',
-        targetType: 'relay',
-        targetId: row.relayId,
+        targetType: owner.targetType,
+        targetId: owner.targetId,
         payload: { relaySlug, purpose: row.purpose, removed: true, attempts: row.attempts + 1 },
       });
       return null;
@@ -404,8 +454,8 @@ export const settleRemoval = internalMutation({
       await writeAuditLog(ctx, {
         actorType: 'system',
         action: 'edge.test_credential',
-        targetType: 'relay',
-        targetId: row.relayId,
+        targetType: owner.targetType,
+        targetId: owner.targetId,
         payload: { relaySlug, purpose: row.purpose, failed: true, attempts },
       });
       return null;

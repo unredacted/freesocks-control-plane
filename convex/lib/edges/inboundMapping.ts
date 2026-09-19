@@ -31,6 +31,7 @@
  */
 import type { PanelInbound } from '../backends/types';
 import { sha256Hex } from '../crypto';
+import { applyIngress, type IngressMapping } from '../panel/ingress';
 import type { InboundUnsupportedCode } from '../../../src/shared/contracts/edgeCodes';
 import {
   isValidListenerCombo,
@@ -77,6 +78,13 @@ export interface InboundMappingOptions {
   existingKeys: readonly string[];
   /** The relay's panel-node origin: names the default Host remark rule. */
   origin: PanelNodeOrigin;
+  /**
+   * The node's declared ingress (a front node's Caddy in front of a loopback
+   * inbound, `lib/panel/ingress.ts`): a mapped loopback inbound is discovered
+   * as the external TLS listener it is reached through. Without it, or for an
+   * inbound the declaration does not describe, loopback stays `loopback`.
+   */
+  ingress?: IngressMapping | null;
 }
 
 export interface InboundMapping {
@@ -171,7 +179,7 @@ export async function mapInboundsToListeners(
   const taken = new Set(opts.existingKeys);
   const ctx = { origin: opts.origin };
 
-  for (const ib of inbounds) {
+  for (const ib of applyIngress(inbounds, opts.ingress)) {
     const tag = ib.tag;
     if (!ib.active) {
       unsupported.push(skip(tag, 'inactive'));

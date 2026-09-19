@@ -13,13 +13,18 @@ import { createQuery, type QueryClient } from '@tanstack/svelte-query';
 import { z } from 'zod';
 import { apiClient } from './api';
 import {
+  ActivationReview,
+  DirectTestLink,
+  NodeIntentList,
   PanelOpList,
   PanelOpView,
+  PanelSetupView,
   PlacementValidation,
   ProfilePatchPreview,
   ReservationList,
   ServerSummary,
   ServerTree,
+  type PanelSetupInput,
   type HostWrite,
   type NodeWrite,
   type ProfilePatchOp,
@@ -130,6 +135,50 @@ export const recoverReservation = (slug: string, roleOpId: string, attest: Recov
     Ok,
   );
 
+// --- the bootstrap contract: setting up a panel, enrolled nodes, activation ---------------------
+export const fetchSetup = (slug: string) =>
+  apiClient.get(`${slugPath(slug)}/setup`, PanelSetupView);
+export const startSetup = (slug: string, input: PanelSetupInput) =>
+  apiClient.post(`${slugPath(slug)}/setup`, input, PanelSetupView);
+export const takeoverPanel = (slug: string) =>
+  apiClient.post(`${slugPath(slug)}/setup/takeover`, {}, PanelSetupView);
+
+export const fetchIntents = (slug: string) =>
+  apiClient.get(`${slugPath(slug)}/nodes/intents`, NodeIntentList);
+const intentPath = (slug: string, id: string) =>
+  `${slugPath(slug)}/nodes/intents/${encodeURIComponent(id)}`;
+export const fetchReview = (slug: string, id: string) =>
+  apiClient.get(`${intentPath(slug, id)}/review`, ActivationReview);
+export const buildDirectTestLink = (slug: string, id: string) =>
+  apiClient.post(`${intentPath(slug, id)}/test-link`, {}, DirectTestLink);
+export const confirmDirect = (slug: string, id: string, binding: DirectTestLink['binding']) =>
+  apiClient.post(`${intentPath(slug, id)}/confirm`, { binding }, z.object({ stage: z.string() }));
+export const approveNode = (slug: string, id: string, reviewHash: string) =>
+  apiClient.post(
+    `${intentPath(slug, id)}/approve`,
+    { reviewHash },
+    z.object({ runId: z.string() }),
+  );
+export const retireNode = (
+  slug: string,
+  id: string,
+  decision?: { disposition: 'keep-dark' | 'migrate'; targetIntentId?: string },
+) =>
+  apiClient.post(`${intentPath(slug, id)}/retire`, decision ?? {}, z.object({ stage: z.string() }));
+export const finishMaintenance = (slug: string, id: string) =>
+  apiClient.post(`${intentPath(slug, id)}/maintenance`, {}, z.object({ ok: z.literal(true) }));
+export const patchNodeSettings = (
+  slug: string,
+  id: string,
+  patch: Record<string, unknown>,
+  maintenance = false,
+) =>
+  apiClient.post(
+    `${intentPath(slug, id)}/settings`,
+    { patch, maintenance },
+    z.object({ change: z.string(), machineRevision: z.number() }),
+  );
+
 const ROOT = ['admin', 'servers'] as const;
 export const serverKeys = {
   all: ROOT,
@@ -137,7 +186,40 @@ export const serverKeys = {
   tree: (slug: string) => [...ROOT, 'tree', slug] as const,
   ops: (slug: string) => [...ROOT, 'ops', slug] as const,
   reservations: (slug: string) => [...ROOT, 'reservations', slug] as const,
+  setup: (slug: string) => [...ROOT, 'setup', slug] as const,
+  intents: (slug: string) => [...ROOT, 'intents', slug] as const,
+  review: (slug: string, id: string) => [...ROOT, 'review', slug, id] as const,
 };
+
+/** Polled faster while a setup run holds its lease. */
+export const setupQuery = (slug: () => string | null) =>
+  createQuery(() => ({
+    queryKey: serverKeys.setup(slug() ?? ''),
+    queryFn: () => fetchSetup(slug()!),
+    enabled: !!slug(),
+    refetchInterval: (q: { state: { data?: { running: boolean } } }) =>
+      q.state.data?.running ? 3_000 : 60_000,
+  }));
+
+/** Polled faster while any node is between enrollment and live. */
+export const intentsQuery = (slug: () => string | null) =>
+  createQuery(() => ({
+    queryKey: serverKeys.intents(slug() ?? ''),
+    queryFn: () => fetchIntents(slug()!),
+    enabled: !!slug(),
+    refetchInterval: (q: { state: { data?: { intents: { stage: string; state: string }[] } } }) =>
+      q.state.data?.intents.some((i) => i.stage !== 'live' || i.state === 'pending')
+        ? 5_000
+        : 60_000,
+  }));
+
+export const reviewQuery = (slug: () => string | null, id: () => string | null) =>
+  createQuery(() => ({
+    queryKey: serverKeys.review(slug() ?? '', id() ?? ''),
+    queryFn: () => fetchReview(slug()!, id()!),
+    enabled: !!slug() && !!id(),
+    staleTime: 5_000,
+  }));
 
 export const serverSummaryQuery = () =>
   createQuery(() => ({

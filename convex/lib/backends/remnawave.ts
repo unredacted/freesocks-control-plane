@@ -42,6 +42,9 @@ import type {
   PanelObservedInbound,
   PanelObservedProfile,
   PanelObservedSquad,
+  PanelInboundTestParams,
+  PanelSubscriptionTemplate,
+  PanelSubscriptionTemplateRef,
   ProfilePatchPreview,
 } from './types';
 import { farFutureExpiryIso, isFarFutureExpiry } from './types';
@@ -1996,6 +1999,155 @@ export async function remnawaveApplyProfilePatch(
 
 /** How long a profile PATCH may take before it is given up on (never below the instance's own). */
 const PROFILE_WRITE_TIMEOUT_MS = 30_000;
+
+// --- Panel setup (bootstrap contract v2) -------------------------------------------------------
+//
+// What "Set up this panel" and the node role's bootstrap need beyond the
+// management writes: creating the profile, the node secret, the subscription
+// templates, and the live parameters of one REALITY inbound for an isolated
+// test link. Every call is `sensitive`: key material or a credential travels
+// on at least one leg, and none of it may reach an error message.
+
+export async function remnawaveCreateProfile(
+  cfg: RemnawaveConfig,
+  spec: { name: string; config: unknown },
+): Promise<{ profileUuid: string }> {
+  const made = await call(cfg, {
+    method: 'POST',
+    path: '/api/config-profiles',
+    body: { name: spec.name, config: spec.config },
+    schema: CreatedUuid,
+    sensitive: true,
+    timeoutMs: Math.max(cfg.timeoutMs ?? 8000, PROFILE_WRITE_TIMEOUT_MS),
+  });
+  return { profileUuid: made.uuid };
+}
+
+/** `GET /api/keygen` answers `{ pubKey }`: the field name is legacy, the value is the node `SECRET_KEY`. */
+const KeygenResponse = z.object({ pubKey: z.string().min(1) });
+
+export async function remnawaveNodeSecret(cfg: RemnawaveConfig): Promise<string> {
+  const out = await call(cfg, {
+    method: 'GET',
+    path: '/api/keygen',
+    schema: KeygenResponse,
+    sensitive: true,
+  });
+  return out.pubKey;
+}
+
+const SubscriptionTemplateRef = z.object({ uuid: z.string(), templateType: z.string() });
+const SubscriptionTemplatesList = z.union([
+  z.array(SubscriptionTemplateRef),
+  z.object({ templates: z.array(SubscriptionTemplateRef) }),
+]);
+const SubscriptionTemplateFull = SubscriptionTemplateRef.extend({
+  templateJson: z.unknown().nullish(),
+  encodedTemplateYaml: z.string().nullish(),
+});
+
+export async function remnawaveListSubscriptionTemplates(
+  cfg: RemnawaveConfig,
+): Promise<PanelSubscriptionTemplateRef[]> {
+  const rows = await call(cfg, {
+    method: 'GET',
+    path: '/api/subscription-templates',
+    schema: SubscriptionTemplatesList,
+    sensitive: true,
+  });
+  return (Array.isArray(rows) ? rows : rows.templates).map((r) => ({
+    uuid: r.uuid,
+    templateType: r.templateType,
+  }));
+}
+
+export async function remnawaveReadSubscriptionTemplate(
+  cfg: RemnawaveConfig,
+  uuid: string,
+): Promise<PanelSubscriptionTemplate> {
+  const row = await call(cfg, {
+    method: 'GET',
+    path: `/api/subscription-templates/${encodeURIComponent(uuid)}`,
+    schema: SubscriptionTemplateFull,
+    sensitive: true,
+  });
+  return {
+    uuid: row.uuid,
+    templateType: row.templateType,
+    templateJson: row.templateJson ?? null,
+    encodedTemplateYaml: row.encodedTemplateYaml ?? null,
+  };
+}
+
+export async function remnawaveUpdateSubscriptionTemplate(
+  cfg: RemnawaveConfig,
+  uuid: string,
+  body: { templateJson?: unknown; encodedTemplateYaml?: string },
+): Promise<void> {
+  await call(cfg, {
+    method: 'PATCH',
+    path: '/api/subscription-templates',
+    body: { uuid, ...body },
+    schema: z.unknown(),
+    sensitive: true,
+  });
+}
+
+/**
+ * The live parameters an isolated REALITY test link is built from. The raw
+ * inbound (private key included) exists only inside this function; what
+ * leaves is the derived public key, ONE short id, names, target and digests.
+ */
+export async function remnawaveReadInboundForTest(
+  cfg: RemnawaveConfig,
+  profileUuid: string,
+  tag: string,
+  digestKey: string,
+): Promise<PanelInboundTestParams | null> {
+  const full = await readFullProfile(cfg, profileUuid);
+  const config = obj(full.config);
+  const raw = (Array.isArray(config?.inbounds) ? config.inbounds : []).find(
+    (i) => str(obj(i)?.tag) === tag,
+  );
+  const inboundUuid = (full.inbounds ?? []).find((i) => i.tag === tag)?.uuid;
+  if (!raw || !inboundUuid) return null;
+  const projected = projectXrayInbound(raw, {
+    configProfileUuid: full.uuid,
+    configProfileInboundUuid: inboundUuid,
+    active: true,
+  });
+  if (!projected || projected.security !== 'reality') return null;
+  const rs = obj(obj(obj(raw)?.streamSettings)?.realitySettings) ?? {};
+  const auth = await realityAuthDigest(rs, digestKey);
+  if (!auth.publicKey) return null;
+  const shortIds = (Array.isArray(rs.shortIds) ? rs.shortIds : []).filter(
+    (s): s is string => typeof s === 'string',
+  );
+  return {
+    tag,
+    inboundUuid,
+    port: projected.port,
+    publicKey: auth.publicKey,
+    shortId: shortIds[0] ?? '',
+    serverNames: projected.reality?.serverNames ?? [],
+    target: projected.reality?.target ?? null,
+    authDigest: auth.digest,
+    changeToken: await changeToken(full.config, digestKey),
+  };
+}
+
+export async function remnawaveUserCredential(
+  cfg: RemnawaveConfig,
+  backendUserId: string,
+): Promise<{ protocolUuid: string | null }> {
+  const user = await call(cfg, {
+    method: 'GET',
+    path: `/api/users/${backendUserId}`,
+    schema: RemnawaveUser,
+    sensitive: true,
+  });
+  return { protocolUuid: user.vlessUuid ?? null };
+}
 
 export async function remnawaveReadProfile(
   cfg: RemnawaveConfig,

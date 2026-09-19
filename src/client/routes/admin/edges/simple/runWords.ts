@@ -102,6 +102,8 @@ export function needButtons(code: string): NeedButtons {
       return { primary: B('Turn on for that family', 'family') };
     case 'quarantined':
       return { primary: B('Review', 'quarantine') };
+    case 'node_not_approved':
+      return { primary: B('Check again', 'retry'), hint: 'Approve the node in Servers first.' };
     case 'coverage_incomplete':
     case 'rehearsal_failed':
     default:

@@ -394,7 +394,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
         backendServerId: serverId,
         nodeName: 'node-nine',
       }),
-    ).toEqual({ required: false, bindingVersion: null, relayId: null, relaySlug: null });
+    ).toMatchObject({ required: false, bindingVersion: null, relayId: null, relaySlug: null });
   });
 
   test('the cache token follows the delivery binding policy version', async () => {
@@ -410,7 +410,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
         backendServerId: serverId,
         nodeName: NODE,
       }),
-    ).toEqual({ required: true, bindingVersion: 1, relayId, relaySlug: NODE });
+    ).toMatchObject({ required: true, bindingVersion: 1, relayId, relaySlug: NODE });
     // The binding is re-claimed (policy version bump): the token changes and a
     // fresh cache entry is no longer valid even inside its TTL.
     await t.run(async (ctx) => {

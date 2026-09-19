@@ -10,11 +10,12 @@
   import { Button } from '@client/components/ui/button';
   import { Skeleton } from '@client/components/ui/skeleton';
   import Link from '@client/components/Link.svelte';
-  import { serverSummaryQuery, serverTreeQuery } from '@client/lib/serversApi';
+  import { intentsQuery, serverSummaryQuery, serverTreeQuery } from '@client/lib/serversApi';
   import { router } from '@client/stores/router.svelte';
   import type { PanelHostView, PanelInboundView } from '../../../../shared/contracts/servers';
   import SectionHeader from '../edges/components/SectionHeader.svelte';
   import StatusDot from '../edges/simple/StatusDot.svelte';
+  import ActivationSection from './components/ActivationSection.svelte';
   import HostDialog from './components/HostDialog.svelte';
   import NamesDialog from './components/NamesDialog.svelte';
   import NodeActions from './components/NodeActions.svelte';
@@ -33,8 +34,14 @@
   const summary = serverSummaryQuery();
   let slug = $derived(pickInstance(router.search, summary.data?.instances ?? []));
   const tree = serverTreeQuery(() => slug);
+  const intents = intentsQuery(() => slug);
   let instance = $derived(summary.data?.instances.find((i) => i.slug === slug) ?? null);
   let node = $derived(tree.data?.nodes.find((n) => n.nodeUuid === uuid) ?? null);
+  // The enrolled node behind this panel row, when the node role enrolled it.
+  let intent = $derived(
+    intents.data?.intents.find((i) => i.nodeUuid === uuid || (node && i.name === node.name)) ??
+      null,
+  );
   let manageOn = $derived(summary.data?.config['manage.enabled'] ?? false);
   let canWrite = $derived(manageOn && !!instance?.writable && !!instance?.handoffCurrent);
   let back = $derived({
@@ -96,6 +103,10 @@
         </ul>
       {/if}
     </div>
+
+    {#if intent && slug}
+      <ActivationSection {slug} {intent} />
+    {/if}
 
     <section aria-labelledby="inbounds">
       <h2 id="inbounds" class="mb-3 text-base font-semibold">Inbounds</h2>

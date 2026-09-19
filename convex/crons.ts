@@ -187,6 +187,8 @@ crons.interval('sni-qualify', { minutes: 5 }, internal.sniQualifyOps.run, {});
 crons.interval('sni-report-sweep', { hours: 24 }, internal.sniReports.sweep, {});
 
 crons.interval('panel-reconcile', { minutes: 5 }, internal.panelWrites.reconcile, {});
+// Resume bootstrap workflows an interrupted attempt left pending (docs/servers.md "Node lifecycle").
+crons.interval('panel-bootstrap-sweep', { minutes: 5 }, internal.panelIntents.sweep, {});
 
 crons.interval('edge-reconcile', { minutes: 5 }, internal.edgeReconcile.run, {});
 // Reachability probes of FCP's own edge addresses from the configured countries

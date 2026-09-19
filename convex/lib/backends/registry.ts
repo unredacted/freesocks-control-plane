@@ -71,6 +71,13 @@ import {
   remnawaveReadProfile,
   remnawaveReadSquads,
   remnawaveReadNodeStatus,
+  remnawaveCreateProfile,
+  remnawaveNodeSecret,
+  remnawaveListSubscriptionTemplates,
+  remnawaveReadSubscriptionTemplate,
+  remnawaveUpdateSubscriptionTemplate,
+  remnawaveReadInboundForTest,
+  remnawaveUserCredential,
   remnawaveFindUserByUsername,
 } from './remnawave';
 import {
@@ -229,6 +236,13 @@ const remnawaveProvider: BackendProvider<RemnawaveServerConfig> = {
     readHosts: remnawaveReadHosts,
     readSquads: remnawaveReadSquads,
     readNodeStatus: remnawaveReadNodeStatus,
+    createProfile: remnawaveCreateProfile,
+    nodeSecret: remnawaveNodeSecret,
+    listSubscriptionTemplates: remnawaveListSubscriptionTemplates,
+    readSubscriptionTemplate: remnawaveReadSubscriptionTemplate,
+    updateSubscriptionTemplate: remnawaveUpdateSubscriptionTemplate,
+    readInboundForTest: remnawaveReadInboundForTest,
+    userCredential: remnawaveUserCredential,
   },
   findUserByUsername: (c, username) => remnawaveFindUserByUsername(c, username),
   fetchContent: (c, shortId, ua, subUrl, hwid) =>
