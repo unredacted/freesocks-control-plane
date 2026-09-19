@@ -775,6 +775,12 @@ export const INBOUND_UNSUPPORTED_COPY: Record<InboundUnsupportedCode, CodeCopy> 
     explain: 'The inbound is in the config profile but the node does not have it active.',
     fix: 'Enable it on the node in the panel if members should use it.',
   },
+  loopback: {
+    label: 'Reached only from inside the node',
+    explain:
+      'The inbound listens on a loopback address, so a provider address cannot dial it directly. Something on the node (usually a TLS terminator) accepts outside connections and forwards to it.',
+    fix: 'Register the listener with the port and transport the terminator exposes (through the node role or the relay form), or make the inbound listen publicly with TLS of its own.',
+  },
   tag: {
     label: 'Tag cannot be bound',
     explain:

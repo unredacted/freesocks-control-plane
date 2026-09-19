@@ -399,6 +399,7 @@ export type SetupAccountReason = (typeof SETUP_ACCOUNT_REASONS)[number];
  */
 export const INBOUND_UNSUPPORTED_CODES = [
   'inactive',
+  'loopback',
   'tag',
   'protocol',
   'transport',
