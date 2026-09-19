@@ -13,7 +13,6 @@
  * claims; `protocols.test.ts` pins the table against the catalogue.
  */
 import {
-  LISTENER_COMBOS,
   comboKey,
   listenerCombo,
   type ListenerCombo,
