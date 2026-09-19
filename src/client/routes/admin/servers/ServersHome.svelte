@@ -3,7 +3,9 @@
    * Admin -> Servers (`/admin/servers[?instance=<slug>]`): what already exists
    * on one panel, node by node. For each node: the config profile it runs, the
    * inbounds it serves, the Hosts members are given for each inbound and the
-   * squads that grant it. READ-ONLY: nothing on this page changes a panel.
+   * squads that grant it. With "Allow changes" on (and the node role's handoff
+   * in place) the same page edits them; every change goes through the
+   * operations ledger and answers the op it became (docs/servers.md).
    *
    * Everything shown is non-secret by construction (docs/servers.md): server
    * names, targets and the PUBLIC key of a REALITY inbound, never the private
@@ -28,7 +30,14 @@
     serverTreeQuery,
   } from '@client/lib/serversApi';
   import { router } from '@client/stores/router.svelte';
+  import type { PanelHostView, PanelInboundView } from '../../../../shared/contracts/servers';
   import SectionHeader from '../edges/components/SectionHeader.svelte';
+  import HostDialog from './components/HostDialog.svelte';
+  import ManageCard from './components/ManageCard.svelte';
+  import NamesDialog from './components/NamesDialog.svelte';
+  import NodeActions from './components/NodeActions.svelte';
+  import OpsList from './components/OpsList.svelte';
+  import SquadsCard from './components/SquadsCard.svelte';
   import { pickInstance, serversPaths } from './lib/routes';
   import {
     inboundSummary,
@@ -47,7 +56,19 @@
 
   let instance = $derived(summary.data?.instances.find((i) => i.slug === slug) ?? null);
   let observeOn = $derived(summary.data?.config['manage.observe'] ?? false);
+  let manageOn = $derived(summary.data?.config['manage.enabled'] ?? false);
+  // The server decides; this only hides what it would refuse anyway.
+  let canWrite = $derived(manageOn && !!instance?.writable && !!instance?.handoffCurrent);
   let refreshing = $state(false);
+
+  let hostOpen = $state(false);
+  let hostFor = $state<{ inbound: PanelInboundView; host: PanelHostView | null } | null>(null);
+  let namesOpen = $state(false);
+  let namesFor = $state<{ profileUuid: string; inbound: PanelInboundView } | null>(null);
+  const editHost = (inbound: PanelInboundView, host: PanelHostView | null) => {
+    hostFor = { inbound, host };
+    hostOpen = true;
+  };
   let saving = $state(false);
   let open = $state<Record<string, boolean>>({});
 
@@ -90,7 +111,7 @@
 
 <SectionHeader
   title="Servers"
-  description="What is on a panel right now: its nodes, what each one serves, and what members are given. Nothing here changes a panel."
+  description="What is on a panel right now: its nodes, what each one serves, and what members are given."
 >
   {#snippet actions()}
     <Button
@@ -205,6 +226,9 @@
                   <dd>{node.profile?.name ?? 'None'}</dd>
                 </div>
               </dl>
+              {#if canWrite && slug}
+                <NodeActions {slug} {node} />
+              {/if}
 
               {#each node.inbounds as inbound (inbound.inboundUuid)}
                 {@const names = serverNamesLabel(inbound)}
@@ -226,6 +250,19 @@
                         </p>
                       {/if}
                     </details>
+                    {#if canWrite && node.profile}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        class="mt-2"
+                        onclick={() => {
+                          namesFor = { profileUuid: node.profile!.profileUuid, inbound };
+                          namesOpen = true;
+                        }}
+                      >
+                        Edit names and target
+                      </Button>
+                    {/if}
                   {/if}
 
                   <div class="mt-3 grid gap-3 sm:grid-cols-2">
@@ -239,13 +276,33 @@
                         <ul>
                           {#each inbound.hosts as host (host.hostUuid)}
                             <li class={host.isDisabled ? 'text-muted-foreground line-through' : ''}>
-                              <span class="break-all">{host.remark}</span>
+                              {#if canWrite}
+                                <button
+                                  type="button"
+                                  class="hover:text-foreground focus-visible:ring-ring/50 rounded text-start underline-offset-2 outline-none hover:underline focus-visible:ring-3"
+                                  onclick={() => editHost(inbound, host)}
+                                >
+                                  <span class="break-all">{host.remark}</span>
+                                </button>
+                              {:else}
+                                <span class="break-all">{host.remark}</span>
+                              {/if}
                               <span class="text-muted-foreground break-all">
                                 {host.address}:{host.port}{host.sni ? ` · ${host.sni}` : ''}
                               </span>
                             </li>
                           {/each}
                         </ul>
+                      {/if}
+                      {#if canWrite}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          class="mt-1 -ms-2"
+                          onclick={() => editHost(inbound, null)}
+                        >
+                          Add an address
+                        </Button>
                       {/if}
                     </div>
                     <div>
@@ -264,6 +321,17 @@
         </li>
       {/each}
     </ul>
+
+    {#if canWrite && slug}
+      <SquadsCard {slug} tree={t} />
+    {/if}
+  {/if}
+
+  {#if slug && instance?.writable}
+    {#if manageOn}
+      <OpsList {slug} />
+    {/if}
+    <ManageCard {slug} {manageOn} handoffCurrent={instance.handoffCurrent} />
   {/if}
 
   <Card class="mt-6">
@@ -287,4 +355,22 @@
       </div>
     </CardContent>
   </Card>
+{/if}
+
+{#if slug && hostFor}
+  <HostDialog
+    bind:open={hostOpen}
+    {slug}
+    inboundUuid={hostFor.inbound.inboundUuid}
+    inboundTag={hostFor.inbound.tag}
+    host={hostFor.host}
+  />
+{/if}
+{#if slug && namesFor}
+  <NamesDialog
+    bind:open={namesOpen}
+    {slug}
+    profileUuid={namesFor.profileUuid}
+    inbound={namesFor.inbound}
+  />
 {/if}
