@@ -84,6 +84,35 @@ const rctx = (
 const key = (i: number) => ((i * 2654435761) >>> 0).toString(16).padStart(8, '0') + 'cd'.repeat(28);
 const NOW = 1_700_000_000_000;
 
+describe('applyEdgeRender: three server names for one member', () => {
+  const pool = ['n0', 'n1', 'n2', 'n3', 'n4', 'n5'].map((n) => ({
+    sni: `${n}.example`,
+    status: 'active' as const,
+  }));
+
+  test('an hrw1 listener renders three entries with three distinct names; a legacy one renders one', () => {
+    const hrw = { ...edgeA, serverNames: pool, sniPick: 'hrw1' as const };
+    for (let i = 0; i < 100; i++) {
+      const out = applyEdgeRender(rctx([hrw]), realityLink, key(i), { now: NOW });
+      const lines = out.body.split('\n').filter((l) => l.startsWith('vless://'));
+      const snis = lines.map((l) =>
+        new URL(l.replace('vless://', 'http://')).searchParams.get('sni'),
+      );
+      expect(snis).toHaveLength(3);
+      expect(new Set(snis).size).toBe(3);
+      expect(out.emitted).toBe(3);
+      // Same endpoint and credentials on every line.
+      for (const l of lines) expect(l).toContain(`${UUID}@203.0.113.10:443?`);
+      // The persisted snapshot names edges only: never which names a member holds.
+      expect(JSON.stringify(out.snapshot)).not.toContain('.example');
+    }
+    const legacy = applyEdgeRender(rctx([{ ...edgeA, serverNames: pool }]), realityLink, key(1), {
+      now: NOW,
+    });
+    expect(legacy.emitted).toBe(1);
+  });
+});
+
 describe('applyEdgeRender: listener-aware assignment', () => {
   test('a body carrying only the REALITY entry makes the shadowsocks edge ineligible: every subscriber lands on the REALITY edge', () => {
     for (let i = 0; i < 300; i++) {

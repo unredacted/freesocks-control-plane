@@ -381,6 +381,118 @@ describe('pickSni hrw1 (rendezvous)', () => {
   });
 });
 
+describe('several server names per endpoint (hrw1 only)', () => {
+  const names = (n: number) => snis(...Array.from({ length: n }, (_, i) => `n${i}.example`));
+  const three = { ...opts, namesPerEndpoint: 3, backupNames: 1 };
+  const held = (a: ReturnType<typeof assignEndpoints>['primary']) =>
+    a ? [a.sni!, ...(a.alternates ?? []).map((x) => x.sni)] : [];
+
+  test('the primary carries the top three of the ranking; the backup one name the primary lacks', () => {
+    const list = names(12);
+    const e0 = edge({ edgeId: 'e0', poolIndex: 0, serverNames: list, sniPick: 'hrw1' });
+    const e1 = edge({
+      edgeId: 'e1',
+      poolIndex: 1,
+      provider: 'scaleway',
+      serverNames: list,
+      sniPick: 'hrw1',
+    });
+    for (let i = 0; i < 500; i++) {
+      const a = assignEndpoints(sha(i), [e0, e1], three);
+      const p = held(a.primary);
+      expect(p).toEqual(rankSniHrw(sha(i), a.primary!.edge.edgeId, list).slice(0, 3));
+      expect(new Set(p).size).toBe(3);
+      const b = held(a.backup);
+      expect(b).toHaveLength(1);
+      expect(p).not.toContain(b[0]);
+    }
+  });
+
+  test("adding a name changes at most one of a member's three, and only to the new name", () => {
+    const before = names(20);
+    const after = [...before, ...snis('fresh.example')];
+    let touched = 0;
+    const N = 5000;
+    for (let i = 0; i < N; i++) {
+      const a = held(
+        assignEndpoints(
+          sha(i),
+          [edge({ edgeId: 'e0', poolIndex: 0, serverNames: before, sniPick: 'hrw1' })],
+          three,
+        ).primary,
+      );
+      const b = held(
+        assignEndpoints(
+          sha(i),
+          [edge({ edgeId: 'e0', poolIndex: 0, serverNames: after, sniPick: 'hrw1' })],
+          three,
+        ).primary,
+      );
+      const gained = b.filter((n) => !a.includes(n));
+      expect(gained.length).toBeLessThanOrEqual(1);
+      if (gained.length === 1) {
+        touched++;
+        expect(gained[0]).toBe('fresh.example');
+      }
+    }
+    // About 3/(N+1) of members, never most of them.
+    expect(touched / N).toBeLessThan(0.25);
+  });
+
+  test("retiring one of a member's names replaces only that slot", () => {
+    const list = names(10);
+    const e = (l: PublishedEdge['serverNames']) =>
+      edge({ edgeId: 'e0', poolIndex: 0, serverNames: l, sniPick: 'hrw1' });
+    for (let i = 0; i < 300; i++) {
+      const a = held(assignEndpoints(sha(i), [e(list)], three).primary);
+      const gone = a[1];
+      const retired = list.map((s) =>
+        s.sni === gone
+          ? { ...s, status: 'retired' as const, retiredAt: NOW, drainUntil: NOW + 1 }
+          : s,
+      );
+      const b = held(assignEndpoints(sha(i), [e(retired)], three).primary);
+      expect(b).not.toContain(gone);
+      expect(b.filter((n) => a.includes(n))).toEqual([a[0], a[2]]);
+    }
+  });
+
+  test('fewer names than asked: the member gets what exists; a shared list still fills the backup', () => {
+    const two = names(2);
+    const e0 = edge({ edgeId: 'e0', poolIndex: 0, serverNames: two, sniPick: 'hrw1' });
+    const e1 = edge({ edgeId: 'e1', poolIndex: 1, serverNames: two, sniPick: 'hrw1' });
+    const a = assignEndpoints(sha(3), [e0, e1], three);
+    expect(held(a.primary).sort()).toEqual(['n0.example', 'n1.example']);
+    // Every name is taken by the primary: the backup still gets one rather than none.
+    expect(held(a.backup)).toHaveLength(1);
+  });
+
+  test('a legacy-PRF listener and an L7 front keep exactly one name', () => {
+    const list = names(12);
+    const legacy = edge({ edgeId: 'e0', poolIndex: 0, serverNames: list });
+    const a = assignEndpoints(sha(1), [legacy], three);
+    expect(a.primary?.alternates).toBeUndefined();
+    expect(a.primary?.sni).toBe(pickSni(sha(1), 'e0', list));
+    const l7 = edge({
+      edgeId: 'e7',
+      poolIndex: 0,
+      layer: 'l7',
+      proto: WS,
+      addresses: { hostname: 'front.example' },
+      serverNames: list,
+      sniPick: 'hrw1',
+    });
+    const b = assignEndpoints(sha(1), [l7], three);
+    expect(b.primary?.sni).toBe('front.example');
+    expect(b.primary?.alternates).toBeUndefined();
+  });
+
+  test('the default options hand out one name, as before', () => {
+    const e0 = edge({ edgeId: 'e0', poolIndex: 0, serverNames: names(12), sniPick: 'hrw1' });
+    expect(assignEndpoints(sha(1), [e0], opts).primary?.alternates).toBeUndefined();
+  });
+});
+
 // An L7 edge is a hostname fronted by a CDN: the hostname is the address, the
 // SNI and the Host header at once, so the listener's (origin-facing) server
 // names play no part in it.

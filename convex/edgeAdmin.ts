@@ -494,6 +494,8 @@ export const endpoints = internalQuery({
       canEmitV6: RENDER_CLIENT_FAMILIES.every(
         (f) => effectiveRule(cfg.render, cfg.render.clients[f]).ipv6Mode !== 'off',
       ),
+      namesPerEndpoint: cfg.render.namesPerEndpoint,
+      backupNames: cfg.render.backupNames,
     });
     return {
       relaySlug: origin.slug,

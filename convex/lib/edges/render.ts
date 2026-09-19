@@ -34,6 +34,9 @@ export interface EffectiveRule extends RenderRuleInput {
   primaryLabel: string;
   backupLabel: string;
   ipv6Label: string;
+  /** Server names per endpoint for a listener on the `hrw1` PRF (1 = one name, as ever). */
+  namesPerEndpoint: number;
+  backupNames: number;
 }
 
 /** Merge the global render config with one family's rule ('' / inherit = global). */
@@ -50,6 +53,8 @@ export function effectiveRule(cfg: EdgeConfig['render'], rule: ClientRenderRule)
     primaryLabel: rule.primaryLabel || cfg.primaryLabel,
     backupLabel: rule.backupLabel || cfg.backupLabel,
     ipv6Label: cfg.ipv6Label,
+    namesPerEndpoint: cfg.namesPerEndpoint,
+    backupNames: cfg.backupNames,
   };
 }
 
@@ -65,6 +70,8 @@ export function ruleForDelivery(rule: EffectiveRule, style: DeliveryStyle): Effe
   return {
     ...rule,
     includeBackup: false,
+    namesPerEndpoint: 1,
+    backupNames: 1,
     maxEntries: 1,
     autoGroup: false,
     dropTemplateEntries: true,
@@ -146,8 +153,30 @@ export function renderEntriesChecked(
         });
     }
   };
+  // A further server name is one more IPv4 entry for the same endpoint (the
+  // IPv6 sibling belongs to the first name only: entries multiply otherwise).
+  const pushAlternates = (ep: AssignedEndpoint | null) => {
+    if (!ep?.alternates || !ep.edge.addresses.v4 || leaks(ep.edge.addresses.v4)) return;
+    const label = ep.role === 'primary' ? rule.primaryLabel : rule.backupLabel;
+    ep.alternates.forEach((alt, i) =>
+      out.push({
+        role: ep.role,
+        edgeId: ep.edge.edgeId,
+        listenerKey: ep.edge.listenerKey,
+        port: ep.edge.edgePort,
+        sni: alt.sni,
+        hostHeader: alt.hostHeader,
+        label: `${label} ${i + 2}`,
+        address: ep.edge.addresses.v4!,
+        family: 'v4',
+        variant: i + 1,
+      }),
+    );
+  };
   push(assigned.primary);
   if (rule.includeBackup) push(assigned.backup);
+  pushAlternates(assigned.primary);
+  if (rule.includeBackup) pushAlternates(assigned.backup);
   return { entries: out, leaked };
 }
 

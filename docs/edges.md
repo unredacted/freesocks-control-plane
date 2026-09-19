@@ -366,7 +366,17 @@ mirror refresh) fetches a body, it pins the node as before, then, in this order:
    whose name list is meant to grow should be on `hrw1`. Switching is an explicit operator
    action (`POST listeners/{id}/sni-pick {"version": "hrw1" | null}`): every member of that
    listener gets a different one of the names the node already accepts at their next refresh,
-   so it is never a side effect;
+   so it is never a side effect. On `hrw1` a member holds **several names per endpoint**
+   (`render.namesPerEndpoint`, default 3; `render.backupNames`, default 1): the top of their
+   ranking, one more entry per name with the same address and credentials, labelled
+   `<label> 2`, `<label> 3` and placed in the automatic group, so a client fails over by
+   itself when one name is blocked. The backup's names avoid the primary's while the list
+   allows it. Adding a name changes at most one of a member's names, and only to the new
+   one; retiring one replaces only that slot. A family's `maxEntries` cuts the further names
+   before it cuts a role, the IPv6 sibling belongs to the first name only, a single-key
+   delivery stays one entry, and a listener on the default PRF or an L7 front keeps exactly
+   one name. The snapshot persisted on the subscription names edges only, never which names
+   a member holds;
 4. rewrites: address, port, SNI, HTTP Host header (and Clash `servername`); never the
    credentials or routing (`pbk`, `sid`, `flow`, `path`, `serviceName`, SIP002 userinfo,
    `hy2`/`tuic` auth). Per **client family** (`render.clients.<family>`): auto-capable

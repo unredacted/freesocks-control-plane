@@ -40,6 +40,12 @@ export interface RenderEndpoint {
    * transport parameters are left alone.
    */
   hostHeader: string | null;
+  /**
+   * 0 / absent = the endpoint's first server name; 1, 2, ... = a further name
+   * for the same endpoint (another entry, another SNI). Variants are the first
+   * thing `maxEntries` drops: a rule that caps entries keeps primary + backup.
+   */
+  variant?: number;
 }
 
 export interface RenderRuleInput {
@@ -87,7 +93,10 @@ export function orderEndpoints(
   const rank = (e: RenderEndpoint) => {
     const roleRank =
       rule.order === 'backup-first' ? (e.role === 'backup' ? 0 : 1) : e.role === 'primary' ? 0 : 1;
-    return roleRank * 2 + (e.family === 'v6' ? 1 : 0);
+    const variant = e.variant ?? 0;
+    // Every first-name entry (both roles, both families) outranks every
+    // further-name entry, so a cap cuts the extra names first.
+    return (variant > 0 ? 1000 : 0) + roleRank * 100 + variant * 2 + (e.family === 'v6' ? 1 : 0);
   };
   const sorted = [...endpoints].sort((a, b) => rank(a) - rank(b));
   return rule.maxEntries > 0 ? sorted.slice(0, rule.maxEntries) : sorted;

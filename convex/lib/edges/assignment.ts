@@ -88,6 +88,14 @@ export interface AssignedEndpoint {
    * can never disagree.
    */
   hostHeader: string | null;
+  /**
+   * Further server names for the SAME endpoint, best first after `sni`: the
+   * renderer emits one more entry per name so a member whose first name is
+   * blocked still holds working ones. Only ever filled for an L4 listener on
+   * the `hrw1` PRF (a ranking is what makes "the next best name" stable);
+   * absent everywhere else.
+   */
+  alternates?: { sni: string; hostHeader: string | null }[];
 }
 
 export interface AssignableOptions {
@@ -137,6 +145,23 @@ function sniFor(
 }
 
 /**
+ * The backup's first name. On `hrw1` it is the best-ranked name the primary
+ * does not already carry (falling back to the plain pick when every name is
+ * taken); everywhere else it is exactly `sniFor`, so legacy output is unchanged.
+ */
+function backupSniFor(
+  subscriberKey: string,
+  edge: PublishedEdge,
+  taken: ReadonlySet<string>,
+): { ok: true; sni: string | null } | { ok: false } {
+  const plain = sniFor(subscriberKey, edge);
+  if (!plain.ok || plain.sni === null) return plain;
+  if (edge.sniPick !== 'hrw1' || edgeHostname(edge) || taken.size === 0) return plain;
+  const fresh = rankSniHrw(subscriberKey, edge.edgeId, edge.serverNames).find((n) => !taken.has(n));
+  return { ok: true, sni: fresh ?? plain.sni };
+}
+
+/**
  * The Host header for (edge, selected name), from the shared tuple. Assignment
  * is address-family agnostic (the render expands one endpoint into a v4 and a
  * v6 entry), so an L4 edge with only a v6 literal feeds that literal in: the
@@ -163,8 +188,39 @@ function endpointFor(
   role: 'primary' | 'backup',
   edge: PublishedEdge,
   sni: string | null,
+  alternateNames: readonly string[] = [],
 ): AssignedEndpoint {
-  return { role, edge, sni, hostHeader: hostHeaderFor(edge, sni) };
+  const alternates = alternateNames.map((n) => ({ sni: n, hostHeader: hostHeaderFor(edge, n) }));
+  return {
+    role,
+    edge,
+    sni,
+    hostHeader: hostHeaderFor(edge, sni),
+    ...(alternates.length > 0 ? { alternates } : {}),
+  };
+}
+
+/**
+ * The names one endpoint carries: `[first, ...alternates]`, at most `want`.
+ * More than one only for an L4, name-presenting listener on `hrw1`; `avoid`
+ * (the primary's names) is honoured for the backup while enough names remain,
+ * so a member's entries spread over as many distinct names as the list allows.
+ */
+function namesFor(
+  subscriberKey: string,
+  edge: PublishedEdge,
+  first: string | null,
+  want: number,
+  avoid: ReadonlySet<string> = new Set(),
+): string[] {
+  if (first === null || want <= 1) return [];
+  if (edge.sniPick !== 'hrw1' || edgeHostname(edge) || !protocolUsesSni(edge.proto)) return [];
+  const ranked = rankSniHrw(subscriberKey, edge.edgeId, edge.serverNames).filter(
+    (n) => n !== first,
+  );
+  const fresh = ranked.filter((n) => !avoid.has(n));
+  const pool = fresh.length >= want - 1 ? fresh : [...fresh, ...ranked.filter((n) => avoid.has(n))];
+  return pool.slice(0, want - 1);
 }
 
 export interface Assignment {
@@ -239,6 +295,10 @@ export interface AssignOptions {
   includeBackup: boolean;
   /** Whether the render can emit IPv6 (default true). An IPv6-only edge is skipped otherwise. */
   canEmitV6?: boolean;
+  /** Server names on the primary endpoint (default 1). See `AssignedEndpoint.alternates`. */
+  namesPerEndpoint?: number;
+  /** Server names on the backup endpoint (default 1). */
+  backupNames?: number;
   /**
    * @deprecated No longer consulted: a retired server name is never selected,
    * whoever held it. Kept so existing callers type-check; remove at will.
@@ -275,7 +335,13 @@ export function assignEndpoints(
   const primaryEdge = pool[pIdx];
   const primarySni = sniFor(subscriberKey, primaryEdge);
   if (!primarySni.ok) return { primary: null, backup: null };
-  const primary = endpointFor('primary', primaryEdge, primarySni.sni);
+  const primaryAlts = namesFor(
+    subscriberKey,
+    primaryEdge,
+    primarySni.sni,
+    opts.namesPerEndpoint ?? 1,
+  );
+  const primary = endpointFor('primary', primaryEdge, primarySni.sni, primaryAlts);
   if (!opts.includeBackup) return { primary, backup: null };
   // Backup: the next assignable edge after the primary in pool order,
   // preferring a different provider.
@@ -289,9 +355,17 @@ export function assignEndpoints(
     (opts.preferDistinctProviders
       ? ordered.find((e) => e.provider !== primaryEdge.provider)
       : undefined) ?? ordered[0];
-  const backupSni = sniFor(subscriberKey, backupEdge);
-  return {
-    primary,
-    backup: backupSni.ok ? endpointFor('backup', backupEdge, backupSni.sni) : null,
-  };
+  // The backup's names avoid the primary's where the list allows it: two
+  // edges sharing a blocked name would fail together.
+  const taken = new Set([primarySni.sni, ...primaryAlts].filter((n): n is string => n !== null));
+  const backupSni = backupSniFor(subscriberKey, backupEdge, taken);
+  if (!backupSni.ok) return { primary, backup: null };
+  const backupAlts = namesFor(
+    subscriberKey,
+    backupEdge,
+    backupSni.sni,
+    opts.backupNames ?? 1,
+    taken,
+  );
+  return { primary, backup: endpointFor('backup', backupEdge, backupSni.sni, backupAlts) };
 }
