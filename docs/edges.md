@@ -998,6 +998,28 @@ routes additionally accept **`admin:edges:register`** (see the node role contrac
 
 ## Node role contract (Ansible)
 
+**Contract v2 (bootstrap-only role).** A node enrolled through `docs/servers.md` "Node
+registration" registers nothing here: Autopilot discovers its listeners from the panel and the
+node's declared ingress, and publication is admitted only under the node's approval
+(`servers.node_not_approved`; setup need `node_not_approved`). Three pieces belong to it:
+
+- **Loopback ingress.** A front node's WebSocket inbound listens on loopback behind Caddy.
+  `mapInboundsToListeners` takes `opts.ingress` (`convex/lib/panel/ingress.ts`): a mapped loopback
+  inbound is discovered as the external TLS listener Caddy exposes (port 443, the origin hostname
+  as its certificate name); the origin probe then verifies that hop exactly as any HTTPS origin.
+  Without a mapping, loopback stays `loopback`.
+- **Go-live.** For an enrolled node, `edgeSetupRuns.goLive` promotes the node's activation run
+  inside its own mutation (`panelActivation.promoteCandidate`): the edges it published are the
+  run's candidate resources, filtered from members until then.
+- **The origin TLS contract.** Recorded per combination: Fastly with `overrideHost: 'origin'`
+  (SNI = Host = the origin name, a public certificate naming it) is supported; Fastly with
+  `'hostname'` only when the probe reports `acceptsHostHeader: any`; Cloudflare `full` (SNI and
+  Host = the edge hostname, served by Caddy's `fallback_sni` plus a catch-all site) is supported;
+  Cloudflare `strict` validates the hostname the node's single-name certificate does not carry and
+  is unsupported in this version.
+
+**Contract v1** (the relay-registering role) follows.
+
 The role registers a relay with ONE idempotent body and reads back what to configure. Token:
 an `fsv1_` token with `admin:edges:register`, minted with a **registration boundary**
 (`apiTokens.edgeRegistration`: the backend servers and, optionally, the node names it may
