@@ -11,6 +11,7 @@ import {
   planWords,
   rolloutWords,
   sniErrorWords,
+  suspectWords,
 } from './words';
 
 const family = (over: Record<string, unknown> = {}, counts: Record<string, number> = {}) => ({
@@ -44,6 +45,7 @@ const name = (over: Record<string, unknown> = {}) => ({
   checkedAt: null,
   blockedIn: [],
   provenIn: [],
+  suspectIn: [] as string[],
   ...over,
 });
 const status = (over: Record<string, unknown> = {}) => ({
@@ -112,6 +114,10 @@ describe('names', () => {
     expect(matchesFilter(name({ status: 'suspended' }), 'problems')).toBe(true);
     expect(matchesFilter(name({ status: 'burned' }), 'problems')).toBe(false);
     expect(matchesFilter(name({ status: 'burned' }), 'off')).toBe(true);
+    // Ready, but singled out by reports: shown under Problems too.
+    expect(matchesFilter(name({ suspectIn: ['IR'] }), 'problems')).toBe(true);
+    expect(matchesFilter(name({ suspectIn: ['IR'] }), 'ready')).toBe(true);
+    expect(suspectWords(['IR', 'CN'])).toMatch(/^Members in IR, CN report/);
   });
 
   test('an import says what happened to every kind of line', () => {

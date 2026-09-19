@@ -183,6 +183,8 @@ crons.daily(
 // unknown, and look again at every open op. It never sends anything.
 // Server-name families: check due names against their family's target (rate-limited).
 crons.interval('sni-qualify', { minutes: 5 }, internal.sniQualifyOps.run, {});
+// Attributed report counts are a short-lived hint: delete what left the window.
+crons.interval('sni-report-sweep', { hours: 24 }, internal.sniReports.sweep, {});
 
 crons.interval('panel-reconcile', { minutes: 5 }, internal.panelWrites.reconcile, {});
 

@@ -15,6 +15,11 @@ export interface SniConfig {
   /** Consecutive failures after which an active name is suspended. */
   suspendAfterFails: number;
   /**
+   * How many days of attributed member reports count towards "this name looks
+   * blocked there". Older counts are deleted, so this is also their retention.
+   */
+  reportWindowDays: number;
+  /**
    * Countries where names are blocked selectively, so a member there is given
    * names proven to work there, and a name blocked there is never offered.
    * ISO 3166-1 alpha-2, uppercase.
@@ -27,6 +32,7 @@ export const SNI_DEFAULTS: SniConfig = {
   qualifyPerTick: 40,
   requalifyHours: 24,
   suspendAfterFails: 2,
+  reportWindowDays: 14,
   curatedCountries: ['CN', 'RU', 'IR', 'MM'],
 };
 
@@ -34,6 +40,7 @@ export const SNI_BOUNDS = {
   qualifyPerTick: { min: 1, max: 200 },
   requalifyHours: { min: 1, max: 24 * 30 },
   suspendAfterFails: { min: 1, max: 10 },
+  reportWindowDays: { min: 1, max: 60 },
 } as const;
 
 export const SNI_KEYS = {
@@ -41,6 +48,7 @@ export const SNI_KEYS = {
   qualifyPerTick: 'edge.sni.qualifyPerTick',
   requalifyHours: 'edge.sni.requalifyHours',
   suspendAfterFails: 'edge.sni.suspendAfterFails',
+  reportWindowDays: 'edge.sni.reportWindowDays',
   curatedCountries: 'edge.sni.curatedCountries',
 } as const;
 type Path = keyof typeof SNI_KEYS;
@@ -84,6 +92,12 @@ export async function resolveSniConfig(db: DatabaseReader): Promise<SniConfig> {
       B.suspendAfterFails.min,
       B.suspendAfterFails.max,
       D.suspendAfterFails,
+    ),
+    reportWindowDays: sanitizeInt(
+      raw.reportWindowDays,
+      B.reportWindowDays.min,
+      B.reportWindowDays.max,
+      D.reportWindowDays,
     ),
     curatedCountries: sanitizeCountries(raw.curatedCountries, D.curatedCountries),
   };

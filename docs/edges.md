@@ -882,6 +882,33 @@ list, up to 1000 lines, answered with a verdict per line: `added`, `duplicate`, 
 `POST rollouts/{id}/test-link`, `POST receipts/{id}/confirm`. Audit rows
 (`edge.sni.*`) carry slugs and **counts only, never a hostname**.
 
+### What members' reports say about a name
+
+An outside check cannot tell whether a name is blocked inside a country (FCP is not inside
+it), and the operator's judgement needs something to go on. Member reports give a coarse one.
+
+When a report counts for the detector (deduplicated, weight 1), names the edge it is about,
+and that edge's listener ranks names per member (`hrw1`), `sniReports.attributeReport`
+recomputes the names that member holds on that edge, from the snapshot's edges only, exactly
+as the account page rebuilds its labels, and adds `1/K` to each in `sniReportCounts`
+(name, country, day, weight: see docs/privacy.md). The country is the member's saved region,
+else the one they shared with the report, when curated; else `ZZ`.
+
+`suspectNames` (pure, `convex/lib/edges/sni/health.ts`) then marks a name as a **suspect** in
+a curated country when, over `edge.sni.reportWindowDays` (default 14), it gathered at least 3
+there **and** at least twice what the family's other reported names average there. Everything
+gathering reports alike points at the address or the node, which is the block detector's
+business, not the name's. `ZZ` never makes a suspect.
+
+A suspect is a line under the name on the family page and a place in its "Problems" filter,
+until the operator records it as blocked there. It never retires a name, never proves one
+works, and never changes what anyone is given. Cron `sni-report-sweep` deletes counts older
+than the window.
+
+Not built: probing each name from inside a country through the outside probe sources. The
+internal probe cannot stand in for it (it is not in the country), and qualification already
+checks every name against its target.
+
 ### The page
 
 Admin -> Edges -> Advanced -> Server names (`/admin/edges/names`, `/admin/edges/names/{slug}`).

@@ -4,6 +4,7 @@
  * aggregations, and the retention sweep. Rows are UNLINKED by design — see the
  * schema note on `issueReports` and docs/privacy.md.
  */
+import { attributeReport } from './sniReports';
 import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc } from './_generated/dataModel';
 import { v } from 'convex/values';
@@ -115,6 +116,16 @@ export const reportIssue = internalMutation({
     // No key: still a valid report (e.g. "can't connect" before first issue
     // would be odd, but a tombstone-grace member is real) — recorded without
     // node context.
+    // A counted report about ONE address also counts, in equal shares, towards
+    // the server names this member holds on it (aggregate only, sniReports.ts).
+    // The country is only what the member chose to share; never a header.
+    if (sub && relay?.relayEdgeId && detectorWeight === 1)
+      await attributeReport(ctx, {
+        sub,
+        edgeId: relay.relayEdgeId,
+        consentedCountry: a.country ?? null,
+        now,
+      });
     const server = sub?.backendServerId ? await ctx.db.get(sub.backendServerId) : null;
     const cfg = await resolveDiagnosticsConfig(ctx.db);
     if (cfg.enabled) {

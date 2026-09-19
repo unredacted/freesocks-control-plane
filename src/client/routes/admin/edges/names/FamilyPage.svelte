@@ -39,6 +39,7 @@
     matchesFilter,
     nameWords,
     sniErrorWords,
+    suspectWords,
     type Dot,
     type NameFilter,
   } from './lib/words';
@@ -334,6 +335,11 @@
               <span class="min-w-0 flex-1">
                 <Label for={`${uid}-${n.name}`} class="block font-medium break-all">{n.name}</Label>
                 <span class="text-muted-foreground block">{w.sentence}</span>
+                {#if n.suspectIn.length > 0}
+                  <span class="block text-amber-700 dark:text-amber-400">
+                    {suspectWords(n.suspectIn)}
+                  </span>
+                {/if}
                 {#if n.provenIn.length > 0 || n.blockedIn.length > 0}
                   <span class="block">
                     {#if n.provenIn.length > 0}Works in {n.provenIn.join(', ')}.{/if}

@@ -67,6 +67,11 @@ export function nameWords(n: SniNameRow): { dot: Dot; sentence: string } {
   return { dot: 'green', sentence: 'The target site serves this name.' };
 }
 
+/** The report hint under a name. It suggests; the operator judges. */
+export function suspectWords(countries: readonly string[]): string {
+  return `Members in ${countries.join(', ')} report problems with this name more than with the others. It may be blocked there.`;
+}
+
 export const NAME_FILTERS = ['all', 'ready', 'problems', 'off'] as const;
 export type NameFilter = (typeof NAME_FILTERS)[number];
 export const FILTER_LABEL: Record<NameFilter, string> = {
@@ -80,7 +85,9 @@ export function matchesFilter(n: SniNameRow, f: NameFilter): boolean {
   if (f === 'all') return true;
   if (f === 'off') return off;
   const ready = n.status === 'active' && n.qualification === 'ok';
-  return f === 'ready' ? ready : !ready && !off;
+  // A suspected name is a problem to look at even though it is still ready.
+  if (f === 'problems') return (!ready && !off) || (!off && n.suspectIn.length > 0);
+  return ready;
 }
 
 /** What an import did, in one sentence per kind of line. */
