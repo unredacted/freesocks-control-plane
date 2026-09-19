@@ -59,6 +59,12 @@
     router.pathname === '/admin/edges' || router.pathname.startsWith('/admin/edges/'),
   );
 
+  // Admin -> Servers (what is on a panel): its own lazy chunk, like Edges.
+  const ServersSection = () => import('./servers/ServersSection.svelte');
+  let onServersRoute = $derived(
+    router.pathname === '/admin/servers' || router.pathname.startsWith('/admin/servers/'),
+  );
+
   // Probes moved from Telemetry into the Edges section; keep old links working.
   $effect(() => {
     if (router.pathname === '/admin/telemetry/probes') {
@@ -105,6 +111,23 @@
   <AdminRemnawave />
 {:else if router.pathname === '/admin/connection-modes'}
   <AdminConnectionModes />
+{:else if onServersRoute}
+  {#await ServersSection()}
+    <div class="max-w-md mx-auto py-12 text-muted-foreground text-center">Loading Servers…</div>
+  {:then mod}
+    {@const Servers = mod.default}
+    <Servers />
+  {:catch}
+    <div class="text-center py-16 space-y-3">
+      <h1 class="text-xl font-display font-bold">The Servers section did not load</h1>
+      <p class="text-sm text-muted-foreground">
+        The connection dropped or a new version was deployed. Reload to try again.
+      </p>
+      <button type="button" class="text-primary underline" onclick={() => window.location.reload()}>
+        Reload
+      </button>
+    </div>
+  {/await}
 {:else if onEdgesRoute}
   <!-- Admin -> Edges is its own lazy chunk (section shell + every edges page). -->
   {#await EdgesSection()}

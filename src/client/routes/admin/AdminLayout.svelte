@@ -19,6 +19,7 @@
   import { clearSessionKey } from '../../lib/pop';
   import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard';
   import Network from '@lucide/svelte/icons/network';
+  import ListTree from '@lucide/svelte/icons/list-tree';
   import Palette from '@lucide/svelte/icons/palette';
   import Layers from '@lucide/svelte/icons/layers';
   import UsersIcon from '@lucide/svelte/icons/users';
@@ -85,6 +86,8 @@
       icon: Server,
       children: [
         { to: '/admin/backend-servers', label: 'Backend servers', icon: Server },
+        // What is on a panel right now (read-only): nodes, inbounds, Hosts, squads.
+        { to: '/admin/servers', label: 'Nodes and inbounds', icon: ListTree },
         { to: '/admin/connection-modes', label: 'Connection modes', icon: GitBranch },
         { to: '/admin/remnawave', label: 'Remnawave', icon: Waypoints },
         // One leaf for the whole Edges section: its own pages (providers,
