@@ -47,7 +47,7 @@ import type {
   StepOutcome,
 } from './types';
 import { firstResource, metaOf, orderByKind } from './types';
-import { EdgeProviderError } from './http';
+import { EdgeProviderError, credentialTestFailure, noteDiscoverError } from './http';
 import { addressFamily } from '../ip';
 import { isFirstLevelUnder } from '../hostname';
 import {
@@ -391,10 +391,14 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
   async testCredentials(cfg): Promise<CredentialTestResult> {
     const detail: string[] = [];
     try {
-      const token = await cfCall('test', () => cloudflareClient(cfg).user.tokens.verify());
+      const token = await cfCall('test', () => cloudflareClient(cfg).user.tokens.verify(), [
+        cfg.apiToken,
+      ]);
       if (token.status !== 'active') return { ok: false, code: 'token_not_active' };
-      const zone = await cfCall('test', () =>
-        cloudflareClient(cfg).zones.get({ zone_id: cfg.zoneId }),
+      const zone = await cfCall(
+        'test',
+        () => cloudflareClient(cfg).zones.get({ zone_id: cfg.zoneId }),
+        [cfg.apiToken],
       );
       const ssl = await zoneSetting(cfg, 'ssl', 'test');
       const websockets = await zoneSetting(cfg, 'websockets', 'test');
@@ -422,19 +426,15 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
       }
       return { ok: true, detail: detail.join(' '), observed };
     } catch (e) {
-      return {
-        ok: false,
-        code:
-          e instanceof EdgeProviderError
-            ? (e.meta.code ?? String(e.meta.status ?? 'error'))
-            : 'error',
-      };
+      return credentialTestFailure(e);
     }
   },
 
   /** Cloudflare has no regions; the account's "region" choice is its DNS zone. */
   async listRegions(cfg) {
-    const page = await cfCall('zones', () => cloudflareClient(cfg).zones.list({ per_page: 50 }));
+    const page = await cfCall('zones', () => cloudflareClient(cfg).zones.list({ per_page: 50 }), [
+      cfg.apiToken,
+    ]);
     return page.result.map((z) => ({ id: z.id, label: z.name }));
   },
 
@@ -442,16 +442,16 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
     const apiToken = typeof partial.apiToken === 'string' ? partial.apiToken : '';
     if (!apiToken) return {};
     try {
-      const page = await cfCall('zones', () =>
-        cloudflareClient({ apiToken }).zones.list({ per_page: 50 }),
+      const page = await cfCall(
+        'zones',
+        () => cloudflareClient({ apiToken }).zones.list({ per_page: 50 }),
+        [apiToken],
       );
       return { zones: page.result.map((z) => ({ id: z.id, label: z.name })) };
     } catch (e) {
-      const code =
-        e instanceof EdgeProviderError
-          ? (e.meta.code ?? String(e.meta.status ?? 'error'))
-          : 'error';
-      return { errors: { zones: code } };
+      const out: DiscoverResult = {};
+      noteDiscoverError(out, 'zones', e);
+      return out;
     }
   },
 

@@ -54,7 +54,7 @@ import type {
   CloudflareDnsConfig,
 } from './types';
 import { firstResource, metaOf, resourcesOfKind } from './types';
-import { EdgeProviderError } from './http';
+import { EdgeProviderError, credentialTestFailure, noteDiscoverError } from './http';
 import { acmeChallengeName } from '../hostname';
 import type { DnsClient, DnsRecord } from './dns/types';
 import {
@@ -751,13 +751,7 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
       }
       return { ok: true, detail };
     } catch (e) {
-      return {
-        ok: false,
-        code:
-          e instanceof EdgeProviderError
-            ? (e.meta.code ?? String(e.meta.status ?? 'error'))
-            : 'error',
-      };
+      return credentialTestFailure(e);
     }
   },
 
@@ -777,14 +771,9 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
           }),
       };
     } catch (e) {
-      return {
-        errors: {
-          tlsConfigurations:
-            e instanceof EdgeProviderError
-              ? (e.meta.code ?? String(e.meta.status ?? 'error'))
-              : 'error',
-        },
-      };
+      const out: DiscoverResult = {};
+      noteDiscoverError(out, 'tlsConfigurations', e);
+      return out;
     }
   },
 

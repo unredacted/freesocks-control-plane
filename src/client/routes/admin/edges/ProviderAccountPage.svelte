@@ -35,6 +35,7 @@
   } from '../../../lib/edgesApi';
   import AdminListState from '../AdminListState.svelte';
   import ConfirmDialog from './components/ConfirmDialog.svelte';
+  import ProviderAnswer from './components/ProviderAnswer.svelte';
   import FakeBadge from './components/FakeBadge.svelte';
   import KeyValue from './components/KeyValue.svelte';
   import LayerBadge from './components/LayerBadge.svelte';
@@ -48,6 +49,7 @@
   import InventoryTab from './providers/InventoryTab.svelte';
   import LimitsCard from './providers/LimitsCard.svelte';
   import QualifyDialog from './providers/QualifyDialog.svelte';
+  import RenameDialog from './providers/RenameDialog.svelte';
   import RotateCredentialsDialog from './providers/RotateCredentialsDialog.svelte';
   import { isTested, settingLabel, settingRows, testWords } from './providers/accountWords';
   import { useAccountActions } from './providers/useAccountActions.svelte';
@@ -132,6 +134,7 @@
   // --- dialogs ---------------------------------------------------------------------------------------
   let qualifyOpen = $state(false);
   let rotateOpen = $state(false);
+  let renameOpen = $state(false);
   let deleteOpen = $state(false);
 </script>
 
@@ -179,6 +182,7 @@
       >
         {acct.test.isPending ? 'Testing' : 'Test credentials'}
       </Button>
+      <Button size="sm" variant="outline" onclick={() => (renameOpen = true)}>Rename</Button>
       <Button size="sm" variant="outline" onclick={() => (rotateOpen = true)}>
         Rotate credentials
       </Button>
@@ -209,6 +213,7 @@
             {#if tested}
               <Badge variant={tested.tone} class="mt-1">{tested.label}</Badge>
               <p class="mt-1 text-xs text-muted-foreground">{tested.detail}</p>
+              <ProviderAnswer detail={a.lastTestErrorDetail} />
             {/if}
           </div>
           <div>
@@ -454,6 +459,7 @@
     tested={isTested(a)}
     onQualify={acct.qualify}
   />
+  <RenameDialog bind:open={renameOpen} account={a} taken={others.map((x) => x.name)} />
   <RotateCredentialsDialog bind:open={rotateOpen} account={a} {credentialFields} />
   <ConfirmDialog
     bind:open={dnsOpen}

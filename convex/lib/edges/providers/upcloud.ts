@@ -35,7 +35,13 @@ import type {
   UpcloudConfig,
 } from './types';
 import { firstResource, metaOf, orderByKind } from './types';
-import { isProviderNotFound, providerFetch, EdgeProviderError } from './http';
+import {
+  isProviderNotFound,
+  providerFetch,
+  EdgeProviderError,
+  credentialTestFailure,
+  noteDiscoverError,
+} from './http';
 import { UpcloudTemplate, UPCLOUD_TEMPLATE_FIELDS, type UpcloudTemplateParams } from './templates';
 
 const BASE = 'https://api.upcloud.com/1.3';
@@ -236,13 +242,7 @@ export const upcloudProvider: EdgeProvider<UpcloudConfig, UpcloudTemplateParams>
       await up(cfg, 'test', 'GET', `/account`, z.unknown());
       return { ok: true };
     } catch (e) {
-      return {
-        ok: false,
-        code:
-          e instanceof EdgeProviderError
-            ? (e.meta.code ?? String(e.meta.status ?? 'error'))
-            : 'error',
-      };
+      return credentialTestFailure(e);
     }
   },
 
@@ -255,14 +255,9 @@ export const upcloudProvider: EdgeProvider<UpcloudConfig, UpcloudTemplateParams>
     try {
       return { regions: await upcloudZones(partial as UpcloudConfig) };
     } catch (e) {
-      return {
-        errors: {
-          regions:
-            e instanceof EdgeProviderError
-              ? (e.meta.code ?? String(e.meta.status ?? 'error'))
-              : 'error',
-        },
-      };
+      const out: DiscoverResult = {};
+      noteDiscoverError(out, 'regions', e);
+      return out;
     }
   },
 

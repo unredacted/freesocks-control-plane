@@ -45,6 +45,7 @@
   import NumberField from '../components/NumberField.svelte';
   import LayerBadge from '../components/LayerBadge.svelte';
   import CodeNote from '../components/CodeNote.svelte';
+  import ProviderAnswer from '../components/ProviderAnswer.svelte';
   import { edgeErrorIssue, edgeErrorMessage } from '../lib/edgeErrors';
   import { providerLabel } from '../lib/format';
   import type { StepperStep } from '../lib/types';
@@ -168,7 +169,9 @@
     if (f.from === 'projects' || f.from === 'regions') discover.mutate();
   }
 
-  let testOutcome = $state<{ ok: boolean; code: string | null } | null>(null);
+  let testOutcome = $state<{ ok: boolean; code: string | null; detail?: string | null } | null>(
+    null,
+  );
   let createdId = $state<string | null>(null);
   const create = createMutation(() => ({
     mutationFn: async () => {
@@ -185,7 +188,7 @@
       // The account exists from here on: a failed test is reported, never thrown away.
       try {
         const t = await testProviderCredentials(id);
-        testOutcome = { ok: t.ok, code: t.code };
+        testOutcome = { ok: t.ok, code: t.code, detail: t.detail };
       } catch (err) {
         testOutcome = { ok: false, code: null };
         toast.error('The account was saved, but the credential test could not run', {
@@ -206,7 +209,7 @@
   const retest = createMutation(() => ({
     mutationFn: () => testProviderCredentials(createdId!),
     onSuccess: (t) => {
-      testOutcome = { ok: t.ok, code: t.code };
+      testOutcome = { ok: t.ok, code: t.code, detail: t.detail };
       invalidateProviders(qc);
       if (t.ok) {
         toast.success('Credentials work');
@@ -436,6 +439,7 @@
                   'This list could not be read. You can type the id on the next step instead.',
               }}
             />
+            <ProviderAnswer detail={discovered?.errorDetails?.[list]} />
           {/each}
           {#if discoveredLists.length === 0 && discoverErrors.length === 0}
             <p class="text-muted-foreground text-sm">
@@ -534,6 +538,7 @@
                 'The account was saved, but its credential test failed. Nothing can be provisioned from it until a test passes.',
             }}
           />
+          <ProviderAnswer detail={testOutcome.detail} />
           {#if retest.error}<InlineError message={edgeErrorMessage(retest.error)} />{/if}
           <div class="flex gap-2">
             <Button disabled={retest.isPending} onclick={() => retest.mutate()}>

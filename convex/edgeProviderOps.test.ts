@@ -289,7 +289,11 @@ describe('edgeProviderOps.rotateCredentials', () => {
       credentials: { applicationSecret: 'AS2', consumerKey: 'CK2' },
       identifiers: { applicationKey: 'AK2' },
     });
-    expect(res).toEqual({ ok: false, code: 'Client::Forbidden' });
+    // The provider echoed the (3-character) secret: too short to replace safely,
+    // so the answer is withheld and only the code is reported.
+    expect(res).toMatchObject({ ok: false, code: 'Client::Forbidden' });
+    expect(JSON.stringify(res)).not.toContain('AS2');
+    expect((res as { detail?: string }).detail).toBeUndefined();
     const secret = await t.query(internal.edgeProviderAccounts.getWithSecret, { id });
     expect(secret?.credentials).toEqual({
       type: 'ovh',

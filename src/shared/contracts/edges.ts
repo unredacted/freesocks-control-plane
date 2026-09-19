@@ -63,6 +63,8 @@ export const EdgeProviderAccountAdmin = z.object({
   maxLiveEdges: z.number(),
   lastTestOkAt: isoN,
   lastTestError: z.string().nullable(),
+  /** What the provider answered on the failing test: redacted and capped, for debugging. */
+  lastTestErrorDetail: z.string().nullable().default(null),
   /** What the last credential test OBSERVED at the provider (e.g. `zoneSslMode`). */
   observedSettings: z.record(z.string(), z.string()).nullable().default(null),
   observedAt: isoN.default(null),
@@ -85,6 +87,8 @@ export type EdgeProviderAccountsResponse = z.infer<typeof EdgeProviderAccountsRe
 export const EdgeTestCredentialsResponse = z.object({
   ok: z.boolean(),
   code: z.string().nullable(),
+  /** The provider's (redacted) answer on a failure. */
+  detail: z.string().nullable().default(null),
   regions: z.array(z.object({ id: z.string(), label: z.string() })),
 });
 export type EdgeTestCredentialsResponse = z.infer<typeof EdgeTestCredentialsResponse>;
@@ -100,7 +104,7 @@ export const EdgeRotateCredentialsResponse = z.union([
     credentialsChanged: z.boolean(),
     identifiersChanged: z.boolean(),
   }),
-  z.object({ ok: z.literal(false), code: z.string() }),
+  z.object({ ok: z.literal(false), code: z.string(), detail: z.string().optional() }),
 ]);
 export type EdgeRotateCredentialsResponse = z.infer<typeof EdgeRotateCredentialsResponse>;
 
@@ -114,6 +118,8 @@ export const EdgeDiscoverResponse = z.object({
   zones: z.array(DiscoverOption).optional(),
   tlsConfigurations: z.array(DiscoverOption).optional(),
   errors: z.record(z.string(), z.string()).optional(),
+  /** Per failed list, the provider's (redacted) answer. */
+  errorDetails: z.record(z.string(), z.string()).optional(),
 });
 export type EdgeDiscoverResponse = z.infer<typeof EdgeDiscoverResponse>;
 

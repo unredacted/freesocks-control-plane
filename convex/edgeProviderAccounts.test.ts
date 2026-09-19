@@ -178,6 +178,53 @@ describe('edgeProviderAccounts', () => {
     }
   });
 
+  test('an account can be renamed: label rules apply, a taken name is refused, trust is kept', async () => {
+    const t = convexTest(schema, modules);
+    const mk = (name: string) =>
+      t.mutation(internal.edgeProviderAccounts.create, {
+        provider: 'gcore',
+        name,
+        settings: gcoreSettings,
+        credentials: { apiKey: 'k' },
+      });
+    const { id } = await mk('Main');
+    await mk('Other');
+    await t.run((ctx) => ctx.db.patch(id as never, { qualified: true }));
+    await expect(
+      t.mutation(internal.edgeProviderAccounts.update, { id: id as never, name: 'Other' }),
+    ).rejects.toThrow(/exists/);
+    await expect(
+      t.mutation(internal.edgeProviderAccounts.update, { id: id as never, name: 'bad/name' }),
+    ).rejects.toThrow(/name must be/);
+    await t.mutation(internal.edgeProviderAccounts.update, { id: id as never, name: 'EU main' });
+    const list = await t.query(internal.edgeProviderAccounts.listForAdmin, {});
+    expect(list.find((a) => a.id === id)).toMatchObject({ name: 'EU main', qualified: true });
+  });
+
+  test('a failed test stores the provider answer; a pass clears it', async () => {
+    const t = convexTest(schema, modules);
+    const { id } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'gcore',
+      name: 'Main',
+      settings: gcoreSettings,
+      credentials: { apiKey: 'k' },
+    });
+    const read = async () =>
+      (await t.query(internal.edgeProviderAccounts.listForAdmin, {})).find((a) => a.id === id);
+    await t.mutation(internal.edgeProviderAccounts.recordTest, {
+      id: id as never,
+      ok: false,
+      code: '400',
+      detail: 'region is not available',
+    });
+    expect(await read()).toMatchObject({
+      lastTestError: '400',
+      lastTestErrorDetail: 'region is not available',
+    });
+    await t.mutation(internal.edgeProviderAccounts.recordTest, { id: id as never, ok: true });
+    expect(await read()).toMatchObject({ lastTestError: null, lastTestErrorDetail: null });
+  });
+
   test('update keeps the secret on blank, replaces on value, and drops qualification on credential/settings change', async () => {
     const t = convexTest(schema, modules);
     const { id } = await t.mutation(internal.edgeProviderAccounts.create, {

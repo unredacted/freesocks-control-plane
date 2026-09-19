@@ -16,6 +16,7 @@
   import { Label } from '@client/components/ui/label';
   import * as Dialog from '@client/components/ui/dialog';
   import InlineError from '@client/components/InlineError.svelte';
+  import ProviderAnswer from '../components/ProviderAnswer.svelte';
   import type { EdgeProviderAccountAdmin } from '../../../../../shared/contracts/edges';
   import { invalidateProviders, rotateProviderCredentials } from '../../../../lib/edgesApi';
   import { CREDENTIAL_HELP, credentialLabel, fieldsFor } from '../forms/providerFields';
@@ -38,11 +39,13 @@
   let secrets = $state<Record<string, string>>({});
   let identifiers = $state<Record<string, string>>({});
   let refusal = $state<string | null>(null);
+  let answer = $state<string | null>(null);
   $effect(() => {
     if (open) {
       secrets = {};
       identifiers = {};
       refusal = null;
+      answer = null;
     }
   });
 
@@ -64,6 +67,7 @@
     },
     onSuccess: (res) => {
       if (!res.ok) {
+        answer = res.detail ?? null;
         refusal = `The provider did not accept the new credentials, so nothing was changed. ${testFailureWords(res.code)}`;
         return;
       }
@@ -132,6 +136,7 @@
         <p class="text-xs text-muted-foreground">{CREDENTIAL_HELP[account.provider]}</p>
       {/if}
       {#if refusal}<InlineError message={refusal} />{/if}
+      <ProviderAnswer detail={answer} />
       <Dialog.Footer>
         <Button type="button" variant="outline" onclick={() => (open = false)}>Cancel</Button>
         <Button type="submit" disabled={!canSubmit || rotate.isPending}>

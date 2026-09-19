@@ -37,7 +37,7 @@ import type {
   TemplateFieldDescriptor,
 } from './types';
 import { firstResource, orderByKind, resourcesOfKind } from './types';
-import { EdgeProviderError, toProviderError } from './http';
+import { EdgeProviderError, toProviderError, credentialTestFailure } from './http';
 import { addressFamily } from '../ip';
 import {
   ScalewayTemplate,
@@ -91,11 +91,11 @@ export function __setScalewayApiFactory(f: ((cfg: ScalewayConfig) => ZonedApi) |
   apiFactory = f ?? ((cfg) => scalewayApi(cfg));
 }
 
-async function sdk<T>(step: string, fn: () => Promise<T>): Promise<T> {
+async function sdk<T>(cfg: ScalewayConfig, step: string, fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
   } catch (e) {
-    throw toProviderError('scaleway', step, e);
+    throw toProviderError('scaleway', step, e, [cfg.secretKey]);
   }
 }
 
@@ -134,16 +134,12 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
 
   async testCredentials(cfg) {
     try {
-      await sdk('test', () => apiFactory(cfg).listLbs({ pageSize: 1, projectId: cfg.projectId }));
+      await sdk(cfg, 'test', () =>
+        apiFactory(cfg).listLbs({ pageSize: 1, projectId: cfg.projectId }),
+      );
       return { ok: true };
     } catch (e) {
-      return {
-        ok: false,
-        code:
-          e instanceof EdgeProviderError
-            ? (e.meta.code ?? String(e.meta.status ?? 'error'))
-            : 'error',
-      };
+      return credentialTestFailure(e);
     }
   },
 
@@ -203,7 +199,7 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
       case 'allocate_ip':
       case 'allocate_ipv6': {
         const isIpv6 = step.kind === 'allocate_ipv6';
-        const ip = await sdk(step.id, () =>
+        const ip = await sdk(cfg, step.id, () =>
           api.createIp({ projectId: cfg.projectId, isIpv6, tags: [spec.name] }),
         );
         return {
@@ -223,7 +219,7 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
         const ipIds = [...resourcesOfKind(ledger, 'ip'), ...resourcesOfKind(ledger, 'ipv6')].map(
           (r) => r.resourceId,
         );
-        const lb = await sdk(step.id, () =>
+        const lb = await sdk(cfg, step.id, () =>
           api.createLb({
             name: spec.name,
             description: 'relay edge',
@@ -243,7 +239,7 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
       case 'create_backend': {
         const lb = firstResource(ledger, 'lb');
         if (!lb) throw ledgerIncomplete(step);
-        const backend = await sdk(step.id, () =>
+        const backend = await sdk(cfg, step.id, () =>
           api.createBackend({
             lbId: lb.resourceId,
             name: step.resourceName,
@@ -277,7 +273,7 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
         const lb = firstResource(ledger, 'lb');
         const backend = firstResource(ledger, 'backend');
         if (!lb || !backend) throw ledgerIncomplete(step);
-        const frontend = await sdk(step.id, () =>
+        const frontend = await sdk(cfg, step.id, () =>
           api.createFrontend({
             lbId: lb.resourceId,
             name: step.resourceName,
@@ -310,7 +306,7 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
       case 'allocate_ip':
       case 'allocate_ipv6': {
         const wantV6 = step.kind === 'allocate_ipv6';
-        const ips = await sdk(step.id, () => api.listIPs({ projectId: cfg.projectId }).all());
+        const ips = await sdk(cfg, step.id, () => api.listIPs({ projectId: cfg.projectId }).all());
         const hit = ips.find(
           (ip) => ip.tags.includes(spec.name) && (addressFamily(ip.ipAddress) === 'v6') === wantV6,
         );
@@ -330,7 +326,7 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
           : { status: 'confirmed_absent' };
       }
       case 'create_lb': {
-        const lbs = await sdk(step.id, () =>
+        const lbs = await sdk(cfg, step.id, () =>
           api.listLbs({ name: spec.name, projectId: cfg.projectId }).all(),
         );
         const hit = lbs.find((l) => l.name === spec.name);
@@ -345,7 +341,7 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
       case 'create_backend': {
         const lb = firstResource(ledger, 'lb');
         if (!lb) return { status: 'confirmed_absent' };
-        const list = await sdk(step.id, () =>
+        const list = await sdk(cfg, step.id, () =>
           api.listBackends({ lbId: lb.resourceId, name: step.resourceName }).all(),
         );
         const hit = list.find((b) => b.name === step.resourceName);
@@ -359,7 +355,7 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
       case 'create_frontend': {
         const lb = firstResource(ledger, 'lb');
         if (!lb) return { status: 'confirmed_absent' };
-        const list = await sdk(step.id, () =>
+        const list = await sdk(cfg, step.id, () =>
           api.listFrontends({ lbId: lb.resourceId, name: step.resourceName }).all(),
         );
         const hit = list.find((f) => f.name === step.resourceName);
@@ -381,7 +377,7 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
     const api = apiFactory(cfg);
     let obj;
     try {
-      obj = await sdk('describe', () => api.getLb({ lbId: lb.resourceId }));
+      obj = await sdk(cfg, 'describe', () => api.getLb({ lbId: lb.resourceId }));
     } catch (e) {
       if (isNotFound(e)) return { state: 'gone', addresses: {}, health: 'unknown' };
       throw e;
@@ -390,7 +386,9 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
     let health: EdgeDescription['health'] = 'unknown';
     if (state === 'active') {
       try {
-        const stats = await sdk('describe-stats', () => api.getLbStats({ lbId: lb.resourceId }));
+        const stats = await sdk(cfg, 'describe-stats', () =>
+          api.getLbStats({ lbId: lb.resourceId }),
+        );
         const checks = stats.backendServersStats.map((s) => String(s.lastHealthCheckStatus));
         if (checks.length > 0)
           health = checks.some((c) => c === 'passed')
@@ -431,11 +429,11 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
         timedOut: false,
       });
     const api = apiFactory(cfg);
-    const obj = await sdk('inspect', () => api.getLb({ lbId: lb.resourceId }));
+    const obj = await sdk(cfg, 'inspect', () => api.getLb({ lbId: lb.resourceId }));
     const [backends, frontends, stats] = await Promise.all([
-      sdk('inspect', () => api.listBackends({ lbId: lb.resourceId }).all()).catch(() => []),
-      sdk('inspect', () => api.listFrontends({ lbId: lb.resourceId }).all()).catch(() => []),
-      sdk('inspect', () => api.getLbStats({ lbId: lb.resourceId })).catch(() => null),
+      sdk(cfg, 'inspect', () => api.listBackends({ lbId: lb.resourceId }).all()).catch(() => []),
+      sdk(cfg, 'inspect', () => api.listFrontends({ lbId: lb.resourceId }).all()).catch(() => []),
+      sdk(cfg, 'inspect', () => api.getLbStats({ lbId: lb.resourceId })).catch(() => null),
     ]);
     const healthByIp = new Map(
       (stats?.backendServersStats ?? []).map((s) => [s.ip, String(s.lastHealthCheckStatus)]),
@@ -459,9 +457,9 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
   async inventory(cfg) {
     const api = apiFactory(cfg);
     const [lbs, ips, types] = await Promise.all([
-      sdk('inventory', () => api.listLbs({ projectId: cfg.projectId }).all()),
-      sdk('inventory', () => api.listIPs({ projectId: cfg.projectId }).all()).catch(() => []),
-      sdk('inventory', () => api.listLbTypes({}).all()).catch(() => []),
+      sdk(cfg, 'inventory', () => api.listLbs({ projectId: cfg.projectId }).all()),
+      sdk(cfg, 'inventory', () => api.listIPs({ projectId: cfg.projectId }).all()).catch(() => []),
+      sdk(cfg, 'inventory', () => api.listLbTypes({}).all()).catch(() => []),
     ]);
     return {
       loadBalancers: lbs.map((l) => ({
@@ -488,17 +486,17 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
     try {
       switch (r.kind) {
         case 'frontend':
-          await sdk('destroy', () => api.deleteFrontend({ frontendId: r.resourceId }));
+          await sdk(cfg, 'destroy', () => api.deleteFrontend({ frontendId: r.resourceId }));
           return { status: 'delete_requested' };
         case 'backend':
-          await sdk('destroy', () => api.deleteBackend({ backendId: r.resourceId }));
+          await sdk(cfg, 'destroy', () => api.deleteBackend({ backendId: r.resourceId }));
           return { status: 'delete_requested' };
         case 'lb':
-          await sdk('destroy', () => api.deleteLb({ lbId: r.resourceId, releaseIp: false }));
+          await sdk(cfg, 'destroy', () => api.deleteLb({ lbId: r.resourceId, releaseIp: false }));
           return { status: 'delete_requested' };
         case 'ip':
         case 'ipv6':
-          await sdk('destroy', () => api.releaseIp({ ipId: r.resourceId }));
+          await sdk(cfg, 'destroy', () => api.releaseIp({ ipId: r.resourceId }));
           return { status: 'delete_requested' };
         default:
           return { status: 'unresolved' };
@@ -515,20 +513,20 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
     try {
       switch (r.kind) {
         case 'lb': {
-          const lb = await sdk('confirm-destroy', () => api.getLb({ lbId: r.resourceId }));
+          const lb = await sdk(cfg, 'confirm-destroy', () => api.getLb({ lbId: r.resourceId }));
           return lb.status === 'deleting' || lb.status === 'to_delete'
             ? { status: 'unresolved' }
             : { status: 'still_present' };
         }
         case 'ip':
         case 'ipv6':
-          await sdk('confirm-destroy', () => api.getIp({ ipId: r.resourceId }));
+          await sdk(cfg, 'confirm-destroy', () => api.getIp({ ipId: r.resourceId }));
           return { status: 'still_present' };
         case 'frontend':
-          await sdk('confirm-destroy', () => api.getFrontend({ frontendId: r.resourceId }));
+          await sdk(cfg, 'confirm-destroy', () => api.getFrontend({ frontendId: r.resourceId }));
           return { status: 'still_present' };
         case 'backend':
-          await sdk('confirm-destroy', () => api.getBackend({ backendId: r.resourceId }));
+          await sdk(cfg, 'confirm-destroy', () => api.getBackend({ backendId: r.resourceId }));
           return { status: 'still_present' };
         default:
           return { status: 'unresolved' };

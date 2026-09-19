@@ -969,7 +969,7 @@ describe('cloudflare: credentials + discovery options', () => {
     });
   });
 
-  test('a rejected token never leaks the body into the result', async () => {
+  test('a rejected token reports the provider answer without the token', async () => {
     mockFetch(() =>
       jsonRes(
         {
@@ -981,7 +981,7 @@ describe('cloudflare: credentials + discovery options', () => {
       ),
     );
     const res = await cloudflareProvider.testCredentials(cfg);
-    expect(res).toEqual({ ok: false, code: '1000' });
+    expect(res).toEqual({ ok: false, code: '1000', detail: '1000 Invalid API Token [redacted]' });
     expect(JSON.stringify(res)).not.toContain('SECRET_CF');
   });
 
@@ -996,9 +996,11 @@ describe('cloudflare: credentials + discovery options', () => {
     expect((stub.calls[0] as Captured).path).toBe('/client/v4/zones');
     expect(await cloudflareProvider.discoverOptions?.({})).toEqual({});
     mockFetch(() => jsonRes(wire(rateLimited), 429));
-    expect(await cloudflareProvider.discoverOptions?.({ apiToken: 'SECRET_CF' })).toEqual({
-      errors: { zones: '10000' },
-    });
+    const failed = await cloudflareProvider.discoverOptions?.({ apiToken: 'SECRET_CF' });
+    expect(failed?.errors).toEqual({ zones: '10000' });
+    // The provider's words ride along for the admin, never the token.
+    expect(failed?.errorDetails?.zones).toBeDefined();
+    expect(JSON.stringify(failed)).not.toContain('SECRET_CF');
   });
 
   test('listRegions offers the account zones', async () => {
