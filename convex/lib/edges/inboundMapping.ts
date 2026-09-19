@@ -134,7 +134,7 @@ export function parseRealityTarget(v: string | null): { address: string; port: n
   if (!m) return null;
   const port = Number(m[2]);
   if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
-  return { address: m[1], port };
+  return { address: m[1] ?? '', port };
 }
 
 function skip(tag: string, reason: InboundUnsupportedCode, detail?: string): UnsupportedInbound {

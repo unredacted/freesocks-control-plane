@@ -62,7 +62,7 @@ function v4Octets(s: string): number[] {
 export function isPublicIpLiteral(s: string): boolean {
   const fam = addressFamily(s);
   if (fam === 'v4') {
-    const [a, b] = v4Octets(s);
+    const [a = 0, b = 0] = v4Octets(s);
     if (a === 0 || a === 10 || a === 127) return false;
     if (a === 100 && b >= 64 && b <= 127) return false;
     if (a === 169 && b === 254) return false;
@@ -79,7 +79,7 @@ export function isPublicIpLiteral(s: string): boolean {
       .toLowerCase();
     if (t === '::' || t === '::1') return false;
     if (t.startsWith('::ffff:')) return false;
-    const first = t.split(':')[0];
+    const first = t.split(':')[0] ?? '';
     if (first.length === 0) return false; // ::-prefixed compressed leading zeros
     const firstVal = parseInt(first, 16);
     if (Number.isNaN(firstVal)) return false;
