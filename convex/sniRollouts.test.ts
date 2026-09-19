@@ -212,9 +212,12 @@ describe('rollout', () => {
     // The panel lists them. No node has proven anything: the relay hands out what it did before.
     expect(await activeNames(t, listenerId)).toEqual(['a.example', 'b.example']);
     const status = await t.query(internal.sniRollouts.status, { rolloutId: out.rolloutId! });
-    expect(status.nodes).toEqual([
+    expect(status.nodes).toMatchObject([
       { relaySlug: 'node-one', listenerKey: 'a', proven: 2, pending: 2, generationProven: false },
     ]);
+    // The live addresses a test link can be built through, by name and state only.
+    expect(status.nodes[0]!.edges).toMatchObject([{ status: 'active' }]);
+    expect(Object.keys(status.nodes[0]!.edges[0]!).sort()).toEqual(['id', 'name', 'status']);
     // Rolling out again with nothing new is a no-op: no write, no node work.
     expect((await t.action(internal.sniRollouts.start, { bindingId })).phase).toBe(
       'nothing_to_change',

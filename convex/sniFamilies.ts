@@ -161,6 +161,16 @@ export const detail = internalQuery({
       (row.state === 'blocked' ? at.blockedIn : at.provenIn).push(row.country);
       judged.set(row.name, at);
     }
+    // The newest rollout of each binding: what the page follows.
+    const latest = new Map<string, string>();
+    for (const b of bindings) {
+      const rollouts = await ctx.db
+        .query('sniRollouts')
+        .withIndex('by_binding', (q) => q.eq('bindingId', b._id))
+        .collect();
+      const newest = rollouts.sort((x, y) => y.generation - x.generation)[0];
+      if (newest) latest.set(b._id as string, newest._id as string);
+    }
     return {
       family: summarize(f, names, bindings.length),
       curatedCountries: (await resolveSniConfig(ctx.db)).curatedCountries,
@@ -183,6 +193,7 @@ export const detail = internalQuery({
         inboundTag: b.inboundTag,
         generation: b.generation,
         panelConfirmedGeneration: b.panelConfirmedGeneration,
+        rolloutId: latest.get(b._id as string) ?? null,
       })),
     };
   },

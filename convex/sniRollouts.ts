@@ -545,6 +545,25 @@ export const status = internalQuery({
       .query('sniAcceptanceReceipts')
       .withIndex('by_rollout', (q) => q.eq('rolloutId', rolloutId))
       .collect();
+    // The edges a test link can be built through, per listener (live ones only).
+    const edgesBy = new Map<string, { id: string; name: string; status: string }[]>();
+    if (b)
+      for (const { relay, listener } of await boundListeners(ctx as never, b)) {
+        const rows = await ctx.db
+          .query('edges')
+          .withIndex('by_relay_status', (q) => q.eq('relayId', relay._id))
+          .collect();
+        edgesBy.set(
+          listener._id as string,
+          rows
+            .filter(
+              (e) =>
+                e.listenerId === listener._id &&
+                (e.status === 'active' || e.status === 'standby' || e.status === 'verifying'),
+            )
+            .map((e) => ({ id: e._id as string, name: e.name, status: e.status as string })),
+        );
+      }
     const nodes = b
       ? (await boundListeners(ctx as never, b)).map(({ relay, listener }) => {
           const active = new Set(
@@ -553,6 +572,7 @@ export const status = internalQuery({
           return {
             relaySlug: relay.slug,
             listenerKey: listener.listenerKey,
+            edges: edgesBy.get(listener._id as string) ?? [],
             proven: r.names.filter((n) => active.has(n)).length,
             pending: r.names.filter((n) => !active.has(n)).length,
             generationProven: receipts.some(

@@ -882,6 +882,29 @@ list, up to 1000 lines, answered with a verdict per line: `added`, `duplicate`, 
 `POST rollouts/{id}/test-link`, `POST receipts/{id}/confirm`. Audit rows
 (`edge.sni.*`) carry slugs and **counts only, never a hostname**.
 
+### The page
+
+Admin -> Edges -> Advanced -> Server names (`/admin/edges/names`, `/admin/edges/names/{slug}`).
+
+- The list: each family in one line (how many names are ready, waiting, failing; whether an
+  inbound uses it), the switch for `edge.sni.enabled`, and "Add a family" (the target is fixed
+  at creation).
+- A family: bind it to a REALITY inbound (the inbounds come from the Servers observation),
+  add names (the answer says what happened to every kind of line), filter and pick names, then
+  check again, retire, bring back, burn (typed), or record for a curated country that they work
+  or are blocked there.
+- A bound inbound: "See what would be written" shows the plan in words, including whether one
+  test per node will prove the whole list (a witness) or each name needs its own; "Write to the
+  panel" starts the rollout; once the panel has it, each node lists how many names it has proven
+  and offers "Test through <address>". The test link is shown once with its name, and "It
+  connected" confirms the receipt. The page says plainly that a check from outside cannot
+  stand in for that test.
+
+The three facts stay separate in the copy: the target serves a name (checked), a node accepts
+it (tested), it works from a country (judged). Wording is in
+`src/client/routes/admin/edges/names/lib/words.ts`; tests pin that every `edge.sni.*` refusal
+and every check code the server can record has its own sentence.
+
 ## Probes and the block detector
 
 Unchanged in substance from the previous release: probe targets are the published edges of

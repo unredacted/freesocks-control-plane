@@ -30,6 +30,11 @@
       href: edgesPaths.probes(),
     },
     {
+      label: 'Server names',
+      hint: 'Pools of names a REALITY node answers to: checked, rolled out, proven per node, judged per country.',
+      href: edgesPaths.names(),
+    },
+    {
       label: 'Settings',
       hint: 'Every knob: pools, drains, the detector, rendering rules, probe budget.',
       href: edgesPaths.settings(),
