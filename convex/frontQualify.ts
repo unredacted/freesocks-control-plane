@@ -58,6 +58,8 @@ function paramsOf(listener: Doc<'relayListeners'>): TransportParams {
     host: t.host ?? null,
     serviceName: t.serviceName ?? null,
     upgradeToken: t.upgradeToken ?? null,
+    // Absent stays absent: the binding hashes `mode` only when it is set.
+    ...(t.mode ? { mode: t.mode } : {}),
   };
 }
 

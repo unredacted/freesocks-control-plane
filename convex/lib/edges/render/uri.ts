@@ -80,7 +80,8 @@ export function uriAgrees(u: ParsedUri, proto: ListenerProto): boolean {
       ? type === 'tcp' || type === 'raw' || type === 'none'
       : stream === 'udp'
         ? true
-        : type === stream;
+        : // `splithttp` was XHTTP's name before Xray 1.8.24; older links still carry it.
+          type === stream || (stream === 'xhttp' && type === 'splithttp');
   switch (proto.protocol) {
     case 'vless': {
       const security = (p.get('security') ?? 'none').toLowerCase();
@@ -125,7 +126,13 @@ export function rewriteProxyUri(u: ParsedUri, target: UriTarget): string {
   }
   if (hostHeader !== null) {
     const type = (params.get('type') ?? '').toLowerCase();
-    if (params.has('host') || type === 'ws' || type === 'httpupgrade' || type === 'xhttp')
+    if (
+      params.has('host') ||
+      type === 'ws' ||
+      type === 'httpupgrade' ||
+      type === 'xhttp' ||
+      type === 'splithttp'
+    )
       params.set('host', hostHeader);
     if (type === 'grpc' && params.has('authority')) params.set('authority', hostHeader);
   }

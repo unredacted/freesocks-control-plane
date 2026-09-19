@@ -80,6 +80,58 @@ async function startFakeRotation(t: T, relayId: Id<'relays'>) {
 }
 
 describe('relays: registration by slug', () => {
+  test('an XHTTP listener registers with its mode (the wire validator accepts `transportParams.mode`)', async () => {
+    const { t, relayId } = await seed();
+    const r = await t.mutation(internal.relays.registerBySlug, {
+      slug: FIXTURE_RELAY_SLUG,
+      origin: { kind: 'panel-node', backendSlug: FIXTURE_PANEL_SLUG, nodeName: FIXTURE_NODE },
+      originAddress: FIXTURE_ORIGIN,
+      listeners: [
+        realityListener(),
+        {
+          listenerKey: 'xh',
+          protocol: 'vless',
+          streamTransport: 'xhttp',
+          security: 'tls',
+          originPort: 443,
+          tlsNames: ['x.example'],
+          transportParams: { path: '/xh', mode: 'packet-up' },
+        },
+      ] as never,
+    });
+    expect(r.listeners.created).toEqual(['xh']);
+    const rows = await t.run((ctx) =>
+      ctx.db
+        .query('relayListeners')
+        .filter((q) => q.eq(q.field('relayId'), relayId))
+        .collect(),
+    );
+    expect(rows.find((l) => l.listenerKey === 'xh')?.transportParams).toEqual({
+      path: '/xh',
+      mode: 'packet-up',
+    });
+    // An unknown mode is a validation refusal, not a stored value.
+    await expect(
+      t.mutation(internal.relays.registerBySlug, {
+        slug: FIXTURE_RELAY_SLUG,
+        origin: { kind: 'panel-node', backendSlug: FIXTURE_PANEL_SLUG, nodeName: FIXTURE_NODE },
+        originAddress: FIXTURE_ORIGIN,
+        listeners: [
+          realityListener(),
+          {
+            listenerKey: 'xh',
+            protocol: 'vless',
+            streamTransport: 'xhttp',
+            security: 'tls',
+            originPort: 443,
+            tlsNames: ['x.example'],
+            transportParams: { path: '/xh', mode: 'warp-speed' },
+          },
+        ] as never,
+      }),
+    ).rejects.toThrow(/unknown xhttp mode/);
+  });
+
   test('an identical body is idempotent: no listener revision bump, no epoch bump, no mirror refresh, only lastRegisteredAt moves', async () => {
     const { t, relayId, listenerId, serverId } = await seed();
     const row0 = (await t.query(internal.relays.get, { id: relayId }))!;

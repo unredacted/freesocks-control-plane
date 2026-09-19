@@ -57,6 +57,8 @@ export const transportParamsValidator = v.object({
   host: v.optional(v.string()),
   serviceName: v.optional(v.string()),
   upgradeToken: v.optional(v.string()),
+  /** XHTTP mode (checked against `XHTTP_MODES` by `validateListenerSpec`). */
+  mode: v.optional(v.string()),
 });
 
 export const matchRuleValidator = v.union(
