@@ -394,6 +394,8 @@ export const RelayListenerAdmin = z.object({
   deployedAt: isoN,
   retired: z.boolean(),
   revision: z.number(),
+  namesRevision: z.number().optional(),
+  sniPick: z.literal('hrw1').nullish(),
   updatedAt: iso,
 });
 export type RelayListenerAdmin = z.infer<typeof RelayListenerAdmin>;

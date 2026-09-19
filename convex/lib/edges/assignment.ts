@@ -21,6 +21,13 @@
  *    a subscriber whose pick is retired re-hashes over the ACTIVE set only. A
  *    retired name is NEVER selected for a render — the drain only means the
  *    node keeps ACCEPTING it for clients that have not refreshed yet.
+ *  - that legacy PRF is a modulus over the list LENGTH, so it is stable under
+ *    retirement but NOT under growth: appending one name moves almost every
+ *    subscriber. A listener whose list is meant to grow opts into `hrw1`
+ *    (rendezvous hashing, `pickSniHrw`): each name scores independently, so
+ *    adding a name moves only the subscribers it now wins (about 1/(N+1)) and
+ *    retiring one moves only its holders. The version is per listener and the
+ *    legacy path is untouched when it is absent, so nobody moves by surprise.
  *  - IPv6 is an extra entry for the same endpoint, never a separate assignment.
  *  - an L7 (CDN-fronted) edge is ONE hostname: it is the address, the SNI and
  *    the HTTP Host header at once, so the profile's server names play no part
@@ -31,6 +38,9 @@ import { hostTargetFor } from './layers';
 import type { EdgeLayer } from './providers/capabilities';
 import { protocolUsesSni, type ListenerProto } from './protocols';
 import type { MatchRule } from './registration';
+
+/** Name-selection PRF versions a listener can opt into (absent = legacy modulus). */
+export type SniPickVersion = 'hrw1';
 
 export interface AssignableSni {
   sni: string;
@@ -56,6 +66,8 @@ export interface PublishedEdge {
   addresses: { v4?: string; v6?: string; hostname?: string };
   /** Empty for a listener that presents no name. */
   serverNames: AssignableSni[];
+  /** How one name is chosen from `serverNames`. Absent = the legacy modulus PRF. */
+  sniPick?: SniPickVersion;
   /**
    * False when the edge is published but must not be selected (listener retired,
    * undeployed or disabled, no codec for the body, no template entry). It still occupies its pool index so the
@@ -120,7 +132,7 @@ function sniFor(
   const hostname = edgeHostname(edge);
   if (hostname) return { ok: true, sni: hostname };
   if (!protocolUsesSni(edge.proto)) return { ok: true, sni: null };
-  const sni = pickSni(subscriberKey, edge.edgeId, edge.serverNames);
+  const sni = pickSni(subscriberKey, edge.edgeId, edge.serverNames, edge.sniPick);
   return sni ? { ok: true, sni } : { ok: false };
 }
 
@@ -186,13 +198,39 @@ export function pickSni(
   subscriberKey: string,
   edgeId: string,
   serverNames: readonly AssignableSni[],
+  version?: SniPickVersion,
 ): string | null {
+  if (version === 'hrw1') return rankSniHrw(subscriberKey, edgeId, serverNames)[0] ?? null;
   if (serverNames.length === 0) return null;
   const pick = serverNames[fnv1a32(`${subscriberKey}:${edgeId}`) % serverNames.length];
   if (pick.status === 'active') return pick.sni;
   const active = serverNames.filter((s) => s.status === 'active');
   if (active.length === 0) return null;
   return active[fnv1a32(`${subscriberKey}:${edgeId}:active`) % active.length].sni;
+}
+
+/**
+ * `hrw1`: the ACTIVE names ranked for (subscriber, edge) by rendezvous hashing,
+ * best first. Each name's score depends only on (subscriber, edge, that name),
+ * never on the list's length or order, which is what makes it stable: a new
+ * name changes a subscriber's ranking only where it outscores their current
+ * names, and a retired name simply drops out of everyone's ranking. Ties (a
+ * 32-bit score can collide) break on the name so the order is total.
+ */
+export function rankSniHrw(
+  subscriberKey: string,
+  edgeId: string,
+  serverNames: readonly AssignableSni[],
+): string[] {
+  const scored: { sni: string; score: number }[] = [];
+  const seen = new Set<string>();
+  for (const s of serverNames) {
+    if (s.status !== 'active' || seen.has(s.sni)) continue;
+    seen.add(s.sni);
+    scored.push({ sni: s.sni, score: fnv1a32(`${subscriberKey}:${edgeId}:${s.sni}`) });
+  }
+  scored.sort((a, b) => b.score - a.score || (a.sni < b.sni ? -1 : a.sni > b.sni ? 1 : 0));
+  return scored.map((x) => x.sni);
 }
 
 export interface AssignOptions {

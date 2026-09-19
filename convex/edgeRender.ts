@@ -103,7 +103,8 @@ export function matcherOf(l: Doc<'relayListeners'>, originAddress: string): Rend
  * (`verificationCurrent`), applied again at render time: a listener revision
  * bump or a re-addressing after the publish leaves the edge published (an
  * operator decision) but nothing is rendered for it until it is retested
- * (attention `retest_needed`), exactly as a stale L7 proof is handled.
+ * (attention `retest_needed`), exactly as a stale L7 proof is handled. Retiring
+ * a REALITY server name is not such a bump (`nameRetireKeepsVerification`).
  */
 export async function publishedEdgesOf(
   ctx: { db: QueryCtx['db'] },
@@ -183,6 +184,7 @@ export function toPublishedEdge(
           drainUntil: s.drainUntil,
         }))
       : [],
+    ...(listener.sniPick ? { sniPick: listener.sniPick } : {}),
     ...(eligible ? {} : { eligible: false }),
   };
 }

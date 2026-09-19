@@ -39,7 +39,8 @@ import {
   bumpEpochAndRefresh,
   liveEdgesOfRelay,
 } from './lib/edges/relayGuards';
-import { protocolLabel } from './lib/edges/protocols';
+import { protocolLabel, protocolUsesSni } from './lib/edges/protocols';
+import { nameRetireKeepsVerification } from './lib/edges/verification';
 
 export type Listener = Doc<'relayListeners'>;
 
@@ -177,6 +178,8 @@ export function mapListenerAdmin(l: Listener, opts: { udpProviderAvailable?: boo
     deployedAt: l.deployedAt ? new Date(l.deployedAt).toISOString() : null,
     retired: l.retired,
     revision: l.revision,
+    namesRevision: l.namesRevision ?? 0,
+    sniPick: l.sniPick ?? null,
     updatedAt: new Date(l.updatedAt).toISOString(),
   };
 }
@@ -603,7 +606,15 @@ async function retireOn(
       code: 'conflict',
       message: `listener ${l.listenerKey} keeps at least one active server name`,
     });
-  await ctx.db.patch(l._id, { tlsNames: next, revision: l.revision + 1, updatedAt: now });
+  // A REALITY retire keeps the operator's endpoint confirmation (see
+  // nameRetireKeepsVerification); everything else is a material revision bump.
+  await ctx.db.patch(l._id, {
+    tlsNames: next,
+    ...(nameRetireKeepsVerification(l)
+      ? { namesRevision: (l.namesRevision ?? 0) + 1 }
+      : { revision: l.revision + 1 }),
+    updatedAt: now,
+  });
   await scheduleNameDrain(ctx, l._id, retiring, now + drainMs);
   await bumpEpochAndRefresh(ctx, relay);
   return retiring;
@@ -722,6 +733,55 @@ export const reactivateName = internalMutation({
       payload: { relaySlug: relay.slug, listenerKey: l.listenerKey, count },
     });
     return { ok: true as const, reactivated: count };
+  },
+});
+
+/**
+ * Choose how this listener picks one server name per subscriber. `hrw1` is
+ * what a listener whose name list is meant to GROW needs (the legacy PRF
+ * reshuffles nearly everyone when a name is appended); `null` returns to the
+ * legacy PRF. Switching moves subscribers to a different one of the names the
+ * node already accepts, so connectivity is unaffected, but every member gets a
+ * changed config at their next refresh: it is an explicit, audited operator
+ * action and never a side effect. Not a material change (nothing about the
+ * path, the keys or the accepted names moves), so `revision` is untouched.
+ */
+export const setSniPick = internalMutation({
+  args: {
+    id: v.id('relayListeners'),
+    version: v.union(v.literal('hrw1'), v.null()),
+    actorAdminId: v.optional(v.id('adminUsers')),
+  },
+  handler: async (ctx, { id, version, actorAdminId }) => {
+    await assertAdmission(ctx.db, 'registration');
+    const l = await ctx.db.get(id);
+    if (!l) throw new ConvexError({ code: 'not_found', message: 'Listener not found' });
+    const relay = await ctx.db.get(l.relayId);
+    if (!relay) throw new ConvexError({ code: 'not_found', message: 'Relay not found' });
+    await assertNoRotationOrQuarantine(ctx.db, relay);
+    if (!protocolUsesSni(l))
+      throw new ConvexError({
+        code: 'conflict',
+        message: `listener ${l.listenerKey} presents no server name`,
+      });
+    const changed = (l.sniPick ?? null) !== version;
+    if (changed) {
+      await ctx.db.patch(id, {
+        sniPick: version ?? undefined,
+        namesRevision: (l.namesRevision ?? 0) + 1,
+        updatedAt: Date.now(),
+      });
+      await bumpEpochAndRefresh(ctx, relay);
+    }
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: actorAdminId ?? undefined,
+      action: 'relay.listener.sni_pick',
+      targetType: 'relay_listener',
+      targetId: id,
+      payload: { relaySlug: relay.slug, listenerKey: l.listenerKey, version: version ?? 'legacy' },
+    });
+    return { ok: true as const, changed, sniPick: version };
   },
 });
 

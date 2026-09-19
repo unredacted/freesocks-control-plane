@@ -1362,6 +1362,7 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'relay.listener.retire': 'Listener retired',
   'relay.listener.name.retire': 'Server name retired',
   'relay.listener.name.reactivate': 'Server name reactivated',
+  'relay.listener.sni_pick': 'Server name selection changed',
   'relay.host.created': 'Panel Host created',
   'relay.host.deleted': 'Panel Host deleted',
   'relay.host.adopted': 'Panel Host adopted',

@@ -682,6 +682,14 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           ...act,
         }),
       );
+    if (c === 'sni-pick') {
+      const version = body.version ?? null;
+      if (version !== null && version !== 'hrw1')
+        return errorJson('validation', "version must be 'hrw1' or null", 400);
+      return json(
+        await ctx.runMutation(internal.relayListeners.setSniPick, { id: lid, version, ...act }),
+      );
+    }
     if (c === 'enable' || c === 'disable')
       return json(
         await ctx.runMutation(internal.relayListeners.setEnabled, {

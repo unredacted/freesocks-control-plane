@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'vitest';
-import { assignEndpoints, edgeAssignable, pickSni, type PublishedEdge } from './assignment';
+import {
+  assignEndpoints,
+  edgeAssignable,
+  pickSni,
+  rankSniHrw,
+  type PublishedEdge,
+} from './assignment';
 import type { ListenerProto } from './protocols';
 
 const NOW = 1_700_000_000_000;
@@ -240,6 +246,138 @@ describe('pickSni', () => {
     expect(pickSni(sha(1), 'e0', [])).toBeNull();
     const e = edge({ edgeId: 'e0', poolIndex: 0, serverNames: allRetired });
     expect(assignEndpoints(sha(1), [e], opts).primary).toBeNull();
+  });
+});
+
+describe('pickSni legacy PRF is frozen', () => {
+  // Golden vector: the legacy (version-less) pick must never change, because
+  // every listener that has not opted into `hrw1` still renders with it.
+  test('byte-identical picks for a fixed key set', () => {
+    const list = snis('a.example', 'b.example', 'c.example', 'd.example', 'e.example');
+    const picks = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => pickSni(sha(i), 'e0', list));
+    expect(picks).toMatchInlineSnapshot(`
+      [
+        "d.example",
+        "b.example",
+        "a.example",
+        "a.example",
+        "d.example",
+        "a.example",
+        "b.example",
+        "c.example",
+        "d.example",
+        "e.example",
+      ]
+    `);
+  });
+
+  test('legacy growth reshuffles most subscribers (why hrw1 exists)', () => {
+    const before = snis(...Array.from({ length: 20 }, (_, i) => `n${i}.example`));
+    const after = [...before, ...snis('n20.example')];
+    let moved = 0;
+    for (let i = 0; i < 5000; i++)
+      if (pickSni(sha(i), 'e0', before) !== pickSni(sha(i), 'e0', after)) moved++;
+    expect(moved / 5000).toBeGreaterThan(0.8);
+  });
+});
+
+describe('pickSni hrw1 (rendezvous)', () => {
+  const names = (n: number) => snis(...Array.from({ length: n }, (_, i) => `n${i}.example`));
+  const N = 10_000;
+
+  test('adding one name moves only the subscribers it wins, about 1/(N+1)', () => {
+    const before = names(20);
+    const after = [...before, ...snis('fresh.example')];
+    let moved = 0;
+    for (let i = 0; i < N; i++) {
+      const a = pickSni(sha(i), 'e0', before, 'hrw1');
+      const b = pickSni(sha(i), 'e0', after, 'hrw1');
+      if (a !== b) {
+        moved++;
+        // Anyone who moved moved TO the new name, never between old ones.
+        expect(b).toBe('fresh.example');
+      }
+    }
+    expect(moved / N).toBeLessThan(2 / 21);
+    expect(moved).toBeGreaterThan(0);
+  });
+
+  test('retiring a name moves only its holders', () => {
+    const before = names(12);
+    const after = before.map((s) =>
+      s.sni === 'n3.example'
+        ? { ...s, status: 'retired' as const, retiredAt: NOW - 1000, drainUntil: NOW + 60_000 }
+        : s,
+    );
+    for (let i = 0; i < N; i++) {
+      const a = pickSni(sha(i), 'e0', before, 'hrw1');
+      const b = pickSni(sha(i), 'e0', after, 'hrw1');
+      if (a === 'n3.example') expect(b).not.toBe('n3.example');
+      else expect(b).toBe(a);
+    }
+  });
+
+  test('order and removed entries do not matter (compaction moves nobody)', () => {
+    const list = names(9);
+    const shuffled = [...list].reverse();
+    const withRetired = [
+      { sni: 'gone.example', status: 'retired' as const, retiredAt: NOW - 1, drainUntil: NOW - 1 },
+      ...list,
+    ];
+    for (let i = 0; i < 2000; i++) {
+      const a = pickSni(sha(i), 'e0', list, 'hrw1');
+      expect(pickSni(sha(i), 'e0', shuffled, 'hrw1')).toBe(a);
+      expect(pickSni(sha(i), 'e0', withRetired, 'hrw1')).toBe(a);
+    }
+  });
+
+  test('spreads subscribers across the names, and differs per edge', () => {
+    const list = names(8);
+    const counts = new Map<string, number>();
+    let differs = 0;
+    for (let i = 0; i < N; i++) {
+      const a = pickSni(sha(i), 'e0', list, 'hrw1')!;
+      counts.set(a, (counts.get(a) ?? 0) + 1);
+      if (pickSni(sha(i), 'e1', list, 'hrw1') !== a) differs++;
+    }
+    expect(counts.size).toBe(8);
+    for (const c of counts.values()) expect(c).toBeGreaterThan(N / 8 / 2);
+    expect(differs).toBeGreaterThan(N / 2);
+  });
+
+  test('a retired name is never ranked; no active name is null', () => {
+    const retired = { status: 'retired' as const, retiredAt: NOW - 1, drainUntil: NOW + 1e6 };
+    const list = [{ sni: 'x.example', ...retired }, ...snis('y.example')];
+    expect(rankSniHrw(sha(1), 'e0', list)).toEqual(['y.example']);
+    expect(pickSni(sha(1), 'e0', [{ sni: 'x.example', ...retired }], 'hrw1')).toBeNull();
+    expect(pickSni(sha(1), 'e0', [], 'hrw1')).toBeNull();
+  });
+
+  test('the ranking is a stable total order with no duplicates', () => {
+    const list = [...names(6), ...snis('n2.example')];
+    const r = rankSniHrw(sha(7), 'e0', list);
+    expect(r).toHaveLength(6);
+    expect(new Set(r).size).toBe(6);
+    expect(rankSniHrw(sha(7), 'e0', [...list].reverse())).toEqual(r);
+  });
+
+  test('assignment uses the edge version; an L7 edge ignores it', () => {
+    const list = names(10);
+    const l4 = edge({ edgeId: 'e0', poolIndex: 0, serverNames: list, sniPick: 'hrw1' });
+    for (let i = 0; i < 200; i++)
+      expect(assignEndpoints(sha(i), [l4], opts).primary?.sni).toBe(
+        pickSni(sha(i), 'e0', list, 'hrw1'),
+      );
+    const l7 = edge({
+      edgeId: 'e7',
+      poolIndex: 0,
+      layer: 'l7',
+      proto: WS,
+      addresses: { hostname: 'front.example' },
+      serverNames: list,
+      sniPick: 'hrw1',
+    });
+    expect(assignEndpoints(sha(1), [l7], opts).primary?.sni).toBe('front.example');
   });
 });
 
