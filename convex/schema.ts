@@ -693,6 +693,11 @@ export default defineSchema({
     // The node this key's subscription content is currently pinned to
     // (Remnawave node pinning), recorded at serve time.
     pinnedNode: v.optional(v.string()),
+    // The assignment version of `pinnedNode` and who wrote it: a node
+    // migration moves a member only when the version it snapshotted is still
+    // current, and restores only what it wrote itself (docs/servers.md).
+    pinVersion: v.optional(v.number()),
+    pinOwner: v.optional(v.string()),
     // The node this key was pinned to BEFORE issuance (copied from the old
     // subscription at regenerate) — excluded from the pin pick when others
     // exist, so a regenerated key lands on a different node.
@@ -1356,7 +1361,11 @@ export default defineSchema({
   // and write no row here; Outline has no name lookup, so its temporary keys
   // live here.
   edgeTestCredentials: defineTable({
-    relayId: v.id('relays'),
+    // The owner: a relay (the test link and rehearsal of a fronted origin) or
+    // a node intent (the isolated direct link of a node being activated,
+    // docs/servers.md "Node lifecycle"). Exactly one is set.
+    relayId: v.optional(v.id('relays')),
+    nodeIntentId: v.optional(v.id('panelNodeIntents')),
     backendServerId: v.id('backendServers'),
     backend: backendId,
     username: v.string(),
@@ -1372,6 +1381,7 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_relay', ['relayId'])
+    .index('by_intent', ['nodeIntentId'])
     .index('by_removal_expires', ['removal', 'expiresAt']),
 
   // One LISTENER on a relay: a port the origin answers on, what it speaks,
@@ -2481,6 +2491,419 @@ export default defineSchema({
     reportedAt: v.number(),
     reportedBy: v.optional(v.string()),
   }).index('by_server', ['backendServerId']),
+
+  // --- Bootstrap contract v2 (docs/servers.md "Setting up a panel", "Node lifecycle") ---
+  //
+  // FCP owns the panel; the node role bootstraps the MACHINE and reports. The
+  // rows below are durable workflows: each carries what it wants (`desired`),
+  // a generation that fences every scheduled action made on its behalf, and a
+  // lease (`claim`) so an interrupted run resumes from the sweep. External
+  // side effects are `panelObligations`, persisted BEFORE the call.
+
+  // One per backend server: the bootstrap profile, its three inbounds, the
+  // squads, the mode placements, the subscription templates, the origin-DNS
+  // account and the delivery gate version.
+  panelSetups: defineTable({
+    backendServerId: v.id('backendServers'),
+    desired: v.string(), // JSON PanelSetupInput (non-secret: names, targets, ports)
+    desiredHash: v.string(),
+    generation: v.number(),
+    claim: v.optional(v.object({ attemptId: v.string(), expiresAt: v.number() })),
+    state: v.union(
+      v.literal('pending'),
+      v.literal('needs_takeover'),
+      v.literal('ready'),
+      v.literal('failed'),
+    ),
+    step: v.optional(v.string()),
+    code: v.optional(v.string()),
+    profileName: v.string(),
+    profileUuid: v.optional(v.string()),
+    // Effective values of the adopted or created profile (never the defaults).
+    inbounds: v.optional(
+      v.object({
+        cdn: v.object({
+          uuid: v.string(),
+          tag: v.string(),
+          listen: v.string(),
+          port: v.number(),
+          path: v.string(),
+        }),
+        reality: v.object({
+          uuid: v.string(),
+          tag: v.string(),
+          port: v.number(),
+          serverNames: v.array(v.string()),
+          target: v.object({ address: v.string(), port: v.number() }),
+          publicKey: v.string(),
+        }),
+        relay: v.object({
+          uuid: v.string(),
+          tag: v.string(),
+          port: v.number(),
+          serverNames: v.array(v.string()),
+          target: v.object({ address: v.string(), port: v.number() }),
+          publicKey: v.string(),
+        }),
+      }),
+    ),
+    squads: v.object({
+      fronted: v.object({ name: v.string(), uuid: v.optional(v.string()) }),
+      reality: v.object({ name: v.string(), uuid: v.optional(v.string()) }),
+      relay: v.object({ name: v.string(), uuid: v.optional(v.string()) }),
+    }),
+    placements: v.array(
+      v.object({ mode: v.string(), state: v.union(v.literal('bound'), v.literal('skipped')) }),
+    ),
+    templates: v.array(
+      v.object({
+        family: v.string(),
+        hash: v.string(),
+        state: v.union(v.literal('matched'), v.literal('drifted'), v.literal('refused')),
+      }),
+    ),
+    // The privacy posture of the adopted profile, from the harden preview.
+    privacy: v.optional(v.union(v.literal('ok'), v.literal('drifted'))),
+    originDns: v.optional(
+      v.union(
+        v.object({
+          accountId: v.id('edgeProviderAccounts'),
+          zoneId: v.string(),
+          zoneName: v.string(),
+        }),
+        v.null(),
+      ),
+    ),
+    handoff: v.optional(v.union(v.literal('fresh'), v.literal('taken_over'))),
+    // The delivery gate version of this panel: bumped on every disposition or
+    // resource-set change of any of its nodes; part of every render's token.
+    gateVersion: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index('by_server', ['backendServerId']),
+
+  // One per enrolled node: what the role enrolled and observes, what FCP owns
+  // of the machine configuration, the revisions, the activation ladder, the
+  // committed (approved) configuration and the delivery disposition.
+  panelNodeIntents: defineTable({
+    backendServerId: v.id('backendServers'),
+    name: v.string(),
+    label: v.string(),
+    purpose: v.union(v.literal('direct'), v.literal('front'), v.literal('relay')),
+    contractVersion: v.number(),
+    generation: v.number(),
+    desiredHash: v.string(),
+    claim: v.optional(v.object({ attemptId: v.string(), expiresAt: v.number() })),
+    state: v.union(
+      v.literal('pending'),
+      v.literal('ready'),
+      v.literal('blocked'),
+      v.literal('retiring'),
+      v.literal('retired'),
+    ),
+    code: v.optional(v.string()),
+    // Observations the role reports on every run (never FCP-owned settings).
+    observed: v.object({
+      management: v.object({ address: v.string(), port: v.number() }),
+      publicIps: v.object({ v4: v.optional(v.string()), v6: v.optional(v.string()) }),
+      capabilities: v.object({ caddy: v.boolean(), ipv6: v.boolean() }),
+      at: v.number(),
+    }),
+    // FCP-owned machine settings; changed only by an admin (bumps machineRevision).
+    settings: v.object({
+      ingress: v.optional(
+        v.object({
+          externalPort: v.number(),
+          hostHeader: v.union(v.literal('any'), v.literal('hostname')),
+          internal: v.array(
+            v.object({
+              inboundTag: v.string(),
+              listen: v.string(),
+              port: v.number(),
+              path: v.string(),
+            }),
+          ),
+        }),
+      ),
+      originHostnameSource: v.union(v.literal('managed'), v.literal('explicit'), v.literal('none')),
+      explicitHostname: v.optional(v.string()),
+      originAddressOverride: v.optional(v.string()),
+      publishV6: v.boolean(),
+      nodePort: v.number(),
+      countryCode: v.optional(v.string()),
+    }),
+    machineRevision: v.number(),
+    appliedRevision: v.optional(v.number()),
+    appliedAt: v.optional(v.number()),
+    appliedReport: v.optional(
+      v.object({ certificateReady: v.optional(v.boolean()), nodeStarted: v.boolean() }),
+    ),
+    // The profile token and inbound uuid this node runs, and the REALITY
+    // authentication digest of its inbound, as last derived.
+    configRevision: v.optional(v.string()),
+    authRevision: v.optional(v.string()),
+    deliveryRevision: v.optional(v.string()),
+    activation: v.object({
+      stage: v.union(
+        v.literal('registered'),
+        v.literal('bootstrap_available'),
+        v.literal('machine_applied'),
+        v.literal('machine_ready'),
+        v.literal('candidates_verified'),
+        v.literal('awaiting_approval'),
+        v.literal('activating'),
+        v.literal('live'),
+      ),
+      // Evidence rows, each bound to the revisions it was taken for.
+      evidence: v.array(
+        v.object({
+          kind: v.string(),
+          machineRevision: v.number(),
+          configRevision: v.optional(v.string()),
+          authRevision: v.optional(v.string()),
+          deliveryRevision: v.optional(v.string()),
+          at: v.number(),
+          detail: v.optional(v.string()),
+        }),
+      ),
+      currentRunId: v.optional(v.id('panelActivationRuns')),
+      reviewHash: v.optional(v.string()),
+    }),
+    // The COMMITTED configuration: what members are served. Moves only when a
+    // delivery commit promotes an activation run's candidate snapshot.
+    approved: v.optional(
+      v.object({
+        machineRevision: v.number(),
+        configRevision: v.string(),
+        authRevision: v.optional(v.string()),
+        deliveryRevision: v.string(),
+        reviewHash: v.string(),
+        approvedAt: v.number(),
+        byAdminId: v.optional(v.id('adminUsers')),
+        committed: v.object({ hostUuids: v.array(v.string()), edgeIds: v.array(v.string()) }),
+      }),
+    ),
+    delivery: v.object({
+      disposition: v.union(
+        v.literal('staged'),
+        v.literal('activating'),
+        v.literal('live'),
+        v.literal('unavailable'),
+        v.literal('retiring'),
+      ),
+      acceptingAssignments: v.boolean(),
+      lastLiveAt: v.optional(v.number()),
+      exposure: v.object({
+        everLive: v.boolean(),
+        hosts: v.array(v.string()),
+        relayId: v.optional(v.id('relays')),
+        mirrors: v.number(),
+        testCredentials: v.number(),
+        dns: v.number(),
+      }),
+    }),
+    origin: v.object({
+      hostname: v.optional(v.string()),
+      address: v.optional(v.string()),
+      dns: v.union(
+        v.literal('none'),
+        v.literal('pending'),
+        v.literal('created'),
+        v.literal('resolves'),
+        v.literal('conflict'),
+      ),
+    }),
+    // A maintenance transition that closed this node (with the ids of every
+    // node it closed, so none reopens on another's checks).
+    maintenance: v.optional(
+      v.object({
+        id: v.string(),
+        reason: v.string(),
+        since: v.number(),
+        byAdminId: v.optional(v.id('adminUsers')),
+      }),
+    ),
+    nodeUuid: v.optional(v.string()),
+    hostUuid: v.optional(v.string()),
+    retirementId: v.optional(v.id('panelRetirements')),
+    tokenId: v.optional(v.id('apiTokens')),
+    registeredAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_server', ['backendServerId'])
+    .index('by_server_name', ['backendServerId', 'name'])
+    .index('by_state', ['state']),
+
+  // One activation attempt: an immutable candidate snapshot with its own
+  // approval, the candidate resources it enables or publishes, and the
+  // rehearsal it recorded. The delivery commit promotes exactly this snapshot.
+  panelActivationRuns: defineTable({
+    backendServerId: v.id('backendServers'),
+    intentId: v.id('panelNodeIntents'),
+    generation: v.number(),
+    stepVersion: v.number(),
+    state: v.union(
+      v.literal('review'),
+      v.literal('running'),
+      v.literal('blocked'),
+      v.literal('committed'),
+      v.literal('superseded'),
+      v.literal('failed'),
+    ),
+    stage: v.union(
+      v.literal('hosts'),
+      v.literal('publish'),
+      v.literal('rehearse'),
+      v.literal('commit'),
+      v.literal('done'),
+    ),
+    candidate: v.object({
+      machineRevision: v.number(),
+      configRevision: v.string(),
+      authRevision: v.optional(v.string()),
+      deliveryRevision: v.string(),
+      reviewHash: v.string(),
+      // The review card, non-secret (what the approval named).
+      review: v.string(),
+      approval: v.optional(v.object({ byAdminId: v.optional(v.id('adminUsers')), at: v.number() })),
+    }),
+    resources: v.object({ hostUuids: v.array(v.string()), edgeIds: v.array(v.string()) }),
+    rehearsal: v.optional(
+      v.object({
+        at: v.number(),
+        ok: v.boolean(),
+        families: v.array(v.string()),
+        detail: v.optional(v.string()),
+      }),
+    ),
+    code: v.optional(v.string()),
+    events: v.array(v.object({ at: v.number(), code: v.string() })),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_intent', ['intentId'])
+    .index('by_state', ['state']),
+
+  // The retirement ladder of one node (docs/servers.md "Retirement and migration").
+  panelRetirements: defineTable({
+    backendServerId: v.id('backendServers'),
+    intentId: v.id('panelNodeIntents'),
+    stage: v.union(
+      v.literal('requested'),
+      v.literal('needs_admin'),
+      v.literal('draining'),
+      v.literal('panel_removed'),
+      v.literal('ready_to_wipe'),
+      v.literal('wiped'),
+      v.literal('retired'),
+    ),
+    disposition: v.optional(v.union(v.literal('keep-dark'), v.literal('migrate'))),
+    migrationId: v.optional(v.id('panelMigrations')),
+    requestedBy: v.union(v.literal('role'), v.literal('admin')),
+    code: v.optional(v.string()),
+    events: v.array(v.object({ at: v.number(), code: v.string() })),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index('by_intent', ['intentId']),
+
+  // Moving a source node's members to a target node: a persisted cohort with
+  // each member's assignment version, batches, and a conditional rollback.
+  panelMigrations: defineTable({
+    backendServerId: v.id('backendServers'),
+    sourceIntentId: v.id('panelNodeIntents'),
+    targetIntentId: v.id('panelNodeIntents'),
+    generation: v.number(),
+    stage: v.union(
+      v.literal('admit'),
+      v.literal('rehearse'),
+      v.literal('cutover'),
+      v.literal('verify'),
+      v.literal('rollback'),
+      v.literal('drain'),
+      v.literal('done'),
+      v.literal('failed'),
+    ),
+    cohort: v.array(
+      v.object({
+        subscriptionId: v.id('subscriptions'),
+        previousNode: v.optional(v.string()),
+        previousVersion: v.number(),
+        state: v.union(
+          v.literal('pending'),
+          v.literal('moved'),
+          v.literal('skipped'),
+          v.literal('restored'),
+        ),
+        movedVersion: v.optional(v.number()),
+      }),
+    ),
+    position: v.number(),
+    code: v.optional(v.string()),
+    events: v.array(v.object({ at: v.number(), code: v.string() })),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_source', ['sourceIntentId'])
+    .index('by_target', ['targetIntentId']),
+
+  // External side effects of the workflows above, persisted BEFORE the call.
+  // A superseded owner generation never releases an unresolved one; on
+  // settlement the result is reconciled against current desired state
+  // (reuse / retain / delete) rather than cleaned up by rule.
+  panelObligations: defineTable({
+    backendServerId: v.id('backendServers'),
+    ownerKind: v.union(
+      v.literal('setup'),
+      v.literal('intent'),
+      v.literal('activation'),
+      v.literal('retirement'),
+      v.literal('migration'),
+    ),
+    ownerId: v.string(),
+    ownerGeneration: v.number(),
+    attemptId: v.string(),
+    kind: v.union(
+      v.literal('profile.create'),
+      v.literal('dns.record'),
+      v.literal('host'),
+      v.literal('node'),
+      v.literal('test_credential'),
+      v.literal('edge_publication'),
+      v.literal('mirror.withdraw'),
+      v.literal('mirror.replace'),
+      v.literal('machine_cleanup'),
+    ),
+    identity: v.string(),
+    verb: v.union(v.literal('create'), v.literal('update'), v.literal('delete')),
+    ownership: v.union(v.literal('created'), v.literal('adopted'), v.literal('shared')),
+    state: v.union(
+      v.literal('pending'),
+      v.literal('sent'),
+      v.literal('unresolved'),
+      v.literal('confirmed'),
+      v.literal('failed'),
+    ),
+    intent: v.string(), // JSON, non-secret (a DNS record's name and content, a Host tuple)
+    resourceRef: v.optional(v.string()),
+    // Where a DNS record lives: cleanup uses this, never the setup's current account.
+    dns: v.optional(
+      v.object({
+        accountId: v.id('edgeProviderAccounts'),
+        zoneId: v.string(),
+        zoneName: v.string(),
+        recordId: v.optional(v.string()),
+        marker: v.string(),
+      }),
+    ),
+    code: v.optional(v.string()),
+    sentAt: v.optional(v.number()),
+    settledAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_owner', ['ownerKind', 'ownerId'])
+    .index('by_server_kind_identity', ['backendServerId', 'kind', 'identity'])
+    .index('by_state', ['state']),
 
   // Detector dedupe marks: one contribution per member per detector window,
   // ACROSS relays: the key is a peppered HMAC of the member alone (see

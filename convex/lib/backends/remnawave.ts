@@ -2140,8 +2140,13 @@ export async function remnawaveUserCredential(
   cfg: RemnawaveConfig,
   backendUserId: string,
 ): Promise<{ protocolUuid: string | null }> {
-  const user = await remnawaveGetUser(cfg, backendUserId);
-  return { protocolUuid: user.protocolUuid ?? null };
+  const user = await call(cfg, {
+    method: 'GET',
+    path: `/api/users/${backendUserId}`,
+    schema: RemnawaveUser,
+    sensitive: true,
+  });
+  return { protocolUuid: user.vlessUuid ?? null };
 }
 
 export async function remnawaveReadProfile(
