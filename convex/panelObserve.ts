@@ -18,7 +18,12 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
-import type { PanelObservation, PanelObservedInbound } from './lib/backends/types';
+import type {
+  PanelObservation,
+  PanelObservedHost,
+  PanelObservedInbound,
+  PanelObservedSquad,
+} from './lib/backends/types';
 import { panelDigestKey } from './lib/panel/key';
 
 const nullableString = v.union(v.string(), v.null());
@@ -63,6 +68,84 @@ export function toStoredInbound(i: PanelObservedInbound): StoredInbound {
 }
 
 const opt = <T>(x: T | null): T | undefined => (x === null ? undefined : x);
+
+type Db = import('./_generated/server').MutationCtx['db'];
+
+/**
+ * Replace an instance's cached Hosts with what was just read: rows the panel
+ * still lists are replaced in place, rows it no longer lists are deleted. The
+ * one mapping from the provider's Host shape to the stored row, shared with the
+ * ledger's post-settle refresh (`panelLedger.syncCache`).
+ */
+export async function upsertObservedHosts(
+  ctx: { db: Db },
+  sid: Id<'backendServers'>,
+  hosts: readonly PanelObservedHost[],
+  now: number,
+) {
+  const rows = await ctx.db
+    .query('panelHosts')
+    .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+    .collect();
+  const by = new Map(rows.map((r) => [r.hostUuid, r]));
+  for (const h of hosts) {
+    const row = {
+      backendServerId: sid,
+      hostUuid: h.hostUuid,
+      remark: h.remark,
+      address: h.address,
+      port: h.port,
+      sni: opt(h.sni),
+      host: opt(h.host),
+      path: opt(h.path),
+      alpn: opt(h.alpn),
+      fingerprint: opt(h.fingerprint),
+      securityLayer: opt(h.securityLayer),
+      isDisabled: h.isDisabled,
+      isHidden: h.isHidden,
+      tag: opt(h.tag),
+      viewPosition: opt(h.viewPosition),
+      configProfileUuid: opt(h.configProfileUuid),
+      configProfileInboundUuid: opt(h.configProfileInboundUuid),
+      nodeUuids: h.nodeUuids,
+      observedAt: now,
+    };
+    const prev = by.get(h.hostUuid);
+    if (prev) await ctx.db.replace(prev._id, row);
+    else await ctx.db.insert('panelHosts', row);
+    by.delete(h.hostUuid);
+  }
+  for (const gone of by.values()) await ctx.db.delete(gone._id);
+}
+
+/** The same for squads. */
+export async function upsertObservedSquads(
+  ctx: { db: Db },
+  sid: Id<'backendServers'>,
+  squads: readonly PanelObservedSquad[],
+  now: number,
+) {
+  const rows = await ctx.db
+    .query('panelSquads')
+    .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+    .collect();
+  const by = new Map(rows.map((r) => [r.squadUuid, r]));
+  for (const sq of squads) {
+    const row = {
+      backendServerId: sid,
+      squadUuid: sq.squadUuid,
+      name: sq.name,
+      inboundUuids: sq.inboundUuids,
+      membersCount: opt(sq.membersCount),
+      observedAt: now,
+    };
+    const prev = by.get(sq.squadUuid);
+    if (prev) await ctx.db.replace(prev._id, row);
+    else await ctx.db.insert('panelSquads', row);
+    by.delete(sq.squadUuid);
+  }
+  for (const gone of by.values()) await ctx.db.delete(gone._id);
+}
 
 export const record = internalMutation({
   args: {
@@ -203,60 +286,8 @@ export const record = internalMutation({
     }
     for (const gone of profileBy.values()) await ctx.db.delete(gone._id);
 
-    const hostRows = await ctx.db
-      .query('panelHosts')
-      .withIndex('by_server', (q) => q.eq('backendServerId', sid))
-      .collect();
-    const hostBy = new Map(hostRows.map((r) => [r.hostUuid, r]));
-    for (const h of a.hosts) {
-      const row = {
-        backendServerId: sid,
-        hostUuid: h.hostUuid,
-        remark: h.remark,
-        address: h.address,
-        port: h.port,
-        sni: opt(h.sni),
-        host: opt(h.host),
-        path: opt(h.path),
-        alpn: opt(h.alpn),
-        fingerprint: opt(h.fingerprint),
-        securityLayer: opt(h.securityLayer),
-        isDisabled: h.isDisabled,
-        isHidden: h.isHidden,
-        tag: opt(h.tag),
-        viewPosition: opt(h.viewPosition),
-        configProfileUuid: opt(h.configProfileUuid),
-        configProfileInboundUuid: opt(h.configProfileInboundUuid),
-        nodeUuids: h.nodeUuids,
-        observedAt: now,
-      };
-      const prev = hostBy.get(h.hostUuid);
-      if (prev) await ctx.db.replace(prev._id, row);
-      else await ctx.db.insert('panelHosts', row);
-      hostBy.delete(h.hostUuid);
-    }
-    for (const gone of hostBy.values()) await ctx.db.delete(gone._id);
-
-    const squadRows = await ctx.db
-      .query('panelSquads')
-      .withIndex('by_server', (q) => q.eq('backendServerId', sid))
-      .collect();
-    const squadBy = new Map(squadRows.map((r) => [r.squadUuid, r]));
-    for (const sq of a.squads) {
-      const row = {
-        backendServerId: sid,
-        squadUuid: sq.squadUuid,
-        name: sq.name,
-        inboundUuids: sq.inboundUuids,
-        membersCount: opt(sq.membersCount),
-        observedAt: now,
-      };
-      const prev = squadBy.get(sq.squadUuid);
-      if (prev) await ctx.db.replace(prev._id, row);
-      else await ctx.db.insert('panelSquads', row);
-      squadBy.delete(sq.squadUuid);
-    }
-    for (const gone of squadBy.values()) await ctx.db.delete(gone._id);
+    await upsertObservedHosts(ctx, sid, a.hosts, now);
+    await upsertObservedSquads(ctx, sid, a.squads, now);
 
     // A reserved identity that now exists was made by the run that reserved it.
     await adoptObservedReservations(ctx, sid);
@@ -378,11 +409,12 @@ export const acknowledgeForeignEdit = internalMutation({
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a) => {
-    const rows = await ctx.db
+    const row = await ctx.db
       .query('panelProfiles')
-      .withIndex('by_server', (q) => q.eq('backendServerId', a.backendServerId))
-      .collect();
-    const row = rows.find((r) => r.profileUuid === a.profileUuid);
+      .withIndex('by_server_uuid', (q) =>
+        q.eq('backendServerId', a.backendServerId).eq('profileUuid', a.profileUuid),
+      )
+      .unique();
     if (!row) throw new ConvexError({ code: 'not_found', message: 'No such profile' });
     if (row.foreignEditAt === undefined) return { ok: true as const };
     await ctx.db.patch(row._id, { foreignEditAt: undefined });

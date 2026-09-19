@@ -88,6 +88,19 @@ describe('family names leave the relays by themselves', () => {
     expect(l.revision).toBe(1);
   });
 
+  test("a BURN takes a relay's last name: a name known blocked is worse than none", async () => {
+    const { t, listenerId } = await seed(['only.example']);
+    const out = await t.mutation(internal.sniFamilies.setNames, {
+      slug: 'fam',
+      names: ['only.example'],
+      action: 'burn',
+    });
+    expect(out.relays).toEqual({ listeners: 1, retired: 1, skipped: 0, kept: 0 });
+    expect(await active(t, listenerId)).toEqual([]);
+    const l = (await t.run((ctx) => ctx.db.get(listenerId)))!;
+    expect(l.tlsNames![0]).toMatchObject({ status: 'retired', retiredBy: 'admin' });
+  });
+
   test("a name that merely stopped qualifying never takes a relay's LAST name with it", async () => {
     const { t, listenerId } = await seed(['only.example']);
     const [due] = (await t.query(internal.sniFamilies.dueForQualification, {})).names;
@@ -209,6 +222,33 @@ describe('the Host follows its server name', () => {
     // Already in step: nothing is written twice.
     expect(await t.action(internal.hostOps.resyncSni, { listenerId })).toEqual({ written: false });
     expect(writes).toHaveLength(1);
+  });
+
+  test('judging the Host name blocked somewhere moves the Host onto the next safe name', async () => {
+    const { t, relayId, listenerId } = await seed();
+    await withHost(t, relayId, listenerId, 'one.example');
+    stubPanel();
+    await t.mutation(internal.sniFamilies.setCountry, {
+      slug: 'fam',
+      names: ['one.example'],
+      country: 'CN',
+      state: 'blocked',
+    });
+    // The rewrite is scheduled from the judgement itself, like a retire does.
+    const scheduled = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
+    expect(scheduled.some((f) => f.name.includes('resyncSni'))).toBe(true);
+    expect(await t.action(internal.hostOps.resyncSni, { listenerId })).toEqual({ written: true });
+    const l = (await t.run((ctx) => ctx.db.get(listenerId)))!;
+    expect(l.host!.intended!.sni).toBe('two.example');
+    // Judging a name that is not the Host's schedules nothing.
+    await t.mutation(internal.sniFamilies.setCountry, {
+      slug: 'fam',
+      names: ['three.example'],
+      country: 'CN',
+      state: 'blocked',
+    });
+    const again = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
+    expect(again.filter((f) => f.name.includes('resyncSni'))).toHaveLength(1);
   });
 
   test('a Host the machine is working on, an operator-owned Host and a rotating relay are left alone', async () => {

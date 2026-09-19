@@ -247,6 +247,11 @@ export const requestHostUpdate = internalMutation({
     const { backendServerId: _s, hostUuid, actorAdminId, inboundUuid, ...rest } = a;
     const fields: PanelHostFields = { ...rest };
     const expected: Record<string, unknown> = { ...rest };
+    // The postcondition is what a later read must SHOW, not what was asked. A
+    // cleared security layer is sent as the panel's own default word (the
+    // enumeration has no "unset"), and the panel reads it back as that word;
+    // expecting null here would never be observed and the claim never released.
+    if (expected.securityLayer === null) expected.securityLayer = 'DEFAULT';
     if (inboundUuid !== undefined) {
       fields.inbound = await inboundBinding(ctx, sid, inboundUuid);
       expected.configProfileInboundUuid = inboundUuid;
@@ -1003,6 +1008,9 @@ async function look(ctx: ActionCtx, opId: Id<'panelOps'>): Promise<boolean> {
       profile,
       nodes,
     });
+    // A server-name rollout that owns this op follows what the look decided,
+    // from whichever look it was (the run's, the cron's, an operator's).
+    if (op.kind === 'profile') await ctx.runMutation(internal.sniRollouts.syncByOp, { opId });
     // A settled profile edit is shown at once, not at the next scheduled read.
     if (!out.open && op.kind === 'profile') {
       const server = await ctx.runQuery(internal.backendServers.getById, {
@@ -1090,6 +1098,7 @@ export const run = internalAction({
             request: 'rejected_pre_mutation',
             errorCode: `servers.${sent.reason}`,
           });
+          await ctx.runMutation(internal.sniRollouts.syncByOp, { opId });
           return { open: false };
         }
       } else if (op.kind === 'node') {
@@ -1123,7 +1132,10 @@ export const run = internalAction({
       objectUuid,
       errorCode,
     });
-    if (outcome === 'rejected_pre_mutation') return { open: false };
+    if (outcome === 'rejected_pre_mutation') {
+      if (op.kind === 'profile') await ctx.runMutation(internal.sniRollouts.syncByOp, { opId });
+      return { open: false };
+    }
     return { open: await look(ctx, opId) };
   },
 });
@@ -1200,9 +1212,11 @@ export const reconcile = internalAction({
   args: {},
   handler: async (ctx): Promise<{ looked: number; stillOpen: number }> =>
     runWithCronOutcome(ctx, 'panel-reconcile', async () => {
-      const { toLook } = await ctx.runMutation(internal.panelLedger.sweepInterrupted, {
+      const { toLook, released } = await ctx.runMutation(internal.panelLedger.sweepInterrupted, {
         olderThanMs: 2 * 60_000,
       });
+      // An op released as never sent may have been a rollout's write.
+      for (const opId of released) await ctx.runMutation(internal.sniRollouts.syncByOp, { opId });
       let stillOpen = 0;
       for (const opId of toLook) if (await look(ctx, opId)) stillOpen++;
       return { looked: toLook.length, stillOpen };

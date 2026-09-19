@@ -47,7 +47,7 @@ const familyValidator = v.union(
   ]),
 );
 
-async function renderEnabled(ctx: QueryCtx): Promise<boolean> {
+async function renderEnabled(ctx: { db: QueryCtx['db'] }): Promise<boolean> {
   const row = await ctx.db
     .query('appSettings')
     .withIndex('by_key', (q) => q.eq('key', 'edge.render.enabled'))
@@ -243,20 +243,45 @@ export const deliveryPolicy = internalQuery({
  * place is edge-required (the epoch is the relay's, or -1 when the binding has
  * no live relay), null for a place no relay covers (raw delivery, no token).
  */
-/**
- * Whether names are judged per country for the place a key resolves to, and
- * the curated countries. The fronted route asks BEFORE it looks at its content
- * cache: a cached body must not reach a request that infers a curated country
- * when it could carry a name blocked there (lib/edges/sni/country.ts).
- */
-export const countryPolicyFor = internalQuery({
+async function epochTokenFor(
+  ctx: { db: QueryCtx['db'] },
+  policy: DeliveryPolicy,
+): Promise<{ token: string | null; relay: Doc<'relays'> | null }> {
+  if (!policy.required) return { token: null, relay: null };
+  const relay = policy.relayId ? await ctx.db.get(policy.relayId) : null;
+  const renderOn = await renderEnabled(ctx);
+  return {
+    token: `${policy.bindingVersion}:${relay && relay.enabled && renderOn ? relay.publicationEpoch : -1}`,
+    relay,
+  };
+}
+
+export const epochFor = internalQuery({
   args: { backendServerId: v.id('backendServers'), nodeName: v.optional(v.string()) },
-  handler: async (ctx, { backendServerId, nodeName }) => {
-    const { curatedCountries } = await resolveSniConfig(ctx.db);
+  handler: async (ctx, { backendServerId, nodeName }): Promise<string | null> =>
+    (await epochTokenFor(ctx, await deliveryPolicyFor(ctx, backendServerId, nodeName))).token,
+});
+
+/**
+ * Everything the fronted route needs about a key's place BEFORE it looks at
+ * its content cache, in one read: the cache token above, and whether names
+ * are judged per country there (`sensitive`) with the curated countries. A
+ * cached body must not reach a request that infers a curated country when it
+ * could carry a name blocked there (lib/edges/sni/country.ts). A place no live
+ * relay covers renders nothing, so it has no country logic either.
+ */
+export const renderContextFor = internalQuery({
+  args: { backendServerId: v.id('backendServers'), nodeName: v.optional(v.string()) },
+  handler: async (
+    ctx,
+    { backendServerId, nodeName },
+  ): Promise<{ token: string | null; curated: string[]; sensitive: boolean }> => {
     const policy = await deliveryPolicyFor(ctx, backendServerId, nodeName);
-    const relay = policy.required && policy.relayId ? await ctx.db.get(policy.relayId) : null;
-    if (!relay || curatedCountries.length === 0)
-      return { curated: curatedCountries, sensitive: false };
+    const { token, relay } = await epochTokenFor(ctx, policy);
+    if (!relay) return { token, curated: [], sensitive: false };
+    const { curatedCountries } = await resolveSniConfig(ctx.db);
+    if (curatedCountries.length === 0)
+      return { token, curated: curatedCountries, sensitive: false };
     const listeners = await listenersOf(ctx, relay._id);
     const sensitive = listeners.some(
       (l) =>
@@ -267,18 +292,7 @@ export const countryPolicyFor = internalQuery({
             ((n.blockedIn?.length ?? 0) > 0 || (n.provenIn?.length ?? 0) > 0),
         ),
     );
-    return { curated: curatedCountries, sensitive };
-  },
-});
-
-export const epochFor = internalQuery({
-  args: { backendServerId: v.id('backendServers'), nodeName: v.optional(v.string()) },
-  handler: async (ctx, { backendServerId, nodeName }): Promise<string | null> => {
-    const policy = await deliveryPolicyFor(ctx, backendServerId, nodeName);
-    if (!policy.required) return null;
-    const relay = policy.relayId ? await ctx.db.get(policy.relayId) : null;
-    const renderOn = await renderEnabled(ctx);
-    return `${policy.bindingVersion}:${relay && relay.enabled && renderOn ? relay.publicationEpoch : -1}`;
+    return { token, curated: curatedCountries, sensitive };
   },
 });
 

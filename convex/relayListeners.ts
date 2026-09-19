@@ -598,6 +598,8 @@ async function retireOn(
   by: 'admin' | 'role',
   now: number,
   drainMs: number,
+  /** `allowLast`: the caller has decided that no name is better than these (a burn). */
+  opts: { allowLast?: boolean } = {},
 ): Promise<string[]> {
   const retiring: string[] = [];
   const next = (l.tlsNames ?? []).map((n) => {
@@ -615,9 +617,11 @@ async function retireOn(
   });
   if (retiring.length === 0) return [];
   // A listener that presents names keeps at least one, unless it is L7-only
-  // (the hostname is then the name).
+  // (the hostname is then the name) or the caller burns a name known blocked:
+  // a listener with no active name renders nothing (its members get the
+  // edge-required 503, not a name that fails), which is the lesser harm.
   const l7Only = l.originTransport?.scheme === 'http';
-  if (!l7Only && !next.some((n) => n.status === 'active'))
+  if (!l7Only && !opts.allowLast && !next.some((n) => n.status === 'active'))
     throw new ConvexError({
       code: 'conflict',
       message: `listener ${l.listenerKey} keeps at least one active server name`,
@@ -683,13 +687,19 @@ export async function retireFamilyNames(
     if (mine.size === 0) continue;
     const before = hostSniOf(l);
     try {
-      const retired = await retireOn(ctx, l, relay, mine, opts.by, now, edgeMs.sniDrain(cfg));
+      const retired = await retireOn(ctx, l, relay, mine, opts.by, now, edgeMs.sniDrain(cfg), {
+        allowLast: !opts.keepLast,
+      });
       out.listeners++;
       out.retired += retired.length;
-    } catch {
-      // The last name of a listener that is not L7-only: left in place.
-      out.kept++;
-      continue;
+    } catch (e) {
+      // Only the listener's own "keeps at least one name" refusal is a kept
+      // name; anything else is a fault and must surface.
+      if (e instanceof ConvexError && (e.data as { code?: string }).code === 'conflict') {
+        out.kept++;
+        continue;
+      }
+      throw e;
     }
     const after = await ctx.db.get(l._id);
     if (after && before !== hostSniOf(after) && after.host?.uuid && relay.hostMode === 'fcp')
