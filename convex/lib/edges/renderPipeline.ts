@@ -85,6 +85,8 @@ export function applyEdgeRender(
     preferDistinctProviders: rctx.preferDistinctProviders,
     includeBackup: rule.includeBackup,
     canEmitV6,
+    namesPerEndpoint: rule.namesPerEndpoint,
+    backupNames: rule.backupNames,
   });
   // (5): render + the edge-required verdict.
   const out = renderEdgeEndpoints({

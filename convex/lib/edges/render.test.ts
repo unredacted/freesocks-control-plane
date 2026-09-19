@@ -10,7 +10,13 @@ import { describe, expect, test } from 'vitest';
 import YAML from 'yaml';
 import { EDGE_DEFAULTS, defaultClientRule } from '../edgeConfig';
 import type { AssignedEndpoint, PublishedEdge } from './assignment';
-import { effectiveRule, matchListeners, renderEntries, renderEdgeEndpoints } from './render';
+import {
+  effectiveRule,
+  matchListeners,
+  renderEntries,
+  renderEntriesChecked,
+  renderEdgeEndpoints,
+} from './render';
 import { applyEdgeRender } from './renderPipeline';
 import { decodeBase64Loose, encodeBase64 } from './render/base64';
 import type { RenderMatcher } from './render/types';
@@ -71,6 +77,18 @@ const assigned: { primary: AssignedEndpoint; backup: AssignedEndpoint } = {
   backup: { role: 'backup', edge: edgeB, sni: 'cdn-b.example', hostHeader: null },
 };
 const EMPTY = { primary: null, backup: null };
+
+// A member on an `hrw1` listener holds further server names per endpoint.
+const withNames: { primary: AssignedEndpoint; backup: AssignedEndpoint } = {
+  primary: {
+    ...assigned.primary,
+    alternates: [
+      { sni: 'cdn-c.example', hostHeader: null },
+      { sni: 'cdn-d.example', hostHeader: null },
+    ],
+  },
+  backup: assigned.backup,
+};
 
 const cfg = { ...EDGE_DEFAULTS.render, enabled: true };
 const linksRule = effectiveRule(cfg, defaultClientRule('v2rayng'));
@@ -469,6 +487,69 @@ describe('link-list rendering', () => {
   });
 });
 
+describe('further server names per endpoint', () => {
+  test('renderEntries: one more IPv4 entry per name, no IPv6 sibling, numbered labels', () => {
+    const entries = renderEntries(withNames, autoRule, true, ORIGIN);
+    expect(entries.map((e) => [e.label, e.family, e.sni, e.variant ?? 0])).toEqual([
+      ['FreeSocks Primary', 'v4', 'cdn-a.example', 0],
+      ['FreeSocks Primary (IPv6)', 'v6', 'cdn-a.example', 0],
+      ['FreeSocks Backup', 'v4', 'cdn-b.example', 0],
+      ['FreeSocks Primary 2', 'v4', 'cdn-c.example', 1],
+      ['FreeSocks Primary 3', 'v4', 'cdn-d.example', 2],
+    ]);
+  });
+
+  test('link list: each name is its own line, pbk / sid / flow untouched', () => {
+    const out = render(templateLink, { assigned: withNames });
+    const lines = out.body.split('\n').filter((l) => l.startsWith('vless://'));
+    expect(lines.map((l) => qsOf(l).get('sni'))).toEqual([
+      'cdn-a.example',
+      'cdn-a.example', // the IPv6 sibling of the first name
+      'cdn-b.example',
+      'cdn-c.example',
+      'cdn-d.example',
+    ]);
+    for (const l of lines) {
+      expect(qsOf(l).get('pbk')).toBe(new URLSearchParams(REALITY_QS).get('pbk'));
+      expect(qsOf(l).get('sid')).toBe(new URLSearchParams(REALITY_QS).get('sid'));
+      expect(l).not.toContain(ORIGIN);
+    }
+    expect(decodeURIComponent(lines[3].split('#')[1])).toBe('FreeSocks Primary 2');
+  });
+
+  test('an entry cap drops the further names before it drops a role', () => {
+    // Three first-name entries exist (primary, its IPv6 sibling, backup): a cap
+    // of three keeps exactly those and cuts both further names.
+    const capped = { ...linksRule, maxEntries: 3 };
+    const out = render(templateLink, { assigned: withNames, rule: capped });
+    const lines = out.body.split('\n').filter((l) => l.startsWith('vless://'));
+    expect(lines.map((l) => decodeURIComponent(l.split('#')[1]))).toEqual([
+      'FreeSocks Primary',
+      'FreeSocks Primary (IPv6)',
+      'FreeSocks Backup',
+    ]);
+  });
+
+  test('a single-key delivery stays one entry', () => {
+    const out = render(templateLink, { assigned: withNames, deliveryStyle: 'single-key' });
+    expect(out.emitted).toBe(1);
+  });
+
+  test('the origin address never leaks through a further name', () => {
+    const leaking = {
+      primary: {
+        ...withNames.primary,
+        edge: { ...edgeA, addresses: { v4: ORIGIN } },
+      },
+      backup: null,
+    };
+    expect(renderEntriesChecked(leaking, linksRule, false, ORIGIN)).toEqual({
+      entries: [],
+      leaked: 1,
+    });
+  });
+});
+
 describe('applyEdgeRender: IPv6-only edges', () => {
   const v6Only: PublishedEdge = {
     ...edgeA,
@@ -558,6 +639,28 @@ describe('sing-box rendering', () => {
   };
   const renderSb = (doc: unknown, over: Partial<Parameters<typeof renderEdgeEndpoints>[0]> = {}) =>
     render(JSON.stringify(doc), { rule: autoRule, ...over });
+
+  test('further server names become further outbounds, all inside the auto group', () => {
+    const out = renderSb(singbox, { assigned: withNames });
+    const doc = JSON.parse(out.body) as { outbounds: Array<Record<string, unknown>> };
+    const emitted = doc.outbounds.filter(
+      (o) => o.type === 'vless' && String(o.tag).startsWith('FreeSocks'),
+    );
+    expect(emitted.map((o) => [o.tag, (o.tls as { server_name: string }).server_name])).toEqual([
+      ['FreeSocks Primary', 'cdn-a.example'],
+      ['FreeSocks Primary (IPv6)', 'cdn-a.example'],
+      ['FreeSocks Backup', 'cdn-b.example'],
+      ['FreeSocks Primary 2', 'cdn-c.example'],
+      ['FreeSocks Primary 3', 'cdn-d.example'],
+    ]);
+    // Same endpoint, same keys: only the name differs.
+    for (const o of emitted.slice(3)) {
+      expect(o).toMatchObject({ server: '203.0.113.10', server_port: 443, uuid: UUID });
+      expect((o.tls as { reality: { public_key: string } }).reality.public_key).toBe('PUBKEY');
+    }
+    const auto = doc.outbounds.find((o) => o.type === 'urltest') as { outbounds: string[] };
+    expect(auto.outbounds).toEqual(emitted.map((o) => o.tag));
+  });
 
   test('clones the template outbound per endpoint, adds the auto group with exactly the emitted tags, makes it the selector default', () => {
     const out = renderSb(singbox);
@@ -749,6 +852,24 @@ rules:
     body: string,
     over: Partial<Parameters<typeof renderEdgeEndpoints>[0]> = {},
   ) => render(body, { rule: mihomoRule, ...over });
+
+  test('further server names become further proxies, all inside the url-test group', () => {
+    const out = renderClash(clash, { assigned: withNames });
+    const doc = YAML.parse(out.body) as {
+      proxies: Array<Record<string, unknown>>;
+      'proxy-groups': Array<{ type: string; proxies: string[] }>;
+    };
+    const emitted = doc.proxies.filter((p) => String(p.name).startsWith('FreeSocks'));
+    expect(emitted.map((p) => [p.name, p.servername])).toEqual([
+      ['FreeSocks Primary', 'cdn-a.example'],
+      ['FreeSocks Primary (IPv6)', 'cdn-a.example'],
+      ['FreeSocks Backup', 'cdn-b.example'],
+      ['FreeSocks Primary 2', 'cdn-c.example'],
+      ['FreeSocks Primary 3', 'cdn-d.example'],
+    ]);
+    const auto = doc['proxy-groups'].find((g) => g.type === 'url-test')!;
+    expect(auto.proxies).toEqual(emitted.map((p) => p.name));
+  });
 
   test('clones the template proxy, adds a url-test group first and keeps the rest', () => {
     const out = renderClash(clash);

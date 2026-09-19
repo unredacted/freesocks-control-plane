@@ -363,6 +363,8 @@ export const memberView = internalQuery({
       preferDistinctProviders: cfg.render.preferDistinctProviders,
       includeBackup: rule.includeBackup && !!backup,
       canEmitV6: rule.ipv6Mode === 'both',
+      namesPerEndpoint: rule.namesPerEndpoint,
+      backupNames: rule.backupNames,
     });
     const connections = renderEntries(assigned, rule, false, origin.originAddress).map((e) => ({
       label: e.label,

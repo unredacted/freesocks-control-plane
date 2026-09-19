@@ -153,6 +153,15 @@ export interface EdgeConfig {
     backupLabel: string;
     ipv6Label: string;
     ipv6Mode: Exclude<Ipv6Mode, 'inherit'>;
+    /**
+     * Server names handed to ONE member per endpoint, for a listener on the
+     * `hrw1` name PRF: each is one more entry, so a member whose first name is
+     * blocked still holds working ones. 1 = a single name. No effect on a
+     * listener still on the legacy PRF, nor on an L7 front.
+     */
+    namesPerEndpoint: number;
+    /** The same, for the backup endpoint. */
+    backupNames: number;
     preferDistinctProviders: boolean;
     clients: Record<RenderClientFamily, ClientRenderRule>;
   };
@@ -239,6 +248,8 @@ export const EDGE_DEFAULTS: EdgeConfig = {
     backupLabel: 'FreeSocks Backup',
     ipv6Label: 'IPv6',
     ipv6Mode: 'both',
+    namesPerEndpoint: 3,
+    backupNames: 1,
     preferDistinctProviders: true,
     clients: defaultClients(),
   },
@@ -385,6 +396,8 @@ export const EDGE_KEYS = {
   'render.primaryLabel': 'edge.render.primaryLabel',
   'render.backupLabel': 'edge.render.backupLabel',
   'render.ipv6Label': 'edge.render.ipv6Label',
+  'render.namesPerEndpoint': 'edge.render.namesPerEndpoint',
+  'render.backupNames': 'edge.render.backupNames',
   'render.ipv6Mode': 'edge.render.ipv6Mode',
   'render.preferDistinctProviders': 'edge.render.preferDistinctProviders',
   'probe.enabled': 'edge.probe.enabled',
@@ -576,6 +589,13 @@ export function sanitizeRelayConfig(
       primaryLabel: sanitizeLabel(raw['render.primaryLabel'], D.render.primaryLabel),
       backupLabel: sanitizeLabel(raw['render.backupLabel'], D.render.backupLabel),
       ipv6Label: sanitizeLabel(raw['render.ipv6Label'], D.render.ipv6Label, 24),
+      namesPerEndpoint: sanitizeInt(
+        raw['render.namesPerEndpoint'],
+        1,
+        5,
+        D.render.namesPerEndpoint,
+      ),
+      backupNames: sanitizeInt(raw['render.backupNames'], 1, 5, D.render.backupNames),
       ipv6Mode: sanitizeEnum(
         raw['render.ipv6Mode'],
         ['off', 'auto-group-only', 'both'] as const,
@@ -829,6 +849,8 @@ export const EDGE_CONFIG_BOUNDS: Readonly<Record<string, { min: number; max: num
   'l7.qualifyStepTimeoutMs': { min: 1_000, max: 60_000 },
   'l7.qualificationTtlMinutes': { min: 5, max: 1440 },
   'l7.maxRequalifyPerTick': { min: 1, max: 50 },
+  'render.namesPerEndpoint': { min: 1, max: 5 },
+  'render.backupNames': { min: 1, max: 5 },
   'probe.intervalMinutes': { min: 5, max: 1440 },
   'probe.suspectedIntervalMinutes': { min: 1, max: 1440 },
   'probe.perCountryLimit': { min: 1, max: 10 },

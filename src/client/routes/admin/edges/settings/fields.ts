@@ -290,6 +290,21 @@ export const RENDER_GLOBAL_FIELDS: Field[] = [
     maxLength: 24,
   },
   {
+    kind: 'number',
+    path: 'render.namesPerEndpoint',
+    label: 'Server names per member',
+    unit: 'names',
+    helper:
+      'How many server names one member gets for their main address, so a blocked name does not cut them off. Only for listeners that use the growth-stable name selection.',
+  },
+  {
+    kind: 'number',
+    path: 'render.backupNames',
+    label: 'Server names on the backup address',
+    unit: 'names',
+    helper: 'The same, for the backup address. They differ from the main ones where possible.',
+  },
+  {
     kind: 'select',
     path: 'render.ipv6Mode',
     label: 'IPv6 entries',

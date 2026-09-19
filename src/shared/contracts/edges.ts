@@ -1200,6 +1200,8 @@ export const EdgeConfigView = z.object({
           primaryLabel: z.string(),
           backupLabel: z.string(),
           ipv6Label: z.string(),
+          namesPerEndpoint: z.number().default(3),
+          backupNames: z.number().default(1),
           ipv6Mode: z.enum(['off', 'auto-group-only', 'both']),
           preferDistinctProviders: z.boolean(),
           clients: z.record(z.string(), ClientRenderRule),
