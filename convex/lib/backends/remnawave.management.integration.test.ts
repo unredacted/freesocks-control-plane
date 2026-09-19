@@ -441,7 +441,45 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave management contract (integra
     expect((await w.readSquads(cfg)).some((x) => x.squadUuid === squadUuid)).toBe(false);
     created.squads = created.squads.filter((u) => u !== squadUuid);
 
-    expect(Array.isArray(await w.readNodeStatus(cfg))).toBe(true);
+    const b = uuidOfTag(profile.data, tagB)!;
+    const { nodeUuid } = await w.createNode(cfg, {
+      name: `fcpw-${run}`,
+      address: '192.0.2.40',
+      countryCode: 'NL',
+      configProfileUuid: profileUuid,
+      activeInboundUuids: [a],
+    });
+    created.nodes.push(nodeUuid);
+    const node = async () => (await w.readNodeStatus(cfg)).find((n) => n.nodeUuid === nodeUuid)!;
+    expect(await node()).toMatchObject({
+      name: `fcpw-${run}`,
+      address: '192.0.2.40',
+      countryCode: 'NL',
+      configProfileUuid: profileUuid,
+      activeInboundUuids: [a],
+      isDisabled: false,
+    });
+    // A rename leaves the profile assignment alone; the assignment travels as one.
+    await w.updateNode(cfg, nodeUuid, { name: `fcpw-${run}-b` });
+    expect(await node()).toMatchObject({ name: `fcpw-${run}-b`, activeInboundUuids: [a] });
+    await w.updateNode(cfg, nodeUuid, {
+      profile: { configProfileUuid: profileUuid, activeInboundUuids: [a, b] },
+    });
+    expect((await node()).activeInboundUuids.sort()).toEqual([a, b].sort());
+    await w.setNodeEnabled(cfg, nodeUuid, false);
+    expect((await node()).isDisabled).toBe(true);
+    await w.setNodeEnabled(cfg, nodeUuid, true);
+    expect((await node()).isDisabled).toBe(false);
+    await w.restartNode(cfg, nodeUuid);
+    await w.deleteNode(cfg, nodeUuid);
+    // The panel queues the removal: the row leaves shortly after, not with the answer.
+    let gone = false;
+    for (let i = 0; i < 20 && !gone; i++) {
+      gone = !(await w.readNodeStatus(cfg)).some((n) => n.nodeUuid === nodeUuid);
+      if (!gone) await new Promise((r) => setTimeout(r, 250));
+    }
+    expect(gone).toBe(true);
+    created.nodes = created.nodes.filter((u) => u !== nodeUuid);
   });
 
   test('squads: create, rename, change inbounds, delete', async () => {

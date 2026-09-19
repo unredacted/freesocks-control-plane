@@ -18,7 +18,12 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { runWithCronOutcome } from './cronHeartbeat';
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
-import type { PanelHostCreate, PanelHostFields, ProfilePatchPreview } from './lib/backends/types';
+import type {
+  PanelHostCreate,
+  PanelHostFields,
+  PanelNodeFields,
+  ProfilePatchPreview,
+} from './lib/backends/types';
 import {
   callResultOf,
   claimKey,
@@ -165,7 +170,7 @@ async function assertHostEditable(ctx: MutationCtx, sid: Id<'backendServers'>, h
 async function assertNotTombstoned(
   ctx: MutationCtx,
   sid: Id<'backendServers'>,
-  kind: 'host' | 'squad',
+  kind: 'host' | 'squad' | 'node',
   identity: string,
   allow: boolean,
 ) {
@@ -487,6 +492,291 @@ export const requestSquadDelete = internalMutation({
   },
 });
 
+// --- nodes --------------------------------------------------------------------------------------------
+
+async function cachedNode(ctx: MutationCtx, sid: Id<'backendServers'>, nodeUuid: string) {
+  const row = await ctx.db
+    .query('panelNodes')
+    .withIndex('by_server_uuid', (q) => q.eq('backendServerId', sid).eq('nodeUuid', nodeUuid))
+    .unique();
+  return row ?? refuse('not_found', 'That node is not on this panel. Refresh and retry');
+}
+
+/** The relays whose origin is this panel node. */
+async function relaysOfNode(ctx: MutationCtx, sid: Id<'backendServers'>, nodeName: string) {
+  const relays = await ctx.db
+    .query('relays')
+    .withIndex('by_backend_server', (q) => q.eq('backendServerId', sid))
+    .collect();
+  return relays.filter((r) => r.origin.kind === 'panel-node' && r.origin.nodeName === nodeName);
+}
+
+/**
+ * A node a relay stands in front of is part of a published path: its address is
+ * what edges forward to, its inbounds are what listeners are bound to. Moving,
+ * stopping or removing it from here would strand members behind edges that
+ * still look healthy, so those changes are refused; they belong to a migration
+ * that also moves the relay.
+ */
+async function assertNotRelayOrigin(ctx: MutationCtx, sid: Id<'backendServers'>, nodeName: string) {
+  const relays = await relaysOfNode(ctx, sid, nodeName);
+  if (relays.length > 0)
+    refuse(
+      'servers.node_relay_origin',
+      `${relays[0].slug} protects this node. Remove that protection before changing the node itself`,
+    );
+}
+
+/**
+ * A node's NAME is an identifier well beyond the panel: relays, delivery
+ * requirements, the node role's token boundary and members' pinned keys all
+ * refer to it. Renaming a node any of them refers to is refused.
+ */
+async function assertRenameSafe(ctx: MutationCtx, sid: Id<'backendServers'>, nodeName: string) {
+  const referenced = async (): Promise<string | null> => {
+    if ((await relaysOfNode(ctx, sid, nodeName)).length > 0) return 'a relay';
+    const binding = await ctx.db
+      .query('edgeDeliveryBindings')
+      .withIndex('by_server_node', (q) => q.eq('backendServerId', sid).eq('nodeName', nodeName))
+      .first();
+    if (binding) return 'a delivery requirement';
+    const pinned = await ctx.db
+      .query('subscriptions')
+      .withIndex('by_backend_server_pinned', (q) =>
+        q.eq('backendServerId', sid).eq('pinnedNode', nodeName),
+      )
+      .first();
+    if (pinned) return 'members whose keys are pinned to it';
+    const tokens = await ctx.db.query('apiTokens').collect();
+    if (tokens.some((t) => t.edgeRegistration?.nodeNames?.includes(nodeName)))
+      return 'an automation token';
+    return null;
+  };
+  const by = await referenced();
+  if (by)
+    refuse(
+      'servers.node_rename_referenced',
+      `This node's name is used by ${by}. It cannot be renamed here`,
+    );
+}
+
+/** Inbound uuids must all belong to the profile, as Servers last read it. */
+async function checkProfileInbounds(
+  ctx: MutationCtx,
+  sid: Id<'backendServers'>,
+  profileUuid: string,
+  inboundUuids: readonly string[],
+) {
+  const profile = await ctx.db
+    .query('panelProfiles')
+    .withIndex('by_server_uuid', (q) => q.eq('backendServerId', sid).eq('profileUuid', profileUuid))
+    .unique();
+  if (!profile) return refuse('not_found', 'That profile is not on this panel. Refresh and retry');
+  const known = new Set(profile.inbounds.map((i) => i.inboundUuid));
+  for (const u of inboundUuids)
+    if (!known.has(u))
+      refuse('servers.unknown_inbound', 'An inbound does not belong to that profile');
+  if (inboundUuids.length === 0) refuse('validation', 'A node serves at least one inbound');
+}
+
+const NODE_NAME = /^[A-Za-z0-9 ._-]{3,30}$/;
+
+export const requestNodeCreate = internalMutation({
+  args: {
+    backendServerId: v.id('backendServers'),
+    name: v.string(),
+    address: v.string(),
+    port: v.optional(v.number()),
+    countryCode: v.optional(v.string()),
+    configProfileUuid: v.string(),
+    activeInboundUuids: v.array(v.string()),
+    restore: v.optional(v.boolean()),
+    ...actor,
+  },
+  handler: async (ctx, a) => {
+    const sid = a.backendServerId;
+    if (!NODE_NAME.test(a.name)) refuse('validation', 'A node name is 3 to 30 plain characters');
+    if (a.address.trim().length < 2) refuse('validation', 'An address is required');
+    if (a.port !== undefined && (!Number.isInteger(a.port) || a.port < 1 || a.port > 65535))
+      refuse('validation', 'A port is 1 to 65535');
+    await checkProfileInbounds(ctx, sid, a.configProfileUuid, a.activeInboundUuids);
+    const nodes = await ctx.db
+      .query('panelNodes')
+      .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+      .collect();
+    if (nodes.some((n) => n.name === a.name))
+      refuse('servers.node_name_taken', 'A node with that name already exists');
+    await assertNotTombstoned(ctx, sid, 'node', a.name, a.restore === true);
+    const { backendServerId: _s, actorAdminId, restore: _r, ...spec } = a;
+    // The panel ROW only. Installing the node and giving it its secret is the
+    // node role's job, against the panel directly.
+    const opId = await claimOp(ctx, {
+      backendServerId: sid,
+      kind: 'node',
+      verb: 'create',
+      label: a.name,
+      identity: a.name,
+      claimKeys: [`nodename:${a.name.toLowerCase()}`],
+      intent: spec,
+      postcondition: {},
+      actorAdminId,
+    });
+    return { opId };
+  },
+});
+
+export const requestNodeUpdate = internalMutation({
+  args: {
+    backendServerId: v.id('backendServers'),
+    nodeUuid: v.string(),
+    name: v.optional(v.string()),
+    address: v.optional(v.string()),
+    port: v.optional(v.number()),
+    countryCode: v.optional(v.string()),
+    configProfileUuid: v.optional(v.string()),
+    activeInboundUuids: v.optional(v.array(v.string())),
+    ...actor,
+  },
+  handler: async (ctx, a) => {
+    const sid = a.backendServerId;
+    const node = await cachedNode(ctx, sid, a.nodeUuid);
+    const fields: PanelNodeFields = {};
+    const expected: Record<string, unknown> = {};
+    const claimKeys = [claimKey.node(a.nodeUuid)];
+    if (a.name !== undefined && a.name !== node.name) {
+      if (!NODE_NAME.test(a.name)) refuse('validation', 'A node name is 3 to 30 plain characters');
+      await assertRenameSafe(ctx, sid, node.name);
+      fields.name = a.name;
+      expected.name = a.name;
+      claimKeys.push(`nodename:${a.name.toLowerCase()}`);
+    }
+    if (a.countryCode !== undefined) {
+      if (!/^[A-Za-z]{2}$/.test(a.countryCode)) refuse('validation', 'A country is two letters');
+      fields.countryCode = a.countryCode.toUpperCase();
+      expected.countryCode = fields.countryCode;
+    }
+    // These make the panel restart the node (measured); a name or country does not.
+    let restarts = false;
+    if (a.address !== undefined && a.address !== node.address) {
+      if (a.address.trim().length < 2) refuse('validation', 'An address is required');
+      fields.address = a.address;
+      expected.address = a.address;
+      restarts = true;
+    }
+    if (a.port !== undefined && a.port !== node.port) {
+      if (!Number.isInteger(a.port) || a.port < 1 || a.port > 65535)
+        refuse('validation', 'A port is 1 to 65535');
+      fields.port = a.port;
+      expected.port = a.port;
+      restarts = true;
+    }
+    if (a.configProfileUuid !== undefined || a.activeInboundUuids !== undefined) {
+      const profileUuid = a.configProfileUuid ?? node.configProfileUuid;
+      const inbounds = a.activeInboundUuids ?? node.activeInboundUuids;
+      if (!profileUuid) return refuse('validation', 'A profile is required');
+      await checkProfileInbounds(ctx, sid, profileUuid, inbounds);
+      fields.profile = { configProfileUuid: profileUuid, activeInboundUuids: inbounds };
+      expected.configProfileUuid = profileUuid;
+      expected.activeInboundUuids = inbounds;
+      claimKeys.push(claimKey.profile(profileUuid));
+      restarts = true;
+    }
+    if (Object.keys(expected).length === 0) refuse('validation', 'Nothing to change');
+    if (restarts) await assertNotRelayOrigin(ctx, sid, node.name);
+    const opId = await claimOp(ctx, {
+      backendServerId: sid,
+      kind: 'node',
+      verb: 'update',
+      label: node.name,
+      objectUuid: a.nodeUuid,
+      claimKeys,
+      intent: fields,
+      postcondition: expected,
+      asyncNodeUuids: restarts ? [a.nodeUuid] : undefined,
+      actorAdminId: a.actorAdminId,
+    });
+    return { opId, restartsNode: restarts };
+  },
+});
+
+/** enable / disable / restart. The panel queues each; none is a no-op, so state is checked first. */
+export const requestNodeAction = internalMutation({
+  args: {
+    backendServerId: v.id('backendServers'),
+    nodeUuid: v.string(),
+    action: v.union(v.literal('enable'), v.literal('disable'), v.literal('restart')),
+    ...actor,
+  },
+  handler: async (ctx, a) => {
+    const sid = a.backendServerId;
+    const node = await cachedNode(ctx, sid, a.nodeUuid);
+    if (a.action === 'disable') await assertNotRelayOrigin(ctx, sid, node.name);
+    // A repeat enqueues panel work for nothing (measured): refuse instead of sending.
+    if (a.action === 'enable' && !node.isDisabled)
+      refuse('servers.already', 'This node is already on');
+    if (a.action === 'disable' && node.isDisabled)
+      refuse('servers.already', 'This node is already off');
+    if (a.action === 'restart' && node.isDisabled)
+      refuse('servers.node_off', 'This node is turned off');
+    const opId = await claimOp(ctx, {
+      backendServerId: sid,
+      kind: 'node',
+      verb: a.action,
+      label: node.name,
+      objectUuid: a.nodeUuid,
+      claimKeys: [claimKey.node(a.nodeUuid)],
+      intent: {},
+      // A restart names no field: the panel row looks the same before and
+      // after, so only the node's own clock settles it.
+      postcondition: a.action === 'restart' ? {} : { isDisabled: a.action === 'disable' },
+      asyncNodeUuids: [a.nodeUuid],
+      actorAdminId: a.actorAdminId,
+    });
+    return { opId };
+  },
+});
+
+/**
+ * Two different things, named as such:
+ *
+ *  - "Stop and remove" (the default): the node must ALREADY be off, as a
+ *    settled step of its own. The panel deletes the row before it tells the
+ *    node to stop, so a row disappearing proves nothing about the process.
+ *  - "Remove from panel" (`removeOnly`): the row goes; the process on the
+ *    server may keep running and serving until someone stops it there.
+ */
+export const requestNodeDelete = internalMutation({
+  args: {
+    backendServerId: v.id('backendServers'),
+    nodeUuid: v.string(),
+    removeOnly: v.optional(v.boolean()),
+    ...actor,
+  },
+  handler: async (ctx, a) => {
+    const sid = a.backendServerId;
+    const node = await cachedNode(ctx, sid, a.nodeUuid);
+    await assertNotRelayOrigin(ctx, sid, node.name);
+    if (!a.removeOnly && !node.isDisabled)
+      refuse(
+        'servers.node_still_on',
+        'Turn the node off first and wait for that to finish, or choose to remove it from the panel only',
+      );
+    const opId = await claimOp(ctx, {
+      backendServerId: sid,
+      kind: 'node',
+      verb: 'delete',
+      label: node.name,
+      objectUuid: a.nodeUuid,
+      identity: node.name,
+      claimKeys: [claimKey.node(a.nodeUuid)],
+      intent: { removeOnly: a.removeOnly === true },
+      postcondition: {},
+      actorAdminId: a.actorAdminId,
+    });
+    return { opId };
+  },
+});
+
 // --- config profiles --------------------------------------------------------------------------------
 
 const patchOp = v.union(
@@ -685,11 +975,22 @@ async function look(ctx: ActionCtx, opId: Id<'panelOps'>): Promise<boolean> {
       };
     }
     const nodes =
-      op.asyncEffect === 'pending'
+      op.asyncEffect === 'pending' || op.kind === 'node'
         ? (await writes.readNodeStatus(config)).map((n) => ({
             nodeUuid: n.nodeUuid,
             lastStatusChange: n.lastStatusChange,
             isDisabled: n.isDisabled,
+            // A node op is settled against the node row itself.
+            ...(op.kind === 'node'
+              ? {
+                  name: n.name,
+                  address: n.address,
+                  port: n.port,
+                  countryCode: n.countryCode,
+                  configProfileUuid: n.configProfileUuid,
+                  activeInboundUuids: n.activeInboundUuids,
+                }
+              : {}),
           }))
         : undefined;
     const out = await ctx.runMutation(internal.panelLedger.applyLook, {
@@ -734,6 +1035,10 @@ export const run = internalAction({
         const found = hostsMatchingIdentity(await writes.readHosts(config), op.identity ?? '');
         matches = found.length;
         match = found[0]?.hostUuid;
+      } else if (op.kind === 'node') {
+        const found = (await writes.readNodeStatus(config)).filter((n) => n.name === op.identity);
+        matches = found.length;
+        match = found[0]?.nodeUuid;
       } else {
         const found = (await writes.readSquads(config)).filter((s) => s.name === op.identity);
         matches = found.length;
@@ -784,6 +1089,14 @@ export const run = internalAction({
           });
           return { open: false };
         }
+      } else if (op.kind === 'node') {
+        const uuid = op.objectUuid!;
+        if (op.verb === 'create') objectUuid = (await writes.createNode(config, intent)).nodeUuid;
+        else if (op.verb === 'update') await writes.updateNode(config, uuid, intent);
+        else if (op.verb === 'enable') await writes.setNodeEnabled(config, uuid, true);
+        else if (op.verb === 'disable') await writes.setNodeEnabled(config, uuid, false);
+        else if (op.verb === 'restart') await writes.restartNode(config, uuid);
+        else await writes.deleteNode(config, uuid);
       } else if (op.kind === 'host') {
         if (op.verb === 'create') objectUuid = (await writes.createHost(config, intent)).hostUuid;
         else if (op.verb === 'update') await writes.updateHost(config, op.objectUuid!, intent);

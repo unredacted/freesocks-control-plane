@@ -258,6 +258,12 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'servers.squad.create': ['backendSlug', 'label', 'outcome', 'code'],
   'servers.squad.update': ['backendSlug', 'label', 'outcome', 'code'],
   'servers.squad.delete': ['backendSlug', 'label', 'outcome', 'code'],
+  'servers.node.create': ['backendSlug', 'label', 'outcome', 'code'],
+  'servers.node.update': ['backendSlug', 'label', 'outcome', 'code'],
+  'servers.node.delete': ['backendSlug', 'label', 'outcome', 'code'],
+  'servers.node.enable': ['backendSlug', 'label', 'outcome', 'code'],
+  'servers.node.disable': ['backendSlug', 'label', 'outcome', 'code'],
+  'servers.node.restart': ['backendSlug', 'label', 'outcome', 'code'],
   'servers.profile.patch': ['backendSlug', 'label', 'outcome', 'code'],
   'servers.handoff.report': ['backendSlug', 'roleContractVersion', 'current'],
   // Operator-run 2.x→3.x key-id remap on one upgraded panel (counts only).

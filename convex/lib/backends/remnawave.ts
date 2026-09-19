@@ -34,6 +34,8 @@ import type {
   PanelInbound,
   PanelHostCreate,
   PanelHostFields,
+  PanelNodeCreate,
+  PanelNodeFields,
   PanelNodeStatus,
   PanelObservation,
   PanelObservedHost,
@@ -1805,12 +1807,17 @@ export async function remnawaveReadSquads(cfg: RemnawaveConfig): Promise<PanelOb
 const NodeStatusResponse = z.array(
   z.object({
     uuid: z.string(),
+    name: z.string().nullish(),
+    address: z.string().nullish(),
+    port: z.number().nullish(),
+    countryCode: z.string().nullish(),
     isDisabled: z.boolean().nullish(),
     lastStatusChange: z.string().nullish(),
     configProfile: z
       .object({
         activeConfigProfileUuid: z.string().nullish(),
         configProfileUuid: z.string().nullish(),
+        activeInbounds: z.array(ConfigProfileInboundRef).nullish(),
       })
       .nullish(),
   }),
@@ -1820,11 +1827,102 @@ export async function remnawaveReadNodeStatus(cfg: RemnawaveConfig): Promise<Pan
   const rows = await call(cfg, { method: 'GET', path: '/api/nodes', schema: NodeStatusResponse });
   return rows.map((n) => ({
     nodeUuid: n.uuid,
+    name: n.name ?? n.uuid,
+    address: n.address ?? null,
+    port: n.port ?? null,
+    countryCode: n.countryCode ?? null,
     lastStatusChange: n.lastStatusChange ?? null,
     isDisabled: n.isDisabled === true,
     configProfileUuid:
       n.configProfile?.activeConfigProfileUuid ?? n.configProfile?.configProfileUuid ?? null,
+    activeInboundUuids: (n.configProfile?.activeInbounds ?? []).map((i) => i.uuid),
   }));
+}
+
+// --- node writes ---------------------------------------------------------------------------------
+//
+// FCP creates and changes the PANEL ROW of a node. It never asks the panel for
+// the node's own secret (`/api/keygen`): installing a node and giving it that
+// secret is the node role's job, done against the panel directly.
+
+function nodeBody(f: PanelNodeFields): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+  if (f.name !== undefined) body.name = f.name;
+  if (f.address !== undefined) body.address = f.address;
+  if (f.port !== undefined) body.port = f.port;
+  if (f.countryCode !== undefined) body.countryCode = f.countryCode;
+  if (f.profile !== undefined)
+    body.configProfile = {
+      activeConfigProfileUuid: f.profile.configProfileUuid,
+      activeInbounds: f.profile.activeInboundUuids,
+    };
+  return body;
+}
+
+export async function remnawaveCreateNode(
+  cfg: RemnawaveConfig,
+  spec: PanelNodeCreate,
+): Promise<{ nodeUuid: string }> {
+  const made = await call(cfg, {
+    method: 'POST',
+    path: '/api/nodes',
+    body: nodeBody({
+      name: spec.name,
+      address: spec.address,
+      port: spec.port,
+      countryCode: spec.countryCode,
+      profile: {
+        configProfileUuid: spec.configProfileUuid,
+        activeInboundUuids: spec.activeInboundUuids,
+      },
+    }),
+    schema: CreatedUuid,
+  });
+  return { nodeUuid: made.uuid };
+}
+
+export async function remnawaveUpdateNode(
+  cfg: RemnawaveConfig,
+  nodeUuid: string,
+  fields: PanelNodeFields,
+): Promise<void> {
+  await call(cfg, {
+    method: 'PATCH',
+    path: '/api/nodes',
+    body: { uuid: nodeUuid, ...nodeBody(fields) },
+    schema: z.unknown(),
+  });
+}
+
+export async function remnawaveSetNodeEnabled(
+  cfg: RemnawaveConfig,
+  nodeUuid: string,
+  enabled: boolean,
+): Promise<void> {
+  await call(cfg, {
+    method: 'POST',
+    path: `/api/nodes/${encodeURIComponent(nodeUuid)}/actions/${enabled ? 'enable' : 'disable'}`,
+    schema: z.unknown(),
+  });
+}
+
+export async function remnawaveRestartNode(cfg: RemnawaveConfig, nodeUuid: string): Promise<void> {
+  await call(cfg, {
+    method: 'POST',
+    path: `/api/nodes/${encodeURIComponent(nodeUuid)}/actions/restart`,
+    // A node skips the restart when its config hashes are unchanged; an
+    // operator who pressed Restart means it.
+    body: { forceRestart: true },
+    schema: z.unknown(),
+  });
+}
+
+export async function remnawaveDeleteNode(cfg: RemnawaveConfig, nodeUuid: string): Promise<void> {
+  await call(cfg, {
+    method: 'DELETE',
+    path: `/api/nodes/${encodeURIComponent(nodeUuid)}`,
+    schema: z.unknown(),
+  });
 }
 
 // --- Guarded config-profile edit (server management) ---------------------------------------

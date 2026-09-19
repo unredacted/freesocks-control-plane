@@ -220,6 +220,32 @@ the same transaction that records the observation):
 - a name a bound listener still hands out, or that is still inside its drain, **may not be
   removed** (`servers.name_in_use`): retire it on the relay first.
 
+### Node writes
+
+FCP writes the panel **row** of a node: its name, address, port, country, the profile it runs
+and which of that profile's inbounds it serves. It never installs a node and never asks the
+panel for a node's secret; that stays the node role's job, against the panel directly.
+
+| Action                           | What is sent                                                                                                                                              | When it is done                                                                                                                                                                   |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Create                           | One `POST`. Never a second one: a lost answer is looked up by name and adopted.                                                                           | The row is seen.                                                                                                                                                                  |
+| Rename, country                  | One `PATCH`.                                                                                                                                              | The row shows the fields. The panel queues no node work for these.                                                                                                                |
+| Address, port, profile, inbounds | One `PATCH`. Profile and inbounds travel together.                                                                                                        | The row shows the fields **and** the node's `lastStatusChange` has moved since the call.                                                                                          |
+| Enable, disable                  | The action, only when the node is not already in that state (`servers.already`): a repeat makes the panel queue work for nothing.                         | Enable waits for the node's clock like an address change. Disable is done when the row says so.                                                                                   |
+| Restart                          | The action with `forceRestart: true` (a node otherwise skips a restart when its config hashes match). Refused on a node that is off (`servers.node_off`). | Only when `lastStatusChange` moves. The panel answers 202 on queue insertion, the row names nothing that changed, and `xrayUptime` and `isConnected` are not evidence (measured). |
+| Stop and remove                  | `DELETE`, and only on a node that is **already off** (`servers.node_still_on`). Disable it first, as its own op.                                          | The uuid is absent on two looks.                                                                                                                                                  |
+| Remove from panel                | `DELETE ...?removeOnly=1`, on a node in any state.                                                                                                        | The uuid is absent on two looks. **The node process may still be running and serving**: the panel removes its row before it tries to stop Xray.                                   |
+
+While an op that restarts a node is open it holds `node:<uuid>`, so a second lifecycle change
+to the same node is refused (`servers.op_running`) rather than queued behind it.
+
+| Refusal                          | When                                                                                                                                                                        |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `servers.node_relay_origin`      | A relay stands in front of this node: its address, port, profile and inbounds are what the relay forwards to, and it is not disabled or removed here. A restart is allowed. |
+| `servers.node_rename_referenced` | The node's **name** is an identifier: relays, delivery requirements and members pinned to a node refer to it. Renaming a referenced node is not offered in this version.    |
+| `servers.node_name_taken`        | As named. Node names are how a lost create is found again.                                                                                                                  |
+| `servers.unknown_inbound`        | An inbound that is not part of the profile being assigned.                                                                                                                  |
+
 ### What is refused
 
 | Refusal                                                 | When                                                                                                                          |
@@ -250,21 +276,22 @@ removed. Turning `servers.manage.enabled` off does not hand anything back to the
 surface (`src/shared/crypto/envelope.ts`): the responses carry node and Host addresses.
 `{slug}` is the backend server's slug.
 
-| Route                                                                                    | Scope                              | What                                                                                                           |
-| ---------------------------------------------------------------------------------------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `GET summary`                                                                            | `admin:servers:read`               | Every instance: observable or not, last look, counts, the switches.                                            |
-| `GET {slug}/tree`                                                                        | `admin:servers:read`               | One instance as a tree, from the cache (no panel call).                                                        |
-| `POST {slug}/refresh`                                                                    | `admin:servers:read`               | Look now, then return the tree. Rate-limited (`admin.servers.panel-read`): the one route that reaches a panel. |
-| `POST {slug}/placements/validate`                                                        | `admin:servers:read`               | Check the squad pools in mode placements against the squads the panel has.                                     |
-| `GET config`, `PATCH config`                                                             | `admin:settings:*`                 | The switches. Audited as `servers.config.update {changedKeys}`.                                                |
-| `POST {slug}/hosts`, `PATCH` / `DELETE {slug}/hosts/{uuid}`, `POST {slug}/hosts/reorder` | `admin:servers:manage`             | Host writes. Answer the op. Rate-limited (`admin.servers.panel-write`).                                        |
-| `POST {slug}/squads`, `PATCH` / `DELETE {slug}/squads/{uuid}`                            | `admin:servers:manage`             | Squad writes.                                                                                                  |
-| `POST {slug}/profiles/{uuid}/preview`                                                    | `admin:servers:read`               | What a typed profile edit would do. Writes nothing.                                                            |
-| `POST {slug}/profiles/{uuid}/apply`                                                      | `admin:servers:manage`             | Apply a previewed edit, conditioned on the previewed token.                                                    |
-| `GET {slug}/ops`                                                                         | `admin:servers:read`               | The last 50 ops of an instance.                                                                                |
-| `POST {slug}/ops/{id}/observe`                                                           | `admin:servers:read`               | Look at the panel again for an open op. Changes nothing on the panel.                                          |
-| `POST {slug}/ops/{id}/recover`                                                           | `admin:servers:manage`             | The attested recovery of an unknown outcome.                                                                   |
-| `PUT {slug}/handoff`                                                                     | `admin:servers:write` or `:manage` | The node role's handoff report.                                                                                |
+| Route                                                                                                            | Scope                              | What                                                                                                           |
+| ---------------------------------------------------------------------------------------------------------------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `GET summary`                                                                                                    | `admin:servers:read`               | Every instance: observable or not, last look, counts, the switches.                                            |
+| `GET {slug}/tree`                                                                                                | `admin:servers:read`               | One instance as a tree, from the cache (no panel call).                                                        |
+| `POST {slug}/refresh`                                                                                            | `admin:servers:read`               | Look now, then return the tree. Rate-limited (`admin.servers.panel-read`): the one route that reaches a panel. |
+| `POST {slug}/placements/validate`                                                                                | `admin:servers:read`               | Check the squad pools in mode placements against the squads the panel has.                                     |
+| `GET config`, `PATCH config`                                                                                     | `admin:settings:*`                 | The switches. Audited as `servers.config.update {changedKeys}`.                                                |
+| `POST {slug}/hosts`, `PATCH` / `DELETE {slug}/hosts/{uuid}`, `POST {slug}/hosts/reorder`                         | `admin:servers:manage`             | Host writes. Answer the op. Rate-limited (`admin.servers.panel-write`).                                        |
+| `POST {slug}/squads`, `PATCH` / `DELETE {slug}/squads/{uuid}`                                                    | `admin:servers:manage`             | Squad writes.                                                                                                  |
+| `POST {slug}/nodes`, `PATCH` / `DELETE {slug}/nodes/{uuid}`, `POST {slug}/nodes/{uuid}/enable\|disable\|restart` | `admin:servers:manage`             | Node writes. `DELETE ...?removeOnly=1` is "remove from panel".                                                 |
+| `POST {slug}/profiles/{uuid}/preview`                                                                            | `admin:servers:read`               | What a typed profile edit would do. Writes nothing.                                                            |
+| `POST {slug}/profiles/{uuid}/apply`                                                                              | `admin:servers:manage`             | Apply a previewed edit, conditioned on the previewed token.                                                    |
+| `GET {slug}/ops`                                                                                                 | `admin:servers:read`               | The last 50 ops of an instance.                                                                                |
+| `POST {slug}/ops/{id}/observe`                                                                                   | `admin:servers:read`               | Look at the panel again for an open op. Changes nothing on the panel.                                          |
+| `POST {slug}/ops/{id}/recover`                                                                                   | `admin:servers:manage`             | The attested recovery of an unknown outcome.                                                                   |
+| `PUT {slug}/handoff`                                                                                             | `admin:servers:write` or `:manage` | The node role's handoff report.                                                                                |
 
 **The tree** is node -> the profile it runs -> the inbounds it **serves** -> the Hosts members
 get for each inbound (a Host pinned to nodes appears under those only) and the squads that
