@@ -46,6 +46,8 @@ function streamQuery(p: ListenerProto): string {
       return `type=httpupgrade&path=${encodeURIComponent(EXAMPLE_PATH)}&host=${EXAMPLE_NAME}`;
     case 'grpc':
       return `type=grpc&serviceName=${EXAMPLE_SERVICE}&authority=${EXAMPLE_NAME}&mode=gun`;
+    case 'xhttp':
+      return `type=xhttp&path=${encodeURIComponent(EXAMPLE_PATH)}&host=${EXAMPLE_NAME}&mode=packet-up`;
     default:
       return 'type=tcp';
   }
@@ -185,6 +187,14 @@ function clashStreamLines(p: ListenerProto): string[] {
       ];
     case 'grpc':
       return ['    network: grpc', '    grpc-opts:', `      grpc-service-name: ${EXAMPLE_SERVICE}`];
+    case 'xhttp':
+      return [
+        '    network: xhttp',
+        '    xhttp-opts:',
+        `      path: ${EXAMPLE_PATH}`,
+        `      host: ${EXAMPLE_NAME}`,
+        '      mode: packet-up',
+      ];
     case 'udp':
       return [];
     default:

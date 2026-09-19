@@ -117,6 +117,8 @@ const TRANSPORTS: Readonly<Record<string, ListenerStreamTransport>> = {
   httpupgrade: 'httpupgrade',
   grpc: 'grpc',
   gun: 'grpc',
+  xhttp: 'xhttp',
+  splithttp: 'xhttp',
 };
 const SECURITIES: Readonly<Record<string, ListenerSecurity>> = {
   none: 'none',
@@ -230,6 +232,12 @@ export async function mapInboundsToListeners(
     } else if (streamTransport === 'grpc') {
       transportParams = {};
       if (ib.grpc?.serviceName) transportParams.serviceName = ib.grpc.serviceName;
+    } else if (streamTransport === 'xhttp') {
+      transportParams = {};
+      if (ib.xhttp?.path) transportParams.path = ib.xhttp.path;
+      if (ib.xhttp?.host) transportParams.host = ib.xhttp.host;
+      // Xray's default when the inbound declares none.
+      transportParams.mode = ib.xhttp?.mode ?? 'auto';
     }
 
     const spec: ListenerSpecInput = {

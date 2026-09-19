@@ -29,7 +29,12 @@ describe('edge provider meta', () => {
   });
 
   it('mirrors the per-provider transport capability', () => {
-    expect(EDGE_PROVIDER_META.cloudflare.l7Transports).toEqual(['ws', 'httpupgrade', 'grpc']);
+    expect(EDGE_PROVIDER_META.cloudflare.l7Transports).toEqual([
+      'ws',
+      'httpupgrade',
+      'grpc',
+      'xhttp',
+    ]);
     expect(EDGE_PROVIDER_META.fastly.l7Transports).toEqual(['ws']);
   });
 

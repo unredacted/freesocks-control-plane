@@ -205,6 +205,30 @@
               {disabled}
             />
           </div>
+          {#if combo.streamTransport === 'xhttp'}
+            <div class="space-y-1.5">
+              <Label for={`${uid}-xhttp-mode`}>XHTTP mode</Label>
+              <Select.Root
+                type="single"
+                value={form.xhttpMode}
+                onValueChange={(v: string) => (form.xhttpMode = v)}
+                {disabled}
+              >
+                <Select.Trigger id={`${uid}-xhttp-mode`} class="w-full font-mono">
+                  {form.xhttpMode}
+                </Select.Trigger>
+                <Select.Content>
+                  {#each ['packet-up', 'auto', 'stream-up', 'stream-one'] as m (m)}
+                    <Select.Item value={m}>{m}</Select.Item>
+                  {/each}
+                </Select.Content>
+              </Select.Root>
+              <p class="text-muted-foreground text-xs">
+                As the inbound declares it. A CDN front is only checked against packet-up and auto;
+                the stream modes need a front that streams request bodies.
+              </p>
+            </div>
+          {/if}
         {/if}
       </div>
     {/if}

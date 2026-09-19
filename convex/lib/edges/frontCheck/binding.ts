@@ -30,13 +30,15 @@ export {
  * How the inbound behind the slot is addressed over its HTTP transport, as the
  * node role declares it (`relayListeners.transportParams`). Each transport uses a
  * different subset: `ws` and `httpupgrade` need the path (and the upgrade
- * token), `grpc` needs the service name. Absent is distinct from empty.
+ * token), `grpc` needs the service name, `xhttp` the path and its mode. Absent
+ * is distinct from empty.
  */
 export interface TransportParams {
   path?: string | null;
   host?: string | null;
   serviceName?: string | null;
   upgradeToken?: string | null;
+  mode?: string | null;
 }
 
 /**
@@ -50,6 +52,8 @@ export function canonicalTransportParams(p: TransportParams): Record<string, str
     host: p.host ?? null,
     serviceName: p.serviceName ?? null,
     upgradeToken: p.upgradeToken ?? null,
+    // Only when set: every binding hashed before XHTTP existed stays valid.
+    ...(p.mode ? { mode: p.mode } : {}),
   };
 }
 

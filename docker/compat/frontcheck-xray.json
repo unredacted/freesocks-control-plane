@@ -3,7 +3,8 @@
     "Xray-core inbounds for the front-qualification integration test",
     "(convex/lib/edges/frontCheck/frontCheck.integration.test.ts).",
     "",
-    "One inbound per HTTP transport an L7 edge can front, each on its own port",
+    "One inbound per HTTP transport an L7 edge can front (ws, httpupgrade, grpc,",
+    "xhttp packet-up), each on its own port",
     "because a listener speaks exactly one of them. Xray terminates TLS itself:",
     "the compat stack has no separate TLS terminator, and what the test has to",
     "prove is that the real software accepts our transport handshake, our VLESS",
@@ -80,6 +81,27 @@
           ]
         },
         "grpcSettings": { "serviceName": "relay-svc" }
+      }
+    },
+    {
+      "tag": "vless-xhttp-tls",
+      "listen": "0.0.0.0",
+      "port": 18446,
+      "protocol": "vless",
+      "settings": {
+        "clients": [{ "id": "01234567-89ab-cdef-0123-456789abcdef" }],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "tls",
+        "tlsSettings": {
+          "alpn": ["h2", "http/1.1"],
+          "certificates": [
+            { "certificateFile": "/etc/xray/tls/cert.pem", "keyFile": "/etc/xray/tls/key.pem" }
+          ]
+        },
+        "xhttpSettings": { "path": "/relay-xh", "mode": "packet-up" }
       }
     }
   ],

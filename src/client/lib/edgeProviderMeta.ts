@@ -47,7 +47,7 @@ export const EDGE_PROVIDER_META: Record<EdgeProviderId, EdgeProviderMeta> = {
     label: 'Cloudflare',
     layer: 'l7',
     addressKind: 'hostname',
-    l7Transports: ['ws', 'httpupgrade', 'grpc'],
+    l7Transports: ['ws', 'httpupgrade', 'grpc', 'xhttp'],
     needsDnsAccount: false,
     providesDns: true,
   },

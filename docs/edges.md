@@ -75,6 +75,7 @@ A listener speaks one valid combination of three fields (`src/shared/contracts/e
 | `vless`              | `raw`                         | `reality` | REALITY: `realityTarget` + server names required                  |
 | `vless`              | `raw`                         | `tls`     | server names = the certificate's                                  |
 | `vless`              | `ws` / `httpupgrade` / `grpc` | `tls`     | L7-frontable (the only authenticated L7 proof)                    |
+| `vless`              | `xhttp`                       | `tls`     | L7-frontable where the provider carries it; no sing-box (below)   |
 | `trojan`             | `raw` / `ws`                  | `tls`     | L4 only (no L7 proof)                                             |
 | `shadowsocks`        | `raw`                         | `none`    | address/port rewrite only; Outline keys are `ss://`               |
 | `hysteria2` / `tuic` | `udp`                         | `tls`     | registers, but no provider forwards UDP today (`no_udp_provider`) |
@@ -85,6 +86,43 @@ adds the CODEC table (which subscription formats the renderer can rewrite per co
 pinned by a test: a combination without a codec for every format it claims never ships).
 `vmess` has no codec and is not in the catalogue.
 
+**XHTTP.** An L4 forwarder carries an XHTTP listener like any TCP listener. An L7 front carries
+it only when the provider declares `xhttp` in `l7Transports` (Cloudflare does; Fastly's
+WebSockets product does not). Xray and Mihomo speak XHTTP (`network: xhttp` + `xhttp-opts`, where
+the renderer writes `host`); sing-box has no transport for it, so its codec row covers share
+links and Clash bodies, and a sing-box subscription of an edge-required XHTTP listener is
+unavailable rather than served with the origin in it. The front
+proof speaks `packet-up` (one `GET <path>/<session>` downstream, sequenced `POST
+<path>/<session>/<seq>` uploads, every request carrying the `x_padding` Xray's server requires
+in its `Referer`), the one mode every CDN passes; an inbound declared `stream-up` or
+`stream-one` refuses packet-up uploads, so its proof reports `transport_failed` / `mode` and it
+stays L4-only. `transportParams.mode` records what the inbound declares (`auto` when it declares
+nothing). It is only behind a real certificate: there is no `xhttp` + `reality` combination.
+
+A deployable inbound (Caddy terminates TLS in front of it, as for WebSocket, so Xray listens on
+loopback and the listener is registered with the terminator's port and certificate name):
+
+```json
+{
+  "tag": "VLESS_XHTTP_CDN",
+  "listen": "127.0.0.1",
+  "port": 8444,
+  "protocol": "vless",
+  "settings": { "clients": [], "decryption": "none" },
+  "streamSettings": {
+    "network": "xhttp",
+    "security": "none",
+    "xhttpSettings": { "path": "/xh", "mode": "packet-up" }
+  }
+}
+```
+
+Caddy proxies `/xh*` to that port (`reverse_proxy 127.0.0.1:8444`). The downstream is a
+long-lived response, so nothing in front may buffer it: Caddy streams a `text/event-stream` body
+on its own, and needs `flush_interval -1` only when the inbound sets `noSSEHeader`. This
+template has not been run behind Caddy yet; the proof above was validated against Xray
+terminating TLS itself (the front-qualification harness).
+
 **Discovery.** A panel-node relay's listeners can be derived from the node instead of typed:
 `backends.listNodeInbounds` (capability `inboundDiscovery`; Remnawave: the node's active config
 profile joined with the profile's Xray `inbounds[]` by tag, allowlisted fields only, never
@@ -93,10 +131,10 @@ and the pure `mapInboundsToListeners` (`convex/lib/edges/inboundMapping.ts`) tur
 registration-shaped listener candidate or an `unsupported` row with a reason from
 `INBOUND_UNSUPPORTED_CODES` (`inactive`, `tag`, `protocol`, `transport`, `security`,
 `invalid`; worded in `src/client/lib/edgeCodes.ts`). vless / trojan / shadowsocks map; tcp or raw
-→ `raw`, ws / httpupgrade / grpc → themselves (xhttp, kcp, quic are `transport`); REALITY
+→ `raw`, ws / httpupgrade / grpc / xhttp (`splithttp`) → themselves (kcp, quic are `transport`); REALITY
 `dest`/`target` + `serverNames` → `realityTarget` + `tlsNames`; TLS `serverName` → `tlsNames`
-(none = `needsName`: the operator supplies one before registering); ws / httpupgrade path +
-host and gRPC serviceName → `transportParams`; the inbound tag + profile uuids → `panelBinding`
+(none = `needsName`: the operator supplies one before registering); ws / httpupgrade / xhttp
+path + host, the xhttp mode and gRPC serviceName → `transportParams`; the inbound tag + profile uuids → `panelBinding`
 with the default `remark` match rule. Every candidate passes `validateListenerSpec`, and carries
 `layers` and `formats`. The listener key is `slug10 + base36(sha256(tag))[0..6]` (the first ten
 lowercase alphanumerics of the tag plus six hash digits; at most 16 chars, deterministic, unique

@@ -49,6 +49,8 @@ export interface TransportParams {
   host?: string;
   serviceName?: string;
   upgradeToken?: string;
+  /** XHTTP mode as the inbound declares it (`auto`, `packet-up`, `stream-up`, `stream-one`). */
+  mode?: string;
 }
 
 export interface ProviderScope {
@@ -128,6 +130,14 @@ export interface ValidationContext {
  * Validate one listener spec against the catalogue and the origin kind.
  * Throws `validation` / `invalid_combination`; returns the canonical spec.
  */
+/** Xray's XHTTP modes (docs/edges.md § "Listener catalogue"). */
+export const XHTTP_MODES: ReadonlySet<string> = new Set([
+  'auto',
+  'packet-up',
+  'stream-up',
+  'stream-one',
+]);
+
 export function validateListenerSpec(
   spec: ListenerSpecInput,
   ctx: ValidationContext,
@@ -187,6 +197,10 @@ export function validateListenerSpec(
     if (p.host !== undefined) transportParams.host = p.host;
     if (p.serviceName !== undefined) transportParams.serviceName = p.serviceName;
     if (p.upgradeToken !== undefined) transportParams.upgradeToken = p.upgradeToken;
+    if (p.mode !== undefined) {
+      if (!XHTTP_MODES.has(p.mode)) fail(`unknown xhttp mode: ${p.mode}`);
+      transportParams.mode = p.mode;
+    }
   }
 
   let panelBinding: PanelBinding | undefined;

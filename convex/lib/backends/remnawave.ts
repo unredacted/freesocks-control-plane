@@ -975,6 +975,10 @@ export function projectXrayInbound(
   } else if (network === 'grpc' || network === 'gun') {
     const g = obj(stream.grpcSettings) ?? {};
     out.grpc = { serviceName: str(g.serviceName) };
+  } else if (network === 'xhttp' || network === 'splithttp') {
+    // `splithttp` was XHTTP's name before Xray 1.8.24; the settings key follows.
+    const x = obj(stream.xhttpSettings) ?? obj(stream.splithttpSettings) ?? {};
+    out.xhttp = { path: str(x.path), host: str(x.host), mode: str(x.mode) };
   }
   return out;
 }

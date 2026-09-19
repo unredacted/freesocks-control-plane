@@ -36,6 +36,8 @@ export interface ListenerForm {
   path: string;
   host: string;
   serviceName: string;
+  /** XHTTP only: the mode the inbound serves. */
+  xhttpMode: string;
   /** How a CDN front reaches this inbound; off = raw TCP to the inbound (L4 only). */
   frontable: boolean;
   scheme: 'http' | 'https';
@@ -67,6 +69,7 @@ export function emptyListenerForm(originKind: OriginKind = 'panel-node'): Listen
     path: '',
     host: '',
     serviceName: '',
+    xhttpMode: 'packet-up',
     frontable: false,
     scheme: 'https',
     certPublic: true,
@@ -94,6 +97,7 @@ export function listenerFormFromAdmin(l: RelayListenerAdmin): ListenerForm {
     path: l.transportParams?.path ?? '',
     host: l.transportParams?.host ?? '',
     serviceName: l.transportParams?.serviceName ?? '',
+    xhttpMode: l.transportParams?.mode ?? 'packet-up',
     frontable: l.originTransport !== null,
     scheme: l.originTransport?.scheme ?? 'https',
     certPublic: l.originTransport?.certPublic ?? true,
@@ -189,6 +193,7 @@ export function toListenerSpec(form: ListenerForm, originKind: OriginKind): List
     } else {
       if (form.path.trim()) p.path = form.path.trim();
       if (form.host.trim()) p.host = form.host.trim();
+      if (combo.streamTransport === 'xhttp') p.mode = form.xhttpMode;
     }
     if (Object.keys(p).length > 0) spec.transportParams = p;
     if (form.frontable)

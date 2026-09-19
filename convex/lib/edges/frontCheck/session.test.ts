@@ -31,7 +31,7 @@ import { createGrpcDecoder, decodeHunk, encodeHunkFrame } from './grpc';
 
 const UUID = '01234567-89ab-cdef-0123-456789abcdef';
 /** The VLESS listener behind the front, per HTTP stream transport. */
-const VLESS = (stream: 'ws' | 'httpupgrade' | 'grpc'): ListenerProto => ({
+const VLESS = (stream: 'ws' | 'httpupgrade' | 'grpc' | 'xhttp'): ListenerProto => ({
   protocol: 'vless',
   streamTransport: stream,
   security: 'tls',
@@ -320,6 +320,61 @@ function startGrpcServer(opts: { grpc: GrpcRole; node: NodeRole }): Promise<Runn
   return listen(server);
 }
 
+// --- XHTTP (packet-up) server -----------------------------------------------
+
+type XhttpRole = 'ok' | 'forbidden' | 'html';
+
+/**
+ * Xray's packet-up server in miniature: `GET /relay/<session>` is the
+ * downstream, `POST /relay/<session>/<seq>` the uploads. Like the real server
+ * it refuses a request whose `Referer` carries no `x_padding` of 100 to 1000
+ * bytes, which is the rule the checker was first caught breaking.
+ */
+function startXhttpServer(opts: { xhttp: XhttpRole; node: NodeRole }): Promise<Running> {
+  const server = createSecureServer({ key: KEY, cert: CERT, ALPNProtocols: ['h2'] });
+  server.on('error', () => {});
+  const downs = new Map<string, ServerHttp2Stream>();
+  server.on('stream', (stream: ServerHttp2Stream, headers: IncomingHttpHeaders) => {
+    stream.on('error', () => {});
+    if (opts.xhttp === 'forbidden') {
+      stream.respond({ ':status': 403, server: 'cloudflare' }, { endStream: true });
+      return;
+    }
+    const padding = new URL(String(headers.referer ?? 'https://x/')).searchParams.get('x_padding');
+    if (!padding || padding.length < 100 || padding.length > 1000) {
+      stream.respond({ ':status': 400 }, { endStream: true });
+      return;
+    }
+    const parts = String(headers[':path']).split('/').filter(Boolean);
+    if (parts[0] !== 'relay' || !parts[1]) {
+      stream.respond({ ':status': 404 }, { endStream: true });
+      return;
+    }
+    const session = parts[1];
+    if (headers[':method'] === 'GET') {
+      if (opts.xhttp === 'html') {
+        stream.respond({ ':status': 200, 'content-type': 'text/html' });
+        stream.end('<html>front</html>');
+        return;
+      }
+      stream.respond({ ':status': 200, 'content-type': 'text/event-stream' });
+      downs.set(session, stream);
+      return;
+    }
+    const chunks: Buffer[] = [];
+    stream.on('data', (d: Buffer) => chunks.push(d));
+    stream.on('end', () => {
+      stream.respond({ ':status': 200 }, { endStream: true });
+      const down = downs.get(session);
+      if (!down) return;
+      const action = handleVless(opts.node, new Uint8Array(Buffer.concat(chunks)));
+      if (action.close) down.close();
+      else if (action.reply) down.write(Buffer.from(action.reply));
+    });
+  });
+  return listen(server);
+}
+
 // --- the checks ------------------------------------------------------------
 
 const running: Running[] = [];
@@ -335,14 +390,19 @@ async function track(p: Promise<Running>): Promise<Running> {
 
 function run(
   port: number,
-  stream: 'ws' | 'httpupgrade' | 'grpc',
-  overrides: { uuid?: string; trust?: boolean; stepTimeoutMs?: number } = {},
+  stream: 'ws' | 'httpupgrade' | 'grpc' | 'xhttp',
+  overrides: { uuid?: string; trust?: boolean; stepTimeoutMs?: number; mode?: string } = {},
 ): Promise<FrontCheckResult> {
   return qualifyFront(
     {
       hostname: HOSTNAME,
       proto: VLESS(stream),
-      params: { path: '/relay', serviceName: SERVICE, upgradeToken: 'websocket' },
+      params: {
+        path: '/relay',
+        serviceName: SERVICE,
+        upgradeToken: 'websocket',
+        ...(overrides.mode ? { mode: overrides.mode } : {}),
+      },
       uuid: overrides.uuid ?? UUID,
       stepTimeoutMs: overrides.stepTimeoutMs ?? 2_000,
     },
@@ -388,6 +448,49 @@ describe('a working chain', () => {
     const result = await run(s.port, 'grpc');
     expect(result).toMatchObject({ ok: true });
     expectNoSecrets(result);
+  });
+});
+
+describe('xhttp (packet-up)', () => {
+  test('the same session over a GET stream and a sequenced POST', async () => {
+    const s = await track(startXhttpServer({ xhttp: 'ok', node: 'proxy204' }));
+    const result = await run(s.port, 'xhttp');
+    expect(result.code).toBeUndefined();
+    expect(result.ok).toBe(true);
+    expect(result.steps.map((x) => x.step)).toEqual(['tls', 'transport', 'vless', 'close']);
+    expectNoSecrets(result);
+  });
+
+  test('a front that answers the requests itself is front_error with its status', async () => {
+    const s = await track(startXhttpServer({ xhttp: 'forbidden', node: 'proxy204' }));
+    expect(await run(s.port, 'xhttp')).toMatchObject({
+      ok: false,
+      code: 'front_error',
+      detail: '403',
+    });
+  });
+
+  test('a 200 that is a web page is the front answering for itself', async () => {
+    const s = await track(startXhttpServer({ xhttp: 'html', node: 'proxy204' }));
+    expect(await run(s.port, 'xhttp')).toMatchObject({
+      ok: false,
+      code: 'front_error',
+      detail: '200',
+    });
+  });
+
+  test('a rejected credential closes the downstream: auth_failed', async () => {
+    const s = await track(startXhttpServer({ xhttp: 'ok', node: 'reject' }));
+    expect(await run(s.port, 'xhttp')).toMatchObject({ ok: false, code: 'auth_failed' });
+  });
+
+  test('a stream-only inbound is refused before any request is made', async () => {
+    const s = await track(startXhttpServer({ xhttp: 'ok', node: 'proxy204' }));
+    expect(await run(s.port, 'xhttp', { mode: 'stream-one' })).toMatchObject({
+      ok: false,
+      code: 'transport_failed',
+      detail: 'mode',
+    });
   });
 });
 

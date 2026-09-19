@@ -24,12 +24,18 @@ export const FIXTURE_CONFIG_PROFILE = '11111111-1111-4111-8111-111111111111';
 export interface ListenerSpecFixture {
   listenerKey: string;
   protocol: 'vless' | 'trojan' | 'shadowsocks' | 'hysteria2' | 'tuic';
-  streamTransport: 'raw' | 'ws' | 'httpupgrade' | 'grpc' | 'udp';
+  streamTransport: 'raw' | 'ws' | 'httpupgrade' | 'grpc' | 'xhttp' | 'udp';
   security: 'none' | 'tls' | 'reality';
   originPort: number;
   tlsNames?: string[];
   realityTarget?: { address: string; port: number };
-  transportParams?: { path?: string; host?: string; serviceName?: string; upgradeToken?: string };
+  transportParams?: {
+    path?: string;
+    host?: string;
+    serviceName?: string;
+    upgradeToken?: string;
+    mode?: string;
+  };
   originTransport?: {
     scheme: 'http' | 'https';
     certPublic: boolean;

@@ -789,7 +789,7 @@ export const INBOUND_UNSUPPORTED_COPY: Record<InboundUnsupportedCode, CodeCopy> 
   transport: {
     label: 'Transport not supported',
     explain:
-      'Edges can carry raw TCP, WebSocket, HTTP Upgrade and gRPC streams; this transport is not one of them.',
+      'Edges can carry raw TCP, WebSocket, HTTP Upgrade, gRPC and XHTTP streams; this transport is not one of them.',
   },
   security: {
     label: 'Security layer not supported',

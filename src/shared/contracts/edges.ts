@@ -358,6 +358,8 @@ export const RelayListenerAdmin = z.object({
       host: z.string().optional(),
       serviceName: z.string().optional(),
       upgradeToken: z.string().optional(),
+      /** XHTTP: `auto` | `packet-up` | `stream-up` | `stream-one`. */
+      mode: z.string().optional(),
     })
     .nullable(),
   originTransport: ListenerOriginTransport.nullable(),
@@ -411,6 +413,8 @@ export const ListenerSpec = z.object({
       host: z.string().optional(),
       serviceName: z.string().optional(),
       upgradeToken: z.string().optional(),
+      /** XHTTP: `auto` | `packet-up` | `stream-up` | `stream-one`. */
+      mode: z.string().optional(),
     })
     .nullish(),
   originTransport: ListenerOriginTransport.nullish(),

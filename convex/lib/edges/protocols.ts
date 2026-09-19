@@ -68,7 +68,7 @@ export function protocolIsHttpTransport(p: ListenerProto): boolean {
   return protocolDescriptor(p).isHttpTransport;
 }
 
-/** The renderer writes an HTTP Host header for these (ws, httpupgrade). */
+/** The renderer writes an HTTP Host header for these (ws, httpupgrade, xhttp). */
 export function protocolUsesHostHeader(p: ListenerProto): boolean {
   return protocolDescriptor(p).usesHostHeader;
 }
@@ -106,6 +106,9 @@ export const CODECS: Partial<Record<ListenerComboKey, CodecSupport>> = {
   'vless/ws/tls': { links: ['vless'], singbox: ['vless'], clash: ['vless'] },
   'vless/httpupgrade/tls': { links: ['vless'], singbox: ['vless'], clash: ['vless'] },
   'vless/grpc/tls': { links: ['vless'], singbox: ['vless'], clash: ['vless'] },
+  // Xray and Mihomo speak XHTTP (`network: xhttp` + `xhttp-opts`); sing-box has
+  // no transport for it, so a sing-box body of such a listener is unavailable.
+  'vless/xhttp/tls': { links: ['vless'], singbox: [], clash: ['vless'] },
   'trojan/raw/tls': { links: ['trojan'], singbox: ['trojan'], clash: ['trojan'] },
   'trojan/ws/tls': { links: ['trojan'], singbox: ['trojan'], clash: ['trojan'] },
   'shadowsocks/raw/none': { links: ['ss'], singbox: ['shadowsocks'], clash: ['ss'] },

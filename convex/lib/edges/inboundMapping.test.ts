@@ -280,12 +280,7 @@ describe('mapInboundsToListeners: unsupported reasons', () => {
       inbound({ tag: 'OFF', active: false }),
       inbound({ tag: 'bad-tag' }),
       inbound({ tag: 'VMESS', protocol: 'vmess' }),
-      inbound({
-        tag: 'XHTTP',
-        network: 'xhttp',
-        security: 'tls',
-        tls: { serverName: 'x.example' },
-      }),
+      inbound({ tag: 'QUIC', network: 'quic' }),
       inbound({ tag: 'KCP', network: 'kcp' }),
       inbound({ tag: 'ODD_SEC', security: 'xtls' }),
       // Valid fields but not a catalogue combination: shadowsocks over reality.
@@ -305,7 +300,7 @@ describe('mapInboundsToListeners: unsupported reasons', () => {
       { tag: 'OFF', reason: 'inactive' },
       { tag: 'bad-tag', reason: 'tag' },
       { tag: 'VMESS', reason: 'protocol', detail: 'vmess' },
-      { tag: 'XHTTP', reason: 'transport', detail: 'xhttp' },
+      { tag: 'QUIC', reason: 'transport', detail: 'quic' },
       { tag: 'KCP', reason: 'transport', detail: 'kcp' },
       { tag: 'ODD_SEC', reason: 'security', detail: 'xtls' },
       { tag: 'SS_REALITY', reason: 'invalid', detail: 'invalid_combination' },
@@ -313,6 +308,38 @@ describe('mapInboundsToListeners: unsupported reasons', () => {
       { tag: 'NO_TARGET', reason: 'invalid', detail: 'reality_target' },
       { tag: 'BAD_NAME', reason: 'invalid', detail: 'invalid server name: not a name' },
     ]);
+  });
+
+  test('an XHTTP inbound behind a certificate maps to a listener with its path, host and mode', async () => {
+    const { candidates, unsupported } = await map([
+      inbound({
+        tag: 'VLESS_XHTTP',
+        network: 'xhttp',
+        security: 'tls',
+        tls: { serverName: 'x.example' },
+        xhttp: { path: '/xh', host: 'x.example', mode: 'packet-up' },
+      }),
+      // No mode declared: Xray's default is `auto`.
+      inbound({
+        tag: 'XHTTP_AUTO',
+        network: 'xhttp',
+        security: 'tls',
+        tls: { serverName: 'x.example' },
+        xhttp: { path: '/xh2', host: null, mode: null },
+      }),
+    ]);
+    expect(unsupported).toEqual([]);
+    expect(candidates.map((c) => c.listenerSpec)).toMatchObject([
+      {
+        streamTransport: 'xhttp',
+        security: 'tls',
+        tlsNames: ['x.example'],
+        transportParams: { path: '/xh', host: 'x.example', mode: 'packet-up' },
+      },
+      { streamTransport: 'xhttp', transportParams: { path: '/xh2', mode: 'auto' } },
+    ]);
+    // Any L4 forwarder carries it; an L7 front only once the origin probe answers.
+    expect(candidates[0].layers.layers).toEqual(['l4']);
   });
 
   test('inactive wins over every other reason (nothing to fix on a served-nowhere inbound)', async () => {
