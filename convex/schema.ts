@@ -2453,6 +2453,21 @@ export default defineSchema({
     .index('by_server_uuid', ['backendServerId', 'panelUuid'])
     .index('by_reservation', ['reservation.roleOpId']),
 
+  // Member reports attributed to the server names the reporter held, as
+  // AGGREGATE fractional weights per (name, country, day). No member, no
+  // subscription, no address: a row cannot be traced to who reported. `country`
+  // is the reporter's curated country (their saved choice, else what they
+  // consented to share) or `ZZ`. Swept after `edge.sni.reportRetentionDays`.
+  sniReportCounts: defineTable({
+    name: v.string(),
+    country: v.string(),
+    day: v.string(), // YYYY-MM-DD, UTC
+    weight: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_name_country_day', ['name', 'country', 'day'])
+    .index('by_day', ['day']),
+
   // The node role's declaration that it follows the ownership protocol for
   // this instance (it no longer rewrites what FCP owns). Writes are refused
   // without a current one.

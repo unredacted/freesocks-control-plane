@@ -130,6 +130,11 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
     description: 'Server-name families: check due names against their target',
   },
   {
+    name: 'sni-report-sweep',
+    everyMs: DAY,
+    description: 'Server-name families: delete attributed report counts older than the window',
+  },
+  {
     name: 'panel-reconcile',
     everyMs: 5 * MIN,
     description: 'Server management: settle open panel changes by looking at the panel',

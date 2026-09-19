@@ -328,6 +328,17 @@ member reports. Neither adds member data anywhere.
   window is enforced through a peppered HMAC mark (`EDGE_MARK_PEPPER`, falling
   back to `IP_HASH_SALT`) that is never reversible to the member and expires with
   the window.
+- **Server-name attribution.** When such a counted report is about one address
+  whose names are handed out per member, the names that member holds on it are
+  recomputed in the same mutation and each gets an equal share of the report's
+  weight in `sniReportCounts`: **name, country, day, summed weight, nothing
+  else**. No member, subscription, address or report row is referenced, and
+  several members' shares land in the same row, so a row cannot be traced back.
+  The country is the member's saved connection region, else the country they
+  chose to share with that report, and only when it is a curated one; otherwise
+  `ZZ`. A country inferred from a request header is never used here. Rows are
+  deleted after `edge.sni.reportWindowDays` (default 14). The counts only ever
+  raise a hint for the operator; they change nothing a member is given.
 - **Rendering** replaces template entries in a member's subscription with their
   assigned edges. The assignment key (`subscriptions.renderKey`) is random,
   server-side only, and independent of the subscription URL token.

@@ -144,6 +144,7 @@ import type * as serverAdmin from "../serverAdmin.js";
 import type * as sessions from "../sessions.js";
 import type * as sniFamilies from "../sniFamilies.js";
 import type * as sniQualifyOps from "../sniQualifyOps.js";
+import type * as sniReports from "../sniReports.js";
 import type * as sniRollouts from "../sniRollouts.js";
 import type * as statusPage from "../statusPage.js";
 import type * as storage from "../storage.js";
@@ -298,6 +299,7 @@ declare const fullApi: ApiFromModules<{
   sessions: typeof sessions;
   sniFamilies: typeof sniFamilies;
   sniQualifyOps: typeof sniQualifyOps;
+  sniReports: typeof sniReports;
   sniRollouts: typeof sniRollouts;
   statusPage: typeof statusPage;
   storage: typeof storage;

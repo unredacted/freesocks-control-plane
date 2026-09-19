@@ -10,6 +10,7 @@ export const SniConfig = z.object({
   qualifyPerTick: z.number(),
   requalifyHours: z.number(),
   suspendAfterFails: z.number(),
+  reportWindowDays: z.number(),
   curatedCountries: z.array(z.string()),
 });
 export type SniConfig = z.infer<typeof SniConfig>;
@@ -47,6 +48,8 @@ export const SniNameRow = z.object({
   checkedAt: z.string().nullable(),
   blockedIn: z.array(z.string()),
   provenIn: z.array(z.string()),
+  /** Curated countries where member reports single this name out. A hint, never a verdict. */
+  suspectIn: z.array(z.string()),
 });
 export type SniNameRow = z.infer<typeof SniNameRow>;
 

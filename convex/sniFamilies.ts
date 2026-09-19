@@ -9,6 +9,7 @@
  *
  * Audit payloads carry slugs and COUNTS only, never a hostname.
  */
+import { dayOf, suspectNames, type NameCount } from './lib/edges/sni/health';
 import { ConvexError, v } from 'convex/values';
 import {
   internalMutation,
@@ -171,12 +172,31 @@ export const detail = internalQuery({
       const newest = rollouts.sort((x, y) => y.generation - x.generation)[0];
       if (newest) latest.set(b._id as string, newest._id as string);
     }
+    // Where member reports single a name out (a hint; lib/edges/sni/health.ts).
+    const sniCfg = await resolveSniConfig(ctx.db);
+    const since = dayOf(Date.now() - sniCfg.reportWindowDays * 86_400_000);
+    const counts: NameCount[] = [];
+    // Rows exist only for names that were reported, so this is bounded by report
+    // volume (rate-limited and deduplicated per member), not by the family's
+    // size. Still capped, newest days first: a read limit is a 500 (docs).
+    for (const row of await ctx.db
+      .query('sniReportCounts')
+      .withIndex('by_day', (q) => q.gte('day', since))
+      .order('desc')
+      .take(8000))
+      if (mine.has(row.name) && sniCfg.curatedCountries.includes(row.country))
+        counts.push({ name: row.name, country: row.country, weight: row.weight });
+    const suspects = suspectNames(counts);
     return {
       family: summarize(f, names, bindings.length),
-      curatedCountries: (await resolveSniConfig(ctx.db)).curatedCountries,
+      curatedCountries: sniCfg.curatedCountries,
       names: names.map((n) => ({
         blockedIn: (judged.get(n.name)?.blockedIn ?? []).sort(),
         provenIn: (judged.get(n.name)?.provenIn ?? []).sort(),
+        // Not where it is already judged blocked: that hint has been acted on.
+        suspectIn: (suspects.get(n.name) ?? []).filter(
+          (c) => !(judged.get(n.name)?.blockedIn ?? []).includes(c),
+        ),
         name: n.name,
         seq: n.seq,
         status: n.status,
