@@ -76,8 +76,15 @@ describe('resolveEdgesRoute / edgesPaths', () => {
       'templates',
       'probes',
       'settings',
+      'names',
     ] as const)
       expect(sectionTabOf({ page })).toBe('advanced');
+    expect(sectionTabOf({ page: 'family', slug: 'a' })).toBe('advanced');
+    expect(resolveEdgesRoute('/admin/edges/names')).toEqual({ page: 'names' });
+    expect(resolveEdgesRoute(edgesPaths.family('fam a'))).toEqual({
+      page: 'family',
+      slug: 'fam a',
+    });
     expect(sectionTabOf({ page: 'relay', slug: 'a' })).toBe('advanced');
   });
   it('keeps every old address and builds the new ones', () => {

@@ -32,6 +32,8 @@ export type EdgesRoute =
   | { page: 'templates' }
   | { page: 'probes' }
   | { page: 'settings' }
+  | { page: 'names' }
+  | { page: 'family'; slug: string }
   | { page: 'not-found' };
 
 export const EDGES_ROUTES = [
@@ -46,13 +48,16 @@ export const EDGES_ROUTES = [
   ['/admin/edges/templates', 'templates'],
   ['/admin/edges/probes', 'probes'],
   ['/admin/edges/settings', 'settings'],
+  ['/admin/edges/names', 'names'],
+  ['/admin/edges/names/:slug', 'family'],
 ] as const;
 
 export function resolveEdgesRoute(pathname: string): EdgesRoute {
   for (const [pattern, page] of EDGES_ROUTES) {
     const m = matchRoute(pattern, pathname);
     if (!m) continue;
-    if (page === 'relay' || page === 'node') return { page, slug: m.params.slug ?? '' };
+    if (page === 'relay' || page === 'node' || page === 'family')
+      return { page, slug: m.params.slug ?? '' };
     if (page === 'provider') return { page, id: m.params.id ?? '' };
     return { page };
   }
@@ -117,4 +122,7 @@ export const edgesPaths = {
   probes: (params?: { target?: string; range?: string }) =>
     withSearch('/admin/edges/probes', params),
   settings: (params?: { section?: string }) => withSearch('/admin/edges/settings', params),
+  /** Server-name families (under Advanced). */
+  names: () => '/admin/edges/names',
+  family: (slug: string) => `/admin/edges/names/${enc(slug)}`,
 };

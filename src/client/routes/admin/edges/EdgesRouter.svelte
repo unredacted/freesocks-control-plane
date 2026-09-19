@@ -24,6 +24,8 @@
   import EdgesTemplates from './EdgesTemplates.svelte';
   import EdgesProbes from './EdgesProbes.svelte';
   import EdgesSettings from './EdgesSettings.svelte';
+  import NamesHome from './names/NamesHome.svelte';
+  import FamilyPage from './names/FamilyPage.svelte';
 
   const route = $derived(resolveEdgesRoute(router.pathname));
 </script>
@@ -52,6 +54,10 @@
   <EdgesProbes />
 {:else if route.page === 'settings'}
   <EdgesSettings />
+{:else if route.page === 'names'}
+  <NamesHome />
+{:else if route.page === 'family'}
+  <FamilyPage slug={route.slug} />
 {:else}
   <Card.Root class="mx-auto mt-10 max-w-md">
     <Card.Header>
