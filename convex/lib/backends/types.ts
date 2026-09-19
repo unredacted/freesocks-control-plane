@@ -320,3 +320,84 @@ export interface NodeInventoryRow {
   port?: number;
   countryCode?: string;
 }
+
+// --- Panel observation (server management) -----------------------------------
+//
+// What FCP reads from a panel to show an operator the nodes, config profiles,
+// Hosts and squads that already exist. Every shape is NON-SECRET by
+// construction: an inbound is the same allowlist projection discovery uses,
+// plus digests (convex/lib/panel/digest.ts) that say "this changed" without
+// carrying what changed. Nothing here may ever hold a private key, a short id,
+// a client, a certificate or a password.
+
+/** The authentication identity of one REALITY inbound; the digest is keyed and value-free. */
+export interface PanelRealityAuth {
+  digest: string | null;
+  /** Derived from the private key. Public by nature (it is in every share link). */
+  publicKey: string | null;
+  /** The profile stores a `publicKey` that does not belong to its private key. */
+  publicKeyMismatch: boolean;
+}
+
+export type PanelObservedInbound = Omit<PanelInbound, 'active'> & {
+  realityAuth?: PanelRealityAuth;
+};
+
+export interface PanelObservedProfile {
+  profileUuid: string;
+  name: string;
+  /** SHA-256 over the redacted config: storable, drives diffs, blind to secret-only changes. */
+  shapeHash: string;
+  /** Keyed digest over the complete config: moves on ANY change, secrets included. */
+  changeToken: string;
+  inbounds: PanelObservedInbound[];
+}
+
+export interface PanelObservedNode {
+  nodeUuid: string;
+  name: string;
+  address: string | null;
+  port: number | null;
+  countryCode: string | null;
+  online: boolean;
+  isDisabled: boolean;
+  usersOnline: number;
+  configProfileUuid: string | null;
+  activeInboundUuids: string[];
+  tags: string[];
+}
+
+export interface PanelObservedHost {
+  hostUuid: string;
+  remark: string;
+  address: string;
+  port: number;
+  sni: string | null;
+  host: string | null;
+  path: string | null;
+  alpn: string | null;
+  fingerprint: string | null;
+  securityLayer: string | null;
+  isDisabled: boolean;
+  isHidden: boolean;
+  tag: string | null;
+  viewPosition: number | null;
+  configProfileUuid: string | null;
+  configProfileInboundUuid: string | null;
+  /** Node uuids the Host is pinned to (empty = every node serving the inbound). */
+  nodeUuids: string[];
+}
+
+export interface PanelObservedSquad {
+  squadUuid: string;
+  name: string;
+  inboundUuids: string[];
+  membersCount: number | null;
+}
+
+export interface PanelObservation {
+  nodes: PanelObservedNode[];
+  profiles: PanelObservedProfile[];
+  hosts: PanelObservedHost[];
+  squads: PanelObservedSquad[];
+}

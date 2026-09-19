@@ -26,6 +26,7 @@
  */
 import { generateKeyPairSync, randomUUID } from 'node:crypto';
 import { afterAll, describe, expect, test } from 'vitest';
+import { remnawaveObservePanel } from './remnawave';
 
 const BASE_URL = process.env.REMNAWAVE_TEST_URL;
 const API_TOKEN = process.env.REMNAWAVE_TEST_TOKEN;
@@ -172,6 +173,42 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave management contract (integra
       'b.example',
       'd.example',
     ]);
+  });
+
+  test("FCP's observation reads the live panel and carries nothing secret", async () => {
+    const seen = await remnawaveObservePanel(
+      { baseUrl: BASE_URL!, apiToken: API_TOKEN!, timeoutMs: 20_000 },
+      'integration-digest-key',
+    );
+    const mine = seen.profiles.find((p) => p.profileUuid === profileUuid)!;
+    expect(mine).toBeTruthy();
+    expect(mine.shapeHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(mine.changeToken).toMatch(/^[0-9a-f]{64}$/);
+    const a = mine.inbounds.find((i) => i.tag === tagA)!;
+    expect(a).toMatchObject({ protocol: 'vless', port: 20443, security: 'reality' });
+    expect(a.configProfileInboundUuid).toMatch(/^[0-9a-f-]{36}$/);
+    expect(a.reality).toEqual({
+      target: 'target.example:443',
+      serverNames: ['a.example', 'b.example', 'd.example'],
+    });
+    // Derived from the private key the panel holds; a real X25519 public key.
+    expect(a.realityAuth?.publicKey).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(a.realityAuth?.digest).toMatch(/^[0-9a-f]{64}$/);
+    const blob = JSON.stringify(seen);
+    const raw = await api('GET', `config-profiles/${profileUuid}`);
+    const sk = rawInbound(raw.data, tagA).streamSettings.realitySettings.privateKey as string;
+    expect(sk.length).toBeGreaterThan(20);
+    expect(blob).not.toContain(sk);
+    expect(blob).not.toContain('0123456789abcdef');
+    expect(blob).not.toContain('rawInbound');
+    // What is read now equals what was read a moment ago: the token is stable.
+    const again = await remnawaveObservePanel(
+      { baseUrl: BASE_URL!, apiToken: API_TOKEN!, timeoutMs: 20_000 },
+      'integration-digest-key',
+    );
+    expect(again.profiles.find((p) => p.profileUuid === profileUuid)!.changeToken).toBe(
+      mine.changeToken,
+    );
   });
 
   test('records what the panel normalises on write', async () => {

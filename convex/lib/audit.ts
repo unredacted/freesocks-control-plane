@@ -249,6 +249,8 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // Admin enforced the no-client-IP-logging posture on the Remnawave config
   // profiles (Xray log/policy). Counts only — no config content is logged.
   'admin.remnawave.logging_hardened': ['instances', 'profilesChanged', 'profilesTotal'],
+  // Server management: which switches moved, never a value from a panel.
+  'servers.config.update': ['changedKeys'],
   // Operator-run 2.x→3.x key-id remap on one upgraded panel (counts only).
   'admin.remnawave.user_ids_migrated': [
     'panelVersion',

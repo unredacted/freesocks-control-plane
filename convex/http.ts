@@ -13,6 +13,7 @@ import { httpAction } from './_generated/server';
 import type { ActionCtx } from './_generated/server';
 import { api, internal } from './_generated/api';
 import { registerEdgeRoutes } from './httpEdges';
+import { registerServerRoutes } from './httpServers';
 import { hmacSha256Hex } from './lib/crypto';
 import { sanitizeConnectionChoice } from './edgeAttribution';
 import { classifyClient } from './lib/edges/clientFamilies';
@@ -4211,5 +4212,6 @@ http.route({
 // Edges admin surface (docs/edges.md): one prefix route per verb, sealed by
 // verb class (envelope.ts), dispatched in httpEdges.ts.
 registerEdgeRoutes(http);
+registerServerRoutes(http);
 
 export default http;

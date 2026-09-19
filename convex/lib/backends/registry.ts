@@ -26,6 +26,7 @@ import type {
   BackendHostCreate,
   NodeInventoryRow,
   PanelInbound,
+  PanelObservation,
 } from './types';
 import {
   remnawaveDeleteDevice,
@@ -51,6 +52,7 @@ import {
   remnawaveSetHostDisabled,
   remnawaveGetNodeInventory,
   remnawaveListNodeInbounds,
+  remnawaveObservePanel,
   remnawaveFindUserByUsername,
 } from './remnawave';
 import {
@@ -140,6 +142,12 @@ export interface BackendProvider<C extends BackendConfig = BackendConfig> {
   // Optional: the inbounds one node serves (allowlisted projection; never
   // credentials or key material) for relay listener discovery.
   listNodeInbounds?(config: C, nodeUuid: string): Promise<PanelInbound[]>;
+  /**
+   * Read the panel's nodes, config profiles, Hosts and squads for server
+   * management. Read-only; config profiles are reduced to a non-secret
+   * projection plus digests keyed with `digestKey` before they are returned.
+   */
+  observePanel?(config: C, digestKey: string): Promise<PanelObservation>;
   // Optional: re-find a user FCP created by its username (the version-neutral
   // by-username read). The persisted mint operations (relay qualification
   // credential, temporary test credentials) discover an issued user after a
@@ -181,6 +189,7 @@ const remnawaveProvider: BackendProvider<RemnawaveServerConfig> = {
   setHostDisabled: (c, uuid, disabled) => remnawaveSetHostDisabled(c, uuid, disabled),
   getNodeInventory: (c) => remnawaveGetNodeInventory(c),
   listNodeInbounds: (c, nodeUuid) => remnawaveListNodeInbounds(c, nodeUuid),
+  observePanel: (c, digestKey) => remnawaveObservePanel(c, digestKey),
   findUserByUsername: (c, username) => remnawaveFindUserByUsername(c, username),
   fetchContent: (c, shortId, ua, subUrl, hwid) =>
     remnawaveFetchSubscription(c, shortId, ua, subUrl, hwid),

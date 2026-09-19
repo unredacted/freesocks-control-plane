@@ -154,6 +154,9 @@ export const RATE_LIMIT_DEFAULTS = {
   // hot CMS loop is what these bound.
   'admin.edges.provider-call': { max: 30, windowMs: MINUTE, enabled: true },
   'admin.edges.probe': { max: 30, windowMs: HOUR, enabled: true },
+  // Server management: an on-demand re-read of one panel (several panel GETs
+  // per call). The scheduled read rides the healthcheck and is not throttled.
+  'admin.servers.panel-read': { max: 30, windowMs: MINUTE, enabled: true },
 } as const satisfies Record<string, RateLimitPolicy>;
 
 export type RateLimitPolicyKey = keyof typeof RATE_LIMIT_DEFAULTS;
