@@ -305,6 +305,13 @@
                       <p>
                         <span class="font-medium">{i.sourceTag}</span>: {copy.label}.
                         <span class="text-muted-foreground">{copy.explain}</span>
+                        {#if i.detail}
+                          <!-- The mapper's own words for THIS inbound (a validator message or
+                               a short code): without them "the detail names what" names nothing. -->
+                          <span class="text-muted-foreground mt-0.5 block font-mono text-xs"
+                            >{i.detail}</span
+                          >
+                        {/if}
                       </p>
                     {/each}
                   </Collapsible.Content>
