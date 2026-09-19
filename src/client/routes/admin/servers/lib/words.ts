@@ -333,7 +333,90 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.run_not_running': 'This activation is not running.',
   'servers.revision_moved': 'Something changed since the approval. Review and approve again.',
   'servers.node_not_approved': 'The node behind this relay is not approved for delivery yet.',
+  // Retirement.
+  'servers.relay_draining': 'Its edges are still being taken down.',
+  'servers.credentials_pending': 'Its test credentials are still being removed from the panel.',
+  'servers.retirement_failed': 'Retiring stopped on an error. It is tried again shortly.',
+  'servers.migration_target': 'The target node must be live.',
+  'servers.migration_not_built':
+    'Moving members to another node is not available yet. Choose to keep them dark.',
 };
+// --- the bootstrap contract: enrolled nodes and their ladder -----------------------------------
+// (stageWords / setupWords / PURPOSE_WORDS; tested in words.test.ts)
+
+export const PURPOSE_WORDS: Record<string, string> = {
+  direct: 'Direct',
+  front: 'Front',
+  relay: 'Relay',
+};
+
+/** One sentence and a dot for where an enrolled node is on its way to members. */
+export function stageWords(i: {
+  stage: string;
+  disposition: string;
+  state: string;
+  code: string | null;
+  maintenance: boolean;
+  retirement: { stage: string } | null;
+}): { dot: Dot; sentence: string } {
+  if (i.retirement) {
+    const s = i.retirement.stage;
+    if (s === 'needs_admin') return { dot: 'amber', sentence: 'Retiring. Needs your decision.' };
+    if (s === 'ready_to_wipe')
+      return { dot: 'grey', sentence: 'Retired here. Waiting for the machine to be wiped.' };
+    if (s === 'retired') return { dot: 'grey', sentence: 'Retired.' };
+    return { dot: 'grey', sentence: 'Retiring.' };
+  }
+  if (i.maintenance)
+    return { dot: 'amber', sentence: 'Closed for maintenance. Finish it, then approve again.' };
+  if (i.state === 'blocked')
+    return { dot: 'red', sentence: `Stopped: ${serverErrorWords(i.code)}` };
+  switch (i.stage) {
+    case 'registered':
+      return {
+        dot: 'grey',
+        sentence: 'Enrolled. Waiting for the role to fetch its configuration.',
+      };
+    case 'bootstrap_available':
+      return { dot: 'grey', sentence: 'Configuration served. Waiting for the role to apply it.' };
+    case 'machine_applied':
+      return { dot: 'amber', sentence: 'The role applied it. Checking the machine.' };
+    case 'machine_ready':
+      return { dot: 'amber', sentence: 'The machine is ready. Test the connection, then approve.' };
+    case 'candidates_verified':
+      return { dot: 'amber', sentence: 'Tested. Review and approve to release it to members.' };
+    case 'awaiting_approval':
+      return { dot: 'amber', sentence: 'Waiting for your approval.' };
+    case 'activating':
+      return {
+        dot: 'amber',
+        sentence: 'Releasing to members. Nobody sees it until this finishes.',
+      };
+    case 'live':
+      return i.disposition === 'live'
+        ? { dot: 'green', sentence: 'Live for members.' }
+        : { dot: 'amber', sentence: 'Approved, but not served right now.' };
+    default:
+      return { dot: 'grey', sentence: 'Enrolled.' };
+  }
+}
+
+/** The setup row in Needs you, or null when there is nothing to do. */
+export function setupWords(s: {
+  exists: boolean;
+  state: string | null;
+  code: string | null;
+  running: boolean;
+}): string | null {
+  if (!s.exists) return 'This panel is not set up yet. Set it up so nodes can enroll.';
+  if (s.running) return 'Setting up the panel.';
+  if (s.state === 'needs_takeover')
+    return 'This panel already has nodes or Hosts. Take it over so FCP becomes its only writer.';
+  if (s.state === 'failed') return `Setting up stopped: ${serverErrorWords(s.code)}`;
+  if (s.state === 'pending') return `Setting up paused: ${serverErrorWords(s.code)}`;
+  return null;
+}
+
 export function serverErrorWords(code: string | null | undefined): string {
   return (code && ERROR_WORDS[code]) || 'That did not work. Try again in a moment.';
 }

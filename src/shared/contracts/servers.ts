@@ -373,6 +373,73 @@ export const NodeRoleView = z.object({
 });
 export type NodeRoleView = z.infer<typeof NodeRoleView>;
 
+/** One enrolled node as the Servers page shows it (`GET {slug}/nodes/intents`). */
+export const NodeIntentView = z.object({
+  id: z.string(),
+  name: z.string(),
+  purpose: NodePurpose,
+  state: z.enum(['pending', 'ready', 'blocked', 'retiring', 'retired']),
+  code: z.string().nullable(),
+  stage: NodeStage,
+  disposition: NodeDisposition,
+  machineRevision: z.number(),
+  appliedRevision: z.number().nullable(),
+  nodeUuid: z.string().nullable(),
+  hostUuid: z.string().nullable(),
+  origin: z.object({ hostname: z.string().nullable(), dns: z.string() }),
+  maintenance: z.boolean(),
+  run: z
+    .object({ id: z.string(), state: z.string(), stage: z.string(), code: z.string().nullable() })
+    .nullable(),
+  retirement: z.object({ stage: z.string(), code: z.string().nullable() }).nullable(),
+  registeredAt: z.string(),
+  updatedAt: z.string(),
+});
+export type NodeIntentView = z.infer<typeof NodeIntentView>;
+export const NodeIntentList = z.object({ intents: z.array(NodeIntentView) });
+
+/** The review card an approval names (`GET …/intents/{id}/review`). */
+export const ActivationReview = z.object({
+  shape: z.object({
+    purpose: NodePurpose,
+    ingress: z.unknown().nullable(),
+    configRevision: z.string(),
+    authRevision: z.string().nullable(),
+    listenerKeys: z.array(z.string()),
+    provider: z.object({ accountId: z.string().nullable(), templateHash: z.string().nullable() }),
+    subscriptionTemplates: z.record(z.string(), z.string()),
+    hostTuple: z
+      .object({ address: z.string(), port: z.number(), sni: z.string().nullable() })
+      .nullable(),
+  }),
+  reviewHash: z.string(),
+  blockers: z.array(z.string()),
+  stage: NodeStage,
+});
+export type ActivationReview = z.infer<typeof ActivationReview>;
+
+/** The isolated direct test link and the binding its confirmation must echo. */
+export const DirectTestLink = z.object({
+  link: z.string(),
+  binding: z.object({
+    intentId: z.string(),
+    inboundUuid: z.string(),
+    endpoint: z.string(),
+    machineRevision: z.number(),
+    configRevision: z.string(),
+    authRevision: z.string().nullable(),
+    params: z.object({
+      sni: z.string(),
+      fingerprint: z.string(),
+      shortIdRef: z.number(),
+      publicKey: z.string(),
+    }),
+    credentialRef: z.string(),
+    issuedAt: z.string(),
+  }),
+});
+export type DirectTestLink = z.infer<typeof DirectTestLink>;
+
 /** `POST …/bootstrap`: the machine configuration plus the node secret, served once per call. */
 export const NodeBootstrap = z.object({
   machineRevision: z.number(),

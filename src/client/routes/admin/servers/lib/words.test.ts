@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { pickInstance, resolveServersRoute, serversPaths } from './routes';
+import { setupWords, stageWords } from './words';
 import {
   WORDED_CODES,
   ago,
@@ -325,5 +326,71 @@ describe('write wording', () => {
     ]);
     expect(namesDelta(['a', 'b'], ['b', 'c', 'd'])).toBe('2 added, 1 removed');
     expect(namesDelta(['a', 'b'], ['b', 'a'])).toBe('Same names, new order');
+  });
+});
+
+describe('enrolled nodes', () => {
+  const base = {
+    disposition: 'staged',
+    state: 'ready',
+    code: null,
+    maintenance: false,
+    retirement: null,
+  };
+  test('one sentence per stage, live only when served', () => {
+    expect(stageWords({ ...base, stage: 'registered' }).dot).toBe('grey');
+    expect(stageWords({ ...base, stage: 'machine_ready' })).toEqual({
+      dot: 'amber',
+      sentence: 'The machine is ready. Test the connection, then approve.',
+    });
+    expect(stageWords({ ...base, stage: 'live', disposition: 'live' })).toEqual({
+      dot: 'green',
+      sentence: 'Live for members.',
+    });
+    expect(stageWords({ ...base, stage: 'live', disposition: 'unavailable' }).dot).toBe('amber');
+    expect(stageWords({ ...base, stage: 'live', maintenance: true }).sentence).toMatch(
+      /maintenance/,
+    );
+    expect(
+      stageWords({ ...base, stage: 'live', retirement: { stage: 'needs_admin' } }).sentence,
+    ).toMatch(/decision/);
+    expect(
+      stageWords({
+        ...base,
+        stage: 'registered',
+        state: 'blocked',
+        code: 'servers.origin_name_taken',
+      }).dot,
+    ).toBe('red');
+  });
+  test('the setup row', () => {
+    expect(setupWords({ exists: false, state: null, code: null, running: false })).toMatch(
+      /not set up/,
+    );
+    expect(setupWords({ exists: true, state: 'ready', code: null, running: false })).toBeNull();
+    expect(
+      setupWords({ exists: true, state: 'needs_takeover', code: null, running: false }),
+    ).toMatch(/Take it over/);
+    expect(
+      setupWords({
+        exists: true,
+        state: 'pending',
+        code: 'servers.obligation_unresolved',
+        running: true,
+      }),
+    ).toBe('Setting up the panel.');
+  });
+  test('no em-dashes in any of it', () => {
+    for (const stage of [
+      'registered',
+      'bootstrap_available',
+      'machine_applied',
+      'machine_ready',
+      'candidates_verified',
+      'awaiting_approval',
+      'activating',
+      'live',
+    ])
+      expect(stageWords({ ...base, stage }).sentence).not.toMatch(/—/);
   });
 });
