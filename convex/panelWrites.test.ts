@@ -485,7 +485,7 @@ describe('Hosts', () => {
     // The provider sends the panel's own default word for "cleared", and the
     // panel reads it back as that word: the op must not wait for a null that
     // will never be seen.
-    expect(panel.hosts[0]!.securityLayer).toBe('DEFAULT');
+    expect((panel.hosts[0] as { securityLayer?: string }).securityLayer).toBe('DEFAULT');
     expect(op).toMatchObject({ state: 'done', panelState: 'observed', open: false });
     expect(await claims(t)).toEqual([]);
   });

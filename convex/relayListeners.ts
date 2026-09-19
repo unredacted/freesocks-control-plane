@@ -27,12 +27,16 @@ import {
   assertNoMatchOverlap,
   diffListeners,
   listenerConfigHash,
+  listenerConfigHashWith,
+  listenerMaterialHash,
   mergeNames,
   normalizeName,
   validateListenerSpec,
   type CanonicalListener,
   type ListenerName,
   type ListenerSpecInput,
+  type MaterialListenerLike,
+  type MergeNamesResult,
 } from './lib/edges/registration';
 import {
   assertNoRelayPanelClaim,
@@ -291,19 +295,79 @@ export async function applyRegistration(
   await assertNoRelayPanelClaim(ctx.db, relay);
   const specs = inputs.map((s) => validateListenerSpec(s, { origin: relay.origin }));
   const existing = await listenersOf(ctx, relay._id);
-  const diff = diffListeners(existing, specs, source, opts.prune);
+  // Diffed against what each listener PRESENTS now (its active names), never
+  // the stored `configHash`: that one keeps the names as they were at the last
+  // MATERIAL change, because a REALITY name retire leaves it, and the endpoint
+  // confirmation bound to it, alone (nameRetireKeepsVerification). A body that
+  // lists a name the role retired earlier is therefore a change (it comes
+  // back), and one that repeats the current names is not.
+  const diff = diffListeners(
+    existing.map((l) => ({
+      ...l,
+      configHash: listenerConfigHashWith(l as MaterialListenerLike, activeNames(l)),
+    })),
+    specs,
+    source,
+    opts.prune,
+  );
   if (diff.owned.length > 0)
     throw new ConvexError({
       code: 'edge.listener_key_owned',
       message: `listener key(s) owned by another source: ${diff.owned.join(', ')}`,
     });
+  const cfg = await resolveEdgeConfig(ctx.db);
+  const drainMs = edgeMs.sniDrain(cfg);
+  const now = Date.now();
+  const result: ApplyRegistrationResult = {
+    created: [],
+    updated: [],
+    unchanged: [],
+    retired: [],
+    owned: [],
+    blockedNames: [],
+    changed: false,
+  };
+  // The stored idempotency hash keeps the names as they were at the last
+  // MATERIAL change: a REALITY name retire, by an operator (`retireOn`) or by
+  // a body that omits the name, leaves it alone so the endpoint confirmation
+  // stands. A body identical to the live listener can therefore hash
+  // differently; judge each candidate update on what it would actually do:
+  // nothing (unchanged), only REALITY names leaving (a names-only retire, no
+  // `revision` bump), or a material change.
+  const updates: {
+    existing: Listener;
+    spec: CanonicalListener;
+    merged: MergeNamesResult;
+    namesOnly: boolean;
+  }[] = [];
+  for (const u of diff.update) {
+    const merged = mergeNames(u.existing.tlsNames ?? [], u.spec.tlsNames, source, now, drainMs);
+    const sameApartFromNames =
+      !u.existing.retired &&
+      listenerMaterialHash(u.spec) === listenerMaterialHash(u.existing as MaterialListenerLike);
+    if (sameApartFromNames && !merged.changed) {
+      result.blockedNames.push(...merged.blocked);
+      diff.unchanged.push(u);
+      continue;
+    }
+    updates.push({
+      ...u,
+      merged,
+      namesOnly:
+        sameApartFromNames &&
+        merged.added.length === 0 &&
+        merged.reactivated.length === 0 &&
+        nameRetireKeepsVerification(u.existing),
+    });
+  }
+  diff.update = updates;
   // The resulting rule set must be unambiguous.
   const after = [
     ...existing
       .filter(
         (l) =>
           !l.retired &&
-          !diff.prune.includes(l) &&
+          !diff.prune.some((p) => p._id === l._id) &&
           !diff.update.some((u) => u.existing._id === l._id),
       )
       .map((l) => ({
@@ -335,7 +399,7 @@ export async function applyRegistration(
         !l.retired &&
         l.deployed &&
         l.enabled &&
-        !diff.prune.includes(l) &&
+        !diff.prune.some((p) => p._id === l._id) &&
         !diff.update.some((u) => u.existing._id === l._id),
     ).length +
     diff.update.filter((u) => u.spec.deployed && u.existing.enabled).length +
@@ -346,21 +410,9 @@ export async function applyRegistration(
       message: `a relay can carry at most ${MAX_DESIRED_PUBLISHED} deployed, enabled listeners (this body would leave ${coverageAfter}); retire or disable one first`,
     });
 
-  const material = diff.create.length + diff.update.length + diff.prune.length > 0;
+  const material = diff.create.length + updates.length + diff.prune.length > 0;
   if (material) await assertNoRotationOrQuarantine(ctx.db, relay);
   const live = material ? await liveEdgesOfRelay(ctx.db, relay._id) : [];
-  const cfg = await resolveEdgeConfig(ctx.db);
-  const drainMs = edgeMs.sniDrain(cfg);
-  const now = Date.now();
-  const result: ApplyRegistrationResult = {
-    created: [],
-    updated: [],
-    unchanged: [],
-    retired: [],
-    owned: [],
-    blockedNames: [],
-    changed: false,
-  };
 
   for (const spec of diff.create) {
     const names: ListenerName[] = spec.tlsNames.map((n) => ({
@@ -370,7 +422,22 @@ export async function applyRegistration(
     await ctx.db.insert('relayListeners', specToRow(relay, spec, names, source, now));
     result.created.push(spec.listenerKey);
   }
-  for (const { existing: ex, spec } of diff.update) {
+  for (const { existing: ex, spec, merged, namesOnly } of updates) {
+    result.blockedNames.push(...merged.blocked);
+    if (namesOnly) {
+      // Only REALITY names left the list: exactly what `retireOn` does for an
+      // operator. The names that remain were accepted when the endpoint was
+      // tested, so the confirmation stands: `namesRevision` moves, `revision`
+      // and the stored hash do not (nameRetireKeepsVerification).
+      await ctx.db.patch(ex._id, {
+        tlsNames: merged.next,
+        namesRevision: (ex.namesRevision ?? 0) + 1,
+        updatedAt: now,
+      });
+      await scheduleNameDrain(ctx, ex._id, merged.retired, now + drainMs);
+      result.updated.push(spec.listenerKey);
+      continue;
+    }
     const rebound =
       ex.protocol !== spec.protocol ||
       ex.streamTransport !== spec.streamTransport ||
@@ -386,8 +453,6 @@ export async function applyRegistration(
           message: `${users.length} edge(s) still use listener ${ex.listenerKey}; destroy them before rebinding its protocol, inbound or port`,
         });
     }
-    const merged = mergeNames(ex.tlsNames ?? [], spec.tlsNames, source, now, drainMs);
-    result.blockedNames.push(...merged.blocked);
     const row = specToRow(relay, spec, merged.next, source, now, ex);
     // A change that keeps the binding but moves the listener out of a LAYER its
     // live edges sit on (an origin transport going from HTTPS to plaintext

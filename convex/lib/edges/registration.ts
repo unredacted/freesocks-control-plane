@@ -319,19 +319,30 @@ function canonicalJson(v: unknown): string {
   return JSON.stringify(v);
 }
 
-/**
- * The idempotency hash of a canonical listener. Names are hashed as a SORTED
- * copy (set semantics); everything else field by field. `deployed` and the
- * match rule are part of it (they change what renders / what the Host is).
- */
-export function listenerConfigHash(c: CanonicalListener): string {
+/** Everything `listenerConfigHash` reads apart from the names; a stored row fits it too. */
+export type MaterialListenerLike = Pick<
+  CanonicalListener,
+  | 'protocol'
+  | 'streamTransport'
+  | 'security'
+  | 'originPort'
+  | 'realityTarget'
+  | 'transportParams'
+  | 'originTransport'
+  | 'panelBinding'
+  | 'matchRule'
+  | 'providerScope'
+  | 'deployed'
+>;
+
+function configHashOf(c: MaterialListenerLike, tlsNames: readonly string[]): string {
   return fnv1a64Hex(
     canonicalJson({
       protocol: c.protocol,
       streamTransport: c.streamTransport,
       security: c.security,
       originPort: c.originPort,
-      tlsNames: [...c.tlsNames].sort(),
+      tlsNames: [...tlsNames].sort(),
       realityTarget: c.realityTarget ?? null,
       transportParams: c.transportParams ?? null,
       originTransport: c.originTransport ?? null,
@@ -341,6 +352,38 @@ export function listenerConfigHash(c: CanonicalListener): string {
       deployed: c.deployed,
     }),
   );
+}
+
+/**
+ * The idempotency hash of a canonical listener. Names are hashed as a SORTED
+ * copy (set semantics); everything else field by field. `deployed` and the
+ * match rule are part of it (they change what renders / what the Host is).
+ */
+export function listenerConfigHash(c: CanonicalListener): string {
+  return configHashOf(c, c.tlsNames);
+}
+
+/**
+ * The same hash with the names left out: two listeners equal under it differ
+ * at most in which names they present. A registration body judges a candidate
+ * update with it, because the stored `configHash` keeps the names as they were
+ * at the last MATERIAL change (a REALITY name retire is not one, see
+ * lib/edges/verification.ts), so an identical body can still hash differently.
+ */
+export function listenerMaterialHash(c: MaterialListenerLike): string {
+  return configHashOf(c, []);
+}
+
+/**
+ * The hash a stored listener would have as a canonical spec of what it
+ * PRESENTS now: its material fields with exactly `activeNames`. A registration
+ * body is diffed against this, never against the stored `configHash`.
+ */
+export function listenerConfigHashWith(
+  c: MaterialListenerLike,
+  activeNames: readonly string[],
+): string {
+  return configHashOf(c, activeNames);
 }
 
 export interface MergeNamesResult {

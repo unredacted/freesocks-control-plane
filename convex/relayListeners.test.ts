@@ -528,6 +528,46 @@ describe('relayListeners: a name retire and the endpoint confirmation', () => {
     expect(await current(t, edgeId, listenerId)).toBe(false);
   });
 
+  test('REALITY: a registration body that omits a name retires it WITHOUT staling the confirmation; the same body again is unchanged', async () => {
+    const { t, relayId, listenerId } = await seed();
+    const { edgeId } = await adoptL4Edge(t, relayId, listenerId, { publish: true });
+    const before = (await row(t, listenerId))!;
+    const e0 = await epochOf(t, relayId);
+    // The role's next body no longer lists a.example.
+    const r1 = await registerRelay(t, {
+      listeners: [realityListener({ tlsNames: ['b.example'] })],
+    });
+    expect(r1.changed).toBe(true);
+    let l = (await row(t, listenerId))!;
+    expect(names(l)).toEqual({ 'a.example': 'retired', 'b.example': 'active' });
+    expect(l.tlsNames![0]).toMatchObject({ retiredBy: 'role' });
+    expect(l.tlsNames![0].drainUntil).toBeGreaterThan(Date.now());
+    // A names-only REALITY retire: `namesRevision` moves, `revision` and the
+    // hash the confirmation is bound to do not, so the edge still renders.
+    expect(l.namesRevision).toBe(1);
+    expect(l.revision).toBe(before.revision);
+    expect(l.configHash).toBe(before.configHash);
+    expect(await current(t, edgeId, listenerId)).toBe(true);
+    expect(await epochOf(t, relayId)).toBe(e0 + 1);
+    // The identical body again is a no-op, although the stored hash still
+    // carries the retired name.
+    const r2 = await registerRelay(t, {
+      listeners: [realityListener({ tlsNames: ['b.example'] })],
+    });
+    expect(r2.changed).toBe(false);
+    expect(await epochOf(t, relayId)).toBe(e0 + 1);
+    expect((await row(t, listenerId))!.revision).toBe(before.revision);
+    // Listing the name again is ADDING it: material, and the confirmation is due a retest.
+    const r3 = await registerRelay(t, {
+      listeners: [realityListener({ tlsNames: ['a.example', 'b.example'] })],
+    });
+    expect(r3.changed).toBe(true);
+    l = (await row(t, listenerId))!;
+    expect(names(l)).toEqual({ 'a.example': 'active', 'b.example': 'active' });
+    expect(l.revision).toBe(before.revision + 1);
+    expect(await current(t, edgeId, listenerId)).toBe(false);
+  });
+
   test('a TLS listener is NOT exempt: its names decide certificate coverage', async () => {
     const { t, relayId } = await seed();
     const tls = await t.mutation(internal.relayListeners.upsert, {

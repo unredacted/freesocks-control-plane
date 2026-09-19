@@ -283,13 +283,21 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave management contract (integra
       { id: randomUUID(), email: 'probe', flow: 'xtls-rprx-vision' },
     ];
     const patched = await api('PATCH', 'config-profiles', { uuid: profileUuid, config });
-    observed.normalisingPatchStatus = patched.status;
+    expect(ok(patched)).toBe(true);
     const after = await api('GET', `config-profiles/${profileUuid}`);
     const stored = rawInbound(after.data, tagB);
-    observed.serverNamesStored = stored?.streamSettings?.realitySettings?.serverNames;
-    observed.publicKeyStored = 'publicKey' in (stored?.streamSettings?.realitySettings ?? {});
-    observed.clientsStored = stored?.settings?.clients?.length ?? null;
-    // Whatever it normalises, the panel must never hand back the client list it was sent.
+    // The change token applies EXACTLY this normalisation (lib/panel/digest.ts
+    // `normalizeForToken`): whitespace trimmed, case and duplicates kept, the
+    // submitted publicKey kept, `settings.clients` cleared. A panel that
+    // normalises differently would make every predicted token false-fail.
+    expect(stored.streamSettings.realitySettings.serverNames).toEqual([
+      'C.Example',
+      'c.example',
+      'e.example',
+    ]);
+    expect(stored.streamSettings.realitySettings.publicKey).toBe(publicKey);
+    expect(stored.settings.clients).toEqual([]);
+    // The panel must never hand back the client list it was sent.
     expect(JSON.stringify(after.data)).not.toContain('"email":"probe"');
   });
 
@@ -330,13 +338,14 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave management contract (integra
       uuid: profileUuid,
       config: { inbounds: 'not-an-array' },
     });
-    // The status is RECORDED, not required: 3.4.4 answers 500 here, not a 4xx.
-    // A 5xx can never sit on the pre-mutation allowlist (a gateway can answer
-    // one while upstream commits), so a caller must treat this outcome as
-    // uncertain and settle it by reading back, exactly as this test does. FCP
-    // validates a config's shape itself before it ever sends one.
-    expect(bad.status).toBeGreaterThanOrEqual(400);
-    observed.invalidConfigStatus = bad.status;
+    // The pinned panel answers 500 here, not a 4xx, and the ledger's rules are
+    // built on that: a 5xx can never sit on the pre-mutation allowlist (a
+    // gateway can answer one while upstream commits), so this outcome is
+    // `uncertain` and is settled by reading back, exactly as this test does. A
+    // panel that moved it to a 4xx would let the classification be revisited;
+    // pin the status so that cannot happen silently. FCP validates a config's
+    // shape itself before it ever sends one.
+    expect(bad.status).toBe(500);
     const after = await api('GET', `config-profiles/${profileUuid}`);
     expect(after.data.config).toEqual(before.data.config);
   });
@@ -361,8 +370,12 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave management contract (integra
       config: profileConfig([realityInbound(tagA, 20450, ['z.example'])]),
     });
     if (ok(clash)) created.profiles.push(clash.data.uuid);
-    observed.duplicateTagStatus = clash.status;
-    expect(ok(clash)).toBe(false);
+    // A deterministic uniqueness collision, not a retryable or uncertain
+    // failure: the management code classifies it by this status.
+    expect(clash.status).toBe(409);
+    const profiles = await api('GET', 'config-profiles');
+    const rows = profiles.data.configProfiles ?? profiles.data;
+    expect(rows.filter((p: any) => p.name === `FCP contract ${run} clash`)).toEqual([]);
   });
 
   test('changing an inbound protocol under the same tag replaces its uuid', async () => {
@@ -377,9 +390,12 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave management contract (integra
       streamSettings: { network: 'tcp', security: 'none' },
     };
     const patched = await api('PATCH', 'config-profiles', { uuid: profileUuid, config });
-    observed.protocolChangeStatus = patched.status;
-    // Recorded, not required: a panel that refuses the change is the safer answer.
-    if (!ok(patched)) return;
+    // The panel ACCEPTS this and replaces the inbound's uuid, which is why a
+    // patch op may never change an inbound's protocol (lib/panel/patchOps.ts):
+    // every Host, squad and listener binding hangs off that uuid. A panel that
+    // started refusing it would call for different handling, so the outcome is
+    // pinned, not merely recorded.
+    expect(patched.status).toBe(200);
     const after = await api('GET', `config-profiles/${profileUuid}`);
     expect(uuidOfTag(after.data, tagA)).toBe(uuidOfTag(before.data, tagA));
     expect(uuidOfTag(after.data, tagB)).not.toBe(uuidOfTag(before.data, tagB));
@@ -551,11 +567,11 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave management contract (integra
       address: '192.0.2.10',
       port: 443,
     });
-    observed.duplicateHostStatus = twin.status;
-    if (ok(twin)) {
-      created.hosts.push(twin.data.uuid);
-      expect(twin.data.uuid).not.toBe(hostUuid);
-    }
+    // Pinned: this is why a create whose answer was lost is settled by
+    // DISCOVERY and never by a second create (lib/panel/ops.ts).
+    expect(twin.status).toBe(201);
+    created.hosts.push(twin.data.uuid);
+    expect(twin.data.uuid).not.toBe(hostUuid);
 
     const reordered = await api('POST', 'hosts/actions/reorder', {
       hosts: created.hosts.map((uuid, i) => ({ uuid, viewPosition: created.hosts.length - i })),
@@ -614,9 +630,10 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave management contract (integra
     const restarted = await api('POST', `nodes/${nodeUuid}/actions/restart`, {
       forceRestart: true,
     });
-    observed.restartStatus = restarted.status;
     observed.restartBody = restarted.data;
-    expect(ok(restarted)).toBe(true);
+    // 202: the answer means "queued", not "restarted". The ledger settles a
+    // restart by the node's own clock for exactly this reason.
+    expect(restarted.status).toBe(202);
 
     const gone = await api('DELETE', `nodes/${nodeUuid}`);
     expect(ok(gone)).toBe(true);
