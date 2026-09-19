@@ -110,8 +110,12 @@ async function request<S extends z.ZodTypeAny>(
   captureSessionToken(path, method, json);
   const parsed = schema.safeParse(json);
   if (!parsed.success) {
+    // Field PATHS only, never values: enough to tell a contract drift from a
+    // bad row, and safe to show an admin or paste into a bug report.
+    const fields = responseShapeIssues(parsed.error.issues);
+    console.error(`[api] ${method} ${path.split('?')[0]}: unexpected response shape (${fields})`);
     throw new ApiCallError(500, {
-      error: { code: 'client.parse_error', message: 'Invalid server response' },
+      error: { code: 'client.parse_error', message: `Invalid server response: ${fields}` },
     });
   }
   return parsed.data;
@@ -131,3 +135,14 @@ export const apiClient = {
 };
 
 export { ApiCallError };
+
+/** Up to six `path (problem)` entries of a failed response parse; no values. */
+export function responseShapeIssues(
+  issues: ReadonlyArray<{ path: PropertyKey[]; code: string }>,
+): string {
+  const shown = issues
+    .slice(0, 6)
+    .map((i) => `${i.path.map(String).join('.') || '(root)'} (${i.code})`);
+  const more = issues.length - shown.length;
+  return `${shown.join(', ')}${more > 0 ? `, and ${more} more` : ''}`;
+}
