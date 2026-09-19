@@ -130,6 +130,19 @@ export function activeNames(l: Pick<Listener, 'tlsNames'>): string[] {
   return (l.tlsNames ?? []).filter((n) => n.status === 'active').map((n) => n.name);
 }
 
+/**
+ * THE one server name written to a listener's panel Host, used for probes, and
+ * shown as "the" name of an endpoint. It is what a member gets who copies a raw
+ * config from the panel (no per-member selection happens there) and what every
+ * fallback uses, so it must be the safest name there is: the first active name
+ * that is not known blocked in any curated country, else simply the first
+ * active one. Stored order, so it only moves when that name leaves.
+ */
+export function hostSniOf(l: Pick<Listener, 'tlsNames'>): string | null {
+  const active = (l.tlsNames ?? []).filter((n) => n.status === 'active');
+  return (active.find((n) => !n.blockedIn || n.blockedIn.length === 0) ?? active[0])?.name ?? null;
+}
+
 export function mapListenerAdmin(l: Listener, opts: { udpProviderAvailable?: boolean } = {}) {
   const layers = listenerLayers(l, { udpProviderAvailable: opts.udpProviderAvailable });
   return {
@@ -621,6 +634,68 @@ async function retireOn(
   await scheduleNameDrain(ctx, l._id, retiring, now + drainMs);
   await bumpEpochAndRefresh(ctx, relay);
   return retiring;
+}
+
+/**
+ * Family names that left their family (burned, retired, or no longer served by
+ * the target) leave the relays too, with the normal drain. Two rules:
+ *
+ *  - `keepLast`: a name that merely stopped qualifying never takes a relay's
+ *    LAST active name with it. A relay with one doubtful name still serves its
+ *    members; a relay with none serves nobody. A burn passes `false`: a name
+ *    known blocked is worse than no name.
+ *  - a relay that is rotating, restoring, quarantined or being changed by
+ *    Servers is skipped and counted, never forced.
+ *
+ * When the name that goes is the one the panel Host carries, the Host follows
+ * (`hostOps.resyncSni`).
+ */
+export async function retireFamilyNames(
+  ctx: MutationCtx,
+  names: readonly string[],
+  opts: { keepLast: boolean; by: 'admin' },
+): Promise<{ listeners: number; retired: number; skipped: number; kept: number }> {
+  const targets = new Set(names);
+  const out = { listeners: 0, retired: 0, skipped: 0, kept: 0 };
+  if (targets.size === 0) return out;
+  const cfg = await resolveEdgeConfig(ctx.db);
+  const now = Date.now();
+  for (const l of await ctx.db.query('relayListeners').collect()) {
+    if (l.retired) continue;
+    const hit = (l.tlsNames ?? []).filter((n) => n.status === 'active' && targets.has(n.name));
+    if (hit.length === 0) continue;
+    const relay = await ctx.db.get(l.relayId);
+    if (!relay) continue;
+    try {
+      await assertNoRotationOrQuarantine(ctx.db, relay);
+    } catch {
+      out.skipped++;
+      continue;
+    }
+    const active = activeNames(l);
+    let mine = new Set(hit.map((n) => n.name));
+    if (opts.keepLast && active.every((n) => mine.has(n))) {
+      // Keep the safest of them handed out.
+      const keep = hostSniOf(l) ?? active[0];
+      mine = new Set([...mine].filter((n) => n !== keep));
+      out.kept++;
+    }
+    if (mine.size === 0) continue;
+    const before = hostSniOf(l);
+    try {
+      const retired = await retireOn(ctx, l, relay, mine, opts.by, now, edgeMs.sniDrain(cfg));
+      out.listeners++;
+      out.retired += retired.length;
+    } catch {
+      // The last name of a listener that is not L7-only: left in place.
+      out.kept++;
+      continue;
+    }
+    const after = await ctx.db.get(l._id);
+    if (after && before !== hostSniOf(after) && after.host?.uuid && relay.hostMode === 'fcp')
+      await ctx.scheduler.runAfter(0, internal.hostOps.resyncSni, { listenerId: l._id });
+  }
+  return out;
 }
 
 export const retireName = internalMutation({

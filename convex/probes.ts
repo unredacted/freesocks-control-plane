@@ -49,7 +49,7 @@ import type {
 } from './lib/edges/probes/types';
 import { assertAdmission } from './lib/edges/maintenance';
 import { shapeProtocolFor } from './lib/edges/verifyRung';
-import { activeNames } from './relayListeners';
+import { hostSniOf } from './relayListeners';
 import { refreshPartialRung } from './edgeVerification';
 
 const MIN = 60_000;
@@ -214,7 +214,8 @@ async function resolveTarget(
     // with one of its active names, or `tcp` for a plaintext listener).
     const listener = await ctx.db.get(edge.listenerId);
     const shape = listener ? shapeProtocolFor(listener) : 'tcp';
-    const servername = listener && shape === 'tls-sni' ? activeNames(listener)[0] : undefined;
+    const servername =
+      listener && shape === 'tls-sni' ? (hostSniOf(listener) ?? undefined) : undefined;
     return {
       kind: t.kind,
       label,
@@ -964,7 +965,7 @@ export const runContext = internalQuery({
     if (run.source === 'internal' && run.probeProtocol === 'tls-sni' && run.targetKind === 'edge') {
       const edge = await ctx.db.get(run.targetRef as Id<'edges'>);
       const listener = edge ? await ctx.db.get(edge.listenerId) : null;
-      servername = listener ? activeNames(listener)[0] : undefined;
+      servername = listener ? (hostSniOf(listener) ?? undefined) : undefined;
     }
     return { run, cfg, secrets, servername: servername ?? null };
   },

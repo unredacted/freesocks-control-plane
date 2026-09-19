@@ -57,7 +57,7 @@ import {
   liveEdgesOfRelay,
   mapRelayAdmin,
 } from './relays';
-import { activeNames, listenerRemark, listenersOf } from './relayListeners';
+import { activeNames, hostSniOf, listenerRemark, listenersOf } from './relayListeners';
 import { resolveTemplateFor } from './edgeTemplates';
 import { mapEdgeAdmin } from './edges';
 import {
@@ -1411,7 +1411,7 @@ const liveHostValidator = v.object({
 
 function tupleOfEdge(edge: Edge, listener: Listener): HostTuple | null {
   const port = edge.listeners[0]?.edgePort ?? 443;
-  const sni = activeNames(listener)[0] ?? null;
+  const sni = hostSniOf(listener);
   const t = hostTargetFor(
     { layer: edge.layer, addresses: edge.addresses, edgePort: port },
     {

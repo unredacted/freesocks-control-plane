@@ -22,6 +22,7 @@ import { writeAuditLog } from './lib/audit';
 import { isPublicIpLiteral } from './lib/edges/ip';
 import { bumpEpochAndRefresh } from './lib/edges/relayGuards';
 import { normalizeName } from './lib/edges/registration';
+import { retireFamilyNames } from './relayListeners';
 import {
   MAX_NAMES_PER_FAMILY,
   judgeImport,
@@ -354,8 +355,18 @@ export const setNames = internalMutation({
       else continue;
       count++;
     }
-    await audit(ctx, `edge.sni.names.${a.action}`, a.actorAdminId, { slug: f.slug, count });
-    return { count };
+    // A name out of use here leaves the relays too. A burn may take a relay's
+    // last name (a name known blocked is worse than none); a retire may not.
+    const left =
+      a.action === 'burn' || a.action === 'retire'
+        ? await retireFamilyNames(ctx, [...wanted], { keepLast: a.action !== 'burn', by: 'admin' })
+        : null;
+    await audit(ctx, `edge.sni.names.${a.action}`, a.actorAdminId, {
+      slug: f.slug,
+      count,
+      ...(left ? { listeners: left.listeners, skipped: left.skipped } : {}),
+    });
+    return { count, relays: left };
   },
 });
 
@@ -526,6 +537,10 @@ export const recordQualification = internalMutation({
       : fails >= cfg.suspendAfterFails
         ? 'suspended'
         : n.status;
+    // The target stopped serving it: it leaves the relays, but never as a
+    // relay's last name (a doubtful name still serves members; none serves nobody).
+    if (status === 'suspended' && n.status !== 'suspended')
+      await retireFamilyNames(ctx, [n.name], { keepLast: true, by: 'admin' });
     await ctx.db.patch(a.id, {
       status,
       qualification: {

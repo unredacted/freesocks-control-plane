@@ -40,7 +40,13 @@ import {
   mapRelayAdmin,
   scheduleMirrorRefresh,
 } from './relays';
-import { activeNames, listenerRemark, listenersOf, mapListenerAdmin } from './relayListeners';
+import {
+  activeNames,
+  hostSniOf,
+  listenerRemark,
+  listenersOf,
+  mapListenerAdmin,
+} from './relayListeners';
 import { EDGE_PROVIDER_CAPABILITIES } from './lib/edges/providers/capabilities';
 import { protocolLabel } from './lib/edges/protocols';
 import { destroyedPatch, mapEdgeAdmin } from './edges';
@@ -294,7 +300,12 @@ async function publishedEndpoints(
   return usable.map((p) => {
     const actives = p.serverNames.filter((s) => s.status === 'active').map((s) => s.sni);
     // ONE source for the Host tuple, shared with the flip and with assignment.
-    const target = hostTargetFor(p, p.proto, actives[0] ?? null);
+    const listenerRow = listeners.find((l) => (l._id as string) === p.listenerId);
+    const target = hostTargetFor(
+      p,
+      p.proto,
+      (listenerRow ? hostSniOf(listenerRow) : null) ?? actives[0] ?? null,
+    );
     const layer = edgeLayer(p);
     const listener = listeners.find((l) => (l._id as string) === p.listenerId);
     return {

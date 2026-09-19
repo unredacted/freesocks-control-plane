@@ -32,7 +32,7 @@ import { writeAuditLog } from './lib/audit';
 import { randomHex } from './lib/crypto';
 import { sameAddress } from './lib/edges/hosts';
 import type { BackendHost } from './lib/backends/types';
-import { listenerRemark } from './relayListeners';
+import { hostSniOf, listenerRemark } from './relayListeners';
 
 /** How long a Host op claim lives before it counts as unsettled (shared with the hide ledger). */
 export const HOST_OP_TTL_MS = 60_000;
@@ -563,6 +563,84 @@ export const deleteListenerHost = internalAction({
  * reappeared covered / approved one is re-hidden, any other raises attention
  * `direct_host_reappeared`; both suppressed while a restore workflow runs).
  */
+// --- the Host follows its server name -------------------------------------------------------------
+
+/**
+ * What a resync would write: only for an FCP-owned Host that is settled
+ * (`present`, no op in flight) whose recorded server name is no longer the one
+ * the listener would choose (`hostSniOf`). A Host mid-create or mid-delete is
+ * left to its own machine; a rotation writes the new tuple by itself.
+ */
+export const resyncSniContext = internalQuery({
+  args: { listenerId: v.id('relayListeners') },
+  handler: async (ctx, { listenerId }) => {
+    const l = await ctx.db.get(listenerId);
+    if (!l || l.retired) return null;
+    const relay = await ctx.db.get(l.relayId);
+    if (!relay || relay.hostMode !== 'fcp' || !relay.backendServerId) return null;
+    if (relay.activeRotationId || relay.restore || relay.quarantine) return null;
+    const host = l.host;
+    if (!host || host.state !== 'present' || host.op || !host.uuid || !host.intended) return null;
+    const sni = hostSniOf(l);
+    if (!sni || host.intended.sni === sni || host.intended.sni === null) return null;
+    return {
+      backendServerId: relay.backendServerId,
+      uuid: host.uuid,
+      address: host.intended.address,
+      port: host.intended.port,
+      sni,
+      revision: l.revision,
+    };
+  },
+});
+
+export const recordResyncedSni = internalMutation({
+  args: { listenerId: v.id('relayListeners'), uuid: v.string(), sni: v.string() },
+  handler: async (ctx, { listenerId, uuid, sni }) => {
+    const l = await ctx.db.get(listenerId);
+    // Only if the Host is still the one that was written to, and still settled.
+    if (!l?.host || l.host.uuid !== uuid || l.host.state !== 'present' || !l.host.intended)
+      return null;
+    await ctx.db.patch(listenerId, {
+      host: { ...l.host, intended: { ...l.host.intended, sni } },
+      updatedAt: Date.now(),
+    });
+    return null;
+  },
+});
+
+/**
+ * The name a listener's panel Host carries was retired: write the listener's
+ * next choice onto the Host, address and port unchanged. A member who copies a
+ * raw config from the panel gets this name, so it must not stay a retired one.
+ * Best effort: a failure leaves the Host as it was, and the next run (a
+ * rotation, or the next retire) writes it.
+ */
+export const resyncSni = internalAction({
+  args: { listenerId: v.id('relayListeners') },
+  handler: async (ctx, { listenerId }): Promise<{ written: boolean }> => {
+    const c = await ctx.runQuery(internal.hostOps.resyncSniContext, { listenerId });
+    if (!c) return { written: false };
+    try {
+      await ctx.runAction(internal.backends.updateHost, {
+        backendServerId: c.backendServerId,
+        uuid: c.uuid,
+        address: c.address,
+        port: c.port,
+        sni: c.sni,
+      });
+    } catch {
+      return { written: false };
+    }
+    await ctx.runMutation(internal.hostOps.recordResyncedSni, {
+      listenerId,
+      uuid: c.uuid,
+      sni: c.sni,
+    });
+    return { written: true };
+  },
+});
+
 export const reconcileHosts = internalAction({
   args: {},
   handler: async (ctx): Promise<{ looked: number; deleted: number }> => {

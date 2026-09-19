@@ -813,6 +813,29 @@ on the panel every name a relay still hands out or that is still draining, whoev
 and whatever its family says, and a later rollout drops it once nothing holds it. A burn is
 immediate on the relays and restarts nothing.
 
+### When a name leaves
+
+A family name that is **burned**, **retired**, or that **stops qualifying** (suspended) leaves
+the relays by itself, with the normal drain (`retireFamilyNames`). Two rules:
+
+- a name that merely stopped qualifying, or that an operator retired, never takes a relay's
+  **last** active name with it: a relay with one doubtful name still serves its members, a relay
+  with none serves nobody. A **burn** may: a name known blocked is worse than no name;
+- a relay that is rotating, restoring, quarantined or being changed by Servers is skipped and
+  counted in the result, never forced.
+
+The panel keeps the name until nothing hands it out and its drain is over (§ Rollout and
+acceptance), so members who have not refreshed are not cut off.
+
+**The one name of a Host.** A panel Host carries one server name. It is what a member gets who
+copies a raw config from the panel (no per-member selection happens there), what the shape
+probes present, and what an endpoint shows as its name. `hostSniOf` chooses it: the first active
+name, in stored order, that is **not known blocked in any curated country**, else the first
+active one. When that name leaves, `hostOps.resyncSni` writes the listener's next choice onto
+the Host (address and port unchanged), for an FCP-owned Host that is settled; a Host the
+machine is working on, an operator-owned Host and a rotating relay are left alone (a rotation
+writes the new tuple by itself).
+
 ### Names for the member's country
 
 A name that works almost everywhere can be blocked in one place: a large site that is itself
