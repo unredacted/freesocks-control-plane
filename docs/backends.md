@@ -392,9 +392,10 @@ de-duplicate names (`C.Example` and `c.example` are both kept), and it keeps a s
 `realitySettings.publicKey`. Anything that compares a written config with a read-back must
 apply the same normalisation first.
 
-Nothing in this probe proves a **node-side** effect (whether a node applied a profile,
-whether a restart finished): no node is attached to the test panel. Those are separate
-checks against a panel-managed node.
+Nothing in this probe proves a **node-side** effect: no node is attached to the test panel.
+Those are measured against a real panel-managed node by
+`bun run test:integration:remnawave-node` ([servers.md](servers.md) § What a node does with a
+profile).
 
 ## Node placement (issuance-time, per-backend)
 
