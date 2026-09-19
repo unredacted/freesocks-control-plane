@@ -98,6 +98,8 @@ function segments(req: Request): { parts: string[]; query: URLSearchParams } | n
 /** POSTs that only compute over stored state (no write, no provider call): read scope. */
 function isReadOnlyPost(parts: string[]): boolean {
   if (parts.length === 1 && parts[0] === 'setup-status') return true;
+  if (parts.length === 4 && parts[0] === 'sni' && parts[1] === 'bindings' && parts[3] === 'plan')
+    return true;
   if (parts.length === 3 && parts[0] === 'relays' && parts[2] === 'preflight') return true;
   return (
     parts.length === 2 &&
@@ -140,6 +142,13 @@ export function throttlePolicyFor(parts: string[]): RateLimitPolicyKey | null {
   const [a, b, c, d] = parts;
   // Qualifying server names opens sockets from the control plane.
   if (a === 'sni' && b === 'qualify' && !c) return 'admin.edges.provider-call';
+  // A rollout writes a panel profile; a test link fetches a credential body.
+  if (
+    a === 'sni' &&
+    (b === 'bindings' || b === 'rollouts') &&
+    (d === 'rollout' || d === 'test-link')
+  )
+    return 'admin.edges.provider-call';
   if (a === 'providers' && (b === 'discover' || b === 'test-credentials') && !c) {
     return 'admin.edges.provider-call';
   }
@@ -251,6 +260,10 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
     if (b === 'families' && !c) return json(await ctx.runQuery(internal.sniFamilies.list, {}));
     if (b === 'families' && c && !d)
       return json(await ctx.runQuery(internal.sniFamilies.detail, { slug: c }));
+    if (b === 'rollouts' && c && !d)
+      return json(
+        await ctx.runQuery(internal.sniRollouts.status, { rolloutId: id<'sniRollouts'>(c) }),
+      );
     return notFound();
   }
   if (a === 'config') return json(await ctx.runQuery(internal.edgeAdmin.configView, {}));
@@ -537,6 +550,33 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
         }),
       );
     if (b === 'qualify' && !c) return json(await ctx.runAction(internal.sniQualifyOps.run, {}));
+    if (b === 'bindings' && c && d === 'plan' && !e)
+      return json(
+        await ctx.runQuery(internal.sniRollouts.plan, { bindingId: id<'sniInboundBindings'>(c) }),
+      );
+    if (b === 'bindings' && c && d === 'rollout' && !e)
+      return json(
+        await ctx.runAction(internal.sniRollouts.start, {
+          bindingId: id<'sniInboundBindings'>(c),
+          ...act,
+        }),
+      );
+    if (b === 'rollouts' && c && d === 'test-link' && !e)
+      return json(
+        await ctx.runAction(internal.sniRollouts.issueReceipt, {
+          rolloutId: id<'sniRollouts'>(c),
+          edgeId: id<'edges'>(String(body.edgeId ?? '')),
+          sni: typeof body.sni === 'string' ? body.sni : undefined,
+          ...act,
+        }),
+      );
+    if (b === 'receipts' && c && d === 'confirm' && !e)
+      return json(
+        await ctx.runMutation(internal.sniRollouts.confirmReceipt, {
+          receiptId: id<'sniAcceptanceReceipts'>(c),
+          ...act,
+        }),
+      );
     return notFound();
   }
   if (a === 'setup-status' && !b) {
