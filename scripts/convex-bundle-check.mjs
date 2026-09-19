@@ -18,7 +18,9 @@
  * refuses queries, mutations and HTTP actions defined in a `"use node"`
  * module, which the backend rejects at push time after bundling succeeded:
  * every `"use node"` bundle is loaded here and its exports are inspected the
- * way the backend's analyze step inspects them.
+ * way the backend's analyze step inspects them. Finally it refuses a dynamic
+ * `import()` in isolate code, which bundles and passes the tests but throws
+ * "dynamic module import unsupported" on the first call in a deployment.
  *
  * Usage: `bun run convex:bundle-check` (CI) or `node scripts/convex-bundle-check.mjs`.
  */
@@ -270,6 +272,28 @@ async function main() {
         'convex-bundle-check: isolate entry points import "use node" modules:\n' +
           reached.map((p) => `  ${p}`).join('\n') +
           '\nMove the shared pure helpers into a module without the directive, or import these only from "use node" files.',
+      );
+    }
+
+    // The V8 isolate has no dynamic module loading: `await import('./x')` in a
+    // query, mutation or isolate action throws "dynamic module import
+    // unsupported" at CALL time, on the first request that reaches the line.
+    // esbuild bundles it happily and vitest runs it happily, so nothing else
+    // catches it before a deployment does.
+    const dynamic = [];
+    for (const [input, meta] of Object.entries(isolateBuild.result.metafile.inputs)) {
+      if (!input.startsWith('convex/')) continue;
+      for (const imp of meta.imports ?? []) {
+        if (imp.kind === 'dynamic-import')
+          dynamic.push(`  ${input} -> ${imp.original ?? imp.path}`);
+      }
+    }
+    if (dynamic.length) {
+      failed = true;
+      console.error(
+        'convex-bundle-check: dynamic import() in code bundled for the V8 isolate:\n' +
+          dynamic.join('\n') +
+          '\nUse a static import (function-only import cycles are fine in ESM), or move the code into a "use node" action.',
       );
     }
   }

@@ -25,6 +25,7 @@ import { assertAdmission } from './lib/edges/maintenance';
 import { ensurePoolCapacity } from './lib/edges/poolCapacity';
 import {
   assertNoMatchOverlap,
+  diffListeners,
   listenerConfigHash,
   mergeNames,
   normalizeName,
@@ -269,7 +270,6 @@ export async function applyRegistration(
 ): Promise<ApplyRegistrationResult> {
   const specs = inputs.map((s) => validateListenerSpec(s, { origin: relay.origin }));
   const existing = await listenersOf(ctx, relay._id);
-  const { diffListeners } = await import('./lib/edges/registration');
   const diff = diffListeners(existing, specs, source, opts.prune);
   if (diff.owned.length > 0)
     throw new ConvexError({
