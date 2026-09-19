@@ -61,6 +61,10 @@ export interface BackendCapabilities {
   /** Hosts and squads can be created, changed and removed through the
    *  operations ledger (server management). */
   panelWrites: boolean;
+  /** A config profile can be created, the node secret read and the
+   *  subscription templates reconciled: "Set up this panel" and the node
+   *  role's bootstrap contract (docs/servers.md). */
+  panelSetup: boolean;
   /** A user FCP created can be re-found by its username (the persisted mint
    *  operations settle a crashed create through it). */
   userLookupByUsername: boolean;
@@ -83,6 +87,7 @@ export const CAPABILITIES: Record<BackendId, BackendCapabilities> = {
     inboundDiscovery: true,
     panelObservation: true,
     panelWrites: true,
+    panelSetup: true,
     userLookupByUsername: true,
   },
   outline: {
@@ -101,6 +106,7 @@ export const CAPABILITIES: Record<BackendId, BackendCapabilities> = {
     inboundDiscovery: false,
     panelObservation: false,
     panelWrites: false,
+    panelSetup: false,
     userLookupByUsername: false,
   },
 };
