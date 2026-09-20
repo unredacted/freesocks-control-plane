@@ -5,7 +5,7 @@
  *
  * The rules that matter are (a) a result is only a qualification for the exact
  * configuration it ran against, so a listener/intent write that lands while
- * the session is in flight must not be recorded as a pass, and (b) a relay with
+ * the session is in flight must not be recorded as a pass, and (b) an origin with
  * no usable qualification credential fails loudly rather than being skipped.
  */
 import { convexTest } from 'convex-test';
@@ -78,7 +78,7 @@ const passing = (checkedAt: number) => ({
 });
 
 describe('frontQualify.context', () => {
-  test('an XHTTP listener hands the session its stored mode (a stream-only inbound must be refused, not probed)', async () => {
+  test('an XHTTP listener hands the session its stored mode (a stream-only transport must be refused, not probed)', async () => {
     const t = convexTest(schema, modules);
     const { edgeId, listenerId } = await seed(t, { qualificationUserId: UUID });
     await t.run((ctx) =>
@@ -185,7 +185,7 @@ describe('frontQualify.record', () => {
     const t = convexTest(schema, modules);
     const { edgeId, listenerId } = await seed(t, { qualificationUserId: UUID });
     const c = (await t.query(internal.frontQualify.context, { edgeId }))!;
-    // The node role redeploys the inbound on a different path mid-session.
+    // The node role redeploys the transport on a different path mid-session.
     const before = (await t.run((ctx) => ctx.db.get(listenerId)))!;
     await t.run((ctx) =>
       ctx.db.patch(listenerId, {
@@ -238,7 +238,7 @@ describe('frontQualify.record', () => {
 });
 
 describe('frontQualifyOps.run', () => {
-  test('a relay with no qualification account records the refusal', async () => {
+  test('an origin with no qualification account records the refusal', async () => {
     const t = convexTest(schema, modules);
     const { edgeId } = await seed(t);
     const out = await t.action(internal.frontQualifyOps.run, { edgeId });

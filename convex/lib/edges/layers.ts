@@ -1,6 +1,6 @@
 /**
  * Layer compatibility: which edge LAYERS (an L4 TCP forwarder, an L7 CDN front)
- * can carry a relay LISTENER, decided on the COMPLETE client-to-origin chain,
+ * can carry an origin LISTENER, decided on the COMPLETE client-to-origin chain,
  * never on the protocol name alone. Pure; used by publishability, selection,
  * adoption and the detector's replacement choice.
  *
@@ -15,7 +15,7 @@
  *  - A listener without `originTransport` keeps the L4-only rules.
  *  - A UDP listener needs a provider that declares `udp`; none does today.
  *
- * `hostTargetFor` is the single source of the Host tuple written to the panel
+ * `hostTargetFor` is the single source of the Host tuple written to the backend
  * and emitted by assignment, so a flip and a render never disagree.
  */
 import type { ListenerLayerExclusion } from '../../../src/shared/contracts/edgeProtocolIds';
@@ -147,7 +147,7 @@ export function listenerLayers(
   const ot = listener.originTransport ?? null;
   const http = protocolIsHttpTransport(listener);
   if (!ot) {
-    // Raw TCP to the inbound; nothing an L7 front could dial.
+    // Raw TCP to the transport; nothing an L7 front could dial.
     excluded.l7 = 'protocol_not_http_transport';
     return { layers: ['l4'], excluded };
   }
@@ -196,9 +196,9 @@ export function listenerAllowsLayer(
 export interface HostTuple {
   address: string;
   port: number;
-  /** null = the Host presents no server name (plain) → clear it on the panel. */
+  /** null = the Host presents no server name (plain) → clear it on the backend. */
   sni: string | null;
-  /** null = no HTTP Host header → clear it on the panel. */
+  /** null = no HTTP Host header → clear it on the backend. */
   host: string | null;
 }
 

@@ -304,8 +304,8 @@
           <CardHeader>
             <CardTitle class="text-base">DNS account</CardTitle>
             <CardDescription>
-              The hostnames of this provider's edges are written through another account that hosts
-              the DNS zone.
+              The hostnames of this provider's edges are written through another account that
+              addresses the DNS zone.
             </CardDescription>
           </CardHeader>
           <CardContent class="space-y-3">

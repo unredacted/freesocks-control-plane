@@ -464,11 +464,11 @@ describe('relayProbes', () => {
     expect(await t.run((ctx) => ctx.db.get(running))).not.toBeNull();
   });
 
-  test('custom targets and relay nodes are probed like edges: CRUD, matrix rows, run history, audit feed', async () => {
+  test('custom targets and origin nodes are probed like edges: CRUD, matrix rows, run history, audit feed', async () => {
     const gp = fakeGlobalping(() => 'ok');
     __setGlobalpingFactory(() => gp);
     const { t, relayId, edgeId } = await seed();
-    // A custom target (hostname) and the relay node opting in.
+    // A custom target (hostname) and the origin node opting in.
     const created = await t.mutation(internal.probeTargets.create, {
       label: 'Decoy A',
       address: 'decoy.example',
@@ -1183,7 +1183,7 @@ describe('relayProbes', () => {
     expect(await offsets('globalping')).toEqual([5 * MIN]);
   });
 
-  test('familiesOf: an edge follows the RENDER ipv6 setting, a relay or custom target follows probe.ipv6, a name is probed once', () => {
+  test('familiesOf: an edge follows the RENDER ipv6 setting, an origin or custom target follows probe.ipv6, a name is probed once', () => {
     const cfg = (over: { ipv6Mode?: 'off' | 'both'; probeIpv6?: boolean }): EdgeConfig =>
       ({
         ...EDGE_DEFAULTS,
@@ -1200,7 +1200,7 @@ describe('relayProbes', () => {
     // An edge is probed over what members are RENDERED, whatever probe.ipv6 says.
     expect(familiesOf(dual('edge'), cfg({ ipv6Mode: 'both', probeIpv6: false }))).toEqual([4, 6]);
     expect(familiesOf(dual('edge'), cfg({ ipv6Mode: 'off', probeIpv6: true }))).toEqual([4]);
-    // A relay node / custom target has nothing to do with rendering: its own knob decides.
+    // An origin node / custom target has nothing to do with rendering: its own knob decides.
     for (const kind of ['relay', 'custom'] as const) {
       expect(familiesOf(dual(kind), cfg({ ipv6Mode: 'off', probeIpv6: true }))).toEqual([4, 6]);
       expect(familiesOf(dual(kind), cfg({ ipv6Mode: 'both', probeIpv6: false }))).toEqual([4]);
@@ -1229,7 +1229,7 @@ describe('relayProbes', () => {
     const plan = await t.query(internal.probes.due, { now: Date.now() + 60 * 60_000 });
     expect(plan.dueTargets.map((d) => d.target.ref)).not.toContain(edgeId);
     expect(await t.run((ctx) => ctx.db.query('probeRuns').collect())).toEqual([]);
-    // A relay whose listeners are all undeployed is the same case.
+    // An origin whose listeners are all undeployed is the same case.
     await t.mutation(internal.relays.update, { id: relayId, probeNode: true });
     await t.run(async (ctx) => {
       for (const l of await ctx.db.query('relayListeners').collect())
@@ -1237,8 +1237,8 @@ describe('relayProbes', () => {
     });
     const plan2 = await t.query(internal.probes.due, { now: Date.now() + 60 * 60_000 });
     expect(plan2.dueTargets.map((d) => d.target.kind)).not.toContain('relay');
-    // A UDP listener is not probeable (the probes are TCP connects): a relay
-    // whose only deployed listener is udp has no relay-node port either.
+    // A UDP listener is not probeable (the probes are TCP connects): an origin
+    // whose only deployed listener is udp has no origin-node port either.
     await t.run(async (ctx) => {
       for (const l of await ctx.db.query('relayListeners').collect())
         await ctx.db.patch(l._id, { deployed: true });

@@ -1,12 +1,12 @@
 // @vitest-environment node
 /**
- * NODE-SIDE CONTRACT: a live Remnawave panel WITH a panel-managed node, a
+ * NODE-SIDE CONTRACT: a live Remnawave backend WITH a backend-managed node, a
  * TLS 1.3 target and a pinned Xray client
- * (docker-compose.remnawave-node-test.yml). It establishes what the panel-only
+ * (docker-compose.remnawave-node-test.yml). It establishes what the backend-only
  * probe cannot, by opening AUTHENTICATED REALITY sessions through the node:
  *
  *  - a server name works for members only once the NODE runs the config that
- *    lists it: with the node held off the panel, the panel says the name is
+ *    lists it: with the node held off the backend, the backend says the name is
  *    there, a plain TLS handshake with that name SUCCEEDS (REALITY forwards it
  *    to the target), and yet no member can connect with it. A TLS probe is
  *    therefore never evidence that a node accepts a name;
@@ -14,7 +14,7 @@
  *    verification fails), a listed one is authenticated;
  *  - how many server names production Xray takes, and how long a profile
  *    change takes to reach a connected node (recorded, docs/servers.md);
- *  - what the panel's node row says before, during and after (recorded): which
+ *  - what the backend's node row says before, during and after (recorded): which
  *    of its fields could ever count as evidence that a node applied a change.
  *
  * Run via `bun run test:integration:remnawave-node`. Fixture names are
@@ -234,7 +234,7 @@ describe.skipIf(!ENABLED)('remnawave managed node (integration)', () => {
     }
     console.info(`[managed-node] observed ${JSON.stringify(observed)}`);
     writeFileSync('.cache/remnawave-node-test/observed.json', JSON.stringify(observed, null, 2));
-    // Debugging aid: leave the fixtures on the panel to poke at a live session.
+    // Debugging aid: leave the fixtures on the backend to poke at a live session.
     if (process.env.RW_TEST_KEEP === '1') return;
     for (const u of created.users) await api('DELETE', `users/${u}`);
     for (const u of created.nodes) await api('DELETE', `nodes/${u}`);
@@ -252,7 +252,7 @@ describe.skipIf(!ENABLED)('remnawave managed node (integration)', () => {
     lastStatusMessage: n?.lastStatusMessage,
   });
 
-  test('a panel-managed node connects and serves the profile', async () => {
+  test('a backend-managed node connects and serves the profile', async () => {
     const profile = await api('POST', 'config-profiles', {
       name: `FCP node ${TAG}`,
       config: profileConfig(names(3)),
@@ -294,7 +294,7 @@ describe.skipIf(!ENABLED)('remnawave managed node (integration)', () => {
       120_000,
       2000,
     );
-    expect(up, 'the node never connected to the panel').toBe(true);
+    expect(up, 'the node never connected to the backend').toBe(true);
     observed.rowConnected = pickStatus(await nodeRow());
   });
 
@@ -319,7 +319,7 @@ describe.skipIf(!ENABLED)('remnawave managed node (integration)', () => {
       config: profileConfig(held),
     });
     expect(patched.status).toBe(200);
-    // The panel has it (this is all a read-back proves)...
+    // The backend has it (this is all a read-back proves)...
     const stored = (await api('GET', `config-profiles/${profileUuid}`)).data.config.inbounds[0];
     expect(stored.streamSettings.realitySettings.serverNames).toContain('late.example');
     observed.rowWhileHeld = pickStatus(await nodeRow());
@@ -338,7 +338,7 @@ describe.skipIf(!ENABLED)('remnawave managed node (integration)', () => {
     observed.reconnectToWorkingMs = works ? Date.now() - t0 : null;
     observed.rowAfterApply = pickStatus(await nodeRow());
     if (!works) {
-      // The panel does not re-push on reconnect by itself: record it, then
+      // The backend does not re-push on reconnect by itself: record it, then
       // show that an explicit restart does deliver the config.
       const restarted = await api('POST', `nodes/${nodeUuid}/actions/restart`, {
         forceRestart: true,

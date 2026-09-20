@@ -4,13 +4,13 @@
    * forwards to this origin) as an edge. From a provider account's inventory the
    * edge is managed; entered by address it is observe-only (never destroyed).
    *
-   * Props: open (bindable); relay; listeners; accounts; onImported(edgeId)
+   * Props: open (bindable); origin; listeners; accounts; onImported(edgeId)
    */
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
   import type {
     EdgeProviderAccountAdmin,
-    RelayAdmin,
+    OriginAdmin,
     RelayListenerAdmin,
   } from '@shared/contracts/edges';
   import * as Dialog from '@client/components/ui/dialog';
@@ -33,7 +33,7 @@
 
   interface Props {
     open: boolean;
-    relay: RelayAdmin;
+    relay: OriginAdmin;
     listeners: RelayListenerAdmin[];
     accounts: EdgeProviderAccountAdmin[];
     onImported: (edgeId: string) => void;
@@ -163,7 +163,7 @@
         </Select.Root>
         {#if usable.length === 0}
           <p class="text-xs text-muted-foreground">
-            This relay has no listener yet. Add one on the Listeners tab first.
+            This origin has no listener yet. Add one on the Listeners tab first.
           </p>
         {/if}
       </div>

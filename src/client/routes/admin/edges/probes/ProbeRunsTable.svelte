@@ -3,7 +3,7 @@
    * Run history of one probe target (newest first).
    *
    * Props:
-   *   targetKey: string      `edge:<id>` | `relay:<id>` | `custom:<id>`
+   *   targetKey: string      `edge:<id>` | `origin:<id>` | `custom:<id>`
    */
   import * as Table from '@client/components/ui/table';
   import { Skeleton } from '@client/components/ui/skeleton';

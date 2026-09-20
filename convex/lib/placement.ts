@@ -33,7 +33,7 @@ import {
 export interface PlacementTarget {
   placement: string | null;
   serverId: string | null;
-  /** Multi-panel deploy where no pool squad is attributable to a panel yet —
+  /** Multi-backend deploy where no pool mode group is attributable to a backend yet —
    *  the caller must fail loudly (503) instead of minting a dead key. */
   unattributedMultiPanel?: boolean;
 }

@@ -2,7 +2,7 @@
   /**
    * Admin -> Edges overview (`/admin/edges`).
    * URL state: `?filter` = all | attention | dark | quarantined | unpublished,
-   *            `?layer`  = all | l4 | l7   (both filter the relay table client-side).
+   *            `?layer`  = all | l4 | l7   (both filter the origin table client-side).
    *
    * Figures the `EdgeSummary` contract does not carry (published per layer,
    * standbys, members dark, probe budget) are derived in overview/derive.ts from
@@ -63,7 +63,7 @@
     parseLayer,
     type AttentionItem,
     type OverviewFilter,
-    type RelayRow,
+    type OriginRow,
   } from './overview/derive';
 
   const qc = useQueryClient();
@@ -117,8 +117,8 @@
           const res = await call(item.relayId, { edgeId: item.edgeId });
           toast.success(
             item.action === 'publish'
-              ? 'Publishing started. Follow the run on the relay page.'
-              : 'Replacement started. Follow the run on the relay page.',
+              ? 'Publishing started. Follow the run on the origin page.'
+              : 'Replacement started. Follow the run on the origin page.',
           );
           if (item.relaySlug) invalidateRelay(qc, item.relaySlug);
           else invalidateOverview(qc);
@@ -131,7 +131,7 @@
             return;
           }
           const res = await provisionRelay(item.relayId);
-          toast.success('Provisioning started. Follow the run on the relay page.');
+          toast.success('Provisioning started. Follow the run on the origin page.');
           if (item.relaySlug) invalidateRelay(qc, item.relaySlug);
           else invalidateOverview(qc);
           openRotation(item.relaySlug, res.rotationId);
@@ -190,18 +190,18 @@
   }
 
   // Row actions.
-  let provisionRow = $state<RelayRow | null>(null);
+  let provisionRow = $state<OriginRow | null>(null);
   let provisionOpen = $state(false);
   const provision = createMutation(() => ({
-    mutationFn: (row: RelayRow) => provisionRelay(row.relay.id),
+    mutationFn: (row: OriginRow) => provisionRelay(row.relay.id),
     onSuccess: (res, row) => {
-      toast.success('Provisioning started. Follow the run on the relay page.');
+      toast.success('Provisioning started. Follow the run on the origin page.');
       invalidateRelay(qc, row.relay.slug);
       openRotation(row.relay.slug, res.rotationId);
     },
   }));
   const probe = createMutation(() => ({
-    mutationFn: (row: RelayRow) => probeRelay(row.relay.id),
+    mutationFn: (row: OriginRow) => probeRelay(row.relay.id),
     onSuccess: (res, row) => {
       const started = res.runIds.length;
       const skipped = res.skipped.length;
@@ -247,7 +247,7 @@
   {#snippet actions()}
     <Button onclick={() => router.navigate(edgesPaths.setup())}>
       <Plus aria-hidden="true" />
-      Set up a relay
+      Set up an origin
     </Button>
   {/snippet}
 </SectionHeader>
@@ -352,26 +352,26 @@
       <AdminListState error={summary.error} onRetry={() => summary.refetch()} />
     {:else if allRows.length === 0}
       <div class="rounded-lg border border-dashed p-8 text-center">
-        <p class="font-medium">No relays yet</p>
+        <p class="font-medium">No origins yet</p>
         <p class="text-muted-foreground mx-auto mt-1 max-w-prose text-sm">
-          A relay is an origin members should never reach directly: a panel node, a backend server
+          An origin is a place members should never reach directly: a backend node, a backend server
           or an address you enter by hand. The control plane puts provider-managed edges in front of
           it and replaces them when they stop working.
         </p>
         <Button class="mt-4" onclick={() => router.navigate(edgesPaths.setup())}>
           <Plus aria-hidden="true" />
-          Set up a relay
+          Set up an origin
         </Button>
       </div>
     {:else if rows.length === 0}
       <div class="text-muted-foreground rounded-lg border border-dashed p-6 text-center text-sm">
-        No relay matches this filter.
+        No origin matches this filter.
         <Button
           variant="link"
           size="sm"
           onclick={() => router.navigate(edgesPaths.overview(), { replace: true })}
         >
-          Show all relays
+          Show all origins
         </Button>
       </div>
     {:else}

@@ -3,7 +3,7 @@
  * WebSocket framing at all. After the 101 the connection is a raw byte stream,
  * which is why this file only builds a request and validates a response head.
  *
- * The upgrade token is configurable on the inbound; Xray's default is
+ * The upgrade token is configurable on the transport; Xray's default is
  * `websocket` (it makes the request indistinguishable from a WebSocket opening
  * handshake to anything that only reads headers), so the slot's declared token
  * is used and `websocket` is only the fallback.
@@ -33,7 +33,7 @@ export type UpgradeVerdict =
 export function checkUpgradeResponse(head: HttpHead, token: string): UpgradeVerdict {
   if (head.status !== 101) return { ok: false, reason: 'status' };
   // The token must be echoed: a front that answers 101 for something else has
-  // not connected us to the inbound.
+  // not connected us to the transport.
   if ((head.headers['upgrade'] ?? '').toLowerCase() !== token.toLowerCase())
     return { ok: false, reason: 'upgrade' };
   if (!headerHasToken(head.headers['connection'], 'upgrade'))

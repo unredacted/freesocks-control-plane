@@ -11,12 +11,12 @@
   import CopyIcon from '@lucide/svelte/icons/copy';
 
   /**
-   * "Verify this connection" panel. Shows the out-of-band-comparable fingerprints
+   * "Verify this connection" backend. Shows the out-of-band-comparable fingerprints
    * of the baked HPKE keys (the SAME values scripts/hpke-fingerprint.mjs prints),
    * the live server attestation (read from the shared hpke-status store, so the
-   * badge and this panel share one fetch), and how to verify off-CDN - including a
+   * badge and this backend share one fetch), and how to verify off-CDN - including a
    * DNS TXT pin the user looks up themselves with dig. The heavy hpke chunk is
-   * lazy-imported only when the panel is opened, so a dark build never pulls it.
+   * lazy-imported only when the backend is opened, so a dark build never pulls it.
    * Honest by design: the in-page check is a convenience; the trust root is the
    * off-CDN comparison (signed release / .onion / the DNS lookup you run yourself).
    * Mirrors the RotateAccountIdModal dialog shape.
@@ -32,11 +32,11 @@
   let copied = $state<string | null>(null);
 
   // Admin surface: the HPKE layer's scope is the member account-number/key flows,
-  // NOT admin actions - so on /admin the panel adds a line saying so, to keep the
+  // NOT admin actions - so on /admin the backend adds a line saying so, to keep the
   // badge from over-implying that admin actions are sealed.
   const isAdmin = $derived(router.pathname.startsWith('/admin'));
 
-  // Admin-configured off-CDN channels; the panel lists only those actually set.
+  // Admin-configured off-CDN channels; the backend lists only those actually set.
   const cfg = configQuery();
   const verification = $derived(cfg.data?.verification);
   const hasChannel = $derived(
@@ -59,10 +59,10 @@
   );
 
   // Lazy-load the hpke chunk + populate on open (keeps a dark build from pulling it).
-  // Attestation comes from the shared store (one fetch across badge + panel).
+  // Attestation comes from the shared store (one fetch across badge + backend).
   $effect(() => {
     if (!open) return;
-    // `force`: opening the panel is an explicit "check this now", so it bypasses the
+    // `force`: opening the backend is an explicit "check this now", so it bypasses the
     // re-check throttle rather than showing a verdict from minutes ago.
     void ensureAttestationChecked({ force: true });
     void import('../lib/hpke').then(async (m) => {

@@ -1,6 +1,6 @@
 /**
  * DEV-ONLY fake edge provider: lets the whole setup flow (account → template →
- * relay → provision → qualify → publish → render) be walked locally without any
+ * origin → provision → qualify → publish → render) be walked locally without any
  * cloud credentials. Enabled ONLY when BOTH `ENVIRONMENT=development` and
  * `DEV_FAKE_EDGE_PROVIDER=true` are set on the deployment (the lib/backends/
  * mock.ts double gate); the registry then hands the fake out in place of ONE

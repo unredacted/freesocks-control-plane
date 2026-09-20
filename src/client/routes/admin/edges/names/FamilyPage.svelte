@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
    * One family (`/admin/edges/names/:slug`): its names and what each one's last
-   * check said, the operator's per-country judgement, and the inbounds it is
+   * check said, the operator's per-country judgement, and the transports it is
    * bound to with their rollouts (BindingCard).
    *
    * All wording lives in ./lib/words.ts (pure, unit-tested).
@@ -111,12 +111,12 @@
     if ((await run(() => removeFamily(slug))) !== null) router.navigate(edgesPaths.names());
   }
 
-  // --- binding to an inbound -------------------------------------------------------------------
+  // --- binding to a transport -------------------------------------------------------------------
   let bindOpen = $state(false);
   let backends = $state<{ slug: string; name: string }[]>([]);
   let backendSlug = $state('');
-  let inbounds = $state<{ tag: string; target: string | null }[]>([]);
-  let inboundTag = $state('');
+  let transports = $state<{ tag: string; target: string | null }[]>([]);
+  let transportTag = $state('');
 
   async function startBind() {
     bindOpen = true;
@@ -128,18 +128,18 @@
     await loadInbounds();
   }
   async function loadInbounds() {
-    inbounds = [];
-    inboundTag = '';
+    transports = [];
+    transportTag = '';
     if (!backendSlug) return;
     const tree = await run(() => fetchServerTree(backendSlug));
-    inbounds = (tree?.profiles ?? [])
-      .flatMap((p) => p.inbounds)
+    transports = (tree?.profiles ?? [])
+      .flatMap((p) => p.transports)
       .filter((i) => i.security === 'reality')
       .map((i) => ({ tag: i.tag, target: i.realityTarget }));
-    inboundTag = inbounds[0]?.tag ?? '';
+    transportTag = transports[0]?.tag ?? '';
   }
   async function bind() {
-    if ((await run(() => bindFamily(slug, backendSlug, inboundTag))) !== null) bindOpen = false;
+    if ((await run(() => bindFamily(slug, backendSlug, transportTag))) !== null) bindOpen = false;
   }
 </script>
 
@@ -186,7 +186,7 @@
     <CardHeader class="flex flex-row flex-wrap items-center justify-between gap-2">
       <CardTitle class="text-base">Where it is used</CardTitle>
       <Button variant="outline" size="sm" disabled={busy} onclick={startBind}>
-        Bind to an inbound
+        Bind to a transport
       </Button>
     </CardHeader>
     <CardContent class="space-y-3 text-sm">
@@ -207,30 +207,30 @@
             </select>
           </label>
           <label>
-            <span class="text-muted-foreground mb-1 block">REALITY inbound</span>
-            <select bind:value={inboundTag} class={SELECT}>
-              {#each inbounds as i (i.tag)}
+            <span class="text-muted-foreground mb-1 block">REALITY transport</span>
+            <select bind:value={transportTag} class={SELECT}>
+              {#each transports as i (i.tag)}
                 <option value={i.tag}>{i.tag}{i.target ? ` (${i.target})` : ''}</option>
               {/each}
             </select>
           </label>
-          <Button type="submit" size="sm" disabled={busy || !inboundTag}>Bind</Button>
+          <Button type="submit" size="sm" disabled={busy || !transportTag}>Bind</Button>
           <Button type="button" variant="ghost" size="sm" onclick={() => (bindOpen = false)}>
             Cancel
           </Button>
-          {#if backendSlug && !busy && inbounds.length === 0}
+          {#if backendSlug && !busy && transports.length === 0}
             <p class="basis-full rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2">
-              No REALITY inbound has been read from this server yet. Refresh it under Servers, then
-              come back here.
+              No REALITY transport has been read from this server yet. Refresh it under Servers,
+              then come back here.
             </p>
           {/if}
           <p class="text-muted-foreground basis-full">
-            The inbound's target site has to be this family's. Binding writes nothing yet.
+            The transport's target site has to be this family's. Binding writes nothing yet.
           </p>
         </form>
       {/if}
       {#if family.data.bindings.length === 0}
-        <p class="text-muted-foreground">Not bound to any inbound yet.</p>
+        <p class="text-muted-foreground">Not bound to any transport yet.</p>
       {/if}
       {#each family.data.bindings as b (b.id)}
         <BindingCard binding={b} />

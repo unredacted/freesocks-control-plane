@@ -55,7 +55,7 @@ function refusalWords(code: string): string | null {
 }
 
 export function edgeErrorMessage(err: unknown): string {
-  // Every throttled edge call reaches a panel or a provider: say so, whatever the code.
+  // Every throttled edge call reaches a backend or a provider: say so, whatever the code.
   if (err instanceof ApiCallError && err.status === 429) {
     return refusalWords('throttled') ?? apiErrorMessage(err);
   }

@@ -6,8 +6,8 @@
  * and Host addresses, the same class of data the edges routes seal.
  *
  * Scopes: `admin:settings:*` for `config`, `admin:servers:read` for every
- * other route here. This surface is READ-ONLY toward the panel: `refresh`
- * re-reads one panel (throttled, it is the only route that makes a panel call)
+ * other route here. This surface is READ-ONLY toward the backend: `refresh`
+ * re-reads one backend (throttled, it is the only route that makes a backend call)
  * and `placements/validate` only computes over stored rows.
  *
  * `{slug}` is the backend server's slug. Responses are the shapes in
@@ -31,7 +31,7 @@ import { errorJson, json, readJson, resolveAdmin, type AdminAuth } from './lib/h
 import {
   NodeAppliedReport,
   NodeRegistration,
-  PanelSetupInput,
+  BackendSetupInput,
 } from '../src/shared/contracts/servers';
 
 const PREFIX = '/api/v1/admin/servers/';
@@ -47,7 +47,7 @@ type Handler = (
 function statusFromCode(code: string): number {
   if (code === 'not_found') return 404;
   if (code === 'servers.manage_disabled') return 403;
-  // The panel could not be read: an upstream fault, not a refusal.
+  // The backend could not be read: an upstream fault, not a refusal.
   if (code === 'backend.panel_read_failed') return 502;
   if (code === 'conflict' || code.startsWith('servers.')) return 409;
   return 400;
@@ -61,15 +61,15 @@ function isReadOnlyPost(parts: string[]): boolean {
   if (parts.length === 3 && parts[1] === 'placements' && parts[2] === 'validate') return true;
   // A preview reads the profile and computes; it writes nothing.
   if (parts.length === 4 && parts[1] === 'profiles' && parts[3] === 'preview') return true;
-  // Looking at the panel again for an open op changes nothing on the panel.
+  // Looking at the backend again for an open op changes nothing on the backend.
   return parts.length === 4 && parts[1] === 'ops' && parts[3] === 'observe';
 }
 
 /**
  * `config` is a settings surface. Reads need `admin:servers:read`. A WRITE to a
- * panel needs `admin:servers:manage`, which is deliberately not
+ * backend needs `admin:servers:manage`, which is deliberately not
  * `admin:servers:write`: the node role's token holds that one. The role's
- * handoff report is the one write it may make here (it changes no panel).
+ * handoff report is the one write it may make here (it changes no backend).
  */
 /** `{slug}/nodes/by-name/{name}[/verb]`: the node role's own routes (docs/servers.md "Node lifecycle"). */
 export function isByNameRoute(parts: string[]): boolean {
@@ -105,9 +105,9 @@ function wrap(handler: Handler, sealedRoute: boolean) {
     const method = req.method.toUpperCase();
     const admin = await resolveAdmin(ctx, req, scopeFor(parts, method));
     if (!admin) return unauth();
-    // Whatever reaches a panel is throttled per actor: reads and writes apart.
+    // Whatever reaches a backend is throttled per actor: reads and writes apart.
     const readOnly = method === 'GET' || (method === 'POST' && isReadOnlyPost(parts));
-    // Of the role's routes only `bootstrap` reaches the panel (the node secret);
+    // Of the role's routes only `bootstrap` reaches the backend (the node secret);
     // enrollment and reports are records, reconciled from FCP's own actions.
     const byName = isByNameRoute(parts);
     const reachesPanel = readOnly
@@ -162,7 +162,7 @@ async function byNameHandler(
   if (!nodeWithinBoundary(boundary, instance.id, name))
     return errorJson('servers.registration_boundary', 'This token may not act for that node', 403);
   const view = async () => {
-    const out = await ctx.runQuery(internal.panelIntents.roleViewByName, {
+    const out = await ctx.runQuery(internal.nodeIntents.roleViewByName, {
       backendServerId: instance.id,
       name,
     });
@@ -172,7 +172,7 @@ async function byNameHandler(
   if (method === 'PUT' && !verb) {
     const parsed = NodeRegistration.safeParse(body);
     if (!parsed.success) return errorJson('validation', 'The registration body is not usable', 400);
-    await ctx.runMutation(internal.panelIntents.enroll, {
+    await ctx.runMutation(internal.nodeIntents.enroll, {
       backendServerId: instance.id,
       name,
       label: parsed.data.label,
@@ -184,31 +184,31 @@ async function byNameHandler(
     return view();
   }
   if (method === 'DELETE' && !verb) {
-    const intent = await ctx.runQuery(internal.panelIntents.byName, {
+    const intent = await ctx.runQuery(internal.nodeIntents.byName, {
       backendServerId: instance.id,
       name,
     });
     if (!intent) return notFound();
-    await ctx.runMutation(internal.panelIntents.requestRetirement, {
+    await ctx.runMutation(internal.nodeIntents.requestRetirement, {
       intentId: intent._id,
       requestedBy: 'role',
     });
     return view();
   }
   if (method !== 'POST') return notFound();
-  const intent = await ctx.runQuery(internal.panelIntents.byName, {
+  const intent = await ctx.runQuery(internal.nodeIntents.byName, {
     backendServerId: instance.id,
     name,
   });
   if (!intent) return notFound();
   if (verb === 'bootstrap') {
     // The one answer that carries a secret: never persisted by FCP, never audited.
-    return json(await ctx.runAction(internal.panelIntents.bootstrap, { intentId: intent._id }));
+    return json(await ctx.runAction(internal.nodeIntents.bootstrap, { intentId: intent._id }));
   }
   if (verb === 'applied') {
     const parsed = NodeAppliedReport.safeParse(body);
     if (!parsed.success) return errorJson('validation', 'The applied report is not usable', 400);
-    await ctx.runMutation(internal.panelIntents.applied, {
+    await ctx.runMutation(internal.nodeIntents.applied, {
       intentId: intent._id,
       appliedRevision: parsed.data.appliedRevision,
       certificateReady: parsed.data.caddy?.certificateReady,
@@ -217,7 +217,7 @@ async function byNameHandler(
     return view();
   }
   if (verb === 'wiped') {
-    await ctx.runMutation(internal.panelIntents.markWiped, { intentId: intent._id });
+    await ctx.runMutation(internal.nodeIntents.markWiped, { intentId: intent._id });
     return view();
   }
   return notFound();
@@ -227,8 +227,8 @@ const actorOf = (admin: AdminAuth) => ({ actorAdminId: admin.adminUserId ?? unde
 
 /** The mutation validated and claimed; now send once and look, and answer the op. */
 async function runOp(ctx: ActionCtx, opId: Id<'panelOps'>) {
-  await ctx.runAction(internal.panelWrites.run, { opId });
-  return json(await ctx.runQuery(internal.panelLedger.view, { opId }));
+  await ctx.runAction(internal.backendWrites.run, { opId });
+  return json(await ctx.runQuery(internal.backendLedger.view, { opId }));
 }
 
 const HOST_FIELDS = [
@@ -263,12 +263,14 @@ const getHandler: Handler = async (ctx, parts) => {
   if (a && b === 'ops' && !c) {
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
     return json({
-      ops: await ctx.runQuery(internal.panelLedger.listForServer, { backendServerId: instance.id }),
+      ops: await ctx.runQuery(internal.backendLedger.listForServer, {
+        backendServerId: instance.id,
+      }),
     });
   }
   if (a && b === 'setup' && !c) {
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
-    return json(await ctx.runQuery(internal.panelSetup.view, { backendServerId: instance.id }));
+    return json(await ctx.runQuery(internal.backendSetup.view, { backendServerId: instance.id }));
   }
   // The enrolled nodes of an instance, and one node's review card.
   if (a && b === 'nodes' && c === 'intents' && !parts[4]) {
@@ -277,14 +279,14 @@ const getHandler: Handler = async (ctx, parts) => {
       intents: await ctx.runQuery(internal.serverAdmin.intentsView, {
         backendServerId: instance.id,
       }),
-      holds: await ctx.runQuery(internal.panelIntents.holdsView, {
+      holds: await ctx.runQuery(internal.nodeIntents.holdsView, {
         backendServerId: instance.id,
       }),
     });
   }
   if (a && b === 'nodes' && c === 'intents' && parts[4] === 'review')
     return json(
-      await ctx.runQuery(internal.panelActivation.review, {
+      await ctx.runQuery(internal.nodeActivation.review, {
         intentId: parts[3] as Id<'panelNodeIntents'>,
       }),
     );
@@ -296,7 +298,7 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
   if (a && b === 'profiles' && c && d === 'acknowledge') {
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
     return json(
-      await ctx.runMutation(internal.panelObserve.acknowledgeForeignEdit, {
+      await ctx.runMutation(internal.backendObserve.acknowledgeForeignEdit, {
         backendServerId: instance.id,
         profileUuid: c,
         ...actorOf(admin),
@@ -307,7 +309,7 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
     if (d === 'preview')
       return json(
-        await ctx.runAction(internal.panelWrites.previewProfilePatch, {
+        await ctx.runAction(internal.backendWrites.previewProfilePatch, {
           backendServerId: instance.id,
           profileUuid: c,
           ops: body.ops,
@@ -315,7 +317,7 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
       );
     // Apply takes what the preview answered, verbatim: the write is conditioned
     // on the profile still having THAT token.
-    const { opId } = await ctx.runMutation(internal.panelWrites.requestProfilePatch, {
+    const { opId } = await ctx.runMutation(internal.backendWrites.requestProfilePatch, {
       backendServerId: instance.id,
       profileUuid: c,
       ops: body.ops as never,
@@ -332,7 +334,7 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
   if (a && b === 'nodes' && c === 'adopt' && !d) {
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
     return json(
-      await ctx.runMutation(internal.panelIntents.adoptNode, {
+      await ctx.runMutation(internal.nodeIntents.adoptNode, {
         backendServerId: instance.id,
         nodeUuid: String(body.nodeUuid ?? ''),
         mode: String(body.mode ?? ''),
@@ -344,7 +346,7 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
   // Releasing the hold a shared change put on nodes FCP does not manage.
   if (a && b === 'holds' && c && d === 'release')
     return json(
-      await ctx.runMutation(internal.panelIntents.releaseHold, {
+      await ctx.runMutation(internal.nodeIntents.releaseHold, {
         holdId: c as Id<'panelMaintenanceHolds'>,
         ...actorOf(admin),
       }),
@@ -356,10 +358,10 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
     const [, , , , intentIdRaw, verb] = parts;
     const intentId = intentIdRaw as Id<'panelNodeIntents'>;
     if (verb === 'test-link')
-      return json(await ctx.runAction(internal.panelActivation.buildDirectTestLink, { intentId }));
+      return json(await ctx.runAction(internal.nodeActivation.buildDirectTestLink, { intentId }));
     if (verb === 'confirm')
       return json(
-        await ctx.runMutation(internal.panelActivation.confirmDirect, {
+        await ctx.runMutation(internal.nodeActivation.confirmDirect, {
           intentId,
           binding: body.binding as never,
           ...actorOf(admin),
@@ -367,7 +369,7 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
       );
     if (verb === 'approve')
       return json(
-        await ctx.runMutation(internal.panelActivation.approve, {
+        await ctx.runMutation(internal.nodeActivation.approve, {
           intentId,
           reviewHash: String(body.reviewHash ?? ''),
           ...actorOf(admin),
@@ -378,7 +380,7 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
       const disposition = body.disposition;
       if (disposition === 'keep-dark' || disposition === 'migrate')
         return json(
-          await ctx.runMutation(internal.panelRetirement.decide, {
+          await ctx.runMutation(internal.nodeRetirement.decide, {
             intentId,
             disposition,
             targetIntentId:
@@ -389,7 +391,7 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
           }),
         );
       return json(
-        await ctx.runMutation(internal.panelIntents.requestRetirement, {
+        await ctx.runMutation(internal.nodeIntents.requestRetirement, {
           intentId,
           requestedBy: 'admin',
         }),
@@ -400,21 +402,21 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
     // the machine is gone and the retirement closes.
     if (verb === 'wiped')
       return json(
-        await ctx.runMutation(internal.panelIntents.markWiped, {
+        await ctx.runMutation(internal.nodeIntents.markWiped, {
           intentId,
           byAdminId: admin.adminUserId ?? undefined,
         }),
       );
     if (verb === 'maintenance')
       return json(
-        await ctx.runMutation(internal.panelIntents.finishMaintenance, {
+        await ctx.runMutation(internal.nodeIntents.finishMaintenance, {
           intentId,
           ...actorOf(admin),
         }),
       );
     if (verb === 'settings')
       return json(
-        await ctx.runMutation(internal.panelIntents.patchSettings, {
+        await ctx.runMutation(internal.nodeIntents.patchSettings, {
           intentId,
           patch: body.patch as never,
           maintenance: body.maintenance === true,
@@ -426,7 +428,7 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
   if (a && b === 'nodes') {
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
     if (!c) {
-      const { opId } = await ctx.runMutation(internal.panelWrites.requestNodeCreate, {
+      const { opId } = await ctx.runMutation(internal.backendWrites.requestNodeCreate, {
         backendServerId: instance.id,
         name: String(body.name ?? ''),
         address: String(body.address ?? ''),
@@ -442,7 +444,7 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
       return runOp(ctx, opId);
     }
     if (d === 'enable' || d === 'disable' || d === 'restart') {
-      const { opId } = await ctx.runMutation(internal.panelWrites.requestNodeAction, {
+      const { opId } = await ctx.runMutation(internal.backendWrites.requestNodeAction, {
         backendServerId: instance.id,
         nodeUuid: c,
         action: d,
@@ -452,11 +454,11 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
     }
     return notFound();
   }
-  if (a && (b === 'hosts' || b === 'squads' || b === 'ops')) {
+  if (a && (b === 'addresses' || b === 'modeGroups' || b === 'ops')) {
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
     const sid = instance.id;
-    if (b === 'hosts' && !c) {
-      const { opId } = await ctx.runMutation(internal.panelWrites.requestHostCreate, {
+    if (b === 'addresses' && !c) {
+      const { opId } = await ctx.runMutation(internal.backendWrites.requestAddressCreate, {
         backendServerId: sid,
         ...(hostFieldsOf(body) as {
           remark: string;
@@ -469,16 +471,16 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
       });
       return runOp(ctx, opId);
     }
-    if (b === 'hosts' && c === 'reorder' && !d) {
-      const { opId } = await ctx.runMutation(internal.panelWrites.requestHostReorder, {
+    if (b === 'addresses' && c === 'reorder' && !d) {
+      const { opId } = await ctx.runMutation(internal.backendWrites.requestAddressReorder, {
         backendServerId: sid,
         hostUuids: Array.isArray(body.hostUuids) ? body.hostUuids.map(String) : [],
         ...actorOf(admin),
       });
       return runOp(ctx, opId);
     }
-    if (b === 'squads' && !c) {
-      const { opId } = await ctx.runMutation(internal.panelWrites.requestSquadCreate, {
+    if (b === 'modeGroups' && !c) {
+      const { opId } = await ctx.runMutation(internal.backendWrites.requestModeGroupCreate, {
         backendServerId: sid,
         name: String(body.name ?? ''),
         inboundUuids: Array.isArray(body.inboundUuids) ? body.inboundUuids.map(String) : [],
@@ -489,12 +491,12 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
     }
     if (b === 'ops' && c && d === 'observe') {
       const opId = c as Id<'panelOps'>;
-      await ctx.runAction(internal.panelWrites.observe, { opId });
-      return json(await ctx.runQuery(internal.panelLedger.view, { opId }));
+      await ctx.runAction(internal.backendWrites.observe, { opId });
+      return json(await ctx.runQuery(internal.backendLedger.view, { opId }));
     }
     if (b === 'ops' && c && d === 'recover') {
       const opId = c as Id<'panelOps'>;
-      await ctx.runAction(internal.panelWrites.recoverOp, {
+      await ctx.runAction(internal.backendWrites.recoverOp, {
         opId,
         credentialsRevoked: body.credentialsRevoked === true,
         noInFlightExecutor: body.noInFlightExecutor === true,
@@ -502,26 +504,26 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
         note: typeof body.note === 'string' ? body.note : undefined,
         ...actorOf(admin),
       });
-      return json(await ctx.runQuery(internal.panelLedger.view, { opId }));
+      return json(await ctx.runQuery(internal.backendLedger.view, { opId }));
     }
     return notFound();
   }
   if (a && b === 'refresh' && !c) {
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
-    await ctx.runAction(internal.panelObserve.refresh, { backendServerId: instance.id });
+    await ctx.runAction(internal.backendObserve.refresh, { backendServerId: instance.id });
     return json(await ctx.runQuery(internal.serverAdmin.tree, { slug: a }));
   }
   // Setting up a backend (docs/servers.md): start, resume, or adopt an existing one (typed).
   if (a && b === 'setup' && !c) {
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
-    const parsed = PanelSetupInput.safeParse(body);
+    const parsed = BackendSetupInput.safeParse(body);
     if (!parsed.success) return errorJson('validation', 'The setup input is not usable', 400);
-    await ctx.runMutation(internal.panelSetup.start, {
+    await ctx.runMutation(internal.backendSetup.start, {
       backendServerId: instance.id,
       input: parsed.data,
       ...actorOf(admin),
     });
-    return json(await ctx.runQuery(internal.panelSetup.view, { backendServerId: instance.id }));
+    return json(await ctx.runQuery(internal.backendSetup.view, { backendServerId: instance.id }));
   }
   if (a && b === 'placements' && c === 'validate')
     return json(await ctx.runQuery(internal.serverAdmin.validatePlacements, { slug: a }));
@@ -532,7 +534,7 @@ const patchHandler: Handler = async (ctx, parts, admin, body) => {
   const [a, b, c, d] = parts;
   if (a && b === 'nodes' && c && !d) {
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
-    const { opId } = await ctx.runMutation(internal.panelWrites.requestNodeUpdate, {
+    const { opId } = await ctx.runMutation(internal.backendWrites.requestNodeUpdate, {
       backendServerId: instance.id,
       nodeUuid: c,
       name: typeof body.name === 'string' ? body.name : undefined,
@@ -548,17 +550,17 @@ const patchHandler: Handler = async (ctx, parts, admin, body) => {
     });
     return runOp(ctx, opId);
   }
-  if (a && c && !d && (b === 'hosts' || b === 'squads')) {
+  if (a && c && !d && (b === 'addresses' || b === 'modeGroups')) {
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
     const { opId } =
-      b === 'hosts'
-        ? await ctx.runMutation(internal.panelWrites.requestHostUpdate, {
+      b === 'addresses'
+        ? await ctx.runMutation(internal.backendWrites.requestAddressUpdate, {
             backendServerId: instance.id,
             hostUuid: c,
             ...hostFieldsOf(body),
             ...actorOf(admin),
           })
-        : await ctx.runMutation(internal.panelWrites.requestSquadUpdate, {
+        : await ctx.runMutation(internal.backendWrites.requestModeGroupUpdate, {
             backendServerId: instance.id,
             squadUuid: c,
             name: typeof body.name === 'string' ? body.name : undefined,
@@ -583,25 +585,25 @@ const deleteHandler: Handler = async (ctx, parts, admin, _body, query) => {
   const [a, b, c, d] = parts;
   if (a && b === 'nodes' && c && !d) {
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
-    const { opId } = await ctx.runMutation(internal.panelWrites.requestNodeDelete, {
+    const { opId } = await ctx.runMutation(internal.backendWrites.requestNodeDelete, {
       backendServerId: instance.id,
       nodeUuid: c,
-      // "Remove from panel" only; the default is "stop and remove".
+      // "Remove from backend" only; the default is "stop and remove".
       removeOnly: query.get('removeOnly') === '1',
       ...actorOf(admin),
     });
     return runOp(ctx, opId);
   }
-  if (!a || !c || d || (b !== 'hosts' && b !== 'squads')) return notFound();
+  if (!a || !c || d || (b !== 'addresses' && b !== 'modeGroups')) return notFound();
   const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
   const { opId } =
-    b === 'hosts'
-      ? await ctx.runMutation(internal.panelWrites.requestHostDelete, {
+    b === 'addresses'
+      ? await ctx.runMutation(internal.backendWrites.requestAddressDelete, {
           backendServerId: instance.id,
           hostUuid: c,
           ...actorOf(admin),
         })
-      : await ctx.runMutation(internal.panelWrites.requestSquadDelete, {
+      : await ctx.runMutation(internal.backendWrites.requestModeGroupDelete, {
           backendServerId: instance.id,
           squadUuid: c,
           ...actorOf(admin),

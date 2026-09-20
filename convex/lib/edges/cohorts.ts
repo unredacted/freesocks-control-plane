@@ -1,5 +1,5 @@
 /**
- * Member COHORTS of a relay origin: one representative subscription per
+ * Member COHORTS of an origin origin: one representative subscription per
  * distinct `backendPlacement` among the active keys pinned to the origin's node
  * (or, for a whole-server origin, every active key of the server). Derived from
  * authoritative membership, never from render snapshots (a member has none

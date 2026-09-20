@@ -82,7 +82,7 @@
     nodeLabel?: string | null;
     /** The location's coarse public load band (quiet/busy/crowded). */
     nodeLoad?: 'quiet' | 'busy' | 'crowded' | 'unknown' | null;
-    /** Relay edges: refresh nudge + connection labels (labels only). */
+    /** Origin edges: refresh nudge + connection labels (labels only). */
     nodeRelay?: {
       refreshSuggested: boolean;
       connections: Array<{ label: string; role: string; family: string }>;

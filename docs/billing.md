@@ -138,7 +138,7 @@ Flow (gift):
 
 Gift codes are bearer credentials (anyone holding one can redeem it), so the
 reveal-once + sweep design keeps the plaintext out of long-term storage. The buyer
-manages their codes from the `GiftCodes` panel.
+manages their codes from the `GiftCodes` backend.
 
 ## Referral rewards
 
@@ -212,7 +212,7 @@ prior month. The daily user-counts reconcile additionally tallies `freeActive`
 returns the member's own `donatedCentsTotal`/`donationCount` (summed from their paid
 orders). The SPA renders these as dithered charts (`DitherChart.svelte`, a
 dependency-free Bayer-ordered-dither canvas — no chart library, CSP-safe): the
-account Membership tab's impact panel (`MemberImpact.svelte`, every membership
+account Membership tab's impact backend (`MemberImpact.svelte`, every membership
 state, with a personal-contribution block for donors) and a home-page impact
 section, both gated on donations being enabled and non-empty history.
 

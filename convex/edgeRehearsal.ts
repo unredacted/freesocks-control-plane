@@ -5,19 +5,19 @@
  * render snapshots.
  *
  *  - One representative subscription per cohort (distinct placement among the
- *    subscriptions pinned to the node), fetched FRESH from the panel per
+ *    subscriptions pinned to the node), fetched FRESH from the backend per
  *    supported format (links, sing-box JSON, Clash YAML through catalogued
  *    client user agents), run through `applyEdgeRender` in dry-run: no
  *    persistence, no snapshot write. Every non-dark cohort must yield `serve`
  *    in every format. An approved dark cohort (`darkCohortKeys`) is excluded.
- *  - An EMPTY panel node has no cohort: the rehearsal credential (the relay's
+ *  - An EMPTY backend node has no cohort: the rehearsal credential (the origin's
  *    qualification user, minted on demand) is the single representative body.
  *    An empty Outline server has no credential path (`use_manual_setup`); an
  *    Outline server with members is rehearsed from its real single-key subs.
  *  - Every catalogued client family's render rule must be enabled
  *    (`familiesDisabled`); every published L7 proof must be current
  *    (`proofsExpired`).
- *  - The OBSERVATION BOUNDARY: the panel Hosts are listed BEFORE and AFTER
+ *  - The OBSERVATION BOUNDARY: the backend Hosts are listed BEFORE and AFTER
  *    (`edgeHostHides.observe`), and the result is accepted only when the two
  *    listings are identical; otherwise the rehearsal repeats (bounded). The
  *    returned observation is the FINAL listing, so the go-live clock does not
@@ -50,7 +50,7 @@ export const REHEARSAL_MAX_ATTEMPTS = 3;
 
 /**
  * The catalogued client of each subscription format (tests/compat/manifest.ts
- * keeps the same shells): what the panel's format selection keys on.
+ * keeps the same shells): what the backend's format selection keys on.
  */
 export const REHEARSAL_USER_AGENTS: Record<RenderFormat, string> = {
   links: 'v2rayNG/1.8.29',
@@ -79,7 +79,7 @@ export interface RehearsalResult {
   proofsExpired: Id<'edges'>[];
   vector: RehearsalVector;
   hostsObservation: { listingHash: string; observedAt: number; version: number };
-  /** The listings never agreed within the attempt budget (the operator reviews the panel). */
+  /** The listings never agreed within the attempt budget (the operator reviews the backend). */
   listingChanged: boolean;
   attempts: number;
   /** Cohorts rehearsed (dark ones excluded) and the source of the representative bodies. */
@@ -290,7 +290,7 @@ export const run = internalAction({
       attempts++;
       const before = await observer(ctx, relayId);
       const c = await ctx.runQuery(internal.edgeRehearsal.context, { relayId, darkCohortKeys });
-      if (!c) throw new Error('rehearsal: the relay has no panel origin');
+      if (!c) throw new Error('rehearsal: the origin has no backend origin');
       const failures: RehearsalFailure[] = [];
       let source: RehearsalResult['source'] = 'members';
       if (c.cohorts.length > 0) {

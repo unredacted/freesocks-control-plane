@@ -62,8 +62,8 @@ const COPY = {
   // --- origin --------------------------------------------------------------------------
   no_origin: {
     label: 'No origin chosen',
-    explain: 'The relay has no origin yet: nothing tells FCP what the edges should dial.',
-    fix: 'Pick a panel node, a backend server or describe the address by hand.',
+    explain: 'The origin has no target yet: nothing tells FCP what the edges should dial.',
+    fix: 'Pick a backend node, a backend server or describe the address by hand.',
   },
   no_backend_server: {
     label: 'Backend server missing',
@@ -84,7 +84,7 @@ const COPY = {
   },
   backend_no_node_inventory: {
     label: 'No node inventory',
-    explain: 'The backend has not reported its node list yet, so a panel node cannot be picked.',
+    explain: 'The backend has not reported its node list yet, so a backend node cannot be picked.',
     fix: 'Refresh the node candidates or wait for the next health check.',
   },
   // --- account -------------------------------------------------------------------------
@@ -135,26 +135,26 @@ const COPY = {
     explain: 'The template parameters do not pass the provider schema.',
     fix: 'Open the template under Templates and fix the flagged fields.',
   },
-  // --- relay and listener --------------------------------------------------------------
+  // --- origin and listener --------------------------------------------------------------
   no_relay: {
-    label: 'No relay yet',
-    explain: 'The relay row does not exist: the origin has not been registered.',
+    label: 'No origin yet',
+    explain: 'The origin row does not exist: the origin has not been registered.',
     fix: 'Finish the origin step, or let the node role register it.',
   },
   relay_deleting: {
-    label: 'Relay is deleting',
-    explain: 'The relay is being torn down; new work on it is refused until the delete completes.',
+    label: 'Origin is deleting',
+    explain: 'The origin is being torn down; new work on it is refused until the delete completes.',
   },
   relay_without_listener: {
     label: 'No listener',
     explain:
-      'The relay has no listener, so nothing says which port and protocol edges should carry.',
+      'The origin has no listener, so nothing says which port and protocol edges should carry.',
     fix: 'Add a listener, or register the node with the role.',
   },
   listener_not_deployed: {
     label: 'Listener not deployed',
     explain: 'The node has not confirmed this listener is live yet.',
-    fix: 'Run the node role, or mark the listener deployed once the inbound is up.',
+    fix: 'Run the node role, or mark the listener deployed once the transport is up.',
   },
   listener_disabled: {
     label: 'Listener disabled',
@@ -190,18 +190,18 @@ const COPY = {
   binding_deferred: {
     label: 'Go-live pending',
     explain:
-      'This relay was set up with its delivery binding deferred: members still receive the direct address until it goes live.',
-    fix: 'Finish the guided setup so the relay goes live.',
+      'This origin was set up with its delivery binding deferred: members still receive the direct address until it goes live.',
+    fix: 'Finish the guided setup so the origin goes live.',
   },
   // --- first edge ----------------------------------------------------------------------
   no_edge: {
     label: 'No edge yet',
-    explain: 'The relay has no edge at all; nothing fronts the origin.',
+    explain: 'The origin has no edge at all; nothing fronts the origin.',
     fix: 'Provision or import an edge.',
   },
   rotation_running: {
     label: 'Rotation running',
-    explain: 'A rotation is in progress on this relay; wait for it to finish.',
+    explain: 'A rotation is in progress on this origin; wait for it to finish.',
   },
   account_budget_exhausted: {
     label: 'Daily budget spent',
@@ -215,7 +215,7 @@ const COPY = {
   },
   provision_failed: {
     label: 'Provisioning failed',
-    explain: 'The last provisioning run on this relay failed.',
+    explain: 'The last provisioning run on this origin failed.',
     fix: 'Open the rotation for the failing step, then retry.',
   },
   // --- qualification -------------------------------------------------------------------
@@ -231,8 +231,8 @@ const COPY = {
   },
   qualification_credential_missing: {
     label: 'Test credential missing',
-    explain: 'No qualification credential exists for this relay, so a front cannot be proven.',
-    fix: 'Mint the qualification credential on the relay.',
+    explain: 'No qualification credential exists for this origin, so a front cannot be proven.',
+    fix: 'Mint the qualification credential on the origin.',
   },
   credential_unsupported: {
     label: 'Credential unsupported',
@@ -251,19 +251,19 @@ const COPY = {
   // --- publish -------------------------------------------------------------------------
   pool_empty: {
     label: 'Pool empty',
-    explain: 'No edge is published for this relay.',
+    explain: 'No edge is published for this origin.',
     fix: 'Publish an edge.',
   },
   quarantined: {
     label: 'Quarantined',
     explain:
-      'A rotation left the panel Hosts in an uncertain state; the relay is frozen until resolved.',
+      'A rotation left the backend Hosts in an uncertain state; the origin is frozen until resolved.',
     fix: 'Open the quarantine view and keep either the previous or the current binding.',
   },
   hosts_operator_managed: {
     label: 'Hosts operator-managed',
-    explain: 'FCP never writes the panel Hosts for this relay, so it cannot flip them.',
-    fix: 'Apply the hosts plan by hand, or hand Host ownership to FCP.',
+    explain: 'FCP never writes the backend Hosts for this origin, so it cannot flip them.',
+    fix: 'Apply the addresses plan by hand, or hand Host ownership to FCP.',
   },
   no_publishable_edge: {
     label: 'Nothing publishable',
@@ -278,19 +278,19 @@ const COPY = {
     fix: 'Turn rendering on under Settings.',
   },
   relay_disabled: {
-    label: 'Relay disabled',
-    explain: 'The relay is switched off; its members receive an unavailable response.',
-    fix: 'Enable the relay.',
+    label: 'Origin disabled',
+    explain: 'The origin is switched off; its members receive an unavailable response.',
+    fix: 'Enable the origin.',
   },
   preview_not_applied: {
     label: 'Preview did not apply',
     explain: 'A render preview produced no rewritten entry for at least one listener.',
-    fix: 'Check the listener match rule against the panel body.',
+    fix: 'Check the listener match rule against the backend body.',
   },
   entry_mismatch: {
     label: 'Entry mismatch',
     explain: 'The template entry found in the body disagrees with what the listener declares.',
-    fix: 'Align the listener fields with the panel inbound, or fix the match rule.',
+    fix: 'Align the listener fields with the backend transport, or fix the match rule.',
   },
   mirrors_unvalidated: {
     label: 'Mirrors not validated',
@@ -320,8 +320,8 @@ const COPY = {
   },
   auto_rotate_off: {
     label: 'Auto-rotate off',
-    explain: 'Automatic replacement is off globally or for this relay.',
-    fix: 'Turn auto-rotate on under Settings and on the relay.',
+    explain: 'Automatic replacement is off globally or for this origin.',
+    fix: 'Turn auto-rotate on under Settings and on the origin.',
   },
   l7_auto_select_blocked: {
     label: 'CDN auto-select off',
@@ -337,15 +337,15 @@ const COPY = {
   },
   not_found: {
     label: 'Not found',
-    explain: 'The relay, edge or rotation named by the request does not exist.',
+    explain: 'The origin, edge or rotation named by the request does not exist.',
   },
   deleting: {
     label: 'Deleting',
-    explain: 'The relay is being deleted; no new operation is accepted.',
+    explain: 'The origin is being deleted; no new operation is accepted.',
   },
   busy: {
-    label: 'Relay busy',
-    explain: 'Another rotation is already running on this relay.',
+    label: 'Origin busy',
+    explain: 'Another rotation is already running on this origin.',
   },
   auto_rotate_disabled: {
     label: 'Auto-rotate disabled',
@@ -363,22 +363,22 @@ const COPY = {
   },
   cooldown: {
     label: 'In cooldown',
-    explain: 'The relay rotated recently and is inside its cooldown window.',
+    explain: 'The origin rotated recently and is inside its cooldown window.',
     fix: 'Wait for the cooldown, or force the rotation.',
   },
   daily_cap: {
     label: 'Daily cap reached',
-    explain: 'The relay has already rotated as often as allowed today.',
+    explain: 'The origin has already rotated as often as allowed today.',
     fix: 'Wait for the next UTC day, or raise the cap.',
   },
   listener_not_found: {
     label: 'Listener not found',
-    explain: 'The listener key does not exist on this relay.',
+    explain: 'The listener key does not exist on this origin.',
   },
   panel_op_running: {
     label: 'A server change is running',
     explain:
-      'Servers is updating the node this relay serves, and holds its listeners still meanwhile.',
+      'Servers is updating the node this origin serves, and holds its listeners still meanwhile.',
     fix: 'Wait for the change under Servers to finish, then try again.',
   },
   listener_unusable: {
@@ -392,7 +392,7 @@ const COPY = {
   },
   l7_replacement_cap: {
     label: 'CDN replacement cap',
-    explain: 'The relay already replaced a same-provider CDN front as often as allowed today.',
+    explain: 'The origin already replaced a same-provider CDN front as often as allowed today.',
   },
   validation: {
     label: 'Invalid request',
@@ -468,7 +468,7 @@ const COPY = {
   // --- preflight: selection -------------------------------------------------------------
   no_compatible_listener: {
     label: 'No compatible listener',
-    explain: 'No listener on the relay can be fronted by any layer.',
+    explain: 'No listener on the origin can be fronted by any layer.',
   },
   no_compatible_layer: {
     label: 'No compatible layer',
@@ -555,7 +555,8 @@ const COPY = {
   // --- attention kinds ------------------------------------------------------------------
   quarantine: {
     label: 'Quarantine',
-    explain: 'A rotation left the panel Hosts uncertain; the relay is frozen until you resolve it.',
+    explain:
+      'A rotation left the backend Hosts uncertain; the origin is frozen until you resolve it.',
     fix: 'Inspect the live Hosts and keep the previous or the current binding.',
   },
   needs_operator: {
@@ -565,12 +566,12 @@ const COPY = {
   },
   host_unresolved: {
     label: 'Host unresolved',
-    explain: 'A panel Host operation had an uncertain outcome and blocks further Host writes.',
-    fix: 'Look at the listener Host and adopt or release the panel object.',
+    explain: 'A backend Host operation had an uncertain outcome and blocks further Host writes.',
+    fix: 'Look at the listener Host and adopt or release the backend object.',
   },
   rotation_failed: {
     label: 'Rotation failed',
-    explain: 'The last rotation on this relay ended in failure.',
+    explain: 'The last rotation on this origin ended in failure.',
     fix: 'Open the rotation to see the failing step.',
   },
   qualification_lapsed: {
@@ -589,13 +590,13 @@ const COPY = {
   },
   pool_below_desired: {
     label: 'Pool below desired',
-    explain: 'Fewer edges are published than the relay wants.',
+    explain: 'Fewer edges are published than the origin wants.',
     fix: 'Provision or publish an edge.',
   },
   go_live_pending: {
     label: 'Go-live pending',
     explain:
-      'An edge is published for this relay but its delivery binding is still deferred, so members keep the direct address.',
+      'An edge is published for this origin but its delivery binding is still deferred, so members keep the direct address.',
     fix: 'Finish the guided setup to go live.',
   },
   pool_rebalance: {
@@ -632,10 +633,10 @@ const COPY = {
     fix: 'Open the edge and compare the live snapshot.',
   },
   direct_host_reappeared: {
-    label: 'Direct address back in the panel',
+    label: 'Direct address back in the backend',
     explain:
-      'A panel Host that hands out the node address itself was re-enabled or added on a protected node, so members on it are refused a body until it is hidden again.',
-    fix: 'Hide it in the panel, or add it to the protected node so FCP hides it for you.',
+      'A backend Host that hands out the node address itself was re-enabled or added on a protected node, so members on it are refused a body until it is hidden again.',
+    fix: 'Hide it in the backend, or add it to the protected node so FCP hides it for you.',
   },
   restore_in_progress: {
     label: 'Restoring the direct address',
@@ -661,7 +662,7 @@ const COPY = {
     label: 'Host header rejected',
     explain:
       'The node accepts only its own names as the HTTP Host header, so the CDN hostname is refused.',
-    fix: 'Let the inbound accept any Host header, or add the edge names to the certificate.',
+    fix: 'Let the transport accept any Host header, or add the edge names to the certificate.',
   },
   origin_plaintext: {
     label: 'Origin is plaintext',
@@ -684,9 +685,9 @@ const COPY = {
   },
   // --- delivery unavailable -------------------------------------------------------------
   relay_missing: {
-    label: 'Relay missing',
-    explain: 'A delivery binding still covers this origin but its relay row is gone.',
-    fix: 'Release the binding under Settings, or register the relay again.',
+    label: 'Origin missing',
+    explain: 'A delivery binding still covers this origin but the origin row is gone.',
+    fix: 'Release the binding under Settings, or register the origin again.',
   },
   no_render_key: {
     label: 'No render key',
@@ -703,12 +704,12 @@ const COPY = {
   },
   no_match: {
     label: 'No template entry',
-    explain: 'No entry in the panel body matched the listener match rule.',
+    explain: 'No entry in the backend body matched the listener match rule.',
     fix: 'Check the Host remark or the address match rule.',
   },
   ambiguous_match: {
     label: 'Ambiguous match',
-    explain: 'More than one entry in the panel body matched the listener.',
+    explain: 'More than one entry in the backend body matched the listener.',
     fix: 'Tighten the match rule or remove the duplicate Host.',
   },
   leak_detected: {
@@ -732,8 +733,8 @@ const COPY = {
   // --- published pool (reserved allocation, capacity, rebalance) -------------------------
   pool_full: {
     label: 'Pool full',
-    explain: 'Every published slot of this relay is taken.',
-    fix: 'Raise the published edges wanted on the relay, or unpublish an edge first.',
+    explain: 'Every published slot of this origin is taken.',
+    fix: 'Raise the published edges wanted on the origin, or unpublish an edge first.',
   },
   pool_reserved: {
     label: 'Slot reserved',
@@ -749,8 +750,8 @@ const COPY = {
   listener_cap: {
     label: 'Listener cap reached',
     explain:
-      'A relay can carry at most eight deployed, enabled listeners, one published slot each; this one would be the ninth.',
-    fix: 'Retire or disable a listener you do not need, or register the listener on another relay.',
+      'An origin can carry at most eight deployed, enabled listeners, one published slot each; this one would be the ninth.',
+    fix: 'Retire or disable a listener you do not need, or register the listener on another origin.',
   },
   pool_below_coverage: {
     label: 'Pool below coverage',
@@ -766,37 +767,37 @@ const COPY = {
   },
   setup_owned: {
     label: 'Owned by a setup run',
-    explain: 'A guided setup owns this relay, so automatic replacement leaves it alone.',
+    explain: 'A guided setup owns this origin, so automatic replacement leaves it alone.',
     fix: 'Finish or cancel the setup run.',
   },
 } as const satisfies Record<KnownCode, CodeCopy> & Record<string, CodeCopy>;
 
-// --- discovered inbounds that cannot become listeners --------------------------------------
-// Why a panel inbound found on the node was left out of the protection plan
+// --- discovered transports that cannot become listeners --------------------------------------
+// Why a backend transport found on the node was left out of the protection plan
 // (`INBOUND_UNSUPPORTED_CODES`). Kept apart from the flat table above: these words are
 // generic nouns, and a future status code with the same name must not inherit them.
 export const INBOUND_UNSUPPORTED_COPY: Record<InboundUnsupportedCode, CodeCopy> = {
   inactive: {
     label: 'Not served by this node',
-    explain: 'The inbound is in the config profile but the node does not have it active.',
-    fix: 'Enable it on the node in the panel if members should use it.',
+    explain: 'The transport is in the config profile but the node does not have it active.',
+    fix: 'Enable it on the node in the backend if members should use it.',
   },
   loopback: {
     label: 'Reached only from inside the node',
     explain:
-      'The inbound listens on a loopback address, so a provider address cannot dial it directly. Something on the node (usually a TLS terminator) accepts outside connections and forwards to it.',
-    fix: 'Register the listener with the port and transport the terminator exposes (through the node role or the relay form), or make the inbound listen publicly with TLS of its own.',
+      'The transport listens on a loopback address, so a provider address cannot dial it directly. Something on the node (usually a TLS terminator) accepts outside connections and forwards to it.',
+    fix: 'Register the listener with the port and transport the terminator exposes (through the node role or the origin form), or make the transport listen publicly with TLS of its own.',
   },
   tag: {
     label: 'Tag cannot be bound',
     explain:
-      'The inbound tag uses characters a panel Host cannot bind to (letters, digits and underscores only).',
-    fix: 'Rename the inbound tag in the config profile.',
+      'The transport tag uses characters a backend Host cannot bind to (letters, digits and underscores only).',
+    fix: 'Rename the transport tag in the config profile.',
   },
   protocol: {
     label: 'Protocol not supported',
     explain:
-      'Edges can carry VLESS, Trojan and Shadowsocks inbounds; this protocol is not one of them.',
+      'Edges can carry VLESS, Trojan and Shadowsocks transports; this protocol is not one of them.',
   },
   transport: {
     label: 'Transport not supported',
@@ -806,12 +807,12 @@ export const INBOUND_UNSUPPORTED_COPY: Record<InboundUnsupportedCode, CodeCopy> 
   security: {
     label: 'Security layer not supported',
     explain:
-      'Edges can carry REALITY, TLS and plain inbounds; this security setting is not one of them.',
+      'Edges can carry REALITY, TLS and plain transports; this security setting is not one of them.',
   },
   invalid: {
-    label: 'Inbound cannot be described',
+    label: 'Transport cannot be described',
     explain:
-      'The inbound looks supported but its settings could not be turned into a listener (the detail names what).',
+      'The transport looks supported but its settings could not be turned into a listener (the detail names what).',
     fix: 'Check the port, the REALITY target and the server names in the config profile.',
   },
 };
@@ -821,7 +822,7 @@ export function inboundUnsupportedCopy(code: string): CodeCopy {
   return (
     known ?? {
       label: humanizeCode(code),
-      explain: `The inbound was skipped: ${humanizeCode(code)}.`,
+      explain: `The transport was skipped: ${humanizeCode(code)}.`,
     }
   );
 }
@@ -834,12 +835,12 @@ const REFUSAL_COPY = {
   host_adopt_required: {
     label: 'Hosts not adopted yet',
     explain: 'FCP can only take over the Hosts once it has adopted every one of them.',
-    fix: 'Open the Listeners tab and use "Adopt a Host" on each listener that has a Host in the panel, then switch again.',
+    fix: 'Open the Listeners tab and use "Adopt a Host" on each listener that has a Host in the backend, then switch again.',
   },
   host_adopt_mismatch: {
     label: 'Host does not fit',
     explain: 'That Host does not fit this listener.',
-    fix: 'Pick a Host that carries the inbound of this listener and dials one of its published edges.',
+    fix: 'Pick a Host that carries the transport of this listener and dials one of its published edges.',
   },
   listener_in_use: {
     label: 'Listener still in use',
@@ -849,30 +850,31 @@ const REFUSAL_COPY = {
   needs_rotation: {
     label: 'Needs a rotation',
     explain:
-      'Publishing this edge would make it the first edge of its listener, which means writing the panel Host.',
+      'Publishing this edge would make it the first edge of its listener, which means writing the backend Host.',
     fix: 'Use Publish so the rotation machine does the switch.',
   },
   origin_address_locked: {
     label: 'Origin address locked',
     explain: 'Edges still dial this origin address.',
-    fix: 'Drain or destroy every edge of the relay before changing it.',
+    fix: 'Drain or destroy every edge of the origin before changing it.',
   },
   match_rule_overlap: {
     label: 'Match rules overlap',
-    explain: 'Another listener of this relay would match the same subscription entries.',
+    explain: 'Another listener of this origin would match the same subscription entries.',
     fix: 'Give each listener its own match rule.',
   },
   node_already_bound: {
     label: 'Node already covered',
-    explain: 'Another relay already covers this node.',
+    explain: 'Another origin already covers this node.',
   },
   server_already_bound: {
     label: 'Backend server already covered',
-    explain: 'Another relay already covers this backend server.',
+    explain: 'Another origin already covers this backend server.',
   },
   throttled: {
     label: 'Asked too often',
-    explain: 'That was asked too often. This call reaches a panel or a provider, so it is limited.',
+    explain:
+      'That was asked too often. This call reaches a backend or a provider, so it is limited.',
     fix: 'Wait a minute and try again.',
   },
   verification_stale: {
@@ -893,7 +895,7 @@ const REFUSAL_COPY = {
   plan_changed: {
     label: 'Node changed since setup',
     explain:
-      'The inbounds on this node are not the ones the earlier setup created listeners for, so the run cannot resume safely.',
+      'The transports on this node are not the ones the earlier setup created listeners for, so the run cannot resume safely.',
     fix: 'Remove protection from the node, then protect it again.',
   },
   consent_withdrawn_hidden: {
@@ -908,14 +910,14 @@ const REFUSAL_COPY = {
     fix: 'Cancel the run and start again with the other account.',
   },
   test_link_no_match: {
-    label: 'No entry for this inbound',
+    label: 'No entry for this transport',
     explain:
-      'The test credential receives no single connection entry for this inbound, so no test link can be built from it.',
-    fix: 'Check that the node has exactly one enabled panel Host on this inbound at its own address and port.',
+      'The test credential receives no single connection entry for this transport, so no test link can be built from it.',
+    fix: 'Check that the node has exactly one enabled backend Host on this transport at its own address and port.',
   },
   test_link_render_failed: {
     label: 'Test link not rendered',
-    explain: 'The candidate address could not be rendered into a connection for this inbound.',
+    explain: 'The candidate address could not be rendered into a connection for this transport.',
     fix: 'Check the listener names and the address, then fetch the test link again.',
   },
   use_manual_setup: {
@@ -931,18 +933,18 @@ const REFUSAL_COPY = {
   credential_unresolved: {
     label: 'Credential still settling',
     explain:
-      'An earlier attempt to create the test credential may still land on the panel; FCP waits before creating another.',
+      'An earlier attempt to create the test credential may still land on the backend; FCP waits before creating another.',
     fix: 'Try again in a couple of minutes.',
   },
   node_unknown: {
     label: 'Node not in inventory',
-    explain: 'The panel inventory has no node with this identifier.',
+    explain: 'The backend inventory has no node with this identifier.',
     fix: 'Refresh the node list, then try again.',
   },
   node_address_unknown: {
     label: 'Node address unknown',
-    explain: 'The panel reports no address for this node, so its origin cannot be probed.',
-    fix: 'Set the node address on the panel, then refresh the node list.',
+    explain: 'The backend reports no address for this node, so its origin cannot be probed.',
+    fix: 'Set the node address on the backend, then refresh the node list.',
   },
 } as const satisfies Record<string, CodeCopy>;
 
@@ -1138,7 +1140,7 @@ export const SETUP_STEP_TITLES: Record<SetupStepId, string> = {
   origin: 'Origin',
   account: 'Provider account',
   template: 'Edge template',
-  relay: 'Relay and listeners',
+  relay: 'Origin and listeners',
   edge: 'First edge',
   qualification: 'Qualification',
   publish: 'Publish',
@@ -1146,15 +1148,15 @@ export const SETUP_STEP_TITLES: Record<SetupStepId, string> = {
   automation: 'Automation',
 };
 export const SETUP_STEP_HINTS: Record<SetupStepId, string> = {
-  origin: 'What the edges dial: a panel node, a backend server or an address.',
+  origin: 'What the edges dial: a backend node, a backend server or an address.',
   account: 'A cloud or CDN account with tested credentials.',
   template: 'The provisioning parameters the account uses.',
-  relay: 'The relay row and at least one deployed listener.',
+  relay: 'The origin row and at least one deployed listener.',
   edge: 'One provisioned or imported edge.',
   qualification: 'Proof the account (and a CDN front) carries traffic end to end.',
   publish: 'At least one edge in the published pool.',
   rendering: 'Members receive rewritten subscriptions.',
-  automation: 'Probes and the detector watch the relay.',
+  automation: 'Probes and the detector watch the origin.',
 };
 export const SETUP_STATUS_LABELS: Record<SetupStepStatus, string> = {
   done: 'Done',
@@ -1176,7 +1178,7 @@ export const ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
   resolve_operator: 'Resolve edge',
   look_at_host: 'Look at Host',
   open_setup: 'Resume setup',
-  open_relay: 'Open relay',
+  open_relay: 'Open origin',
   open_edge: 'Open edge',
   open_account: 'Open account',
   open_settings: 'Open settings',
@@ -1241,7 +1243,7 @@ export const SETUP_RUN_NEED_COPY: Record<SetupRunNeed, CodeCopy> = {
   },
   account_incompatible: {
     label: 'Account cannot front this node',
-    explain: 'The provider account cannot carry every inbound this node serves.',
+    explain: 'The provider account cannot carry every transport this node serves.',
     fix: 'Choose another account.',
   },
   maintenance: {
@@ -1250,8 +1252,8 @@ export const SETUP_RUN_NEED_COPY: Record<SetupRunNeed, CodeCopy> = {
     fix: 'Resume new work.',
   },
   too_many_inbounds: {
-    label: 'Too many inbounds',
-    explain: 'The node serves more frontable inbounds than a guided run protects.',
+    label: 'Too many transports',
+    explain: 'The node serves more frontable transports than a guided run protects.',
     fix: 'Use manual setup.',
   },
   use_manual_setup: {
@@ -1261,7 +1263,7 @@ export const SETUP_RUN_NEED_COPY: Record<SetupRunNeed, CodeCopy> = {
   },
   choose_mode: {
     label: 'Connection mode needed',
-    explain: 'The test account needs a connection mode with a placement on this panel.',
+    explain: 'The test account needs a connection mode with a placement on this backend.',
     fix: 'Choose connection mode.',
   },
   provider_failed: {
@@ -1275,7 +1277,7 @@ export const SETUP_RUN_NEED_COPY: Record<SetupRunNeed, CodeCopy> = {
     fix: 'Try another address (Go live anyway).',
   },
   coverage_incomplete: {
-    label: 'Not every inbound covered',
+    label: 'Not every transport covered',
     explain: 'The published pool had no room for one of the listeners.',
     fix: 'Try again.',
   },
@@ -1287,13 +1289,13 @@ export const SETUP_RUN_NEED_COPY: Record<SetupRunNeed, CodeCopy> = {
   },
   review_changed: {
     label: 'Hosts changed',
-    explain: 'The panel now has unsupported Hosts the review did not show.',
+    explain: 'The backend now has unsupported Hosts the review did not show.',
     fix: 'Review the change.',
   },
   hide_failed: {
     label: 'Could not hide a Host',
-    explain: 'The panel refused to hide one of the old direct Hosts.',
-    fix: 'Check again (Hide them in the panel yourself).',
+    explain: 'The backend refused to hide one of the old direct Hosts.',
+    fix: 'Check again (Hide them in the backend yourself).',
   },
   family_disabled: {
     label: 'Client family off',
@@ -1307,12 +1309,12 @@ export const SETUP_RUN_NEED_COPY: Record<SetupRunNeed, CodeCopy> = {
   },
   node_not_approved: {
     label: 'Node not approved',
-    explain: 'The node behind this relay is enrolled and its activation has not been approved.',
+    explain: 'The node behind this origin is enrolled and its activation has not been approved.',
     fix: 'Approve the node in Servers, then check again.',
   },
   quarantined: {
     label: 'Paused for safety',
-    explain: 'A rotation could not converge and paused the relay.',
+    explain: 'A rotation could not converge and paused the origin.',
     fix: 'Review.',
   },
 };
@@ -1325,8 +1327,8 @@ export const SETUP_ACCOUNT_REASON_COPY: Record<SetupAccountReason, CodeCopy> = {
   },
   account_disabled: { label: 'Disabled', explain: 'The account is disabled.' },
   layer_mismatch: {
-    label: 'Cannot carry every inbound',
-    explain: 'The account fronts at a layer one of the inbounds cannot use.',
+    label: 'Cannot carry every transport',
+    explain: 'The account fronts at a layer one of the transports cannot use.',
   },
   account_capacity_reached: {
     label: 'No room',
@@ -1362,11 +1364,11 @@ export function setupRunNeedCopy(code: string | null | undefined): CodeCopy {
 // --- audit actions (Timeline) ----------------------------------------------------------------
 
 const AUDIT_ACTION_LABELS: Record<string, string> = {
-  'relay.create': 'Relay created',
-  'relay.registered': 'Relay registered by the node role',
-  'relay.upsert': 'Relay registered',
-  'relay.update': 'Relay settings changed',
-  'relay.delete': 'Relay deleted',
+  'relay.create': 'Origin created',
+  'relay.registered': 'Origin registered by the node role',
+  'relay.upsert': 'Origin registered',
+  'relay.update': 'Origin settings changed',
+  'relay.delete': 'Origin deleted',
   'relay.delivery.released': 'Delivery binding released',
   'relay.listener.upsert': 'Listener registered',
   'relay.listener.update': 'Listener changed',
@@ -1374,11 +1376,11 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'relay.listener.name.retire': 'Server name retired',
   'relay.listener.name.reactivate': 'Server name reactivated',
   'relay.listener.sni_pick': 'Server name selection changed',
-  'relay.host.created': 'Panel Host created',
-  'relay.host.deleted': 'Panel Host deleted',
-  'relay.host.adopted': 'Panel Host adopted',
+  'relay.host.created': 'Backend Host created',
+  'relay.host.deleted': 'Backend Host deleted',
+  'relay.host.adopted': 'Backend Host adopted',
   'relay.host.adopt_requested': 'Host adoption requested',
-  'relay.host.released': 'Panel Host released',
+  'relay.host.released': 'Backend Host released',
   'relay.qualification_credential': 'Qualification credential changed',
   'edge.published': 'Edge published',
   'edge.unpublished': 'Edge unpublished',
@@ -1386,7 +1388,7 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'edge.burned': 'Edge burned',
   'edge.rolled_back': 'Rotation rolled back',
   'edge.rotation_failed': 'Rotation failed',
-  'edge.quarantined': 'Relay quarantined',
+  'edge.quarantined': 'Origin quarantined',
   'edge.quarantine_resolved': 'Quarantine resolved',
   'edge.destroy': 'Edge destroy requested',
   'edge.destroyed': 'Edge destroyed',
@@ -1454,8 +1456,8 @@ export function auditActionLabel(action: string): string {
 // `RESTORE_PHASE_WORDS` the restore workflow's phases in words.
 
 export const PLAIN_WORDS: Record<string, string> = {
-  relay: 'protected node',
-  relays: 'protected nodes',
+  origin: 'protected node',
+  origins: 'protected nodes',
   edge: 'address',
   edges: 'addresses',
   published: 'in use',
@@ -1474,9 +1476,9 @@ export const PLAIN_WORDS: Record<string, string> = {
   qualification: 'trust',
   quarantine: 'paused for safety',
   quarantined: 'paused for safety',
-  'host flip': 'update the panel',
+  'host flip': 'update the backend',
   listener: 'inbound',
-  listeners: 'inbounds',
+  listeners: 'transports',
 };
 
 /** Rewrite a technical sentence in plain words (whole-word, longest match first). */
@@ -1500,8 +1502,8 @@ const PLAIN_AUDIT_LABELS: Record<string, string> = {
   'relay.upsert': 'Node registered',
   'relay.update': 'Settings changed',
   'relay.delete': 'Protection removed',
-  'relay.host.created': 'Panel updated with the new address',
-  'relay.host.deleted': 'Old address removed from the panel',
+  'relay.host.created': 'Backend updated with the new address',
+  'relay.host.deleted': 'Old address removed from the backend',
   'edge.published': 'Address in use',
   'edge.unpublished': 'Address taken out of use',
   'edge.rotated': 'Address replaced',
@@ -1514,8 +1516,8 @@ const PLAIN_AUDIT_LABELS: Record<string, string> = {
   'edge.verified': 'Address tested with a real session',
   'edge.block_suspected': 'Address looks blocked',
   'edge.block_cleared': 'Address no longer looks blocked',
-  'edge.host.hidden': 'Direct address hidden in the panel',
-  'edge.host.restored': 'Direct address restored in the panel',
+  'edge.host.hidden': 'Direct address hidden in the backend',
+  'edge.host.restored': 'Direct address restored in the backend',
   'edge.relay.restore_started': 'Removing protection',
   'edge.setup_run.started': 'Protection started',
   'edge.setup_run.needs_operator': 'Protection needs you',
@@ -1534,10 +1536,10 @@ export function plainAuditActionLabel(action: string): string {
 /** The restore workflow (removing protection) phase, as the node page shows it. */
 export const RESTORE_PHASE_WORDS: Record<string, string> = {
   freeze: 'Pausing changes on this node',
-  settle: 'Waiting for the panel to settle',
-  verify_fcp_raw: 'Checking what the panel serves',
+  settle: 'Waiting for the backend to settle',
+  verify_fcp_raw: 'Checking what the backend serves',
   release_binding: 'Handing members the direct address',
-  restore: 'Restoring the direct address in the panel',
+  restore: 'Restoring the direct address in the backend',
   verify_direct: 'Checking the direct address works',
   finish: 'Finishing',
 };

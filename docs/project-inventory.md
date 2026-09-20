@@ -4,7 +4,7 @@
 (`tests/compat/`, `scripts/compat/`, `docker/compat/`, `docker-compose.compat.yml`; runbook
 `docs/client-compatibility.md`) run by the new **Client compatibility** workflow on every PR:
 every catalogued client's subscription rendered through FCP's real `/api/v1/sub` handler against
-a live throwaway Remnawave panel (format per User-Agent, exact-UA cache isolation, refresh after
+a live throwaway Remnawave backend (format per User-Agent, exact-UA cache isolation, refresh after
 a Host change), pinned sing-box + Mihomo engines through a REALITY tunnel to an origin only the
 proxy can reach (HTTPS, remote DNS, UDP DNS, wrong-credential fail-closed), the checksum-verified
 **SFL 1.14.0 Linux package** imported + refreshed for real (deep link and manual URL entry, its
@@ -43,7 +43,7 @@ a WCAG pass (zero contrast failures; 44px mobile touch targets); and the Remnawa
 update-user contract-safety fixes (pinned in `docs/backends.md`).
 
 **Previous update 2026-07-08 (audit-fix pass, branch `v2`).** A full-pass audit + fixes landed:
-(WS1) issuance never mints a squad-less Remnawave key — an unbound connection mode now
+(WS1) issuance never mints a mode group-less Remnawave key — an unbound connection mode now
 falls back across pools (mode → default → any bound) and `switchMode` rejects an unbound
 target instead of tombstoning a live key; (WS2) **idle free users are deactivated + RETAINED,
 never deleted** — a new `users.status:'inactive'` (login-reactivatable) + `users.freeKeyExpiresAt`
@@ -86,14 +86,14 @@ erasing disabled modes' cells on save.
 
 **Last reconciled against the code: 2026-07-13.** The note below is from the earlier
 node-placement reconcile and still holds. **2026-07-07** (branch `v2`, after the node-placement
-redesign — Phases 1–5a). That redesign replaced the earlier squad-pool "load balancing" (which
-balanced nothing in a real fleet: a Remnawave internal squad is a set of inbounds, not a node)
-with **issuance-time node placement**. The generic backend layer is now **squad-free** — it
+redesign — Phases 1–5a). That redesign replaced the earlier mode group-pool "load balancing" (which
+balanced nothing in a real fleet: a Remnawave internal mode group is a set of transports, not a node)
+with **issuance-time node placement**. The generic backend layer is now **mode group-free** — it
 carries an opaque **`placement` handle** (`subscriptions.backendPlacement`); only Remnawave-local
-code maps it to a squad UUID. A **connection mode** (renamed from "connection profile"; leaf ids
+code maps it to a mode group UUID. A **connection mode** (renamed from "connection profile"; leaf ids
 `freedom-ws` / `freedom-reality` / `privacy-reality` under the parent families `freedom` /
 `privacy`, data-driven with a `deliveryStyle` capability flag and an admin `enabled` toggle at
-both levels) binds a **pool of per-node squads**
+both levels) binds a **pool of per-node mode groups**
 (`remnawave.modePlacement.<id>.squads`), and issuance homes each new key to the **least-loaded
 node** of that pool by node telemetry (`usersOnline` + optional realtime bandwidth, cached in
 `remnawaveNodeStats` by the healthcheck cron); the pick is persisted so tier pushes never re-home
@@ -113,7 +113,7 @@ label + description that override the member picker's translated copy per-mode w
 instance **`maxKeys` capacity caps**; the **device-limit enforcement toggle**
 (`devices.enforcementEnabled`, default OFF = unlimited-by-default) that gates every
 `hwidDeviceLimit` send, plus the **FCP-front HWID fix** — `GET /api/v1/sub/<token>` now
-forwards `x-hwid`/`x-device-os`/`x-ver-os`/`x-device-model` so panel device registration +
+forwards `x-hwid`/`x-device-os`/`x-ver-os`/`x-device-model` so backend device registration +
 enforcement work through the front, with app-compatibility gating in the connect UI; the
 **privacy-by-default** hardening (explicit Caddy `log … output discard`, `RUST_LOG` request-
 line silencing, Cap error-log/geo posture — see `docs/privacy.md`); a **Docker refresh**
@@ -130,7 +130,7 @@ reset-to-default, and URL-persisted admin filters; before that, the improvement-
 pass: an admin landing **dashboard** with a shared `GET /admin/status` and audit-log filtering,
 an admin-configurable **theme system**, **admin/passkey lifecycle** (deactivate/reactivate and
 per-passkey revoke, guarded), IaC-friendly **by-slug / by-name CRUD** with declarative
-squad↔tier binding and an **automation-token** bootstrap for the Ansible role, per-rail
+mode group↔tier binding and an **automation-token** bootstrap for the Ansible role, per-rail
 **billing readiness**, tier **duplicate**, onboarding **skeletons**, a copy sweep, and the
 **Paraglide** i18n migration; on top of the earlier launch-readiness pass: Cap captcha, W2
 rate-limit policies, W3 support ID, W4 redemption codes, i18n/RTL, and the A1–A4 plus P1/P2
@@ -150,7 +150,7 @@ Detailed companions, referenced rather than duplicated here:
 
 - [`docs/convex-self-hosting.md`](convex-self-hosting.md): self-hosting + fresh-deploy cutover runbook + env checklist.
 - [`docs/backends.md`](backends.md): proxy-backend dispatch (Convex actions) + adding a backend.
-- [`docs/servers.md`](servers.md): server management (read-only today): panel observation, the
+- [`docs/servers.md`](servers.md): server management (read-only today): backend observation, the
   non-secret caches and digests, the `/api/v1/admin/servers/` surface. Ships dormant.
 - [`docs/outline-setup.md`](outline-setup.md): registering/operating Outline servers via the admin CMS.
 - [`docs/account-number-design.md`](account-number-design.md): account-number auth design + implementation status.
@@ -261,7 +261,7 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   cron hard-deletes after the grace window.
 - **FCP-fronted subscription URL** (`GET /api/v1/sub/<token>`): the evade path hands the client an
   FCP-origin subscription URL (opaque per-sub `subToken`, rotates per key) instead of the backend
-  panel URL, so the proxy app fetches config from us — hiding the backend origin, with a short
+  backend URL, so the proxy app fetches config from us — hiding the backend origin, with a short
   User-Agent-keyed TTL cache (`subscriptions.subCache`) fronting the backend. Public/unauthenticated
   (the token is the capability); the SPA builds the URL from its own origin + the sealed `subToken`
   (`subscriptionDisplayUrl`), so no deployment-origin env is needed. Every member UI surface
@@ -286,7 +286,7 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
 ### 1.6 Admin CMS (`/api/v1/admin/*` + `src/client/routes/admin/*`): **Live**
 
 - **Dashboard** (the `/admin` landing; replaced the old `→ /admin/tiers` redirect): a health
-  strip + users-by-status + per-backend health + a billing mini-panel, all from the shared
+  strip + users-by-status + per-backend health + a billing mini-backend, all from the shared
   **`GET /api/v1/admin/status`** (`statusSummary`; scope `admin:status:read`; counts + health
   booleans only, never a secret — also consumed by the Ansible post-deploy health gate).
 - **Tiers** (CRUD + **Duplicate** — a pre-filled create; the one-default-free-per-backend
@@ -295,10 +295,10 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   membership**; backend shown; **paginated**); **Admins** (invite links + deactivate/reactivate
   - per-passkey revoke, §1.1); **API tokens** (create / reveal-once / revoke; scope **group**
     toggles); **Backend servers** (CRUD + test-connection; secret `config`/`apiUrl` stored
-    server-side, only ever returned masked); **Remnawave** (per-mode node-placement squad pools —
+    server-side, only ever returned masked); **Remnawave** (per-mode node-placement mode group pools —
     write-only UUIDs, with per-mode bound counts — + a read-only per-placement node-load
     table + the **Xray no-log hardening card**: dry-run `logging-status` / apply
-    `harden-logging` against every panel config profile; §"Xray logging privacy harden"
+    `harden-logging` against every backend config profile; §"Xray logging privacy harden"
     in `docs/backends.md`); **Billing** (per-rail config + a **readiness** check
     that flags enabled-but-misconfigured rails; §1.7); **Storage mirrors** (provider pool, §1.7);
     **Client apps** (the DB-driven recommended-client catalog — `convex/clients.ts`, `AdminClients.svelte`,
@@ -309,7 +309,7 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
     (W2); **Membership codes** (W4); **Status page** (`/admin/status` — publish/edit/
     resolve/delete incidents, curate the country × connection-mode censorship matrix,
     tune the load-band thresholds; scope `admin:servers:write`, routes
-    `/api/v1/admin/status/{page,incidents}`); App settings (incl. the **Verification** panel — `setVerification` /
+    `/api/v1/admin/status/{page,incidents}`); App settings (incl. the **Verification** backend — `setVerification` /
     `PATCH /api/v1/admin/verification`, surfaced in `HpkeVerifyModal` — and the **site
     chrome** block: the announcement banner + footer source link, `site.*` namespace in
     `convex/lib/siteConfig.ts`, `PATCH /api/v1/admin/site`, rendered by `SiteBanner.svelte`); **Audit log** (filter by action / actor / since).
@@ -317,20 +317,20 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
 …/mirror-providers/by-name/{name}`**. Each is a single keep-secret-on-blank upsert; no
   client-side id resolution. Backed by `convex/adminApi.ts` / `convex/mirrorProviders.ts`.
   Node placement is bound separately via **`PATCH …/backends/remnawave/mode-placements`**
-  (`admin:servers:write`): the role creates one squad per node and binds each connection mode's
+  (`admin:servers:write`): the role creates one mode group per node and binds each connection mode's
   pool there — per mode via full-replace `squadUuids` or the append/detach forms
   `addSquadUuids`/`removeSquadUuids` (so a node deploy adds/removes just itself; UUIDs stay
-  write-only, server-side UUID-validated). (The by-slug tier upsert no longer carries a squad
+  write-only, server-side UUID-validated). (The by-slug tier upsert no longer carries a mode group
   field — the old tier-level `remnawaveSquadUuid` bind was removed in Phase 5b; node placement
   is per connection mode.)
 
 - **Edges** (`/admin/edges`, `docs/edges.md`; scopes `admin:servers:*` for
   infrastructure, `admin:settings:*` for the `edge.*` config, `admin:edges:register` for the
-  node role's by-slug registration, confined to the token's registration boundary): relays are
-  ANY origin (a panel node, a whole backend server such as Outline, or a manual address) with
+  node role's by-slug registration, confined to the token's registration boundary): origins are
+  ANY origin (a backend node, a whole backend server such as Outline, or a manual address) with
   **listeners** (protocol / stream transport / security from a catalogue, names with
-  retire/drain, REALITY target, origin transport, a match rule for the renderer, the panel
-  inbound and the panel Host FCP owns for it); provider accounts (write-only credentials,
+  retire/drain, REALITY target, origin transport, a match rule for the renderer, the backend
+  transport and the backend Host FCP owns for it); provider accounts (write-only credentials,
   qualification gate, live inventory); edge templates; the published pool with per-listener
   template edges; adoption; provision / rotate / burn with a polled live progress view and a
   per-rotation audit trail; a persisted Host state machine (`convex/hostOps.ts`); an
@@ -348,8 +348,8 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   `Nodes | Providers | Advanced`) has a **simple face** in plain words (the nodes home with
   "Protect a node" = the guided setup runs, a per-node page, provider cards; `simple/`) and,
   under Advanced, the technical pages: the fleet dashboard (fleet tiles, server-ranked
-  attention list, readiness), the **manual setup** driven entirely by the relay-scoped
-  `setup-status` endpoint, per-relay pages (edges, listeners, rotations, probes, timeline,
+  attention list, readiness), the **manual setup** driven entirely by the origin-scoped
+  `setup-status` endpoint, per-origin pages (edges, listeners, rotations, probes, timeline,
   quarantine resolver), the per-account page, templates, probes and settings, on top
   of the operator endpoints `setup-status`, `test-provision` (first edge from a tested but
   unqualified account), `preflight` (read-only dry run), `attention`, `timeline`, `quarantine`,
@@ -379,7 +379,7 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   `userId`-bound order (no payer PII stored) → processor invoice → `/api/webhooks/<processor>`
   verifies + dedupes + grants exactly once via `applyMembership`. Catalog/toggles in the
   `appSettings` `billing.*` namespace, edited in Admin → Billing. The SPA `UpgradeMembership`
-  panel + `/account?order=<ref>` polling complete the loop. **Gift purchases**: the same
+  backend + `/account?order=<ref>` polling complete the loop. **Gift purchases**: the same
   checkout takes `orderKind:'gift'` + a `quantity` (1–50) and mints that many shareable,
   hash-only redemption codes bound to the buyer; the plaintexts reveal once
   (`GiftRevealModal`) and the `billing-gift-reveal-sweep` cron clears any un-acknowledged
@@ -408,7 +408,7 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   `publicConfig billing.donation.{freeUsersHelped,history}` (GB/user counts only — dollar totals
   are never public) and the member's own `donatedCentsTotal`/`donationCount` on the account view;
   rendered as dithered charts (`DitherChart.svelte`, hand-rolled Bayer-dither canvas, no chart
-  lib) in the account impact panel (`MemberImpact.svelte`) and a home-page impact section.
+  lib) in the account impact backend (`MemberImpact.svelte`) and a home-page impact section.
 - **Public network-status page** (`/status` + `GET /api/v1/status`, `convex/statusPage.ts` +
   `convex/lib/statusPage.ts` + `convex/lib/loadBands.ts`): per-location online bits +
   **coarse load bands** (`quiet/busy/crowded` — never raw user counts, the same
@@ -431,7 +431,7 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   (`backendServers.locationLat/Lng`, city-level, set/cleared as a pair — the label
   already names the city publicly), editable in the CMS server form and the by-slug
   upsert (Ansible can set them), projected as `coords` on `publicConfig.locations`.
-  Fail-soft: no coords anywhere → the panel doesn't render (old single-column layout).
+  Fail-soft: no coords anywhere → the backend doesn't render (old single-column layout).
   **Live.**
 - **Referral program** (`convex/referrals.ts` + `convex/lib/{referralCode,referralConfig}.ts`):
   word-of-mouth growth. Every member gets a shareable `FSR-XXXX-XXXX` code
@@ -451,7 +451,7 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
 - **Billing webhook seam** (legacy/ops): `POST /api/webhooks/billing` (`convex/webhooks.ts`),
   HMAC-SHA256-verified (`WEBHOOK_SIGNING_SECRET`) + deduped by `eventId` (`webhookEvents`
   table) → maps `{accountId, tierSlug, expiresAtMs?}` onto `lifecycle.setMembership`. Kept as
-  a generic inbound entitlement seam alongside the self-service rails above. The dedupe row is
+  a generic transport entitlement seam alongside the self-service rails above. The dedupe row is
   a **status-tracked claim** (`pending → processed | failed`, shared with the processor
   webhooks): a grant that throws leaves the event retryable instead of silently ACKing the
   sender's retry as a duplicate. **Live.**
@@ -460,7 +460,7 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   (ownership-checked against their own key, confirmation-gated, rate-limited via the
   `account.device-revoke` policy) instead of the nuclear full-key regenerate. Remnawave only
   (Outline has no device concept → typed 409). **Live.**
-- **Umami analytics relay** (`convex/lib/{analyticsConfig,umami}.ts` + `convex/analytics.ts` +
+- **Umami analytics origin** (`convex/lib/{analyticsConfig,umami}.ts` + `convex/analytics.ts` +
   `src/client/lib/analytics.ts` + `PageviewBeacon.svelte`; `docs/privacy.md` §6): anonymous
   pageview counts relayed **server-side** to an operator-run Umami — the SPA loads no Umami
   script and never learns the Umami host (`publicConfig.analytics` = the enabled bit only).
@@ -587,13 +587,13 @@ Convex runs these natively (no Workers triggers, no node-cron):
   unknown provider outcome by discovery, refresh provider health, drain → destroy with a
   claimed reverse-order ledger walk, pool upkeep (config-gated), finish origin deletes.
 - `edge-probe` (5 min): budgeted reachability probes of every probe target (published edges,
-  opted-in relay nodes, enabled custom targets) from the configured countries (no-op unless
+  opted-in origin nodes, enabled custom targets) from the configured countries (no-op unless
   `edge.probe.enabled`). `retention-edge-probes` (daily) prunes settled runs after two weeks.
-- `edge-block-detector` (5 min): per-relay scoring of attributed reports, node load and probe
+- `edge-block-detector` (5 min): per-origin scoring of attributed reports, node load and probe
   verdicts; automatic rotation only with edge-level evidence and every gate open.
 
 Every sweep stamps a per-cron heartbeat (`convex/cronHeartbeat.ts`, `cronHeartbeats` table,
-stamped at start) surfaced as a freshness panel on the admin dashboard.
+stamped at start) surfaced as a freshness backend on the admin dashboard.
 
 ### 1.9 Frontend SPA (Svelte 5 runes): **Live**
 
@@ -637,7 +637,7 @@ the companion docs. Sizes: S/M/L.
 | **Paid cross-backend switch — portal tier model**: the linkage MECHANISM shipped (`tiers.peerTierId` + `tiers.getPeerTier`; `account.switchBackend` 409s only when NO peer tier is linked, with an actionable message). What remains is the linked-tier model design once a billing portal exists, and actually linking paid peers in the CMS.                                                                                                                                                                                                                                                                                                                                     | M    | `convex/account.ts`                      |
 | **Outline WSS `accessUrl` / `ssconf://` contract** (latent): needs the FreeSocks Outline fork's real WSS create-key response shape before any WSS server is routed to.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | M    | `docs/outline-setup.md`                  |
 | **Status-page hardening follow-ups** (deferred by design): auto-derived incidents from healthcheck flapping (too noisy — incidents are operator-published only), public uptime %/SLA math (needs durable health history we deliberately don't keep), and automated censorship-matrix probing (needs in-country vantage points).                                                                                                                                                                                                                                                                                                                                                    | M    | `convex/lib/statusPage.ts`               |
-| ~~**Remnawave 3.x port**~~ — **DONE** (2026-09-01): the provider speaks both the 2.x (`uuid`) and 3.x (numeric `id`) contracts by id shape; numeric ids are stored instance-scoped (`<backendServerId>:<id>`, `convex/lib/backendUserId.ts`); the operator-run `backendServers:migrateRemnawaveUserIds` re-keys a panel's existing subscriptions after ITS upgrade (runbook: `docs/backends.md` § "Upgrading a panel to Remnawave 3.x"). What remains is operational: upgrading the real panels one at a time and running the migration per panel.                                                                                                                                 | —    | `docs/backends.md`                       |
+| ~~**Remnawave 3.x port**~~ — **DONE** (2026-09-01): the provider speaks both the 2.x (`uuid`) and 3.x (numeric `id`) contracts by id shape; numeric ids are stored instance-scoped (`<backendServerId>:<id>`, `convex/lib/backendUserId.ts`); the operator-run `backendServers:migrateRemnawaveUserIds` re-keys a backend's existing subscriptions after ITS upgrade (runbook: `docs/backends.md` § "Upgrading a backend to Remnawave 3.x"). What remains is operational: upgrading the real backends one at a time and running the migration per backend.                                                                                                                         | —    | `docs/backends.md`                       |
 | **Client application certification evidence**: the automated suite proves subscription formats for every catalogued client, tunnels for the reference sing-box/Mihomo engines, and import/refresh for the packaged SFL Linux app. Every other app (Hiddify, Karing, v2rayNG/N, the Clash family, Throne, Shadowrocket, Anywhere, Outline) needs device evidence recorded in `tests/compat/application-evidence.json` for `scripts/compat/certify.ts` to pass (30-day expiry, exact FCP commit). Operational: provision the Xfce VM runners and flip `CLIENT_COMPAT_VM_RUNNERS`; create the canary subscription for `FCP_COMPAT_SMOKE_TARGETS`.                                     | M    | `docs/client-compatibility.md`           |
 | **Admin referral drill-down**: referral events are audit-visible today (`referral.*`); a per-user referral view in the CMS is a follow-up if operators want it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | S    | `convex/referrals.ts`                    |
 | ~~**Deferred P2 perf/scale**~~ — **both CLOSED** (2026-07-18): (a) all daily sweeps drain-chain pages via `runAfter` until a partial page (retention.ts pattern, bounded at 50 rounds) — no table can outgrow its daily page; (b) `appSettings.resolved` is per-key indexed reads (no table scan), which also can't load the ratelimit/billing namespaces on hot paths.                                                                                                                                                                                                                                                                                                            | —    | `retention.ts`, `appSettings.ts`         |
@@ -653,7 +653,7 @@ the companion docs. Sizes: S/M/L.
 
 | Symbol / artifact                                      | Location                                                                                                                                                              | Why it has no (full) caller                                                                                                                                                                                          | Disposition                   |
 | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
-| `webhooks.ingest` billing seam                         | `convex/webhooks.ts`, `convex/http.ts`                                                                                                                                | The single inbound point for the future billing portal; HMAC + dedupe + `setMembership` are all live, but no portal calls it today.                                                                                  | **Keep** (seam ready)         |
+| `webhooks.ingest` billing seam                         | `convex/webhooks.ts`, `convex/http.ts`                                                                                                                                | The single transport point for the future billing portal; HMAC + dedupe + `setMembership` are all live, but no portal calls it today.                                                                                | **Keep** (seam ready)         |
 | Entire **Outline** subsystem                           | `convex/backends.ts` (outline branches), `convex/lib/backends/outline.ts`, `convex/backendServers.ts` (generic pool; Outline rows live there), admin server routes/UI | Fully wired but unreachable until `outline.enabled=true` + a server is registered. Within it: `prometheusUrl` is reserved. (Pool scoring now uses real `lastHealthRttMs` — the old `latency*0` placeholder is gone.) | **Keep** (dormant)            |
 | S3 mirroring (`storage.ts`)                            | `convex/storage.ts`, `convex/mirrorProviders.ts`, `convex/lib/issuance.ts`                                                                                            | Skipped entirely unless ≥1 active mirror provider is configured (admin CMS → Storage mirrors).                                                                                                                       | **Keep** (dormant)            |
 | `appState` table                                       | `convex/schema.ts`                                                                                                                                                    | Generic singleton key/value (issuance lock, the `stats:userCounts` user-status counter, tier-propagation cursors).                                                                                                   | **Keep** (live + scaffolding) |
@@ -682,7 +682,7 @@ deployer container (`docs/beta-deploy.md` § One-off functions).
 Traffic-scaled tables (never `collect()` them without a selective index range): `users`,
 `sessions`, `subscriptions`, `tierHistory`, `auditLog`, `billingOrders`, `webhookEvents`,
 `redemptionCodes`, `referrals`, `rateLimits`, `replayGuard`, the WebAuthn challenge tables.
-Relay tables (`relays`, `edges`, `edgeRotations`, …) are operator-scale and may be
+Origin tables (`relays`, `edges`, `edgeRotations`, …) are operator-scale and may be
 collected; `probeRuns` grows with the probe budget and `relaySamples` with the 5-min detector
 cadence, so both are read through indexed ranges (`by_target_requested`, `by_relay_at`) and
 pruned (probe runs after 14 days, samples after 7 days).

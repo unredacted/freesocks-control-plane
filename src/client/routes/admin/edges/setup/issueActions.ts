@@ -68,7 +68,7 @@ export function issueLink(code: string, ctx: IssueLinkContext): IssueLink | null
     case 'relay_disabled':
     case 'mirrors_unvalidated': {
       const href = relayTab('overview');
-      return href ? { label: 'Open the relay', href } : null;
+      return href ? { label: 'Open the origin', href } : null;
     }
     case 'no_publishable_edge':
     case 'provision_failed': {

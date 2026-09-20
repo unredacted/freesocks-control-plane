@@ -138,7 +138,7 @@ describe('audit.record (integration, via the real mutation)', () => {
 });
 
 describe('AUDIT_PAYLOAD_ALLOWLIST coverage', () => {
-  test('every relay-edge audit action (edge.* / probe.* / relay.* / admin.edge.*) written by the backend has an allowlist entry (the allowlist is fail-closed: a missing entry silently drops the payload)', () => {
+  test('every origin-edge audit action (edge.* / probe.* / origin.* / admin.edge.*) written by the backend has an allowlist entry (the allowlist is fail-closed: a missing entry silently drops the payload)', () => {
     const used = new Set<string>();
     for (const text of Object.values(sources)) {
       // `action: '<dotted.name>'` literals in the edge namespaces: every one is

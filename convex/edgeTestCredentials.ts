@@ -3,16 +3,16 @@
  * whose OWN subscription body the test link and the empty-node rehearsal are
  * built from.
  *
- *  - Remnawave: the relay's qualification credential, through
- *    `relayQualification.ensure` (a persisted, idempotent mint on the relay's
+ *  - Remnawave: the origin's qualification credential, through
+ *    `relayQualification.ensure` (a persisted, idempotent mint on the origin's
  *    placement; never a second user). No row is written here: that credential
- *    lives with the relay and goes when the relay goes.
+ *    lives with the origin and goes when the origin goes.
  *  - Outline: a temporary access key through the provider's `issueUser`. The
  *    `edgeTestCredentials` row is written BEFORE the create (`backendUserId`
  *    absent until issuance is observed) and is a DURABLE OBLIGATION: the
  *    reconcile sweep removes expired or released keys through `deleteUser`
  *    with bounded retries, independently of any setup run. Closing the sheet,
- *    cancelling the run and a failed panel delete all leave a row the sweep
+ *    cancelling the run and a failed backend delete all leave a row the sweep
  *    finishes; a delete that keeps failing is `failed` and surfaces as
  *    attention `test_key_cleanup`. A rehearsal on an EMPTY Outline server has
  *    no credential path (`use_manual_setup`); an Outline server with members
@@ -61,7 +61,7 @@ export interface CredentialFetchRef {
 export type EnsureCredentialResult =
   | {
       ok: true;
-      /** The temporary row (Outline); null when the relay's qualification credential is used. */
+      /** The temporary row (Outline); null when the origin's qualification credential is used. */
       credentialId: Id<'edgeTestCredentials'> | null;
       source: 'qualification' | 'temporary';
       fetchRef: CredentialFetchRef;
@@ -116,7 +116,7 @@ export const context = internalQuery({
 });
 
 /**
- * Who a credential row belongs to, for the audit trail: the relay's slug or
+ * Who a credential row belongs to, for the audit trail: the origin's slug or
  * the enrolled node's name (a direct node's isolated test link,
  * docs/servers.md "Node lifecycle").
  */
@@ -151,7 +151,7 @@ export const insertPending = internalMutation({
     const server = await ctx.db.get(a.backendServerId);
     if (!server) throw new ConvexError({ code: 'backend.not_found' });
     if (!!a.relayId === !!a.nodeIntentId)
-      throw new ConvexError({ code: 'validation', message: 'One owner: a relay or a node' });
+      throw new ConvexError({ code: 'validation', message: 'One owner: an origin or a node' });
     const now = Date.now();
     return ctx.db.insert('edgeTestCredentials', {
       relayId: a.relayId,
@@ -220,8 +220,8 @@ export const release = internalMutation({
 
 /**
  * The operator closed or finished a test card: the temporary credential behind
- * its link expires now (the sweep removes it). Scoped to the edge's relay so a
- * caller cannot expire another relay's credential by id.
+ * its link expires now (the sweep removes it). Scoped to the edge's origin so a
+ * caller cannot expire another origin's credential by id.
  */
 export const releaseForEdge = internalMutation({
   args: { edgeId: v.id('edges'), credentialId: v.id('edgeTestCredentials') },
@@ -251,7 +251,7 @@ export const releaseForIntent = internalMutation({
     let outstanding = 0;
     for (const r of rows) {
       // A row whose cleanup exhausted its retries still names a user that may
-      // exist on the panel: outstanding until an operator retries or resolves it.
+      // exist on the backend: outstanding until an operator retries or resolves it.
       if (r.removal === 'pending' || r.removal === 'failed') outstanding++;
       if (r.removal !== 'pending' || r.expiresAt <= now) continue;
       await ctx.db.patch(r._id, { expiresAt: now, updatedAt: now });
@@ -261,7 +261,7 @@ export const releaseForIntent = internalMutation({
   },
 });
 
-/** Every pending credential of a relay expires now (a cancelled run, a deleted relay). */
+/** Every pending credential of an origin expires now (a cancelled run, a deleted origin). */
 export const releaseForRelay = internalMutation({
   args: { relayId: v.id('relays') },
   handler: async (ctx, { relayId }) => {
@@ -282,14 +282,14 @@ export const releaseForRelay = internalMutation({
 
 /**
  * Ensure a credential whose body the caller can fetch. Remnawave reuses the
- * relay's qualification credential (minted on demand, idempotent); Outline
+ * origin's qualification credential (minted on demand, idempotent); Outline
  * gets a temporary key for a test link and no rehearsal credential at all.
  */
 export const ensure = internalAction({
   args: { relayId: v.id('relays'), purpose: purposeValidator },
   handler: async (ctx, { relayId, purpose }): Promise<EnsureCredentialResult> => {
     const c = await ctx.runQuery(internal.edgeTestCredentials.context, { relayId, purpose });
-    if (!c) throw new ConvexError({ code: 'not_found', message: 'Relay has no panel' });
+    if (!c) throw new ConvexError({ code: 'not_found', message: 'Origin has no backend' });
 
     if (c.caps.userLookupByUsername) {
       // A stored credential from before the subscription locator was kept is

@@ -1,16 +1,16 @@
 /// <reference types="vite/client" />
 /**
  * Server-name families: curating names against a target, qualifying them, and
- * binding a family to a panel inbound.
+ * binding a family to a backend transport.
  *
  *  - dormant by default: nothing is qualified and nothing can be bound;
  *  - an import answers a verdict per line; a name belongs to one family, and a
  *    burned name is never offered again, by any family;
  *  - a name that stops qualifying is suspended and comes back by itself;
- *  - a family binds only to a REALITY inbound whose target IS the family's
- *    target, and everything the inbound already lists is recorded as seen, so
+ *  - a family binds only to a REALITY transport whose target IS the family's
+ *    target, and everything the transport already lists is recorded as seen, so
  *    none of it can ever serve as a witness of a new generation;
- *  - a bound inbound is no longer edited by hand;
+ *  - a bound transport is no longer edited by hand;
  *  - audit rows carry slugs and counts, never a hostname.
  *
  * Fixtures use RFC 5737 addresses and `*.example` names only.
@@ -62,7 +62,7 @@ async function seed() {
       headers: { cookie, 'content-type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-  // What Servers last read from the panel: one REALITY inbound and one TLS inbound.
+  // What Servers last read from the backend: one REALITY transport and one TLS transport.
   await t.run((ctx) =>
     ctx.db.insert('panelProfiles', {
       backendServerId: serverId,
@@ -222,8 +222,8 @@ describe('qualification', () => {
   });
 });
 
-describe('binding a family to an inbound', () => {
-  test('refused while dormant, on a non-REALITY inbound, and when the targets differ', async () => {
+describe('binding a family to a transport', () => {
+  test('refused while dormant, on a non-REALITY transport, and when the targets differ', async () => {
     const { call } = await seed();
     await call('POST', 'families', family);
     const bind = (slug: string, inboundTag: string) =>
@@ -242,7 +242,7 @@ describe('binding a family to an inbound', () => {
     );
   });
 
-  test('binding records every name the inbound already lists as SEEN; one family per inbound', async () => {
+  test('binding records every name the transport already lists as SEEN; one family per transport', async () => {
     const { t, call } = await seed();
     await call('POST', 'families', family);
     await call('PATCH', 'config', { enabled: true });
@@ -275,7 +275,7 @@ describe('binding a family to an inbound', () => {
     expect((await call('DELETE', 'families/fam-a')).status).toBe(200);
   });
 
-  test('a bound inbound is no longer edited by hand', async () => {
+  test('a bound transport is no longer edited by hand', async () => {
     const { t, serverId, call } = await seed();
     await call('POST', 'families', family);
     await call('PATCH', 'config', { enabled: true });
@@ -283,7 +283,7 @@ describe('binding a family to an inbound', () => {
     await t.mutation(internal.serverAdmin.patchConfig, { patch: { 'manage.enabled': true } });
     await markBackendSetUp(t, serverId);
     await expect(
-      t.mutation(internal.panelWrites.requestProfilePatch, {
+      t.mutation(internal.backendWrites.requestProfilePatch, {
         backendServerId: serverId,
         profileUuid: PROFILE,
         ops: [{ op: 'setRealityServerNames', inboundTag: 'REALITY_IN', names: ['x.example'] }],
@@ -296,7 +296,7 @@ describe('binding a family to an inbound', () => {
 });
 
 describe('judging names per country', () => {
-  test('marks are recorded, copied onto the relay listeners that carry the name, and the renders move on', async () => {
+  test('marks are recorded, copied onto the origin listeners that carry the name, and the renders move on', async () => {
     const { t, call } = await seed();
     const { registerRelay, realityListener } = await import('./lib/edges/testing/fixtures');
     const { relayId, listenerIds } = await registerRelay(t, {

@@ -1,7 +1,7 @@
 /**
  * Per-user node pinning for Remnawave subscriptions.
  *
- * The panel serves a squad-wide subscription (every node's Hosts) as a list of
+ * The backend serves a mode group-wide subscription (every node's Hosts) as a list of
  * proxy links. Serving it verbatim exposes the whole fleet's endpoints to
  * every user. This module filters that content down to ONE node per
  * subscription, chosen by rendezvous hashing on (pinKey, nodeName):
@@ -22,15 +22,15 @@
  *
  * Three content shapes are understood:
  *   - link lists (optionally base64-wrapped) — filtered line by line;
- *   - sing-box JSON configs (what the panel serves to sing-box User-Agents) —
+ *   - sing-box JSON configs (what the backend serves to sing-box User-Agents) —
  *     outbounds are tagged with the same Host remarks, so we drop the other
  *     nodes' outbounds and prune them from selector/urltest groups;
  *   - Clash / Mihomo YAML — `proxies[].name` carries the same remarks; the
  *     other nodes' proxies are dropped and pruned from `proxy-groups`.
  *
- * A body that carries exactly ONE node (the real topology: one squad per node)
+ * A body that carries exactly ONE node (the real topology: one mode group per node)
  * is returned verbatim WITH that node reported, so the caller can record the
- * pin and run relay rendering for it. Fail-open everywhere else: unknown
+ * pin and run origin rendering for it. Fail-open everywhere else: unknown
  * content shape, unparseable lines, or zero nodes come back verbatim with
  * `node: null`.
  */
@@ -40,9 +40,9 @@ import { mentionsAny } from './edges/render/refs';
 
 const PROXY_LINE_RE = /^(vless|vmess|trojan|ss|ssr|hy2|hysteria2|tuic):\/\//i;
 // Known transport suffixes the role appends to Host remarks (xhttp removed
-// 2026-07-04 but kept here so legacy remarks still parse), plus the relay-edge
-// template Host remark `<node>-relay-<slotKey>` (convex/lib/edges/hosts.ts):
-// a node's relay templates must pin WITH the node, never pass through to all.
+// 2026-07-04 but kept here so legacy remarks still parse), plus the origin-edge
+// template Host remark `<node>-origin-<slotKey>` (convex/lib/edges/hosts.ts):
+// a node's origin templates must pin WITH the node, never pass through to all.
 const TRANSPORT_SUFFIX_RE = /-(ws|reality|xhttp)(-[0-9a-f]{6})?$|-relay-[a-z0-9]{1,16}$/i;
 
 /** Extract the node name from a proxy link's remark, or null if unparseable. */
@@ -60,7 +60,7 @@ export function nodeNameFromLink(line: string): string | null {
 }
 
 /** Extract the node name from a sing-box outbound tag / Clash proxy name (the
- *  panel uses the Host remark verbatim), or null when the name carries no
+ *  backend uses the Host remark verbatim), or null when the name carries no
  *  transport suffix (selector/urltest groups, direct/block/dns outbounds). */
 export function nodeNameFromTag(tag: string): string | null {
   const node = tag.replace(TRANSPORT_SUFFIX_RE, '');
@@ -116,7 +116,7 @@ export interface PinResult {
 }
 
 /**
- * Filter squad-wide subscription content down to the lines of the single node
+ * Filter mode group-wide subscription content down to the lines of the single node
  * `pinKey` maps to. `excludeNode` (the node the key was PREVIOUSLY pinned to,
  * e.g. before a regenerate) is avoided when others exist, so a regenerated
  * key lands on a different node. Returns the (possibly re-encoded) content
@@ -230,7 +230,7 @@ function chooseAndDrop(
 }
 
 /**
- * Pin a sing-box JSON config to one node. The panel's sing-box template emits
+ * Pin a sing-box JSON config to one node. The backend's sing-box template emits
  * one outbound per Host, tagged with the Host remark (the same names the link
  * list carries), plus selector/urltest groups whose `outbounds` arrays list
  * those tags. We keep the chosen node's outbounds, drop the rest, and prune
@@ -291,7 +291,7 @@ function pinSingboxConfig(trimmed: string, pinKey: string, excludeNode?: Exclude
  * group (or proxy) names. Same contract as the sing-box pinner: keep the chosen
  * node's proxies, prune the others from every group, and fail open (null) on
  * an empty group or a surviving reference. Comments are lost in the YAML round
- * trip (the panel's template comments are operator notes, not client input).
+ * trip (the backend's template comments are operator notes, not client input).
  */
 function pinClashConfig(trimmed: string, pinKey: string, excludeNode?: ExcludeNodes): ConfigPin {
   let doc: unknown;

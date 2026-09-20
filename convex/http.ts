@@ -124,8 +124,8 @@ function issuanceErrorResponse(err: unknown, requestId: string): Response {
       503,
     );
   }
-  // Multi-panel deploy whose pool squads aren't attributable to a panel yet:
-  // issuing would mint a (squad, wrong-panel) dead key, so issuance refuses
+  // Multi-backend deploy whose pool mode groups aren't attributable to a backend yet:
+  // issuing would mint a (mode group, wrong-backend) dead key, so issuance refuses
   // loudly (retryable — the stats cron attributes within minutes).
   if (code === 'backend.placement_unresolved') {
     return errorJson(
@@ -256,16 +256,16 @@ interface SubCacheEntry {
   ua: string;
   at: number;
   // Edge-render cache token (edgeRender.epochFor): `<bindingVersion>:<epoch>`
-  // for the place the body was rendered for while a relay covers it, null when
-  // it was served as the panel sent it (no relay). A hit is only valid while
+  // for the place the body was rendered for while an origin covers it, null when
+  // it was served as the backend sent it (no origin). A hit is only valid while
   // the current token is identical, so a pool/switch/policy change re-renders
   // within one request instead of one TTL.
   relay?: string | number | null;
   /** The member's own stored country answer this body was rendered for; never an inferred one. */
   region?: string | null;
-  // The epoch the body was actually RENDERED against (relay endpoints applied
+  // The epoch the body was actually RENDERED against (origin endpoints applied
   // or template entries dropped), null when the render failed open and the
-  // body is the panel's. Only this is stamped on the subscription: a
+  // body is the backend's. Only this is stamped on the subscription: a
   // passthrough body says nothing about which pool the member received.
   renderedEpoch?: number | null;
 }
@@ -278,7 +278,7 @@ interface SubCacheEntry {
  *  per User-Agent, so the public path MUST send `Vary: User-Agent` or a shared
  *  cache cross-serves the first fetcher's format (Clash vs v2ray) to everyone on
  *  the token. An HWID (device-specific) request is `private, no-store` — each
- *  device must reach the panel to register + get its own body. */
+ *  device must reach the backend to register + get its own body. */
 function subscriptionResponse(
   entry: { content: string; contentType: string; headers?: Record<string, string> },
   opts?: { hwid?: boolean },
@@ -286,9 +286,9 @@ function subscriptionResponse(
   const headers: Record<string, string> = {
     'content-type': entry.contentType || 'text/plain',
     ...(entry.headers ?? {}),
-    // The panel legitimately returns an HTML landing page for browser UAs, and
+    // The backend legitimately returns an HTML landing page for browser UAs, and
     // this route serves it SAME-ORIGIN with the SPA + admin CMS. Sandbox it so
-    // panel-injected markup can never execute scripts on the FCP origin
+    // backend-injected markup can never execute scripts on the FCP origin
     // (supply-chain XSS channel), and stop content-type sniffing. (Review B-F2.)
     'content-security-policy': "sandbox; default-src 'none'",
     'x-content-type-options': 'nosniff',
@@ -441,7 +441,7 @@ http.route({
   }),
 });
 
-// Server-side analytics relay: the SPA posts a tiny anonymous pageview beacon
+// Server-side analytics origin: the SPA posts a tiny anonymous pageview beacon
 // and FCP forwards it to the operator's self-hosted Umami (docs/privacy.md).
 // No Umami script is ever loaded and the Umami HOST NEVER REACHES A CLIENT
 // (publicConfig exposes only `analytics.enabled`). Anonymous by construction:
@@ -877,7 +877,7 @@ http.route({
     const member = await resolveMember(ctx, req, 'account:read');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
     // Per-user throttle: getAccountView makes a LIVE backend getUser, so open
-    // tabs × polling would otherwise scale panel QPS linearly.
+    // tabs × polling would otherwise scale backend QPS linearly.
     const rl = await ctx.runMutation(internal.rateLimits.enforce, {
       policyKey: 'account.read',
       subject: member.userId,
@@ -922,7 +922,7 @@ http.route({
 
 // Aggregate usage trend for the member's key (last ~30 days). Non-secret member
 // stats, read live from the backend and NEVER persisted; unsealed (TLS + PoP).
-// Lazy — the SPA calls this only when the member opens the usage panel, so it
+// Lazy — the SPA calls this only when the member opens the usage backend, so it
 // doesn't add a second live backend call to the main /account load. Degrades to
 // `{ usage: null }` for backends without usage history (Outline) or on any error.
 http.route({
@@ -932,7 +932,7 @@ http.route({
     const member = await resolveMember(ctx, req, 'account:read');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
     // Per-user throttle: every call is a live backend bandwidth-stats fetch with
-    // no cache, so an unthrottled member hot-loop scales panel QPS linearly.
+    // no cache, so an unthrottled member hot-loop scales backend QPS linearly.
     const rl = await ctx.runMutation(internal.rateLimits.enforce, {
       policyKey: 'account.usage',
       subject: member.userId,
@@ -1000,7 +1000,7 @@ http.route({
 });
 
 // FCP-fronted subscription URL (the evade delivery path): the member's proxy app
-// fetches its config from THIS origin instead of the backend panel, so the backend
+// fetches its config from THIS origin instead of the backend backend, so the backend
 // origin is never exposed and we gain a cache/control point. PUBLIC + unauthenticated
 // — possession of the 128-bit `subToken` IS the capability, exactly like the backend
 // subscription URL it replaces (a proxy app can't do the HPKE reveal-leg). A small
@@ -1063,13 +1063,13 @@ http.route({
 
     const now = Date.now();
     // Truncate the UA: it's the cache key, so an unbounded UA is an unbounded
-    // cache-bypass amplification vector (each distinct UA = a live panel
+    // cache-bypass amplification vector (each distinct UA = a live backend
     // fetch). 256 chars covers every real proxy-app UA. (Review B-F1.)
     const ua = (req.headers.get('user-agent') ?? '').slice(0, 256);
     // HWID headers are forwarded ONLY when device-limit enforcement is on
-    // (Review B-F1): with the master toggle off FCP never sends a panel-side
+    // (Review B-F1): with the master toggle off FCP never sends a backend-side
     // hwidDeviceLimit, so forwarding would only REGISTER arbitrary devices
-    // panel-side (the stuffing vector) with zero enforcement benefit. Values
+    // backend-side (the stuffing vector) with zero enforcement benefit. Values
     // are length-capped like the member device-revoke route.
     const settings = await ctx.runQuery(internal.appSettings.resolved, {});
     const hwidEnabled = settings['devices.enforcementEnabled'] === true;
@@ -1083,7 +1083,7 @@ http.route({
     const hasHwid = 'x-hwid' in hwidHeaders;
     const cached = hasHwid ? [] : parseSubCache(sub.subCache);
     // Edge-required delivery (docs/edges.md): the cache token for this key's
-    // resolved place (`<bindingVersion>:<epoch>` while a relay covers it, null
+    // resolved place (`<bindingVersion>:<epoch>` while an origin covers it, null
     // otherwise), compared against the token stored on the entry. Only bodies
     // that PASSED the delivery policy are ever cached, so a hit is safe. The
     // same read answers whether names are judged per country at that place.
@@ -1128,7 +1128,7 @@ http.route({
     // format (the same invariant the fresh path enforces). (Review #11.)
     // …and its edge-render token must still be current: a body rendered before
     // a rotation/burn/unpublish carries a removed edge and must never be served
-    // as a fallback, however long the panel stays down.
+    // as a fallback, however long the backend stays down.
     const stale =
       (useCache
         ? cached.find(
@@ -1153,7 +1153,7 @@ http.route({
       // the token `epochFor` computes from `sub.pinnedNode` on the next request
       // is for the same node the body was rendered for). The pinner reports a
       // node for every known body shape — a single-node body included, which
-      // is the real topology (one squad per node) — so the fallback to the
+      // is the real topology (one mode group per node) — so the fallback to the
       // stored pin only covers unknown shapes.
       const node = fetched.pinnedNode ?? sub.pinnedNode;
       if (fetched.pinnedNode && fetched.pinnedNode !== sub.pinnedNode) {
@@ -1164,7 +1164,7 @@ http.route({
       }
       // Edge-required delivery: the policy is judged against the place the body
       // ACTUALLY resolved to (the node it was pinned to, else the whole server),
-      // after the fetch. A place no relay covers passes through; a covered
+      // after the fetch. A place no origin covers passes through; a covered
       // place is served a rendered body that passed every check or an
       // unavailable response (503 keeps the client's last config; an empty 200
       // would wipe it), never the origin body.
@@ -1261,7 +1261,7 @@ http.route({
         ...(located.source === 'override' ? { region: located.where.country } : {}),
       };
       // Don't cache an hwid'd response — the next device (different hwid, same
-      // UA) must reach the panel too, for its own registration + enforcement.
+      // UA) must reach the backend too, for its own registration + enforcement.
       const cacheable = bodyIsCacheable(located.source, countryPolicy.sensitive);
       if (!hasHwid && cacheable) {
         await ctx.runMutation(internal.subscriptions.writeContentCache, {
@@ -1270,7 +1270,7 @@ http.route({
         });
       }
       // Every successful delivery is stamped (miss AND hwid'd path) — the
-      // relay layer reads it as "has this key seen post-rotation content", and
+      // origin layer reads it as "has this key seen post-rotation content", and
       // the epoch it was rendered against as "has it seen the current pool".
       await ctx.runMutation(internal.subscriptions.markDelivered, {
         subscriptionId: sub._id,
@@ -1282,7 +1282,7 @@ http.route({
       // An inferred country shaped this body: it is this member's, here, now.
       return subscriptionResponse(entry, { hwid: hasHwid || !cacheable });
     } catch (err) {
-      // A HWID rejection (panel 404 for a device-limited key fetched without a
+      // A HWID rejection (backend 404 for a device-limited key fetched without a
       // valid x-hwid) is authoritative — pass 404 through, and never serve a
       // stale body for it (that would defeat the device limit).
       if (
@@ -1594,7 +1594,7 @@ http.route({
     if (!isReportIssueReason(body.reason)) {
       return errorJson('validation', 'unknown reason', 400);
     }
-    // Relay detector dedupe mark: HMAC(pepper, member). Time-independent — the
+    // Origin detector dedupe mark: HMAC(pepper, member). Time-independent — the
     // mark row's own expiry (first report + detector window) is the sliding
     // window, so a report either side of an aligned bucket edge cannot count
     // twice. The member id never reaches the mark row or the telemetry row.
@@ -1702,7 +1702,7 @@ http.route({
 // Intentionally UNSEALED (no envelope.ts policy entry; the `sealed()` wrapper is
 // a plaintext pass-through here and only keeps the route's error handling
 // uniform). The body carries a hwid only: a device identifier the proxy client
-// already reports to the panel over its own TLS, not a credential, a config or
+// already reports to the backend over its own TLS, not a credential, a config or
 // a bearer code, so a passive CDN gains nothing from it. PoP-signed like every
 // member route. Listed in convex/sealedRoutePolicy.test.ts.
 http.route({
@@ -3192,7 +3192,7 @@ http.route({
   }),
 });
 
-// --- admin: analytics relay (self-hosted Umami) ------------------------------
+// --- admin: analytics origin (self-hosted Umami) ------------------------------
 // The umamiUrl/websiteId are ADMIN-READABLE here but never public (publicConfig
 // projects only the enabled bit). The PATCH pre-computes the truncated URL hash
 // for the audit trail here (Web Crypto is action-side only) so a repoint of the
@@ -3983,11 +3983,11 @@ http.route({
 // --- admin: Remnawave-specific config (namespaced /admin/remnawave/*) --------
 // Backend-specific surface, kept OFF the generic admin API so FCP stays
 // backend-agnostic. Reuses the admin:servers:* scopes (same class as
-// backend-servers). Squad UUIDs are write-only; node load is read-only.
+// backend-servers). Mode group UUIDs are write-only; node load is read-only.
 
 // GET /api/v1/admin/remnawave/node-stats: per-placement node-load snapshots (the
 // node-placement picker's input), read-only for the admin CMS. Placement handles
-// (squad UUIDs) are shown — the admin set them; they never reach public config.
+// (mode group UUIDs) are shown — the admin set them; they never reach public config.
 http.route({
   path: '/api/v1/admin/remnawave/node-stats',
   method: 'GET',
@@ -3996,7 +3996,7 @@ http.route({
     return json({
       nodes: await ctx.runQuery(internal.remnawaveNodes.listNodeStats, {}),
       // Pool SIZES per mode (never the UUIDs) — the placement editor's
-      // "N squads bound" feedback.
+      // "N mode groups bound" feedback.
       placements: await ctx.runQuery(internal.remnawaveNodes.listModePlacementCounts, {}),
     });
   }),
@@ -4009,7 +4009,7 @@ http.route({
 
 // GET /api/v1/admin/remnawave/logging-status: dry-run report of the Xray
 // no-client-IP-logging posture across every Remnawave config profile (read-only;
-// touches the panel API but writes nothing).
+// touches the backend API but writes nothing).
 http.route({
   path: '/api/v1/admin/remnawave/logging-status',
   method: 'GET',
@@ -4027,7 +4027,7 @@ http.route({
 
 // POST /api/v1/admin/remnawave/harden-logging: enforce the no-client-IP-logging
 // posture on every Remnawave config profile (safe read-modify-write of the Xray
-// log/policy — preserves inbounds/Reality/routing; restarts the affected nodes).
+// log/policy — preserves transports/Reality/routing; restarts the affected nodes).
 // Audited by counts only (no config content).
 http.route({
   path: '/api/v1/admin/remnawave/harden-logging',

@@ -5,7 +5,7 @@
  * a listener is uncovered is EXPANDED (within the cap) so upkeep can cover it.
  * Shrinking is never automatic; at the cap the operator rebalances.
  *
- * Kept out of relays.ts so relayListeners.ts (which relays.ts imports) can call
+ * Kept out of origins.ts so relayListeners.ts (which origins.ts imports) can call
  * it without a cycle: it reads the listener rows through the index directly.
  */
 import type { MutationCtx } from '../../_generated/server';
@@ -26,7 +26,7 @@ export interface PoolCapacityResult {
   blocked: number;
 }
 
-/** Pure: the `desiredPublished` a relay needs for its listeners. */
+/** Pure: the `desiredPublished` an origin needs for its listeners. */
 export function requiredPoolSize(input: {
   desiredPublished: number;
   publishedEdgeIds: readonly (string | null)[];
@@ -64,8 +64,8 @@ export function requiredPoolSize(input: {
 }
 
 /**
- * Apply `requiredPoolSize` to a relay row. Never shrinks, never throws; a
- * deleting relay is left alone. Only an EXPANSION is audited (a raise at
+ * Apply `requiredPoolSize` to an origin row. Never shrinks, never throws; a
+ * deleting origin is left alone. Only an EXPANSION is audited (a raise at
  * registration rides in the registration's own audit row).
  */
 export async function ensurePoolCapacity(

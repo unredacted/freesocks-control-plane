@@ -7,7 +7,7 @@ import type { QueryClient } from '@tanstack/svelte-query';
 import { toast } from 'svelte-sonner';
 import { ApiCallError } from '@client/lib/api';
 import { invalidateServers } from '@client/lib/serversApi';
-import type { PanelOpView } from '../../../../../shared/contracts/servers';
+import type { OpView } from '../../../../../shared/contracts/servers';
 import { opTitle, opWords, serverErrorWords } from './words';
 
 export const codeOf = (e: unknown): string | null =>
@@ -16,8 +16,8 @@ export const codeOf = (e: unknown): string | null =>
 /** Runs one write. Resolves to the op, or null when it was refused before anything was sent. */
 export async function runWrite(
   qc: QueryClient,
-  write: () => Promise<PanelOpView>,
-): Promise<PanelOpView | null> {
+  write: () => Promise<OpView>,
+): Promise<OpView | null> {
   try {
     const op = await write();
     const words = opWords(op);

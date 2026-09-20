@@ -4,7 +4,7 @@
    * per protected node, "Protect a node". URL state: `?protect=1` opens the
    * protect sheet, `?run=<id>` opens a run's progress.
    *
-   * The technical dashboard this replaced lives on under Advanced (All relays).
+   * The technical dashboard this replaced lives on under Advanced (All origins).
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -108,7 +108,7 @@
         case 'rebalance':
           if (!item.relayId) break;
           await rebalanceRelay(item.relayId);
-          toast.success('Made room. The uncovered inbound gets its address next.');
+          toast.success('Made room. The uncovered transport gets its address next.');
           invalidateOverview(qc);
           return;
         case 'thaw':

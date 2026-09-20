@@ -1,12 +1,12 @@
 /**
  * Reachability probes, DB half: probe runs (`probeRuns`), the per-target
  * per-country per-source rollup (`probeReachability`), each target's
- * cross-source summary (`edges.reachability`, `relays.reachability`,
+ * cross-source summary (`edges.reachability`, `origins.reachability`,
  * `probeTargets.reachability`), scheduling (the `edge-probe` cron + manual
  * "probe now"), and the admin reads (Telemetry → Probes).
  *
- * A TARGET is one of: an edge (its public address, per family), a relay node
- * (its origin address, when the relay opts in with `probeNode`), or an
+ * A TARGET is one of: an edge (its public address, per family), an origin node
+ * (its origin address, when the origin opts in with `probeNode`), or an
  * operator-entered custom host:port (`probeTargets`). Only EDGE evidence feeds
  * the block detector; the other kinds are operator evidence.
  *
@@ -169,7 +169,7 @@ export interface ResolvedTarget {
   label: string;
   /**
    * What is probed: IP literals per family, or a NAME (an L7 edge's fronted
-   * hostname, a relay whose origin is a name, a custom name target). A name has
+   * hostname, an origin whose origin is a name, a custom name target). A name has
    * no family of its own: the vantage's resolver picks one.
    */
   addresses: { v4?: string; v6?: string; name?: string };
@@ -186,7 +186,7 @@ export interface ResolvedTarget {
    */
   internalProbeProtocol?: ProbeProtocol;
   servername?: string;
-  /** Deployed UDP listeners left out of `ports` (relay targets; the probes are TCP connects). */
+  /** Deployed UDP listeners left out of `ports` (origin targets; the probes are TCP connects). */
   udpListeners?: number;
 }
 
@@ -240,7 +240,7 @@ async function resolveTarget(
     return {
       kind: t.kind,
       label: `${relay.slug} node`,
-      // A relay origin keeps the bare connect whatever its address kind: a
+      // An origin origin keeps the bare connect whatever its address kind: a
       // REALITY or plaintext origin would fail a handshake probe and look
       // blocked when it is serving members perfectly well.
       addresses: splitByKind(relay.originAddress),
@@ -263,7 +263,7 @@ async function resolveTarget(
 
 /**
  * The target's distinct listener ports. EMPTY when it has none: a target with
- * no listeners (an edge whose slots were retired, a relay with nothing
+ * no listeners (an edge whose slots were retired, an origin with nothing
  * deployed) is not probeable, and guessing 443 would measure a port nobody
  * serves and record its silence as a block.
  */
@@ -284,7 +284,7 @@ function splitByKind(address: string): { v4?: string; v6?: string; name?: string
  * resolver follows is the path its members would take. For literals, v4 always,
  * and v6 when the deployment probes it: the RENDER setting for edges (a family
  * members are never handed is not evidence about them) and the probe's own
- * `probe.ipv6` knob for relay origins and custom targets, which are operator
+ * `probe.ipv6` knob for origin origins and custom targets, which are operator
  * evidence and have nothing to do with what is rendered. A v6-only target is
  * probed over v6 either way.
  */
@@ -987,8 +987,8 @@ export const listRuns = internalQuery({
 });
 
 /**
- * The reachability matrix over every probe target: live edges of every relay,
- * relay nodes that opted in (or were ever probed), and custom targets. Small by
+ * The reachability matrix over every probe target: live edges of every origin,
+ * origin nodes that opted in (or were ever probed), and custom targets. Small by
  * construction (operator-scale tables).
  */
 export const matrix = internalQuery({
@@ -1163,7 +1163,7 @@ export const auditFeed = internalQuery({
 
 /**
  * Targets due for a probe round, with the hour's spend so the cron can budget:
- * published edges of enabled relays (suspected relays first), relay nodes that
+ * published edges of enabled origins (suspected origins first), origin nodes that
  * opted in, and enabled custom targets.
  */
 export const due = internalQuery({
@@ -1228,7 +1228,7 @@ export const due = internalQuery({
       .collect()) {
       await consider({ kind: 'custom', ref: t._id }, baseInterval, false);
     }
-    // Suspected relays' edges first so a tight budget goes where it matters.
+    // Suspected origins' edges first so a tight budget goes where it matters.
     dueTargets.sort((a, b) => Number(b.suspected) - Number(a.suspected));
     return {
       enabled: cfg.probe.enabled,

@@ -5,7 +5,7 @@
    * renders no Card of its own so a page can place it anywhere.
    *
    * Props:
-   *   filter?: (targetKey: string) => boolean   keep only these targets (`edge:<id>` / `relay:<id>` / `custom:<id>`)
+   *   filter?: (targetKey: string) => boolean   keep only these targets (`edge:<id>` / `origin:<id>` / `custom:<id>`)
    *   compact?: boolean                         no selection column, no group headings, no "updated" column
    *   openTarget?: string | null                the target whose run history is expanded (controlled; e.g. from `?target=`)
    *   onOpenTarget?: (key: string | null) => void
@@ -47,7 +47,7 @@
     compact = false,
     openTarget,
     onOpenTarget,
-    emptyText = 'Nothing to probe yet. Publish an edge, opt a relay node in, or add a custom target.',
+    emptyText = 'Nothing to probe yet. Publish an edge, opt an origin node in, or add a custom target.',
   }: Props = $props();
 
   const qc = useQueryClient();

@@ -266,7 +266,7 @@ describe('lifecycle grace/disable transitions', () => {
           deletedAt: now - 1000, // grace elapsed → due
           updatedAt: now,
         });
-      // Oldest row fails (its panel 500s); the newer one must still delete.
+      // Oldest row fails (its backend 500s); the newer one must still delete.
       const failId = await mk('bu-fail', serverId);
       const okId = await mk('bu-ok');
       return { failId, okId };
@@ -565,7 +565,7 @@ describe('lifecycle idle-free deactivate + retain (WS2)', () => {
   });
 
   // Usage-aware sweep: seed a due free user whose sub resolves to a real (fetch-
-  // stubbed) Remnawave instance, so the sweep's panel read actually runs.
+  // stubbed) Remnawave instance, so the sweep's backend read actually runs.
   async function seedDueFreeUserWithPanel(t: ReturnType<typeof convexTest>, freeTierId: unknown) {
     const RW_UUID = '00000000-0000-4000-8000-000000000001';
     const now = Date.now();
@@ -617,7 +617,7 @@ describe('lifecycle idle-free deactivate + retain (WS2)', () => {
     return { userId, panelUser };
   }
 
-  test('deactivateIdleFree REFRESHES (not reclaims) a key the panel saw online recently', async () => {
+  test('deactivateIdleFree REFRESHES (not reclaims) a key the backend saw online recently', async () => {
     vi.stubEnv('DEV_MOCK_BACKEND', '');
     const t = convexTest(schema, modules);
     const { freeTierId } = await seedTiers(t);
@@ -668,7 +668,7 @@ describe('lifecycle idle-free deactivate + retain (WS2)', () => {
     expect(pushed).toBeGreaterThan(Date.now() + 3649 * DAY);
   });
 
-  test('deactivateIdleFree SKIPS (no reclaim) when the panel is unreachable', async () => {
+  test('deactivateIdleFree SKIPS (no reclaim) when the backend is unreachable', async () => {
     vi.stubEnv('DEV_MOCK_BACKEND', '');
     const t = convexTest(schema, modules);
     const { freeTierId } = await seedTiers(t);
@@ -692,7 +692,7 @@ describe('lifecycle idle-free deactivate + retain (WS2)', () => {
     });
   });
 
-  test('deactivateIdleFree RECLAIMS when the panel last saw the key outside the window', async () => {
+  test('deactivateIdleFree RECLAIMS when the backend last saw the key outside the window', async () => {
     vi.stubEnv('DEV_MOCK_BACKEND', '');
     const t = convexTest(schema, modules);
     const { freeTierId } = await seedTiers(t);
@@ -712,7 +712,7 @@ describe('lifecycle idle-free deactivate + retain (WS2)', () => {
         if (method === 'GET' && url.pathname.startsWith('/api/hwid/devices/')) {
           return new Response('not found', { status: 404 });
         }
-        // The reclaim path deletes the panel user.
+        // The reclaim path deletes the backend user.
         return new Response(JSON.stringify({ response: { ok: true } }), {
           status: 200,
           headers: { 'content-type': 'application/json' },
@@ -893,8 +893,8 @@ describe('account issuance lock (P1-3)', () => {
 });
 
 // Review #2/#3: a tier push (renewal, downgrade, upgrade) must re-enable a key the
-// grace sweep disabled and preserve the member's connection-profile squad.
-describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
+// grace sweep disabled and preserve the member's connection-profile mode group.
+describe('lifecycle push: re-enable + profile mode group (Review #2/#3)', () => {
   beforeEach(() => {
     vi.stubEnv('DEV_MOCK_BACKEND', 'true');
     vi.stubEnv('ENVIRONMENT', 'development');
@@ -949,7 +949,7 @@ describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
     expect(st?.userStatus).toBe('active');
     // The CURRENT tier's slug rides along so the push re-tags the backend key on
     // a tier change (issuance stamps it once — e.g. FREE — and without this an
-    // upgraded member's key stayed tagged FREE panel-side forever).
+    // upgraded member's key stayed tagged FREE backend-side forever).
     expect(st?.tag).toBe('member');
   });
 
@@ -967,9 +967,9 @@ describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
     );
     await seedActiveSub(t, userId, 'bu-fallback');
 
-    // No mode pool + no persisted placement + no recorded panel → undefined
+    // No mode pool + no persisted placement + no recorded backend → undefined
     // (the push OMITS placement; it never sends null, which would clear the
-    // squad panel-side).
+    // mode group backend-side).
     const st = await t.query(internal.lifecycle.activeSubAndTier, { userId });
     expect(st?.placement).toBeUndefined();
   });
@@ -1060,10 +1060,10 @@ describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
     const st = await t.query(internal.lifecycle.activeSubAndTier, { userId });
     expect(st?.placement).toBe('SQUAD_A'); // pinned, NOT re-picked to SQUAD_B
 
-    // A pre-pool row (no persisted placement) WITH a recorded panel resolves
-    // pinned to a squad ON THAT PANEL (never pool[0] of a foreign panel — that
-    // would 400 the whole tier-push PATCH on a multi-panel deploy). random → 0
-    // pins the least-loaded of the panel's squads (SQUAD_B).
+    // A pre-pool row (no persisted placement) WITH a recorded backend resolves
+    // pinned to a mode group ON THAT PANEL (never pool[0] of a foreign backend — that
+    // would 400 the whole tier-push PATCH on a multi-backend deploy). random → 0
+    // pins the least-loaded of the backend's mode groups (SQUAD_B).
     const legacyUserId = await t.run((ctx) =>
       ctx.db.insert('users', {
         tierId: memberTierId,
@@ -1086,14 +1086,14 @@ describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
       const stLegacy = await t.query(internal.lifecycle.activeSubAndTier, {
         userId: legacyUserId,
       });
-      expect(stLegacy?.placement).toBe('SQUAD_B'); // pinned to the key's own panel
+      expect(stLegacy?.placement).toBe('SQUAD_B'); // pinned to the key's own backend
     } finally {
       randomSpy.mockRestore();
     }
 
-    // A legacy row with NO recorded panel on a MULTI-panel deploy gets
+    // A legacy row with NO recorded backend on a MULTI-backend deploy gets
     // undefined (the push OMITS placement — never sends null, which would
-    // clear the squad panel-side; the panel can't be proven).
+    // clear the mode group backend-side; the backend can't be proven).
     await t.run((ctx) =>
       ctx.db.insert('backendServers', {
         backend: 'remnawave',

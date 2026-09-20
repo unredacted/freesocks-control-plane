@@ -1,5 +1,5 @@
 /**
- * Analytics relay config (self-hosted Umami). Stored in the `appSettings`
+ * Analytics origin config (self-hosted Umami). Stored in the `appSettings`
  * `analytics.*` namespace (like `verification.*` / `site.*`: deliberately NOT
  * in SETTINGS_DEFAULTS, so it gets typed validation here instead of leaking
  * through the generic settings allowlist).
@@ -8,17 +8,17 @@
  * public projection (`publicAnalytics`) carries exactly one boolean — the SPA
  * never learns the operator's Umami host (censorship resistance: a client can't
  * enumerate the operator's analytics infrastructure), and the pageview beacon
- * goes to the same-origin `/api/v1/telemetry` relay instead.
+ * goes to the same-origin `/api/v1/telemetry` origin instead.
  */
 import type { DatabaseReader } from '../_generated/server';
 import { checkInfraUrl } from './urlSafety';
 
 export interface AnalyticsConfig {
-  /** Master switch for the pageview relay. Ships OFF. */
+  /** Master switch for the pageview origin. Ships OFF. */
   enabled: boolean;
   /** Base URL of the operator's self-hosted Umami (https-only); '' = unset. */
   umamiUrl: string;
-  /** Umami website id (UUID) the relay reports under; '' = unset. */
+  /** Umami website id (UUID) the origin reports under; '' = unset. */
   websiteId: string;
   /**
    * Forward the visitor's IP to Umami per request as `payload.ip` (enables
@@ -29,7 +29,7 @@ export interface AnalyticsConfig {
    */
   forwardIp: boolean;
   /**
-   * Where the relay reads the visitor IP when forwardIp is on. '' (default) =
+   * Where the origin reads the visitor IP when forwardIp is on. '' (default) =
    * the fail-closed resolveClientIp (CF_FRONTED / TRUSTED_PROXY_HOPS envs);
    * else the NAME of a single-IP request header set by the operator's fronting
    * CDN, e.g. 'cf-connecting-ip' (Cloudflare) or 'fastly-client-ip' (Fastly).
@@ -44,8 +44,8 @@ export interface AnalyticsConfig {
   /**
    * Location granularity when forwardIp is on. 'full' (default) = the visitor
    * IP is sent as payload.ip: Umami derives country/region/CITY and keeps real
-   * per-visitor uniqueness. 'coarse' = the IP is NEVER sent; the relay instead
-   * copies the fronting Cloudflare edge's inbound geo headers (cf-ipcountry +
+   * per-visitor uniqueness. 'coarse' = the IP is NEVER sent; the origin instead
+   * copies the fronting Cloudflare edge's transport geo headers (cf-ipcountry +
    * cf-region-code — region needs the free "Add visitor location headers"
    * Managed Transform on the zone) onto the outbound Umami request, which
    * Umami reads when payload.ip is absent. City is structurally absent in
@@ -69,7 +69,7 @@ const MAX_URL = 512;
 /**
  * The Umami base URL: https-only + the shared infra SSRF denylist (the backend
  * fetches this URL on every pageview, so a stored value is a durable SSRF
- * primitive exactly like a backend panel URL — checkInfraUrl rejects
+ * primitive exactly like a backend backend URL — checkInfraUrl rejects
  * loopback/link-local/metadata literals). ALLOW_INTERNAL_BACKENDS=true (the
  * existing dev knob, already honored inside checkInfraUrl) additionally lifts
  * the https requirement here so a local/compose-network Umami works in dev.
@@ -152,7 +152,7 @@ export async function resolveAnalyticsConfig(db: DatabaseReader): Promise<Analyt
  * The ONLY analytics shape that may reach publicConfig.get. Exactly one key,
  * by construction: a future AnalyticsConfig field can't leak without someone
  * consciously widening this projection. "Effectively enabled" (toggle AND both
- * targets set) so the SPA never beacons into an unconfigured relay.
+ * targets set) so the SPA never beacons into an unconfigured origin.
  */
 export function publicAnalytics(cfg: AnalyticsConfig): { enabled: boolean } {
   return { enabled: cfg.enabled && cfg.umamiUrl !== '' && cfg.websiteId !== '' };

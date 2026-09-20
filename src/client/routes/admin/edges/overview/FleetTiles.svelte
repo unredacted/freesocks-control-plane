@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
    * The fleet figures as a tile grid. A problem tile with a non-zero count is a
-   * button that applies its filter to the relay table (pressed state = active).
+   * button that applies its filter to the origin table (pressed state = active).
    *
    * Props:
    *   tiles: FleetTile[]                       from overview/derive.ts fleetTiles()
@@ -52,7 +52,7 @@
             active && 'ring-primary ring-2',
           )}
           aria-pressed={active}
-          aria-label={`${tile.label}: ${tile.value}. ${active ? 'Clear the filter' : 'Filter the relay table'}`}
+          aria-label={`${tile.label}: ${tile.value}. ${active ? 'Clear the filter' : 'Filter the origin table'}`}
           onclick={() => onFilter(active ? 'all' : filter)}
         >
           {@render body(tile)}

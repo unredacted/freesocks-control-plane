@@ -61,7 +61,7 @@ export function sealingEnabled(): boolean {
 }
 
 /**
- * The baked public HPKE identity, for the "Verify connection" panel (all
+ * The baked public HPKE identity, for the "Verify connection" backend (all
  * base64url strings; the key fields are undefined in a dark build). Non-secret by
  * design - these are the public halves baked into the bundle.
  */
@@ -101,7 +101,7 @@ export async function connectionFingerprints(): Promise<{
 
 /**
  * The ungrouped-hex (no-spaces) fingerprints in the exact `_fcp-pin` DNS TXT
- * field layout, so the "Verify via DNS" panel shows precisely what `dig` should
+ * field layout, so the "Verify via DNS" backend shows precisely what `dig` should
  * return and what `scripts/hpke-fingerprint.mjs` publishes. Undefined fields
  * (e.g. no ML-DSA key baked) are omitted from the record by the consumer.
  */
@@ -309,7 +309,7 @@ export interface ConnectionAttestation {
 }
 
 /**
- * Live, READ-ONLY attestation check for the "Verify connection" panel + the
+ * Live, READ-ONLY attestation check for the "Verify connection" backend + the
  * banner's active state: fetch the server-attested epoch key and verify the
  * manifest chain in-browser exactly as the seal path does, but WITHOUT mutating
  * the seal state machine (a pure diagnostic). `attested:false` with
@@ -319,7 +319,7 @@ export interface ConnectionAttestation {
  */
 export async function verifyConnection(): Promise<ConnectionAttestation> {
   // No manifest key baked -> the live check is impossible on this build (NOT a
-  // network failure). Report it distinctly so the panel doesn't say "couldn't reach."
+  // network failure). Report it distinctly so the backend doesn't say "couldn't reach."
   if (!sealingEnabled() || !MANIFEST_PK) {
     return { reachable: false, attested: false, configured: false };
   }

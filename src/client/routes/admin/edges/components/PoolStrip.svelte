@@ -1,13 +1,13 @@
 <script lang="ts">
   /**
-   * A relay's pool as a strip of small cells: published slots by pool index,
+   * An origin's pool as a strip of small cells: published slots by pool index,
    * wanted-but-empty slots, standbys, draining edges. Slot computation is pure
    * (lib/pool.ts). With `onSelect`, cells that carry an edge id are buttons.
    *
    * Props:
-   *   publishedEdgeIds: Array<string | null>   RelayAdmin.publishedEdgeIds (index = pool index)
-   *   desired: number                          RelayAdmin.desiredPublished
-   *   standbys?: string[] | number             RelayAdmin.standbyEdgeIds, or RelayPoolSummary.standbys
+   *   publishedEdgeIds: Array<string | null>   OriginAdmin.publishedEdgeIds (index = pool index)
+   *   desired: number                          OriginAdmin.desiredPublished
+   *   standbys?: string[] | number             OriginAdmin.standbyEdgeIds, or RelayPoolSummary.standbys
    *   draining?: number                        RelayPoolSummary.draining
    *   entries?: PoolEntry[]                    RelayPoolSummary.pool: tints published cells by health
    *   onSelect?: (edgeId: string) => void      e.g. open the edge drawer

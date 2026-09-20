@@ -1,5 +1,5 @@
 /**
- * Relay registration (pure half): validate the listeners a registration body
+ * Origin registration (pure half): validate the listeners a registration body
  * carries, canonicalise them for an idempotency hash, merge server names under
  * the ownership rules, and diff a body against the stored listeners.
  *
@@ -49,7 +49,7 @@ export interface TransportParams {
   host?: string;
   serviceName?: string;
   upgradeToken?: string;
-  /** XHTTP mode as the inbound declares it (`auto`, `packet-up`, `stream-up`, `stream-one`). */
+  /** XHTTP mode as the transport declares it (`auto`, `packet-up`, `stream-up`, `stream-one`). */
   mode?: string;
 }
 
@@ -88,7 +88,7 @@ export interface CanonicalListener extends ListenerProto {
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-/** A panel inbound tag a listener may bind to (shared with inbound discovery). */
+/** A backend transport tag a listener may bind to (shared with transport discovery). */
 export const INBOUND_TAG_RE = /^[A-Z0-9_]{1,64}$/;
 const MAX_NAMES = 32;
 
@@ -206,10 +206,10 @@ export function validateListenerSpec(
   let panelBinding: PanelBinding | undefined;
   if (spec.panelBinding) {
     if (ctx.origin.kind !== 'panel-node')
-      fail('panelBinding is only valid for a panel-node origin');
+      fail('panelBinding is only valid for a backend-node origin');
     const b = spec.panelBinding;
     if (!UUID_RE.test(b.configProfileUuid) || !UUID_RE.test(b.configProfileInboundUuid))
-      fail('config profile / inbound uuids must be UUIDs');
+      fail('config profile / transport uuids must be UUIDs');
     if (!INBOUND_TAG_RE.test(b.inboundTag)) fail('inboundTag must be [A-Z0-9_]');
     panelBinding = {
       inboundTag: b.inboundTag,

@@ -249,7 +249,7 @@
         <p>
           {run.reviewDelta.length === 1
             ? 'One more host in the panel uses an inbound the address cannot carry:'
-            : `${run.reviewDelta.length} more hosts in the panel use an inbound the address cannot carry:`}
+            : `${run.reviewDelta.length} more addresses on the backend use a transport the address cannot carry:`}
           <span class="text-muted-foreground"
             >{run.reviewDelta.map((d) => d.remark).join(', ')}</span
           >
@@ -314,7 +314,7 @@
           >
             Protect and hide {run.reviewDelta.length} unsupported {run.reviewDelta.length === 1
               ? 'host'
-              : 'hosts'}
+              : 'addresses'}
           </Button>
           <Button
             size="sm"

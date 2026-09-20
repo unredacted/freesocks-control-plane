@@ -3,7 +3,7 @@
  * The isolated test link (docs/edges.md § "Publication"; acceptance 26, the
  * test-link part): from a REALISTIC credential body that carries only the
  * node's direct Host under a different remark and NO FCP Host, the test-only
- * matcher resolves the intended inbound's entry and the real renderer emits
+ * matcher resolves the intended transport's entry and the real renderer emits
  * exactly one connection, the candidate's; pool, epoch, Hosts, snapshots and
  * persisted match rules are unchanged; an ambiguous body is refused
  * (`edge.test_link_no_match`); the binding is the one the confirmation accepts.
@@ -49,7 +49,7 @@ const directHost = (over: Partial<FakePanelHost> = {}): FakePanelHost => ({
   ...over,
 });
 
-/** The body the panel serves the credential: this node's direct entry (a role-style remark) + another node's. */
+/** The body the backend serves the credential: this node's direct entry (a role-style remark) + another node's. */
 function realisticBody(uuid: string, lines: string[] = []): string {
   return [
     `vless://${uuid}@${ORIGIN}:443?${REALITY_QS}#node-one-reality`,
@@ -113,7 +113,7 @@ describe('the isolated test link', () => {
     expect(r.link).not.toContain(ORIGIN);
     expect(r.link).not.toContain(OTHER_NODE);
     expect(decodeURIComponent(u.fragment!)).toBe('FCP test node-one a');
-    expect(r.credentialId).toBeNull(); // the relay's qualification user, no temporary row
+    expect(r.credentialId).toBeNull(); // the origin's qualification user, no temporary row
     // The binding equals what the verification route derives, and the tick accepts it.
     const b = (await t.query(internal.edgeVerification.binding, { edgeId }))!;
     expect(r.binding).toMatchObject({
@@ -142,7 +142,7 @@ describe('the isolated test link', () => {
     expect(after.publication).toBe('unpublished');
     expect(after.subs).toEqual([]);
     expect(after.verification?.method).toBe('test_link'); // the tick, not the link, wrote this
-    // The panel saw reads only: no Host write, no second user.
+    // The backend saw reads only: no Host write, no second user.
     const writes = panel.calls.filter(
       (c) => c.method !== 'GET' && !(c.method === 'POST' && c.path === '/api/users'),
     );
@@ -182,7 +182,7 @@ describe('the isolated test link', () => {
     expect(JSON.stringify(listeners)).not.toContain('never-handed-out.example');
   });
 
-  test('an ambiguous body (two direct Hosts on the inbound at the origin) is refused; a body with no entry for the inbound too', async () => {
+  test('an ambiguous body (two direct Hosts on the transport at the origin) is refused; a body with no entry for the transport too', async () => {
     const { t, edgeId } = await seed({
       hosts: [directHost(), directHost({ uuid: H(2), remark: 'node-one-reality-copy' })],
       extraLines: [`vless://x@${ORIGIN}:443?${REALITY_QS}#node-one-reality-copy`],
@@ -192,7 +192,7 @@ describe('the isolated test link', () => {
     );
   });
 
-  test('no entry for the inbound: the Host is on ANOTHER inbound, or the body has none at the origin', async () => {
+  test('no entry for the transport: the Host is on ANOTHER transport, or the body has none at the origin', async () => {
     const other = await seed({
       hosts: [
         directHost({
@@ -206,7 +206,7 @@ describe('the isolated test link', () => {
     await expect(
       other.t.action(internal.edgeTestLinks.build, { edgeId: other.edgeId }),
     ).rejects.toThrow(/test_link_no_match/);
-    // A disabled direct Host (hidden) with no FCP Host yet: nothing names the inbound's entry.
+    // A disabled direct Host (hidden) with no FCP Host yet: nothing names the transport's entry.
     const hidden = await seed({ hosts: [directHost({ isDisabled: true })] });
     await expect(
       hidden.t.action(internal.edgeTestLinks.build, { edgeId: hidden.edgeId }),
@@ -215,7 +215,7 @@ describe('the isolated test link', () => {
 
   test("after the direct Host is hidden the listener's own FCP Host names the entry (a spare retest)", async () => {
     // The direct Host is disabled (hidden) and the body carries the FCP Host
-    // entry at the published edge: the own remark resolves the inbound.
+    // entry at the published edge: the own remark resolves the transport.
     const { t, edgeId } = await seed({
       hosts: [
         directHost({ isDisabled: true }),
@@ -248,12 +248,12 @@ describe('the isolated test link', () => {
     expect(selectTestEntry([direct, own].join('\n'), c, hosts)).toEqual({ line: direct });
     // Direct hidden (not in the enabled Host list): the own remark.
     expect(selectTestEntry([direct, own].join('\n'), c, [])).toEqual({ line: own });
-    // A line at the origin whose remark no Host on the inbound carries is not the entry.
+    // A line at the origin whose remark no Host on the transport carries is not the entry.
     expect(selectTestEntry(foreign, c, hosts)).toEqual({ code: 'no_match' });
     // Protocol facts must agree: a ws line is not this REALITY listener's entry.
     const ws = `vless://u@${ORIGIN}:443?security=tls&type=ws&path=%2Fws#node-one-reality`;
     expect(selectTestEntry(ws, c, hosts)).toEqual({ code: 'no_match' });
-    // Two Hosts on the inbound at the origin, both lines present: ambiguous.
+    // Two Hosts on the transport at the origin, both lines present: ambiguous.
     const copy = `vless://u@${ORIGIN}:443?${REALITY_QS}#node-one-reality-copy`;
     expect(
       selectTestEntry([direct, copy].join('\n'), c, [

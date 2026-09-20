@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
-   * What members of one relay would receive, per client family: the body the
-   * panel serves next to the body FCP would send, and every listener whose entry
+   * What members of one origin would receive, per client family: the body the
+   * backend serves next to the body FCP would send, and every listener whose entry
    * did not resolve, in words. Read only (the preview writes nothing).
    *
    * Props:

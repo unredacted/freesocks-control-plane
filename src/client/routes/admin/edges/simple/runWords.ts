@@ -96,7 +96,7 @@ export function needButtons(code: string): NeedButtons {
     case 'hide_failed':
       return {
         primary: B('Check again', 'retry'),
-        hint: 'Or hide them in the panel yourself, then check again.',
+        hint: 'Or hide them in the backend yourself, then check again.',
       };
     case 'family_disabled':
       return { primary: B('Turn on for that family', 'family') };
@@ -134,7 +134,7 @@ export interface PlanWords {
   renderGlobal: string | null;
   /** The primary button label. */
   button: string;
-  /** Which subscription formats the protected inbounds cover. */
+  /** Which subscription formats the protected transports cover. */
   formats: string;
 }
 
@@ -155,13 +155,13 @@ export function planWords(
           count: unc.length,
           remarks: unc.map((h) => h.remark),
           uuids: unc.map((h) => h.uuid),
-          statement: `${plural(unc.length, 'host', 'hosts')} in the panel ${unc.length === 1 ? 'uses' : 'use'} an inbound the address cannot carry. Protecting the node hides ${unc.length === 1 ? 'it' : 'them'}, so members who rely on ${unc.length === 1 ? 'it' : 'them'} must switch to a supported one.`,
+          statement: `${plural(unc.length, 'host', 'addresses')} on the backend ${unc.length === 1 ? 'uses' : 'use'} a transport the address cannot carry. Protecting the node hides ${unc.length === 1 ? 'it' : 'them'}, so members who rely on ${unc.length === 1 ? 'it' : 'them'} must switch to a supported one.`,
         };
   const renderGlobal = plan.renderGlobal.willEnable
     ? `Going live also turns on protected delivery for ${plural(plan.renderGlobal.affectedRelays.length, 'other node', 'other nodes')} that ${plan.renderGlobal.affectedRelays.length === 1 ? 'is' : 'are'} ready for it${plan.renderGlobal.affectedRelays.length > 0 ? ` (${plan.renderGlobal.affectedRelays.join(', ')})` : ''}.`
     : null;
   const button = uncovered
-    ? `Protect and hide ${plural(uncovered.count, 'unsupported host', 'unsupported hosts')}`
+    ? `Protect and hide ${plural(uncovered.count, 'unsupported host', 'unsupported addresses')}`
     : 'Protect this node';
   const frontable = plan.inbounds.filter((i) => i.frontable);
   const all = (k: 'links' | 'singbox' | 'clash') =>

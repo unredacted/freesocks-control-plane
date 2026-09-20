@@ -2,7 +2,7 @@
 /**
  * The front check's wire codecs, on fixtures.
  *
- * These are the bytes a censor-facing front and a real Xray inbound see, so
+ * These are the bytes a censor-facing front and a real Xray transport see, so
  * they are pinned against the specifications themselves (RFC 6455's own example
  * frame and accept key, gRPC's length prefix, protobuf's varint) rather than
  * against what our encoder happens to produce. A decoder that only agrees with

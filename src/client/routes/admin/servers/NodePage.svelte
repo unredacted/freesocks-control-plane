@@ -1,9 +1,9 @@
 <script lang="ts">
   /**
    * One node (`/admin/servers/nodes/:uuid?instance=<slug>`): its status in a
-   * sentence, the inbounds it serves with the addresses members get for each,
+   * sentence, the transports it serves with the addresses members get for each,
    * and every action on the node in the header. Nothing on this page changes a
-   * panel unless changes are allowed and the node role has handed it over.
+   * backend unless changes are allowed and the node role has handed it over.
    *
    * Wording lives in ./lib/words.ts (pure, unit-tested).
    */
@@ -12,7 +12,7 @@
   import Link from '@client/components/Link.svelte';
   import { intentsQuery, serverSummaryQuery, serverTreeQuery } from '@client/lib/serversApi';
   import { router } from '@client/stores/router.svelte';
-  import type { PanelHostView, PanelInboundView } from '../../../../shared/contracts/servers';
+  import type { AddressView, TransportView } from '../../../../shared/contracts/servers';
   import SectionHeader from '../edges/components/SectionHeader.svelte';
   import StatusDot from '../edges/simple/StatusDot.svelte';
   import ActivationSection from './components/ActivationSection.svelte';
@@ -37,7 +37,7 @@
   const intents = intentsQuery(() => slug);
   let instance = $derived(summary.data?.instances.find((i) => i.slug === slug) ?? null);
   let node = $derived(tree.data?.nodes.find((n) => n.nodeUuid === uuid) ?? null);
-  // The enrolled node behind this panel row, when the node role enrolled it.
+  // The enrolled node behind this backend row, when the node role enrolled it.
   let intent = $derived(
     intents.data?.intents.find((i) => i.nodeUuid === uuid || (node && i.name === node.name)) ??
       null,
@@ -50,10 +50,10 @@
   });
 
   let hostOpen = $state(false);
-  let hostFor = $state<{ inbound: PanelInboundView; host: PanelHostView | null } | null>(null);
+  let hostFor = $state<{ inbound: TransportView; host: AddressView | null } | null>(null);
   let namesOpen = $state(false);
-  let namesFor = $state<{ profileUuid: string; inbound: PanelInboundView } | null>(null);
-  const editHost = (inbound: PanelInboundView, host: PanelHostView | null) => {
+  let namesFor = $state<{ profileUuid: string; inbound: TransportView } | null>(null);
+  const editHost = (inbound: TransportView, host: AddressView | null) => {
     hostFor = { inbound, host };
     hostOpen = true;
   };
@@ -68,7 +68,7 @@
 {:else if !node || !slug}
   <SectionHeader title="Node not found" {back} />
   <p class="text-muted-foreground text-sm">
-    There is no node with this id on the panel any more, or the link is old.
+    There is no node with this id on the backend any more, or the link is old.
   </p>
 {:else}
   {@const w = nodeWords(node)}
@@ -108,13 +108,13 @@
       <ActivationSection {slug} {intent} />
     {/if}
 
-    <section aria-labelledby="inbounds">
-      <h2 id="inbounds" class="mb-3 text-base font-semibold">Inbounds</h2>
-      {#if node.inbounds.length === 0}
-        <p class="text-muted-foreground text-sm">This node serves no inbound.</p>
+    <section aria-labelledby="transports">
+      <h2 id="transports" class="mb-3 text-base font-semibold">Transports</h2>
+      {#if node.transports.length === 0}
+        <p class="text-muted-foreground text-sm">This node serves no transport.</p>
       {:else}
         <ul class="space-y-3">
-          {#each node.inbounds as inbound (inbound.inboundUuid)}
+          {#each node.transports as inbound (inbound.transportUuid)}
             {@const names = serverNamesLabel(inbound)}
             <li class="rounded-lg border p-3 text-sm">
               <p class="font-medium break-all">
@@ -154,11 +154,11 @@
                 <h3 class="text-muted-foreground text-xs font-medium uppercase">
                   Addresses members get
                 </h3>
-                {#if inbound.hosts.length === 0}
+                {#if inbound.addresses.length === 0}
                   <p class="text-muted-foreground">None yet.</p>
                 {:else}
                   <ul class="mt-1 space-y-0.5">
-                    {#each inbound.hosts as host (host.hostUuid)}
+                    {#each inbound.addresses as host (host.addressUuid)}
                       <li class={host.isDisabled ? 'text-muted-foreground line-through' : ''}>
                         {#if canWrite}
                           <button
@@ -191,10 +191,10 @@
               </div>
 
               <p class="text-muted-foreground mt-2">
-                {#if inbound.squads.length === 0}
-                  In no squad.
+                {#if inbound.modeGroups.length === 0}
+                  In no mode group.
                 {:else}
-                  Squads: {inbound.squads.map((s) => s.name).join(', ')}
+                  Mode groups: {inbound.modeGroups.map((s) => s.name).join(', ')}
                 {/if}
               </p>
             </li>
@@ -219,8 +219,8 @@
     <HostDialog
       bind:open={hostOpen}
       {slug}
-      inboundUuid={hostFor.inbound.inboundUuid}
-      inboundTag={hostFor.inbound.tag}
+      transportUuid={hostFor.inbound.transportUuid}
+      transportTag={hostFor.inbound.tag}
       host={hostFor.host}
     />
   {/if}

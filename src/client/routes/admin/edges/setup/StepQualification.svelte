@@ -39,10 +39,10 @@
   const frontPending = $derived(has('front_unqualified') || has('front_failed'));
 
   const CHECKLIST = [
-    'Import the subscription of a test member whose key lives on this relay, or wire a client by hand to the edge address shown on the relay page.',
+    'Import the subscription of a test member whose key lives on this origin, or wire a client by hand to the edge address shown on the origin page.',
     'Open a real session through the edge and load a few pages.',
     'Leave the session idle for a few minutes, then use it again. Some providers drop idle connections.',
-    'Open the edge on the relay page and pull its live view: the provider should report the origin as a healthy member.',
+    'Open the edge on the origin page and pull its live view: the provider should report the origin as a healthy member.',
   ];
 
   let confirmOpen = $state(false);

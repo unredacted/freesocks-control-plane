@@ -6,7 +6,7 @@
  * address, the port, the server name and the HTTP Host for that listener,
  * without touching a real member's subscription.
  *
- * Clash has no `httpupgrade` network: mihomo carries an HTTP-Upgrade inbound as
+ * Clash has no `httpupgrade` network: mihomo carries an HTTP-Upgrade transport as
  * `network: ws`, so the Clash fixture for it is the ws one.
  */
 import type { SubscriptionFormat } from './clientFamilies';
@@ -175,7 +175,7 @@ function clashTlsLines(p: ListenerProto): string[] {
 
 function clashStreamLines(p: ListenerProto): string[] {
   switch (p.streamTransport) {
-    // Clash has no httpupgrade network: mihomo serves such an inbound as ws.
+    // Clash has no httpupgrade network: mihomo serves such a transport as ws.
     case 'ws':
     case 'httpupgrade':
       return [

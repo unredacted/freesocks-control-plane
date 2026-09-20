@@ -1,5 +1,5 @@
 /**
- * Pure helpers for an origin's PUBLISHED pool (`relays.publishedEdgeIds`,
+ * Pure helpers for an origin's PUBLISHED pool (`origins.publishedEdgeIds`,
  * ordered by pool index, nulls are gaps). Generic over the id type so the
  * `Id<'edges'>` brand survives a round trip.
  */
@@ -7,7 +7,7 @@
 /**
  * Every edge status that is NOT `destroyed`. Reads that must exclude destroyed
  * rows iterate these against the `(relayId|accountId, status)` indexes instead
- * of collecting the whole table and filtering: a relay accumulates destroyed
+ * of collecting the whole table and filtering: an origin accumulates destroyed
  * edges forever (they are pruned after 30 days), so an unbounded collect grows
  * without limit and eventually crosses Convex's read cap.
  */

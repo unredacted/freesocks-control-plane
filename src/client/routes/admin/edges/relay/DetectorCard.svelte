@@ -1,11 +1,11 @@
 <script lang="ts">
   /**
-   * The block detector's view of one relay, in words, with Rotate / Burn for a
+   * The block detector's view of one origin, in words, with Rotate / Burn for a
    * published edge (each behind a dry run).
    *
-   * Props: relay; edges; onOpenEdge(edgeId); onRotationStarted(rotationId)
+   * Props: origin; edges; onOpenEdge(edgeId); onRotationStarted(rotationId)
    */
-  import type { EdgeAdmin, RelayAdmin } from '@shared/contracts/edges';
+  import type { EdgeAdmin, OriginAdmin } from '@shared/contracts/edges';
   import * as Card from '@client/components/ui/card';
   import * as Select from '@client/components/ui/select';
   import { Badge } from '@client/components/ui/badge';
@@ -19,7 +19,7 @@
   import { edgeAddress, hintLevelWords } from './relayLogic';
 
   interface Props {
-    relay: RelayAdmin;
+    relay: OriginAdmin;
     edges: EdgeAdmin[];
     onOpenEdge: (edgeId: string) => void;
     onRotationStarted: (rotationId: string) => void;
@@ -100,7 +100,7 @@
   <Card.Content class="space-y-4 text-sm">
     {#if !s}
       <p class="text-muted-foreground">
-        The detector has not looked at this relay yet. It evaluates relays with a published edge
+        The detector has not looked at this origin yet. It evaluates origins with a published edge
         every few minutes once the edge layer is on in Settings.
       </p>
     {:else}
@@ -114,7 +114,7 @@
       {/if}
       {#if s.state === 'suspected' && !s.veto && !relay.autoRotate}
         <p class="rounded-md border border-amber-500/40 bg-amber-500/10 p-3">
-          Auto rotate is off for this relay, so nothing happens until you rotate or burn the edge
+          Auto rotate is off for this origin, so nothing happens until you rotate or burn the edge
           yourself.
         </p>
       {/if}

@@ -68,7 +68,7 @@ export function uriSupported(u: ParsedUri, proto: ListenerProto): boolean {
 
 /**
  * Whether the link's own transport / security parameters agree with the
- * listener. A mismatch means the template describes a different inbound than
+ * listener. A mismatch means the template describes a different transport than
  * the listener claims (or the wrong listener matched): never rewrite it.
  */
 export function uriAgrees(u: ParsedUri, proto: ListenerProto): boolean {

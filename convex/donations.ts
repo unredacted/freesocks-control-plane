@@ -51,7 +51,7 @@ export const currentBonusGb = internalQuery({
   },
 });
 
-/** A member's own settled donation totals (impact panel). Read from the
+/** A member's own settled donation totals (impact backend). Read from the
  *  MAINTAINED aggregates on the user row (fundDonation bumps them at grant
  *  time) — billing-order retention pruning (365d) must never shrink the
  *  displayed lifetime totals. donatedGbTotal is computed at the current rate
@@ -190,7 +190,7 @@ const BULK_CHUNK = 500; // Remnawave bulk/update uuids cap
  * drives window expiry: nothing else notices that a bucket aged out. Groups each
  * page's Remnawave keys by hosting instance and bulk-updates in ≤500-uuid chunks.
  *
- * Failure semantics: each chunk is isolated (one down panel must not abort the
+ * Failure semantics: each chunk is isolated (one down backend must not abort the
  * whole run — the start-of-run heartbeat would otherwise make a wedged job look
  * healthy), and the applied marker is set ONLY after a full, zero-failure drain:
  * a partial run leaves the marker unset so the next hourly tick re-pushes

@@ -1,5 +1,5 @@
 /**
- * Admin HTTP surface for edges (the L4 load balancers in front of relays): `/api/v1/admin/edges/*`. One prefix
+ * Admin HTTP surface for edges (the L4 load balancers in front of origins): `/api/v1/admin/edges/*`. One prefix
  * route per verb feeds a small dispatcher, so the HPKE policy is a clean
  * per-verb prefix rule (envelope.ts): GET reveals, POST seals both legs,
  * PATCH/PUT seal the body, DELETE carries nothing. Scopes: `admin:settings:*`
@@ -37,7 +37,7 @@ function statusFromCode(code: string): number {
   if (code === 'not_found') return 404;
   // A register-scoped token reaching outside its boundary is a permission refusal.
   if (code === 'edge.registration_boundary') return 403;
-  // The panel (or a step that depends on it) failed: an upstream fault, not a refusal.
+  // The backend (or a step that depends on it) failed: an upstream fault, not a refusal.
   if (code === 'backend.panel_read_failed' || code === 'edge.plan_step_failed') return 502;
   if (code === 'conflict' || code.startsWith('edge.')) return 409;
   // The hourly probe budget is a quota: answer like a rate limit.
@@ -108,7 +108,7 @@ function isReadOnlyPost(parts: string[]): boolean {
   );
 }
 
-/** The node role's registration routes: `relays/by-slug/{slug}[/listeners/{key}]`. */
+/** The node role's registration routes: `origins/by-slug/{slug}[/listeners/{key}]`. */
 export function isRegistrationRoute(parts: string[]): boolean {
   return parts[0] === 'relays' && parts[1] === 'by-slug' && !!parts[2];
 }
@@ -135,14 +135,14 @@ export function scopeFor(parts: string[], method: string): string | string[] {
 
 /**
  * Which POSTs are throttled, and under which policy. `provider-call` = a live
- * call to a cloud provider / the panel (or a CPU-bound preview render);
+ * call to a cloud provider / the backend (or a CPU-bound preview render);
  * `probe` = measurement runs that spend third-party credits.
  */
 export function throttlePolicyFor(parts: string[]): RateLimitPolicyKey | null {
   const [a, b, c, d] = parts;
   // Qualifying server names opens sockets from the control plane.
   if (a === 'sni' && b === 'qualify' && !c) return 'admin.edges.provider-call';
-  // A rollout writes a panel profile; a test link fetches a credential body.
+  // A rollout writes a backend profile; a test link fetches a credential body.
   if (
     a === 'sni' &&
     (b === 'bindings' || b === 'rollouts') &&
@@ -159,14 +159,14 @@ export function throttlePolicyFor(parts: string[]): RateLimitPolicyKey | null {
   if (a === 'providers' && b && c === 'rotate-credentials' && !d) {
     return 'admin.edges.provider-call';
   }
-  // The test link fetches the credential body and lists the panel Hosts.
+  // The test link fetches the credential body and lists the backend Hosts.
   if (a === 'edges' && b && c === 'test-link' && !d) return 'admin.edges.provider-call';
   if (a === 'relays' && b === 'node-candidates' && c === 'refresh') {
     return 'admin.edges.provider-call';
   }
   // Importing a front inspects the provider resource first: an outbound call.
   if (a === 'relays' && b && c === 'adopt' && !d) return 'admin.edges.provider-call';
-  // The quarantine resolver's live column lists the panel's Hosts.
+  // The quarantine resolver's live column lists the backend's Hosts.
   if (a === 'relays' && b && c === 'quarantine' && d === 'inspect')
     return 'admin.edges.provider-call';
   if (a === 'edges' && b && c === 'live' && d === 'refresh') return 'admin.edges.provider-call';
@@ -175,18 +175,18 @@ export function throttlePolicyFor(parts: string[]): RateLimitPolicyKey | null {
   if (a === 'render' && b === 'preview') return 'admin.edges.provider-call';
   if (a === 'edges' && b && c === 'probe') return 'admin.edges.probe';
   if (a === 'relays' && b && c === 'probe') return 'admin.edges.probe';
-  // Minting the L7 qualification credential creates a panel user.
+  // Minting the L7 qualification credential creates a backend user.
   if (a === 'relays' && b && c === 'qualification-credential' && !d)
     return 'admin.edges.provider-call';
   if (a === 'probes' && !b) return 'admin.edges.probe';
-  // The setup plan lists the node's inbounds and Hosts from the panel.
+  // The setup plan lists the node's transports and Hosts from the backend.
   if (a === 'setup-runs' && b === 'plan' && !c) return 'admin.edges.provider-call';
   return null;
 }
 
 /**
- * The GETs that reach a panel or open sockets from the control plane (the
- * inbound-candidates origin probe, the test link's credential body + Host
+ * The GETs that reach a backend or open sockets from the control plane (the
+ * transport-candidates origin probe, the test link's credential body + Host
  * listing): throttled under the same policy as the provider-calling POSTs.
  */
 export function throttlePolicyForGet(parts: string[]): RateLimitPolicyKey | null {
@@ -242,7 +242,7 @@ const actor = (admin: AdminAuth) => ({ actorAdminId: admin.adminUserId ?? undefi
 /** AdminAuth plus the registration boundary of a register-scoped token (undefined = unbounded). */
 type EdgeAdminAuth = AdminAuth & { boundary?: RegistrationBoundary };
 
-/** Refuse a bounded caller outside its boundary for an EXISTING relay (GET / DELETE / PUT update). */
+/** Refuse a bounded caller outside its boundary for an EXISTING origin (GET / DELETE / PUT update). */
 async function assertRelayWithinBoundary(ctx: ActionCtx, slug: string, admin: EdgeAdminAuth) {
   if (!admin.boundary) return;
   const relay = await ctx.runQuery(internal.relays.getBySlug, { slug });
@@ -342,7 +342,7 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
       );
     }
     if (b === 'inbound-candidates' && !c) {
-      // Discovery with the origin probe applied (throttled: a panel call plus sockets).
+      // Discovery with the origin probe applied (throttled: a backend call plus sockets).
       const serverId = query.get('backendServerId');
       const nodeUuid = query.get('nodeUuid');
       if (!serverId || !nodeUuid)
@@ -592,7 +592,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
     return notFound();
   }
   if (a === 'setup-status' && !b) {
-    // A draft: the wizard's intended origin + listeners before the relay exists (read-only).
+    // A draft: the wizard's intended origin + listeners before the origin exists (read-only).
     return json(
       await ctx.runQuery(internal.edgeOperator.setupStatus, {
         draft: (body.draft ?? body) as never,
@@ -620,7 +620,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
     if (typeof body.on !== 'boolean') return errorJson('validation', 'on must be a boolean', 400);
     return json(await ctx.runMutation(internal.edgeAdmin.setAutomation, { on: body.on, ...act }));
   }
-  // Guided setup runs: plan (read-only over the panel), create, and the three
+  // Guided setup runs: plan (read-only over the backend), create, and the three
   // operator verbs on a run (cancel / retry / continue).
   if (a === 'setup-runs') {
     if (b === 'plan' && !c) {
@@ -697,7 +697,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
         ...act,
       } as never)) as { id: Id<'edgeProviderAccounts'> };
       // A new account is inventoried right away so its existing load balancers
-      // show up in the relay import picker without a manual pull (fail-soft:
+      // show up in the origin import picker without a manual pull (fail-soft:
       // a scheduled action; bad credentials just leave the snapshot empty).
       await ctx.scheduler.runAfter(0, internal.edgeProviderOps.inventory, {
         accountId: created.id,
@@ -918,7 +918,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           }),
         );
       case 'qualification-credential':
-        // Mint (or re-mint) the panel account the L7 front qualification
+        // Mint (or re-mint) the backend account the L7 front qualification
         // authenticates with; the credential never leaves the server.
         return json(await ctx.runAction(internal.relayQualification.mint, { relayId, ...act }));
       case 'adopt': {
@@ -1040,7 +1040,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           }),
         );
       case 'probe': {
-        // Every published edge of the relay (+ the node itself when it opted in).
+        // Every published edge of the origin (+ the node itself when it opted in).
         const relay = await ctx.runQuery(internal.relays.get, { id: relayId });
         if (!relay) return notFound();
         const edges = await ctx.runQuery(internal.edgeAdmin.publishedEdgeIdsOf, { relayId });
@@ -1111,7 +1111,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
       case 'test-link':
         if (d === 'release') {
           // The card closed or finished: the temporary credential behind the
-          // link expires now instead of at its TTL (scoped to the edge's relay).
+          // link expires now instead of at its TTL (scoped to the edge's origin).
           if (typeof body.credentialId !== 'string')
             return errorJson('validation', 'credentialId is required', 400);
           await ctx.runMutation(internal.edgeTestCredentials.releaseForEdge, {
@@ -1122,7 +1122,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
         }
         // The isolated test link: the candidate connection only, plus the same
         // binding `GET .../verification-binding` shows. A POST under the write
-        // scope, not a GET: building it may mint the test credential (a panel
+        // scope, not a GET: building it may mint the test credential (a backend
         // user, or a temporary Outline key) and record it. Throttled like the
         // other provider-calling POSTs.
         return json(await ctx.runAction(internal.edgeTestLinks.build, { edgeId }));

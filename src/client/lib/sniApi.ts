@@ -56,8 +56,8 @@ export const judgeNames = (
   state: 'proven' | 'blocked' | 'unknown',
 ) => apiClient.post(`${BASE}/families/${enc(slug)}/names/country`, { snis, country, state }, Loose);
 
-export const bindFamily = (slug: string, backendSlug: string, inboundTag: string) =>
-  apiClient.post(`${BASE}/families/${enc(slug)}/bind`, { backendSlug, inboundTag }, Loose);
+export const bindFamily = (slug: string, backendSlug: string, transportTag: string) =>
+  apiClient.post(`${BASE}/families/${enc(slug)}/bind`, { backendSlug, transportTag }, Loose);
 export const unbindFamily = (bindingId: string) =>
   apiClient.delete(`${BASE}/bindings/${enc(bindingId)}`, Loose);
 

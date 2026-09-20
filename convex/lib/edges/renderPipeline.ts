@@ -1,7 +1,7 @@
 /**
- * The pure half of relay rendering: given the render context FCP resolved for
+ * The pure half of origin rendering: given the render context FCP resolved for
  * one subscription (published edges of its origin, the listener matchers, the
- * effective client rule) and the panel body, resolve which listeners the body
+ * effective client rule) and the backend body, resolve which listeners the body
  * actually carries, assign this subscriber's endpoints over the edges whose
  * listener resolved, and rewrite the body. Used by the fronted /sub route, the
  * mirror refresh and the admin preview so all three emit identical output for

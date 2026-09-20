@@ -21,21 +21,21 @@ describe('capability record ⇔ provider methods', () => {
     expect(caps.bulkTrafficUpdate).toBe(!!provider.bulkUpdateTrafficLimit);
     expect(caps.usageHistory).toBe(!!provider.getUserUsage);
     expect(caps.nodeStats).toBe(!!provider.getNodeStats);
-    // Host management = list + repoint + create + delete (the relay Host flip,
+    // Host management = list + repoint + create + delete (the origin Host flip,
     // the rotation machine's `ensureListenerHost` and the delete cleanup).
     expect(caps.hostManagement).toBe(
       !!provider.listHosts &&
-        !!provider.updateHost &&
-        !!provider.createHost &&
-        !!provider.deleteHost,
+        !!provider.updateAddress &&
+        !!provider.createAddress &&
+        !!provider.deleteAddress,
     );
-    expect(!!provider.createHost).toBe(!!provider.deleteHost);
+    expect(!!provider.createAddress).toBe(!!provider.deleteAddress);
     expect(caps.nodeInventory).toBe(!!provider.getNodeInventory);
     expect(caps.hostDisable).toBe(!!provider.setHostDisabled);
     expect(caps.inboundDiscovery).toBe(!!provider.listNodeInbounds);
     expect(caps.panelObservation).toBe(!!provider.observePanel);
-    expect(caps.panelWrites).toBe(!!provider.panelWrites);
-    expect(caps.panelSetup).toBe(!!provider.panelWrites?.createProfile);
+    expect(caps.backendWrites).toBe(!!provider.backendWrites);
+    expect(caps.backendSetup).toBe(!!provider.backendWrites?.createProfile);
     expect(caps.userLookupByUsername).toBe(!!provider.findUserByUsername);
     // Hiding a Host is only meaningful where FCP manages Hosts at all.
     if (caps.hostDisable) expect(caps.hostManagement).toBe(true);

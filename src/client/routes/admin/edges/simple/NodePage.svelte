@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
    * One protected node (`/admin/edges/nodes/:slug`), no tabs: the status
-   * sentence, the addresses in use per inbound, "Replace address", the
+   * sentence, the addresses in use per transport, "Replace address", the
    * per-node automatic switch, recent activity in plain words, and a More
    * menu (spare address, remove protection, advanced details). URL state:
    * `?test=<edgeId>` opens the test card for that address.
@@ -264,7 +264,7 @@
       {:else if edgesQ.isError}
         <AdminListState error={edgesQ.error} onRetry={() => void edgesQ.refetch()} />
       {:else if listeners.length === 0}
-        <p class="text-muted-foreground text-sm">This node has no inbound FCP can protect yet.</p>
+        <p class="text-muted-foreground text-sm">This node has no transport FCP can protect yet.</p>
       {:else}
         <ul class="space-y-3">
           {#each listeners as l (l.id)}

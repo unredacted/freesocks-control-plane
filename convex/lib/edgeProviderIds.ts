@@ -1,6 +1,6 @@
 /**
- * Convex-side derivations of the relay-provider id set (the backendIds.ts
- * pattern): every schema field and function arg that names a relay provider
+ * Convex-side derivations of the origin-provider id set (the backendIds.ts
+ * pattern): every schema field and function arg that names an origin provider
  * uses `edgeProviderIdValidator` instead of a hand-copied union.
  */
 import { v } from 'convex/values';

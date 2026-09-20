@@ -26,7 +26,7 @@
     DEFAULT_MODE_SETUP,
     MODE_SHAPES,
     type ModeSetupInput,
-    type PanelSetupView,
+    type BackendSetupView,
   } from '../../../../../shared/contracts/servers';
   import ConfirmDialog from '../../edges/components/ConfirmDialog.svelte';
   import StatusDot from '../../edges/simple/StatusDot.svelte';
@@ -36,7 +36,7 @@
   interface Props {
     open: boolean;
     slug: string;
-    setup: PanelSetupView | null;
+    setup: BackendSetupView | null;
     accounts: { id: string; name: string; zoneName: string }[];
   }
   let { open = $bindable(false), slug, setup, accounts }: Props = $props();

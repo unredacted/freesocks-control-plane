@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * `?relay=<slug>` names a relay that does not exist (yet): the operator is
+   * `?origin=<slug>` names an origin that does not exist (yet): the operator is
    * waiting for the node role to register it. Checks again every few seconds.
    *
    * Props:
@@ -27,10 +27,10 @@
 <div class="max-w-2xl space-y-4 rounded-lg border p-4">
   <div>
     <h2 class="text-base font-semibold">
-      Waiting for relay <span class="font-mono">{slug}</span>
+      Waiting for origin <span class="font-mono">{slug}</span>
     </h2>
     <p class="text-muted-foreground text-sm">
-      No relay with this slug exists yet. When the node role registers it, the setup continues here
+      No origin with this slug exists yet. When the node role registers it, the setup continues here
       by itself. This page checks every few seconds.
     </p>
   </div>

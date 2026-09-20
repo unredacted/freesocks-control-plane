@@ -28,7 +28,7 @@
   <StepIssues {step} ctx={linkCtx} hide={['no_relay']} />
 
   {#if !relay}
-    <p class="text-muted-foreground text-sm">Create the relay first (step 4).</p>
+    <p class="text-muted-foreground text-sm">Create the origin first (step 4).</p>
   {:else}
     {#if published > 0}
       <p class="text-sm">
@@ -60,7 +60,7 @@
       <HostsPlanCard relaySlug={relay.slug} />
     {:else if relay.hostMode === 'none'}
       <p class="text-muted-foreground text-xs">
-        This origin has no panel Host. Publishing only changes what FCP renders and the connection
+        This origin has no backend Host. Publishing only changes what FCP renders and the connection
         plan.
       </p>
     {/if}
@@ -69,7 +69,7 @@
       href={edgesPaths.relay(relay.slug, { tab: 'edges' })}
       class={buttonVariants({ size: 'sm', variant: 'ghost' })}
     >
-      Choose a different edge on the relay page
+      Choose a different edge on the origin page
     </Link>
 
     {#if edgeId}

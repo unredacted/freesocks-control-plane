@@ -90,7 +90,7 @@ describe('remnawaveNodes.claimStatsRefresh (stampede guard)', () => {
         freshMs,
       }),
     ).toBe(true);
-    // Held: concurrent pollers in the same window lose (≤1 panel sweep per window).
+    // Held: concurrent pollers in the same window lose (≤1 backend sweep per window).
     expect(
       await t.mutation(internal.remnawaveNodes.claimStatsRefresh, {
         backendServerId: serverId,

@@ -10,7 +10,7 @@ const SERVER = 'j57abc123def456ghi789jkl';
 const UUID = '550e8400-e29b-41d4-a716-446655440000';
 
 describe('backend user id scoping', () => {
-  test('a per-panel numeric id is stored scoped to its instance', () => {
+  test('a per-backend numeric id is stored scoped to its instance', () => {
     expect(isNumericBackendUserId('2')).toBe(true);
     expect(toStoredBackendUserId(SERVER, '2')).toBe(`${SERVER}:2`);
     expect(toProviderUserId(`${SERVER}:2`)).toBe('2');

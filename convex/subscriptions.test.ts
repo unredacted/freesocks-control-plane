@@ -697,7 +697,7 @@ describe('subscriptions.appendMirror — a superseded row is refused', () => {
   });
 });
 
-describe('subscriptions — relay render key + delivery stamps', () => {
+describe('subscriptions — origin render key + delivery stamps', () => {
   test('insertSubscription mints a renderKey; ensureRenderKey backfills and is idempotent', async () => {
     const t = convexTest(schema, modules);
     const tierId = await seedTier(t);

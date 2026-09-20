@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * Publish one edge into its relay's pool. The dry run (preflight) is shown
+   * Publish one edge into its origin's pool. The dry run (preflight) is shown
    * first; the start button stays off while anything blocks it.
    *
    * Props:

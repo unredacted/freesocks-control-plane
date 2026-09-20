@@ -1,5 +1,5 @@
 /**
- * Umami relay: builds and sends the `/api/send` event for the pageview beacon
+ * Umami origin: builds and sends the `/api/send` event for the pageview beacon
  * (POST /api/v1/telemetry). Pure HTTP, no Convex wrappers, modeled on
  * `captcha.ts`.
  *
@@ -10,7 +10,7 @@
  *   '/other'). Adding a member-facing SPA route means adding a line here.
  * - Referrers are reduced to their ORIGIN (a full referring URL can identify
  *   a private page); in-app referrers are themselves allowlist-checked.
- * - Outbound headers are built from an explicit literal: no inbound header,
+ * - Outbound headers are built from an explicit literal: no transport header,
  *   cookie, or session value is ever forwarded. The client's User-Agent is
  *   forwarded (Umami drops events without a valid UA) after stripping
  *   non-printable chars — CR/LF removal is header-injection hygiene.
@@ -149,7 +149,7 @@ export interface UmamiEventArgs {
   /** Resolved client IP, ONLY when forwardIp is on AND geoMode is 'full'. */
   clientIp: string | null;
   /**
-   * Coarse geo (forwardIp on + geoMode 'coarse'): the fronting edge's inbound
+   * Coarse geo (forwardIp on + geoMode 'coarse'): the fronting edge's transport
    * cf-ipcountry / cf-region-code, pre-sanitize. Sent as OUTBOUND geo headers,
    * which Umami reads when payload.ip is absent — so country/region record
    * WITHOUT the visitor IP ever leaving this backend, and city is structurally
@@ -193,7 +193,7 @@ export async function sendUmamiEvent(args: UmamiEventArgs): Promise<void> {
     },
   };
 
-  // Explicit header literal: nothing from the inbound request is forwarded
+  // Explicit header literal: nothing from the transport request is forwarded
   // except the sanitized UA (Umami rejects UA-less events).
   const headers: Record<string, string> = {
     'content-type': 'application/json',
@@ -225,7 +225,7 @@ export async function sendUmamiEvent(args: UmamiEventArgs): Promise<void> {
       signal: controller.signal,
       // Never follow redirects: the SSRF denylist (checkInfraUrl) ran against
       // the CONFIGURED host at save time, so a permitted host answering 30x
-      // could otherwise steer the relay (and the opt-in payload IP) to a
+      // could otherwise steer the origin (and the opt-in payload IP) to a
       // loopback/link-local/metadata address it couldn't register directly.
       // The response is never read, so dropping the redirect loses nothing.
       redirect: 'manual',

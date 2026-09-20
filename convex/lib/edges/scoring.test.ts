@@ -412,11 +412,11 @@ describe('autoRotateDecision', () => {
     expect(decide({ origin: { ...origin, autoRotate: false } })).toEqual({
       veto: 'auto_rotate_off',
     });
-    // A relay a guided setup owns is never replaced automatically, whatever the evidence.
+    // An origin a guided setup owns is never replaced automatically, whatever the evidence.
     expect(decide({ origin: { ...origin, setupOwned: true } })).toEqual({ veto: 'setup_owned' });
     expect(decide({ evaluation: evaluate(input()) })).toEqual({ veto: 'not_suspected' });
     // Evidence + outage gates come BEFORE the operational ones: a quarantined
-    // relay without evidence reports the missing evidence, not the quarantine.
+    // origin without evidence reports the missing evidence, not the quarantine.
     const originOnly = evaluate(input({ window: loud, usersOnline: 0 }));
     expect(decide({ evaluation: originOnly, origin: { ...origin, quarantined: true } })).toEqual({
       veto: 'no_edge_evidence',
@@ -445,7 +445,7 @@ describe('autoRotateDecision', () => {
     // Same inputs, complete window: this one rotates.
     expect(decide()).toEqual({ edgeId: 'e1', source: 'probes' });
     expect(decide({ evaluation: incompleteEv })).toEqual({ veto: 'evidence_incomplete' });
-    // It is still only a veto: a relay that is not suspected reports that first.
+    // It is still only a veto: an origin that is not suspected reports that first.
     expect(decide({ evaluation: { ...evaluate(input()), windowIncomplete: true } })).toEqual({
       veto: 'not_suspected',
     });

@@ -53,7 +53,7 @@
   const config = configQuery();
 
   // The membership upgrade entry point: an authed member goes straight to their
-  // account (the upgrade panel); an anon visitor creates a free account first.
+  // account (the upgrade backend); an anon visitor creates a free account first.
   const billingEnabled = $derived(config.data?.billing?.enabled ?? false);
   // Admin-configured site chrome (hero overrides, repo link, support email).
   const site = $derived(config.data?.site);

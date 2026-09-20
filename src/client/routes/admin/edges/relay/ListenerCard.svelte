@@ -1,13 +1,13 @@
 <script lang="ts">
   /**
-   * One listener of a relay: what it speaks, its server names (retire /
+   * One listener of an origin: what it speaks, its server names (retire /
    * reactivate, per listener or fleet-wide), which layers can front it and why
-   * the others cannot, its match rule, its panel Host and who owns the row.
+   * the others cannot, its match rule, its backend Host and who owns the row.
    *
-   * Props: relay; listener; edgeCount (non-destroyed edges bound to it); highlighted?;
+   * Props: origin; listener; edgeCount (non-destroyed edges bound to it); highlighted?;
    *        onEdit(listener); onProvision(listenerKey)
    */
-  import type { RelayAdmin, RelayListenerAdmin } from '@shared/contracts/edges';
+  import type { OriginAdmin, RelayListenerAdmin } from '@shared/contracts/edges';
   import * as Card from '@client/components/ui/card';
   import { Badge } from '@client/components/ui/badge';
   import { Button } from '@client/components/ui/button';
@@ -35,7 +35,7 @@
   import { matchRuleWords, originTransportWords } from './relayLogic';
 
   interface Props {
-    relay: RelayAdmin;
+    relay: OriginAdmin;
     listener: RelayListenerAdmin;
     edgeCount: number;
     highlighted?: boolean;
@@ -59,9 +59,9 @@
   let disableOpen = $state(false);
   let deleteOpen = $state(false);
   let adoptOpen = $state(false);
-  let hostUuid = $state('');
+  let addressUuid = $state('');
   const uuidOk = $derived(
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(hostUuid.trim()),
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(addressUuid.trim()),
   );
 
   const OWNERSHIP_WORDS = {
@@ -105,7 +105,7 @@
   const inboundRows = $derived.by((): KeyValueRow[] =>
     l.panelBinding
       ? [
-          { label: 'Inbound tag', value: l.panelBinding.inboundTag, mono: true },
+          { label: 'Transport tag', value: l.panelBinding.inboundTag, mono: true },
           {
             label: 'Config profile',
             value: l.panelBinding.configProfileUuid,
@@ -255,7 +255,7 @@
     <!-- panel Host -->
     {#if relay.hostMode !== 'none' && !l.retired}
       <section class="space-y-2">
-        <h3 class="font-medium">Panel Host</h3>
+        <h3 class="font-medium">Backend Host</h3>
         {#if l.host}
           <div class="flex flex-wrap items-center gap-2">
             <StatusBadge kind="host" value={l.host.state} />
@@ -274,13 +274,13 @@
           {/if}
           {#if l.host.state === 'ambiguous'}
             <p class="rounded-md border border-destructive/40 bg-destructive/10 p-2">
-              Several panel Hosts fit this listener, so FCP will not pick one. Delete the duplicates
-              in the panel; FCP looks again within a few minutes.
+              Several backend Hosts fit this listener, so FCP will not pick one. Delete the
+              duplicates in the backend; FCP looks again within a few minutes.
             </p>
           {:else if l.host.state === 'unresolved'}
             <p class="rounded-md border border-amber-500/40 bg-amber-500/10 p-2">
-              FCP does not know whether its last panel call took effect. It keeps looking and writes
-              nothing for this listener until the answer is clear.
+              FCP does not know whether its last backend call took effect. It keeps looking and
+              writes nothing for this listener until the answer is clear.
             </p>
           {/if}
         {:else}
@@ -307,8 +307,8 @@
               Adopt a Host
             </Button>
             <p class="mt-1 text-xs text-muted-foreground">
-              Tell FCP which panel Host belongs to this listener. It is needed before FCP can take
-              over writing the Hosts of this relay.
+              Tell FCP which backend Host belongs to this listener. It is needed before FCP can take
+              over writing the Hosts of this origin.
             </p>
           </div>
         {/if}
@@ -422,7 +422,7 @@
 <ActionConfirm
   bind:open={deleteOpen}
   title={`Retire listener ${l.listenerKey}?`}
-  body={`The listener stops existing for FCP: nothing can be provisioned or published for it, and FCP deletes the panel Host it created for it. ${edgeCount > 0 ? `It is refused while edges use it: ${edgeCount} still do, so destroy or delete them on the Edges tab first.` : 'No edge uses it, so this goes through.'}${l.source === 'role' ? ' The node role registered this listener and will register it again on its next run unless you remove it there too.' : ''}`}
+  body={`The listener stops existing for FCP: nothing can be provisioned or published for it, and FCP deletes the address it created for it on the backend. ${edgeCount > 0 ? `It is refused while edges use it: ${edgeCount} still do, so destroy or delete them on the Edges tab first.` : 'No edge uses it, so this goes through.'}${l.source === 'role' ? ' The node role registered this listener and will register it again on its next run unless you remove it there too.' : ''}`}
   typed={l.listenerKey}
   confirmLabel="Retire listener"
   danger
@@ -442,23 +442,23 @@
   disabled={!uuidOk}
   run={() =>
     act.mutateAsync({
-      run: () => adoptListenerHost(relay.id, l.listenerKey, { hostUuid: hostUuid.trim() }),
+      run: () => adoptListenerHost(relay.id, l.listenerKey, { hostUuid: addressUuid.trim() }),
       success: 'Host adopted.',
-      after: () => (hostUuid = ''),
+      after: () => (addressUuid = ''),
       quiet: true,
     })}
 >
   <div class="space-y-1.5">
-    <Label for={`adopt-${l.id}`}>Host uuid, from the panel's Hosts page</Label>
+    <Label for={`adopt-${l.id}`}>Host uuid, from the backend's Hosts page</Label>
     <Input
       id={`adopt-${l.id}`}
-      bind:value={hostUuid}
+      bind:value={addressUuid}
       class="font-mono"
       placeholder="00000000-0000-4000-8000-000000000000"
       autocomplete="off"
-      aria-invalid={hostUuid !== '' && !uuidOk}
+      aria-invalid={addressUuid !== '' && !uuidOk}
     />
-    {#if hostUuid !== '' && !uuidOk}
+    {#if addressUuid !== '' && !uuidOk}
       <p class="text-xs text-destructive">That does not look like a uuid.</p>
     {/if}
   </div>

@@ -1,7 +1,7 @@
 /**
  * Overview derivations (pure; unit-tested). Everything the dashboard shows that
  * the `EdgeSummary` contract does not carry as a figure is derived HERE from the
- * summary's relay rows and the attention list, never invented.
+ * summary's origin rows and the attention list, never invented.
  *
  * Exports:
  *   OVERVIEW_FILTERS / OVERVIEW_LAYERS, parseFilter, parseLayer
@@ -20,7 +20,7 @@ import type {
 } from '../../../../../shared/contracts/edges';
 import { codeLabel, type Tone } from '../../../../lib/edgeCodes';
 
-export type RelayRow = z.infer<typeof RelayPoolSummary>;
+export type OriginRow = z.infer<typeof RelayPoolSummary>;
 export type AttentionItem = z.infer<typeof AttentionItemSchema>;
 
 export const OVERVIEW_FILTERS = ['all', 'attention', 'dark', 'quarantined', 'unpublished'] as const;
@@ -29,7 +29,7 @@ export const OVERVIEW_LAYERS = ['all', 'l4', 'l7'] as const;
 export type OverviewLayer = (typeof OVERVIEW_LAYERS)[number];
 
 export const FILTER_LABELS: Record<OverviewFilter, string> = {
-  all: 'All relays',
+  all: 'All origins',
   attention: 'Needs attention',
   dark: 'Members dark',
   quarantined: 'Quarantined',
@@ -46,21 +46,21 @@ export const parseFilter = (raw: string | null | undefined): OverviewFilter =>
 export const parseLayer = (raw: string | null | undefined): OverviewLayer =>
   (OVERVIEW_LAYERS as readonly string[]).includes(raw ?? '') ? (raw as OverviewLayer) : 'all';
 
-export const ORIGIN_KIND_LABELS: Record<RelayRow['relay']['origin']['kind'], string> = {
-  'panel-node': 'Panel node',
+export const ORIGIN_KIND_LABELS: Record<OriginRow['relay']['origin']['kind'], string> = {
+  'panel-node': 'Backend node',
   'backend-server': 'Backend server',
   manual: 'Manual origin',
 };
 
-/** The layers of the relay's PUBLISHED pool, L4 first. */
-export function relayLayers(row: RelayRow): EdgeLayer[] {
+/** The layers of the origin's PUBLISHED pool, L4 first. */
+export function relayLayers(row: OriginRow): EdgeLayer[] {
   const seen = new Set<EdgeLayer>(row.pool.map((p) => p.layer));
   return (['l4', 'l7'] as const).filter((l) => seen.has(l));
 }
 
 const HEALTH_RANK: Record<string, number> = { offline: 3, degraded: 2, unknown: 1, online: 0 };
 /** The worst health among the published edges; null when nothing is published. */
-export function worstHealth(row: RelayRow): string | null {
+export function worstHealth(row: OriginRow): string | null {
   if (row.pool.length === 0) return null;
   let worst = row.pool[0]!.health;
   for (const p of row.pool) {
@@ -69,13 +69,13 @@ export function worstHealth(row: RelayRow): string | null {
   return worst;
 }
 
-/** Relays the server reports as leaving members without a usable subscription. */
+/** Origins the server reports as leaving members without a usable subscription. */
 export function darkRelaySlugs(items: readonly AttentionItem[]): Set<string> {
   const out = new Set<string>();
   for (const i of items) if (i.kind === 'members_dark' && i.relaySlug) out.add(i.relaySlug);
   return out;
 }
-/** Relays with at least one attention item of any kind. */
+/** Origins with at least one attention item of any kind. */
 export function attentionRelaySlugs(items: readonly AttentionItem[]): Set<string> {
   const out = new Set<string>();
   for (const i of items) if (i.relaySlug) out.add(i.relaySlug);
@@ -84,11 +84,11 @@ export function attentionRelaySlugs(items: readonly AttentionItem[]): Set<string
 
 export type DeliveryState = 'dark' | 'serving' | 'idle';
 /**
- * dark = the server says members of this relay get no subscription body;
+ * dark = the server says members of this origin get no subscription body;
  * serving = at least one edge is published; idle = nothing published and no
  * member depends on it yet.
  */
-export function deliveryState(row: RelayRow, dark: ReadonlySet<string>): DeliveryState {
+export function deliveryState(row: OriginRow, dark: ReadonlySet<string>): DeliveryState {
   if (dark.has(row.relay.slug)) return 'dark';
   return row.relay.publishedCount > 0 ? 'serving' : 'idle';
 }
@@ -107,7 +107,7 @@ export interface FilterContext {
   dark: ReadonlySet<string>;
   attention: ReadonlySet<string>;
 }
-export function matchesFilter(row: RelayRow, filter: OverviewFilter, ctx: FilterContext): boolean {
+export function matchesFilter(row: OriginRow, filter: OverviewFilter, ctx: FilterContext): boolean {
   switch (filter) {
     case 'all':
       return true;
@@ -121,20 +121,20 @@ export function matchesFilter(row: RelayRow, filter: OverviewFilter, ctx: Filter
       return row.relay.publishedCount === 0;
   }
 }
-export function matchesLayer(row: RelayRow, layer: OverviewLayer): boolean {
+export function matchesLayer(row: OriginRow, layer: OverviewLayer): boolean {
   return layer === 'all' || row.pool.some((p) => p.layer === layer);
 }
 export function filterRelays(
-  rows: readonly RelayRow[],
+  rows: readonly OriginRow[],
   filter: OverviewFilter,
   layer: OverviewLayer,
   ctx: FilterContext,
-): RelayRow[] {
+): OriginRow[] {
   return rows.filter((r) => matchesFilter(r, filter, ctx) && matchesLayer(r, layer));
 }
 
 /** The detector chip of a row: a veto wins over a suspicion; null = nothing to say. */
-export function suspicionChip(row: RelayRow): { label: string; tone: Tone; hint: string } | null {
+export function suspicionChip(row: OriginRow): { label: string; tone: Tone; hint: string } | null {
   const s = row.relay.suspicion;
   if (!s) return null;
   if (s.veto) {
@@ -276,7 +276,7 @@ export function fleetTiles(
       id: 'quarantined',
       label: 'Quarantined',
       value: String(c.quarantined),
-      hint: 'Relays frozen after a run could not roll back cleanly.',
+      hint: 'Origins frozen after a run could not roll back cleanly.',
       tone: problem(c.quarantined, 'danger'),
       filter: c.quarantined > 0 ? 'quarantined' : null,
     },
@@ -292,7 +292,7 @@ export function fleetTiles(
       id: 'dark',
       label: 'Members dark',
       value: String(dark),
-      hint: 'Relays whose members currently get no subscription.',
+      hint: 'Origins whose members currently get no subscription.',
       tone: problem(dark, 'danger'),
       filter: dark > 0 ? 'dark' : null,
     },

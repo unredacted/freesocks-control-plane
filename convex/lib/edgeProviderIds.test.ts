@@ -1,5 +1,5 @@
 /**
- * Guards the one-source-of-truth invariant for relay-provider ids: the Convex
+ * Guards the one-source-of-truth invariant for origin-provider ids: the Convex
  * validator, the schema's credential/settings variant sets, and the zod enum
  * must all track EDGE_PROVIDER_IDS exactly.
  */
@@ -21,7 +21,7 @@ interface VObjectLike {
 const variantTypes = (u: VUnionLike): string[] =>
   u.members.map((m) => ((m as VObjectLike).fields.type as unknown as VLiteralLike).value).sort();
 
-describe('relay-provider-id derivations track EDGE_PROVIDER_IDS', () => {
+describe('origin-provider-id derivations track EDGE_PROVIDER_IDS', () => {
   test('edgeProviderIdValidator members ≡ EDGE_PROVIDER_IDS', () => {
     const members = (edgeProviderIdValidator as unknown as VUnionLike).members.map(
       (m) => (m as VLiteralLike).value,

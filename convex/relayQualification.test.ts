@@ -28,7 +28,7 @@ afterEach(() => {
   __setEnsureFailpointForTests(null);
 });
 
-describe('relay qualification credential', () => {
+describe('origin qualification credential', () => {
   test('username is slug-derived, bounded and tagged', () => {
     const u = qualificationUsername('Node.One/Very-Long-Relay-Slug-Name', 'abcd1234');
     expect(u.startsWith('fcp-qualify-node-one-very-long-r')).toBe(true);
@@ -36,7 +36,7 @@ describe('relay qualification credential', () => {
     expect(u).toMatch(/^[a-z0-9-]+$/);
   });
 
-  test('mintContext: the relay’s panel + the placement of its qualificationModeSlug; a manual origin has nothing to mint on', async () => {
+  test('mintContext: the origin’s backend + the placement of its qualificationModeSlug; a manual origin has nothing to mint on', async () => {
     const { t, relayId } = await seed();
     const c = (await t.query(internal.relayQualification.mintContext, { relayId }))!;
     expect(c).toMatchObject({
@@ -46,7 +46,7 @@ describe('relay qualification credential', () => {
       pendingRemovals: [],
     });
     expect(c.backendServerId).toBeDefined();
-    // An unknown mode slug falls back to the panel's default placement (fail-soft), never a throw.
+    // An unknown mode slug falls back to the backend's default placement (fail-soft), never a throw.
     await t.run((ctx) => ctx.db.patch(relayId, { qualificationModeSlug: 'no-such-mode' }));
     expect(await t.query(internal.relayQualification.mintContext, { relayId })).toMatchObject({
       slug: 'node-one',
@@ -56,7 +56,7 @@ describe('relay qualification credential', () => {
       qualificationModeSlug: 'no-such-mode',
       qualificationCredential: false,
     });
-    // A manual origin: no panel, so no context and mint refuses.
+    // A manual origin: no backend, so no context and mint refuses.
     const { relayId: manual } = await registerRelay(t, {
       slug: 'hand-made',
       kind: 'manual',
@@ -71,7 +71,7 @@ describe('relay qualification credential', () => {
     );
   });
 
-  test('mint stores only the protocol uuid + panel user id; revoke clears and deactivates', async () => {
+  test('mint stores only the protocol uuid + backend user id; revoke clears and deactivates', async () => {
     vi.stubEnv('DEV_MOCK_BACKEND', 'true');
     vi.stubEnv('ENVIRONMENT', 'development');
     const { t, relayId } = await seed();
@@ -107,13 +107,13 @@ describe('relay qualification credential', () => {
     }
   });
 
-  test('a failed panel deactivation is OWED and retried, never orphaned', async () => {
+  test('a failed backend deactivation is OWED and retried, never orphaned', async () => {
     vi.stubEnv('DEV_MOCK_BACKEND', 'true');
     vi.stubEnv('ENVIRONMENT', 'development');
     const { t, relayId } = await seed();
     await t.action(internal.relayQualification.mint, { relayId });
     const first = (await t.run((ctx) => ctx.db.get(relayId)))!.qualificationBackendUserId!;
-    // The panel is unreachable while the credential is replaced: the old account
+    // The backend is unreachable while the credential is replaced: the old account
     // must stay recorded as owed rather than vanish with its only identifier.
     __setQualificationRemoverForTests(async () => false);
     const r = await t.action(internal.relayQualification.mint, { relayId });
@@ -121,7 +121,7 @@ describe('relay qualification credential', () => {
     let row = (await t.run((ctx) => ctx.db.get(relayId)))!;
     expect(row.qualificationRemovalPending).toEqual([first]);
     expect(row.qualificationBackendUserId).not.toBe(first);
-    // Revoke while the panel is still down: the credential is kept (the
+    // Revoke while the backend is still down: the credential is kept (the
     // operator sees it is still minted) and the failure is reported.
     expect(await t.action(internal.relayQualification.revoke, { relayId })).toMatchObject({
       ok: false,
@@ -129,7 +129,7 @@ describe('relay qualification credential', () => {
     });
     row = (await t.run((ctx) => ctx.db.get(relayId)))!;
     expect(row.qualificationUserId).toBeDefined();
-    // The panel is back: the owed removal and the current account both go.
+    // The backend is back: the owed removal and the current account both go.
     const removed: string[] = [];
     __setQualificationRemoverForTests(async (_b, id) => {
       removed.push(id);
@@ -145,7 +145,7 @@ describe('relay qualification credential', () => {
     expect(removed).toContain(first);
   });
 
-  test('deleting the relay schedules every owed deactivation, not only the current one', async () => {
+  test('deleting the origin schedules every owed deactivation, not only the current one', async () => {
     vi.stubEnv('DEV_MOCK_BACKEND', 'true');
     vi.stubEnv('ENVIRONMENT', 'development');
     const { t, relayId } = await seed();
@@ -213,7 +213,7 @@ describe('relayQualification.ensure: the persisted mint operation', () => {
       }),
     ).rejects.toThrow(/killed/);
     let row = await relay();
-    // The intent (with the username) landed BEFORE the panel call; the user exists on the panel.
+    // The intent (with the username) landed BEFORE the backend call; the user exists on the backend.
     expect(row.qualificationMint).toMatchObject({ state: 'intended', placement: 'sq-a' });
     expect(row.qualificationUserId).toBeUndefined();
     expect(panel.users.size).toBe(1);
@@ -235,7 +235,7 @@ describe('relayQualification.ensure: the persisted mint operation', () => {
     expect(panel.users.size).toBe(1);
     expect(panel.deleted).toEqual([]);
 
-    // The same binding again: reused without a panel call.
+    // The same binding again: reused without a backend call.
     const before = panel.calls.length;
     expect(
       await t.action(internal.relayQualification.ensure, {
@@ -313,7 +313,7 @@ describe('relayQualification.ensure: the persisted mint operation', () => {
     expect(panel.deleted).toHaveLength(2);
   });
 
-  test('a pending operation whose user is NOT on the panel waits for the settle rule, then issues under a new name', async () => {
+  test('a pending operation whose user is NOT on the backend waits for the settle rule, then issues under a new name', async () => {
     const { t, relayId, panel, relay, createCalls } = await seedWithPanel();
     __setEnsureFailpointForTests((point) => {
       if (point === 'after_claim') throw new Error('killed before the create');
@@ -416,7 +416,7 @@ describe('relayQualification.ensure: the persisted mint operation', () => {
     expect((await t.run((ctx) => ctx.db.get(outlineRelay)))?.qualificationMint).toBeUndefined();
   });
 
-  test('deleting a relay with an unsettled operation schedules the by-username removal', async () => {
+  test('deleting an origin with an unsettled operation schedules the by-username removal', async () => {
     const { t, relayId, panel } = await seedWithPanel();
     __setEnsureFailpointForTests((point) => {
       if (point === 'after_issue') throw new Error('killed');

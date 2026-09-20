@@ -1,11 +1,11 @@
 /// <reference types="vite/client" />
 /**
  * The operator endpoints behind the redesigned Admin -> Edges section:
- * setup-status through the bootstrap stages (relay, draft, fleet), the
+ * setup-status through the bootstrap stages (origin, draft, fleet), the
  * explicit test provision from a tested but UNQUALIFIED account, the preflight
  * dry run (first blocker = what a real start throws; writes nothing), the
  * ranked attention list, the merged timeline, the quarantine resolver view
- * (+ the live column), provider usage, the relay lookup, delivery bindings,
+ * (+ the live column), provider usage, the origin lookup, delivery bindings,
  * the maintenance switch and the Host adoption handoff. Fixtures only
  * (RFC 5737 / 3849, `*.example`).
  */
@@ -34,7 +34,7 @@ import {
   EdgeRotationDetail,
   ProvidersUsageResponse,
   QuarantineView,
-  RelayAdmin,
+  OriginAdmin,
   SetupStatusResponse,
   TimelineResponse,
 } from '../src/shared/contracts/edges';
@@ -68,7 +68,7 @@ async function adminCookie(t: T) {
   return `fs_admin_session=${await signValue(sid, ADMIN_SIGN_KEY)}`;
 }
 
-/** Panel + one gcore account (untested, unqualified) + relay `node-one` with the REALITY listener `a`. */
+/** Backend + one gcore account (untested, unqualified) + origin `node-one` with the REALITY listener `a`. */
 async function seed() {
   const t = convexTest(schema, modules);
   const f = await seedEdgeFixture(t);
@@ -95,7 +95,7 @@ const count = (t: T, table: 'auditLog' | 'edgeRotations') =>
   t.run(async (ctx) => (await ctx.db.query(table).collect()).length);
 
 describe('setup-status', () => {
-  test('relay scope walks the bootstrap: untested account -> tested -> edge -> qualification -> publish -> rendering', async () => {
+  test('origin scope walks the bootstrap: untested account -> tested -> edge -> qualification -> publish -> rendering', async () => {
     const { t, call, get, relayId, listenerId, accountId } = await seed();
     let s = await get('setup-status?relay=node-one', SetupStatusResponse);
     expect(s.scope).toBe('relay');
@@ -129,7 +129,7 @@ describe('setup-status', () => {
     await adoptL4Edge(t, relayId, listenerId, { publish: false });
     s = await get('setup-status?relay=node-one', SetupStatusResponse);
     expect(step(s, 'edge').status).toBe('done');
-    // The adopted edge has no account: qualification looks at the relay's chosen account? No: an
+    // The adopted edge has no account: qualification looks at the origin's chosen account? No: an
     // observe-only edge carries no account, so nothing about accounts blocks it.
     expect(step(s, 'qualification').status).toBe('done');
     expect(s.currentStep).toBe('publish');
@@ -145,7 +145,7 @@ describe('setup-status', () => {
     expect(step(s, 'automation').warnings.map((w) => w.code)).toContain('edge_layer_disabled');
   });
 
-  test('draft scope judges layer compatibility before the relay exists; a manual draft needs no backend', async () => {
+  test('draft scope judges layer compatibility before the origin exists; a manual draft needs no backend', async () => {
     const { t, call, accountId } = await seed();
     await markTested(t, accountId);
     const res = await call('POST', 'setup-status', {
@@ -188,7 +188,7 @@ describe('setup-status', () => {
     expect(codes(udp, 'account')).toEqual(['no_compatible_account']);
   });
 
-  test('fleet scope aggregates per step and lists relays to resume; the draft POST is admitted by a read scope', async () => {
+  test('fleet scope aggregates per step and lists origins to resume; the draft POST is admitted by a read scope', async () => {
     const { t, get } = await seed();
     await registerRelay(t, { slug: 'node-two', nodeName: 'node-two' });
     const s = await get('setup-status', SetupStatusResponse);
@@ -429,7 +429,7 @@ describe('attention, timeline, usage, lookups, maintenance', () => {
     expect((await get('maintenance', EdgeMaintenanceView)).frozen).toBe(false);
   });
 
-  test('timeline merges the relay, edge, listener and rotation rows newest first and classifies the subject', async () => {
+  test('timeline merges the origin, edge, listener and rotation rows newest first and classifies the subject', async () => {
     const { t, get, relayId, listenerId } = await seed();
     await adoptL4Edge(t, relayId, listenerId, { publish: true });
     // A second edge published directly (index 1 needs no Host flip) audits against the edge row.
@@ -451,7 +451,7 @@ describe('attention, timeline, usage, lookups, maintenance', () => {
     expect(tl.entries.some((e) => e.targetId === edgeId)).toBe(true);
   });
 
-  test('providers usage counts published / standby edges per account and relay, and what auto-provision would add', async () => {
+  test('providers usage counts published / standby edges per account and origin, and what auto-provision would add', async () => {
     const { t, get, relayId, listenerId, accountId } = await seed();
     await adoptL4Edge(t, relayId, listenerId, { publish: true, accountId });
     await adoptL4Edge(t, relayId, listenerId, { ipv4: '198.51.100.8', publish: false });
@@ -469,9 +469,9 @@ describe('attention, timeline, usage, lookups, maintenance', () => {
     expect(u.totals).toMatchObject({ published: 1, standby: 1 });
   });
 
-  test('relays/lookup returns the full admin view by slug (404 when absent); delivery bindings list the registered node', async () => {
+  test('origins/lookup returns the full admin view by slug (404 when absent); delivery bindings list the registered node', async () => {
     const { call, get, serverId } = await seed();
-    const r = await get('relays/lookup?slug=node-one', RelayAdmin);
+    const r = await get('relays/lookup?slug=node-one', OriginAdmin);
     expect(r.slug).toBe('node-one');
     expect(r.origin.kind).toBe('panel-node');
     expect((await call('GET', 'relays/lookup?slug=nope')).status).toBe(404);
@@ -490,7 +490,7 @@ describe('attention, timeline, usage, lookups, maintenance', () => {
 });
 
 describe('quarantine view and Host adoption', () => {
-  test('quarantine view: previous and current tuples per listener; the live column matches what the panel serves', async () => {
+  test('quarantine view: previous and current tuples per listener; the live column matches what the backend serves', async () => {
     const { t, call, get, relayId, listenerId } = await seed();
     const prev = await adoptL4Edge(t, relayId, listenerId, { ipv4: '198.51.100.1', publish: true });
     const next = await adoptL4Edge(t, relayId, listenerId, {
@@ -548,7 +548,7 @@ describe('quarantine view and Host adoption', () => {
       match: 'unknown',
     });
     expect(view.inspectedAt).toBeNull();
-    // Inspect: the panel serves the NEW address for the listener's remark, plus a stray duplicate.
+    // Inspect: the backend serves the NEW address for the listener's remark, plus a stray duplicate.
     mockFetch((c) => {
       if (c.path === '/api/hosts' && c.method === 'GET')
         return jsonRes({
@@ -620,7 +620,7 @@ describe('quarantine view and Host adoption', () => {
     // Resolving with a reason audits the reason.
     const r = await call('POST', `relays/${relayId}/resolve-quarantine`, {
       keep: 'current',
-      reason: 'panel serves the new edge',
+      reason: 'backend serves the new edge',
     });
     expect(r.status).toBe(200);
     const audits = await t.run(async (c) =>
@@ -630,11 +630,11 @@ describe('quarantine view and Host adoption', () => {
     );
     expect(audits[0].payload).toMatchObject({
       keep: 'current',
-      reason: 'panel serves the new edge',
+      reason: 'backend serves the new edge',
     });
   });
 
-  test('adopt-host: an operator Host at a published edge with the listener inbound becomes adopted (legacy remark kept); a mismatch is refused; hostMode may then flip to fcp', async () => {
+  test('adopt-host: an operator Host at a published edge with the listener transport becomes adopted (legacy remark kept); a mismatch is refused; hostMode may then flip to fcp', async () => {
     const t = convexTest(schema, modules);
     await insertPanelServer(t);
     await createAccount(t, { provider: 'gcore', name: 'acct-a' });
@@ -764,7 +764,7 @@ describe('operator-facing refusals and the rotation view', () => {
     );
   });
 
-  test('a relay whose only deployed listener is UDP is skipped in words: probe.udp_unsupported', async () => {
+  test('an origin whose only deployed listener is UDP is skipped in words: probe.udp_unsupported', async () => {
     const { t, call } = await seed();
     const udp = await registerRelay(t, {
       slug: 'node-udp',
@@ -838,7 +838,7 @@ describe('review fixes: attention targets, the tested rule, the quarantine verdi
     expect(pre.blockers.map((b) => b.code)).toContain('account_untested');
   });
 
-  test('a suspected relay offers a one-click rotate only when the evidence names exactly one published edge', async () => {
+  test('a suspected origin offers a one-click rotate only when the evidence names exactly one published edge', async () => {
     const { t, get, relayId, listenerId } = await seed();
     const a = await adoptL4Edge(t, relayId, listenerId, { publish: true });
     const suspicion = (edgeIds: string[]) => ({

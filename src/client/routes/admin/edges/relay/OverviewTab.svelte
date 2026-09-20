@@ -1,15 +1,15 @@
 <script lang="ts">
   /**
-   * The Overview tab: the quarantine resolver first when the relay is
+   * The Overview tab: the quarantine resolver first when the origin is
    * quarantined, a live rotation banner, then origin / pool / delivery /
    * detector cards and the merged timeline.
    *
-   * Props: relay; edges; listeners; connectionPlan; onOpenEdge; onOpenRotation
+   * Props: origin; edges; listeners; connectionPlan; onOpenEdge; onOpenRotation
    */
   import type { z } from 'zod';
   import type {
     EdgeAdmin,
-    RelayAdmin,
+    OriginAdmin,
     RelayConnectionPlanEntry,
     RelayListenerAdmin,
   } from '@shared/contracts/edges';
@@ -29,7 +29,7 @@
   import { timelineLinkParams } from './relayLogic';
 
   interface Props {
-    relay: RelayAdmin;
+    relay: OriginAdmin;
     edges: EdgeAdmin[];
     listeners: RelayListenerAdmin[];
     connectionPlan: Array<z.infer<typeof RelayConnectionPlanEntry>>;
@@ -57,8 +57,8 @@
 
   {#if relay.deleting}
     <div class="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm">
-      This relay is being deleted. Its edges are destroyed in the background and the page disappears
-      once the last one is confirmed gone.
+      This origin is being deleted. Its edges are destroyed in the background and the page
+      disappears once the last one is confirmed gone.
     </div>
   {/if}
 
@@ -95,7 +95,7 @@
     <Card.Header>
       <Card.Title>Timeline</Card.Title>
       <Card.Description>
-        Everything that happened to this relay, its listeners, its edges and its rotations, newest
+        Everything that happened to this origin, its listeners, its edges and its rotations, newest
         first.
       </Card.Description>
     </Card.Header>

@@ -2,7 +2,7 @@
 /**
  * The delivery rehearsal (docs/edges.md § "Rendering"; acceptance 12, 16, 21,
  * 22): cohorts from authoritative membership (two placements with different
- * inbound sets, both rehearsed, every page walked), an approved dark cohort
+ * transport sets, both rehearsed, every page walked), an approved dark cohort
  * excluded, an empty node rehearsed from the rehearsal credential, a disabled
  * family rule listed, an expired L7 proof listed, the before/after Host
  * listing repeated (bounded), and an Outline server with members rehearsed
@@ -53,7 +53,7 @@ const INBOUND_B = '66666666-6666-4666-8666-666666666666';
 const REMARK_A = `${NODE}-relay-a`;
 const REMARK_B = `${NODE}-relay-b`;
 
-/** What the panel serves per format for a body carrying ONE listener's FCP Host entry. */
+/** What the backend serves per format for a body carrying ONE listener's FCP Host entry. */
 function bodyFor(
   format: 'links' | 'singbox' | 'clash',
   remark: string,
@@ -118,7 +118,7 @@ type BodyRule = (user: FakePanelUser | null, shortId: string, ua: string) => str
 
 async function seed(opts: { body?: BodyRule; bindPool?: boolean } = {}) {
   const shortToPlacement = new Map<string, string>();
-  // A panel user (the rehearsal credential) is on the node's placement `sq-a`;
+  // A backend user (the rehearsal credential) is on the node's placement `sq-a`;
   // a member short id the test seeded maps through `shortToPlacement`.
   const defaultBody: BodyRule = (user, shortId, ua) => {
     const format = formatOfUa(ua);
@@ -208,7 +208,7 @@ async function seed(opts: { body?: BodyRule; bindPool?: boolean } = {}) {
 }
 
 describe('the delivery rehearsal', () => {
-  test('two placements with different inbound sets are both rehearsed from membership, in every supported format; the vector is what vectorNow reports', async () => {
+  test('two placements with different transport sets are both rehearsed from membership, in every supported format; the vector is what vectorNow reports', async () => {
     const { t, fx, addMember, run } = await seed();
     await addMember('sq-a');
     await addMember('sq-b');
@@ -238,7 +238,7 @@ describe('the delivery rehearsal', () => {
   test('an approved dark cohort is excluded from the serve requirement; a cohort whose body cannot render is a failure per format', async () => {
     const { addMember, run } = await seed({
       body: (u, short, ua) => {
-        // sq-b members receive a body with NO relay entry at all (their inbound is unsupported).
+        // sq-b members receive a body with NO origin entry at all (their transport is unsupported).
         const fmt = formatOfUa(ua);
         return short.startsWith('member2')
           ? `vless://${UUID}@${ORIGIN}:9999?${REALITY_QS}#${NODE}-other`

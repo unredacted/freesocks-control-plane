@@ -237,7 +237,7 @@
     },
   }));
 
-  // Analytics relay (self-hosted Umami): its own namespace + own admin GET —
+  // Analytics origin (self-hosted Umami): its own namespace + own admin GET —
   // the Umami URL/website id are deliberately NOT in the public /api/v1/config
   // (only the enabled bit is), so current values come from adminAnalyticsQuery,
   // not configQuery. The server sanitizes (https-only URL, UUID id) and echoes
@@ -363,9 +363,9 @@
             effectively unlimited and the device UI is hidden. When ON, each tier's device limit
             applies and the connect screen steers members to HWID-capable apps.
             <strong class="text-foreground">
-              Enforcement also requires HWID_DEVICE_LIMIT_ENABLED=true on the Remnawave panel</strong
+              Enforcement also requires HWID_DEVICE_LIMIT_ENABLED=true on the Remnawave backend</strong
             >
-            - FCP can't read or set that panel setting. Set the per-tier limit under Tiers.
+            - FCP can't read or set that backend setting. Set the per-tier limit under Tiers.
           </CardDescription>
         </CardHeader>
         <CardContent class="text-sm">
@@ -588,9 +588,9 @@
         <CardHeader>
           <CardTitle class="text-base">HPKE encryption verification</CardTitle>
           <CardDescription>
-            Controls the "HPKE" badge and its Verify panel. The links below are shown to users as
+            Controls the "HPKE" badge and its Verify backend. The links below are shown to users as
             out-of-band ways to confirm the app hasn't been tampered with; leave one blank to hide
-            it. Turning the panel off hides the badge entirely (encryption still runs).
+            it. Turning the backend off hides the badge entirely (encryption still runs).
           </CardDescription>
         </CardHeader>
         <CardContent class="space-y-3 text-sm">
@@ -599,7 +599,7 @@
               checked={vDraft.showPanel}
               onCheckedChange={(v) => (vDraft = { ...vDraft, showPanel: v === true })}
             />
-            <span>Show the HPKE badge and verify panel</span>
+            <span>Show the HPKE badge and verify backend</span>
           </label>
           <div>
             <label class="text-xs text-muted-foreground mb-1 block" for="verify-release">
@@ -981,7 +981,7 @@
               <p class="text-xs text-muted-foreground mt-1">
                 Full: the visitor IP is embedded in the event (requires Umami v2.17 or newer); Umami
                 hashes it with a daily-rotating salt and stores derived country/region/city, never
-                the raw IP. Country and region only: the relay copies the Cloudflare edge's geo
+                the raw IP. Country and region only: the origin copies the Cloudflare edge's geo
                 headers instead and the IP never leaves this server; city is never sent, and
                 unique-visitor counts fall back to per-device approximations. Like the Cloudflare IP
                 source, this needs CADDY_TRUST_CF_HEADER=true on the web service (the Caddyfile
@@ -1025,7 +1025,7 @@
                 {/if}
               </div>
               <p class="text-xs text-muted-foreground mt-1">
-                Where the relay reads the visitor IP. Default: the platform's trusted-proxy
+                Where the origin reads the visitor IP. Default: the platform's trusted-proxy
                 resolution (TRUSTED_PROXY_HOPS / CF_FRONTED). Pick your fronting CDN's header when
                 the proxy chain doesn't preserve the forwarded chain (for example Cloudflare in
                 front of a tunnel). This choice affects analytics only, never rate limiting.

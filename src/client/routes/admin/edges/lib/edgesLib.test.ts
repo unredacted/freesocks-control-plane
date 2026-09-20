@@ -184,7 +184,7 @@ describe('attention', () => {
       '/admin/edges/settings?section=maintenance',
     );
   });
-  it('falls back to the home without a relay', () => {
+  it('falls back to the home without a origin', () => {
     expect(attentionTarget(item({ action: 'open_relay', relaySlug: null }))).toBe('/admin/edges');
     expect(attentionTarget(item({ action: 'open_account' }))).toBe('/admin/edges/providers');
   });
@@ -212,7 +212,7 @@ describe('attention', () => {
       ),
     ).toBe('1 of 3 published · in IR, CN');
     expect(attentionFactsLine(item({ facts: { ageMs: 120_000 } }))).toBe('for 2 min');
-    expect(attentionSubject(item({ listenerKey: 'main' }))).toBe('Relay relay-a, listener main');
+    expect(attentionSubject(item({ listenerKey: 'main' }))).toBe('Origin relay-a, listener main');
     expect(attentionSubject(item({ relaySlug: null }))).toBe('');
   });
 });

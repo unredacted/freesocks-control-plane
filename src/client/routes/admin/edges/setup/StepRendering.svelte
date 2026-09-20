@@ -93,12 +93,13 @@
       <section class="space-y-2">
         <h4 class="text-sm font-semibold">Preview per client</h4>
         <p class="text-muted-foreground text-xs">
-          A sample member of this relay, rendered for each client family. Nothing is sent to anyone.
+          A sample member of this origin, rendered for each client family. Nothing is sent to
+          anyone.
         </p>
         <RenderPreview relayId={relay.id} family={previewFamily} />
       </section>
     {:else}
-      <p class="text-muted-foreground text-sm">Create the relay first (step 4).</p>
+      <p class="text-muted-foreground text-sm">Create the origin first (step 4).</p>
     {/if}
   {/if}
 </div>

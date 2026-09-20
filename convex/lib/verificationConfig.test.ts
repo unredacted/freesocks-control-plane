@@ -2,7 +2,7 @@
 import { describe, expect, test } from 'vitest';
 import { sanitizeHttpsUrl, sanitizeOnion } from './verificationConfig';
 
-/** These gate what the "Verify connection" panel renders as a clickable link, so
+/** These gate what the "Verify connection" backend renders as a clickable link, so
  *  a non-https / scheme-injecting value must sanitize to '' (never a live href). */
 describe('sanitizeHttpsUrl', () => {
   test('accepts a plain https URL (trimmed)', () => {

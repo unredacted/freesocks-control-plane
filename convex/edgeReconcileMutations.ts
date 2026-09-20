@@ -1,6 +1,6 @@
 /**
  * Isolate mutations the reconcile cron needs beyond the row-level ones in
- * edges / relays: destroy bookkeeping (audited) and the
+ * edges / origins: destroy bookkeeping (audited) and the
  * publish-a-standby decision (direct publish, or a `publish` rotation when the
  * free slot is pool index 0 on a Host-managed origin).
  */
@@ -257,7 +257,7 @@ export const publishStandby = internalMutation({
         origin.hostMode === 'fcp' &&
         (!listener?.templateEdgeId || listener.templateEdgeId === edge._id);
       if (becomesTemplate) {
-        // Needs the panel-Host flip: hand it to the rotation machine.
+        // Needs the backend-Host flip: hand it to the rotation machine.
         try {
           const { rotationId } = await startRotation(ctx, {
             relayId,

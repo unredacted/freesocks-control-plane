@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
    * Step 9, automation (optional): probes, the edge layer, automatic rotation
-   * for this relay, automatic L7 selection. Each switch says what it does.
+   * for this origin, automatic L7 selection. Each switch says what it does.
    *
    * Props: StepBodyProps
    */
@@ -53,8 +53,8 @@
 
 <div class="space-y-4">
   <p class="text-sm">
-    Everything here is optional. The relay already works; these switches decide how much FCP does on
-    its own afterwards.
+    Everything here is optional. The origin already works; these switches decide how much FCP does
+    on its own afterwards.
   </p>
   <StepIssues {step} ctx={linkCtx} />
 

@@ -1,15 +1,15 @@
 <script lang="ts">
   /**
-   * Edit one relay: label, location, pool size, standbys, its own rotation
-   * limits and (panel origins) the connection mode whose placement the front
+   * Edit one origin: label, location, pool size, standbys, its own rotation
+   * limits and (backend origins) the connection mode whose placement the front
    * qualification user is created on. Number knobs use the server bounds (`edgeConfigQuery().bounds`); only
    * changed fields are sent.
    *
-   * Props: open (bindable); relay
+   * Props: open (bindable); origin
    */
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
-  import type { RelayAdmin } from '@shared/contracts/edges';
+  import type { OriginAdmin } from '@shared/contracts/edges';
   import * as Dialog from '@client/components/ui/dialog';
   import { Button } from '@client/components/ui/button';
   import { Input } from '@client/components/ui/input';
@@ -29,7 +29,7 @@
 
   interface Props {
     open: boolean;
-    relay: RelayAdmin;
+    relay: OriginAdmin;
   }
   let { open = $bindable(false), relay }: Props = $props();
 
@@ -47,10 +47,10 @@
   let maxRotationsPerDay = $state(4);
   let drainMinutes = $state(60);
   let probeNode = $state(false);
-  // '' = the panel's default placement.
+  // '' = the backend's default placement.
   let qualificationMode = $state('');
   const DEFAULT_MODE = '__default__';
-  // Only a panel origin mints a qualification user; the mode list is fetched only then.
+  // Only a backend origin mints a qualification user; the mode list is fetched only then.
   const hasPanel = $derived(relay.origin.kind === 'panel-node');
   const modes = adminConnectionModesQuery();
   const modeOptions = $derived(
@@ -59,7 +59,7 @@
     ),
   );
   const modeLabel = $derived.by(() => {
-    if (qualificationMode === '') return 'Panel default';
+    if (qualificationMode === '') return 'Backend default';
     const m = modeOptions.find((x) => x.id === qualificationMode);
     return m ? (m.label ?? m.id) : qualificationMode;
   });
@@ -114,7 +114,7 @@
   const save = createMutation(() => ({
     mutationFn: async (p: RelayPatch) => assertEdgeOk(await updateRelay(relay.id, p)),
     onSuccess: () => {
-      toast.success('Relay saved.');
+      toast.success('Origin saved.');
       invalidateRelay(qc, relay.slug);
       open = false;
     },
@@ -127,7 +127,7 @@
       <Dialog.Title>Edit relay {relay.slug}</Dialog.Title>
       <Dialog.Description>
         The slug, the origin and its address are fixed once edges dial them. Everything here applies
-        to this relay only and overrides the fleet defaults in Settings.
+        to this origin only and overrides the fleet defaults in Settings.
       </Dialog.Description>
     </Dialog.Header>
     <form
@@ -226,7 +226,7 @@
             <Select.Trigger id="relay-qualification-mode" class="w-full">{modeLabel}</Select.Trigger
             >
             <Select.Content>
-              <Select.Item value={DEFAULT_MODE}>Panel default</Select.Item>
+              <Select.Item value={DEFAULT_MODE}>Backend default</Select.Item>
               {#each modeOptions as m (m.id)}
                 <Select.Item value={m.id}>
                   {m.label ?? m.id}{m.enabled ? '' : ' (disabled)'}
@@ -235,9 +235,9 @@
             </Select.Content>
           </Select.Root>
           <p class="text-xs text-muted-foreground">
-            Proving a CDN front needs a test user on this panel. It is created on the placement of
-            the mode chosen here, which must include this relay's node, or the proof fails although
-            the front works. Panel default suits a panel with one placement. It takes effect the
+            Proving a CDN front needs a test user on this backend. It is created on the placement of
+            the mode chosen here, which must include this origin's node, or the proof fails although
+            the front works. Backend default suits a backend with one placement. It takes effect the
             next time the qualification credential is created.
           </p>
           {#if modes.isError}

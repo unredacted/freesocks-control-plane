@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * What the node role needs to register this relay: public values only, as
+   * What the node role needs to register this origin: public values only, as
    * copyable lines. Tokens are minted on the API tokens page (the button deep
    * links into its create dialog, see `tokenPrefill.ts`), never shown here.
    *
@@ -53,7 +53,7 @@
     </p>
   {:else}
     <p class="text-muted-foreground text-sm">
-      The node role has not registered this relay yet. This page checks again every few seconds.
+      The node role has not registered this origin yet. This page checks again every few seconds.
     </p>
   {/if}
 
@@ -81,7 +81,7 @@
   <div class="space-y-1.5 text-sm">
     <p>
       The role needs an API token with the scope
-      <span class="font-mono">{scope}</span>, confined to this relay. The button opens the API
+      <span class="font-mono">{scope}</span>, confined to this origin. The button opens the API
       tokens page with that scope chosen and a name suggested: a token is shown once and never
       appears on this page.
     </p>

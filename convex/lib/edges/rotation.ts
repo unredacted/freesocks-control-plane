@@ -118,7 +118,7 @@ export interface StandbyCandidate {
 
 /**
  * A compatible standby: active + unpublished, on the SAME slot (same profile,
- * same inbound), with a publishable address, and from the profile's account when
+ * same transport), with a publishable address, and from the profile's account when
  * the profile is account-scoped. Prefers a provider not already published.
  */
 export function pickStandby(
@@ -261,8 +261,8 @@ export function pickSlot(
 
 /**
  * Account pick for a slot that is not bound to one provider: the best qualified
- * account across providers, preferring one not yet published on the relay
- * (when distinct providers are preferred), then the relay's preference.
+ * account across providers, preferring one not yet published on the origin
+ * (when distinct providers are preferred), then the origin's preference.
  */
 export function pickAccountAny(
   accounts: readonly AccountCandidate[],

@@ -15,11 +15,11 @@
    * this) with no hardcoded copy to drift. The membership tier (the one whose
    * slug matches `billing.tierSlug`) shows its monthly price (the shortest term's
    * per-month) + an Upgrade CTA when billing is enabled and the parent supplies
-   * `onUpgrade`. Longer-term discounts are shown in the upgrade panel, not here.
+   * `onUpgrade`. Longer-term discounts are shown in the upgrade backend, not here.
    */
   interface Props {
     currentTierSlug: string;
-    /** Called when the membership-card CTA is clicked (parent scrolls to / opens the panel). */
+    /** Called when the membership-card CTA is clicked (parent scrolls to / opens the backend). */
     onUpgrade?: () => void;
     /** Per-surface header copy (the RedeemCode pattern); defaults keep Home unchanged. */
     titleKey?: MessageKey;
@@ -43,7 +43,7 @@
 
   // The headline monthly price = the SHORTEST term's per-month (e.g. the 1-month
   // plan at $5/mo), NOT the cheapest amortized annual ($4.17/mo) - that read as a
-  // pricing bug. Longer-term discounts live in the upgrade panel instead.
+  // pricing bug. Longer-term discounts live in the upgrade backend instead.
   let monthlyCents = $derived(baselinePerMonth(billing?.durations ?? []));
   let fromPerMonth = $derived(
     monthlyCents !== null

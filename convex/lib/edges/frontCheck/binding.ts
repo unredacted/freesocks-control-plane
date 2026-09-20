@@ -27,7 +27,7 @@ export {
 } from '../intent';
 
 /**
- * How the inbound behind the slot is addressed over its HTTP transport, as the
+ * How the transport behind the slot is addressed over its HTTP transport, as the
  * node role declares it (`relayListeners.transportParams`). Each transport uses a
  * different subset: `ws` and `httpupgrade` need the path (and the upgrade
  * token), `grpc` needs the service name, `xhttp` the path and its mode. Absent

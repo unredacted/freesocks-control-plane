@@ -21,7 +21,7 @@
 
   // Mobile accordion: on narrow viewports the bar keeps only the logo + the
   // HPKE badge + a menu toggle; everything else lives in a full-width,
-  // fully-LABELED panel below. The old icon-only row was too condensed to tell
+  // fully-LABELED backend below. The old icon-only row was too condensed to tell
   // the controls apart. Desktop (sm+) keeps the inline nav.
   let menuOpen = $state(false);
   const closeMenu = () => (menuOpen = false);

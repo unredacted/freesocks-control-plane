@@ -1,8 +1,8 @@
 /**
- * Inbound candidates with the origin probe applied (docs/edges.md § "Listener
- * catalogue", discovery): `GET relays/inbound-candidates?backendServerId=&nodeUuid=`
- * lists the node's inbounds (`backends.listNodeInbounds`), maps them to listener
- * candidates (`mapInboundsToListeners`), then probes every HTTP-transport
+ * Transport candidates with the origin probe applied (docs/edges.md § "Listener
+ * catalogue", discovery): `GET origins/transport-candidates?backendServerId=&nodeUuid=`
+ * lists the node's transports (`backends.listNodeInbounds`), maps them to listener
+ * candidates (`mapTransportsToListeners`), then probes every HTTP-transport
  * candidate's origin (edgeOriginProbeOps.ts) and fills `originTransport` where
  * the probe succeeded, recomputing `layers`. Everything else stays L4-only and
  * carries the probe's reason. Read-only: nothing is registered here.
@@ -12,8 +12,8 @@ import { internalAction, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import {
-  mapInboundsToListeners,
-  type InboundCandidate,
+  mapTransportsToListeners,
+  type TransportCandidate,
   type UnsupportedInbound,
 } from './lib/edges/inboundMapping';
 import { listenerLayers, type OriginTransport } from './lib/edges/layers';
@@ -21,7 +21,7 @@ import type { OriginProbeOutcome } from './lib/edges/originProbe';
 import { protocolIsHttpTransport } from './lib/edges/protocols';
 import { listenersOf } from './relayListeners';
 
-export interface ProbedInboundCandidate extends InboundCandidate {
+export interface ProbedInboundCandidate extends TransportCandidate {
   originTransport: OriginTransport | null;
   /** The probe's verdict for an HTTP-transport candidate; null when none was needed. */
   probe: { ok: boolean; reason: string | null } | null;
@@ -44,7 +44,7 @@ export const nodeContext = internalQuery({
     if (!capabilitiesOf(server.backend).inboundDiscovery)
       throw new ConvexError({
         code: 'backend.inbounds_unsupported',
-        message: 'This backend does not list node inbounds',
+        message: 'This backend does not list node transports',
       });
     const rows = await ctx.db
       .query('backendNodeInventory')
@@ -54,9 +54,9 @@ export const nodeContext = internalQuery({
     if (!node)
       throw new ConvexError({
         code: 'edge.node_unknown',
-        message: 'The node is not in the panel inventory; refresh the node list first',
+        message: 'The node is not in the backend inventory; refresh the node list first',
       });
-    // An existing relay on the node names the origin address and the keys already taken.
+    // An existing origin on the node names the origin address and the keys already taken.
     const relay = await ctx.db
       .query('relays')
       .withIndex('by_node', (q) =>
@@ -70,7 +70,7 @@ export const nodeContext = internalQuery({
     if (!originAddress)
       throw new ConvexError({
         code: 'edge.node_address_unknown',
-        message: 'The panel reports no address for this node',
+        message: 'The backend reports no address for this node',
       });
     return {
       node: { nodeUuid: node.nodeUuid, name: node.name, address: node.address ?? null },
@@ -82,7 +82,10 @@ export const nodeContext = internalQuery({
 });
 
 /** The HTTP-transport candidates the origin probe must look at (pure; shared with the setup plan). */
-export function originProbeTargets(candidates: readonly InboundCandidate[], originAddress: string) {
+export function originProbeTargets(
+  candidates: readonly TransportCandidate[],
+  originAddress: string,
+) {
   return candidates
     .filter((cand) => protocolIsHttpTransport(cand.listenerSpec))
     .map((cand) => ({
@@ -102,7 +105,7 @@ export function originProbeTargets(candidates: readonly InboundCandidate[], orig
  * offered an L7 account through the guided flow too).
  */
 export function applyOriginProbes(
-  candidates: readonly InboundCandidate[],
+  candidates: readonly TransportCandidate[],
   outcomes: readonly OriginProbeOutcome[],
 ): ProbedInboundCandidate[] {
   const byKey = new Map(outcomes.map((o) => [o.listenerKey, o]));
@@ -137,7 +140,7 @@ export const inboundCandidates = internalAction({
       backendServerId,
       nodeUuid,
     });
-    const mapped = await mapInboundsToListeners(inbounds, {
+    const mapped = await mapTransportsToListeners(inbounds, {
       existingKeys: c.existingKeys,
       origin: { kind: 'panel-node', backendServerId, nodeName: c.node.name, nodeUuid },
     });

@@ -241,9 +241,9 @@ Highlights:
   (country × connection mode), and operator-published **incidents** — all edited in
   the CMS (**Admin → Status**) with no redeploy. The member's Access Pass shows which
   node its key is on and deep-links to that location's card.
-- **Edges**: any origin (a panel node, a whole Outline server, or a hand-described
+- **Edges**: any origin (a backend node, a whole Outline server, or a hand-described
   address) sits behind replaceable fronts ("edges") that FCP provisions, publishes as a
-  per-relay pool (primary + backup), renders into each member's subscription with a
+  per-origin pool (primary + backup), renders into each member's subscription with a
   stable assignment, probes from the countries that matter, and rotates when blocked,
   all with a recovery-first ledger, per-rotation audit trails and a sealed admin
   surface. What the origin speaks is described per listener (VLESS, Trojan,
@@ -317,7 +317,7 @@ Highlights:
   `POST /api/v1/account/gift-codes/ack` + `GET /api/v1/account/codes` (gift purchases).
 - **Admin (cookie or scope-checked token):** `GET|POST|PATCH|DELETE /api/v1/admin/{status,tiers,users,admins,tokens,audit,settings,rate-limits,membership-codes,backend-servers,backends/{backend}/mode-placements,billing,mirror-providers,theme,site,verification,clients,connection-modes,connection-mode-families,client-ip,status/{page,incidents},referrals/config,remnawave/{node-stats,logging-status,harden-logging}}/*` — every route enforces a scope on token callers (several features share the broader `admin:settings:*` / `admin:users:*` scopes rather than one scope per feature); the Ansible role's idempotent `by-slug` / `by-name` upserts live under these.
 - **Plumbing:** `GET|POST /api/admin/auth/*` (WebAuthn passkey ceremonies + bootstrap),
-  `POST /api/webhooks/billing` (generic HMAC inbound), and the processor webhooks
+  `POST /api/webhooks/billing` (generic HMAC transport), and the processor webhooks
   `POST /api/webhooks/{nowpayments,btcpay,stripe,paypal}`.
 
 ### Authentication paths
@@ -357,7 +357,7 @@ bun run test:compat:browser          # report-issue dialog in Chromium + Firefox
 
 The client-compatibility suite (`docs/client-compatibility.md`) is the **Client compatibility**
 GitHub workflow. On every PR it renders each catalogued client's subscription through FCP's real
-HTTP handler against a live throwaway Remnawave panel (exact User-Agent cache isolation, refresh
+HTTP handler against a live throwaway Remnawave backend (exact User-Agent cache isolation, refresh
 after a Host change), drives pinned sing-box and Mihomo engines through a REALITY tunnel to an
 origin only the proxy can reach (HTTPS, remote DNS, UDP DNS, wrong-credential fail-closed), and
 imports + refreshes the subscription in the checksum-verified SFL Linux package (deep link and

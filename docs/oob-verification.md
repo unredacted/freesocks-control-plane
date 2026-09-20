@@ -59,7 +59,7 @@ through as many of these independent channels as are available:
 
    The `hpke`/`ed25519`/`mldsa` values are the **ungrouped** hex of the same
    fingerprints above (`mldsa` is omitted for an Ed25519-only deployment); the in-app
-   "Verify via DNS" panel computes them with the same primitive (`sha256HexOfB64Url`),
+   "Verify via DNS" backend computes them with the same primitive (`sha256HexOfB64Url`),
    so the page and the record are one hash. The user runs the `dig` themselves and
    compares: strict `connect-src 'self'` (and COEP `require-corp`) forbid an in-page
    DNS lookup by design, so this is deliberately a manual check, not an automatic one.
@@ -77,18 +77,18 @@ through as many of these independent channels as are available:
    so the generator and the extension's `background.js` canonicalize that one tag before
    hashing; the SRI `integrity=` attributes pin every chunk, so the normalized-index hash
    pins the whole bundle). Once published to a web store, set the listing URL in Admin →
-   Settings → verification (`verification.extensionUrl`) and the in-app panel links to it;
-   until then the panel says "planned, not available yet." A native app reusing the
+   Settings → verification (`verification.extensionUrl`) and the in-app backend links to it;
+   until then the backend says "planned, not available yet." A native app reusing the
    existing proxy clients is the stronger sibling (the extension's own self-fetch can be
    gamed by a sophisticated active CDN). **Pin generation is automated; packaging +
    web-store publication remain operator actions.**
 
-The in-app **"Verify connection" panel** (opened from the HPKE badge in the header /
+The in-app **"Verify connection" backend** (opened from the HPKE badge in the header /
 admin sidebar) shows the SAME fingerprints — it and the script both call
 `fingerprintB64Url`, so the value on the running page is byte-identical to the one
 published here — adds a live manifest-attestation check (`/api/v1/hpke/keys`), and
 surfaces the **"Verify via DNS"** lookup (the `_fcp-pin` `dig` command + the expected
-record) so a user can check off-CDN without leaving the page. The panel is a
+record) so a user can check off-CDN without leaving the page. The backend is a
 _convenience_, not the trust root: a tampered page could lie about its own status, so
 the guarantee still comes from comparing through a channel the CDN doesn't control —
 the DNS lookup you run yourself, the signed release, or the `.onion` mirror.
@@ -96,7 +96,7 @@ the DNS lookup you run yourself, the signed release, or the `.onion` mirror.
 ### What the live attestation check reports
 
 `/api/v1/hpke/keys` publishes the current manifest-signed **epoch key** (rotated every
-10 minutes, valid 30). The panel verifies that signature in the browser against the
+10 minutes, valid 30). The backend verifies that signature in the browser against the
 baked manifest public key, and the verdict is deliberately split by _which_ check
 failed, because only some failures mean someone swapped a key:
 
@@ -104,8 +104,8 @@ failed, because only some failures mean someone swapped a key:
 | ------------- | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
 | `active`      | signature verifies, unexpired, not revoked                                                 | green badge                                                                                     |
 | `warn`        | the endpoint answered and the key **fails signature verification**, or its kid is revoked  | green badge turns amber **and** the loud full-width bar ("don't enter your account number yet") |
-| `stale`       | the endpoint answered but has no live epoch: none published, or the one served had expired | panel detail only                                                                               |
-| `unreachable` | the endpoint could not be reached                                                          | panel detail only                                                                               |
+| `stale`       | the endpoint answered but has no live epoch: none published, or the one served had expired | backend detail only                                                                             |
+| `unreachable` | the endpoint could not be reached                                                          | backend detail only                                                                             |
 
 `stale` and `unreachable` are quiet on purpose. In both the client keeps sealing to the
 manifest-**pinned static key** baked into the bundle, so nothing is sent unprotected and
@@ -137,7 +137,7 @@ silent static-key fallback precisely where censorship makes NAT sharing the norm
 
 The client also re-attests every 5 minutes and on refocus or regained connectivity
 (throttled to one check per minute), so a long-lived tab's verdict is current rather than
-frozen at page load, and opening the verify panel forces a fresh check. The interval is
+frozen at page load, and opening the verify backend forces a fresh check. The interval is
 deliberately not gated on `document.visibilityState`, because some embedded webviews
 report a displayed page as hidden forever.
 

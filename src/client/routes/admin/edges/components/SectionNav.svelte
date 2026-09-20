@@ -3,7 +3,7 @@
    * The section's in-page header: `Nodes | Providers | Advanced`, one quiet row
    * of plain links at the top of every Edges page (the sidebar has a single
    * "Edges" leaf). The current page's link is emphasised; every technical page
-   * (templates, probes, settings, setup, a relay) counts as Advanced.
+   * (templates, probes, settings, setup, an origin) counts as Advanced.
    *
    * Props:
    *   current: SectionTab

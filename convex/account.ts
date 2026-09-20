@@ -30,9 +30,9 @@ import { NODE_STATS_STALE_MS } from './lib/remnawavePlacement';
 
 /**
  * The member-facing raw subscription URL. Under edge-required delivery a
- * backend server covered by a relay binding (an Outline instance behind edges)
+ * backend server covered by an origin binding (an Outline instance behind edges)
  * hands out ONLY the fronted token URL: its raw URL is the origin's own key.
- * A panel URL names the panel, not a node, and passes through.
+ * A backend URL names the backend, not a node, and passes through.
  */
 async function memberFacingUrl(
   ctx: ActionCtx,
@@ -49,7 +49,7 @@ type Backend = BackendId;
 /**
  * WS1 bring-up safety net: when a Remnawave key is issued with a null placement
  * (only possible when NO mode has a pool bound anywhere on the deploy), the key
- * has no inbounds. We still issue it (keys must mint during bring-up) but never
+ * has no transports. We still issue it (keys must mint during bring-up) but never
  * SILENTLY — audit it so an admin sees they must bind a placement pool. A no-op
  * for Outline or when a placement resolved. `switchMode` can't reach this (it
  * rejects unbound targets first).
@@ -88,7 +88,7 @@ const TOMBSTONE_GRACE_MS = 24 * 60 * 60 * 1000;
  * live usedTrafficBytes and shrink the new key's limit by it, so the member's
  * period quota is preserved across the re-issue instead of reset.
  *
- * Best-effort: a panel blip (or an already-gone old key) must not block
+ * Best-effort: a backend blip (or an already-gone old key) must not block
  * re-issue — there is usually nothing to carry then. A fully-spent quota
  * carries as 1 byte, NOT 0: 0 means UNLIMITED to Remnawave (and 'blocked' to
  * Outline), so 1 byte is the only value that reads as "spent" on both.
@@ -140,11 +140,11 @@ async function tombstoneOldSub(
 }
 
 /**
- * Where a NEW key issues: for Remnawave, the (placement, panel) pair resolved
- * TOGETHER (a squad UUID only exists on its own panel) for the member's mode +
+ * Where a NEW key issues: for Remnawave, the (placement, backend) pair resolved
+ * TOGETHER (a mode group UUID only exists on its own backend) for the member's mode +
  * preferred location; null-everything for other backends. `serverId` pins
- * issueUser to the squad's panel — without it the instance pick could land on a
- * different panel than the squad (a dead key on any multi-panel deploy).
+ * issueUser to the mode group's backend — without it the instance pick could land on a
+ * different backend than the mode group (a dead key on any multi-backend deploy).
  */
 async function resolveIssueTarget(
   ctx: ActionCtx,
@@ -163,9 +163,9 @@ async function resolveIssueTarget(
     location,
     rand: randBuf[0]! / 2 ** 32,
   });
-  // Multi-panel + zero attributable squads: an unpinned issue would mint a
-  // (squad, wrong-panel) dead key — fail loudly (503, retryable once the stats
-  // cron attributes the pool) instead. Single-panel deploys never see this.
+  // Multi-backend + zero attributable mode groups: an unpinned issue would mint a
+  // (mode group, wrong-backend) dead key — fail loudly (503, retryable once the stats
+  // cron attributes the pool) instead. Single-backend deploys never see this.
   if (t.unattributedMultiPanel) {
     throw new ConvexError({
       code: 'backend.placement_unresolved',
@@ -177,12 +177,12 @@ async function resolveIssueTarget(
 }
 
 /**
- * The panel that actually hosts a live key, for the in-place update paths. The
- * stored `backendServerId` can be stale (its panel row was re-registered) or
+ * The backend that actually hosts a live key, for the in-place update paths. The
+ * stored `backendServerId` can be stale (its backend row was re-registered) or
  * absent (legacy sub); either used to force the re-issue fallback on EVERY
- * switch. Repair it: probe the active fleet for the panel that really has this
+ * switch. Repair it: probe the active fleet for the backend that really has this
  * key, and persist the fix so later key→instance resolutions work too. A failed
- * probe resolves null = unpinned (the historical single-panel behavior).
+ * probe resolves null = unpinned (the historical single-backend behavior).
  */
 async function resolveOwnPanel(
   ctx: ActionCtx,
@@ -288,7 +288,7 @@ export const releaseIssuanceLock = internalMutation({
  * the effective mode's pool is unbound but another mode's is bound, the member
  * must pick a new mode first (the /connection-mode + switchMode guards are the
  * same shape). An all-unbound (bring-up) deploy is NOT blocked: issuance
- * proceeds squad-less + audited.
+ * proceeds mode group-less + audited.
  */
 const MODE_UNAVAILABLE_MESSAGE =
   'Your current connection mode is no longer available. Switch to another connection mode first.';
@@ -349,7 +349,7 @@ interface AccountView {
     url: string;
     // Opaque FCP-fronted-URL token; the SPA builds `<origin>/api/v1/sub/<subToken>`.
     subToken: string | null;
-    /** A relay covers this key's place: only the fronted token URL is handed out. */
+    /** An origin covers this key's place: only the fronted token URL is handed out. */
     edgeRequired: boolean;
     shortUuid: string;
     mirrors: { provider: string; publicUrl: string }[];
@@ -412,7 +412,7 @@ export const getAccountView = internalAction({
     // outage (backend unreachable) still shows the raised cap, not the base.
     const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
     const trafficLimitFromTier = resolveTrafficLimitBytes(tier, bonusGb);
-    // The member's own settled donation totals (impact panel). The GB figure is
+    // The member's own settled donation totals (impact backend). The GB figure is
     // computed server-side at the current rate so the raw rate never ships.
     const donationTotals: {
       donatedCentsTotal: number;
@@ -460,7 +460,7 @@ export const getAccountView = internalAction({
       const server = sub.backendServerId
         ? await ctx.runQuery(internal.backendServers.getById, { id: sub.backendServerId })
         : null;
-      // Edge-required delivery (docs/edges.md): when a relay covers this key's
+      // Edge-required delivery (docs/edges.md): when an origin covers this key's
       // place, the raw backend URL is the origin itself (for an Outline key it
       // IS the `ss://` key at the origin address) and must never reach the
       // member; only the fronted token URL is handed out.
@@ -543,7 +543,7 @@ export const getAccountView = internalAction({
  * member's current subscription and asks the backend for the last `days` of
  * usage; null when there's no sub or the backend has no usage history (Outline).
  * Kept OUT of getAccountView so it doesn't add a second live backend call to the
- * main account load — the client fetches it lazily when the member opens the panel.
+ * main account load — the client fetches it lazily when the member opens the backend.
  */
 export const getUsage = internalAction({
   args: { userId: v.id('users'), days: v.optional(v.number()) },
@@ -562,7 +562,7 @@ export const getUsage = internalAction({
 interface NodeStatusView {
   /** true/false when we have a signal; null = never observed (unknown). */
   online: boolean | null;
-  /** Squad/node display name (Remnawave), when known. */
+  /** Mode group/node display name (Remnawave), when known. */
   label: string | null;
   location: { code: string; label: string } | null;
   /** The location's coarse public load band (quiet/busy/crowded); null when the
@@ -572,7 +572,7 @@ interface NodeStatusView {
   checkedAt: string | null;
   /** Edges (docs/edges.md): a refresh nudge + the labels of the
    *  connections this key's subscription carries. Null when the key is not
-   *  behind a rendered relay origin. Labels only, never addresses. */
+   *  behind a rendered origin origin. Labels only, never addresses. */
   relay: {
     refreshSuggested: boolean;
     /** `name` = a hostname-fronted connection (one entry, no address family). */
@@ -589,7 +589,7 @@ const NODE_STATUS_FRESH_MS = 60_000;
 /**
  * Live-ish status of the node the member's config is homed to, so a member can
  * tell "the node is up, my network is filtering me" from an actual outage. For
- * a placed Remnawave key this is the squad's node snapshot (refreshed on demand
+ * a placed Remnawave key this is the mode group's node snapshot (refreshed on demand
  * at most once per instance per NODE_STATUS_FRESH_MS via the claimStatsRefresh
  * stampede guard — the SPA polls this endpoint); otherwise it degrades to the
  * instance-level healthcheck signal (10-min cron cadence).
@@ -630,7 +630,7 @@ export const getNodeStatus = internalAction({
         return {
           node: {
             online: stats.online && stats.nodeCount > 0,
-            // Neutral label: the panel's squad/node name (stats.label) often
+            // Neutral label: the backend's mode group/node name (stats.label) often
             // encodes provider/host infra detail — the member sees the curated
             // location label instead ("Kansas City, MO").
             label: location?.label ?? null,
@@ -718,7 +718,7 @@ export const regenerate = internalAction({
         ),
         trafficLimitStrategy: tier.trafficStrategy,
         // Member term, else the far-future sentinel (free keys never expire
-        // panel-side; the usage-based idle sweep owns free reclaim).
+        // backend-side; the usage-based idle sweep owns free reclaim).
         expireAt: computeExpireAtIso(user.membershipExpiresAt),
         hwidDeviceLimit: resolveHwidLimit(!!settings['devices.enforcementEnabled'], tier),
         tag: tier.slug,
@@ -933,7 +933,7 @@ type SwitchModeResult =
 /**
  * Switch the member's connection mode (transport) WITHIN the same backend.
  * PREFERS an IN-PLACE update: a member who already holds a live Remnawave key just
- * has that key's squad re-pointed (PATCH /api/users → activeInternalSquads), so the
+ * has that key's mode group re-pointed (PATCH /api/users → activeInternalSquads), so the
  * SAME subscription row/URL/token, traffic counter, and devices survive the switch
  * — no user churn and no 24h "old key" window. Falls back to the re-issue saga
  * (mint new key into the mode's least-loaded node → tombstone the old with 24h
@@ -1028,7 +1028,7 @@ export const switchMode = internalAction({
     // Re-issue path (the historical behavior): mint a NEW key into the mode's
     // placement and tombstone the old one with 24h grace. Used only when there is
     // no in-place-updatable current key — the first key, a cross-backend /
-    // non-Remnawave sub, or an in-place PATCH that failed (e.g. the panel user was
+    // non-Remnawave sub, or an in-place PATCH that failed (e.g. the backend user was
     // manually deleted).
     const reissue = async (): Promise<SwitchModeResult> => {
       const issueTarget = await resolveIssueTarget(
@@ -1085,7 +1085,7 @@ export const switchMode = internalAction({
         action: 'subscription.switch_mode',
         targetType: 'subscription',
         targetId: issued.subscriptionId,
-        // Never a placement/squad uuid — only which mode.
+        // Never a placement/mode group uuid — only which mode.
         payload: { fromMode: user.connectionModeId ?? null, toMode: target, inPlace: false },
         requestId,
       });
@@ -1100,12 +1100,12 @@ export const switchMode = internalAction({
     };
 
     // In-place switch (the common case): a member who already has a live Remnawave
-    // key just moves it to the new mode's squad via PATCH /api/users. The SAME
+    // key just moves it to the new mode's mode group via PATCH /api/users. The SAME
     // subscription row/URL/token, live traffic counter, and registered devices are
-    // all preserved — no user churn in the panel and no separate "old key" to keep
+    // all preserved — no user churn in the backend and no separate "old key" to keep
     // alive for 24h. Only when the current key AND the tier are Remnawave.
     if (oldSub && capabilitiesOf(tier.backend).placement && oldSub.backend === tier.backend) {
-      // The in-place PATCH lands on the key's OWN panel, so the new mode's
+      // The in-place PATCH lands on the key's OWN backend, so the new mode's
       // placement must exist there — a hard `onlyServerId` pin.
       const pinServerId = await resolveOwnPanel(ctx, oldSub, tier.backend);
       const { placement: nodePlacement } = await ctx.runQuery(
@@ -1116,17 +1116,17 @@ export const switchMode = internalAction({
           onlyServerId: pinServerId as Id<'backendServers'> | null,
         },
       );
-      // null when no pool is bound anywhere OR the target mode has no squad on
-      // this key's panel; the re-issue path owns both (it may move panels and
-      // owns the squad-less-key audit), so fall through to it rather than PATCH
-      // a squad clear onto a live key. (The per-mode unbound case was rejected
+      // null when no pool is bound anywhere OR the target mode has no mode group on
+      // this key's backend; the re-issue path owns both (it may move backends and
+      // owns the mode group-less-key audit), so fall through to it rather than PATCH
+      // a mode group clear onto a live key. (The per-mode unbound case was rejected
       // above.)
       if (nodePlacement !== null) {
-        // Persist BEFORE the panel PATCH (Review D-#6): a concurrent
+        // Persist BEFORE the backend PATCH (Review D-#6): a concurrent
         // pushTierToBackend reads the PERSISTED placement — with DB-first, a
         // push landing mid-switch re-sends the NEW placement (exactly what the
-        // PATCH is about to do), so panel and DB stay convergent. The old
-        // order (PATCH → persist) let such a push silently revert the squad
+        // PATCH is about to do), so backend and DB stay convergent. The old
+        // order (PATCH → persist) let such a push silently revert the mode group
         // move while the DB recorded it. On PATCH failure we restore the old
         // persisted placement so the DB never claims a move that didn't happen.
         await ctx.runMutation(internal.subscriptions.setPlacementAndClearCache, {
@@ -1157,7 +1157,7 @@ export const switchMode = internalAction({
           action: 'subscription.switch_mode',
           targetType: 'subscription',
           targetId: oldSub._id,
-          // Never a placement/squad uuid — only which mode + that it was in place.
+          // Never a placement/mode group uuid — only which mode + that it was in place.
           payload: { fromMode: user.connectionModeId ?? null, toMode: target, inPlace: true },
           requestId,
         });
@@ -1199,11 +1199,11 @@ type SwitchServerResult =
  * regenerating (which rotates the saved URL).
  *
  * Three levers, cheapest first, because they move different things:
- *  1. a different squad on the key's OWN panel — an in-place PATCH, nothing else
+ *  1. a different mode group on the key's OWN backend — an in-place PATCH, nothing else
  *     changes;
- *  2. the node pin — when one squad spans several nodes, this is the ONLY thing
+ *  2. the node pin — when one mode group spans several nodes, this is the ONLY thing
  *     that decides which node a member gets, so it is always rotated;
- *  3. a re-issue — the only way to reach another panel (the panel owns the user
+ *  3. a re-issue — the only way to reach another backend (the backend owns the user
  *     record), used when (1) is impossible or its PATCH failed. Carries the sub
  *     token, so even here the member's saved URL does not change.
  *
@@ -1282,17 +1282,17 @@ export const switchServer = internalAction({
     // Is the member's stored mode still usable here? `resolvePlacementPool` falls
     // back across modes (own pool → default → any bound), which is right at
     // ISSUANCE but wrong here: a placement move would silently re-home the key
-    // into ANOTHER mode's squad while connectionModeId and the whole UI still say
+    // into ANOTHER mode's mode group while connectionModeId and the whole UI still say
     // the original. On a privacy mode that quietly swaps the transport the member
     // deliberately chose. regenerate and switch-backend already refuse in this
     // state; so does this. The node-pin rotation below stays available — it moves
-    // inside the current squad and cannot change the transport.
+    // inside the current mode group and cannot change the transport.
     const modeBlocked =
       canPlaceBackend && (await isEffectiveModeBlocked(ctx, tier.backend, modeId));
     const canPlace = canPlaceBackend && !modeBlocked;
-    // The panel this key actually lives on. Resolved once: the in-place lever
-    // pins to it, and the cross-panel probe compares against it to tell a real
-    // relocation from a same-panel shuffle.
+    // The backend this key actually lives on. Resolved once: the in-place lever
+    // pins to it, and the cross-backend probe compares against it to tell a real
+    // relocation from a same-backend shuffle.
     const ownPanelId = canPlaceBackend ? await resolveOwnPanel(ctx, oldSub, tier.backend) : null;
     const settings = await ctx.runQuery(internal.appSettings.resolved, {});
 
@@ -1309,7 +1309,7 @@ export const switchServer = internalAction({
         action: 'subscription.switch_server',
         targetType: 'subscription',
         targetId: payload.subscriptionId,
-        // The member's reason + WHAT moved. Never a placement/squad uuid.
+        // The member's reason + WHAT moved. Never a placement/mode group uuid.
         payload: {
           reason,
           inPlace: payload.inPlace,
@@ -1341,8 +1341,8 @@ export const switchServer = internalAction({
       });
     };
 
-    // Where a re-issue would land: the mode's pool with NO panel pin, so it can
-    // cross to another panel/location — the only lever that can, since a panel
+    // Where a re-issue would land: the mode's pool with NO backend pin, so it can
+    // cross to another backend/location — the only lever that can, since a backend
     // owns its user records. Separate from `reissue` itself so the caller can ask
     // "is there anywhere else to go?" WITHOUT minting a key to find out.
     const resolveCrossPanelTarget = async () => {
@@ -1359,8 +1359,8 @@ export const switchServer = internalAction({
     };
 
     // (3) Re-issue: a new key in the SAME mode, excluding the placement the
-    // member is leaving, unpinned so it may land on another panel/location.
-    // `pre` is a target already resolved by the caller (the cross-panel probe);
+    // member is leaving, unpinned so it may land on another backend/location.
+    // `pre` is a target already resolved by the caller (the cross-backend probe);
     // the PATCH-failure path passes nothing and resolves fresh.
     const reissue = async (
       pre?: Awaited<ReturnType<typeof resolveCrossPanelTarget>>,
@@ -1393,7 +1393,7 @@ export const switchServer = internalAction({
         },
         pinServerId: (target.serverId as Id<'backendServers'> | null) ?? undefined,
         // Land on a different node than the one being left, for the same reason
-        // regenerate does — the squad may span nodes.
+        // regenerate does — the mode group may span nodes.
         excludeNode: oldSub.pinnedNode ?? undefined,
         // Moving servers is not a rotation: the member keeps their saved link.
         carrySubTokenFromId: oldSub._id,
@@ -1426,7 +1426,7 @@ export const switchServer = internalAction({
       };
     };
 
-    // (1) A different squad on this key's own panel.
+    // (1) A different mode group on this key's own backend.
     if (canPlace) {
       const pinServerId = ownPanelId;
       const rand = new Uint32Array(1);
@@ -1441,13 +1441,13 @@ export const switchServer = internalAction({
       // A legacy row (issued before placements were persisted — a state
       // lifecycle.legacyPushPlacement still supports) has NO source placement to
       // compare against, so "different from null" proves nothing: the key may
-      // already sit in the very squad we resolved, making the PATCH a no-op that
+      // already sit in the very mode group we resolved, making the PATCH a no-op that
       // we would report as a move. Require a KNOWN source that actually differs.
       // The unknown case still falls through to the pin rotation and the
-      // cross-panel re-issue, both of which prove a move on their own terms.
+      // cross-backend re-issue, both of which prove a move on their own terms.
       const sourcePlacement = oldSub.backendPlacement ?? null;
       if (placement !== null && sourcePlacement !== null && placement !== sourcePlacement) {
-        // DB before panel, as in switchMode: a concurrent pushTierToBackend
+        // DB before backend, as in switchMode: a concurrent pushTierToBackend
         // re-sends the PERSISTED placement, so this ordering keeps the two
         // convergent. Restore on failure so the DB never claims a move that
         // didn't happen.
@@ -1469,7 +1469,7 @@ export const switchServer = internalAction({
           });
           return reissue();
         }
-        // (2) also rotate the pin: the new squad may still serve several nodes.
+        // (2) also rotate the pin: the new mode group may still serve several nodes.
         const leftNode = await ctx.runMutation(internal.subscriptions.rotateNodePin, {
           subscriptionId: oldSub._id,
         });
@@ -1494,24 +1494,24 @@ export const switchServer = internalAction({
       }
     }
 
-    // (2) alone: no other squad to move to, but the key may be pinned to one node
-    // of a MULTI-node squad, where rotating the pin genuinely changes the server.
+    // (2) alone: no other mode group to move to, but the key may be pinned to one node
+    // of a MULTI-node mode group, where rotating the pin genuinely changes the server.
     //
     // "Multi-node" is load-bearing, not decoration: pinSubscriptionToNode refuses
     // to pin a single-node list at all, and pickNode DROPS the exclusion rather
-    // than empty the pool (lib/nodePinning.ts). So on a one-node squad the next
+    // than empty the pool (lib/nodePinning.ts). So on a one-node mode group the next
     // fetch serves the very same node while we'd have told the member their key
     // moved. Only claim the move when the cached stats prove another node exists;
     // an unknown count (no stats row yet — bring-up, or a placement the
     // healthcheck cron hasn't observed) counts as unproven, which reads as
     // "try again later" and self-heals on the next cron pass.
-    // The snapshot must also be FRESH. A squad that has since shrunk to one node
+    // The snapshot must also be FRESH. A mode group that has since shrunk to one node
     // would still read >1 from a stale row, putting us right back to claiming a
     // move that cannot happen — so apply the same staleness bar pickByNodeLoad
     // uses for its own load decisions.
     // Deliberately `canPinBackend`, not `canPlace`: rotating the pin stays
     // available to a member whose mode an admin just unbound, or whose tier was
-    // flipped to another backend, because it moves WITHIN their current squad —
+    // flipped to another backend, because it moves WITHIN their current mode group —
     // it cannot change their transport and needs nothing from the tier.
     const placementStats =
       canPinBackend && oldSub.backendPlacement
@@ -1544,23 +1544,23 @@ export const switchServer = internalAction({
       };
     }
 
-    // (3) Cross-panel re-issue. Both cheap levers are exhausted, but the mode's
-    // pool may still hold a placement on ANOTHER panel — the same-panel lookup
+    // (3) Cross-backend re-issue. Both cheap levers are exhausted, but the mode's
+    // pool may still hold a placement on ANOTHER backend — the same-backend lookup
     // above deliberately hides those (`onlyServerId` is a hard pin), so without
-    // this probe a member on a one-squad, one-node panel could never leave it
+    // this probe a member on a one-mode group, one-node backend could never leave it
     // even with a whole other location bound. Probe before committing: reissue
     // mints a key and tombstones the old one, which is far too much to spend
     // landing back where we started.
     const crossPanel = await resolveCrossPanelTarget();
     const knownSource = oldSub.backendPlacement ?? null;
-    // With a KNOWN current squad, a different resolved squad is proof enough.
+    // With a KNOWN current mode group, a different resolved mode group is proof enough.
     // With an UNKNOWN one (a legacy row) it is not: `excludePlacement` was null,
-    // so the pick can be the very squad the key already sits in, and on a
-    // one-squad/one-node pool the re-issue would then tombstone a working key,
+    // so the pick can be the very mode group the key already sits in, and on a
+    // one-mode group/one-node pool the re-issue would then tombstone a working key,
     // re-register the member's devices and land them on the same server — while
     // reporting success. A different PANEL is the one thing that still proves a
-    // move without knowing the squad: a key created on panel B is by definition
-    // not on panel A. (Such a row can also recover a recorded placement via
+    // move without knowing the mode group: a key created on backend B is by definition
+    // not on backend A. (Such a row can also recover a recorded placement via
     // regenerate, after which its switches are provable the normal way.)
     const provenAlternative =
       knownSource !== null
@@ -1582,7 +1582,7 @@ export const switchServer = internalAction({
       };
     }
 
-    // Nothing to move: a single-squad, single-node deployment, a key that has
+    // Nothing to move: a single-mode group, single-node deployment, a key that has
     // never been served (so there is no pin yet), or a node count we can't prove.
     // Change nothing and say so — tombstoning a working key to land back on the
     // same server helps no one, and neither does claiming a move that didn't
@@ -1629,9 +1629,9 @@ export const revokeDevice = internalAction({
       };
     }
 
-    // Backend failures (a RemnawaveApiError carries a panel-body slice) must be
+    // Backend failures (a RemnawaveApiError carries a backend-body slice) must be
     // mapped to a generic result HERE — otherwise they escape the route and
-    // surface as a runtime 500 with panel text attached (every other member
+    // surface as a runtime 500 with backend text attached (every other member
     // route maps backend errors to a clean 502). (Review D-#5.)
     let state;
     try {

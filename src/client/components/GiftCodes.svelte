@@ -6,7 +6,7 @@
    * UpgradeMembership; a quantity stepper scales the price. "Buy codes" creates a
    * processor-hosted invoice and full-page redirects (the strict CSP forbids an
    * embedded SDK). The freshly-minted codes are revealed ONCE on return (handled
-   * by Account's order poll); this panel also lists the codes you've bought + their
+   * by Account's order poll); this backend also lists the codes you've bought + their
    * redeemed status.
    */
   import { Button } from '@client/components/ui/button';
@@ -55,7 +55,7 @@
   }
   let totalCents = $derived((selectedDuration?.amountCents ?? 0) * quantity);
 
-  // The buyer's purchased codes (gated on billing being live, like the panel).
+  // The buyer's purchased codes (gated on billing being live, like the backend).
   let codes = accountCodesQuery(() => !!billing?.enabled);
 
   const checkout = createMutation(() => ({

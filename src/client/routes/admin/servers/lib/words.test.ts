@@ -23,7 +23,7 @@ import {
 
 const inbound = (over: Record<string, unknown> = {}) => ({
   tag: 'reality-in',
-  inboundUuid: 'i-1',
+  transportUuid: 'i-1',
   protocol: 'vless',
   port: 443 as number | null,
   listen: null,
@@ -36,8 +36,8 @@ const inbound = (over: Record<string, unknown> = {}) => ({
   serviceName: null,
   realityPublicKey: 'pk',
   realityPublicKeyMismatch: false,
-  hosts: [{ remark: 'h' }] as never[],
-  squads: [{ squadUuid: 's', name: 'free' }],
+  addresses: [{ remark: 'h' }] as never[],
+  modeGroups: [{ groupUuid: 's', name: 'free' }],
   ...over,
 });
 
@@ -47,8 +47,8 @@ const node = (over: Record<string, unknown> = {}) => ({
   online: true,
   isDisabled: false,
   usersOnline: 4,
-  profile: { profileUuid: 'p', name: 'Default', inboundCount: 1, changedAt: null },
-  inbounds: [inbound()],
+  profile: { profileUuid: 'p', name: 'Default', transportCount: 1, changedAt: null },
+  transports: [inbound()],
   ...over,
 });
 
@@ -62,8 +62,8 @@ describe('nodeWords', () => {
       'Online, 1 person connected.',
     );
     expect(nodeWords(node({ online: false }) as never).dot).toBe('red');
-    expect(nodeWords(node({ inbounds: [] }) as never).dot).toBe('amber');
-    expect(nodeWords(node({ profile: null, inbounds: [] }) as never).sentence).toMatch(
+    expect(nodeWords(node({ transports: [] }) as never).dot).toBe('amber');
+    expect(nodeWords(node({ profile: null, transports: [] }) as never).sentence).toMatch(
       /No config profile/,
     );
     // Off wins over everything: it is a decision, not a fault.
@@ -71,7 +71,7 @@ describe('nodeWords', () => {
   });
 });
 
-describe('inbound words', () => {
+describe('transport words', () => {
   test('summary', () => {
     expect(inboundSummary(inbound())).toBe('VLESS over TCP, REALITY, port 443');
     expect(inboundSummary(inbound({ network: 'raw', security: 'none', port: null }))).toBe(
@@ -121,10 +121,10 @@ describe('observedWords', () => {
 
 describe('what the page says', () => {
   const tree = (nodes: unknown[], over: Record<string, unknown> = {}) =>
-    ({ nodes, profiles: [], unattached: { profiles: [], hosts: [] }, ...over }) as never;
+    ({ nodes, profiles: [], unattached: { profiles: [], addresses: [] }, ...over }) as never;
 
   test('the instance in one sentence', () => {
-    expect(fleetSentence([])).toEqual({ dot: 'grey', text: 'No nodes on this panel yet.' });
+    expect(fleetSentence([])).toEqual({ dot: 'grey', text: 'No nodes on this backend yet.' });
     expect(fleetSentence([node({ usersOnline: 3 }), node()] as never)).toEqual({
       dot: 'green',
       text: 'All 2 nodes are online, 7 people connected.',
@@ -134,7 +134,7 @@ describe('what the page says', () => {
     );
     expect(fleetSentence([node({ usersOnline: 1 }), node({ online: false })] as never)).toEqual({
       dot: 'amber',
-      text: '1 of 2 nodes online, 1 person connected. The panel cannot reach the other one.',
+      text: '1 of 2 nodes online, 1 person connected. The backend cannot reach the other one.',
     });
     expect(fleetSentence([node({ online: false })] as never).dot).toBe('red');
     // A node turned off on purpose is not "unreachable".
@@ -147,50 +147,60 @@ describe('what the page says', () => {
     expect(needsYou(tree([node()]))).toEqual([]);
     const rows = needsYou(
       tree(
-        [node({ inbounds: [inbound({ realityPublicKeyMismatch: true, hosts: [], squads: [] })] })],
+        [
+          node({
+            transports: [
+              inbound({ realityPublicKeyMismatch: true, addresses: [], modeGroups: [] }),
+            ],
+          }),
+        ],
         {
           profiles: [
             { profileUuid: 'p-1', name: 'Default', foreignEditAt: '2026-01-01T00:00:00Z' },
           ],
-          unattached: { profiles: ['Old profile'], hosts: ['a', 'b', 'c', 'd', 'e'] },
+          unattached: { profiles: ['Old profile'], addresses: ['a', 'b', 'c', 'd', 'e'] },
         },
       ),
     );
-    expect(rows.map((r) => r.key)).toEqual(['key:n-1:reality-in', 'edit:p-1', 'unattached-hosts']);
+    expect(rows.map((r) => r.key)).toEqual([
+      'key:n-1:reality-in',
+      'edit:p-1',
+      'unattached-addresses',
+    ]);
     expect(rows[0]!.nodeUuid).toBe('n-1');
     expect(rows[2]!.text).toBe(
-      'a, b, c and 2 more point at an inbound no node serves. People given them cannot connect.',
+      'a, b, c and 2 more point at a transport no node serves. People given them cannot connect.',
     );
   });
 
-  test('quiet notes: one unused inbound on three nodes is one line', () => {
+  test('quiet notes: one unused transport on three nodes is one line', () => {
     const unused = (name: string) =>
       node({
         nodeUuid: name,
         name,
-        inbounds: [inbound({ tag: 'VLESS_XHTTP_CDN', hosts: [], squads: [] })],
+        transports: [inbound({ tag: 'VLESS_XHTTP_CDN', addresses: [], modeGroups: [] })],
       });
     expect(quietNotes(tree([unused('a'), unused('b'), unused('c')]))).toEqual([
-      'VLESS_XHTTP_CDN is unused on every node: no address and no squad.',
+      'VLESS_XHTTP_CDN is unused on every node: no address and no mode group.',
     ]);
     expect(
       quietNotes(
         tree([unused('a'), node({ nodeUuid: 'b', name: 'b' })], {
-          unattached: { profiles: ['Default-Profile'], hosts: [] },
+          unattached: { profiles: ['Default-Profile'], addresses: [] },
         }),
       ),
     ).toEqual([
-      'VLESS_XHTTP_CDN is unused on a: no address and no squad.',
+      'VLESS_XHTTP_CDN is unused on a: no address and no mode group.',
       'No node runs Default-Profile.',
     ]);
-    expect(quietNotes(tree([node({ inbounds: [inbound({ squads: [] })] })]))).toEqual([
-      'reality-in is unused on node-one: in no squad.',
+    expect(quietNotes(tree([node({ transports: [inbound({ modeGroups: [] })] })]))).toEqual([
+      'reality-in is unused on node-one: in no mode group.',
     ]);
     expect(quietNotes(tree([node()]))).toEqual([]);
   });
 
   test("a node's own notes, and its country", () => {
-    expect(nodeNotes(node({ inbounds: [inbound({ hosts: [] })] }) as never)).toEqual([
+    expect(nodeNotes(node({ transports: [inbound({ addresses: [] })] }) as never)).toEqual([
       'reality-in has no address for members.',
     ]);
     expect(countryLabel('XX')).toBeNull();
@@ -204,23 +214,25 @@ describe('what the page says', () => {
         tree(
           [
             node({
-              inbounds: [inbound({ realityPublicKeyMismatch: true, hosts: [], squads: [] })],
+              transports: [
+                inbound({ realityPublicKeyMismatch: true, addresses: [], modeGroups: [] }),
+              ],
             }),
           ],
           {
             profiles: [{ profileUuid: 'p', name: 'Default', foreignEditAt: 'x' }],
-            unattached: { profiles: ['p'], hosts: ['h'] },
+            unattached: { profiles: ['p'], addresses: ['h'] },
           },
         ),
       ).map((n) => n.text),
-      ...quietNotes(tree([node({ inbounds: [inbound({ hosts: [], squads: [] })] })])),
+      ...quietNotes(tree([node({ transports: [inbound({ addresses: [], modeGroups: [] })] })])),
       fleetSentence([node(), node({ online: false })] as never).text,
       nodeWords(node({ online: false }) as never).sentence,
       nodeWords(node({ profile: null }) as never).sentence,
     ].join('\n');
     expect(all).not.toMatch(/—|–/);
     expect(all).not.toMatch(/\/api\//);
-    // (inbound tags such as reality-in are the panel's own names, not code words)
+    // (transport tags such as reality-in are the backend's own names, not code words)
     expect(all.replace(/reality-in/g, '')).not.toMatch(/[a-z]+_[a-z]+/);
   });
 });
@@ -228,7 +240,9 @@ describe('what the page says', () => {
 describe('routes', () => {
   test('paths and instance selection', () => {
     expect(serversPaths.home()).toBe('/admin/servers');
-    expect(serversPaths.home({ instance: 'panel a' })).toBe('/admin/servers?instance=panel%20a');
+    expect(serversPaths.home({ instance: 'backend a' })).toBe(
+      '/admin/servers?instance=backend%20a',
+    );
     expect(serversPaths.node('n 1', { instance: 'p' })).toBe(
       '/admin/servers/nodes/n%201?instance=p',
     );
@@ -265,8 +279,9 @@ describe('write wording', () => {
   test('every refusal the server can answer has its own words', () => {
     const sources = import.meta.glob(
       [
-        '../../../../../../convex/panel*.ts',
-        '../../../../../../convex/lib/panel/*.ts',
+        '../../../../../../convex/backend*.ts',
+        '../../../../../../convex/node*.ts',
+        '../../../../../../convex/lib/backend/*.ts',
         '!**/*.test.ts',
       ],
       { query: '?raw', import: 'default', eager: true },
@@ -288,7 +303,7 @@ describe('write wording', () => {
 
   test('an edit made elsewhere says what may now be wrong, without blame', () => {
     const words = foreignEditWords('Default', '5 minutes ago');
-    expect(words).toMatch(/^Default was changed on the panel 5 minutes ago, not from here/);
+    expect(words).toMatch(/^Default was changed on the backend 5 minutes ago, not from here/);
     expect(words).not.toMatch(/—/);
   });
 
@@ -306,7 +321,7 @@ describe('write wording', () => {
     expect(opWords({ ...op, state: 'refused', errorCode: 'servers.never_sent' }).sentence).toMatch(
       /Never sent/,
     );
-    // A refusal FCP made itself names its reason; only the panel's own is "the panel refused it".
+    // A refusal FCP made itself names its reason; only the backend's own is "the backend refused it".
     expect(
       opWords({ ...op, state: 'refused', errorCode: 'servers.profile_changed' }).sentence,
     ).toMatch(/Preview again/);
@@ -315,7 +330,7 @@ describe('write wording', () => {
     ).toMatch(/already had exactly this/);
     expect(
       opWords({ ...op, state: 'refused', errorCode: 'servers.panel_refused' }).sentence,
-    ).toMatch(/panel refused/);
+    ).toMatch(/backend refused/);
   });
 
   test('server names are parsed from lines or commas, in order, without repeats', () => {

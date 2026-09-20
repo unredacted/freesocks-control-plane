@@ -125,7 +125,7 @@ describe('fastly sdk wrapper: requests', () => {
     const svc = await api.createService({
       name: 'fcp-relay-o1-deadbeef',
       type: 'vcl',
-      comment: 'relay edge',
+      comment: 'origin edge',
     });
     expect(svc.id).toBe('SU1Z0isxPaozGVKXdv0eY');
     expect(rec.calls).toHaveLength(1);
@@ -138,7 +138,7 @@ describe('fastly sdk wrapper: requests', () => {
     expect(call.body).toEqual({
       name: 'fcp-relay-o1-deadbeef',
       type: 'vcl',
-      comment: 'relay edge',
+      comment: 'origin edge',
     });
   });
 

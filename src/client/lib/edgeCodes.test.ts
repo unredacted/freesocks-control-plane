@@ -279,14 +279,14 @@ describe('phase, status and step maps', () => {
 
 describe('plain words (the simple screens)', () => {
   test('the table maps the technical terms the plan names, without an em-dash or an API path', () => {
-    expect(PLAIN_WORDS.relay).toBe('protected node');
+    expect(PLAIN_WORDS.origin).toBe('protected node');
     expect(PLAIN_WORDS.edge).toBe('address');
     expect(PLAIN_WORDS.published).toBe('in use');
     expect(PLAIN_WORDS.standby).toBe('spare');
     expect(PLAIN_WORDS.draining).toBe('retiring');
     expect(PLAIN_WORDS.qualified).toBe('trusted');
     expect(PLAIN_WORDS.quarantine).toBe('paused for safety');
-    expect(PLAIN_WORDS['host flip']).toBe('update the panel');
+    expect(PLAIN_WORDS['host flip']).toBe('update the backend');
     for (const text of [
       ...Object.values(PLAIN_WORDS),
       ...Object.values(RESTORE_PHASE_WORDS),
@@ -299,7 +299,7 @@ describe('plain words (the simple screens)', () => {
     }
   });
   test('rewrites whole words only, keeping the leading capital', () => {
-    expect(plainWords('Relay quarantined')).toBe('Protected node paused for safety');
+    expect(plainWords('Origin quarantined')).toBe('Protected node paused for safety');
     expect(plainWords('Edge published')).toBe('Address in use');
     expect(plainWords('Standby edge, ready to publish')).toBe('Spare address, ready to publish');
     expect(plainWords('relayed')).toBe('relayed');

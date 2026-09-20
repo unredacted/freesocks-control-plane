@@ -29,7 +29,7 @@
 
   {#if !relay}
     <p class="text-muted-foreground text-sm">
-      Create the relay first (step 4). An edge always belongs to a listener of a relay.
+      Create the origin first (step 4). An edge always belongs to a listener of an origin.
     </p>
   {:else}
     {#if edges > 0}
@@ -39,13 +39,13 @@
           class="underline underline-offset-2"
           href={edgesPaths.relay(relay.slug, { tab: 'edges' })}
         >
-          See them on the relay page
+          See them on the origin page
         </Link>.
       </p>
     {/if}
     {#if rotating && relay.activeRotationId}
       <div class="flex flex-wrap items-center gap-2 rounded-md border px-3 py-2 text-sm">
-        <span>An operation is running on this relay.</span>
+        <span>An operation is running on this origin.</span>
         <Button size="sm" variant="outline" onclick={() => onRotation(relay.activeRotationId!)}>
           Watch it
         </Button>
@@ -89,7 +89,7 @@
       href={edgesPaths.relay(relay.slug, { tab: 'rotations' })}
       class={buttonVariants({ size: 'sm', variant: 'ghost' })}
     >
-      Earlier operations on this relay
+      Earlier operations on this origin
     </Link>
 
     <TestProvisionDialog

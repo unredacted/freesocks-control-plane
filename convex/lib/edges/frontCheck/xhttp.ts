@@ -8,8 +8,8 @@
  *
  * Packet-up is the one mode every CDN can pass (the stream modes need a front
  * that streams request bodies, which Cloudflare gates behind its gRPC switch),
- * so it is the mode the proof speaks whatever the inbound declares as long as
- * the inbound accepts it (`auto` and `packet-up`; the stream-only modes refuse
+ * so it is the mode the proof speaks whatever the transport declares as long as
+ * the transport accepts it (`auto` and `packet-up`; the stream-only modes refuse
  * a packet-up client, so they are reported as unsupported rather than tried).
  *
  * Both directions ride one HTTP/2 session (Xray serves h2 behind TLS and every
@@ -47,7 +47,7 @@ export type XhttpDownVerdict =
 /**
  * The downstream response head. Xray answers 200 with `text/event-stream`
  * (or no content type at all under `noSSEHeader`); a 200 that is HTML or JSON
- * is the front answering for itself and never reaches the inbound.
+ * is the front answering for itself and never reaches the transport.
  */
 export function checkXhttpDownResponse(
   status: number,

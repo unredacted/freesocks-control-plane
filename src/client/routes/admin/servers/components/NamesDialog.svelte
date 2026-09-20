@@ -1,13 +1,13 @@
 <script lang="ts">
   /**
-   * Edit the server names and the target of one REALITY inbound: write, preview
-   * (what changes, which nodes restart, which relays feel it), then apply. The
+   * Edit the server names and the target of one REALITY transport: write, preview
+   * (what changes, which nodes restart, which origins feel it), then apply. The
    * apply is conditioned on the profile still being what the preview read.
    *
-   * A name listed on the panel is not yet a name a node accepts, so new names
+   * A name listed on the backend is not yet a name a node accepts, so new names
    * are NOT given to members by this edit (docs/servers.md).
    *
-   * Props: open (bindable), slug, profileUuid, inbound
+   * Props: open (bindable), slug, profileUuid, transport
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -17,7 +17,7 @@
   import { Label } from '@client/components/ui/label';
   import { applyProfilePatch, previewProfilePatch } from '@client/lib/serversApi';
   import type {
-    PanelInboundView,
+    TransportView,
     ProfilePatchOp,
     ProfilePatchPreview,
   } from '../../../../../shared/contracts/servers';
@@ -28,7 +28,7 @@
     open: boolean;
     slug: string;
     profileUuid: string;
-    inbound: PanelInboundView;
+    inbound: TransportView;
   }
   let { open = $bindable(false), slug, profileUuid, inbound }: Props = $props();
   const qc = useQueryClient();
@@ -62,9 +62,9 @@
   async function doPreview() {
     if (!dirty || busy) return;
     const ops: ProfilePatchOp[] = [];
-    if (namesChanged) ops.push({ op: 'setRealityServerNames', inboundTag: inbound.tag, names });
+    if (namesChanged) ops.push({ op: 'setRealityServerNames', transportTag: inbound.tag, names });
     if (targetChanged)
-      ops.push({ op: 'setRealityTarget', inboundTag: inbound.tag, target: target.trim() });
+      ops.push({ op: 'setRealityTarget', transportTag: inbound.tag, target: target.trim() });
     busy = true;
     try {
       preview = await previewProfilePatch(slug, profileUuid, ops);
@@ -135,10 +135,10 @@
     {:else}
       <div class="space-y-3 text-sm" aria-live="polite">
         {#if !preview.changed}
-          <p>The panel already has exactly this. There is nothing to apply.</p>
+          <p>The backend already has exactly this. There is nothing to apply.</p>
         {:else}
           <ul class="space-y-2">
-            {#each preview.changes as c (c.inboundTag + c.field)}
+            {#each preview.changes as c (c.transportTag + c.field)}
               <li class="bg-muted/30 rounded-md border p-3">
                 {#if c.field === 'serverNames'}
                   {@const was = Array.isArray(c.before) ? c.before : []}

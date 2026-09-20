@@ -3,7 +3,7 @@
  * captcha widget, the tier-comparison table, and the backend chooser. Ported
  * from the old PublicConfig contract. Public + safe: the Cap SITE key is
  * public, tier limits are public, and only the backend enabled/label subset of
- * settings is exposed (never squad/backend secrets). A plain query so it can be
+ * settings is exposed (never mode group/backend secrets). A plain query so it can be
  * served reactively or via the GET /api/v1/config HTTP route.
  */
 import { query } from './_generated/server';
@@ -267,21 +267,21 @@ export const get = query({
       // over the baked default. Non-secret; always present (fail-safe default).
       theme,
       // Admin-configured HPKE verification channels (non-secret): which off-CDN
-      // channels the "Verify connection" panel shows, and whether to surface the
-      // whole HPKE badge/panel at all. The panel renders only the set channels.
+      // channels the "Verify connection" backend shows, and whether to surface the
+      // whole HPKE badge/backend at all. The backend renders only the set channels.
       verification,
       // Admin-configured site chrome (non-secret): the announcement banner (toggle
       // + text) and the footer "View source" repo link (toggle + https URL). Both
       // resolve to safe defaults (off/empty) until the operator sets them.
       site,
-      // Analytics relay: ONLY the effective on/off bit (toggle AND configured).
+      // Analytics origin: ONLY the effective on/off bit (toggle AND configured).
       // The Umami host + website id are server-side-only — publicAnalytics's
       // narrow return type is the structural guarantee they can't leak here.
       analytics: publicAnalytics(analyticsCfg),
       // Member-facing connection-mode catalog: the PARENT families a member picks
       // first, plus their transport sub-choices (id + family + label + description
       // + deliveryStyle + isDefault + available = enabled AND placement pool
-      // bound). Admin-disabled entries are omitted entirely. NEVER a squad UUID.
+      // bound). Admin-disabled entries are omitted entirely. NEVER a mode group UUID.
       connectionModes: modeProjection,
       connectionModeFamilies: publicFamilyProjection(modeCatalog.families, modeProjection),
       // Member-facing node-location catalog (active Remnawave instances with a

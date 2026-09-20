@@ -3,7 +3,7 @@
    * Operator landing dashboard (`/admin`). Consumes the shared
    * GET /api/v1/admin/status snapshot (the same endpoint the Ansible role
    * health-gates on): a backend-healthcheck-freshness strip, member counts by
-   * status, total issued keys, and a per-backend health/key panel. Read-only
+   * status, total issued keys, and a per-backend health/key backend. Read-only
    * and non-secret - there is never a backend `config` in this payload.
    */
   import AdminLayout from './AdminLayout.svelte';

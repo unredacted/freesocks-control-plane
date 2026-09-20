@@ -1,12 +1,12 @@
 /**
  * Admin reads for server management (Admin -> Servers) plus its two switches.
- * Every read is served from the `panel*` caches `panelObserve` fills, so the
- * page shows what ALREADY exists on a panel without making a panel call, and
+ * Every read is served from the `backend*` caches `backendObserve` fills, so the
+ * page shows what ALREADY exists on a backend without making a backend call, and
  * nothing here can return a secret: the caches hold none.
  *
  * The central view is the TREE of one instance: each node with the config
- * profile it runs, the inbounds it serves, the Hosts members are handed for
- * those inbounds and the squads that grant them.
+ * profile it runs, the transports it serves, the Hosts members are handed for
+ * those transports and the mode groups that grant them.
  */
 import { ConvexError, v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
@@ -16,7 +16,7 @@ import { writeAuditLog } from './lib/audit';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import { poolFromConfig } from './lib/remnawavePlacement';
 import { flattenServerConfig, resolveServerConfig, serverConfigWrites } from './lib/serverConfig';
-import { modeRefOf } from './panelIntents';
+import { modeRefOf } from './nodeIntents';
 
 const iso = (ms: number | undefined) => (ms ? new Date(ms).toISOString() : null);
 
@@ -60,7 +60,15 @@ function mapState(s: Doc<'panelObserveState'> | null) {
     attemptedAt: iso(s?.attemptedAt),
     ok: s ? s.ok : null,
     errorCode: s?.errorCode ?? null,
-    counts: s?.counts ?? null,
+    // Stored under the backend's own words; the view speaks ours.
+    counts: s?.counts
+      ? {
+          nodes: s.counts.nodes,
+          profiles: s.counts.profiles,
+          addresses: s.counts.hosts,
+          modeGroups: s.counts.squads,
+        }
+      : null,
   };
 }
 
@@ -130,7 +138,7 @@ export const summary = internalQuery({
           backend: s.backend,
           isActive: s.isActive,
           observable: capabilitiesOf(s.backend).panelObservation,
-          writable: capabilitiesOf(s.backend).panelWrites,
+          writable: capabilitiesOf(s.backend).backendWrites,
           // Whether FCP has set this backend up (or adopted it): the one condition for writing it.
           setUp: setupBy.get(s._id as string)?.state === 'ready',
           ...mapState(stateBy.get(s._id as string) ?? null),
@@ -154,7 +162,7 @@ export const instanceBySlug = internalQuery({
 function mapInbound(i: Doc<'panelProfiles'>['inbounds'][number]) {
   return {
     tag: i.tag,
-    inboundUuid: i.inboundUuid,
+    transportUuid: i.inboundUuid,
     protocol: i.protocol,
     port: i.port,
     listen: i.listen ?? null,
@@ -172,7 +180,7 @@ function mapInbound(i: Doc<'panelProfiles'>['inbounds'][number]) {
 
 function mapHost(h: Doc<'panelHosts'>) {
   return {
-    hostUuid: h.hostUuid,
+    addressUuid: h.hostUuid,
     remark: h.remark,
     address: h.address,
     port: h.port,
@@ -187,16 +195,16 @@ function mapHost(h: Doc<'panelHosts'>) {
     tag: h.tag ?? null,
     viewPosition: h.viewPosition ?? null,
     configProfileUuid: h.configProfileUuid ?? null,
-    inboundUuid: h.configProfileInboundUuid ?? null,
+    transportUuid: h.configProfileInboundUuid ?? null,
     nodeUuids: h.nodeUuids,
   };
 }
 
 /**
- * One instance as a tree: node -> profile -> served inbounds -> Hosts + squads.
+ * One instance as a tree: node -> profile -> served transports -> Hosts + mode groups.
  * A Host pinned to specific nodes appears under those only; an unpinned one
- * under every node serving its inbound. What hangs off no node (a profile no
- * node runs, a Host on an inbound no node serves) is returned as `unattached`,
+ * under every node serving its transport. What hangs off no node (a profile no
+ * node runs, a Host on a transport no node serves) is returned as `unattached`,
  * because that is exactly what an operator needs to notice.
  */
 export const tree = internalQuery({
@@ -242,7 +250,7 @@ export const tree = internalQuery({
         const profile = n.configProfileUuid ? profileBy.get(n.configProfileUuid) : undefined;
         if (profile) usedProfiles.add(profile.profileUuid);
         const active = new Set(n.activeInboundUuids);
-        const inbounds = (profile?.inbounds ?? [])
+        const transports = (profile?.inbounds ?? [])
           .filter((i) => active.has(i.inboundUuid))
           .map((i) => {
             const mine = hosts.filter(
@@ -253,12 +261,12 @@ export const tree = internalQuery({
             for (const h of mine) placedHosts.add(h.hostUuid);
             return {
               ...mapInbound(i),
-              hosts: mine
+              addresses: mine
                 .sort((a, b) => (a.viewPosition ?? 0) - (b.viewPosition ?? 0))
                 .map(mapHost),
-              squads: squads
+              modeGroups: squads
                 .filter((sq) => sq.inboundUuids.includes(i.inboundUuid))
-                .map((sq) => ({ squadUuid: sq.squadUuid, name: sq.name })),
+                .map((sq) => ({ groupUuid: sq.squadUuid, name: sq.name })),
             };
           });
         return {
@@ -275,11 +283,11 @@ export const tree = internalQuery({
             ? {
                 profileUuid: profile.profileUuid,
                 name: profile.name,
-                inboundCount: profile.inbounds.length,
+                transportCount: profile.inbounds.length,
                 changedAt: iso(profile.tokenChangedAt),
               }
             : null,
-          inbounds,
+          transports,
         };
       });
 
@@ -297,29 +305,29 @@ export const tree = internalQuery({
           changedAt: iso(p.tokenChangedAt),
           foreignEditAt: iso(p.foreignEditAt),
           nodeCount: nodes.filter((n) => n.configProfileUuid === p.profileUuid).length,
-          inbounds: p.inbounds.map(mapInbound),
+          transports: p.inbounds.map(mapInbound),
         })),
-      squads: squads
+      modeGroups: squads
         .sort((a, b) => a.name.localeCompare(b.name))
         .map((sq) => ({
-          squadUuid: sq.squadUuid,
+          groupUuid: sq.squadUuid,
           name: sq.name,
           membersCount: sq.membersCount ?? null,
-          inboundTags: sq.inboundUuids.map((u) => tagOf.get(u) ?? null),
-          inboundUuids: sq.inboundUuids,
+          transportTags: sq.inboundUuids.map((u) => tagOf.get(u) ?? null),
+          transportUuids: sq.inboundUuids,
         })),
-      hosts: hosts.sort((a, b) => (a.viewPosition ?? 0) - (b.viewPosition ?? 0)).map(mapHost),
+      addresses: hosts.sort((a, b) => (a.viewPosition ?? 0) - (b.viewPosition ?? 0)).map(mapHost),
       unattached: {
         profiles: profiles.filter((p) => !usedProfiles.has(p.profileUuid)).map((p) => p.name),
-        hosts: hosts.filter((h) => !placedHosts.has(h.hostUuid)).map((h) => h.remark),
+        addresses: hosts.filter((h) => !placedHosts.has(h.hostUuid)).map((h) => h.remark),
       },
     };
   },
 });
 
 /**
- * Who feels a change to these inbounds of a profile: the nodes the panel will
- * re-apply it to, and the relays whose listeners are bound to them.
+ * Who feels a change to these transports of a profile: the nodes the backend will
+ * re-apply it to, and the origins whose listeners are bound to them.
  */
 export const profileBlastRadius = internalQuery({
   args: {
@@ -362,11 +370,11 @@ export const profileBlastRadius = internalQuery({
 });
 
 /**
- * Check the squad pools operators pasted into mode placements against the
- * squads the panel really has. A pool is write-only over HTTP (it is never
- * echoed), so this answers in COUNTS and squad names, never the pasted uuids:
- * a uuid the panel lacks issues keys nobody can use, and a squad without an
- * inbound issues keys that connect to nothing.
+ * Check the mode group pools operators pasted into mode placements against the
+ * mode groups the backend really has. A pool is write-only over HTTP (it is never
+ * echoed), so this answers in COUNTS and mode group names, never the pasted uuids:
+ * a uuid the backend lacks issues keys nobody can use, and a mode group without an
+ * transport issues keys that connect to nothing.
  */
 export const validatePlacements = internalQuery({
   args: { slug: v.string() },
@@ -400,12 +408,12 @@ export const validatePlacements = internalQuery({
           const present = pool.filter((u) => known.has(u));
           return {
             modeSlug: p.modeSlug,
-            squads: pool.length,
+            modeGroups: pool.length,
             // Several instances can share a backend type: a uuid missing HERE
-            // may live on another panel, so this is a count to look into, not
+            // may live on another backend, so this is a count to look into, not
             // a verdict.
             unknownHere: pool.length - present.length,
-            withoutInbounds: present
+            withoutTransports: present
               .map((u) => known.get(u)!)
               .filter((sq) => sq.inboundUuids.length === 0)
               .map((sq) => sq.name),

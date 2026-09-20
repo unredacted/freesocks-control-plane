@@ -16,7 +16,7 @@ describe('edgeErrorMessage', () => {
       'Edges still use this listener. Destroy or delete those edges first (Edges tab), then try again.',
     );
     expect(edgeErrorMessage(new EdgeRefusalError('edge.node_already_bound'))).toBe(
-      'Another relay already covers this node.',
+      'Another origin already covers this node.',
     );
   });
 

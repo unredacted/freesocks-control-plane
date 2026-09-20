@@ -1,9 +1,9 @@
 /**
- * Per-NODE inventory cache (`backendNodeInventory`): one row per panel node per
+ * Per-NODE inventory cache (`backendNodeInventory`): one row per backend node per
  * instance, refreshed by the backend-healthcheck cron through the provider's
- * optional `getNodeInventory`. The relay block detector reads a node's live
+ * optional `getNodeInventory`. The origin block detector reads a node's live
  * users-online here; the per-PLACEMENT cache (remnawaveNodeStats) cannot
- * isolate one node behind a shared relay squad. Stats only, no secrets.
+ * isolate one node behind a shared origin mode group. Stats only, no secrets.
  */
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
@@ -50,14 +50,14 @@ export const markNodeInventory = internalMutation({
       if (prev) await ctx.db.patch(prev._id, row);
       else await ctx.db.insert('backendNodeInventory', row);
     }
-    // A node the panel no longer lists is gone (retired/renamed): drop its row so
+    // A node the backend no longer lists is gone (retired/renamed): drop its row so
     // the detector reads "unknown" rather than a frozen snapshot.
     for (const r of existing) if (!seen.has(r.nodeUuid)) await ctx.db.delete(r._id);
     return null;
   },
 });
 
-/** One node's cached row by (instance, panel node name). */
+/** One node's cached row by (instance, backend node name). */
 export const getByServerName = internalQuery({
   args: { backendServerId: v.id('backendServers'), name: v.string() },
   handler: (ctx, { backendServerId, name }) =>
@@ -78,7 +78,7 @@ export const listByServer = internalQuery({
 });
 
 /**
- * Pull the node list from one panel now (Admin → Edges → New relay, "Refresh
+ * Pull the node list from one backend now (Admin → Edges → New origin, "Refresh
  * nodes"). Same provider call as the healthcheck cron; a failure is reported to
  * the caller instead of being swallowed.
  */

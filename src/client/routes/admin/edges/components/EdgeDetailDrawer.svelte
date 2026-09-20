@@ -313,7 +313,8 @@
             </p>
           {:else}
             <p class="text-muted-foreground text-sm">
-              No probe has measured this edge yet. Run a probe from the relay page to get a verdict.
+              No probe has measured this edge yet. Run a probe from the origin page to get a
+              verdict.
             </p>
           {/if}
         </section>

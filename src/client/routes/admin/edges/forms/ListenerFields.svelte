@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
-   * The fields of one listener (what the inbound behind a relay speaks), shared
-   * by the new-relay dialog, the add/edit listener dialog and the setup draft.
+   * The fields of one listener (what the transport behind an origin speaks), shared
+   * by the new-origin dialog, the add/edit listener dialog and the setup draft.
    * Only the fields the chosen combination uses are shown.
    *
    * Props:
@@ -59,11 +59,12 @@
     remark: 'By the entry remark',
   };
   const MATCH_HINTS: Record<MatchRuleChoice, string> = {
-    auto: 'The remark of the panel Host when the inbound is bound, the origin address and port otherwise.',
+    auto: 'The remark of the backend Host when the transport is bound, the origin address and port otherwise.',
     address: 'Entries that dial the origin address on this port are rewritten.',
     'whole-body':
-      'Every entry is rewritten. Only valid when this is the only listener of the relay.',
-    remark: 'Entries whose remark equals the text below are rewritten. Needs the panel inbound.',
+      'Every entry is rewritten. Only valid when this is the only listener of the origin.',
+    remark:
+      'Entries whose remark equals the text below are rewritten. Needs the backend transport.',
   };
   const matchChoices = $derived(
     (['auto', 'address', 'whole-body', 'remark'] as const).filter((m) => m !== 'remark' || canBind),
@@ -125,7 +126,7 @@
         bind:value={form.originPort}
         {disabled}
       />
-      <p class="text-muted-foreground text-xs">The port the inbound listens on at the origin.</p>
+      <p class="text-muted-foreground text-xs">The port the transport listens on at the origin.</p>
     </div>
   </div>
 
@@ -156,7 +157,7 @@
           bind:value={form.targetAddress}
           {disabled}
         />
-        <p class="text-muted-foreground text-xs">The site the inbound impersonates.</p>
+        <p class="text-muted-foreground text-xs">The site the transport impersonates.</p>
       </div>
       <div class="space-y-1.5">
         <Label for={`${uid}-target-port`}>Target port</Label>
@@ -224,8 +225,8 @@
                 </Select.Content>
               </Select.Root>
               <p class="text-muted-foreground text-xs">
-                As the inbound declares it. A CDN front is only checked against packet-up and auto;
-                the stream modes need a front that streams request bodies.
+                As the transport declares it. A CDN front is only checked against packet-up and
+                auto; the stream modes need a front that streams request bodies.
               </p>
             </div>
           {/if}
@@ -236,7 +237,7 @@
     <div class="space-y-3 rounded-md border p-3">
       <div class="flex items-start justify-between gap-3">
         <div>
-          <Label for={`${uid}-frontable`}>A CDN front can reach this inbound</Label>
+          <Label for={`${uid}-frontable`}>A CDN front can reach this transport</Label>
           <p class="text-muted-foreground text-xs">
             Off: only load balancers (L4) front it. On: describe how a front dials the origin, and
             the server decides whether L7 is allowed.
@@ -324,16 +325,16 @@
           class="size-4 transition-transform group-data-[state=open]:rotate-90"
           aria-hidden="true"
         />
-        Panel inbound, matching and provider scope
+        Backend transport, matching and provider scope
       </Collapsible.Trigger>
       <Collapsible.Content class="space-y-4 pt-3">
         {#if canBind}
           <div class="space-y-3 rounded-md border p-3">
             <div class="flex items-start justify-between gap-3">
               <div>
-                <Label for={`${uid}-bind`}>Bind the panel inbound</Label>
+                <Label for={`${uid}-bind`}>Bind the backend transport</Label>
                 <p class="text-muted-foreground text-xs">
-                  Needed for FCP to create and flip the panel Host itself. The node role normally
+                  Needed for FCP to create and flip the backend Host itself. The node role normally
                   fills this in when it registers.
                 </p>
               </div>
@@ -342,7 +343,7 @@
             {#if form.bindPanel}
               <div class="grid gap-4 sm:grid-cols-3">
                 <div class="space-y-1.5">
-                  <Label for={`${uid}-tag`}>Inbound tag</Label>
+                  <Label for={`${uid}-tag`}>Transport tag</Label>
                   <Input
                     id={`${uid}-tag`}
                     class="font-mono"
@@ -362,7 +363,7 @@
                   />
                 </div>
                 <div class="space-y-1.5">
-                  <Label for={`${uid}-inbound`}>Inbound id</Label>
+                  <Label for={`${uid}-inbound`}>Transport id</Label>
                   <Input
                     id={`${uid}-inbound`}
                     class="font-mono"
@@ -428,7 +429,7 @@
 
         <div class="flex items-start justify-between gap-3">
           <div>
-            <Label for={`${uid}-deployed`}>The inbound is deployed on the origin</Label>
+            <Label for={`${uid}-deployed`}>The transport is deployed on the origin</Label>
             <p class="text-muted-foreground text-xs">
               Off while the node is still being prepared. No edge is provisioned for a listener that
               is not deployed.

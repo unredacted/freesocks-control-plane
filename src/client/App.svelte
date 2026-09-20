@@ -42,7 +42,7 @@
 
   // PoP boot-warm lives in <PopWarm/> inside the provider below - it calls
   // meQuery(), which reads the query client from context at init, so it CANNOT
-  // run from this script (App hosts the provider; its script runs before the
+  // run from this script (App addresses the provider; its script runs before the
   // provider child mounts).
 
   // DevTools only in development; in production it's tree-shaken away.
