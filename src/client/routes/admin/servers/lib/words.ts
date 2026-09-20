@@ -1,6 +1,6 @@
 /**
  * Plain-words logic for Admin -> Servers (pure; unit-tested): one dot and one
- * sentence per node, a one-line summary per inbound, the instance headline and
+ * sentence per node, a one-line summary per transport, the instance headline and
  * the things an operator should notice. No em-dashes, no API paths, no bare
  * code words: copy only.
  */
@@ -21,12 +21,12 @@ export interface NodeWords {
 export function nodeWords(
   n: Pick<PanelNodeView, 'online' | 'isDisabled' | 'profile' | 'inbounds' | 'usersOnline'>,
 ): NodeWords {
-  if (n.isDisabled) return { dot: 'grey', sentence: 'Turned off in the panel.' };
+  if (n.isDisabled) return { dot: 'grey', sentence: 'Turned off on the backend.' };
   if (!n.profile)
     return { dot: 'amber', sentence: 'No config profile is assigned, so it serves nothing.' };
   if (n.inbounds.length === 0)
-    return { dot: 'amber', sentence: 'A profile is assigned but no inbound is switched on.' };
-  if (!n.online) return { dot: 'red', sentence: 'The panel cannot reach this node.' };
+    return { dot: 'amber', sentence: 'A profile is assigned but no transport is switched on.' };
+  if (!n.online) return { dot: 'red', sentence: 'The backend cannot reach this node.' };
   const people = n.usersOnline === 1 ? '1 person' : `${n.usersOnline} people`;
   return { dot: 'green', sentence: `Online, ${people} connected.` };
 }
@@ -43,7 +43,7 @@ export function inboundSummary(
   return `${i.protocol.toUpperCase()} over ${transport}, ${security}, ${port}`;
 }
 
-/** `3 server names` / `1 server name` / null when the inbound presents none. */
+/** `3 server names` / `1 server name` / null when the transport presents none. */
 export function serverNamesLabel(i: Pick<PanelInboundView, 'serverNames'>): string | null {
   if (!i.serverNames) return null;
   const n = i.serverNames.length;
@@ -61,7 +61,7 @@ export function observedWords(s: ServerObserveState, observeOn: boolean, now: nu
   if (!s.ok)
     return when
       ? `The last read failed. Showing what was read ${when}.`
-      : 'The panel could not be read. Check the address and the API token of this server.';
+      : 'The backend could not be read. Check the address and the API token of this server.';
   return `Read ${when ?? 'just now'}.`;
 }
 
@@ -75,7 +75,7 @@ export function ago(ms: number): string {
   return `${d} days ago`;
 }
 
-/** The country under a node name; the panel's `XX` placeholder is nothing. */
+/** The country under a node name; the backend's `XX` placeholder is nothing. */
 export function countryLabel(code: string | null | undefined): string | null {
   if (!code || code.toUpperCase() === 'XX') return null;
   try {
@@ -92,7 +92,7 @@ export function fleetSentence(
   dot: Dot;
   text: string;
 } {
-  if (nodes.length === 0) return { dot: 'grey', text: 'No nodes on this panel yet.' };
+  if (nodes.length === 0) return { dot: 'grey', text: 'No nodes on this backend yet.' };
   const on = nodes.filter((n) => !n.isDisabled);
   const online = on.filter((n) => n.online);
   const people = online.reduce((a, n) => a + n.usersOnline, 0);
@@ -102,10 +102,10 @@ export function fleetSentence(
       dot: 'green',
       text: `${on.length === 1 ? 'The node is' : `All ${on.length} nodes are`} online, ${who}.`,
     };
-  if (online.length === 0) return { dot: 'red', text: 'No node is reachable from the panel.' };
+  if (online.length === 0) return { dot: 'red', text: 'No node is reachable from the backend.' };
   return {
     dot: 'amber',
-    text: `${online.length} of ${on.length} nodes online, ${who}. The panel cannot reach the ${on.length - online.length === 1 ? 'other one' : 'others'}.`,
+    text: `${online.length} of ${on.length} nodes online, ${who}. The backend cannot reach the ${on.length - online.length === 1 ? 'other one' : 'others'}.`,
   };
 }
 
@@ -138,23 +138,23 @@ export function needsYou(
     if (p.foreignEditAt)
       out.push({
         key: `edit:${p.profileUuid}`,
-        text: `${p.name} was changed on the panel, not from here. What this page shows of it may be out of date.`,
+        text: `${p.name} was changed on the backend, not from here. What this page shows of it may be out of date.`,
       });
   if (tree.unattached.hosts.length > 0)
     out.push({
       key: 'unattached-hosts',
-      text: `${list(tree.unattached.hosts)} ${tree.unattached.hosts.length === 1 ? 'points' : 'point'} at an inbound no node serves. People given ${tree.unattached.hosts.length === 1 ? 'it' : 'them'} cannot connect.`,
+      text: `${list(tree.unattached.hosts)} ${tree.unattached.hosts.length === 1 ? 'points' : 'point'} at a transport no node serves. People given ${tree.unattached.hosts.length === 1 ? 'it' : 'them'} cannot connect.`,
     });
   return out;
 }
 
 /**
- * Leftovers worth knowing, grouped so one unused inbound on three nodes is one
+ * Leftovers worth knowing, grouped so one unused transport on three nodes is one
  * line, not six. Nothing here is broken.
  */
 export function quietNotes(tree: Pick<ServerTree, 'nodes' | 'unattached'>): string[] {
   const out: string[] = [];
-  // tag -> the nodes on which it has nobody to serve (no address, or no squad).
+  // tag -> the nodes on which it has nobody to serve (no address, or no group).
   const unused = new Map<string, { nodes: string[]; noHost: boolean; noSquad: boolean }>();
   for (const n of tree.nodes)
     for (const i of n.inbounds) {
@@ -170,10 +170,10 @@ export function quietNotes(tree: Pick<ServerTree, 'nodes' | 'unattached'>): stri
   for (const [tag, u] of unused) {
     const why =
       u.noHost && u.noSquad
-        ? 'no address and no squad'
+        ? 'no address and no mode group'
         : u.noHost
           ? 'no address for members'
-          : 'in no squad';
+          : 'in no mode group';
     const where =
       u.nodes.length === tree.nodes.length && tree.nodes.length > 1
         ? 'every node'
@@ -192,9 +192,9 @@ export function nodeNotes(n: Pick<PanelNodeView, 'inbounds'>): string[] {
   const out: string[] = [];
   for (const i of n.inbounds) {
     if (i.hosts.length === 0 && i.squads.length === 0)
-      out.push(`${i.tag} has no address for members and is in no squad.`);
+      out.push(`${i.tag} has no address for members and is in no mode group.`);
     else if (i.hosts.length === 0) out.push(`${i.tag} has no address for members.`);
-    else if (i.squads.length === 0) out.push(`${i.tag} is in no squad, so no key can use it.`);
+    else if (i.squads.length === 0) out.push(`${i.tag} is in no mode group, so no key can use it.`);
   }
   return out;
 }
@@ -204,15 +204,15 @@ function list(names: readonly string[]): string {
   return `${names.slice(0, 3).join(', ')} and ${names.length - 3} more`;
 }
 
-/** A profile was edited on the panel by something other than this page. */
+/** A profile was edited on the backend by something other than this page. */
 export function foreignEditWords(name: string, agoWords: string): string {
-  return `${name} was changed on the panel ${agoWords}, not from here. What this page shows of it may be out of date.`;
+  return `${name} was changed on the backend ${agoWords}, not from here. What this page shows of it may be out of date.`;
 }
 
 /** One line for a toast when a server call failed, from its error code. */
 const ERROR_WORDS: Record<string, string> = {
   'backend.panel_read_failed':
-    'The panel could not be read. Check the address and the API token of this server.',
+    'The backend could not be read. Check the address and the API token of this server.',
   'servers.unsupported_backend': 'This kind of server has nothing to show here.',
   'rate_limit.exceeded': 'That was a lot at once. Wait a minute and try again.',
   not_found: 'That no longer exists. Refresh and look again.',
@@ -227,21 +227,21 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.relay_setup_running':
     'A relay setup is using this right now. Try again when it is done.',
   'servers.tombstoned': 'This was removed on purpose. Tick "bring it back" to create it again.',
-  'servers.exists': 'This already exists on the panel.',
-  // Hosts and squads.
+  'servers.exists': 'This already exists on the backend.',
+  // Addresses and mode groups.
   'servers.host_edge_owned': 'This address belongs to a relay. Change it from Edges.',
   'servers.relay_remark': 'Names ending in -relay are kept for relays. Pick another name.',
-  'servers.unknown_inbound': 'That inbound is not on this panel. Refresh and pick again.',
+  'servers.unknown_inbound': 'That transport is not on this backend. Refresh and pick again.',
   'servers.duplicate_object':
-    'The panel has more than one of these, so there is no telling which is meant. Remove the extra one on the panel.',
+    'The backend has more than one of these, so there is no telling which is meant. Remove the extra one there.',
   'servers.squad_in_placement':
-    'New keys are issued into this squad. Take it out of the connection mode first.',
-  'servers.squad_has_members': 'This squad still has members. Move them first.',
-  'servers.squad_name_taken': 'A squad with that name already exists.',
+    'New keys are issued into this group. Take it out of the connection mode first.',
+  'servers.squad_has_members': 'This group still has members. Move them first.',
+  'servers.squad_name_taken': 'A group with that name already exists.',
   // Nodes.
   'servers.node_name_taken': 'A node with that name already exists.',
   'servers.node_relay_origin':
-    'A relay forwards to this node. Its address, port and inbounds are changed from Edges, and it is not turned off or removed here.',
+    'An edge forwards to this node. Its address, port and transports are changed from Edges, and it is not turned off or removed here.',
   'servers.node_rename_referenced':
     'Relays or pinned members refer to this node by name, so it cannot be renamed yet.',
   'servers.node_still_on': 'Turn the node off first, and wait for that to finish.',
@@ -249,20 +249,20 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.already': 'It is already in that state.',
   // Profile edits.
   'servers.profile_changed':
-    'The profile changed on the panel since the preview. Preview again before applying.',
-  'servers.nothing_to_change': 'The panel already had exactly this, so nothing was sent.',
+    'The profile changed on the backend since the preview. Preview again before applying.',
+  'servers.nothing_to_change': 'The backend already had exactly this, so nothing was sent.',
   'servers.name_in_use':
     'Members are still given one of the names being removed. Retire it on the relay first.',
   'servers.inbound_sni_managed':
-    'A server name family manages the names of this inbound. Change them under Edges.',
-  'servers.not_reality': 'That inbound does not use REALITY.',
-  'servers.too_many_names': 'That is more server names than one inbound may carry.',
-  'servers.profile_malformed': 'The profile on the panel is not in a shape this can edit safely.',
+    'A server name family manages the names of this transport. Change them under Edges.',
+  'servers.not_reality': 'That transport does not use REALITY.',
+  'servers.too_many_names': 'That is more server names than one transport may carry.',
+  'servers.profile_malformed': 'The profile on the backend is not in a shape this can edit safely.',
   'servers.inbound_uuid_changed':
     'The panel replaced an inbound while this was applied. Look at the panel before anything else.',
   // Settling.
   'servers.recovery_incomplete': 'Every condition has to hold before this can be released.',
-  'servers.panel_refused': 'The panel refused it. Nothing was changed.',
+  'servers.panel_refused': 'The backend refused it. Nothing was changed.',
   'servers.outcome_unknown':
     'The panel did not answer clearly, so it is not known whether this happened.',
   // Setting up a backend.
@@ -290,38 +290,38 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.unmanaged_nodes_affected':
     'Nodes FCP does not manage run this profile too. Choose to hold them closed or acknowledge that they change in place.',
   'servers.obligation_unresolved':
-    'A call to the panel or the DNS provider did not answer clearly. It is looked at again shortly.',
-  'servers.observe_lag': 'The panel does not show it yet. It is looked at again shortly.',
+    'A call to the backend or the DNS provider did not answer clearly. It is looked at again shortly.',
+  'servers.observe_lag': 'The backend does not show it yet. It is looked at again shortly.',
   'servers.profile_incompatible':
-    'A profile with this name exists but is not the shape nodes need. Rename it on the panel or pick another name.',
+    'A profile with this name exists but is not the shape nodes need. Rename it on the backend or pick another name.',
   'servers.privacy_drifted':
     'The profile logs more than it may. Harden it from the backend server page.',
   'servers.placement_skipped':
     'A connection mode this backend feeds does not exist, so its group is not bound.',
   'servers.template_drifted':
-    'A subscription template on the panel is not what it should be, and could not be set.',
+    'A subscription template on the backend is not what it should be, and could not be set.',
   // Enrolling a node.
-  'servers.contract_version': 'The node role is too old for this panel. Update the role.',
-  'servers.panel_not_set_up': 'Set up this panel first.',
+  'servers.contract_version': 'The node role is too old for this backend. Update the role.',
+  'servers.panel_not_set_up': 'Set up this backend first.',
   'servers.node_retiring': 'This node is being retired.',
   'servers.not_retiring': 'This node is not being retired.',
   'servers.retirement_stage': 'The node is not at that point of its retirement yet.',
   'servers.mode_change_needs_admin':
     'A node keeps its mode. Change it from here, then run the role again.',
   'servers.node_exists_unowned':
-    'The panel already has this node or Host. Adopt it here before the role enrolls it.',
+    'The backend already has this node or address. Adopt it here before the role enrolls it.',
   'servers.origin_label_invalid': 'The name cannot be made into a DNS label.',
   'servers.registration_boundary': 'This token may not act for that node.',
   'servers.revision_stale': 'The machine settings changed. Run the role again.',
   'servers.revision_unknown': 'That machine revision was never handed out.',
-  'servers.reconcile_failed': 'The node could not be reconciled with the panel.',
+  'servers.reconcile_failed': 'The node could not be reconciled with the backend.',
   'servers.maintenance_required':
     'This change rewrites the running path. Start it as a maintenance transition: the node is closed until it is approved again.',
   'servers.maintenance_open': 'A maintenance transition is open on this node.',
   // Machine readiness.
   'servers.config_moved': 'The profile changed under this node. It is checked again.',
   'servers.foreign_profile_edit': 'The profile was edited outside FCP. See it, then try again.',
-  'servers.node_offline': 'The node is not connected to the panel.',
+  'servers.node_offline': 'The node is not connected to the backend.',
   'servers.origin_hostname_missing':
     'This front node has no origin name yet. Set one under Settings.',
   'servers.origin_name_taken':
@@ -329,36 +329,36 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.origin_not_resolving': 'The origin name does not resolve to the node yet.',
   'servers.origin_certificate':
     'The node does not present a valid certificate for its origin name yet.',
-  'servers.ingress_path': 'The WebSocket path is not proxied to the inbound.',
+  'servers.ingress_path': 'The WebSocket path is not proxied to the transport.',
   'servers.ingress_host_header': 'The node does not answer a foreign Host header.',
   // Activation.
   'servers.machine_not_ready': 'The machine is not ready yet.',
   'servers.direct_unconfirmed': 'Test the direct connection and tick it first.',
   'servers.confirmation_stale':
     'What you tested is not what the node serves now. Build a new test link.',
-  'servers.credential_unavailable': 'No test credential could be made on the panel.',
-  'servers.inbound_missing': 'The REALITY inbound is gone from the profile.',
+  'servers.credential_unavailable': 'No test credential could be made on the backend.',
+  'servers.inbound_missing': 'The REALITY transport is gone from the profile.',
   'servers.stage': 'The node is not at the point where this can be done.',
   'servers.review_stale': 'The review changed since you read it. Read it again.',
-  'servers.host_missing': 'The node has no Host to enable.',
+  'servers.host_missing': 'The node has no address to enable.',
   'servers.rehearsal_failed':
-    'The panel bodies did not carry this node as expected. Nothing was released.',
+    'The bodies the backend served did not carry this node as expected. Nothing was released.',
   'servers.rehearsal_missing': 'The rehearsal has not run.',
   'servers.activation_failed': 'Activation stopped on an error.',
   'servers.run_superseded': 'A newer approval replaced this one.',
   'servers.run_not_running': 'This activation is not running.',
   'servers.revision_moved': 'Something changed since the approval. Review and approve again.',
-  'servers.node_not_approved': 'The node behind this relay is not approved for delivery yet.',
+  'servers.node_not_approved': 'The node behind this edge is not approved for delivery yet.',
   'servers.standbys_missing': 'Protect this node in Edges first: its standbys come from there.',
   'servers.standbys_unverified':
     'Not every standby of this node is verified yet. Finish the Edges setup up to publish.',
   'servers.credential_unresolved':
-    'A test credential of this node has an unknown outcome on the panel. Look at its users.',
+    'A test credential of this node has an unknown outcome on the backend. Look at its users.',
   'servers.delete_not_applied': 'An origin record was not removed. It is tried again.',
   'servers.create_not_observed': 'An origin record was not created. It is tried again.',
   // Retirement.
   'servers.relay_draining': 'Its edges are still being taken down.',
-  'servers.credentials_pending': 'Its test credentials are still being removed from the panel.',
+  'servers.credentials_pending': 'Its test credentials are still being removed from the backend.',
   'servers.retirement_failed': 'Retiring stopped on an error. It is tried again shortly.',
   'servers.migration_target': 'The target node must be live.',
   'servers.migration_not_built':
@@ -490,29 +490,29 @@ export function opTitle(op: OpLike): string {
 export function opWords(op: OpLike): { dot: Dot; sentence: string } {
   switch (op.state) {
     case 'working':
-      return { dot: 'amber', sentence: 'Sent. Waiting to see it on the panel.' };
+      return { dot: 'amber', sentence: 'Sent. Waiting to see it on the backend.' };
     case 'waiting_for_nodes':
       return {
         dot: 'amber',
-        sentence: 'The panel has it. Waiting for the nodes to pick it up.',
+        sentence: 'The backend has it. Waiting for the nodes to pick it up.',
       };
     case 'done':
       return op.errorCode === 'servers.adopted_existing'
         ? { dot: 'green', sentence: 'Done. It was already there, so nothing was created twice.' }
-        : { dot: 'green', sentence: 'Done, and seen on the panel.' };
+        : { dot: 'green', sentence: 'Done, and seen on the backend.' };
     case 'refused': {
       if (op.errorCode === 'servers.never_sent')
         return { dot: 'grey', sentence: 'Never sent. Nothing was changed.' };
       // Most refusals are FCP's own (the profile moved since the preview, the
-      // panel already had it, two matches): say which, never "the panel refused".
+      // backend already had it, two matches): say which, never "the backend refused".
       const reason = op.errorCode ? ERROR_WORDS[op.errorCode] : undefined;
-      return { dot: 'grey', sentence: reason ?? 'The panel refused it. Nothing was changed.' };
+      return { dot: 'grey', sentence: reason ?? 'The backend refused it. Nothing was changed.' };
     }
     case 'outcome_unknown':
       return {
         dot: 'red',
         sentence:
-          'It is not known whether this happened. Nothing else can change this item until it is seen on the panel or settled by hand.',
+          'It is not known whether this happened. Nothing else can change this item until it is seen on the backend or settled by hand.',
       };
     case 'recovered':
       return { dot: 'grey', sentence: 'Settled by hand.' };

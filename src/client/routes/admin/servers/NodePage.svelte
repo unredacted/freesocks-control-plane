@@ -192,9 +192,9 @@
 
               <p class="text-muted-foreground mt-2">
                 {#if inbound.squads.length === 0}
-                  In no squad.
+                  In no mode group.
                 {:else}
-                  Squads: {inbound.squads.map((s) => s.name).join(', ')}
+                  Mode groups: {inbound.squads.map((s) => s.name).join(', ')}
                 {/if}
               </p>
             </li>

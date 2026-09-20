@@ -124,7 +124,7 @@ describe('what the page says', () => {
     ({ nodes, profiles: [], unattached: { profiles: [], hosts: [] }, ...over }) as never;
 
   test('the instance in one sentence', () => {
-    expect(fleetSentence([])).toEqual({ dot: 'grey', text: 'No nodes on this panel yet.' });
+    expect(fleetSentence([])).toEqual({ dot: 'grey', text: 'No nodes on this backend yet.' });
     expect(fleetSentence([node({ usersOnline: 3 }), node()] as never)).toEqual({
       dot: 'green',
       text: 'All 2 nodes are online, 7 people connected.',
@@ -134,7 +134,7 @@ describe('what the page says', () => {
     );
     expect(fleetSentence([node({ usersOnline: 1 }), node({ online: false })] as never)).toEqual({
       dot: 'amber',
-      text: '1 of 2 nodes online, 1 person connected. The panel cannot reach the other one.',
+      text: '1 of 2 nodes online, 1 person connected. The backend cannot reach the other one.',
     });
     expect(fleetSentence([node({ online: false })] as never).dot).toBe('red');
     // A node turned off on purpose is not "unreachable".
@@ -159,11 +159,11 @@ describe('what the page says', () => {
     expect(rows.map((r) => r.key)).toEqual(['key:n-1:reality-in', 'edit:p-1', 'unattached-hosts']);
     expect(rows[0]!.nodeUuid).toBe('n-1');
     expect(rows[2]!.text).toBe(
-      'a, b, c and 2 more point at an inbound no node serves. People given them cannot connect.',
+      'a, b, c and 2 more point at a transport no node serves. People given them cannot connect.',
     );
   });
 
-  test('quiet notes: one unused inbound on three nodes is one line', () => {
+  test('quiet notes: one unused transport on three nodes is one line', () => {
     const unused = (name: string) =>
       node({
         nodeUuid: name,
@@ -171,7 +171,7 @@ describe('what the page says', () => {
         inbounds: [inbound({ tag: 'VLESS_XHTTP_CDN', hosts: [], squads: [] })],
       });
     expect(quietNotes(tree([unused('a'), unused('b'), unused('c')]))).toEqual([
-      'VLESS_XHTTP_CDN is unused on every node: no address and no squad.',
+      'VLESS_XHTTP_CDN is unused on every node: no address and no mode group.',
     ]);
     expect(
       quietNotes(
@@ -180,11 +180,11 @@ describe('what the page says', () => {
         }),
       ),
     ).toEqual([
-      'VLESS_XHTTP_CDN is unused on a: no address and no squad.',
+      'VLESS_XHTTP_CDN is unused on a: no address and no mode group.',
       'No node runs Default-Profile.',
     ]);
     expect(quietNotes(tree([node({ inbounds: [inbound({ squads: [] })] })]))).toEqual([
-      'reality-in is unused on node-one: in no squad.',
+      'reality-in is unused on node-one: in no mode group.',
     ]);
     expect(quietNotes(tree([node()]))).toEqual([]);
   });
@@ -288,7 +288,7 @@ describe('write wording', () => {
 
   test('an edit made elsewhere says what may now be wrong, without blame', () => {
     const words = foreignEditWords('Default', '5 minutes ago');
-    expect(words).toMatch(/^Default was changed on the panel 5 minutes ago, not from here/);
+    expect(words).toMatch(/^Default was changed on the backend 5 minutes ago, not from here/);
     expect(words).not.toMatch(/—/);
   });
 
@@ -315,7 +315,7 @@ describe('write wording', () => {
     ).toMatch(/already had exactly this/);
     expect(
       opWords({ ...op, state: 'refused', errorCode: 'servers.panel_refused' }).sentence,
-    ).toMatch(/panel refused/);
+    ).toMatch(/backend refused/);
   });
 
   test('server names are parsed from lines or commas, in order, without repeats', () => {

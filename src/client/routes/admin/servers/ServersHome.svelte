@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
    * Servers home (`/admin/servers[?instance=<slug>]`): one status sentence,
-   * what needs you, one row per node, the quiet leftovers, squads, recent
+   * what needs you, one row per node, the quiet leftovers, mode groups, recent
    * changes, and the two switches in the footer. A node's details and every
    * action on it live on its own page (NodePage).
    *
@@ -36,7 +36,7 @@
   import AdoptNodeDialog from './components/AdoptNodeDialog.svelte';
   import OpsList from './components/OpsList.svelte';
   import SetupSheet from './components/SetupSheet.svelte';
-  import SquadsCard from './components/SquadsCard.svelte';
+  import ModeGroupsCard from './components/ModeGroupsCard.svelte';
   import { codeOf } from './lib/run';
   import { pickInstance, serversPaths } from './lib/routes';
   import {
@@ -316,7 +316,7 @@
     </section>
 
     {#if slug}
-      <SquadsCard {slug} tree={t} {canWrite} />
+      <ModeGroupsCard {slug} tree={t} {canWrite} />
       <AdoptNodeDialog
         bind:open={adoptOpen}
         {slug}

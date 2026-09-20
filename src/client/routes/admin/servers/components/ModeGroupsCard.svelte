@@ -1,8 +1,8 @@
 <script lang="ts">
   /**
-   * The squads of one panel: which inbounds each one grants. Changing a squad's
-   * inbounds makes the panel push to the nodes that serve them, so that change
-   * stays open until those nodes have picked it up.
+   * The mode groups of one backend: which transports each one grants. Changing a
+   * group's transports makes the backend push to the nodes that serve them, so
+   * that change stays open until those nodes have picked it up.
    *
    * Props: slug, tree, canWrite (false = list only)
    */
@@ -18,26 +18,26 @@
   import { runWrite } from '../lib/run';
 
   let { slug, tree, canWrite }: { slug: string; tree: ServerTree; canWrite: boolean } = $props();
-  type Squad = ServerTree['squads'][number];
+  type ModeGroup = ServerTree['squads'][number];
   const qc = useQueryClient();
   const uid = $props.id();
 
-  let inbounds = $derived(
+  let transports = $derived(
     tree.profiles.flatMap((p) => p.inbounds.map((i) => ({ ...i, profile: p.name }))),
   );
 
   let open = $state(false);
-  let editing = $state<Squad | null>(null);
+  let editing = $state<ModeGroup | null>(null);
   let name = $state('');
   let picked = $state<string[]>([]);
   let restore = $state(false);
   let busy = $state(false);
   let removeOpen = $state(false);
 
-  function start(squad: Squad | null) {
-    editing = squad;
-    name = squad?.name ?? '';
-    picked = [...(squad?.inboundUuids ?? [])];
+  function start(group: ModeGroup | null) {
+    editing = group;
+    name = group?.name ?? '';
+    picked = [...(group?.inboundUuids ?? [])];
     restore = false;
     open = true;
   }
@@ -45,7 +45,7 @@
   const toggle = (uuid: string, on: boolean) =>
     (picked = on ? [...picked, uuid] : picked.filter((u) => u !== uuid));
 
-  let sameInbounds = $derived(
+  let sameTransports = $derived(
     !!editing && [...picked].sort().join() === [...editing.inboundUuids].sort().join(),
   );
   let valid = $derived(/^[A-Za-z0-9_-]{2,20}$/.test(name.trim()));
@@ -54,14 +54,14 @@
     if (!valid || busy) return;
     busy = true;
     try {
-      const squad = editing;
+      const group = editing;
       const op = await runWrite(qc, () => {
-        if (!squad) return createSquad(slug, { name: name.trim(), inboundUuids: picked, restore });
+        if (!group) return createSquad(slug, { name: name.trim(), inboundUuids: picked, restore });
         // Only what changed is sent: a rename alone queues no work on any node.
         const fields: { name?: string; inboundUuids?: string[] } = {};
-        if (name.trim() !== squad.name) fields.name = name.trim();
-        if (!sameInbounds) fields.inboundUuids = picked;
-        return updateSquad(slug, squad.squadUuid, fields);
+        if (name.trim() !== group.name) fields.name = name.trim();
+        if (!sameTransports) fields.inboundUuids = picked;
+        return updateSquad(slug, group.squadUuid, fields);
       });
       if (op) open = false;
     } finally {
@@ -70,38 +70,38 @@
   }
 
   async function remove() {
-    const squad = editing;
-    if (!squad) return;
+    const group = editing;
+    if (!group) return;
     removeOpen = false;
     open = false;
-    await runWrite(qc, () => deleteSquad(slug, squad.squadUuid));
+    await runWrite(qc, () => deleteSquad(slug, group.squadUuid));
   }
 </script>
 
-<section aria-labelledby="squads">
+<section aria-labelledby="mode-groups">
   <div class="mb-3 flex items-center justify-between gap-3">
-    <h2 id="squads" class="text-base font-semibold">Squads</h2>
+    <h2 id="mode-groups" class="text-base font-semibold">Mode groups</h2>
     {#if canWrite}
-      <Button variant="outline" size="sm" onclick={() => start(null)}>Add a squad</Button>
+      <Button variant="outline" size="sm" onclick={() => start(null)}>Add a group</Button>
     {/if}
   </div>
   {#if tree.squads.length === 0}
-    <p class="text-muted-foreground text-sm">No squads yet.</p>
+    <p class="text-muted-foreground text-sm">No mode groups yet.</p>
   {:else}
     <ul class="divide-y rounded-lg border text-sm">
-      {#each tree.squads as squad (squad.squadUuid)}
+      {#each tree.squads as group (group.squadUuid)}
         <li class="flex flex-wrap items-center gap-3 px-3 py-2.5">
           <span class="min-w-0 flex-1">
-            <span class="block font-medium break-all">{squad.name}</span>
+            <span class="block font-medium break-all">{group.name}</span>
             <span class="text-muted-foreground block break-all">
-              {squad.inboundTags.filter(Boolean).join(', ') || 'No inbounds'}
-              {#if squad.membersCount !== null}
-                · {squad.membersCount} {squad.membersCount === 1 ? 'member' : 'members'}
+              {group.inboundTags.filter(Boolean).join(', ') || 'No transports'}
+              {#if group.membersCount !== null}
+                · {group.membersCount} {group.membersCount === 1 ? 'member' : 'members'}
               {/if}
             </span>
           </span>
           {#if canWrite}
-            <Button variant="ghost" size="sm" onclick={() => start(squad)}>Change</Button>
+            <Button variant="ghost" size="sm" onclick={() => start(group)}>Change</Button>
           {/if}
         </li>
       {/each}
@@ -112,8 +112,8 @@
 <Dialog.Root bind:open>
   <Dialog.Content class="sm:max-w-md">
     <Dialog.Header>
-      <Dialog.Title>{editing ? `Change ${editing.name}` : 'Add a squad'}</Dialog.Title>
-      <Dialog.Description>Keys in a squad can use the inbounds ticked here.</Dialog.Description>
+      <Dialog.Title>{editing ? `Change ${editing.name}` : 'Add a mode group'}</Dialog.Title>
+      <Dialog.Description>Keys in a group can use the transports ticked here.</Dialog.Description>
     </Dialog.Header>
     <form
       class="space-y-3"
@@ -136,8 +136,8 @@
         </p>
       </div>
       <fieldset class="space-y-2">
-        <legend class="text-sm font-medium">Inbounds</legend>
-        {#each inbounds as i (i.inboundUuid)}
+        <legend class="text-sm font-medium">Transports</legend>
+        {#each transports as i (i.inboundUuid)}
           <div class="flex items-center gap-2">
             <Checkbox
               id={`${uid}-${i.inboundUuid}`}
@@ -150,16 +150,16 @@
           </div>
         {/each}
       </fieldset>
-      {#if editing && !sameInbounds}
+      {#if editing && !sameTransports}
         <p class="text-muted-foreground text-sm">
-          New inbounds are pushed to the nodes that serve them.
+          New transports are pushed to the nodes that serve them.
         </p>
       {/if}
       {#if !editing}
         <div class="flex items-start gap-2">
           <Checkbox id={`${uid}-restore`} bind:checked={restore} />
           <Label for={`${uid}-restore`} class="leading-snug font-normal">
-            Bring back a squad of this name that was removed on purpose
+            Bring back a group of this name that was removed on purpose
           </Label>
         </div>
       {/if}
@@ -181,7 +181,7 @@
 <ConfirmDialog
   bind:open={removeOpen}
   title={`Remove ${editing?.name ?? ''}?`}
-  body="Only an empty squad that no connection mode issues into can be removed."
+  body="Only an empty group that no connection mode issues into can be removed."
   typed={editing?.name}
   confirmLabel="Remove"
   danger
