@@ -82,14 +82,18 @@ function installPanel(): Panel {
           tag: e.remark,
           server: e.address,
           server_port: e.port,
-          tls: { enabled: true, reality: { enabled: true, public_key: e.pk } },
+          tls: {
+            enabled: true,
+            server_name: e.sni,
+            reality: { enabled: true, public_key: e.pk },
+          },
         })),
       });
     if (/clash|mihomo/i.test(ua))
       return `proxies:\n${entries
         .map(
           (e) =>
-            `  - name: ${e.remark}\n    type: vless\n    server: ${e.address}\n    port: ${e.port}\n    reality-opts:\n      public-key: ${e.pk}\n`,
+            `  - name: ${e.remark}\n    type: vless\n    server: ${e.address}\n    port: ${e.port}\n    servername: ${e.sni}\n    reality-opts:\n      public-key: ${e.pk}\n`,
         )
         .join('')}`;
     return entries
@@ -319,6 +323,52 @@ async function seedLiveDirect() {
 const gateOf = (t: T, serverId: Id<'backendServers'>) =>
   t.query(internal.panelIntents.nodeGate, { backendServerId: serverId, nodeName: 'node-a' });
 
+/** A live direct node: seeded, confirmed, approved and committed. */
+async function liveAndCommitted() {
+  const ctx = await seedLiveDirect();
+  const { t, intentId } = ctx;
+  const built = await t.action(internal.panelActivation.buildDirectTestLink, { intentId });
+  const { intentId: _i, issuedAt: _t, ...binding } = built.binding;
+  await t.mutation(internal.panelActivation.confirmDirect, { intentId, binding });
+  const review = await t.query(internal.panelActivation.review, { intentId });
+  const { runId } = await t.mutation(internal.panelActivation.approve, {
+    intentId,
+    reviewHash: review.reviewHash,
+  });
+  const run = await runUntil(
+    () => t.run((c) => c.db.get(runId)),
+    (state) => state !== 'running',
+  );
+  expect(run.state).toBe('committed');
+  return { ...ctx, review };
+}
+
+/**
+ * A second name on the transport, as a family rollout leaves it: the profile
+ * moves through FCP's own write, so the observation is not a foreign edit.
+ */
+async function addFamilyName(t: T, serverId: Id<'backendServers'>, panel: Panel) {
+  panel.profiles[0].config.inbounds[0].streamSettings.realitySettings.serverNames = [
+    'decoy-a.example',
+    'www.decoy-a.example',
+  ];
+  await t.action(internal.panelObserve.refresh, { backendServerId: serverId });
+  await t.mutation(internal.panelObserve.acknowledgeForeignEdit, {
+    backendServerId: serverId,
+    profileUuid: panel.profiles[0].uuid,
+  });
+}
+
+const gateVersionOf = (t: T, serverId: Id<'backendServers'>) =>
+  t
+    .run((c) =>
+      c.db
+        .query('panelSetups')
+        .withIndex('by_server', (q) => q.eq('backendServerId', serverId))
+        .unique(),
+    )
+    .then((r) => r!.gateVersion);
+
 describe('activating a direct node', () => {
   test('test link, bound confirmation, approval, candidate addresses, rehearsal, commit', async () => {
     const { t, serverId, panel, intentId } = await seedLiveDirect();
@@ -544,6 +594,71 @@ describe('activating a direct node', () => {
     ).rejects.toThrow(/node_exists|node_not_on_mode/);
   });
 
+  // Nothing runs an adopted machine, so no role ever reports its wipe: the
+  // admin who cleaned it up closes the ladder instead.
+  test('an adopted node is retired by an admin confirming its machine is gone', async () => {
+    const { t, serverId, panel } = await seedLiveDirect();
+    const transportUuid = panel.profiles[0].inbounds[0].uuid as string;
+    panel.nodes.push({
+      uuid: UUID(300),
+      name: 'legacy-b',
+      address: '203.0.113.30',
+      port: 2222,
+      countryCode: 'XX',
+      isDisabled: false,
+      lastStatusChange: 't0',
+      configProfile: {
+        activeConfigProfileUuid: panel.profiles[0].uuid,
+        activeInbounds: [{ uuid: transportUuid, tag: TAG }],
+      },
+    });
+    await t.action(internal.panelObserve.refresh, { backendServerId: serverId });
+    const { intentId } = await t.mutation(internal.panelIntents.adoptNode, {
+      backendServerId: serverId,
+      nodeUuid: UUID(300),
+      mode: 'privacy-reality',
+    });
+    // Its retirement has run its course: everything FCP made is gone and the
+    // panel row with it, so the machine is all that is left.
+    const retirementId = await t.run(async (ctx) => {
+      const id = await ctx.db.insert('panelRetirements', {
+        backendServerId: serverId,
+        intentId,
+        stage: 'panel_removed',
+        disposition: 'keep-dark',
+        requestedBy: 'admin',
+        events: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      await ctx.db.patch(intentId, { retirementId: id, state: 'retiring' });
+      return id;
+    });
+    // Before `ready_to_wipe` there is nothing to confirm.
+    await expect(t.mutation(internal.panelIntents.markWiped, { intentId })).rejects.toThrow(
+      /retirement_stage/,
+    );
+    await t.run((ctx) => ctx.db.patch(retirementId, { stage: 'ready_to_wipe' }));
+    const admin = await t.run((ctx) =>
+      ctx.db.insert('adminUsers', {
+        username: 'ops',
+        displayName: 'Ops',
+        isActive: true,
+        updatedAt: Date.now(),
+      }),
+    );
+    const out = await t.mutation(internal.panelIntents.markWiped, { intentId, byAdminId: admin });
+    expect(out.stage).toBe('retired');
+    const done = (await t.run((ctx) => ctx.db.get(retirementId)))!;
+    expect(done.stage).toBe('retired');
+    expect(done.events.map((e) => e.code)).toEqual(['wiped_by_admin', 'retired']);
+    expect((await t.run((ctx) => ctx.db.get(intentId)))!.state).toBe('retired');
+    const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
+    const row = audit.find((a) => a.action === 'servers.node.retired')!;
+    expect(row.actorType).toBe('admin');
+    expect((row.payload as { confirmedBy?: string }).confirmedBy).toBe('admin');
+  });
+
   test('a profile edit closes every enrolled node on the transport and needs a treatment for the rest', async () => {
     const { t, serverId, panel, intentId } = await seedLiveDirect();
     // Take the enrolled node live first.
@@ -656,5 +771,90 @@ describe('activating a direct node', () => {
     expect(intent.approved?.reviewHash).toBe(review.reviewHash);
     const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
     expect(audit.some((a) => a.action === 'servers.node.drift')).toBe(true);
+  });
+  // A family rollout adding a name gives a live node an address it was never
+  // verified or approved for: it stays live on what members hold, and the new
+  // one is a candidate that needs the tick and a fresh approval.
+  test('a name the family adds is a candidate: the node stays live, the tick and the approval are taken again', async () => {
+    const { t, serverId, panel, intentId } = await liveAndCommitted();
+    const before = await gateVersionOf(t, serverId);
+    expect(panel.hosts).toHaveLength(1);
+
+    // The transport now lists a second name, through FCP's own write (a family
+    // rollout): the profile's token moves, and it is not a foreign edit.
+    await addFamilyName(t, serverId, panel);
+    await t.mutation(internal.panelIntents.enroll, {
+      backendServerId: serverId,
+      name: 'node-a',
+      mode: 'privacy-reality',
+      contractVersion: 2,
+      observed: {
+        management: { address: '192.0.2.10', port: 2222 },
+        publicIps: { v4: '203.0.113.10' },
+        capabilities: { caddy: false, ipv6: false },
+      },
+    });
+    const intent = await settled(() => t.run((c) => c.db.get(intentId)));
+    // Not drift: members keep the committed address, nothing is closed.
+    expect(intent.delivery.disposition).toBe('live');
+    expect(intent.maintenance).toBeUndefined();
+    expect((await gateOf(t, serverId)).state).toBe('open');
+    // But the node is no longer verified, and the workflow offers approval again.
+    expect(intent.activation.stage).toBe('machine_ready');
+    expect(intent.activation.evidence.some((e) => e.kind === 'direct_confirmed')).toBe(false);
+    expect(await gateVersionOf(t, serverId)).toBeGreaterThan(before);
+    // The new address exists, disabled, beside the committed one.
+    expect(panel.hosts).toHaveLength(2);
+    const added = panel.hosts.find((h) => h.sni === 'www.decoy-a.example');
+    expect(added.isDisabled).toBe(true);
+    expect(intent.addressUuids).toHaveLength(2);
+  });
+
+  // One entry says nothing about the others: the rehearsal reads every
+  // candidate address, with the name it is there to serve.
+  test('the rehearsal refuses a body that carries only one of two addresses', async () => {
+    const { t, serverId, panel, intentId, review: committed } = await liveAndCommitted();
+    await addFamilyName(t, serverId, panel);
+    await t.mutation(internal.panelIntents.enroll, {
+      backendServerId: serverId,
+      name: 'node-a',
+      mode: 'privacy-reality',
+      contractVersion: 2,
+      observed: {
+        management: { address: '192.0.2.10', port: 2222 },
+        publicIps: { v4: '203.0.113.10' },
+        capabilities: { caddy: false, ipv6: false },
+      },
+    });
+    await settled(() => t.run((c) => c.db.get(intentId)));
+    // The backend leaves the second name out of every body it serves.
+    const whole = panel.bodyFor;
+    panel.bodyFor = (ua: string) =>
+      whole(ua)
+        .split('\n')
+        .filter((line) => !line.includes('www.decoy-a.example'))
+        .join('\n');
+    const built = await t.action(internal.panelActivation.buildDirectTestLink, { intentId });
+    const { intentId: _i, issuedAt: _t, ...binding } = built.binding;
+    await t.mutation(internal.panelActivation.confirmDirect, { intentId, binding });
+    const review = await t.query(internal.panelActivation.review, { intentId });
+    expect(review.shape.addressTuples).toHaveLength(2);
+    const { runId } = await t.mutation(internal.panelActivation.approve, {
+      intentId,
+      reviewHash: review.reviewHash,
+    });
+    const run = await runUntil(
+      () => t.run((c) => c.db.get(runId)),
+      (state) => state !== 'running',
+    );
+    expect(run.state).toBe('blocked');
+    expect(run.code).toBe('servers.rehearsal_failed');
+    expect(run.rehearsal?.detail).toContain('www.decoy-a.example');
+    // Nothing of the candidate set stays enabled, and what members were
+    // approved for is still the one address of the earlier commit.
+    expect(panel.hosts.every((h) => h.isDisabled)).toBe(true);
+    const intent = (await t.run((c) => c.db.get(intentId)))!;
+    expect(intent.approved?.reviewHash).toBe(committed.reviewHash);
+    expect(intent.approved?.committed.hostUuids).toHaveLength(1);
   });
 });

@@ -604,7 +604,16 @@ export const recordQualification = internalMutation({
 // --- binding a family to an inbound ---------------------------------------------------------------------------
 
 export const bind = internalMutation({
-  args: { slug: v.string(), backendSlug: v.string(), inboundTag: v.string(), ...actor },
+  args: {
+    slug: v.string(),
+    backendSlug: v.string(),
+    inboundTag: v.string(),
+    // The exact inbound, where the caller knows it (setup does): a tag is only
+    // unique per profile, so a second profile reusing a conventional tag such
+    // as VLESS_REALITY must not make an unambiguous binding fail.
+    inboundUuid: v.optional(v.string()),
+    ...actor,
+  },
   handler: async (ctx, a) => {
     const cfg = await resolveSniConfig(ctx.db);
     if (!cfg.enabled) refuse('edge.sni.disabled', 'Server-name families are switched off');
@@ -620,7 +629,9 @@ export const bind = internalMutation({
       .withIndex('by_server', (q) => q.eq('backendServerId', server._id))
       .collect();
     const hits = profiles.flatMap((p) =>
-      p.inbounds.filter((i) => i.tag === a.inboundTag).map((i) => ({ p, i })),
+      p.inbounds
+        .filter((i) => (a.inboundUuid ? i.inboundUuid === a.inboundUuid : i.tag === a.inboundTag))
+        .map((i) => ({ p, i })),
     );
     if (hits.length !== 1)
       return refuse(

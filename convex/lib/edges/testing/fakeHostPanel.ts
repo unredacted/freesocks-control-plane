@@ -52,10 +52,14 @@ export function fakeHostPanel(initial: PanelHostRow[], mode: PatchMode = 'apply'
   let hook: ((p: { uuid: string; isDisabled: boolean }) => Promise<void>) | null = null;
   const patches: Array<{ uuid: string; isDisabled: boolean }> = [];
   let subFetches = 0;
+  // A real panel puts each Host's own server name in its entry, which is what
+  // tells two addresses of one node apart.
+  const qs = (h: PanelHostRow) =>
+    h.sni ? FAKE_REALITY_QS.replace('sni=target.example', `sni=${h.sni}`) : FAKE_REALITY_QS;
   const body = () =>
     hosts
       .filter((h) => !h.isDisabled)
-      .map((h) => `vless://${FAKE_USER_UUID}@${h.address}:${h.port}?${FAKE_REALITY_QS}#${h.remark}`)
+      .map((h) => `vless://${FAKE_USER_UUID}@${h.address}:${h.port}?${qs(h)}#${h.remark}`)
       .join('\n');
   const stub = mockFetch(async (c) => {
     if (new URL(c.url).hostname !== 'panel.example') throw new Error(`unexpected ${c.url}`);

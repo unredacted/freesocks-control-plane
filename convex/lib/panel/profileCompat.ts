@@ -59,6 +59,20 @@ export type CompatResult =
   | { ok: false; issue: CompatIssue };
 
 /**
+ * What identifies a mode's transport: its definition, plus what an earlier
+ * setup of the same mode already found (never re-derived from a renamed group).
+ */
+export interface ModeLookup {
+  slug: string;
+  name: string;
+  shape: ModeShape;
+  /** The tag a previous setup recorded for this mode. */
+  tag?: string;
+  /** The transport a previous setup bound. */
+  transport?: { uuid?: string };
+}
+
+/**
  * Tags an earlier setup gave the same modes: the profile shape the node
  * role once created (`VLESS_*`). Looked up after the mode's own tag.
  */
@@ -127,16 +141,27 @@ function checkReality(
   };
 }
 
-/** The observed transport a mode adopts: its own tag first, then a legacy tag. */
+/**
+ * The observed transport a mode adopts: the one a previous setup of this mode
+ * already bound (by uuid, then by the tag it recorded, since a backend never
+ * renames a transport), else the tag this mode's group name gives, else a tag
+ * an older release gave the same mode.
+ */
 export function findTransport(
   inbounds: readonly PanelObservedInbound[],
-  mode: { slug: string; name: string },
+  mode: ModeLookup,
 ): PanelObservedInbound | null {
   const byTag = new Map(inbounds.map((i) => [i.tag, i]));
-  const own = byTag.get(transportTagOf(mode.name));
-  if (own) return own;
-  for (const legacy of LEGACY_TRANSPORT_TAGS[mode.slug] ?? []) {
-    const hit = byTag.get(legacy);
+  if (mode.transport?.uuid) {
+    const byUuid = inbounds.find((i) => i.configProfileInboundUuid === mode.transport!.uuid);
+    if (byUuid) return byUuid;
+  }
+  for (const tag of [
+    mode.tag,
+    transportTagOf(mode.name),
+    ...(LEGACY_TRANSPORT_TAGS[mode.slug] ?? []),
+  ]) {
+    const hit = tag ? byTag.get(tag) : undefined;
     if (hit) return hit;
   }
   return null;
@@ -148,11 +173,11 @@ export function findTransport(
  */
 export function checkProfileCompatibility(
   profile: { inbounds: readonly PanelObservedInbound[] },
-  modes: readonly { slug: string; name: string; shape: ModeShape }[],
+  modes: readonly ModeLookup[],
 ): CompatResult {
   const out: Record<string, EffectiveTransport> = {};
   for (const m of modes) {
-    const tag = transportTagOf(m.name);
+    const tag = m.tag ?? transportTagOf(m.name);
     const ib = findTransport(profile.inbounds, m);
     if (!ib || !ib.configProfileInboundUuid)
       return { ok: false, issue: { slug: m.slug, tag, field: 'missing' } };

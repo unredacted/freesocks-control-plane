@@ -284,7 +284,9 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'servers.node.maintenance_finished': ['backendSlug', 'name'],
   'servers.node.retire_requested': ['backendSlug', 'name', 'stage'],
   'servers.node.retire_decided': ['backendSlug', 'name', 'disposition'],
-  'servers.node.retired': ['backendSlug', 'name'],
+  'servers.node.retired': ['backendSlug', 'name', 'confirmedBy'],
+  // The one-shot migration off contract v1 (counts only).
+  'servers.contract.migrated': ['handoffs', 'reservations', 'setups', 'intents'],
   // Operator-run 2.x→3.x key-id remap on one upgraded panel (counts only).
   'admin.remnawave.user_ids_migrated': [
     'panelVersion',

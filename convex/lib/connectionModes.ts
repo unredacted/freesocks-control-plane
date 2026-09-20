@@ -47,6 +47,12 @@ export interface DefaultModeRow {
   isCensorshipRecommended?: boolean;
   backends: BackendId[];
   order: number;
+  /**
+   * The BUILT_IN_MODES_VERSION this mode was added in (1 = the first catalog).
+   * The seed inserts a mode only where this is newer than what the deployment
+   * has seen, so one an admin deleted on purpose is never resurrected.
+   */
+  since?: number;
 }
 
 export const DEFAULT_CONNECTION_MODE_FAMILIES: readonly DefaultFamilyRow[] = [
@@ -92,6 +98,7 @@ export const DEFAULT_CONNECTION_MODES: readonly DefaultModeRow[] = [
     isFamilyDefault: false,
     backends: ['remnawave'],
     order: 2,
+    since: 2,
   },
   {
     slug: 'privacy-reality',

@@ -92,6 +92,7 @@ export const intentsView = internalQuery({
         appliedRevision: i.appliedRevision ?? null,
         nodeUuid: i.nodeUuid ?? null,
         addressUuids: i.addressUuids ?? [],
+        adopted: !!i.adopted,
         origin: { hostname: i.origin.hostname ?? null, dns: i.origin.dns },
         maintenance: !!i.maintenance,
         run: run

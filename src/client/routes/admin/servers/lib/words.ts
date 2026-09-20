@@ -280,6 +280,8 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.family_target_mismatch':
     'The backend already forwards this mode to a different site than its family checks. Pick the family that matches, or change the site from the profile.',
   'servers.family_unbound': 'The mode is not bound to its family yet. Set up the backend again.',
+  'servers.family_bound_elsewhere':
+    "This mode's transport already answers to another server-name family, whose rollouts would keep moving its names. Unbind it under Server names, or pick that family here.",
   // Adopting a node that already serves members.
   'servers.node_exists': 'This node is already enrolled.',
   'servers.node_not_on_mode':
@@ -295,7 +297,7 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.privacy_drifted':
     'The profile logs more than it may. Harden it from the backend server page.',
   'servers.placement_skipped':
-    'A connection mode this panel feeds does not exist, so its squad is not bound.',
+    'A connection mode this backend feeds does not exist, so its group is not bound.',
   'servers.template_drifted':
     'A subscription template on the panel is not what it should be, and could not be set.',
   // Enrolling a node.
@@ -443,7 +445,9 @@ export function setupWords(s: {
 }
 
 export function serverErrorWords(code: string | null | undefined): string {
-  return (code && ERROR_WORDS[code]) || 'That did not work. Try again in a moment.';
+  // Codes carry detail after a colon (`servers.profile_incompatible:TAG:field`).
+  const key = code ? (code.split(':')[0] ?? '') : '';
+  return ERROR_WORDS[key] || 'That did not work. Try again in a moment.';
 }
 /** Every code with its own words (pinned by the tests against the server's vocabulary). */
 export const WORDED_CODES: readonly string[] = Object.keys(ERROR_WORDS);
@@ -460,7 +464,7 @@ export interface OpLike {
 
 const KIND: Record<OpLike['kind'], string> = {
   host: 'address',
-  squad: 'squad',
+  squad: 'mode group',
   node: 'node',
   profile: 'config profile',
 };

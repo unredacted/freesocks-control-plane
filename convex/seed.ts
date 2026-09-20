@@ -309,7 +309,10 @@ export const seedConnectionModes = internalMutation({
         const present = new Set(
           (await ctx.db.query('connectionModes').collect()).map((m) => m.slug),
         );
-        for (const m of DEFAULT_CONNECTION_MODES) if (!present.has(m.slug)) await insertMode(m);
+        // Only the built-ins ADDED after what this deployment has seen: one it
+        // was seeded with and an admin then deleted stays deleted.
+        for (const m of DEFAULT_CONNECTION_MODES)
+          if ((m.since ?? 1) > seen && !present.has(m.slug)) await insertMode(m);
       }
     }
     await upsertSettingRow(ctx, BUILT_IN_MODES_VERSION_KEY, JSON.stringify(BUILT_IN_MODES_VERSION));

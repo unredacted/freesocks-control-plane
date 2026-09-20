@@ -395,6 +395,16 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
         }),
       );
     }
+    // A node FCP bootstrapped reports its own wipe (POST …/wiped, role token);
+    // for an adopted node, whose machine the role never runs, an admin confirms
+    // the machine is gone and the retirement closes.
+    if (verb === 'wiped')
+      return json(
+        await ctx.runMutation(internal.panelIntents.markWiped, {
+          intentId,
+          byAdminId: admin.adminUserId ?? undefined,
+        }),
+      );
     if (verb === 'maintenance')
       return json(
         await ctx.runMutation(internal.panelIntents.finishMaintenance, {

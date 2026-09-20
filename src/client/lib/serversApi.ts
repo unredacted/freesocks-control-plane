@@ -166,6 +166,9 @@ export const retireNode = (
   decision?: { disposition: 'keep-dark' | 'migrate'; targetIntentId?: string },
 ) =>
   apiClient.post(`${intentPath(slug, id)}/retire`, decision ?? {}, z.object({ stage: z.string() }));
+/** An adopted node's machine is never run by the role: an admin confirms it is gone. */
+export const confirmWiped = (slug: string, id: string) =>
+  apiClient.post(`${intentPath(slug, id)}/wiped`, {}, z.object({ stage: z.string() }));
 export const finishMaintenance = (slug: string, id: string) =>
   apiClient.post(`${intentPath(slug, id)}/maintenance`, {}, z.object({ ok: z.literal(true) }));
 export const patchNodeSettings = (

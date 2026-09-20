@@ -342,7 +342,7 @@ export const ModeSetupView = z.object({
       target: z.string().nullable(),
     })
     .nullable(),
-  family: z.enum(['none', 'bound', 'unbound', 'target_mismatch']),
+  family: z.enum(['none', 'bound', 'unbound', 'target_mismatch', 'bound_elsewhere']),
 });
 export type ModeSetupView = z.infer<typeof ModeSetupView>;
 
@@ -447,6 +447,8 @@ export const NodeIntentView = z.object({
   nodeUuid: z.string().nullable(),
   /** The node's own addresses on the backend (one per family name on a direct node). */
   addressUuids: z.array(z.string()),
+  /** Taken over as it was: the role never runs this machine (docs/servers.md). */
+  adopted: z.boolean(),
   origin: z.object({ hostname: z.string().nullable(), dns: z.string() }),
   maintenance: z.boolean(),
   run: z

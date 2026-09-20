@@ -114,6 +114,32 @@ describe('seedConnectionModes: fresh deploy', () => {
     expect(modes.find((m) => m.slug === 'freedom-ws')!.label).toBe('Tunnel Mode');
     expect(modes.find((m) => m.slug === 'freedom-ws')!.enabled).toBe(false);
   });
+
+  // A deployment seeded before a built-in existed gets that ONE built-in, and
+  // nothing it deleted on purpose from an earlier catalog comes back.
+  test('a version bump adds only the built-in it introduced', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.seedConnectionModes, {});
+    await t.mutation(internal.connectionModes.removeMode, { slug: 'freedom-reality' });
+    await t.mutation(internal.connectionModes.removeMode, { slug: 'freedom-xhttp' });
+    // Back to what the catalog looked like at version 1.
+    await t.run(async (ctx) => {
+      const row = await ctx.db
+        .query('appSettings')
+        .withIndex('by_key', (q) => q.eq('key', 'connectionModes.builtInsVersion'))
+        .unique();
+      await ctx.db.patch(row!._id, { value: JSON.stringify(1) });
+    });
+    await t.mutation(internal.seed.seedConnectionModes, {});
+    const modes = await t.run((ctx) => ctx.db.query('connectionModes').collect());
+    // freedom-xhttp arrived with version 2; freedom-reality was a version 1
+    // built-in the admin removed, and stays removed.
+    expect(modes.map((m) => m.slug).sort()).toEqual([
+      'freedom-ws',
+      'freedom-xhttp',
+      'privacy-reality',
+    ]);
+  });
 });
 
 describe('cleanupLegacyModeSettings', () => {

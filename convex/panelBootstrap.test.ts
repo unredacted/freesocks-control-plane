@@ -17,6 +17,7 @@ import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { insertPanelServer } from './lib/edges/testing/fixtures';
+import { addressRemark, addressesOf, ownsAddress } from './panelIntents';
 
 const modules = import.meta.glob('./**/*.*s');
 type T = TestConvex<typeof schema>;
@@ -234,7 +235,7 @@ describe('setting up a fresh backend', () => {
     expect(row.profileUuid).toBe(panel.profiles[0]!.uuid);
     expect(row.privacy).toBe('ok');
     expect(panel.writes.filter((w) => w.call === 'POST /api/config-profiles')).toHaveLength(1);
-    const bySlug = Object.fromEntries(row.modes.map((m) => [m.slug, m]));
+    const bySlug = Object.fromEntries(row.modes!.map((m) => [m.slug, m]));
     expect(bySlug['privacy-reality']).toMatchObject({
       tag: 'PRIVACY_REALITY',
       placement: 'bound',
@@ -255,7 +256,7 @@ describe('setting up a fresh backend', () => {
       family: 'none',
       transport: { port: 8443, path: '/ws' },
     });
-    expect(row.modes.every((m) => !!m.groupUuid)).toBe(true);
+    expect(row.modes!.every((m) => !!m.groupUuid)).toBe(true);
     expect(panel.squads.map((s) => s.name).sort()).toEqual([
       'Freedom-Reality',
       'Freedom-WebSocket',
@@ -333,7 +334,12 @@ describe('setting up a fresh backend', () => {
       lastStatusChange: 't0',
       configProfile: { activeConfigProfileUuid: UUID(2), activeInbounds: [] },
     });
-    const legacyGroup = { uuid: UUID(3), name: 'FreeSocks-Reality', inbounds: [] };
+    // The group also grants a transport of an older release: a mode grants one.
+    const legacyGroup = {
+      uuid: UUID(3),
+      name: 'FreeSocks-Reality',
+      inbounds: [{ uuid: UUID(9), tag: 'VLESS_OLD' }],
+    };
     panel.squads.push(legacyGroup);
     await t.action(internal.panelObserve.refresh, { backendServerId: serverId });
     await expect(
@@ -343,13 +349,75 @@ describe('setting up a fresh backend', () => {
     const row = await runSetup(t, serverId, { ...setupInput, adopt: true });
     expect(row.state).toBe('ready');
     expect(row.adopted).toBe(true);
-    const direct = row.modes.find((m) => m.slug === 'privacy-reality')!;
+    const direct = row.modes!.find((m) => m.slug === 'privacy-reality')!;
     expect(direct.groupUuid).toBe(legacyGroup.uuid);
     expect(direct.renamedFrom).toBe('FreeSocks-Reality');
     expect(panel.squads.find((s) => s.uuid === legacyGroup.uuid)!.name).toBe('Privacy-Reality');
+    // Exactly the mode's transport, not the old one beside it.
+    expect(
+      panel.squads
+        .find((x) => x.uuid === legacyGroup.uuid)!
+        .inbounds.map((i: { uuid: string }) => i.uuid),
+    ).toEqual([direct.transport!.uuid]);
     expect(panel.squads.filter((s) => s.name === 'FreeSocks-Reality')).toHaveLength(0);
     const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
     expect(audit.some((a) => a.action === 'servers.setup.group_renamed')).toBe(true);
+  });
+
+  // A tag is unique per profile, never per backend: another profile reusing a
+  // conventional tag must not make an unambiguous binding fail.
+  test('a second profile reusing a transport tag does not stop the family binding', async () => {
+    const { t, serverId, panel } = await seed();
+    panel.profiles.push({
+      uuid: UUID(90),
+      name: 'Someone-Elses-Config',
+      config: { inbounds: [{ tag: 'PRIVACY_REALITY' }] },
+      inbounds: [{ uuid: UUID(91), tag: 'PRIVACY_REALITY' }],
+    });
+    await t.action(internal.panelObserve.refresh, { backendServerId: serverId });
+    const row = await runSetup(t, serverId, { ...setupInput, adopt: true });
+    expect(row.state).toBe('ready');
+    const direct = row.modes!.find((m) => m.slug === 'privacy-reality')!;
+    expect(direct.family).toBe('bound');
+    // The family is bound to THIS profile's transport, not the other one.
+    const bindings = await t.run((ctx) => ctx.db.query('sniInboundBindings').collect());
+    expect(bindings.map((b) => b.inboundUuid)).toContain(direct.transport!.uuid);
+    expect(bindings.map((b) => b.inboundUuid)).not.toContain(UUID(91));
+  });
+
+  // A transport already bound to ANOTHER family answers to that family's
+  // rollouts: setting up around it would leave two owners of one allowlist.
+  test('a transport bound to another family stops the setup with that family', async () => {
+    const { t, serverId } = await seed();
+    const row = await runSetup(t, serverId);
+    expect(row.state).toBe('ready');
+    const direct = row.modes!.find((m) => m.slug === 'privacy-reality')!;
+    await t.mutation(internal.sniFamilies.create, {
+      slug: 'fam-other',
+      label: 'fam-other',
+      targetAddress: 'decoy-a.example',
+      targetPort: 443,
+    });
+    await t.run(async (ctx) => {
+      const other = await ctx.db
+        .query('sniFamilies')
+        .withIndex('by_slug', (q) => q.eq('slug', 'fam-other'))
+        .unique();
+      const mine = (await ctx.db.query('sniInboundBindings').collect()).find(
+        (x) => x.inboundUuid === direct.transport!.uuid,
+      )!;
+      await ctx.db.patch(mine._id, { familyId: other!._id });
+      // The row asks to be looked at again (as a resumed or retried setup does).
+      await ctx.db.patch(row._id, {
+        modes: row.modes!.map((m) =>
+          m.slug === 'privacy-reality' ? { ...m, family: 'unbound' as const } : m,
+        ),
+      });
+    });
+    const again = await runSetup(t, serverId);
+    expect(again.state).toBe('failed');
+    expect(again.code).toBe('servers.family_bound_elsewhere:fam-other');
+    expect(again.modes!.find((m) => m.slug === 'privacy-reality')!.family).toBe('bound_elsewhere');
   });
 });
 
@@ -375,8 +443,8 @@ describe('enrolling a direct node', () => {
     expect(panel.nodes).toHaveLength(1);
     expect(panel.nodes[0]).toMatchObject({ name: 'node-a', address: '192.0.2.10', port: 2222 });
     expect(panel.hosts.map((h) => h.remark).sort()).toEqual([
-      'node-a-decoy-a.example',
-      'node-a-www.decoy-a.example',
+      'node-a | decoy-a.example',
+      'node-a | www.decoy-a.example',
     ]);
     expect(panel.hosts[0]).toMatchObject({
       address: '203.0.113.10',
@@ -530,5 +598,122 @@ describe('enrolling a direct node', () => {
         observed,
       }),
     ).rejects.toThrow(/mode_change_needs_admin/);
+  });
+});
+
+describe('an address belongs to exactly one node', () => {
+  test('a node whose name is the prefix of another never owns its addresses', () => {
+    expect(addressRemark('node-a', 'decoy-a.example')).toBe('node-a | decoy-a.example');
+    expect(ownsAddress('node-a', addressRemark('node-a', 'decoy-a.example'))).toBe(true);
+    // The collision a name prefix used to cause: node-a would have taken
+    // node-a-west's addresses for its own, and deleted them as extra.
+    expect(ownsAddress('node-a', addressRemark('node-a-west', 'decoy-a.example'))).toBe(false);
+    expect(ownsAddress('node-a-west', addressRemark('node-a', 'decoy-a.example'))).toBe(false);
+    // Whatever remark it carries, an address the node has recorded is its own
+    // (an adopted node's were named by whoever made them).
+    const hosts = [
+      { hostUuid: 'h1', remark: 'anything at all' },
+      { hostUuid: 'h2', remark: addressRemark('node-a', 'www.decoy-a.example') },
+      { hostUuid: 'h3', remark: addressRemark('node-a-west', 'decoy-a.example') },
+    ];
+    expect(
+      addressesOf({ name: 'node-a', addressUuids: ['h1'] }, hosts).map((h) => h.hostUuid),
+    ).toEqual(['h1', 'h2']);
+  });
+});
+
+describe('moving off contract v1', () => {
+  test('the migration clears the v1 rows and leaves a current setup alone', async () => {
+    const { t, serverId, panel } = await seed();
+    const current = await runSetup(t, serverId);
+    expect(current.state).toBe('ready');
+    expect(panel.profiles).toHaveLength(1);
+    // A second backend carrying what the release before modes wrote.
+    const legacy = await insertPanelServer(t, { slug: 'panel-b' });
+    const legacyIds = await t.run(async (ctx) => {
+      const setupId = await ctx.db.insert('panelSetups', {
+        backendServerId: legacy,
+        desired: '{}',
+        desiredHash: 'h',
+        generation: 1,
+        state: 'ready',
+        profileName: 'FreeSocks-Config',
+        profileUuid: UUID(80),
+        inbounds: { cdn: { uuid: UUID(81), tag: 'VLESS_WS_CDN' } },
+        squads: { fronted: { name: 'FreeSocks-Fronted' } },
+        placements: [{ mode: 'freedom-ws', state: 'bound' }],
+        handoff: 'fresh',
+        templates: [],
+        gateVersion: 3,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      const intentId = await ctx.db.insert('panelNodeIntents', {
+        backendServerId: legacy,
+        name: 'legacy-node',
+        label: 'legacy-node',
+        purpose: 'front',
+        contractVersion: 1,
+        generation: 1,
+        desiredHash: 'h',
+        state: 'ready',
+        observed: {
+          management: { address: '192.0.2.9', port: 2222 },
+          publicIps: {},
+          capabilities: { caddy: true, ipv6: false },
+          at: Date.now(),
+        },
+        settings: { originHostnameSource: 'none', publishV6: false, nodePort: 2222 },
+        machineRevision: 1,
+        activation: { stage: 'live', evidence: [] },
+        delivery: {
+          disposition: 'live',
+          acceptingAssignments: true,
+          exposure: { everLive: true, hosts: [], mirrors: 0, testCredentials: 0, dns: 0 },
+        },
+        origin: { dns: 'none' },
+        hostUuid: UUID(82),
+        registeredAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert('panelHandoff', {
+        backendServerId: legacy,
+        roleContractVersion: 1,
+        reportedAt: Date.now(),
+        reportedBy: 'role',
+      });
+      const ownershipId = await ctx.db.insert('panelOwnership', {
+        backendServerId: legacy,
+        kind: 'node',
+        identity: 'legacy-node',
+        lookup: ['legacy-node'],
+        state: 'reserved',
+        reservation: { roleOpId: 'op-1', at: Date.now() },
+        since: Date.now(),
+        updatedAt: Date.now(),
+      });
+      return { setupId, intentId, ownershipId };
+    });
+
+    const out = await t.mutation(internal.panelSetup.migrateContractV2, {});
+    expect(out).toEqual({ handoffs: 1, reservations: 1, setups: 1, intents: 1 });
+    await t.run(async (ctx) => {
+      expect(await ctx.db.get(legacyIds.setupId)).toBeNull();
+      expect(await ctx.db.get(legacyIds.intentId)).toBeNull();
+      expect(await ctx.db.query('panelHandoff').collect()).toHaveLength(0);
+      const own = (await ctx.db.get(legacyIds.ownershipId))!;
+      expect(own.state).toBe('owned');
+      expect(own.reservation).toBeUndefined();
+      // The current backend is untouched, and nothing on a panel was called.
+      expect((await ctx.db.get(current._id))!.state).toBe('ready');
+    });
+    expect(panel.writes.filter((w) => w.call.startsWith('DELETE'))).toHaveLength(0);
+    // Idempotent.
+    expect(await t.mutation(internal.panelSetup.migrateContractV2, {})).toEqual({
+      handoffs: 0,
+      reservations: 0,
+      setups: 0,
+      intents: 0,
+    });
   });
 });

@@ -35,7 +35,7 @@ import { LABEL_RE, originHostname, originLabel } from './lib/panel/originDns';
 import { type ModeShape } from './lib/panel/profileTemplate';
 import { resolveServerConfig } from './lib/serverConfig';
 import { observeInstance } from './panelObserve';
-import { bumpGateVersion, modeOf, setupReady } from './panelSetup';
+import { bumpGateVersion, modeOf, setupReady, type Setup, type SetupMode } from './panelSetup';
 
 const refuse = (code: string, message: string): never => {
   throw new ConvexError({ code, message });
@@ -56,7 +56,13 @@ const fence = { intentId: v.id('panelNodeIntents'), generation: v.number(), atte
 type Fence = { intentId: Id<'panelNodeIntents'>; generation: number; attemptId: string };
 
 type Intent = Doc<'panelNodeIntents'>;
-type Setup = Doc<'panelSetups'>;
+
+/**
+ * The mode a node serves. The field is optional in the schema only so a row
+ * from the release before modes can be pushed (see schema.ts); such a row has
+ * no mode and fails closed wherever one is needed.
+ */
+export const modeSlug = (intent: { mode?: string }): string => intent.mode ?? '';
 
 async function intentByName(
   ctx: { db: QueryCtx['db'] },
@@ -76,8 +82,6 @@ async function readySetup(ctx: { db: QueryCtx['db'] }, sid: Id<'backendServers'>
     .unique();
   return setupReady(row) ? row : null;
 }
-
-type SetupMode = Setup['modes'][number];
 
 /** The setup row's entry for the mode a node serves (the row is ready: every mode has a transport). */
 export function modeEntry(setup: Setup, slug: string): SetupMode {
@@ -145,11 +149,30 @@ export function originAddressOf(intent: Intent, hostname: string | undefined): s
   return intent.observed.publicIps.v4 ?? intent.observed.management.address;
 }
 
-/** The remark of a direct node's address for one family name. */
-export const addressRemark = (nodeName: string, sni: string): string => `${nodeName}-${sni}`;
-/** Whether an address belongs to a node (its remark carries the node's name). */
+/**
+ * The remark of a direct node's address for one family name. The separator is
+ * a character neither a node name (`[A-Za-z0-9 ._-]`) nor a host name can
+ * carry, so the node a remark names is never in doubt: `node-a` must not read
+ * `node-a-west | x.example` as its own (and delete it as extra).
+ */
+export const ADDRESS_SEP = ' | ';
+export const addressRemark = (nodeName: string, sni: string): string =>
+  `${nodeName}${ADDRESS_SEP}${sni}`;
+/** Whether a remark FCP wrote names this node. */
 export const ownsAddress = (nodeName: string, remark: string): boolean =>
-  remark.startsWith(`${nodeName}-`);
+  remark.startsWith(`${nodeName}${ADDRESS_SEP}`);
+/**
+ * A node's own addresses: the ones it has recorded (an adopted node's carry
+ * whatever remarks the operator gave them) plus any remark FCP wrote for this
+ * node, which is how a lost create is found again before it is recorded.
+ */
+export const addressesOf = <H extends { hostUuid: string; remark: string }>(
+  intent: { name: string; addressUuids?: string[] },
+  hosts: readonly H[],
+): H[] =>
+  hosts.filter(
+    (h) => intent.addressUuids?.includes(h.hostUuid) || ownsAddress(intent.name, h.remark),
+  );
 
 export function ingressOf(intent: Intent, hostname: string | undefined): IngressMapping | null {
   const i = intent.settings.ingress;
@@ -209,7 +232,7 @@ export const enroll = internalMutation({
     if (intent) {
       if (intent.state === 'retiring' || intent.state === 'retired')
         refuse('servers.node_retiring', 'This node is being retired. Enroll it under a new name');
-      if (intent.mode !== a.mode)
+      if (modeSlug(intent) !== a.mode)
         refuse(
           'servers.mode_change_needs_admin',
           'A node keeps its mode. An admin changes it from Servers',
@@ -698,8 +721,8 @@ async function loadContext(ctx: QueryCtx, intent: Intent) {
     .withIndex('by_server', (q) => q.eq('backendServerId', sid))
     .collect();
   const hostname = originHostnameOf(intent, setup);
-  const mode = modeEntry(setup, intent.mode);
-  const t = transportFor(setup, intent.mode);
+  const mode = modeEntry(setup, modeSlug(intent));
+  const t = transportFor(setup, modeSlug(intent));
   const inbound = profile?.inbounds.find((i) => i.inboundUuid === t.uuid) ?? null;
   return {
     intent,
@@ -712,8 +735,8 @@ async function loadContext(ctx: QueryCtx, intent: Intent) {
       ? { changeToken: profile.changeToken, foreignEditAt: profile.foreignEditAt }
       : null,
     inbound,
-    // A direct node's own addresses, one per family name (by remark).
-    addresses: hosts.filter((h) => ownsAddress(intent.name, h.remark)),
+    // A direct node's own addresses, one per family name.
+    addresses: addressesOf(intent, hosts),
     hostname,
     originAddress: originAddressOf(intent, hostname),
     ingress: ingressOf(intent, hostname),
@@ -776,11 +799,18 @@ export const observeRevisions = internalMutation({
     configRevision: v.string(),
     authRevision: v.union(v.string(), v.null()),
     hostMoved: v.boolean(),
+    // A family name a direct node has no address for yet: a candidate change,
+    // never drift. The committed addresses keep serving; the node needs its
+    // isolated tick and an approval again before the new one is delivered.
+    addressAdded: v.optional(v.boolean()),
     // The profile token moved through FCP's own ledger (a family rollout,
     // a hardening), not somebody else's edit: nothing the node serves broke.
     ownChange: v.boolean(),
   },
-  handler: async (ctx, { configRevision, authRevision, hostMoved, ownChange, ...f }) => {
+  handler: async (
+    ctx,
+    { configRevision, authRevision, hostMoved, addressAdded, ownChange, ...f },
+  ) => {
     const intent = await ctx.db.get(f.intentId);
     if (!intent || !fenceHolds(intent, f)) return { ok: false as const, drift: false };
     const now = Date.now();
@@ -799,15 +829,30 @@ export const observeRevisions = internalMutation({
     // an endpoint move): the evidence and the approval are re-stamped to the
     // new revision, since what members hold still works; a run in flight is
     // superseded (its snapshot names the old revision) and is approved again.
-    if (configMoved && !authMoved && ownChange && !hostMoved) {
+    // A family name that ARRIVED is the same kind of change: the committed
+    // addresses keep serving while the new one is prepared, but it is not
+    // verified or approved, so the isolated tick and the approval are taken
+    // again and the commit promotes the whole set.
+    const candidateOnly =
+      (configMoved && !authMoved && ownChange && !hostMoved) ||
+      (!revisionMoved && !hostMoved && addressAdded === true);
+    if (candidateOnly) {
       const restamp = <E extends { configRevision?: string }>(e: E): E =>
         e.configRevision !== undefined ? { ...e, configRevision } : e;
       const d = intent.delivery.disposition;
+      const evidence = (
+        addressAdded
+          ? intent.activation.evidence.filter((e) => e.kind !== 'direct_confirmed')
+          : intent.activation.evidence
+      ).map(restamp);
       patch.activation = {
         ...intent.activation,
-        evidence: intent.activation.evidence.map(restamp),
-        stage:
-          intent.activation.stage === 'activating' ? 'awaiting_approval' : intent.activation.stage,
+        evidence,
+        stage: addressAdded
+          ? stageAfterChange(intent.activation.stage, evidence)
+          : intent.activation.stage === 'activating'
+            ? 'awaiting_approval'
+            : intent.activation.stage,
         reviewHash: undefined,
         currentRunId: undefined,
       };
@@ -819,6 +864,9 @@ export const observeRevisions = internalMutation({
         .collect())
         if (r.state === 'running' || r.state === 'blocked' || r.state === 'review')
           await ctx.db.patch(r._id, { state: 'superseded', updatedAt: now });
+      // The candidate resource set changes (an address is about to be created),
+      // and every render carries the gate version it was made under.
+      if (addressAdded) await bumpGateVersion(ctx, intent.backendServerId);
       await ctx.db.patch(f.intentId, patch);
       return { ok: true as const, drift: false };
     }
@@ -829,7 +877,7 @@ export const observeRevisions = internalMutation({
       deliveryRevision: intent.deliveryRevision ?? '',
     };
     const evidence = retainEvidence(intent.activation.evidence, revs).filter(
-      (e) => !(hostMoved && e.kind === 'direct_confirmed'),
+      (e) => !((hostMoved || addressAdded) && e.kind === 'direct_confirmed'),
     );
     const d = intent.delivery.disposition;
     const drift =
@@ -1033,10 +1081,15 @@ export const reconcile = internalAction({
         return w && (h.address !== w.address || h.port !== w.port || (h.sni ?? null) !== w.sni);
       });
       const extra = c.addresses.filter((h) => !wanted.some((w) => w.remark === h.remark));
+      // A name the family added: the address for it does not exist yet. What
+      // members hold keeps working, so this is not drift; it is a CANDIDATE the
+      // node has to be verified and approved for before it is delivered.
+      const addressAdded = wanted.some((w) => !c.addresses.some((h) => h.remark === w.remark));
       const rev = await ctx.runMutation(internal.panelIntents.observeRevisions, {
         ...f,
         configRevision,
         authRevision,
+        addressAdded,
         hostMoved: moved.length > 0 || extra.length > 0,
         // The observer marks a token move nobody's ledger op expected as a
         // foreign edit; anything else was FCP's own write.
@@ -1578,10 +1631,15 @@ export const holdsView = internalQuery({
       })),
 });
 
-/** The role confirms the machine is cleaned up: `ready_to_wipe` -> `wiped` -> `retired`. */
+/**
+ * The machine is cleaned up: `ready_to_wipe` -> `wiped` -> `retired`. The role
+ * reports it for a node FCP bootstrapped; for an ADOPTED node the role is never
+ * run, so an admin confirms it instead (`byAdminId`) and the same step closes
+ * the ladder. Without either, the retirement would sit at `ready_to_wipe`.
+ */
 export const markWiped = internalMutation({
-  args: { intentId: v.id('panelNodeIntents') },
-  handler: async (ctx, { intentId }) => {
+  args: { intentId: v.id('panelNodeIntents'), byAdminId: v.optional(v.id('adminUsers')) },
+  handler: async (ctx, { intentId, byAdminId }) => {
     const intent = await ctx.db.get(intentId);
     if (!intent) return refuse('not_found', 'No such node');
     const r = intent.retirementId ? await ctx.db.get(intent.retirementId) : null;
@@ -1589,20 +1647,30 @@ export const markWiped = internalMutation({
     if (r!.stage === 'wiped' || r!.stage === 'retired') return { stage: r!.stage };
     if (r!.stage !== 'ready_to_wipe')
       refuse('servers.retirement_stage', `The node is not ready to wipe yet (${r!.stage})`);
+    const byAdmin = byAdminId !== undefined;
     const now = Date.now();
     await ctx.db.patch(r!._id, {
       stage: 'retired',
-      events: [...r!.events, { at: now, code: 'wiped' }, { at: now, code: 'retired' }],
+      events: [
+        ...r!.events,
+        { at: now, code: byAdmin ? 'wiped_by_admin' : 'wiped' },
+        { at: now, code: 'retired' },
+      ],
       updatedAt: now,
     });
     await ctx.db.patch(intentId, { state: 'retired', updatedAt: now });
     const server = await ctx.db.get(intent.backendServerId);
     await writeAuditLog(ctx, {
-      actorType: 'system',
+      actorType: byAdmin ? 'admin' : 'system',
+      actorId: byAdminId,
       action: 'servers.node.retired',
       targetType: 'panel_node_intent',
       targetId: intentId,
-      payload: { backendSlug: server?.slug ?? '', name: intent.name },
+      payload: {
+        backendSlug: server?.slug ?? '',
+        name: intent.name,
+        ...(byAdmin ? { confirmedBy: 'admin' } : {}),
+      },
     });
     return { stage: 'retired' as const };
   },
@@ -1664,10 +1732,15 @@ export async function modeRefOf(
     .query('panelSetups')
     .withIndex('by_server', (q) => q.eq('backendServerId', intent.backendServerId))
     .unique();
-  const m = setup ? modeOf(setup, intent.mode) : undefined;
+  // Whatever vintage the row is: a pre-modes row carries no entry at all.
+  const m = setup?.modes?.find((x) => x.slug === modeSlug(intent));
   return m
     ? { slug: m.slug, name: m.name, shape: m.shape }
-    : { slug: intent.mode, name: intent.mode, shape: { transport: 'reality', fronting: 'direct' } };
+    : {
+        slug: modeSlug(intent),
+        name: modeSlug(intent),
+        shape: { transport: 'reality', fronting: 'direct' },
+      };
 }
 
 // --- the sweep ---------------------------------------------------------------------------------------

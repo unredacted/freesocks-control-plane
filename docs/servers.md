@@ -118,8 +118,8 @@ node work behind a write and answers before it runs. `convex/panelLedger.ts` (th
 `panelOps` and `panelClaims`) and the pure rules in `convex/lib/panel/ops.ts` exist for that.
 
 **Gates**, checked in the claiming transaction: `servers.manage.enabled` is on
-(`servers.manage_disabled`), the backend type can be managed, and the node role has reported its
-**handoff** for this instance (`servers.handoff_missing`, see § The node role). A write needs the
+(`servers.manage_disabled`), the backend type can be managed, and FCP has set this backend up or
+adopted it (`servers.not_set_up`, see § Setting up a backend). A write needs the
 scope **`admin:servers:manage`**. That is deliberately not `admin:servers:write`: the node
 role's token holds that one and must not gain the power to change a panel here. (A signed-in
 admin is not scope-limited; scopes confine tokens.)
@@ -319,8 +319,8 @@ shape (Caddy or not, ingress, what an edge dials) follows from the mode's shape.
 | observe    | A fresh look at the backend; everything below reads the cache.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | families   | Every REALITY mode's family must exist, be on, and have a usable (qualified, active) name today: `servers.family_missing`, `servers.family_empty`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | profile    | The profile by name: adopted when compatible (`lib/panel/profileCompat.ts`: per mode the transport found under the mode's tag or a tag an earlier setup gave it, checked for protocol, network, security, listen, port, path, names, target and a usable key; keys and short ids never touched; an adopted tag is kept, since a backend keys transports by tag), otherwise created from the template (`lib/panel/profileTemplate.ts`: one transport per mode, born with the privacy posture, each REALITY transport with its family's target and usable names and its own key pair generated inside the claimed attempt). `servers.profile_incompatible:<tag>:<field>`. |
-| bind       | Each REALITY transport is bound to its family (`sniFamilies.bind`): the family is the one authoritative allowlist from then on, and later name changes are rollouts (docs/edges.md). An adopted transport forwarding elsewhere than the family's target is `servers.family_target_mismatch`.                                                                                                                                                                                                                                                                                                                                                                            |
-| groups     | Each mode's group, found under its name, or under a name an earlier setup gave the same mode (`FreeSocks-Reality` → `Privacy-Reality`, `FreeSocks-Relay` → `Freedom-Reality`, `FreeSocks-Fronted`/`FreeSocks-Fastly` → `Freedom-WebSocket`) and **renamed in place** through the ledger (its id and every member assignment survive; audited `servers.setup.group_renamed`), else created; carrying the mode's transport.                                                                                                                                                                                                                                               |
+| bind       | Each REALITY transport is bound to its family (`sniFamilies.bind`, by the transport's own uuid, since a tag is unique per profile and not per backend): the family is the one authoritative allowlist from then on, and later name changes are rollouts (docs/edges.md). An adopted transport forwarding elsewhere than the family's target is `servers.family_target_mismatch`; one already bound to a DIFFERENT family is `servers.family_bound_elsewhere:<slug>` (that family's rollouts own its names, so an admin unbinds it or the mode names that family).                                                                                                       |
+| groups     | Each mode's group, found under its name, or under a name an earlier setup gave the same mode (`FreeSocks-Reality` → `Privacy-Reality`, `FreeSocks-Relay` → `Freedom-Reality`, `FreeSocks-Fronted`/`FreeSocks-Fastly` → `Freedom-WebSocket`) and **renamed in place** through the ledger (its id and every member assignment survive; audited `servers.setup.group_renamed`), else created; carrying EXACTLY the mode's transport (a transport an earlier release left in the group is removed: a mode grants one way in).                                                                                                                                               |
 | placements | Each group into its mode's pool (`addSquadUuids`). A mode that does not exist is recorded `skipped` and blocks activation of its nodes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | templates  | The four subscription templates (`lib/panel/subscriptionTemplates/`, YAML byte-exact) reconciled on drift; a refused write (401/403) blocks activation unless the live template already matches.                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
@@ -342,7 +342,28 @@ that is **live at once**: its row must run the mode's transport; its addresses (
 by remark or address) become its committed set; evidence and approval are synthesized as
 `adopted`. A fronted node whose edge FCP does not run yet (an earlier tool made it) is
 `externallyFronted`: it needs no standbys and no origin name until Edges protects it, one node at
-a time, through the normal flow. The role is never run for an adopted machine.
+a time, through the normal flow. The role is never run for an adopted machine, which is also why
+its retirement is closed by an admin rather than by a report (below).
+
+### Moving to modes
+
+A deployment that ran the release before modes carries rows of the old shape, and Convex
+validates stored documents on every push, so those fields are still accepted (marked
+TRANSITIONAL in `convex/schema.ts`) and one mutation clears them, once per deployment, right
+after the deploy:
+
+```
+bunx convex run panelSetup:migrateContractV2 '{}'
+```
+
+(through the deployer container: docs/beta-deploy.md "One-off functions"). It deletes the v1
+handoff rows, settles any open v1 reservation on a `panelOwnership` row to `owned`, and removes
+`panelSetups` and `panelNodeIntents` rows written before modes together with what they fenced
+(activation runs, retirements, obligations, holds). Nothing on a backend and nothing a member
+holds is touched: these are FCP's own workflow rows. The operator then sets each backend up again
+(which ADOPTS what is there) and adopts each live node. It is idempotent, and audited
+`servers.contract.migrated` with counts. Once every deployment has run it, the TRANSITIONAL
+fields go.
 
 ## Node lifecycle
 
@@ -357,14 +378,14 @@ registered → bootstrap_available → machine_applied → machine_ready → can
 ```
 
 | Stage                 | Evidence (each row bound to the revisions it was taken for)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `registered`          | The intent exists; the node row is created or brought in line through the ledger; a direct node's Host is created **disabled**; a front node's origin record is written (obligations, below).                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `bootstrap_available` | `POST …/bootstrap` served the machine configuration and the panel's node secret. The secret is read from the panel on the call and returned to the caller; FCP never persists, audits or logs it (the machine holds it in its compose file).                                                                                                                                                                                                                                                                                                                                                                                    |
 | `machine_applied`     | The role reported `appliedRevision == machineRevision`. Idempotent; a lower revision is `servers.revision_stale` (run the role again), a higher one `servers.revision_unknown`; a report never regresses a stage.                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `machine_ready`       | The node op that applied the current profile and inbound is done by its own ledger evidence, the node is online, the profile token has not moved; a front node's origin name resolves to the intended addresses, presents a publicly valid certificate naming it, proxies the WebSocket path and answers a foreign Host header.                                                                                                                                                                                                                                                                                                 |
 | `candidates_verified` | Direct: the isolated **direct test link** (the node's own test credential, the inbound's live parameters) confirmed against a **binding** recomputed from live rows: endpoint, machine, config and authentication revisions, the parameters tested, the credential. A moved endpoint refuses (`servers.confirmation_stale`). Fronted: every listener of the open Autopilot run (the one waiting at publish for this approval) has a live, verified standby (L7 proof; L4 confirmation); recorded as `standbys_verified` evidence at approval, refused as `servers.standbys_missing` / `servers.standbys_unverified` until then. |
 | `awaiting_approval`   | The review card hashes the delivery **shape** (purpose, ingress, profile revision, listeners, provider account + template, subscription templates, the Host tuple), never individual addresses.                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `activating`          | Approval creates one run with an **immutable candidate snapshot** (`panelActivationRuns`); older runs are superseded. A direct run enables the Host as a **candidate resource**, rehearses the panel's real bodies in every client family (`lib/panel/rehearsal.ts`), and commits. A failed rehearsal disables the Host again and releases nothing. A run that blocks or fails **parks** the node at `awaiting_approval` with no current run (`staged` again unless it was live): the next approval supersedes it and starts a fresh run.                                                                                       |
+| `activating`          | Approval creates one run with an **immutable candidate snapshot** (`panelActivationRuns`); older runs are superseded. A direct run enables the addresses as **candidate resources**, rehearses the panel's real bodies in every client family (`lib/panel/rehearsal.ts`), and commits. The rehearsal reads EVERY address the run would commit, each with the server name it is there to serve (links `sni`, sing-box `tls.server_name`, Clash `servername`) and the expected REALITY key: one entry proves nothing about the others, and the detail records `<family>:<name>:absent                                             | key | sni`. A failed rehearsal disables the Host again and releases nothing. A run that blocks or fails **parks** the node at `awaiting_approval` with no current run (`staged` again unless it was live): the next approval supersedes it and starts a fresh run. |
 | `live`                | `panelActivation.commit`: one mutation that re-validates the approval, the evidence, the rehearsal and open obligations, then **promotes the snapshot** (`intent.approved`, the committed resources), opens the gate, bumps the gate version. A fronted node's Autopilot go-live calls the same promotion inside its own mutation; no independent go-live exists while an activation is unapproved, blocked or superseded.                                                                                                                                                                                                      |
 
 Three revision sets: `desired` (what the next review approves), `committed` (`intent.approved`,
@@ -382,7 +403,11 @@ its addresses (`panelIntents.observeRevisions`), the invalidated evidence goes, 
 activations are superseded, and a live node closes under a maintenance transition (reason
 `drift`, audited as `servers.node.drift`) until it is re-verified and approved again; the
 existing addresses are brought to the new endpoint meanwhile (a name that arrived is a new
-address, a name that left is removed). A token FCP's own ledger moved (a family rollout, a
+address, a name that left is removed). A name a family ROLLOUT added to a live node is neither
+drift nor a delivery change: the committed addresses keep serving (the node stays `live`, the
+gate stays open), the new address is created disabled as a candidate, and the node's own
+verification is dropped so it asks for the isolated tick and a fresh approval, which then commits
+the whole set. A token FCP's own ledger moved (a family rollout, a
 hardening) is not drift: evidence and approval are re-stamped to the new revision, since what
 members hold still works, and a run in flight is superseded for a fresh approval. A lost DNS
 answer is settled by discovery on the next run (an absent record confirms a delete and fails a
@@ -440,7 +465,9 @@ and `POST {slug}/holds/{id}/release` ends one. `POST {slug}/nodes/adopt` adopts 
 
 Admin routes on `{slug}/nodes/intents/{id}`: `GET review`, `POST test-link`, `POST confirm`,
 `POST approve {reviewHash}`, `POST settings {patch, maintenance}`, `POST maintenance` (finish),
-`POST retire [{disposition}]`.
+`POST retire [{disposition}]`, `POST wiped` (an ADOPTED node's machine confirmed gone by an
+admin, since no role runs it; the role's own `POST {slug}/nodes/by-name/{name}/wiped` does this
+for a machine FCP bootstrapped).
 
 ### Origin names
 
@@ -468,7 +495,10 @@ members get the edge-required unavailable answer) or `migrate` (refused in this 
 `servers.migration_not_built`). Never `restore-direct`. The ladder: `draining` (the relay
 deleted keep-dark, credentials released, the direct Host deleted, DNS withdrawn) →
 `panel_removed` (the row removed with `removeOnly`, the name tombstoned) → `ready_to_wipe` →
-the role's `wiped` ack → `retired`.
+`wiped` → `retired`. The last step is the role's `wiped` ack for a machine FCP bootstrapped, or an
+admin's confirmation that the machine is gone for an ADOPTED node, whose machine no role runs
+("The machine is gone" on the node, `POST {slug}/nodes/intents/{id}/wiped`, audited with
+`confirmedBy: admin`). Without either the ladder would sit at `ready_to_wipe` forever.
 
 ## Admin surface
 
@@ -476,23 +506,22 @@ the role's `wiped` ack → `retired`.
 surface (`src/shared/crypto/envelope.ts`): the responses carry node and Host addresses.
 `{slug}` is the backend server's slug.
 
-| Route                                                                                                            | Scope                              | What                                                                                                           |
-| ---------------------------------------------------------------------------------------------------------------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `GET summary`                                                                                                    | `admin:servers:read`               | Every instance: observable or not, last look, counts, the switches.                                            |
-| `GET {slug}/tree`                                                                                                | `admin:servers:read`               | One instance as a tree, from the cache (no panel call).                                                        |
-| `POST {slug}/refresh`                                                                                            | `admin:servers:read`               | Look now, then return the tree. Rate-limited (`admin.servers.panel-read`): the one route that reaches a panel. |
-| `POST {slug}/placements/validate`                                                                                | `admin:servers:read`               | Check the squad pools in mode placements against the squads the panel has.                                     |
-| `GET config`, `PATCH config`                                                                                     | `admin:settings:*`                 | The switches. Audited as `servers.config.update {changedKeys}`.                                                |
-| `POST {slug}/hosts`, `PATCH` / `DELETE {slug}/hosts/{uuid}`, `POST {slug}/hosts/reorder`                         | `admin:servers:manage`             | Host writes. Answer the op. Rate-limited (`admin.servers.panel-write`).                                        |
-| `POST {slug}/squads`, `PATCH` / `DELETE {slug}/squads/{uuid}`                                                    | `admin:servers:manage`             | Squad writes.                                                                                                  |
-| `POST {slug}/nodes`, `PATCH` / `DELETE {slug}/nodes/{uuid}`, `POST {slug}/nodes/{uuid}/enable\|disable\|restart` | `admin:servers:manage`             | Node writes. `DELETE ...?removeOnly=1` is "remove from panel".                                                 |
-| `POST {slug}/profiles/{uuid}/preview`                                                                            | `admin:servers:read`               | What a typed profile edit would do. Writes nothing.                                                            |
-| `POST {slug}/profiles/{uuid}/acknowledge`                                                                        | `admin:servers:manage`             | An operator has seen that the profile was edited elsewhere.                                                    |
-| `POST {slug}/profiles/{uuid}/apply`                                                                              | `admin:servers:manage`             | Apply a previewed edit, conditioned on the previewed token.                                                    |
-| `GET {slug}/ops`                                                                                                 | `admin:servers:read`               | The last 50 ops of an instance.                                                                                |
-| `POST {slug}/ops/{id}/observe`                                                                                   | `admin:servers:read`               | Look at the panel again for an open op. Changes nothing on the panel.                                          |
-| `POST {slug}/ops/{id}/recover`                                                                                   | `admin:servers:manage`             | The attested recovery of an unknown outcome.                                                                   |
-| `PUT {slug}/handoff`                                                                                             | `admin:servers:write` or `:manage` | The node role's handoff report.                                                                                |
+| Route                                                                                                            | Scope                  | What                                                                                                           |
+| ---------------------------------------------------------------------------------------------------------------- | ---------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `GET summary`                                                                                                    | `admin:servers:read`   | Every instance: observable or not, last look, counts, the switches.                                            |
+| `GET {slug}/tree`                                                                                                | `admin:servers:read`   | One instance as a tree, from the cache (no panel call).                                                        |
+| `POST {slug}/refresh`                                                                                            | `admin:servers:read`   | Look now, then return the tree. Rate-limited (`admin.servers.panel-read`): the one route that reaches a panel. |
+| `POST {slug}/placements/validate`                                                                                | `admin:servers:read`   | Check the squad pools in mode placements against the squads the panel has.                                     |
+| `GET config`, `PATCH config`                                                                                     | `admin:settings:*`     | The switches. Audited as `servers.config.update {changedKeys}`.                                                |
+| `POST {slug}/hosts`, `PATCH` / `DELETE {slug}/hosts/{uuid}`, `POST {slug}/hosts/reorder`                         | `admin:servers:manage` | Host writes. Answer the op. Rate-limited (`admin.servers.panel-write`).                                        |
+| `POST {slug}/squads`, `PATCH` / `DELETE {slug}/squads/{uuid}`                                                    | `admin:servers:manage` | Squad writes.                                                                                                  |
+| `POST {slug}/nodes`, `PATCH` / `DELETE {slug}/nodes/{uuid}`, `POST {slug}/nodes/{uuid}/enable\|disable\|restart` | `admin:servers:manage` | Node writes. `DELETE ...?removeOnly=1` is "remove from panel".                                                 |
+| `POST {slug}/profiles/{uuid}/preview`                                                                            | `admin:servers:read`   | What a typed profile edit would do. Writes nothing.                                                            |
+| `POST {slug}/profiles/{uuid}/acknowledge`                                                                        | `admin:servers:manage` | An operator has seen that the profile was edited elsewhere.                                                    |
+| `POST {slug}/profiles/{uuid}/apply`                                                                              | `admin:servers:manage` | Apply a previewed edit, conditioned on the previewed token.                                                    |
+| `GET {slug}/ops`                                                                                                 | `admin:servers:read`   | The last 50 ops of an instance.                                                                                |
+| `POST {slug}/ops/{id}/observe`                                                                                   | `admin:servers:read`   | Look at the panel again for an open op. Changes nothing on the panel.                                          |
+| `POST {slug}/ops/{id}/recover`                                                                                   | `admin:servers:manage` | The attested recovery of an unknown outcome.                                                                   |
 
 **The tree** is node -> the profile it runs -> the inbounds it **serves** -> the Hosts members
 get for each inbound (a Host pinned to nodes appears under those only) and the squads that
@@ -512,8 +541,8 @@ leftovers as quiet one-line notes (an inbound nobody uses on three nodes is one 
 The two switches (regular reading, changes from here) sit in the footer.
 
 `/admin/servers/nodes/{uuid}` is one node: its sentence, the profile it runs, its own notes,
-and its inbounds with the addresses members get for each. With changes allowed and the role's
-handoff in place the header carries Edit, Restart or Turn on, and a More menu with Turn off,
+and its inbounds with the addresses members get for each. With changes allowed and the backend set up
+the header carries Edit, Restart or Turn on, and a More menu with Turn off,
 **Stop and remove** (offered only once the node is off) and **Remove from the panel only**
 (says the process may keep running); both removes are typed. On an inbound: add, change or
 remove an address; edit a REALITY inbound's names and target as write -> preview -> apply,

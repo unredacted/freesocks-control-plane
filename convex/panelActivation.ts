@@ -41,11 +41,12 @@ import { TEST_CREDENTIAL_TAG, testCredentialUsername } from './edgeTestCredentia
 import {
   isDirect,
   modeEntry,
+  modeSlug,
   originAddressOf,
   originHostnameOf,
   transportFor,
 } from './panelIntents';
-import { bumpGateVersion, setupReady } from './panelSetup';
+import { bumpGateVersion, setupReady, type Setup } from './panelSetup';
 import { scheduleMirrorRefresh } from './relays';
 
 const refuse = (code: string, message: string): never => {
@@ -79,12 +80,12 @@ function revisionsOf(intent: Intent): Revisions {
 async function reviewShapeOf(
   ctx: { db: QueryCtx['db'] },
   intent: Intent,
-  setup: Doc<'panelSetups'>,
+  setup: Setup,
 ): Promise<ReviewShape> {
   const hostname = originHostnameOf(intent, setup);
   const originAddress = originAddressOf(intent, hostname);
-  const mode = modeEntry(setup, intent.mode);
-  const transport = transportFor(setup, intent.mode);
+  const mode = modeEntry(setup, modeSlug(intent));
+  const transport = transportFor(setup, modeSlug(intent));
   const direct = isDirect(mode.shape);
   let listenerKeys: string[] = [];
   let provider: ReviewShape['provider'] = { accountId: null, templateHash: null };
@@ -155,7 +156,7 @@ export const review = internalQuery({
     const setup = await setupOf(ctx, intent.backendServerId);
     const shape = await reviewShapeOf(ctx, intent, setup);
     const reviewHash = await reviewHashOf(shape);
-    const direct = isDirect(modeEntry(setup, intent.mode).shape);
+    const direct = isDirect(modeEntry(setup, modeSlug(intent)).shape);
     const standbys = direct ? null : await standbysOf(ctx, intent);
     const blockers = activationBlockers(intent, setup, direct, standbys);
     return { shape, reviewHash, blockers, stage: intent.activation.stage };
@@ -194,7 +195,7 @@ async function standbysOf(
 /** What keeps a node from being approved, as code words. */
 function activationBlockers(
   intent: Intent,
-  setup: Doc<'panelSetups'>,
+  setup: Setup,
   direct: boolean,
   standbys: { code: string | null } | null,
 ): string[] {
@@ -207,7 +208,7 @@ function activationBlockers(
   // An adopted node whose edge FCP does not run yet has no standbys to show.
   if (!direct && !intent.adopted?.externallyFronted && !has('standbys_verified') && standbys?.code)
     out.push(standbys.code);
-  const mode = modeEntry(setup, intent.mode);
+  const mode = modeEntry(setup, modeSlug(intent));
   if (mode.placement !== 'bound') out.push('servers.placement_skipped');
   if (mode.family === 'unbound' || mode.family === 'target_mismatch')
     out.push('servers.family_unbound');
@@ -247,9 +248,9 @@ async function credentialContextOf(ctx: QueryCtx, intentId: Id<'panelNodeIntents
     intent,
     server: { _id: server._id, backend: server.backend, config: server.config, slug: server.slug },
     setup,
-    mode: modeEntry(setup, intent.mode),
-    transport: transportFor(setup, intent.mode),
-    groupUuid: modeEntry(setup, intent.mode).groupUuid ?? null,
+    mode: modeEntry(setup, modeSlug(intent)),
+    transport: transportFor(setup, modeSlug(intent)),
+    groupUuid: modeEntry(setup, modeSlug(intent)).groupUuid ?? null,
     originAddress: originAddressOf(intent, hostname),
     reusable: reusable
       ? {
@@ -463,9 +464,9 @@ export const confirmDirect = internalMutation({
     const intent = await ctx.db.get(a.intentId);
     if (!intent) return refuse('not_found', 'No such node');
     const setup = await setupOf(ctx, intent.backendServerId);
-    if (!isDirect(modeEntry(setup, intent.mode).shape))
+    if (!isDirect(modeEntry(setup, modeSlug(intent)).shape))
       refuse('validation', 'Only a direct node is confirmed this way');
-    const reality = transportFor(setup, intent.mode);
+    const reality = transportFor(setup, modeSlug(intent));
     const hostname = originHostnameOf(intent, setup);
     const names = await liveNamesOf(ctx, intent, reality.uuid);
     const live = {
@@ -537,7 +538,7 @@ export const approve = internalMutation({
     const intent = await ctx.db.get(a.intentId);
     if (!intent) return refuse('not_found', 'No such node');
     const setup = await setupOf(ctx, intent.backendServerId);
-    const direct = isDirect(modeEntry(setup, intent.mode).shape);
+    const direct = isDirect(modeEntry(setup, modeSlug(intent)).shape);
     const standbys = direct ? null : await standbysOf(ctx, intent);
     const blockers = activationBlockers(intent, setup, direct, standbys);
     if (blockers.length > 0) refuse(blockers[0]!, 'The node is not ready for approval');
@@ -617,7 +618,7 @@ export const approve = internalMutation({
       action: 'servers.node.approved',
       targetType: 'panel_node_intent',
       targetId: intent._id,
-      payload: { backendSlug: server?.slug ?? '', name: intent.name, mode: intent.mode },
+      payload: { backendSlug: server?.slug ?? '', name: intent.name, mode: modeSlug(intent) },
     });
     if (direct)
       await ctx.scheduler.runAfter(0, internal.panelActivation.runDirect, {
@@ -662,7 +663,7 @@ async function runContextOf(ctx: QueryCtx, runId: Id<'panelActivationRuns'>, ste
     intent,
     server: { _id: server._id, backend: server.backend, config: server.config, slug: server.slug },
     setup,
-    transport: transportFor(setup, intent.mode),
+    transport: transportFor(setup, modeSlug(intent)),
     addresses,
     originAddress: originAddressOf(intent, hostname),
   };
@@ -789,9 +790,19 @@ export const runDirect = internalAction({
           intentId: c.intent._id,
         })) as CredentialCtx | null;
         if (!cred?.reusable) return block('servers.credential_unavailable').then(() => null);
-        const reality = { port: c.transport.port, publicKey: c.transport.publicKey ?? '' };
+        const publicKey = c.transport.publicKey ?? '';
         const families: RehearsalFamily[] = ['links', 'singbox', 'clash'];
         const failed: string[] = [];
+        // EVERY candidate address, with the name it is there to serve: a body
+        // that carries one of a node's addresses says nothing about the rest,
+        // and the commit promotes all of them.
+        const expected = c.addresses.map((h) => ({
+          address: h.address,
+          port: h.port,
+          publicKey,
+          sni: h.sni ?? null,
+          label: h.sni ?? h.address,
+        }));
         for (const family of families) {
           const fetched = await ctx.runAction(internal.backends.fetchSubscriptionContent, {
             backend: c.server.backend,
@@ -801,12 +812,15 @@ export const runDirect = internalAction({
             userAgent: REHEARSAL_USER_AGENTS[family],
             unpinned: true,
           });
-          const verdict = bodyHasEndpoint(family, fetched.content, {
-            address: c.originAddress,
-            port: reality.port,
-            publicKey: reality.publicKey,
-          });
-          if (!verdict.found) failed.push(`${family}:${verdict.keyMismatch ? 'key' : 'absent'}`);
+          for (const e of expected) {
+            const verdict = bodyHasEndpoint(family, fetched.content, e);
+            if (!verdict.found)
+              failed.push(
+                `${family}:${e.label}:${
+                  verdict.keyMismatch ? 'key' : verdict.sniMismatch ? 'sni' : 'absent'
+                }`,
+              );
+          }
         }
         const ok = failed.length === 0;
         const s = await ctx.runMutation(internal.panelActivation.step, {
@@ -871,7 +885,7 @@ export async function promoteCandidate(
     .query('panelSetups')
     .withIndex('by_server', (q) => q.eq('backendServerId', intent.backendServerId))
     .unique();
-  if (!setup || setup.state !== 'ready') return { ok: false, code: 'servers.panel_not_set_up' };
+  if (!setupReady(setup)) return { ok: false, code: 'servers.panel_not_set_up' };
   // The candidate is what was approved: recomputed from the snapshot's own values.
   const cand = run.candidate;
   const revs: Revisions = {
@@ -893,7 +907,7 @@ export async function promoteCandidate(
   const has = (k: string) =>
     intent.activation.evidence.some((e) => e.kind === k && evidenceHolds(e, revs));
   if (!has('machine_ready')) return { ok: false, code: 'servers.machine_not_ready' };
-  if (isDirect(modeEntry(setup, intent.mode).shape)) {
+  if (isDirect(modeEntry(setup, modeSlug(intent)).shape)) {
     if (!has('direct_confirmed')) return { ok: false, code: 'servers.direct_unconfirmed' };
     if (!run.rehearsal?.ok) return { ok: false, code: 'servers.rehearsal_missing' };
   } else if (!has('standbys_verified') && !intent.adopted?.externallyFronted)
@@ -948,7 +962,7 @@ export async function promoteCandidate(
     action: 'servers.node.live',
     targetType: 'panel_node_intent',
     targetId: intent._id,
-    payload: { backendSlug: server?.slug ?? '', name: intent.name, mode: intent.mode },
+    payload: { backendSlug: server?.slug ?? '', name: intent.name, mode: modeSlug(intent) },
   });
   return { ok: true };
 }

@@ -15,6 +15,7 @@
     approveNode,
     buildDirectTestLink,
     confirmDirect,
+    confirmWiped,
     finishMaintenance,
     invalidateServers,
     retireNode,
@@ -44,6 +45,7 @@
   let ticked = $state(false);
   let approveOpen = $state(false);
   let retireOpen = $state(false);
+  let wipedOpen = $state(false);
   let words = $derived(stageWords(intent));
 
   async function run(fn: () => Promise<unknown>) {
@@ -89,6 +91,11 @@
       review.data.blockers.length === 0,
   );
   let needsDecision = $derived(intent.retirement?.stage === 'needs_admin');
+  // The role never runs an adopted machine, so nothing reports its wipe: the
+  // retirement waits for whoever cleaned it up to say so.
+  let needsWipeConfirmation = $derived(
+    intent.adopted && intent.retirement?.stage === 'ready_to_wipe',
+  );
 </script>
 
 <section aria-labelledby="activation">
@@ -172,6 +179,11 @@
         Finish maintenance
       </Button>
     {/if}
+    {#if needsWipeConfirmation}
+      <Button size="sm" variant="outline" disabled={busy} onclick={() => (wipedOpen = true)}>
+        The machine is gone
+      </Button>
+    {/if}
     {#if needsDecision}
       <Button size="sm" variant="destructive" disabled={busy} onclick={() => (retireOpen = true)}
         >Decide the retirement</Button
@@ -197,11 +209,25 @@
   onConfirm={approve}
 />
 <ConfirmDialog
+  bind:open={wipedOpen}
+  title={`Is ${intent.name} gone?`}
+  body="This node was taken over as it was, so FCP never ran its machine and nothing reports the wipe. Confirm you have stopped and cleaned up the machine yourself; the retirement then closes and the name is free again."
+  confirmLabel="It is gone"
+  onConfirm={() =>
+    run(async () => {
+      wipedOpen = false;
+      await confirmWiped(slug, intent.id);
+    })}
+/>
+<ConfirmDialog
   bind:open={retireOpen}
   title={`Retire ${intent.name}?`}
-  body={needsDecision
-    ? 'Members on this node get the unavailable answer until they are moved. Its addresses, edges and records are removed, then the role wipes the machine.'
-    : 'Its addresses, edges and records are removed, then the role wipes the machine.'}
+  body={(needsDecision
+    ? 'Members on this node get the unavailable answer until they are moved. Its addresses, edges and records are removed. '
+    : 'Its addresses, edges and records are removed. ') +
+    (intent.adopted
+      ? 'FCP never ran this machine, so confirm here once you have cleaned it up yourself.'
+      : 'The role then wipes the machine.')}
   typed={intent.name}
   confirmLabel="Retire"
   danger

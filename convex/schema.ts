@@ -2455,7 +2455,9 @@ export default defineSchema({
     identity: v.string(),
     lookup: v.array(v.string()),
     panelUuid: v.optional(v.string()),
-    state: v.union(v.literal('owned'), v.literal('tombstoned')),
+    // TRANSITIONAL: 'reserved' is a v1 role reservation. Rows carrying it are
+    // settled by `panelSetup:migrateContractV2`; the literal goes with it.
+    state: v.union(v.literal('owned'), v.literal('reserved'), v.literal('tombstoned')),
     // An open reservation by the node role: blocks tombstoning until settled.
     reservation: v.optional(
       v.object({ roleOpId: v.string(), at: v.number(), tokenId: v.optional(v.id('apiTokens')) }),
@@ -2482,9 +2484,16 @@ export default defineSchema({
     .index('by_name_country_day', ['name', 'country', 'day'])
     .index('by_day', ['day']),
 
-  // The node role's declaration that it follows the ownership protocol for
-  // this instance (it no longer rewrites what FCP owns). Writes are refused
-  // without a current one.
+  // TRANSITIONAL: the v1 role's handoff declaration. Contract v1 is gone and
+  // nothing reads this; the table stays declared only so a deployment that has
+  // such rows can be pushed, and `panelSetup:migrateContractV2` empties it.
+  panelHandoff: defineTable({
+    backendServerId: v.id('backendServers'),
+    roleContractVersion: v.number(),
+    reportedAt: v.number(),
+    reportedBy: v.optional(v.string()),
+  }).index('by_server', ['backendServerId']),
+
   // --- Bootstrap contract v2 (docs/servers.md "Setting up a backend", "Node lifecycle") ---
   //
   // FCP owns the backend; the node role bootstraps the MACHINE and reports.
@@ -2503,7 +2512,13 @@ export default defineSchema({
     desiredHash: v.string(),
     generation: v.number(),
     claim: v.optional(v.object({ attemptId: v.string(), expiresAt: v.number() })),
-    state: v.union(v.literal('pending'), v.literal('ready'), v.literal('failed')),
+    // TRANSITIONAL: 'needs_takeover' is a v1 row's state (see `modes` below).
+    state: v.union(
+      v.literal('pending'),
+      v.literal('needs_takeover'),
+      v.literal('ready'),
+      v.literal('failed'),
+    ),
     step: v.optional(v.string()),
     code: v.optional(v.string()),
     profileName: v.string(),
@@ -2511,43 +2526,58 @@ export default defineSchema({
     // One entry per mode the backend serves: the connection mode it feeds,
     // its group, its shape, its family, and the EFFECTIVE transport (from
     // the adopted or created profile, never the defaults).
-    modes: v.array(
-      v.object({
-        slug: v.string(),
-        name: v.string(),
-        shape: v.object({
-          transport: v.union(v.literal('reality'), v.literal('xhttp-reality'), v.literal('ws')),
-          fronting: v.union(v.literal('direct'), v.literal('edge-l4'), v.literal('edge-l7')),
-        }),
-        familySlug: v.optional(v.string()),
-        acceptProxyProtocol: v.boolean(),
-        ws: v.optional(v.object({ path: v.string(), port: v.number() })),
-        // The transport tag: the group name's, or the tag an adopted profile
-        // already carried (a backend keys transports by tag; never renamed).
-        tag: v.string(),
-        groupUuid: v.optional(v.string()),
-        // The name the group was found under when it was renamed in place.
-        renamedFrom: v.optional(v.string()),
-        placement: v.union(v.literal('pending'), v.literal('bound'), v.literal('skipped')),
-        transport: v.optional(
-          v.object({
-            uuid: v.string(),
-            listen: v.optional(v.string()),
-            port: v.number(),
-            path: v.optional(v.string()),
-            serverNames: v.optional(v.array(v.string())),
-            target: v.optional(v.object({ address: v.string(), port: v.number() })),
-            publicKey: v.optional(v.string()),
+    // TRANSITIONAL optional: a row written by the release before modes has no
+    // `modes` (it had `inbounds`/`squads`/`placements` instead) and Convex
+    // validates stored documents on every push, so the field cannot be
+    // required until `panelSetup:migrateContractV2` has removed those rows.
+    // `setupReady` treats a row without modes as not set up.
+    modes: v.optional(
+      v.array(
+        v.object({
+          slug: v.string(),
+          name: v.string(),
+          shape: v.object({
+            transport: v.union(v.literal('reality'), v.literal('xhttp-reality'), v.literal('ws')),
+            fronting: v.union(v.literal('direct'), v.literal('edge-l4'), v.literal('edge-l7')),
           }),
-        ),
-        family: v.union(
-          v.literal('none'),
-          v.literal('bound'),
-          v.literal('unbound'),
-          v.literal('target_mismatch'),
-        ),
-      }),
+          familySlug: v.optional(v.string()),
+          acceptProxyProtocol: v.boolean(),
+          ws: v.optional(v.object({ path: v.string(), port: v.number() })),
+          // The transport tag: the group name's, or the tag an adopted profile
+          // already carried (a backend keys transports by tag; never renamed).
+          tag: v.string(),
+          groupUuid: v.optional(v.string()),
+          // The name the group was found under when it was renamed in place.
+          renamedFrom: v.optional(v.string()),
+          placement: v.union(v.literal('pending'), v.literal('bound'), v.literal('skipped')),
+          transport: v.optional(
+            v.object({
+              uuid: v.string(),
+              listen: v.optional(v.string()),
+              port: v.number(),
+              path: v.optional(v.string()),
+              serverNames: v.optional(v.array(v.string())),
+              target: v.optional(v.object({ address: v.string(), port: v.number() })),
+              publicKey: v.optional(v.string()),
+            }),
+          ),
+          family: v.union(
+            v.literal('none'),
+            v.literal('bound'),
+            v.literal('unbound'),
+            v.literal('target_mismatch'),
+            // Bound to a DIFFERENT family: that family's rollouts own the names.
+            v.literal('bound_elsewhere'),
+          ),
+        }),
+      ),
     ),
+    // TRANSITIONAL: the shape the release before modes wrote, kept only so its
+    // rows validate until the migration removes them. Nothing reads these.
+    inbounds: v.optional(v.any()),
+    squads: v.optional(v.any()),
+    placements: v.optional(v.any()),
+    handoff: v.optional(v.any()),
     templates: v.array(
       v.object({
         family: v.string(),
@@ -2568,7 +2598,8 @@ export default defineSchema({
       ),
     ),
     // Taken over with existing nodes or addresses (the operator's typed adopt).
-    adopted: v.boolean(),
+    // TRANSITIONAL optional: absent on a row from before modes (see above).
+    adopted: v.optional(v.boolean()),
     // The delivery gate version of this backend: bumped on every disposition
     // or resource-set change of any of its nodes; part of every render's token.
     gateVersion: v.number(),
@@ -2585,7 +2616,13 @@ export default defineSchema({
     label: v.string(),
     // The connection mode this node serves (one per node); the machine shape
     // follows from the backend setup's entry for it.
-    mode: v.string(),
+    // TRANSITIONAL optional: a row from the release before modes carries
+    // `purpose` instead. Those rows are removed by
+    // `panelSetup:migrateContractV2`; until then the field cannot be required,
+    // and a row without it fails closed (`servers.mode_unknown`).
+    mode: v.optional(v.string()),
+    // TRANSITIONAL: direct | front | relay, the pre-modes shape of a node.
+    purpose: v.optional(v.any()),
     contractVersion: v.number(),
     generation: v.number(),
     desiredHash: v.string(),
@@ -2722,6 +2759,8 @@ export default defineSchema({
     nodeUuid: v.optional(v.string()),
     // A direct node's own addresses on the backend: one per family name.
     addressUuids: v.optional(v.array(v.string())),
+    // TRANSITIONAL: the single Host of a pre-modes direct node.
+    hostUuid: v.optional(v.string()),
     // Taken over as it was (already serving members): live at once, with its
     // current addresses committed. `externallyFronted`: a fronted node whose
     // edge FCP does not run yet (an earlier tool made it); Edges takes over later.

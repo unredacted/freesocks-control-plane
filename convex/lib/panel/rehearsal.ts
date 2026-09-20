@@ -1,7 +1,9 @@
 /**
  * The direct-node rehearsal check (pure): does a real panel body, in each
  * client family, carry an entry for the node's endpoint, and does that entry
- * say what the node serves (REALITY with the expected public key). Bodies are
+ * say what the node serves (REALITY with the expected public key, presenting
+ * the expected server name). Every one of a node's addresses is checked, since
+ * one good entry says nothing about the others. Bodies are
  * what the panel actually generated for the test credential: a base64 or
  * plain link list, a sing-box JSON config, or a Clash / Mihomo YAML.
  */
@@ -13,6 +15,12 @@ export interface EndpointExpectation {
   port: number;
   /** The REALITY public key the entry must carry (links and sing-box name it; Clash as `public-key`). */
   publicKey?: string | null;
+  /**
+   * The server name the entry must present (links `sni`, sing-box
+   * `tls.server_name`, Clash `servername`). A direct node has one address per
+   * family name, so the address alone does not say which name was served.
+   */
+  sni?: string | null;
 }
 
 export type RehearsalFamily = 'links' | 'singbox' | 'clash';
@@ -21,6 +29,8 @@ export interface RehearsalVerdict {
   found: boolean;
   /** The entry names the endpoint but not the expected key (a stale profile, another inbound). */
   keyMismatch: boolean;
+  /** The entry names the endpoint and the key, but serves another name. */
+  sniMismatch?: boolean;
 }
 
 function sameHost(a: string, b: string): boolean {
@@ -36,6 +46,7 @@ function checkLinks(body: string, e: EndpointExpectation): RehearsalVerdict {
   const decoded = decodeLinkList(body);
   if (!decoded) return { found: false, keyMismatch: false };
   let keyMismatch = false;
+  let sniMismatch = false;
   for (const line of decoded.lines) {
     const uri = parseProxyUri(line);
     if (!uri || !sameHost(uri.host, e.address) || uri.port !== e.port) continue;
@@ -44,9 +55,13 @@ function checkLinks(body: string, e: EndpointExpectation): RehearsalVerdict {
       keyMismatch = true;
       continue;
     }
+    if (e.sni && !sameHost(uri.params.get('sni') ?? '', e.sni)) {
+      sniMismatch = true;
+      continue;
+    }
     return { found: true, keyMismatch: false };
   }
-  return { found: false, keyMismatch };
+  return { found: false, keyMismatch, sniMismatch };
 }
 
 function walk(v: unknown, visit: (o: Record<string, unknown>) => void): void {
@@ -66,24 +81,34 @@ function checkSingbox(body: string, e: EndpointExpectation): RehearsalVerdict {
   }
   let found = false;
   let keyMismatch = false;
+  let sniMismatch = false;
   walk(json, (o) => {
     if (found) return;
     if (typeof o.server !== 'string' || !sameHost(o.server, e.address)) return;
     if (o.server_port !== e.port) return;
-    const reality = (o.tls as { reality?: { public_key?: string } } | undefined)?.reality;
-    if (e.publicKey && reality?.public_key !== e.publicKey) {
+    const tls = o.tls as { server_name?: string; reality?: { public_key?: string } } | undefined;
+    if (e.publicKey && tls?.reality?.public_key !== e.publicKey) {
       keyMismatch = true;
+      return;
+    }
+    if (e.sni && !sameHost(tls?.server_name ?? '', e.sni)) {
+      sniMismatch = true;
       return;
     }
     found = true;
   });
-  return { found, keyMismatch: found ? false : keyMismatch };
+  return {
+    found,
+    keyMismatch: found ? false : keyMismatch,
+    sniMismatch: found ? false : sniMismatch,
+  };
 }
 
 function checkClash(body: string, e: EndpointExpectation): RehearsalVerdict {
   // One proxy per `- name:` block; the fields we read are flat scalars.
   const blocks = body.split(/\n(?=\s*-\s+name:)/);
   let keyMismatch = false;
+  let sniMismatch = false;
   for (const b of blocks) {
     const server = /^\s*server:\s*['"]?([^'"\s]+)['"]?\s*$/m.exec(b)?.[1];
     const port = /^\s*port:\s*(\d+)\s*$/m.exec(b)?.[1];
@@ -93,9 +118,14 @@ function checkClash(body: string, e: EndpointExpectation): RehearsalVerdict {
       keyMismatch = true;
       continue;
     }
+    const sni = /^\s*servername:\s*['"]?([^'"\s]+)['"]?\s*$/m.exec(b)?.[1];
+    if (e.sni && !sameHost(sni ?? '', e.sni)) {
+      sniMismatch = true;
+      continue;
+    }
     return { found: true, keyMismatch: false };
   }
-  return { found: false, keyMismatch };
+  return { found: false, keyMismatch, sniMismatch };
 }
 
 /** Whether the body of one client family carries the node's endpoint as expected. */
