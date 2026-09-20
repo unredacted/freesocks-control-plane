@@ -1,12 +1,15 @@
 /// <reference types="vite/client" />
 /**
- * The bootstrap contract on a FRESH fake panel: "Set up this panel" creates
- * the profile from the template (one POST, keys never stored), the three
- * squads and their placements, and writes the handoff itself; then a direct
- * node is enrolled by name, its row and its DISABLED Host are created, the
- * bootstrap answer carries the secret, and the applied report leads to
- * machine_ready with revision-bound evidence. Identical reruns perform no
- * write. Fixtures use RFC 5737 addresses and `*.example` names only.
+ * The bootstrap contract on a fake backend: "Set up this backend" creates the
+ * profile from the template (one POST, keys never stored) with one transport
+ * per mode, binds each REALITY transport to its family, makes each mode's
+ * group and placement; an existing backend is adopted only when the operator
+ * says so, and a group an earlier setup named is renamed in place. Then a
+ * direct node is enrolled by name, its row and its DISABLED addresses (one per
+ * family name) are created, the bootstrap answer carries the secret, and the
+ * applied report leads to machine_ready with revision-bound evidence.
+ * Identical reruns perform no write. Fixtures use RFC 5737 addresses and
+ * `*.example` names only.
  */
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -14,7 +17,6 @@ import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { insertPanelServer } from './lib/edges/testing/fixtures';
-import { BOOTSTRAP_TAGS } from './lib/panel/profileTemplate';
 
 const modules = import.meta.glob('./**/*.*s');
 type T = TestConvex<typeof schema>;
@@ -90,6 +92,13 @@ function installPanel(): Panel {
         panel.squads.push(made);
         return json({ uuid: made.uuid }, 201);
       }
+      if (path === '/api/internal-squads' && method === 'PATCH') {
+        const s = panel.squads.find((x) => x.uuid === body.uuid)!;
+        if (typeof body.name === 'string') s.name = body.name;
+        if (Array.isArray(body.inbounds))
+          s.inbounds = (body.inbounds as string[]).map((uuid) => ({ uuid, tag: uuid }));
+        return json(s);
+      }
       if (path === '/api/hosts' && method === 'POST') {
         const made = { uuid: UUID(++panel.seq), ...body, isDisabled: body.isDisabled === true };
         panel.hosts.push(made);
@@ -123,22 +132,72 @@ function installPanel(): Panel {
 
 const setupInput = {
   profileName: 'FreeSocks-Config',
-  cdn: { path: '/ws', port: 8443 },
-  reality: { target: { address: 'decoy-a.example', port: 443 }, serverNames: ['decoy-a.example'] },
-  relay: {
-    target: { address: 'decoy-b.example', port: 443 },
-    serverNames: ['decoy-b.example'],
-    acceptProxyProtocol: false,
-  },
-  squads: { fronted: 'FreeSocks-Fronted', reality: 'FreeSocks-Reality', relay: 'FreeSocks-Relay' },
+  modes: [
+    {
+      slug: 'privacy-reality',
+      name: 'Privacy-Reality',
+      shape: { transport: 'reality' as const, fronting: 'direct' as const },
+      familySlug: 'fam-direct',
+      acceptProxyProtocol: false,
+    },
+    {
+      slug: 'freedom-reality',
+      name: 'Freedom-Reality',
+      shape: { transport: 'reality' as const, fronting: 'edge-l4' as const },
+      familySlug: 'fam-fronted',
+      acceptProxyProtocol: false,
+    },
+    {
+      slug: 'freedom-xhttp',
+      name: 'Freedom-XHTTP',
+      shape: { transport: 'xhttp-reality' as const, fronting: 'edge-l4' as const },
+      familySlug: 'fam-fronted',
+      acceptProxyProtocol: false,
+    },
+    {
+      slug: 'freedom-ws',
+      name: 'Freedom-WebSocket',
+      shape: { transport: 'ws' as const, fronting: 'edge-l7' as const },
+      acceptProxyProtocol: false,
+      ws: { path: '/ws', port: 8443 },
+    },
+  ],
   originDns: null,
+  adopt: false,
 };
+
+/** Two families with qualified names, and families switched on (binding needs it). */
+async function seedFamilies(t: T) {
+  await t.mutation(internal.sniFamilies.patchConfig, { patch: { enabled: true } });
+  for (const [slug, target, names] of [
+    ['fam-direct', 'decoy-a.example', ['decoy-a.example', 'www.decoy-a.example']],
+    ['fam-fronted', 'decoy-b.example', ['decoy-b.example']],
+  ] as const) {
+    await t.mutation(internal.sniFamilies.create, {
+      slug,
+      label: slug,
+      targetAddress: target,
+      targetPort: 443,
+    });
+    await t.mutation(internal.sniFamilies.importNames, { slug, lines: [...names] });
+  }
+  const due = (await t.query(internal.sniFamilies.dueForQualification, {})).names;
+  for (const n of due)
+    await t.mutation(internal.sniFamilies.recordQualification, {
+      id: n.id,
+      ok: true,
+      tlsVersion: 'TLSv1.3',
+      alpn: 'h2',
+    });
+}
 
 async function seed() {
   const t = convexTest(schema, modules);
   const serverId = await insertPanelServer(t);
   const panel = installPanel();
+  await t.mutation(internal.seed.seedConnectionModes, {});
   await t.mutation(internal.serverAdmin.patchConfig, { patch: { 'manage.enabled': true } });
+  await seedFamilies(t);
   return { t, serverId, panel };
 }
 
@@ -152,10 +211,10 @@ async function settled<R extends { claim?: unknown }>(get: () => Promise<R | nul
   throw new Error('workflow did not settle');
 }
 
-async function runSetup(t: T, serverId: Id<'backendServers'>) {
+async function runSetup(t: T, serverId: Id<'backendServers'>, input = setupInput) {
   const started = await t.mutation(internal.panelSetup.start, {
     backendServerId: serverId,
-    input: setupInput,
+    input,
   });
   // `start` scheduled the run; convex-test executes it on the next tick.
   return settled(() => t.run((ctx) => ctx.db.get(started.setupId)));
@@ -165,34 +224,50 @@ async function runIntent(t: T, intentId: Id<'panelNodeIntents'>) {
   return settled(() => t.run((ctx) => ctx.db.get(intentId)));
 }
 
-describe('setting up a fresh panel', () => {
-  test('creates the profile once, the squads and placements, and hands the panel to FCP', async () => {
+describe('setting up a fresh backend', () => {
+  test('creates the profile once with a transport per mode, binds families, makes groups and placements', async () => {
     const { t, serverId, panel } = await seed();
     const row = await runSetup(t, serverId);
     expect(row.state).toBe('ready');
-    expect(row.handoff).toBe('fresh');
+    expect(row.code).toBeUndefined();
+    expect(row.adopted).toBe(false);
     expect(row.profileUuid).toBe(panel.profiles[0]!.uuid);
-    expect(row.inbounds!.cdn).toMatchObject({ tag: BOOTSTRAP_TAGS.cdn, port: 8443, path: '/ws' });
-    expect(row.inbounds!.reality.serverNames).toEqual(['decoy-a.example']);
     expect(row.privacy).toBe('ok');
     expect(panel.writes.filter((w) => w.call === 'POST /api/config-profiles')).toHaveLength(1);
+    const bySlug = Object.fromEntries(row.modes.map((m) => [m.slug, m]));
+    expect(bySlug['privacy-reality']).toMatchObject({
+      tag: 'PRIVACY_REALITY',
+      placement: 'bound',
+      family: 'bound',
+      transport: {
+        port: 443,
+        serverNames: ['decoy-a.example', 'www.decoy-a.example'],
+        target: { address: 'decoy-a.example', port: 443 },
+      },
+    });
+    expect(bySlug['freedom-xhttp']).toMatchObject({
+      tag: 'FREEDOM_XHTTP',
+      family: 'bound',
+      transport: { path: '/', target: { address: 'decoy-b.example', port: 443 } },
+    });
+    expect(bySlug['freedom-ws']).toMatchObject({
+      tag: 'FREEDOM_WEBSOCKET',
+      family: 'none',
+      transport: { port: 8443, path: '/ws' },
+    });
+    expect(row.modes.every((m) => !!m.groupUuid)).toBe(true);
     expect(panel.squads.map((s) => s.name).sort()).toEqual([
-      'FreeSocks-Fronted',
-      'FreeSocks-Reality',
-      'FreeSocks-Relay',
+      'Freedom-Reality',
+      'Freedom-WebSocket',
+      'Freedom-XHTTP',
+      'Privacy-Reality',
     ]);
-    expect(row.placements).toEqual([
-      { mode: 'freedom-ws', state: 'bound' },
-      { mode: 'privacy-reality', state: 'bound' },
-      { mode: 'freedom-reality', state: 'bound' },
+    const bindings = await t.run((ctx) => ctx.db.query('sniInboundBindings').collect());
+    expect(bindings.map((b) => b.inboundTag).sort()).toEqual([
+      'FREEDOM_REALITY',
+      'FREEDOM_XHTTP',
+      'PRIVACY_REALITY',
     ]);
-    const handoff = await t.run((ctx) =>
-      ctx.db
-        .query('panelHandoff')
-        .withIndex('by_server', (q) => q.eq('backendServerId', serverId))
-        .unique(),
-    );
-    expect(handoff).toMatchObject({ roleContractVersion: 2, reportedBy: 'fcp-setup' });
     const obligations = await t.run((ctx) => ctx.db.query('panelObligations').collect());
     expect(obligations).toHaveLength(1);
     expect(obligations[0]).toMatchObject({
@@ -209,10 +284,12 @@ describe('setting up a fresh panel', () => {
         await ctx.db.query('auditLog').collect(),
       ]),
     );
-    const privateKey =
-      panel.profiles[0]!.config.inbounds[1].streamSettings.realitySettings.privateKey;
-    expect(privateKey).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect(rows).not.toContain(privateKey);
+    for (const ib of panel.profiles[0]!.config.inbounds) {
+      const privateKey = ib.streamSettings?.realitySettings?.privateKey;
+      if (!privateKey) continue;
+      expect(privateKey).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(rows).not.toContain(privateKey);
+    }
 
     // An identical rerun performs no write.
     const before = panel.writes.length;
@@ -224,7 +301,27 @@ describe('setting up a fresh panel', () => {
     expect(panel.writes.length).toBe(before);
   });
 
-  test('an existing panel with nodes needs the typed takeover before FCP writes', async () => {
+  test('a mode without a usable family, or an unknown mode, is refused before anything is written', async () => {
+    const { t, serverId, panel } = await seed();
+    await expect(
+      t.mutation(internal.panelSetup.start, {
+        backendServerId: serverId,
+        input: {
+          ...setupInput,
+          modes: [{ ...setupInput.modes[0]!, familySlug: 'nope' }],
+        },
+      }),
+    ).rejects.toThrow(/family_missing/);
+    await expect(
+      t.mutation(internal.panelSetup.start, {
+        backendServerId: serverId,
+        input: { ...setupInput, modes: [{ ...setupInput.modes[0]!, slug: 'made-up-mode' }] },
+      }),
+    ).rejects.toThrow(/mode_unknown/);
+    expect(panel.writes).toHaveLength(0);
+  });
+
+  test('an existing backend is adopted only on the typed say-so; a group an earlier setup named is renamed in place', async () => {
     const { t, serverId, panel } = await seed();
     panel.nodes.push({
       uuid: UUID(1),
@@ -236,18 +333,28 @@ describe('setting up a fresh panel', () => {
       lastStatusChange: 't0',
       configProfile: { activeConfigProfileUuid: UUID(2), activeInbounds: [] },
     });
-    const row = await runSetup(t, serverId);
-    expect(row.state).toBe('needs_takeover');
+    const legacyGroup = { uuid: UUID(3), name: 'FreeSocks-Reality', inbounds: [] };
+    panel.squads.push(legacyGroup);
+    await t.action(internal.panelObserve.refresh, { backendServerId: serverId });
+    await expect(
+      t.mutation(internal.panelSetup.start, { backendServerId: serverId, input: setupInput }),
+    ).rejects.toThrow(/adopt_required/);
     expect(panel.writes).toHaveLength(0);
-    await t.mutation(internal.panelSetup.takeover, { backendServerId: serverId });
-    const after = await runSetup(t, serverId);
-    expect(after.state).toBe('ready');
-    expect(after.handoff).toBe('taken_over');
+    const row = await runSetup(t, serverId, { ...setupInput, adopt: true });
+    expect(row.state).toBe('ready');
+    expect(row.adopted).toBe(true);
+    const direct = row.modes.find((m) => m.slug === 'privacy-reality')!;
+    expect(direct.groupUuid).toBe(legacyGroup.uuid);
+    expect(direct.renamedFrom).toBe('FreeSocks-Reality');
+    expect(panel.squads.find((s) => s.uuid === legacyGroup.uuid)!.name).toBe('Privacy-Reality');
+    expect(panel.squads.filter((s) => s.name === 'FreeSocks-Reality')).toHaveLength(0);
+    const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
+    expect(audit.some((a) => a.action === 'servers.setup.group_renamed')).toBe(true);
   });
 });
 
 describe('enrolling a direct node', () => {
-  test('creates the row and a DISABLED Host, serves the secret, and reaches machine_ready on the applied report', async () => {
+  test('creates the row and DISABLED addresses (one per family name), serves the secret, and reaches machine_ready on the applied report', async () => {
     const { t, serverId, panel } = await seed();
     await runSetup(t, serverId);
     const observed = {
@@ -258,7 +365,7 @@ describe('enrolling a direct node', () => {
     const { intentId } = await t.mutation(internal.panelIntents.enroll, {
       backendServerId: serverId,
       name: 'node-a',
-      purpose: 'direct',
+      mode: 'privacy-reality',
       contractVersion: 2,
       observed,
     });
@@ -267,25 +374,30 @@ describe('enrolling a direct node', () => {
     expect(intent.activation.stage).toBe('registered');
     expect(panel.nodes).toHaveLength(1);
     expect(panel.nodes[0]).toMatchObject({ name: 'node-a', address: '192.0.2.10', port: 2222 });
-    expect(panel.hosts).toHaveLength(1);
+    expect(panel.hosts.map((h) => h.remark).sort()).toEqual([
+      'node-a-decoy-a.example',
+      'node-a-www.decoy-a.example',
+    ]);
     expect(panel.hosts[0]).toMatchObject({
-      remark: 'node-a-reality',
       address: '203.0.113.10',
       port: 443,
       sni: 'decoy-a.example',
       isDisabled: true,
     });
     expect(intent.nodeUuid).toBe(panel.nodes[0]!.uuid);
-    expect(intent.hostUuid).toBe(panel.hosts[0]!.uuid);
+    expect(intent.addressUuids?.sort()).toEqual(panel.hosts.map((h) => h.uuid).sort());
     expect(intent.configRevision).toMatch(/:/);
     expect(intent.authRevision).toBeTruthy();
 
-    // The bootstrap answer carries the secret; nothing FCP keeps does.
+    // The bootstrap answer carries the secret and the mode; nothing FCP keeps holds the secret.
     const boot = await t.action(internal.panelIntents.bootstrap, { intentId });
     expect(boot).toMatchObject({
       machineRevision: 1,
       secretKey: 'panel-node-secret-placeholder',
-      node: { port: 2222, purpose: 'direct' },
+      node: {
+        port: 2222,
+        mode: { slug: 'privacy-reality', shape: { transport: 'reality', fronting: 'direct' } },
+      },
       ingress: null,
     });
     const kept = JSON.stringify(
@@ -326,12 +438,12 @@ describe('enrolling a direct node', () => {
     });
     expect(r2).toEqual({ stage: 'machine_ready', repeated: true });
 
-    // An identical observation rerun changes nothing on the panel.
+    // An identical observation rerun changes nothing on the backend.
     const before = panel.writes.length;
     await t.mutation(internal.panelIntents.enroll, {
       backendServerId: serverId,
       name: 'node-a',
-      purpose: 'direct',
+      mode: 'privacy-reality',
       contractVersion: 2,
       observed,
     });
@@ -349,10 +461,14 @@ describe('enrolling a direct node', () => {
       backendServerId: serverId,
       name: 'node-a',
     });
-    expect(view).toMatchObject({ purpose: 'direct', stage: 'machine_ready', delivery: 'staged' });
+    expect(view).toMatchObject({
+      mode: { slug: 'privacy-reality', name: 'Privacy-Reality' },
+      stage: 'machine_ready',
+      delivery: 'staged',
+    });
   });
 
-  test('a purpose change, an unowned panel node and a stale contract are refused', async () => {
+  test('a mode change, an unknown mode, an unowned backend node and a stale contract are refused', async () => {
     const { t, serverId, panel } = await seed();
     await runSetup(t, serverId);
     const observed = {
@@ -364,11 +480,20 @@ describe('enrolling a direct node', () => {
       t.mutation(internal.panelIntents.enroll, {
         backendServerId: serverId,
         name: 'node-a',
-        purpose: 'direct',
+        mode: 'privacy-reality',
         contractVersion: 1,
         observed,
       }),
     ).rejects.toThrow(/contract_version/);
+    await expect(
+      t.mutation(internal.panelIntents.enroll, {
+        backendServerId: serverId,
+        name: 'node-a',
+        mode: 'no-such-mode',
+        contractVersion: 2,
+        observed,
+      }),
+    ).rejects.toThrow(/mode_unknown/);
     panel.nodes.push({
       uuid: UUID(99),
       name: 'stranger',
@@ -384,7 +509,7 @@ describe('enrolling a direct node', () => {
       t.mutation(internal.panelIntents.enroll, {
         backendServerId: serverId,
         name: 'stranger',
-        purpose: 'direct',
+        mode: 'privacy-reality',
         contractVersion: 2,
         observed,
       }),
@@ -392,7 +517,7 @@ describe('enrolling a direct node', () => {
     await t.mutation(internal.panelIntents.enroll, {
       backendServerId: serverId,
       name: 'node-a',
-      purpose: 'relay',
+      mode: 'freedom-reality',
       contractVersion: 2,
       observed,
     });
@@ -400,10 +525,10 @@ describe('enrolling a direct node', () => {
       t.mutation(internal.panelIntents.enroll, {
         backendServerId: serverId,
         name: 'node-a',
-        purpose: 'direct',
+        mode: 'privacy-reality',
         contractVersion: 2,
         observed,
       }),
-    ).rejects.toThrow(/purpose_change_needs_admin/);
+    ).rejects.toThrow(/mode_change_needs_admin/);
   });
 });

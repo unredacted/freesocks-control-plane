@@ -266,13 +266,12 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'servers.node.restart': ['backendSlug', 'label', 'outcome', 'code'],
   'servers.profile.patch': ['backendSlug', 'label', 'outcome', 'code'],
   'servers.profile.foreign_edit_seen': ['backendSlug', 'label'],
-  'servers.reservation.recover': ['backendSlug', 'kind'],
-  'servers.handoff.report': ['backendSlug', 'roleContractVersion', 'current'],
-  // The bootstrap contract v2 (docs/servers.md "Node lifecycle"): setting up a
-  // panel, an enrolled node's ladder, its retirement. Names and stages only.
-  'servers.setup.started': ['backendSlug', 'generation'],
+  // The bootstrap contract v2 (docs/servers.md "Node lifecycle"): setting up
+  // or adopting a backend, an enrolled node's ladder, its retirement. Names
+  // and stages only.
+  'servers.setup.started': ['backendSlug', 'generation', 'adopt'],
   'servers.setup.finished': ['backendSlug', 'state', 'code', 'step'],
-  'servers.setup.takeover': ['backendSlug'],
+  'servers.setup.group_renamed': ['backendSlug', 'from', 'to'],
   'servers.node.registered': ['backendSlug', 'name', 'purpose'],
   'servers.node.settings': ['backendSlug', 'name', 'change'],
   'servers.node.direct_confirmed': ['backendSlug', 'name'],

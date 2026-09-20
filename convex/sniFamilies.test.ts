@@ -24,6 +24,7 @@ import {
   FIXTURE_CONFIG_PROFILE as PROFILE,
   FIXTURE_INBOUND as INBOUND,
   insertPanelServer,
+  markBackendSetUp,
 } from './lib/edges/testing/fixtures';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -280,10 +281,7 @@ describe('binding a family to an inbound', () => {
     await call('PATCH', 'config', { enabled: true });
     await call('POST', 'families/fam-a/bind', { backendSlug: 'panel-a', inboundTag: 'REALITY_IN' });
     await t.mutation(internal.serverAdmin.patchConfig, { patch: { 'manage.enabled': true } });
-    await t.mutation(internal.panelLedger.reportHandoff, {
-      backendServerId: serverId,
-      roleContractVersion: 1,
-    });
+    await markBackendSetUp(t, serverId);
     await expect(
       t.mutation(internal.panelWrites.requestProfilePatch, {
         backendServerId: serverId,

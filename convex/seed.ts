@@ -8,14 +8,18 @@
 import { internalAction, internalMutation } from './_generated/server';
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
-import { SETTINGS_DEFAULTS } from './appSettings';
+import { SETTINGS_DEFAULTS, upsertSettingRow } from './appSettings';
 import { DEFAULT_CLIENTS } from './lib/clientCatalog';
 import {
+  BUILT_IN_MODES_VERSION,
   CONNECTION_MODE_DEFAULT_KEY,
   DEFAULT_CONNECTION_MODES,
   DEFAULT_CONNECTION_MODE_FAMILIES,
   resolveModeCatalog,
 } from './lib/connectionModes';
+
+/** The built-ins version this deployment's mode catalog was last brought up to. */
+const BUILT_IN_MODES_VERSION_KEY = 'connectionModes.builtInsVersion';
 import { fakeEdgeProviderEnabled } from './lib/edges/providers/fake';
 import { mockBackendEnabled } from './lib/backends/mock';
 
@@ -267,6 +271,20 @@ export const seedConnectionModes = internalMutation({
       ctx.db.query('connectionModeFamilies').first(),
       ctx.db.query('connectionModes').first(),
     ]);
+    const insertMode = async (m: (typeof DEFAULT_CONNECTION_MODES)[number]) => {
+      await ctx.db.insert('connectionModes', {
+        slug: m.slug,
+        familySlug: m.familySlug,
+        deliveryStyle: m.deliveryStyle,
+        enabled: m.enabled,
+        isFamilyDefault: m.isFamilyDefault,
+        isCensorshipRecommended: m.isCensorshipRecommended,
+        backends: [...m.backends],
+        order: m.order,
+        updatedAt: now,
+      });
+      modesInserted++;
+    };
     if (!famAny && !modeAny) {
       for (const f of DEFAULT_CONNECTION_MODE_FAMILIES) {
         await ctx.db.insert('connectionModeFamilies', {
@@ -278,21 +296,23 @@ export const seedConnectionModes = internalMutation({
         });
         familiesInserted++;
       }
-      for (const m of DEFAULT_CONNECTION_MODES) {
-        await ctx.db.insert('connectionModes', {
-          slug: m.slug,
-          familySlug: m.familySlug,
-          deliveryStyle: m.deliveryStyle,
-          enabled: m.enabled,
-          isFamilyDefault: m.isFamilyDefault,
-          isCensorshipRecommended: m.isCensorshipRecommended,
-          backends: [...m.backends],
-          order: m.order,
-          updatedAt: now,
-        });
-        modesInserted++;
+      for (const m of DEFAULT_CONNECTION_MODES) await insertMode(m);
+    } else {
+      // A built-in ADDED since this deployment was seeded is inserted once,
+      // by version: a mode an admin removed after that version stays removed.
+      const versionRow = await ctx.db
+        .query('appSettings')
+        .withIndex('by_key', (q) => q.eq('key', BUILT_IN_MODES_VERSION_KEY))
+        .unique();
+      const seen = versionRow ? Number(JSON.parse(versionRow.value)) || 0 : 1;
+      if (seen < BUILT_IN_MODES_VERSION) {
+        const present = new Set(
+          (await ctx.db.query('connectionModes').collect()).map((m) => m.slug),
+        );
+        for (const m of DEFAULT_CONNECTION_MODES) if (!present.has(m.slug)) await insertMode(m);
       }
     }
+    await upsertSettingRow(ctx, BUILT_IN_MODES_VERSION_KEY, JSON.stringify(BUILT_IN_MODES_VERSION));
     return { familiesInserted, modesInserted };
   },
 });

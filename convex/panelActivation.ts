@@ -38,8 +38,14 @@ import {
 } from './lib/panel/rehearsal';
 import { QUALIFICATION_TRAFFIC_LIMIT_BYTES } from './relayQualification';
 import { TEST_CREDENTIAL_TAG, testCredentialUsername } from './edgeTestCredentials';
-import { inboundFor, originAddressOf, originHostnameOf } from './panelIntents';
-import { bumpGateVersion } from './panelSetup';
+import {
+  isDirect,
+  modeEntry,
+  originAddressOf,
+  originHostnameOf,
+  transportFor,
+} from './panelIntents';
+import { bumpGateVersion, setupReady } from './panelSetup';
 import { scheduleMirrorRefresh } from './relays';
 
 const refuse = (code: string, message: string): never => {
@@ -54,8 +60,8 @@ async function setupOf(ctx: { db: QueryCtx['db'] }, sid: Id<'backendServers'>) {
     .query('panelSetups')
     .withIndex('by_server', (q) => q.eq('backendServerId', sid))
     .unique();
-  if (!row || row.state !== 'ready' || !row.inbounds || !row.profileUuid)
-    return refuse('servers.panel_not_set_up', 'Set up this panel in Servers first');
+  if (!setupReady(row))
+    return refuse('servers.panel_not_set_up', 'Set up this backend in Servers first');
   return row;
 }
 
@@ -77,10 +83,12 @@ async function reviewShapeOf(
 ): Promise<ReviewShape> {
   const hostname = originHostnameOf(intent, setup);
   const originAddress = originAddressOf(intent, hostname);
-  const reality = setup.inbounds!.reality;
+  const mode = modeEntry(setup, intent.mode);
+  const transport = transportFor(setup, intent.mode);
+  const direct = isDirect(mode.shape);
   let listenerKeys: string[] = [];
   let provider: ReviewShape['provider'] = { accountId: null, templateHash: null };
-  if (intent.purpose !== 'direct') {
+  if (!direct) {
     const relay = (
       await ctx.db
         .query('relays')
@@ -107,19 +115,36 @@ async function reviewShapeOf(
       };
     }
   }
+  // A direct node's addresses follow the names its transport lists today.
+  const names = direct ? await liveNamesOf(ctx, intent, transport.uuid) : [];
   return {
-    purpose: intent.purpose,
+    mode: mode.slug,
+    modeShape: mode.shape,
     ingress: intent.settings.ingress ?? null,
     configRevision: intent.configRevision ?? '',
     authRevision: intent.authRevision ?? null,
     listenerKeys,
     provider,
     subscriptionTemplates: Object.fromEntries(setup.templates.map((t) => [t.family, t.hash])),
-    hostTuple:
-      intent.purpose === 'direct'
-        ? { address: originAddress, port: reality.port, sni: reality.serverNames[0] ?? null }
-        : null,
+    addressTuples: names.map((sni) => ({ address: originAddress, port: transport.port, sni })),
   };
+}
+
+/** The names a REALITY transport lists on the backend right now (its family's rollouts move them). */
+async function liveNamesOf(
+  ctx: { db: QueryCtx['db'] },
+  intent: Intent,
+  transportUuid: string,
+): Promise<string[]> {
+  const profiles = await ctx.db
+    .query('panelProfiles')
+    .withIndex('by_server', (q) => q.eq('backendServerId', intent.backendServerId))
+    .collect();
+  for (const p of profiles) {
+    const ib = p.inbounds.find((i) => i.inboundUuid === transportUuid);
+    if (ib) return ib.reality?.serverNames ?? [];
+  }
+  return [];
 }
 
 export const review = internalQuery({
@@ -130,8 +155,9 @@ export const review = internalQuery({
     const setup = await setupOf(ctx, intent.backendServerId);
     const shape = await reviewShapeOf(ctx, intent, setup);
     const reviewHash = await reviewHashOf(shape);
-    const standbys = intent.purpose === 'direct' ? null : await standbysOf(ctx, intent);
-    const blockers = activationBlockers(intent, setup, standbys);
+    const direct = isDirect(modeEntry(setup, intent.mode).shape);
+    const standbys = direct ? null : await standbysOf(ctx, intent);
+    const blockers = activationBlockers(intent, setup, direct, standbys);
     return { shape, reviewHash, blockers, stage: intent.activation.stage };
   },
 });
@@ -169,6 +195,7 @@ async function standbysOf(
 function activationBlockers(
   intent: Intent,
   setup: Doc<'panelSetups'>,
+  direct: boolean,
   standbys: { code: string | null } | null,
 ): string[] {
   const out: string[] = [];
@@ -176,11 +203,12 @@ function activationBlockers(
   const has = (k: string) =>
     intent.activation.evidence.some((e) => e.kind === k && evidenceHolds(e, revs));
   if (!has('machine_ready')) out.push('servers.machine_not_ready');
-  if (intent.purpose === 'direct' && !has('direct_confirmed'))
-    out.push('servers.direct_unconfirmed');
-  if (intent.purpose !== 'direct' && !has('standbys_verified') && standbys?.code)
-    out.push(standbys.code);
-  if (setup.placements.some((p) => p.state === 'skipped')) out.push('servers.placement_skipped');
+  if (direct && !has('direct_confirmed')) out.push('servers.direct_unconfirmed');
+  if (!direct && !has('standbys_verified') && standbys?.code) out.push(standbys.code);
+  const mode = modeEntry(setup, intent.mode);
+  if (mode.placement !== 'bound') out.push('servers.placement_skipped');
+  if (mode.family === 'unbound' || mode.family === 'target_mismatch')
+    out.push('servers.family_unbound');
   if (setup.templates.some((t) => t.state !== 'matched')) out.push('servers.template_drifted');
   if (setup.privacy === 'drifted') out.push('servers.privacy_drifted');
   if (intent.maintenance) out.push('servers.maintenance_open');
@@ -217,7 +245,9 @@ async function credentialContextOf(ctx: QueryCtx, intentId: Id<'panelNodeIntents
     intent,
     server: { _id: server._id, backend: server.backend, config: server.config, slug: server.slug },
     setup,
-    squadUuid: setup.squads.reality.uuid ?? null,
+    mode: modeEntry(setup, intent.mode),
+    transport: transportFor(setup, intent.mode),
+    groupUuid: modeEntry(setup, intent.mode).groupUuid ?? null,
     originAddress: originAddressOf(intent, hostname),
     reusable: reusable
       ? {
@@ -244,7 +274,7 @@ async function ensureIntentCredential(
   c: {
     intent: Intent;
     server: { _id: Id<'backendServers'>; backend: Doc<'backendServers'>['backend'] };
-    squadUuid: string | null;
+    groupUuid: string | null;
     reusable: {
       id: Id<'edgeTestCredentials'>;
       backendUserId: string;
@@ -290,7 +320,7 @@ async function ensureIntentCredential(
       await ctx.runMutation(internal.edgeTestCredentials.dropUnissued, { id: c.unresolved.id });
     }
   }
-  if (!c.squadUuid) refuse('servers.panel_not_set_up', 'The reality squad is not set up');
+  if (!c.groupUuid) refuse('servers.panel_not_set_up', 'The mode has no group on the backend');
   const username = testCredentialUsername(c.intent.name, 'test_link', randomHex(4));
   const id = await ctx.runMutation(internal.edgeTestCredentials.insertPending, {
     nodeIntentId: c.intent._id,
@@ -309,7 +339,7 @@ async function ensureIntentCredential(
         expireAt: null,
         tag: TEST_CREDENTIAL_TAG,
         description: 'FCP node activation test (automated, temporary)',
-        placement: c.squadUuid,
+        placement: c.groupUuid,
       },
     });
   } catch (err) {
@@ -352,17 +382,17 @@ export const buildDirectTestLink = internalAction({
       intentId,
     })) as CredentialCtx | null;
     if (!c) throw new ConvexError({ code: 'not_found', message: 'No such node' });
-    if (c.intent.purpose !== 'direct')
+    if (!isDirect(c.mode.shape) || c.mode.shape.transport !== 'reality')
       throw new ConvexError({
         code: 'validation',
-        message: 'Only a direct node has a direct test link',
+        message: 'Only a direct REALITY node has a direct test link',
       });
     const writes = PROVIDERS[c.server.backend].panelWrites;
     if (!writes)
       throw new ConvexError({ code: 'servers.unsupported_backend', message: 'Unsupported' });
     const config = c.server.config as BackendConfig;
     const cred = await ensureIntentCredential(ctx, c);
-    const reality = c.setup.inbounds!.reality;
+    const reality = c.transport;
     const params = await writes.readInboundForTest(
       config,
       c.setup.profileUuid!,
@@ -430,19 +460,20 @@ export const confirmDirect = internalMutation({
   handler: async (ctx, a) => {
     const intent = await ctx.db.get(a.intentId);
     if (!intent) return refuse('not_found', 'No such node');
-    if (intent.purpose !== 'direct')
-      refuse('validation', 'Only a direct node is confirmed this way');
     const setup = await setupOf(ctx, intent.backendServerId);
-    const reality = setup.inbounds!.reality;
+    if (!isDirect(modeEntry(setup, intent.mode).shape))
+      refuse('validation', 'Only a direct node is confirmed this way');
+    const reality = transportFor(setup, intent.mode);
     const hostname = originHostnameOf(intent, setup);
+    const names = await liveNamesOf(ctx, intent, reality.uuid);
     const live = {
       inboundUuid: reality.uuid,
       endpoint: `${originAddressOf(intent, hostname)}:${reality.port}`,
       machineRevision: intent.machineRevision,
       configRevision: intent.configRevision ?? '',
       authRevision: intent.authRevision ?? null,
-      sni: reality.serverNames[0] ?? '',
-      publicKey: reality.publicKey,
+      sni: names[0] ?? reality.serverNames?.[0] ?? '',
+      publicKey: reality.publicKey ?? '',
     };
     const b = a.binding;
     const same =
@@ -504,13 +535,14 @@ export const approve = internalMutation({
     const intent = await ctx.db.get(a.intentId);
     if (!intent) return refuse('not_found', 'No such node');
     const setup = await setupOf(ctx, intent.backendServerId);
-    const standbys = intent.purpose === 'direct' ? null : await standbysOf(ctx, intent);
-    const blockers = activationBlockers(intent, setup, standbys);
+    const direct = isDirect(modeEntry(setup, intent.mode).shape);
+    const standbys = direct ? null : await standbysOf(ctx, intent);
+    const blockers = activationBlockers(intent, setup, direct, standbys);
     if (blockers.length > 0) refuse(blockers[0]!, 'The node is not ready for approval');
     const now = Date.now();
     let stage = intent.activation.stage;
     let evidence = intent.activation.evidence;
-    if (intent.purpose !== 'direct' && stage === 'machine_ready' && standbys && !standbys.code) {
+    if (!direct && stage === 'machine_ready' && standbys && !standbys.code) {
       // The standbys hold now: recorded as evidence bound to the revisions
       // (the commit re-checks it), and the ladder reaches candidates_verified.
       evidence = [
@@ -543,7 +575,7 @@ export const approve = internalMutation({
       generation: intent.generation,
       stepVersion: 1,
       state: 'running',
-      stage: intent.purpose === 'direct' ? 'hosts' : 'publish',
+      stage: direct ? 'hosts' : 'publish',
       candidate: {
         machineRevision: intent.machineRevision,
         configRevision: intent.configRevision ?? '',
@@ -554,7 +586,7 @@ export const approve = internalMutation({
         approval: { byAdminId: a.actorAdminId, at: now },
       },
       resources: {
-        hostUuids: intent.purpose === 'direct' && intent.hostUuid ? [intent.hostUuid] : [],
+        hostUuids: direct ? [...(intent.addressUuids ?? [])] : [],
         edgeIds: [],
       },
       events: [{ at: now, code: 'approved' }],
@@ -583,9 +615,9 @@ export const approve = internalMutation({
       action: 'servers.node.approved',
       targetType: 'panel_node_intent',
       targetId: intent._id,
-      payload: { backendSlug: server?.slug ?? '', name: intent.name, purpose: intent.purpose },
+      payload: { backendSlug: server?.slug ?? '', name: intent.name, mode: intent.mode },
     });
-    if (intent.purpose === 'direct')
+    if (direct)
       await ctx.scheduler.runAfter(0, internal.panelActivation.runDirect, {
         runId,
         stepVersion: 1,
@@ -615,21 +647,21 @@ async function runContextOf(ctx: QueryCtx, runId: Id<'panelActivationRuns'>, ste
   const server = await ctx.db.get(intent.backendServerId);
   if (!server) return null;
   const setup = await setupOf(ctx, intent.backendServerId);
-  const host = intent.hostUuid
-    ? await ctx.db
-        .query('panelHosts')
-        .withIndex('by_server_uuid', (q) =>
-          q.eq('backendServerId', intent.backendServerId).eq('hostUuid', intent.hostUuid!),
-        )
-        .unique()
-    : null;
+  const wanted = new Set(intent.addressUuids ?? []);
+  const addresses = (
+    await ctx.db
+      .query('panelHosts')
+      .withIndex('by_server', (q) => q.eq('backendServerId', intent.backendServerId))
+      .collect()
+  ).filter((h) => wanted.has(h.hostUuid));
   const hostname = originHostnameOf(intent, setup);
   return {
     run,
     intent,
     server: { _id: server._id, backend: server.backend, config: server.config, slug: server.slug },
     setup,
-    host,
+    transport: transportFor(setup, intent.mode),
+    addresses,
     originAddress: originAddressOf(intent, hostname),
   };
 }
@@ -730,12 +762,13 @@ export const runDirect = internalAction({
       });
     try {
       if (c.run.stage === 'hosts') {
-        // The candidate Host: enabled now, filtered from members by the gate until the commit.
-        if (!c.host) return block('servers.host_missing').then(() => null);
-        if (c.host.isDisabled) {
+        // The candidate addresses: enabled now, filtered from members by the gate until the commit.
+        if (c.addresses.length === 0) return block('servers.host_missing').then(() => null);
+        for (const h of c.addresses) {
+          if (!h.isDisabled) continue;
           const { opId } = await ctx.runMutation(internal.panelWrites.requestHostUpdate, {
             backendServerId: c.server._id,
-            hostUuid: c.host.hostUuid,
+            hostUuid: h.hostUuid,
             isDisabled: false,
           });
           const r = await ctx.runAction(internal.panelWrites.run, { opId });
@@ -754,7 +787,7 @@ export const runDirect = internalAction({
           intentId: c.intent._id,
         })) as CredentialCtx | null;
         if (!cred?.reusable) return block('servers.credential_unavailable').then(() => null);
-        const reality = c.setup.inbounds!.reality;
+        const reality = { port: c.transport.port, publicKey: c.transport.publicKey ?? '' };
         const families: RehearsalFamily[] = ['links', 'singbox', 'clash'];
         const failed: string[] = [];
         for (const family of families) {
@@ -783,11 +816,11 @@ export const runDirect = internalAction({
             : { state: 'blocked' as const, code: 'servers.rehearsal_failed' }),
         });
         if (!ok || !s.ok) {
-          // A failed rehearsal closes what it opened: the Host goes back to disabled.
-          if (c.host && !c.host.isDisabled) {
+          // A failed rehearsal closes what it opened: every address goes back to disabled.
+          for (const h of c.addresses) {
             const { opId } = await ctx.runMutation(internal.panelWrites.requestHostUpdate, {
               backendServerId: c.server._id,
-              hostUuid: c.host.hostUuid,
+              hostUuid: h.hostUuid,
               isDisabled: true,
             });
             await ctx.runAction(internal.panelWrites.run, { opId });
@@ -858,7 +891,7 @@ export async function promoteCandidate(
   const has = (k: string) =>
     intent.activation.evidence.some((e) => e.kind === k && evidenceHolds(e, revs));
   if (!has('machine_ready')) return { ok: false, code: 'servers.machine_not_ready' };
-  if (intent.purpose === 'direct') {
+  if (isDirect(modeEntry(setup, intent.mode).shape)) {
     if (!has('direct_confirmed')) return { ok: false, code: 'servers.direct_unconfirmed' };
     if (!run.rehearsal?.ok) return { ok: false, code: 'servers.rehearsal_missing' };
   } else if (!has('standbys_verified')) return { ok: false, code: 'servers.standbys_unverified' };
@@ -912,7 +945,7 @@ export async function promoteCandidate(
     action: 'servers.node.live',
     targetType: 'panel_node_intent',
     targetId: intent._id,
-    payload: { backendSlug: server?.slug ?? '', name: intent.name, purpose: intent.purpose },
+    payload: { backendSlug: server?.slug ?? '', name: intent.name, mode: intent.mode },
   });
   return { ok: true };
 }
@@ -966,4 +999,4 @@ export async function recordCandidateEdge(ctx: MutationCtx, run: Run, edgeId: Id
   });
 }
 
-export { inboundFor };
+export { transportFor };

@@ -209,4 +209,3 @@ export function looksLikeRelayRemark(remark: string, nodeNames: readonly string[
 }
 
 /** The role contract version a write requires of an instance's handoff. */
-export const REQUIRED_ROLE_CONTRACT_VERSION = 1;

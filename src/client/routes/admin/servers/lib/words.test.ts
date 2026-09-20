@@ -369,16 +369,13 @@ describe('enrolled nodes', () => {
     );
     expect(setupWords({ exists: true, state: 'ready', code: null, running: false })).toBeNull();
     expect(
-      setupWords({ exists: true, state: 'needs_takeover', code: null, running: false }),
-    ).toMatch(/Take it over/);
-    expect(
       setupWords({
         exists: true,
         state: 'pending',
         code: 'servers.obligation_unresolved',
         running: true,
       }),
-    ).toBe('Setting up the panel.');
+    ).toBe('Setting up the backend.');
   });
   test('no em-dashes in any of it', () => {
     for (const stage of [

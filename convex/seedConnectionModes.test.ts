@@ -58,15 +58,17 @@ describe('seedConnectionModes: fresh deploy', () => {
   test('inserts the compiled defaults into empty tables', async () => {
     const t = convexTest(schema, modules);
     const out = await t.mutation(internal.seed.seedConnectionModes, {});
-    expect(out).toMatchObject({ familiesInserted: 2, modesInserted: 3 });
+    expect(out).toMatchObject({ familiesInserted: 2, modesInserted: 4 });
     const fams = await t.run((ctx) => ctx.db.query('connectionModeFamilies').collect());
     const modes = await t.run((ctx) => ctx.db.query('connectionModes').collect());
     expect(fams.map((f) => f.slug).sort()).toEqual(['freedom', 'privacy']);
     expect(modes.map((m) => m.slug).sort()).toEqual([
       'freedom-reality',
       'freedom-ws',
+      'freedom-xhttp',
       'privacy-reality',
     ]);
+    expect(modes.find((m) => m.slug === 'freedom-xhttp')!.enabled).toBe(false); // ships dark
     // Fresh rows carry NO admin copy (null → the SPA's i18n).
     expect(fams.every((f) => f.label === undefined)).toBe(true);
     expect(modes.find((m) => m.slug === 'freedom-reality')!.enabled).toBe(false); // ships dark
@@ -104,7 +106,11 @@ describe('seedConnectionModes: fresh deploy', () => {
     await t.mutation(internal.seed.seedConnectionModes, {});
     const modes = await t.run((ctx) => ctx.db.query('connectionModes').collect());
     // Not resurrected, not clobbered.
-    expect(modes.map((m) => m.slug).sort()).toEqual(['freedom-ws', 'privacy-reality']);
+    expect(modes.map((m) => m.slug).sort()).toEqual([
+      'freedom-ws',
+      'freedom-xhttp',
+      'privacy-reality',
+    ]);
     expect(modes.find((m) => m.slug === 'freedom-ws')!.label).toBe('Tunnel Mode');
     expect(modes.find((m) => m.slug === 'freedom-ws')!.enabled).toBe(false);
   });
@@ -317,7 +323,7 @@ describe('seedCutover integration', () => {
   test('one call seeds the catalog; a second deploy is zero work', async () => {
     const t = convexTest(schema, modules);
     const out = await t.action(internal.seed.seedCutover, {});
-    expect(out.modesInserted).toBe(3);
+    expect(out.modesInserted).toBe(4);
     expect(out.modeFamiliesInserted).toBe(2);
     // Second deploy: fully converged, zero work.
     const out2 = await t.action(internal.seed.seedCutover, {});

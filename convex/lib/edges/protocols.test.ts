@@ -62,7 +62,7 @@ describe('listener catalogue ⇔ codec table', () => {
     expect(Object.keys(CODECS).sort()).toEqual([...keys].sort());
   });
 
-  test('the catalogue is exactly the eleven supported combinations, keyed uniquely', () => {
+  test('the catalogue is exactly the twelve supported combinations, keyed uniquely', () => {
     expect(LISTENER_COMBOS.map((c) => c.key).sort()).toEqual(
       [
         'vless/raw/reality',
@@ -71,6 +71,7 @@ describe('listener catalogue ⇔ codec table', () => {
         'vless/httpupgrade/tls',
         'vless/grpc/tls',
         'vless/xhttp/tls',
+        'vless/xhttp/reality',
         'trojan/raw/tls',
         'trojan/ws/tls',
         'shadowsocks/raw/none',
@@ -189,6 +190,7 @@ describe('protocol helpers derive from the three fields', () => {
       'vless/httpupgrade/tls': 'httpupgrade',
       'vless/grpc/tls': 'grpc',
       'vless/xhttp/tls': 'xhttp',
+      'vless/xhttp/reality': 'reality',
       'trojan/raw/tls': 'tls',
       'trojan/ws/tls': 'ws',
       'shadowsocks/raw/none': 'plain',

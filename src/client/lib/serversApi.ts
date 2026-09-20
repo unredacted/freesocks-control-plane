@@ -21,7 +21,6 @@ import {
   PanelSetupView,
   PlacementValidation,
   ProfilePatchPreview,
-  ReservationList,
   ServerSummary,
   ServerTree,
   type PanelSetupInput,
@@ -126,22 +125,11 @@ export const acknowledgeForeignEdit = (slug: string, profileUuid: string) =>
     Ok,
   );
 
-export const fetchReservations = (slug: string) =>
-  apiClient.get(`${slugPath(slug)}/reservations`, ReservationList);
-export const recoverReservation = (slug: string, roleOpId: string, attest: RecoveryAttestation) =>
-  apiClient.post(
-    `${slugPath(slug)}/reservations/${encodeURIComponent(roleOpId)}/recover`,
-    attest,
-    Ok,
-  );
-
-// --- the bootstrap contract: setting up a panel, enrolled nodes, activation ---------------------
+// --- the bootstrap contract: setting up a backend, enrolled nodes, activation ---------------------
 export const fetchSetup = (slug: string) =>
   apiClient.get(`${slugPath(slug)}/setup`, PanelSetupView);
 export const startSetup = (slug: string, input: PanelSetupInput) =>
   apiClient.post(`${slugPath(slug)}/setup`, input, PanelSetupView);
-export const takeoverPanel = (slug: string) =>
-  apiClient.post(`${slugPath(slug)}/setup/takeover`, {}, PanelSetupView);
 
 export const fetchIntents = (slug: string) =>
   apiClient.get(`${slugPath(slug)}/nodes/intents`, NodeIntentList);
@@ -185,7 +173,6 @@ export const serverKeys = {
   summary: [...ROOT, 'summary'] as const,
   tree: (slug: string) => [...ROOT, 'tree', slug] as const,
   ops: (slug: string) => [...ROOT, 'ops', slug] as const,
-  reservations: (slug: string) => [...ROOT, 'reservations', slug] as const,
   setup: (slug: string) => [...ROOT, 'setup', slug] as const,
   intents: (slug: string) => [...ROOT, 'intents', slug] as const,
   review: (slug: string, id: string) => [...ROOT, 'review', slug, id] as const,
@@ -246,14 +233,6 @@ export const opsQuery = (slug: () => string | null, enabled: () => boolean) =>
     enabled: !!slug() && enabled(),
     refetchInterval: (q: { state: { data?: { ops: { open: boolean }[] } } }) =>
       q.state.data?.ops.some((o) => o.open) ? 5_000 : 60_000,
-  }));
-
-export const reservationsQuery = (slug: () => string | null, enabled: () => boolean) =>
-  createQuery(() => ({
-    queryKey: serverKeys.reservations(slug() ?? ''),
-    queryFn: () => fetchReservations(slug()!),
-    enabled: !!slug() && enabled(),
-    refetchInterval: 60_000,
   }));
 
 export function invalidateServers(qc: QueryClient): void {

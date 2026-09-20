@@ -24,7 +24,6 @@ import type { PanelObservedHost, PanelObservedSquad } from './lib/backends/types
 import { upsertObservedHosts, upsertObservedSquads } from './panelObserve';
 import {
   GONE_LOOKS_REQUIRED,
-  REQUIRED_ROLE_CONTRACT_VERSION,
   asyncWorkFinished,
   claimsReleasable,
   displayState,
@@ -99,15 +98,14 @@ export async function assertWritable(ctx: MutationCtx, backendServerId: Id<'back
   if (!server) return refuse('not_found', 'Backend server not found');
   if (!capabilitiesOf(server.backend).panelWrites)
     refuse('servers.unsupported_backend', 'This backend type cannot be managed here');
-  const handoff = await ctx.db
-    .query('panelHandoff')
+  // FCP writes a backend it has set up or adopted (docs/servers.md "Setting up
+  // a backend"); nothing else writes one. The setup run itself is the one
+  // caller admitted before the row is ready (it creates what the row records).
+  const setup = await ctx.db
+    .query('panelSetups')
     .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
     .unique();
-  if (!handoff || handoff.roleContractVersion < REQUIRED_ROLE_CONTRACT_VERSION)
-    refuse(
-      'servers.handoff_missing',
-      'The node role has not confirmed that it leaves server-managed items alone',
-    );
+  if (!setup) refuse('servers.not_set_up', 'Set up this backend in Servers first');
   return server;
 }
 
@@ -710,28 +708,4 @@ export const listForServer = internalQuery({
         .order('desc')
         .take(50)
     ).map(mapOp),
-});
-
-// --- handoff --------------------------------------------------------------------------------------------
-
-export const reportHandoff = internalMutation({
-  args: {
-    backendServerId: v.id('backendServers'),
-    roleContractVersion: v.number(),
-    reportedBy: v.optional(v.string()),
-  },
-  handler: async (ctx, a) => {
-    const prev = await ctx.db
-      .query('panelHandoff')
-      .withIndex('by_server', (q) => q.eq('backendServerId', a.backendServerId))
-      .unique();
-    const row = { ...a, reportedAt: Date.now() };
-    if (prev) await ctx.db.replace(prev._id, row);
-    else await ctx.db.insert('panelHandoff', row);
-    return {
-      ok: true as const,
-      required: REQUIRED_ROLE_CONTRACT_VERSION,
-      current: a.roleContractVersion >= REQUIRED_ROLE_CONTRACT_VERSION,
-    };
-  },
 });

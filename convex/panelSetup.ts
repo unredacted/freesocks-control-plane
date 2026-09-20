@@ -1,10 +1,15 @@
 /**
- * "Set up this panel" (docs/servers.md "Setting up a panel"): one durable,
- * fenced workflow per backend server that makes a panel the shape the node
- * purposes rely on. The profile (created from the template, or an existing
- * one adopted only when compatible; keys never touched), its three inbounds,
- * the three squads and their mode placements, the subscription templates,
- * and the handoff that makes FCP the panel's only writer.
+ * "Set up this backend" (docs/servers.md "Setting up a backend"): one durable,
+ * fenced workflow per backend server that makes a backend the shape its
+ * modes rely on. The profile (created from the template, or an existing one
+ * adopted only when compatible; keys never touched), one transport per mode,
+ * each REALITY transport bound to its server-name family, each mode's group
+ * (found under its name or a name an earlier setup gave it and renamed in
+ * place), the mode placements, and the subscription templates.
+ *
+ * A backend that already has nodes or addresses is ADOPTED: the operator's
+ * typed confirmation is the one attestation; nothing is created beside what
+ * exists, and nothing a member holds changes.
  *
  * Every step is idempotent and re-enterable: the row records the step it is
  * on, the sweep resumes an expired lease, and the one external create (the
@@ -21,14 +26,18 @@ import { writeAuditLog } from './lib/audit';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
 import { resolveModeCatalog } from './lib/connectionModes';
+import { sameTarget } from './lib/edges/sni/family';
 import { CLAIM_LEASE_MS, claimAvailable, desiredHashOf, fenceHolds } from './lib/panel/fencing';
 import { callResultOf, classifyRequest } from './lib/panel/ops';
-import { checkProfileCompatibility } from './lib/panel/profileCompat';
+import { checkProfileCompatibility, type EffectiveTransport } from './lib/panel/profileCompat';
 import {
-  BOOTSTRAP_DEFAULTS,
-  buildBootstrapProfile,
-  checkBootstrapInput,
-  type BootstrapProfileInput,
+  PROFILE_DEFAULTS,
+  buildProfile,
+  checkModeDefinitions,
+  isReality,
+  transportTagOf,
+  type ModeShape,
+  type ModeTemplateInput,
 } from './lib/panel/profileTemplate';
 import { generateRealityKey } from './lib/panel/realityKeys';
 import {
@@ -45,29 +54,44 @@ const refuse = (code: string, message: string): never => {
   throw new ConvexError({ code, message });
 };
 
-/** The role contract version FCP itself reports when it is the panel's only writer. */
-export const FCP_WRITER_CONTRACT_VERSION = 2;
-
-const realityInput = v.object({
-  target: v.object({ address: v.string(), port: v.number() }),
-  serverNames: v.array(v.string()),
-  minClientVer: v.optional(v.string()),
+const shapeValidator = v.object({
+  transport: v.union(v.literal('reality'), v.literal('xhttp-reality'), v.literal('ws')),
+  fronting: v.union(v.literal('direct'), v.literal('edge-l4'), v.literal('edge-l7')),
+});
+const modeInput = v.object({
+  slug: v.string(),
+  name: v.string(),
+  shape: shapeValidator,
+  familySlug: v.optional(v.string()),
+  acceptProxyProtocol: v.boolean(),
+  ws: v.optional(v.object({ path: v.string(), port: v.number() })),
 });
 export const setupInput = v.object({
   profileName: v.string(),
-  cdn: v.object({ path: v.string(), port: v.number() }),
-  reality: realityInput,
-  relay: v.object({ ...realityInput.fields, acceptProxyProtocol: v.boolean() }),
-  squads: v.object({ fronted: v.string(), reality: v.string(), relay: v.string() }),
+  modes: v.array(modeInput),
   originDns: v.union(v.object({ accountId: v.string() }), v.null()),
+  adopt: v.boolean(),
 });
+type ModeInput = {
+  slug: string;
+  name: string;
+  shape: ModeShape;
+  familySlug?: string;
+  acceptProxyProtocol: boolean;
+  ws?: { path: string; port: number };
+};
 type SetupInput = {
   profileName: string;
-  cdn: { path: string; port: number };
-  reality: BootstrapProfileInput['reality'];
-  relay: BootstrapProfileInput['relay'];
-  squads: { fronted: string; reality: string; relay: string };
+  modes: ModeInput[];
   originDns: { accountId: string } | null;
+  adopt: boolean;
+};
+
+/** Group names an earlier setup gave the same modes; found and renamed in place. */
+const LEGACY_GROUP_NAMES: Readonly<Record<string, readonly string[]>> = {
+  'privacy-reality': ['FreeSocks-Reality'],
+  'freedom-reality': ['FreeSocks-Relay'],
+  'freedom-ws': ['FreeSocks-Fronted', 'FreeSocks-Fastly'],
 };
 
 const fence = {
@@ -77,13 +101,8 @@ const fence = {
 };
 type Fence = { setupId: Id<'panelSetups'>; generation: number; attemptId: string };
 
-const SQUAD_NAME = /^[A-Za-z0-9_-]{2,20}$/;
-/** Which squad feeds which connection mode (the role's topology, kept). */
-export const SQUAD_MODES = {
-  fronted: 'freedom-ws',
-  reality: 'privacy-reality',
-  relay: 'freedom-reality',
-} as const;
+type Setup = Doc<'panelSetups'>;
+type SetupMode = Setup['modes'][number];
 
 async function setupRow(ctx: { db: { query: DbQuery } }, sid: Id<'backendServers'>) {
   return ctx.db
@@ -93,7 +112,33 @@ async function setupRow(ctx: { db: { query: DbQuery } }, sid: Id<'backendServers
 }
 type DbQuery = import('./_generated/server').QueryCtx['db']['query'];
 
-// --- start / takeover ----------------------------------------------------------------------------
+/** The setup row's entry for a mode slug. */
+export function modeOf(setup: Setup, slug: string): SetupMode | undefined {
+  return setup.modes.find((m) => m.slug === slug);
+}
+
+/** The mode entries a fresh row starts with: definitions only, nothing found yet. */
+function freshModes(input: SetupInput, prev: readonly SetupMode[] = []): SetupMode[] {
+  return input.modes.map((m) => {
+    const before = prev.find((p) => p.slug === m.slug);
+    return {
+      slug: m.slug,
+      name: m.name,
+      shape: m.shape,
+      familySlug: m.familySlug,
+      acceptProxyProtocol: m.acceptProxyProtocol,
+      ws: m.ws,
+      tag: before?.tag ?? transportTagOf(m.name),
+      groupUuid: before?.groupUuid,
+      renamedFrom: before?.renamedFrom,
+      placement: 'pending',
+      transport: undefined,
+      family: isReality(m.shape) ? 'unbound' : 'none',
+    };
+  });
+}
+
+// --- start ----------------------------------------------------------------------------------------
 
 export const start = internalMutation({
   args: {
@@ -111,13 +156,24 @@ export const start = internalMutation({
     if (!capabilitiesOf(server.backend).panelSetup)
       refuse('servers.unsupported_backend', 'This backend type cannot be set up here');
     const input = a.input as SetupInput;
-    const bad = checkBootstrapInput(input);
-    if (bad) refuse('validation', `The setup input is not usable (${bad})`);
-    for (const name of Object.values(input.squads))
-      if (!SQUAD_NAME.test(name)) refuse('validation', 'A squad name is 2 to 20 plain characters');
-    if (new Set(Object.values(input.squads)).size !== 3)
-      refuse('validation', 'The three squads need three different names');
-    let originDns: Doc<'panelSetups'>['originDns'] = null;
+    if (!/^[A-Za-z0-9 ._-]{1,60}$/.test(input.profileName))
+      refuse('validation', 'A profile name is 1 to 60 plain characters');
+    const bad = checkModeDefinitions(input.modes);
+    if (bad) refuse('servers.modes_invalid', `The modes are not usable (${bad})`);
+    const { modes: catalog } = await resolveModeCatalog(ctx.db);
+    const known = new Set(catalog.map((m) => m.id));
+    for (const m of input.modes) {
+      if (!known.has(m.slug))
+        refuse('servers.mode_unknown', `No connection mode "${m.slug}" exists. Add it first`);
+      if (!isReality(m.shape)) continue;
+      const family = await ctx.db
+        .query('sniFamilies')
+        .withIndex('by_slug', (q) => q.eq('slug', m.familySlug!))
+        .unique();
+      if (!family || !family.enabled)
+        refuse('servers.family_missing', `Mode ${m.name} names a family that does not exist`);
+    }
+    let originDns: Setup['originDns'] = null;
     if (input.originDns) {
       const acct = await ctx.db.get(input.originDns.accountId as Id<'edgeProviderAccounts'>);
       const settings = acct?.settings as { zoneId?: string; zoneName?: string } | undefined;
@@ -129,11 +185,28 @@ export const start = internalMutation({
         zoneName: settings!.zoneName!,
       };
     }
+    // A backend with nodes or addresses on it is adopted, never quietly set up.
+    const [nodes, addresses] = await Promise.all([
+      ctx.db
+        .query('panelNodes')
+        .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+        .first(),
+      ctx.db
+        .query('panelHosts')
+        .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+        .first(),
+    ]);
+    const existing = !!nodes || !!addresses;
+    let row = await setupRow(ctx, sid);
+    if (existing && !input.adopt && !row?.adopted)
+      refuse(
+        'servers.adopt_required',
+        'This backend already has nodes or addresses. Adopt it (typed) to make FCP its writer',
+      );
     const desiredHash = await desiredHashOf(input);
     const now = Date.now();
-    let row = await setupRow(ctx, sid);
     if (row && !claimAvailable(row, now))
-      refuse('servers.setup_running', 'The panel is being set up right now');
+      refuse('servers.setup_running', 'The backend is being set up right now');
     if (!row) {
       const id = await ctx.db.insert('panelSetups', {
         backendServerId: sid,
@@ -142,14 +215,10 @@ export const start = internalMutation({
         generation: 1,
         state: 'pending',
         profileName: input.profileName,
-        squads: {
-          fronted: { name: input.squads.fronted },
-          reality: { name: input.squads.reality },
-          relay: { name: input.squads.relay },
-        },
-        placements: [],
+        modes: freshModes(input),
         templates: [],
         originDns,
+        adopted: existing,
         gateVersion: 0,
         createdAt: now,
         updatedAt: now,
@@ -164,12 +233,9 @@ export const start = internalMutation({
         step: undefined,
         code: undefined,
         profileName: input.profileName,
-        squads: {
-          fronted: { name: input.squads.fronted, uuid: row.squads.fronted.uuid },
-          reality: { name: input.squads.reality, uuid: row.squads.reality.uuid },
-          relay: { name: input.squads.relay, uuid: row.squads.relay.uuid },
-        },
+        modes: freshModes(input, row.modes),
         originDns,
+        adopted: row.adopted || existing,
         updatedAt: now,
       });
       row = (await ctx.db.get(row._id))!;
@@ -194,7 +260,7 @@ export const start = internalMutation({
       action: 'servers.setup.started',
       targetType: 'backend_server',
       targetId: sid,
-      payload: { backendSlug: server.slug, generation: row.generation },
+      payload: { backendSlug: server.slug, generation: row.generation, adopt: row.adopted },
     });
     return {
       setupId: row._id,
@@ -207,77 +273,16 @@ export const start = internalMutation({
 
 /**
  * A ready row that still records a blocker (drifted privacy after a
- * hardening, a drifted or refused template, a skipped placement) is re-run on
- * request so the blocker can clear: the run adopts everything it finds and
- * recomputes those fields from the panel.
+ * hardening, a drifted or refused template, a skipped placement, an unbound
+ * family) is re-run on request so the blocker can clear: the run adopts
+ * everything it finds and recomputes those fields from the backend.
  */
-function setupNeedsRefresh(row: Doc<'panelSetups'>): boolean {
+function setupNeedsRefresh(row: Setup): boolean {
   return (
     row.privacy === 'drifted' ||
     row.templates.some((t) => t.state !== 'matched') ||
-    row.placements.some((p) => p.state === 'skipped')
+    row.modes.some((m) => m.placement !== 'bound' || m.family === 'unbound' || !m.transport)
   );
-}
-
-/**
- * An existing panel becomes FCP's to write: the operator attests that no
- * v1 role still writes to it. Refused while a v1 reservation is open.
- */
-export const takeover = internalMutation({
-  args: { backendServerId: v.id('backendServers'), actorAdminId: v.optional(v.id('adminUsers')) },
-  handler: async (ctx, a) => {
-    const sid = a.backendServerId;
-    const server = await ctx.db.get(sid);
-    if (!server) return refuse('not_found', 'Backend server not found');
-    const reserved = (
-      await ctx.db
-        .query('panelOwnership')
-        .withIndex('by_server_kind_identity', (q) => q.eq('backendServerId', sid))
-        .collect()
-    ).filter((r) => r.state === 'reserved');
-    if (reserved.length > 0)
-      refuse(
-        'servers.reservation_open',
-        'A node role run still holds a reservation on this panel. Settle it first',
-      );
-    await writeHandoff(ctx, sid, 'fcp-takeover');
-    const row = await setupRow(ctx, sid);
-    if (row)
-      await ctx.db.patch(row._id, {
-        handoff: 'taken_over',
-        state: row.state === 'needs_takeover' ? 'pending' : row.state,
-        code: undefined,
-        updatedAt: Date.now(),
-      });
-    await writeAuditLog(ctx, {
-      actorType: 'admin',
-      actorId: a.actorAdminId ?? undefined,
-      action: 'servers.setup.takeover',
-      targetType: 'backend_server',
-      targetId: sid,
-      payload: { backendSlug: server.slug },
-    });
-    return { ok: true as const };
-  },
-});
-
-async function writeHandoff(
-  ctx: { db: import('./_generated/server').MutationCtx['db'] },
-  sid: Id<'backendServers'>,
-  by: string,
-) {
-  const prev = await ctx.db
-    .query('panelHandoff')
-    .withIndex('by_server', (q) => q.eq('backendServerId', sid))
-    .unique();
-  const row = {
-    backendServerId: sid,
-    roleContractVersion: FCP_WRITER_CONTRACT_VERSION,
-    reportedAt: Date.now(),
-    reportedBy: by,
-  };
-  if (prev) await ctx.db.replace(prev._id, row);
-  else await ctx.db.insert('panelHandoff', row);
 }
 
 // --- what the run reads and records ---------------------------------------------------------------------
@@ -288,15 +293,7 @@ async function loadSetupContext(ctx: QueryCtx, f: Fence) {
   const sid = row.backendServerId;
   const server = await ctx.db.get(sid);
   if (!server) return null;
-  const [nodes, hosts, profiles, squads, ownership, handoff] = await Promise.all([
-    ctx.db
-      .query('panelNodes')
-      .withIndex('by_server', (q) => q.eq('backendServerId', sid))
-      .collect(),
-    ctx.db
-      .query('panelHosts')
-      .withIndex('by_server', (q) => q.eq('backendServerId', sid))
-      .collect(),
+  const [profiles, groups] = await Promise.all([
     ctx.db
       .query('panelProfiles')
       .withIndex('by_server', (q) => q.eq('backendServerId', sid))
@@ -305,16 +302,38 @@ async function loadSetupContext(ctx: QueryCtx, f: Fence) {
       .query('panelSquads')
       .withIndex('by_server', (q) => q.eq('backendServerId', sid))
       .collect(),
-    ctx.db
-      .query('panelOwnership')
-      .withIndex('by_server_kind_identity', (q) => q.eq('backendServerId', sid))
-      .collect(),
-    ctx.db
-      .query('panelHandoff')
-      .withIndex('by_server', (q) => q.eq('backendServerId', sid))
-      .unique(),
   ]);
   const { modes } = await resolveModeCatalog(ctx.db);
+  // Every family a REALITY mode names: its target and the names usable today.
+  const families: Record<
+    string,
+    { slug: string; target: { address: string; port: number }; names: string[] }
+  > = {};
+  for (const m of row.modes) {
+    if (!m.familySlug || families[m.familySlug]) continue;
+    const family = await ctx.db
+      .query('sniFamilies')
+      .withIndex('by_slug', (q) => q.eq('slug', m.familySlug!))
+      .unique();
+    if (!family) continue;
+    const names = (
+      await ctx.db
+        .query('sniNames')
+        .withIndex('by_family_seq', (q) => q.eq('familyId', family._id))
+        .collect()
+    )
+      .filter((n) => n.status === 'active' && n.qualification.state === 'ok')
+      .map((n) => n.name);
+    families[m.familySlug] = {
+      slug: family.slug,
+      target: { address: family.target.address, port: family.target.port },
+      names,
+    };
+  }
+  const bindings = await ctx.db
+    .query('sniInboundBindings')
+    .withIndex('by_server_inbound', (q) => q.eq('backendServerId', sid))
+    .collect();
   return {
     row,
     input: JSON.parse(row.desired) as SetupInput,
@@ -325,8 +344,6 @@ async function loadSetupContext(ctx: QueryCtx, f: Fence) {
       slug: server.slug,
     },
     snapshot: {
-      nodes: nodes.length,
-      hosts: hosts.length,
       profiles: profiles.map((p) => ({
         profileUuid: p.profileUuid,
         name: p.name,
@@ -335,17 +352,22 @@ async function loadSetupContext(ctx: QueryCtx, f: Fence) {
           configProfileUuid: p.profileUuid,
           configProfileInboundUuid: i.inboundUuid,
           reality: i.reality,
-          ws: i.path !== undefined ? { path: i.path ?? null, host: null } : undefined,
+          ws:
+            i.network === 'ws' && i.path !== undefined
+              ? { path: i.path ?? null, host: null }
+              : undefined,
+          xhttp:
+            i.network === 'xhttp' ? { path: i.path ?? null, host: null, mode: null } : undefined,
         })),
       })),
-      squads: squads.map((s) => ({
-        squadUuid: s.squadUuid,
+      groups: groups.map((s) => ({
+        groupUuid: s.squadUuid,
         name: s.name,
-        inboundUuids: s.inboundUuids,
+        transportUuids: s.inboundUuids,
       })),
-      openReservations: ownership.filter((o) => o.state === 'reserved').length,
-      handoff: handoff ? { version: handoff.roleContractVersion } : null,
       knownModes: modes.map((m) => m.id),
+      families,
+      boundTransportUuids: bindings.map((b) => b.inboundUuid),
     },
   };
 }
@@ -358,12 +380,9 @@ export const loadForRun = internalQuery({
 const stepPatch = v.object({
   step: v.optional(v.string()),
   profileUuid: v.optional(v.string()),
-  inbounds: v.optional(v.any()),
-  squads: v.optional(v.any()),
-  placements: v.optional(v.any()),
+  modes: v.optional(v.any()),
   templates: v.optional(v.any()),
   privacy: v.optional(v.union(v.literal('ok'), v.literal('drifted'))),
-  handoff: v.optional(v.union(v.literal('fresh'), v.literal('taken_over'))),
 });
 
 export const recordStep = internalMutation({
@@ -373,7 +392,7 @@ export const recordStep = internalMutation({
     if (!row || !fenceHolds(row, f)) return { ok: false as const };
     const now = Date.now();
     await ctx.db.patch(f.setupId, {
-      ...(patch as Partial<Doc<'panelSetups'>>),
+      ...(patch as Partial<Setup>),
       claim: { attemptId: f.attemptId, expiresAt: now + CLAIM_LEASE_MS },
       updatedAt: now,
     });
@@ -381,26 +400,10 @@ export const recordStep = internalMutation({
   },
 });
 
-export const recordHandoff = internalMutation({
-  args: fence,
-  handler: async (ctx, f) => {
-    const row = await ctx.db.get(f.setupId);
-    if (!row || !fenceHolds(row, f)) return { ok: false as const };
-    await writeHandoff(ctx, row.backendServerId, 'fcp-setup');
-    await ctx.db.patch(f.setupId, { handoff: 'fresh', updatedAt: Date.now() });
-    return { ok: true as const };
-  },
-});
-
 export const finish = internalMutation({
   args: {
     ...fence,
-    state: v.union(
-      v.literal('pending'),
-      v.literal('needs_takeover'),
-      v.literal('ready'),
-      v.literal('failed'),
-    ),
+    state: v.union(v.literal('pending'), v.literal('ready'), v.literal('failed')),
     code: v.optional(v.string()),
     step: v.optional(v.string()),
   },
@@ -431,6 +434,23 @@ export const finish = internalMutation({
   },
 });
 
+export const recordGroupRename = internalMutation({
+  args: { ...fence, from: v.string(), to: v.string() },
+  handler: async (ctx, { from, to, ...f }) => {
+    const row = await ctx.db.get(f.setupId);
+    if (!row || !fenceHolds(row, f)) return null;
+    const server = await ctx.db.get(row.backendServerId);
+    await writeAuditLog(ctx, {
+      actorType: 'system',
+      action: 'servers.setup.group_renamed',
+      targetType: 'backend_server',
+      targetId: row.backendServerId,
+      payload: { backendSlug: server?.slug ?? '', from, to },
+    });
+    return null;
+  },
+});
+
 // --- the delivery gate version lives on the setup row -------------------------------------------
 
 export const gateVersionOf = internalQuery({
@@ -439,7 +459,7 @@ export const gateVersionOf = internalQuery({
     (await setupRow(ctx, backendServerId))?.gateVersion ?? 0,
 });
 
-/** Bump the panel-wide gate version (every disposition or resource-set change). */
+/** Bump the backend-wide gate version (every disposition or resource-set change). */
 export async function bumpGateVersion(
   ctx: { db: import('./_generated/server').MutationCtx['db'] },
   sid: Id<'backendServers'>,
@@ -463,19 +483,31 @@ async function loadForRunHandler(ctx: ActionCtx, f: Fence): Promise<Loaded | nul
   return (await ctx.runQuery(internal.panelSetup.loadForRun, f)) as Loaded | null;
 }
 
+/** The transport entry a setup row records for an effective transport. */
+function transportRecord(e: EffectiveTransport): NonNullable<SetupMode['transport']> {
+  return e.kind === 'ws'
+    ? { uuid: e.uuid, listen: e.listen, port: e.port, path: e.path }
+    : {
+        uuid: e.uuid,
+        port: e.port,
+        path: e.path ?? undefined,
+        serverNames: e.serverNames,
+        target: e.target,
+        publicKey: e.publicKey,
+      };
+}
+
 export const run = internalAction({
   args: fence,
   handler: async (ctx, f): Promise<null> => {
-    let c = await loadForRunHandler(ctx, f);
-    if (!c) return null;
+    const first = await loadForRunHandler(ctx, f);
+    if (!first) return null;
+    let c: Loaded = first;
     const sid = c.server._id;
     const record = (patch: Record<string, unknown>) =>
       ctx.runMutation(internal.panelSetup.recordStep, { ...f, patch });
-    const finish = (
-      state: 'pending' | 'needs_takeover' | 'ready' | 'failed',
-      code?: string,
-      step?: string,
-    ) => ctx.runMutation(internal.panelSetup.finish, { ...f, state, code, step });
+    const finish = (state: 'pending' | 'ready' | 'failed', code?: string, step?: string) =>
+      ctx.runMutation(internal.panelSetup.finish, { ...f, state, code, step });
     const reload = async (): Promise<Loaded> => {
       const next = await loadForRunHandler(ctx, f);
       if (!next) throw new Fenced();
@@ -497,8 +529,10 @@ export const run = internalAction({
     }
     const config = c.server.config as BackendConfig;
     const input = c.input;
+    let modes: SetupMode[] = c.row.modes.map((m) => ({ ...m }));
+    const save = () => record({ modes });
     try {
-      // 1. A fresh look at the panel: everything below reads the cache.
+      // 1. A fresh look at the backend: everything below reads the cache.
       await record({ step: 'observe' });
       if (!(await observeInstance(ctx, c.server))) {
         await finish('failed', 'servers.observe_failed', 'observe');
@@ -506,16 +540,20 @@ export const run = internalAction({
       }
       c = await reload();
 
-      // 2. Handoff: automatic only for a demonstrably fresh panel.
-      await record({ step: 'handoff' });
-      if (!c.snapshot.handoff) {
-        const fresh =
-          c.snapshot.nodes === 0 && c.snapshot.hosts === 0 && c.snapshot.openReservations === 0;
-        if (!fresh) {
-          await finish('needs_takeover', 'servers.handoff_needs_takeover', 'handoff');
+      // 2. Every REALITY mode's family must have a usable name today; a
+      //    created transport is born with exactly those names.
+      await record({ step: 'families' });
+      for (const m of modes) {
+        if (!isReality(m.shape)) continue;
+        const fam = c.snapshot.families[m.familySlug!];
+        if (!fam) {
+          await finish('failed', 'servers.family_missing', 'families');
           return null;
         }
-        await ctx.runMutation(internal.panelSetup.recordHandoff, f);
+        if (fam.names.length === 0) {
+          await finish('failed', 'servers.family_empty', 'families');
+          return null;
+        }
       }
 
       // 3. The profile: adopt a compatible one, else create from the template.
@@ -557,7 +595,36 @@ export const run = internalAction({
           });
           return null;
         }
-        const outcome = await createProfile(writes, config, input, opened.id, ctx);
+        const template: ModeTemplateInput[] = modes.map((m) =>
+          m.shape.transport === 'ws'
+            ? {
+                slug: m.slug,
+                name: m.name,
+                shape: m.shape as { transport: 'ws'; fronting: ModeShape['fronting'] },
+                ws: m.ws ?? { path: PROFILE_DEFAULTS.ws.path, port: PROFILE_DEFAULTS.ws.port },
+              }
+            : {
+                slug: m.slug,
+                name: m.name,
+                shape: m.shape as {
+                  transport: 'reality' | 'xhttp-reality';
+                  fronting: ModeShape['fronting'];
+                },
+                acceptProxyProtocol: m.acceptProxyProtocol,
+                reality: {
+                  target: c.snapshot.families[m.familySlug!]!.target,
+                  serverNames: c.snapshot.families[m.familySlug!]!.names,
+                },
+              },
+        );
+        const outcome = await createProfile(
+          writes,
+          config,
+          input.profileName,
+          template,
+          opened.id,
+          ctx,
+        );
         if (outcome !== 'created') {
           await finish(
             outcome === 'refused' ? 'failed' : 'pending',
@@ -574,7 +641,7 @@ export const run = internalAction({
           return null;
         }
       }
-      const compat = checkProfileCompatibility(profile);
+      const compat = checkProfileCompatibility(profile, modes);
       if (!compat.ok) {
         await finish(
           'failed',
@@ -583,113 +650,130 @@ export const run = internalAction({
         );
         return null;
       }
-      const e = compat.effective;
-      const asReality = (k: 'reality' | 'relay') => {
-        const r = e[k];
-        if (r.kind === 'cdn') throw new Error('unreachable');
-        return {
-          uuid: r.inboundUuid,
-          tag: r.tag,
-          port: r.port,
-          serverNames: r.serverNames,
-          target: r.target,
-          publicKey: r.publicKey,
-        };
-      };
-      const cdn = e.cdn.kind === 'cdn' ? e.cdn : null;
-      if (!cdn) throw new Error('unreachable');
       let privacy: 'ok' | 'drifted' = 'ok';
       if (provider.hardenLogging) {
         const report = await provider.hardenLogging(config, { dryRun: true });
         const p = report.profiles.find((x) => x.uuid === profile!.profileUuid);
         privacy = p && p.changed ? 'drifted' : 'ok';
       }
-      await record({
-        profileUuid: profile.profileUuid,
-        inbounds: {
-          cdn: {
-            uuid: cdn.inboundUuid,
-            tag: cdn.tag,
-            listen: cdn.listen,
-            port: cdn.port,
-            path: cdn.path,
-          },
-          reality: asReality('reality'),
-          relay: asReality('relay'),
-        },
-        privacy,
+      modes = modes.map((m) => {
+        const e = compat.effective[m.slug]!;
+        return { ...m, tag: e.tag, transport: transportRecord(e) };
       });
+      await record({ profileUuid: profile.profileUuid, privacy, modes });
 
-      // 4. Squads: three, each carrying its inbound; through the ledger.
-      await record({ step: 'squads' });
-      const squadInbound = {
-        fronted: cdn.inboundUuid,
-        reality: asReality('reality').uuid,
-        relay: asReality('relay').uuid,
-      };
-      const squads: Doc<'panelSetups'>['squads'] = {
-        fronted: { name: input.squads.fronted },
-        reality: { name: input.squads.reality },
-        relay: { name: input.squads.relay },
-      };
-      for (const kind of ['fronted', 'reality', 'relay'] as const) {
-        const name = input.squads[kind];
-        const inboundUuid = squadInbound[kind];
-        let sq = c.snapshot.squads.find((s) => s.name === name) ?? null;
-        if (!sq) {
+      // 4. Families bound to their transports: the one authoritative allowlist
+      //    of each REALITY transport (rollouts carry later changes).
+      await record({ step: 'bind' });
+      for (const m of modes) {
+        if (!isReality(m.shape) || !m.transport) continue;
+        if (c.snapshot.boundTransportUuids.includes(m.transport.uuid)) {
+          m.family = 'bound';
+          continue;
+        }
+        const fam = c.snapshot.families[m.familySlug!]!;
+        if (!sameTarget(m.transport.target ?? null, fam.target)) {
+          m.family = 'target_mismatch';
+          await save();
+          await finish('failed', 'servers.family_target_mismatch', 'bind');
+          return null;
+        }
+        await ctx.runMutation(internal.sniFamilies.bind, {
+          slug: fam.slug,
+          backendSlug: c.server.slug,
+          inboundTag: m.tag,
+        });
+        m.family = 'bound';
+      }
+      await save();
+
+      // 5. Groups: each mode's, found under its name or a name an earlier
+      //    setup gave it (renamed in place: ids and assignments survive);
+      //    created only when nothing exists; carrying the mode's transport.
+      await record({ step: 'groups' });
+      for (const m of modes) {
+        const transportUuid = m.transport!.uuid;
+        let group =
+          c.snapshot.groups.find((g) => g.name === m.name) ??
+          (m.groupUuid ? c.snapshot.groups.find((g) => g.groupUuid === m.groupUuid) : undefined) ??
+          null;
+        if (!group) {
+          const legacy = (LEGACY_GROUP_NAMES[m.slug] ?? [])
+            .map((n) => c.snapshot.groups.find((g) => g.name === n))
+            .find((g) => !!g);
+          if (legacy) {
+            const { opId } = await ctx.runMutation(internal.panelWrites.requestSquadUpdate, {
+              backendServerId: sid,
+              squadUuid: legacy.groupUuid,
+              name: m.name,
+            });
+            const r = await ctx.runAction(internal.panelWrites.run, { opId });
+            if (r.open) {
+              await finish('pending', 'servers.op_running', 'groups');
+              return null;
+            }
+            await ctx.runMutation(internal.panelSetup.recordGroupRename, {
+              ...f,
+              from: legacy.name,
+              to: m.name,
+            });
+            m.renamedFrom = legacy.name;
+            await observeInstance(ctx, c.server);
+            c = await reload();
+            group = c.snapshot.groups.find((g) => g.groupUuid === legacy.groupUuid) ?? null;
+          }
+        }
+        if (!group) {
           const { opId } = await ctx.runMutation(internal.panelWrites.requestSquadCreate, {
             backendServerId: sid,
-            name,
-            inboundUuids: [inboundUuid],
+            name: m.name,
+            inboundUuids: [transportUuid],
           });
           const r = await ctx.runAction(internal.panelWrites.run, { opId });
           if (r.open) {
-            await finish('pending', 'servers.op_running', 'squads');
+            await finish('pending', 'servers.op_running', 'groups');
             return null;
           }
           await observeInstance(ctx, c.server);
           c = await reload();
-          sq = c.snapshot.squads.find((s) => s.name === name) ?? null;
-          if (!sq) {
-            await finish('pending', 'servers.observe_lag', 'squads');
+          group = c.snapshot.groups.find((g) => g.name === m.name) ?? null;
+          if (!group) {
+            await finish('pending', 'servers.observe_lag', 'groups');
             return null;
           }
-        } else if (!sq.inboundUuids.includes(inboundUuid)) {
+        } else if (!group.transportUuids.includes(transportUuid)) {
           const { opId } = await ctx.runMutation(internal.panelWrites.requestSquadUpdate, {
             backendServerId: sid,
-            squadUuid: sq.squadUuid,
-            inboundUuids: [...sq.inboundUuids, inboundUuid],
+            squadUuid: group.groupUuid,
+            inboundUuids: [...group.transportUuids, transportUuid],
           });
           const r = await ctx.runAction(internal.panelWrites.run, { opId });
           if (r.open) {
-            await finish('pending', 'servers.op_running', 'squads');
+            await finish('pending', 'servers.op_running', 'groups');
             return null;
           }
         }
-        squads[kind] = { name, uuid: sq.squadUuid };
+        m.groupUuid = group.groupUuid;
+        await save();
       }
-      await record({ squads });
 
-      // 5. Placements: each squad into its mode's pool; unknown modes are recorded, not bound.
+      // 6. Placements: each group into its mode's pool; an unknown mode is recorded, not bound.
       await record({ step: 'placements' });
-      const modes: Record<string, { addSquadUuids: string[] }> = {};
-      const placements: { mode: string; state: 'bound' | 'skipped' }[] = [];
-      for (const kind of ['fronted', 'reality', 'relay'] as const) {
-        const mode = SQUAD_MODES[kind];
-        const uuid = squads[kind].uuid!;
-        if (c.snapshot.knownModes.includes(mode)) {
-          modes[mode] = { addSquadUuids: [uuid] };
-          placements.push({ mode, state: 'bound' });
-        } else placements.push({ mode, state: 'skipped' });
+      const patch: Record<string, { addSquadUuids: string[] }> = {};
+      for (const m of modes) {
+        if (c.snapshot.knownModes.includes(m.slug)) {
+          patch[m.slug] = { addSquadUuids: [m.groupUuid!] };
+          m.placement = 'bound';
+        } else m.placement = 'skipped';
       }
-      if (Object.keys(modes).length > 0)
+      if (Object.keys(patch).length > 0)
         await ctx.runMutation(internal.connectionModes.setModePlacements, {
           backend: c.server.backend,
-          patch: { modes },
+          patch: { modes: patch },
         });
-      await record({ placements });
+      await save();
 
-      // 6. Subscription templates: reconcile on drift; a refused write blocks activation later.
+      // 7. Subscription templates: reconcile on drift; a refused write blocks activation later.
       await record({ step: 'templates' });
       if (!(await writable('templates'))) return null;
       const listed = await writes.listSubscriptionTemplates(config);
@@ -732,6 +816,7 @@ export const run = internalAction({
         err instanceof ConvexError && typeof (err.data as { code?: unknown })?.code === 'string'
           ? (err.data as { code: string }).code
           : 'servers.setup_failed';
+      await record({ modes }).catch(() => undefined);
       await finish('failed', code);
       return null;
     }
@@ -747,7 +832,8 @@ class Fenced extends Error {}
 async function createProfile(
   writes: NonNullable<(typeof PROVIDERS)[keyof typeof PROVIDERS]['panelWrites']>,
   config: BackendConfig,
-  input: SetupInput,
+  profileName: string,
+  modes: readonly ModeTemplateInput[],
   obligationId: Id<'panelObligations'>,
   ctx: ActionCtx,
 ): Promise<'created' | 'refused' | 'unresolved'> {
@@ -755,13 +841,18 @@ async function createProfile(
     state: 'sent' | 'unresolved' | 'confirmed' | 'failed',
     extra: { resourceRef?: string; code?: string } = {},
   ) => ctx.runMutation(internal.panelObligations.mark, { id: obligationId, state, ...extra });
-  const body = buildBootstrapProfile(input, {
-    reality: { privateKey: generateRealityKey().privateKey, shortIds: BOOTSTRAP_DEFAULTS.shortIds },
-    relay: { privateKey: generateRealityKey().privateKey, shortIds: BOOTSTRAP_DEFAULTS.shortIds },
-  });
+  const keys = Object.fromEntries(
+    modes
+      .filter((m) => m.shape.transport !== 'ws')
+      .map((m) => [
+        m.slug,
+        { privateKey: generateRealityKey().privateKey, shortIds: PROFILE_DEFAULTS.shortIds },
+      ]),
+  );
+  const body = buildProfile(modes, keys);
   await mark('sent');
   try {
-    const made = await writes.createProfile(config, { name: input.profileName, config: body });
+    const made = await writes.createProfile(config, { name: profileName, config: body });
     await mark('confirmed', { resourceRef: made.profileUuid });
     return 'created';
   } catch (err) {
@@ -789,16 +880,13 @@ export const view = internalQuery({
         generation: 0,
         running: false,
         profile: null,
-        inbounds: null,
-        squads: [],
-        placements: [],
+        modes: [],
         templates: [],
         privacy: null,
         originDns: null,
-        handoff: null,
+        adopted: false,
         updatedAt: null,
       };
-    const target = (t: { address: string; port: number }) => `${t.address}:${t.port}`;
     return {
       exists: true,
       state: row.state,
@@ -807,50 +895,53 @@ export const view = internalQuery({
       generation: row.generation,
       running: !!row.claim && row.claim.expiresAt > Date.now(),
       profile: { name: row.profileName, uuid: row.profileUuid ?? null },
-      inbounds: row.inbounds
-        ? {
-            cdn: {
-              tag: row.inbounds.cdn.tag,
-              listen: row.inbounds.cdn.listen,
-              port: row.inbounds.cdn.port,
-              path: row.inbounds.cdn.path,
-            },
-            reality: {
-              tag: row.inbounds.reality.tag,
-              port: row.inbounds.reality.port,
-              serverNames: row.inbounds.reality.serverNames,
-              target: target(row.inbounds.reality.target),
-            },
-            relay: {
-              tag: row.inbounds.relay.tag,
-              port: row.inbounds.relay.port,
-              serverNames: row.inbounds.relay.serverNames,
-              target: target(row.inbounds.relay.target),
-            },
-          }
-        : null,
-      squads: (['fronted', 'reality', 'relay'] as const).map((k) => ({
-        kind: k,
-        name: row.squads[k].name,
-        bound: !!row.squads[k].uuid,
+      modes: row.modes.map((m) => ({
+        slug: m.slug,
+        name: m.name,
+        shape: m.shape,
+        familySlug: m.familySlug ?? null,
+        tag: m.tag,
+        group: { uuid: m.groupUuid ?? null, renamedFrom: m.renamedFrom ?? null },
+        placement: m.placement,
+        transport: m.transport
+          ? {
+              port: m.transport.port,
+              path: m.transport.path ?? null,
+              serverNames: m.transport.serverNames ?? [],
+              target: m.transport.target
+                ? `${m.transport.target.address}:${m.transport.target.port}`
+                : null,
+            }
+          : null,
+        family: m.family,
       })),
-      placements: row.placements,
       templates: row.templates.map((t) => ({ family: t.family, state: t.state })),
       privacy: row.privacy ?? null,
       originDns: row.originDns
         ? { accountId: row.originDns.accountId, zoneName: row.originDns.zoneName }
         : null,
-      handoff: row.handoff ?? null,
+      adopted: row.adopted,
       updatedAt: new Date(row.updatedAt).toISOString(),
     };
   },
 });
 
-/** The setup row a node intent reads its inbounds and origin zone from; null until ready. */
+/** Whether a setup row can serve node intents: ready, with every mode's transport and group. */
+export function setupReady(row: Setup | null): row is Setup {
+  return (
+    !!row &&
+    row.state === 'ready' &&
+    !!row.profileUuid &&
+    row.modes.length > 0 &&
+    row.modes.every((m) => !!m.transport && !!m.groupUuid)
+  );
+}
+
+/** The setup row a node intent reads its transports and origin zone from; null until ready. */
 export const readyFor = internalQuery({
   args: { backendServerId: v.id('backendServers') },
   handler: async (ctx, { backendServerId }) => {
     const row = await setupRow(ctx, backendServerId);
-    return row && row.state === 'ready' && row.inbounds && row.profileUuid ? row : null;
+    return setupReady(row) ? row : null;
   },
 });

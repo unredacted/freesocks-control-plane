@@ -38,7 +38,6 @@
   import { codeOf } from './lib/run';
   import { pickInstance, serversPaths } from './lib/routes';
   import {
-    PURPOSE_WORDS,
     ago,
     countryLabel,
     fleetSentence,
@@ -71,7 +70,7 @@
   let instance = $derived(summary.data?.instances.find((i) => i.slug === slug) ?? null);
   let observeOn = $derived(summary.data?.config['manage.observe'] ?? false);
   let manageOn = $derived(summary.data?.config['manage.enabled'] ?? false);
-  let canWrite = $derived(manageOn && !!instance?.writable && !!instance?.handoffCurrent);
+  let canWrite = $derived(manageOn && !!instance?.writable && !!instance?.setUp);
   let refreshing = $state(false);
   let saving = $state(false);
 
@@ -185,7 +184,7 @@
       </p>
     </div>
 
-    {#if attention.length > 0 || (manageOn && setupRow) || (manageOn && instance && !instance.handoffCurrent && !setupRow)}
+    {#if attention.length > 0 || (manageOn && setupRow) || (manageOn && instance && !instance.setUp && !setupRow)}
       <section aria-labelledby="needs-you">
         <h2 id="needs-you" class="mb-3 text-base font-semibold">Needs you</h2>
         <ul class="space-y-2">
@@ -194,14 +193,12 @@
               class="flex flex-wrap items-center gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm"
             >
               <span class="min-w-0 flex-1">{setupRow}</span>
-              <Button variant="outline" size="sm" onclick={() => (setupOpen = true)}>
-                {setup.data?.state === 'needs_takeover' ? 'Take over' : 'Set up'}
-              </Button>
+              <Button variant="outline" size="sm" onclick={() => (setupOpen = true)}>Set up</Button>
             </li>
-          {:else if manageOn && instance && !instance.handoffCurrent}
+          {:else if manageOn && instance && !instance.setUp}
             <li class="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm">
-              Changes are allowed, but this panel is not set up yet, so they are refused. Set it up
-              first.
+              Changes are allowed, but this backend is not set up yet, so they are refused. Set it
+              up first.
             </li>
           {/if}
           {#each attention as row (row.key)}
@@ -249,9 +246,7 @@
                   <span class="flex flex-wrap items-baseline gap-x-2">
                     <span class="font-medium">{node.name}</span>
                     {#if intent}
-                      <span class="text-muted-foreground text-xs"
-                        >{PURPOSE_WORDS[intent.purpose]}</span
-                      >
+                      <span class="text-muted-foreground text-xs">{intent.mode.name}</span>
                     {/if}
                     {#if country}<span class="text-muted-foreground text-xs">{country}</span>{/if}
                   </span>

@@ -10,7 +10,6 @@
  * marks the instance unhealthy.
  */
 import { writeAuditLog } from './lib/audit';
-import { adoptObservedReservations } from './panelReservations';
 import { ConvexError, v } from 'convex/values';
 import type { ActionCtx } from './_generated/server';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
@@ -288,9 +287,6 @@ export const record = internalMutation({
 
     await upsertObservedHosts(ctx, sid, a.hosts, now);
     await upsertObservedSquads(ctx, sid, a.squads, now);
-
-    // A reserved identity that now exists was made by the run that reserved it.
-    await adoptObservedReservations(ctx, sid);
 
     await stampState(ctx, sid, {
       attemptedAt: now,

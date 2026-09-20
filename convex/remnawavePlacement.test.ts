@@ -216,7 +216,12 @@ describe('resolveBoundModeCounts', () => {
       }),
     );
     const counts = await t.run((ctx) => resolveBoundModeCounts(ctx.db));
-    expect(counts).toEqual({ 'freedom-ws': 3, 'freedom-reality': 0, 'privacy-reality': 0 });
+    expect(counts).toEqual({
+      'freedom-ws': 3,
+      'freedom-reality': 0,
+      'freedom-xhttp': 0,
+      'privacy-reality': 0,
+    });
   });
 
   test('a stale pre-refactor appSettings pool is IGNORED (the table is the only store)', async () => {
@@ -229,7 +234,12 @@ describe('resolveBoundModeCounts', () => {
       });
     });
     const counts = await t.run((ctx) => resolveBoundModeCounts(ctx.db));
-    expect(counts).toEqual({ 'freedom-ws': 0, 'freedom-reality': 0, 'privacy-reality': 0 });
+    expect(counts).toEqual({
+      'freedom-ws': 0,
+      'freedom-reality': 0,
+      'freedom-xhttp': 0,
+      'privacy-reality': 0,
+    });
     expect(await t.run((ctx) => resolveModeSquadPool(ctx.db, 'freedom-ws'))).toEqual([]);
     const bound = await t.run(async (ctx) => [...(await resolveBoundModeIds(ctx.db))]);
     expect(bound).toEqual([]);

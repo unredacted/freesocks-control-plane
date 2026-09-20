@@ -27,6 +27,7 @@ import {
   FIXTURE_INBOUND as INBOUND,
   adoptL4Edge,
   insertPanelServer,
+  markBackendSetUp,
   realityListener,
   registerRelay,
 } from './lib/edges/testing/fixtures';
@@ -135,10 +136,7 @@ async function seed(familyNames = ['fresh-1.example', 'fresh-2.example']) {
   const panel = installPanel();
   await t.action(internal.panelObserve.refresh, { backendServerId: serverId });
   await t.mutation(internal.serverAdmin.patchConfig, { patch: { 'manage.enabled': true } });
-  await t.mutation(internal.panelLedger.reportHandoff, {
-    backendServerId: serverId,
-    roleContractVersion: 1,
-  });
+  await markBackendSetUp(t, serverId);
   await t.mutation(internal.sniFamilies.patchConfig, { patch: { enabled: true } });
   const { relayId, listenerIds } = await registerRelay(t, { listeners: [realityListener()] });
   const listenerId = listenerIds.a as Id<'relayListeners'>;
