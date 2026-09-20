@@ -2508,7 +2508,7 @@ export default defineSchema({
   // the delivery gate version.
   panelSetups: defineTable({
     backendServerId: v.id('backendServers'),
-    desired: v.string(), // JSON PanelSetupInput (non-secret: names, targets, ports)
+    desired: v.string(), // JSON BackendSetupInput (non-secret: names, targets, ports)
     desiredHash: v.string(),
     generation: v.number(),
     claim: v.optional(v.object({ attemptId: v.string(), expiresAt: v.number() })),

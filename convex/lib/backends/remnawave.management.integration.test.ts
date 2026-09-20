@@ -413,7 +413,7 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave management contract (integra
     const a = uuidOfTag(profile.data, tagA)!;
     const inbound = { configProfileUuid: profileUuid, configProfileInboundUuid: a };
 
-    const { hostUuid } = await w.createHost(cfg, {
+    const { hostUuid } = await w.createAddress(cfg, {
       remark: `fcp-w-${run}`,
       address: '192.0.2.30',
       port: 443,
@@ -423,7 +423,7 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave management contract (integra
       inbound,
     });
     created.hosts.push(hostUuid);
-    await w.updateHost(cfg, hostUuid, {
+    await w.updateAddress(cfg, hostUuid, {
       sni: null,
       fingerprint: 'firefox',
       remark: `fcp-w-${run}-b`,
@@ -438,22 +438,22 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave management contract (integra
       address: '192.0.2.30',
       configProfileInboundUuid: a,
     });
-    await w.reorderHosts(cfg, [{ hostUuid, viewPosition: 7 }]);
+    await w.reorderAddresses(cfg, [{ hostUuid, viewPosition: 7 }]);
     seen = (await w.readHosts(cfg)).find((h) => h.hostUuid === hostUuid)!;
     expect(seen.viewPosition).toBe(7);
-    await w.deleteHost(cfg, hostUuid);
+    await w.deleteAddress(cfg, hostUuid);
     expect((await w.readHosts(cfg)).some((h) => h.hostUuid === hostUuid)).toBe(false);
     created.hosts = created.hosts.filter((u) => u !== hostUuid);
 
-    const { squadUuid } = await w.createSquad(cfg, { name: `fcpw-${run}`, inboundUuids: [a] });
+    const { squadUuid } = await w.createModeGroup(cfg, { name: `fcpw-${run}`, inboundUuids: [a] });
     created.squads.push(squadUuid);
-    await w.updateSquad(cfg, squadUuid, { name: `fcpw-${run}-b` });
+    await w.updateModeGroup(cfg, squadUuid, { name: `fcpw-${run}-b` });
     let squad = (await w.readSquads(cfg)).find((x) => x.squadUuid === squadUuid)!;
     expect(squad).toMatchObject({ name: `fcpw-${run}-b`, inboundUuids: [a] });
-    await w.updateSquad(cfg, squadUuid, { inboundUuids: [] });
+    await w.updateModeGroup(cfg, squadUuid, { inboundUuids: [] });
     squad = (await w.readSquads(cfg)).find((x) => x.squadUuid === squadUuid)!;
     expect(squad.inboundUuids).toEqual([]);
-    await w.deleteSquad(cfg, squadUuid);
+    await w.deleteModeGroup(cfg, squadUuid);
     expect((await w.readSquads(cfg)).some((x) => x.squadUuid === squadUuid)).toBe(false);
     created.squads = created.squads.filter((u) => u !== squadUuid);
 

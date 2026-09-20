@@ -255,7 +255,7 @@ export const HOST_MODE_IDS = ['fcp', 'operator', 'none'] as const;
 export const HostMode = z.enum(HOST_MODE_IDS);
 export type HostMode = z.infer<typeof HostMode>;
 
-export const RelayAdmin = z.object({
+export const OriginAdmin = z.object({
   id: z.string(),
   slug: z.string(),
   label: z.string().nullable().default(null),
@@ -303,7 +303,7 @@ export const RelayAdmin = z.object({
   suspicion: RelaySuspicion.nullable(),
   updatedAt: iso,
 });
-export type RelayAdmin = z.infer<typeof RelayAdmin>;
+export type OriginAdmin = z.infer<typeof OriginAdmin>;
 
 export const EDGE_LAYER_IDS = ['l4', 'l7'] as const;
 export const EdgeLayer = z.enum(EDGE_LAYER_IDS);
@@ -907,7 +907,7 @@ export const RelayPoolEntry = z.object({
   mixedIn: z.array(z.string()),
 });
 export const RelayPoolSummary = z.object({
-  relay: RelayAdmin,
+  relay: OriginAdmin,
   pool: z.array(RelayPoolEntry),
   standbys: z.number(),
   draining: z.number(),

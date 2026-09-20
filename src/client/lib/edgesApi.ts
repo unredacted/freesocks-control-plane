@@ -71,7 +71,7 @@ import {
   ProbeTargetsResponse,
   ProvidersUsageResponse,
   QuarantineView,
-  RelayAdmin,
+  OriginAdmin,
   RelayBySlugResponse,
   RelayEndpointsResponse,
   RelayListenerUpsertResponse,
@@ -254,7 +254,7 @@ export const EdgeQualifyResponse = z
   .object({ ok: z.boolean(), code: z.string().nullable().optional() })
   .passthrough();
 export type EdgeQualifyResponse = z.infer<typeof EdgeQualifyResponse>;
-const RelayList = z.array(RelayAdmin);
+const RelayList = z.array(OriginAdmin);
 const EdgeList = z.array(EdgeAdmin);
 const RotationList = z.array(EdgeRotationAdmin);
 const NodeCandidatesLoose = RelayNodeCandidatesResponse.passthrough();
@@ -362,7 +362,7 @@ export const deleteTemplate = (id: string) =>
 export const fetchRelays = () => apiClient.get(`${BASE}/relays`, RelayList);
 /** 404 (an ApiCallError with status 404) when the slug is unknown. */
 export const lookupRelay = (slug: string) =>
-  apiClient.get(`${BASE}/relays/lookup?slug=${enc(slug)}`, RelayAdmin);
+  apiClient.get(`${BASE}/relays/lookup?slug=${enc(slug)}`, OriginAdmin);
 export const fetchNodeCandidates = (backendServerId: string) =>
   apiClient.get(
     `${BASE}/relays/node-candidates?backendServerId=${enc(backendServerId)}`,

@@ -12,7 +12,7 @@
   import { Checkbox } from '@client/components/ui/checkbox';
   import { Label } from '@client/components/ui/label';
   import { invalidateServers, observeOp, opsQuery, recoverOp } from '@client/lib/serversApi';
-  import type { PanelOpView } from '../../../../../shared/contracts/servers';
+  import type { OpView } from '../../../../../shared/contracts/servers';
   import ConfirmDialog from '../../edges/components/ConfirmDialog.svelte';
   import { codeOf } from '../lib/run';
   import { ago, opTitle, opWords, serverErrorWords, type Dot } from '../lib/words';
@@ -32,13 +32,13 @@
   };
 
   let looking = $state<string | null>(null);
-  let settling = $state<PanelOpView | null>(null);
+  let settling = $state<OpView | null>(null);
   let settleOpen = $state(false);
   let revoked = $state(false);
   let noWorker = $state(false);
   let drained = $state(false);
 
-  async function look(op: PanelOpView) {
+  async function look(op: OpView) {
     looking = op.id;
     try {
       const next = await observeOp(slug, op.id);
@@ -51,7 +51,7 @@
     }
   }
 
-  function startSettle(op: PanelOpView) {
+  function startSettle(op: OpView) {
     settling = op;
     revoked = noWorker = drained = false;
     settleOpen = true;

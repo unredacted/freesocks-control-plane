@@ -505,7 +505,7 @@ export const ensureListenerHost = internalAction({
       return { state: claim.state as EnsureResult['state'] };
     }
     try {
-      const { uuid } = await ctx.runAction(internal.backends.createHost, {
+      const { uuid } = await ctx.runAction(internal.backends.createAddress, {
         backendServerId: claim.backendServerId,
         remark: claim.intended.remark,
         address: claim.intended.address,
@@ -538,7 +538,7 @@ export const deleteListenerHost = internalAction({
     if (!claim.claimed) return { state: claim.state };
     if (!claim.backendServerId) return { state: 'failed' };
     try {
-      await ctx.runAction(internal.backends.deleteHost, {
+      await ctx.runAction(internal.backends.deleteAddress, {
         backendServerId: claim.backendServerId,
         uuid: claim.uuid,
       });
@@ -622,7 +622,7 @@ export const resyncSni = internalAction({
     const c = await ctx.runQuery(internal.hostOps.resyncSniContext, { listenerId });
     if (!c) return { written: false };
     try {
-      await ctx.runAction(internal.backends.updateHost, {
+      await ctx.runAction(internal.backends.updateAddress, {
         backendServerId: c.backendServerId,
         uuid: c.uuid,
         address: c.address,

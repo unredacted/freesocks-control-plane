@@ -1110,7 +1110,7 @@ export const reconcile = internalAction({
           const have = c.addresses.find((h) => h.remark === w.remark);
           if (!have)
             ops.push(
-              ctx.runMutation(internal.panelWrites.requestHostCreate, {
+              ctx.runMutation(internal.panelWrites.requestAddressCreate, {
                 backendServerId: sid,
                 ...w,
                 fingerprint: 'chrome',
@@ -1121,7 +1121,7 @@ export const reconcile = internalAction({
             );
           else if (moved.some((m) => m.hostUuid === have.hostUuid))
             ops.push(
-              ctx.runMutation(internal.panelWrites.requestHostUpdate, {
+              ctx.runMutation(internal.panelWrites.requestAddressUpdate, {
                 backendServerId: sid,
                 hostUuid: have.hostUuid,
                 address: w.address,
@@ -1132,7 +1132,7 @@ export const reconcile = internalAction({
         }
         for (const h of extra)
           ops.push(
-            ctx.runMutation(internal.panelWrites.requestHostDelete, {
+            ctx.runMutation(internal.panelWrites.requestAddressDelete, {
               backendServerId: sid,
               hostUuid: h.hostUuid,
             }),

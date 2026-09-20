@@ -364,23 +364,23 @@ describe('/api/v1/admin/servers', () => {
     expect(tree.state.ok).toBe(true);
     const [node] = tree.nodes;
     expect(node).toMatchObject({ name: 'node-one', online: true, usersOnline: 4 });
-    expect(node.profile).toMatchObject({ name: 'Default', inboundCount: 2 });
+    expect(node.profile).toMatchObject({ name: 'Default', transportCount: 2 });
     // Only the transports the node SERVES hang off it.
-    expect(node.inbounds.map((i) => i.tag)).toEqual(['reality-in']);
-    expect(node.inbounds[0]).toMatchObject({
+    expect(node.transports.map((i) => i.tag)).toEqual(['reality-in']);
+    expect(node.transports[0]).toMatchObject({
       security: 'reality',
       serverNames: ['a.example', 'b.example'],
       realityTarget: 'target.example:443',
       realityPublicKeyMismatch: false,
     });
-    expect(node.inbounds[0].realityPublicKey).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect(node.inbounds[0].hosts.map((h) => h.remark)).toEqual(['node-one-reality']);
-    expect(node.inbounds[0].squads).toEqual([{ squadUuid: 's-1', name: 'free' }]);
+    expect(node.transports[0].realityPublicKey).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(node.transports[0].addresses.map((h) => h.remark)).toEqual(['node-one-reality']);
+    expect(node.transports[0].modeGroups).toEqual([{ groupUuid: 's-1', name: 'free' }]);
     // A Host on a transport no node serves is what an operator must notice.
-    expect(tree.unattached).toEqual({ profiles: [], hosts: ['points-nowhere'] });
+    expect(tree.unattached).toEqual({ profiles: [], addresses: ['points-nowhere'] });
     // GET serves the same thing from the cache, with no backend call.
     const cached = ServerTree.parse(await (await call('GET', 'panel-a/tree')).json());
-    expect(cached.nodes[0].inbounds[0].serverNames).toEqual(['a.example', 'b.example']);
+    expect(cached.nodes[0].transports[0].serverNames).toEqual(['a.example', 'b.example']);
   });
 
   test('no response carries a secret', async () => {
@@ -445,7 +445,12 @@ describe('/api/v1/admin/servers', () => {
     const res = await call('POST', 'panel-a/placements/validate');
     const text = await res.text();
     expect(PlacementValidation.parse(JSON.parse(text)).modes).toEqual([
-      { modeSlug: 'freedom-reality', squads: 3, unknownHere: 1, withoutInbounds: ['empty-squad'] },
+      {
+        modeSlug: 'freedom-reality',
+        modeGroups: 3,
+        unknownHere: 1,
+        withoutTransports: ['empty-squad'],
+      },
     ]);
     expect(text).not.toContain('99999999');
   });

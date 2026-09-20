@@ -17,7 +17,7 @@
   import { Label } from '@client/components/ui/label';
   import { applyProfilePatch, previewProfilePatch } from '@client/lib/serversApi';
   import type {
-    PanelInboundView,
+    TransportView,
     ProfilePatchOp,
     ProfilePatchPreview,
   } from '../../../../../shared/contracts/servers';
@@ -28,7 +28,7 @@
     open: boolean;
     slug: string;
     profileUuid: string;
-    inbound: PanelInboundView;
+    inbound: TransportView;
   }
   let { open = $bindable(false), slug, profileUuid, inbound }: Props = $props();
   const qc = useQueryClient();
@@ -62,9 +62,9 @@
   async function doPreview() {
     if (!dirty || busy) return;
     const ops: ProfilePatchOp[] = [];
-    if (namesChanged) ops.push({ op: 'setRealityServerNames', inboundTag: inbound.tag, names });
+    if (namesChanged) ops.push({ op: 'setRealityServerNames', transportTag: inbound.tag, names });
     if (targetChanged)
-      ops.push({ op: 'setRealityTarget', inboundTag: inbound.tag, target: target.trim() });
+      ops.push({ op: 'setRealityTarget', transportTag: inbound.tag, target: target.trim() });
     busy = true;
     try {
       preview = await previewProfilePatch(slug, profileUuid, ops);
@@ -138,7 +138,7 @@
           <p>The backend already has exactly this. There is nothing to apply.</p>
         {:else}
           <ul class="space-y-2">
-            {#each preview.changes as c (c.inboundTag + c.field)}
+            {#each preview.changes as c (c.transportTag + c.field)}
               <li class="bg-muted/30 rounded-md border p-3">
                 {#if c.field === 'serverNames'}
                   {@const was = Array.isArray(c.before) ? c.before : []}

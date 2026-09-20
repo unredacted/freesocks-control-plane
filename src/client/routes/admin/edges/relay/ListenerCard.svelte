@@ -7,7 +7,7 @@
    * Props: origin; listener; edgeCount (non-destroyed edges bound to it); highlighted?;
    *        onEdit(listener); onProvision(listenerKey)
    */
-  import type { RelayAdmin, RelayListenerAdmin } from '@shared/contracts/edges';
+  import type { OriginAdmin, RelayListenerAdmin } from '@shared/contracts/edges';
   import * as Card from '@client/components/ui/card';
   import { Badge } from '@client/components/ui/badge';
   import { Button } from '@client/components/ui/button';
@@ -35,7 +35,7 @@
   import { matchRuleWords, originTransportWords } from './relayLogic';
 
   interface Props {
-    relay: RelayAdmin;
+    relay: OriginAdmin;
     listener: RelayListenerAdmin;
     edgeCount: number;
     highlighted?: boolean;
@@ -59,9 +59,9 @@
   let disableOpen = $state(false);
   let deleteOpen = $state(false);
   let adoptOpen = $state(false);
-  let hostUuid = $state('');
+  let addressUuid = $state('');
   const uuidOk = $derived(
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(hostUuid.trim()),
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(addressUuid.trim()),
   );
 
   const OWNERSHIP_WORDS = {
@@ -105,7 +105,7 @@
   const inboundRows = $derived.by((): KeyValueRow[] =>
     l.panelBinding
       ? [
-          { label: 'Transport tag', value: l.panelBinding.inboundTag, mono: true },
+          { label: 'Transport tag', value: l.panelBinding.transportTag, mono: true },
           {
             label: 'Config profile',
             value: l.panelBinding.configProfileUuid,
@@ -442,9 +442,9 @@
   disabled={!uuidOk}
   run={() =>
     act.mutateAsync({
-      run: () => adoptListenerHost(relay.id, l.listenerKey, { hostUuid: hostUuid.trim() }),
+      run: () => adoptListenerHost(relay.id, l.listenerKey, { addressUuid: addressUuid.trim() }),
       success: 'Host adopted.',
-      after: () => (hostUuid = ''),
+      after: () => (addressUuid = ''),
       quiet: true,
     })}
 >
@@ -452,13 +452,13 @@
     <Label for={`adopt-${l.id}`}>Host uuid, from the backend's Hosts page</Label>
     <Input
       id={`adopt-${l.id}`}
-      bind:value={hostUuid}
+      bind:value={addressUuid}
       class="font-mono"
       placeholder="00000000-0000-4000-8000-000000000000"
       autocomplete="off"
-      aria-invalid={hostUuid !== '' && !uuidOk}
+      aria-invalid={addressUuid !== '' && !uuidOk}
     />
-    {#if hostUuid !== '' && !uuidOk}
+    {#if addressUuid !== '' && !uuidOk}
       <p class="text-xs text-destructive">That does not look like a uuid.</p>
     {/if}
   </div>

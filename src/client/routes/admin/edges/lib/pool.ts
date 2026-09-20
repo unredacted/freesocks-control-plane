@@ -2,7 +2,7 @@
  * Pool strip slot computation (pure; PoolStrip.svelte renders the result).
  *
  * An origin's published pool is an index-addressed array with holes
- * (`RelayAdmin.publishedEdgeIds`: `string | null` per pool index) and a wanted
+ * (`OriginAdmin.publishedEdgeIds`: `string | null` per pool index) and a wanted
  * size (`desiredPublished`). The strip shows, in order: every pool index up to
  * the larger of the two, then the standbys, then the draining edges.
  *

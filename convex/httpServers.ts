@@ -31,7 +31,7 @@ import { errorJson, json, readJson, resolveAdmin, type AdminAuth } from './lib/h
 import {
   NodeAppliedReport,
   NodeRegistration,
-  PanelSetupInput,
+  BackendSetupInput,
 } from '../src/shared/contracts/servers';
 
 const PREFIX = '/api/v1/admin/servers/';
@@ -456,7 +456,7 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
     const sid = instance.id;
     if (b === 'hosts' && !c) {
-      const { opId } = await ctx.runMutation(internal.panelWrites.requestHostCreate, {
+      const { opId } = await ctx.runMutation(internal.panelWrites.requestAddressCreate, {
         backendServerId: sid,
         ...(hostFieldsOf(body) as {
           remark: string;
@@ -470,7 +470,7 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
       return runOp(ctx, opId);
     }
     if (b === 'hosts' && c === 'reorder' && !d) {
-      const { opId } = await ctx.runMutation(internal.panelWrites.requestHostReorder, {
+      const { opId } = await ctx.runMutation(internal.panelWrites.requestAddressReorder, {
         backendServerId: sid,
         hostUuids: Array.isArray(body.hostUuids) ? body.hostUuids.map(String) : [],
         ...actorOf(admin),
@@ -478,7 +478,7 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
       return runOp(ctx, opId);
     }
     if (b === 'squads' && !c) {
-      const { opId } = await ctx.runMutation(internal.panelWrites.requestSquadCreate, {
+      const { opId } = await ctx.runMutation(internal.panelWrites.requestModeGroupCreate, {
         backendServerId: sid,
         name: String(body.name ?? ''),
         inboundUuids: Array.isArray(body.inboundUuids) ? body.inboundUuids.map(String) : [],
@@ -514,7 +514,7 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
   // Setting up a backend (docs/servers.md): start, resume, or adopt an existing one (typed).
   if (a && b === 'setup' && !c) {
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
-    const parsed = PanelSetupInput.safeParse(body);
+    const parsed = BackendSetupInput.safeParse(body);
     if (!parsed.success) return errorJson('validation', 'The setup input is not usable', 400);
     await ctx.runMutation(internal.panelSetup.start, {
       backendServerId: instance.id,
@@ -552,13 +552,13 @@ const patchHandler: Handler = async (ctx, parts, admin, body) => {
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
     const { opId } =
       b === 'hosts'
-        ? await ctx.runMutation(internal.panelWrites.requestHostUpdate, {
+        ? await ctx.runMutation(internal.panelWrites.requestAddressUpdate, {
             backendServerId: instance.id,
             hostUuid: c,
             ...hostFieldsOf(body),
             ...actorOf(admin),
           })
-        : await ctx.runMutation(internal.panelWrites.requestSquadUpdate, {
+        : await ctx.runMutation(internal.panelWrites.requestModeGroupUpdate, {
             backendServerId: instance.id,
             squadUuid: c,
             name: typeof body.name === 'string' ? body.name : undefined,
@@ -596,12 +596,12 @@ const deleteHandler: Handler = async (ctx, parts, admin, _body, query) => {
   const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
   const { opId } =
     b === 'hosts'
-      ? await ctx.runMutation(internal.panelWrites.requestHostDelete, {
+      ? await ctx.runMutation(internal.panelWrites.requestAddressDelete, {
           backendServerId: instance.id,
           hostUuid: c,
           ...actorOf(admin),
         })
-      : await ctx.runMutation(internal.panelWrites.requestSquadDelete, {
+      : await ctx.runMutation(internal.panelWrites.requestModeGroupDelete, {
           backendServerId: instance.id,
           squadUuid: c,
           ...actorOf(admin),

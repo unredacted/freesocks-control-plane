@@ -1,6 +1,6 @@
 /**
  * Wire contracts for server management (`/api/v1/admin/servers/*`): what Admin
- * -> Servers shows of a panel's nodes, config profiles, Hosts and squads.
+ * -> Servers shows of a panel's nodes, config profiles, Hosts and modeGroups.
  * Every shape is non-secret by construction: a REALITY inbound carries its
  * server names, its target and its PUBLIC key, never the private key, the
  * short ids or the client list.
@@ -22,7 +22,12 @@ export const ServerObserveState = z.object({
   ok: z.boolean().nullable(),
   errorCode: z.string().nullable(),
   counts: z
-    .object({ nodes: z.number(), profiles: z.number(), hosts: z.number(), squads: z.number() })
+    .object({
+      nodes: z.number(),
+      profiles: z.number(),
+      addresses: z.number(),
+      modeGroups: z.number(),
+    })
     .nullable(),
 });
 export type ServerObserveState = z.infer<typeof ServerObserveState>;
@@ -47,8 +52,8 @@ export const ServerSummary = z.object({
 });
 export type ServerSummary = z.infer<typeof ServerSummary>;
 
-export const PanelHostView = z.object({
-  hostUuid: z.string(),
+export const AddressView = z.object({
+  addressUuid: z.string(),
   remark: z.string(),
   address: z.string(),
   port: z.number(),
@@ -63,14 +68,14 @@ export const PanelHostView = z.object({
   tag: z.string().nullable(),
   viewPosition: z.number().nullable(),
   configProfileUuid: z.string().nullable(),
-  inboundUuid: z.string().nullable(),
+  transportUuid: z.string().nullable(),
   nodeUuids: z.array(z.string()),
 });
-export type PanelHostView = z.infer<typeof PanelHostView>;
+export type AddressView = z.infer<typeof AddressView>;
 
-export const PanelInboundView = z.object({
+export const TransportView = z.object({
   tag: z.string(),
-  inboundUuid: z.string(),
+  transportUuid: z.string(),
   protocol: z.string(),
   port: z.number().nullable(),
   listen: z.string().nullable(),
@@ -85,9 +90,9 @@ export const PanelInboundView = z.object({
   /** The profile stores a public key that does not belong to its private key. */
   realityPublicKeyMismatch: z.boolean(),
 });
-export type PanelInboundView = z.infer<typeof PanelInboundView>;
+export type TransportView = z.infer<typeof TransportView>;
 
-export const PanelNodeView = z.object({
+export const NodeView = z.object({
   nodeUuid: z.string(),
   name: z.string(),
   address: z.string().nullable(),
@@ -101,24 +106,24 @@ export const PanelNodeView = z.object({
     .object({
       profileUuid: z.string(),
       name: z.string(),
-      inboundCount: z.number(),
+      transportCount: z.number(),
       changedAt: z.string().nullable(),
     })
     .nullable(),
-  inbounds: z.array(
-    PanelInboundView.extend({
-      hosts: z.array(PanelHostView),
-      squads: z.array(z.object({ squadUuid: z.string(), name: z.string() })),
+  transports: z.array(
+    TransportView.extend({
+      addresses: z.array(AddressView),
+      modeGroups: z.array(z.object({ groupUuid: z.string(), name: z.string() })),
     }),
   ),
 });
-export type PanelNodeView = z.infer<typeof PanelNodeView>;
+export type NodeView = z.infer<typeof NodeView>;
 
 export const ServerTree = z.object({
   instance: z.object({ id: z.string(), slug: z.string(), name: z.string() }),
   observable: z.boolean(),
   state: ServerObserveState,
-  nodes: z.array(PanelNodeView),
+  nodes: z.array(NodeView),
   profiles: z.array(
     z.object({
       profileUuid: z.string(),
@@ -128,21 +133,21 @@ export const ServerTree = z.object({
       /** Edited on the panel by something other than FCP, and not yet acknowledged. */
       foreignEditAt: z.string().nullable(),
       nodeCount: z.number(),
-      inbounds: z.array(PanelInboundView),
+      transports: z.array(TransportView),
     }),
   ),
-  squads: z.array(
+  modeGroups: z.array(
     z.object({
-      squadUuid: z.string(),
+      groupUuid: z.string(),
       name: z.string(),
       membersCount: z.number().nullable(),
-      inboundTags: z.array(z.string().nullable()),
-      inboundUuids: z.array(z.string()),
+      transportTags: z.array(z.string().nullable()),
+      transportUuids: z.array(z.string()),
     }),
   ),
-  hosts: z.array(PanelHostView),
+  addresses: z.array(AddressView),
   /** What hangs off no node: a profile nothing runs, a Host on an inbound nothing serves. */
-  unattached: z.object({ profiles: z.array(z.string()), hosts: z.array(z.string()) }),
+  unattached: z.object({ profiles: z.array(z.string()), addresses: z.array(z.string()) }),
 });
 export type ServerTree = z.infer<typeof ServerTree>;
 
@@ -151,9 +156,9 @@ export const PlacementValidation = z.object({
   modes: z.array(
     z.object({
       modeSlug: z.string(),
-      squads: z.number(),
+      modeGroups: z.number(),
       unknownHere: z.number(),
-      withoutInbounds: z.array(z.string()),
+      withoutTransports: z.array(z.string()),
     }),
   ),
 });
@@ -172,7 +177,7 @@ export const PanelOpState = z.enum([
 export type PanelOpState = z.infer<typeof PanelOpState>;
 
 /** One change to a panel: sent once, then looked at until it is seen (docs/servers.md). */
-export const PanelOpView = z.object({
+export const OpView = z.object({
   id: z.string(),
   kind: z.enum(['host', 'squad', 'node', 'profile']),
   verb: z.string(),
@@ -187,8 +192,8 @@ export const PanelOpView = z.object({
   settledAt: z.string().nullable(),
   recovered: z.boolean(),
 });
-export type PanelOpView = z.infer<typeof PanelOpView>;
-export const PanelOpList = z.object({ ops: z.array(PanelOpView) });
+export type OpView = z.infer<typeof OpView>;
+export const PanelOpList = z.object({ ops: z.array(OpView) });
 
 /** The four conditions an unknown outcome is released on, each attested by name. */
 export const RecoveryAttestation = z.object({
@@ -204,7 +209,7 @@ export const HostWrite = z.object({
   remark: z.string(),
   address: z.string(),
   port: z.number(),
-  inboundUuid: z.string(),
+  transportUuid: z.string(),
   sni: z.string().nullable().optional(),
   host: z.string().nullable().optional(),
   path: z.string().nullable().optional(),
@@ -229,10 +234,10 @@ export type NodeWrite = z.infer<typeof NodeWrite>;
 export const ProfilePatchOp = z.discriminatedUnion('op', [
   z.object({
     op: z.literal('setRealityServerNames'),
-    inboundTag: z.string(),
+    transportTag: z.string(),
     names: z.array(z.string()),
   }),
-  z.object({ op: z.literal('setRealityTarget'), inboundTag: z.string(), target: z.string() }),
+  z.object({ op: z.literal('setRealityTarget'), transportTag: z.string(), target: z.string() }),
 ]);
 export type ProfilePatchOp = z.infer<typeof ProfilePatchOp>;
 
@@ -314,7 +319,7 @@ export const LEGACY_GROUP_NAMES: Readonly<Record<string, readonly string[]>> = {
 };
 
 /** What "Set up this backend" is asked for. Non-secret: names, shapes, families. */
-export const PanelSetupInput = z.object({
+export const BackendSetupInput = z.object({
   profileName: z.string().min(1).max(60).default('FreeSocks-Config'),
   modes: z.array(ModeSetupInput).min(1).max(12),
   /** The Cloudflare account whose zone WebSocket nodes get their origin names in; null = explicit hostnames per node. */
@@ -322,7 +327,7 @@ export const PanelSetupInput = z.object({
   /** A backend that already has nodes or addresses is taken over only when the operator says so (typed). */
   adopt: z.boolean().default(false),
 });
-export type PanelSetupInput = z.infer<typeof PanelSetupInput>;
+export type BackendSetupInput = z.infer<typeof BackendSetupInput>;
 
 export const PanelSetupState = z.enum(['pending', 'ready', 'failed']);
 
@@ -346,7 +351,7 @@ export const ModeSetupView = z.object({
 });
 export type ModeSetupView = z.infer<typeof ModeSetupView>;
 
-export const PanelSetupView = z.object({
+export const BackendSetupView = z.object({
   exists: z.boolean(),
   state: PanelSetupState.nullable(),
   step: z.string().nullable(),
@@ -364,7 +369,7 @@ export const PanelSetupView = z.object({
   adopted: z.boolean(),
   updatedAt: z.string().nullable(),
 });
-export type PanelSetupView = z.infer<typeof PanelSetupView>;
+export type BackendSetupView = z.infer<typeof BackendSetupView>;
 
 // --- bootstrap contract v2: node enrollment (the role) --------------------------------------
 
@@ -502,7 +507,7 @@ export const DirectTestLink = z.object({
   link: z.string(),
   binding: z.object({
     intentId: z.string(),
-    inboundUuid: z.string(),
+    transportUuid: z.string(),
     endpoint: z.string(),
     machineRevision: z.number(),
     configRevision: z.string(),
@@ -543,14 +548,14 @@ export const ProfilePatchPreview = z.object({
   changed: z.boolean(),
   changes: z.array(
     z.object({
-      inboundTag: z.string(),
+      transportTag: z.string(),
       field: z.enum(['serverNames', 'target']),
       before: z.union([z.array(z.string()), z.string(), z.null()]),
       after: z.union([z.array(z.string()), z.string()]),
     }),
   ),
   touchedTags: z.array(z.string()),
-  inboundUuids: z.record(z.string(), z.string()),
+  transportUuids: z.record(z.string(), z.string()),
   ops: z.array(ProfilePatchOp),
   restartsNodes: z.array(z.string()),
   affectedRelays: z.array(

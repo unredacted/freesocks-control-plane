@@ -153,11 +153,11 @@ export interface BackendProvider<C extends BackendConfig = BackendConfig> {
   // and an address/port repoint of ONE of them — the origin-edge flip. Absent for
   // backends whose endpoint is the server itself (Outline).
   listHosts?(config: C): Promise<BackendHost[]>;
-  updateHost?(config: C, patch: BackendHostPatch): Promise<void>;
+  updateAddress?(config: C, patch: BackendHostPatch): Promise<void>;
   /** Create one client-facing Host; returns its uuid. The caller confirms by re-listing. */
-  createHost?(config: C, host: BackendHostCreate): Promise<{ uuid: string }>;
+  createAddress?(config: C, host: BackendHostCreate): Promise<{ uuid: string }>;
   /** Delete one Host by uuid (idempotent: a missing Host is success). The caller confirms by re-listing. */
-  deleteHost?(config: C, uuid: string): Promise<void>;
+  deleteAddress?(config: C, uuid: string): Promise<void>;
   /** Flip ONE Host's disabled bit and nothing else (the origin hide/restore ledger). The caller confirms by re-listing. */
   setHostDisabled?(config: C, uuid: string, disabled: boolean): Promise<void>;
   // Optional: per-NODE load/online rows (Remnawave /api/nodes) for the origin
@@ -210,21 +210,21 @@ const remnawaveProvider: BackendProvider<RemnawaveServerConfig> = {
   getNodeStats: (c) => remnawaveGetNodeStats(c),
   hardenLogging: (c, opts) => remnawaveHardenLogging(c, opts),
   listHosts: (c) => remnawaveListHosts(c),
-  updateHost: (c, patch) => remnawaveUpdateHost(c, patch),
-  createHost: (c, host) => remnawaveCreateHost(c, host),
-  deleteHost: (c, uuid) => remnawaveDeleteHost(c, uuid),
+  updateAddress: (c, patch) => remnawaveUpdateHost(c, patch),
+  createAddress: (c, host) => remnawaveCreateHost(c, host),
+  deleteAddress: (c, uuid) => remnawaveDeleteHost(c, uuid),
   setHostDisabled: (c, uuid, disabled) => remnawaveSetHostDisabled(c, uuid, disabled),
   getNodeInventory: (c) => remnawaveGetNodeInventory(c),
   listNodeInbounds: (c, nodeUuid) => remnawaveListNodeInbounds(c, nodeUuid),
   observePanel: (c, digestKey) => remnawaveObservePanel(c, digestKey),
   panelWrites: {
-    createHost: remnawaveManageCreateHost,
-    updateHost: remnawaveManageUpdateHost,
-    deleteHost: (c, uuid) => remnawaveDeleteHost(c, uuid),
-    reorderHosts: remnawaveReorderHosts,
-    createSquad: remnawaveCreateSquad,
-    updateSquad: remnawaveUpdateSquad,
-    deleteSquad: remnawaveDeleteSquad,
+    createAddress: remnawaveManageCreateHost,
+    updateAddress: remnawaveManageUpdateHost,
+    deleteAddress: (c, uuid) => remnawaveDeleteHost(c, uuid),
+    reorderAddresses: remnawaveReorderHosts,
+    createModeGroup: remnawaveCreateSquad,
+    updateModeGroup: remnawaveUpdateSquad,
+    deleteModeGroup: remnawaveDeleteSquad,
     createNode: remnawaveCreateNode,
     updateNode: remnawaveUpdateNode,
     setNodeEnabled: remnawaveSetNodeEnabled,

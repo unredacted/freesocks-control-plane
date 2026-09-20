@@ -63,7 +63,7 @@
     parseLayer,
     type AttentionItem,
     type OverviewFilter,
-    type RelayRow,
+    type OriginRow,
   } from './overview/derive';
 
   const qc = useQueryClient();
@@ -190,10 +190,10 @@
   }
 
   // Row actions.
-  let provisionRow = $state<RelayRow | null>(null);
+  let provisionRow = $state<OriginRow | null>(null);
   let provisionOpen = $state(false);
   const provision = createMutation(() => ({
-    mutationFn: (row: RelayRow) => provisionRelay(row.relay.id),
+    mutationFn: (row: OriginRow) => provisionRelay(row.relay.id),
     onSuccess: (res, row) => {
       toast.success('Provisioning started. Follow the run on the origin page.');
       invalidateRelay(qc, row.relay.slug);
@@ -201,7 +201,7 @@
     },
   }));
   const probe = createMutation(() => ({
-    mutationFn: (row: RelayRow) => probeRelay(row.relay.id),
+    mutationFn: (row: OriginRow) => probeRelay(row.relay.id),
     onSuccess: (res, row) => {
       const started = res.runIds.length;
       const skipped = res.skipped.length;

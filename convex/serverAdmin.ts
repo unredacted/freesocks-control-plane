@@ -60,7 +60,15 @@ function mapState(s: Doc<'panelObserveState'> | null) {
     attemptedAt: iso(s?.attemptedAt),
     ok: s ? s.ok : null,
     errorCode: s?.errorCode ?? null,
-    counts: s?.counts ?? null,
+    // Stored under the backend's own words; the view speaks ours.
+    counts: s?.counts
+      ? {
+          nodes: s.counts.nodes,
+          profiles: s.counts.profiles,
+          addresses: s.counts.hosts,
+          modeGroups: s.counts.squads,
+        }
+      : null,
   };
 }
 
@@ -154,7 +162,7 @@ export const instanceBySlug = internalQuery({
 function mapInbound(i: Doc<'panelProfiles'>['inbounds'][number]) {
   return {
     tag: i.tag,
-    inboundUuid: i.inboundUuid,
+    transportUuid: i.inboundUuid,
     protocol: i.protocol,
     port: i.port,
     listen: i.listen ?? null,
@@ -172,7 +180,7 @@ function mapInbound(i: Doc<'panelProfiles'>['inbounds'][number]) {
 
 function mapHost(h: Doc<'panelHosts'>) {
   return {
-    hostUuid: h.hostUuid,
+    addressUuid: h.hostUuid,
     remark: h.remark,
     address: h.address,
     port: h.port,
@@ -187,7 +195,7 @@ function mapHost(h: Doc<'panelHosts'>) {
     tag: h.tag ?? null,
     viewPosition: h.viewPosition ?? null,
     configProfileUuid: h.configProfileUuid ?? null,
-    inboundUuid: h.configProfileInboundUuid ?? null,
+    transportUuid: h.configProfileInboundUuid ?? null,
     nodeUuids: h.nodeUuids,
   };
 }
@@ -242,7 +250,7 @@ export const tree = internalQuery({
         const profile = n.configProfileUuid ? profileBy.get(n.configProfileUuid) : undefined;
         if (profile) usedProfiles.add(profile.profileUuid);
         const active = new Set(n.activeInboundUuids);
-        const inbounds = (profile?.inbounds ?? [])
+        const transports = (profile?.inbounds ?? [])
           .filter((i) => active.has(i.inboundUuid))
           .map((i) => {
             const mine = hosts.filter(
@@ -253,12 +261,12 @@ export const tree = internalQuery({
             for (const h of mine) placedHosts.add(h.hostUuid);
             return {
               ...mapInbound(i),
-              hosts: mine
+              addresses: mine
                 .sort((a, b) => (a.viewPosition ?? 0) - (b.viewPosition ?? 0))
                 .map(mapHost),
-              squads: squads
+              modeGroups: squads
                 .filter((sq) => sq.inboundUuids.includes(i.inboundUuid))
-                .map((sq) => ({ squadUuid: sq.squadUuid, name: sq.name })),
+                .map((sq) => ({ groupUuid: sq.squadUuid, name: sq.name })),
             };
           });
         return {
@@ -275,11 +283,11 @@ export const tree = internalQuery({
             ? {
                 profileUuid: profile.profileUuid,
                 name: profile.name,
-                inboundCount: profile.inbounds.length,
+                transportCount: profile.inbounds.length,
                 changedAt: iso(profile.tokenChangedAt),
               }
             : null,
-          inbounds,
+          transports,
         };
       });
 
@@ -297,21 +305,21 @@ export const tree = internalQuery({
           changedAt: iso(p.tokenChangedAt),
           foreignEditAt: iso(p.foreignEditAt),
           nodeCount: nodes.filter((n) => n.configProfileUuid === p.profileUuid).length,
-          inbounds: p.inbounds.map(mapInbound),
+          transports: p.inbounds.map(mapInbound),
         })),
-      squads: squads
+      modeGroups: squads
         .sort((a, b) => a.name.localeCompare(b.name))
         .map((sq) => ({
-          squadUuid: sq.squadUuid,
+          groupUuid: sq.squadUuid,
           name: sq.name,
           membersCount: sq.membersCount ?? null,
-          inboundTags: sq.inboundUuids.map((u) => tagOf.get(u) ?? null),
-          inboundUuids: sq.inboundUuids,
+          transportTags: sq.inboundUuids.map((u) => tagOf.get(u) ?? null),
+          transportUuids: sq.inboundUuids,
         })),
-      hosts: hosts.sort((a, b) => (a.viewPosition ?? 0) - (b.viewPosition ?? 0)).map(mapHost),
+      addresses: hosts.sort((a, b) => (a.viewPosition ?? 0) - (b.viewPosition ?? 0)).map(mapHost),
       unattached: {
         profiles: profiles.filter((p) => !usedProfiles.has(p.profileUuid)).map((p) => p.name),
-        hosts: hosts.filter((h) => !placedHosts.has(h.hostUuid)).map((h) => h.remark),
+        addresses: hosts.filter((h) => !placedHosts.has(h.hostUuid)).map((h) => h.remark),
       },
     };
   },
@@ -400,12 +408,12 @@ export const validatePlacements = internalQuery({
           const present = pool.filter((u) => known.has(u));
           return {
             modeSlug: p.modeSlug,
-            squads: pool.length,
+            modeGroups: pool.length,
             // Several instances can share a backend type: a uuid missing HERE
             // may live on another backend, so this is a count to look into, not
             // a verdict.
             unknownHere: pool.length - present.length,
-            withoutInbounds: present
+            withoutTransports: present
               .map((u) => known.get(u)!)
               .filter((sq) => sq.inboundUuids.length === 0)
               .map((sq) => sq.name),

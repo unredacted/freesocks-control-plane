@@ -15,13 +15,13 @@ import type { z } from 'zod';
 import type {
   AttentionItem,
   EdgeSummary,
-  RelayAdmin,
+  OriginAdmin,
   SetupRunAdmin,
 } from '../../../../../shared/contracts/edges';
 import type { SetupRunStage } from '../../../../../shared/contracts/edgeCodes';
 import { codeLabel } from '../../../../lib/edgeCodes';
 
-export type RelayRow = z.infer<typeof EdgeSummary>['relays'][number];
+export type OriginRow = z.infer<typeof EdgeSummary>['relays'][number];
 export type Dot = 'green' | 'amber' | 'red' | 'blue' | 'grey';
 
 export interface NodeStatus {
@@ -82,7 +82,7 @@ export interface StatusContext {
 }
 
 type RelayLike = Pick<
-  RelayAdmin,
+  OriginAdmin,
   | 'slug'
   | 'enabled'
   | 'quarantine'

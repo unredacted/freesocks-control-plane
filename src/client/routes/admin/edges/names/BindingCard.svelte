@@ -101,10 +101,10 @@
   }
 </script>
 
-<section class="rounded-lg border p-4 text-sm" aria-label={binding.inboundTag}>
+<section class="rounded-lg border p-4 text-sm" aria-label={binding.transportTag}>
   <div class="flex flex-wrap items-start gap-3">
     <div class="min-w-0 flex-1">
-      <h3 class="font-medium break-all">{binding.inboundTag}</h3>
+      <h3 class="font-medium break-all">{binding.transportTag}</h3>
       <p class="text-muted-foreground break-all">on {binding.backendSlug}</p>
     </div>
     <Button variant="outline" size="sm" disabled={busy} onclick={look}>
@@ -220,7 +220,7 @@
 />
 <ConfirmDialog
   bind:open={unbindOpen}
-  title={`Unbind ${binding.inboundTag}?`}
+  title={`Unbind ${binding.transportTag}?`}
   body="Names on the panel and with members stay as they are."
   confirmLabel="Unbind"
   danger

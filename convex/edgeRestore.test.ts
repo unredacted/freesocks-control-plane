@@ -14,7 +14,7 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { upsertSettingRow } from './appSettings';
 import { judgeRawBody } from './edgeRestore';
-import { fakeHostPanel, type PanelHostRow } from './lib/edges/testing/fakeHostPanel';
+import { fakeHostPanel, type AddressRow } from './lib/edges/testing/fakeHostPanel';
 import {
   FIXTURE_CONFIG_PROFILE,
   FIXTURE_INBOUND,
@@ -44,7 +44,7 @@ const inbound = (uuid: string) => ({
   configProfileInboundUuid: uuid,
 });
 
-function panelHosts(): PanelHostRow[] {
+function panelHosts(): AddressRow[] {
   return [
     {
       uuid: FCP_UUID,

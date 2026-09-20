@@ -5,7 +5,7 @@
    *
    * Props: origin; edges; onOpenEdge(edgeId)
    */
-  import type { EdgeAdmin, RelayAdmin } from '@shared/contracts/edges';
+  import type { EdgeAdmin, OriginAdmin } from '@shared/contracts/edges';
   import * as Card from '@client/components/ui/card';
   import KeyValue from '../components/KeyValue.svelte';
   import PoolStrip from '../components/PoolStrip.svelte';
@@ -13,7 +13,7 @@
   import type { KeyValueRow, PoolEntry } from '../lib/types';
 
   interface Props {
-    relay: RelayAdmin;
+    relay: OriginAdmin;
     edges: EdgeAdmin[];
     onOpenEdge: (edgeId: string) => void;
   }

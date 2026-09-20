@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'vitest';
-import type { PanelObservedInbound } from '../backends/types';
+import type { ObservedTransport } from '../backends/types';
 import { checkProfileCompatibility, findTransport } from './profileCompat';
 import type { ModeShape } from './profileTemplate';
 
-const base = (over: Partial<PanelObservedInbound>): PanelObservedInbound => ({
+const base = (over: Partial<ObservedTransport>): ObservedTransport => ({
   tag: 'X',
   configProfileUuid: 'p1',
   configProfileInboundUuid: 'i-x',
@@ -17,7 +17,7 @@ const base = (over: Partial<PanelObservedInbound>): PanelObservedInbound => ({
   ...over,
 });
 
-const good: PanelObservedInbound[] = [
+const good: ObservedTransport[] = [
   base({
     tag: 'FREEDOM_WEBSOCKET',
     configProfileInboundUuid: 'i-ws',

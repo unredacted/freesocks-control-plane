@@ -5,7 +5,7 @@
    * refuses it here and says so.
    *
    * Props:
-   *   open (bindable), slug, inboundUuid, inboundTag
+   *   open (bindable), slug, transportUuid, transportTag
    *   host?: the Host being changed; absent = a new one
    */
   import { useQueryClient } from '@tanstack/svelte-query';
@@ -14,19 +14,19 @@
   import * as Dialog from '@client/components/ui/dialog';
   import { Input } from '@client/components/ui/input';
   import { Label } from '@client/components/ui/label';
-  import { createHost, deleteHost, updateHost } from '@client/lib/serversApi';
-  import type { PanelHostView } from '../../../../../shared/contracts/servers';
+  import { createAddress, deleteAddress, updateAddress } from '@client/lib/serversApi';
+  import type { AddressView } from '../../../../../shared/contracts/servers';
   import ConfirmDialog from '../../edges/components/ConfirmDialog.svelte';
   import { runWrite } from '../lib/run';
 
   interface Props {
     open: boolean;
     slug: string;
-    inboundUuid: string;
-    inboundTag: string;
-    host?: PanelHostView | null;
+    transportUuid: string;
+    transportTag: string;
+    host?: AddressView | null;
   }
-  let { open = $bindable(false), slug, inboundUuid, inboundTag, host = null }: Props = $props();
+  let { open = $bindable(false), slug, transportUuid, transportTag, host = null }: Props = $props();
   const qc = useQueryClient();
   const uid = $props.id();
 
@@ -70,8 +70,8 @@
       };
       const op = await runWrite(qc, () =>
         host
-          ? updateHost(slug, host.hostUuid, fields)
-          : createHost(slug, { ...fields, inboundUuid, restore }),
+          ? updateAddress(slug, host.addressUuid, fields)
+          : createAddress(slug, { ...fields, transportUuid, restore }),
       );
       if (op) open = false;
     } finally {
@@ -83,7 +83,7 @@
     if (!host) return;
     removeOpen = false;
     open = false;
-    await runWrite(qc, () => deleteHost(slug, host.hostUuid));
+    await runWrite(qc, () => deleteAddress(slug, host.addressUuid));
   }
 </script>
 
@@ -92,7 +92,7 @@
     <Dialog.Header>
       <Dialog.Title>{host ? `Change ${host.remark}` : 'Add an address'}</Dialog.Title>
       <Dialog.Description>
-        For <span class="break-all">{inboundTag}</span>. Members see it at their next update.
+        For <span class="break-all">{transportTag}</span>. Members see it at their next update.
       </Dialog.Description>
     </Dialog.Header>
     <form

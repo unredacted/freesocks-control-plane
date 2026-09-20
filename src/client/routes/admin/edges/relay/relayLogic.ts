@@ -26,7 +26,7 @@ import type {
   ListenerMatchRule,
   ListenerOriginTransport,
   QuarantineView,
-  RelayAdmin,
+  OriginAdmin,
   RelaySuspicion,
   SetupStatusResponse,
 } from '@shared/contracts/edges';
@@ -49,7 +49,7 @@ export interface DeliveryState {
 }
 
 export interface DeliveryInput {
-  relay: Pick<RelayAdmin, 'id' | 'origin' | 'enabled' | 'publishedCount'>;
+  relay: Pick<OriginAdmin, 'id' | 'origin' | 'enabled' | 'publishedCount'>;
   setup?: Pick<SetupStatusResponse, 'steps'> | null;
   attention?: AttentionItem[] | null;
 }
@@ -288,7 +288,7 @@ export function relayProbeTargetKeys(
 
 // --- words ---------------------------------------------------------------------------------------
 
-export const ORIGIN_KIND_WORDS: Record<RelayAdmin['origin']['kind'], string> = {
+export const ORIGIN_KIND_WORDS: Record<OriginAdmin['origin']['kind'], string> = {
   'panel-node': 'A node on a backend',
   'backend-server': 'A whole backend server',
   manual: 'Described by hand',

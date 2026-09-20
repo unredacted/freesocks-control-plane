@@ -5,7 +5,7 @@
    *                      picking one fetches the plan and shows the transports in words
    *   2. Which account?  the plan's compatible accounts as radio cards; "Add account"
    *                      renders the provider stepper inline (compact)
-   *   3. Review          one sentence, the consent for unsupported hosts, one button
+   *   3. Review          one sentence, the consent for unsupported addresses, one button
    * A created run hands over to ProtectProgress (`runId`), which the URL keeps.
    *
    * Props:
@@ -86,12 +86,12 @@
     planM.mutate(uuid);
   }
   const planIssue = $derived(planM.error ? edgeErrorIssue(planM.error) : null);
-  const inboundLine = (i: SetupPlanResponse['inbounds'][number]): string => {
+  const inboundLine = (i: SetupPlanResponse['transports'][number]): string => {
     const parsed = ListenerSpec.safeParse(i.listenerSpec);
     return parsed.success ? protocolLine(parsed.data) : i.sourceTag;
   };
-  const supported = $derived(plan?.inbounds.filter((i) => i.frontable) ?? []);
-  const unsupported = $derived(plan?.inbounds.filter((i) => !i.frontable) ?? []);
+  const supported = $derived(plan?.transports.filter((i) => i.frontable) ?? []);
+  const unsupported = $derived(plan?.transports.filter((i) => !i.frontable) ?? []);
 
   // 2. Which account?
   let accountId = $state('');
@@ -271,7 +271,8 @@
                 </p>
               {:else}
                 <p class="font-medium">
-                  {supported.length === 1 ? 'This inbound gets' : 'These inbounds get'} a protected address
+                  {supported.length === 1 ? 'This inbound gets' : 'These transports get'} a protected
+                  address
                 </p>
                 <ul class="space-y-1">
                   {#each supported as i (i.listenerKey)}
@@ -297,7 +298,7 @@
                     Not supported yet ({unsupported.length})
                   </Collapsible.Trigger>
                   <Collapsible.Content class="space-y-2 pt-2">
-                    <!-- Unsupported inbounds have no listener key (the plan sends ''), so the
+                    <!-- Unsupported transports have no listener key (the plan sends ''), so the
                          tag with its position is the key: two of them would otherwise collide
                          and Svelte refuses duplicate keys at render time. -->
                     {#each unsupported as i, idx (`${i.sourceTag}#${idx}`)}

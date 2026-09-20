@@ -263,7 +263,7 @@ const COPY = {
   hosts_operator_managed: {
     label: 'Hosts operator-managed',
     explain: 'FCP never writes the backend Hosts for this origin, so it cannot flip them.',
-    fix: 'Apply the hosts plan by hand, or hand Host ownership to FCP.',
+    fix: 'Apply the addresses plan by hand, or hand Host ownership to FCP.',
   },
   no_publishable_edge: {
     label: 'Nothing publishable',
@@ -1478,7 +1478,7 @@ export const PLAIN_WORDS: Record<string, string> = {
   quarantined: 'paused for safety',
   'host flip': 'update the backend',
   listener: 'inbound',
-  listeners: 'inbounds',
+  listeners: 'transports',
 };
 
 /** Rewrite a technical sentence in plain words (whole-word, longest match first). */

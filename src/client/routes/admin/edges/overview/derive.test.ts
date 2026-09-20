@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AttentionItem, EdgeSummary, RelayAdmin } from '../../../../../shared/contracts/edges';
+import { AttentionItem, EdgeSummary, OriginAdmin } from '../../../../../shared/contracts/edges';
 import {
   attentionRelaySlugs,
   darkRelaySlugs,
@@ -11,13 +11,13 @@ import {
   relayLayers,
   suspicionChip,
   worstHealth,
-  type RelayRow,
+  type OriginRow,
 } from './derive';
 
 const NOW = '2026-09-18T00:00:00.000Z';
 
 function relay(slug: string, over: Record<string, unknown> = {}) {
-  return RelayAdmin.parse({
+  return OriginAdmin.parse({
     id: `id-${slug}`,
     slug,
     origin: { kind: 'manual' },
@@ -104,7 +104,7 @@ const summary = EdgeSummary.parse({
   relays: rows.map((r, i) => ({ ...r, standbys: i === 0 ? 2 : 0 })),
   generatedAt: NOW,
 });
-const parsedRows: RelayRow[] = summary.relays;
+const parsedRows: OriginRow[] = summary.relays;
 const items = [
   item('members_dark', 'bravo'),
   item('edge_unreachable', 'charlie'),
@@ -127,7 +127,7 @@ describe('overview derive', () => {
     const dark = darkRelaySlugs(items);
     expect(deliveryState(parsedRows[0]!, dark)).toBe('serving');
     expect(deliveryState(parsedRows[1]!, dark)).toBe('dark');
-    expect(deliveryState(row('delta', []) as RelayRow, dark)).toBe('idle');
+    expect(deliveryState(row('delta', []) as OriginRow, dark)).toBe('idle');
   });
 
   it('filters by problem and by layer', () => {
@@ -190,11 +190,11 @@ describe('overview derive', () => {
       baselineWarm: true,
       veto: null,
     };
-    const suspected = row('echo', [], { suspicion }) as RelayRow;
+    const suspected = row('echo', [], { suspicion }) as OriginRow;
     expect(suspicionChip(suspected)?.label).toBe('Block suspected in IR');
     const vetoed = row('foxtrot', [], {
       suspicion: { ...suspicion, veto: 'node_offline' },
-    }) as RelayRow;
+    }) as OriginRow;
     expect(suspicionChip(vetoed)?.tone).toBe('info');
     expect(suspicionChip(parsedRows[0]!)).toBeNull();
   });

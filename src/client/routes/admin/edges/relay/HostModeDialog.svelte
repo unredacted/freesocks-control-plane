@@ -8,7 +8,7 @@
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
-  import type { HostMode, RelayAdmin, RelayListenerAdmin } from '@shared/contracts/edges';
+  import type { HostMode, OriginAdmin, RelayListenerAdmin } from '@shared/contracts/edges';
   import { invalidateRelay, updateRelay } from '@client/lib/edgesApi';
   import Link from '@client/components/Link.svelte';
   import { assertEdgeOk } from '../lib/edgeErrors';
@@ -18,7 +18,7 @@
 
   interface Props {
     open: boolean;
-    relay: RelayAdmin;
+    relay: OriginAdmin;
     listeners: RelayListenerAdmin[];
   }
   let { open = $bindable(false), relay, listeners }: Props = $props();

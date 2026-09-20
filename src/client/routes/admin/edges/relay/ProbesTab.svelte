@@ -5,7 +5,7 @@
    *
    * Props: origin; edges
    */
-  import type { EdgeAdmin, RelayAdmin } from '@shared/contracts/edges';
+  import type { EdgeAdmin, OriginAdmin } from '@shared/contracts/edges';
   import * as Card from '@client/components/ui/card';
   import { Button } from '@client/components/ui/button';
   import Link from '@client/components/Link.svelte';
@@ -16,7 +16,7 @@
   import { relayProbeTargetKeys } from './relayLogic';
 
   interface Props {
-    relay: RelayAdmin;
+    relay: OriginAdmin;
     edges: EdgeAdmin[];
   }
   let { relay, edges }: Props = $props();

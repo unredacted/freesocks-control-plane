@@ -9,7 +9,7 @@
    * which offers sign-in or an anonymous gift) so gifts go through FreeSocks
    * and feed the free-user bandwidth pool - never to the external nonprofit
    * donate page, which confused people about where to give. Its own component
-   * (not inline in App.svelte's footer) because App hosts the
+   * (not inline in App.svelte's footer) because App addresses the
    * QueryClientProvider, so configQuery()/meQuery() can only run from a child
    * inside the provider tree (the FooterRepoLink pattern). Hidden entirely
    * while in-app donations are disabled.

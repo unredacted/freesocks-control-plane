@@ -7,7 +7,7 @@
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
-  import type { RelayAdmin } from '@shared/contracts/edges';
+  import type { OriginAdmin } from '@shared/contracts/edges';
   import { Checkbox } from '@client/components/ui/checkbox';
   import { Label } from '@client/components/ui/label';
   import {
@@ -23,7 +23,7 @@
 
   interface Props {
     open: boolean;
-    relay: RelayAdmin;
+    relay: OriginAdmin;
     edgeCount: number;
   }
   let { open = $bindable(false), relay, edgeCount }: Props = $props();

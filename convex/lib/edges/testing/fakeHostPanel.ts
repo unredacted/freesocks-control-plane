@@ -14,7 +14,7 @@
  */
 import { jsonRes, mockFetch, type FetchStub } from './mockFetch';
 
-export interface PanelHostRow {
+export interface AddressRow {
   uuid: string;
   remark: string;
   address: string;
@@ -33,7 +33,7 @@ export const FAKE_REALITY_QS =
 
 export interface FakeHostPanel {
   stub: FetchStub;
-  hosts: PanelHostRow[];
+  hosts: AddressRow[];
   /** `PATCH /api/hosts` behaviour from now on. */
   setPatchMode: (mode: PatchMode) => void;
   /** Every `{uuid, isDisabled}` PATCH seen, in order. */
@@ -42,11 +42,11 @@ export interface FakeHostPanel {
   onPatch: (hook: ((p: { uuid: string; isDisabled: boolean }) => Promise<void>) | null) => void;
   /** Subscription-body fetches seen. */
   subFetches: () => number;
-  find: (uuid: string) => PanelHostRow;
+  find: (uuid: string) => AddressRow;
   body: () => string;
 }
 
-export function fakeHostPanel(initial: PanelHostRow[], mode: PatchMode = 'apply'): FakeHostPanel {
+export function fakeHostPanel(initial: AddressRow[], mode: PatchMode = 'apply'): FakeHostPanel {
   const hosts = initial.map((h) => ({ ...h }));
   let patchMode = mode;
   let hook: ((p: { uuid: string; isDisabled: boolean }) => Promise<void>) | null = null;
@@ -54,7 +54,7 @@ export function fakeHostPanel(initial: PanelHostRow[], mode: PatchMode = 'apply'
   let subFetches = 0;
   // A real backend puts each Host's own server name in its entry, which is what
   // tells two addresses of one node apart.
-  const qs = (h: PanelHostRow) =>
+  const qs = (h: AddressRow) =>
     h.sni ? FAKE_REALITY_QS.replace('sni=target.example', `sni=${h.sni}`) : FAKE_REALITY_QS;
   const body = () =>
     hosts

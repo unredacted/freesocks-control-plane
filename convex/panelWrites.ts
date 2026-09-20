@@ -190,7 +190,7 @@ async function assertNotTombstoned(
 
 // --- Hosts ---------------------------------------------------------------------------------------------
 
-export const requestHostCreate = internalMutation({
+export const requestAddressCreate = internalMutation({
   args: {
     backendServerId: v.id('backendServers'),
     ...hostFields,
@@ -232,7 +232,7 @@ export const requestHostCreate = internalMutation({
   },
 });
 
-export const requestHostUpdate = internalMutation({
+export const requestAddressUpdate = internalMutation({
   args: { backendServerId: v.id('backendServers'), hostUuid: v.string(), ...hostFields, ...actor },
   handler: async (ctx, a) => {
     checkHostFields(a);
@@ -271,7 +271,7 @@ export const requestHostUpdate = internalMutation({
   },
 });
 
-export const requestHostDelete = internalMutation({
+export const requestAddressDelete = internalMutation({
   args: { backendServerId: v.id('backendServers'), hostUuid: v.string(), ...actor },
   handler: async (ctx, a) => {
     const current = await cachedHost(ctx, a.backendServerId, a.hostUuid);
@@ -297,7 +297,7 @@ export const requestHostDelete = internalMutation({
   },
 });
 
-export const requestHostReorder = internalMutation({
+export const requestAddressReorder = internalMutation({
   args: { backendServerId: v.id('backendServers'), hostUuids: v.array(v.string()), ...actor },
   handler: async (ctx, a) => {
     const rows = await ctx.db
@@ -378,7 +378,7 @@ async function affectedByInbounds(
 
 const SQUAD_NAME = /^[A-Za-z0-9_-]{2,20}$/;
 
-export const requestSquadCreate = internalMutation({
+export const requestModeGroupCreate = internalMutation({
   args: {
     backendServerId: v.id('backendServers'),
     name: v.string(),
@@ -414,7 +414,7 @@ export const requestSquadCreate = internalMutation({
   },
 });
 
-export const requestSquadUpdate = internalMutation({
+export const requestModeGroupUpdate = internalMutation({
   args: {
     backendServerId: v.id('backendServers'),
     squadUuid: v.string(),
@@ -468,7 +468,7 @@ export const requestSquadUpdate = internalMutation({
   },
 });
 
-export const requestSquadDelete = internalMutation({
+export const requestModeGroupDelete = internalMutation({
   args: { backendServerId: v.id('backendServers'), squadUuid: v.string(), ...actor },
   handler: async (ctx, a) => {
     const sid = a.backendServerId;
@@ -1128,14 +1128,15 @@ export const run = internalAction({
         else if (op.verb === 'restart') await writes.restartNode(config, uuid);
         else await writes.deleteNode(config, uuid);
       } else if (op.kind === 'host') {
-        if (op.verb === 'create') objectUuid = (await writes.createHost(config, intent)).hostUuid;
-        else if (op.verb === 'update') await writes.updateHost(config, op.objectUuid!, intent);
-        else if (op.verb === 'delete') await writes.deleteHost(config, op.objectUuid!);
-        else await writes.reorderHosts(config, intent.order);
+        if (op.verb === 'create')
+          objectUuid = (await writes.createAddress(config, intent)).hostUuid;
+        else if (op.verb === 'update') await writes.updateAddress(config, op.objectUuid!, intent);
+        else if (op.verb === 'delete') await writes.deleteAddress(config, op.objectUuid!);
+        else await writes.reorderAddresses(config, intent.order);
       } else if (op.verb === 'create')
-        objectUuid = (await writes.createSquad(config, intent)).squadUuid;
-      else if (op.verb === 'update') await writes.updateSquad(config, op.objectUuid!, intent);
-      else await writes.deleteSquad(config, op.objectUuid!);
+        objectUuid = (await writes.createModeGroup(config, intent)).squadUuid;
+      else if (op.verb === 'update') await writes.updateModeGroup(config, op.objectUuid!, intent);
+      else await writes.deleteModeGroup(config, op.objectUuid!);
       outcome = classifyRequest({ kind: 'ok' });
     } catch (err) {
       // The message is never read: only a status or a connect code.

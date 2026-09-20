@@ -5,7 +5,7 @@
    * 4" and opens the progress sheet instead.
    *
    * Props:
-   *   row: RelayRow                       one EdgeSummary origin row
+   *   row: OriginRow                       one EdgeSummary origin row
    *   status: NodeStatus                  from nodeStatus()
    *   runId?: string | null               the live run (the row opens its progress)
    *   onOpenRun?: (runId: string) => void
@@ -15,10 +15,10 @@
   import { countryName } from '@client/lib/countries';
   import { edgesPaths } from '../lib/routes';
   import StatusDot from './StatusDot.svelte';
-  import type { NodeStatus, RelayRow } from './nodeStatus';
+  import type { NodeStatus, OriginRow } from './nodeStatus';
 
   interface Props {
-    row: RelayRow;
+    row: OriginRow;
     status: NodeStatus;
     runId?: string | null;
     onOpenRun?: (runId: string) => void;

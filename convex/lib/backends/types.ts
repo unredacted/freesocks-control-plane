@@ -341,7 +341,7 @@ export interface PanelRealityAuth {
   publicKeyMismatch: boolean;
 }
 
-export type PanelObservedInbound = Omit<PanelInbound, 'active'> & {
+export type ObservedTransport = Omit<PanelInbound, 'active'> & {
   realityAuth?: PanelRealityAuth;
 };
 
@@ -352,7 +352,7 @@ export interface PanelObservedProfile {
   shapeHash: string;
   /** Keyed digest over the complete config: moves on ANY change, secrets included. */
   changeToken: string;
-  inbounds: PanelObservedInbound[];
+  inbounds: ObservedTransport[];
 }
 
 export interface PanelObservedNode {
@@ -539,20 +539,20 @@ export interface PanelWrites<C> {
   ): Promise<PanelInboundTestParams | null>;
   /** The protocol credential (VLESS uuid) of a backend user FCP issued, in memory only. */
   userCredential(config: C, backendUserId: string): Promise<{ protocolUuid: string | null }>;
-  createHost(config: C, spec: PanelHostCreate): Promise<{ hostUuid: string }>;
-  updateHost(config: C, hostUuid: string, fields: PanelHostFields): Promise<void>;
-  deleteHost(config: C, hostUuid: string): Promise<void>;
-  reorderHosts(config: C, order: { hostUuid: string; viewPosition: number }[]): Promise<void>;
-  createSquad(
+  createAddress(config: C, spec: PanelHostCreate): Promise<{ hostUuid: string }>;
+  updateAddress(config: C, hostUuid: string, fields: PanelHostFields): Promise<void>;
+  deleteAddress(config: C, hostUuid: string): Promise<void>;
+  reorderAddresses(config: C, order: { hostUuid: string; viewPosition: number }[]): Promise<void>;
+  createModeGroup(
     config: C,
     spec: { name: string; inboundUuids: string[] },
   ): Promise<{ squadUuid: string }>;
-  updateSquad(
+  updateModeGroup(
     config: C,
     squadUuid: string,
     fields: { name?: string; inboundUuids?: string[] },
   ): Promise<void>;
-  deleteSquad(config: C, squadUuid: string): Promise<void>;
+  deleteModeGroup(config: C, squadUuid: string): Promise<void>;
   createNode(config: C, spec: PanelNodeCreate): Promise<{ nodeUuid: string }>;
   updateNode(config: C, nodeUuid: string, fields: PanelNodeFields): Promise<void>;
   setNodeEnabled(config: C, nodeUuid: string, enabled: boolean): Promise<void>;

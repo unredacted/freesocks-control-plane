@@ -12,7 +12,7 @@
  * tag is kept, never renamed). Existing REALITY keys and short ids are never
  * touched: the effective values come from the adopted profile.
  */
-import type { PanelObservedInbound } from '../backends/types';
+import type { ObservedTransport } from '../backends/types';
 import { parseRealityTarget } from '../edges/inboundMapping';
 import { transportTagOf, type ModeShape } from './profileTemplate';
 
@@ -91,7 +91,7 @@ function isLoopback(listen: string | null | undefined): boolean {
   return l === 'localhost' || l === '::1' || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(l);
 }
 
-function checkWs(slug: string, ib: PanelObservedInbound): EffectiveWsTransport | CompatIssue {
+function checkWs(slug: string, ib: ObservedTransport): EffectiveWsTransport | CompatIssue {
   const tag = ib.tag;
   if (ib.protocol !== 'vless') return { slug, tag, field: 'protocol' };
   if (ib.network !== 'ws') return { slug, tag, field: 'network' };
@@ -112,7 +112,7 @@ function checkWs(slug: string, ib: PanelObservedInbound): EffectiveWsTransport |
 
 function checkReality(
   slug: string,
-  ib: PanelObservedInbound,
+  ib: ObservedTransport,
   kind: 'reality' | 'xhttp-reality',
 ): EffectiveRealityTransport | CompatIssue {
   const tag = ib.tag;
@@ -148,9 +148,9 @@ function checkReality(
  * an older release gave the same mode.
  */
 export function findTransport(
-  inbounds: readonly PanelObservedInbound[],
+  inbounds: readonly ObservedTransport[],
   mode: ModeLookup,
-): PanelObservedInbound | null {
+): ObservedTransport | null {
   const byTag = new Map(inbounds.map((i) => [i.tag, i]));
   if (mode.transport?.uuid) {
     const byUuid = inbounds.find((i) => i.configProfileInboundUuid === mode.transport!.uuid);
@@ -172,7 +172,7 @@ export function findTransport(
  * values of each mode's transport when it can (keyed by mode slug).
  */
 export function checkProfileCompatibility(
-  profile: { inbounds: readonly PanelObservedInbound[] },
+  profile: { inbounds: readonly ObservedTransport[] },
   modes: readonly ModeLookup[],
 ): CompatResult {
   const out: Record<string, EffectiveTransport> = {};

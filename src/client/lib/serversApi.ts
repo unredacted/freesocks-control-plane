@@ -18,13 +18,13 @@ import {
   AdoptNodeResult,
   NodeIntentList,
   PanelOpList,
-  PanelOpView,
-  PanelSetupView,
+  OpView,
+  BackendSetupView,
   PlacementValidation,
   ProfilePatchPreview,
   ServerSummary,
   ServerTree,
-  type PanelSetupInput,
+  type BackendSetupInput,
   type HostWrite,
   type NodeWrite,
   type ProfilePatchOp,
@@ -52,47 +52,47 @@ type Patch<T> = Partial<Omit<T, 'restore'>>;
 
 export const fetchOps = (slug: string) => apiClient.get(`${slugPath(slug)}/ops`, PanelOpList);
 export const observeOp = (slug: string, id: string) =>
-  apiClient.post(`${slugPath(slug)}/ops/${encodeURIComponent(id)}/observe`, {}, PanelOpView);
+  apiClient.post(`${slugPath(slug)}/ops/${encodeURIComponent(id)}/observe`, {}, OpView);
 /** The server makes the fresh read itself; the operator attests the other three. */
 export const recoverOp = (
   slug: string,
   id: string,
   attest: Omit<RecoveryAttestation, 'freshReadAt'>,
-) => apiClient.post(`${slugPath(slug)}/ops/${encodeURIComponent(id)}/recover`, attest, PanelOpView);
+) => apiClient.post(`${slugPath(slug)}/ops/${encodeURIComponent(id)}/recover`, attest, OpView);
 
-export const createHost = (slug: string, host: HostWrite) =>
-  apiClient.post(`${slugPath(slug)}/hosts`, host, PanelOpView);
-export const updateHost = (slug: string, uuid: string, fields: Patch<HostWrite>) =>
-  apiClient.patch(`${slugPath(slug)}/hosts/${encodeURIComponent(uuid)}`, fields, PanelOpView);
-export const deleteHost = (slug: string, uuid: string) =>
-  apiClient.delete(`${slugPath(slug)}/hosts/${encodeURIComponent(uuid)}`, PanelOpView);
+export const createAddress = (slug: string, host: HostWrite) =>
+  apiClient.post(`${slugPath(slug)}/addresses`, host, OpView);
+export const updateAddress = (slug: string, uuid: string, fields: Patch<HostWrite>) =>
+  apiClient.patch(`${slugPath(slug)}/addresses/${encodeURIComponent(uuid)}`, fields, OpView);
+export const deleteAddress = (slug: string, uuid: string) =>
+  apiClient.delete(`${slugPath(slug)}/addresses/${encodeURIComponent(uuid)}`, OpView);
 
 export interface SquadWrite {
   name: string;
-  inboundUuids: string[];
+  transportUuids: string[];
   restore?: boolean;
 }
-export const createSquad = (slug: string, squad: SquadWrite) =>
-  apiClient.post(`${slugPath(slug)}/squads`, squad, PanelOpView);
-export const updateSquad = (slug: string, uuid: string, fields: Patch<SquadWrite>) =>
-  apiClient.patch(`${slugPath(slug)}/squads/${encodeURIComponent(uuid)}`, fields, PanelOpView);
-export const deleteSquad = (slug: string, uuid: string) =>
-  apiClient.delete(`${slugPath(slug)}/squads/${encodeURIComponent(uuid)}`, PanelOpView);
+export const createModeGroup = (slug: string, squad: SquadWrite) =>
+  apiClient.post(`${slugPath(slug)}/modeGroups`, squad, OpView);
+export const updateModeGroup = (slug: string, uuid: string, fields: Patch<SquadWrite>) =>
+  apiClient.patch(`${slugPath(slug)}/modeGroups/${encodeURIComponent(uuid)}`, fields, OpView);
+export const deleteModeGroup = (slug: string, uuid: string) =>
+  apiClient.delete(`${slugPath(slug)}/modeGroups/${encodeURIComponent(uuid)}`, OpView);
 
 export const createNode = (slug: string, node: NodeWrite) =>
-  apiClient.post(`${slugPath(slug)}/nodes`, node, PanelOpView);
+  apiClient.post(`${slugPath(slug)}/nodes`, node, OpView);
 export const updateNode = (
   slug: string,
   uuid: string,
   fields: Patch<Omit<NodeWrite, 'configProfileUuid'>> & { configProfileUuid?: string },
-) => apiClient.patch(`${slugPath(slug)}/nodes/${encodeURIComponent(uuid)}`, fields, PanelOpView);
+) => apiClient.patch(`${slugPath(slug)}/nodes/${encodeURIComponent(uuid)}`, fields, OpView);
 export const nodeAction = (slug: string, uuid: string, action: 'enable' | 'disable' | 'restart') =>
-  apiClient.post(`${slugPath(slug)}/nodes/${encodeURIComponent(uuid)}/${action}`, {}, PanelOpView);
+  apiClient.post(`${slugPath(slug)}/nodes/${encodeURIComponent(uuid)}/${action}`, {}, OpView);
 /** `removeOnly`: take the row off the backend and say the process may keep running. */
 export const deleteNode = (slug: string, uuid: string, removeOnly: boolean) =>
   apiClient.delete(
     `${slugPath(slug)}/nodes/${encodeURIComponent(uuid)}${removeOnly ? '?removeOnly=1' : ''}`,
-    PanelOpView,
+    OpView,
   );
 
 export const previewProfilePatch = (slug: string, profileUuid: string, ops: ProfilePatchOp[]) =>
@@ -115,10 +115,10 @@ export const applyProfilePatch = (
       ops: preview.ops,
       baseToken: preview.baseToken,
       expectedToken: preview.expectedToken,
-      inboundUuids: preview.inboundUuids,
+      transportUuids: preview.transportUuids,
       ...(unmanaged ? { unmanaged } : {}),
     },
-    PanelOpView,
+    OpView,
   );
 
 /** Adopt a node that already serves members, as it is (live at once). */
@@ -140,9 +140,9 @@ export const acknowledgeForeignEdit = (slug: string, profileUuid: string) =>
 
 // --- the bootstrap contract: setting up a backend, enrolled nodes, activation ---------------------
 export const fetchSetup = (slug: string) =>
-  apiClient.get(`${slugPath(slug)}/setup`, PanelSetupView);
-export const startSetup = (slug: string, input: PanelSetupInput) =>
-  apiClient.post(`${slugPath(slug)}/setup`, input, PanelSetupView);
+  apiClient.get(`${slugPath(slug)}/setup`, BackendSetupView);
+export const startSetup = (slug: string, input: BackendSetupInput) =>
+  apiClient.post(`${slugPath(slug)}/setup`, input, BackendSetupView);
 
 export const fetchIntents = (slug: string) =>
   apiClient.get(`${slugPath(slug)}/nodes/intents`, NodeIntentList);

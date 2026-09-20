@@ -6,7 +6,7 @@
    *
    * Props:
    *   status: the setup-status query (origin scope, or draft scope)
-   *   origin: RelayAdmin | null
+   *   origin: OriginAdmin | null
    *   relaySlug: string | null
    *   draft: StoredDraft (bindable)
    *   draftMode: boolean
@@ -17,7 +17,7 @@
   import { Button, buttonVariants } from '@client/components/ui/button';
   import { Skeleton } from '@client/components/ui/skeleton';
   import Link from '@client/components/Link.svelte';
-  import type { RelayAdmin, SetupStatusResponse } from '@shared/contracts/edges';
+  import type { OriginAdmin, SetupStatusResponse } from '@shared/contracts/edges';
   import { router } from '@client/stores/router.svelte';
   import { searchParam } from '@client/lib/urlState.svelte';
   import { SETUP_STEP_HINTS, SETUP_STEP_TITLES } from '@client/lib/edgeCodes';
@@ -41,7 +41,7 @@
 
   interface Props {
     status: CreateQueryResult<SetupStatusResponse, Error>;
-    relay: RelayAdmin | null;
+    relay: OriginAdmin | null;
     relaySlug: string | null;
     draft: StoredDraft;
     draftMode: boolean;

@@ -9,7 +9,7 @@
   import type { z } from 'zod';
   import type {
     EdgeAdmin,
-    RelayAdmin,
+    OriginAdmin,
     RelayConnectionPlanEntry,
     RelayListenerAdmin,
   } from '@shared/contracts/edges';
@@ -29,7 +29,7 @@
   import { timelineLinkParams } from './relayLogic';
 
   interface Props {
-    relay: RelayAdmin;
+    relay: OriginAdmin;
     edges: EdgeAdmin[];
     listeners: RelayListenerAdmin[];
     connectionPlan: Array<z.infer<typeof RelayConnectionPlanEntry>>;

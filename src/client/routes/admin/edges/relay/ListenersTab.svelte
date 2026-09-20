@@ -10,7 +10,7 @@
   import type { z } from 'zod';
   import type {
     EdgeAdmin,
-    RelayAdmin,
+    OriginAdmin,
     RelayHostsPlan,
     RelayListenerAdmin,
   } from '@shared/contracts/edges';
@@ -29,7 +29,7 @@
   import ProvisionDialog from './ProvisionDialog.svelte';
 
   interface Props {
-    relay: RelayAdmin;
+    relay: OriginAdmin;
     listeners: RelayListenerAdmin[];
     edges: EdgeAdmin[];
     hostsPlan: z.infer<typeof RelayHostsPlan> | null;
@@ -96,7 +96,7 @@
   {:else if shown.length === 0}
     <AdminListState
       emptyText={relay.origin.kind === 'panel-node'
-        ? 'No listener yet. Run the node role so it registers the inbounds of this node, or use Add listener to describe one by hand.'
+        ? 'No listener yet. Run the node role so it registers the transports of this node, or use Add listener to describe one by hand.'
         : 'No listener yet. Use Add listener to describe the port this origin answers on.'}
     />
   {:else}
@@ -125,7 +125,7 @@
         </Card.Description>
       </Card.Header>
       <Card.Content>
-        {#if hostsPlan.hosts.length === 0}
+        {#if hostsPlan.addresses.length === 0}
           <AdminListState
             emptyText="Nothing to write yet. Publish an edge for a listener and its Host appears here."
           />
@@ -143,7 +143,7 @@
                 </Table.Row>
               </Table.Header>
               <Table.Body>
-                {#each hostsPlan.hosts as h (h.listenerKey)}
+                {#each hostsPlan.addresses as h (h.listenerKey)}
                   <Table.Row>
                     <Table.Cell class="font-mono text-xs">{h.listenerKey}</Table.Cell>
                     <Table.Cell class="font-mono text-xs">

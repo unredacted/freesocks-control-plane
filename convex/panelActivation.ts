@@ -769,7 +769,7 @@ export const runDirect = internalAction({
         if (c.addresses.length === 0) return block('servers.host_missing').then(() => null);
         for (const h of c.addresses) {
           if (!h.isDisabled) continue;
-          const { opId } = await ctx.runMutation(internal.panelWrites.requestHostUpdate, {
+          const { opId } = await ctx.runMutation(internal.panelWrites.requestAddressUpdate, {
             backendServerId: c.server._id,
             hostUuid: h.hostUuid,
             isDisabled: false,
@@ -834,7 +834,7 @@ export const runDirect = internalAction({
         if (!ok || !s.ok) {
           // A failed rehearsal closes what it opened: every address goes back to disabled.
           for (const h of c.addresses) {
-            const { opId } = await ctx.runMutation(internal.panelWrites.requestHostUpdate, {
+            const { opId } = await ctx.runMutation(internal.panelWrites.requestAddressUpdate, {
               backendServerId: c.server._id,
               hostUuid: h.hostUuid,
               isDisabled: true,

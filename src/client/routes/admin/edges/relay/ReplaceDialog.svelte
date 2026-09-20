@@ -8,7 +8,7 @@
    */
   import { createQuery, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
-  import type { EdgeAdmin, RelayAdmin } from '@shared/contracts/edges';
+  import type { EdgeAdmin, OriginAdmin } from '@shared/contracts/edges';
   import { Checkbox } from '@client/components/ui/checkbox';
   import { Label } from '@client/components/ui/label';
   import {
@@ -25,7 +25,7 @@
   interface Props {
     open: boolean;
     kind: 'rotate' | 'burn';
-    relay: RelayAdmin;
+    relay: OriginAdmin;
     edge: EdgeAdmin;
     onClose: () => void;
     onStarted: (rotationId: string) => void;

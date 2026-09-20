@@ -115,8 +115,8 @@
   let bindOpen = $state(false);
   let backends = $state<{ slug: string; name: string }[]>([]);
   let backendSlug = $state('');
-  let inbounds = $state<{ tag: string; target: string | null }[]>([]);
-  let inboundTag = $state('');
+  let transports = $state<{ tag: string; target: string | null }[]>([]);
+  let transportTag = $state('');
 
   async function startBind() {
     bindOpen = true;
@@ -128,18 +128,18 @@
     await loadInbounds();
   }
   async function loadInbounds() {
-    inbounds = [];
-    inboundTag = '';
+    transports = [];
+    transportTag = '';
     if (!backendSlug) return;
     const tree = await run(() => fetchServerTree(backendSlug));
-    inbounds = (tree?.profiles ?? [])
-      .flatMap((p) => p.inbounds)
+    transports = (tree?.profiles ?? [])
+      .flatMap((p) => p.transports)
       .filter((i) => i.security === 'reality')
       .map((i) => ({ tag: i.tag, target: i.realityTarget }));
-    inboundTag = inbounds[0]?.tag ?? '';
+    transportTag = transports[0]?.tag ?? '';
   }
   async function bind() {
-    if ((await run(() => bindFamily(slug, backendSlug, inboundTag))) !== null) bindOpen = false;
+    if ((await run(() => bindFamily(slug, backendSlug, transportTag))) !== null) bindOpen = false;
   }
 </script>
 
@@ -208,17 +208,17 @@
           </label>
           <label>
             <span class="text-muted-foreground mb-1 block">REALITY transport</span>
-            <select bind:value={inboundTag} class={SELECT}>
-              {#each inbounds as i (i.tag)}
+            <select bind:value={transportTag} class={SELECT}>
+              {#each transports as i (i.tag)}
                 <option value={i.tag}>{i.tag}{i.target ? ` (${i.target})` : ''}</option>
               {/each}
             </select>
           </label>
-          <Button type="submit" size="sm" disabled={busy || !inboundTag}>Bind</Button>
+          <Button type="submit" size="sm" disabled={busy || !transportTag}>Bind</Button>
           <Button type="button" variant="ghost" size="sm" onclick={() => (bindOpen = false)}>
             Cancel
           </Button>
-          {#if backendSlug && !busy && inbounds.length === 0}
+          {#if backendSlug && !busy && transports.length === 0}
             <p class="basis-full rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2">
               No REALITY transport has been read from this server yet. Refresh it under Servers,
               then come back here.

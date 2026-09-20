@@ -34,7 +34,7 @@ import {
   EdgeRotationDetail,
   ProvidersUsageResponse,
   QuarantineView,
-  RelayAdmin,
+  OriginAdmin,
   SetupStatusResponse,
   TimelineResponse,
 } from '../src/shared/contracts/edges';
@@ -471,7 +471,7 @@ describe('attention, timeline, usage, lookups, maintenance', () => {
 
   test('origins/lookup returns the full admin view by slug (404 when absent); delivery bindings list the registered node', async () => {
     const { call, get, serverId } = await seed();
-    const r = await get('relays/lookup?slug=node-one', RelayAdmin);
+    const r = await get('relays/lookup?slug=node-one', OriginAdmin);
     expect(r.slug).toBe('node-one');
     expect(r.origin.kind).toBe('panel-node');
     expect((await call('GET', 'relays/lookup?slug=nope')).status).toBe(404);

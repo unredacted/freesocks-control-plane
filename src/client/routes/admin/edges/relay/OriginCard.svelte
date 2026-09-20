@@ -8,7 +8,7 @@
    */
   import type { z } from 'zod';
   import type {
-    RelayAdmin,
+    OriginAdmin,
     RelayConnectionPlanEntry,
     RelayListenerAdmin,
   } from '@shared/contracts/edges';
@@ -30,7 +30,7 @@
   import { HOST_MODE_WORDS, ORIGIN_KIND_WORDS } from './relayLogic';
 
   interface Props {
-    relay: RelayAdmin;
+    relay: OriginAdmin;
     listeners: RelayListenerAdmin[];
     connectionPlan: Array<z.infer<typeof RelayConnectionPlanEntry>>;
   }

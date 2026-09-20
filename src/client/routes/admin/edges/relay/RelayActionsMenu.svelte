@@ -5,7 +5,7 @@
    * Props: origin; listeners; edgeCount; onRotationStarted(rotationId)
    */
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
-  import type { RelayAdmin, RelayListenerAdmin } from '@shared/contracts/edges';
+  import type { OriginAdmin, RelayListenerAdmin } from '@shared/contracts/edges';
   import { Button } from '@client/components/ui/button';
   import * as DropdownMenu from '@client/components/ui/dropdown-menu';
   import { invalidateProbes, probeRelay, updateRelay } from '@client/lib/edgesApi';
@@ -20,7 +20,7 @@
   import { relayAction } from './actions.svelte';
 
   interface Props {
-    relay: RelayAdmin;
+    relay: OriginAdmin;
     listeners: RelayListenerAdmin[];
     /** Non-destroyed edges (the delete dialog says how many are torn down). */
     edgeCount: number;

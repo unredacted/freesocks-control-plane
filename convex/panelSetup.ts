@@ -736,7 +736,7 @@ export const run = internalAction({
             .map((n) => c.snapshot.groups.find((g) => g.name === n))
             .find((g) => !!g);
           if (legacy) {
-            const { opId } = await ctx.runMutation(internal.panelWrites.requestSquadUpdate, {
+            const { opId } = await ctx.runMutation(internal.panelWrites.requestModeGroupUpdate, {
               backendServerId: sid,
               squadUuid: legacy.groupUuid,
               name: m.name,
@@ -758,7 +758,7 @@ export const run = internalAction({
           }
         }
         if (!group) {
-          const { opId } = await ctx.runMutation(internal.panelWrites.requestSquadCreate, {
+          const { opId } = await ctx.runMutation(internal.panelWrites.requestModeGroupCreate, {
             backendServerId: sid,
             name: m.name,
             inboundUuids: [transportUuid],
@@ -779,7 +779,7 @@ export const run = internalAction({
           // A mode grants exactly ONE transport, so the group carries exactly
           // it: a transport an earlier release left in the group would keep
           // granting members a second way in.
-          const { opId } = await ctx.runMutation(internal.panelWrites.requestSquadUpdate, {
+          const { opId } = await ctx.runMutation(internal.panelWrites.requestModeGroupUpdate, {
             backendServerId: sid,
             squadUuid: group.groupUuid,
             inboundUuids: [transportUuid],

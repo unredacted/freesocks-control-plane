@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { installKind } from './installKind';
 
 describe('installKind', () => {
-  test('classifies store / repo / download hosts', () => {
+  test('classifies store / repo / download addresses', () => {
     expect(installKind('https://play.google.com/store/apps/details?id=com.example')).toBe('play');
     expect(installKind('https://apps.apple.com/app/shadowrocket/id932747118')).toBe('appStore');
     expect(installKind('https://itunes.apple.com/app/id932747118')).toBe('appStore');

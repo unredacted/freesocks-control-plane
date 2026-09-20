@@ -2,11 +2,11 @@
   /**
    * Edge-required delivery of one origin: are members served through edges, or
    * dark, and why (derived in relayLogic.deriveDelivery from the origin, its
-   * setup status and the attention list). Also hosts the render preview.
+   * setup status and the attention list). Also addresses the render preview.
    *
    * Props: origin
    */
-  import type { RelayAdmin } from '@shared/contracts/edges';
+  import type { OriginAdmin } from '@shared/contracts/edges';
   import * as Card from '@client/components/ui/card';
   import { Badge } from '@client/components/ui/badge';
   import { Button } from '@client/components/ui/button';
@@ -18,7 +18,7 @@
   import { deriveDelivery } from './relayLogic';
 
   interface Props {
-    relay: RelayAdmin;
+    relay: OriginAdmin;
   }
   let { relay }: Props = $props();
 

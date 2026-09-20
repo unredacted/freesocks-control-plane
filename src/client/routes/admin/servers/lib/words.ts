@@ -5,8 +5,8 @@
  * code words: copy only.
  */
 import type {
-  PanelInboundView,
-  PanelNodeView,
+  TransportView,
+  NodeView,
   ServerObserveState,
   ServerTree,
 } from '../../../../../shared/contracts/servers';
@@ -19,12 +19,12 @@ export interface NodeWords {
 }
 
 export function nodeWords(
-  n: Pick<PanelNodeView, 'online' | 'isDisabled' | 'profile' | 'inbounds' | 'usersOnline'>,
+  n: Pick<NodeView, 'online' | 'isDisabled' | 'profile' | 'transports' | 'usersOnline'>,
 ): NodeWords {
   if (n.isDisabled) return { dot: 'grey', sentence: 'Turned off on the backend.' };
   if (!n.profile)
     return { dot: 'amber', sentence: 'No config profile is assigned, so it serves nothing.' };
-  if (n.inbounds.length === 0)
+  if (n.transports.length === 0)
     return { dot: 'amber', sentence: 'A profile is assigned but no transport is switched on.' };
   if (!n.online) return { dot: 'red', sentence: 'The backend cannot reach this node.' };
   const people = n.usersOnline === 1 ? '1 person' : `${n.usersOnline} people`;
@@ -35,7 +35,7 @@ const SECURITY_WORDS: Record<string, string> = { reality: 'REALITY', tls: 'TLS',
 
 /** `VLESS over TCP, REALITY, port 443`. */
 export function inboundSummary(
-  i: Pick<PanelInboundView, 'protocol' | 'network' | 'security' | 'port'>,
+  i: Pick<TransportView, 'protocol' | 'network' | 'security' | 'port'>,
 ): string {
   const transport = i.network === 'raw' ? 'TCP' : i.network.toUpperCase();
   const security = SECURITY_WORDS[i.security] ?? i.security;
@@ -44,7 +44,7 @@ export function inboundSummary(
 }
 
 /** `3 server names` / `1 server name` / null when the transport presents none. */
-export function serverNamesLabel(i: Pick<PanelInboundView, 'serverNames'>): string | null {
+export function serverNamesLabel(i: Pick<TransportView, 'serverNames'>): string | null {
   if (!i.serverNames) return null;
   const n = i.serverNames.length;
   if (n === 0) return 'No server names';
@@ -87,7 +87,7 @@ export function countryLabel(code: string | null | undefined): string | null {
 
 /** The instance in one sentence: how many nodes are up, and how many people are on them. */
 export function fleetSentence(
-  nodes: readonly Pick<PanelNodeView, 'online' | 'isDisabled' | 'usersOnline'>[],
+  nodes: readonly Pick<NodeView, 'online' | 'isDisabled' | 'usersOnline'>[],
 ): {
   dot: Dot;
   text: string;
@@ -127,7 +127,7 @@ export function needsYou(
 ): AttentionRow[] {
   const out: AttentionRow[] = [];
   for (const n of tree.nodes)
-    for (const i of n.inbounds)
+    for (const i of n.transports)
       if (i.realityPublicKeyMismatch)
         out.push({
           key: `key:${n.nodeUuid}:${i.tag}`,
@@ -140,10 +140,10 @@ export function needsYou(
         key: `edit:${p.profileUuid}`,
         text: `${p.name} was changed on the backend, not from here. What this page shows of it may be out of date.`,
       });
-  if (tree.unattached.hosts.length > 0)
+  if (tree.unattached.addresses.length > 0)
     out.push({
-      key: 'unattached-hosts',
-      text: `${list(tree.unattached.hosts)} ${tree.unattached.hosts.length === 1 ? 'points' : 'point'} at a transport no node serves. People given ${tree.unattached.hosts.length === 1 ? 'it' : 'them'} cannot connect.`,
+      key: 'unattached-addresses',
+      text: `${list(tree.unattached.addresses)} ${tree.unattached.addresses.length === 1 ? 'points' : 'point'} at a transport no node serves. People given ${tree.unattached.addresses.length === 1 ? 'it' : 'them'} cannot connect.`,
     });
   return out;
 }
@@ -157,9 +157,9 @@ export function quietNotes(tree: Pick<ServerTree, 'nodes' | 'unattached'>): stri
   // tag -> the nodes on which it has nobody to serve (no address, or no group).
   const unused = new Map<string, { nodes: string[]; noHost: boolean; noSquad: boolean }>();
   for (const n of tree.nodes)
-    for (const i of n.inbounds) {
-      const noHost = i.hosts.length === 0;
-      const noSquad = i.squads.length === 0;
+    for (const i of n.transports) {
+      const noHost = i.addresses.length === 0;
+      const noSquad = i.modeGroups.length === 0;
       if (!noHost && !noSquad) continue;
       const at = unused.get(i.tag) ?? { nodes: [], noHost: false, noSquad: false };
       at.nodes.push(n.name);
@@ -188,13 +188,14 @@ export function quietNotes(tree: Pick<ServerTree, 'nodes' | 'unattached'>): stri
 }
 
 /** The notes of one node only, for its page. */
-export function nodeNotes(n: Pick<PanelNodeView, 'inbounds'>): string[] {
+export function nodeNotes(n: Pick<NodeView, 'transports'>): string[] {
   const out: string[] = [];
-  for (const i of n.inbounds) {
-    if (i.hosts.length === 0 && i.squads.length === 0)
+  for (const i of n.transports) {
+    if (i.addresses.length === 0 && i.modeGroups.length === 0)
       out.push(`${i.tag} has no address for members and is in no mode group.`);
-    else if (i.hosts.length === 0) out.push(`${i.tag} has no address for members.`);
-    else if (i.squads.length === 0) out.push(`${i.tag} is in no mode group, so no key can use it.`);
+    else if (i.addresses.length === 0) out.push(`${i.tag} has no address for members.`);
+    else if (i.modeGroups.length === 0)
+      out.push(`${i.tag} is in no mode group, so no key can use it.`);
   }
   return out;
 }

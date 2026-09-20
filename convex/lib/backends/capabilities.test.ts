@@ -25,11 +25,11 @@ describe('capability record ⇔ provider methods', () => {
     // the rotation machine's `ensureListenerHost` and the delete cleanup).
     expect(caps.hostManagement).toBe(
       !!provider.listHosts &&
-        !!provider.updateHost &&
-        !!provider.createHost &&
-        !!provider.deleteHost,
+        !!provider.updateAddress &&
+        !!provider.createAddress &&
+        !!provider.deleteAddress,
     );
-    expect(!!provider.createHost).toBe(!!provider.deleteHost);
+    expect(!!provider.createAddress).toBe(!!provider.deleteAddress);
     expect(caps.nodeInventory).toBe(!!provider.getNodeInventory);
     expect(caps.hostDisable).toBe(!!provider.setHostDisabled);
     expect(caps.inboundDiscovery).toBe(!!provider.listNodeInbounds);

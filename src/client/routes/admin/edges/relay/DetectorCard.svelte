@@ -5,7 +5,7 @@
    *
    * Props: origin; edges; onOpenEdge(edgeId); onRotationStarted(rotationId)
    */
-  import type { EdgeAdmin, RelayAdmin } from '@shared/contracts/edges';
+  import type { EdgeAdmin, OriginAdmin } from '@shared/contracts/edges';
   import * as Card from '@client/components/ui/card';
   import * as Select from '@client/components/ui/select';
   import { Badge } from '@client/components/ui/badge';
@@ -19,7 +19,7 @@
   import { edgeAddress, hintLevelWords } from './relayLogic';
 
   interface Props {
-    relay: RelayAdmin;
+    relay: OriginAdmin;
     edges: EdgeAdmin[];
     onOpenEdge: (edgeId: string) => void;
     onRotationStarted: (rotationId: string) => void;

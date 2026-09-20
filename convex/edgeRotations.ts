@@ -3757,7 +3757,7 @@ async function phaseHostFlip(ctx: ActionCtx, c: Ctx) {
     return;
   }
   try {
-    await ctx.runAction(internal.backends.updateHost, {
+    await ctx.runAction(internal.backends.updateAddress, {
       backendServerId: panelServerId(origin),
       uuid: entry.uuid,
       address: target.address,
@@ -3956,7 +3956,7 @@ async function phaseRollingBack(ctx: ActionCtx, c: Ctx) {
     return;
   }
   try {
-    await ctx.runAction(internal.backends.updateHost, {
+    await ctx.runAction(internal.backends.updateAddress, {
       backendServerId: panelServerId(origin),
       uuid: pendingEntry.uuid,
       address: rollbackTarget.address,

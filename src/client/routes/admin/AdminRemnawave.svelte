@@ -90,7 +90,7 @@
 
   const save = createMutation(() => ({
     mutationFn: async () => {
-      const modes: Record<string, { squadUuids: string[] }> = {};
+      const modes: Record<string, { groupUuids: string[] }> = {};
       const invalid: string[] = [];
       // Only send a mode when the admin typed something - blank keeps the current
       // binding (keep-secret-on-blank). An explicit line clears/sets the pool.
@@ -99,7 +99,7 @@
         if (!text.trim()) continue;
         const uuids = parseSquadList(text);
         invalid.push(...uuids.filter((s) => !UUID_RE.test(s)));
-        modes[m.id] = { squadUuids: uuids };
+        modes[m.id] = { groupUuids: uuids };
       }
       if (invalid.length > 0) {
         throw new Error(`Not a squad UUID: ${invalid.join(', ')}`);

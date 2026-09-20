@@ -314,7 +314,7 @@
           >
             Protect and hide {run.reviewDelta.length} unsupported {run.reviewDelta.length === 1
               ? 'host'
-              : 'hosts'}
+              : 'addresses'}
           </Button>
           <Button
             size="sm"

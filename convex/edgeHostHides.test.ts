@@ -18,7 +18,7 @@ import { classifyDirectHosts, listingHash } from './lib/edges/directHosts';
 import { cohortReportForOrigin } from './lib/edges/cohorts';
 import { HIDE_MAX_ATTEMPTS, judgeLook } from './edgeHostHides';
 import { HOST_OP_TTL_MS, HOST_SETTLE_MS } from './hostOps';
-import { fakeHostPanel, type PanelHostRow } from './lib/edges/testing/fakeHostPanel';
+import { fakeHostPanel, type AddressRow } from './lib/edges/testing/fakeHostPanel';
 import {
   FIXTURE_CONFIG_PROFILE,
   FIXTURE_INBOUND,
@@ -50,7 +50,7 @@ const inbound = (uuid: string) => ({
 });
 
 /** The backend's Hosts on the node: FCP's template + a covered direct Host (+ an uncovered one). */
-function panelHosts(opts: { uncovered?: boolean; d1Disabled?: boolean } = {}): PanelHostRow[] {
+function panelHosts(opts: { uncovered?: boolean; d1Disabled?: boolean } = {}): AddressRow[] {
   return [
     {
       uuid: FCP_UUID,
@@ -92,7 +92,7 @@ function panelHosts(opts: { uncovered?: boolean; d1Disabled?: boolean } = {}): P
  * rendering on. `deferred` = a guided origin before go-live (no binding).
  */
 async function world(
-  opts: { deferred?: boolean; hosts?: PanelHostRow[]; mode?: 'apply' | 'ignore' | 'fail' } = {},
+  opts: { deferred?: boolean; hosts?: AddressRow[]; mode?: 'apply' | 'ignore' | 'fail' } = {},
 ) {
   const panel = fakeHostPanel(opts.hosts ?? panelHosts(), opts.mode);
   const t = convexTest(schema, modules);
@@ -195,7 +195,7 @@ describe('classifyDirectHosts (pure)', () => {
   });
 
   test('a disabled Host, another node’s transport, an edge address, an FCP remark and a legacy uuid are never direct', () => {
-    const hosts: PanelHostRow[] = [
+    const hosts: AddressRow[] = [
       ...panelHosts({ d1Disabled: true }),
       {
         uuid: 'other',

@@ -1,12 +1,12 @@
 /** Props every guided-setup step body receives. The server's step is the only source of status. */
-import type { RelayAdmin, SetupStatusResponse, SetupStep } from '@shared/contracts/edges';
+import type { OriginAdmin, SetupStatusResponse, SetupStep } from '@shared/contracts/edges';
 import type { IssueLinkContext } from './issueActions';
 
 export interface StepBodyProps {
   step: SetupStep;
   status: SetupStatusResponse;
   /** The origin row once it exists (null while the wizard works from a draft). */
-  relay: RelayAdmin | null;
+  relay: OriginAdmin | null;
   linkCtx: IssueLinkContext;
 }
 

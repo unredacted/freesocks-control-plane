@@ -10,7 +10,7 @@
   import { toast } from 'svelte-sonner';
   import type {
     EdgeProviderAccountAdmin,
-    RelayAdmin,
+    OriginAdmin,
     RelayListenerAdmin,
   } from '@shared/contracts/edges';
   import * as Dialog from '@client/components/ui/dialog';
@@ -33,7 +33,7 @@
 
   interface Props {
     open: boolean;
-    relay: RelayAdmin;
+    relay: OriginAdmin;
     listeners: RelayListenerAdmin[];
     accounts: EdgeProviderAccountAdmin[];
     onImported: (edgeId: string) => void;

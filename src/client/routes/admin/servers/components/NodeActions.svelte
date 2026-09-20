@@ -15,11 +15,11 @@
   import { Input } from '@client/components/ui/input';
   import { Label } from '@client/components/ui/label';
   import { deleteNode, nodeAction, updateNode } from '@client/lib/serversApi';
-  import type { PanelNodeView } from '../../../../../shared/contracts/servers';
+  import type { NodeView } from '../../../../../shared/contracts/servers';
   import ConfirmDialog from '../../edges/components/ConfirmDialog.svelte';
   import { runWrite } from '../lib/run';
 
-  let { slug, node }: { slug: string; node: PanelNodeView } = $props();
+  let { slug, node }: { slug: string; node: NodeView } = $props();
   const qc = useQueryClient();
   const uid = $props.id();
 

@@ -11,7 +11,7 @@
    */
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
-  import type { RelayAdmin } from '@shared/contracts/edges';
+  import type { OriginAdmin } from '@shared/contracts/edges';
   import * as Card from '@client/components/ui/card';
   import { Badge } from '@client/components/ui/badge';
   import { Button } from '@client/components/ui/button';
@@ -42,7 +42,7 @@
   } from './relayLogic';
 
   interface Props {
-    relay: RelayAdmin;
+    relay: OriginAdmin;
     onOpenEdge: (edgeId: string) => void;
     onOpenRotation: (rotationId: string) => void;
   }

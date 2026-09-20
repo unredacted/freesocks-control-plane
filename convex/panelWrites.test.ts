@@ -607,12 +607,12 @@ describe('claims, interruption and recovery', () => {
 
   test('an op that never sent is released; one interrupted mid-call becomes unknown', async () => {
     const { t, serverId, panel } = await seed();
-    const { opId: neverSent } = await t.mutation(internal.panelWrites.requestHostUpdate, {
+    const { opId: neverSent } = await t.mutation(internal.panelWrites.requestAddressUpdate, {
       backendServerId: serverId,
       hostUuid: 'h-1',
       sni: 'x.example',
     });
-    const { opId: midCall } = await t.mutation(internal.panelWrites.requestHostUpdate, {
+    const { opId: midCall } = await t.mutation(internal.panelWrites.requestAddressUpdate, {
       backendServerId: serverId,
       hostUuid: 'h-edge',
       sni: 'y.example',

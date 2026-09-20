@@ -12,18 +12,18 @@
   import * as Dialog from '@client/components/ui/dialog';
   import { Input } from '@client/components/ui/input';
   import { Label } from '@client/components/ui/label';
-  import { createSquad, deleteSquad, updateSquad } from '@client/lib/serversApi';
+  import { createModeGroup, deleteModeGroup, updateModeGroup } from '@client/lib/serversApi';
   import type { ServerTree } from '../../../../../shared/contracts/servers';
   import ConfirmDialog from '../../edges/components/ConfirmDialog.svelte';
   import { runWrite } from '../lib/run';
 
   let { slug, tree, canWrite }: { slug: string; tree: ServerTree; canWrite: boolean } = $props();
-  type ModeGroup = ServerTree['squads'][number];
+  type ModeGroup = ServerTree['modeGroups'][number];
   const qc = useQueryClient();
   const uid = $props.id();
 
   let transports = $derived(
-    tree.profiles.flatMap((p) => p.inbounds.map((i) => ({ ...i, profile: p.name }))),
+    tree.profiles.flatMap((p) => p.transports.map((i) => ({ ...i, profile: p.name }))),
   );
 
   let open = $state(false);
@@ -37,7 +37,7 @@
   function start(group: ModeGroup | null) {
     editing = group;
     name = group?.name ?? '';
-    picked = [...(group?.inboundUuids ?? [])];
+    picked = [...(group?.transportUuids ?? [])];
     restore = false;
     open = true;
   }
@@ -46,7 +46,7 @@
     (picked = on ? [...picked, uuid] : picked.filter((u) => u !== uuid));
 
   let sameTransports = $derived(
-    !!editing && [...picked].sort().join() === [...editing.inboundUuids].sort().join(),
+    !!editing && [...picked].sort().join() === [...editing.transportUuids].sort().join(),
   );
   let valid = $derived(/^[A-Za-z0-9_-]{2,20}$/.test(name.trim()));
 
@@ -56,12 +56,13 @@
     try {
       const group = editing;
       const op = await runWrite(qc, () => {
-        if (!group) return createSquad(slug, { name: name.trim(), inboundUuids: picked, restore });
+        if (!group)
+          return createModeGroup(slug, { name: name.trim(), transportUuids: picked, restore });
         // Only what changed is sent: a rename alone queues no work on any node.
-        const fields: { name?: string; inboundUuids?: string[] } = {};
+        const fields: { name?: string; transportUuids?: string[] } = {};
         if (name.trim() !== group.name) fields.name = name.trim();
-        if (!sameTransports) fields.inboundUuids = picked;
-        return updateSquad(slug, group.squadUuid, fields);
+        if (!sameTransports) fields.transportUuids = picked;
+        return updateModeGroup(slug, group.groupUuid, fields);
       });
       if (op) open = false;
     } finally {
@@ -74,7 +75,7 @@
     if (!group) return;
     removeOpen = false;
     open = false;
-    await runWrite(qc, () => deleteSquad(slug, group.squadUuid));
+    await runWrite(qc, () => deleteModeGroup(slug, group.groupUuid));
   }
 </script>
 
@@ -85,16 +86,16 @@
       <Button variant="outline" size="sm" onclick={() => start(null)}>Add a group</Button>
     {/if}
   </div>
-  {#if tree.squads.length === 0}
+  {#if tree.modeGroups.length === 0}
     <p class="text-muted-foreground text-sm">No mode groups yet.</p>
   {:else}
     <ul class="divide-y rounded-lg border text-sm">
-      {#each tree.squads as group (group.squadUuid)}
+      {#each tree.modeGroups as group (group.groupUuid)}
         <li class="flex flex-wrap items-center gap-3 px-3 py-2.5">
           <span class="min-w-0 flex-1">
             <span class="block font-medium break-all">{group.name}</span>
             <span class="text-muted-foreground block break-all">
-              {group.inboundTags.filter(Boolean).join(', ') || 'No transports'}
+              {group.transportTags.filter(Boolean).join(', ') || 'No transports'}
               {#if group.membersCount !== null}
                 · {group.membersCount} {group.membersCount === 1 ? 'member' : 'members'}
               {/if}
@@ -137,14 +138,14 @@
       </div>
       <fieldset class="space-y-2">
         <legend class="text-sm font-medium">Transports</legend>
-        {#each transports as i (i.inboundUuid)}
+        {#each transports as i (i.transportUuid)}
           <div class="flex items-center gap-2">
             <Checkbox
-              id={`${uid}-${i.inboundUuid}`}
-              checked={picked.includes(i.inboundUuid)}
-              onCheckedChange={(v) => toggle(i.inboundUuid, v === true)}
+              id={`${uid}-${i.transportUuid}`}
+              checked={picked.includes(i.transportUuid)}
+              onCheckedChange={(v) => toggle(i.transportUuid, v === true)}
             />
-            <Label for={`${uid}-${i.inboundUuid}`} class="font-normal break-all">
+            <Label for={`${uid}-${i.transportUuid}`} class="font-normal break-all">
               {i.tag} <span class="text-muted-foreground">({i.profile})</span>
             </Label>
           </div>

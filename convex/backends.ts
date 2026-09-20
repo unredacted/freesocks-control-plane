@@ -424,7 +424,7 @@ export const listHosts = internalAction({
   },
 });
 
-export const createHost = internalAction({
+export const createAddress = internalAction({
   args: {
     backendServerId: v.id('backendServers'),
     remark: v.string(),
@@ -438,24 +438,24 @@ export const createHost = internalAction({
     const server = await ctx.runQuery(internal.backendServers.getById, { id: backendServerId });
     if (!server) throw new ConvexError({ code: 'backend.not_found' });
     const provider = PROVIDERS[server.backend];
-    if (!provider.createHost) throw new ConvexError({ code: 'backend.hosts_unsupported' });
-    return provider.createHost(server.config as BackendConfig, h);
+    if (!provider.createAddress) throw new ConvexError({ code: 'backend.hosts_unsupported' });
+    return provider.createAddress(server.config as BackendConfig, h);
   },
 });
 
-export const deleteHost = internalAction({
+export const deleteAddress = internalAction({
   args: { backendServerId: v.id('backendServers'), uuid: v.string() },
   handler: async (ctx, { backendServerId, uuid }): Promise<null> => {
     const server = await ctx.runQuery(internal.backendServers.getById, { id: backendServerId });
     if (!server) throw new ConvexError({ code: 'backend.not_found' });
     const provider = PROVIDERS[server.backend];
-    if (!provider.deleteHost) throw new ConvexError({ code: 'backend.hosts_unsupported' });
-    await provider.deleteHost(server.config as BackendConfig, uuid);
+    if (!provider.deleteAddress) throw new ConvexError({ code: 'backend.hosts_unsupported' });
+    await provider.deleteAddress(server.config as BackendConfig, uuid);
     return null;
   },
 });
 
-export const updateHost = internalAction({
+export const updateAddress = internalAction({
   args: {
     backendServerId: v.id('backendServers'),
     uuid: v.string(),
@@ -469,8 +469,8 @@ export const updateHost = internalAction({
     const server = await ctx.runQuery(internal.backendServers.getById, { id: backendServerId });
     if (!server) throw new ConvexError({ code: 'backend.not_found' });
     const provider = PROVIDERS[server.backend];
-    if (!provider.updateHost) throw new ConvexError({ code: 'backend.hosts_unsupported' });
-    await provider.updateHost(server.config as BackendConfig, {
+    if (!provider.updateAddress) throw new ConvexError({ code: 'backend.hosts_unsupported' });
+    await provider.updateAddress(server.config as BackendConfig, {
       uuid,
       address,
       port,

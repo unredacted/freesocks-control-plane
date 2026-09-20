@@ -8,7 +8,7 @@
    * plus optional Terms of Service / Privacy Policy / Transparency Report links
    * and X / Mastodon / Bluesky profile icons (https URL only - an empty URL hides
    * the link). Its own component (not inline in
-   * App.svelte's footer) because App hosts the QueryClientProvider, so configQuery()
+   * App.svelte's footer) because App addresses the QueryClientProvider, so configQuery()
    * can only run from a child inside the provider tree. The server sanitizes each URL
    * to https-only, so '' (or an unsafe value) → hidden.
    *

@@ -20,7 +20,7 @@ import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
 import type {
   PanelObservation,
   PanelObservedHost,
-  PanelObservedInbound,
+  ObservedTransport,
   PanelObservedSquad,
 } from './lib/backends/types';
 import { panelDigestKey } from './lib/panel/key';
@@ -47,7 +47,7 @@ const observedInbound = v.object({
 type StoredInbound = Doc<'panelProfiles'>['inbounds'][number];
 
 /** The provider's transport projection, flattened to the stored shape. Pure. */
-export function toStoredInbound(i: PanelObservedInbound): StoredInbound {
+export function toStoredInbound(i: ObservedTransport): StoredInbound {
   const out: StoredInbound = {
     tag: i.tag,
     inboundUuid: i.configProfileInboundUuid,

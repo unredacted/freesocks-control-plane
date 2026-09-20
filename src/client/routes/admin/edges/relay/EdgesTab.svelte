@@ -9,7 +9,7 @@
   import type {
     EdgeAdmin,
     EdgeProviderAccountAdmin,
-    RelayAdmin,
+    OriginAdmin,
     RelayListenerAdmin,
   } from '@shared/contracts/edges';
   import * as Table from '@client/components/ui/table';
@@ -30,7 +30,7 @@
   import { edgeAddress } from './relayLogic';
 
   interface Props {
-    relay: RelayAdmin;
+    relay: OriginAdmin;
     edges: EdgeAdmin[];
     listeners: RelayListenerAdmin[];
     accounts: EdgeProviderAccountAdmin[];

@@ -18,9 +18,9 @@
   let { relaySlug }: Props = $props();
 
   const view = relayBySlugQuery(() => relaySlug);
-  const hosts = $derived(view.data?.hostsPlan.hosts ?? []);
+  const addresses = $derived(view.data?.hostsPlan.addresses ?? []);
 
-  const rowsOf = (h: (typeof hosts)[number]): KeyValueRow[] => [
+  const rowsOf = (h: (typeof addresses)[number]): KeyValueRow[] => [
     { label: 'Remark', value: h.remark, mono: true, copy: true },
     { label: 'Address', value: h.address, mono: true, copy: true },
     { label: 'Port', value: h.port, mono: true, copy: true },
@@ -43,12 +43,12 @@
     <AdminListState error={view.error} onRetry={() => void view.refetch()} />
   {:else if view.isPending}
     <Skeleton class="h-24 w-full" />
-  {:else if hosts.length === 0}
+  {:else if addresses.length === 0}
     <AdminListState
       emptyText="Nothing to create yet. The values appear here once an edge is published."
     />
   {:else}
-    {#each hosts as h (h.listenerKey)}
+    {#each addresses as h (h.listenerKey)}
       <KeyValue title={`Listener ${h.listenerKey}`} rows={rowsOf(h)} columns={2} hideEmpty />
     {/each}
   {/if}

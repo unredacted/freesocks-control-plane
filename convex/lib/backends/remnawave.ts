@@ -39,7 +39,7 @@ import type {
   PanelNodeStatus,
   PanelObservation,
   PanelObservedHost,
-  PanelObservedInbound,
+  ObservedTransport,
   PanelObservedProfile,
   PanelObservedSquad,
   PanelInboundTestParams,
@@ -1579,7 +1579,7 @@ export async function observeConfigProfile(
   const uuidByTag = new Map((profile.inbounds ?? []).map((i) => [i.tag, i.uuid]));
   const config = obj(profile.config);
   const rawInbounds = Array.isArray(config?.inbounds) ? config.inbounds : [];
-  const inbounds: PanelObservedInbound[] = [];
+  const inbounds: ObservedTransport[] = [];
   for (const raw of rawInbounds) {
     const tag = str(obj(raw)?.tag);
     if (!tag) continue;
@@ -1590,7 +1590,7 @@ export async function observeConfigProfile(
     });
     if (!projected) continue;
     const { active: _active, ...inbound } = projected;
-    const out: PanelObservedInbound = inbound;
+    const out: ObservedTransport = inbound;
     if (inbound.security === 'reality') {
       const rs = obj(obj(obj(raw)?.streamSettings)?.realitySettings);
       out.realityAuth = await realityAuthDigest(rs, digestKey);

@@ -9,7 +9,7 @@
    */
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
-  import type { RelayAdmin } from '@shared/contracts/edges';
+  import type { OriginAdmin } from '@shared/contracts/edges';
   import * as Dialog from '@client/components/ui/dialog';
   import { Button } from '@client/components/ui/button';
   import { Input } from '@client/components/ui/input';
@@ -29,7 +29,7 @@
 
   interface Props {
     open: boolean;
-    relay: RelayAdmin;
+    relay: OriginAdmin;
   }
   let { open = $bindable(false), relay }: Props = $props();
 

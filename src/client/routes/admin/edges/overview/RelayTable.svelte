@@ -5,11 +5,11 @@
    * overview/derive.ts.
    *
    * Props:
-   *   rows: RelayRow[]
+   *   rows: OriginRow[]
    *   dark: ReadonlySet<string>               slugs the server reports as members dark
    *   busySlug?: string | null                a row whose action is in flight
-   *   onProvision: (row: RelayRow) => void    the page confirms (billable) and calls
-   *   onProbe: (row: RelayRow) => void
+   *   onProvision: (row: OriginRow) => void    the page confirms (billable) and calls
+   *   onProbe: (row: OriginRow) => void
    */
   import Ellipsis from '@lucide/svelte/icons/ellipsis';
   import * as Table from '@client/components/ui/table';
@@ -32,19 +32,19 @@
     relayLayers,
     suspicionChip,
     worstHealth,
-    type RelayRow,
+    type OriginRow,
   } from './derive';
 
   interface Props {
-    rows: RelayRow[];
+    rows: OriginRow[];
     dark: ReadonlySet<string>;
     busySlug?: string | null;
-    onProvision: (row: RelayRow) => void;
-    onProbe: (row: RelayRow) => void;
+    onProvision: (row: OriginRow) => void;
+    onProbe: (row: OriginRow) => void;
   }
   let { rows, dark, busySlug = null, onProvision, onProbe }: Props = $props();
 
-  function originLine(row: RelayRow): string {
+  function originLine(row: OriginRow): string {
     const o = row.relay.origin;
     return o.kind === 'panel-node'
       ? `${ORIGIN_KIND_LABELS[o.kind]}: ${o.nodeName}`

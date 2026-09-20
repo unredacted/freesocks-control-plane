@@ -272,7 +272,7 @@ export const advance = internalAction({
       }
       // 3. The node's own addresses.
       for (const h of c.addresses) {
-        const { opId } = await ctx.runMutation(internal.panelWrites.requestHostDelete, {
+        const { opId } = await ctx.runMutation(internal.panelWrites.requestAddressDelete, {
           backendServerId: sid,
           hostUuid: h.hostUuid,
         });

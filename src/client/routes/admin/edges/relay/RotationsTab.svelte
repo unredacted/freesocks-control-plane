@@ -9,7 +9,7 @@
   import { Badge } from '@client/components/ui/badge';
   import { Button } from '@client/components/ui/button';
   import { Skeleton } from '@client/components/ui/skeleton';
-  import type { RelayAdmin } from '@shared/contracts/edges';
+  import type { OriginAdmin } from '@shared/contracts/edges';
   import { cancelRelayRotation, edgeKeys, relayRotationsQuery } from '@client/lib/edgesApi';
   import AdminListState from '../../AdminListState.svelte';
   import StatusBadge from '../components/StatusBadge.svelte';
@@ -20,7 +20,7 @@
   import { rotationDurationMs, rotationOutcomeWords } from './relayLogic';
 
   interface Props {
-    relay: RelayAdmin;
+    relay: OriginAdmin;
     onOpenRotation: (rotationId: string) => void;
   }
   let { relay, onOpenRotation }: Props = $props();
