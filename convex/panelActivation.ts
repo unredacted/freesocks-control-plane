@@ -204,7 +204,9 @@ function activationBlockers(
     intent.activation.evidence.some((e) => e.kind === k && evidenceHolds(e, revs));
   if (!has('machine_ready')) out.push('servers.machine_not_ready');
   if (direct && !has('direct_confirmed')) out.push('servers.direct_unconfirmed');
-  if (!direct && !has('standbys_verified') && standbys?.code) out.push(standbys.code);
+  // An adopted node whose edge FCP does not run yet has no standbys to show.
+  if (!direct && !intent.adopted?.externallyFronted && !has('standbys_verified') && standbys?.code)
+    out.push(standbys.code);
   const mode = modeEntry(setup, intent.mode);
   if (mode.placement !== 'bound') out.push('servers.placement_skipped');
   if (mode.family === 'unbound' || mode.family === 'target_mismatch')
@@ -894,7 +896,8 @@ export async function promoteCandidate(
   if (isDirect(modeEntry(setup, intent.mode).shape)) {
     if (!has('direct_confirmed')) return { ok: false, code: 'servers.direct_unconfirmed' };
     if (!run.rehearsal?.ok) return { ok: false, code: 'servers.rehearsal_missing' };
-  } else if (!has('standbys_verified')) return { ok: false, code: 'servers.standbys_unverified' };
+  } else if (!has('standbys_verified') && !intent.adopted?.externallyFronted)
+    return { ok: false, code: 'servers.standbys_unverified' };
   const open = (
     await ctx.db
       .query('panelObligations')

@@ -457,7 +457,21 @@ export const NodeIntentView = z.object({
   updatedAt: z.string(),
 });
 export type NodeIntentView = z.infer<typeof NodeIntentView>;
-export const NodeIntentList = z.object({ intents: z.array(NodeIntentView) });
+export const AdoptNodeResult = z.object({ intentId: z.string(), addresses: z.number() });
+
+/** A shared change's hold on nodes FCP does not manage (released by an admin). */
+export const MaintenanceHoldView = z.object({
+  id: z.string(),
+  reason: z.string(),
+  heldNodeNames: z.array(z.string()),
+  closed: z.number(),
+  since: z.string(),
+});
+export type MaintenanceHoldView = z.infer<typeof MaintenanceHoldView>;
+export const NodeIntentList = z.object({
+  intents: z.array(NodeIntentView),
+  holds: z.array(MaintenanceHoldView).default([]),
+});
 
 /** The review card an approval names (`GET …/intents/{id}/review`). */
 export const ActivationReview = z.object({

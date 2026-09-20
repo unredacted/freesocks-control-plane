@@ -15,6 +15,7 @@ import { apiClient } from './api';
 import {
   ActivationReview,
   DirectTestLink,
+  AdoptNodeResult,
   NodeIntentList,
   PanelOpList,
   PanelOpView,
@@ -105,6 +106,8 @@ export const applyProfilePatch = (
   slug: string,
   profileUuid: string,
   preview: ProfilePatchPreview,
+  /** What happens to nodes FCP does not manage that run the touched transports. */
+  unmanaged?: 'hold' | 'acknowledge',
 ) =>
   apiClient.post(
     `${slugPath(slug)}/profiles/${encodeURIComponent(profileUuid)}/apply`,
@@ -113,9 +116,19 @@ export const applyProfilePatch = (
       baseToken: preview.baseToken,
       expectedToken: preview.expectedToken,
       inboundUuids: preview.inboundUuids,
+      ...(unmanaged ? { unmanaged } : {}),
     },
     PanelOpView,
   );
+
+/** Adopt a node that already serves members, as it is (live at once). */
+export const adoptNode = (
+  slug: string,
+  body: { nodeUuid: string; mode: string; externallyFronted?: boolean },
+) => apiClient.post(`${slugPath(slug)}/nodes/adopt`, body, AdoptNodeResult);
+/** Release the hold a shared change put on nodes FCP does not manage. */
+export const releaseHold = (slug: string, holdId: string) =>
+  apiClient.post(`${slugPath(slug)}/holds/${encodeURIComponent(holdId)}/release`, {}, Ok);
 
 /** "I have looked at it": clears the edited-elsewhere flag of one profile. */
 export const acknowledgeForeignEdit = (slug: string, profileUuid: string) =>

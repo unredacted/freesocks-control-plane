@@ -305,6 +305,143 @@ export const enroll = internalMutation({
   },
 });
 
+/**
+ * Adopt an existing backend node as a LIVE enrolled node (docs/servers.md
+ * "Adopting a backend"): it already serves members, so nothing changes for
+ * them. The node row must already run the mode's transport; a direct node's
+ * addresses (those carrying its name or its address) become its committed
+ * set. A fronted node whose edge FCP does not run yet is `externallyFronted`
+ * until Edges protects it. The role is never run for an adopted machine.
+ */
+export const adoptNode = internalMutation({
+  args: {
+    backendServerId: v.id('backendServers'),
+    nodeUuid: v.string(),
+    mode: v.string(),
+    externallyFronted: v.optional(v.boolean()),
+    actorAdminId: v.optional(v.id('adminUsers')),
+  },
+  handler: async (ctx, a) => {
+    const sid = a.backendServerId;
+    const cfg = await resolveServerConfig(ctx.db);
+    if (!cfg.manage.enabled)
+      refuse('servers.manage_disabled', 'Server changes are switched off in Servers settings');
+    const setup = await readySetup(ctx, sid);
+    if (!setup) refuse('servers.panel_not_set_up', 'Set up this backend in Servers first');
+    const mode = modeEntry(setup!, a.mode);
+    const t = transportFor(setup!, a.mode);
+    const node = await ctx.db
+      .query('panelNodes')
+      .withIndex('by_server_uuid', (q) => q.eq('backendServerId', sid).eq('nodeUuid', a.nodeUuid))
+      .unique();
+    if (!node) return refuse('not_found', 'That node is not on the backend. Refresh Servers');
+    if (await intentByName(ctx, sid, node.name))
+      refuse('servers.node_exists', 'This node is already enrolled');
+    if (node.configProfileUuid !== setup!.profileUuid || !node.activeInboundUuids.includes(t.uuid))
+      refuse(
+        'servers.node_not_on_mode',
+        `The node does not run the ${mode.name} transport of this backend's profile`,
+      );
+    if (!NODE_NAME.test(node.name)) refuse('validation', 'The node name is not usable here');
+    const direct = isDirect(mode.shape);
+    const hosts = await ctx.db
+      .query('panelHosts')
+      .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+      .collect();
+    const addresses = direct
+      ? hosts.filter(
+          (h) =>
+            h.configProfileInboundUuid === t.uuid &&
+            (ownsAddress(node.name, h.remark) || (!!node.address && h.address === node.address)),
+        )
+      : [];
+    const profile = await ctx.db
+      .query('panelProfiles')
+      .withIndex('by_server_uuid', (q) =>
+        q.eq('backendServerId', sid).eq('profileUuid', setup!.profileUuid!),
+      )
+      .unique();
+    const inbound = profile?.inbounds.find((i) => i.inboundUuid === t.uuid);
+    const configRevision = `${profile?.changeToken ?? ''}:${t.uuid}`;
+    const authRevision = inbound?.realityAuth?.digest ?? undefined;
+    const now = Date.now();
+    const settings = defaultSettings(setup!, a.mode);
+    if (isWs(mode.shape)) settings.originHostnameSource = 'explicit';
+    const observed: Intent['observed'] = {
+      management: { address: node.address ?? '', port: node.port ?? 2222 },
+      publicIps: node.address && IPV4.test(node.address) ? { v4: node.address } : {},
+      capabilities: { caddy: isWs(mode.shape), ipv6: false },
+      at: now,
+    };
+    const revs = { machineRevision: 1, configRevision, authRevision, deliveryRevision: '' };
+    const id = await ctx.db.insert('panelNodeIntents', {
+      backendServerId: sid,
+      name: node.name,
+      label: originLabel(node.name) || node.name.toLowerCase(),
+      mode: a.mode,
+      contractVersion: ROLE_CONTRACT_VERSION,
+      generation: 1,
+      desiredHash: await desiredHashOf({ observed, settings }),
+      state: 'ready',
+      observed,
+      settings,
+      machineRevision: 1,
+      appliedRevision: 1,
+      appliedAt: now,
+      configRevision,
+      authRevision,
+      activation: {
+        stage: 'live',
+        evidence: [
+          { kind: 'machine_applied', machineRevision: 1, at: now, detail: 'adopted' },
+          { kind: 'machine_ready', machineRevision: 1, configRevision, at: now, detail: 'adopted' },
+        ],
+      },
+      approved: {
+        ...revs,
+        reviewHash: 'adopted',
+        approvedAt: now,
+        byAdminId: a.actorAdminId,
+        committed: { hostUuids: addresses.map((h) => h.hostUuid), edgeIds: [] },
+      },
+      delivery: {
+        disposition: 'live',
+        acceptingAssignments: true,
+        lastLiveAt: now,
+        exposure: {
+          everLive: true,
+          hosts: addresses.map((h) => h.hostUuid),
+          mirrors: 0,
+          testCredentials: 0,
+          dns: 0,
+        },
+      },
+      origin: { dns: 'none' },
+      nodeUuid: node.nodeUuid,
+      addressUuids: addresses.map((h) => h.hostUuid),
+      adopted: { at: now, externallyFronted: !direct && a.externallyFronted === true },
+      registeredAt: now,
+      updatedAt: now,
+    });
+    await bumpGateVersion(ctx, sid);
+    const server = await ctx.db.get(sid);
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: a.actorAdminId ?? undefined,
+      action: 'servers.node.adopted',
+      targetType: 'panel_node_intent',
+      targetId: id,
+      payload: {
+        backendSlug: server?.slug ?? '',
+        name: node.name,
+        mode: a.mode,
+        addresses: addresses.length,
+      },
+    });
+    return { intentId: id, addresses: addresses.length };
+  },
+});
+
 /** Take the lease and schedule the reconcile, unless an attempt already holds it. */
 async function scheduleReconcile(ctx: MutationCtx, intent: Intent) {
   const now = Date.now();
@@ -639,20 +776,52 @@ export const observeRevisions = internalMutation({
     configRevision: v.string(),
     authRevision: v.union(v.string(), v.null()),
     hostMoved: v.boolean(),
+    // The profile token moved through FCP's own ledger (a family rollout,
+    // a hardening), not somebody else's edit: nothing the node serves broke.
+    ownChange: v.boolean(),
   },
-  handler: async (ctx, { configRevision, authRevision, hostMoved, ...f }) => {
+  handler: async (ctx, { configRevision, authRevision, hostMoved, ownChange, ...f }) => {
     const intent = await ctx.db.get(f.intentId);
     if (!intent || !fenceHolds(intent, f)) return { ok: false as const, drift: false };
     const now = Date.now();
-    const revisionMoved =
-      intent.configRevision !== undefined &&
-      (intent.configRevision !== configRevision || (intent.authRevision ?? null) !== authRevision);
+    const configMoved =
+      intent.configRevision !== undefined && intent.configRevision !== configRevision;
+    const authMoved =
+      intent.configRevision !== undefined && (intent.authRevision ?? null) !== authRevision;
+    const revisionMoved = configMoved || authMoved;
     const patch: Partial<Intent> = {
       configRevision,
       authRevision: authRevision ?? undefined,
       claim: { attemptId: f.attemptId, expiresAt: now + CLAIM_LEASE_MS },
       updatedAt: now,
     };
+    // FCP's own write of the profile (never the authentication material, never
+    // an endpoint move): the evidence and the approval are re-stamped to the
+    // new revision, since what members hold still works; a run in flight is
+    // superseded (its snapshot names the old revision) and is approved again.
+    if (configMoved && !authMoved && ownChange && !hostMoved) {
+      const restamp = <E extends { configRevision?: string }>(e: E): E =>
+        e.configRevision !== undefined ? { ...e, configRevision } : e;
+      const d = intent.delivery.disposition;
+      patch.activation = {
+        ...intent.activation,
+        evidence: intent.activation.evidence.map(restamp),
+        stage:
+          intent.activation.stage === 'activating' ? 'awaiting_approval' : intent.activation.stage,
+        reviewHash: undefined,
+        currentRunId: undefined,
+      };
+      if (intent.approved) patch.approved = { ...intent.approved, configRevision };
+      if (d === 'activating') patch.delivery = { ...intent.delivery, disposition: 'staged' };
+      for (const r of await ctx.db
+        .query('panelActivationRuns')
+        .withIndex('by_intent', (q) => q.eq('intentId', intent._id))
+        .collect())
+        if (r.state === 'running' || r.state === 'blocked' || r.state === 'review')
+          await ctx.db.patch(r._id, { state: 'superseded', updatedAt: now });
+      await ctx.db.patch(f.intentId, patch);
+      return { ok: true as const, drift: false };
+    }
     const revs: Revisions = {
       machineRevision: intent.machineRevision,
       configRevision,
@@ -869,6 +1038,9 @@ export const reconcile = internalAction({
         configRevision,
         authRevision,
         hostMoved: moved.length > 0 || extra.length > 0,
+        // The observer marks a token move nobody's ledger op expected as a
+        // foreign edit; anything else was FCP's own write.
+        ownChange: !c.profile?.foreignEditAt,
       });
       if (!rev.ok) throw new Fenced();
       c = await load();
@@ -928,7 +1100,8 @@ export const reconcile = internalAction({
       }
 
       // 4. A WebSocket node's origin name: obligations through the node runtime.
-      if (isWs(shape)) {
+      //    An adopted node fronted by an edge FCP does not run keeps its own name.
+      if (isWs(shape) && !c.intent.adopted?.externallyFronted) {
         if (!c.hostname) {
           await stop('blocked', 'servers.origin_hostname_missing');
           return null;
@@ -989,7 +1162,7 @@ async function verifyMachine(
   if (!c.node || !c.node.online) return { ok: false, code: 'servers.node_offline' };
   const now = Date.now();
   const evidence: Evidence[] = [];
-  if (isWs(c.mode.shape)) {
+  if (isWs(c.mode.shape) && !c.intent.adopted?.externallyFronted) {
     const check = await ctx.runAction(internal.panelIntentOps.checkFrontIngress, {
       hostname: c.hostname!,
       port: c.ingress!.external.port,
@@ -1124,7 +1297,21 @@ export async function nodeGateFor(
         .withIndex('by_intent', (q) => q.eq('intentId', intent._id))
         .collect()
     : [];
-  return nodeGateOf(intent, runs, gateVersion, false);
+  // An unmanaged node is closed only by an open maintenance hold that names it.
+  const held = !intent && !!nodeName && (await heldNodeNames(ctx, sid)).has(nodeName);
+  return nodeGateOf(intent, runs, gateVersion, held);
+}
+
+/** The unmanaged node names an open maintenance hold of this backend keeps closed. */
+export async function heldNodeNames(
+  ctx: { db: QueryCtx['db'] },
+  sid: Id<'backendServers'>,
+): Promise<Set<string>> {
+  const holds = await ctx.db
+    .query('panelMaintenanceHolds')
+    .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+    .collect();
+  return new Set(holds.filter((h) => !h.released).flatMap((h) => h.heldNodeNames));
 }
 
 /** The names of every enrolled node of a panel whose gate is closed (the pinner never picks one while another exists). */
@@ -1135,9 +1322,13 @@ export const blockedNodeNames = internalQuery({
       .query('panelNodeIntents')
       .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
       .collect();
-    return intents
-      .filter((i) => i.delivery.disposition !== 'live' || !!i.maintenance)
-      .map((i) => i.name);
+    const held = await heldNodeNames(ctx, backendServerId);
+    return [
+      ...intents
+        .filter((i) => i.delivery.disposition !== 'live' || !!i.maintenance)
+        .map((i) => i.name),
+      ...held,
+    ];
   },
 });
 
@@ -1234,6 +1425,157 @@ export const finishMaintenance = internalMutation({
     await scheduleReconcile(ctx, (await ctx.db.get(intentId))!);
     return { ok: true as const, stage: intent.activation.stage };
   },
+});
+
+// --- a shared change: the maintenance transition over its blast radius ------------------------------
+
+/**
+ * A change to a profile reaches every node running the touched transports at
+ * once (docs/servers.md "Node lifecycle", maintenance): before the write is
+ * admitted, every affected MANAGED node closes under one transition (it
+ * returns to live only through its own re-verification and commit), and
+ * every affected UNMANAGED node needs a treatment from the caller: held
+ * closed by name until an admin releases the hold, or acknowledged as
+ * changing in place. "No intent means open" never bypasses this.
+ */
+export async function closeForSharedChange(
+  ctx: MutationCtx,
+  a: {
+    backendServerId: Id<'backendServers'>;
+    transportUuids: readonly string[];
+    reason: string;
+    unmanaged?: 'hold' | 'acknowledge';
+    actorAdminId?: Id<'adminUsers'>;
+  },
+): Promise<{ transitionId: string; closed: string[]; held: string[]; acknowledged: string[] }> {
+  const sid = a.backendServerId;
+  const wanted = new Set(a.transportUuids);
+  const nodes = (
+    await ctx.db
+      .query('panelNodes')
+      .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+      .collect()
+  ).filter((n) => !n.isDisabled && n.activeInboundUuids.some((u) => wanted.has(u)));
+  const intents = await ctx.db
+    .query('panelNodeIntents')
+    .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+    .collect();
+  const byName = new Map(intents.map((i) => [i.name, i]));
+  const unmanaged = nodes.filter((n) => !byName.has(n.name)).map((n) => n.name);
+  if (unmanaged.length > 0 && !a.unmanaged)
+    refuse(
+      'servers.unmanaged_nodes_affected',
+      `Nodes FCP does not manage run this too: ${unmanaged.join(', ')}. Hold them closed or acknowledge`,
+    );
+  const now = Date.now();
+  const transitionId = crypto.randomUUID();
+  const closed: string[] = [];
+  for (const n of nodes) {
+    const intent = byName.get(n.name);
+    if (!intent || intent.state === 'retiring' || intent.state === 'retired') continue;
+    for (const r of await ctx.db
+      .query('panelActivationRuns')
+      .withIndex('by_intent', (q) => q.eq('intentId', intent._id))
+      .collect())
+      if (r.state === 'running' || r.state === 'blocked' || r.state === 'review')
+        await ctx.db.patch(r._id, { state: 'superseded', updatedAt: now });
+    await ctx.db.patch(intent._id, {
+      delivery: {
+        ...intent.delivery,
+        disposition: intent.delivery.disposition === 'live' ? 'unavailable' : 'staged',
+      },
+      maintenance: intent.maintenance ?? {
+        id: transitionId,
+        reason: a.reason,
+        since: now,
+        byAdminId: a.actorAdminId,
+      },
+      activation: {
+        ...intent.activation,
+        stage:
+          intent.activation.stage === 'activating' || intent.activation.stage === 'live'
+            ? 'awaiting_approval'
+            : intent.activation.stage,
+        reviewHash: undefined,
+        currentRunId: undefined,
+      },
+      updatedAt: now,
+    });
+    closed.push(intent.name);
+  }
+  const held = a.unmanaged === 'hold' ? unmanaged : [];
+  const acknowledged = a.unmanaged === 'acknowledge' ? unmanaged : [];
+  if (closed.length > 0 || unmanaged.length > 0)
+    await ctx.db.insert('panelMaintenanceHolds', {
+      backendServerId: sid,
+      transitionId,
+      reason: a.reason,
+      heldNodeNames: held,
+      closedIntentIds: closed.map((n) => byName.get(n)!._id),
+      released: held.length === 0,
+      since: now,
+      byAdminId: a.actorAdminId,
+      updatedAt: now,
+    });
+  if (closed.length > 0 || held.length > 0) await bumpGateVersion(ctx, sid);
+  const server = await ctx.db.get(sid);
+  await writeAuditLog(ctx, {
+    actorType: a.actorAdminId ? 'admin' : 'system',
+    actorId: a.actorAdminId,
+    action: 'servers.profile.transition',
+    targetType: 'backend_server',
+    targetId: sid,
+    payload: {
+      backendSlug: server?.slug ?? '',
+      closed: closed.length,
+      held: held.length,
+      acknowledged: acknowledged.length,
+    },
+  });
+  return { transitionId, closed, held, acknowledged };
+}
+
+/** An admin releases the hold on unmanaged nodes a shared change closed. */
+export const releaseHold = internalMutation({
+  args: { holdId: v.id('panelMaintenanceHolds'), actorAdminId: v.optional(v.id('adminUsers')) },
+  handler: async (ctx, { holdId, actorAdminId }) => {
+    const hold = await ctx.db.get(holdId);
+    if (!hold) return refuse('not_found', 'No such hold');
+    if (hold.released) return { ok: true as const, released: false };
+    const now = Date.now();
+    await ctx.db.patch(holdId, { released: true, updatedAt: now });
+    await bumpGateVersion(ctx, hold.backendServerId);
+    const server = await ctx.db.get(hold.backendServerId);
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: actorAdminId ?? undefined,
+      action: 'servers.profile.transition_released',
+      targetType: 'backend_server',
+      targetId: hold.backendServerId,
+      payload: { backendSlug: server?.slug ?? '', held: hold.heldNodeNames.length },
+    });
+    return { ok: true as const, released: true };
+  },
+});
+
+/** The open holds of a backend, for the Servers page. */
+export const holdsView = internalQuery({
+  args: { backendServerId: v.id('backendServers') },
+  handler: async (ctx, { backendServerId }) =>
+    (
+      await ctx.db
+        .query('panelMaintenanceHolds')
+        .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
+        .collect()
+    )
+      .filter((h) => !h.released)
+      .map((h) => ({
+        id: h._id as string,
+        reason: h.reason,
+        heldNodeNames: h.heldNodeNames,
+        closed: h.closedIntentIds.length,
+        since: new Date(h.since).toISOString(),
+      })),
 });
 
 /** The role confirms the machine is cleaned up: `ready_to_wipe` -> `wiped` -> `retired`. */

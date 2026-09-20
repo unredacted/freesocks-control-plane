@@ -16,6 +16,7 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { insertPanelServer } from './lib/edges/testing/fixtures';
 import { generateRealityKey } from './lib/panel/realityKeys';
+import { closeForSharedChange } from './panelIntents';
 
 const modules = import.meta.glob('./**/*.*s');
 type T = TestConvex<typeof schema>;
@@ -470,6 +471,148 @@ describe('activating a direct node', () => {
     expect(intent.machineRevision).toBe(2);
     expect(intent.activation.stage).toBe('bootstrap_available');
     expect(panel.hosts[0]!.isDisabled).toBe(true);
+  });
+
+  test('a node that already serves members is adopted live with its addresses; an enrolled name is refused', async () => {
+    const { t, serverId, panel, intentId } = await seedLiveDirect();
+    // A second node the backend already runs on the same transport, with an address of its own.
+    const transportUuid = panel.profiles[0].inbounds[0].uuid as string;
+    panel.nodes.push({
+      uuid: UUID(200),
+      name: 'legacy-a',
+      address: '203.0.113.20',
+      port: 2222,
+      countryCode: 'XX',
+      isDisabled: false,
+      lastStatusChange: 't0',
+      configProfile: {
+        activeConfigProfileUuid: panel.profiles[0].uuid,
+        activeInbounds: [{ uuid: transportUuid, tag: TAG }],
+      },
+    });
+    panel.hosts.push({
+      uuid: UUID(201),
+      remark: 'legacy-a-reality',
+      address: '203.0.113.20',
+      port: 443,
+      sni: 'decoy-a.example',
+      inbound: {
+        configProfileUuid: panel.profiles[0].uuid,
+        configProfileInboundUuid: transportUuid,
+      },
+      isDisabled: false,
+    });
+    await t.action(internal.panelObserve.refresh, { backendServerId: serverId });
+    const r = await t.mutation(internal.panelIntents.adoptNode, {
+      backendServerId: serverId,
+      nodeUuid: UUID(200),
+      mode: 'privacy-reality',
+    });
+    expect(r.addresses).toBe(1);
+    const adopted = (await t.run((ctx) => ctx.db.get(r.intentId)))!;
+    expect(adopted).toMatchObject({
+      name: 'legacy-a',
+      mode: 'privacy-reality',
+      activation: { stage: 'live' },
+      delivery: { disposition: 'live' },
+      approved: { committed: { hostUuids: [UUID(201)] } },
+      addressUuids: [UUID(201)],
+      adopted: { externallyFronted: false },
+    });
+    expect(
+      (
+        await t.query(internal.panelIntents.nodeGate, {
+          backendServerId: serverId,
+          nodeName: 'legacy-a',
+        })
+      ).state,
+    ).toBe('open');
+    // The enrolled node cannot be adopted twice; an unknown one is not found.
+    await expect(
+      t.mutation(internal.panelIntents.adoptNode, {
+        backendServerId: serverId,
+        nodeUuid: (await t.run((ctx) => ctx.db.get(intentId)))!.nodeUuid!,
+        mode: 'privacy-reality',
+      }),
+    ).rejects.toThrow(/node_exists/);
+    await expect(
+      t.mutation(internal.panelIntents.adoptNode, {
+        backendServerId: serverId,
+        nodeUuid: UUID(200),
+        mode: 'freedom-ws',
+      }),
+    ).rejects.toThrow(/node_exists|node_not_on_mode/);
+  });
+
+  test('a profile edit closes every enrolled node on the transport and needs a treatment for the rest', async () => {
+    const { t, serverId, panel, intentId } = await seedLiveDirect();
+    // Take the enrolled node live first.
+    const built = await t.action(internal.panelActivation.buildDirectTestLink, { intentId });
+    const { intentId: _i, issuedAt: _t, ...binding } = built.binding;
+    await t.mutation(internal.panelActivation.confirmDirect, { intentId, binding });
+    const review = await t.query(internal.panelActivation.review, { intentId });
+    const { runId } = await t.mutation(internal.panelActivation.approve, {
+      intentId,
+      reviewHash: review.reviewHash,
+    });
+    await runUntil(
+      () => t.run((ctx) => ctx.db.get(runId)),
+      (s) => s !== 'running',
+    );
+    expect((await gateOf(t, serverId)).state).toBe('open');
+    // A node FCP does not manage runs the same transport.
+    const transportUuid = panel.profiles[0].inbounds[0].uuid as string;
+    panel.nodes.push({
+      uuid: UUID(300),
+      name: 'stranger',
+      address: '203.0.113.30',
+      port: 2222,
+      countryCode: 'XX',
+      isDisabled: false,
+      lastStatusChange: 't0',
+      configProfile: {
+        activeConfigProfileUuid: panel.profiles[0].uuid,
+        activeInbounds: [{ uuid: transportUuid, tag: TAG }],
+      },
+    });
+    await t.action(internal.panelObserve.refresh, { backendServerId: serverId });
+    // The transition is opened directly (the profile-patch request calls it).
+    await expect(
+      t.run((ctx) =>
+        closeForSharedChange(ctx, {
+          backendServerId: serverId,
+          transportUuids: [transportUuid],
+          reason: 'profile',
+        }),
+      ),
+    ).rejects.toThrow(/unmanaged_nodes_affected/);
+    const out = await t.run((ctx) =>
+      closeForSharedChange(ctx, {
+        backendServerId: serverId,
+        transportUuids: [transportUuid],
+        reason: 'profile',
+        unmanaged: 'hold',
+      }),
+    );
+    expect(out.closed).toEqual(['node-a']);
+    expect(out.held).toEqual(['stranger']);
+    const intent = (await t.run((ctx) => ctx.db.get(intentId)))!;
+    expect(intent.delivery.disposition).toBe('unavailable');
+    expect(intent.maintenance?.reason).toBe('profile');
+    expect(intent.activation.stage).toBe('awaiting_approval');
+    expect((await gateOf(t, serverId)).state).toBe('blocked');
+    // The unmanaged node is held closed by name until released.
+    const strangerGate = () =>
+      t.query(internal.panelIntents.nodeGate, { backendServerId: serverId, nodeName: 'stranger' });
+    expect((await strangerGate()).state).toBe('blocked');
+    const holds = await t.query(internal.panelIntents.holdsView, { backendServerId: serverId });
+    expect(holds).toHaveLength(1);
+    await t.mutation(internal.panelIntents.releaseHold, {
+      holdId: holds[0]!.id as Id<'panelMaintenanceHolds'>,
+    });
+    expect((await strangerGate()).state).toBe('open');
+    // The enrolled node stays closed: it reopens only through its own approval.
+    expect((await gateOf(t, serverId)).state).toBe('blocked');
   });
 
   test('a moved endpoint under a live node is observed drift: the gate closes, the address follows, the tick is gone', async () => {

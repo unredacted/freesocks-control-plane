@@ -57,6 +57,8 @@
   let needsTyped = $derived((preview?.restartsNodes.length ?? 0) > 1);
   let canApply = $derived(!!preview?.changed && (!needsTyped || typed.trim() === inbound.tag));
 
+  let unmanaged = $state<'hold' | 'acknowledge'>('hold');
+
   async function doPreview() {
     if (!dirty || busy) return;
     const ops: ProfilePatchOp[] = [];
@@ -78,7 +80,7 @@
     busy = true;
     try {
       const p = preview;
-      const op = await runWrite(qc, () => applyProfilePatch(slug, profileUuid, p));
+      const op = await runWrite(qc, () => applyProfilePatch(slug, profileUuid, p, unmanaged));
       if (op) open = false;
       else preview = null;
     } finally {
@@ -177,6 +179,22 @@
             <p class="text-muted-foreground">
               New names reach members only after a node has proven it accepts them.
             </p>
+          {/if}
+          {#if preview.restartsNodes.length > 0}
+            <div class="space-y-1.5">
+              <Label for={`${uid}-unmanaged`}>Nodes FCP does not manage that run this</Label>
+              <select
+                id={`${uid}-unmanaged`}
+                class="bg-background w-full rounded-md border px-3 py-2 text-sm"
+                bind:value={unmanaged}
+              >
+                <option value="hold">Hold them closed until I release them</option>
+                <option value="acknowledge">They change in place; I acknowledge that</option>
+              </select>
+              <p class="text-muted-foreground text-xs">
+                Enrolled nodes close on their own and come back once verified and approved again.
+              </p>
+            </div>
           {/if}
           {#if needsTyped}
             <div class="space-y-1.5">

@@ -24,6 +24,7 @@
     invalidateServers,
     patchServerConfig,
     refreshServer,
+    releaseHold,
     serverKeys,
     serverSummaryQuery,
     serverTreeQuery,
@@ -32,6 +33,7 @@
   import { router } from '@client/stores/router.svelte';
   import SectionHeader from '../edges/components/SectionHeader.svelte';
   import StatusDot from '../edges/simple/StatusDot.svelte';
+  import AdoptNodeDialog from './components/AdoptNodeDialog.svelte';
   import OpsList from './components/OpsList.svelte';
   import SetupSheet from './components/SetupSheet.svelte';
   import SquadsCard from './components/SquadsCard.svelte';
@@ -59,6 +61,20 @@
   const providers = providersQuery();
   let setupOpen = $state(false);
   let setupRow = $derived(setup.data ? setupWords(setup.data) : null);
+  // Adopting a node that already serves members (a row without an intent).
+  let adoptOpen = $state(false);
+  let adoptTarget = $state<{ nodeUuid: string; name: string } | null>(null);
+  let holds = $derived(intents.data?.holds ?? []);
+  async function release(holdId: string) {
+    try {
+      await releaseHold(slug!, holdId);
+      toast.success('Hold released.');
+    } catch (e) {
+      toast.error(serverErrorWords(codeOf(e)));
+    } finally {
+      invalidateServers(qc);
+    }
+  }
   let originAccounts = $derived(
     (providers.data?.accounts ?? [])
       .filter((a) => a.provider === 'cloudflare' && typeof a.settings.zoneName === 'string')
@@ -184,10 +200,25 @@
       </p>
     </div>
 
-    {#if attention.length > 0 || (manageOn && setupRow) || (manageOn && instance && !instance.setUp && !setupRow)}
+    {#if attention.length > 0 || holds.length > 0 || (manageOn && setupRow) || (manageOn && instance && !instance.setUp && !setupRow)}
       <section aria-labelledby="needs-you">
         <h2 id="needs-you" class="mb-3 text-base font-semibold">Needs you</h2>
         <ul class="space-y-2">
+          {#each holds as h (h.id)}
+            <li
+              class="flex flex-wrap items-center gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm"
+            >
+              <span class="min-w-0 flex-1">
+                {h.heldNodeNames.join(', ')}
+                {h.heldNodeNames.length === 1 ? 'is' : 'are'} held closed since a profile change
+                {ago(Date.now() - Date.parse(h.since))}. They are not enrolled, so nothing re-checks
+                them: release the hold once you have.
+              </span>
+              {#if canWrite}
+                <Button variant="outline" size="sm" onclick={() => release(h.id)}>Release</Button>
+              {/if}
+            </li>
+          {/each}
           {#if manageOn && setupRow}
             <li
               class="flex flex-wrap items-center gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm"
@@ -259,6 +290,18 @@
                   aria-hidden="true"
                 />
               </Link>
+              {#if !intent && canWrite && setup.data?.state === 'ready'}
+                <div class="mt-1 flex justify-end">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onclick={() => {
+                      adoptTarget = { nodeUuid: node.nodeUuid, name: node.name };
+                      adoptOpen = true;
+                    }}>Adopt as an enrolled node</Button
+                  >
+                </div>
+              {/if}
             </li>
           {/each}
         </ul>
@@ -274,6 +317,12 @@
 
     {#if slug}
       <SquadsCard {slug} tree={t} {canWrite} />
+      <AdoptNodeDialog
+        bind:open={adoptOpen}
+        {slug}
+        node={adoptTarget}
+        modes={setup.data?.modes ?? []}
+      />
       <SetupSheet
         bind:open={setupOpen}
         {slug}

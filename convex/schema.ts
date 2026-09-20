@@ -2722,6 +2722,10 @@ export default defineSchema({
     nodeUuid: v.optional(v.string()),
     // A direct node's own addresses on the backend: one per family name.
     addressUuids: v.optional(v.array(v.string())),
+    // Taken over as it was (already serving members): live at once, with its
+    // current addresses committed. `externallyFronted`: a fronted node whose
+    // edge FCP does not run yet (an earlier tool made it); Edges takes over later.
+    adopted: v.optional(v.object({ at: v.number(), externallyFronted: v.boolean() })),
     retirementId: v.optional(v.id('panelRetirements')),
     tokenId: v.optional(v.id('apiTokens')),
     registeredAt: v.number(),
@@ -2730,6 +2734,23 @@ export default defineSchema({
     .index('by_server', ['backendServerId'])
     .index('by_server_name', ['backendServerId', 'name'])
     .index('by_state', ['state']),
+
+  // A maintenance transition over a shared change (a profile edit): the nodes
+  // it closed. Managed nodes carry the transition on their own row; unmanaged
+  // nodes (no intent) are held closed by name here until an admin releases the
+  // hold, since nothing re-verifies them.
+  panelMaintenanceHolds: defineTable({
+    backendServerId: v.id('backendServers'),
+    transitionId: v.string(),
+    reason: v.string(),
+    // Unmanaged node names held closed; managed nodes are listed for the record.
+    heldNodeNames: v.array(v.string()),
+    closedIntentIds: v.array(v.id('panelNodeIntents')),
+    released: v.boolean(),
+    since: v.number(),
+    byAdminId: v.optional(v.id('adminUsers')),
+    updatedAt: v.number(),
+  }).index('by_server', ['backendServerId']),
 
   // One activation attempt: an immutable candidate snapshot with its own
   // approval, the candidate resources it enables or publishes, and the

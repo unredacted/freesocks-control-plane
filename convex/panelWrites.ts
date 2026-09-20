@@ -38,6 +38,7 @@ import { parseRealityTarget } from './lib/edges/inboundMapping';
 import { assertNoRotationOrQuarantine } from './lib/edges/relayGuards';
 import { panelDigestKey } from './lib/panel/key';
 import { PatchRefused, checkPatchOps, type PatchOp } from './lib/panel/patchOps';
+import { closeForSharedChange } from './panelIntents';
 import { claimOp } from './panelLedger';
 import { observeInstance } from './panelObserve';
 
@@ -817,6 +818,11 @@ export const requestProfilePatch = internalMutation({
     inboundUuids: v.record(v.string(), v.string()),
     /** Set by the server-name rollout only; no HTTP route can pass it. */
     sniRollout: v.optional(v.boolean()),
+    /**
+     * The treatment of enrolled-less nodes the edit reaches: held closed until
+     * released, or acknowledged as changing in place. Required when any exist.
+     */
+    unmanaged: v.optional(v.union(v.literal('hold'), v.literal('acknowledge'))),
     ...actor,
   },
   handler: async (ctx, a) => {
@@ -922,6 +928,18 @@ export const requestProfilePatch = internalMutation({
     const targets: Record<string, { address: string; port: number }> = {};
     for (const op of ops)
       if (op.op === 'setRealityTarget') targets[op.inboundTag] = parseRealityTarget(op.target)!;
+
+    // An edit (never a rollout: names reach members by per-node receipts) is
+    // applied in place under every node on the touched transports: the
+    // maintenance transition over its blast radius comes BEFORE the claim.
+    if (!a.sniRollout)
+      await closeForSharedChange(ctx, {
+        backendServerId: sid,
+        transportUuids: [...touchedUuids],
+        reason: 'profile',
+        unmanaged: a.unmanaged,
+        actorAdminId: a.actorAdminId,
+      });
 
     const opId = await claimOp(ctx, {
       backendServerId: sid,

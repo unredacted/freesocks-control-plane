@@ -280,6 +280,13 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.family_target_mismatch':
     'The backend already forwards this mode to a different site than its family checks. Pick the family that matches, or change the site from the profile.',
   'servers.family_unbound': 'The mode is not bound to its family yet. Set up the backend again.',
+  // Adopting a node that already serves members.
+  'servers.node_exists': 'This node is already enrolled.',
+  'servers.node_not_on_mode':
+    'The node does not run that mode on this backend. Pick the mode whose transport it serves.',
+  // A shared change (a profile edit) that reaches nodes FCP does not manage.
+  'servers.unmanaged_nodes_affected':
+    'Nodes FCP does not manage run this profile too. Choose to hold them closed or acknowledge that they change in place.',
   'servers.obligation_unresolved':
     'A call to the panel or the DNS provider did not answer clearly. It is looked at again shortly.',
   'servers.observe_lag': 'The panel does not show it yet. It is looked at again shortly.',

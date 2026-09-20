@@ -154,12 +154,15 @@ async function seed() {
     });
   const preview = async (ops: unknown[]) =>
     (await call('POST', `profiles/${PROFILE}/preview`, { ops })).json();
-  const apply = (p: any) =>
+  // The fixture's node is not enrolled: an edit reaching it needs a treatment
+  // (docs/servers.md "Node lifecycle", maintenance); these tests acknowledge.
+  const apply = (p: any, unmanaged: 'hold' | 'acknowledge' | undefined = 'acknowledge') =>
     call('POST', `profiles/${PROFILE}/apply`, {
       ops: p.ops,
       baseToken: p.baseToken,
       expectedToken: p.expectedToken,
       inboundUuids: p.inboundUuids,
+      ...(unmanaged ? { unmanaged } : {}),
     });
   return {
     t,

@@ -277,6 +277,9 @@ const getHandler: Handler = async (ctx, parts) => {
       intents: await ctx.runQuery(internal.serverAdmin.intentsView, {
         backendServerId: instance.id,
       }),
+      holds: await ctx.runQuery(internal.panelIntents.holdsView, {
+        backendServerId: instance.id,
+      }),
     });
   }
   if (a && b === 'nodes' && c === 'intents' && parts[4] === 'review')
@@ -319,10 +322,33 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
       baseToken: String(body.baseToken ?? ''),
       expectedToken: String(body.expectedToken ?? ''),
       inboundUuids: (body.inboundUuids ?? {}) as Record<string, string>,
+      unmanaged:
+        body.unmanaged === 'hold' || body.unmanaged === 'acknowledge' ? body.unmanaged : undefined,
       ...actorOf(admin),
     });
     return runOp(ctx, opId);
   }
+  // Adopting a node that already serves members, as it is (docs/servers.md "Adopting a backend").
+  if (a && b === 'nodes' && c === 'adopt' && !d) {
+    const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
+    return json(
+      await ctx.runMutation(internal.panelIntents.adoptNode, {
+        backendServerId: instance.id,
+        nodeUuid: String(body.nodeUuid ?? ''),
+        mode: String(body.mode ?? ''),
+        externallyFronted: body.externallyFronted === true,
+        ...actorOf(admin),
+      }),
+    );
+  }
+  // Releasing the hold a shared change put on nodes FCP does not manage.
+  if (a && b === 'holds' && c && d === 'release')
+    return json(
+      await ctx.runMutation(internal.panelIntents.releaseHold, {
+        holdId: c as Id<'panelMaintenanceHolds'>,
+        ...actorOf(admin),
+      }),
+    );
   // Node activation (docs/servers.md "Node lifecycle"): the isolated direct
   // test link, its bound confirmation, and the approval of a review. Before
   // the generic node writes: `nodes/intents/{id}/{verb}` is not a node uuid.
