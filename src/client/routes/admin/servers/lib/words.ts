@@ -219,16 +219,13 @@ const ERROR_WORDS: Record<string, string> = {
   validation: 'Something in the form is not valid. Check the fields and try again.',
   conflict: 'That is already settled. Refresh and look again.',
   // Before anything is sent.
-  'servers.manage_disabled': 'Changing panels from here is turned off. Turn it on below first.',
-  'servers.handoff_missing':
-    'The node role has not handed this panel over yet. Run it with fcp_managed set, then try again.',
+  'servers.manage_disabled': 'Changing backends from here is turned off. Turn it on below first.',
+  'servers.not_set_up': 'Set up this backend first. Until then nothing on it is changed from here.',
   'servers.op_running': 'Another change to this is still running. Wait for it to finish.',
   'servers.op_uncertain':
     'An earlier change to this has an unknown outcome. Settle it under Recent changes first.',
   'servers.relay_setup_running':
     'A relay setup is using this right now. Try again when it is done.',
-  'servers.reservation_open':
-    'The node role reserved this name and has not said how that ended. See Reserved by the node role.',
   'servers.tombstoned': 'This was removed on purpose. Tick "bring it back" to create it again.',
   'servers.exists': 'This already exists on the panel.',
   // Hosts and squads.
@@ -268,11 +265,30 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.panel_refused': 'The panel refused it. Nothing was changed.',
   'servers.outcome_unknown':
     'The panel did not answer clearly, so it is not known whether this happened.',
-  // Setting up a panel.
-  'servers.setup_running': 'The panel is being set up right now. Wait for it to finish.',
-  'servers.setup_failed': 'Setting up stopped on an error. Look at the panel, then try again.',
-  'servers.handoff_needs_takeover':
-    'This panel already has nodes or Hosts. Take it over to make FCP its only writer.',
+  // Setting up a backend.
+  'servers.setup_running': 'The backend is being set up right now. Wait for it to finish.',
+  'servers.setup_failed': 'Setting up stopped on an error. Look at the backend, then try again.',
+  'servers.adopt_required':
+    'This backend already has nodes or addresses. Adopt it (typed) to make FCP its writer.',
+  'servers.modes_invalid': 'The modes are not usable. Check their names and shapes.',
+  'servers.mode_unknown':
+    'No such connection mode exists yet, or this backend is not set up for it. Add it under Connection modes first.',
+  'servers.family_missing':
+    'A REALITY mode names a server-name family that does not exist or is off.',
+  'servers.family_empty':
+    'That family has no usable name yet. Add names to it and let them qualify first.',
+  'servers.family_target_mismatch':
+    'The backend already forwards this mode to a different site than its family checks. Pick the family that matches, or change the site from the profile.',
+  'servers.family_unbound': 'The mode is not bound to its family yet. Set up the backend again.',
+  'servers.family_bound_elsewhere':
+    "This mode's transport already answers to another server-name family, whose rollouts would keep moving its names. Unbind it under Server names, or pick that family here.",
+  // Adopting a node that already serves members.
+  'servers.node_exists': 'This node is already enrolled.',
+  'servers.node_not_on_mode':
+    'The node does not run that mode on this backend. Pick the mode whose transport it serves.',
+  // A shared change (a profile edit) that reaches nodes FCP does not manage.
+  'servers.unmanaged_nodes_affected':
+    'Nodes FCP does not manage run this profile too. Choose to hold them closed or acknowledge that they change in place.',
   'servers.obligation_unresolved':
     'A call to the panel or the DNS provider did not answer clearly. It is looked at again shortly.',
   'servers.observe_lag': 'The panel does not show it yet. It is looked at again shortly.',
@@ -281,7 +297,7 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.privacy_drifted':
     'The profile logs more than it may. Harden it from the backend server page.',
   'servers.placement_skipped':
-    'A connection mode this panel feeds does not exist, so its squad is not bound.',
+    'A connection mode this backend feeds does not exist, so its group is not bound.',
   'servers.template_drifted':
     'A subscription template on the panel is not what it should be, and could not be set.',
   // Enrolling a node.
@@ -290,8 +306,8 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.node_retiring': 'This node is being retired.',
   'servers.not_retiring': 'This node is not being retired.',
   'servers.retirement_stage': 'The node is not at that point of its retirement yet.',
-  'servers.purpose_change_needs_admin':
-    'A node keeps its purpose. Change it from here, then run the role again.',
+  'servers.mode_change_needs_admin':
+    'A node keeps its mode. Change it from here, then run the role again.',
   'servers.node_exists_unowned':
     'The panel already has this node or Host. Adopt it here before the role enrolls it.',
   'servers.origin_label_invalid': 'The name cannot be made into a DNS label.',
@@ -349,13 +365,19 @@ const ERROR_WORDS: Record<string, string> = {
     'Moving members to another node is not available yet. Choose to keep them dark.',
 };
 // --- the bootstrap contract: enrolled nodes and their ladder -----------------------------------
-// (stageWords / setupWords / PURPOSE_WORDS; tested in words.test.ts)
+// (stageWords / setupWords / shapeWords; tested in words.test.ts)
 
-export const PURPOSE_WORDS: Record<string, string> = {
-  direct: 'Direct',
-  front: 'Front',
-  relay: 'Relay',
-};
+/** "REALITY, direct" / "WebSocket, fronted through an edge": a mode's shape in words. */
+export function shapeWords(s: { transport: string; fronting: string }): string {
+  const transport =
+    s.transport === 'ws'
+      ? 'WebSocket'
+      : s.transport === 'xhttp-reality'
+        ? 'XHTTP + REALITY'
+        : 'REALITY';
+  const fronting = s.fronting === 'direct' ? 'direct' : 'fronted through an edge';
+  return `${transport}, ${fronting}`;
+}
 
 /** One sentence and a dot for where an enrolled node is on its way to members. */
 export function stageWords(i: {
@@ -415,17 +437,17 @@ export function setupWords(s: {
   code: string | null;
   running: boolean;
 }): string | null {
-  if (!s.exists) return 'This panel is not set up yet. Set it up so nodes can enroll.';
-  if (s.running) return 'Setting up the panel.';
-  if (s.state === 'needs_takeover')
-    return 'This panel already has nodes or Hosts. Take it over so FCP becomes its only writer.';
+  if (!s.exists) return 'This backend is not set up yet. Set it up so nodes can enroll.';
+  if (s.running) return 'Setting up the backend.';
   if (s.state === 'failed') return `Setting up stopped: ${serverErrorWords(s.code)}`;
   if (s.state === 'pending') return `Setting up paused: ${serverErrorWords(s.code)}`;
   return null;
 }
 
 export function serverErrorWords(code: string | null | undefined): string {
-  return (code && ERROR_WORDS[code]) || 'That did not work. Try again in a moment.';
+  // Codes carry detail after a colon (`servers.profile_incompatible:TAG:field`).
+  const key = code ? (code.split(':')[0] ?? '') : '';
+  return ERROR_WORDS[key] || 'That did not work. Try again in a moment.';
 }
 /** Every code with its own words (pinned by the tests against the server's vocabulary). */
 export const WORDED_CODES: readonly string[] = Object.keys(ERROR_WORDS);
@@ -442,7 +464,7 @@ export interface OpLike {
 
 const KIND: Record<OpLike['kind'], string> = {
   host: 'address',
-  squad: 'squad',
+  squad: 'mode group',
   node: 'node',
   profile: 'config profile',
 };

@@ -25,6 +25,7 @@ import {
   FIXTURE_CONFIG_PROFILE as PROFILE,
   FIXTURE_INBOUND as INBOUND,
   insertPanelServer,
+  markBackendSetUp,
   realityListener,
   registerRelay,
 } from './lib/edges/testing/fixtures';
@@ -143,10 +144,7 @@ async function seed() {
   const panel = installPanel();
   await t.action(internal.panelObserve.refresh, { backendServerId: serverId });
   await t.mutation(internal.serverAdmin.patchConfig, { patch: { 'manage.enabled': true } });
-  await t.mutation(internal.panelLedger.reportHandoff, {
-    backendServerId: serverId,
-    roleContractVersion: 1,
-  });
+  await markBackendSetUp(t, serverId);
   const { relayId, listenerIds } = await registerRelay(t, { listeners: [realityListener()] });
   const call = (method: string, path: string, body?: unknown) =>
     t.fetch(`/api/v1/admin/servers/panel-a/${path}`, {
@@ -156,12 +154,15 @@ async function seed() {
     });
   const preview = async (ops: unknown[]) =>
     (await call('POST', `profiles/${PROFILE}/preview`, { ops })).json();
-  const apply = (p: any) =>
+  // The fixture's node is not enrolled: an edit reaching it needs a treatment
+  // (docs/servers.md "Node lifecycle", maintenance); these tests acknowledge.
+  const apply = (p: any, unmanaged: 'hold' | 'acknowledge' | undefined = 'acknowledge') =>
     call('POST', `profiles/${PROFILE}/apply`, {
       ops: p.ops,
       baseToken: p.baseToken,
       expectedToken: p.expectedToken,
       inboundUuids: p.inboundUuids,
+      ...(unmanaged ? { unmanaged } : {}),
     });
   return {
     t,

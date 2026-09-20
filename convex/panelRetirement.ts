@@ -14,13 +14,17 @@
  *   draining -> panel_removed                the node row removed with
  *                                            removeOnly (the process may run)
  *   panel_removed -> ready_to_wipe           answered to the role
- *   ready_to_wipe -> wiped -> retired        the role's own ack (panelIntents.markWiped)
+ *   ready_to_wipe -> wiped -> retired        the role's own ack, or an admin's
+ *                                            confirmation for an ADOPTED node,
+ *                                            whose machine the role never runs
+ *                                            (panelIntents.markWiped)
  */
 import { ConvexError, v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
+import { addressesOf } from './panelIntents';
 import { bumpGateVersion } from './panelSetup';
 import { scheduleMirrorRefresh } from './relays';
 
@@ -148,7 +152,8 @@ export const context = internalQuery({
       intent,
       server: { _id: server._id, slug: server.slug },
       relay: relay ? { _id: relay._id, deleting: !!relay.deleting } : null,
-      directHost: hosts.find((h) => h.remark === `${intent.name}-reality`) ?? null,
+      // A direct node's own addresses (one per family name), by remark.
+      addresses: addressesOf(intent, hosts),
       node,
     };
   },
@@ -265,11 +270,11 @@ export const advance = internalAction({
         await stop('servers.credentials_pending');
         return null;
       }
-      // 3. The direct Host.
-      if (c.directHost) {
+      // 3. The node's own addresses.
+      for (const h of c.addresses) {
         const { opId } = await ctx.runMutation(internal.panelWrites.requestHostDelete, {
           backendServerId: sid,
-          hostUuid: c.directHost.hostUuid,
+          hostUuid: h.hostUuid,
         });
         const r = await ctx.runAction(internal.panelWrites.run, { opId });
         if (r.open) {

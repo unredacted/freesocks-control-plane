@@ -21,7 +21,12 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import { signValue } from './lib/cookies';
-import { insertPanelServer, realityListener, registerRelay } from './lib/edges/testing/fixtures';
+import {
+  insertPanelServer,
+  markBackendSetUp,
+  realityListener,
+  registerRelay,
+} from './lib/edges/testing/fixtures';
 
 const modules = import.meta.glob('./**/*.*s');
 const ADMIN_SIGN_KEY = 'test-admin-sign';
@@ -183,10 +188,7 @@ async function seed() {
   const panel = installPanel();
   await t.action(internal.panelObserve.refresh, { backendServerId: serverId });
   await t.mutation(internal.serverAdmin.patchConfig, { patch: { 'manage.enabled': true } });
-  await t.mutation(internal.panelLedger.reportHandoff, {
-    backendServerId: serverId,
-    roleContractVersion: 1,
-  });
+  await markBackendSetUp(t, serverId);
   const call = async (method: string, path: string, body?: unknown) =>
     (
       await t.fetch(`/api/v1/admin/servers/panel-a/${path}`, {

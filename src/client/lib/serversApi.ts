@@ -15,13 +15,13 @@ import { apiClient } from './api';
 import {
   ActivationReview,
   DirectTestLink,
+  AdoptNodeResult,
   NodeIntentList,
   PanelOpList,
   PanelOpView,
   PanelSetupView,
   PlacementValidation,
   ProfilePatchPreview,
-  ReservationList,
   ServerSummary,
   ServerTree,
   type PanelSetupInput,
@@ -106,6 +106,8 @@ export const applyProfilePatch = (
   slug: string,
   profileUuid: string,
   preview: ProfilePatchPreview,
+  /** What happens to nodes FCP does not manage that run the touched transports. */
+  unmanaged?: 'hold' | 'acknowledge',
 ) =>
   apiClient.post(
     `${slugPath(slug)}/profiles/${encodeURIComponent(profileUuid)}/apply`,
@@ -114,9 +116,19 @@ export const applyProfilePatch = (
       baseToken: preview.baseToken,
       expectedToken: preview.expectedToken,
       inboundUuids: preview.inboundUuids,
+      ...(unmanaged ? { unmanaged } : {}),
     },
     PanelOpView,
   );
+
+/** Adopt a node that already serves members, as it is (live at once). */
+export const adoptNode = (
+  slug: string,
+  body: { nodeUuid: string; mode: string; externallyFronted?: boolean },
+) => apiClient.post(`${slugPath(slug)}/nodes/adopt`, body, AdoptNodeResult);
+/** Release the hold a shared change put on nodes FCP does not manage. */
+export const releaseHold = (slug: string, holdId: string) =>
+  apiClient.post(`${slugPath(slug)}/holds/${encodeURIComponent(holdId)}/release`, {}, Ok);
 
 /** "I have looked at it": clears the edited-elsewhere flag of one profile. */
 export const acknowledgeForeignEdit = (slug: string, profileUuid: string) =>
@@ -126,22 +138,11 @@ export const acknowledgeForeignEdit = (slug: string, profileUuid: string) =>
     Ok,
   );
 
-export const fetchReservations = (slug: string) =>
-  apiClient.get(`${slugPath(slug)}/reservations`, ReservationList);
-export const recoverReservation = (slug: string, roleOpId: string, attest: RecoveryAttestation) =>
-  apiClient.post(
-    `${slugPath(slug)}/reservations/${encodeURIComponent(roleOpId)}/recover`,
-    attest,
-    Ok,
-  );
-
-// --- the bootstrap contract: setting up a panel, enrolled nodes, activation ---------------------
+// --- the bootstrap contract: setting up a backend, enrolled nodes, activation ---------------------
 export const fetchSetup = (slug: string) =>
   apiClient.get(`${slugPath(slug)}/setup`, PanelSetupView);
 export const startSetup = (slug: string, input: PanelSetupInput) =>
   apiClient.post(`${slugPath(slug)}/setup`, input, PanelSetupView);
-export const takeoverPanel = (slug: string) =>
-  apiClient.post(`${slugPath(slug)}/setup/takeover`, {}, PanelSetupView);
 
 export const fetchIntents = (slug: string) =>
   apiClient.get(`${slugPath(slug)}/nodes/intents`, NodeIntentList);
@@ -165,6 +166,9 @@ export const retireNode = (
   decision?: { disposition: 'keep-dark' | 'migrate'; targetIntentId?: string },
 ) =>
   apiClient.post(`${intentPath(slug, id)}/retire`, decision ?? {}, z.object({ stage: z.string() }));
+/** An adopted node's machine is never run by the role: an admin confirms it is gone. */
+export const confirmWiped = (slug: string, id: string) =>
+  apiClient.post(`${intentPath(slug, id)}/wiped`, {}, z.object({ stage: z.string() }));
 export const finishMaintenance = (slug: string, id: string) =>
   apiClient.post(`${intentPath(slug, id)}/maintenance`, {}, z.object({ ok: z.literal(true) }));
 export const patchNodeSettings = (
@@ -185,7 +189,6 @@ export const serverKeys = {
   summary: [...ROOT, 'summary'] as const,
   tree: (slug: string) => [...ROOT, 'tree', slug] as const,
   ops: (slug: string) => [...ROOT, 'ops', slug] as const,
-  reservations: (slug: string) => [...ROOT, 'reservations', slug] as const,
   setup: (slug: string) => [...ROOT, 'setup', slug] as const,
   intents: (slug: string) => [...ROOT, 'intents', slug] as const,
   review: (slug: string, id: string) => [...ROOT, 'review', slug, id] as const,
@@ -246,14 +249,6 @@ export const opsQuery = (slug: () => string | null, enabled: () => boolean) =>
     enabled: !!slug() && enabled(),
     refetchInterval: (q: { state: { data?: { ops: { open: boolean }[] } } }) =>
       q.state.data?.ops.some((o) => o.open) ? 5_000 : 60_000,
-  }));
-
-export const reservationsQuery = (slug: () => string | null, enabled: () => boolean) =>
-  createQuery(() => ({
-    queryKey: serverKeys.reservations(slug() ?? ''),
-    queryFn: () => fetchReservations(slug()!),
-    enabled: !!slug() && enabled(),
-    refetchInterval: 60_000,
   }));
 
 export function invalidateServers(qc: QueryClient): void {

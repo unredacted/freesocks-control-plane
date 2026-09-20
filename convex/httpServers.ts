@@ -85,11 +85,6 @@ export function scopeFor(parts: string[], method: string): string | string[] {
       ? ['admin:servers:read', 'admin:edges:register', 'admin:servers:manage']
       : ['admin:servers:write', 'admin:edges:register', 'admin:servers:manage'];
   if (method === 'GET' || (method === 'POST' && isReadOnlyPost(parts))) return 'admin:servers:read';
-  if (method === 'PUT' && parts.length === 2 && parts[1] === 'handoff')
-    return ['admin:servers:write', 'admin:servers:manage'];
-  // The role reserves and settles; releasing an unanswered one is an operator's call.
-  if (parts[1] === 'reservations' && parts[3] !== 'recover')
-    return ['admin:servers:write', 'admin:servers:manage'];
   return 'admin:servers:manage';
 }
 
@@ -119,12 +114,7 @@ function wrap(handler: Handler, sealedRoute: boolean) {
       ? method === 'POST' && parts[1] !== 'placements'
       : byName
         ? parts[4] === 'bootstrap'
-        : parts[0] !== 'config' &&
-          parts[1] !== 'handoff' &&
-          parts[1] !== 'reservations' &&
-          parts[3] !== 'acknowledge' &&
-          // A takeover records an attestation; the setup run reaches the panel from its own action.
-          !(parts[1] === 'setup' && parts[2] === 'takeover');
+        : parts[0] !== 'config' && parts[3] !== 'acknowledge';
     if (reachesPanel) {
       const limited = await throttle(
         ctx,
@@ -186,7 +176,7 @@ async function byNameHandler(
       backendServerId: instance.id,
       name,
       label: parsed.data.label,
-      purpose: parsed.data.purpose,
+      mode: parsed.data.mode,
       contractVersion: parsed.data.roleContractVersion,
       observed: parsed.data.observed,
       tokenId: admin.tokenId ?? undefined,
@@ -276,14 +266,6 @@ const getHandler: Handler = async (ctx, parts) => {
       ops: await ctx.runQuery(internal.panelLedger.listForServer, { backendServerId: instance.id }),
     });
   }
-  if (a && b === 'reservations' && !c) {
-    const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
-    return json({
-      reservations: await ctx.runQuery(internal.panelReservations.list, {
-        backendServerId: instance.id,
-      }),
-    });
-  }
   if (a && b === 'setup' && !c) {
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
     return json(await ctx.runQuery(internal.panelSetup.view, { backendServerId: instance.id }));
@@ -293,6 +275,9 @@ const getHandler: Handler = async (ctx, parts) => {
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
     return json({
       intents: await ctx.runQuery(internal.serverAdmin.intentsView, {
+        backendServerId: instance.id,
+      }),
+      holds: await ctx.runQuery(internal.panelIntents.holdsView, {
         backendServerId: instance.id,
       }),
     });
@@ -308,47 +293,6 @@ const getHandler: Handler = async (ctx, parts) => {
 
 const postHandler: Handler = async (ctx, parts, admin, body) => {
   const [a, b, c, d] = parts;
-  if (a && b === 'reservations' && !c) {
-    const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
-    const kind = String(body.kind ?? '');
-    if (!['node', 'host', 'inbound', 'squad', 'profile'].includes(kind))
-      return errorJson('validation', 'kind is node, host, inbound, squad or profile', 400);
-    const h = (body.host ?? null) as Record<string, unknown> | null;
-    return json(
-      await ctx.runMutation(internal.panelReservations.reserve, {
-        backendServerId: instance.id,
-        roleOpId: String(body.roleOpId ?? ''),
-        kind: kind as 'node',
-        identity: typeof body.identity === 'string' ? body.identity : undefined,
-        host: h
-          ? {
-              remark: String(h.remark ?? ''),
-              inboundUuid: String(h.inboundUuid ?? ''),
-              address: String(h.address ?? ''),
-              port: Number(h.port),
-            }
-          : undefined,
-        tokenId: admin.tokenId ?? undefined,
-      }),
-    );
-  }
-  if (a && b === 'reservations' && c && d === 'recover') {
-    // When the fresh read was made is part of the attestation, never assumed.
-    if (!Number.isFinite(Number(body.freshReadAt)))
-      return errorJson('validation', 'freshReadAt is required', 400);
-    const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
-    return json(
-      await ctx.runMutation(internal.panelReservations.recover, {
-        backendServerId: instance.id,
-        roleOpId: c,
-        credentialsRevoked: body.credentialsRevoked === true,
-        noInFlightExecutor: body.noInFlightExecutor === true,
-        queueDrained: body.queueDrained === true,
-        freshReadAt: Number(body.freshReadAt),
-        ...actorOf(admin),
-      }),
-    );
-  }
   if (a && b === 'profiles' && c && d === 'acknowledge') {
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
     return json(
@@ -378,10 +322,33 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
       baseToken: String(body.baseToken ?? ''),
       expectedToken: String(body.expectedToken ?? ''),
       inboundUuids: (body.inboundUuids ?? {}) as Record<string, string>,
+      unmanaged:
+        body.unmanaged === 'hold' || body.unmanaged === 'acknowledge' ? body.unmanaged : undefined,
       ...actorOf(admin),
     });
     return runOp(ctx, opId);
   }
+  // Adopting a node that already serves members, as it is (docs/servers.md "Adopting a backend").
+  if (a && b === 'nodes' && c === 'adopt' && !d) {
+    const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
+    return json(
+      await ctx.runMutation(internal.panelIntents.adoptNode, {
+        backendServerId: instance.id,
+        nodeUuid: String(body.nodeUuid ?? ''),
+        mode: String(body.mode ?? ''),
+        externallyFronted: body.externallyFronted === true,
+        ...actorOf(admin),
+      }),
+    );
+  }
+  // Releasing the hold a shared change put on nodes FCP does not manage.
+  if (a && b === 'holds' && c && d === 'release')
+    return json(
+      await ctx.runMutation(internal.panelIntents.releaseHold, {
+        holdId: c as Id<'panelMaintenanceHolds'>,
+        ...actorOf(admin),
+      }),
+    );
   // Node activation (docs/servers.md "Node lifecycle"): the isolated direct
   // test link, its bound confirmation, and the approval of a review. Before
   // the generic node writes: `nodes/intents/{id}/{verb}` is not a node uuid.
@@ -428,6 +395,16 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
         }),
       );
     }
+    // A node FCP bootstrapped reports its own wipe (POST …/wiped, role token);
+    // for an adopted node, whose machine the role never runs, an admin confirms
+    // the machine is gone and the retirement closes.
+    if (verb === 'wiped')
+      return json(
+        await ctx.runMutation(internal.panelIntents.markWiped, {
+          intentId,
+          byAdminId: admin.adminUserId ?? undefined,
+        }),
+      );
     if (verb === 'maintenance')
       return json(
         await ctx.runMutation(internal.panelIntents.finishMaintenance, {
@@ -534,23 +511,16 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
     await ctx.runAction(internal.panelObserve.refresh, { backendServerId: instance.id });
     return json(await ctx.runQuery(internal.serverAdmin.tree, { slug: a }));
   }
-  // Setting up a panel (docs/servers.md): start or resume, or take over an existing one.
-  if (a && b === 'setup' && (!c || (c === 'takeover' && !d))) {
+  // Setting up a backend (docs/servers.md): start, resume, or adopt an existing one (typed).
+  if (a && b === 'setup' && !c) {
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
-    if (c === 'takeover') {
-      await ctx.runMutation(internal.panelSetup.takeover, {
-        backendServerId: instance.id,
-        ...actorOf(admin),
-      });
-    } else {
-      const parsed = PanelSetupInput.safeParse(body);
-      if (!parsed.success) return errorJson('validation', 'The setup input is not usable', 400);
-      await ctx.runMutation(internal.panelSetup.start, {
-        backendServerId: instance.id,
-        input: parsed.data,
-        ...actorOf(admin),
-      });
-    }
+    const parsed = PanelSetupInput.safeParse(body);
+    if (!parsed.success) return errorJson('validation', 'The setup input is not usable', 400);
+    await ctx.runMutation(internal.panelSetup.start, {
+      backendServerId: instance.id,
+      input: parsed.data,
+      ...actorOf(admin),
+    });
     return json(await ctx.runQuery(internal.panelSetup.view, { backendServerId: instance.id }));
   }
   if (a && b === 'placements' && c === 'validate')
@@ -639,40 +609,8 @@ const deleteHandler: Handler = async (ctx, parts, admin, _body, query) => {
   return runOp(ctx, opId);
 };
 
-/** The node role declares that it follows the ownership protocol for this instance. */
-const putHandler: Handler = async (ctx, parts, admin, body) => {
-  const [a, b, c, d] = parts;
-  if (a && b === 'reservations' && c && !d) {
-    const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
-    const created = typeof body.created === 'string' ? body.created : undefined;
-    if (!created && body.rejected_pre_mutation !== true)
-      return errorJson(
-        'validation',
-        'Settle with {"created": "<panel uuid>"} or {"rejected_pre_mutation": true}',
-        400,
-      );
-    return json(
-      await ctx.runMutation(internal.panelReservations.settle, {
-        backendServerId: instance.id,
-        roleOpId: c,
-        outcome: created ? 'created' : 'rejected_pre_mutation',
-        panelUuid: created,
-      }),
-    );
-  }
-  if (!a || b !== 'handoff' || c) return notFound();
-  const version = Number(body.roleContractVersion);
-  if (!Number.isInteger(version) || version < 1)
-    return errorJson('validation', 'roleContractVersion must be a positive integer', 400);
-  const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
-  return json(
-    await ctx.runMutation(internal.panelLedger.reportHandoff, {
-      backendServerId: instance.id,
-      roleContractVersion: version,
-      reportedBy: admin.tokenId ? 'token' : 'admin',
-    }),
-  );
-};
+/** `PUT` carries only the node role's enrollment (dispatched by `byNameHandler` before this). */
+const putHandler: Handler = async () => notFound();
 
 export function registerServerRoutes(http: HttpRouter): void {
   http.route({ pathPrefix: PREFIX, method: 'GET', handler: wrap(getHandler, true) });

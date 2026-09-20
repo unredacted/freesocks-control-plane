@@ -118,6 +118,37 @@ export function shadowsocksListener(
   };
 }
 
+/**
+ * Mark a backend as set up by FCP (the one condition every management write
+ * checks): a ready setup row with no modes. Tests of the writes themselves
+ * need nothing more; the setup workflow has its own tests.
+ */
+export async function markBackendSetUp(t: T, serverId: Id<'backendServers'>): Promise<void> {
+  const now = Date.now();
+  await t.run(async (ctx) => {
+    const existing = await ctx.db
+      .query('panelSetups')
+      .withIndex('by_server', (q) => q.eq('backendServerId', serverId))
+      .unique();
+    if (existing) return;
+    await ctx.db.insert('panelSetups', {
+      backendServerId: serverId,
+      desired: '{}',
+      desiredHash: 'fixture',
+      generation: 1,
+      state: 'ready',
+      profileName: 'FreeSocks-Config',
+      modes: [],
+      templates: [],
+      originDns: null,
+      adopted: false,
+      gateVersion: 0,
+      createdAt: now,
+      updatedAt: now,
+    });
+  });
+}
+
 export async function insertPanelServer(
   t: T,
   opts: { slug?: string; backend?: 'remnawave' | 'outline' } = {},

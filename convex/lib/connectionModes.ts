@@ -47,6 +47,12 @@ export interface DefaultModeRow {
   isCensorshipRecommended?: boolean;
   backends: BackendId[];
   order: number;
+  /**
+   * The BUILT_IN_MODES_VERSION this mode was added in (1 = the first catalog).
+   * The seed inserts a mode only where this is newer than what the deployment
+   * has seen, so one an admin deleted on purpose is never resurrected.
+   */
+  since?: number;
 }
 
 export const DEFAULT_CONNECTION_MODE_FAMILIES: readonly DefaultFamilyRow[] = [
@@ -82,6 +88,19 @@ export const DEFAULT_CONNECTION_MODES: readonly DefaultModeRow[] = [
     order: 1,
   },
   {
+    // XHTTP under REALITY behind an L4 edge. Ships dark: Xray and Mihomo
+    // clients only (sing-box has no XHTTP), so the operator turns it on once
+    // the client catalog says which apps carry it.
+    slug: 'freedom-xhttp',
+    familySlug: 'freedom',
+    deliveryStyle: 'url',
+    enabled: false,
+    isFamilyDefault: false,
+    backends: ['remnawave'],
+    order: 2,
+    since: 2,
+  },
+  {
     slug: 'privacy-reality',
     familySlug: 'privacy',
     deliveryStyle: 'rawConfig',
@@ -91,6 +110,13 @@ export const DEFAULT_CONNECTION_MODES: readonly DefaultModeRow[] = [
     order: 0,
   },
 ] as const;
+
+/**
+ * Bumped whenever a built-in mode is ADDED: the seed inserts the built-ins a
+ * deployment does not have yet, once per version, without resurrecting one
+ * an admin removed on purpose after that version.
+ */
+export const BUILT_IN_MODES_VERSION = 2;
 
 export const DEFAULT_CONNECTION_MODE = 'freedom-ws';
 

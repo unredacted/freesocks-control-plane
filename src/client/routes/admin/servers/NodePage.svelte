@@ -43,7 +43,7 @@
       null,
   );
   let manageOn = $derived(summary.data?.config['manage.enabled'] ?? false);
-  let canWrite = $derived(manageOn && !!instance?.writable && !!instance?.handoffCurrent);
+  let canWrite = $derived(manageOn && !!instance?.writable && !!instance?.setUp);
   let back = $derived({
     href: serversPaths.home({ instance: slug ?? undefined }),
     label: 'Servers',
@@ -208,8 +208,8 @@
         {#if !manageOn}
           Changes from here are off. Turn them on from the
           <Link href={back.href} class="underline underline-offset-4">Servers page</Link>.
-        {:else if instance && !instance.handoffCurrent}
-          Changes are refused until the node role has handed this panel over.
+        {:else if instance && !instance.setUp}
+          Changes are refused until this backend is set up (or adopted) from the Servers page.
         {/if}
       </p>
     {/if}

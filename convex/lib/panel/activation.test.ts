@@ -78,14 +78,15 @@ describe('evidence and revisions', () => {
 
 describe('reviewHash', () => {
   const shape = {
-    purpose: 'relay' as const,
+    mode: 'freedom-reality',
+    modeShape: { transport: 'reality', fronting: 'edge-l4' },
     ingress: null,
     configRevision: 'c1',
     authRevision: 'a1',
     listenerKeys: ['k1'],
     provider: { accountId: 'acc', templateHash: 't1' },
     subscriptionTemplates: { SINGBOX: 'h1' },
-    hostTuple: null,
+    addressTuples: [],
   };
   test('is stable and blind to key order, and moves on any shape change', async () => {
     const a = await reviewHashOf(shape);

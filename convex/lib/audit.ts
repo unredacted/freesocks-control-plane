@@ -266,23 +266,27 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'servers.node.restart': ['backendSlug', 'label', 'outcome', 'code'],
   'servers.profile.patch': ['backendSlug', 'label', 'outcome', 'code'],
   'servers.profile.foreign_edit_seen': ['backendSlug', 'label'],
-  'servers.reservation.recover': ['backendSlug', 'kind'],
-  'servers.handoff.report': ['backendSlug', 'roleContractVersion', 'current'],
-  // The bootstrap contract v2 (docs/servers.md "Node lifecycle"): setting up a
-  // panel, an enrolled node's ladder, its retirement. Names and stages only.
-  'servers.setup.started': ['backendSlug', 'generation'],
+  // The bootstrap contract v2 (docs/servers.md "Node lifecycle"): setting up
+  // or adopting a backend, an enrolled node's ladder, its retirement. Names
+  // and stages only.
+  'servers.setup.started': ['backendSlug', 'generation', 'adopt'],
   'servers.setup.finished': ['backendSlug', 'state', 'code', 'step'],
-  'servers.setup.takeover': ['backendSlug'],
-  'servers.node.registered': ['backendSlug', 'name', 'purpose'],
+  'servers.setup.group_renamed': ['backendSlug', 'from', 'to'],
+  'servers.node.registered': ['backendSlug', 'name', 'mode'],
+  'servers.node.adopted': ['backendSlug', 'name', 'mode', 'addresses'],
+  'servers.profile.transition': ['backendSlug', 'closed', 'held', 'acknowledged'],
+  'servers.profile.transition_released': ['backendSlug', 'held'],
   'servers.node.settings': ['backendSlug', 'name', 'change'],
   'servers.node.direct_confirmed': ['backendSlug', 'name'],
-  'servers.node.approved': ['backendSlug', 'name', 'purpose'],
-  'servers.node.live': ['backendSlug', 'name', 'purpose'],
+  'servers.node.approved': ['backendSlug', 'name', 'mode'],
+  'servers.node.live': ['backendSlug', 'name', 'mode'],
   'servers.node.drift': ['backendSlug', 'name', 'kind', 'wasLive'],
   'servers.node.maintenance_finished': ['backendSlug', 'name'],
   'servers.node.retire_requested': ['backendSlug', 'name', 'stage'],
   'servers.node.retire_decided': ['backendSlug', 'name', 'disposition'],
-  'servers.node.retired': ['backendSlug', 'name'],
+  'servers.node.retired': ['backendSlug', 'name', 'confirmedBy'],
+  // The one-shot migration off contract v1 (counts only).
+  'servers.contract.migrated': ['handoffs', 'reservations', 'setups', 'intents'],
   // Operator-run 2.x→3.x key-id remap on one upgraded panel (counts only).
   'admin.remnawave.user_ids_migrated': [
     'panelVersion',

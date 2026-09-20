@@ -1,12 +1,13 @@
 /// <reference types="vite/client" />
 /**
- * Activating a direct node on the fake panel: the test link is built from the
- * node's own credential and the inbound's live parameters and carries a
+ * Activating a direct node on the fake backend: the test link is built from
+ * the node's own credential and the transport's live parameters and carries a
  * binding; a confirmation with a moved endpoint is refused; approval creates
- * one run; the Host is enabled as a candidate and the gate stays closed; a
- * forced rehearsal failure disables it again and releases nothing; a passing
- * rehearsal commits and the gate opens. Fixtures use RFC 5737 addresses and
- * `*.example` names only.
+ * one run; the addresses are enabled as candidates and the gate stays closed;
+ * a forced rehearsal failure disables them again and parks the node for a
+ * fresh approval; a passing rehearsal commits and the gate opens; a moved
+ * endpoint under a live node is observed drift. Fixtures use RFC 5737
+ * addresses and `*.example` names only.
  */
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -15,6 +16,7 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { insertPanelServer } from './lib/edges/testing/fixtures';
 import { generateRealityKey } from './lib/panel/realityKeys';
+import { closeForSharedChange } from './panelIntents';
 
 const modules = import.meta.glob('./**/*.*s');
 type T = TestConvex<typeof schema>;
@@ -32,6 +34,7 @@ afterEach(() => {
 
 const UUID = (n: number) => `${String(n).padStart(8, '0')}-0000-4000-8000-000000000000`;
 const USER_UUID = 'aaaaaaaa-1111-4222-8333-444444444444';
+const TAG = 'PRIVACY_REALITY';
 
 interface Panel {
   profiles: any[];
@@ -41,7 +44,7 @@ interface Panel {
   users: any[];
   writes: { call: string; body: any }[];
   seq: number;
-  /** What the panel serves as the credential's subscription body per UA family. */
+  /** What the backend serves as the credential's subscription body per UA family. */
   bodyFor: (ua: string) => string;
 }
 
@@ -62,9 +65,9 @@ function installPanel(): Panel {
       headers: { 'content-type': 'application/json' },
     });
   const enabledHosts = () => panel.hosts.filter((h) => !h.isDisabled);
-  // The panel's own body: one vless link per enabled Host on the reality inbound.
+  // The backend's own body: one vless link per enabled address on the REALITY transport.
   panel.bodyFor = (ua: string) => {
-    const pk = panel.profiles[0]?.publicKeyByTag?.VLESS_REALITY ?? 'pk';
+    const pk = panel.profiles[0]?.publicKeyByTag?.[TAG] ?? 'pk';
     const entries = enabledHosts().map((h) => ({
       remark: h.remark,
       address: h.address,
@@ -79,14 +82,18 @@ function installPanel(): Panel {
           tag: e.remark,
           server: e.address,
           server_port: e.port,
-          tls: { enabled: true, reality: { enabled: true, public_key: e.pk } },
+          tls: {
+            enabled: true,
+            server_name: e.sni,
+            reality: { enabled: true, public_key: e.pk },
+          },
         })),
       });
     if (/clash|mihomo/i.test(ua))
       return `proxies:\n${entries
         .map(
           (e) =>
-            `  - name: ${e.remark}\n    type: vless\n    server: ${e.address}\n    port: ${e.port}\n    reality-opts:\n      public-key: ${e.pk}\n`,
+            `  - name: ${e.remark}\n    type: vless\n    server: ${e.address}\n    port: ${e.port}\n    servername: ${e.sni}\n    reality-opts:\n      public-key: ${e.pk}\n`,
         )
         .join('')}`;
     return entries
@@ -153,6 +160,13 @@ function installPanel(): Panel {
         panel.squads.push(made);
         return json({ uuid: made.uuid }, 201);
       }
+      if (path === '/api/internal-squads' && method === 'PATCH') {
+        const s = panel.squads.find((x) => x.uuid === body.uuid)!;
+        if (typeof body.name === 'string') s.name = body.name;
+        if (Array.isArray(body.inbounds))
+          s.inbounds = (body.inbounds as string[]).map((uuid) => ({ uuid, tag: uuid }));
+        return json(s);
+      }
       if (path === '/api/hosts' && method === 'POST') {
         const made = { uuid: UUID(++panel.seq), ...body, isDisabled: body.isDisabled === true };
         panel.hosts.push(made);
@@ -208,15 +222,24 @@ function installPanel(): Panel {
 
 const setupInput = {
   profileName: 'FreeSocks-Config',
-  cdn: { path: '/ws', port: 8443 },
-  reality: { target: { address: 'decoy-a.example', port: 443 }, serverNames: ['decoy-a.example'] },
-  relay: {
-    target: { address: 'decoy-b.example', port: 443 },
-    serverNames: ['decoy-b.example'],
-    acceptProxyProtocol: false,
-  },
-  squads: { fronted: 'FreeSocks-Fronted', reality: 'FreeSocks-Reality', relay: 'FreeSocks-Relay' },
+  modes: [
+    {
+      slug: 'privacy-reality',
+      name: 'Privacy-Reality',
+      shape: { transport: 'reality' as const, fronting: 'direct' as const },
+      familySlug: 'fam-direct',
+      acceptProxyProtocol: false,
+    },
+    {
+      slug: 'freedom-ws',
+      name: 'Freedom-WebSocket',
+      shape: { transport: 'ws' as const, fronting: 'edge-l7' as const },
+      acceptProxyProtocol: false,
+      ws: { path: '/ws', port: 8443 },
+    },
+  ],
   originDns: null,
+  adopt: false,
 };
 
 async function settled<R extends { claim?: unknown }>(get: () => Promise<R | null>): Promise<R> {
@@ -244,21 +267,41 @@ async function seedLiveDirect() {
   const t = convexTest(schema, modules);
   const serverId = await insertPanelServer(t);
   const panel = installPanel();
+  await t.mutation(internal.seed.seedConnectionModes, {});
   await t.mutation(internal.serverAdmin.patchConfig, { patch: { 'manage.enabled': true } });
+  await t.mutation(internal.sniFamilies.patchConfig, { patch: { enabled: true } });
+  await t.mutation(internal.sniFamilies.create, {
+    slug: 'fam-direct',
+    label: 'fam-direct',
+    targetAddress: 'decoy-a.example',
+    targetPort: 443,
+  });
+  await t.mutation(internal.sniFamilies.importNames, {
+    slug: 'fam-direct',
+    lines: ['decoy-a.example'],
+  });
+  for (const n of (await t.query(internal.sniFamilies.dueForQualification, {})).names)
+    await t.mutation(internal.sniFamilies.recordQualification, {
+      id: n.id,
+      ok: true,
+      tlsVersion: 'TLSv1.3',
+      alpn: 'h2',
+    });
   const started = await t.mutation(internal.panelSetup.start, {
     backendServerId: serverId,
     input: setupInput,
   });
-  await settled(() => t.run((ctx) => ctx.db.get(started.setupId)));
+  const setup = await settled(() => t.run((ctx) => ctx.db.get(started.setupId)));
+  expect(setup.state).toBe('ready');
   // The fake keeps the private key under `publicKeyByTag`; what the profile
   // observation derives is the real public key, so align the fake's bodies.
-  const priv = panel.profiles[0].config.inbounds[1].streamSettings.realitySettings.privateKey;
+  const priv = panel.profiles[0].config.inbounds[0].streamSettings.realitySettings.privateKey;
   const { realityPublicKey } = await import('./lib/panel/digest');
-  panel.profiles[0].publicKeyByTag.VLESS_REALITY = realityPublicKey(priv);
+  panel.profiles[0].publicKeyByTag[TAG] = realityPublicKey(priv);
   const { intentId } = await t.mutation(internal.panelIntents.enroll, {
     backendServerId: serverId,
     name: 'node-a',
-    purpose: 'direct',
+    mode: 'privacy-reality',
     contractVersion: 2,
     observed: {
       management: { address: '192.0.2.10', port: 2222 },
@@ -280,8 +323,54 @@ async function seedLiveDirect() {
 const gateOf = (t: T, serverId: Id<'backendServers'>) =>
   t.query(internal.panelIntents.nodeGate, { backendServerId: serverId, nodeName: 'node-a' });
 
+/** A live direct node: seeded, confirmed, approved and committed. */
+async function liveAndCommitted() {
+  const ctx = await seedLiveDirect();
+  const { t, intentId } = ctx;
+  const built = await t.action(internal.panelActivation.buildDirectTestLink, { intentId });
+  const { intentId: _i, issuedAt: _t, ...binding } = built.binding;
+  await t.mutation(internal.panelActivation.confirmDirect, { intentId, binding });
+  const review = await t.query(internal.panelActivation.review, { intentId });
+  const { runId } = await t.mutation(internal.panelActivation.approve, {
+    intentId,
+    reviewHash: review.reviewHash,
+  });
+  const run = await runUntil(
+    () => t.run((c) => c.db.get(runId)),
+    (state) => state !== 'running',
+  );
+  expect(run.state).toBe('committed');
+  return { ...ctx, review };
+}
+
+/**
+ * A second name on the transport, as a family rollout leaves it: the profile
+ * moves through FCP's own write, so the observation is not a foreign edit.
+ */
+async function addFamilyName(t: T, serverId: Id<'backendServers'>, panel: Panel) {
+  panel.profiles[0].config.inbounds[0].streamSettings.realitySettings.serverNames = [
+    'decoy-a.example',
+    'www.decoy-a.example',
+  ];
+  await t.action(internal.panelObserve.refresh, { backendServerId: serverId });
+  await t.mutation(internal.panelObserve.acknowledgeForeignEdit, {
+    backendServerId: serverId,
+    profileUuid: panel.profiles[0].uuid,
+  });
+}
+
+const gateVersionOf = (t: T, serverId: Id<'backendServers'>) =>
+  t
+    .run((c) =>
+      c.db
+        .query('panelSetups')
+        .withIndex('by_server', (q) => q.eq('backendServerId', serverId))
+        .unique(),
+    )
+    .then((r) => r!.gateVersion);
+
 describe('activating a direct node', () => {
-  test('test link, bound confirmation, approval, candidate Host, rehearsal, commit', async () => {
+  test('test link, bound confirmation, approval, candidate addresses, rehearsal, commit', async () => {
     const { t, serverId, panel, intentId } = await seedLiveDirect();
     expect(generateRealityKey().privateKey).toBeTruthy();
 
@@ -322,14 +411,13 @@ describe('activating a direct node', () => {
     });
     expect(confirmed.stage).toBe('candidates_verified');
 
-    // Review and approve: one run, the Host still disabled, the gate closed.
+    // Review and approve: one run, the address still disabled, the gate closed.
     const review = await t.query(internal.panelActivation.review, { intentId });
     expect(review.blockers).toEqual([]);
-    expect(review.shape.hostTuple).toEqual({
-      address: '203.0.113.10',
-      port: 443,
-      sni: 'decoy-a.example',
-    });
+    expect(review.shape.mode).toBe('privacy-reality');
+    expect(review.shape.addressTuples).toEqual([
+      { address: '203.0.113.10', port: 443, sni: 'decoy-a.example' },
+    ]);
     await expect(
       t.mutation(internal.panelActivation.approve, { intentId, reviewHash: 'stale' }),
     ).rejects.toThrow(/review_stale/);
@@ -342,6 +430,7 @@ describe('activating a direct node', () => {
       (s) => s !== 'running',
     );
     expect(run.state).toBe('committed');
+    expect(panel.hosts).toHaveLength(1);
     expect(panel.hosts[0]!.isDisabled).toBe(false);
     const intent = (await t.run((ctx) => ctx.db.get(intentId)))!;
     expect(intent.activation.stage).toBe('live');
@@ -365,13 +454,13 @@ describe('activating a direct node', () => {
     expect(after).not.toContain('panel-node-secret-placeholder');
   });
 
-  test('a failed rehearsal releases nothing: the Host goes back to disabled and the gate stays closed', async () => {
+  test('a failed rehearsal releases nothing: the addresses go back to disabled, the node is parked, a fresh approval commits', async () => {
     const { t, serverId, panel, intentId } = await seedLiveDirect();
     const built = await t.action(internal.panelActivation.buildDirectTestLink, { intentId });
     const { intentId: _i, issuedAt: _t, ...binding } = built.binding;
     await t.mutation(internal.panelActivation.confirmDirect, { intentId, binding });
-    // The panel's bodies will not carry the node (the fake serves another key).
-    panel.profiles[0].publicKeyByTag.VLESS_REALITY = 'not-the-key';
+    // The backend's bodies will not carry the node (the fake serves another key).
+    panel.profiles[0].publicKeyByTag[TAG] = 'not-the-key';
     const review = await t.query(internal.panelActivation.review, { intentId });
     const { runId } = await t.mutation(internal.panelActivation.approve, {
       intentId,
@@ -395,8 +484,8 @@ describe('activating a direct node', () => {
 
     // With the cause fixed, a fresh approval starts a fresh run and commits.
     const { realityPublicKey } = await import('./lib/panel/digest');
-    panel.profiles[0].publicKeyByTag.VLESS_REALITY = realityPublicKey(
-      panel.profiles[0].config.inbounds[1].streamSettings.realitySettings.privateKey,
+    panel.profiles[0].publicKeyByTag[TAG] = realityPublicKey(
+      panel.profiles[0].config.inbounds[0].streamSettings.realitySettings.privateKey,
     );
     const again = await t.query(internal.panelActivation.review, { intentId });
     expect(again.blockers).toEqual([]);
@@ -412,49 +501,6 @@ describe('activating a direct node', () => {
     expect(run2.state).toBe('committed');
     expect((await t.run((ctx) => ctx.db.get(runId)))!.state).toBe('superseded');
     expect((await gateOf(t, serverId)).state).toBe('open');
-  });
-
-  test('a moved endpoint under a live node is observed drift: the gate closes, the Host follows, the tick is gone', async () => {
-    const { t, serverId, panel, intentId } = await seedLiveDirect();
-    const built = await t.action(internal.panelActivation.buildDirectTestLink, { intentId });
-    const { intentId: _i, issuedAt: _t, ...binding } = built.binding;
-    await t.mutation(internal.panelActivation.confirmDirect, { intentId, binding });
-    const review = await t.query(internal.panelActivation.review, { intentId });
-    const { runId } = await t.mutation(internal.panelActivation.approve, {
-      intentId,
-      reviewHash: review.reviewHash,
-    });
-    await runUntil(
-      () => t.run((ctx) => ctx.db.get(runId)),
-      (s) => s !== 'running',
-    );
-    expect((await gateOf(t, serverId)).state).toBe('open');
-
-    // The role reports a new public address: the committed Host's tuple is dead.
-    await t.mutation(internal.panelIntents.enroll, {
-      backendServerId: serverId,
-      name: 'node-a',
-      purpose: 'direct',
-      contractVersion: 2,
-      observed: {
-        management: { address: '192.0.2.10', port: 2222 },
-        publicIps: { v4: '203.0.113.11' },
-        capabilities: { caddy: false, ipv6: false },
-      },
-    });
-    const intent = await settled(() => t.run((ctx) => ctx.db.get(intentId)));
-    expect(intent.delivery.disposition).toBe('unavailable');
-    expect(intent.maintenance?.reason).toBe('drift');
-    expect(intent.activation.currentRunId).toBeUndefined();
-    expect(intent.activation.evidence.some((e) => e.kind === 'direct_confirmed')).toBe(false);
-    expect(intent.activation.stage).not.toBe('live');
-    expect((await gateOf(t, serverId)).state).toBe('blocked');
-    // The existing Host now carries the new endpoint; the approved snapshot is untouched.
-    expect(panel.hosts).toHaveLength(1);
-    expect(panel.hosts[0]!.address).toBe('203.0.113.11');
-    expect(intent.approved?.reviewHash).toBe(review.reviewHash);
-    const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
-    expect(audit.some((a) => a.action === 'servers.node.drift')).toBe(true);
   });
 
   test('a moved observation supersedes the run and a stale commit is refused', async () => {
@@ -475,5 +521,340 @@ describe('activating a direct node', () => {
     expect(intent.machineRevision).toBe(2);
     expect(intent.activation.stage).toBe('bootstrap_available');
     expect(panel.hosts[0]!.isDisabled).toBe(true);
+  });
+
+  test('a node that already serves members is adopted live with its addresses; an enrolled name is refused', async () => {
+    const { t, serverId, panel, intentId } = await seedLiveDirect();
+    // A second node the backend already runs on the same transport, with an address of its own.
+    const transportUuid = panel.profiles[0].inbounds[0].uuid as string;
+    panel.nodes.push({
+      uuid: UUID(200),
+      name: 'legacy-a',
+      address: '203.0.113.20',
+      port: 2222,
+      countryCode: 'XX',
+      isDisabled: false,
+      lastStatusChange: 't0',
+      configProfile: {
+        activeConfigProfileUuid: panel.profiles[0].uuid,
+        activeInbounds: [{ uuid: transportUuid, tag: TAG }],
+      },
+    });
+    panel.hosts.push({
+      uuid: UUID(201),
+      remark: 'legacy-a-reality',
+      address: '203.0.113.20',
+      port: 443,
+      sni: 'decoy-a.example',
+      inbound: {
+        configProfileUuid: panel.profiles[0].uuid,
+        configProfileInboundUuid: transportUuid,
+      },
+      isDisabled: false,
+    });
+    await t.action(internal.panelObserve.refresh, { backendServerId: serverId });
+    const r = await t.mutation(internal.panelIntents.adoptNode, {
+      backendServerId: serverId,
+      nodeUuid: UUID(200),
+      mode: 'privacy-reality',
+    });
+    expect(r.addresses).toBe(1);
+    const adopted = (await t.run((ctx) => ctx.db.get(r.intentId)))!;
+    expect(adopted).toMatchObject({
+      name: 'legacy-a',
+      mode: 'privacy-reality',
+      activation: { stage: 'live' },
+      delivery: { disposition: 'live' },
+      approved: { committed: { hostUuids: [UUID(201)] } },
+      addressUuids: [UUID(201)],
+      adopted: { externallyFronted: false },
+    });
+    expect(
+      (
+        await t.query(internal.panelIntents.nodeGate, {
+          backendServerId: serverId,
+          nodeName: 'legacy-a',
+        })
+      ).state,
+    ).toBe('open');
+    // The enrolled node cannot be adopted twice; an unknown one is not found.
+    await expect(
+      t.mutation(internal.panelIntents.adoptNode, {
+        backendServerId: serverId,
+        nodeUuid: (await t.run((ctx) => ctx.db.get(intentId)))!.nodeUuid!,
+        mode: 'privacy-reality',
+      }),
+    ).rejects.toThrow(/node_exists/);
+    await expect(
+      t.mutation(internal.panelIntents.adoptNode, {
+        backendServerId: serverId,
+        nodeUuid: UUID(200),
+        mode: 'freedom-ws',
+      }),
+    ).rejects.toThrow(/node_exists|node_not_on_mode/);
+  });
+
+  // Nothing runs an adopted machine, so no role ever reports its wipe: the
+  // admin who cleaned it up closes the ladder instead.
+  test('an adopted node is retired by an admin confirming its machine is gone', async () => {
+    const { t, serverId, panel } = await seedLiveDirect();
+    const transportUuid = panel.profiles[0].inbounds[0].uuid as string;
+    panel.nodes.push({
+      uuid: UUID(300),
+      name: 'legacy-b',
+      address: '203.0.113.30',
+      port: 2222,
+      countryCode: 'XX',
+      isDisabled: false,
+      lastStatusChange: 't0',
+      configProfile: {
+        activeConfigProfileUuid: panel.profiles[0].uuid,
+        activeInbounds: [{ uuid: transportUuid, tag: TAG }],
+      },
+    });
+    await t.action(internal.panelObserve.refresh, { backendServerId: serverId });
+    const { intentId } = await t.mutation(internal.panelIntents.adoptNode, {
+      backendServerId: serverId,
+      nodeUuid: UUID(300),
+      mode: 'privacy-reality',
+    });
+    // Its retirement has run its course: everything FCP made is gone and the
+    // panel row with it, so the machine is all that is left.
+    const retirementId = await t.run(async (ctx) => {
+      const id = await ctx.db.insert('panelRetirements', {
+        backendServerId: serverId,
+        intentId,
+        stage: 'panel_removed',
+        disposition: 'keep-dark',
+        requestedBy: 'admin',
+        events: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      await ctx.db.patch(intentId, { retirementId: id, state: 'retiring' });
+      return id;
+    });
+    // Before `ready_to_wipe` there is nothing to confirm.
+    await expect(t.mutation(internal.panelIntents.markWiped, { intentId })).rejects.toThrow(
+      /retirement_stage/,
+    );
+    await t.run((ctx) => ctx.db.patch(retirementId, { stage: 'ready_to_wipe' }));
+    const admin = await t.run((ctx) =>
+      ctx.db.insert('adminUsers', {
+        username: 'ops',
+        displayName: 'Ops',
+        isActive: true,
+        updatedAt: Date.now(),
+      }),
+    );
+    const out = await t.mutation(internal.panelIntents.markWiped, { intentId, byAdminId: admin });
+    expect(out.stage).toBe('retired');
+    const done = (await t.run((ctx) => ctx.db.get(retirementId)))!;
+    expect(done.stage).toBe('retired');
+    expect(done.events.map((e) => e.code)).toEqual(['wiped_by_admin', 'retired']);
+    expect((await t.run((ctx) => ctx.db.get(intentId)))!.state).toBe('retired');
+    const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
+    const row = audit.find((a) => a.action === 'servers.node.retired')!;
+    expect(row.actorType).toBe('admin');
+    expect((row.payload as { confirmedBy?: string }).confirmedBy).toBe('admin');
+  });
+
+  test('a profile edit closes every enrolled node on the transport and needs a treatment for the rest', async () => {
+    const { t, serverId, panel, intentId } = await seedLiveDirect();
+    // Take the enrolled node live first.
+    const built = await t.action(internal.panelActivation.buildDirectTestLink, { intentId });
+    const { intentId: _i, issuedAt: _t, ...binding } = built.binding;
+    await t.mutation(internal.panelActivation.confirmDirect, { intentId, binding });
+    const review = await t.query(internal.panelActivation.review, { intentId });
+    const { runId } = await t.mutation(internal.panelActivation.approve, {
+      intentId,
+      reviewHash: review.reviewHash,
+    });
+    await runUntil(
+      () => t.run((ctx) => ctx.db.get(runId)),
+      (s) => s !== 'running',
+    );
+    expect((await gateOf(t, serverId)).state).toBe('open');
+    // A node FCP does not manage runs the same transport.
+    const transportUuid = panel.profiles[0].inbounds[0].uuid as string;
+    panel.nodes.push({
+      uuid: UUID(300),
+      name: 'stranger',
+      address: '203.0.113.30',
+      port: 2222,
+      countryCode: 'XX',
+      isDisabled: false,
+      lastStatusChange: 't0',
+      configProfile: {
+        activeConfigProfileUuid: panel.profiles[0].uuid,
+        activeInbounds: [{ uuid: transportUuid, tag: TAG }],
+      },
+    });
+    await t.action(internal.panelObserve.refresh, { backendServerId: serverId });
+    // The transition is opened directly (the profile-patch request calls it).
+    await expect(
+      t.run((ctx) =>
+        closeForSharedChange(ctx, {
+          backendServerId: serverId,
+          transportUuids: [transportUuid],
+          reason: 'profile',
+        }),
+      ),
+    ).rejects.toThrow(/unmanaged_nodes_affected/);
+    const out = await t.run((ctx) =>
+      closeForSharedChange(ctx, {
+        backendServerId: serverId,
+        transportUuids: [transportUuid],
+        reason: 'profile',
+        unmanaged: 'hold',
+      }),
+    );
+    expect(out.closed).toEqual(['node-a']);
+    expect(out.held).toEqual(['stranger']);
+    const intent = (await t.run((ctx) => ctx.db.get(intentId)))!;
+    expect(intent.delivery.disposition).toBe('unavailable');
+    expect(intent.maintenance?.reason).toBe('profile');
+    expect(intent.activation.stage).toBe('awaiting_approval');
+    expect((await gateOf(t, serverId)).state).toBe('blocked');
+    // The unmanaged node is held closed by name until released.
+    const strangerGate = () =>
+      t.query(internal.panelIntents.nodeGate, { backendServerId: serverId, nodeName: 'stranger' });
+    expect((await strangerGate()).state).toBe('blocked');
+    const holds = await t.query(internal.panelIntents.holdsView, { backendServerId: serverId });
+    expect(holds).toHaveLength(1);
+    await t.mutation(internal.panelIntents.releaseHold, {
+      holdId: holds[0]!.id as Id<'panelMaintenanceHolds'>,
+    });
+    expect((await strangerGate()).state).toBe('open');
+    // The enrolled node stays closed: it reopens only through its own approval.
+    expect((await gateOf(t, serverId)).state).toBe('blocked');
+  });
+
+  test('a moved endpoint under a live node is observed drift: the gate closes, the address follows, the tick is gone', async () => {
+    const { t, serverId, panel, intentId } = await seedLiveDirect();
+    const built = await t.action(internal.panelActivation.buildDirectTestLink, { intentId });
+    const { intentId: _i, issuedAt: _t, ...binding } = built.binding;
+    await t.mutation(internal.panelActivation.confirmDirect, { intentId, binding });
+    const review = await t.query(internal.panelActivation.review, { intentId });
+    const { runId } = await t.mutation(internal.panelActivation.approve, {
+      intentId,
+      reviewHash: review.reviewHash,
+    });
+    await runUntil(
+      () => t.run((ctx) => ctx.db.get(runId)),
+      (s) => s !== 'running',
+    );
+    expect((await gateOf(t, serverId)).state).toBe('open');
+
+    // The role reports a new public address: the committed address's tuple is dead.
+    await t.mutation(internal.panelIntents.enroll, {
+      backendServerId: serverId,
+      name: 'node-a',
+      mode: 'privacy-reality',
+      contractVersion: 2,
+      observed: {
+        management: { address: '192.0.2.10', port: 2222 },
+        publicIps: { v4: '203.0.113.11' },
+        capabilities: { caddy: false, ipv6: false },
+      },
+    });
+    const intent = await settled(() => t.run((ctx) => ctx.db.get(intentId)));
+    expect(intent.delivery.disposition).toBe('unavailable');
+    expect(intent.maintenance?.reason).toBe('drift');
+    expect(intent.activation.currentRunId).toBeUndefined();
+    expect(intent.activation.evidence.some((e) => e.kind === 'direct_confirmed')).toBe(false);
+    expect(intent.activation.stage).not.toBe('live');
+    expect((await gateOf(t, serverId)).state).toBe('blocked');
+    // The existing address now carries the new endpoint; the approved snapshot is untouched.
+    expect(panel.hosts).toHaveLength(1);
+    expect(panel.hosts[0]!.address).toBe('203.0.113.11');
+    expect(intent.approved?.reviewHash).toBe(review.reviewHash);
+    const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
+    expect(audit.some((a) => a.action === 'servers.node.drift')).toBe(true);
+  });
+  // A family rollout adding a name gives a live node an address it was never
+  // verified or approved for: it stays live on what members hold, and the new
+  // one is a candidate that needs the tick and a fresh approval.
+  test('a name the family adds is a candidate: the node stays live, the tick and the approval are taken again', async () => {
+    const { t, serverId, panel, intentId } = await liveAndCommitted();
+    const before = await gateVersionOf(t, serverId);
+    expect(panel.hosts).toHaveLength(1);
+
+    // The transport now lists a second name, through FCP's own write (a family
+    // rollout): the profile's token moves, and it is not a foreign edit.
+    await addFamilyName(t, serverId, panel);
+    await t.mutation(internal.panelIntents.enroll, {
+      backendServerId: serverId,
+      name: 'node-a',
+      mode: 'privacy-reality',
+      contractVersion: 2,
+      observed: {
+        management: { address: '192.0.2.10', port: 2222 },
+        publicIps: { v4: '203.0.113.10' },
+        capabilities: { caddy: false, ipv6: false },
+      },
+    });
+    const intent = await settled(() => t.run((c) => c.db.get(intentId)));
+    // Not drift: members keep the committed address, nothing is closed.
+    expect(intent.delivery.disposition).toBe('live');
+    expect(intent.maintenance).toBeUndefined();
+    expect((await gateOf(t, serverId)).state).toBe('open');
+    // But the node is no longer verified, and the workflow offers approval again.
+    expect(intent.activation.stage).toBe('machine_ready');
+    expect(intent.activation.evidence.some((e) => e.kind === 'direct_confirmed')).toBe(false);
+    expect(await gateVersionOf(t, serverId)).toBeGreaterThan(before);
+    // The new address exists, disabled, beside the committed one.
+    expect(panel.hosts).toHaveLength(2);
+    const added = panel.hosts.find((h) => h.sni === 'www.decoy-a.example');
+    expect(added.isDisabled).toBe(true);
+    expect(intent.addressUuids).toHaveLength(2);
+  });
+
+  // One entry says nothing about the others: the rehearsal reads every
+  // candidate address, with the name it is there to serve.
+  test('the rehearsal refuses a body that carries only one of two addresses', async () => {
+    const { t, serverId, panel, intentId, review: committed } = await liveAndCommitted();
+    await addFamilyName(t, serverId, panel);
+    await t.mutation(internal.panelIntents.enroll, {
+      backendServerId: serverId,
+      name: 'node-a',
+      mode: 'privacy-reality',
+      contractVersion: 2,
+      observed: {
+        management: { address: '192.0.2.10', port: 2222 },
+        publicIps: { v4: '203.0.113.10' },
+        capabilities: { caddy: false, ipv6: false },
+      },
+    });
+    await settled(() => t.run((c) => c.db.get(intentId)));
+    // The backend leaves the second name out of every body it serves.
+    const whole = panel.bodyFor;
+    panel.bodyFor = (ua: string) =>
+      whole(ua)
+        .split('\n')
+        .filter((line) => !line.includes('www.decoy-a.example'))
+        .join('\n');
+    const built = await t.action(internal.panelActivation.buildDirectTestLink, { intentId });
+    const { intentId: _i, issuedAt: _t, ...binding } = built.binding;
+    await t.mutation(internal.panelActivation.confirmDirect, { intentId, binding });
+    const review = await t.query(internal.panelActivation.review, { intentId });
+    expect(review.shape.addressTuples).toHaveLength(2);
+    const { runId } = await t.mutation(internal.panelActivation.approve, {
+      intentId,
+      reviewHash: review.reviewHash,
+    });
+    const run = await runUntil(
+      () => t.run((c) => c.db.get(runId)),
+      (state) => state !== 'running',
+    );
+    expect(run.state).toBe('blocked');
+    expect(run.code).toBe('servers.rehearsal_failed');
+    expect(run.rehearsal?.detail).toContain('www.decoy-a.example');
+    // Nothing of the candidate set stays enabled, and what members were
+    // approved for is still the one address of the earlier commit.
+    expect(panel.hosts.every((h) => h.isDisabled)).toBe(true);
+    const intent = (await t.run((c) => c.db.get(intentId)))!;
+    expect(intent.approved?.reviewHash).toBe(committed.reviewHash);
+    expect(intent.approved?.committed.hostUuids).toHaveLength(1);
   });
 });

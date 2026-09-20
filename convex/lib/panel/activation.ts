@@ -92,14 +92,17 @@ export function stageAfterChange(current: Stage, retained: readonly Evidence[]):
 }
 
 export interface ReviewShape {
-  purpose: 'direct' | 'front' | 'relay';
+  /** The connection mode the node serves and its shape (transport + fronting). */
+  mode: string;
+  modeShape: { transport: string; fronting: string };
   ingress: unknown;
   configRevision: string;
   authRevision: string | null;
   listenerKeys: string[];
   provider: { accountId: string | null; templateHash: string | null };
   subscriptionTemplates: Record<string, string>;
-  hostTuple: { address: string; port: number; sni: string | null } | null;
+  /** A direct node's addresses, one per family name; empty for a fronted node. */
+  addressTuples: { address: string; port: number; sni: string | null }[];
 }
 
 /** The hash the review card is approved under. Stable across edge address changes. */

@@ -8,7 +8,6 @@
  * profile it runs, the inbounds it serves, the Hosts members are handed for
  * those inbounds and the squads that grant them.
  */
-import { REQUIRED_ROLE_CONTRACT_VERSION } from './lib/panel/ops';
 import { ConvexError, v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc } from './_generated/dataModel';
@@ -17,6 +16,7 @@ import { writeAuditLog } from './lib/audit';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import { poolFromConfig } from './lib/remnawavePlacement';
 import { flattenServerConfig, resolveServerConfig, serverConfigWrites } from './lib/serverConfig';
+import { modeRefOf } from './panelIntents';
 
 const iso = (ms: number | undefined) => (ms ? new Date(ms).toISOString() : null);
 
@@ -83,7 +83,7 @@ export const intentsView = internalQuery({
       out.push({
         id: i._id as string,
         name: i.name,
-        purpose: i.purpose,
+        mode: await modeRefOf(ctx, i),
         state: i.state,
         code: i.code ?? null,
         stage: i.activation.stage,
@@ -91,7 +91,8 @@ export const intentsView = internalQuery({
         machineRevision: i.machineRevision,
         appliedRevision: i.appliedRevision ?? null,
         nodeUuid: i.nodeUuid ?? null,
-        hostUuid: i.hostUuid ?? null,
+        addressUuids: i.addressUuids ?? [],
+        adopted: !!i.adopted,
         origin: { hostname: i.origin.hostname ?? null, dns: i.origin.dns },
         maintenance: !!i.maintenance,
         run: run
@@ -110,14 +111,14 @@ export const intentsView = internalQuery({
 export const summary = internalQuery({
   args: {},
   handler: async (ctx) => {
-    const [servers, states, handoffs, cfg] = await Promise.all([
+    const [servers, states, setups, cfg] = await Promise.all([
       ctx.db.query('backendServers').collect(),
       ctx.db.query('panelObserveState').collect(),
-      ctx.db.query('panelHandoff').collect(),
+      ctx.db.query('panelSetups').collect(),
       resolveServerConfig(ctx.db),
     ]);
     const stateBy = new Map(states.map((s) => [s.backendServerId as string, s]));
-    const handoffBy = new Map(handoffs.map((h) => [h.backendServerId as string, h]));
+    const setupBy = new Map(setups.map((s) => [s.backendServerId as string, s]));
     return {
       config: flattenServerConfig(cfg),
       instances: servers
@@ -130,10 +131,8 @@ export const summary = internalQuery({
           isActive: s.isActive,
           observable: capabilitiesOf(s.backend).panelObservation,
           writable: capabilitiesOf(s.backend).panelWrites,
-          // Whether the node role has said it follows the ownership protocol.
-          handoffCurrent:
-            (handoffBy.get(s._id as string)?.roleContractVersion ?? 0) >=
-            REQUIRED_ROLE_CONTRACT_VERSION,
+          // Whether FCP has set this backend up (or adopted it): the one condition for writing it.
+          setUp: setupBy.get(s._id as string)?.state === 'ready',
           ...mapState(stateBy.get(s._id as string) ?? null),
         })),
     };

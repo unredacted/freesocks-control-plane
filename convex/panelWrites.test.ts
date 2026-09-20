@@ -25,7 +25,12 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { signValue } from './lib/cookies';
 import { sha256Hex } from './lib/crypto';
-import { insertPanelServer, registerRelay, realityListener } from './lib/edges/testing/fixtures';
+import {
+  insertPanelServer,
+  markBackendSetUp,
+  registerRelay,
+  realityListener,
+} from './lib/edges/testing/fixtures';
 import { claimKey } from './lib/panel/ops';
 import { assertNoPanelClaim } from './panelLedger';
 import { scopeFor } from './httpServers';
@@ -261,11 +266,7 @@ async function seed(opts: { enabled?: boolean; handoff?: boolean } = {}) {
   await t.action(internal.panelObserve.refresh, { backendServerId: serverId });
   if (opts.enabled !== false)
     await t.mutation(internal.serverAdmin.patchConfig, { patch: { 'manage.enabled': true } });
-  if (opts.handoff !== false)
-    await t.mutation(internal.panelLedger.reportHandoff, {
-      backendServerId: serverId,
-      roleContractVersion: 1,
-    });
+  if (opts.handoff !== false) await markBackendSetUp(t, serverId);
   const call = (
     method: string,
     path: string,
@@ -305,16 +306,16 @@ describe('gates', () => {
     expect(panel.writes).toEqual([]);
   });
 
-  test('without the role handoff a write is refused', async () => {
+  test('a backend FCP has not set up or adopted refuses every write', async () => {
     const { call, panel, t } = await seed({ handoff: false });
     const res = await call('POST', 'panel-a/hosts', NEW_HOST);
-    expect((await res.json()).error.code).toBe('servers.handoff_missing');
+    expect((await res.json()).error.code).toBe('servers.not_set_up');
     expect(panel.writes).toEqual([]);
     expect(await claims(t)).toEqual([]);
   });
 
-  test('the node role token (admin:servers:write) cannot change a panel, but may report its handoff', async () => {
-    const { t, panel } = await seed({ handoff: false });
+  test('the node role token (admin:servers:write) cannot change a backend; a manager can once it is set up', async () => {
+    const { t, panel, serverId } = await seed({ handoff: false });
     const role = await token(t, ['admin:servers:read', 'admin:servers:write']);
     const as = (tok: string, method: string, path: string, body?: unknown) =>
       t.fetch(`/api/v1/admin/servers/${path}`, {
@@ -324,9 +325,10 @@ describe('gates', () => {
       });
     expect((await as(role, 'POST', 'panel-a/hosts', NEW_HOST)).status).toBe(401);
     expect((await as(role, 'DELETE', 'panel-a/hosts/h-1')).status).toBe(401);
+    // The v1 handoff route is gone: a role token's PUT is refused by scope before any route.
+    expect((await as(role, 'PUT', 'panel-a/handoff', { roleContractVersion: 1 })).status).toBe(401);
     expect(panel.writes).toEqual([]);
-    const handoff = await as(role, 'PUT', 'panel-a/handoff', { roleContractVersion: 1 });
-    expect(await handoff.json()).toEqual({ ok: true, required: 1, current: true });
+    await markBackendSetUp(t, serverId);
     const manager = await token(t, ['admin:servers:manage']);
     expect((await as(manager, 'POST', 'panel-a/hosts', NEW_HOST)).status).toBe(200);
     expect(scopeFor(['panel-a', 'hosts'], 'POST')).toBe('admin:servers:manage');

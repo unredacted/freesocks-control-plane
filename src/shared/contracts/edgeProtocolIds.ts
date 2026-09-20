@@ -123,8 +123,11 @@ export const LISTENER_COMBOS: readonly ListenerCombo[] = [
   combo('vless', 'grpc', 'tls', 'VLESS over gRPC (TLS)'),
   // XHTTP (Xray 1.8.24+): plain HTTP requests carry the stream, so any CDN that
   // passes HTTP can front it; an L4 forwarder carries it like any TCP listener.
-  // Only behind a real certificate: with REALITY there is no Caddy in front.
   combo('vless', 'xhttp', 'tls', 'VLESS over XHTTP (TLS)'),
+  // XHTTP under REALITY: the node terminates, the handshake impersonates the
+  // family's target, an L4 edge forwards TCP. Never an L7 front (that would
+  // terminate TLS); Xray and Mihomo clients only (sing-box has no XHTTP).
+  combo('vless', 'xhttp', 'reality', 'VLESS over XHTTP + REALITY'),
   combo('trojan', 'raw', 'tls', 'Trojan over TLS'),
   combo('trojan', 'ws', 'tls', 'Trojan over WebSocket (TLS)'),
   combo('shadowsocks', 'raw', 'none', 'Shadowsocks'),
