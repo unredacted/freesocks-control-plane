@@ -205,7 +205,7 @@ export const RecoveryAttestation = z.object({
 });
 export type RecoveryAttestation = z.infer<typeof RecoveryAttestation>;
 
-export const HostWrite = z.object({
+export const AddressWrite = z.object({
   remark: z.string(),
   address: z.string(),
   port: z.number(),
@@ -218,7 +218,7 @@ export const HostWrite = z.object({
   isDisabled: z.boolean().optional(),
   restore: z.boolean().optional(),
 });
-export type HostWrite = z.infer<typeof HostWrite>;
+export type AddressWrite = z.infer<typeof AddressWrite>;
 
 export const NodeWrite = z.object({
   name: z.string(),

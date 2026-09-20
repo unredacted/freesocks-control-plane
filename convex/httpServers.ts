@@ -452,10 +452,10 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
     }
     return notFound();
   }
-  if (a && (b === 'hosts' || b === 'squads' || b === 'ops')) {
+  if (a && (b === 'addresses' || b === 'modeGroups' || b === 'ops')) {
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
     const sid = instance.id;
-    if (b === 'hosts' && !c) {
+    if (b === 'addresses' && !c) {
       const { opId } = await ctx.runMutation(internal.panelWrites.requestAddressCreate, {
         backendServerId: sid,
         ...(hostFieldsOf(body) as {
@@ -469,7 +469,7 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
       });
       return runOp(ctx, opId);
     }
-    if (b === 'hosts' && c === 'reorder' && !d) {
+    if (b === 'addresses' && c === 'reorder' && !d) {
       const { opId } = await ctx.runMutation(internal.panelWrites.requestAddressReorder, {
         backendServerId: sid,
         hostUuids: Array.isArray(body.hostUuids) ? body.hostUuids.map(String) : [],
@@ -477,7 +477,7 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
       });
       return runOp(ctx, opId);
     }
-    if (b === 'squads' && !c) {
+    if (b === 'modeGroups' && !c) {
       const { opId } = await ctx.runMutation(internal.panelWrites.requestModeGroupCreate, {
         backendServerId: sid,
         name: String(body.name ?? ''),
@@ -548,10 +548,10 @@ const patchHandler: Handler = async (ctx, parts, admin, body) => {
     });
     return runOp(ctx, opId);
   }
-  if (a && c && !d && (b === 'hosts' || b === 'squads')) {
+  if (a && c && !d && (b === 'addresses' || b === 'modeGroups')) {
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
     const { opId } =
-      b === 'hosts'
+      b === 'addresses'
         ? await ctx.runMutation(internal.panelWrites.requestAddressUpdate, {
             backendServerId: instance.id,
             hostUuid: c,
@@ -592,10 +592,10 @@ const deleteHandler: Handler = async (ctx, parts, admin, _body, query) => {
     });
     return runOp(ctx, opId);
   }
-  if (!a || !c || d || (b !== 'hosts' && b !== 'squads')) return notFound();
+  if (!a || !c || d || (b !== 'addresses' && b !== 'modeGroups')) return notFound();
   const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
   const { opId } =
-    b === 'hosts'
+    b === 'addresses'
       ? await ctx.runMutation(internal.panelWrites.requestAddressDelete, {
           backendServerId: instance.id,
           hostUuid: c,

@@ -300,7 +300,7 @@ const auditOf = (t: T, action: string) =>
 describe('gates', () => {
   test('dormant: no write is accepted and nothing is sent', async () => {
     const { call, panel } = await seed({ enabled: false });
-    const res = await call('POST', 'panel-a/hosts', NEW_HOST);
+    const res = await call('POST', 'panel-a/addresses', NEW_HOST);
     expect(res.status).toBe(403);
     expect((await res.json()).error.code).toBe('servers.manage_disabled');
     expect(panel.writes).toEqual([]);
@@ -308,7 +308,7 @@ describe('gates', () => {
 
   test('a backend FCP has not set up or adopted refuses every write', async () => {
     const { call, panel, t } = await seed({ handoff: false });
-    const res = await call('POST', 'panel-a/hosts', NEW_HOST);
+    const res = await call('POST', 'panel-a/addresses', NEW_HOST);
     expect((await res.json()).error.code).toBe('servers.not_set_up');
     expect(panel.writes).toEqual([]);
     expect(await claims(t)).toEqual([]);
@@ -323,14 +323,14 @@ describe('gates', () => {
         headers: { 'content-type': 'application/json', authorization: `Bearer ${tok}` },
         body: body === undefined ? undefined : JSON.stringify(body),
       });
-    expect((await as(role, 'POST', 'panel-a/hosts', NEW_HOST)).status).toBe(401);
-    expect((await as(role, 'DELETE', 'panel-a/hosts/h-1')).status).toBe(401);
+    expect((await as(role, 'POST', 'panel-a/addresses', NEW_HOST)).status).toBe(401);
+    expect((await as(role, 'DELETE', 'panel-a/addresses/h-1')).status).toBe(401);
     // The v1 handoff route is gone: a role token's PUT is refused by scope before any route.
     expect((await as(role, 'PUT', 'panel-a/handoff', { roleContractVersion: 1 })).status).toBe(401);
     expect(panel.writes).toEqual([]);
     await markBackendSetUp(t, serverId);
     const manager = await token(t, ['admin:servers:manage']);
-    expect((await as(manager, 'POST', 'panel-a/hosts', NEW_HOST)).status).toBe(200);
+    expect((await as(manager, 'POST', 'panel-a/addresses', NEW_HOST)).status).toBe(200);
     expect(scopeFor(['panel-a', 'hosts'], 'POST')).toBe('admin:servers:manage');
     expect(scopeFor(['panel-a', 'ops', 'x', 'observe'], 'POST')).toBe('admin:servers:read');
     expect(scopeFor(['panel-a', 'ops', 'x', 'recover'], 'POST')).toBe('admin:servers:manage');
@@ -340,7 +340,7 @@ describe('gates', () => {
 describe('Hosts', () => {
   test('create: sent once, seen, owned, claims released, audited by name only', async () => {
     const { t, call, panel } = await seed();
-    const op = await (await call('POST', 'panel-a/hosts', NEW_HOST)).json();
+    const op = await (await call('POST', 'panel-a/addresses', NEW_HOST)).json();
     expect(op).toMatchObject({ kind: 'host', verb: 'create', state: 'done', open: false });
     expect(panel.writes).toEqual(['POST /api/hosts']);
     expect(panel.hosts.at(-1)).toMatchObject({ remark: 'node-one-alt', sni: 'b.example' });
@@ -357,7 +357,7 @@ describe('Hosts', () => {
   test('a LOST create response is settled by looking: adopted, never sent twice', async () => {
     const { t, call, panel } = await seed();
     panel.fault = { status: 504, apply: 'now' };
-    const op = await (await call('POST', 'panel-a/hosts', NEW_HOST)).json();
+    const op = await (await call('POST', 'panel-a/addresses', NEW_HOST)).json();
     // The gateway said 504, the backend had created it: the look right after finds it.
     expect(op).toMatchObject({ state: 'done', request: 'uncertain', panelState: 'observed' });
     expect(panel.writes).toEqual(['POST /api/hosts']);
@@ -368,7 +368,7 @@ describe('Hosts', () => {
   test('the delayed-attempt sequence: no re-send, no opposing write, resolves when the original lands', async () => {
     const { t, call, panel } = await seed();
     panel.fault = { timeout: true, apply: 'later' };
-    const first = await (await call('PATCH', 'panel-a/hosts/h-1', { sni: 'x.example' })).json();
+    const first = await (await call('PATCH', 'panel-a/addresses/h-1', { sni: 'x.example' })).json();
     expect(first).toMatchObject({ state: 'outcome_unknown', request: 'uncertain', open: true });
     panel.fault = null;
 
@@ -378,7 +378,7 @@ describe('Hosts', () => {
     expect(panel.writes).toEqual(['PATCH /api/hosts']);
 
     // An opposing write to the same Host is refused, however many quiet looks pass.
-    const opposing = await call('PATCH', 'panel-a/hosts/h-1', { sni: 'y.example' });
+    const opposing = await call('PATCH', 'panel-a/addresses/h-1', { sni: 'y.example' });
     expect(opposing.status).toBe(409);
     expect((await opposing.json()).error.code).toBe('servers.op_uncertain');
     expect(panel.writes).toEqual(['PATCH /api/hosts']);
@@ -391,14 +391,16 @@ describe('Hosts', () => {
     expect(panel.hosts[0].sni).toBe('x.example');
     // Now the next change is welcome.
     expect(
-      (await (await call('PATCH', 'panel-a/hosts/h-1', { sni: 'y.example' })).json()).state,
+      (await (await call('PATCH', 'panel-a/addresses/h-1', { sni: 'y.example' })).json()).state,
     ).toBe('done');
   });
 
   test('a gateway 502 while upstream commits stays unknown until the result is seen', async () => {
     const { call, panel } = await seed();
     panel.fault = { status: 502, apply: 'later' };
-    const op = await (await call('PATCH', 'panel-a/hosts/h-1', { fingerprint: 'firefox' })).json();
+    const op = await (
+      await call('PATCH', 'panel-a/addresses/h-1', { fingerprint: 'firefox' })
+    ).json();
     expect(op).toMatchObject({ state: 'outcome_unknown', open: true });
     panel.fault = null;
     panel.delayed.splice(0).forEach((apply) => apply());
@@ -410,7 +412,7 @@ describe('Hosts', () => {
   test('an auth rejection is the one answer that releases at once', async () => {
     const { t, call, panel } = await seed();
     panel.fault = { status: 401, apply: 'never' };
-    const op = await (await call('PATCH', 'panel-a/hosts/h-1', { sni: 'x.example' })).json();
+    const op = await (await call('PATCH', 'panel-a/addresses/h-1', { sni: 'x.example' })).json();
     expect(op).toMatchObject({ state: 'refused', open: false, errorCode: 'servers.panel_refused' });
     expect(await claims(t)).toEqual([]);
   });
@@ -422,7 +424,7 @@ describe('Hosts', () => {
       ...NEW_HOST,
       inbound: { configProfileUuid: 'p-1', configProfileInboundUuid: 'i-1' },
     } as never);
-    const adopted = await (await call('POST', 'panel-a/hosts', NEW_HOST)).json();
+    const adopted = await (await call('POST', 'panel-a/addresses', NEW_HOST)).json();
     expect(adopted).toMatchObject({ state: 'done', errorCode: 'servers.adopted_existing' });
     expect(panel.writes).toEqual([]);
     panel.hosts.push({
@@ -430,7 +432,7 @@ describe('Hosts', () => {
       ...NEW_HOST,
       inbound: { configProfileUuid: 'p-1', configProfileInboundUuid: 'i-1' },
     } as never);
-    const dup = await (await call('POST', 'panel-a/hosts', NEW_HOST)).json();
+    const dup = await (await call('POST', 'panel-a/addresses', NEW_HOST)).json();
     expect(dup).toMatchObject({ state: 'refused', errorCode: 'servers.duplicate_object' });
     expect(panel.writes).toEqual([]);
   });
@@ -447,18 +449,21 @@ describe('Hosts', () => {
       ctx.db.patch(listener._id, { host: { state: 'present', uuid: 'h-edge', ownership: 'fcp' } }),
     );
     for (const res of [
-      await call('PATCH', 'panel-a/hosts/h-edge', { sni: 'x.example' }),
-      await call('DELETE', 'panel-a/hosts/h-edge'),
+      await call('PATCH', 'panel-a/addresses/h-edge', { sni: 'x.example' }),
+      await call('DELETE', 'panel-a/addresses/h-edge'),
     ])
       expect((await res.json()).error.code).toBe('servers.host_edge_owned');
-    const spoof = await call('POST', 'panel-a/hosts', { ...NEW_HOST, remark: 'node-one-relay-zz' });
+    const spoof = await call('POST', 'panel-a/addresses', {
+      ...NEW_HOST,
+      remark: 'node-one-relay-zz',
+    });
     expect((await spoof.json()).error.code).toBe('servers.relay_remark');
     expect(panel.writes).toEqual([]);
   });
 
   test('a delete needs two quiet looks, leaves a tombstone, and is not undone by name', async () => {
     const { t, call, panel } = await seed();
-    const op = await (await call('DELETE', 'panel-a/hosts/h-1')).json();
+    const op = await (await call('DELETE', 'panel-a/addresses/h-1')).json();
     // One look right after the call is not enough to call something gone.
     expect(op).toMatchObject({ verb: 'delete', open: true, state: 'working' });
     const settled = await (await call('POST', `panel-a/ops/${op.id}/observe`)).json();
@@ -473,17 +478,17 @@ describe('Hosts', () => {
       port: 443,
       inboundUuid: 'i-1',
     };
-    expect((await (await call('POST', 'panel-a/hosts', again)).json()).error.code).toBe(
+    expect((await (await call('POST', 'panel-a/addresses', again)).json()).error.code).toBe(
       'servers.tombstoned',
     );
     expect(
-      (await (await call('POST', 'panel-a/hosts', { ...again, restore: true })).json()).state,
+      (await (await call('POST', 'panel-a/addresses', { ...again, restore: true })).json()).state,
     ).toBe('done');
   });
 
   test('clearing the security layer settles: the postcondition expects what the backend will SHOW', async () => {
     const { t, call, panel } = await seed();
-    const op = await (await call('PATCH', 'panel-a/hosts/h-1', { securityLayer: null })).json();
+    const op = await (await call('PATCH', 'panel-a/addresses/h-1', { securityLayer: null })).json();
     // The provider sends the backend's own default word for "cleared", and the
     // backend reads it back as that word: the op must not wait for a null that
     // will never be seen.
@@ -495,16 +500,24 @@ describe('Hosts', () => {
   test('reorder, validation and unknown references', async () => {
     const { call, panel } = await seed();
     const op = await (
-      await call('POST', 'panel-a/hosts/reorder', { hostUuids: ['h-edge', 'h-1'] })
+      await call('POST', 'panel-a/addresses/reorder', { hostUuids: ['h-edge', 'h-1'] })
     ).json();
     expect(op.state).toBe('done');
     expect(panel.hosts.find((h) => h.uuid === 'h-edge')!.viewPosition).toBe(1);
-    expect((await call('POST', 'panel-a/hosts/reorder', { hostUuids: ['h-1'] })).status).toBe(400);
-    expect((await call('POST', 'panel-a/hosts', { ...NEW_HOST, port: 70000 })).status).toBe(400);
-    expect((await call('POST', 'panel-a/hosts', { ...NEW_HOST, alpn: 'spdy' })).status).toBe(400);
-    const unknown = await call('POST', 'panel-a/hosts', { ...NEW_HOST, inboundUuid: 'i-nope' });
+    expect((await call('POST', 'panel-a/addresses/reorder', { hostUuids: ['h-1'] })).status).toBe(
+      400,
+    );
+    expect((await call('POST', 'panel-a/addresses', { ...NEW_HOST, port: 70000 })).status).toBe(
+      400,
+    );
+    expect((await call('POST', 'panel-a/addresses', { ...NEW_HOST, alpn: 'spdy' })).status).toBe(
+      400,
+    );
+    const unknown = await call('POST', 'panel-a/addresses', { ...NEW_HOST, inboundUuid: 'i-nope' });
     expect((await unknown.json()).error.code).toBe('servers.unknown_inbound');
-    expect((await call('PATCH', 'panel-a/hosts/h-nope', { sni: 'x.example' })).status).toBe(404);
+    expect((await call('PATCH', 'panel-a/addresses/h-nope', { sni: 'x.example' })).status).toBe(
+      404,
+    );
   });
 });
 
@@ -512,15 +525,17 @@ describe('squads', () => {
   test('create and rename queue no node work and take no profile claim', async () => {
     const { t, call } = await seed();
     const made = await (
-      await call('POST', 'panel-a/squads', { name: 'paid', inboundUuids: ['i-1'] })
+      await call('POST', 'panel-a/modeGroups', { name: 'paid', inboundUuids: ['i-1'] })
     ).json();
     expect(made).toMatchObject({ state: 'done', asyncEffect: 'none' });
-    const renamed = await (await call('PATCH', 'panel-a/squads/s-1', { name: 'free-b' })).json();
+    const renamed = await (
+      await call('PATCH', 'panel-a/modeGroups/s-1', { name: 'free-b' })
+    ).json();
     expect(renamed).toMatchObject({ state: 'done', asyncEffect: 'none' });
     const all = await ops(t);
     expect(all.flatMap((o) => o.claimKeys).some((k) => k.startsWith('profile:'))).toBe(false);
     expect(
-      (await (await call('POST', 'panel-a/squads', { name: 'paid', inboundUuids: [] })).json())
+      (await (await call('POST', 'panel-a/modeGroups', { name: 'paid', inboundUuids: [] })).json())
         .error.code,
     ).toBe('servers.squad_name_taken');
   });
@@ -528,7 +543,7 @@ describe('squads', () => {
   test('changing transports claims the profile and its nodes; the mode group row alone never releases them', async () => {
     const { t, call, serverId, panel } = await seed();
     const op = await (
-      await call('PATCH', 'panel-a/squads/s-1', { inboundUuids: ['i-1', 'i-2'] })
+      await call('PATCH', 'panel-a/modeGroups/s-1', { inboundUuids: ['i-1', 'i-2'] })
     ).json();
     // The backend row already shows the change, but the node has not applied yet.
     expect(panel.squads[0].inbounds.map((i) => i.uuid)).toEqual(['i-1', 'i-2']);
@@ -545,7 +560,7 @@ describe('squads', () => {
 
     // A competing change on the same mode group is refused, and another workflow sees the node claim.
     expect(
-      (await (await call('PATCH', 'panel-a/squads/s-1', { name: 'x-y' })).json()).error.code,
+      (await (await call('PATCH', 'panel-a/modeGroups/s-1', { name: 'x-y' })).json()).error.code,
     ).toBe('servers.op_running');
     await expect(
       t.run((ctx) => assertNoPanelClaim(ctx.db, serverId, [claimKey.node('n-1')])),
@@ -565,7 +580,7 @@ describe('squads', () => {
 
   test('a mode group members are issued into, or that has members, is not deleted', async () => {
     const { t, call, panel } = await seed();
-    expect((await (await call('DELETE', 'panel-a/squads/s-busy')).json()).error.code).toBe(
+    expect((await (await call('DELETE', 'panel-a/modeGroups/s-busy')).json()).error.code).toBe(
       'servers.squad_has_members',
     );
     await t.run((ctx) =>
@@ -576,11 +591,12 @@ describe('squads', () => {
         updatedAt: Date.now(),
       }),
     );
-    expect((await (await call('DELETE', 'panel-a/squads/s-1')).json()).error.code).toBe(
+    expect((await (await call('DELETE', 'panel-a/modeGroups/s-1')).json()).error.code).toBe(
       'servers.squad_in_placement',
     );
     expect(
-      (await (await call('PATCH', 'panel-a/squads/s-1', { inboundUuids: [] })).json()).error.code,
+      (await (await call('PATCH', 'panel-a/modeGroups/s-1', { inboundUuids: [] })).json()).error
+        .code,
     ).toBe('servers.squad_in_placement');
     expect(panel.writes).toEqual([]);
   });
@@ -590,7 +606,7 @@ describe('claims, interruption and recovery', () => {
   test('the owner path needs EXACT coverage: a missing required claim fails, it does not pass by vacuity', async () => {
     const { t, call, serverId, panel } = await seed();
     panel.fault = { timeout: true, apply: 'never' };
-    const op = await (await call('PATCH', 'panel-a/hosts/h-1', { sni: 'x.example' })).json();
+    const op = await (await call('PATCH', 'panel-a/addresses/h-1', { sni: 'x.example' })).json();
     const owner = { opId: op.id as Id<'panelOps'>, generation: 1 };
     const check = (keys: string[], o?: typeof owner) =>
       t.run((ctx) => assertNoPanelClaim(ctx.db, serverId, keys, o));
@@ -636,7 +652,7 @@ describe('claims, interruption and recovery', () => {
   test('a recovery needs every condition, and a fresh look may settle it first', async () => {
     const { t, call, panel } = await seed();
     panel.fault = { timeout: true, apply: 'never' };
-    const op = await (await call('PATCH', 'panel-a/hosts/h-1', { sni: 'x.example' })).json();
+    const op = await (await call('PATCH', 'panel-a/addresses/h-1', { sni: 'x.example' })).json();
     panel.fault = null;
     const partial = await call('POST', `panel-a/ops/${op.id}/recover`, {
       credentialsRevoked: true,

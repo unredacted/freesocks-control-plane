@@ -25,7 +25,7 @@ import {
   ServerSummary,
   ServerTree,
   type BackendSetupInput,
-  type HostWrite,
+  type AddressWrite,
   type NodeWrite,
   type ProfilePatchOp,
   type RecoveryAttestation,
@@ -60,21 +60,21 @@ export const recoverOp = (
   attest: Omit<RecoveryAttestation, 'freshReadAt'>,
 ) => apiClient.post(`${slugPath(slug)}/ops/${encodeURIComponent(id)}/recover`, attest, OpView);
 
-export const createAddress = (slug: string, host: HostWrite) =>
-  apiClient.post(`${slugPath(slug)}/addresses`, host, OpView);
-export const updateAddress = (slug: string, uuid: string, fields: Patch<HostWrite>) =>
+export const createAddress = (slug: string, address: AddressWrite) =>
+  apiClient.post(`${slugPath(slug)}/addresses`, address, OpView);
+export const updateAddress = (slug: string, uuid: string, fields: Patch<AddressWrite>) =>
   apiClient.patch(`${slugPath(slug)}/addresses/${encodeURIComponent(uuid)}`, fields, OpView);
 export const deleteAddress = (slug: string, uuid: string) =>
   apiClient.delete(`${slugPath(slug)}/addresses/${encodeURIComponent(uuid)}`, OpView);
 
-export interface SquadWrite {
+export interface ModeGroupWrite {
   name: string;
   transportUuids: string[];
   restore?: boolean;
 }
-export const createModeGroup = (slug: string, squad: SquadWrite) =>
-  apiClient.post(`${slugPath(slug)}/modeGroups`, squad, OpView);
-export const updateModeGroup = (slug: string, uuid: string, fields: Patch<SquadWrite>) =>
+export const createModeGroup = (slug: string, group: ModeGroupWrite) =>
+  apiClient.post(`${slugPath(slug)}/modeGroups`, group, OpView);
+export const updateModeGroup = (slug: string, uuid: string, fields: Patch<ModeGroupWrite>) =>
   apiClient.patch(`${slugPath(slug)}/modeGroups/${encodeURIComponent(uuid)}`, fields, OpView);
 export const deleteModeGroup = (slug: string, uuid: string) =>
   apiClient.delete(`${slugPath(slug)}/modeGroups/${encodeURIComponent(uuid)}`, OpView);

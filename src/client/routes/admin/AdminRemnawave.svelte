@@ -77,7 +77,7 @@
   }
 
   // One UUID per line (commas also accepted); trims + dedupes.
-  function parseSquadList(text: string): string[] {
+  function parseGroupList(text: string): string[] {
     const out: string[] = [];
     for (const raw of text.split(/[\n,]/)) {
       const s = raw.trim();
@@ -97,12 +97,12 @@
       for (const m of adminModes) {
         const text = draft[m.id] ?? '';
         if (!text.trim()) continue;
-        const uuids = parseSquadList(text);
+        const uuids = parseGroupList(text);
         invalid.push(...uuids.filter((s) => !UUID_RE.test(s)));
         modes[m.id] = { groupUuids: uuids };
       }
       if (invalid.length > 0) {
-        throw new Error(`Not a squad UUID: ${invalid.join(', ')}`);
+        throw new Error(`Not a mode group UUID: ${invalid.join(', ')}`);
       }
       return apiClient.patch(
         '/api/v1/admin/backends/remnawave/mode-placements',
@@ -221,9 +221,9 @@
                 </div>
                 <textarea
                   rows="2"
-                  aria-label={`Squad pool for ${m.label ?? m.id}`}
+                  aria-label={`Mode group pool for ${m.label ?? m.id}`}
                   class="border-input focus-visible:border-ring focus-visible:ring-ring/50 w-full min-w-0 rounded-lg border bg-transparent px-2.5 py-1 font-mono text-base outline-none transition-colors focus-visible:ring-3 md:text-sm placeholder:text-muted-foreground"
-                  placeholder={bound ? 'Bound - leave blank to keep' : 'squad-uuid per line'}
+                  placeholder={bound ? 'Bound - leave blank to keep' : 'one group uuid per line'}
                   value={draft[m.id] ?? ''}
                   oninput={(e) =>
                     (draft = { ...draft, [m.id]: (e.target as HTMLTextAreaElement).value })}

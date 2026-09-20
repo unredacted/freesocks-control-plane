@@ -155,23 +155,23 @@ export function needsYou(
 export function quietNotes(tree: Pick<ServerTree, 'nodes' | 'unattached'>): string[] {
   const out: string[] = [];
   // tag -> the nodes on which it has nobody to serve (no address, or no group).
-  const unused = new Map<string, { nodes: string[]; noHost: boolean; noSquad: boolean }>();
+  const unused = new Map<string, { nodes: string[]; noAddress: boolean; noGroup: boolean }>();
   for (const n of tree.nodes)
     for (const i of n.transports) {
-      const noHost = i.addresses.length === 0;
-      const noSquad = i.modeGroups.length === 0;
-      if (!noHost && !noSquad) continue;
-      const at = unused.get(i.tag) ?? { nodes: [], noHost: false, noSquad: false };
+      const noAddress = i.addresses.length === 0;
+      const noGroup = i.modeGroups.length === 0;
+      if (!noAddress && !noGroup) continue;
+      const at = unused.get(i.tag) ?? { nodes: [], noAddress: false, noGroup: false };
       at.nodes.push(n.name);
-      at.noHost ||= noHost;
-      at.noSquad ||= noSquad;
+      at.noAddress ||= noAddress;
+      at.noGroup ||= noGroup;
       unused.set(i.tag, at);
     }
   for (const [tag, u] of unused) {
     const why =
-      u.noHost && u.noSquad
+      u.noAddress && u.noGroup
         ? 'no address and no mode group'
-        : u.noHost
+        : u.noAddress
           ? 'no address for members'
           : 'in no mode group';
     const where =
