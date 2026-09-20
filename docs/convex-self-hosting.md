@@ -75,7 +75,7 @@ dashboard → Settings → Environment Variables). `bunx convex env list` shows 
 | `ADMIN_SESSION_SIGNING_KEY`                      | admin `fs_admin_session` cookie HMAC: `openssl rand -hex 32`                                                                                                                                                                    |
 | `ADMIN_BOOTSTRAP_SECRET`                         | first-run admin passkey bootstrap gate: `openssl rand -hex 32`                                                                                                                                                                  |
 | `IP_HASH_SALT`                                   | HMAC salt for free-tier IP keying + login rate-limit: `openssl rand -hex 32`                                                                                                                                                    |
-| `EDGE_MARK_PEPPER`                               | optional: HMAC pepper for the relay block detector's per-member-per-window dedupe mark (`docs/edges.md`); falls back to `IP_HASH_SALT`. `openssl rand -hex 32`                                                                  |
+| `EDGE_MARK_PEPPER`                               | optional: HMAC pepper for the origin block detector's per-member-per-window dedupe mark (`docs/edges.md`); falls back to `IP_HASH_SALT`. `openssl rand -hex 32`                                                                 |
 | `EDGE_PROBE_GLOBALPING_TOKEN`                    | optional env fallback for the Globalping probe token (normally a write-only setting under Admin → Telemetry → Probes)                                                                                                           |
 | `EDGE_PROBE_RIPEATLAS_KEY`                       | optional env fallback for the RIPE Atlas probe key (same)                                                                                                                                                                       |
 | `ACCOUNT_ID_PEPPER`                              | keyed-hash pepper for account numbers (a leaked hash column is useless without it): `openssl rand -hex 32`. **Set once before launch; changing it invalidates every account number.**                                           |
@@ -239,7 +239,7 @@ members to carry). On a fresh backend:
    through the deployer container (see `docs/beta-deploy.md` §"One-off
    functions").
 
-   The Ansible role's panel-bootstrap converges the squad pools through
+   The Ansible role's backend-bootstrap converges the mode group pools through
    `PATCH /admin/backends/remnawave/mode-placements` (requires role
    `b082c2b`+; the legacy `/admin/remnawave/mode-placements` alias and its
    pre-rename id mapping were removed 2026-07-30 after both stacks converged).
