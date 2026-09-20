@@ -242,7 +242,7 @@ const ERROR_WORDS: Record<string, string> = {
   // Nodes.
   'servers.node_name_taken': 'A node with that name already exists.',
   'servers.node_relay_origin':
-    'An edge forwards to this node. Its address, port and transports are changed from Edges, and it is not turned off or removed here.',
+    'An origin in Edges covers this node. Its address, port and transports are changed there, and it is not turned off or removed here.',
   'servers.node_rename_referenced':
     'Origins or pinned members refer to this node by name, so it cannot be renamed yet.',
   'servers.node_still_on': 'Turn the node off first, and wait for that to finish.',
@@ -260,7 +260,7 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.too_many_names': 'That is more server names than one transport may carry.',
   'servers.profile_malformed': 'The profile on the backend is not in a shape this can edit safely.',
   'servers.inbound_uuid_changed':
-    'The backend replaced an transport while this was applied. Look at the backend before anything else.',
+    'The backend replaced a transport while this was applied. Look at the backend before anything else.',
   // Settling.
   'servers.recovery_incomplete': 'Every condition has to hold before this can be released.',
   'servers.panel_refused': 'The backend refused it. Nothing was changed.',
@@ -349,7 +349,7 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.run_superseded': 'A newer approval replaced this one.',
   'servers.run_not_running': 'This activation is not running.',
   'servers.revision_moved': 'Something changed since the approval. Review and approve again.',
-  'servers.node_not_approved': 'The node behind this edge is not approved for delivery yet.',
+  'servers.node_not_approved': 'The node behind this origin is not approved for delivery yet.',
   'servers.standbys_missing': 'Protect this node in Edges first: its standbys come from there.',
   'servers.standbys_unverified':
     'Not every standby of this node is verified yet. Finish the Edges setup up to publish.',

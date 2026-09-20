@@ -348,7 +348,7 @@
                     id={`${uid}-tag`}
                     class="font-mono"
                     placeholder="VLESS_REALITY"
-                    bind:value={form.transportTag}
+                    bind:value={form.inboundTag}
                     {disabled}
                   />
                 </div>

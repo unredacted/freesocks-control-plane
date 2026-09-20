@@ -86,12 +86,12 @@
     planM.mutate(uuid);
   }
   const planIssue = $derived(planM.error ? edgeErrorIssue(planM.error) : null);
-  const inboundLine = (i: SetupPlanResponse['transports'][number]): string => {
+  const inboundLine = (i: SetupPlanResponse['inbounds'][number]): string => {
     const parsed = ListenerSpec.safeParse(i.listenerSpec);
     return parsed.success ? protocolLine(parsed.data) : i.sourceTag;
   };
-  const supported = $derived(plan?.transports.filter((i) => i.frontable) ?? []);
-  const unsupported = $derived(plan?.transports.filter((i) => !i.frontable) ?? []);
+  const supported = $derived(plan?.inbounds.filter((i) => i.frontable) ?? []);
+  const unsupported = $derived(plan?.inbounds.filter((i) => !i.frontable) ?? []);
 
   // 2. Which account?
   let accountId = $state('');

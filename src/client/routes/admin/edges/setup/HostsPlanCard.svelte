@@ -18,7 +18,7 @@
   let { relaySlug }: Props = $props();
 
   const view = relayBySlugQuery(() => relaySlug);
-  const addresses = $derived(view.data?.hostsPlan.addresses ?? []);
+  const addresses = $derived(view.data?.hostsPlan.hosts ?? []);
 
   const rowsOf = (h: (typeof addresses)[number]): KeyValueRow[] => [
     { label: 'Remark', value: h.remark, mono: true, copy: true },

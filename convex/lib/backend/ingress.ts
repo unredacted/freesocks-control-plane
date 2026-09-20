@@ -42,7 +42,7 @@ function isLoopback(listen: string | null | undefined): boolean {
 
 /**
  * Rewrite each loopback transport that the ingress maps into the externally
- * visible listener. An transport without a mapping (or one whose declared
+ * visible listener. A transport without a mapping (or one whose declared
  * internal port or path disagree with the backend) is returned unchanged, so it
  * still fails discovery as `loopback`: a stale declaration never promotes an
  * transport it does not describe.

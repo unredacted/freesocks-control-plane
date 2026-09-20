@@ -125,7 +125,7 @@
         </Card.Description>
       </Card.Header>
       <Card.Content>
-        {#if hostsPlan.addresses.length === 0}
+        {#if hostsPlan.hosts.length === 0}
           <AdminListState
             emptyText="Nothing to write yet. Publish an edge for a listener and its Host appears here."
           />
@@ -143,7 +143,7 @@
                 </Table.Row>
               </Table.Header>
               <Table.Body>
-                {#each hostsPlan.addresses as h (h.listenerKey)}
+                {#each hostsPlan.hosts as h (h.listenerKey)}
                   <Table.Row>
                     <Table.Cell class="font-mono text-xs">{h.listenerKey}</Table.Cell>
                     <Table.Cell class="font-mono text-xs">

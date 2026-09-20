@@ -95,7 +95,7 @@ links and Clash bodies, and a sing-box subscription of an edge-required XHTTP li
 unavailable rather than served with the origin in it. The front
 proof speaks `packet-up` (one `GET <path>/<session>` downstream, sequenced `POST
 <path>/<session>/<seq>` uploads, every request carrying the `x_padding` Xray's server requires
-in its `Referer`), the one mode every CDN passes; an transport declared `stream-up` or
+in its `Referer`), the one mode every CDN passes; a transport declared `stream-up` or
 `stream-one` refuses packet-up uploads, so its proof reports `transport_failed` / `mode` and it
 stays L4-only. `transportParams.mode` records what the transport declares (`auto` when it declares
 nothing). Under REALITY (`vless/xhttp/reality`, the `freedom-xhttp` mode of a backend set up in
@@ -736,7 +736,7 @@ Ships dormant: `edge.sni.enabled` is off. Off, nothing is qualified and no famil
 | `sniFamilies`           | `slug`, `label`, `target {kind: static, address, port}`, `enabled`, `requireH2`. The **target is immutable**: every name was checked against it, and an allowlist is only safe for the target it was built for. A different target is a new family. `sni-router` (a target on the node that follows the presented name) is a reserved kind. |
 | `sniNames`              | `name` (fleet-unique: one family per name), `seq` (monotonic per family, never reused: the order names are taken in), `status`, `qualification`.                                                                                                                                                                                            |
 | `sniInboundBindings`    | One family bound to one backend transport: the single authoritative allowlist for it, with its `generation`.                                                                                                                                                                                                                                |
-| `sniInboundNameHistory` | Every name an transport has **ever** listed, keyed by transport and name, independent of any binding (it survives unbind and rebind and is never reset). Binding records everything the transport lists at that moment as seen.                                                                                                             |
+| `sniInboundNameHistory` | Every name a transport has **ever** listed, keyed by transport and name, independent of any binding (it survives unbind and rebind and is never reset). Binding records everything the transport lists at that moment as seen.                                                                                                              |
 
 **Name states.** `active` (usable once it qualifies), `suspended` (it stopped qualifying; it
 comes back by itself when it qualifies again), `retired` (an operator took it out), `burned`
@@ -760,7 +760,7 @@ transport is REALITY, is on the backend as Servers last read it, has no family y
 target are no longer edited by hand (`servers.inbound_sni_managed`): they have one author.
 Unbinding keeps the names on the backend and on the origins, and keeps the history.
 
-**What goes onto an transport** (`planAllowlist`, `convex/lib/edges/sni/family.ts`). The backend
+**What goes onto a transport** (`planAllowlist`, `convex/lib/edges/sni/family.ts`). The backend
 allowlist is one list with one cap (512; production Xray takes 1024, measured) and three kinds
 of tenant: the family's names; names that are not the family's but that an origin still hands
 out; and names that were retired but are still inside their drain. The cap is over **all** of

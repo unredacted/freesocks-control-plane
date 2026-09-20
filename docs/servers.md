@@ -53,7 +53,7 @@ the other.
 A config profile holds the REALITY **private key**, the **short ids**, the **client list** and
 certificate material. None of it is stored, returned or logged:
 
-- An transport is the same **allowlist projection** discovery uses (`projectXrayInbound`): tag,
+- A transport is the same **allowlist projection** discovery uses (`projectXrayInbound`): tag,
   protocol, port, transport, security, server names, target, paths. The backend's derived
   `rawInbound` (the complete transport JSON) is stripped at the schema boundary.
 - Every config-profile call is made `sensitive` ([backends.md](backends.md) § Sensitive data):
@@ -192,7 +192,7 @@ The edit itself is `convex/lib/backend/patchOps.ts`: a **closed set** of operati
 object, an empty `inbounds` (writing that back would strip the nodes), a missing or duplicated
 tag, a non-REALITY transport. Everything it does not name is carried over by reference, the
 private key and short ids included; they exist only inside the provider call. It never changes
-an transport's tag, protocol or position, because the backend keeps an transport's uuid only while
+a transport's tag, protocol or position, because the backend keeps a transport's uuid only while
 tag and protocol hold (measured) and listener bindings, Hosts and mode groups hang off that uuid. A
 uuid that moved anyway is flagged (`servers.inbound_uuid_changed`). Port changes and new
 transports are not offered yet: they need the node's firewall to be ready first.
@@ -261,7 +261,7 @@ to the same node is refused (`servers.op_running`) rather than queued behind it.
 | `servers.node_relay_origin`      | An origin stands in front of this node: its address, port, profile and transports are what the origin forwards to, and it is not disabled or removed here. A restart is allowed. |
 | `servers.node_rename_referenced` | The node's **name** is an identifier: origins, delivery requirements and members pinned to a node refer to it. Renaming a referenced node is not offered in this version.        |
 | `servers.node_name_taken`        | As named. Node names are how a lost create is found again.                                                                                                                       |
-| `servers.unknown_inbound`        | An transport that is not part of the profile being assigned.                                                                                                                     |
+| `servers.unknown_inbound`        | A transport that is not part of the profile being assigned.                                                                                                                      |
 
 ### What is refused
 
@@ -526,7 +526,7 @@ surface (`src/shared/crypto/envelope.ts`): the responses carry node and Host add
 **The tree** is node -> the profile it runs -> the transports it **serves** -> the Hosts members
 get for each transport (a Host pinned to nodes appears under those only) and the mode groups that
 grant it. What hangs off no node is returned as `unattached`: a profile no node runs, a Host on
-an transport no node serves. That is usually a leftover worth noticing.
+a transport no node serves. That is usually a leftover worth noticing.
 
 **Placement validation** answers in counts and mode group names, never the pasted uuids (a pool is
 write-only over HTTP). `unknownHere` is a count to look into, not a verdict: several instances
@@ -537,14 +537,14 @@ can share a backend type, and a uuid missing on this backend may live on another
 
 Admin -> Servers -> Nodes and transports, built like the simple Edges screens: one status
 sentence, a "Needs you" list only when something is broken, one row per node, and the
-leftovers as quiet one-line notes (an transport nobody uses on three nodes is one line, not six).
+leftovers as quiet one-line notes (a transport nobody uses on three nodes is one line, not six).
 The two switches (regular reading, changes from here) sit in the footer.
 
 `/admin/servers/nodes/{uuid}` is one node: its sentence, the profile it runs, its own notes,
 and its transports with the addresses members get for each. With changes allowed and the backend set up
 the header carries Edit, Restart or Turn on, and a More menu with Turn off,
 **Stop and remove** (offered only once the node is off) and **Remove from the backend only**
-(says the process may keep running); both removes are typed. On an transport: add, change or
+(says the process may keep running); both removes are typed. On a transport: add, change or
 remove an address; edit a REALITY transport's names and target as write -> preview -> apply,
 typed when more than one node restarts. The home lists mode groups (add, rename, change transports,
 remove) and Recent changes ("Look again" on an open one, "Settle by hand" on an unknown

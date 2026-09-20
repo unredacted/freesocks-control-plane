@@ -163,7 +163,7 @@ async function assertHostEditable(ctx: MutationCtx, sid: Id<'backendServers'>, h
   if (lock)
     refuse(
       'servers.host_edge_owned',
-      'This Host belongs to an edge. Change it from the origin it serves',
+      'This address belongs to an origin. Change it from the origin it serves',
     );
 }
 
@@ -583,7 +583,7 @@ async function checkProfileInbounds(
   const known = new Set(profile.inbounds.map((i) => i.inboundUuid));
   for (const u of inboundUuids)
     if (!known.has(u))
-      refuse('servers.unknown_inbound', 'An transport does not belong to that profile');
+      refuse('servers.unknown_inbound', 'A transport does not belong to that profile');
   if (inboundUuids.length === 0) refuse('validation', 'A node serves at least one transport');
 }
 

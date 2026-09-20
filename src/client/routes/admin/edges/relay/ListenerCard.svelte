@@ -105,7 +105,7 @@
   const inboundRows = $derived.by((): KeyValueRow[] =>
     l.panelBinding
       ? [
-          { label: 'Transport tag', value: l.panelBinding.transportTag, mono: true },
+          { label: 'Transport tag', value: l.panelBinding.inboundTag, mono: true },
           {
             label: 'Config profile',
             value: l.panelBinding.configProfileUuid,
@@ -442,7 +442,7 @@
   disabled={!uuidOk}
   run={() =>
     act.mutateAsync({
-      run: () => adoptListenerHost(relay.id, l.listenerKey, { addressUuid: addressUuid.trim() }),
+      run: () => adoptListenerHost(relay.id, l.listenerKey, { hostUuid: addressUuid.trim() }),
       success: 'Host adopted.',
       after: () => (addressUuid = ''),
       quiet: true,

@@ -67,7 +67,7 @@ export function checkPatchOps(ops: readonly PatchOp[]): PatchOp[] {
   const seen = new Set<string>();
   return ops.map((raw) => {
     const tag = typeof raw?.inboundTag === 'string' ? raw.inboundTag : '';
-    if (!tag) refuse('validation', 'An transport tag is required');
+    if (!tag) refuse('validation', 'A transport tag is required');
     const key = `${raw.op}:${tag}`;
     if (seen.has(key)) refuse('validation', `${raw.op} is listed twice for ${tag}`);
     seen.add(key);

@@ -111,7 +111,7 @@
     if ((await run(() => removeFamily(slug))) !== null) router.navigate(edgesPaths.names());
   }
 
-  // --- binding to an transport -------------------------------------------------------------------
+  // --- binding to a transport -------------------------------------------------------------------
   let bindOpen = $state(false);
   let backends = $state<{ slug: string; name: string }[]>([]);
   let backendSlug = $state('');
@@ -186,7 +186,7 @@
     <CardHeader class="flex flex-row flex-wrap items-center justify-between gap-2">
       <CardTitle class="text-base">Where it is used</CardTitle>
       <Button variant="outline" size="sm" disabled={busy} onclick={startBind}>
-        Bind to an transport
+        Bind to a transport
       </Button>
     </CardHeader>
     <CardContent class="space-y-3 text-sm">

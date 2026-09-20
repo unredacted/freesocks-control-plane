@@ -294,7 +294,7 @@ export const remove = internalMutation({
       .withIndex('by_family', (q) => q.eq('familyId', f._id))
       .first();
     if (bound)
-      refuse('edge.sni.family_in_use', 'An transport still uses this family. Unbind it first');
+      refuse('edge.sni.family_in_use', 'A transport still uses this family. Unbind it first');
     const names = await namesOf(ctx, f._id);
     // A burned name stays known (it must never be offered again, by any family).
     for (const n of names) if (n.status !== 'burned') await ctx.db.delete(n._id);

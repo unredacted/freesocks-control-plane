@@ -162,7 +162,7 @@ const ERROR_WORDS: Record<string, string> = {
   'edge.sni.bad_target': 'The target has to be a public host name and a port.',
   'edge.sni.cap': 'This family is full.',
   'edge.sni.disabled': 'Server name families are turned off. Turn them on first.',
-  'edge.sni.family_in_use': 'An transport still uses this family. Unbind it first.',
+  'edge.sni.family_in_use': 'A transport still uses this family. Unbind it first.',
   'edge.sni.target_mismatch':
     "The transport's target site is not this family's target. Every name must be one the target really serves.",
   'edge.sni.binding_changed':
@@ -180,7 +180,7 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.op_uncertain':
     'An earlier change to this profile has an unknown outcome. Settle it under Servers.',
   'servers.name_in_use': 'Members are still given one of the names being removed.',
-  // Binding to an transport reads the Servers cache.
+  // Binding to a transport reads the Servers cache.
   'servers.unknown_inbound':
     'That transport is not on this backend as last read. Refresh under Servers, then pick again.',
   'servers.not_reality': 'Only a REALITY transport takes a family.',

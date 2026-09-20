@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * Add or change one address members are given for an transport (a backend Host).
+   * Add or change one address members are given for a transport (a backend Host).
    * An address that belongs to an origin is changed from Edges; the server
    * refuses it here and says so.
    *
