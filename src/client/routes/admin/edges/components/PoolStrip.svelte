@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * A relay's pool as a strip of small cells: published slots by pool index,
+   * An origin's pool as a strip of small cells: published slots by pool index,
    * wanted-but-empty slots, standbys, draining edges. Slot computation is pure
    * (lib/pool.ts). With `onSelect`, cells that carry an edge id are buttons.
    *

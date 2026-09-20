@@ -1,8 +1,8 @@
 <script lang="ts">
   /**
-   * The header "Actions" menu of the relay page, with its dialogs.
+   * The header "Actions" menu of the origin page, with its dialogs.
    *
-   * Props: relay; listeners; edgeCount; onRotationStarted(rotationId)
+   * Props: origin; listeners; edgeCount; onRotationStarted(rotationId)
    */
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import type { RelayAdmin, RelayListenerAdmin } from '@shared/contracts/edges';
@@ -53,7 +53,7 @@
   function enable(): void {
     act.mutate({
       run: () => updateRelay(relay.id, { enabled: true }),
-      success: 'Relay enabled. Subscriptions on this origin are rendered again.',
+      success: 'Origin enabled. Subscriptions on this origin are rendered again.',
     });
   }
 </script>
@@ -79,11 +79,11 @@
     <DropdownMenu.Separator />
     {#if relay.enabled}
       <DropdownMenu.Item disabled={busy} onSelect={() => (disableOpen = true)}>
-        Disable relay
+        Disable origin
       </DropdownMenu.Item>
     {:else}
       <DropdownMenu.Item disabled={busy || act.isPending} onSelect={enable}>
-        Enable relay
+        Enable origin
       </DropdownMenu.Item>
     {/if}
     <DropdownMenu.Item disabled={busy} onSelect={() => (autoRotateOpen = true)}>
@@ -99,7 +99,7 @@
     <DropdownMenu.Item disabled={busy} onSelect={() => (editOpen = true)}>Edit</DropdownMenu.Item>
     <DropdownMenu.Separator />
     <DropdownMenu.Item variant="destructive" disabled={busy} onSelect={() => (deleteOpen = true)}>
-      Delete relay
+      Delete origin
     </DropdownMenu.Item>
   </DropdownMenu.Content>
 </DropdownMenu.Root>
@@ -119,7 +119,7 @@
 
 <ActionConfirm
   bind:open={disableOpen}
-  title={`Disable relay ${relay.slug}?`}
+  title={`Disable origin ${relay.slug}?`}
   body={relay.origin.kind === 'manual'
     ? 'Rotations and automatic provisioning stop for this relay. Its edges stay where they are.'
     : 'Rendering stops for this origin. Because delivery is edge-required, members on it go dark: their subscription is answered "temporarily unavailable" until the relay is enabled again. Edges stay provisioned and keep billing.'}

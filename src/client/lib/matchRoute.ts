@@ -1,5 +1,5 @@
 /**
- * Pure route-pattern matcher for the client router. `'/admin/edges/relays/:slug'`
+ * Pure route-pattern matcher for the client router. `'/admin/edges/origins/:slug'`
  * style patterns; one `:name` segment captures exactly one path segment
  * (URL-decoded). No regexes, no wildcards, no optional segments: every route
  * in this SPA is a fixed depth, and a pattern that says less is easier to

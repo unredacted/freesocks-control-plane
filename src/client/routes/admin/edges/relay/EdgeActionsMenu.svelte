@@ -5,7 +5,7 @@
    * (`variant="drawer"`, an "Actions" button). Dialogs are mounted only while open.
    *
    * Props:
-   *   relay: RelayAdmin
+   *   origin: RelayAdmin
    *   edge: EdgeAdmin
    *   variant?: 'row' | 'drawer'
    *   onOpenEdge?: (edgeId) => void            "Live" opens the drawer (row variant)
@@ -238,7 +238,7 @@
           <Label for={`keep-${edge.id}`}>Keep it as a standby</Label>
           <p class="text-xs text-muted-foreground">
             On: the edge stays provisioned and can be published again at once. Off: it drains for
-            the relay's drain time and is then destroyed at the provider.
+            the origin's drain time and is then destroyed at the provider.
           </p>
         </div>
       </div>

@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * Import a front that already exists as an edge of this relay: a resource
+   * Import a front that already exists as an edge of this origin: a resource
    * picked from an account's inventory, or a bare address FCP does not manage.
    * The import is never published from here (publishing is its own step).
    *

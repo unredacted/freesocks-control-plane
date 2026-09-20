@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * The wizard's first screen (no `?relay`): resume a relay whose setup is not
+   * The wizard's first screen (no `?origin`): resume an origin whose setup is not
    * finished, or start a new one. Progress is never stored here: the list comes
    * from the fleet setup status.
    *
@@ -32,10 +32,10 @@
 <div class="grid gap-4 lg:grid-cols-2">
   <section class="space-y-3 rounded-lg border p-4">
     <div>
-      <h2 class="text-base font-semibold">Continue a relay</h2>
+      <h2 class="text-base font-semibold">Continue an origin</h2>
       <p class="text-muted-foreground text-sm">
-        Relays whose setup is not finished. The steps are judged by the server each time, so you can
-        leave and come back at any point.
+        Origins whose setup is not finished. The steps are judged by the server each time, so you
+        can leave and come back at any point.
       </p>
     </div>
     {#if fleet.isError}
@@ -79,9 +79,9 @@
 
   <section class="space-y-3 rounded-lg border p-4">
     <div>
-      <h2 class="text-base font-semibold">Start a new relay</h2>
+      <h2 class="text-base font-semibold">Start a new origin</h2>
       <p class="text-muted-foreground text-sm">
-        Nine short steps from an origin to a published, watched edge. Until the relay is created,
+        Nine short steps from an origin to a published, watched edge. Until the origin is created,
         what you choose is kept as a draft in this browser only.
       </p>
     </div>
@@ -92,7 +92,7 @@
           >Discard it and start over</Button
         >
       {:else}
-        <Button onclick={() => onStartNew(false)}>Start a new relay</Button>
+        <Button onclick={() => onStartNew(false)}>Start a new origin</Button>
       {/if}
     </div>
   </section>

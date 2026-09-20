@@ -1,11 +1,11 @@
 <script lang="ts">
   /**
-   * One relay (`/admin/edges/relays/:slug`). URL state: `?tab`
+   * One origin (`/admin/edges/origins/:slug`). URL state: `?tab`
    * overview|edges|listeners|rotations|probes, `?edge` (edge drawer), `?rotation`
    * (rotation drawer), `?listener` (the listener card to scroll to / edit).
    *
-   * The page resolves the slug to the relay (id) once and hands the relay, its
-   * listeners, its edges and the provider accounts to the tabs in `relay/`.
+   * The page resolves the slug to the origin (id) once and hands the origin, its
+   * listeners, its edges and the provider accounts to the tabs in `origin/`.
    * Both drawers live here so every tab can open them through the URL.
    */
   import { ApiCallError } from '@client/lib/api';
@@ -39,7 +39,7 @@
   import EdgeActionsMenu from './relay/EdgeActionsMenu.svelte';
 
   interface Props {
-    /** The relay slug from the route (`/admin/edges/relays/:slug`). */
+    /** The origin slug from the route (`/admin/edges/origins/:slug`). */
     slug: string;
   }
   let { slug }: Props = $props();
@@ -104,13 +104,13 @@
     <Card.Header>
       <Card.Title>There is no relay called "{slug}"</Card.Title>
       <Card.Description>
-        It may have been deleted, or the address was mistyped. The overview lists every relay, and
+        It may have been deleted, or the address was mistyped. The overview lists every origin, and
         the guided setup registers a new one.
       </Card.Description>
     </Card.Header>
     <Card.Content class="flex flex-wrap gap-4 text-sm">
       <Link href={edgesPaths.overview()} class="font-medium text-primary hover:underline">
-        Go to all relays
+        Go to all origins
       </Link>
       <Link href={edgesPaths.setup()} class="font-medium text-primary hover:underline">
         Start the guided setup
@@ -135,7 +135,7 @@
   </div>
 {:else}
   <SectionHeader
-    title={relay.label ? `${relay.label} (${relay.slug})` : `Relay ${relay.slug}`}
+    title={relay.label ? `${relay.label} (${relay.slug})` : `Origin ${relay.slug}`}
     description="One origin behind edges: its pool, its listeners, its rotations and how reachable it is."
     back={{ href: edgesPaths.overview(), label: 'All relays' }}
   >

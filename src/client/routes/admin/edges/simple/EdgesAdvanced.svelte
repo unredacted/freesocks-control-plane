@@ -10,8 +10,8 @@
 
   const LINKS: Array<{ label: string; hint: string; href: string }> = [
     {
-      label: 'All relays',
-      hint: 'The fleet dashboard: tiles, the attention list, readiness, every relay, reachability.',
+      label: 'All origins',
+      hint: 'The fleet dashboard: tiles, the attention list, readiness, every origin, reachability.',
       href: edgesPaths.overview(),
     },
     {

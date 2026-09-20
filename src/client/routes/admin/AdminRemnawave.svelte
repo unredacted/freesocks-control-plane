@@ -22,9 +22,9 @@
   /**
    * Remnawave-specific admin config (the namespaced /api/v1/admin/remnawave/*
    * surface). Node placement lives here, OFF the generic settings page: each
-   * connection mode binds a POOL of Remnawave internal-squad UUIDs, and issuance
+   * connection mode binds a POOL of Remnawave internal-mode group UUIDs, and issuance
    * homes a new key to the least-loaded node of that pool (per-node load from the
-   * panel, refreshed by the healthcheck cron). Squad UUIDs are write-only; the
+   * backend, refreshed by the healthcheck cron). Mode group UUIDs are write-only; the
    * live node-load view below is read-only. English-only (admin CMS convention).
    */
   const nodeStats = adminNodeStatsQuery();
@@ -59,7 +59,7 @@
 
   // Per-leaf textarea contents, keyed by mode id.
   let draft = $state<Record<string, string>>({});
-  // Inline validation error (bad UUID lines) — a typo'd squad UUID used to save
+  // Inline validation error (bad UUID lines) — a typo'd mode group UUID used to save
   // silently and only surface later as a dead/offline pool.
   let draftError = $state<string | null>(null);
 
@@ -167,11 +167,11 @@
       <CardHeader>
         <CardTitle class="text-base">Node placement pools</CardTitle>
         <CardDescription>
-          Bind each connection mode to a POOL of Remnawave internal-squad UUIDs - one squad per node
-          (create them on the panel, e.g. via the Ansible role). At issuance FCP homes a new key to
-          the least-loaded node of the chosen mode's pool. Squad UUIDs are write-only; one per line,
-          2+ = a load-balanced pool. Leave a field blank to keep the current binding. The Ansible
-          panel-bootstrap sets these automatically.
+          Bind each connection mode to a POOL of Remnawave internal-mode group UUIDs - one mode
+          group per node (create them on the backend, e.g. via the Ansible role). At issuance FCP
+          homes a new key to the least-loaded node of the chosen mode's pool. Mode group UUIDs are
+          write-only; one per line, 2+ = a load-balanced pool. Leave a field blank to keep the
+          current binding. The Ansible backend-bootstrap sets these automatically.
         </CardDescription>
       </CardHeader>
       <CardContent class="space-y-5 text-sm">
@@ -211,7 +211,7 @@
                     >
                       {#if bound}
                         {summary.count > 0
-                          ? `${summary.count} squad${summary.count === 1 ? '' : 's'} bound`
+                          ? `${summary.count} mode group${summary.count === 1 ? '' : 's'} bound`
                           : 'Pool bound'}
                       {:else}
                         Not set
@@ -251,8 +251,8 @@
       <CardHeader>
         <CardTitle class="text-base">Node load</CardTitle>
         <CardDescription>
-          Users online per placement (squad → node), refreshed by the backend-healthcheck cron (~10
-          min). Issuance picks the least-loaded fresh + online placement of a mode's pool.
+          Users online per placement (mode group → node), refreshed by the backend-healthcheck cron
+          (~10 min). Issuance picks the least-loaded fresh + online placement of a mode's pool.
         </CardDescription>
       </CardHeader>
       <CardContent class="text-sm">
@@ -290,7 +290,7 @@
           Enforce the no-client-IP-logging posture on every Remnawave config profile: sets the Xray
           <code>log</code> to no access/error log and turns off the per-user online-IP tracker (<code
             >statsUserOnline</code
-          >), preserving inbounds, Reality keys, and routing (a safe read-modify-write). See
+          >), preserving transports, Reality keys, and routing (a safe read-modify-write). See
           docs/privacy.md §5. Applying restarts the affected nodes (a brief reconnect).
         </CardDescription>
       </CardHeader>

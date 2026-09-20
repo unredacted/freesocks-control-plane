@@ -55,7 +55,7 @@
   const summary = serverSummaryQuery();
   let slug = $derived(pickInstance(router.search, summary.data?.instances ?? []));
   const tree = serverTreeQuery(() => slug);
-  // The bootstrap contract: the panel's setup and its enrolled nodes.
+  // The bootstrap contract: the backend's setup and its enrolled nodes.
   const setup = setupQuery(() => slug);
   const intents = intentsQuery(() => slug);
   const providers = providersQuery();
@@ -258,7 +258,7 @@
     <section aria-label="Nodes">
       {#if t.nodes.length === 0}
         <p class="text-muted-foreground text-sm">
-          A node appears here once the node role has registered it with the panel.
+          A node appears here once the node role has registered it with the backend.
         </p>
       {:else}
         <ul class="space-y-2">

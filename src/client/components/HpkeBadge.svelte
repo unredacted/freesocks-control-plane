@@ -15,7 +15,7 @@
    * ONLY if the key endpoint is reachable but its key fails to verify (the active-CDN
    * tamper tell); a network blip stays green (the pinned key is still in use). The
    * loud "don't enter your account number" escalation lives in HpkeAlert - this badge
-   * is the quiet steady-state signal and the entry point to the Verify panel.
+   * is the quiet steady-state signal and the entry point to the Verify backend.
    */
   interface Props {
     /** 'admin' shows deployment-scoped tooltips (admin actions are not in the HPKE layer). */
@@ -38,7 +38,7 @@
   });
 
   // `warn` is the only state that deviates from the green "encrypted" look; pending
-  // and unreachable both keep the pinned-key-in-use green (detail is in the panel).
+  // and unreachable both keep the pinned-key-in-use green (detail is in the backend).
   const warn = $derived(enabled && hpkeSession.attestation === 'warn');
 
   // Admin tooltips are deployment-scoped ("members' flows are encrypted on this

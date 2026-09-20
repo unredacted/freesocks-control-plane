@@ -38,8 +38,8 @@
   let scopes = $state<Set<ApiScope>>(new Set(initialScopes));
   let expiry = $state<string>('none');
 
-  // A relay-registration token is confined to a boundary: the backend servers
-  // (and optionally the node names) the node role may register relays for.
+  // An origin-registration token is confined to a boundary: the backend servers
+  // (and optionally the node names) the node role may register origins for.
   // The server refuses the scope without one, so the dialog asks for it.
   const REGISTER_SCOPE: ApiScope = 'admin:edges:register';
   const needsBoundary = $derived(scopes.has(REGISTER_SCOPE));
@@ -188,9 +188,9 @@
       {#if needsBoundary}
         <div class="space-y-2 rounded border p-3">
           <div>
-            <span class="text-sm font-medium block">Relay registration boundary</span>
+            <span class="text-sm font-medium block">Origin registration boundary</span>
             <p class="text-xs text-muted-foreground">
-              A relay registration token may only register relays on the backend servers ticked
+              An origin-registration token may only register origins on the backend servers ticked
               here. Pick at least one.
             </p>
           </div>

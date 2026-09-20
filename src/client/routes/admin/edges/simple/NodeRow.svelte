@@ -5,7 +5,7 @@
    * 4" and opens the progress sheet instead.
    *
    * Props:
-   *   row: RelayRow                       one EdgeSummary relay row
+   *   row: RelayRow                       one EdgeSummary origin row
    *   status: NodeStatus                  from nodeStatus()
    *   runId?: string | null               the live run (the row opens its progress)
    *   onOpenRun?: (runId: string) => void

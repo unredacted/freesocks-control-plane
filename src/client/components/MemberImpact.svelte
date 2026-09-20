@@ -7,7 +7,7 @@
   import DitherChart from './DitherChart.svelte';
 
   /**
-   * Donation-impact panel: what the community's donations are doing for free
+   * Donation-impact backend: what the community's donations are doing for free
    * users right now (bonus GB live this month, free accounts it reaches, and
    * the month-to-date daily staircase as a dithered chart), plus - for donors - their
    * own contribution. The nonprofit framing card grew into this once the
@@ -16,7 +16,7 @@
    * impact data yet, so the card never renders empty charts.
    */
   const config = configQuery();
-  // Gated on a session existing: the panel also renders on the public /donate
+  // Gated on a session existing: the backend also renders on the public /donate
   // page, where an unconditional account fetch would just 401 every mount.
   const me = meQuery();
   const account = accountQuery(() => !!me.data?.authenticated);

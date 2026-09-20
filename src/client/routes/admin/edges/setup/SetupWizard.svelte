@@ -5,8 +5,8 @@
    * rotation drawer (`?rotation=`). No progress is kept here.
    *
    * Props:
-   *   status: the setup-status query (relay scope, or draft scope)
-   *   relay: RelayAdmin | null
+   *   status: the setup-status query (origin scope, or draft scope)
+   *   origin: RelayAdmin | null
    *   relaySlug: string | null
    *   draft: StoredDraft (bindable)
    *   draftMode: boolean
@@ -87,16 +87,16 @@
 
 <div class="mb-4 flex flex-wrap items-center gap-2 text-sm">
   {#if relaySlug}
-    <span class="text-muted-foreground">Setting up relay</span>
+    <span class="text-muted-foreground">Setting up origin</span>
     <Link class="font-mono underline underline-offset-2" href={edgesPaths.relay(relaySlug)}>
       {relaySlug}
     </Link>
   {:else}
     <span class="text-muted-foreground"
-      >Setting up a new relay from a draft kept in this browser</span
+      >Setting up a new origin from a draft kept in this browser</span
     >
   {/if}
-  <Button size="sm" variant="ghost" class="ms-auto" onclick={onLeave}>Choose another relay</Button>
+  <Button size="sm" variant="ghost" class="ms-auto" onclick={onLeave}>Choose another origin</Button>
 </div>
 
 {#if status.isError && !data}
@@ -125,17 +125,17 @@
         >
           <h2 class="flex items-center gap-2 text-base font-semibold">
             <CircleCheck class="size-5 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
-            This relay is set up
+            This origin is set up
           </h2>
           <p class="text-sm">
             An edge is published and members are sent to it. Day to day work (rotating, standbys,
-            probes, listeners) happens on the relay page. Pick any step on the left to look at it
+            probes, listeners) happens on the origin page. Pick any step on the left to look at it
             again.
           </p>
           <div class="flex flex-wrap gap-2">
             {#if relaySlug}
               <Link href={edgesPaths.relay(relaySlug)} class={buttonVariants({})}>
-                Open the relay
+                Open the origin
               </Link>
             {/if}
             <Link href={edgesPaths.overview()} class={buttonVariants({ variant: 'outline' })}>

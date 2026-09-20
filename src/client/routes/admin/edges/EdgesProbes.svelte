@@ -3,7 +3,7 @@
    * Probes (`/admin/edges/probes`; URL state `?target` = the target whose run
    * history is open, `?range` = the outcome chart's range, see
    * `probes/rangeParam.ts`). Reachability of FCP's own addresses as measured from the
-   * configured countries: edges of every relay, relay nodes that opted in, and
+   * configured countries: edges of every origin, origin nodes that opted in, and
    * operator-entered custom targets. Only edge evidence reaches the block
    * detector. No member data is involved anywhere on this page. Probe SETTINGS
    * live under Settings, not here.

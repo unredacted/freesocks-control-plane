@@ -59,7 +59,7 @@
     router.pathname === '/admin/edges' || router.pathname.startsWith('/admin/edges/'),
   );
 
-  // Admin -> Servers (what is on a panel): its own lazy chunk, like Edges.
+  // Admin -> Servers (what is on a backend): its own lazy chunk, like Edges.
   const ServersSection = () => import('./servers/ServersSection.svelte');
   let onServersRoute = $derived(
     router.pathname === '/admin/servers' || router.pathname.startsWith('/admin/servers/'),

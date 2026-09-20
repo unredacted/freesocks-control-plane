@@ -56,7 +56,7 @@ describe('origin', () => {
   });
 
   it('names the first missing piece per kind', () => {
-    expect(originIssue(emptyOrigin('panel-node'))).toMatch(/panel/);
+    expect(originIssue(emptyOrigin('panel-node'))).toMatch(/backend/);
     expect(
       originIssue({ ...emptyOrigin('panel-node'), backendServerId: 'b1', backendSlug: 'p' }),
     ).toMatch(/node/);
@@ -132,7 +132,7 @@ describe('listener form', () => {
     expect(toDraftListener(f).originTransport?.scheme).toBe('http');
   });
 
-  it('never sends a panel binding or a remark rule for a non-panel origin', () => {
+  it('never sends a backend binding or a remark rule for a non-backend origin', () => {
     const f = emptyListenerForm('backend-server');
     f.listenerKey = 'ss';
     f.originPort = '8388';

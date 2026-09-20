@@ -225,12 +225,12 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.op_uncertain':
     'An earlier change to this has an unknown outcome. Settle it under Recent changes first.',
   'servers.relay_setup_running':
-    'A relay setup is using this right now. Try again when it is done.',
+    'An origin setup is using this right now. Try again when it is done.',
   'servers.tombstoned': 'This was removed on purpose. Tick "bring it back" to create it again.',
   'servers.exists': 'This already exists on the backend.',
   // Addresses and mode groups.
-  'servers.host_edge_owned': 'This address belongs to a relay. Change it from Edges.',
-  'servers.relay_remark': 'Names ending in -relay are kept for relays. Pick another name.',
+  'servers.host_edge_owned': 'This address belongs to an origin. Change it from Edges.',
+  'servers.relay_remark': 'Names ending in -origin are kept for origins. Pick another name.',
   'servers.unknown_inbound': 'That transport is not on this backend. Refresh and pick again.',
   'servers.duplicate_object':
     'The backend has more than one of these, so there is no telling which is meant. Remove the extra one there.',
@@ -243,7 +243,7 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.node_relay_origin':
     'An edge forwards to this node. Its address, port and transports are changed from Edges, and it is not turned off or removed here.',
   'servers.node_rename_referenced':
-    'Relays or pinned members refer to this node by name, so it cannot be renamed yet.',
+    'Origins or pinned members refer to this node by name, so it cannot be renamed yet.',
   'servers.node_still_on': 'Turn the node off first, and wait for that to finish.',
   'servers.node_off': 'This node is turned off.',
   'servers.already': 'It is already in that state.',
@@ -252,19 +252,19 @@ const ERROR_WORDS: Record<string, string> = {
     'The profile changed on the backend since the preview. Preview again before applying.',
   'servers.nothing_to_change': 'The backend already had exactly this, so nothing was sent.',
   'servers.name_in_use':
-    'Members are still given one of the names being removed. Retire it on the relay first.',
+    'Members are still given one of the names being removed. Retire it on the origin first.',
   'servers.inbound_sni_managed':
     'A server name family manages the names of this transport. Change them under Edges.',
   'servers.not_reality': 'That transport does not use REALITY.',
   'servers.too_many_names': 'That is more server names than one transport may carry.',
   'servers.profile_malformed': 'The profile on the backend is not in a shape this can edit safely.',
   'servers.inbound_uuid_changed':
-    'The panel replaced an inbound while this was applied. Look at the panel before anything else.',
+    'The backend replaced an transport while this was applied. Look at the backend before anything else.',
   // Settling.
   'servers.recovery_incomplete': 'Every condition has to hold before this can be released.',
   'servers.panel_refused': 'The backend refused it. Nothing was changed.',
   'servers.outcome_unknown':
-    'The panel did not answer clearly, so it is not known whether this happened.',
+    'The backend did not answer clearly, so it is not known whether this happened.',
   // Setting up a backend.
   'servers.setup_running': 'The backend is being set up right now. Wait for it to finish.',
   'servers.setup_failed': 'Setting up stopped on an error. Look at the backend, then try again.',
@@ -452,7 +452,7 @@ export function serverErrorWords(code: string | null | undefined): string {
 /** Every code with its own words (pinned by the tests against the server's vocabulary). */
 export const WORDED_CODES: readonly string[] = Object.keys(ERROR_WORDS);
 
-// --- one change to a panel, in words ------------------------------------------------------------
+// --- one change to a backend, in words ------------------------------------------------------------
 
 export interface OpLike {
   kind: 'host' | 'squad' | 'node' | 'profile';

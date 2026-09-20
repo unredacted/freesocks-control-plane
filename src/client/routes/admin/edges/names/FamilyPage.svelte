@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
    * One family (`/admin/edges/names/:slug`): its names and what each one's last
-   * check said, the operator's per-country judgement, and the inbounds it is
+   * check said, the operator's per-country judgement, and the transports it is
    * bound to with their rollouts (BindingCard).
    *
    * All wording lives in ./lib/words.ts (pure, unit-tested).
@@ -111,7 +111,7 @@
     if ((await run(() => removeFamily(slug))) !== null) router.navigate(edgesPaths.names());
   }
 
-  // --- binding to an inbound -------------------------------------------------------------------
+  // --- binding to an transport -------------------------------------------------------------------
   let bindOpen = $state(false);
   let backends = $state<{ slug: string; name: string }[]>([]);
   let backendSlug = $state('');
@@ -186,7 +186,7 @@
     <CardHeader class="flex flex-row flex-wrap items-center justify-between gap-2">
       <CardTitle class="text-base">Where it is used</CardTitle>
       <Button variant="outline" size="sm" disabled={busy} onclick={startBind}>
-        Bind to an inbound
+        Bind to an transport
       </Button>
     </CardHeader>
     <CardContent class="space-y-3 text-sm">
@@ -207,7 +207,7 @@
             </select>
           </label>
           <label>
-            <span class="text-muted-foreground mb-1 block">REALITY inbound</span>
+            <span class="text-muted-foreground mb-1 block">REALITY transport</span>
             <select bind:value={inboundTag} class={SELECT}>
               {#each inbounds as i (i.tag)}
                 <option value={i.tag}>{i.tag}{i.target ? ` (${i.target})` : ''}</option>
@@ -220,17 +220,17 @@
           </Button>
           {#if backendSlug && !busy && inbounds.length === 0}
             <p class="basis-full rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2">
-              No REALITY inbound has been read from this server yet. Refresh it under Servers, then
-              come back here.
+              No REALITY transport has been read from this server yet. Refresh it under Servers,
+              then come back here.
             </p>
           {/if}
           <p class="text-muted-foreground basis-full">
-            The inbound's target site has to be this family's. Binding writes nothing yet.
+            The transport's target site has to be this family's. Binding writes nothing yet.
           </p>
         </form>
       {/if}
       {#if family.data.bindings.length === 0}
-        <p class="text-muted-foreground">Not bound to any inbound yet.</p>
+        <p class="text-muted-foreground">Not bound to any transport yet.</p>
       {/if}
       {#each family.data.bindings as b (b.id)}
         <BindingCard binding={b} />

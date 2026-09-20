@@ -1,7 +1,7 @@
 /**
  * Overview derivations (pure; unit-tested). Everything the dashboard shows that
  * the `EdgeSummary` contract does not carry as a figure is derived HERE from the
- * summary's relay rows and the attention list, never invented.
+ * summary's origin rows and the attention list, never invented.
  *
  * Exports:
  *   OVERVIEW_FILTERS / OVERVIEW_LAYERS, parseFilter, parseLayer
@@ -29,7 +29,7 @@ export const OVERVIEW_LAYERS = ['all', 'l4', 'l7'] as const;
 export type OverviewLayer = (typeof OVERVIEW_LAYERS)[number];
 
 export const FILTER_LABELS: Record<OverviewFilter, string> = {
-  all: 'All relays',
+  all: 'All origins',
   attention: 'Needs attention',
   dark: 'Members dark',
   quarantined: 'Quarantined',
@@ -47,12 +47,12 @@ export const parseLayer = (raw: string | null | undefined): OverviewLayer =>
   (OVERVIEW_LAYERS as readonly string[]).includes(raw ?? '') ? (raw as OverviewLayer) : 'all';
 
 export const ORIGIN_KIND_LABELS: Record<RelayRow['relay']['origin']['kind'], string> = {
-  'panel-node': 'Panel node',
+  'panel-node': 'Backend node',
   'backend-server': 'Backend server',
   manual: 'Manual origin',
 };
 
-/** The layers of the relay's PUBLISHED pool, L4 first. */
+/** The layers of the origin's PUBLISHED pool, L4 first. */
 export function relayLayers(row: RelayRow): EdgeLayer[] {
   const seen = new Set<EdgeLayer>(row.pool.map((p) => p.layer));
   return (['l4', 'l7'] as const).filter((l) => seen.has(l));
@@ -69,13 +69,13 @@ export function worstHealth(row: RelayRow): string | null {
   return worst;
 }
 
-/** Relays the server reports as leaving members without a usable subscription. */
+/** Origins the server reports as leaving members without a usable subscription. */
 export function darkRelaySlugs(items: readonly AttentionItem[]): Set<string> {
   const out = new Set<string>();
   for (const i of items) if (i.kind === 'members_dark' && i.relaySlug) out.add(i.relaySlug);
   return out;
 }
-/** Relays with at least one attention item of any kind. */
+/** Origins with at least one attention item of any kind. */
 export function attentionRelaySlugs(items: readonly AttentionItem[]): Set<string> {
   const out = new Set<string>();
   for (const i of items) if (i.relaySlug) out.add(i.relaySlug);
@@ -84,7 +84,7 @@ export function attentionRelaySlugs(items: readonly AttentionItem[]): Set<string
 
 export type DeliveryState = 'dark' | 'serving' | 'idle';
 /**
- * dark = the server says members of this relay get no subscription body;
+ * dark = the server says members of this origin get no subscription body;
  * serving = at least one edge is published; idle = nothing published and no
  * member depends on it yet.
  */
@@ -276,7 +276,7 @@ export function fleetTiles(
       id: 'quarantined',
       label: 'Quarantined',
       value: String(c.quarantined),
-      hint: 'Relays frozen after a run could not roll back cleanly.',
+      hint: 'Origins frozen after a run could not roll back cleanly.',
       tone: problem(c.quarantined, 'danger'),
       filter: c.quarantined > 0 ? 'quarantined' : null,
     },
@@ -292,7 +292,7 @@ export function fleetTiles(
       id: 'dark',
       label: 'Members dark',
       value: String(dark),
-      hint: 'Relays whose members currently get no subscription.',
+      hint: 'Origins whose members currently get no subscription.',
       tone: problem(dark, 'danger'),
       filter: dark > 0 ? 'dark' : null,
     },

@@ -1,10 +1,10 @@
 <script lang="ts">
   /**
-   * Edge-required places (delivery bindings). A binding outlives its relay on
-   * purpose: deleting a relay with "keep dark" leaves members on that node
-   * answered "temporarily unavailable" until another relay claims the node or
+   * Edge-required places (delivery bindings). A binding outlives its origin on
+   * purpose: deleting an origin with "keep dark" leaves members on that node
+   * answered "temporarily unavailable" until another origin claims the node or
    * an operator releases the binding HERE, which restores direct delivery.
-   * Only a binding whose relay is gone can be released.
+   * Only a binding whose origin is gone can be released.
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -53,7 +53,7 @@
     <h2 id="settings-delivery-title" class="font-medium">Edge-required places</h2>
     <p class="text-muted-foreground mt-0.5 text-sm">
       Members on these places receive edge addresses or nothing, never the origin address. A place
-      stays listed after its relay is deleted with "keep dark", until you release it here.
+      stays listed after its origin is deleted with "keep dark", until you release it here.
     </p>
   </header>
   <div class="border-t px-4 py-4">
@@ -63,14 +63,14 @@
       <AdminListState error={bindings.error} onRetry={() => bindings.refetch()} />
     {:else if (bindings.data?.bindings ?? []).length === 0}
       <p class="text-muted-foreground text-sm">
-        No place is edge-required yet. Registering a relay makes its node one.
+        No place is edge-required yet. Registering an origin makes its node one.
       </p>
     {:else}
       <Table.Root>
         <Table.Header>
           <Table.Row>
             <Table.Head>Place</Table.Head>
-            <Table.Head>Relay</Table.Head>
+            <Table.Head>Origin</Table.Head>
             <Table.Head>State</Table.Head>
             <Table.Head>Changed</Table.Head>
             <Table.Head class="text-right">Action</Table.Head>
@@ -134,7 +134,7 @@
   bind:open
   title="Restore direct delivery?"
   body={target
-    ? `Members on ${target.place} will receive the origin's own addresses again, because no relay fronts it any more. Do this only when the origin address may be handed out.`
+    ? `Members on ${target.place} will receive the origin's own addresses again, because no edge fronts it any more. Do this only when the origin address may be handed out.`
     : ''}
   confirmLabel="Release"
   danger

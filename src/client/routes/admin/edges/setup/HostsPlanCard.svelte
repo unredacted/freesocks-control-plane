@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * `hostMode: operator`: the panel Hosts the OPERATOR must create or keep, one
+   * `hostMode: operator`: the backend Hosts the OPERATOR must create or keep, one
    * copyable block per listener (from the by-slug view's `hostsPlan`).
    *
    * Props:
@@ -35,7 +35,7 @@
   <div>
     <h4 class="text-sm font-semibold">Create this Host</h4>
     <p class="text-muted-foreground text-xs">
-      You write the panel Hosts for this relay, so FCP never touches them. Create one Host per
+      You write the backend Hosts for this origin, so FCP never touches them. Create one Host per
       listener with exactly these values, and update it whenever the published edge changes.
     </p>
   </div>

@@ -357,7 +357,7 @@
 
   // Mutation: move this key to a different server, same connection mode. The
   // server prefers an in-place move (URL, traffic counter and devices all
-  // survive) and only re-issues when it has to cross panels — either way the
+  // survive) and only re-issues when it has to cross backends — either way the
   // saved subscription URL is unchanged, so there is nothing to re-import.
   const switchServer = createMutation(() => ({
     mutationFn: (telemetry: TelemetryPayload | null) => {

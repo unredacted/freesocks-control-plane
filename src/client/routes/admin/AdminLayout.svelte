@@ -86,12 +86,12 @@
       icon: Server,
       children: [
         { to: '/admin/backend-servers', label: 'Backend servers', icon: Server },
-        // What is on a panel right now (read-only): nodes, inbounds, Hosts, squads.
-        { to: '/admin/servers', label: 'Nodes and inbounds', icon: ListTree },
+        // What is on a backend right now (read-only): nodes, transports, Hosts, mode groups.
+        { to: '/admin/servers', label: 'Nodes and transports', icon: ListTree },
         { to: '/admin/connection-modes', label: 'Connection modes', icon: GitBranch },
         { to: '/admin/remnawave', label: 'Remnawave', icon: Waypoints },
         // One leaf for the whole Edges section: its own pages (providers,
-        // templates, probes, settings, setup, relay and node pages) are reached
+        // templates, probes, settings, setup, origin and node pages) are reached
         // from the section's in-page header, so every `/admin/edges/*` path
         // keeps this leaf lit.
         { to: '/admin/edges', label: 'Edges', icon: Network },

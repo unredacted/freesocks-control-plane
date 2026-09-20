@@ -5,11 +5,11 @@
    * (lib/attention.ts, typechecked complete):
    *
    *   pure navigation, done here:
-   *     open_setup          -> /admin/edges/setup?relay=<slug>
-   *     open_relay          -> the relay page (rotations tab + ?rotation when the item names one)
-   *     open_edge, resolve_operator -> relay page ?tab=edges&edge=<id>
-   *     resolve_quarantine  -> relay page ?tab=rotations&rotation=<id>
-   *     look_at_host        -> relay page ?tab=listeners&listener=<key>
+   *     open_setup          -> /admin/edges/setup?origin=<slug>
+   *     open_relay          -> the origin page (rotations tab + ?rotation when the item names one)
+   *     open_edge, resolve_operator -> origin page ?tab=edges&edge=<id>
+   *     resolve_quarantine  -> origin page ?tab=rotations&rotation=<id>
+   *     look_at_host        -> origin page ?tab=listeners&listener=<key>
    *     open_account        -> /admin/edges/providers/<id>
    *     open_settings       -> /admin/edges/settings
    *   server calls, handed to `onAction` (after a ConfirmDialog for the billable /
@@ -18,7 +18,7 @@
    *     publish, provision, qualify_front, rotate, test_credentials, thaw, rebalance,
    *     verify_endpoint (the host opens the test card), require_edges (go live)
    *   Without `onAction` a call action falls back to navigating to the page where
-   *   the operator can do it by hand (provision -> relay page ?tab=edges,
+   *   the operator can do it by hand (provision -> origin page ?tab=edges,
    *   verify_endpoint / require_edges -> the node page, ...).
    *
    * Props:
@@ -29,7 +29,7 @@
    *   max?: number                          show at most this many, with a "Show all" button
    *   emptyText?: string
    *   plain?: boolean                       the simple screens: words through PLAIN_WORDS
-   *                                         (relay -> protected node, edge -> address, ...)
+   *                                         (origin -> protected node, edge -> address, ...)
    *   class?: string
    */
   import ChevronRight from '@lucide/svelte/icons/chevron-right';

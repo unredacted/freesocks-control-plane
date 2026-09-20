@@ -1,10 +1,10 @@
 <script lang="ts">
   /**
-   * One inbound's addresses on the node page: a reduced pool strip (one health
+   * One transport's addresses on the node page: a reduced pool strip (one health
    * dot per address in use, a spare cell per spare) and a plain line per
    * address (In use / Spare / Retiring, health, tested or not).
    *
-   * Props: listener; edges (every non-destroyed edge of the relay); onTest(edgeId)
+   * Props: listener; edges (every non-destroyed edge of the origin); onTest(edgeId)
    */
   import type { EdgeAdmin, RelayListenerAdmin } from '@shared/contracts/edges';
   import { Button } from '@client/components/ui/button';

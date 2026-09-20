@@ -6,14 +6,14 @@
  * The section has two faces. The simple screens (`simple/`): the home at
  * `/admin/edges` (nodes), the per-node page, Providers and the Advanced index.
  * The technical pages keep their old addresses under Advanced (the old
- * dashboard moved to `/admin/edges/advanced/relays`; every other URL is unchanged).
+ * dashboard moved to `/admin/edges/advanced/origins`; every other URL is unchanged).
  *
  * Exports:
  *   EDGES_ROUTES                     pattern -> page id, in match order
  *   resolveEdgesRoute(pathname)      -> EdgesRoute (page 'not-found' when nothing matches)
  *   edgesPaths                       link builders (slug / id URL-encoded, optional search params)
  *   sectionTabOf(route)              which in-page header link the route lights up
- *   RELAY_TABS / RelayTab            the `?tab` values of the relay page
+ *   RELAY_TABS / RelayTab            the `?tab` values of the origin page
  */
 import { matchRoute } from '../../../../lib/matchRoute';
 
@@ -100,7 +100,7 @@ export const edgesPaths = {
   node: (slug: string, params?: { test?: string | null }) =>
     withSearch(`/admin/edges/nodes/${enc(slug)}`, params),
   advanced: () => '/admin/edges/advanced',
-  /** The technical fleet dashboard (all relays), under Advanced. */
+  /** The technical fleet dashboard (all origins), under Advanced. */
   overview: (params?: { filter?: string; layer?: string }) =>
     withSearch('/admin/edges/advanced/relays', params),
   setup: (params?: { relay?: string | null; step?: string | null }) =>

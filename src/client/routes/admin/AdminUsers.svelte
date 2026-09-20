@@ -312,7 +312,7 @@
               {#if u.backendPushFailedAt}
                 <span
                   class="ml-2 inline-flex items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-xs text-amber-600 dark:text-amber-400"
-                  title={`Last backend push failed ${formatDate(u.backendPushFailedAt)}; the panel may be out of sync. Use Resync to re-push.`}
+                  title={`Last backend push failed ${formatDate(u.backendPushFailedAt)}; the backend may be out of sync. Use Resync to re-push.`}
                 >
                   backend drift
                 </span>
@@ -411,7 +411,7 @@
                   {:else if !deviceLimitsShown(config.data)}
                     <div class="text-muted-foreground">
                       No registered devices. Device tracking is off (device-limit enforcement in
-                      Settings), so the panel doesn't record them.
+                      Settings), so the backend doesn't record them.
                     </div>
                   {:else}
                     <div class="text-muted-foreground">No registered devices.</div>

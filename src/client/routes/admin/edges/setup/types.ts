@@ -5,7 +5,7 @@ import type { IssueLinkContext } from './issueActions';
 export interface StepBodyProps {
   step: SetupStep;
   status: SetupStatusResponse;
-  /** The relay row once it exists (null while the wizard works from a draft). */
+  /** The origin row once it exists (null while the wizard works from a draft). */
   relay: RelayAdmin | null;
   linkCtx: IssueLinkContext;
 }

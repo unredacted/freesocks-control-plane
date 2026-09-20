@@ -1,7 +1,7 @@
 /**
  * Operator-facing backend display names for the ADMIN CMS.
  *
- * The `remnawave` id is an implementation detail (the management panel); end
+ * The `remnawave` id is an implementation detail (the management backend); end
  * users see it as "Xray" (the server default in convex/appSettings.ts and the
  * protocol family the apps speak). Admin screens were split - "Xray" in the
  * tier editor, "Remnawave" in settings - so the same id read as two different

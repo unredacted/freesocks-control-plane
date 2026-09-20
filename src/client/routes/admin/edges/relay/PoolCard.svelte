@@ -1,9 +1,9 @@
 <script lang="ts">
   /**
-   * The published pool of a relay: the strip, the epoch, the rotation limits and
+   * The published pool of an origin: the strip, the epoch, the rotation limits and
    * where they stand today.
    *
-   * Props: relay; edges; onOpenEdge(edgeId)
+   * Props: origin; edges; onOpenEdge(edgeId)
    */
   import type { EdgeAdmin, RelayAdmin } from '@shared/contracts/edges';
   import * as Card from '@client/components/ui/card';

@@ -7,15 +7,15 @@
  *      `src/shared/contracts/edges.ts` through `apiClient` (which seals by the
  *      shared route policy; nothing to do here).
  *   2. `edgeKeys`: the TanStack query-key tree. Everything sits under
- *      `['admin', 'edges']` (the admin 401 handler keys off `'admin'`); per-relay
- *      subtrees are keyed by SLUG (`['admin','edges','relay', slug, …]`) because the
+ *      `['admin', 'edges']` (the admin 401 handler keys off `'admin'`); per-origin
+ *      subtrees are keyed by SLUG (`['admin','edges','origin', slug, …]`) because the
  *      pages route by slug, per-edge by id (`['admin','edges','edge', edgeId, …]`),
  *      providers under `['admin','edges','providers', …]`, config under
  *      `['admin','edges','config']`.
  *   3. `*Query()` wrappers around `createQuery` in the accessor-function style of
  *      `queries.ts` (`(relaySlug: () => string | null)`), with the cadences the
  *      section relies on: summary 30 s (3 s while `counts.rotating > 0`),
- *      attention 15 s, setup-status 30 s (5 s while a step is `ready`), relay
+ *      attention 15 s, setup-status 30 s (5 s while a step is `ready`), origin
  *      10 s while a rotation runs, rotation detail 2 s until terminal, probe
  *      matrix 30 s.
  *   Plus `invalidateOverview / invalidateRelay / invalidateEdge /
@@ -290,7 +290,7 @@ export type SetupRunCreateBody = z.infer<typeof SetupRunCreateRequest>;
 export type SetupRunRetryBody = z.infer<typeof SetupRunRetryRequest>;
 export type SetupRunContinueBody = z.infer<typeof SetupRunContinueRequest>;
 
-/** The read-only plan for one panel node (throttled: it lists the node's inbounds and Hosts). */
+/** The read-only plan for one backend node (throttled: it lists the node's transports and Hosts). */
 export const planSetupRun = (backendServerId: string, nodeUuid: string) =>
   apiClient.post(`${BASE}/setup-runs/plan`, { backendServerId, nodeUuid }, SetupPlanResponse);
 export const createSetupRun = (body: SetupRunCreateBody) =>
@@ -304,7 +304,7 @@ export const retrySetupRun = (runId: string, body: SetupRunRetryBody = {}) =>
   apiClient.post(`${BASE}/setup-runs/${enc(runId)}/retry`, body, SetupRunRetryResponse);
 export const continueSetupRun = (runId: string, body: SetupRunContinueBody = {}) =>
   apiClient.post(`${BASE}/setup-runs/${enc(runId)}/continue`, body, SetupRunContinueResponse);
-/** The activation policy on a deferred relay: pending untested L4 endpoints come back instead of a binding. */
+/** The activation policy on a deferred origin: pending untested L4 endpoints come back instead of a binding. */
 export const requireRelayEdges = (relayId: string, accountId?: string) =>
   apiClient.post(
     `${BASE}/relays/${enc(relayId)}/require-edges`,
@@ -357,7 +357,7 @@ export const updateTemplate = (id: string, patch: TemplatePatch) =>
 export const deleteTemplate = (id: string) =>
   apiClient.delete(`${BASE}/templates/${enc(id)}`, EdgeOkResponse);
 
-// --- relays ----------------------------------------------------------------------------------------
+// --- origins ----------------------------------------------------------------------------------------
 
 export const fetchRelays = () => apiClient.get(`${BASE}/relays`, RelayList);
 /** 404 (an ApiCallError with status 404) when the slug is unknown. */
@@ -368,14 +368,14 @@ export const fetchNodeCandidates = (backendServerId: string) =>
     `${BASE}/relays/node-candidates?backendServerId=${enc(backendServerId)}`,
     RelayNodeCandidatesResponse,
   );
-/** Discovery with the origin probe applied (throttled: reaches the panel and opens sockets). */
+/** Discovery with the origin probe applied (throttled: reaches the backend and opens sockets). */
 export const fetchInboundCandidates = (backendServerId: string, nodeUuid: string) =>
   apiClient.get(
     `${BASE}/relays/inbound-candidates?backendServerId=${enc(backendServerId)}&nodeUuid=${enc(nodeUuid)}`,
     InboundCandidatesResponse,
   );
 /** The isolated test link for an L4 candidate (throttled: fetches the credential body). */
-// A POST: building the link may mint the test credential (a panel user or a
+// A POST: building the link may mint the test credential (a backend user or a
 // temporary key), so it needs the write scope a GET would not carry.
 export const fetchTestLink = (edgeId: string) =>
   apiClient.post(`${BASE}/edges/${enc(edgeId)}/test-link`, {}, EdgeTestLinkResponse);
@@ -597,7 +597,7 @@ export function invalidateOverview(qc: QueryClient): void {
   void qc.invalidateQueries({ queryKey: edgeKeys.setupStatusAll });
   void qc.invalidateQueries({ queryKey: edgeKeys.setupRuns });
 }
-/** Everything keyed under one relay slug, the relay list, and the overview. */
+/** Everything keyed under one origin slug, the origin list, and the overview. */
 export function invalidateRelay(qc: QueryClient, slug: string): void {
   void qc.invalidateQueries({ queryKey: edgeKeys.relay(slug) });
   void qc.invalidateQueries({ queryKey: edgeKeys.relays });
@@ -650,7 +650,7 @@ export const attentionQuery = () =>
   }));
 
 /**
- * Guided-setup status for one relay (slug) or the fleet (null): 30 s, 5 s while
+ * Guided-setup status for one origin (slug) or the fleet (null): 30 s, 5 s while
  * a step is `ready` (the operator is acting on it right now).
  */
 export const setupStatusQuery = (relaySlug: () => string | null) =>
@@ -662,7 +662,7 @@ export const setupStatusQuery = (relaySlug: () => string | null) =>
       q.state.data?.steps.some((s) => s.status === 'ready') ? 5_000 : 30_000,
   }));
 
-/** Setup status judged against a draft (before the relay row exists); null = off. */
+/** Setup status judged against a draft (before the origin row exists); null = off. */
 export const setupDraftStatusQuery = (draft: () => SetupDraftBody | null) =>
   createQuery(() => {
     const d = draft();
@@ -709,7 +709,7 @@ export const testLinksQuery = (edgeIds: () => readonly string[]) =>
     queryFn: () => Promise.all(edgeIds().map((id) => fetchTestLink(id))),
     enabled: edgeIds().length > 0,
     // The fetch is a POST that may mint the test credential and always reaches
-    // the panel: built once per card, never re-issued on a window focus.
+    // the backend: built once per card, never re-issued on a window focus.
     staleTime: 5 * 60_000,
     refetchOnWindowFocus: false,
     retry: false,
@@ -769,7 +769,7 @@ export const relaysQuery = () =>
     refetchInterval: 30_000,
   }));
 
-/** One relay by slug: 10 s while a rotation runs on it, 30 s otherwise. 404 = unknown slug. */
+/** One origin by slug: 10 s while a rotation runs on it, 30 s otherwise. 404 = unknown slug. */
 export const relayLookupQuery = (relaySlug: () => string | null) =>
   createQuery(() => ({
     queryKey: edgeKeys.relayLookup(relaySlug() ?? ''),
@@ -796,7 +796,7 @@ export const nodeCandidatesQuery = (backendServerId: () => string | null) =>
   }));
 
 /**
- * Per-relay sub-resources. Keyed by SLUG (the page's route param) but fetched
+ * Per-origin sub-resources. Keyed by SLUG (the page's route param) but fetched
  * by ID (the server's path param): pass both accessors; the query waits until
  * the id is known (from `relayLookupQuery`). `rotating` (optional) speeds the
  * poll to 10 s while a rotation runs.

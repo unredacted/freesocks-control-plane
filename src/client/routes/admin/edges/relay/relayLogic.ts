@@ -1,9 +1,9 @@
 /**
- * Pure display logic of the per-relay page (no Svelte, unit-tested in
+ * Pure display logic of the per-origin page (no Svelte, unit-tested in
  * relayLogic.test.ts).
  *
  * Exports:
- *   deriveDelivery(input)            edge-required delivery state of one relay, in words
+ *   deriveDelivery(input)            edge-required delivery state of one origin, in words
  *   suspicionChip(suspicion)         the detector chip of the header (null = nothing to say)
  *   tupleLine / tuplesEqual          Host tuples of the quarantine resolver
  *   highlightedColumn(match)         which recorded binding the live Host matches
@@ -13,7 +13,7 @@
  *   edgeAddress(edge)                the one address an edge is known by
  *   operatorFactsRows(edge)          "what FCP saw" for a needs-operator edge
  *   rotationDurationMs(rotation, now)
- *   relayProbeTargetKeys(relayId, edges)       the probe targets that belong to this relay
+ *   relayProbeTargetKeys(relayId, edges)       the probe targets that belong to this origin
  *   originKindWords / hostModeWords / matchRuleWords / originTransportWords
  */
 import type { z } from 'zod';
@@ -176,10 +176,10 @@ export function highlightedColumn(match: QuarantineMatch): 'previous' | 'current
   return match === 'previous' || match === 'current' ? match : null;
 }
 export const MATCH_WORDS: Record<QuarantineMatch, string> = {
-  previous: 'The panel serves the previous binding',
-  current: 'The panel serves the current binding',
-  neither: 'The panel serves something else',
-  absent: 'The panel has no Host for this listener',
+  previous: 'The backend serves the previous binding',
+  current: 'The backend serves the current binding',
+  neither: 'The backend serves something else',
+  absent: 'The backend has no Host for this listener',
   unknown: 'Not inspected yet',
 };
 export function matchTone(match: QuarantineMatch): Tone {
@@ -209,13 +209,13 @@ export function justificationText(input: {
     .map((l) => l.listenerKey);
   let text: string;
   if (!inspectedAt) {
-    text = `Keep ${keep} binding. The panel was not inspected before this decision.`;
+    text = `Keep ${keep} binding. The backend was not inspected before this decision.`;
   } else if (agree.length > 0 && differ.length === 0) {
-    text = `Keep ${keep} binding. The panel serves it for ${agree.join(', ')} (inspected ${inspectedAt.slice(0, 16)}Z).`;
+    text = `Keep ${keep} binding. The backend serves it for ${agree.join(', ')} (inspected ${inspectedAt.slice(0, 16)}Z).`;
   } else if (agree.length > 0) {
-    text = `Keep ${keep} binding. The panel serves it for ${agree.join(', ')}, not for ${differ.join(', ')} (inspected ${inspectedAt.slice(0, 16)}Z).`;
+    text = `Keep ${keep} binding. The backend serves it for ${agree.join(', ')}, not for ${differ.join(', ')} (inspected ${inspectedAt.slice(0, 16)}Z).`;
   } else {
-    text = `Keep ${keep} binding by operator decision. The panel does not serve it for any listener (inspected ${inspectedAt.slice(0, 16)}Z).`;
+    text = `Keep ${keep} binding by operator decision. The backend does not serve it for any listener (inspected ${inspectedAt.slice(0, 16)}Z).`;
   }
   return text.length <= REASON_MAX ? text : `${text.slice(0, REASON_MAX - 1).trimEnd()}.`;
 }
@@ -289,7 +289,7 @@ export function relayProbeTargetKeys(
 // --- words ---------------------------------------------------------------------------------------
 
 export const ORIGIN_KIND_WORDS: Record<RelayAdmin['origin']['kind'], string> = {
-  'panel-node': 'A node on a panel',
+  'panel-node': 'A node on a backend',
   'backend-server': 'A whole backend server',
   manual: 'Described by hand',
 };
@@ -298,17 +298,17 @@ export const HOST_MODE_WORDS: Record<HostMode, { label: string; explain: string 
   fcp: {
     label: 'FCP writes the Hosts',
     explain:
-      'FCP creates, switches and deletes the client-facing panel Hosts itself. Rotations switch members over without anyone touching the panel.',
+      'FCP creates, switches and deletes the client-facing backend Hosts itself. Rotations switch members over without anyone touching the backend.',
   },
   operator: {
     label: 'You write the Hosts',
     explain:
-      'FCP never writes to the panel. You apply the Hosts plan by hand or through the node role. Replacing the first edge of a listener is refused unless forced, because FCP cannot switch members over.',
+      'FCP never writes to the backend. You apply the Hosts plan by hand or through the node role. Replacing the first edge of a listener is refused unless forced, because FCP cannot switch members over.',
   },
   none: {
     label: 'No Hosts',
     explain:
-      'This origin has no panel Host. Subscriptions are rewritten when they are served, nothing is written anywhere else.',
+      'This origin has no backend Host. Subscriptions are rewritten when they are served, nothing is written anywhere else.',
   },
 };
 

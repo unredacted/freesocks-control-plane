@@ -17,7 +17,7 @@ describe('needButtons', () => {
       secondary: { action: 'retry_another_address' },
     });
     expect(needButtons('address_unreachable').secondary?.action).toBe('accept_partial');
-    expect(needButtons('hide_failed').hint).toMatch(/panel yourself/);
+    expect(needButtons('hide_failed').hint).toMatch(/backend yourself/);
     expect(needButtons('whatever').primary.action).toBe('retry');
   });
 });

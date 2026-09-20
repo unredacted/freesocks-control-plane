@@ -3,7 +3,7 @@
    * Wraps the route tree with `<svelte:boundary>` so a render-time crash in
    * any child does not blank the entire SPA. Mirrors the React class-based
    * ErrorBoundary the codebase had pre-Svelte: catches the throw, logs it,
-   * shows a "Something went wrong" panel with a reload affordance.
+   * shows a "Something went wrong" backend with a reload affordance.
    *
    * Note: Svelte 5's <svelte:boundary> only catches errors during render and
    * effect runs. Async event-handler errors must still be caught explicitly

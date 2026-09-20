@@ -1,13 +1,13 @@
 <script lang="ts">
   /**
-   * Choose what a relay's edges dial: a node of a panel, a whole backend
+   * Choose what an origin's edges dial: a node of a backend, a whole backend
    * server, or an address described by hand. One flat draft (forms/origin.ts)
    * so switching kind keeps what was typed.
    *
    * Props:
    *   value: OriginDraft (bindable)
    *   disabled?: boolean
-   *   lockKind?: boolean              the kind of an existing relay never changes
+   *   lockKind?: boolean              the kind of an existing origin never changes
    *   onchange?: (next: OriginDraft) => void
    */
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
@@ -41,8 +41,8 @@
   const KINDS: Array<{ id: OriginKind; label: string; hint: string }> = [
     {
       id: 'panel-node',
-      label: 'Panel node',
-      hint: 'A node of a panel FCP manages. Subscriptions are rewritten for members pinned to it.',
+      label: 'Backend node',
+      hint: 'A node of a backend FCP manages. Subscriptions are rewritten for members pinned to it.',
     },
     {
       id: 'backend-server',
@@ -92,7 +92,7 @@
     patch({
       nodeName: n.name,
       nodeUuid: n.nodeUuid,
-      // The panel already knows where the node is; the operator can still correct it.
+      // The backend already knows where the node is; the operator can still correct it.
       address: n.address && addressIssue(n.address) === null ? n.address : value.address,
     });
   }

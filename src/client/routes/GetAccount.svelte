@@ -103,7 +103,7 @@
   let locations = $derived(config.data?.locations ?? []);
   let pickedLocation = $state('auto');
   // Connection-mode catalog + emphasis (client choice → country suggestion →
-  // catalog default); orders the panels. `rawConfigFirst` is data-driven off the
+  // catalog default); orders the backends. `rawConfigFirst` is data-driven off the
   // selected mode's deliveryStyle (replaces the hardcoded `=== 'privacy'`).
   let connectionModes = $derived(config.data?.connectionModes ?? []);
   let connectionModeFamilies = $derived(config.data?.connectionModeFamilies ?? []);
@@ -190,8 +190,8 @@
     document.getElementById(id)?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth' });
   }
 
-  // Step transitions: bring the active panel into view. The 1→2 transition is
-  // the blocking reveal modal (no scroll needed); 2→3 reveals the key panel.
+  // Step transitions: bring the active backend into view. The 1→2 transition is
+  // the blocking reveal modal (no scroll needed); 2→3 reveals the key backend.
   let lastStep = 0;
   $effect(() => {
     const s = currentStep;

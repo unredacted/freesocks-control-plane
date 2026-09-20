@@ -1,13 +1,13 @@
 <script lang="ts">
   /**
-   * Edit the server names and the target of one REALITY inbound: write, preview
-   * (what changes, which nodes restart, which relays feel it), then apply. The
+   * Edit the server names and the target of one REALITY transport: write, preview
+   * (what changes, which nodes restart, which origins feel it), then apply. The
    * apply is conditioned on the profile still being what the preview read.
    *
-   * A name listed on the panel is not yet a name a node accepts, so new names
+   * A name listed on the backend is not yet a name a node accepts, so new names
    * are NOT given to members by this edit (docs/servers.md).
    *
-   * Props: open (bindable), slug, profileUuid, inbound
+   * Props: open (bindable), slug, profileUuid, transport
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -135,7 +135,7 @@
     {:else}
       <div class="space-y-3 text-sm" aria-live="polite">
         {#if !preview.changed}
-          <p>The panel already has exactly this. There is nothing to apply.</p>
+          <p>The backend already has exactly this. There is nothing to apply.</p>
         {:else}
           <ul class="space-y-2">
             {#each preview.changes as c (c.inboundTag + c.field)}

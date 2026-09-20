@@ -71,7 +71,7 @@ describe('nodeWords', () => {
   });
 });
 
-describe('inbound words', () => {
+describe('transport words', () => {
   test('summary', () => {
     expect(inboundSummary(inbound())).toBe('VLESS over TCP, REALITY, port 443');
     expect(inboundSummary(inbound({ network: 'raw', security: 'none', port: null }))).toBe(
@@ -220,7 +220,7 @@ describe('what the page says', () => {
     ].join('\n');
     expect(all).not.toMatch(/—|–/);
     expect(all).not.toMatch(/\/api\//);
-    // (inbound tags such as reality-in are the panel's own names, not code words)
+    // (transport tags such as reality-in are the backend's own names, not code words)
     expect(all.replace(/reality-in/g, '')).not.toMatch(/[a-z]+_[a-z]+/);
   });
 });
@@ -228,7 +228,9 @@ describe('what the page says', () => {
 describe('routes', () => {
   test('paths and instance selection', () => {
     expect(serversPaths.home()).toBe('/admin/servers');
-    expect(serversPaths.home({ instance: 'panel a' })).toBe('/admin/servers?instance=panel%20a');
+    expect(serversPaths.home({ instance: 'backend a' })).toBe(
+      '/admin/servers?instance=backend%20a',
+    );
     expect(serversPaths.node('n 1', { instance: 'p' })).toBe(
       '/admin/servers/nodes/n%201?instance=p',
     );
@@ -306,7 +308,7 @@ describe('write wording', () => {
     expect(opWords({ ...op, state: 'refused', errorCode: 'servers.never_sent' }).sentence).toMatch(
       /Never sent/,
     );
-    // A refusal FCP made itself names its reason; only the panel's own is "the panel refused it".
+    // A refusal FCP made itself names its reason; only the backend's own is "the backend refused it".
     expect(
       opWords({ ...op, state: 'refused', errorCode: 'servers.profile_changed' }).sentence,
     ).toMatch(/Preview again/);

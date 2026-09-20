@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
    * One Host tuple of the quarantine resolver (address:port, server name, Host
-   * header), optionally highlighted as the one the panel serves.
+   * header), optionally highlighted as the one the backend serves.
    *
    * Props: title; tuple (null = none); emptyText; highlight?; tone?; edgeId?; uuid?; onOpenEdge?
    */
@@ -44,7 +44,7 @@
   <div class="mb-1.5 flex flex-wrap items-center gap-1.5">
     <h4 class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">{title}</h4>
     {#if highlight}
-      <Badge variant="success">The panel serves this</Badge>
+      <Badge variant="success">The backend serves this</Badge>
     {/if}
   </div>
   {#if tuple}
@@ -58,7 +58,7 @@
       </div>
       {#if uuid}
         <div class="text-xs text-muted-foreground">
-          Panel Host: <span class="font-mono">{uuid}</span>
+          Backend Host: <span class="font-mono">{uuid}</span>
         </div>
       {/if}
       {#if edgeId}

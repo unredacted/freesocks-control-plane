@@ -2,7 +2,7 @@
   /**
    * Admin -> Edges -> Server names (`/admin/edges/names`): the families. A family
    * is one target site plus the names that site really serves; bound to a
-   * REALITY inbound, its names are what members are spread across.
+   * REALITY transport, its names are what members are spread across.
    *
    * All wording lives in ./lib/words.ts (pure, unit-tested).
    */

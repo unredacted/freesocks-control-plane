@@ -4,7 +4,7 @@
    * address believed blocked), behind a dry run that says whether the run would
    * start and what it would pick. Mount it while wanted (`{#if}`) with `open={true}`.
    *
-   * Props: kind 'rotate' | 'burn'; relay; edge; onClose(); onStarted(rotationId)
+   * Props: kind 'rotate' | 'burn'; origin; edge; onClose(); onStarted(rotationId)
    */
   import { createQuery, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';

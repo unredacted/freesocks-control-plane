@@ -1,5 +1,5 @@
 /**
- * What the new-relay dialog can be opened with: the guided setup's draft fits
+ * What the new-origin dialog can be opened with: the guided setup's draft fits
  * (`StoredDraft` in setup/draft.ts is this shape).
  *
  * Exports:

@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * The relay table of the overview. Rows come from `EdgeSummary.relays`
+   * The origin table of the overview. Rows come from `EdgeSummary.origins`
    * (already filtered by the page); every derived cell is computed in
    * overview/derive.ts.
    *
@@ -55,7 +55,7 @@
 <Table.Root>
   <Table.Header>
     <Table.Row>
-      <Table.Head>Relay</Table.Head>
+      <Table.Head>Origin</Table.Head>
       <Table.Head>Origin</Table.Head>
       <Table.Head>Layers</Table.Head>
       <Table.Head>Pool</Table.Head>
@@ -189,7 +189,7 @@
                 variant="destructive"
                 onSelect={() => router.navigate(edgesPaths.relay(relay.slug))}
               >
-                Delete on the relay page
+                Delete on the origin page
               </DropdownMenu.Item>
             </DropdownMenu.Content>
           </DropdownMenu.Root>

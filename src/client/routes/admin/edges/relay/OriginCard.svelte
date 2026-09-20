@@ -1,10 +1,10 @@
 <script lang="ts">
   /**
-   * The origin of a relay: what it is, where edges dial, who writes the panel
+   * The target of an origin: what it is, where edges dial, who writes the backend
    * Hosts, the connection plan of a manual origin and the L7 qualification
    * credential.
    *
-   * Props: relay; listeners; connectionPlan
+   * Props: origin; listeners; connectionPlan
    */
   import type { z } from 'zod';
   import type {
@@ -65,7 +65,7 @@
           tone: 'muted',
           hint: nodesQ.isPending
             ? 'Loading the node list.'
-            : 'The node is not in the last node list FCP pulled from the panel.',
+            : 'The node is not in the last node list FCP pulled from the backend.',
         };
       }
       return node.online
@@ -74,7 +74,7 @@
             tone: 'success',
             hint: `${node.usersOnline} member(s) connected${nodesQ.data?.fetchedAt ? `, seen ${relativeTime(nodesQ.data.fetchedAt)}` : ''}.`,
           }
-        : { value: 'Offline', tone: 'danger', hint: 'The panel reports this node as down.' };
+        : { value: 'Offline', tone: 'danger', hint: 'The backend reports this node as down.' };
     },
   );
 
@@ -96,7 +96,7 @@
       out.push({ label: 'Node state', ...nodeState });
     }
     out.push({
-      label: 'Panel Hosts',
+      label: 'Backend Hosts',
       value: HOST_MODE_WORDS[relay.hostMode].label,
       hint: HOST_MODE_WORDS[relay.hostMode].explain,
     });
@@ -104,7 +104,7 @@
     if (origin.kind === 'panel-node')
       out.push({
         label: 'Front qualification mode',
-        value: relay.qualificationModeSlug ?? 'Panel default',
+        value: relay.qualificationModeSlug ?? 'Backend default',
         hint: 'The connection mode whose placement the test user is created on. Change it under Edit.',
       });
     out.push({
@@ -124,7 +124,7 @@
   <Card.Header>
     <Card.Title>Origin</Card.Title>
     <Card.Description
-      >The server behind the edges. It is fixed for the life of the relay.</Card.Description
+      >The server behind the edges. It is fixed for the life of the origin.</Card.Description
     >
     {#if backendServerId}
       <Card.Action>

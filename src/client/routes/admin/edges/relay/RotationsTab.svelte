@@ -1,9 +1,9 @@
 <script lang="ts">
   /**
-   * The Rotations tab: every provision / publish / replace run of the relay. A
+   * The Rotations tab: every provision / publish / replace run of the origin. A
    * row opens the rotation drawer (`?rotation=`); the running one can be cancelled.
    *
-   * Props: relay; onOpenRotation(rotationId)
+   * Props: origin; onOpenRotation(rotationId)
    */
   import * as Table from '@client/components/ui/table';
   import { Badge } from '@client/components/ui/badge';

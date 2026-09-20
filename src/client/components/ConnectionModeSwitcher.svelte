@@ -116,7 +116,7 @@
     },
     onSuccess: (result) => {
       switchModeOpen = false;
-      // Keep the local presentation hint in sync so the delivery panels don't
+      // Keep the local presentation hint in sync so the delivery backends don't
       // flash the old focus before the account query returns the new mode.
       setConnectionModePref(result.mode.id);
       pendingModeId = null;

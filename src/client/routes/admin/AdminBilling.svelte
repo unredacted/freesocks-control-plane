@@ -129,7 +129,7 @@
           apiBase: res.secretStatus.paypal.apiBase,
         },
       };
-      // Refresh the admin view AND the public config (the member panel reads it).
+      // Refresh the admin view AND the public config (the member backend reads it).
       void qc.invalidateQueries({ queryKey: ['admin', 'billing'] });
       void qc.invalidateQueries({ queryKey: queryKeys.config });
       toast.success('Billing settings saved');

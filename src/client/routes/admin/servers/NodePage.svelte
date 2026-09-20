@@ -1,9 +1,9 @@
 <script lang="ts">
   /**
    * One node (`/admin/servers/nodes/:uuid?instance=<slug>`): its status in a
-   * sentence, the inbounds it serves with the addresses members get for each,
+   * sentence, the transports it serves with the addresses members get for each,
    * and every action on the node in the header. Nothing on this page changes a
-   * panel unless changes are allowed and the node role has handed it over.
+   * backend unless changes are allowed and the node role has handed it over.
    *
    * Wording lives in ./lib/words.ts (pure, unit-tested).
    */
@@ -37,7 +37,7 @@
   const intents = intentsQuery(() => slug);
   let instance = $derived(summary.data?.instances.find((i) => i.slug === slug) ?? null);
   let node = $derived(tree.data?.nodes.find((n) => n.nodeUuid === uuid) ?? null);
-  // The enrolled node behind this panel row, when the node role enrolled it.
+  // The enrolled node behind this backend row, when the node role enrolled it.
   let intent = $derived(
     intents.data?.intents.find((i) => i.nodeUuid === uuid || (node && i.name === node.name)) ??
       null,
@@ -68,7 +68,7 @@
 {:else if !node || !slug}
   <SectionHeader title="Node not found" {back} />
   <p class="text-muted-foreground text-sm">
-    There is no node with this id on the panel any more, or the link is old.
+    There is no node with this id on the backend any more, or the link is old.
   </p>
 {:else}
   {@const w = nodeWords(node)}
@@ -109,9 +109,9 @@
     {/if}
 
     <section aria-labelledby="inbounds">
-      <h2 id="inbounds" class="mb-3 text-base font-semibold">Inbounds</h2>
+      <h2 id="inbounds" class="mb-3 text-base font-semibold">Transports</h2>
       {#if node.inbounds.length === 0}
-        <p class="text-muted-foreground text-sm">This node serves no inbound.</p>
+        <p class="text-muted-foreground text-sm">This node serves no transport.</p>
       {:else}
         <ul class="space-y-3">
           {#each node.inbounds as inbound (inbound.inboundUuid)}

@@ -1,10 +1,10 @@
 <script lang="ts">
   /**
    * The Listeners tab: a card per listener, the Hosts plan when the operator
-   * writes the panel Hosts, and the add / edit dialog. `?listener=<key>` scrolls
+   * writes the backend Hosts, and the add / edit dialog. `?listener=<key>` scrolls
    * to (and rings) one card.
    *
-   * Props: relay; listeners; edges; hostsPlan; loading; error; onRetry
+   * Props: origin; listeners; edges; hostsPlan; loading; error; onRetry
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import type { z } from 'zod';
@@ -120,8 +120,8 @@
       <Card.Header>
         <Card.Title>Hosts plan</Card.Title>
         <Card.Description>
-          You write the panel Hosts of this relay. After every publish or rotation, make the Hosts
-          in the panel say exactly this, or members keep dialling the old edge.
+          You write the backend Hosts of this origin. After every publish or rotation, make the
+          Hosts in the backend say exactly this, or members keep dialling the old edge.
         </Card.Description>
       </Card.Header>
       <Card.Content>
@@ -139,7 +139,7 @@
                   <Table.Head>Address</Table.Head>
                   <Table.Head>Server name</Table.Head>
                   <Table.Head>Host header</Table.Head>
-                  <Table.Head>Inbound</Table.Head>
+                  <Table.Head>Transport</Table.Head>
                 </Table.Row>
               </Table.Header>
               <Table.Body>

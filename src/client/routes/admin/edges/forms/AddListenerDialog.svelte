@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * Add a listener to a relay, or edit one (`existing`). One upsert call; the
+   * Add a listener to an origin, or edit one (`existing`). One upsert call; the
    * server validates the combination against the origin kind and answers with
    * what changed.
    *
@@ -8,7 +8,7 @@
    *   open: boolean (bindable)
    *   relayId: string
    *   relaySlug: string                       for invalidateRelay(qc, slug)
-   *   originKind: 'panel-node' | 'backend-server' | 'manual'
+   *   originKind: 'backend-node' | 'backend-server' | 'manual'
    *   existing?: RelayListenerAdmin | null    edit this listener (key locked)
    *   onSaved: () => void
    */
@@ -99,7 +99,7 @@
         >{existing ? `Edit listener ${existing.listenerKey}` : 'Add a listener'}</Dialog.Title
       >
       <Dialog.Description>
-        A listener is one inbound on the origin and what it speaks. Each listener gets its own
+        A listener is one transport on the origin and what it speaks. Each listener gets its own
         edges.
       </Dialog.Description>
     </Dialog.Header>

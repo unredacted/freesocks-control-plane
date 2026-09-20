@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
-   * Add or change one address members are given for an inbound (a panel Host).
-   * An address that belongs to a relay is changed from Edges; the server
+   * Add or change one address members are given for an transport (a backend Host).
+   * An address that belongs to an origin is changed from Edges; the server
    * refuses it here and says so.
    *
    * Props:

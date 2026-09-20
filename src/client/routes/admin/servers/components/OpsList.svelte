@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * Recent changes to one panel. A change is sent once and then looked at until
+   * Recent changes to one backend. A change is sent once and then looked at until
    * it is seen; one whose outcome is unknown stays in the way of anything else
    * on the same item until it is seen or settled by hand (docs/servers.md).
    *
@@ -131,24 +131,24 @@
     <div class="flex items-start gap-2">
       <Checkbox id="settle-revoked" bind:checked={revoked} />
       <Label for="settle-revoked" class="leading-snug font-normal">
-        The API token it was sent with is revoked, and the panel rejects it.
+        The API token it was sent with is revoked, and the backend rejects it.
       </Label>
     </div>
     <div class="flex items-start gap-2">
       <Checkbox id="settle-worker" bind:checked={noWorker} />
       <Label for="settle-worker" class="leading-snug font-normal">
-        No proxy, gateway or panel worker still carries the request.
+        No proxy, gateway or backend worker still carries the request.
       </Label>
     </div>
     <div class="flex items-start gap-2">
       <Checkbox id="settle-queue" bind:checked={drained} />
       <Label for="settle-queue" class="leading-snug font-normal">
-        Every job from it in the panel's queues has finished or been cancelled. A restart does not
+        Every job from it in the backend's queues has finished or been cancelled. A restart does not
         empty those queues.
       </Label>
     </div>
   </div>
   <p class="text-muted-foreground mt-3">
-    The panel is read again, and what it shows is the outcome.
+    The backend is read again, and what it shows is the outcome.
   </p>
 </ConfirmDialog>

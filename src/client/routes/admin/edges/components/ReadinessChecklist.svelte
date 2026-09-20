@@ -2,13 +2,13 @@
   /**
    * The guided setup as a checklist: each step with its status, its blockers and
    * warnings in words, and a link into the wizard at that step. In fleet scope it
-   * also lists the relays whose setup can be resumed.
+   * also lists the origins whose setup can be resumed.
    *
    * Props:
-   *   status: SetupStatusResponse           from setupStatusQuery (relay or fleet scope)
+   *   status: SetupStatusResponse           from setupStatusQuery (origin or fleet scope)
    *   relaySlug?: string | null             overrides status.context.relaySlug for the links
    *   compact?: boolean                     one line per step, blockers collapsed to a count
-   *   showResume?: boolean                  list `status.resume` relays (default true)
+   *   showResume?: boolean                  list `status.resume` origins (default true)
    *   class?: string
    */
   import type { SetupStatusResponse } from '@shared/contracts/edges';
@@ -103,7 +103,7 @@
 
   {#if showResume && status.scope === 'fleet' && resumable.length > 0}
     <div>
-      <h3 class="mb-1.5 text-sm font-semibold">Relays with unfinished setup</h3>
+      <h3 class="mb-1.5 text-sm font-semibold">Origins with unfinished setup</h3>
       <ul class="space-y-1">
         {#each resumable as r (r.relayId)}
           <li class="flex flex-wrap items-center justify-between gap-2 text-sm">

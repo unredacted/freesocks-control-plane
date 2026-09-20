@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * Self-service membership purchase panel. Renders ONLY when billing is enabled
+   * Self-service membership purchase backend. Renders ONLY when billing is enabled
    * and at least one rail is live (it reads PublicConfig.billing). The member
    * picks a payment method + duration; "Continue to payment" creates a
    * processor-hosted invoice server-side and full-page redirects to it (the

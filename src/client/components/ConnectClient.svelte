@@ -64,7 +64,7 @@
   );
   let currentClients = $derived(clients.filter((c) => c.platforms.includes(active)));
   // On a device-limited plan, HWID-capable apps honor the limit; others each
-  // consume a slot per launch (or, with panel enforcement on, fail to connect),
+  // consume a slot per launch (or, with backend enforcement on, fail to connect),
   // so we surface them separately. `gateDevices` is true only when it matters —
   // the backend's DEVICE capability comes from publicConfig, not an id literal.
   let gateDevices = $derived(

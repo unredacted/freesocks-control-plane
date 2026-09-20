@@ -1,10 +1,10 @@
 <script lang="ts">
   /**
-   * Edge-required delivery of one relay: are members served through edges, or
-   * dark, and why (derived in relayLogic.deriveDelivery from the relay, its
+   * Edge-required delivery of one origin: are members served through edges, or
+   * dark, and why (derived in relayLogic.deriveDelivery from the origin, its
    * setup status and the attention list). Also hosts the render preview.
    *
-   * Props: relay
+   * Props: origin
    */
   import type { RelayAdmin } from '@shared/contracts/edges';
   import * as Card from '@client/components/ui/card';

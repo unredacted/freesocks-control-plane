@@ -1,9 +1,9 @@
 <script lang="ts">
   /**
-   * The Probes tab: the reachability matrix narrowed to this relay's targets
+   * The Probes tab: the reachability matrix narrowed to this origin's targets
    * (its origin when opted in, and each of its edges), plus "Probe now".
    *
-   * Props: relay; edges
+   * Props: origin; edges
    */
   import type { EdgeAdmin, RelayAdmin } from '@shared/contracts/edges';
   import * as Card from '@client/components/ui/card';

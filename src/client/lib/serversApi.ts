@@ -6,7 +6,7 @@
  *   2. `serverKeys`, the TanStack key tree rooted at ['admin','servers'];
  *   3. `*Query()` wrappers with their polling cadence, plus invalidators.
  *
- * Cadence: the panel is only re-read every ten minutes (the healthcheck) or on
+ * Cadence: the backend is only re-read every ten minutes (the healthcheck) or on
  * an explicit Refresh, so the cached tree is polled gently (60 s).
  */
 import { createQuery, type QueryClient } from '@tanstack/svelte-query';
@@ -38,7 +38,7 @@ const slugPath = (slug: string) => `${BASE}/${encodeURIComponent(slug)}`;
 export const fetchServerSummary = () => apiClient.get(`${BASE}/summary`, ServerSummary);
 export const fetchServerTree = (slug: string) =>
   apiClient.get(`${slugPath(slug)}/tree`, ServerTree);
-/** Re-read the panel now; answers the fresh tree. Rate-limited server-side. */
+/** Re-read the backend now; answers the fresh tree. Rate-limited server-side. */
 export const refreshServer = (slug: string) =>
   apiClient.post(`${slugPath(slug)}/refresh`, {}, ServerTree);
 export const validatePlacements = (slug: string) =>
@@ -88,7 +88,7 @@ export const updateNode = (
 ) => apiClient.patch(`${slugPath(slug)}/nodes/${encodeURIComponent(uuid)}`, fields, PanelOpView);
 export const nodeAction = (slug: string, uuid: string, action: 'enable' | 'disable' | 'restart') =>
   apiClient.post(`${slugPath(slug)}/nodes/${encodeURIComponent(uuid)}/${action}`, {}, PanelOpView);
-/** `removeOnly`: take the row off the panel and say the process may keep running. */
+/** `removeOnly`: take the row off the backend and say the process may keep running. */
 export const deleteNode = (slug: string, uuid: string, removeOnly: boolean) =>
   apiClient.delete(
     `${slugPath(slug)}/nodes/${encodeURIComponent(uuid)}${removeOnly ? '?removeOnly=1' : ''}`,

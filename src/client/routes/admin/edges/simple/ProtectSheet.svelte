@@ -1,8 +1,8 @@
 <script lang="ts">
   /**
    * "Protect a node": a sheet with three questions and then the progress.
-   *   1. Which node?     a panel, then one of its nodes (already protected ones greyed);
-   *                      picking one fetches the plan and shows the inbounds in words
+   *   1. Which node?     a backend, then one of its nodes (already protected ones greyed);
+   *                      picking one fetches the plan and shows the transports in words
    *   2. Which account?  the plan's compatible accounts as radio cards; "Add account"
    *                      renders the provider stepper inline (compact)
    *   3. Review          one sentence, the consent for unsupported hosts, one button
@@ -195,7 +195,7 @@
         {:else}
           {#if panels.length > 1}
             <div class="space-y-1.5">
-              <span class="text-sm font-medium">Panel</span>
+              <span class="text-sm font-medium">Backend</span>
               <Select.Root
                 type="single"
                 value={serverId}
@@ -266,7 +266,7 @@
                 <CodeNote issue={{ code: 'too_many_inbounds' }} />
               {:else if supported.length === 0}
                 <p>
-                  No inbound on this node can be carried by a provider address yet. It cannot be
+                  No transport on this node can be carried by a provider address yet. It cannot be
                   protected this way.
                 </p>
               {:else}
@@ -360,7 +360,7 @@
             </fieldset>
             {#if compatible.length === 0}
               <p class="text-muted-foreground text-xs">
-                No account can carry this node's inbounds as it is. Fix one above or add another.
+                No account can carry this node's transports as it is. Fix one above or add another.
               </p>
             {/if}
           {/if}
