@@ -35,7 +35,7 @@ const SS_INBOUND = '44444444-4444-4444-8444-444444444444';
 const SS_HOST_UUID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
 const SS_OLD_EDGE = '198.51.100.2';
 
-interface PanelHost {
+interface BackendAddress {
   uuid: string;
   remark: string;
   address: string;
@@ -57,10 +57,10 @@ function fakeWorld(
     /** The template Host points at the origin itself (leak). */
     hostLeaks?: boolean;
     /** Extra Hosts the backend starts with (other listeners). */
-    extraHosts?: PanelHost[];
+    extraHosts?: BackendAddress[];
   } = {},
 ) {
-  const panelHosts: PanelHost[] = [];
+  const panelHosts: BackendAddress[] = [];
   if (opts.hostPresent !== false) {
     panelHosts.push({
       uuid: HOST_UUID,
@@ -109,7 +109,7 @@ function fakeWorld(
           port: number;
           sni?: string;
           host?: string;
-          inbound: PanelHost['inbound'];
+          inbound: BackendAddress['inbound'];
         };
         const uuid = `cccccccc-cccc-4ccc-8ccc-${String(creates).padStart(12, '0')}`;
         panelHosts.push({

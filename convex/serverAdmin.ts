@@ -1,6 +1,6 @@
 /**
  * Admin reads for server management (Admin -> Servers) plus its two switches.
- * Every read is served from the `backend*` caches `panelObserve` fills, so the
+ * Every read is served from the `backend*` caches `backendObserve` fills, so the
  * page shows what ALREADY exists on a backend without making a backend call, and
  * nothing here can return a secret: the caches hold none.
  *
@@ -16,7 +16,7 @@ import { writeAuditLog } from './lib/audit';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import { poolFromConfig } from './lib/remnawavePlacement';
 import { flattenServerConfig, resolveServerConfig, serverConfigWrites } from './lib/serverConfig';
-import { modeRefOf } from './panelIntents';
+import { modeRefOf } from './nodeIntents';
 
 const iso = (ms: number | undefined) => (ms ? new Date(ms).toISOString() : null);
 
@@ -138,7 +138,7 @@ export const summary = internalQuery({
           backend: s.backend,
           isActive: s.isActive,
           observable: capabilitiesOf(s.backend).panelObservation,
-          writable: capabilitiesOf(s.backend).panelWrites,
+          writable: capabilitiesOf(s.backend).backendWrites,
           // Whether FCP has set this backend up (or adopted it): the one condition for writing it.
           setUp: setupBy.get(s._id as string)?.state === 'ready',
           ...mapState(stateBy.get(s._id as string) ?? null),

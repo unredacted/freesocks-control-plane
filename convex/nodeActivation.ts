@@ -29,13 +29,13 @@ import {
   type Evidence,
   type ReviewShape,
   type Revisions,
-} from './lib/panel/activation';
-import { panelDigestKey } from './lib/panel/key';
+} from './lib/backend/activation';
+import { panelDigestKey } from './lib/backend/key';
 import {
   REHEARSAL_USER_AGENTS,
   bodyHasEndpoint,
   type RehearsalFamily,
-} from './lib/panel/rehearsal';
+} from './lib/backend/rehearsal';
 import { QUALIFICATION_TRAFFIC_LIMIT_BYTES } from './relayQualification';
 import { TEST_CREDENTIAL_TAG, testCredentialUsername } from './edgeTestCredentials';
 import {
@@ -45,8 +45,8 @@ import {
   originAddressOf,
   originHostnameOf,
   transportFor,
-} from './panelIntents';
-import { bumpGateVersion, setupReady, type Setup } from './panelSetup';
+} from './nodeIntents';
+import { bumpGateVersion, setupReady, type Setup } from './backendSetup';
 import { scheduleMirrorRefresh } from './relays';
 
 const refuse = (code: string, message: string): never => {
@@ -381,7 +381,7 @@ export interface DirectTestBinding {
 export const buildDirectTestLink = internalAction({
   args: { intentId: v.id('panelNodeIntents') },
   handler: async (ctx, { intentId }): Promise<{ link: string; binding: DirectTestBinding }> => {
-    const c = (await ctx.runQuery(internal.panelActivation.credentialContext, {
+    const c = (await ctx.runQuery(internal.nodeActivation.credentialContext, {
       intentId,
     })) as CredentialCtx | null;
     if (!c) throw new ConvexError({ code: 'not_found', message: 'No such node' });
@@ -390,7 +390,7 @@ export const buildDirectTestLink = internalAction({
         code: 'validation',
         message: 'Only a direct REALITY node has a direct test link',
       });
-    const writes = PROVIDERS[c.server.backend].panelWrites;
+    const writes = PROVIDERS[c.server.backend].backendWrites;
     if (!writes)
       throw new ConvexError({ code: 'servers.unsupported_backend', message: 'Unsupported' });
     const config = c.server.config as BackendConfig;
@@ -621,7 +621,7 @@ export const approve = internalMutation({
       payload: { backendSlug: server?.slug ?? '', name: intent.name, mode: modeSlug(intent) },
     });
     if (direct)
-      await ctx.scheduler.runAfter(0, internal.panelActivation.runDirect, {
+      await ctx.scheduler.runAfter(0, internal.nodeActivation.runDirect, {
         runId,
         stepVersion: 1,
       });
@@ -712,7 +712,7 @@ export const step = internalMutation({
     });
     if (a.state === 'blocked' || a.state === 'failed') await parkAfterBlock(ctx, run);
     if (a.schedule)
-      await ctx.scheduler.runAfter(0, internal.panelActivation.runDirect, {
+      await ctx.scheduler.runAfter(0, internal.nodeActivation.runDirect, {
         runId: a.runId,
         stepVersion: next,
       });
@@ -751,13 +751,13 @@ async function parkAfterBlock(ctx: MutationCtx, run: Run): Promise<void> {
 export const runDirect = internalAction({
   args: { runId: v.id('panelActivationRuns'), stepVersion: v.number() },
   handler: async (ctx, { runId, stepVersion }): Promise<null> => {
-    const c = (await ctx.runQuery(internal.panelActivation.runContext, {
+    const c = (await ctx.runQuery(internal.nodeActivation.runContext, {
       runId,
       stepVersion,
     })) as RunContext | null;
     if (!c) return null;
     const block = (code: string) =>
-      ctx.runMutation(internal.panelActivation.step, {
+      ctx.runMutation(internal.nodeActivation.step, {
         runId,
         stepVersion,
         state: 'blocked',
@@ -769,15 +769,15 @@ export const runDirect = internalAction({
         if (c.addresses.length === 0) return block('servers.host_missing').then(() => null);
         for (const h of c.addresses) {
           if (!h.isDisabled) continue;
-          const { opId } = await ctx.runMutation(internal.panelWrites.requestAddressUpdate, {
+          const { opId } = await ctx.runMutation(internal.backendWrites.requestAddressUpdate, {
             backendServerId: c.server._id,
             hostUuid: h.hostUuid,
             isDisabled: false,
           });
-          const r = await ctx.runAction(internal.panelWrites.run, { opId });
+          const r = await ctx.runAction(internal.backendWrites.run, { opId });
           if (r.open) return block('servers.op_running').then(() => null);
         }
-        await ctx.runMutation(internal.panelActivation.step, {
+        await ctx.runMutation(internal.nodeActivation.step, {
           runId,
           stepVersion,
           stage: 'rehearse',
@@ -786,7 +786,7 @@ export const runDirect = internalAction({
         return null;
       }
       if (c.run.stage === 'rehearse') {
-        const cred = (await ctx.runQuery(internal.panelActivation.credentialContext, {
+        const cred = (await ctx.runQuery(internal.nodeActivation.credentialContext, {
           intentId: c.intent._id,
         })) as CredentialCtx | null;
         if (!cred?.reusable) return block('servers.credential_unavailable').then(() => null);
@@ -823,7 +823,7 @@ export const runDirect = internalAction({
           }
         }
         const ok = failed.length === 0;
-        const s = await ctx.runMutation(internal.panelActivation.step, {
+        const s = await ctx.runMutation(internal.nodeActivation.step, {
           runId,
           stepVersion,
           rehearsal: { ok, families, detail: failed.join(',') || undefined },
@@ -834,16 +834,16 @@ export const runDirect = internalAction({
         if (!ok || !s.ok) {
           // A failed rehearsal closes what it opened: every address goes back to disabled.
           for (const h of c.addresses) {
-            const { opId } = await ctx.runMutation(internal.panelWrites.requestAddressUpdate, {
+            const { opId } = await ctx.runMutation(internal.backendWrites.requestAddressUpdate, {
               backendServerId: c.server._id,
               hostUuid: h.hostUuid,
               isDisabled: true,
             });
-            await ctx.runAction(internal.panelWrites.run, { opId });
+            await ctx.runAction(internal.backendWrites.run, { opId });
           }
           return null;
         }
-        await ctx.runMutation(internal.panelActivation.commit, {
+        await ctx.runMutation(internal.nodeActivation.commit, {
           runId,
           stepVersion: s.stepVersion,
         });
@@ -914,7 +914,7 @@ export async function promoteCandidate(
     return { ok: false, code: 'servers.standbys_unverified' };
   const open = (
     await ctx.db
-      .query('panelObligations')
+      .query('backendObligations')
       .withIndex('by_owner', (q) => q.eq('ownerKind', 'intent').eq('ownerId', intent._id))
       .collect()
   ).some((o) => o.state === 'pending' || o.state === 'sent' || o.state === 'unresolved');

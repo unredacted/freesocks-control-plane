@@ -15,8 +15,8 @@ import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { insertPanelServer } from './lib/edges/testing/fixtures';
-import { generateRealityKey } from './lib/panel/realityKeys';
-import { closeForSharedChange } from './panelIntents';
+import { generateRealityKey } from './lib/backend/realityKeys';
+import { closeForSharedChange } from './nodeIntents';
 
 const modules = import.meta.glob('./**/*.*s');
 type T = TestConvex<typeof schema>;
@@ -287,7 +287,7 @@ async function seedLiveDirect() {
       tlsVersion: 'TLSv1.3',
       alpn: 'h2',
     });
-  const started = await t.mutation(internal.panelSetup.start, {
+  const started = await t.mutation(internal.backendSetup.start, {
     backendServerId: serverId,
     input: setupInput,
   });
@@ -296,9 +296,9 @@ async function seedLiveDirect() {
   // The fake keeps the private key under `publicKeyByTag`; what the profile
   // observation derives is the real public key, so align the fake's bodies.
   const priv = panel.profiles[0].config.inbounds[0].streamSettings.realitySettings.privateKey;
-  const { realityPublicKey } = await import('./lib/panel/digest');
+  const { realityPublicKey } = await import('./lib/backend/digest');
   panel.profiles[0].publicKeyByTag[TAG] = realityPublicKey(priv);
-  const { intentId } = await t.mutation(internal.panelIntents.enroll, {
+  const { intentId } = await t.mutation(internal.nodeIntents.enroll, {
     backendServerId: serverId,
     name: 'node-a',
     mode: 'privacy-reality',
@@ -310,7 +310,7 @@ async function seedLiveDirect() {
     },
   });
   await settled(() => t.run((ctx) => ctx.db.get(intentId)));
-  await t.mutation(internal.panelIntents.applied, {
+  await t.mutation(internal.nodeIntents.applied, {
     intentId,
     appliedRevision: 1,
     nodeStarted: true,
@@ -321,17 +321,17 @@ async function seedLiveDirect() {
 }
 
 const gateOf = (t: T, serverId: Id<'backendServers'>) =>
-  t.query(internal.panelIntents.nodeGate, { backendServerId: serverId, nodeName: 'node-a' });
+  t.query(internal.nodeIntents.nodeGate, { backendServerId: serverId, nodeName: 'node-a' });
 
 /** A live direct node: seeded, confirmed, approved and committed. */
 async function liveAndCommitted() {
   const ctx = await seedLiveDirect();
   const { t, intentId } = ctx;
-  const built = await t.action(internal.panelActivation.buildDirectTestLink, { intentId });
+  const built = await t.action(internal.nodeActivation.buildDirectTestLink, { intentId });
   const { intentId: _i, issuedAt: _t, ...binding } = built.binding;
-  await t.mutation(internal.panelActivation.confirmDirect, { intentId, binding });
-  const review = await t.query(internal.panelActivation.review, { intentId });
-  const { runId } = await t.mutation(internal.panelActivation.approve, {
+  await t.mutation(internal.nodeActivation.confirmDirect, { intentId, binding });
+  const review = await t.query(internal.nodeActivation.review, { intentId });
+  const { runId } = await t.mutation(internal.nodeActivation.approve, {
     intentId,
     reviewHash: review.reviewHash,
   });
@@ -352,8 +352,8 @@ async function addFamilyName(t: T, serverId: Id<'backendServers'>, panel: Panel)
     'decoy-a.example',
     'www.decoy-a.example',
   ];
-  await t.action(internal.panelObserve.refresh, { backendServerId: serverId });
-  await t.mutation(internal.panelObserve.acknowledgeForeignEdit, {
+  await t.action(internal.backendObserve.refresh, { backendServerId: serverId });
+  await t.mutation(internal.backendObserve.acknowledgeForeignEdit, {
     backendServerId: serverId,
     profileUuid: panel.profiles[0].uuid,
   });
@@ -375,7 +375,7 @@ describe('activating a direct node', () => {
     expect(generateRealityKey().privateKey).toBeTruthy();
 
     // The isolated link: the credential's uuid, the endpoint, the live parameters.
-    const built = await t.action(internal.panelActivation.buildDirectTestLink, { intentId });
+    const built = await t.action(internal.nodeActivation.buildDirectTestLink, { intentId });
     expect(built.link).toMatch(
       /^vless:\/\/aaaaaaaa-1111-4222-8333-444444444444@203\.0\.113\.10:443\?/,
     );
@@ -400,28 +400,28 @@ describe('activating a direct node', () => {
     // A confirmation whose endpoint moved is refused; the right one advances the ladder.
     const { intentId: _i, issuedAt: _t, ...binding } = built.binding;
     await expect(
-      t.mutation(internal.panelActivation.confirmDirect, {
+      t.mutation(internal.nodeActivation.confirmDirect, {
         intentId,
         binding: { ...binding, endpoint: '203.0.113.11:443' },
       }),
     ).rejects.toThrow(/confirmation_stale/);
-    const confirmed = await t.mutation(internal.panelActivation.confirmDirect, {
+    const confirmed = await t.mutation(internal.nodeActivation.confirmDirect, {
       intentId,
       binding,
     });
     expect(confirmed.stage).toBe('candidates_verified');
 
     // Review and approve: one run, the address still disabled, the gate closed.
-    const review = await t.query(internal.panelActivation.review, { intentId });
+    const review = await t.query(internal.nodeActivation.review, { intentId });
     expect(review.blockers).toEqual([]);
     expect(review.shape.mode).toBe('privacy-reality');
     expect(review.shape.addressTuples).toEqual([
       { address: '203.0.113.10', port: 443, sni: 'decoy-a.example' },
     ]);
     await expect(
-      t.mutation(internal.panelActivation.approve, { intentId, reviewHash: 'stale' }),
+      t.mutation(internal.nodeActivation.approve, { intentId, reviewHash: 'stale' }),
     ).rejects.toThrow(/review_stale/);
-    const { runId } = await t.mutation(internal.panelActivation.approve, {
+    const { runId } = await t.mutation(internal.nodeActivation.approve, {
       intentId,
       reviewHash: review.reviewHash,
     });
@@ -456,13 +456,13 @@ describe('activating a direct node', () => {
 
   test('a failed rehearsal releases nothing: the addresses go back to disabled, the node is parked, a fresh approval commits', async () => {
     const { t, serverId, panel, intentId } = await seedLiveDirect();
-    const built = await t.action(internal.panelActivation.buildDirectTestLink, { intentId });
+    const built = await t.action(internal.nodeActivation.buildDirectTestLink, { intentId });
     const { intentId: _i, issuedAt: _t, ...binding } = built.binding;
-    await t.mutation(internal.panelActivation.confirmDirect, { intentId, binding });
+    await t.mutation(internal.nodeActivation.confirmDirect, { intentId, binding });
     // The backend's bodies will not carry the node (the fake serves another key).
     panel.profiles[0].publicKeyByTag[TAG] = 'not-the-key';
-    const review = await t.query(internal.panelActivation.review, { intentId });
-    const { runId } = await t.mutation(internal.panelActivation.approve, {
+    const review = await t.query(internal.nodeActivation.review, { intentId });
+    const { runId } = await t.mutation(internal.nodeActivation.approve, {
       intentId,
       reviewHash: review.reviewHash,
     });
@@ -483,13 +483,13 @@ describe('activating a direct node', () => {
     expect((await gateOf(t, serverId)).state).toBe('blocked');
 
     // With the cause fixed, a fresh approval starts a fresh run and commits.
-    const { realityPublicKey } = await import('./lib/panel/digest');
+    const { realityPublicKey } = await import('./lib/backend/digest');
     panel.profiles[0].publicKeyByTag[TAG] = realityPublicKey(
       panel.profiles[0].config.inbounds[0].streamSettings.realitySettings.privateKey,
     );
-    const again = await t.query(internal.panelActivation.review, { intentId });
+    const again = await t.query(internal.nodeActivation.review, { intentId });
     expect(again.blockers).toEqual([]);
-    const { runId: runId2 } = await t.mutation(internal.panelActivation.approve, {
+    const { runId: runId2 } = await t.mutation(internal.nodeActivation.approve, {
       intentId,
       reviewHash: again.reviewHash,
     });
@@ -505,17 +505,17 @@ describe('activating a direct node', () => {
 
   test('a moved observation supersedes the run and a stale commit is refused', async () => {
     const { t, panel, intentId } = await seedLiveDirect();
-    const built = await t.action(internal.panelActivation.buildDirectTestLink, { intentId });
+    const built = await t.action(internal.nodeActivation.buildDirectTestLink, { intentId });
     const { intentId: _i, issuedAt: _t, ...binding } = built.binding;
-    await t.mutation(internal.panelActivation.confirmDirect, { intentId, binding });
-    const review = await t.query(internal.panelActivation.review, { intentId });
+    await t.mutation(internal.nodeActivation.confirmDirect, { intentId, binding });
+    const review = await t.query(internal.nodeActivation.review, { intentId });
     // An in-place machine change before the run commits: the review is stale, the run superseded.
-    await t.mutation(internal.panelIntents.patchSettings, {
+    await t.mutation(internal.nodeIntents.patchSettings, {
       intentId,
       patch: { nodePort: 2223 },
     });
     await expect(
-      t.mutation(internal.panelActivation.approve, { intentId, reviewHash: review.reviewHash }),
+      t.mutation(internal.nodeActivation.approve, { intentId, reviewHash: review.reviewHash }),
     ).rejects.toThrow(/machine_not_ready|review_stale|direct_unconfirmed/);
     const intent = (await t.run((ctx) => ctx.db.get(intentId)))!;
     expect(intent.machineRevision).toBe(2);
@@ -552,8 +552,8 @@ describe('activating a direct node', () => {
       },
       isDisabled: false,
     });
-    await t.action(internal.panelObserve.refresh, { backendServerId: serverId });
-    const r = await t.mutation(internal.panelIntents.adoptNode, {
+    await t.action(internal.backendObserve.refresh, { backendServerId: serverId });
+    const r = await t.mutation(internal.nodeIntents.adoptNode, {
       backendServerId: serverId,
       nodeUuid: UUID(200),
       mode: 'privacy-reality',
@@ -571,7 +571,7 @@ describe('activating a direct node', () => {
     });
     expect(
       (
-        await t.query(internal.panelIntents.nodeGate, {
+        await t.query(internal.nodeIntents.nodeGate, {
           backendServerId: serverId,
           nodeName: 'legacy-a',
         })
@@ -579,14 +579,14 @@ describe('activating a direct node', () => {
     ).toBe('open');
     // The enrolled node cannot be adopted twice; an unknown one is not found.
     await expect(
-      t.mutation(internal.panelIntents.adoptNode, {
+      t.mutation(internal.nodeIntents.adoptNode, {
         backendServerId: serverId,
         nodeUuid: (await t.run((ctx) => ctx.db.get(intentId)))!.nodeUuid!,
         mode: 'privacy-reality',
       }),
     ).rejects.toThrow(/node_exists/);
     await expect(
-      t.mutation(internal.panelIntents.adoptNode, {
+      t.mutation(internal.nodeIntents.adoptNode, {
         backendServerId: serverId,
         nodeUuid: UUID(200),
         mode: 'freedom-ws',
@@ -612,8 +612,8 @@ describe('activating a direct node', () => {
         activeInbounds: [{ uuid: transportUuid, tag: TAG }],
       },
     });
-    await t.action(internal.panelObserve.refresh, { backendServerId: serverId });
-    const { intentId } = await t.mutation(internal.panelIntents.adoptNode, {
+    await t.action(internal.backendObserve.refresh, { backendServerId: serverId });
+    const { intentId } = await t.mutation(internal.nodeIntents.adoptNode, {
       backendServerId: serverId,
       nodeUuid: UUID(300),
       mode: 'privacy-reality',
@@ -635,7 +635,7 @@ describe('activating a direct node', () => {
       return id;
     });
     // Before `ready_to_wipe` there is nothing to confirm.
-    await expect(t.mutation(internal.panelIntents.markWiped, { intentId })).rejects.toThrow(
+    await expect(t.mutation(internal.nodeIntents.markWiped, { intentId })).rejects.toThrow(
       /retirement_stage/,
     );
     await t.run((ctx) => ctx.db.patch(retirementId, { stage: 'ready_to_wipe' }));
@@ -647,7 +647,7 @@ describe('activating a direct node', () => {
         updatedAt: Date.now(),
       }),
     );
-    const out = await t.mutation(internal.panelIntents.markWiped, { intentId, byAdminId: admin });
+    const out = await t.mutation(internal.nodeIntents.markWiped, { intentId, byAdminId: admin });
     expect(out.stage).toBe('retired');
     const done = (await t.run((ctx) => ctx.db.get(retirementId)))!;
     expect(done.stage).toBe('retired');
@@ -662,11 +662,11 @@ describe('activating a direct node', () => {
   test('a profile edit closes every enrolled node on the transport and needs a treatment for the rest', async () => {
     const { t, serverId, panel, intentId } = await seedLiveDirect();
     // Take the enrolled node live first.
-    const built = await t.action(internal.panelActivation.buildDirectTestLink, { intentId });
+    const built = await t.action(internal.nodeActivation.buildDirectTestLink, { intentId });
     const { intentId: _i, issuedAt: _t, ...binding } = built.binding;
-    await t.mutation(internal.panelActivation.confirmDirect, { intentId, binding });
-    const review = await t.query(internal.panelActivation.review, { intentId });
-    const { runId } = await t.mutation(internal.panelActivation.approve, {
+    await t.mutation(internal.nodeActivation.confirmDirect, { intentId, binding });
+    const review = await t.query(internal.nodeActivation.review, { intentId });
+    const { runId } = await t.mutation(internal.nodeActivation.approve, {
       intentId,
       reviewHash: review.reviewHash,
     });
@@ -690,7 +690,7 @@ describe('activating a direct node', () => {
         activeInbounds: [{ uuid: transportUuid, tag: TAG }],
       },
     });
-    await t.action(internal.panelObserve.refresh, { backendServerId: serverId });
+    await t.action(internal.backendObserve.refresh, { backendServerId: serverId });
     // The transition is opened directly (the profile-patch request calls it).
     await expect(
       t.run((ctx) =>
@@ -718,11 +718,11 @@ describe('activating a direct node', () => {
     expect((await gateOf(t, serverId)).state).toBe('blocked');
     // The unmanaged node is held closed by name until released.
     const strangerGate = () =>
-      t.query(internal.panelIntents.nodeGate, { backendServerId: serverId, nodeName: 'stranger' });
+      t.query(internal.nodeIntents.nodeGate, { backendServerId: serverId, nodeName: 'stranger' });
     expect((await strangerGate()).state).toBe('blocked');
-    const holds = await t.query(internal.panelIntents.holdsView, { backendServerId: serverId });
+    const holds = await t.query(internal.nodeIntents.holdsView, { backendServerId: serverId });
     expect(holds).toHaveLength(1);
-    await t.mutation(internal.panelIntents.releaseHold, {
+    await t.mutation(internal.nodeIntents.releaseHold, {
       holdId: holds[0]!.id as Id<'panelMaintenanceHolds'>,
     });
     expect((await strangerGate()).state).toBe('open');
@@ -732,11 +732,11 @@ describe('activating a direct node', () => {
 
   test('a moved endpoint under a live node is observed drift: the gate closes, the address follows, the tick is gone', async () => {
     const { t, serverId, panel, intentId } = await seedLiveDirect();
-    const built = await t.action(internal.panelActivation.buildDirectTestLink, { intentId });
+    const built = await t.action(internal.nodeActivation.buildDirectTestLink, { intentId });
     const { intentId: _i, issuedAt: _t, ...binding } = built.binding;
-    await t.mutation(internal.panelActivation.confirmDirect, { intentId, binding });
-    const review = await t.query(internal.panelActivation.review, { intentId });
-    const { runId } = await t.mutation(internal.panelActivation.approve, {
+    await t.mutation(internal.nodeActivation.confirmDirect, { intentId, binding });
+    const review = await t.query(internal.nodeActivation.review, { intentId });
+    const { runId } = await t.mutation(internal.nodeActivation.approve, {
       intentId,
       reviewHash: review.reviewHash,
     });
@@ -747,7 +747,7 @@ describe('activating a direct node', () => {
     expect((await gateOf(t, serverId)).state).toBe('open');
 
     // The role reports a new public address: the committed address's tuple is dead.
-    await t.mutation(internal.panelIntents.enroll, {
+    await t.mutation(internal.nodeIntents.enroll, {
       backendServerId: serverId,
       name: 'node-a',
       mode: 'privacy-reality',
@@ -783,7 +783,7 @@ describe('activating a direct node', () => {
     // The transport now lists a second name, through FCP's own write (a family
     // rollout): the profile's token moves, and it is not a foreign edit.
     await addFamilyName(t, serverId, panel);
-    await t.mutation(internal.panelIntents.enroll, {
+    await t.mutation(internal.nodeIntents.enroll, {
       backendServerId: serverId,
       name: 'node-a',
       mode: 'privacy-reality',
@@ -815,7 +815,7 @@ describe('activating a direct node', () => {
   test('the rehearsal refuses a body that carries only one of two addresses', async () => {
     const { t, serverId, panel, intentId, review: committed } = await liveAndCommitted();
     await addFamilyName(t, serverId, panel);
-    await t.mutation(internal.panelIntents.enroll, {
+    await t.mutation(internal.nodeIntents.enroll, {
       backendServerId: serverId,
       name: 'node-a',
       mode: 'privacy-reality',
@@ -834,12 +834,12 @@ describe('activating a direct node', () => {
         .split('\n')
         .filter((line) => !line.includes('www.decoy-a.example'))
         .join('\n');
-    const built = await t.action(internal.panelActivation.buildDirectTestLink, { intentId });
+    const built = await t.action(internal.nodeActivation.buildDirectTestLink, { intentId });
     const { intentId: _i, issuedAt: _t, ...binding } = built.binding;
-    await t.mutation(internal.panelActivation.confirmDirect, { intentId, binding });
-    const review = await t.query(internal.panelActivation.review, { intentId });
+    await t.mutation(internal.nodeActivation.confirmDirect, { intentId, binding });
+    const review = await t.query(internal.nodeActivation.review, { intentId });
     expect(review.shape.addressTuples).toHaveLength(2);
-    const { runId } = await t.mutation(internal.panelActivation.approve, {
+    const { runId } = await t.mutation(internal.nodeActivation.approve, {
       intentId,
       reviewHash: review.reviewHash,
     });

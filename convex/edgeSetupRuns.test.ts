@@ -24,7 +24,7 @@ import {
 } from './lib/edges/testing/fixtures';
 import { __setStageOpsForTests, approvedDarkCohorts, type StageOps } from './edgeSetupRuns';
 import { __setPlanOpsForTests } from './edgeSetupPlan';
-import type { PanelInbound } from './lib/backends/types';
+import type { BackendTransport } from './lib/backends/types';
 import { MAX_OBSERVATION_AGE_MS, slugForNode, vectorsEqual } from './lib/edges/setupRuns';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -45,7 +45,7 @@ const HOST_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
 const HOST_S = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2';
 const HOST_V = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3';
 
-interface PanelHost {
+interface BackendAddress {
   uuid: string;
   remark: string;
   address: string;
@@ -56,7 +56,7 @@ interface PanelHost {
   inbound: { configProfileUuid: string; configProfileInboundUuid: string };
 }
 
-const inboundA: PanelInbound = {
+const inboundA: BackendTransport = {
   tag: 'VLESS_RELAY_A',
   configProfileUuid: FIXTURE_CONFIG_PROFILE,
   configProfileInboundUuid: FIXTURE_INBOUND,
@@ -67,7 +67,7 @@ const inboundA: PanelInbound = {
   reality: { target: 'target.example:443', serverNames: ['a.example'] },
   active: true,
 };
-const inboundS: PanelInbound = {
+const inboundS: BackendTransport = {
   tag: 'SS_IN',
   configProfileUuid: FIXTURE_CONFIG_PROFILE,
   configProfileInboundUuid: SS_INBOUND,
@@ -77,7 +77,7 @@ const inboundS: PanelInbound = {
   security: 'none',
   active: true,
 };
-const inboundV: PanelInbound = {
+const inboundV: BackendTransport = {
   tag: 'VMESS_IN',
   configProfileUuid: FIXTURE_CONFIG_PROFILE,
   configProfileInboundUuid: VMESS_INBOUND,
@@ -87,7 +87,7 @@ const inboundV: PanelInbound = {
   security: 'tls',
   active: true,
 };
-const directHostA = (): PanelHost => ({
+const directHostA = (): BackendAddress => ({
   uuid: HOST_A,
   remark: 'direct-a',
   address: ORIGIN,
@@ -95,14 +95,14 @@ const directHostA = (): PanelHost => ({
   sni: 'a.example',
   inbound: { configProfileUuid: FIXTURE_CONFIG_PROFILE, configProfileInboundUuid: FIXTURE_INBOUND },
 });
-const directHostS = (): PanelHost => ({
+const directHostS = (): BackendAddress => ({
   uuid: HOST_S,
   remark: 'direct-s',
   address: ORIGIN,
   port: 8388,
   inbound: { configProfileUuid: FIXTURE_CONFIG_PROFILE, configProfileInboundUuid: SS_INBOUND },
 });
-const directHostV = (): PanelHost => ({
+const directHostV = (): BackendAddress => ({
   uuid: HOST_V,
   remark: 'direct-v',
   address: ORIGIN,
@@ -114,8 +114,8 @@ const directHostV = (): PanelHost => ({
  * A fake UpCloud (every create mints a fresh RFC 5737 address) + a fake backend
  * whose Hosts are observable (the publish rotation creates the FCP Host).
  */
-function fakeWorld(opts: { hosts?: PanelHost[]; failCreateAt?: number } = {}) {
-  const panelHosts: PanelHost[] = opts.hosts ?? [directHostA()];
+function fakeWorld(opts: { hosts?: BackendAddress[]; failCreateAt?: number } = {}) {
+  const panelHosts: BackendAddress[] = opts.hosts ?? [directHostA()];
   const lbs = new Map<string, { uuid: string; name: string; operational_state: string }>();
   let creates = 0;
   let lbCreates = 0;
@@ -143,7 +143,7 @@ function fakeWorld(opts: { hosts?: PanelHost[]; failCreateAt?: number } = {}) {
       }
       if (c.path === '/api/hosts' && c.method === 'POST') {
         creates++;
-        const body = c.body as PanelHost;
+        const body = c.body as BackendAddress;
         const uuid = `cccccccc-cccc-4ccc-8ccc-${String(creates).padStart(12, '0')}`;
         panelHosts.push({ ...body, uuid });
         return jsonRes({ response: { uuid } });
@@ -183,7 +183,7 @@ function fakeWorld(opts: { hosts?: PanelHost[]; failCreateAt?: number } = {}) {
 
 /** Backend + a TESTED but unqualified UpCloud account + the node in the inventory. */
 async function seed(
-  opts: { inbounds?: PanelInbound[]; hosts?: PanelHost[]; failCreateAt?: number } = {},
+  opts: { inbounds?: BackendTransport[]; hosts?: BackendAddress[]; failCreateAt?: number } = {},
 ) {
   vi.useFakeTimers();
   const world = fakeWorld({ hosts: opts.hosts, failCreateAt: opts.failCreateAt });

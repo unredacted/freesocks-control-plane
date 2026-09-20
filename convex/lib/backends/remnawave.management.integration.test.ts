@@ -219,7 +219,7 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave management contract (integra
       apiToken: API_TOKEN!,
       timeoutMs: 20_000,
     };
-    const w = PROVIDERS.remnawave.panelWrites!;
+    const w = PROVIDERS.remnawave.backendWrites!;
     const KEY = 'integration-digest-key';
     const ops = [
       {
@@ -408,7 +408,7 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave management contract (integra
       apiToken: API_TOKEN!,
       timeoutMs: 20_000,
     };
-    const w = PROVIDERS.remnawave.panelWrites!;
+    const w = PROVIDERS.remnawave.backendWrites!;
     const profile = await api('GET', `config-profiles/${profileUuid}`);
     const a = uuidOfTag(profile.data, tagA)!;
     const inbound = { configProfileUuid: profileUuid, configProfileInboundUuid: a };

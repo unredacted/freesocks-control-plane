@@ -17,15 +17,15 @@
  *   ready_to_wipe -> wiped -> retired        the role's own ack, or an admin's
  *                                            confirmation for an ADOPTED node,
  *                                            whose machine the role never runs
- *                                            (panelIntents.markWiped)
+ *                                            (nodeIntents.markWiped)
  */
 import { ConvexError, v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
-import { addressesOf } from './panelIntents';
-import { bumpGateVersion } from './panelSetup';
+import { addressesOf } from './nodeIntents';
+import { bumpGateVersion } from './backendSetup';
 import { scheduleMirrorRefresh } from './relays';
 
 const refuse = (code: string, message: string): never => {
@@ -103,7 +103,7 @@ export const decide = internalMutation({
       targetId: intent._id,
       payload: { backendSlug: server?.slug ?? '', name: intent.name, disposition: a.disposition },
     });
-    await ctx.scheduler.runAfter(0, internal.panelRetirement.advance, { retirementId: r._id });
+    await ctx.scheduler.runAfter(0, internal.nodeRetirement.advance, { retirementId: r._id });
     return { stage: 'draining' as const };
   },
 });
@@ -115,7 +115,7 @@ export const startIfPlain = internalMutation({
     const r = await ctx.db.get(retirementId);
     if (!r || r.stage !== 'requested') return false;
     await event(ctx, r, { disposition: 'keep-dark', stage: 'draining' }, 'plain');
-    await ctx.scheduler.runAfter(0, internal.panelRetirement.advance, { retirementId });
+    await ctx.scheduler.runAfter(0, internal.nodeRetirement.advance, { retirementId });
     return true;
   },
 });
@@ -237,11 +237,11 @@ export const mark = internalMutation({
 export const advance = internalAction({
   args: { retirementId: v.id('panelRetirements') },
   handler: async (ctx, { retirementId }): Promise<null> => {
-    const c = await ctx.runQuery(internal.panelRetirement.context, { retirementId });
+    const c = await ctx.runQuery(internal.nodeRetirement.context, { retirementId });
     if (!c || c.r.stage !== 'draining') return null;
     const sid = c.intent.backendServerId;
     const stop = (code: string) =>
-      ctx.runMutation(internal.panelRetirement.mark, { retirementId, code });
+      ctx.runMutation(internal.nodeRetirement.mark, { retirementId, code });
     try {
       // 1. The origin and its edges (publication withdrawn by the delete; edges destroyed by reconcile).
       if (c.relay) {
@@ -272,18 +272,18 @@ export const advance = internalAction({
       }
       // 3. The node's own addresses.
       for (const h of c.addresses) {
-        const { opId } = await ctx.runMutation(internal.panelWrites.requestAddressDelete, {
+        const { opId } = await ctx.runMutation(internal.backendWrites.requestAddressDelete, {
           backendServerId: sid,
           hostUuid: h.hostUuid,
         });
-        const r = await ctx.runAction(internal.panelWrites.run, { opId });
+        const r = await ctx.runAction(internal.backendWrites.run, { opId });
         if (r.open) {
           await stop('servers.op_running');
           return null;
         }
       }
       // 4. Origin DNS.
-      const dns = await ctx.runAction(internal.panelIntentOps.withdrawOriginDns, {
+      const dns = await ctx.runAction(internal.nodeIntentOps.withdrawOriginDns, {
         intentId: c.intent._id,
       });
       if (dns.unresolved > 0) {
@@ -291,27 +291,27 @@ export const advance = internalAction({
         return null;
       }
       // 5. The backend row: removed with removeOnly (the role stops the process after).
-      await ctx.runAction(internal.panelObserve.refresh, { backendServerId: sid });
-      const fresh = await ctx.runQuery(internal.panelRetirement.context, { retirementId });
+      await ctx.runAction(internal.backendObserve.refresh, { backendServerId: sid });
+      const fresh = await ctx.runQuery(internal.nodeRetirement.context, { retirementId });
       if (fresh?.node) {
-        const { opId } = await ctx.runMutation(internal.panelWrites.requestNodeDelete, {
+        const { opId } = await ctx.runMutation(internal.backendWrites.requestNodeDelete, {
           backendServerId: sid,
           nodeUuid: fresh.node.nodeUuid,
           removeOnly: true,
         });
-        const r = await ctx.runAction(internal.panelWrites.run, { opId });
+        const r = await ctx.runAction(internal.backendWrites.run, { opId });
         if (r.open) {
           await stop('servers.op_running');
           return null;
         }
       }
-      await ctx.runMutation(internal.panelRetirement.mark, {
+      await ctx.runMutation(internal.nodeRetirement.mark, {
         retirementId,
         stage: 'panel_removed',
         code: null,
         tombstone: true,
       });
-      await ctx.runMutation(internal.panelRetirement.mark, {
+      await ctx.runMutation(internal.nodeRetirement.mark, {
         retirementId,
         stage: 'ready_to_wipe',
         code: null,
@@ -340,12 +340,12 @@ export const pending = internalQuery({
 export const sweep = internalAction({
   args: {},
   handler: async (ctx): Promise<number> => {
-    const rows = await ctx.runQuery(internal.panelRetirement.pending, {});
+    const rows = await ctx.runQuery(internal.nodeRetirement.pending, {});
     let n = 0;
     for (const r of rows) {
       if (r.stage === 'requested')
-        await ctx.runMutation(internal.panelRetirement.startIfPlain, { retirementId: r.id });
-      else await ctx.runAction(internal.panelRetirement.advance, { retirementId: r.id });
+        await ctx.runMutation(internal.nodeRetirement.startIfPlain, { retirementId: r.id });
+      else await ctx.runAction(internal.nodeRetirement.advance, { retirementId: r.id });
       n++;
     }
     return n;

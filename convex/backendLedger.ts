@@ -20,8 +20,8 @@ import { internalMutation, internalQuery, type MutationCtx } from './_generated/
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { capabilitiesOf } from './lib/backends/capabilities';
-import type { PanelObservedHost, PanelObservedSquad } from './lib/backends/types';
-import { upsertObservedHosts, upsertObservedSquads } from './panelObserve';
+import type { ObservedAddress, ObservedModeGroup } from './lib/backends/types';
+import { upsertObservedHosts, upsertObservedSquads } from './backendObserve';
 import {
   GONE_LOOKS_REQUIRED,
   asyncWorkFinished,
@@ -30,7 +30,7 @@ import {
   fieldsMatch,
   hostsMatchingIdentity,
   type RequestOutcome,
-} from './lib/panel/ops';
+} from './lib/backend/ops';
 import { resolveServerConfig } from './lib/serverConfig';
 
 type Op = Doc<'panelOps'>;
@@ -96,7 +96,7 @@ export async function assertWritable(ctx: MutationCtx, backendServerId: Id<'back
     refuse('servers.manage_disabled', 'Server changes are switched off in Servers settings');
   const server = await ctx.db.get(backendServerId);
   if (!server) return refuse('not_found', 'Backend server not found');
-  if (!capabilitiesOf(server.backend).panelWrites)
+  if (!capabilitiesOf(server.backend).backendWrites)
     refuse('servers.unsupported_backend', 'This backend type cannot be managed here');
   // FCP writes a backend it has set up or adopted (docs/servers.md "Setting up
   // a backend"); nothing else writes one. The setup run itself is the one
@@ -505,8 +505,8 @@ async function bridgeProfilePatch(ctx: MutationCtx, op: Op) {
 async function syncCache(
   ctx: MutationCtx,
   op: Op,
-  hosts?: readonly PanelObservedHost[],
-  squads?: readonly PanelObservedSquad[],
+  hosts?: readonly ObservedAddress[],
+  squads?: readonly ObservedModeGroup[],
 ) {
   const now = Date.now();
   if (op.kind === 'host' && hosts) await upsertObservedHosts(ctx, op.backendServerId, hosts, now);

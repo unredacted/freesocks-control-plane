@@ -9,7 +9,7 @@
 import { v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
-import { blocksIdentity } from './lib/panel/obligations';
+import { blocksIdentity } from './lib/backend/obligations';
 
 export const ownerKind = v.union(
   v.literal('setup'),
@@ -41,11 +41,11 @@ const obligationState = v.union(
 export async function blockingObligationFor(
   db: { query: DbQuery },
   backendServerId: Id<'backendServers'>,
-  kind: Doc<'panelObligations'>['kind'],
+  kind: Doc<'backendObligations'>['kind'],
   identity: string,
-): Promise<Doc<'panelObligations'> | null> {
+): Promise<Doc<'backendObligations'> | null> {
   const rows = await db
-    .query('panelObligations')
+    .query('backendObligations')
     .withIndex('by_server_kind_identity', (q) =>
       q.eq('backendServerId', backendServerId).eq('kind', kind).eq('identity', identity),
     )
@@ -63,7 +63,7 @@ export const listForOwner = internalQuery({
   args: { ownerKind, ownerId: v.string() },
   handler: (ctx, { ownerKind: k, ownerId }) =>
     ctx.db
-      .query('panelObligations')
+      .query('backendObligations')
       .withIndex('by_owner', (q) => q.eq('ownerKind', k).eq('ownerId', ownerId))
       .collect(),
 });
@@ -95,7 +95,7 @@ export const open = internalMutation({
     const blocking = await blockingObligationFor(ctx.db, a.backendServerId, a.kind, a.identity);
     if (blocking) return { ok: false as const, blockedBy: blocking._id };
     const now = Date.now();
-    const id = await ctx.db.insert('panelObligations', {
+    const id = await ctx.db.insert('backendObligations', {
       ...a,
       state: 'pending',
       createdAt: now,
@@ -107,7 +107,7 @@ export const open = internalMutation({
 
 export const mark = internalMutation({
   args: {
-    id: v.id('panelObligations'),
+    id: v.id('backendObligations'),
     state: obligationState,
     resourceRef: v.optional(v.string()),
     code: v.optional(v.string()),
@@ -131,6 +131,6 @@ export const mark = internalMutation({
 });
 
 export const get = internalQuery({
-  args: { id: v.id('panelObligations') },
+  args: { id: v.id('backendObligations') },
   handler: (ctx, { id }) => ctx.db.get(id),
 });

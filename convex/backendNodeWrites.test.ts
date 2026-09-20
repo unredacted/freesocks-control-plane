@@ -186,7 +186,7 @@ async function seed() {
   await t.mutation(internal.sessions.create, { sid, kind: 'admin', adminUserId, ttlMs: 3_600_000 });
   const cookie = `fs_admin_session=${await signValue(sid, ADMIN_SIGN_KEY)}`;
   const panel = installPanel();
-  await t.action(internal.panelObserve.refresh, { backendServerId: serverId });
+  await t.action(internal.backendObserve.refresh, { backendServerId: serverId });
   await t.mutation(internal.serverAdmin.patchConfig, { patch: { 'manage.enabled': true } });
   await markBackendSetUp(t, serverId);
   const call = async (method: string, path: string, body?: unknown) =>
@@ -198,7 +198,7 @@ async function seed() {
       })
     ).json();
   const observe = (id: string) => call('POST', `ops/${id}/observe`);
-  const refresh = () => t.action(internal.panelObserve.refresh, { backendServerId: serverId });
+  const refresh = () => t.action(internal.backendObserve.refresh, { backendServerId: serverId });
   return { t, serverId, panel, call, observe, refresh };
 }
 

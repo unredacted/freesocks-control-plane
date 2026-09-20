@@ -25,7 +25,7 @@ import type {
   BackendHostPatch,
   BackendHostCreate,
   NodeInventoryRow,
-  PanelInbound,
+  BackendTransport,
   PanelObservation,
   PanelWrites,
 } from './types';
@@ -166,7 +166,7 @@ export interface BackendProvider<C extends BackendConfig = BackendConfig> {
   getNodeInventory?(config: C): Promise<NodeInventoryRow[]>;
   // Optional: the inbounds one node serves (allowlisted projection; never
   // credentials or key material) for origin listener discovery.
-  listNodeInbounds?(config: C, nodeUuid: string): Promise<PanelInbound[]>;
+  listNodeInbounds?(config: C, nodeUuid: string): Promise<BackendTransport[]>;
   /**
    * Read the backend's nodes, config profiles, Hosts and mode groups for server
    * management. Read-only; config profiles are reduced to a non-secret
@@ -174,7 +174,7 @@ export interface BackendProvider<C extends BackendConfig = BackendConfig> {
    */
   observePanel?(config: C, digestKey: string): Promise<PanelObservation>;
   /** Server-management WRITES (Hosts, mode groups). One call each, never retried here. */
-  panelWrites?: PanelWrites<C>;
+  backendWrites?: PanelWrites<C>;
   // Optional: re-find a user FCP created by its username (the version-neutral
   // by-username read). The persisted mint operations (origin qualification
   // credential, temporary test credentials) discover an issued user after a
@@ -217,7 +217,7 @@ const remnawaveProvider: BackendProvider<RemnawaveServerConfig> = {
   getNodeInventory: (c) => remnawaveGetNodeInventory(c),
   listNodeInbounds: (c, nodeUuid) => remnawaveListNodeInbounds(c, nodeUuid),
   observePanel: (c, digestKey) => remnawaveObservePanel(c, digestKey),
-  panelWrites: {
+  backendWrites: {
     createAddress: remnawaveManageCreateHost,
     updateAddress: remnawaveManageUpdateHost,
     deleteAddress: (c, uuid) => remnawaveDeleteHost(c, uuid),

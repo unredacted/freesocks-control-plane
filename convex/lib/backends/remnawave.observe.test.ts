@@ -9,7 +9,7 @@
  * Fixtures use RFC 5737 addresses and `*.example` names only.
  */
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { realityPublicKey } from '../panel/digest';
+import { realityPublicKey } from '../backend/digest';
 import { remnawaveObservePanel, type RemnawaveConfig } from './remnawave';
 
 const cfg: RemnawaveConfig = { baseUrl: 'https://panel.internal', apiToken: 'SECRET_TOKEN' };

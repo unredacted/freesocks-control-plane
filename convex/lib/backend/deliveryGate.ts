@@ -1,5 +1,5 @@
 /**
- * The node delivery gate (pure half; `convex/panelIntents.ts` reads the rows).
+ * The node delivery gate (pure half; `convex/nodeIntents.ts` reads the rows).
  * What keeps members away from a node that is not live is this gate, not the
  * absence of Hosts or edges: during activation both exist as CANDIDATE
  * resources. Every render carries the gate version and the committed

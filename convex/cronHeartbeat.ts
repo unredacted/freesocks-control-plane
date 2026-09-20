@@ -135,12 +135,12 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
     description: 'Server-name families: delete attributed report counts older than the window',
   },
   {
-    name: 'panel-reconcile',
+    name: 'backend-reconcile',
     everyMs: 5 * MIN,
     description: 'Server management: settle open backend changes by looking at the backend',
   },
   {
-    name: 'panel-bootstrap-sweep',
+    name: 'backend-bootstrap-sweep',
     everyMs: 5 * MIN,
     description:
       'Server management: resume bootstrap workflows an interrupted attempt left pending',

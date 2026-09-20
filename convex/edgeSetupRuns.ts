@@ -82,7 +82,7 @@ import { SETUP_RUN_STAGES, type SetupRunStage } from '../src/shared/contracts/ed
 import type { HideResult, HideStatus } from './edgeHostHides';
 import type { RehearsalResult } from './edgeRehearsal';
 import type { TestLinkResult } from './edgeTestLinks';
-import { activatingRunFor, promoteCandidate } from './panelActivation';
+import { activatingRunFor, promoteCandidate } from './nodeActivation';
 
 type Run = Doc<'edgeSetupRuns'>;
 type Relay = Doc<'relays'>;

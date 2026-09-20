@@ -1,6 +1,6 @@
 /**
  * Transport discovery (pure half): turn the transports a backend node serves
- * (`PanelInbound`, the provider's allowlisted projection) into origin listener
+ * (`BackendTransport`, the provider's allowlisted projection) into origin listener
  * candidates in the by-slug registration shape, or say why one cannot be a
  * listener. The guided setup builds its "protect every frontable transport"
  * plan from this; nothing here touches the database or the backend.
@@ -29,9 +29,9 @@
  * rule. Uniqueness is still enforced against the origin's existing keys and
  * within the batch: a collision after the digest is `invalid`.
  */
-import type { PanelInbound } from '../backends/types';
+import type { BackendTransport } from '../backends/types';
 import { sha256Hex } from '../crypto';
-import { applyIngress, type IngressMapping } from '../panel/ingress';
+import { applyIngress, type IngressMapping } from '../backend/ingress';
 import type { InboundUnsupportedCode } from '../../../src/shared/contracts/edgeCodes';
 import {
   isValidListenerCombo,
@@ -53,7 +53,7 @@ import {
 
 export type PanelNodeOrigin = Extract<RelayOrigin, { kind: 'panel-node' }>;
 
-export interface InboundCandidate {
+export interface TransportCandidate {
   /** The listener as a registration body carries it (no `originTransport`). */
   listenerSpec: ListenerSpecInput;
   /** Which edge layers can front it today (L4-only until an origin probe runs). */
@@ -88,7 +88,7 @@ export interface InboundMappingOptions {
 }
 
 export interface InboundMapping {
-  candidates: InboundCandidate[];
+  candidates: TransportCandidate[];
   unsupported: UnsupportedInbound[];
 }
 
@@ -170,11 +170,11 @@ function refusalDetail(err: unknown): string {
   return err instanceof Error ? err.message : 'validation';
 }
 
-export async function mapInboundsToListeners(
-  inbounds: readonly PanelInbound[],
+export async function mapTransportsToListeners(
+  inbounds: readonly BackendTransport[],
   opts: InboundMappingOptions,
 ): Promise<InboundMapping> {
-  const candidates: InboundCandidate[] = [];
+  const candidates: TransportCandidate[] = [];
   const unsupported: UnsupportedInbound[] = [];
   const taken = new Set(opts.existingKeys);
   const ctx = { origin: opts.origin };

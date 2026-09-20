@@ -279,8 +279,9 @@ describe('write wording', () => {
   test('every refusal the server can answer has its own words', () => {
     const sources = import.meta.glob(
       [
-        '../../../../../../convex/panel*.ts',
-        '../../../../../../convex/lib/panel/*.ts',
+        '../../../../../../convex/backend*.ts',
+        '../../../../../../convex/node*.ts',
+        '../../../../../../convex/lib/backend/*.ts',
         '!**/*.test.ts',
       ],
       { query: '?raw', import: 'default', eager: true },

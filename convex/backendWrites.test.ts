@@ -31,8 +31,8 @@ import {
   registerRelay,
   realityListener,
 } from './lib/edges/testing/fixtures';
-import { claimKey } from './lib/panel/ops';
-import { assertNoPanelClaim } from './panelLedger';
+import { claimKey } from './lib/backend/ops';
+import { assertNoPanelClaim } from './backendLedger';
 import { scopeFor } from './httpServers';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -263,7 +263,7 @@ async function seed(opts: { enabled?: boolean; handoff?: boolean } = {}) {
   const cookie = await adminCookie(t);
   const panel = newPanel();
   installPanel(panel);
-  await t.action(internal.panelObserve.refresh, { backendServerId: serverId });
+  await t.action(internal.backendObserve.refresh, { backendServerId: serverId });
   if (opts.enabled !== false)
     await t.mutation(internal.serverAdmin.patchConfig, { patch: { 'manage.enabled': true } });
   if (opts.handoff !== false) await markBackendSetUp(t, serverId);
@@ -373,8 +373,8 @@ describe('Hosts', () => {
     panel.fault = null;
 
     // Running it again never sends a second attempt.
-    await t.action(internal.panelWrites.run, { opId: first.id as Id<'panelOps'> });
-    await t.action(internal.panelWrites.reconcile, {});
+    await t.action(internal.backendWrites.run, { opId: first.id as Id<'panelOps'> });
+    await t.action(internal.backendWrites.reconcile, {});
     expect(panel.writes).toEqual(['PATCH /api/hosts']);
 
     // An opposing write to the same Host is refused, however many quiet looks pass.
@@ -623,22 +623,22 @@ describe('claims, interruption and recovery', () => {
 
   test('an op that never sent is released; one interrupted mid-call becomes unknown', async () => {
     const { t, serverId, panel } = await seed();
-    const { opId: neverSent } = await t.mutation(internal.panelWrites.requestAddressUpdate, {
+    const { opId: neverSent } = await t.mutation(internal.backendWrites.requestAddressUpdate, {
       backendServerId: serverId,
       hostUuid: 'h-1',
       sni: 'x.example',
     });
-    const { opId: midCall } = await t.mutation(internal.panelWrites.requestAddressUpdate, {
+    const { opId: midCall } = await t.mutation(internal.backendWrites.requestAddressUpdate, {
       backendServerId: serverId,
       hostUuid: 'h-edge',
       sni: 'y.example',
     });
-    await t.mutation(internal.panelLedger.markSent, { opId: midCall, attemptId: 'a-1' });
+    await t.mutation(internal.backendLedger.markSent, { opId: midCall, attemptId: 'a-1' });
     await t.run(async (ctx) => {
       for (const id of [neverSent, midCall])
         await ctx.db.patch(id, { updatedAt: Date.now() - 10 * 60_000 });
     });
-    await t.action(internal.panelWrites.reconcile, {});
+    await t.action(internal.backendWrites.reconcile, {});
     const byId = new Map((await ops(t)).map((o) => [o._id, o]));
     expect(byId.get(neverSent)).toMatchObject({
       open: false,

@@ -5,7 +5,7 @@
  * name and marker after an uncertain one), public resolution, and the front
  * ingress check (TLS to the origin name, the WebSocket path answered, a
  * foreign Host answered). Nothing here writes a workflow row directly: every
- * outcome goes through the fenced mutations in panelIntents.ts.
+ * outcome goes through the fenced mutations in nodeIntents.ts.
  */
 import { promises as dns } from 'node:dns';
 import * as https from 'node:https';
@@ -22,7 +22,7 @@ import {
   planRecord,
   verifyResolution,
   type DesiredRecord,
-} from './lib/panel/originDns';
+} from './lib/backend/originDns';
 
 const fence = { intentId: v.id('panelNodeIntents'), generation: v.number(), attemptId: v.string() };
 
@@ -52,7 +52,7 @@ export const ensureOriginDns = internalAction({
     ctx,
     f,
   ): Promise<{ state: 'created' | 'kept' | 'conflict' | 'unresolved' | 'none' }> => {
-    const c = await ctx.runQuery(internal.panelIntents.loadForRun, f);
+    const c = await ctx.runQuery(internal.nodeIntents.loadForRun, f);
     if (!c) return { state: 'none' };
     const zone = c.setup.originDns;
     if (!zone || c.intent.settings.originHostnameSource !== 'managed' || !c.hostname)
@@ -62,7 +62,7 @@ export const ensureOriginDns = internalAction({
     });
     const apiToken = (acct?.credentials as { apiToken?: string } | undefined)?.apiToken;
     if (!acct || !apiToken) {
-      await ctx.runMutation(internal.panelIntents.progress, {
+      await ctx.runMutation(internal.nodeIntents.progress, {
         ...f,
         patch: { origin: { hostname: c.hostname, address: c.originAddress, dns: 'conflict' } },
       });
@@ -84,7 +84,7 @@ export const ensureOriginDns = internalAction({
     // A record FCP owns for a family no longer desired (v6 withdrawn, an
     // address family gone from the observations) is deleted first, so what
     // resolves is exactly what is desired.
-    const owned = await ctx.runQuery(internal.panelObligations.listForOwner, {
+    const owned = await ctx.runQuery(internal.backendObligations.listForOwner, {
       ownerKind: 'intent',
       ownerId: f.intentId,
     });
@@ -99,7 +99,7 @@ export const ensureOriginDns = internalAction({
       const identity = `${d.type}:${d.name}`;
       // Discovery FIRST: it settles the previous attempt on this identity, if any.
       const existing = await client.findRecordsByName(d.name);
-      const blocking = await ctx.runQuery(internal.panelObligations.blockingFor, {
+      const blocking = await ctx.runQuery(internal.backendObligations.blockingFor, {
         backendServerId: c.server._id,
         kind: 'dns.record',
         identity,
@@ -112,7 +112,7 @@ export const ensureOriginDns = internalAction({
           code?: string;
           recordId?: string;
         }) =>
-          ctx.runMutation(internal.panelObligations.mark, {
+          ctx.runMutation(internal.backendObligations.mark, {
             id: blocking._id,
             ...patch,
             ...(patch.recordId ? { resourceRef: patch.recordId } : {}),
@@ -136,7 +136,7 @@ export const ensureOriginDns = internalAction({
         }
       }
       if (plan.action === 'conflict') {
-        await ctx.runMutation(internal.panelIntents.progress, {
+        await ctx.runMutation(internal.nodeIntents.progress, {
           ...f,
           patch: { origin: { hostname: c.hostname, address: c.originAddress, dns: 'conflict' } },
         });
@@ -144,7 +144,7 @@ export const ensureOriginDns = internalAction({
       }
       if (plan.action === 'keep') continue;
       if (plan.action === 'replace') {
-        const del = await ctx.runMutation(internal.panelObligations.open, {
+        const del = await ctx.runMutation(internal.backendObligations.open, {
           backendServerId: c.server._id,
           ownerKind: 'intent',
           ownerId: f.intentId,
@@ -158,28 +158,31 @@ export const ensureOriginDns = internalAction({
           dns: { ...zone, marker, recordId: plan.deleteId },
         });
         if (!del.ok) return { state: 'unresolved' };
-        await ctx.runMutation(internal.panelObligations.mark, { id: del.id, state: 'sent' });
+        await ctx.runMutation(internal.backendObligations.mark, { id: del.id, state: 'sent' });
         try {
           await client.deleteRecord(plan.deleteId);
-          await ctx.runMutation(internal.panelObligations.mark, { id: del.id, state: 'confirmed' });
+          await ctx.runMutation(internal.backendObligations.mark, {
+            id: del.id,
+            state: 'confirmed',
+          });
           // The create obligation that owned the replaced record is settled
           // with it: retirement must not try to delete a record twice.
           for (const o of owned)
             if (ownsRecord(o) && o.dns?.recordId === plan.deleteId)
-              await ctx.runMutation(internal.panelObligations.mark, {
+              await ctx.runMutation(internal.backendObligations.mark, {
                 id: o._id,
                 state: 'failed',
                 code: 'replaced',
               });
         } catch {
-          await ctx.runMutation(internal.panelObligations.mark, {
+          await ctx.runMutation(internal.backendObligations.mark, {
             id: del.id,
             state: 'unresolved',
           });
           return { state: 'unresolved' };
         }
       }
-      const ob = await ctx.runMutation(internal.panelObligations.open, {
+      const ob = await ctx.runMutation(internal.backendObligations.open, {
         backendServerId: c.server._id,
         ownerKind: 'intent',
         ownerId: f.intentId,
@@ -193,10 +196,10 @@ export const ensureOriginDns = internalAction({
         dns: { ...zone, marker },
       });
       if (!ob.ok) return { state: 'unresolved' };
-      await ctx.runMutation(internal.panelObligations.mark, { id: ob.id, state: 'sent' });
+      await ctx.runMutation(internal.backendObligations.mark, { id: ob.id, state: 'sent' });
       try {
         const rec = await client.createRecord({ ...d, proxied: false, comment: marker });
-        await ctx.runMutation(internal.panelObligations.mark, {
+        await ctx.runMutation(internal.backendObligations.mark, {
           id: ob.id,
           state: 'confirmed',
           resourceRef: rec.id,
@@ -204,11 +207,11 @@ export const ensureOriginDns = internalAction({
         });
         created = true;
       } catch {
-        await ctx.runMutation(internal.panelObligations.mark, { id: ob.id, state: 'unresolved' });
+        await ctx.runMutation(internal.backendObligations.mark, { id: ob.id, state: 'unresolved' });
         return { state: 'unresolved' };
       }
     }
-    await ctx.runMutation(internal.panelIntents.progress, {
+    await ctx.runMutation(internal.nodeIntents.progress, {
       ...f,
       patch: { origin: { hostname: c.hostname, address: c.originAddress, dns: 'created' } },
     });
@@ -216,7 +219,7 @@ export const ensureOriginDns = internalAction({
   },
 });
 
-type Obligation = Doc<'panelObligations'>;
+type Obligation = Doc<'backendObligations'>;
 
 /** A confirmed create obligation holding a record id: FCP owns that record. */
 function ownsRecord(o: Obligation): boolean {
@@ -252,7 +255,7 @@ async function withdrawRecord(ctx: ActionCtx, o: Obligation): Promise<'removed' 
       return 'unresolved';
     }
   }
-  await ctx.runMutation(internal.panelObligations.mark, {
+  await ctx.runMutation(internal.backendObligations.mark, {
     id: o._id,
     state: 'failed',
     code: 'withdrawn',
@@ -264,7 +267,7 @@ async function withdrawRecord(ctx: ActionCtx, o: Obligation): Promise<'removed' 
 export const withdrawOriginDns = internalAction({
   args: { intentId: v.id('panelNodeIntents') },
   handler: async (ctx, { intentId }): Promise<{ removed: number; unresolved: number }> => {
-    const rows = await ctx.runQuery(internal.panelObligations.listForOwner, {
+    const rows = await ctx.runQuery(internal.backendObligations.listForOwner, {
       ownerKind: 'intent',
       ownerId: intentId,
     });

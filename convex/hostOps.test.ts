@@ -32,7 +32,7 @@ const NOW = 1_800_000_000_000;
 
 const TARGET = { address: EDGE, port: 443, sni: 'a.example', host: null };
 
-interface PanelHost {
+interface BackendAddress {
   uuid: string;
   remark: string;
   address: string;
@@ -42,7 +42,7 @@ interface PanelHost {
   inbound: { configProfileUuid: string; configProfileInboundUuid: string } | null;
 }
 
-function panelHost(over: Partial<PanelHost> = {}): PanelHost {
+function panelHost(over: Partial<BackendAddress> = {}): BackendAddress {
   return {
     uuid: HOST_UUID,
     remark: REMARK,
@@ -59,7 +59,7 @@ function panelHost(over: Partial<PanelHost> = {}): PanelHost {
 }
 
 /** The discovery-call shape `applyDiscovery` takes (what `listPanelHosts` produces). */
-function seen(h: PanelHost) {
+function seen(h: BackendAddress) {
   return {
     uuid: h.uuid,
     remark: h.remark,
@@ -76,7 +76,7 @@ function seen(h: PanelHost) {
  * asked), DELETE removes (or fails / is ignored when asked), GET lists.
  */
 function fakePanel(
-  initial: PanelHost[] = [],
+  initial: BackendAddress[] = [],
   opts: { createFails?: boolean; deleteFails?: boolean; deleteIgnored?: boolean } = {},
 ) {
   const hosts = [...initial];
@@ -92,7 +92,7 @@ function fakePanel(
         port: number;
         sni?: string;
         host?: string;
-        inbound: PanelHost['inbound'];
+        inbound: BackendAddress['inbound'];
       };
       const uuid = `cccccccc-cccc-4ccc-8ccc-${String(++minted).padStart(12, '0')}`;
       hosts.push({

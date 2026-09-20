@@ -15,7 +15,7 @@ import type { QueryCtx } from './_generated/server';
 import type { Id } from './_generated/dataModel';
 import type { BackendConfig, RemnawaveServerConfig } from './lib/backends/registry';
 import { PROVIDERS } from './lib/backends/registry';
-import { observeInstance } from './panelObserve';
+import { observeInstance } from './backendObserve';
 import {
   remnawaveFleetStats,
   remnawaveMajorVersion,
@@ -351,7 +351,7 @@ export const hardenRemnawaveLogging = internalAction({
         // backend again as a new baseline so it is not flagged as somebody else's.
         if (!dryRun && report.profiles.some((p) => p.changed) && provider.observePanel)
           await ctx
-            .runAction(internal.panelObserve.refresh, { backendServerId: s._id, ownEdit: true })
+            .runAction(internal.backendObserve.refresh, { backendServerId: s._id, ownEdit: true })
             .catch(() => undefined);
         instances.push({
           serverId: s._id as string,

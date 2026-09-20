@@ -134,7 +134,7 @@ async function seed(familyNames = ['fresh-1.example', 'fresh-2.example']) {
   const t = convexTest(schema, modules);
   const serverId = await insertPanelServer(t);
   const panel = installPanel();
-  await t.action(internal.panelObserve.refresh, { backendServerId: serverId });
+  await t.action(internal.backendObserve.refresh, { backendServerId: serverId });
   await t.mutation(internal.serverAdmin.patchConfig, { patch: { 'manage.enabled': true } });
   await markBackendSetUp(t, serverId);
   await t.mutation(internal.sniFamilies.patchConfig, { patch: { enabled: true } });
@@ -251,7 +251,7 @@ describe('rollout', () => {
     // The backend is readable again; the scheduled reconcile settles the op...
     panel.failReads = false;
     panel.node.lastStatusChange = 't1';
-    await t.action(internal.panelWrites.reconcile, {});
+    await t.action(internal.backendWrites.reconcile, {});
     // ...and the rollout followed it, without anyone starting it again.
     const after = await t.query(internal.sniRollouts.status, { rolloutId: out.rolloutId! });
     expect(after.phase).toBe('panel_confirmed');
@@ -264,7 +264,7 @@ describe('rollout', () => {
     await t.action(internal.sniRollouts.start, { bindingId });
     // b.example is retired on the origin but still inside its drain.
     panel.node.lastStatusChange = 't1';
-    await t.action(internal.panelWrites.reconcile, {});
+    await t.action(internal.backendWrites.reconcile, {});
     await t.mutation(internal.relayListeners.retireName, { id: listenerId, names: ['b.example'] });
     const p = await t.query(internal.sniRollouts.plan, { bindingId });
     expect(p.names).toContain('b.example');
@@ -417,7 +417,7 @@ describe('acceptance', () => {
     const first = await t.action(internal.sniRollouts.start, { bindingId });
     const rc = await receipt(t, first.rolloutId!, edgeId);
     panel.node.lastStatusChange = 't1';
-    await t.action(internal.panelWrites.reconcile, {});
+    await t.action(internal.backendWrites.reconcile, {});
     await t.mutation(internal.sniFamilies.importNames, { slug: 'fam', lines: ['fresh-3.example'] });
     for (const n of (await t.query(internal.sniFamilies.dueForQualification, {})).names)
       await t.mutation(internal.sniFamilies.recordQualification, { id: n.id, ok: true });

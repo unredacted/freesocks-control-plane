@@ -1015,7 +1015,7 @@ export type RelayNodeCandidatesResponse = z.infer<typeof RelayNodeCandidatesResp
  * catalogue", discovery), with `originTransport` filled where the origin probe
  * succeeded and `layers` recomputed from it. Nothing is registered by this call.
  */
-export const InboundCandidate = z.object({
+export const TransportCandidate = z.object({
   listenerSpec: ListenerSpec,
   /** The layers that can front the candidate, and why the others cannot (`LAYER_EXCLUSION_CODES`). */
   layers: z.object({
@@ -1029,13 +1029,13 @@ export const InboundCandidate = z.object({
   /** The origin probe's verdict (HTTP-transport candidates only); `reason` is a short code, never an address. */
   probe: z.object({ ok: z.boolean(), reason: z.string().nullable() }).nullable(),
 });
-export type InboundCandidate = z.infer<typeof InboundCandidate>;
+export type TransportCandidate = z.infer<typeof TransportCandidate>;
 export const InboundCandidatesResponse = z.object({
   node: z.object({ nodeUuid: z.string(), name: z.string(), address: z.string().nullable() }),
   originAddress: z.string(),
   /** The relay already registered on this node, when one exists. */
   relaySlug: z.string().nullable(),
-  candidates: z.array(InboundCandidate),
+  candidates: z.array(TransportCandidate),
   unsupported: z.array(
     z.object({
       tag: z.string(),

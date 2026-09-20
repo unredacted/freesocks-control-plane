@@ -19,11 +19,11 @@ import { capabilitiesOf } from './lib/backends/capabilities';
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
 import type {
   PanelObservation,
-  PanelObservedHost,
+  ObservedAddress,
   ObservedTransport,
-  PanelObservedSquad,
+  ObservedModeGroup,
 } from './lib/backends/types';
-import { panelDigestKey } from './lib/panel/key';
+import { panelDigestKey } from './lib/backend/key';
 
 const nullableString = v.union(v.string(), v.null());
 
@@ -74,12 +74,12 @@ type Db = import('./_generated/server').MutationCtx['db'];
  * Replace an instance's cached Hosts with what was just read: rows the backend
  * still lists are replaced in place, rows it no longer lists are deleted. The
  * one mapping from the provider's Host shape to the stored row, shared with the
- * ledger's post-settle refresh (`panelLedger.syncCache`).
+ * ledger's post-settle refresh (`backendLedger.syncCache`).
  */
 export async function upsertObservedHosts(
   ctx: { db: Db },
   sid: Id<'backendServers'>,
-  hosts: readonly PanelObservedHost[],
+  hosts: readonly ObservedAddress[],
   now: number,
 ) {
   const rows = await ctx.db
@@ -121,7 +121,7 @@ export async function upsertObservedHosts(
 export async function upsertObservedSquads(
   ctx: { db: Db },
   sid: Id<'backendServers'>,
-  squads: readonly PanelObservedSquad[],
+  squads: readonly ObservedModeGroup[],
   now: number,
 ) {
   const rows = await ctx.db
@@ -379,7 +379,7 @@ export async function observeInstance(
   try {
     const { key, keyId } = await panelDigestKey();
     const seen = await provider.observePanel(server.config as BackendConfig, key);
-    await ctx.runMutation(internal.panelObserve.record, {
+    await ctx.runMutation(internal.backendObserve.record, {
       backendServerId: server._id,
       digestKeyId: keyId,
       ownEdit: opts.ownEdit,
@@ -388,7 +388,7 @@ export async function observeInstance(
     return true;
   } catch {
     // The provider's message is never persisted (a backend can say anything).
-    await ctx.runMutation(internal.panelObserve.recordFailure, {
+    await ctx.runMutation(internal.backendObserve.recordFailure, {
       backendServerId: server._id,
       errorCode: 'servers.observe_failed',
     });

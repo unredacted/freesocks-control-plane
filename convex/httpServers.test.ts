@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 /**
- * Server management, read half: backend observation (`panelObserve`) and the
+ * Server management, read half: backend observation (`backendObserve`) and the
  * admin surface over it (`/api/v1/admin/servers/*`).
  *
  *  - DORMANT by default: the healthcheck makes no observation call until
@@ -271,7 +271,7 @@ describe('backend observation', () => {
 
   test('no secret is stored', async () => {
     const { t, serverId } = await seed();
-    await t.action(internal.panelObserve.refresh, { backendServerId: serverId });
+    await t.action(internal.backendObserve.refresh, { backendServerId: serverId });
     const blob = JSON.stringify(await allPanelRows(t));
     for (const s of SECRETS) expect(blob).not.toContain(s);
     expect(blob).not.toContain('clients');
@@ -279,7 +279,7 @@ describe('backend observation', () => {
 
   test('the caches follow the backend, and a moved change token is stamped', async () => {
     const { t, serverId, panel } = await seed();
-    const look = () => t.action(internal.panelObserve.refresh, { backendServerId: serverId });
+    const look = () => t.action(internal.backendObserve.refresh, { backendServerId: serverId });
     await look();
     let rows = await allPanelRows(t);
     const token0 = rows.profiles[0].changeToken;
@@ -306,19 +306,19 @@ describe('backend observation', () => {
 
   test('a token made with another key is a new baseline, not a change', async () => {
     const { t, serverId } = await seed();
-    await t.action(internal.panelObserve.refresh, { backendServerId: serverId });
+    await t.action(internal.backendObserve.refresh, { backendServerId: serverId });
     vi.stubEnv('ACCOUNT_ID_PEPPER', 'another-deployment');
-    await t.action(internal.panelObserve.refresh, { backendServerId: serverId });
+    await t.action(internal.backendObserve.refresh, { backendServerId: serverId });
     const [p] = (await allPanelRows(t)).profiles;
     expect(p.tokenChangedAt).toBeUndefined();
   });
 
   test('a failing look keeps the last snapshot, stores a code word, and never the message', async () => {
     const { t, serverId, panel } = await seed();
-    await t.action(internal.panelObserve.refresh, { backendServerId: serverId });
+    await t.action(internal.backendObserve.refresh, { backendServerId: serverId });
     panel.fail = true;
     await expect(
-      t.action(internal.panelObserve.refresh, { backendServerId: serverId }),
+      t.action(internal.backendObserve.refresh, { backendServerId: serverId }),
     ).rejects.toThrow(/panel_read_failed/);
     const rows = await allPanelRows(t);
     expect(rows.nodes).toHaveLength(1);
@@ -350,7 +350,7 @@ describe('backend observation', () => {
     const { t } = await seed();
     const outline = await insertPanelServer(t, { slug: 'outline-a', backend: 'outline' });
     await expect(
-      t.action(internal.panelObserve.refresh, { backendServerId: outline }),
+      t.action(internal.backendObserve.refresh, { backendServerId: outline }),
     ).rejects.toThrow(/unsupported_backend/);
   });
 });

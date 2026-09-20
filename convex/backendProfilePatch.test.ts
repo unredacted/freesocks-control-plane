@@ -142,7 +142,7 @@ async function seed() {
   await t.mutation(internal.sessions.create, { sid, kind: 'admin', adminUserId, ttlMs: 3_600_000 });
   const cookie = `fs_admin_session=${await signValue(sid, ADMIN_SIGN_KEY)}`;
   const panel = installPanel();
-  await t.action(internal.panelObserve.refresh, { backendServerId: serverId });
+  await t.action(internal.backendObserve.refresh, { backendServerId: serverId });
   await t.mutation(internal.serverAdmin.patchConfig, { patch: { 'manage.enabled': true } });
   await markBackendSetUp(t, serverId);
   const { relayId, listenerIds } = await registerRelay(t, { listeners: [realityListener()] });
@@ -369,7 +369,7 @@ describe('an edit made somewhere else', () => {
   test("FCP's own edit is never flagged, however late it is first seen", async () => {
     const { t, preview, apply, serverId } = await seed();
     await apply(await preview(ADD));
-    await t.action(internal.panelObserve.refresh, { backendServerId: serverId });
+    await t.action(internal.backendObserve.refresh, { backendServerId: serverId });
     expect(await flagged(t)).toBeFalsy();
   });
 
@@ -377,12 +377,12 @@ describe('an edit made somewhere else', () => {
     const { t, panel, serverId, call } = await seed();
     // Somebody edits the profile in the backend UI: a short id, which shows in no redacted view.
     panel.config.inbounds[0].streamSettings.realitySettings.shortIds = ['0011223344556677'];
-    await t.action(internal.panelObserve.refresh, { backendServerId: serverId });
+    await t.action(internal.backendObserve.refresh, { backendServerId: serverId });
     expect(await flagged(t)).toBeTypeOf('number');
     const tree = await (await call('GET', 'tree')).json();
     expect(tree.profiles[0].foreignEditAt).toBeTypeOf('string');
     // Reading again does not clear it: only an operator does.
-    await t.action(internal.panelObserve.refresh, { backendServerId: serverId });
+    await t.action(internal.backendObserve.refresh, { backendServerId: serverId });
     expect(await flagged(t)).toBeTypeOf('number');
     expect((await call('POST', `profiles/${PROFILE}/acknowledge`)).status).toBe(200);
     expect(await flagged(t)).toBeFalsy();
@@ -398,7 +398,7 @@ describe('an edit made somewhere else', () => {
   test('an edit FCP made outside the ledger (the logging harden) re-baselines instead', async () => {
     const { t, panel, serverId } = await seed();
     panel.config.log = { loglevel: 'none', access: 'none' };
-    await t.action(internal.panelObserve.refresh, { backendServerId: serverId, ownEdit: true });
+    await t.action(internal.backendObserve.refresh, { backendServerId: serverId, ownEdit: true });
     expect(await flagged(t)).toBeFalsy();
   });
 });

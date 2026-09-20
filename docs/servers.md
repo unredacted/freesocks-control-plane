@@ -3,7 +3,7 @@
 Admin -> Servers shows, and will later manage, what lives on a proxy backend: its **nodes**, the
 **config profiles** and **transports** they run, the **Hosts** members are handed and the
 **mode groups** that grant them. It is built the way [edges](edges.md) is: a pure library
-(`convex/lib/panel/`), isolate queries and mutations that are the only writers of their tables,
+(`convex/lib/backend/`), isolate queries and mutations that are the only writers of their tables,
 one bounded provider call per action, one HTTP prefix with a dispatcher, contracts in
 `src/shared/contracts/servers.ts`.
 
@@ -28,7 +28,7 @@ Turning either off never hands ownership of anything back to another writer.
 
 ## Observation
 
-`convex/panelObserve.ts` is the only writer of the cache tables. One look is five kinds of
+`convex/backendObserve.ts` is the only writer of the cache tables. One look is five kinds of
 read: `GET /api/nodes`, `GET /api/hosts`, `GET /api/internal-squads`, `GET /api/config-profiles`
 and then **each profile by uuid** (the list row is never trusted to be complete). It runs in its
 own best-effort slot of the healthcheck, like fleet stats: a failing look keeps the last
@@ -59,7 +59,7 @@ certificate material. None of it is stored, returned or logged:
 - Every config-profile call is made `sensitive` ([backends.md](backends.md) § Sensitive data):
   an error is status and path only.
 - The raw config exists only inside `observeConfigProfile`, which returns the projection plus
-  three digests (`convex/lib/panel/digest.ts`):
+  three digests (`convex/lib/backend/digest.ts`):
 
 | Digest              | Over                                                             | Answers                                                                                              |
 | ------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
@@ -114,8 +114,8 @@ handshake succeeds on a private one but nothing comes back through the tunnel.
 
 A write to a backend goes wrong in ways a request/response call hides: the answer is lost while
 the backend did the work, a gateway answers an error while upstream commits, the backend queues
-node work behind a write and answers before it runs. `convex/panelLedger.ts` (the only writer of
-`panelOps` and `panelClaims`) and the pure rules in `convex/lib/panel/ops.ts` exist for that.
+node work behind a write and answers before it runs. `convex/backendLedger.ts` (the only writer of
+`panelOps` and `panelClaims`) and the pure rules in `convex/lib/backend/ops.ts` exist for that.
 
 **Gates**, checked in the claiming transaction: `servers.manage.enabled` is on
 (`servers.manage_disabled`), the backend type can be managed, and FCP has set this backend up or
@@ -163,7 +163,7 @@ revoked (not merely replaced), nothing in flight can still execute it, and the b
 and stalled jobs have finished or were cancelled; a fresh read is taken first and may simply
 settle the op. "The backend was restarted" is not a condition: queued work survives a restart.
 
-**Interruption.** `panel-reconcile` (every 5 min) never sends anything. An op that never
+**Interruption.** `backend-reconcile` (every 5 min) never sends anything. An op that never
 recorded an attempt sent nothing and is released (`servers.never_sent`); one that recorded an
 attempt but no outcome becomes `uncertain`; everything open is looked at again.
 
@@ -187,7 +187,7 @@ stale preconditions are ignored). An edit is therefore a read-modify-write, in t
    profile back: its token must equal the predicted one, which means the edit landed **and
    nothing else moved**, key material included.
 
-The edit itself is `convex/lib/panel/patchOps.ts`: a **closed set** of operations
+The edit itself is `convex/lib/backend/patchOps.ts`: a **closed set** of operations
 (`setRealityServerNames`, `setRealityTarget`), no raw JSON. It refuses a config that is not an
 object, an empty `inbounds` (writing that back would strip the nodes), a missing or duplicated
 tag, a non-REALITY transport. Everything it does not name is carried over by reference, the
@@ -292,10 +292,10 @@ and targets only.
 
 ## Setting up a backend
 
-`convex/panelSetup.ts`. One durable workflow per backend server (`panelSetups`), started from
+`convex/backendSetup.ts`. One durable workflow per backend server (`panelSetups`), started from
 Admin -> Servers ("Set up this backend") with names, shapes and family slugs only: never a
 secret. Each step is idempotent and re-enterable; an interrupted attempt is resumed by the
-`panel-bootstrap-sweep` cron once its lease has expired.
+`backend-bootstrap-sweep` cron once its lease has expired.
 
 **Modes.** A backend is set up for a list of modes (`PanelSetupInput.modes`, pre-filled from
 `DEFAULT_MODE_SETUP`; editable, a table, not a fixed set). Each names the connection mode it
@@ -314,15 +314,15 @@ Every REALITY transport listens on 443: a node serves ONE mode, so they never co
 named by a node is the only thing the role needs to know about it (`node_mode`); the machine
 shape (Caddy or not, ingress, what an edge dials) follows from the mode's shape.
 
-| Step       | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| observe    | A fresh look at the backend; everything below reads the cache.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| families   | Every REALITY mode's family must exist, be on, and have a usable (qualified, active) name today: `servers.family_missing`, `servers.family_empty`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| profile    | The profile by name: adopted when compatible (`lib/panel/profileCompat.ts`: per mode the transport found under the mode's tag or a tag an earlier setup gave it, checked for protocol, network, security, listen, port, path, names, target and a usable key; keys and short ids never touched; an adopted tag is kept, since a backend keys transports by tag), otherwise created from the template (`lib/panel/profileTemplate.ts`: one transport per mode, born with the privacy posture, each REALITY transport with its family's target and usable names and its own key pair generated inside the claimed attempt). `servers.profile_incompatible:<tag>:<field>`. |
-| bind       | Each REALITY transport is bound to its family (`sniFamilies.bind`, by the transport's own uuid, since a tag is unique per profile and not per backend): the family is the one authoritative allowlist from then on, and later name changes are rollouts (docs/edges.md). An adopted transport forwarding elsewhere than the family's target is `servers.family_target_mismatch`; one already bound to a DIFFERENT family is `servers.family_bound_elsewhere:<slug>` (that family's rollouts own its names, so an admin unbinds it or the mode names that family).                                                                                                       |
-| groups     | Each mode's group, found under its name, or under a name an earlier setup gave the same mode (`FreeSocks-Reality` → `Privacy-Reality`, `FreeSocks-Relay` → `Freedom-Reality`, `FreeSocks-Fronted`/`FreeSocks-Fastly` → `Freedom-WebSocket`) and **renamed in place** through the ledger (its id and every member assignment survive; audited `servers.setup.group_renamed`), else created; carrying EXACTLY the mode's transport (a transport an earlier release left in the group is removed: a mode grants one way in).                                                                                                                                               |
-| placements | Each group into its mode's pool (`addSquadUuids`). A mode that does not exist is recorded `skipped` and blocks activation of its nodes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| templates  | The four subscription templates (`lib/panel/subscriptionTemplates/`, YAML byte-exact) reconciled on drift; a refused write (401/403) blocks activation unless the live template already matches.                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Step       | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| observe    | A fresh look at the backend; everything below reads the cache.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| families   | Every REALITY mode's family must exist, be on, and have a usable (qualified, active) name today: `servers.family_missing`, `servers.family_empty`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| profile    | The profile by name: adopted when compatible (`lib/backend/profileCompat.ts`: per mode the transport found under the mode's tag or a tag an earlier setup gave it, checked for protocol, network, security, listen, port, path, names, target and a usable key; keys and short ids never touched; an adopted tag is kept, since a backend keys transports by tag), otherwise created from the template (`lib/backend/profileTemplate.ts`: one transport per mode, born with the privacy posture, each REALITY transport with its family's target and usable names and its own key pair generated inside the claimed attempt). `servers.profile_incompatible:<tag>:<field>`. |
+| bind       | Each REALITY transport is bound to its family (`sniFamilies.bind`, by the transport's own uuid, since a tag is unique per profile and not per backend): the family is the one authoritative allowlist from then on, and later name changes are rollouts (docs/edges.md). An adopted transport forwarding elsewhere than the family's target is `servers.family_target_mismatch`; one already bound to a DIFFERENT family is `servers.family_bound_elsewhere:<slug>` (that family's rollouts own its names, so an admin unbinds it or the mode names that family).                                                                                                           |
+| groups     | Each mode's group, found under its name, or under a name an earlier setup gave the same mode (`FreeSocks-Reality` → `Privacy-Reality`, `FreeSocks-Relay` → `Freedom-Reality`, `FreeSocks-Fronted`/`FreeSocks-Fastly` → `Freedom-WebSocket`) and **renamed in place** through the ledger (its id and every member assignment survive; audited `servers.setup.group_renamed`), else created; carrying EXACTLY the mode's transport (a transport an earlier release left in the group is removed: a mode grants one way in).                                                                                                                                                   |
+| placements | Each group into its mode's pool (`addSquadUuids`). A mode that does not exist is recorded `skipped` and blocks activation of its nodes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| templates  | The four subscription templates (`lib/backend/subscriptionTemplates/`, YAML byte-exact) reconciled on drift; a refused write (401/403) blocks activation unless the live template already matches.                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 
 A ready row that still records a blocker (a drifted or refused template, a skipped placement, an
 unbound family, drifted privacy) is re-run on the next request so the blocker can clear. The
@@ -337,7 +337,7 @@ under its existing tags, groups an earlier setup named are renamed in place, and
 member holds changes. The setup row records `adopted`.
 
 **Adopting a node** (`POST {slug}/nodes/adopt {nodeUuid, mode, externallyFronted?}`,
-`panelIntents.adoptNode`): a backend node that already serves members becomes an enrolled node
+`nodeIntents.adoptNode`): a backend node that already serves members becomes an enrolled node
 that is **live at once**: its row must run the mode's transport; its addresses (a direct node's,
 by remark or address) become its committed set; evidence and approval are synthesized as
 `adopted`. A fronted node whose edge FCP does not run yet (an earlier tool made it) is
@@ -353,7 +353,7 @@ TRANSITIONAL in `convex/schema.ts`) and one mutation clears them, once per deplo
 after the deploy:
 
 ```
-bunx convex run panelSetup:migrateContractV2 '{}'
+bunx convex run backendSetup:migrateContractV2 '{}'
 ```
 
 (through the deployer container: docs/beta-deploy.md "One-off functions"). It deletes the v1
@@ -367,7 +367,7 @@ fields go.
 
 ## Node lifecycle
 
-The bootstrap contract v2 (`convex/panelIntents.ts`, `panelActivation.ts`, `panelRetirement.ts`):
+The bootstrap contract v2 (`convex/nodeIntents.ts`, `nodeActivation.ts`, `nodeRetirement.ts`):
 the node role bootstraps the **machine** and reports; FCP owns the machine settings, the backend
 row, the direct Host, the origin DNS record and the release to members. Nothing about a node
 reaches a member before its **delivery commit**.
@@ -385,12 +385,12 @@ registered → bootstrap_available → machine_applied → machine_ready → can
 | `machine_ready`       | The node op that applied the current profile and transport is done by its own ledger evidence, the node is online, the profile token has not moved; a front node's origin name resolves to the intended addresses, presents a publicly valid certificate naming it, proxies the WebSocket path and answers a foreign Host header.                                                                                                                                                                                                                                                                                                 |
 | `candidates_verified` | Direct: the isolated **direct test link** (the node's own test credential, the transport's live parameters) confirmed against a **binding** recomputed from live rows: endpoint, machine, config and authentication revisions, the parameters tested, the credential. A moved endpoint refuses (`servers.confirmation_stale`). Fronted: every listener of the open Autopilot run (the one waiting at publish for this approval) has a live, verified standby (L7 proof; L4 confirmation); recorded as `standbys_verified` evidence at approval, refused as `servers.standbys_missing` / `servers.standbys_unverified` until then. |
 | `awaiting_approval`   | The review card hashes the delivery **shape** (purpose, ingress, profile revision, listeners, provider account + template, subscription templates, the Host tuple), never individual addresses.                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `activating`          | Approval creates one run with an **immutable candidate snapshot** (`panelActivationRuns`); older runs are superseded. A direct run enables the addresses as **candidate resources**, rehearses the backend's real bodies in every client family (`lib/panel/rehearsal.ts`), and commits. The rehearsal reads EVERY address the run would commit, each with the server name it is there to serve (links `sni`, sing-box `tls.server_name`, Clash `servername`) and the expected REALITY key: one entry proves nothing about the others, and the detail records `<family>:<name>:absent                                             | key | sni`. A failed rehearsal disables the Host again and releases nothing. A run that blocks or fails **parks** the node at `awaiting_approval` with no current run (`staged` again unless it was live): the next approval supersedes it and starts a fresh run. |
-| `live`                | `panelActivation.commit`: one mutation that re-validates the approval, the evidence, the rehearsal and open obligations, then **promotes the snapshot** (`intent.approved`, the committed resources), opens the gate, bumps the gate version. A fronted node's Autopilot go-live calls the same promotion inside its own mutation; no independent go-live exists while an activation is unapproved, blocked or superseded.                                                                                                                                                                                                        |
+| `activating`          | Approval creates one run with an **immutable candidate snapshot** (`panelActivationRuns`); older runs are superseded. A direct run enables the addresses as **candidate resources**, rehearses the backend's real bodies in every client family (`lib/backend/rehearsal.ts`), and commits. The rehearsal reads EVERY address the run would commit, each with the server name it is there to serve (links `sni`, sing-box `tls.server_name`, Clash `servername`) and the expected REALITY key: one entry proves nothing about the others, and the detail records `<family>:<name>:absent                                           | key | sni`. A failed rehearsal disables the Host again and releases nothing. A run that blocks or fails **parks** the node at `awaiting_approval` with no current run (`staged` again unless it was live): the next approval supersedes it and starts a fresh run. |
+| `live`                | `nodeActivation.commit`: one mutation that re-validates the approval, the evidence, the rehearsal and open obligations, then **promotes the snapshot** (`intent.approved`, the committed resources), opens the gate, bumps the gate version. A fronted node's Autopilot go-live calls the same promotion inside its own mutation; no independent go-live exists while an activation is unapproved, blocked or superseded.                                                                                                                                                                                                         |
 
 Three revision sets: `desired` (what the next review approves), `committed` (`intent.approved`,
 what members are served; moves only at a commit) and, per run, the candidate. `patchSettings`
-classifies a change (`lib/panel/activation.ts` `classifyChange`): one that only adds a path is
+classifies a change (`lib/backend/activation.ts` `classifyChange`): one that only adds a path is
 prepared beside the committed one; one that rewrites the running path (a port or path rewrite, a
 re-address, a profile edit) is applied in place and needs an explicit **maintenance transition**,
 which closes the node (`unavailable`) until it is verified and approved again. The previous
@@ -399,7 +399,7 @@ configuration is not claimed to remain served in that case.
 **Observed drift** is the same transition without anyone asking for it. When a reconcile finds
 the REALITY material moved, or the profile token moved by somebody else's edit
 (`foreignEditAt`), under evidence already taken, or a direct node's endpoint moved under one of
-its addresses (`panelIntents.observeRevisions`), the invalidated evidence goes, running
+its addresses (`nodeIntents.observeRevisions`), the invalidated evidence goes, running
 activations are superseded, and a live node closes under a maintenance transition (reason
 `drift`, audited as `servers.node.drift`) until it is re-verified and approved again; the
 existing addresses are brought to the new endpoint meanwhile (a name that arrived is a new
@@ -419,14 +419,14 @@ and parks while it is off.
 **A shared change** (a typed profile edit through `requestProfilePatch`; never a rollout, whose
 names reach members by per-node receipts) is applied in place under every node running the
 touched transports, so the maintenance transition comes BEFORE the write is admitted
-(`panelIntents.closeForSharedChange`): every affected enrolled node closes under one transition
+(`nodeIntents.closeForSharedChange`): every affected enrolled node closes under one transition
 (reason `profile`; it reopens only through its own re-verification and commit), and every
 affected node FCP does not manage needs a treatment from the operator, `hold` (closed by name in
 `panelMaintenanceHolds` until an admin releases it: nothing re-verifies an unmanaged node) or
 `acknowledge` (it changes in place). "No intent means open" never bypasses this. Audited as
 `servers.profile.transition` / `servers.profile.transition_released` (counts only).
 
-**The delivery gate** (`lib/panel/deliveryGate.ts`, enforced in `edgeRender.deliveryPolicyFor`,
+**The delivery gate** (`lib/backend/deliveryGate.ts`, enforced in `edgeRender.deliveryPolicyFor`,
 the pinner's exclusion list, the subscription route, the mirror refresh): closed for an enrolled
 node that is not live, under maintenance or retiring, open for an unmanaged node. Every render
 carries the gate version; the route and the mirror refresh re-read it after rendering and never
@@ -472,7 +472,7 @@ for a machine FCP bootstrapped).
 ### Origin names
 
 A front node's origin name is `<label>.<zone>` in the Cloudflare zone chosen at setup (or an
-explicit hostname the admin sets). Records are **obligations** (`panelObligations`, kind
+explicit hostname the admin sets). Records are **obligations** (`backendObligations`, kind
 `dns.record`) persisted before the call with the account, zone, marker
 `fcp-origin:<slug>:<name>` and expected content; an uncertain answer is discovered by name and
 marker before anything is sent again; a record FCP did not write, or a CNAME at the name, is
@@ -483,7 +483,7 @@ Cleanup uses the obligation's own account and zone. `created` and `resolves` are
 
 External side effects of every workflow are rows persisted before the call. A superseded
 generation never releases an unresolved one; a lease expiry resumes discovery of the same
-attempt; settlement reconciles the result against what is wanted now (`lib/panel/obligations.ts`:
+attempt; settlement reconciles the result against what is wanted now (`lib/backend/obligations.ts`:
 reuse, retain, delete), so a late create generation B still needs is adopted, an update never
 authorises a delete, and a shared object is never disposable.
 

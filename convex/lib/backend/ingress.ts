@@ -10,7 +10,7 @@
  * path. The origin probe then verifies that external hop exactly as it does
  * for any HTTPS origin; nothing here asserts that the hop works.
  */
-import type { PanelInbound } from '../backends/types';
+import type { BackendTransport } from '../backends/types';
 
 export interface IngressInternal {
   inboundTag: string;
@@ -48,9 +48,9 @@ function isLoopback(listen: string | null | undefined): boolean {
  * transport it does not describe.
  */
 export function applyIngress(
-  inbounds: readonly PanelInbound[],
+  inbounds: readonly BackendTransport[],
   ingress: IngressMapping | null | undefined,
-): PanelInbound[] {
+): BackendTransport[] {
   if (!ingress) return [...inbounds];
   const byTag = new Map(ingress.internal.map((i) => [i.inboundTag, i]));
   return inbounds.map((ib) => {

@@ -283,7 +283,7 @@ describe('binding a family to a transport', () => {
     await t.mutation(internal.serverAdmin.patchConfig, { patch: { 'manage.enabled': true } });
     await markBackendSetUp(t, serverId);
     await expect(
-      t.mutation(internal.panelWrites.requestProfilePatch, {
+      t.mutation(internal.backendWrites.requestProfilePatch, {
         backendServerId: serverId,
         profileUuid: PROFILE,
         ops: [{ op: 'setRealityServerNames', inboundTag: 'REALITY_IN', names: ['x.example'] }],

@@ -34,8 +34,8 @@ describe('capability record ⇔ provider methods', () => {
     expect(caps.hostDisable).toBe(!!provider.setHostDisabled);
     expect(caps.inboundDiscovery).toBe(!!provider.listNodeInbounds);
     expect(caps.panelObservation).toBe(!!provider.observePanel);
-    expect(caps.panelWrites).toBe(!!provider.panelWrites);
-    expect(caps.panelSetup).toBe(!!provider.panelWrites?.createProfile);
+    expect(caps.backendWrites).toBe(!!provider.backendWrites);
+    expect(caps.backendSetup).toBe(!!provider.backendWrites?.createProfile);
     expect(caps.userLookupByUsername).toBe(!!provider.findUserByUsername);
     // Hiding a Host is only meaningful where FCP manages Hosts at all.
     if (caps.hostDisable) expect(caps.hostManagement).toBe(true);

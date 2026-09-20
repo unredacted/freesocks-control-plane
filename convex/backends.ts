@@ -40,7 +40,7 @@ import type {
   UsageSeries,
   UserState,
   BackendHost,
-  PanelInbound,
+  BackendTransport,
 } from './lib/backends/types';
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
 import { backendIdValidator } from './lib/backendIds';
@@ -510,7 +510,7 @@ export const setHostDisabled = internalAction({
  */
 export const listNodeInbounds = internalAction({
   args: { backendServerId: v.id('backendServers'), nodeUuid: v.string() },
-  handler: async (ctx, { backendServerId, nodeUuid }): Promise<PanelInbound[]> => {
+  handler: async (ctx, { backendServerId, nodeUuid }): Promise<BackendTransport[]> => {
     const server = await ctx.runQuery(internal.backendServers.getById, { id: backendServerId });
     if (!server) throw new ConvexError({ code: 'backend.not_found' });
     const provider = PROVIDERS[server.backend];
@@ -612,7 +612,7 @@ export const fetchSubscriptionContent = internalAction({
         // maintenance, retiring; docs/servers.md "Node lifecycle") are never
         // picked while another node exists; a body that can only resolve to one
         // is refused by the delivery policy afterwards.
-        const gated = await ctx.runQuery(internal.panelIntents.blockedNodeNames, {
+        const gated = await ctx.runQuery(internal.nodeIntents.blockedNodeNames, {
           backendServerId,
         });
         const pinned = pinSubscriptionToNode(fetched.content, backendShortId, [

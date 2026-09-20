@@ -261,7 +261,7 @@ export const sync = internalMutation({
   handler: (ctx, { rolloutId }) => syncRollout(ctx, rolloutId),
 });
 
-/** The same, from the ledger's side: the rollout that owns `opId`, if any (`panelWrites.look`). */
+/** The same, from the ledger's side: the rollout that owns `opId`, if any (`backendWrites.look`). */
 export const syncByOp = internalMutation({
   args: { opId: v.id('panelOps') },
   handler: async (ctx, { opId }) => {
@@ -294,14 +294,14 @@ export const start = internalAction({
     const ops = [
       { op: 'setRealityServerNames' as const, inboundTag: p.inboundTag, names: p.names },
     ];
-    const preview = await ctx.runAction(internal.panelWrites.previewProfilePatch, {
+    const preview = await ctx.runAction(internal.backendWrites.previewProfilePatch, {
       backendServerId: p.backendServerId,
       profileUuid: p.profileUuid,
       ops,
     });
     if (!preview.changed)
       return { rolloutId: null, phase: 'nothing_to_change', added: 0, removed: 0 };
-    const { opId } = await ctx.runMutation(internal.panelWrites.requestProfilePatch, {
+    const { opId } = await ctx.runMutation(internal.backendWrites.requestProfilePatch, {
       backendServerId: p.backendServerId,
       profileUuid: p.profileUuid,
       ops,
@@ -321,7 +321,7 @@ export const start = internalAction({
       expectedToken: preview.expectedToken,
       opId,
     });
-    await ctx.runAction(internal.panelWrites.run, { opId });
+    await ctx.runAction(internal.backendWrites.run, { opId });
     const phase = await ctx.runMutation(internal.sniRollouts.sync, { rolloutId });
     return {
       rolloutId,

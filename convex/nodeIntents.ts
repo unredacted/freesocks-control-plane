@@ -10,7 +10,7 @@
  * Stages: registered -> bootstrap_available -> machine_applied ->
  * machine_ready -> candidates_verified -> awaiting_approval -> activating ->
  * live. Nothing reaches a member before the delivery commit
- * (panelActivation.ts); until then the node's gate is closed.
+ * (nodeActivation.ts); until then the node's gate is closed.
  */
 import { ConvexError, v, type Infer } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
@@ -27,15 +27,15 @@ import {
   type Evidence,
   type Revisions,
   type Stage,
-} from './lib/panel/activation';
-import { nodeGateOf, type NodeGate } from './lib/panel/deliveryGate';
-import { CLAIM_LEASE_MS, claimAvailable, desiredHashOf, fenceHolds } from './lib/panel/fencing';
-import type { IngressMapping } from './lib/panel/ingress';
-import { LABEL_RE, originHostname, originLabel } from './lib/panel/originDns';
-import { type ModeShape } from './lib/panel/profileTemplate';
+} from './lib/backend/activation';
+import { nodeGateOf, type NodeGate } from './lib/backend/deliveryGate';
+import { CLAIM_LEASE_MS, claimAvailable, desiredHashOf, fenceHolds } from './lib/backend/fencing';
+import type { IngressMapping } from './lib/backend/ingress';
+import { LABEL_RE, originHostname, originLabel } from './lib/backend/originDns';
+import { type ModeShape } from './lib/backend/profileTemplate';
 import { resolveServerConfig } from './lib/serverConfig';
-import { observeInstance } from './panelObserve';
-import { bumpGateVersion, modeOf, setupReady, type Setup, type SetupMode } from './panelSetup';
+import { observeInstance } from './backendObserve';
+import { bumpGateVersion, modeOf, setupReady, type Setup, type SetupMode } from './backendSetup';
 
 const refuse = (code: string, message: string): never => {
   throw new ConvexError({ code, message });
@@ -474,7 +474,7 @@ async function scheduleReconcile(ctx: MutationCtx, intent: Intent) {
     claim: { attemptId, expiresAt: now + CLAIM_LEASE_MS },
     updatedAt: now,
   });
-  await ctx.scheduler.runAfter(0, internal.panelIntents.reconcile, {
+  await ctx.scheduler.runAfter(0, internal.nodeIntents.reconcile, {
     intentId: intent._id,
     generation: intent.generation,
     attemptId,
@@ -968,18 +968,18 @@ export const reconcile = internalAction({
   args: fence,
   handler: async (ctx, f): Promise<null> => {
     const load = async () => {
-      const c = await ctx.runQuery(internal.panelIntents.loadForRun, f);
+      const c = await ctx.runQuery(internal.nodeIntents.loadForRun, f);
       if (!c) throw new Fenced();
       return c;
     };
     const record = (patch: ProgressPatch) =>
-      ctx.runMutation(internal.panelIntents.progress, { ...f, patch });
+      ctx.runMutation(internal.nodeIntents.progress, { ...f, patch });
     const stop = (state: 'pending' | 'blocked' | 'ready', code: string | null) =>
       record({ state, code, release: true });
     try {
       let c = await load();
       const sid = c.server._id;
-      const writes = PROVIDERS[c.server.backend].panelWrites;
+      const writes = PROVIDERS[c.server.backend].backendWrites;
       if (!writes) return stop('blocked', 'servers.unsupported_backend').then(() => null);
       const setup = c.setup;
       const t = c.transport;
@@ -1006,12 +1006,12 @@ export const reconcile = internalAction({
         activeInboundUuids: [t.uuid],
       };
       if (!c.node) {
-        const { opId } = await ctx.runMutation(internal.panelWrites.requestNodeCreate, {
+        const { opId } = await ctx.runMutation(internal.backendWrites.requestNodeCreate, {
           backendServerId: sid,
           name: c.intent.name,
           ...want,
         });
-        const r = await ctx.runAction(internal.panelWrites.run, { opId });
+        const r = await ctx.runAction(internal.backendWrites.run, { opId });
         if (r.open) {
           await stop('pending', 'servers.op_running');
           return null;
@@ -1039,7 +1039,7 @@ export const reconcile = internalAction({
         if (Object.keys(diff).length > 0) {
           let opId: Id<'panelOps'>;
           try {
-            ({ opId } = await ctx.runMutation(internal.panelWrites.requestNodeUpdate, {
+            ({ opId } = await ctx.runMutation(internal.backendWrites.requestNodeUpdate, {
               backendServerId: sid,
               nodeUuid: c.node.nodeUuid,
               ...diff,
@@ -1048,7 +1048,7 @@ export const reconcile = internalAction({
             await stop('blocked', codeOf(err));
             return null;
           }
-          const r = await ctx.runAction(internal.panelWrites.run, { opId });
+          const r = await ctx.runAction(internal.backendWrites.run, { opId });
           if (r.open) {
             await stop('pending', 'servers.op_running');
             return null;
@@ -1085,7 +1085,7 @@ export const reconcile = internalAction({
       // members hold keeps working, so this is not drift; it is a CANDIDATE the
       // node has to be verified and approved for before it is delivered.
       const addressAdded = wanted.some((w) => !c.addresses.some((h) => h.remark === w.remark));
-      const rev = await ctx.runMutation(internal.panelIntents.observeRevisions, {
+      const rev = await ctx.runMutation(internal.nodeIntents.observeRevisions, {
         ...f,
         configRevision,
         authRevision,
@@ -1110,7 +1110,7 @@ export const reconcile = internalAction({
           const have = c.addresses.find((h) => h.remark === w.remark);
           if (!have)
             ops.push(
-              ctx.runMutation(internal.panelWrites.requestAddressCreate, {
+              ctx.runMutation(internal.backendWrites.requestAddressCreate, {
                 backendServerId: sid,
                 ...w,
                 fingerprint: 'chrome',
@@ -1121,7 +1121,7 @@ export const reconcile = internalAction({
             );
           else if (moved.some((m) => m.hostUuid === have.hostUuid))
             ops.push(
-              ctx.runMutation(internal.panelWrites.requestAddressUpdate, {
+              ctx.runMutation(internal.backendWrites.requestAddressUpdate, {
                 backendServerId: sid,
                 hostUuid: have.hostUuid,
                 address: w.address,
@@ -1132,7 +1132,7 @@ export const reconcile = internalAction({
         }
         for (const h of extra)
           ops.push(
-            ctx.runMutation(internal.panelWrites.requestAddressDelete, {
+            ctx.runMutation(internal.backendWrites.requestAddressDelete, {
               backendServerId: sid,
               hostUuid: h.hostUuid,
             }),
@@ -1140,7 +1140,7 @@ export const reconcile = internalAction({
         if (ops.length > 0) {
           for (const p of ops) {
             const { opId } = await p;
-            const r = await ctx.runAction(internal.panelWrites.run, { opId });
+            const r = await ctx.runAction(internal.backendWrites.run, { opId });
             if (r.open) {
               await stop('pending', 'servers.op_running');
               return null;
@@ -1159,7 +1159,7 @@ export const reconcile = internalAction({
           await stop('blocked', 'servers.origin_hostname_missing');
           return null;
         }
-        const dns = await ctx.runAction(internal.panelIntentOps.ensureOriginDns, f);
+        const dns = await ctx.runAction(internal.nodeIntentOps.ensureOriginDns, f);
         if (dns.state === 'conflict') {
           await stop('blocked', 'servers.origin_name_taken');
           return null;
@@ -1207,7 +1207,7 @@ async function verifyMachine(
   c: IntentContext,
 ): Promise<{ ok: true } | { ok: false; code: string }> {
   const record = (patch: ProgressPatch) =>
-    ctx.runMutation(internal.panelIntents.progress, { ...f, patch });
+    ctx.runMutation(internal.nodeIntents.progress, { ...f, patch });
   const configRevision = `${c.profile?.changeToken ?? ''}:${c.transport.uuid}`;
   if (c.intent.configRevision !== configRevision)
     return { ok: false, code: 'servers.config_moved' };
@@ -1216,7 +1216,7 @@ async function verifyMachine(
   const now = Date.now();
   const evidence: Evidence[] = [];
   if (isWs(c.mode.shape) && !c.intent.adopted?.externallyFronted) {
-    const check = await ctx.runAction(internal.panelIntentOps.checkFrontIngress, {
+    const check = await ctx.runAction(internal.nodeIntentOps.checkFrontIngress, {
       hostname: c.hostname!,
       port: c.ingress!.external.port,
       path: c.ingress!.internal[0]!.path,
@@ -1299,7 +1299,7 @@ export interface BootstrapAnswer {
 export const bootstrap = internalAction({
   args: { intentId: v.id('panelNodeIntents') },
   handler: async (ctx, { intentId }): Promise<BootstrapAnswer> => {
-    const c = (await ctx.runQuery(internal.panelIntents.bootstrapContext, {
+    const c = (await ctx.runQuery(internal.nodeIntents.bootstrapContext, {
       intentId,
     })) as IntentContext | null;
     if (!c) throw new ConvexError({ code: 'not_found', message: 'No such node' });
@@ -1308,11 +1308,11 @@ export const bootstrap = internalAction({
         code: 'servers.node_retiring',
         message: 'This node is being retired',
       });
-    const writes = PROVIDERS[c.server.backend].panelWrites;
+    const writes = PROVIDERS[c.server.backend].backendWrites;
     if (!writes)
       throw new ConvexError({ code: 'servers.unsupported_backend', message: 'Unsupported' });
     const secretKey = await writes.nodeSecret(c.server.config as BackendConfig);
-    await ctx.runMutation(internal.panelIntents.markBootstrapServed, { intentId });
+    await ctx.runMutation(internal.nodeIntents.markBootstrapServed, { intentId });
     const ingress = c.ingress;
     return {
       machineRevision: c.intent.machineRevision,
@@ -1435,7 +1435,7 @@ export const requestRetirement = internalMutation({
     });
     await bumpGateVersion(ctx, intent.backendServerId);
     if (stage === 'requested')
-      await ctx.scheduler.runAfter(0, internal.panelRetirement.startIfPlain, { retirementId: id });
+      await ctx.scheduler.runAfter(0, internal.nodeRetirement.startIfPlain, { retirementId: id });
     const server = await ctx.db.get(intent.backendServerId);
     await writeAuditLog(ctx, {
       actorType: requestedBy === 'admin' ? 'admin' : 'system',
@@ -1782,7 +1782,7 @@ export const resumeSetup = internalMutation({
       claim: { attemptId, expiresAt: now + CLAIM_LEASE_MS },
       updatedAt: now,
     });
-    await ctx.scheduler.runAfter(0, internal.panelSetup.run, {
+    await ctx.scheduler.runAfter(0, internal.backendSetup.run, {
       setupId,
       generation: row.generation,
       attemptId,
@@ -1795,17 +1795,17 @@ export const resumeSetup = internalMutation({
 export const sweep = internalAction({
   args: {},
   handler: async (ctx): Promise<{ intents: number; setups: number }> =>
-    runWithCronOutcome(ctx, 'panel-bootstrap-sweep', async () => {
-      const { intents, setups } = await ctx.runQuery(internal.panelIntents.stale, {
+    runWithCronOutcome(ctx, 'backend-bootstrap-sweep', async () => {
+      const { intents, setups } = await ctx.runQuery(internal.nodeIntents.stale, {
         now: Date.now(),
       });
       let a = 0;
       let b = 0;
       for (const id of intents)
-        if (await ctx.runMutation(internal.panelIntents.resume, { intentId: id })) a++;
+        if (await ctx.runMutation(internal.nodeIntents.resume, { intentId: id })) a++;
       for (const id of setups)
-        if (await ctx.runMutation(internal.panelIntents.resumeSetup, { setupId: id })) b++;
-      await ctx.runAction(internal.panelRetirement.sweep, {});
+        if (await ctx.runMutation(internal.nodeIntents.resumeSetup, { setupId: id })) b++;
+      await ctx.runAction(internal.nodeRetirement.sweep, {});
       return { intents: a, setups: b };
     }),
 });

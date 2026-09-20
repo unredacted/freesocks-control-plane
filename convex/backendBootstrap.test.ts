@@ -17,7 +17,7 @@ import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { insertPanelServer } from './lib/edges/testing/fixtures';
-import { addressRemark, addressesOf, ownsAddress } from './panelIntents';
+import { addressRemark, addressesOf, ownsAddress } from './nodeIntents';
 
 const modules = import.meta.glob('./**/*.*s');
 type T = TestConvex<typeof schema>;
@@ -213,7 +213,7 @@ async function settled<R extends { claim?: unknown }>(get: () => Promise<R | nul
 }
 
 async function runSetup(t: T, serverId: Id<'backendServers'>, input = setupInput) {
-  const started = await t.mutation(internal.panelSetup.start, {
+  const started = await t.mutation(internal.backendSetup.start, {
     backendServerId: serverId,
     input,
   });
@@ -269,7 +269,7 @@ describe('setting up a fresh backend', () => {
       'FREEDOM_XHTTP',
       'PRIVACY_REALITY',
     ]);
-    const obligations = await t.run((ctx) => ctx.db.query('panelObligations').collect());
+    const obligations = await t.run((ctx) => ctx.db.query('backendObligations').collect());
     expect(obligations).toHaveLength(1);
     expect(obligations[0]).toMatchObject({
       kind: 'profile.create',
@@ -281,7 +281,7 @@ describe('setting up a fresh backend', () => {
       await t.run(async (ctx) => [
         await ctx.db.query('panelSetups').collect(),
         await ctx.db.query('panelProfiles').collect(),
-        await ctx.db.query('panelObligations').collect(),
+        await ctx.db.query('backendObligations').collect(),
         await ctx.db.query('auditLog').collect(),
       ]),
     );
@@ -294,7 +294,7 @@ describe('setting up a fresh backend', () => {
 
     // An identical rerun performs no write.
     const before = panel.writes.length;
-    const again = await t.mutation(internal.panelSetup.start, {
+    const again = await t.mutation(internal.backendSetup.start, {
       backendServerId: serverId,
       input: setupInput,
     });
@@ -305,7 +305,7 @@ describe('setting up a fresh backend', () => {
   test('a mode without a usable family, or an unknown mode, is refused before anything is written', async () => {
     const { t, serverId, panel } = await seed();
     await expect(
-      t.mutation(internal.panelSetup.start, {
+      t.mutation(internal.backendSetup.start, {
         backendServerId: serverId,
         input: {
           ...setupInput,
@@ -314,7 +314,7 @@ describe('setting up a fresh backend', () => {
       }),
     ).rejects.toThrow(/family_missing/);
     await expect(
-      t.mutation(internal.panelSetup.start, {
+      t.mutation(internal.backendSetup.start, {
         backendServerId: serverId,
         input: { ...setupInput, modes: [{ ...setupInput.modes[0]!, slug: 'made-up-mode' }] },
       }),
@@ -341,9 +341,9 @@ describe('setting up a fresh backend', () => {
       inbounds: [{ uuid: UUID(9), tag: 'VLESS_OLD' }],
     };
     panel.squads.push(legacyGroup);
-    await t.action(internal.panelObserve.refresh, { backendServerId: serverId });
+    await t.action(internal.backendObserve.refresh, { backendServerId: serverId });
     await expect(
-      t.mutation(internal.panelSetup.start, { backendServerId: serverId, input: setupInput }),
+      t.mutation(internal.backendSetup.start, { backendServerId: serverId, input: setupInput }),
     ).rejects.toThrow(/adopt_required/);
     expect(panel.writes).toHaveLength(0);
     const row = await runSetup(t, serverId, { ...setupInput, adopt: true });
@@ -374,7 +374,7 @@ describe('setting up a fresh backend', () => {
       config: { inbounds: [{ tag: 'PRIVACY_REALITY' }] },
       inbounds: [{ uuid: UUID(91), tag: 'PRIVACY_REALITY' }],
     });
-    await t.action(internal.panelObserve.refresh, { backendServerId: serverId });
+    await t.action(internal.backendObserve.refresh, { backendServerId: serverId });
     const row = await runSetup(t, serverId, { ...setupInput, adopt: true });
     expect(row.state).toBe('ready');
     const direct = row.modes!.find((m) => m.slug === 'privacy-reality')!;
@@ -430,7 +430,7 @@ describe('enrolling a direct node', () => {
       publicIps: { v4: '203.0.113.10' },
       capabilities: { caddy: false, ipv6: false },
     };
-    const { intentId } = await t.mutation(internal.panelIntents.enroll, {
+    const { intentId } = await t.mutation(internal.nodeIntents.enroll, {
       backendServerId: serverId,
       name: 'node-a',
       mode: 'privacy-reality',
@@ -458,7 +458,7 @@ describe('enrolling a direct node', () => {
     expect(intent.authRevision).toBeTruthy();
 
     // The bootstrap answer carries the secret and the mode; nothing FCP keeps holds the secret.
-    const boot = await t.action(internal.panelIntents.bootstrap, { intentId });
+    const boot = await t.action(internal.nodeIntents.bootstrap, { intentId });
     expect(boot).toMatchObject({
       machineRevision: 1,
       secretKey: 'panel-node-secret-placeholder',
@@ -481,13 +481,13 @@ describe('enrolling a direct node', () => {
 
     // Applied: idempotent, stale and unknown revisions refused, then machine_ready.
     await expect(
-      t.mutation(internal.panelIntents.applied, {
+      t.mutation(internal.nodeIntents.applied, {
         intentId,
         appliedRevision: 2,
         nodeStarted: true,
       }),
     ).rejects.toThrow(/revision_unknown/);
-    const r1 = await t.mutation(internal.panelIntents.applied, {
+    const r1 = await t.mutation(internal.nodeIntents.applied, {
       intentId,
       appliedRevision: 1,
       nodeStarted: true,
@@ -499,7 +499,7 @@ describe('enrolling a direct node', () => {
       'machine_applied',
       'machine_ready',
     ]);
-    const r2 = await t.mutation(internal.panelIntents.applied, {
+    const r2 = await t.mutation(internal.nodeIntents.applied, {
       intentId,
       appliedRevision: 1,
       nodeStarted: true,
@@ -508,7 +508,7 @@ describe('enrolling a direct node', () => {
 
     // An identical observation rerun changes nothing on the backend.
     const before = panel.writes.length;
-    await t.mutation(internal.panelIntents.enroll, {
+    await t.mutation(internal.nodeIntents.enroll, {
       backendServerId: serverId,
       name: 'node-a',
       mode: 'privacy-reality',
@@ -520,12 +520,12 @@ describe('enrolling a direct node', () => {
     expect(intent.activation.stage).toBe('machine_ready');
 
     // The gate stays closed before any approval; the role view says so.
-    const gate = await t.query(internal.panelIntents.nodeGate, {
+    const gate = await t.query(internal.nodeIntents.nodeGate, {
       backendServerId: serverId,
       nodeName: 'node-a',
     });
     expect(gate.state).toBe('blocked');
-    const view = await t.query(internal.panelIntents.roleViewByName, {
+    const view = await t.query(internal.nodeIntents.roleViewByName, {
       backendServerId: serverId,
       name: 'node-a',
     });
@@ -545,7 +545,7 @@ describe('enrolling a direct node', () => {
       capabilities: { caddy: false, ipv6: false },
     };
     await expect(
-      t.mutation(internal.panelIntents.enroll, {
+      t.mutation(internal.nodeIntents.enroll, {
         backendServerId: serverId,
         name: 'node-a',
         mode: 'privacy-reality',
@@ -554,7 +554,7 @@ describe('enrolling a direct node', () => {
       }),
     ).rejects.toThrow(/contract_version/);
     await expect(
-      t.mutation(internal.panelIntents.enroll, {
+      t.mutation(internal.nodeIntents.enroll, {
         backendServerId: serverId,
         name: 'node-a',
         mode: 'no-such-mode',
@@ -572,9 +572,9 @@ describe('enrolling a direct node', () => {
       lastStatusChange: 't0',
       configProfile: { activeConfigProfileUuid: panel.profiles[0]!.uuid, activeInbounds: [] },
     });
-    await t.action(internal.panelObserve.refresh, { backendServerId: serverId });
+    await t.action(internal.backendObserve.refresh, { backendServerId: serverId });
     await expect(
-      t.mutation(internal.panelIntents.enroll, {
+      t.mutation(internal.nodeIntents.enroll, {
         backendServerId: serverId,
         name: 'stranger',
         mode: 'privacy-reality',
@@ -582,7 +582,7 @@ describe('enrolling a direct node', () => {
         observed,
       }),
     ).rejects.toThrow(/node_exists_unowned/);
-    await t.mutation(internal.panelIntents.enroll, {
+    await t.mutation(internal.nodeIntents.enroll, {
       backendServerId: serverId,
       name: 'node-a',
       mode: 'freedom-reality',
@@ -590,7 +590,7 @@ describe('enrolling a direct node', () => {
       observed,
     });
     await expect(
-      t.mutation(internal.panelIntents.enroll, {
+      t.mutation(internal.nodeIntents.enroll, {
         backendServerId: serverId,
         name: 'node-a',
         mode: 'privacy-reality',
@@ -695,7 +695,7 @@ describe('moving off contract v1', () => {
       return { setupId, intentId, ownershipId };
     });
 
-    const out = await t.mutation(internal.panelSetup.migrateContractV2, {});
+    const out = await t.mutation(internal.backendSetup.migrateContractV2, {});
     expect(out).toEqual({ handoffs: 1, reservations: 1, setups: 1, intents: 1 });
     await t.run(async (ctx) => {
       expect(await ctx.db.get(legacyIds.setupId)).toBeNull();
@@ -709,7 +709,7 @@ describe('moving off contract v1', () => {
     });
     expect(panel.writes.filter((w) => w.call.startsWith('DELETE'))).toHaveLength(0);
     // Idempotent.
-    expect(await t.mutation(internal.panelSetup.migrateContractV2, {})).toEqual({
+    expect(await t.mutation(internal.backendSetup.migrateContractV2, {})).toEqual({
       handoffs: 0,
       reservations: 0,
       setups: 0,

@@ -31,25 +31,25 @@ import type {
   BackendHostPatch,
   BackendHostCreate,
   NodeInventoryRow,
-  PanelInbound,
+  BackendTransport,
   PanelHostCreate,
-  PanelHostFields,
+  BackendAddressFields,
   PanelNodeCreate,
-  PanelNodeFields,
+  BackendNodeFields,
   PanelNodeStatus,
   PanelObservation,
-  PanelObservedHost,
+  ObservedAddress,
   ObservedTransport,
-  PanelObservedProfile,
-  PanelObservedSquad,
+  ObservedProfile,
+  ObservedModeGroup,
   PanelInboundTestParams,
   PanelSubscriptionTemplate,
   PanelSubscriptionTemplateRef,
   ProfilePatchPreview,
 } from './types';
 import { farFutureExpiryIso, isFarFutureExpiry } from './types';
-import { changeToken, realityAuthDigest, shapeHash } from '../panel/digest';
-import { applyPatchOps, type PatchOp } from '../panel/patchOps';
+import { changeToken, realityAuthDigest, shapeHash } from '../backend/digest';
+import { applyPatchOps, type PatchOp } from '../backend/patchOps';
 
 export interface RemnawaveConfig {
   baseUrl: string;
@@ -970,7 +970,7 @@ function plainPort(v: unknown): number | null {
 
 /**
  * Project one raw Xray inbound (a `config.inbounds[]` entry) onto the
- * allowlisted `PanelInbound` shape. ONLY these paths are read: `tag`,
+ * allowlisted `BackendTransport` shape. ONLY these paths are read: `tag`,
  * `protocol`, `port`, `streamSettings.network`, `.security`,
  * `.realitySettings.{dest,target,serverNames}`, `.tlsSettings.serverName`,
  * `.wsSettings.{path,host,headers.Host}`, `.httpupgradeSettings.{path,host}`
@@ -979,10 +979,10 @@ function plainPort(v: unknown): number | null {
  * are never touched. Pure; exported for the redaction test. Returns null when
  * the entry has no usable tag.
  */
-export function projectXrayInbound(
+export function projectXrayTransport(
   raw: unknown,
   binding: { configProfileUuid: string; configProfileInboundUuid: string; active: boolean },
-): PanelInbound | null {
+): BackendTransport | null {
   const ib = obj(raw);
   if (!ib) return null;
   const tag = str(ib.tag);
@@ -990,7 +990,7 @@ export function projectXrayInbound(
   const stream = obj(ib.streamSettings) ?? {};
   const network = (str(stream.network) ?? 'tcp').toLowerCase();
   const security = (str(stream.security) ?? 'none').toLowerCase();
-  const out: PanelInbound = {
+  const out: BackendTransport = {
     tag,
     configProfileUuid: binding.configProfileUuid,
     configProfileInboundUuid: binding.configProfileInboundUuid,
@@ -1038,13 +1038,13 @@ export function projectXrayInbound(
  * the profile's Xray `config.inbounds[]` and the derived inbound rows; the two
  * are joined BY TAG (the inbound uuid a Host binds to lives only on the derived
  * row; the stream settings only in the raw config). Every entry goes through
- * `projectXrayInbound`, so nothing beyond the allowlist leaves this function.
+ * `projectXrayTransport`, so nothing beyond the allowlist leaves this function.
  * A node without an active profile answers `[]`; an unknown node uuid throws.
  */
 export async function remnawaveListNodeInbounds(
   cfg: RemnawaveConfig,
   nodeUuid: string,
-): Promise<PanelInbound[]> {
+): Promise<BackendTransport[]> {
   const nodes = await call(cfg, { method: 'GET', path: '/api/nodes', schema: NodesResponse });
   const node = nodes.find((n) => n.uuid === nodeUuid);
   if (!node) throw new RemnawaveApiError('Remnawave node not found on /api/nodes', { status: 404 });
@@ -1062,7 +1062,7 @@ export async function remnawaveListNodeInbounds(
   const uuidByTag = new Map((profile.inbounds ?? []).map((i) => [i.tag, i.uuid]));
   const config = obj(profile.config);
   const rawInbounds = Array.isArray(config?.inbounds) ? config.inbounds : [];
-  const out: PanelInbound[] = [];
+  const out: BackendTransport[] = [];
   for (const raw of rawInbounds) {
     const tag = str(obj(raw)?.tag);
     if (!tag) continue;
@@ -1070,7 +1070,7 @@ export async function remnawaveListNodeInbounds(
     // No derived row = the backend has not indexed this inbound; a Host cannot
     // bind to it, so there is nothing a listener could map to.
     if (!inboundUuid) continue;
-    const projected = projectXrayInbound(raw, {
+    const projected = projectXrayTransport(raw, {
       configProfileUuid: profile.uuid,
       configProfileInboundUuid: inboundUuid,
       active: activeUuids.has(inboundUuid) || activeTags.has(tag),
@@ -1575,7 +1575,7 @@ export async function observeConfigProfile(
     inbounds?: { uuid: string; tag: string }[] | null;
   },
   digestKey: string,
-): Promise<PanelObservedProfile> {
+): Promise<ObservedProfile> {
   const uuidByTag = new Map((profile.inbounds ?? []).map((i) => [i.tag, i.uuid]));
   const config = obj(profile.config);
   const rawInbounds = Array.isArray(config?.inbounds) ? config.inbounds : [];
@@ -1583,7 +1583,7 @@ export async function observeConfigProfile(
   for (const raw of rawInbounds) {
     const tag = str(obj(raw)?.tag);
     if (!tag) continue;
-    const projected = projectXrayInbound(raw, {
+    const projected = projectXrayTransport(raw, {
       configProfileUuid: profile.uuid,
       configProfileInboundUuid: uuidByTag.get(tag) ?? '',
       active: false,
@@ -1628,7 +1628,7 @@ export async function remnawaveObservePanel(
       sensitive: true,
     }),
   ]);
-  const profiles: PanelObservedProfile[] = [];
+  const profiles: ObservedProfile[] = [];
   for (const p of Array.isArray(listed) ? listed : listed.configProfiles) {
     const full = await call(cfg, {
       method: 'GET',
@@ -1659,7 +1659,7 @@ export async function remnawaveObservePanel(
   };
 }
 
-function mapObservedHosts(rows: z.infer<typeof ObservedHostsResponse>): PanelObservedHost[] {
+function mapObservedHosts(rows: z.infer<typeof ObservedHostsResponse>): ObservedAddress[] {
   return (Array.isArray(rows) ? rows : rows.hosts).map((h) => ({
     hostUuid: h.uuid,
     remark: h.remark,
@@ -1681,7 +1681,7 @@ function mapObservedHosts(rows: z.infer<typeof ObservedHostsResponse>): PanelObs
   }));
 }
 
-function mapObservedSquads(rows: z.infer<typeof ObservedSquadsResponse>): PanelObservedSquad[] {
+function mapObservedSquads(rows: z.infer<typeof ObservedSquadsResponse>): ObservedModeGroup[] {
   return rows.internalSquads.map((sq) => ({
     squadUuid: sq.uuid,
     name: sq.name,
@@ -1698,7 +1698,7 @@ function mapObservedSquads(rows: z.infer<typeof ObservedSquadsResponse>): PanelO
 // management contract probe pins against a live backend.
 
 /** `null` clears a text field (the backend takes ''), absent leaves it. */
-function hostBody(f: PanelHostFields): Record<string, unknown> {
+function hostBody(f: BackendAddressFields): Record<string, unknown> {
   const body: Record<string, unknown> = {};
   const text = (k: 'sni' | 'host' | 'path' | 'tag') => {
     if (f[k] !== undefined) body[k] = f[k] ?? '';
@@ -1739,7 +1739,7 @@ export async function remnawaveManageCreateHost(
 export async function remnawaveManageUpdateHost(
   cfg: RemnawaveConfig,
   hostUuid: string,
-  fields: PanelHostFields,
+  fields: BackendAddressFields,
 ): Promise<void> {
   await call(cfg, {
     method: 'PATCH',
@@ -1793,13 +1793,13 @@ export async function remnawaveDeleteSquad(cfg: RemnawaveConfig, squadUuid: stri
   });
 }
 
-export async function remnawaveReadHosts(cfg: RemnawaveConfig): Promise<PanelObservedHost[]> {
+export async function remnawaveReadHosts(cfg: RemnawaveConfig): Promise<ObservedAddress[]> {
   return mapObservedHosts(
     await call(cfg, { method: 'GET', path: '/api/hosts', schema: ObservedHostsResponse }),
   );
 }
 
-export async function remnawaveReadSquads(cfg: RemnawaveConfig): Promise<PanelObservedSquad[]> {
+export async function remnawaveReadSquads(cfg: RemnawaveConfig): Promise<ObservedModeGroup[]> {
   return mapObservedSquads(
     await call(cfg, {
       method: 'GET',
@@ -1850,7 +1850,7 @@ export async function remnawaveReadNodeStatus(cfg: RemnawaveConfig): Promise<Pan
 // the node's own secret (`/api/keygen`): installing a node and giving it that
 // secret is the node role's job, done against the backend directly.
 
-function nodeBody(f: PanelNodeFields): Record<string, unknown> {
+function nodeBody(f: BackendNodeFields): Record<string, unknown> {
   const body: Record<string, unknown> = {};
   if (f.name !== undefined) body.name = f.name;
   if (f.address !== undefined) body.address = f.address;
@@ -1889,7 +1889,7 @@ export async function remnawaveCreateNode(
 export async function remnawaveUpdateNode(
   cfg: RemnawaveConfig,
   nodeUuid: string,
-  fields: PanelNodeFields,
+  fields: BackendNodeFields,
 ): Promise<void> {
   await call(cfg, {
     method: 'PATCH',
@@ -2111,7 +2111,7 @@ export async function remnawaveReadInboundForTest(
   );
   const inboundUuid = (full.inbounds ?? []).find((i) => i.tag === tag)?.uuid;
   if (!raw || !inboundUuid) return null;
-  const projected = projectXrayInbound(raw, {
+  const projected = projectXrayTransport(raw, {
     configProfileUuid: full.uuid,
     configProfileInboundUuid: inboundUuid,
     active: true,
@@ -2153,6 +2153,6 @@ export async function remnawaveReadProfile(
   cfg: RemnawaveConfig,
   profileUuid: string,
   digestKey: string,
-): Promise<PanelObservedProfile> {
+): Promise<ObservedProfile> {
   return observeConfigProfile(await readFullProfile(cfg, profileUuid), digestKey);
 }

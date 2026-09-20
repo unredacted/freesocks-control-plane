@@ -38,7 +38,7 @@ const INBOUND_U = '22222222-2222-4222-8222-222222222222';
 const INBOUND_G = '33333333-3333-4333-8333-333333333333';
 const HOST_UUID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 
-interface PanelHost {
+interface BackendAddress {
   uuid: string;
   remark: string;
   address: string;
@@ -53,7 +53,7 @@ interface PanelHost {
  */
 function fakeUpcloud(
   initial: Array<{ uuid: string; name: string }>,
-  opts: { panelHosts?: PanelHost[] } = {},
+  opts: { panelHosts?: BackendAddress[] } = {},
 ) {
   const lbs = new Map(initial.map((l) => [l.uuid, { ...l, operational_state: 'running' }]));
   const deletes: string[] = [];
@@ -1004,7 +1004,7 @@ describe('edgeReconcile: backend Host operations run every tick', () => {
     uuid: HOST_UUID,
     ownership,
   });
-  const panelHost = (): PanelHost => ({
+  const panelHost = (): BackendAddress => ({
     uuid: HOST_UUID,
     remark: 'node-one-relay-u',
     address: '198.51.100.1',

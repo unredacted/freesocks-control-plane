@@ -2213,7 +2213,7 @@ export default defineSchema({
 
   // --- Backend observation (server management) ---------------------------------
   // What an operator sees of a backend BEFORE any write: its nodes, config
-  // profiles, Hosts and mode groups, as last read by `panelObserve`. Read caches
+  // profiles, Hosts and mode groups, as last read by `backendObserve`. Read caches
   // with ONE writer each (the observe mutation); a row the backend no longer
   // lists is deleted. NOTHING here is secret by construction: a transport is the
   // allowlist projection discovery uses, and a profile is that plus digests
@@ -2456,7 +2456,7 @@ export default defineSchema({
     lookup: v.array(v.string()),
     panelUuid: v.optional(v.string()),
     // TRANSITIONAL: 'reserved' is a v1 role reservation. Rows carrying it are
-    // settled by `panelSetup:migrateContractV2`; the literal goes with it.
+    // settled by `backendSetup:migrateContractV2`; the literal goes with it.
     state: v.union(v.literal('owned'), v.literal('reserved'), v.literal('tombstoned')),
     // An open reservation by the node role: blocks tombstoning until settled.
     reservation: v.optional(
@@ -2486,7 +2486,7 @@ export default defineSchema({
 
   // TRANSITIONAL: the v1 role's handoff declaration. Contract v1 is gone and
   // nothing reads this; the table stays declared only so a deployment that has
-  // such rows can be pushed, and `panelSetup:migrateContractV2` empties it.
+  // such rows can be pushed, and `backendSetup:migrateContractV2` empties it.
   panelHandoff: defineTable({
     backendServerId: v.id('backendServers'),
     roleContractVersion: v.number(),
@@ -2500,7 +2500,7 @@ export default defineSchema({
   // The rows below are durable workflows: each carries what it wants
   // (`desired`), a generation that fences every scheduled action made on its
   // behalf, and a lease (`claim`) so an interrupted run resumes from the
-  // sweep. External side effects are `panelObligations`, persisted BEFORE the
+  // sweep. External side effects are `backendObligations`, persisted BEFORE the
   // call.
 
   // One per backend server: the profile, one transport per mode, each mode's
@@ -2529,7 +2529,7 @@ export default defineSchema({
     // TRANSITIONAL optional: a row written by the release before modes has no
     // `modes` (it had `transports`/`mode groups`/`placements` instead) and Convex
     // validates stored documents on every push, so the field cannot be
-    // required until `panelSetup:migrateContractV2` has removed those rows.
+    // required until `backendSetup:migrateContractV2` has removed those rows.
     // `setupReady` treats a row without modes as not set up.
     modes: v.optional(
       v.array(
@@ -2618,7 +2618,7 @@ export default defineSchema({
     // follows from the backend setup's entry for it.
     // TRANSITIONAL optional: a row from the release before modes carries
     // `purpose` instead. Those rows are removed by
-    // `panelSetup:migrateContractV2`; until then the field cannot be required,
+    // `backendSetup:migrateContractV2`; until then the field cannot be required,
     // and a row without it fails closed (`servers.mode_unknown`).
     mode: v.optional(v.string()),
     // TRANSITIONAL: direct | front | origin, the pre-modes shape of a node.
@@ -2907,7 +2907,7 @@ export default defineSchema({
   // A superseded owner generation never releases an unresolved one; on
   // settlement the result is reconciled against current desired state
   // (reuse / retain / delete) rather than cleaned up by rule.
-  panelObligations: defineTable({
+  backendObligations: defineTable({
     backendServerId: v.id('backendServers'),
     ownerKind: v.union(
       v.literal('setup'),

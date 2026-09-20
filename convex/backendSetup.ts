@@ -27,9 +27,9 @@ import { capabilitiesOf } from './lib/backends/capabilities';
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
 import { resolveModeCatalog } from './lib/connectionModes';
 import { sameTarget } from './lib/edges/sni/family';
-import { CLAIM_LEASE_MS, claimAvailable, desiredHashOf, fenceHolds } from './lib/panel/fencing';
-import { callResultOf, classifyRequest } from './lib/panel/ops';
-import { checkProfileCompatibility, type EffectiveTransport } from './lib/panel/profileCompat';
+import { CLAIM_LEASE_MS, claimAvailable, desiredHashOf, fenceHolds } from './lib/backend/fencing';
+import { callResultOf, classifyRequest } from './lib/backend/ops';
+import { checkProfileCompatibility, type EffectiveTransport } from './lib/backend/profileCompat';
 import {
   PROFILE_DEFAULTS,
   buildProfile,
@@ -38,17 +38,17 @@ import {
   transportTagOf,
   type ModeShape,
   type ModeTemplateInput,
-} from './lib/panel/profileTemplate';
-import { generateRealityKey } from './lib/panel/realityKeys';
+} from './lib/backend/profileTemplate';
+import { generateRealityKey } from './lib/backend/realityKeys';
 import {
   SUBSCRIPTION_TEMPLATES,
   TEMPLATE_FAMILIES,
   desiredTemplateBody,
   templateDrift,
   templateHash,
-} from './lib/panel/subscriptionTemplates';
+} from './lib/backend/subscriptionTemplates';
 import { resolveServerConfig } from './lib/serverConfig';
-import { observeInstance } from './panelObserve';
+import { observeInstance } from './backendObserve';
 
 const refuse = (code: string, message: string): never => {
   throw new ConvexError({ code, message });
@@ -163,7 +163,7 @@ export const start = internalMutation({
       refuse('servers.manage_disabled', 'Server changes are switched off in Servers settings');
     const server = await ctx.db.get(sid);
     if (!server) return refuse('not_found', 'Backend server not found');
-    if (!capabilitiesOf(server.backend).panelSetup)
+    if (!capabilitiesOf(server.backend).backendSetup)
       refuse('servers.unsupported_backend', 'This backend type cannot be set up here');
     const input = a.input as SetupInput;
     if (!/^[A-Za-z0-9 ._-]{1,60}$/.test(input.profileName))
@@ -264,7 +264,7 @@ export const start = internalMutation({
       code: undefined,
       updatedAt: now,
     });
-    await ctx.scheduler.runAfter(0, internal.panelSetup.run, {
+    await ctx.scheduler.runAfter(0, internal.backendSetup.run, {
       setupId: row._id,
       generation: row.generation,
       attemptId,
@@ -503,7 +503,7 @@ export const bumpGate = internalMutation({
 
 type Loaded = NonNullable<Awaited<ReturnType<typeof loadSetupContext>>>;
 async function loadForRunHandler(ctx: ActionCtx, f: Fence): Promise<Loaded | null> {
-  return (await ctx.runQuery(internal.panelSetup.loadForRun, f)) as Loaded | null;
+  return (await ctx.runQuery(internal.backendSetup.loadForRun, f)) as Loaded | null;
 }
 
 /** The transport entry a setup row records for an effective transport. */
@@ -528,9 +528,9 @@ export const run = internalAction({
     let c: Loaded = first;
     const sid = c.server._id;
     const record = (patch: Record<string, unknown>) =>
-      ctx.runMutation(internal.panelSetup.recordStep, { ...f, patch });
+      ctx.runMutation(internal.backendSetup.recordStep, { ...f, patch });
     const finish = (state: 'pending' | 'ready' | 'failed', code?: string, step?: string) =>
-      ctx.runMutation(internal.panelSetup.finish, { ...f, state, code, step });
+      ctx.runMutation(internal.backendSetup.finish, { ...f, state, code, step });
     const reload = async (): Promise<Loaded> => {
       const next = await loadForRunHandler(ctx, f);
       if (!next) throw new Fenced();
@@ -545,7 +545,7 @@ export const run = internalAction({
       return false;
     };
     const provider = PROVIDERS[c.server.backend];
-    const writes = provider.panelWrites;
+    const writes = provider.backendWrites;
     if (!writes) {
       await finish('failed', 'servers.unsupported_backend');
       return null;
@@ -583,7 +583,7 @@ export const run = internalAction({
       await record({ step: 'profile' });
       let profile = c.snapshot.profiles.find((p) => p.name === input.profileName) ?? null;
       if (!profile) {
-        const blocking = await ctx.runQuery(internal.panelObligations.blockingFor, {
+        const blocking = await ctx.runQuery(internal.backendObligations.blockingFor, {
           backendServerId: sid,
           kind: 'profile.create',
           identity: input.profileName,
@@ -594,7 +594,7 @@ export const run = internalAction({
           await finish('pending', 'servers.obligation_unresolved', 'profile');
           return null;
         }
-        const opened = await ctx.runMutation(internal.panelObligations.open, {
+        const opened = await ctx.runMutation(internal.backendObligations.open, {
           backendServerId: sid,
           ownerKind: 'setup',
           ownerId: f.setupId,
@@ -611,7 +611,7 @@ export const run = internalAction({
           return null;
         }
         if (!(await writable('profile'))) {
-          await ctx.runMutation(internal.panelObligations.mark, {
+          await ctx.runMutation(internal.backendObligations.mark, {
             id: opened.id,
             state: 'failed',
             code: 'servers.manage_disabled',
@@ -736,17 +736,17 @@ export const run = internalAction({
             .map((n) => c.snapshot.groups.find((g) => g.name === n))
             .find((g) => !!g);
           if (legacy) {
-            const { opId } = await ctx.runMutation(internal.panelWrites.requestModeGroupUpdate, {
+            const { opId } = await ctx.runMutation(internal.backendWrites.requestModeGroupUpdate, {
               backendServerId: sid,
               squadUuid: legacy.groupUuid,
               name: m.name,
             });
-            const r = await ctx.runAction(internal.panelWrites.run, { opId });
+            const r = await ctx.runAction(internal.backendWrites.run, { opId });
             if (r.open) {
               await finish('pending', 'servers.op_running', 'groups');
               return null;
             }
-            await ctx.runMutation(internal.panelSetup.recordGroupRename, {
+            await ctx.runMutation(internal.backendSetup.recordGroupRename, {
               ...f,
               from: legacy.name,
               to: m.name,
@@ -758,12 +758,12 @@ export const run = internalAction({
           }
         }
         if (!group) {
-          const { opId } = await ctx.runMutation(internal.panelWrites.requestModeGroupCreate, {
+          const { opId } = await ctx.runMutation(internal.backendWrites.requestModeGroupCreate, {
             backendServerId: sid,
             name: m.name,
             inboundUuids: [transportUuid],
           });
-          const r = await ctx.runAction(internal.panelWrites.run, { opId });
+          const r = await ctx.runAction(internal.backendWrites.run, { opId });
           if (r.open) {
             await finish('pending', 'servers.op_running', 'groups');
             return null;
@@ -779,12 +779,12 @@ export const run = internalAction({
           // A mode grants exactly ONE transport, so the group carries exactly
           // it: a transport an earlier release left in the group would keep
           // granting members a second way in.
-          const { opId } = await ctx.runMutation(internal.panelWrites.requestModeGroupUpdate, {
+          const { opId } = await ctx.runMutation(internal.backendWrites.requestModeGroupUpdate, {
             backendServerId: sid,
             squadUuid: group.groupUuid,
             inboundUuids: [transportUuid],
           });
-          const r = await ctx.runAction(internal.panelWrites.run, { opId });
+          const r = await ctx.runAction(internal.backendWrites.run, { opId });
           if (r.open) {
             await finish('pending', 'servers.op_running', 'groups');
             return null;
@@ -867,17 +867,17 @@ class Fenced extends Error {}
  * call made once. Returns what happened without ever returning the config.
  */
 async function createProfile(
-  writes: NonNullable<(typeof PROVIDERS)[keyof typeof PROVIDERS]['panelWrites']>,
+  writes: NonNullable<(typeof PROVIDERS)[keyof typeof PROVIDERS]['backendWrites']>,
   config: BackendConfig,
   profileName: string,
   modes: readonly ModeTemplateInput[],
-  obligationId: Id<'panelObligations'>,
+  obligationId: Id<'backendObligations'>,
   ctx: ActionCtx,
 ): Promise<'created' | 'refused' | 'unresolved'> {
   const mark = (
     state: 'sent' | 'unresolved' | 'confirmed' | 'failed',
     extra: { resourceRef?: string; code?: string } = {},
-  ) => ctx.runMutation(internal.panelObligations.mark, { id: obligationId, state, ...extra });
+  ) => ctx.runMutation(internal.backendObligations.mark, { id: obligationId, state, ...extra });
   const keys = Object.fromEntries(
     modes
       .filter((m) => m.shape.transport !== 'ws')
@@ -1049,7 +1049,7 @@ export const migrateContractV2 = internalMutation({
         .withIndex('by_server', (q) => q.eq('backendServerId', sid))
         .collect())
         await ctx.db.delete(h._id);
-      for (const o of (await ctx.db.query('panelObligations').collect()).filter(
+      for (const o of (await ctx.db.query('backendObligations').collect()).filter(
         (o) => o.backendServerId === sid,
       ))
         await ctx.db.delete(o._id);

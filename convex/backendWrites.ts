@@ -3,7 +3,7 @@
  * `request*` mutation (validate against what FCP knows, then claim through the
  * ledger) followed by `run` (send ONCE, then look). The mutation refuses
  * anything that belongs to the edges machinery or that would strand members;
- * the ledger decides when a claim may be released (panelLedger.ts).
+ * the ledger decides when a claim may be released (backendLedger.ts).
  *
  * What queues node work on the backend (measured against the backend's source and
  * the managed-node harness): changing a mode group's transports and deleting a mode group
@@ -20,8 +20,8 @@ import { runWithCronOutcome } from './cronHeartbeat';
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
 import type {
   PanelHostCreate,
-  PanelHostFields,
-  PanelNodeFields,
+  BackendAddressFields,
+  BackendNodeFields,
   ProfilePatchPreview,
 } from './lib/backends/types';
 import {
@@ -32,15 +32,15 @@ import {
   hostLock,
   hostsMatchingIdentity,
   looksLikeRelayRemark,
-} from './lib/panel/ops';
+} from './lib/backend/ops';
 import { poolFromConfig } from './lib/remnawavePlacement';
 import { parseRealityTarget } from './lib/edges/inboundMapping';
 import { assertNoRotationOrQuarantine } from './lib/edges/relayGuards';
-import { panelDigestKey } from './lib/panel/key';
-import { PatchRefused, checkPatchOps, type PatchOp } from './lib/panel/patchOps';
-import { closeForSharedChange } from './panelIntents';
-import { claimOp } from './panelLedger';
-import { observeInstance } from './panelObserve';
+import { panelDigestKey } from './lib/backend/key';
+import { PatchRefused, checkPatchOps, type PatchOp } from './lib/backend/patchOps';
+import { closeForSharedChange } from './nodeIntents';
+import { claimOp } from './backendLedger';
+import { observeInstance } from './backendObserve';
 
 const refuse = (code: string, message: string): never => {
   throw new ConvexError({ code, message });
@@ -244,7 +244,7 @@ export const requestAddressUpdate = internalMutation({
         refuse('servers.relay_remark', 'Remarks ending in -origin belong to edges. Pick another');
     }
     const { backendServerId: _s, hostUuid, actorAdminId, inboundUuid, ...rest } = a;
-    const fields: PanelHostFields = { ...rest };
+    const fields: BackendAddressFields = { ...rest };
     const expected: Record<string, unknown> = { ...rest };
     // The postcondition is what a later read must SHOW, not what was asked. A
     // cleared security layer is sent as the backend's own default word (the
@@ -648,7 +648,7 @@ export const requestNodeUpdate = internalMutation({
   handler: async (ctx, a) => {
     const sid = a.backendServerId;
     const node = await cachedNode(ctx, sid, a.nodeUuid);
-    const fields: PanelNodeFields = {};
+    const fields: BackendNodeFields = {};
     const expected: Record<string, unknown> = {};
     const claimKeys = [claimKey.node(a.nodeUuid)];
     if (a.name !== undefined && a.name !== node.name) {
@@ -973,7 +973,7 @@ export const requestProfilePatch = internalMutation({
 async function writesFor(ctx: ActionCtx, backendServerId: Id<'backendServers'>) {
   const server = await ctx.runQuery(internal.backendServers.getById, { id: backendServerId });
   if (!server) throw new ConvexError({ code: 'not_found', message: 'Backend server not found' });
-  const writes = PROVIDERS[server.backend].panelWrites;
+  const writes = PROVIDERS[server.backend].backendWrites;
   if (!writes)
     throw new ConvexError({
       code: 'servers.unsupported_backend',
@@ -984,7 +984,7 @@ async function writesFor(ctx: ActionCtx, backendServerId: Id<'backendServers'>) 
 
 /** One look at the backend for this op; never throws (a failed look changes nothing). */
 async function look(ctx: ActionCtx, opId: Id<'panelOps'>): Promise<boolean> {
-  const op = await ctx.runQuery(internal.panelLedger.getForRun, { opId });
+  const op = await ctx.runQuery(internal.backendLedger.getForRun, { opId });
   if (!op || !op.open) return false;
   try {
     const { writes, config } = await writesFor(ctx, op.backendServerId);
@@ -1019,7 +1019,7 @@ async function look(ctx: ActionCtx, opId: Id<'panelOps'>): Promise<boolean> {
               : {}),
           }))
         : undefined;
-    const out = await ctx.runMutation(internal.panelLedger.applyLook, {
+    const out = await ctx.runMutation(internal.backendLedger.applyLook, {
       opId,
       hosts,
       squads,
@@ -1050,7 +1050,7 @@ async function look(ctx: ActionCtx, opId: Id<'panelOps'>): Promise<boolean> {
 export const run = internalAction({
   args: { opId: v.id('panelOps') },
   handler: async (ctx, { opId }): Promise<{ open: boolean }> => {
-    const op = await ctx.runQuery(internal.panelLedger.getForRun, { opId });
+    const op = await ctx.runQuery(internal.backendLedger.getForRun, { opId });
     if (!op || !op.open) return { open: false };
     if (op.request !== 'pending' || op.attemptId) return { open: await look(ctx, opId) };
     const { writes, config } = await writesFor(ctx, op.backendServerId);
@@ -1074,7 +1074,7 @@ export const run = internalAction({
         match = found[0]?.squadUuid;
       }
       if (matches > 0) {
-        await ctx.runMutation(internal.panelLedger.settleWithoutSending, {
+        await ctx.runMutation(internal.backendLedger.settleWithoutSending, {
           opId,
           outcome: matches === 1 ? 'adopted' : 'duplicate',
           objectUuid: match,
@@ -1089,7 +1089,7 @@ export const run = internalAction({
             .filter((n) => (op.asyncNodes ?? []).some((a) => a.nodeUuid === n.nodeUuid))
             .map((n) => ({ nodeUuid: n.nodeUuid, before: n.lastStatusChange }))
         : undefined;
-    const sent = await ctx.runMutation(internal.panelLedger.markSent, {
+    const sent = await ctx.runMutation(internal.backendLedger.markSent, {
       opId,
       attemptId: crypto.randomUUID(),
       asyncNodes,
@@ -1111,7 +1111,7 @@ export const run = internalAction({
         if (!sent.sent) {
           // Someone else changed the profile since the preview (or there is
           // nothing to do): the PATCH was never made.
-          await ctx.runMutation(internal.panelLedger.recordOutcome, {
+          await ctx.runMutation(internal.backendLedger.recordOutcome, {
             opId,
             request: 'rejected_pre_mutation',
             errorCode: `servers.${sent.reason}`,
@@ -1145,7 +1145,7 @@ export const run = internalAction({
       errorCode =
         outcome === 'rejected_pre_mutation' ? 'servers.panel_refused' : 'servers.outcome_unknown';
     }
-    await ctx.runMutation(internal.panelLedger.recordOutcome, {
+    await ctx.runMutation(internal.backendLedger.recordOutcome, {
       opId,
       request: outcome as 'rejected_pre_mutation' | 'acknowledged' | 'uncertain',
       objectUuid,
@@ -1218,7 +1218,7 @@ export const recoverOp = internalAction({
   handler: async (ctx, a): Promise<{ ok: true; settledByLook: boolean }> => {
     // The fresh read may simply settle it: then no attestation is needed.
     if (!(await look(ctx, a.opId))) return { ok: true, settledByLook: true };
-    await ctx.runMutation(internal.panelLedger.recover, { ...a, freshReadAt: Date.now() });
+    await ctx.runMutation(internal.backendLedger.recover, { ...a, freshReadAt: Date.now() });
     return { ok: true, settledByLook: false };
   },
 });
@@ -1230,8 +1230,8 @@ export const recoverOp = internalAction({
 export const reconcile = internalAction({
   args: {},
   handler: async (ctx): Promise<{ looked: number; stillOpen: number }> =>
-    runWithCronOutcome(ctx, 'panel-reconcile', async () => {
-      const { toLook, released } = await ctx.runMutation(internal.panelLedger.sweepInterrupted, {
+    runWithCronOutcome(ctx, 'backend-reconcile', async () => {
+      const { toLook, released } = await ctx.runMutation(internal.backendLedger.sweepInterrupted, {
         olderThanMs: 2 * 60_000,
       });
       // An op released as never sent may have been a rollout's write.

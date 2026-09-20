@@ -103,8 +103,8 @@ import type {
   ResourceStep,
 } from './lib/edges/providers/types';
 import { admitted, assertAdmission } from './lib/edges/maintenance';
-import { publicationAdmitted } from './lib/panel/activation';
-import { activatingRunFor, recordCandidateEdge } from './panelActivation';
+import { publicationAdmitted } from './lib/backend/activation';
+import { activatingRunFor, recordCandidateEdge } from './nodeActivation';
 
 type Rotation = Doc<'edgeRotations'>;
 type Edge = Doc<'edges'>;

@@ -4,7 +4,7 @@
  * setup runs".
  *
  * The plan answers "what would protecting this node do" from the backend:
- *   - transports via `backends.listNodeInbounds` + the pure `mapInboundsToListeners`
+ *   - transports via `backends.listNodeInbounds` + the pure `mapTransportsToListeners`
  *     (the frontable ones are the required listeners, cap 8);
  *   - the node's DIRECT backend Hosts via `backends.listHosts` + `classifyDirectHosts`
  *     (covered = its transport is frontable in every format; uncovered = the
@@ -23,9 +23,9 @@ import { internalAction, internalQuery } from './_generated/server';
 import type { ActionCtx, QueryCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
-import type { BackendHost, PanelInbound } from './lib/backends/types';
+import type { BackendHost, BackendTransport } from './lib/backends/types';
 import { RENDER_CLIENT_FAMILIES, resolveEdgeConfig } from './lib/edgeConfig';
-import { mapInboundsToListeners } from './lib/edges/inboundMapping';
+import { mapTransportsToListeners } from './lib/edges/inboundMapping';
 import { applyOriginProbes, originProbeTargets } from './edgeOriginProbe';
 import type { OriginProbeOutcome } from './lib/edges/originProbe';
 import { classifyDirectHosts } from './lib/edges/directHosts';
@@ -48,7 +48,7 @@ export interface PlanOps {
   listNodeInbounds(
     ctx: ActionCtx,
     a: { backendServerId: Id<'backendServers'>; nodeUuid: string },
-  ): Promise<PanelInbound[]>;
+  ): Promise<BackendTransport[]>;
   listHosts(ctx: ActionCtx, a: { backendServerId: Id<'backendServers'> }): Promise<BackendHost[]>;
   /** The origin probe for HTTP-transport transports (fills `originTransport`; lib/edges/originProbe.ts). */
   probeOrigins(
@@ -264,7 +264,7 @@ export async function buildPlan(
     planOps.listNodeInbounds(ctx, a),
   );
   const mapped = await planStage('mapping the transports to listeners', () =>
-    mapInboundsToListeners(inbounds, { existingKeys: [], origin }),
+    mapTransportsToListeners(inbounds, { existingKeys: [], origin }),
   );
   // The mapper leaves HTTP-transport transports without `originTransport` (L4
   // only); the origin probe fills it in, exactly as the transport-candidates

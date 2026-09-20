@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'vitest';
-import type { PanelInbound } from '../backends/types';
-import { mapInboundsToListeners } from '../edges/inboundMapping';
+import type { BackendTransport } from '../backends/types';
+import { mapTransportsToListeners } from '../edges/inboundMapping';
 import { applyIngress, type IngressMapping } from './ingress';
 
 const PROFILE = '11111111-1111-4111-8111-111111111111';
 const INBOUND = '22222222-2222-4222-8222-222222222222';
-const cdn: PanelInbound = {
+const cdn: BackendTransport = {
   tag: 'VLESS_WS_CDN',
   configProfileUuid: PROFILE,
   configProfileInboundUuid: INBOUND,
@@ -51,11 +51,15 @@ describe('applyIngress', () => {
   });
 
   test('discovery refuses the loopback transport without an ingress and maps it with one', async () => {
-    const without = await mapInboundsToListeners([cdn], { existingKeys: [], origin });
+    const without = await mapTransportsToListeners([cdn], { existingKeys: [], origin });
     expect(without.candidates).toHaveLength(0);
     expect(without.unsupported[0]).toMatchObject({ tag: 'VLESS_WS_CDN', reason: 'loopback' });
 
-    const withIngress = await mapInboundsToListeners([cdn], { existingKeys: [], origin, ingress });
+    const withIngress = await mapTransportsToListeners([cdn], {
+      existingKeys: [],
+      origin,
+      ingress,
+    });
     expect(withIngress.unsupported).toHaveLength(0);
     expect(withIngress.candidates[0]!.listenerSpec).toMatchObject({
       protocol: 'vless',

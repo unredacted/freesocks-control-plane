@@ -281,7 +281,7 @@ export interface BackendHostCreate {
  * key and short ids, and certificate material are never read into this shape.
  * `port` is null when the backend's value is not one plain port (a range/list).
  */
-export interface PanelInbound {
+export interface BackendTransport {
   tag: string;
   configProfileUuid: string;
   configProfileInboundUuid: string;
@@ -321,7 +321,7 @@ export interface NodeInventoryRow {
   countryCode?: string;
 }
 
-import type { PatchChange, PatchOp } from '../panel/patchOps';
+import type { PatchChange, PatchOp } from '../backend/patchOps';
 
 // --- Backend observation (server management) -----------------------------------
 //
@@ -341,11 +341,11 @@ export interface PanelRealityAuth {
   publicKeyMismatch: boolean;
 }
 
-export type ObservedTransport = Omit<PanelInbound, 'active'> & {
+export type ObservedTransport = Omit<BackendTransport, 'active'> & {
   realityAuth?: PanelRealityAuth;
 };
 
-export interface PanelObservedProfile {
+export interface ObservedProfile {
   profileUuid: string;
   name: string;
   /** SHA-256 over the redacted config: storable, drives diffs, blind to secret-only changes. */
@@ -355,7 +355,7 @@ export interface PanelObservedProfile {
   inbounds: ObservedTransport[];
 }
 
-export interface PanelObservedNode {
+export interface ObservedNode {
   nodeUuid: string;
   name: string;
   address: string | null;
@@ -369,7 +369,7 @@ export interface PanelObservedNode {
   tags: string[];
 }
 
-export interface PanelObservedHost {
+export interface ObservedAddress {
   hostUuid: string;
   remark: string;
   address: string;
@@ -390,7 +390,7 @@ export interface PanelObservedHost {
   nodeUuids: string[];
 }
 
-export interface PanelObservedSquad {
+export interface ObservedModeGroup {
   squadUuid: string;
   name: string;
   inboundUuids: string[];
@@ -398,10 +398,10 @@ export interface PanelObservedSquad {
 }
 
 export interface PanelObservation {
-  nodes: PanelObservedNode[];
-  profiles: PanelObservedProfile[];
-  hosts: PanelObservedHost[];
-  squads: PanelObservedSquad[];
+  nodes: ObservedNode[];
+  profiles: ObservedProfile[];
+  hosts: ObservedAddress[];
+  squads: ObservedModeGroup[];
 }
 
 // --- Backend writes (server management) ------------------------------------------
@@ -418,7 +418,7 @@ export interface ProfilePatchPreview {
 }
 
 /** Every Host field an operator may set. Absent = leave; `null` = clear (sent as ''). */
-export interface PanelHostFields {
+export interface BackendAddressFields {
   remark?: string;
   address?: string;
   port?: number;
@@ -436,7 +436,7 @@ export interface PanelHostFields {
   nodeUuids?: string[];
 }
 
-export type PanelHostCreate = PanelHostFields & {
+export type PanelHostCreate = BackendAddressFields & {
   remark: string;
   address: string;
   port: number;
@@ -467,7 +467,7 @@ export interface PanelNodeCreate {
 }
 
 /** Absent = leave. Profile and inbounds travel together (the backend takes them as one). */
-export interface PanelNodeFields {
+export interface BackendNodeFields {
   name?: string;
   address?: string;
   port?: number;
@@ -540,7 +540,7 @@ export interface PanelWrites<C> {
   /** The protocol credential (VLESS uuid) of a backend user FCP issued, in memory only. */
   userCredential(config: C, backendUserId: string): Promise<{ protocolUuid: string | null }>;
   createAddress(config: C, spec: PanelHostCreate): Promise<{ hostUuid: string }>;
-  updateAddress(config: C, hostUuid: string, fields: PanelHostFields): Promise<void>;
+  updateAddress(config: C, hostUuid: string, fields: BackendAddressFields): Promise<void>;
   deleteAddress(config: C, hostUuid: string): Promise<void>;
   reorderAddresses(config: C, order: { hostUuid: string; viewPosition: number }[]): Promise<void>;
   createModeGroup(
@@ -554,7 +554,7 @@ export interface PanelWrites<C> {
   ): Promise<void>;
   deleteModeGroup(config: C, squadUuid: string): Promise<void>;
   createNode(config: C, spec: PanelNodeCreate): Promise<{ nodeUuid: string }>;
-  updateNode(config: C, nodeUuid: string, fields: PanelNodeFields): Promise<void>;
+  updateNode(config: C, nodeUuid: string, fields: BackendNodeFields): Promise<void>;
   setNodeEnabled(config: C, nodeUuid: string, enabled: boolean): Promise<void>;
   /** Always a FORCED restart: a node otherwise skips it when its config hashes are unchanged. */
   restartNode(config: C, nodeUuid: string): Promise<void>;
@@ -582,9 +582,9 @@ export interface PanelWrites<C> {
     baseToken: string,
     digestKey: string,
   ): Promise<{ sent: true } | { sent: false; reason: 'profile_changed' | 'nothing_to_change' }>;
-  readProfile(config: C, profileUuid: string, digestKey: string): Promise<PanelObservedProfile>;
+  readProfile(config: C, profileUuid: string, digestKey: string): Promise<ObservedProfile>;
   /** Targeted read-backs: the ledger settles an op by LOOKING, never by trusting a response. */
-  readHosts(config: C): Promise<PanelObservedHost[]>;
-  readSquads(config: C): Promise<PanelObservedSquad[]>;
+  readHosts(config: C): Promise<ObservedAddress[]>;
+  readSquads(config: C): Promise<ObservedModeGroup[]>;
   readNodeStatus(config: C): Promise<PanelNodeStatus[]>;
 }

@@ -815,7 +815,7 @@ its first confirmed receipt; that switch is recorded like an operator's
 nothing new, because every member's name changes with it.
 
 A rollout follows its ledger op from **whichever** look settles it (the run's own, the
-`panel-reconcile` cron's, an operator's "look again"), so a backend read that fails right after
+`backend-reconcile` cron's, an operator's "look again"), so a backend read that fails right after
 the write leaves the rollout `writing` only until the next successful look, never for good.
 
 **Removal is the reverse.** A name leaves the origins first, with its drain. The plan **retains**
@@ -1007,12 +1007,12 @@ node's declared ingress, and publication is admitted only under the node's appro
 (`servers.node_not_approved`; setup need `node_not_approved`). Three pieces belong to it:
 
 - **Loopback ingress.** A front node's WebSocket transport listens on loopback behind Caddy.
-  `mapInboundsToListeners` takes `opts.ingress` (`convex/lib/panel/ingress.ts`): a mapped loopback
+  `mapInboundsToListeners` takes `opts.ingress` (`convex/lib/backend/ingress.ts`): a mapped loopback
   transport is discovered as the external TLS listener Caddy exposes (port 443, the origin hostname
   as its certificate name); the origin probe then verifies that hop exactly as any HTTPS origin.
   Without a mapping, loopback stays `loopback`.
 - **Go-live.** For an enrolled node, `edgeSetupRuns.goLive` promotes the node's activation run
-  inside its own mutation (`panelActivation.promoteCandidate`): the edges it published are the
+  inside its own mutation (`nodeActivation.promoteCandidate`): the edges it published are the
   run's candidate resources, filtered from members until then.
 - **The origin TLS contract.** Recorded per combination: Fastly with `overrideHost: 'origin'`
   (SNI = Host = the origin name, a public certificate naming it) is supported; Fastly with
