@@ -68,12 +68,12 @@ export const RATE_LIMIT_DEFAULTS = {
   'account.node-status': { max: 20, windowMs: MINUTE, enabled: true },
   'account.connection-region': { max: 20, windowMs: MINUTE, enabled: true },
   // Member account read (per user): each fetch does a LIVE backend getUser, so
-  // open tabs × polling would otherwise scale panel QPS linearly. Generous —
+  // open tabs × polling would otherwise scale backend QPS linearly. Generous —
   // the SPA polls ~1/min + on window focus.
   'account.read': { max: 30, windowMs: MINUTE, enabled: true },
   // Member usage trend (per user): every call is a LIVE backend bandwidth-stats
-  // fetch with no cache, so a hot loop scales panel QPS linearly. The SPA calls
-  // it only when the usage panel opens.
+  // fetch with no cache, so a hot loop scales backend QPS linearly. The SPA calls
+  // it only when the usage backend opens.
   'account.usage': { max: 20, windowMs: MINUTE, enabled: true },
   // Member raw-config copy (per user): every call is a LIVE backend content
   // fetch with no cache (unlike the token-fronted /sub/ route, which caches).
@@ -119,7 +119,7 @@ export const RATE_LIMIT_DEFAULTS = {
   'subscription.fetch': { max: 120, windowMs: MINUTE, enabled: true },
   // Per-TOKEN bucket on the same route (Review B-F1): the per-IP bucket alone
   // lets a token holder rotate source IPs (or UAs, bypassing the cache) to
-  // multiply live panel fetches, and HWID device-stuffing is per-token. 60/min
+  // multiply live backend fetches, and HWID device-stuffing is per-token. 60/min
   // is generous for a member's own devices (each polls every few minutes).
   'subscription.fetch.token': { max: 60, windowMs: MINUTE, enabled: true },
   // Unauthenticated public GETs (per IP) — DoS-amplification hygiene, not access
@@ -142,23 +142,23 @@ export const RATE_LIMIT_DEFAULTS = {
   // per view; hygiene against a hot refresh loop.
   'account.referrals': { max: 20, windowMs: MINUTE, enabled: true },
   // Anonymous SPA pageview beacon (per IP): each POST costs one small outbound
-  // relay to the operator's Umami, so this is DoS-amplification hygiene, not
+  // origin to the operator's Umami, so this is DoS-amplification hygiene, not
   // accuracy control — over the cap, pageviews are silently dropped. Matched to
   // config.fetch/status.fetch because the same shared-exit/CGNAT populations
   // hit all three; a real user generates well under 20 route changes a minute.
   'telemetry.send': { max: 120, windowMs: MINUTE, enabled: true },
   // Admin edges surface (per actor: admin id / API token / IP). Every call behind
   // `provider-call` reaches a cloud provider's API (credential tests, option
-  // discovery, inventory + live-LB pulls, panel node refresh, render preview);
+  // discovery, inventory + live-LB pulls, backend node refresh, render preview);
   // `probe` requests measurement runs that spend third-party probe credits.
   // Interactive operator use stays far below both; a leaked admin token or a
   // hot CMS loop is what these bound.
   'admin.edges.provider-call': { max: 30, windowMs: MINUTE, enabled: true },
   'admin.edges.probe': { max: 30, windowMs: HOUR, enabled: true },
-  // Server management: an on-demand re-read of one panel (several panel GETs
+  // Server management: an on-demand re-read of one backend (several backend GETs
   // per call). The scheduled read rides the healthcheck and is not throttled.
   'admin.servers.panel-read': { max: 30, windowMs: MINUTE, enabled: true },
-  // A management WRITE: one panel call plus read-backs. Interactive use is a
+  // A management WRITE: one backend call plus read-backs. Interactive use is a
   // handful a minute; this bounds a leaked token or a looping script.
   'admin.servers.panel-write': { max: 12, windowMs: MINUTE, enabled: true },
 } as const satisfies Record<string, RateLimitPolicy>;

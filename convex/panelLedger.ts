@@ -1,6 +1,6 @@
 /**
- * The operations ledger for panel writes (server management). The ONLY writer
- * of `panelOps` and `panelClaims`. Rules (lib/panel/ops.ts):
+ * The operations ledger for backend writes (server management). The ONLY writer
+ * of `panelOps` and `panelClaims`. Rules (lib/backend/ops.ts):
  *
  *  - an op and ALL its claims are inserted in one mutation, before anything is
  *    sent; a key someone else holds refuses the whole op;
@@ -47,7 +47,7 @@ export interface PanelOpOwner {
 }
 
 /**
- * Refuse while any of `keys` is claimed by a panel op. With `owner`, pass ONLY
+ * Refuse while any of `keys` is claimed by a backend op. With `owner`, pass ONLY
  * when EVERY key has a claim row and each belongs to that op at that
  * generation: a missing required claim fails (it does not pass by vacuity), so
  * an op cannot do its follow-up work after losing, or never taking, a claim.
@@ -84,7 +84,7 @@ export interface ClaimArgs {
   claimKeys: string[];
   intent: unknown;
   postcondition: unknown;
-  /** Nodes whose application work the panel will queue behind this write. */
+  /** Nodes whose application work the backend will queue behind this write. */
   asyncNodeUuids?: string[];
   actorAdminId?: Id<'adminUsers'>;
 }
@@ -236,7 +236,7 @@ export const recordOutcome = internalMutation({
 });
 
 /**
- * A create whose identity ALREADY exists on the panel before anything was
+ * A create whose identity ALREADY exists on the backend before anything was
  * sent: exactly one match is adopted (no call is made), several are left to
  * the operator. Either way the op never sends.
  */
@@ -294,7 +294,7 @@ const observedHost = v.object({
 });
 const observedProfile = v.object({
   changeToken: v.string(),
-  /** tag -> inbound uuid as read now. */
+  /** tag -> transport uuid as read now. */
   inboundUuids: v.record(v.string(), v.string()),
 });
 const observedSquad = v.object({
@@ -305,7 +305,7 @@ const observedSquad = v.object({
 });
 
 /**
- * One look at the panel, taken AFTER the attempt. Decides whether the
+ * One look at the backend, taken AFTER the attempt. Decides whether the
  * postcondition is seen and whether queued node work is done, and releases the
  * claims only when `claimsReleasable` allows it. A create that matches SEVERAL
  * rows is never adopted: it stays fenced for the operator.
@@ -370,8 +370,8 @@ export const applyLook = internalMutation({
         // The whole config, key material included, is what the token covers:
         // equal tokens mean the edit landed AND nothing else moved.
         seen = profile.changeToken === expected.expectedToken;
-        // The panel keeps an inbound's uuid while tag and protocol hold. If one
-        // moved anyway, every binding to it (listeners, Hosts, squads) is stale:
+        // The backend keeps a transport's uuid while tag and protocol hold. If one
+        // moved anyway, every binding to it (listeners, Hosts, mode groups) is stale:
         // say so loudly rather than carry on as if nothing happened.
         const before = (expected.inboundUuids ?? {}) as Record<string, string>;
         if (
@@ -447,14 +447,14 @@ export const applyLook = internalMutation({
 });
 
 /**
- * After a profile edit is SEEN on the panel, the relay listeners bound to the
- * touched inbounds follow. Ownership, not a bypass: the op must hold the claim
- * on every relay it is about to touch, exactly.
+ * After a profile edit is SEEN on the backend, the origin listeners bound to the
+ * touched transports follow. Ownership, not a bypass: the op must hold the claim
+ * on every origin it is about to touch, exactly.
  *
  *  - a new TARGET is descriptive state of the listener: it is updated, and the
  *    listener's `revision` moves, so every L4 endpoint confirmation on it is
  *    due a retest (the material an operator tested against changed);
- *  - new SERVER NAMES are NOT activated here. The panel listing a name does not
+ *  - new SERVER NAMES are NOT activated here. The backend listing a name does not
  *    mean the node accepts it (measured), so a name reaches members only
  *    through a path that proves acceptance. Removed names were refused at claim
  *    time while a listener still handed them out, so nothing is left to retire.
@@ -631,7 +631,7 @@ export const sweepInterrupted = internalMutation({
  * The recorded recovery of an attempt whose outcome cannot be observed. ALL
  * three conditions must be attested by name, and a read made after them must
  * have been taken (`freshReadAt`, supplied by the action that just looked).
- * "The panel was restarted" is not one of the conditions: queued work survives
+ * "The backend was restarted" is not one of the conditions: queued work survives
  * a restart.
  */
 export const recover = internalMutation({

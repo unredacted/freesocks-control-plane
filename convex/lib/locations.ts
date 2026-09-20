@@ -1,7 +1,7 @@
 /**
  * Member-facing node-location catalog, derived from the backend-server pool:
  * active instances of location-capable backends (the `locations` capability)
- * that have a `location` code set, deduped by code (several panels may share
+ * that have a `location` code set, deduped by code (several backends may share
  * a location). Non-secret by construction — only the
  * operator-entered code + display label, a coarse online bit, and the coarse
  * load BAND ever leave this projection (never a URL, token, key count, or raw
@@ -95,7 +95,7 @@ export async function resolveLocations(db: DatabaseReader): Promise<LocationEntr
       (s) => s.lastHealthOkAt != null && now - s.lastHealthOkAt < HEALTH_FRESH_MS,
     );
     // First instance at the code with a full coordinate pair (same convention
-    // as the label: any panel at the location may carry it).
+    // as the label: any backend at the location may carry it).
     const located = instances.find((s) => s.locationLat != null && s.locationLng != null);
     out.push({
       code,

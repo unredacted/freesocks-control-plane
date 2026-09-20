@@ -268,10 +268,10 @@ export const downgradeLapsedToFree = internalMutation({
 
 /**
  * Placement for a legacy sub row with no persisted `backendPlacement` (see
- * activeSubAndTier): pinned to the row's recorded panel when it has one;
- * resolved normally when the deploy is single-panel (any pool squad is on the
- * only panel); undefined — the push OMITS placement, preserving the key's
- * current squad — when the panel can't be proven (multi-panel deploy).
+ * activeSubAndTier): pinned to the row's recorded backend when it has one;
+ * resolved normally when the deploy is single-backend (any pool mode group is on the
+ * only backend); undefined — the push OMITS placement, preserving the key's
+ * current mode group — when the backend can't be proven (multi-backend deploy).
  */
 async function legacyPushPlacement(
   db: DatabaseReader,
@@ -310,11 +310,11 @@ export const activeSubAndTier = internalQuery({
     // the key's own placement, never re-pick (that would thrash live keys across
     // nodes on every renewal, discarding the member's mode choice). (Review #3 +
     // node placement.) Legacy rows with no persisted placement resolve PINNED to
-    // the key's own panel when one is recorded (onlyServerId); with no panel
-    // recorded, they resolve normally only on a SINGLE-panel deploy (any pool
-    // squad is on it), and the push OMITS placement (undefined — never null,
-    // which would clear the squad panel-side) on multi-panel deploys where the
-    // panel can't be proven.
+    // the key's own backend when one is recorded (onlyServerId); with no backend
+    // recorded, they resolve normally only on a SINGLE-backend deploy (any pool
+    // mode group is on it), and the push OMITS placement (undefined — never null,
+    // which would clear the mode group backend-side) on multi-backend deploys where the
+    // backend can't be proven.
     const placement = capabilitiesOf(sub.backend).placement
       ? (sub.backendPlacement ??
         (await legacyPushPlacement(ctx.db, user.connectionModeId ?? null, sub.backendServerId)))
@@ -348,7 +348,7 @@ export const activeSubAndTier = internalQuery({
       trafficLimitStrategy: tier.trafficStrategy,
       // The CURRENT tier's slug, so the push re-tags the backend key on a tier
       // change (issuance stamps the slug — e.g. FREE — and nothing else ever
-      // updated it, so an upgraded member's key stayed tagged FREE panel-side).
+      // updated it, so an upgraded member's key stayed tagged FREE backend-side).
       tag: tier.slug,
       hwidDeviceLimit: resolveHwidLimit(enforcementEnabled, tier),
       placement,
@@ -395,7 +395,7 @@ export const pushTierToBackend = internalAction({
           trafficLimitStrategy: st.trafficLimitStrategy,
           hwidDeviceLimit: st.hwidDeviceLimit,
           placement: st.placement,
-          // Keep the panel-side tag in step with the tier (member ⇄ free).
+          // Keep the backend-side tag in step with the tier (member ⇄ free).
           tag: st.tag,
           // Push the entitlement expiry too: a renewal extends the backend key,
           // and a downgrade-to-free pushes the no-expiry sentinel over the old
@@ -664,7 +664,7 @@ export const runGraceSweep = internalAction({
       for (const userId of disableIds) {
         // Re-check due-ness right before acting (M2): the ids were collected
         // read-only across pages, so a renewal may have landed since — disabling
-        // a paying member's key at the panel would be entitlement loss caused by
+        // a paying member's key at the backend would be entitlement loss caused by
         // the control plane itself.
         if (!(await ctx.runQuery(internal.lifecycle.isDisableDue, { userId, now }))) continue;
         const st = await ctx.runQuery(internal.lifecycle.activeSubAndTier, { userId });
@@ -694,7 +694,7 @@ export const runGraceSweep = internalAction({
 // --- tombstone sweep -------------------------------------------------------
 
 /**
- * A tombstone whose backend delete keeps failing (dead panel) used to occupy
+ * A tombstone whose backend delete keeps failing (dead backend) used to occupy
  * the oldest-100 page forever, starving every NEWER tombstone (head-of-line
  * blocking). Failures now back off exponentially (10 min → 24 h cap) and the
  * due-row selection skips rows still inside their backoff; after
@@ -834,7 +834,7 @@ export async function freeWindowExpiryMs(db: DatabaseReader): Promise<number> {
   return Date.now() + (await freeWindowDays(db)) * 86_400_000;
 }
 
-/** Action-side read of the idle window (the sweep compares the panel's
+/** Action-side read of the idle window (the sweep compares the backend's
  *  last-online stamp against this many days). */
 export const freeWindowDaysQuery = internalQuery({
   args: {},
@@ -969,7 +969,7 @@ export const refreshFreeWindow = internalMutation({
 });
 
 /** Cron: deactivate + RETAIN idle free users (key reclaimed, row kept on the free
- *  tier, reactivatable on return). USAGE-AWARE: a due candidate whose panel
+ *  tier, reactivatable on return). USAGE-AWARE: a due candidate whose backend
  *  last-online stamp falls inside the window is refreshed, not reclaimed — only
  *  accounts with no VPN activity for the whole window lose their key. Never
  *  deletes — manual `purgeInactiveFree` removes long-inactive rows on operator
@@ -981,7 +981,7 @@ export const deactivateIdleFree = internalAction({
       const now = Date.now();
       const pageSize = limit ?? 100;
       const tierIds = await ctx.runQuery(internal.lifecycle.defaultFreeTierIds, {});
-      // The idle window: a key whose panel last-online stamp is within this many
+      // The idle window: a key whose backend last-online stamp is within this many
       // days is IN USE and gets refreshed instead of reclaimed (the member never
       // needs to visit the website to keep their config).
       const windowMs =
@@ -1034,7 +1034,7 @@ export const deactivateIdleFree = internalAction({
             if (!stillDue) continue;
             if (e.backendUserId && e.backend) {
               // Usage check: the control plane can't see proxy traffic, but the
-              // panel stamps each user's last-online time. A key used within
+              // backend stamps each user's last-online time. A key used within
               // the window is IN USE — refresh the FCP window instead of
               // reclaiming, so an active member keeps the same config forever
               // without ever visiting the website.
@@ -1045,8 +1045,8 @@ export const deactivateIdleFree = internalAction({
                   backendUserId: e.backendUserId,
                 });
               } catch (err) {
-                // Panel-side 404 = the key is already gone; fall through and
-                // reclaim the FCP side. Anything else (unreachable panel) must
+                // Backend-side 404 = the key is already gone; fall through and
+                // reclaim the FCP side. Anything else (unreachable backend) must
                 // NOT reclaim on missing evidence — skip until the next run.
                 if (!/\b404\b/.test(String(err))) continue;
               }
@@ -1055,9 +1055,9 @@ export const deactivateIdleFree = internalAction({
                 await ctx.runMutation(internal.lifecycle.refreshFreeWindow, {
                   userId: e.userId,
                 });
-                // Heal panel-side expiry (best-effort): keys issued before the
+                // Heal backend-side expiry (best-effort): keys issued before the
                 // no-expiry cutover still carry a concrete date; push the
-                // sentinel — and re-enable if the panel already expired it.
+                // sentinel — and re-enable if the backend already expired it.
                 try {
                   await ctx.runAction(internal.backends.updateUser, {
                     backend: e.backend,

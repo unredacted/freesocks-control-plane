@@ -101,7 +101,7 @@ describe('sanitizeUserAgent', () => {
     expect(out).toBe('Mozilla/5.0X-Evil: 1');
   });
 
-  test('falls back to the fixed relay UA (Umami drops UA-less events)', () => {
+  test('falls back to the fixed origin UA (Umami drops UA-less events)', () => {
     expect(sanitizeUserAgent(null)).toBe('Mozilla/5.0 (compatible; FreeSocksRelay/1.0)');
     expect(sanitizeUserAgent('')).toBe('Mozilla/5.0 (compatible; FreeSocksRelay/1.0)');
     expect(sanitizeUserAgent('\r\n')).toBe('Mozilla/5.0 (compatible; FreeSocksRelay/1.0)');
@@ -113,7 +113,7 @@ describe('sanitizeUserAgent', () => {
 });
 
 describe('sendUmamiEvent', () => {
-  test('posts the exact Umami wire shape and forwards NO inbound headers', async () => {
+  test('posts the exact Umami wire shape and forwards NO transport headers', async () => {
     const spy = vi.fn().mockResolvedValue(new Response('ok'));
     vi.stubGlobal('fetch', spy);
     await sendUmamiEvent({
@@ -134,7 +134,7 @@ describe('sendUmamiEvent', () => {
     expect(url).toBe('https://analytics.example.org/api/send');
     expect(init.method).toBe('POST');
     // SSRF guard: the denylist ran against the configured host at save time,
-    // so the relay must never follow a redirect off it.
+    // so the origin must never follow a redirect off it.
     expect(init.redirect).toBe('manual');
     const headers = init.headers as Record<string, string>;
     expect(headers['content-type']).toBe('application/json');

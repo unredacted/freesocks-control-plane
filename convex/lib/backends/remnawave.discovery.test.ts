@@ -58,7 +58,7 @@ describe('remnawaveSetHostDisabled', () => {
     mockFetch(() => jsonRes({ response: { uuid: 'h-1', isDisabled: true } }));
     await remnawaveSetHostDisabled(cfg, 'h-1', true);
     expect(calls[0]).toMatchObject({ path: '/api/hosts', method: 'PATCH' });
-    // Nothing else travels: the panel omits absent fields, so the address,
+    // Nothing else travels: the backend omits absent fields, so the address,
     // port, names, inbound and fingerprint stay exactly as they were.
     expect(calls[0].body).toEqual({ uuid: 'h-1', isDisabled: true });
     mockFetch(() => jsonRes({ response: { uuid: 'h-1', isDisabled: false } }));
@@ -66,14 +66,14 @@ describe('remnawaveSetHostDisabled', () => {
     expect(calls[0].body).toEqual({ uuid: 'h-1', isDisabled: false });
   });
 
-  test('surfaces a panel error without the URL host', async () => {
+  test('surfaces a backend error without the URL host', async () => {
     mockFetch(() => new Response('nope', { status: 400 }));
     await expect(remnawaveSetHostDisabled(cfg, 'h-1', true)).rejects.toThrow(/400 on \/api\/hosts/);
     await expect(remnawaveSetHostDisabled(cfg, 'h-1', true)).rejects.not.toThrow(/panel\.internal/);
   });
 });
 
-// A profile as a 3.x panel returns it: the raw Xray config (with everything an
+// A profile as a 3.x backend returns it: the raw Xray config (with everything an
 // operator would put there, secrets included) plus the derived inbound rows
 // (`ConfigProfileInboundsSchema`, whose `rawInbound` repeats the whole inbound).
 const PROFILE_UUID = '0f1e2d3c-4b5a-4968-8776-655443322110';
@@ -125,7 +125,7 @@ const rawConfig = {
       settings: { clients: [{ id: 'VMESS_SECRET' }] },
       streamSettings: { network: 'kcp' },
     },
-    // Not indexed by the panel (no derived row): nothing a Host could bind to.
+    // Not indexed by the backend (no derived row): nothing a Host could bind to.
     { tag: 'UNINDEXED', port: 9000, protocol: 'vless', settings: { clients: [] } },
     // No tag: skipped.
     { port: 9001, protocol: 'vless' },

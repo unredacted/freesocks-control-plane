@@ -3,15 +3,15 @@
  * Node writes through the operations ledger.
  *
  *  - a rename or a country change queues no node work; an address, port or
- *    profile change makes the panel restart the node, and holds the node's
+ *    profile change makes the backend restart the node, and holds the node's
  *    claim until the node's own clock moves;
  *  - a RESTART names no field of the row, so the row alone never settles it;
  *    it is sent as a forced restart, and refused on a node that is off;
  *  - enable / disable are refused when the node is already in that state (a
- *    repeat enqueues panel work for nothing);
+ *    repeat enqueues backend work for nothing);
  *  - deleting is two named things: "stop and remove" needs the node to be off
- *    already, "remove from panel" says the process may keep running;
- *  - a node a relay stands in front of is not moved, stopped or removed here,
+ *    already, "remove from backend" says the process may keep running;
+ *  - a node an origin stands in front of is not moved, stopped or removed here,
  *    and a node whose NAME anything refers to is not renamed.
  *
  * Fixtures use RFC 5737 addresses and `*.example` names only.
@@ -234,7 +234,7 @@ describe('node changes', () => {
     expect(await observe(op.id)).toMatchObject({ state: 'done', asyncEffect: 'complete' });
   });
 
-  test('profile and inbounds travel together, and must belong to each other', async () => {
+  test('profile and transports travel together, and must belong to each other', async () => {
     const { panel, call, observe } = await seed();
     const bad = await call('PATCH', 'nodes/n-2', { activeInboundUuids: ['i-nope'] });
     expect(bad.error.code).toBe('servers.unknown_inbound');
@@ -256,7 +256,7 @@ describe('enable, disable, restart', () => {
       call: 'POST /api/nodes/n-2/actions/restart',
       body: { forceRestart: true },
     });
-    // The panel answered 202 (queued). The row looks exactly as before: not done.
+    // The backend answered 202 (queued). The row looks exactly as before: not done.
     expect(op).toMatchObject({ verb: 'restart', asyncEffect: 'pending', open: true });
     expect((await observe(op.id)).open).toBe(true);
     panel.nodes[1].lastStatusChange = 't1';
@@ -277,7 +277,7 @@ describe('enable, disable, restart', () => {
 });
 
 describe('create and delete', () => {
-  test('create makes the panel ROW only, once, and never asks for the node secret', async () => {
+  test('create makes the backend ROW only, once, and never asks for the node secret', async () => {
     const { panel, call } = await seed();
     const spec = {
       name: 'node-three',
@@ -295,7 +295,7 @@ describe('create and delete', () => {
     expect((await call('POST', 'nodes', { ...spec, name: 'x' })).error.code).toBe('validation');
   });
 
-  test('"stop and remove" needs the node to be off already; "remove from panel" says what it is', async () => {
+  test('"stop and remove" needs the node to be off already; "remove from backend" says what it is', async () => {
     const { panel, call, observe, refresh } = await seed();
     expect((await call('DELETE', 'nodes/n-2')).error.code).toBe('servers.node_still_on');
     await call('POST', 'nodes/n-2/disable');
@@ -316,7 +316,7 @@ describe('create and delete', () => {
     expect((await call('POST', 'nodes', { ...again, restore: true })).state).toBe('done');
   });
 
-  test('"remove from panel" works on a running node', async () => {
+  test('"remove from backend" works on a running node', async () => {
     const { panel, call, observe } = await seed();
     const op = await call('DELETE', 'nodes/n-2?removeOnly=1');
     expect((await observe(op.id)).state).toBe('done');
@@ -325,7 +325,7 @@ describe('create and delete', () => {
 });
 
 describe('a node something depends on', () => {
-  test('a relay stands in front of it: it is not moved, stopped, reassigned or removed here', async () => {
+  test('an origin stands in front of it: it is not moved, stopped, reassigned or removed here', async () => {
     const { t, panel, call } = await seed();
     await registerRelay(t, { listeners: [realityListener()] });
     for (const res of [
@@ -335,11 +335,11 @@ describe('a node something depends on', () => {
       await call('DELETE', 'nodes/n-1?removeOnly=1'),
     ])
       expect(res.error.code).toBe('servers.node_relay_origin');
-    // Its name is an identifier: relays, delivery requirements and pinned keys refer to it.
+    // Its name is an identifier: origins, delivery requirements and pinned keys refer to it.
     expect((await call('PATCH', 'nodes/n-1', { name: 'renamed' })).error.code).toBe(
       'servers.node_rename_referenced',
     );
-    // A restart is allowed: it changes nothing the relay depends on.
+    // A restart is allowed: it changes nothing the origin depends on.
     expect((await call('POST', 'nodes/n-1/restart')).verb).toBe('restart');
     expect(panel.writes.map((w) => w.call)).toEqual(['POST /api/nodes/n-1/actions/restart']);
   });

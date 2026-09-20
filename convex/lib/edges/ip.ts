@@ -1,5 +1,5 @@
 /**
- * IP-literal helpers for relay edges: classify an address family, reject
+ * IP-literal helpers for origin edges: classify an address family, reject
  * non-public literals (an edge address must be a routable public IP, never a
  * private/loopback/link-local value a mis-provisioned LB could report), and
  * bracket IPv6 for URI/host:port contexts.

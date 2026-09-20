@@ -1,6 +1,6 @@
 /**
  * The direct-Host hide LEDGER (docs/edges.md § "Direct-Host hides and the
- * restore workflow"): a guided setup hides a node's direct Hosts (the panel
+ * restore workflow"): a guided setup hides a node's direct Hosts (the backend
  * entries that still hand the node's own address to members) once its edges
  * serve, so that from then on members depend on the edge; the restore workflow
  * (convex/edgeRestore.ts) re-enables them.
@@ -12,7 +12,7 @@
  *   -> read-back isDisabled === true -> `confirmed`
  *
  * A row that holds an `opId` is POSSIBLY written (the call may have reached
- * the panel) and is settled only by observation: disabled -> `confirmed`;
+ * the backend) and is settled only by observation: disabled -> `confirmed`;
  * gone -> `released`; still enabled -> `unresolved`, and only after the settle
  * floor (`HOST_SETTLE_MS`) AND two quiet looks (`HOST_SETTLE_LOOKS`) have
  * passed since the lease expired is it settled: RELEASED inside a restore
@@ -20,9 +20,9 @@
  * pass otherwise (bounded by `HIDE_MAX_ATTEMPTS`; then `failed`). A lease
  * expiry alone never releases or reverses anything; a disable that lands late
  * is caught by the next look. No opposing write is issued while any row of the
- * relay is unsettled.
+ * origin is unsettled.
  *
- * Every direct-Host write on a relay is refused while `relays.restore` is set.
+ * Every direct-Host write on an origin is refused while `origins.restore` is set.
  */
 import { ConvexError, v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
@@ -160,7 +160,7 @@ export interface HideContext {
   relay: Doc<'relays'>;
   backendServerId: Id<'backendServers'>;
   nodeName: string | null;
-  /** Deployed, enabled, non-retired listeners with a panel inbound. */
+  /** Deployed, enabled, non-retired listeners with a backend transport. */
   listenerInboundUuids: string[];
   fcpRemarks: string[];
   legacyHostUuids: string[];
@@ -256,7 +256,7 @@ export const status = internalQuery({
   handler: (ctx, { relayId }): Promise<HideStatus> => hideStatusOf(ctx.db, relayId),
 });
 
-/** Rows the settle pass must re-observe, across every relay (or one). */
+/** Rows the settle pass must re-observe, across every origin (or one). */
 export const pendingRows = internalQuery({
   args: { relayId: v.optional(v.id('relays')) },
   handler: async (ctx, { relayId }) => {
@@ -290,8 +290,8 @@ export const pendingRows = internalQuery({
 /**
  * Claim a write on one Host: insert the `intended` row (or re-claim an
  * unsettled row for a retry) with the observed tuple, an opId and a lease.
- * Refused while the relay's restore workflow runs (for a `disable`), while
- * another row of the same Host on this relay is unsettled, and when a
+ * Refused while the origin's restore workflow runs (for a `disable`), while
+ * another row of the same Host on this origin is unsettled, and when a
  * `confirmed` disable already covers it.
  */
 export const claim = internalMutation({
@@ -334,7 +334,7 @@ export const claim = internalMutation({
     const confirmed = rows.filter((r) => r.intent === 'disable' && r.state === 'confirmed');
     if (a.intent === 'disable' && confirmed.length > 0) {
       // Still disabled: nothing to write. Observed ENABLED again (someone
-      // re-enabled it): the old row no longer describes the panel; release it
+      // re-enabled it): the old row no longer describes the backend; release it
       // and let a fresh claim record the re-hide.
       if (a.observed.isDisabled) return { claimed: false as const, state: 'confirmed' as const };
       for (const r of confirmed)
@@ -510,7 +510,7 @@ export const setDirectHostAlert = internalMutation({
   },
 });
 
-/** Relays the reconcile direct-Host check looks at: bound, guided (hide rows), not deleting, no restore. */
+/** Origins the reconcile direct-Host check looks at: bound, guided (hide rows), not deleting, no restore. */
 export const boundGuidedRelays = internalQuery({
   args: {},
   handler: async (ctx): Promise<Id<'relays'>[]> => {
@@ -559,11 +559,11 @@ function liveOf(h: BackendHost | undefined) {
 }
 
 /**
- * The node's inbound set for classification: what the caller knows (the plan's
- * discovered inbounds), plus the listeners' own inbounds, plus the inbound of
+ * The node's transport set for classification: what the caller knows (the plan's
+ * discovered transports), plus the listeners' own transports, plus the transport of
  * every Host that dials the origin address (the address IS the node, so a Host
- * pointing at it belongs to the node whatever inbound it sits on). No panel
- * inbound discovery is needed here.
+ * pointing at it belongs to the node whatever transport it sits on). No backend
+ * transport discovery is needed here.
  */
 function nodeInbounds(
   c: HideContext,
@@ -593,7 +593,7 @@ export function directContextOf(
   };
 }
 
-/** FCP's relay-convention remarks on this node, from a listing (`<node>-relay-<key>`). */
+/** FCP's origin-convention remarks on this node, from a listing (`<node>-origin-<key>`). */
 function conventionRemarks(hosts: readonly BackendHost[], nodeName: string | null): string[] {
   if (!nodeName) return [];
   const re = relayRemarkRegex(nodeName);
@@ -647,7 +647,7 @@ export async function writeHostBit(
       opId: claim.opId,
     });
   }
-  // Read-back: the panel is the truth; the echoed row is never trusted.
+  // Read-back: the backend is the truth; the echoed row is never trusted.
   let hosts: BackendHost[];
   try {
     hosts = await listPanelHosts(ctx, a.backendServerId);
@@ -672,7 +672,7 @@ export interface HideResult {
 }
 
 /**
- * Hide every covered direct Host of the relay's node plus the approved
+ * Hide every covered direct Host of the origin's node plus the approved
  * uncovered ones (by uuid). An uncovered Host that is NOT approved is reported
  * in `reviewChanged` and left alone. Refused while a restore workflow runs.
  */
@@ -681,16 +681,16 @@ export const hide = internalAction({
     relayId: v.id('relays'),
     runId: v.optional(v.string()),
     approvedUuids: v.array(v.string()),
-    /** The node's inbound uuids when the caller already discovered them (the plan). */
+    /** The node's transport uuids when the caller already discovered them (the plan). */
     nodeInboundUuids: v.optional(v.array(v.string())),
   },
   handler: async (ctx, a): Promise<HideResult> => {
     const c = await ctx.runQuery(internal.edgeHostHides.context, { relayId: a.relayId });
-    if (!c) throw new ConvexError({ code: 'not_found', message: 'Relay not found' });
+    if (!c) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     if (c.relay.restore)
       throw new ConvexError({
         code: 'edge.restore_in_progress',
-        message: 'a restore workflow is running on this relay',
+        message: 'a restore workflow is running on this origin',
       });
     const hosts = await listPanelHosts(ctx, c.backendServerId);
     const inbounds = nodeInbounds(c, hosts, a.nodeInboundUuids);
@@ -737,7 +737,7 @@ export const hide = internalAction({
 });
 
 /**
- * Re-observe every unsettled row (all relays, or one): confirmed / released /
+ * Re-observe every unsettled row (all origins, or one): confirmed / released /
  * a quiet look, and, once settled, a retry (reconcile) or a release (restore).
  */
 export const settle = internalAction({
@@ -793,7 +793,7 @@ export const row = internalQuery({
   handler: (ctx, { rowId }) => ctx.db.get(rowId),
 });
 
-/** What one fresh look at the panel's Hosts says (the rehearsal compares two of these). */
+/** What one fresh look at the backend's Hosts says (the rehearsal compares two of these). */
 export interface HostObservation {
   listingHash: string;
   observedAt: number;
@@ -808,7 +808,7 @@ export const observe = internalAction({
   args: { relayId: v.id('relays'), nodeInboundUuids: v.optional(v.array(v.string())) },
   handler: async (ctx, a): Promise<HostObservation> => {
     const c = await ctx.runQuery(internal.edgeHostHides.context, { relayId: a.relayId });
-    if (!c) throw new ConvexError({ code: 'not_found', message: 'Relay not found' });
+    if (!c) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     // A backend without client-facing Hosts (Outline, a manual origin) has
     // nothing to observe: a constant listing, never a `hosts_unsupported` throw.
     if (c.relay.hostMode === 'none')
@@ -829,11 +829,11 @@ export const observe = internalAction({
 });
 
 /**
- * The reconcile check for BOUND guided relays (the observation boundary's
+ * The reconcile check for BOUND guided origins (the observation boundary's
  * "caught afterwards"): a direct Host that reappeared is re-hidden when it is
  * covered by a listener or was approved before (a hide row exists for it);
  * otherwise attention `direct_host_reappeared` is raised. Suppressed while the
- * relay's restore workflow runs (`boundGuidedRelays` excludes it).
+ * origin's restore workflow runs (`boundGuidedRelays` excludes it).
  */
 export const reobserveDirect = internalAction({
   args: {},

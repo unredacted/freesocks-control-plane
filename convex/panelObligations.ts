@@ -3,7 +3,7 @@
  * (docs/servers.md "Node lifecycle"). A row lands BEFORE the call; an
  * outstanding one blocks its identity whatever generation owns it; a lease
  * expiry only resumes discovery of the same attempt; settlement reconciles
- * the result against what is wanted now (lib/panel/obligations.ts). Nothing
+ * the result against what is wanted now (lib/backend/obligations.ts). Nothing
  * here calls a provider.
  */
 import { v } from 'convex/values';

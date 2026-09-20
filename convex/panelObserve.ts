@@ -1,8 +1,8 @@
 /**
- * Panel observation for server management: read a panel's nodes, config
- * profiles, Hosts and squads, and cache the NON-SECRET projection so Admin can
+ * Backend observation for server management: read a backend's nodes, config
+ * profiles, Hosts and mode groups, and cache the NON-SECRET projection so Admin can
  * show what already exists before anything is written. READ-ONLY toward the
- * panel, and the sole writer of the `panel*` cache tables.
+ * backend, and the sole writer of the `backend*` cache tables.
  *
  * Runs at the tail of the backend healthcheck when `servers.manage.observe` is
  * on (`observeInstance`), and on demand (`refresh`). A failure is recorded as a
@@ -46,7 +46,7 @@ const observedInbound = v.object({
 
 type StoredInbound = Doc<'panelProfiles'>['inbounds'][number];
 
-/** The provider's inbound projection, flattened to the stored shape. Pure. */
+/** The provider's transport projection, flattened to the stored shape. Pure. */
 export function toStoredInbound(i: PanelObservedInbound): StoredInbound {
   const out: StoredInbound = {
     tag: i.tag,
@@ -71,7 +71,7 @@ const opt = <T>(x: T | null): T | undefined => (x === null ? undefined : x);
 type Db = import('./_generated/server').MutationCtx['db'];
 
 /**
- * Replace an instance's cached Hosts with what was just read: rows the panel
+ * Replace an instance's cached Hosts with what was just read: rows the backend
  * still lists are replaced in place, rows it no longer lists are deleted. The
  * one mapping from the provider's Host shape to the stored row, shared with the
  * ledger's post-settle refresh (`panelLedger.syncCache`).
@@ -117,7 +117,7 @@ export async function upsertObservedHosts(
   for (const gone of by.values()) await ctx.db.delete(gone._id);
 }
 
-/** The same for squads. */
+/** The same for mode groups. */
 export async function upsertObservedSquads(
   ctx: { db: Db },
   sid: Id<'backendServers'>,
@@ -387,7 +387,7 @@ export async function observeInstance(
     });
     return true;
   } catch {
-    // The provider's message is never persisted (a panel can say anything).
+    // The provider's message is never persisted (a backend can say anything).
     await ctx.runMutation(internal.panelObserve.recordFailure, {
       backendServerId: server._id,
       errorCode: 'servers.observe_failed',
@@ -440,7 +440,7 @@ export const refresh = internalAction({
     if (!(await observeInstance(ctx, server, { ownEdit })))
       throw new ConvexError({
         code: 'backend.panel_read_failed',
-        message: 'The panel could not be read',
+        message: 'The backend could not be read',
       });
     return { ok: true };
   },

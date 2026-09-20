@@ -1,5 +1,5 @@
 /**
- * The guided setup, judged for ONE relay (or a draft before the relay row
+ * The guided setup, judged for ONE origin (or a draft before the origin row
  * exists) from a plain facts object the query gathers (`convex/edgeOperator.ts`).
  * Pure: no db, no clock beyond what the input carries, so the step logic is
  * unit-tested directly and the wizard renders exactly what this returns.
@@ -67,7 +67,7 @@ export interface SetupAccountFacts {
   qualified: boolean;
   /** Qualified AND the effective template hash still matches. */
   qualificationCurrent: boolean;
-  /** Listener keys of THIS relay/draft the account can front (layer + protocol). */
+  /** Listener keys of THIS origin/draft the account can front (layer + protocol). */
   frontsListeners: string[];
   dnsAccountMissing: boolean;
   zoneModeUnknown: boolean;
@@ -114,12 +114,12 @@ export interface SetupRelayFacts {
   edges: SetupEdgeFacts[];
   /** A delivery binding covers members on this origin (edge-required). */
   deliveryRequired: boolean;
-  /** The binding is deferred to go-live (a guided relay): members still get the raw body. */
+  /** The binding is deferred to go-live (a guided origin): members still get the raw body. */
   bindingDeferred?: boolean;
   connectionPlanCount: number;
   mirrorsUnvalidated: number;
   qualificationCredential: boolean;
-  /** Whether the relay's backend can mint the L7 qualification credential at all. */
+  /** Whether the origin's backend can mint the L7 qualification credential at all. */
   credentialSupported: boolean;
 }
 
@@ -172,7 +172,7 @@ const blocker = (
   detail: string | null = null,
 ): SetupBlocker => ({ code, subject, detail });
 
-/** Accounts that can front at least one usable listener of this relay. */
+/** Accounts that can front at least one usable listener of this origin. */
 function compatibleAccounts(input: SetupInput): SetupAccountFacts[] {
   const usable = new Set(
     input.listeners.filter((l) => !l.retired && l.validCombo).map((l) => l.key),
@@ -266,7 +266,7 @@ export function computeSetupStatus(input: SetupInput): SetupResult {
     });
   }
 
-  // 4. relay + listener
+  // 4. origin + listener
   const usableListeners = input.listeners.filter(
     (l) => !l.retired && l.validCombo && l.deployed && l.enabled,
   );
@@ -395,7 +395,7 @@ export function computeSetupStatus(input: SetupInput): SetupResult {
       if (relay.hostMode === 'operator') w.push(blocker('hosts_operator_managed', relay.slug));
     } else if (isManual && relay.connectionPlanCount === 0)
       b.push(blocker('no_publishable_edge', relay.slug));
-    // A guided relay serves the raw body until its binding is claimed at go-live:
+    // A guided origin serves the raw body until its binding is claimed at go-live:
     // published edges reach nobody yet (never `members_dark`, which needs a binding).
     if (relay?.bindingDeferred) w.push(blocker('binding_deferred', relay.slug));
     steps.push({

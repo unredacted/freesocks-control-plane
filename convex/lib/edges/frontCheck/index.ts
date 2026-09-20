@@ -7,7 +7,7 @@
  * certificate, answers 200 for its own error pages, and will happily complete a
  * WebSocket handshake with a rule that never reaches the origin. None of that
  * proves a member can connect. So the check opens the transport exactly as the
- * slot describes, authenticates with the relay's qualification VLESS UUID, asks
+ * slot describes, authenticates with the origin's qualification VLESS UUID, asks
  * the node to proxy `www.gstatic.com:80` and requires the 204 to come back out
  * of the tunnel. Only that sequence proves the whole chain.
  *
@@ -534,7 +534,7 @@ function openXhttpTunnel(
   randomBytes: (n: number) => Uint8Array,
 ): Promise<Tunnel> {
   const mode = args.params.mode || XHTTP_DEFAULT_MODE;
-  // A stream-only inbound refuses packet-up uploads: say so instead of failing
+  // A stream-only transport refuses packet-up uploads: say so instead of failing
   // the authenticated step with a status that looks like a front problem.
   if (!XHTTP_PACKET_UP_MODES.has(mode))
     return Promise.reject(new StepError('transport_failed', 'mode'));

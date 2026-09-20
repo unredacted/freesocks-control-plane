@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 /**
- * Relay listeners as an admin edits them: the admin-owned upsert (never
+ * Origin listeners as an admin edits them: the admin-owned upsert (never
  * pruned by the role), retire refusals (edge in use, FCP Host present, a
  * running rotation), server-name retire / reactivate with the epoch bumps and
  * the ≥1-active-name rule, the fleet-wide ONE-transaction name retirement,
@@ -369,7 +369,7 @@ describe('relayListeners: server names', () => {
     ).rejects.toThrow(/rotation_running/);
   });
 
-  test('retireNameEverywhere retires the name on every relay in ONE transaction; a rotating relay refuses the whole call', async () => {
+  test('retireNameEverywhere retires the name on every origin in ONE transaction; a rotating origin refuses the whole call', async () => {
     const { t, relayId, listenerId } = await seed();
     const two = await registerRelay(t, {
       slug: 'node-two',
@@ -403,7 +403,7 @@ describe('relayListeners: server names', () => {
     const e1 = await epochOf(t, relayId);
     const e2 = await epochOf(t, two.relayId);
     const e3 = await epochOf(t, three.relayId);
-    // Relay two rotates: nothing is retired anywhere.
+    // Origin two rotates: nothing is retired anywhere.
     const rotationId = await fakeRotation(t, two.relayId);
     await expect(
       t.mutation(internal.relayListeners.retireNameEverywhere, { name: 'a.example' }),
@@ -441,7 +441,7 @@ describe('relayListeners: server names', () => {
     });
     expect(await epochOf(t, relayId)).toBe(e1 + 1);
     // Atomic under the ≥1-active rule too: a listener whose ONLY active name is
-    // the burned one refuses the call, and no other relay loses the name.
+    // the burned one refuses the call, and no other origin loses the name.
     const four = await registerRelay(t, {
       slug: 'node-four',
       nodeName: 'node-four',

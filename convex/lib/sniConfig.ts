@@ -6,7 +6,7 @@ import type { DatabaseReader } from '../_generated/server';
 import { sanitizeBool, sanitizeInt } from './edgeConfig';
 
 export interface SniConfig {
-  /** Families may be bound to inbounds, and the qualify cron runs. */
+  /** Families may be bound to transports, and the qualify cron runs. */
   enabled: boolean;
   /** Names checked per cron tick (every 5 min). */
   qualifyPerTick: number;

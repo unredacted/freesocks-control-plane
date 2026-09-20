@@ -1,5 +1,5 @@
 /**
- * Golden tests for inbound discovery: every supported combination maps to the
+ * Golden tests for transport discovery: every supported combination maps to the
  * by-slug listener shape, every unsupported reason is named, the listener key
  * algorithm is deterministic and collision-resistant, and nothing secret can
  * cross the mapper (its input is already the allowlisted projection; the
@@ -310,7 +310,7 @@ describe('mapInboundsToListeners: unsupported reasons', () => {
     ]);
   });
 
-  test('an XHTTP inbound behind a certificate maps to a listener with its path, host and mode', async () => {
+  test('an XHTTP transport behind a certificate maps to a listener with its path, host and mode', async () => {
     const { candidates, unsupported } = await map([
       inbound({
         tag: 'VLESS_XHTTP',
@@ -342,7 +342,7 @@ describe('mapInboundsToListeners: unsupported reasons', () => {
     expect(candidates[0].layers.layers).toEqual(['l4']);
   });
 
-  test('a loopback-bound inbound is reported as such, with the address it listens on', async () => {
+  test('a loopback-bound transport is reported as such, with the address it listens on', async () => {
     const { candidates, unsupported } = await map([
       inbound({ tag: 'VLESS_WS_CDN', network: 'ws', security: 'none', listen: '127.0.0.1' }),
       inbound({ tag: 'V6', listen: '[::1]' }),
@@ -356,7 +356,7 @@ describe('mapInboundsToListeners: unsupported reasons', () => {
     expect(candidates.some((c) => c.sourceTag === 'PUBLIC')).toBe(true);
   });
 
-  test('inactive wins over every other reason (nothing to fix on a served-nowhere inbound)', async () => {
+  test('inactive wins over every other reason (nothing to fix on a served-nowhere transport)', async () => {
     const { unsupported } = await map([
       inbound({ tag: 'vmess-off', protocol: 'vmess', active: false }),
     ]);
@@ -365,7 +365,7 @@ describe('mapInboundsToListeners: unsupported reasons', () => {
 });
 
 describe('mapInboundsToListeners: listener keys', () => {
-  test('a key already on the relay makes the inbound invalid (never a duplicate listener)', async () => {
+  test('a key already on the origin makes the transport invalid (never a duplicate listener)', async () => {
     const key = await listenerKeyForTag('VLESS_REALITY');
     const { candidates, unsupported } = await map([inbound({ tag: 'VLESS_REALITY' })], [key]);
     expect(candidates).toEqual([]);

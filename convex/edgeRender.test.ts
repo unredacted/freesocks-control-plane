@@ -1,10 +1,10 @@
 /// <reference types="vite/client" />
 /**
- * Relay rendering through the FCP-fronted subscription route under the
- * EDGE-REQUIRED delivery policy: a subscription whose resolved place a relay
+ * Origin rendering through the FCP-fronted subscription route under the
+ * EDGE-REQUIRED delivery policy: a subscription whose resolved place an origin
  * covers is served a rendered body that passed every check, or a 503 with the
  * reason in `x-fcp-delivery`; the origin body only ever leaves for a place no
- * relay covers. The cache token follows the binding's policy version and the
+ * origin covers. The cache token follows the binding's policy version and the
  * origin's publication epoch, and every render is snapshotted on the row.
  */
 import { convexTest } from 'convex-test';
@@ -40,9 +40,9 @@ const UUID = '11111111-2222-4333-8444-555555555555';
 const REALITY_QS =
   'encryption=none&flow=xtls-rprx-vision&security=reality&sni=target.example&fp=chrome&pbk=PUBKEY&sid=abcd&type=tcp';
 const NAMES = ['a.example', 'b.example', 'c.example'];
-/** The REALITY listener's template Host remark (`<node>-relay-<listenerKey>`). */
+/** The REALITY listener's template Host remark (`<node>-origin-<listenerKey>`). */
 const TEMPLATE = `${NODE}-relay-a`;
-/** What the panel serves for the relay node: the template Host, pointing at the pool-index-0 edge. */
+/** What the backend serves for the origin node: the template Host, pointing at the pool-index-0 edge. */
 const panelBody = `vless://${UUID}@${EDGE_A}:443?${REALITY_QS}#${TEMPLATE}`;
 
 let fetchCalls = 0;
@@ -300,7 +300,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     expect(fetchCalls).toBe(2);
   });
 
-  test('a disabled relay: 503 relay_disabled', async () => {
+  test('a disabled origin: 503 relay_disabled', async () => {
     stubPanel();
     const { t, relayId, serverId } = await seed();
     await t.mutation(internal.relays.update, { id: relayId, enabled: false });
@@ -312,7 +312,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     ).toBe('1:-1');
   });
 
-  test('a binding whose relay row is gone (keep-dark): 503 relay_missing', async () => {
+  test('a binding whose origin row is gone (keep-dark): 503 relay_missing', async () => {
     stubPanel();
     const { t, relayId, subId } = await seed();
     await t.run((ctx) => ctx.db.delete(relayId));
@@ -366,7 +366,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     expect(await other.text()).toContain('FreeSocks%20Primary');
   });
 
-  test('the raw body is served ONLY for a place no relay covers (token null, decision raw)', async () => {
+  test('the raw body is served ONLY for a place no origin covers (token null, decision raw)', async () => {
     const raw = `vless://${UUID}@198.51.100.60:443?${REALITY_QS}#node-nine-relay-a`;
     stubPanel(raw);
     const { t, subId, serverId } = await seed({ pinned: false });
@@ -631,12 +631,12 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     ).toHaveLength(2);
   });
 
-  test('panel outage: the stale fallback is served only while its edge token is still current', async () => {
+  test('backend outage: the stale fallback is served only while its edge token is still current', async () => {
     stubPanel();
     const { t, relayId, edgeA, subId } = await seed();
     const first = await (await get(t)).text();
     expect(first).toContain('FreeSocks%20Primary');
-    // Panel down, pool unchanged → the last-known body for this UA is fine.
+    // Backend down, pool unchanged → the last-known body for this UA is fine.
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => {
@@ -647,7 +647,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     const stale = await get(t);
     expect(stale.status).toBe(200);
     expect(await stale.text()).toBe(first);
-    // Unpublish (epoch bump) while the panel is still down: the cached body
+    // Unpublish (epoch bump) while the backend is still down: the cached body
     // carries the removed edge and must NOT be served as a fallback.
     await t.mutation(internal.relays.unpublishEdge, { relayId, edgeId: edgeA, keepActive: true });
     const refused = await get(t);
@@ -690,13 +690,13 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     view = await t.query(internal.edgeRender.memberView, { subscriptionId: subId });
     expect(view?.refreshSuggested).toBe(false);
     expect(view?.known).toBe(true);
-    // A key behind a disabled relay gets null.
+    // A key behind a disabled origin gets null.
     await t.mutation(internal.relays.update, { id: relayId, enabled: false });
     expect(await t.query(internal.edgeRender.memberView, { subscriptionId: subId })).toBeNull();
   });
 });
 
-// The REAL topology: one squad per node, so every member body carries exactly
+// The REAL topology: one mode group per node, so every member body carries exactly
 // ONE node. Pinning must still report that node (there is nothing to filter)
 // or the pin is never recorded and the delivery policy never sees the place.
 // Each body family is exercised with a sub that has NO stored pin.
@@ -822,7 +822,7 @@ describe("edgeRender: server names for the member's country", () => {
   });
 });
 
-describe('edgeRender: single-node bodies (one squad per node)', () => {
+describe('edgeRender: single-node bodies (one mode group per node)', () => {
   const singleLinks = panelBody;
   const singleSingbox = JSON.stringify({
     outbounds: [

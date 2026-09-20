@@ -1,9 +1,9 @@
 /**
- * Panel observation (`remnawaveObservePanel`): what server management reads to
- * show an operator the nodes, config profiles, Hosts and squads that already
+ * Backend observation (`remnawaveObservePanel`): what server management reads to
+ * show an operator the nodes, config profiles, Hosts and mode groups that already
  * exist. It is READ-ONLY, and the guard here is the same one discovery has: a
  * config profile's private key, short ids, clients, certificate material and
- * the panel's derived `rawInbound` can never leave the provider, in a value or
+ * the backend's derived `rawInbound` can never leave the provider, in a value or
  * in an error.
  *
  * Fixtures use RFC 5737 addresses and `*.example` names only.
@@ -61,7 +61,7 @@ const profile = (names: string[], shortIds?: string[]) => ({
     ],
   },
   inbounds: [
-    // The panel's derived rows carry the COMPLETE inbound JSON, key included.
+    // The backend's derived rows carry the COMPLETE inbound JSON, key included.
     { uuid: 'i-reality', tag: 'reality-in', rawInbound: realityInbound(names, shortIds) },
     { uuid: 'i-tls', tag: 'tls-in' },
   ],
@@ -163,7 +163,7 @@ describe('remnawaveObservePanel', () => {
     expect(blob).not.toContain('shortIds');
   });
 
-  test('projects nodes, profiles, Hosts and squads', async () => {
+  test('projects nodes, profiles, Hosts and mode groups', async () => {
     mockFetch(panel(profile(['a.example', 'b.example'])));
     const o = await remnawaveObservePanel(cfg, KEY);
     expect(o.nodes).toEqual([

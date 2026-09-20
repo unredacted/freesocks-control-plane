@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 /**
- * Server-management WRITES through the operations ledger (Hosts, squads).
+ * Server-management WRITES through the operations ledger (Hosts, mode groups).
  * These are the cases the design exists for:
  *
  *  - nothing is written while dormant, without the role's handoff, or by a
@@ -11,8 +11,8 @@
  *  - the delayed-attempt sequence: while an attempt's outcome is unknown, a
  *    re-send does not happen, an opposing write is refused, and when the
  *    original finally lands the op resolves. No conflicting op was admitted;
- *  - reading a changed squad row never releases the claims on the profiles and
- *    nodes the panel re-applies; the nodes' own clocks must move;
+ *  - reading a changed mode group row never releases the claims on the profiles and
+ *    nodes the backend re-applies; the nodes' own clocks must move;
  *  - what belongs to the edges machinery is locked; a deliberate removal is
  *    not undone by name; a recovery needs every condition.
  *
@@ -50,7 +50,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-// --- a mutable fake panel that can lose answers and delay writes ---------------------------------
+// --- a mutable fake backend that can lose answers and delay writes ---------------------------------
 
 interface Host {
   uuid: string;
@@ -76,7 +76,7 @@ interface Panel {
   nodes: { uuid: string; name: string; isDisabled: boolean; lastStatusChange: string | null }[];
   writes: string[];
   fault: Fault;
-  /** Writes accepted by the panel but not applied yet (`apply: 'later'`). */
+  /** Writes accepted by the backend but not applied yet (`apply: 'later'`). */
   delayed: (() => void)[];
   seq: number;
 }
@@ -358,7 +358,7 @@ describe('Hosts', () => {
     const { t, call, panel } = await seed();
     panel.fault = { status: 504, apply: 'now' };
     const op = await (await call('POST', 'panel-a/hosts', NEW_HOST)).json();
-    // The gateway said 504, the panel had created it: the look right after finds it.
+    // The gateway said 504, the backend had created it: the look right after finds it.
     expect(op).toMatchObject({ state: 'done', request: 'uncertain', panelState: 'observed' });
     expect(panel.writes).toEqual(['POST /api/hosts']);
     expect(panel.hosts.filter((h) => h.remark === 'node-one-alt')).toHaveLength(1);
@@ -481,11 +481,11 @@ describe('Hosts', () => {
     ).toBe('done');
   });
 
-  test('clearing the security layer settles: the postcondition expects what the panel will SHOW', async () => {
+  test('clearing the security layer settles: the postcondition expects what the backend will SHOW', async () => {
     const { t, call, panel } = await seed();
     const op = await (await call('PATCH', 'panel-a/hosts/h-1', { securityLayer: null })).json();
-    // The provider sends the panel's own default word for "cleared", and the
-    // panel reads it back as that word: the op must not wait for a null that
+    // The provider sends the backend's own default word for "cleared", and the
+    // backend reads it back as that word: the op must not wait for a null that
     // will never be seen.
     expect((panel.hosts[0] as { securityLayer?: string }).securityLayer).toBe('DEFAULT');
     expect(op).toMatchObject({ state: 'done', panelState: 'observed', open: false });
@@ -525,12 +525,12 @@ describe('squads', () => {
     ).toBe('servers.squad_name_taken');
   });
 
-  test('changing inbounds claims the profile and its nodes; the squad row alone never releases them', async () => {
+  test('changing transports claims the profile and its nodes; the mode group row alone never releases them', async () => {
     const { t, call, serverId, panel } = await seed();
     const op = await (
       await call('PATCH', 'panel-a/squads/s-1', { inboundUuids: ['i-1', 'i-2'] })
     ).json();
-    // The panel row already shows the change, but the node has not applied yet.
+    // The backend row already shows the change, but the node has not applied yet.
     expect(panel.squads[0].inbounds.map((i) => i.uuid)).toEqual(['i-1', 'i-2']);
     expect(op).toMatchObject({
       panelState: 'observed',
@@ -543,7 +543,7 @@ describe('squads', () => {
       [claimKey.node('n-1'), claimKey.profile('p-1'), claimKey.squad('s-1')].sort(),
     );
 
-    // A competing change on the same squad is refused, and another workflow sees the node claim.
+    // A competing change on the same mode group is refused, and another workflow sees the node claim.
     expect(
       (await (await call('PATCH', 'panel-a/squads/s-1', { name: 'x-y' })).json()).error.code,
     ).toBe('servers.op_running');
@@ -563,7 +563,7 @@ describe('squads', () => {
     expect(await claims(t)).toEqual([]);
   });
 
-  test('a squad members are issued into, or that has members, is not deleted', async () => {
+  test('a mode group members are issued into, or that has members, is not deleted', async () => {
     const { t, call, panel } = await seed();
     expect((await (await call('DELETE', 'panel-a/squads/s-busy')).json()).error.code).toBe(
       'servers.squad_has_members',
@@ -650,7 +650,7 @@ describe('claims, interruption and recovery', () => {
         credentialsRevoked: true,
         noInFlightExecutor: true,
         queueDrained: true,
-        note: 'token revoked in the panel, queue inspected',
+        note: 'token revoked in the backend, queue inspected',
       })
     ).json();
     expect(done).toMatchObject({ state: 'recovered', open: false, recovered: true });

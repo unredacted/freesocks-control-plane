@@ -1,5 +1,5 @@
 /**
- * Outbound-URL safety for operator-registered infrastructure (backend panels,
+ * Outbound-URL safety for operator-registered infrastructure (backend backends,
  * S3 mirror providers). The control plane fetches these URLs on a schedule
  * (healthchecks), at issuance, and on admin test-connection, so a registered
  * URL is a DURABLE SSRF primitive — notably because `admin:servers:write` /
@@ -7,13 +7,13 @@
  * register them. (Review D-M4.)
  *
  * WHATWG URL canonicalizes IPv4 hosts (hex/octal/short forms → dotted quad),
- * so checking the parsed hostname covers the encoding tricks. Panels and
+ * so checking the parsed hostname covers the encoding tricks. Backends and
  * buckets legitimately live on private RFC1918 addresses, so private space is
  * ALLOWED; the denylist is loopback, link-local (incl. the cloud metadata
  * address 169.254.169.254), the unspecified address, and obvious metadata
- * hostnames — none of which is ever a legitimate panel/bucket on this
+ * hostnames — none of which is ever a legitimate backend/bucket on this
  * deployment shape. Set ALLOW_INTERNAL_BACKENDS=true to lift the deny (dev
- * panels on the same host).
+ * backends on the same host).
  *
  * This is prefix filtering, not DNS pinning: a hostname that RESOLVES to a
  * denied address still passes (no DNS in mutations). It raises the bar from

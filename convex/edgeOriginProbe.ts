@@ -1,7 +1,7 @@
 /**
- * Inbound candidates with the origin probe applied (docs/edges.md § "Listener
- * catalogue", discovery): `GET relays/inbound-candidates?backendServerId=&nodeUuid=`
- * lists the node's inbounds (`backends.listNodeInbounds`), maps them to listener
+ * Transport candidates with the origin probe applied (docs/edges.md § "Listener
+ * catalogue", discovery): `GET origins/transport-candidates?backendServerId=&nodeUuid=`
+ * lists the node's transports (`backends.listNodeInbounds`), maps them to listener
  * candidates (`mapInboundsToListeners`), then probes every HTTP-transport
  * candidate's origin (edgeOriginProbeOps.ts) and fills `originTransport` where
  * the probe succeeded, recomputing `layers`. Everything else stays L4-only and
@@ -44,7 +44,7 @@ export const nodeContext = internalQuery({
     if (!capabilitiesOf(server.backend).inboundDiscovery)
       throw new ConvexError({
         code: 'backend.inbounds_unsupported',
-        message: 'This backend does not list node inbounds',
+        message: 'This backend does not list node transports',
       });
     const rows = await ctx.db
       .query('backendNodeInventory')
@@ -54,9 +54,9 @@ export const nodeContext = internalQuery({
     if (!node)
       throw new ConvexError({
         code: 'edge.node_unknown',
-        message: 'The node is not in the panel inventory; refresh the node list first',
+        message: 'The node is not in the backend inventory; refresh the node list first',
       });
-    // An existing relay on the node names the origin address and the keys already taken.
+    // An existing origin on the node names the origin address and the keys already taken.
     const relay = await ctx.db
       .query('relays')
       .withIndex('by_node', (q) =>
@@ -70,7 +70,7 @@ export const nodeContext = internalQuery({
     if (!originAddress)
       throw new ConvexError({
         code: 'edge.node_address_unknown',
-        message: 'The panel reports no address for this node',
+        message: 'The backend reports no address for this node',
       });
     return {
       node: { nodeUuid: node.nodeUuid, name: node.name, address: node.address ?? null },

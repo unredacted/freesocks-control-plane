@@ -4,7 +4,7 @@
  *
  * One bounded operation per invocation: read what the session needs through an
  * internal query, run the authenticated test session through the edge
- * (lib/edges/frontCheck), hand the verdict back to a mutation. No relay state
+ * (lib/edges/frontCheck), hand the verdict back to a mutation. No origin state
  * is read or written here, and nothing member-owned is touched: the credential
  * is FCP's own qualification account and the tunnel fetches a neutral 204.
  *

@@ -317,7 +317,7 @@ export const sweepBillingOrders = internalMutation({
   },
 });
 
-// --- relay edges ------------------------------------------------------------------------------
+// --- origin edges ------------------------------------------------------------------------------
 
 /**
  * Destroyed edges: the row is a ledger of what existed; keep ~30 days
@@ -372,7 +372,7 @@ const TERMINAL_ROTATION_PHASES = [
 /**
  * Terminal rotations: keep ~90 days (EDGE_ROTATION_RETENTION_DAYS) via the
  * `by_phase_finished` index (phase + finishedAt). A `quarantined` row that a
- * relay's live quarantine still points at is kept whatever its age (it is the
+ * origin's live quarantine still points at is kept whatever its age (it is the
  * operator's evidence until resolved).
  */
 export const sweepEdgeRotations = internalMutation({

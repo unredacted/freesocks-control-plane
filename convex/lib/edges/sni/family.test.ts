@@ -109,7 +109,7 @@ describe('planAllowlist', () => {
     expect(plan.familyBudget).toBe(512 - 64 - 2);
     expect(plan.names).toHaveLength(448);
     expect(plan.overflow).toBe(600 - 446);
-    // Retire one + add its replacement: both fit on the panel at once, under the cap.
+    // Retire one + add its replacement: both fit on the backend at once, under the cap.
     expect(plan.names.length + 1 + 1).toBeLessThanOrEqual(512);
     // Deterministic: the same inputs choose the same names for every listener.
     expect(planAllowlist(fam(600).reverse(), ['a.example', 'b.example']).names).toEqual(plan.names);

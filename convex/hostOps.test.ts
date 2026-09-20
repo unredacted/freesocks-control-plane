@@ -1,8 +1,8 @@
 /// <reference types="vite/client" />
 /**
- * The panel-Host state machine for FCP-owned listener Hosts (convex/hostOps.ts):
+ * The backend-Host state machine for FCP-owned listener Hosts (convex/hostOps.ts):
  * persisted intent before any call, discovery that matches on remark AND
- * inbound AND address:port, the settle floor before an empty listing means
+ * transport AND address:port, the settle floor before an empty listing means
  * `absent`, read-back-only delete confirmation, and the reconcile pass.
  */
 import { convexTest } from 'convex-test';
@@ -72,7 +72,7 @@ function seen(h: PanelHost) {
 }
 
 /**
- * A fake panel with a mutable Host table. POST mints a uuid (or fails when
+ * A fake backend with a mutable Host table. POST mints a uuid (or fails when
  * asked), DELETE removes (or fails / is ignored when asked), GET lists.
  */
 function fakePanel(
@@ -216,7 +216,7 @@ describe('hostOps: create', () => {
     expect(l.host!.intended).toBeDefined();
   });
 
-  test('claimCreate refuses a relay whose Hosts FCP does not own, and a listener without a panel Host', async () => {
+  test('claimCreate refuses an origin whose Hosts FCP does not own, and a listener without a backend Host', async () => {
     const { t, relayId, listenerId } = await seed();
     await t.run((ctx) => ctx.db.patch(relayId, { hostMode: 'operator' }));
     await expect(
@@ -241,14 +241,14 @@ describe('hostOps: applyDiscovery after an uncertain create', () => {
     return claim.opId;
   }
 
-  test('exactly one Host matching remark AND inbound AND address:port settles the create as present', async () => {
+  test('exactly one Host matching remark AND transport AND address:port settles the create as present', async () => {
     const { t, listenerId } = await seed();
     const opId = await unresolvedCreate(t, listenerId);
     const r = await t.mutation(internal.hostOps.applyDiscovery, {
       listenerId,
       opId,
       hosts: [
-        // Same remark, another inbound: the role's Host for a different listener, not ours.
+        // Same remark, another transport: the role's Host for a different listener, not ours.
         seen(
           panelHost({
             uuid: 'other-inbound',
@@ -258,9 +258,9 @@ describe('hostOps: applyDiscovery after an uncertain create', () => {
             },
           }),
         ),
-        // Same remark + inbound, another port: not the intended tuple.
+        // Same remark + transport, another port: not the intended tuple.
         seen(panelHost({ uuid: 'other-port', port: 8443 })),
-        // Same remark + inbound, another address: not ours either.
+        // Same remark + transport, another address: not ours either.
         seen(panelHost({ uuid: 'other-address', address: '198.51.100.99' })),
         seen(panelHost()),
       ],
@@ -448,7 +448,7 @@ describe('hostOps: delete', () => {
     const actions = await auditActions(t);
     expect(actions).toContain('relay.host.released');
     expect(actions).not.toContain('relay.host.deleted');
-    // Through the action: no panel call at all.
+    // Through the action: no backend call at all.
     const world = fakePanel([panelHost()]);
     await presentHost(t, listenerId, 'adopted');
     expect(await t.action(internal.hostOps.deleteListenerHost, { listenerId })).toEqual({
@@ -474,8 +474,8 @@ describe('hostOps: delete', () => {
   });
 });
 
-describe('hostOps: the actions against a panel', () => {
-  test('ensureListenerHost creates the Host through POST /api/hosts with the persisted intent, then answers present only after seeing it on the panel', async () => {
+describe('hostOps: the actions against a backend', () => {
+  test('ensureListenerHost creates the Host through POST /api/hosts with the persisted intent, then answers present only after seeing it on the backend', async () => {
     const world = fakePanel();
     const { t, listenerId } = await seed();
     const r = await t.action(internal.hostOps.ensureListenerHost, { listenerId, target: TARGET });
@@ -488,7 +488,7 @@ describe('hostOps: the actions against a panel', () => {
       address: EDGE,
       port: 443,
       sni: 'a.example',
-      // null = clear, sent as '' (the panel's string-typed DTO).
+      // null = clear, sent as '' (the backend's string-typed DTO).
       host: '',
       isDisabled: false,
       inbound: {
@@ -511,7 +511,7 @@ describe('hostOps: the actions against a panel', () => {
     expect(world.calls()).toEqual(['POST /api/hosts', 'GET /api/hosts']);
   });
 
-  test('a Host the ledger calls present but the panel lost is re-created, not reported present from the database', async () => {
+  test('a Host the ledger calls present but the backend lost is re-created, not reported present from the database', async () => {
     const world = fakePanel();
     const { t, listenerId } = await seed();
     const first = await t.action(internal.hostOps.ensureListenerHost, {
@@ -519,7 +519,7 @@ describe('hostOps: the actions against a panel', () => {
       target: TARGET,
     });
     expect(first.state).toBe('present');
-    // Deleted out of band on the panel.
+    // Deleted out of band on the backend.
     world.hosts.length = 0;
     const again = await t.action(internal.hostOps.ensureListenerHost, {
       listenerId,
@@ -535,7 +535,7 @@ describe('hostOps: the actions against a panel', () => {
     expect(audits).toContain('relay.host.lost');
   });
 
-  test('a lost uuid with exactly one Host on the listener remark and inbound takes its place; several park it ambiguous', async () => {
+  test('a lost uuid with exactly one Host on the listener remark and transport takes its place; several park it ambiguous', async () => {
     const world = fakePanel();
     const { t, listenerId } = await seed();
     await t.action(internal.hostOps.ensureListenerHost, { listenerId, target: TARGET });
@@ -559,7 +559,7 @@ describe('hostOps: the actions against a panel', () => {
     expect(world.calls().filter((c) => c === 'POST /api/hosts')).toHaveLength(1);
   });
 
-  test('a failed POST parks the listener unresolved; the next ensure RE-OBSERVES (never re-creates) and adopts what the panel did create', async () => {
+  test('a failed POST parks the listener unresolved; the next ensure RE-OBSERVES (never re-creates) and adopts what the backend did create', async () => {
     const world = fakePanel([], { createFails: true });
     const { t, listenerId } = await seed();
     const r = await t.action(internal.hostOps.ensureListenerHost, { listenerId, target: TARGET });
@@ -568,7 +568,7 @@ describe('hostOps: the actions against a panel', () => {
       state: 'unresolved',
       op: { kind: 'create' },
     });
-    // The panel actually created it before answering 500.
+    // The backend actually created it before answering 500.
     world.hosts.push(panelHost());
     const r2 = await t.action(internal.hostOps.ensureListenerHost, { listenerId, target: TARGET });
     expect(r2).toEqual({ state: 'present', uuid: HOST_UUID });
@@ -608,7 +608,7 @@ describe('hostOps: the actions against a panel', () => {
     });
     expect(world.calls()).toEqual([`DELETE /api/hosts/${HOST_UUID}`, 'GET /api/hosts']);
     expect((await listener(t, listenerId)).host).toEqual({ state: 'absent' });
-    // The DELETE 2xx'd but the panel still lists it: present, op kept, not confirmed.
+    // The DELETE 2xx'd but the backend still lists it: present, op kept, not confirmed.
     world = fakePanel([panelHost()], { deleteIgnored: true });
     await present();
     expect(await t.action(internal.hostOps.deleteListenerHost, { listenerId })).toEqual({
@@ -627,7 +627,7 @@ describe('hostOps: the actions against a panel', () => {
 });
 
 describe('hostOps: pendingListeners + reconcileHosts', () => {
-  test('nothing pending: an empty list, a no-op pass, no panel call', async () => {
+  test('nothing pending: an empty list, a no-op pass, no backend call', async () => {
     const world = fakePanel();
     const { t } = await seed();
     expect(await t.query(internal.hostOps.pendingListeners, {})).toEqual([]);
@@ -672,21 +672,21 @@ describe('hostOps: pendingListeners + reconcileHosts', () => {
     expect(await t.query(internal.hostOps.pendingListeners, {})).toEqual([
       { kind: 'delete', listenerId },
     ]);
-    // Pass 1: the DELETE is accepted but the panel still lists the Host: not deleted.
+    // Pass 1: the DELETE is accepted but the backend still lists the Host: not deleted.
     expect(await t.action(internal.hostOps.reconcileHosts, {})).toEqual({ looked: 0, deleted: 0 });
     expect(world.calls()).toEqual([`DELETE /api/hosts/${HOST_UUID}`, 'GET /api/hosts']);
     expect((await listener(t, listenerId)).host).toMatchObject({
       state: 'present',
       op: { kind: 'delete' },
     });
-    // Pass 2: the panel lets go: gone on read-back → absent, counted.
+    // Pass 2: the backend lets go: gone on read-back → absent, counted.
     world.hosts.splice(0, 1);
     expect(await t.action(internal.hostOps.reconcileHosts, {})).toEqual({ looked: 0, deleted: 1 });
     expect((await listener(t, listenerId)).host).toEqual({ state: 'absent' });
     expect(await t.query(internal.hostOps.pendingListeners, {})).toEqual([]);
   });
 
-  test('a deleting relay has its FCP Hosts removed; an operator-managed relay is never touched; an adopted Host is released', async () => {
+  test('a deleting origin has its FCP Hosts removed; an operator-managed origin is never touched; an adopted Host is released', async () => {
     const world = fakePanel([panelHost()]);
     const { t, relayId, listenerId } = await seed();
     await t.run((ctx) =>
@@ -698,14 +698,14 @@ describe('hostOps: pendingListeners + reconcileHosts', () => {
     // Operator-managed: FCP does not own the Hosts, so nothing is pending.
     await t.run((ctx) => ctx.db.patch(relayId, { hostMode: 'operator' }));
     expect(await t.query(internal.hostOps.pendingListeners, {})).toEqual([]);
-    // The relay is being deleted: its FCP Host goes.
+    // The origin is being deleted: its FCP Host goes.
     await t.run((ctx) => ctx.db.patch(relayId, { hostMode: 'fcp', deleting: true }));
     expect(await t.query(internal.hostOps.pendingListeners, {})).toEqual([
       { kind: 'delete', listenerId },
     ]);
     expect(await t.action(internal.hostOps.reconcileHosts, {})).toEqual({ looked: 0, deleted: 1 });
     expect(world.hosts).toEqual([]);
-    // An adopted Host on a deleting relay: released, no DELETE.
+    // An adopted Host on a deleting origin: released, no DELETE.
     world.hosts.push(panelHost());
     await t.run((ctx) =>
       ctx.db.patch(listenerId, {

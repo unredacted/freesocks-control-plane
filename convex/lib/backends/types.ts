@@ -55,8 +55,8 @@ export function applyUsageCarryover(limitBytes: number, usedBytes: number): numb
   return Math.max(1, limitBytes - Math.max(0, Math.floor(usedBytes)));
 }
 
-/** Panel-side "no expiry" sentinel horizon (~10 years). Remnawave requires a
- *  concrete date, so keys that must never expire on the panel's clock carry
+/** Backend-side "no expiry" sentinel horizon (~10 years). Remnawave requires a
+ *  concrete date, so keys that must never expire on the backend's clock carry
  *  this instead of null. */
 export const FAR_FUTURE_EXPIRY_DAYS = 3650;
 
@@ -64,7 +64,7 @@ export function farFutureExpiryIso(now = Date.now()): string {
   return new Date(now + FAR_FUTURE_EXPIRY_DAYS * DAY_MS).toISOString();
 }
 
-/** True when a panel `expireAt` is (a drifted copy of) the far-future sentinel —
+/** True when a backend `expireAt` is (a drifted copy of) the far-future sentinel —
  *  read-side, it maps back to "no expiry". The 5-year threshold sits far above
  *  any real membership term and comfortably below the 10-year sentinel. */
 export function isFarFutureExpiry(iso: string, now = Date.now()): boolean {
@@ -75,8 +75,8 @@ export function isFarFutureExpiry(iso: string, now = Date.now()): boolean {
 /**
  * The backend `expireAt` (ISO) for a user: a paid member's purchased term
  * (`membershipExpiresAt`), else the far-future sentinel — a FREE key never
- * expires on the panel's clock. Free-account reclaim is usage-based instead:
- * the deactivate-idle-free sweep consults the panel's last-online stamp and
+ * expires on the backend's clock. Free-account reclaim is usage-based instead:
+ * the deactivate-idle-free sweep consults the backend's last-online stamp and
  * only reclaims genuinely idle accounts, so an actively-used free key keeps
  * the same config indefinitely. Call from an ACTION (uses Date.now()).
  */
@@ -98,7 +98,7 @@ export function computeExpireAtIso(membershipExpiresAtMs: number | null | undefi
  * device-limit enforcement is globally enabled AND the tier opts in. When the
  * master toggle is off (the unlimited-by-default posture) this is null for every
  * user regardless of tier, so a client that doesn't send an x-hwid header is
- * never rejected. Panel-side enforcement additionally requires
+ * never rejected. Backend-side enforcement additionally requires
  * HWID_DEVICE_LIMIT_ENABLED=true (outside FCP's control).
  */
 export function resolveHwidLimit(
@@ -119,7 +119,7 @@ export interface IssueUserSpec {
   trafficLimitStrategy?: TrafficLimitStrategy;
   // Opaque, backend-defined placement handle (where within the backend this key
   // is homed). The generic layer treats it as a black box; Remnawave maps it to
-  // an internal-squad UUID (activeInternalSquads), Outline ignores it.
+  // an internal-mode group UUID (activeInternalSquads), Outline ignores it.
   placement?: string | null;
 }
 
@@ -129,7 +129,7 @@ export interface IssuedUser {
   subscriptionUrl: string;
   raw: unknown;
   /**
-   * The UUID-class protocol credential the panel minted for the user (the VLESS
+   * The UUID-class protocol credential the backend minted for the user (the VLESS
    * id), when the backend exposes one. The L7 front qualification authenticates
    * its test session with it; absent = this backend cannot back that check.
    */
@@ -153,7 +153,7 @@ export interface UserState {
   // undefined for backends without periodic resets, e.g. Outline).
   trafficLimitStrategy?: TrafficLimitStrategy;
   lastTrafficResetAt?: string;
-  // Panel-side "last seen online" stamp (Remnawave-only; undefined for
+  // Backend-side "last seen online" stamp (Remnawave-only; undefined for
   // backends that don't report liveness, e.g. Outline).
   onlineAt?: string;
   expireAt: string | null;
@@ -202,8 +202,8 @@ export interface UsageSeries {
 }
 
 /**
- * Fleet-wide observability for one backend panel (admin dashboard). Read-only,
- * cached by the healthcheck cron so the dashboard never makes a live panel call.
+ * Fleet-wide observability for one backend backend (admin dashboard). Read-only,
+ * cached by the healthcheck cron so the dashboard never makes a live backend call.
  * `panelVersion` surfaces version drift (relevant to the pinned API contract).
  */
 export interface FleetStats {
@@ -218,14 +218,14 @@ export interface FleetStats {
 
 /**
  * Per-placement load snapshot for issuance-time node placement. A placement is
- * the opaque handle a key is homed to (Remnawave: an internal squad, which maps
+ * the opaque handle a key is homed to (Remnawave: an internal mode group, which maps
  * to one or more nodes); the load is aggregated from that placement's node(s).
  * `usersOnline` is the primary signal (fewest wins). Read-only, refreshed by the
- * healthcheck cron. Squad-free by design — the generic layer never sees a squad.
+ * healthcheck cron. Mode group-free by design — the generic layer never sees a mode group.
  */
 export interface NodeStats {
-  placement: string; // opaque handle (Remnawave: internal-squad uuid)
-  label: string; // display name (squad name)
+  placement: string; // opaque handle (Remnawave: internal-mode group uuid)
+  label: string; // display name (mode group name)
   usersOnline: number; // summed over the placement's mapped nodes
   trafficBytesRealtime?: number; // summed realtime throughput, when available
   online: boolean; // ≥1 mapped node connected & not disabled
@@ -234,8 +234,8 @@ export interface NodeStats {
 
 /**
  * A client-facing connection entry the backend advertises in subscriptions
- * (Remnawave: a Host). Relay edges repoint the ADDRESS of the template Hosts
- * that belong to a relay slot; everything else is read-only here.
+ * (Remnawave: a Host). Origin edges repoint the ADDRESS of the template Hosts
+ * that belong to an origin slot; everything else is read-only here.
  */
 export interface BackendHost {
   uuid: string;
@@ -263,7 +263,7 @@ export interface BackendHostPatch {
   host?: string | null;
 }
 
-/** A NEW client-facing Host FCP creates for a relay listener (hostMode `fcp`). */
+/** A NEW client-facing Host FCP creates for an origin listener (hostMode `fcp`). */
 export interface BackendHostCreate {
   remark: string;
   address: string;
@@ -274,18 +274,18 @@ export interface BackendHostCreate {
 }
 
 /**
- * One inbound a panel node serves, as the relay layer needs it for listener
+ * One inbound a backend node serves, as the origin layer needs it for listener
  * discovery (Remnawave: an Xray inbound of the node's active config profile).
  * An ALLOWLIST projection: the protocol, port, stream/security kind and the
  * client-facing names/paths only. Credentials (`clients`), the REALITY private
  * key and short ids, and certificate material are never read into this shape.
- * `port` is null when the panel's value is not one plain port (a range/list).
+ * `port` is null when the backend's value is not one plain port (a range/list).
  */
 export interface PanelInbound {
   tag: string;
   configProfileUuid: string;
   configProfileInboundUuid: string;
-  /** Xray protocol id as the panel reports it (`vless`, `trojan`, `vmess`, ...). */
+  /** Xray protocol id as the backend reports it (`vless`, `trojan`, `vmess`, ...). */
   protocol: string;
   port: number | null;
   /** Xray `listen` when set (an inbound bound to loopback is reached only through something else on the node). */
@@ -306,16 +306,16 @@ export interface PanelInbound {
 }
 
 /**
- * Per-NODE load snapshot (Remnawave: one row per panel node). Distinct from
- * NodeStats, which aggregates per PLACEMENT (squad): a shared relay squad
- * spans several nodes, so the relay block detector needs the node grain.
+ * Per-NODE load snapshot (Remnawave: one row per backend node). Distinct from
+ * NodeStats, which aggregates per PLACEMENT (mode group): a shared origin mode group
+ * spans several nodes, so the origin block detector needs the node grain.
  */
 export interface NodeInventoryRow {
   nodeUuid: string;
   name: string;
   usersOnline: number;
   online: boolean;
-  /** The node's public address / port / country as the panel knows them (for the relay picker). */
+  /** The node's public address / port / country as the backend knows them (for the origin picker). */
   address?: string;
   port?: number;
   countryCode?: string;
@@ -323,12 +323,12 @@ export interface NodeInventoryRow {
 
 import type { PatchChange, PatchOp } from '../panel/patchOps';
 
-// --- Panel observation (server management) -----------------------------------
+// --- Backend observation (server management) -----------------------------------
 //
-// What FCP reads from a panel to show an operator the nodes, config profiles,
-// Hosts and squads that already exist. Every shape is NON-SECRET by
+// What FCP reads from a backend to show an operator the nodes, config profiles,
+// Hosts and mode groups that already exist. Every shape is NON-SECRET by
 // construction: an inbound is the same allowlist projection discovery uses,
-// plus digests (convex/lib/panel/digest.ts) that say "this changed" without
+// plus digests (convex/lib/backend/digest.ts) that say "this changed" without
 // carrying what changed. Nothing here may ever hold a private key, a short id,
 // a client, a certificate or a password.
 
@@ -404,7 +404,7 @@ export interface PanelObservation {
   squads: PanelObservedSquad[];
 }
 
-// --- Panel writes (server management) ------------------------------------------
+// --- Backend writes (server management) ------------------------------------------
 
 export interface ProfilePatchPreview {
   profileName: string;
@@ -443,7 +443,7 @@ export type PanelHostCreate = PanelHostFields & {
   inbound: { configProfileUuid: string; configProfileInboundUuid: string };
 };
 
-/** What the panel says about a node's application state; the only field read is its own clock. */
+/** What the backend says about a node's application state; the only field read is its own clock. */
 export interface PanelNodeStatus {
   nodeUuid: string;
   name: string;
@@ -456,7 +456,7 @@ export interface PanelNodeStatus {
   activeInboundUuids: string[];
 }
 
-/** A node row FCP creates on the panel. The node's own secret is never FCP's to fetch. */
+/** A node row FCP creates on the backend. The node's own secret is never FCP's to fetch. */
 export interface PanelNodeCreate {
   name: string;
   address: string;
@@ -466,7 +466,7 @@ export interface PanelNodeCreate {
   activeInboundUuids: string[];
 }
 
-/** Absent = leave. Profile and inbounds travel together (the panel takes them as one). */
+/** Absent = leave. Profile and inbounds travel together (the backend takes them as one). */
 export interface PanelNodeFields {
   name?: string;
   address?: string;
@@ -475,7 +475,7 @@ export interface PanelNodeFields {
   profile?: { configProfileUuid: string; activeInboundUuids: string[] };
 }
 
-/** A subscription template row as the panel lists it (type + uuid only). */
+/** A subscription template row as the backend lists it (type + uuid only). */
 export interface PanelSubscriptionTemplateRef {
   uuid: string;
   templateType: string;
@@ -518,7 +518,7 @@ export interface PanelWrites<C> {
     spec: { name: string; config: unknown },
   ): Promise<{ profileUuid: string }>;
   /**
-   * The panel-wide node secret (`SECRET_KEY`), for handing to a node the role
+   * The backend-wide node secret (`SECRET_KEY`), for handing to a node the role
    * is bootstrapping. Returned to the caller and nowhere else: never persisted
    * by FCP, never logged, never audited.
    */
@@ -537,7 +537,7 @@ export interface PanelWrites<C> {
     tag: string,
     digestKey: string,
   ): Promise<PanelInboundTestParams | null>;
-  /** The protocol credential (VLESS uuid) of a panel user FCP issued, in memory only. */
+  /** The protocol credential (VLESS uuid) of a backend user FCP issued, in memory only. */
   userCredential(config: C, backendUserId: string): Promise<{ protocolUuid: string | null }>;
   createHost(config: C, spec: PanelHostCreate): Promise<{ hostUuid: string }>;
   updateHost(config: C, hostUuid: string, fields: PanelHostFields): Promise<void>;

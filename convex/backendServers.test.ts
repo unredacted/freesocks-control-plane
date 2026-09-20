@@ -405,7 +405,7 @@ describe('migrateRemnawaveUserIds (2.x uuid → instance-scoped 3.x id)', () => 
     });
   }
 
-  /** A panel stub: reports `version`, answers by-short-uuid from `byShort`. */
+  /** A backend stub: reports `version`, answers by-short-uuid from `byShort`. */
   function stubPanel(version: string, byShort: Record<string, number>) {
     const seen: string[] = [];
     vi.stubGlobal(
@@ -440,7 +440,7 @@ describe('migrateRemnawaveUserIds (2.x uuid → instance-scoped 3.x id)', () => 
     return seen;
   }
 
-  test('remaps legacy uuid keys on a 3.x panel, skips scoped/deleted rows, counts the missing', async () => {
+  test('remaps legacy uuid keys on a 3.x backend, skips scoped/deleted rows, counts the missing', async () => {
     const t = convexTest(schema, modules);
     const instanceId = await seedInstance(t, { slug: 'rw-3x' });
     const subs = await seedSubs(t, instanceId);
@@ -469,7 +469,7 @@ describe('migrateRemnawaveUserIds (2.x uuid → instance-scoped 3.x id)', () => 
     await t.run(async (ctx) => {
       expect((await ctx.db.get(subs.legacy))!.backendUserId).toBe(`${instanceId}:5`);
       expect((await ctx.db.get(subs.scoped))!.backendUserId).toBe(`${instanceId}:9`);
-      // The panel-unknown key is left for the operator, untouched.
+      // The backend-unknown key is left for the operator, untouched.
       expect((await ctx.db.get(subs.gone))!.backendUserId).toBe(
         '550e8400-e29b-41d4-a716-446655440001',
       );
@@ -507,19 +507,19 @@ describe('migrateRemnawaveUserIds (2.x uuid → instance-scoped 3.x id)', () => 
     expect(second.servers[0]!.complete).toBe(true);
     expect(second.servers[0]!.continueCursor).toBeNull();
     expect(first.servers[0]!.scanned + second.servers[0]!.scanned).toBe(4);
-    // Between the two runs every legacy row the panel knows got remapped.
+    // Between the two runs every legacy row the backend knows got remapped.
     expect(first.servers[0]!.remapped + second.servers[0]!.remapped).toBe(2);
     await t.run(async (ctx) => {
       expect((await ctx.db.get(subs.legacy))!.backendUserId).toBe(`${instanceId}:5`);
       expect((await ctx.db.get(subs.gone))!.backendUserId).toBe(`${instanceId}:6`);
     });
-    // A cursor without its panel is refused (it belongs to one row sequence).
+    // A cursor without its backend is refused (it belongs to one row sequence).
     await expect(
       t.action(internal.backendServers.migrateRemnawaveUserIds, { cursor: 'abc' }),
     ).rejects.toThrow(/cursor requires serverId/);
   });
 
-  test('a panel still on 2.x is skipped: its uuids are correct as they are', async () => {
+  test('a backend still on 2.x is skipped: its uuids are correct as they are', async () => {
     const t = convexTest(schema, modules);
     const instanceId = await seedInstance(t, { slug: 'rw-2x' });
     const subs = await seedSubs(t, instanceId);
@@ -536,7 +536,7 @@ describe('migrateRemnawaveUserIds (2.x uuid → instance-scoped 3.x id)', () => 
     const t = convexTest(schema, modules);
     const instanceId = await seedInstance(t, { slug: 'rw-dup' });
     const subs = await seedSubs(t, instanceId);
-    // The panel claims the legacy key is user 9 — but `${instanceId}:9` is already
+    // The backend claims the legacy key is user 9 — but `${instanceId}:9` is already
     // held by another row. Never clobber: report a conflict.
     stubPanel('3.4.2', { sA: 9 });
     const res = await t.action(internal.backendServers.migrateRemnawaveUserIds, {});

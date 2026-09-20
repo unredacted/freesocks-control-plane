@@ -48,7 +48,7 @@ interface PanelHost {
 }
 
 /**
- * Fake UpCloud with a mutable LB table; records DELETEs. The panel half keeps a
+ * Fake UpCloud with a mutable LB table; records DELETEs. The backend half keeps a
  * Host table too (GET lists, DELETE removes) so the Host cleanup is observable.
  */
 function fakeUpcloud(
@@ -135,7 +135,7 @@ async function seed() {
   return { t, accountId, relayId, listenerId };
 }
 
-/** An admin-added Gcore-scoped listener `g` on the seeded relay, plus a Gcore account. */
+/** An admin-added Gcore-scoped listener `g` on the seeded origin, plus a Gcore account. */
 async function gcoreListener(
   s: Awaited<ReturnType<typeof seed>>,
   opts: { qualified?: boolean } = {},
@@ -294,7 +294,7 @@ describe('edgeReconcile', () => {
     fakeUpcloud([]); // lb-1 does not exist any more
     const s = await seed();
     const edgeId = await managedEdge(s, 'lb-1', { lastHealthAt: undefined });
-    // The listener's template index is the rotation machine's job on a relay
+    // The listener's template index is the rotation machine's job on an origin
     // whose Hosts FCP owns; these tests are about the reconcile loop, not the
     // flip, so the operator keeps the Hosts.
     await s.t.mutation(internal.relays.update, { id: s.relayId, hostMode: 'operator' });
@@ -686,7 +686,7 @@ describe('edgeReconcile', () => {
     await s.t.run((ctx) => upsertSettingRow(ctx, 'edge.autoProvisionToDesired', 'true'));
     await adoptL4Edge(s.t, s.relayId, s.listenerId, { ipv4: '198.51.100.1', publish: true });
     const standby = await managedEdge(s, 'lb-1', {});
-    // A second relay already marked for deletion, with nothing left to tear down.
+    // A second origin already marked for deletion, with nothing left to tear down.
     const { relayId: doomed } = await registerRelay(s.t, {
       slug: 'node-two',
       nodeName: 'node-two',
@@ -998,7 +998,7 @@ describe('edgeReconcile', () => {
   });
 });
 
-describe('edgeReconcile: panel Host operations run every tick', () => {
+describe('edgeReconcile: backend Host operations run every tick', () => {
   const presentHost = (ownership: 'fcp' | 'adopted' = 'fcp') => ({
     state: 'present' as const,
     uuid: HOST_UUID,
@@ -1013,7 +1013,7 @@ describe('edgeReconcile: panel Host operations run every tick', () => {
     inbound: { configProfileUuid: FIXTURE_CONFIG_PROFILE, configProfileInboundUuid: INBOUND_U },
   });
 
-  test('nothing pending: the pass neither calls the panel nor errors', async () => {
+  test('nothing pending: the pass neither calls the backend nor errors', async () => {
     const world = fakeUpcloud([], { panelHosts: [panelHost()] });
     const s = await seed();
     await s.t.run((ctx) =>
@@ -1025,7 +1025,7 @@ describe('edgeReconcile: panel Host operations run every tick', () => {
     expect(world.panelHosts).toHaveLength(1);
   });
 
-  test('a retired listener’s FCP-owned Host is deleted, confirmed by the read-back, and the relay delete can then finish', async () => {
+  test('a retired listener’s FCP-owned Host is deleted, confirmed by the read-back, and the origin delete can then finish', async () => {
     const world = fakeUpcloud([], { panelHosts: [panelHost()] });
     const s = await seed();
     // The role dropped the listener from its body (pruned = retired) while FCP
@@ -1050,7 +1050,7 @@ describe('edgeReconcile: panel Host operations run every tick', () => {
     });
   });
 
-  test('a deleting relay waits on its FCP Host: the tick removes the Host first, the row goes on the next', async () => {
+  test('a deleting origin waits on its FCP Host: the tick removes the Host first, the row goes on the next', async () => {
     const world = fakeUpcloud([], { panelHosts: [panelHost()] });
     const s = await seed();
     await s.t.run((ctx) =>
@@ -1073,7 +1073,7 @@ describe('edgeReconcile: panel Host operations run every tick', () => {
     expect(await s.t.query(internal.relays.get, { id: s.relayId })).toBeNull();
   });
 
-  test('an adopted Host on a deleting relay is released, never deleted', async () => {
+  test('an adopted Host on a deleting origin is released, never deleted', async () => {
     const world = fakeUpcloud([], { panelHosts: [panelHost()] });
     const s = await seed();
     await s.t.run((ctx) =>
@@ -1105,7 +1105,7 @@ describe('edgeReconcile: panel Host operations run every tick', () => {
     // Still inside the op's TTL: no look.
     await run(s.t);
     expect(world.panelCalls).toEqual([]);
-    // Expired: a look; the panel holds the Host after all → present, owned by FCP.
+    // Expired: a look; the backend holds the Host after all → present, owned by FCP.
     vi.setSystemTime(1_800_000_000_000 + 61_000);
     world.panelHosts.push(panelHost());
     await run(s.t);

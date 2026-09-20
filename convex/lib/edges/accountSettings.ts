@@ -1,5 +1,5 @@
 /**
- * Pure validation + masking for relay provider ACCOUNTS: the non-secret
+ * Pure validation + masking for origin provider ACCOUNTS: the non-secret
  * `settings` variant per provider (zod), the secret `credentials` field list,
  * the admin-safe mask (per-field set/not-set booleans) and the keep-on-blank
  * merge. Isolate-safe (no SDK imports).

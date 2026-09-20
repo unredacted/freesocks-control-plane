@@ -36,9 +36,9 @@ export interface BackendCapabilities {
   /** Fleet-wide traffic-limit updates in bulk; without it callers fall back
    *  to per-user updates. */
   bulkTrafficUpdate: boolean;
-  /** Per-user usage history series (the member usage trend panel). */
+  /** Per-user usage history series (the member usage trend backend). */
   usageHistory: boolean;
-  /** A 404 from fetchSubscriptionContent means the panel rejected the DEVICE
+  /** A 404 from fetchSubscriptionContent means the backend rejected the DEVICE
    *  (HWID enforcement), not that the key is gone. */
   fetch404IsDeviceRejection: boolean;
   /** Delivery is a single bare access key (ss:// etc.), not a multi-config
@@ -46,23 +46,23 @@ export interface BackendCapabilities {
    *  one-tap import builder, no per-node pinning talk). */
   accessKeyDelivery: boolean;
   /** Client-facing connection entries (Hosts) can be listed and repointed:
-   *  the relay-edge address flip. */
+   *  the origin-edge address flip. */
   hostManagement: boolean;
-  /** Per-NODE load rows (the relay block detector's load signal). */
+  /** Per-NODE load rows (the origin block detector's load signal). */
   nodeInventory: boolean;
-  /** A Host's disabled bit can be flipped on its own (the relay hide/restore
+  /** A Host's disabled bit can be flipped on its own (the origin hide/restore
    *  ledger hides a node's direct Hosts without rewriting them). */
   hostDisable: boolean;
-  /** The inbounds a node serves can be listed (relay listener discovery). */
+  /** The inbounds a node serves can be listed (origin listener discovery). */
   inboundDiscovery: boolean;
-  /** The panel's nodes, config profiles, Hosts and squads can be read for
+  /** The backend's nodes, config profiles, Hosts and mode groups can be read for
    *  server management (a non-secret projection plus digests; read-only). */
   panelObservation: boolean;
-  /** Hosts and squads can be created, changed and removed through the
+  /** Hosts and mode groups can be created, changed and removed through the
    *  operations ledger (server management). */
   panelWrites: boolean;
   /** A config profile can be created, the node secret read and the
-   *  subscription templates reconciled: "Set up this panel" and the node
+   *  subscription templates reconciled: "Set up this backend" and the node
    *  role's bootstrap contract (docs/servers.md). */
   panelSetup: boolean;
   /** A user FCP created can be re-found by its username (the persisted mint

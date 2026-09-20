@@ -1,25 +1,25 @@
 /**
  * Verification / HPKE-transparency config. The out-of-band verification channels
- * shown in the "Verify connection" panel are per-deployment (a signed-release or
+ * shown in the "Verify connection" backend are per-deployment (a signed-release or
  * verify-page URL, an optional Tor .onion mirror, a public source-repo URL), and
- * an operator may want to hide the whole HPKE badge + panel. Stored in the
+ * an operator may want to hide the whole HPKE badge + backend. Stored in the
  * `appSettings` `verification.*` namespace (like `theme.*` / `billing.*`: NOT in
  * SETTINGS_DEFAULTS, so it gets typed validation here instead of leaking through
  * the generic settings allowlist), resolved fail-safe, and exposed (non-secret)
- * via publicConfig.get so the panel renders only the channels that actually exist.
+ * via publicConfig.get so the backend renders only the channels that actually exist.
  */
 import type { DatabaseReader } from '../_generated/server';
 
 export interface VerificationConfig {
-  /** Master switch for the HPKE badge + verify panel (independent of the baked pins). */
+  /** Master switch for the HPKE badge + verify backend (independent of the baked pins). */
   showPanel: boolean;
   /** URL where users compare fingerprints (signed release / verify page); '' = unset. */
   releaseUrl: string;
-  /** Tor .onion mirror address; '' = unset (the panel omits that channel). */
+  /** Tor .onion mirror address; '' = unset (the backend omits that channel). */
   onionAddress: string;
   /** Public source-repo URL for the reproducible-build path; '' = unset. */
   sourceUrl: string;
-  /** Published verifier-extension URL (web store); '' = unset (panel shows "planned"). */
+  /** Published verifier-extension URL (web store); '' = unset (backend shows "planned"). */
   extensionUrl: string;
 }
 

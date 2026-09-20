@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 /**
- * The relay admin surface (`/api/v1/admin/edges/*`): auth + scopes (incl. the
+ * The origin admin surface (`/api/v1/admin/edges/*`): auth + scopes (incl. the
  * any-of register scope and its token boundary on the by-slug routes), the
  * node role's ONE-body registration round trip (origin + listeners → adopted
  * edge → publishedEndpoints / connectionPlan), the listener routes, the
@@ -183,7 +183,7 @@ type BySlugView = {
 };
 
 /**
- * seed() + provider account + relay registered by the NODE ROLE (a bounded
+ * seed() + provider account + origin registered by the NODE ROLE (a bounded
  * register token, so listener `u` is role-owned) + a published (index 0) and
  * an unpublished adopted edge. `roleCall` re-registers as the role.
  */
@@ -248,7 +248,7 @@ function bearerCall(t: ReturnType<typeof convexTest>, tok: string) {
     });
 }
 
-describe('relay admin routes', () => {
+describe('origin admin routes', () => {
   test('sealing policy: every verb under the prefix is covered (GET reveal, POST both, PATCH/PUT seal, DELETE plain)', () => {
     const p = '/api/v1/admin/edges/relays/by-slug/x';
     expect(routePolicy(p, 'GET')).toEqual({ request: 'plain', response: 'reveal' });
@@ -273,7 +273,7 @@ describe('relay admin routes', () => {
     const REVEAL = { request: 'plain', response: 'reveal' };
     const BOTH = { request: 'seal', response: 'reveal' };
     const REQ = { request: 'seal', response: 'plain' };
-    // reads: config, providers (+inventory), templates, relays (+ listeners, by-slug), edges, rotations, probes
+    // reads: config, providers (+inventory), templates, origins (+ listeners, by-slug), edges, rotations, probes
     for (const g of [
       'config',
       'providers',
@@ -372,7 +372,7 @@ describe('relay admin routes', () => {
     expect(scopeFor(['listeners', 'retire-name'], 'POST')).toBe('admin:servers:write');
     // Qualifying writes a verdict onto the edge: a write scope, not a read one.
     expect(scopeFor(['edges', 'e1', 'qualify'], 'POST')).toBe('admin:servers:write');
-    // Guided setup runs: reads under the read scope, the plan (a panel call) and every verb under write.
+    // Guided setup runs: reads under the read scope, the plan (a backend call) and every verb under write.
     expect(scopeFor(['setup-runs'], 'GET')).toBe('admin:servers:read');
     expect(scopeFor(['setup-runs', 'run1'], 'GET')).toBe('admin:servers:read');
     expect(scopeFor(['setup-runs', 'plan'], 'POST')).toBe('admin:servers:write');
@@ -423,7 +423,7 @@ describe('relay admin routes', () => {
     expect(throttlePolicyFor(['edges', 'e1', 'probe'])).toBe('admin.edges.probe');
     expect(throttlePolicyFor(['relays', 'r1', 'probe'])).toBe('admin.edges.probe');
     expect(throttlePolicyFor(['probes'])).toBe('admin.edges.probe');
-    // The setup plan lists the node's inbounds and Hosts from the panel; the run verbs do not.
+    // The setup plan lists the node's transports and Hosts from the backend; the run verbs do not.
     expect(throttlePolicyFor(['setup-runs', 'plan'])).toBe(P);
     for (const p of [
       ['setup-runs'],
@@ -442,7 +442,7 @@ describe('relay admin routes', () => {
     ]) {
       expect(throttlePolicyFor(p)).toBeNull();
     }
-    // The GET that reaches a panel and opens sockets is throttled under the same
+    // The GET that reaches a backend and opens sockets is throttled under the same
     // policy; the test link is a POST (it may mint a credential) and is throttled there.
     expect(throttlePolicyForGet(['relays', 'inbound-candidates'])).toBe(P);
     expect(throttlePolicyFor(['edges', 'e1', 'test-link'])).toBe(P);
@@ -486,7 +486,7 @@ describe('relay admin routes', () => {
     expect(cfgOk.status).toBe(200);
   });
 
-  test('scopes pinned: servers:read cannot PATCH providers / burn / DELETE relays but may preview + validate; settings:write alone reaches only config', async () => {
+  test('scopes pinned: servers:read cannot PATCH providers / burn / DELETE origins but may preview + validate; settings:write alone reaches only config', async () => {
     const { t, accountId, relayId, publishedEdgeId } = await fixture();
     const reader = bearerCall(t, await token(t, ['admin:servers:read']));
     expect((await reader('PATCH', `providers/${accountId}`, { name: 'renamed' })).status).toBe(401);
@@ -506,7 +506,7 @@ describe('relay admin routes', () => {
     });
     expect(validate.status).toBe(200);
     expect(await validate.json()).toHaveProperty('ok');
-    // The relay still exists and the account is untouched; the read scope satisfies the any-of by-slug GET.
+    // The origin still exists and the account is untouched; the read scope satisfies the any-of by-slug GET.
     expect((await reader('GET', `relays/by-slug/node-one`)).status).toBe(200);
     expect((await reader('GET', `relays/${relayId}/listeners`)).status).toBe(200);
 
@@ -589,7 +589,7 @@ describe('relay admin routes', () => {
       listeners: [{ ...LISTENER_U, panelBinding: undefined }],
     });
     expect(manual.status).toBe(403);
-    // A relay registered by the operator on the OTHER panel: the bounded token may not read or delete it.
+    // An origin registered by the operator on the OTHER backend: the bounded token may not read or delete it.
     await call('PUT', 'relays/by-slug/node-b', {
       ...REGISTER_BODY,
       originAddress: '203.0.113.11',
@@ -1235,7 +1235,7 @@ describe('relay admin routes', () => {
     ]);
   });
 
-  test('DELETE relays/{id} needs a disposition from the CMS; by-slug defaults to restore-direct', async () => {
+  test('DELETE origins/{id} needs a disposition from the CMS; by-slug defaults to restore-direct', async () => {
     const { t, call, relayId, serverId } = await fixture();
     const noDisposition = await call('DELETE', `relays/${relayId}`);
     expect(noDisposition.status).toBe(409);
@@ -1248,7 +1248,7 @@ describe('relay admin routes', () => {
     const dark = await call('DELETE', `relays/${relayId}?disposition=keep-dark&force=true`);
     expect(dark.status).toBe(200);
     expect(await dark.json()).toEqual({ ok: true, deleted: false });
-    // keep-dark: members of the node stay edge-required (503) until another relay claims it.
+    // keep-dark: members of the node stay edge-required (503) until another origin claims it.
     expect(
       await t.query(internal.relays.deliveryBinding, {
         backendServerId: serverId,
@@ -1538,7 +1538,7 @@ describe('relay admin routes', () => {
   });
 });
 
-describe('relay admin routes: importing an existing L7 front', () => {
+describe('origin admin routes: importing an existing L7 front', () => {
   const ORIGIN = '203.0.113.10';
   const HOSTNAME = 'front-a.example.org';
 
@@ -1594,7 +1594,7 @@ describe('relay admin routes: importing an existing L7 front', () => {
   }
 
   /**
-   * seed() + a Cloudflare account, a relay and an L7-only ws listener: the
+   * seed() + a Cloudflare account, an origin and an L7-only ws listener: the
    * origin speaks plaintext HTTP behind the front, so the listener carries NO
    * names of its own (behind a front the member presents the edge hostname).
    */
@@ -1805,7 +1805,7 @@ describe('relay admin routes: importing an existing L7 front', () => {
       });
     });
     // The first published edge becomes the listener's template edge: on an
-    // FCP-owned relay that is the rotation machine's job, so leave the Host to the operator.
+    // FCP-owned origin that is the rotation machine's job, so leave the Host to the operator.
     await t.mutation(internal.relays.update, { id: relayId as Id<'relays'>, hostMode: 'operator' });
     expect(
       await t.mutation(internal.relays.publishEdge, { relayId: relayId as Id<'relays'>, edgeId }),

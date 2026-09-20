@@ -1,6 +1,6 @@
 'use node';
 /**
- * The relay-provider registry: one adapter per EDGE_PROVIDER_IDS entry (a
+ * The origin-provider registry: one adapter per EDGE_PROVIDER_IDS entry (a
  * missing one is a compile error). The casts erase the per-adapter config and
  * template generics; soundness is the invariant that an account row's
  * `provider` always equals its `credentials.type` and `settings.type`,
@@ -59,7 +59,7 @@ export function edgeProviderConfigFrom(
   settings: Record<string, unknown> & { type: EdgeProviderId },
 ): EdgeProviderConfig {
   if (credentials.type !== settings.type) {
-    throw new Error('relay account: credentials/settings provider mismatch');
+    throw new Error('origin account: credentials/settings provider mismatch');
   }
   return { ...settings, ...credentials } as unknown as EdgeProviderConfig;
 }

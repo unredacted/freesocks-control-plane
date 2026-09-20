@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 /**
- * Relays under the generic-relay model: by-slug registration (idempotent,
+ * Origins under the generic-origin model: by-slug registration (idempotent,
  * ownership-aware, boundary-confined), origin kinds and the derived hostMode,
  * the delivery binding, edge adoption + the published-pool bookkeeping, the
  * publish gates (checkPublishable codes) and the per-listener template edge
@@ -54,7 +54,7 @@ const audits = (t: T, action: string) =>
     (await ctx.db.query('auditLog').collect()).filter((a) => a.action === action),
   );
 
-/** A rotation row in a non-terminal phase, pinned as the relay's active rotation. */
+/** A rotation row in a non-terminal phase, pinned as the origin's active rotation. */
 async function startFakeRotation(t: T, relayId: Id<'relays'>) {
   const rotationId = await t.run((ctx) =>
     ctx.db.insert('edgeRotations', {
@@ -79,7 +79,7 @@ async function startFakeRotation(t: T, relayId: Id<'relays'>) {
   return rotationId;
 }
 
-describe('relays: registration by slug', () => {
+describe('origins: registration by slug', () => {
   test('an XHTTP listener registers with its mode (the wire validator accepts `transportParams.mode`)', async () => {
     const { t, relayId } = await seed();
     const r = await t.mutation(internal.relays.registerBySlug, {
@@ -418,7 +418,7 @@ describe('relays: registration by slug', () => {
     expect((await listenerRow(t, listenerId))!.retired).toBe(true);
   });
 
-  test('a re-bound inbound forgets the listener’s panel Host; the rule set must stay unambiguous', async () => {
+  test('a re-bound transport forgets the listener’s backend Host; the rule set must stay unambiguous', async () => {
     const { t, relayId, listenerId } = await seed();
     await t.run((ctx) =>
       ctx.db.patch(listenerId, { host: { state: 'present', uuid: 'h-1', ownership: 'fcp' } }),
@@ -458,7 +458,7 @@ describe('relays: registration by slug', () => {
     ).rejects.toThrow(/invalid_combination/);
   });
 
-  test('refused on a deleting relay; origin kind is locked; re-parenting is locked while edges exist', async () => {
+  test('refused on a deleting origin; origin kind is locked; re-parenting is locked while edges exist', async () => {
     const { t, relayId, listenerId } = await seed();
     await insertPanelServer(t, { slug: 'panel-b' });
     await adoptL4Edge(t, relayId, listenerId);
@@ -472,7 +472,7 @@ describe('relays: registration by slug', () => {
     await expect(registerRelay(t)).rejects.toThrow(/being deleted/);
   });
 
-  test('re-parenting without edges moves the relay AND its delivery binding; the vacated node is claimable', async () => {
+  test('re-parenting without edges moves the origin AND its delivery binding; the vacated node is claimable', async () => {
     const { t, relayId, serverId } = await seed();
     const before = await mirrorRefreshes(t);
     const r = await registerRelay(t, { nodeName: 'node-two' });
@@ -494,7 +494,7 @@ describe('relays: registration by slug', () => {
       }),
     ).toMatchObject({ relaySlug: FIXTURE_RELAY_SLUG, state: 'active' });
     // The old node's binding row still exists (now pointing at this slug; the
-    // relay's re-registration re-claimed it) but a new relay may take the node.
+    // origin's re-registration re-claimed it) but a new origin may take the node.
     const two = await registerRelay(t, {
       slug: 'node-one-again',
       nodeName: FIXTURE_NODE,
@@ -527,7 +527,7 @@ describe('relays: registration by slug', () => {
     ).toBeUndefined();
   });
 
-  test('one relay per place: node_already_bound / server_already_bound; a manual origin is unique by slug only', async () => {
+  test('one origin per place: node_already_bound / server_already_bound; a manual origin is unique by slug only', async () => {
     const { t } = await seed();
     await expect(
       registerRelay(t, { slug: 'node-one-b', originAddress: '203.0.113.20' }),
@@ -550,7 +550,7 @@ describe('relays: registration by slug', () => {
         listeners: [shadowsocksListener()],
       }),
     ).rejects.toThrow(/server_already_bound/);
-    // A panel-node relay on a backend without nodes is refused.
+    // A backend-node origin on a backend without nodes is refused.
     await expect(
       registerRelay(t, {
         slug: 'x',
@@ -570,7 +570,7 @@ describe('relays: registration by slug', () => {
     }
   });
 
-  test('origin kinds derive hostMode: panel-node → fcp, backend-server / manual → none; operator only by request on a panel node', async () => {
+  test('origin kinds derive hostMode: backend-node → fcp, backend-server / manual → none; operator only by request on a backend node', async () => {
     const { t, relayId } = await seed();
     expect((await t.query(internal.relays.get, { id: relayId }))!.hostMode).toBe('fcp');
     await insertPanelServer(t, { slug: 'outline-a', backend: 'outline' });
@@ -687,7 +687,7 @@ describe('relays: registration by slug', () => {
     await expect(
       t.mutation(internal.relays.update, { id: two.relayId, originAddress: '198.51.100.7' }),
     ).rejects.toThrow(/origin_is_edge/);
-    // Its own edge is not "another relay's edge" (the address check skips self).
+    // Its own edge is not "another origin's edge" (the address check skips self).
     await t.run((ctx) => ctx.db.patch(relayId, { publishedEdgeIds: [] }));
   });
 
@@ -705,14 +705,14 @@ describe('relays: registration by slug', () => {
       relaySlug: FIXTURE_RELAY_SLUG,
       state: 'active',
     });
-    // Another node of the panel is not covered (no whole-server binding).
+    // Another node of the backend is not covered (no whole-server binding).
     expect(
       await t.query(internal.relays.deliveryBinding, {
         backendServerId: serverId,
         nodeName: 'other',
       }),
     ).toBeNull();
-    // A whole-server relay covers every node of ITS server.
+    // A whole-server origin covers every node of ITS server.
     await insertPanelServer(t, { slug: 'outline-a', backend: 'outline' });
     const whole = await registerRelay(t, {
       slug: 'whole-a',
@@ -737,11 +737,11 @@ describe('relays: registration by slug', () => {
     });
     expect(await t.run((ctx) => ctx.db.query('edgeDeliveryBindings').collect())).toHaveLength(2);
 
-    // Deleting a covering relay must say what happens to its members.
+    // Deleting a covering origin must say what happens to its members.
     await expect(t.mutation(internal.relays.requestDelete, { id: relayId })).rejects.toThrow(
       /delivery_disposition_required/,
     );
-    // Releasing the binding by hand is refused while the relay lives.
+    // Releasing the binding by hand is refused while the origin lives.
     await expect(t.mutation(internal.relays.releaseDeliveryBinding, { id: b._id })).rejects.toThrow(
       /still exists/,
     );
@@ -758,7 +758,7 @@ describe('relays: registration by slug', () => {
       force: false,
       disposition: 'keep-dark',
     });
-    // The operator releases a dark binding once the relay is going.
+    // The operator releases a dark binding once the origin is going.
     expect(await t.mutation(internal.relays.releaseDeliveryBinding, { id: b._id })).toEqual({
       ok: true,
     });
@@ -786,13 +786,13 @@ describe('relays: registration by slug', () => {
         nodeName: undefined,
       }),
     ).toBeNull();
-    // A manual relay needs no disposition (it never bound anything).
+    // A manual origin needs no disposition (it never bound anything).
     const hand = await t.query(internal.relays.getBySlug, { slug: 'hand-a' });
     expect(await t.mutation(internal.relays.requestDelete, { id: hand!._id })).toEqual({
       ok: true,
       deleted: false,
     });
-    // A binding is re-claimed (version bumped) when a new relay registers the node.
+    // A binding is re-claimed (version bumped) when a new origin registers the node.
     await t.mutation(internal.relays.finalizeDelete, { id: relayId });
     await registerRelay(t, { slug: 'node-one-v2' });
     expect(await t.run((ctx) => ctx.db.get(b._id))).toMatchObject({
@@ -845,7 +845,7 @@ describe('relays: registration by slug', () => {
     });
     expect(ok.created).toBe(true);
     // The existing row is checked too: a body that would move it out of the boundary is refused,
-    // and so is touching a relay that already sits outside it.
+    // and so is touching an origin that already sits outside it.
     await expect(
       t.mutation(internal.relays.registerBySlug, {
         slug: 'node-c',
@@ -858,7 +858,7 @@ describe('relays: registration by slug', () => {
   });
 });
 
-describe('relays: operator knobs and epochs', () => {
+describe('origins: operator knobs and epochs', () => {
   test('a publication-affecting update bumps the epoch AND schedules a mirror refresh; an unrelated one does neither', async () => {
     const { t, relayId } = await seed();
     const before = await epochOf(t, relayId);
@@ -878,7 +878,7 @@ describe('relays: operator knobs and epochs', () => {
     );
   });
 
-  test('a render.* config change bumps every enabled relay epoch (and only those)', async () => {
+  test('a render.* config change bumps every enabled origin epoch (and only those)', async () => {
     const { t, relayId } = await seed();
     const { relayId: off } = await registerRelay(t, {
       slug: 'node-off',
@@ -924,8 +924,8 @@ describe('relays: operator knobs and epochs', () => {
   });
 });
 
-describe('relays: adoption and the published pool', () => {
-  test('adopt validates addresses (public, not the origin, listener of this relay) and publishes at the next free pool index', async () => {
+describe('origins: adoption and the published pool', () => {
+  test('adopt validates addresses (public, not the origin, listener of this origin) and publishes at the next free pool index', async () => {
     const { t, relayId, listenerId } = await seed();
     await expect(adoptL4Edge(t, relayId, listenerId, { ipv4: '10.0.0.1' })).rejects.toThrow(
       /public IPv4/,
@@ -990,7 +990,7 @@ describe('relays: adoption and the published pool', () => {
   test('unpublish leaves a gap that the next publish inherits; epoch bumps each time; the template edge follows the lowest index', async () => {
     const { t, relayId, listenerId } = await seed();
     // Direct publishes into the template position need the Host flip on an
-    // FCP-owned relay; this test is about pool bookkeeping, so leave the Hosts
+    // FCP-owned origin; this test is about pool bookkeeping, so leave the Hosts
     // to the operator.
     await t.mutation(internal.relays.update, { id: relayId, hostMode: 'operator' });
     const a = await adoptL4Edge(t, relayId, listenerId, { ipv4: '198.51.100.1', publish: true });
@@ -1126,7 +1126,7 @@ describe('relays: adoption and the published pool', () => {
       id: listenerId,
       names: ['a.example'],
     });
-    // Not deployed (the role says the inbound is not live yet).
+    // Not deployed (the role says the transport is not live yet).
     await registerRelay(t, { listeners: [realityListener({ deployed: false })] });
     await expect(publish()).rejects.toThrow(/listener_not_deployed/);
     await registerRelay(t, { listeners: [realityListener()] });
@@ -1324,14 +1324,14 @@ describe('relays: adoption and the published pool', () => {
   });
 });
 
-describe('relays: delete lifecycle', () => {
+describe('origins: delete lifecycle', () => {
   const plan = {
     templateHash: 'h',
     listeners: [{ edgePort: 443, originAddress: FIXTURE_ORIGIN, originPort: 443 }],
     steps: [{ id: 'lb', kind: 'loadbalancer', resourceName: 'x' }],
   };
 
-  test('requestDelete honours the relay drain window unless forced', async () => {
+  test('requestDelete honours the origin drain window unless forced', async () => {
     const { t, relayId, listenerId, accountId } = await seed();
     const planned = await t.mutation(internal.edges.insertPlanned, {
       relayId,
@@ -1400,7 +1400,7 @@ describe('relays: delete lifecycle', () => {
       waitingOn: 'edges',
     });
     await t.mutation(internal.edges.patchEdge, { edgeId: planned.id, status: 'destroyed' });
-    // Edges gone, but an FCP-owned panel Host remains: the Host cleanup goes first.
+    // Edges gone, but an FCP-owned backend Host remains: the Host cleanup goes first.
     expect(await t.mutation(internal.relays.finalizeDelete, { id: relayId })).toEqual({
       removed: false,
       waitingOn: 'hosts',
@@ -1446,7 +1446,7 @@ describe('relays: delete lifecycle', () => {
       removed: true,
       waitingOn: null,
     });
-    // finalizeDelete on a relay not marked for deletion does nothing.
+    // finalizeDelete on an origin not marked for deletion does nothing.
     const s3 = await seed();
     expect(await s3.t.mutation(internal.relays.finalizeDelete, { id: s3.relayId })).toEqual({
       removed: false,
@@ -1466,7 +1466,7 @@ describe('relays: delete lifecycle', () => {
   });
 });
 
-describe('relays: layers, adoption by hostname and the L7 publish gates', () => {
+describe('origins: layers, adoption by hostname and the L7 publish gates', () => {
   /** The fixture + a Cloudflare account + an L7-capable ws listener (https origin). */
   async function l7Seed() {
     const s = await seed();
@@ -1664,7 +1664,7 @@ describe('relays: layers, adoption by hostname and the L7 publish gates', () => 
     expect(by.p.excluded).toEqual({ l4: 'origin_plaintext' });
   });
 
-  test('retiring a listener is refused while a rotation runs on the relay', async () => {
+  test('retiring a listener is refused while a rotation runs on the origin', async () => {
     const { t, relayId } = await seed();
     await startFakeRotation(t, relayId);
     await expect(

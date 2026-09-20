@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 /**
  * Guided setup runs (edgeSetupRuns.ts + edgeSetupPlan.ts): the stage machine
- * end to end against the real rotation machine (a fake UpCloud + a fake panel
+ * end to end against the real rotation machine (a fake UpCloud + a fake backend
  * behind one fetch stub), with the other subsystems (Host hides, restore,
  * test links, rehearsal, the qualification credential) injected through the
  * stage-ops seam. Acceptance cases 1, 2, 3, 6, 9, 10, 11, 12, 20, 21 and 26 of
@@ -111,7 +111,7 @@ const directHostV = (): PanelHost => ({
 });
 
 /**
- * A fake UpCloud (every create mints a fresh RFC 5737 address) + a fake panel
+ * A fake UpCloud (every create mints a fresh RFC 5737 address) + a fake backend
  * whose Hosts are observable (the publish rotation creates the FCP Host).
  */
 function fakeWorld(opts: { hosts?: PanelHost[]; failCreateAt?: number } = {}) {
@@ -181,7 +181,7 @@ function fakeWorld(opts: { hosts?: PanelHost[]; failCreateAt?: number } = {}) {
   return { stub, panelHosts, lbs, creates: () => creates, lbCreates: () => lbCreates };
 }
 
-/** Panel + a TESTED but unqualified UpCloud account + the node in the inventory. */
+/** Backend + a TESTED but unqualified UpCloud account + the node in the inventory. */
 async function seed(
   opts: { inbounds?: PanelInbound[]; hosts?: PanelHost[]; failCreateAt?: number } = {},
 ) {
@@ -441,7 +441,7 @@ async function audits(t: T, action: string) {
 }
 
 describe('edgeSetupPlan', () => {
-  test('a panel call that throws names the step instead of an anonymous failure; a coded refusal passes through', async () => {
+  test('a backend call that throws names the step instead of an anonymous failure; a coded refusal passes through', async () => {
     const { t, serverId } = await seed();
     __setPlanOpsForTests({
       listNodeInbounds: async () => {
@@ -455,7 +455,7 @@ describe('edgeSetupPlan', () => {
     expect(err).toBeInstanceOf(ConvexError);
     const data = (err as ConvexError<{ code: string; message: string }>).data;
     expect(data.code).toBe('edge.plan_step_failed');
-    expect(data.message).toContain("reading the node's inbounds");
+    expect(data.message).toContain("reading the node's transports");
     expect(data.message).toContain('TypeError');
     expect(data.message).not.toContain('203.0.113.9');
     __setPlanOpsForTests({
@@ -469,7 +469,7 @@ describe('edgeSetupPlan', () => {
     });
   });
 
-  test('the plan lists frontable inbounds, classifies the direct Hosts, judges accounts, and hashes what the run must echo', async () => {
+  test('the plan lists frontable transports, classifies the direct Hosts, judges accounts, and hashes what the run must echo', async () => {
     const { t, serverId, accountId } = await seed({
       inbounds: [inboundA, inboundS, inboundV],
       hosts: [directHostA(), directHostS(), directHostV()],
@@ -481,7 +481,7 @@ describe('edgeSetupPlan', () => {
     const vmess = plan.inbounds.find((i) => i.sourceTag === 'VMESS_IN')!;
     expect(vmess.frontable).toBe(false);
     expect(vmess.reason).toBe('protocol');
-    // The REALITY and SS inbounds are covered in every format; the vmess Host is uncovered.
+    // The REALITY and SS transports are covered in every format; the vmess Host is uncovered.
     expect(plan.directHosts.map((h) => [h.uuid, h.covered])).toEqual(
       expect.arrayContaining([
         [HOST_A, true],
@@ -701,7 +701,7 @@ describe('edgeSetupRuns: two listeners (cases 2, 20)', () => {
   });
 });
 
-describe('edgeSetupRuns: unsupported inbound with active users (case 3)', () => {
+describe('edgeSetupRuns: unsupported transport with active users (case 3)', () => {
   test('without consent the run finishes unbound; with consent the approved uuid is hidden; a Host added after review interrupts', async () => {
     const { t, serverId, accountId, calls, setHideResult } = await seed({
       inbounds: [inboundA, inboundV],
@@ -724,7 +724,7 @@ describe('edgeSetupRuns: unsupported inbound with active users (case 3)', () => 
     expect(att.items.some((i) => i.kind === 'go_live_pending' && i.relaySlug === relay.slug)).toBe(
       true,
     );
-    // A second run on the same origin reuses the owned relay at its recorded stage, with consent by uuid.
+    // A second run on the same origin reuses the owned origin at its recorded stage, with consent by uuid.
     const { runId: run2 } = await startRun(t, serverId, accountId, { approvedHideUuids: [HOST_V] });
     const r2start = await run(t, run2);
     expect(r2start.relayId).toBe(relay._id);
@@ -810,7 +810,7 @@ describe('edgeSetupRuns: fencing (case 6)', () => {
 });
 
 describe('edgeSetupRuns: provider failure (case 9)', () => {
-  test('a failed provision stops the run at provision; the relay stays owned and unbound; retry reuses the other listener’s standby', async () => {
+  test('a failed provision stops the run at provision; the origin stays owned and unbound; retry reuses the other listener’s standby', async () => {
     const { t, world, serverId, accountId } = await seed({
       inbounds: [inboundA, inboundS],
       hosts: [directHostA(), directHostS()],
@@ -834,7 +834,7 @@ describe('edgeSetupRuns: provider failure (case 9)', () => {
     );
     expect(edges.map((e) => e.status).sort()).toEqual(['active', 'failed']);
     expect(world.lbCreates()).toBe(2);
-    // Reconcile leaves an owned relay alone (no upkeep starts), whatever the run's state.
+    // Reconcile leaves an owned origin alone (no upkeep starts), whatever the run's state.
     await t.mutation(internal.edgeAdmin.setAutomation, { on: true });
     const report = await t.action(internal.edgeReconcile.run, {});
     expect(report.started).toBe(0);
@@ -878,7 +878,7 @@ describe('edgeSetupRuns: coverage (case 10)', () => {
 describe('edgeSetupRuns: require-edges and no shortcut (case 11)', () => {
   test('refuses on each unmet condition, returns pending untested L4 endpoints instead of binding, then binds through stages 7-8', async () => {
     const { t, serverId, accountId } = await seed();
-    // A deferred relay set up by hand: registered as a guided relay, an edge published by the operator.
+    // A deferred origin set up by hand: registered as a guided origin, an edge published by the operator.
     const { id: relayId } = await t.mutation(internal.relays.create, {
       slug: 'node-one',
       origin: {
@@ -918,7 +918,7 @@ describe('edgeSetupRuns: require-edges and no shortcut (case 11)', () => {
       t.mutation(internal.edgeSetupRuns.requireEdges, { relayId, accountId }),
     ).rejects.toThrow(/coverage_incomplete/);
     const { edgeId } = await adoptL4Edge(t, relayId, listenerId, { publish: true, accountId });
-    // Publishing on a deferred relay never bound it (no shortcut).
+    // Publishing on a deferred origin never bound it (no shortcut).
     expect(await bindingFor(t, serverId)).toBeNull();
     // A listener change makes the confirmation stale: require-edges answers the pending endpoint, binds nothing.
     await t.mutation(internal.relayListeners.upsert, {
@@ -961,7 +961,7 @@ describe('edgeSetupRuns: require-edges and no shortcut (case 11)', () => {
     ).rejects.toThrow(/not_deferred/);
   });
 
-  test('the detector veto and the reconcile skip hold for an owned relay after a failed run (a registered relay binds at once)', async () => {
+  test('the detector veto and the reconcile skip hold for an owned origin after a failed run (a registered origin binds at once)', async () => {
     const { t } = await seed();
     const { relayId } = await registerRelay(t, { slug: 'node-two', nodeName: 'node-two' });
     const relay = (await t.run((ctx) => ctx.db.get(relayId)))!;
@@ -1073,7 +1073,7 @@ describe('edgeSetupRuns: rehearsal and the observation boundary (cases 12, 21)',
 });
 
 describe('edgeSetupRuns: cancel', () => {
-  test('before publish the relay is deleted restore-direct; between publish and go-live the restore workflow runs and the relay stays owned', async () => {
+  test('before publish the origin is deleted restore-direct; between publish and go-live the restore workflow runs and the origin stays owned', async () => {
     const { t, serverId, accountId, calls } = await seed();
     const { runId } = await startRun(t, serverId, accountId);
     let r = await pump(t, runId, settled);

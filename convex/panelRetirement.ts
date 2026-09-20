@@ -1,13 +1,13 @@
 /**
  * Retiring a node (docs/servers.md "Retirement and migration"). The role's
  * DELETE only records the request; whenever the node was ever live or
- * anything of it is still out there (a relay, Hosts, DNS, credentials, a
+ * anything of it is still out there (an origin, Hosts, DNS, credentials, a
  * mirror) an admin decides the disposition: `keep-dark` (its members get the
  * edge-required unavailable behaviour) or `migrate` (an explicitly named
  * target). Never `restore-direct`.
  *
  * The ladder, each step resumable by the sweep:
- *   requested / needs_admin -> draining      publication withdrawn, the relay
+ *   requested / needs_admin -> draining      publication withdrawn, the origin
  *                                            deleted keep-dark, credentials
  *                                            released, the direct Host deleted,
  *                                            DNS withdrawn, mirrors refreshed
@@ -231,7 +231,7 @@ export const mark = internalMutation({
 /**
  * One pass of the ladder from `draining`; stops at the first thing not yet
  * settled and records why; the sweep calls it again. Every external step is
- * idempotent: a relay already gone, a Host already deleted, a record already
+ * idempotent: an origin already gone, a Host already deleted, a record already
  * withdrawn each count as done.
  */
 export const advance = internalAction({
@@ -243,7 +243,7 @@ export const advance = internalAction({
     const stop = (code: string) =>
       ctx.runMutation(internal.panelRetirement.mark, { retirementId, code });
     try {
-      // 1. The relay and its edges (publication withdrawn by the delete; edges destroyed by reconcile).
+      // 1. The origin and its edges (publication withdrawn by the delete; edges destroyed by reconcile).
       if (c.relay) {
         if (!c.relay.deleting) {
           await ctx.runMutation(internal.relays.requestDelete, {
@@ -290,7 +290,7 @@ export const advance = internalAction({
         await stop('servers.obligation_unresolved');
         return null;
       }
-      // 5. The panel row: removed with removeOnly (the role stops the process after).
+      // 5. The backend row: removed with removeOnly (the role stops the process after).
       await ctx.runAction(internal.panelObserve.refresh, { backendServerId: sid });
       const fresh = await ctx.runQuery(internal.panelRetirement.context, { retirementId });
       if (fresh?.node) {

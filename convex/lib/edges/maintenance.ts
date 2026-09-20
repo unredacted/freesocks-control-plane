@@ -2,13 +2,13 @@
  * Edge maintenance gate: separates ADMISSION of new work from COMPLETION of
  * work already in flight.
  *
- * While frozen, nothing new is admitted (a rotation start of any kind, a relay
+ * While frozen, nothing new is admitted (a rotation start of any kind, an origin
  * or slot registration, an edge import, a direct publish, provider account /
  * template / profile writes, probe requests, detector evaluation, reconcile
  * pool upkeep). Everything that finishes or unwinds existing work stays
  * admitted and keeps its own fencing: rotation steps and re-kicks past
  * `select`, rollback, cancel, unpublish, destroy runs and their confirmation,
- * quarantine / needs_operator resolution, relay delete finalisation, and the
+ * quarantine / needs_operator resolution, origin delete finalisation, and the
  * qualification-credential removal retry. Deleting ledger rows under a live
  * external operation would strand provider resources, so the reset drain
  * (`convex/seedEdgesReset.ts`) freezes first, waits for the completion paths to

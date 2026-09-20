@@ -38,7 +38,7 @@ const INTENTIONALLY_UNSEALED: Record<string, string> = {
   // Member plane. Same class as the passkey LOGIN ceremony, which the threat
   // model leaves unsealed on purpose: single-use, origin-bound, non-replayable.
   'POST /api/v1/account/devices/revoke':
-    'hwid only: a device identifier the proxy client already reports to the panel over its own TLS; not a credential, config or code',
+    'hwid only: a device identifier the proxy client already reports to the backend over its own TLS; not a credential, config or code',
   'POST /api/v1/account/passkey/register/options':
     'WebAuthn creation options: a single-use, origin-bound challenge',
   'POST /api/v1/account/passkey/register/verify': 'WebAuthn attestation: the credential PUBLIC key',

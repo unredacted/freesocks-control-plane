@@ -150,7 +150,7 @@ export interface BackendProvider<C extends BackendConfig = BackendConfig> {
   // such config surface (Outline). `dryRun` reports what would change, no write.
   hardenLogging?(config: C, opts: { dryRun: boolean }): Promise<RemnawaveLoggingReport>;
   // Optional: the backend's client-facing connection entries (Remnawave Hosts)
-  // and an address/port repoint of ONE of them — the relay-edge flip. Absent for
+  // and an address/port repoint of ONE of them — the origin-edge flip. Absent for
   // backends whose endpoint is the server itself (Outline).
   listHosts?(config: C): Promise<BackendHost[]>;
   updateHost?(config: C, patch: BackendHostPatch): Promise<void>;
@@ -158,25 +158,25 @@ export interface BackendProvider<C extends BackendConfig = BackendConfig> {
   createHost?(config: C, host: BackendHostCreate): Promise<{ uuid: string }>;
   /** Delete one Host by uuid (idempotent: a missing Host is success). The caller confirms by re-listing. */
   deleteHost?(config: C, uuid: string): Promise<void>;
-  /** Flip ONE Host's disabled bit and nothing else (the relay hide/restore ledger). The caller confirms by re-listing. */
+  /** Flip ONE Host's disabled bit and nothing else (the origin hide/restore ledger). The caller confirms by re-listing. */
   setHostDisabled?(config: C, uuid: string, disabled: boolean): Promise<void>;
-  // Optional: per-NODE load/online rows (Remnawave /api/nodes) for the relay
+  // Optional: per-NODE load/online rows (Remnawave /api/nodes) for the origin
   // block detector; getNodeStats aggregates per placement and can't isolate a
-  // node behind a shared squad.
+  // node behind a shared mode group.
   getNodeInventory?(config: C): Promise<NodeInventoryRow[]>;
   // Optional: the inbounds one node serves (allowlisted projection; never
-  // credentials or key material) for relay listener discovery.
+  // credentials or key material) for origin listener discovery.
   listNodeInbounds?(config: C, nodeUuid: string): Promise<PanelInbound[]>;
   /**
-   * Read the panel's nodes, config profiles, Hosts and squads for server
+   * Read the backend's nodes, config profiles, Hosts and mode groups for server
    * management. Read-only; config profiles are reduced to a non-secret
    * projection plus digests keyed with `digestKey` before they are returned.
    */
   observePanel?(config: C, digestKey: string): Promise<PanelObservation>;
-  /** Server-management WRITES (Hosts, squads). One call each, never retried here. */
+  /** Server-management WRITES (Hosts, mode groups). One call each, never retried here. */
   panelWrites?: PanelWrites<C>;
   // Optional: re-find a user FCP created by its username (the version-neutral
-  // by-username read). The persisted mint operations (relay qualification
+  // by-username read). The persisted mint operations (origin qualification
   // credential, temporary test credentials) discover an issued user after a
   // crash between the create and the store with it; null = no such user.
   // Absent for backends without a name lookup (Outline keys have no unique name).
@@ -187,7 +187,7 @@ export interface BackendProvider<C extends BackendConfig = BackendConfig> {
     userAgent?: string,
     subscriptionUrl?: string,
     // HWID identification headers forwarded from the member's proxy app through
-    // the FCP-fronted /api/v1/sub/ route, so panel-side device registration +
+    // the FCP-fronted /api/v1/sub/ route, so backend-side device registration +
     // limit enforcement still work when FCP fetches on the client's behalf.
     // Backends without a device concept (Outline) ignore them.
     hwidHeaders?: Record<string, string>,

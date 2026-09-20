@@ -1,5 +1,5 @@
 /**
- * Generic webhook seam (P7): the single inbound integration point the future
+ * Generic webhook seam (P7): the single transport integration point the future
  * billing portal plugs into to drive entitlements. HMAC-verified + deduped,
  * then mapped onto the lifecycle `setMembership` seam keyed by the member's
  * account number. CiviCRM's bespoke webhook is gone; this is intentionally

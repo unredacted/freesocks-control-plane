@@ -74,7 +74,7 @@ let mockBody = 'RAW-CONFIG-1';
 let mockHeaders: Record<string, string> = { 'content-type': 'text/yaml' };
 let mockStatus = 200;
 let fetchCalls = 0;
-// Request headers seen by the LAST stubbed panel fetch (to assert forwarding).
+// Request headers seen by the LAST stubbed backend fetch (to assert forwarding).
 let lastReqHeaders: Record<string, string> = {};
 function stubFrontFetch(): void {
   fetchCalls = 0;
@@ -173,7 +173,7 @@ describe('GET /api/v1/sub/<token>', () => {
     expect(res.headers.get('cache-control')).toBe('private, no-store');
     expect(res.headers.get('vary')).toBeNull(); // device-specific → no shared caching at all
     expect(fetchCalls).toBe(1);
-    // A different device (same UA) must reach the panel too — no cross-serve.
+    // A different device (same UA) must reach the backend too — no cross-serve.
     await t.fetch('/api/v1/sub/tok_abc', {
       headers: { 'user-agent': 'Karing/1', 'x-hwid': 'device-bbb' },
     });
@@ -221,7 +221,7 @@ describe('GET /api/v1/sub/<token>', () => {
     expect(fetchCalls).toBe(2); // neither re-poll hit the backend
   });
 
-  test('forwards the client HWID headers to the panel fetch', async () => {
+  test('forwards the client HWID headers to the backend fetch', async () => {
     const t = convexTest(schema, modules);
     await seedSub(t);
     await enableDeviceEnforcement(t);
@@ -241,11 +241,11 @@ describe('GET /api/v1/sub/<token>', () => {
     expect(lastReqHeaders['user-agent']).toBe('Karing/1');
   });
 
-  test('an hwid request BYPASSES the cache (each device reaches the panel to register)', async () => {
+  test('an hwid request BYPASSES the cache (each device reaches the backend to register)', async () => {
     const t = convexTest(schema, modules);
     await seedSub(t);
     await enableDeviceEnforcement(t);
-    // Two devices, same UA, different hwid → two panel fetches (no cache collision).
+    // Two devices, same UA, different hwid → two backend fetches (no cache collision).
     await t.fetch('/api/v1/sub/tok_abc', {
       headers: { 'user-agent': 'Karing/1', 'x-hwid': 'device-A' },
     });
@@ -261,14 +261,14 @@ describe('GET /api/v1/sub/<token>', () => {
     expect(fetchCalls).toBe(3);
   });
 
-  test('panel 404 (HWID rejection) passes through as 404, not a 502 or a stale body', async () => {
+  test('backend 404 (HWID rejection) passes through as 404, not a 502 or a stale body', async () => {
     const t = convexTest(schema, modules);
     await seedSub(t);
     await enableDeviceEnforcement(t);
     // Prime a cached body for this UA (no hwid) so we can prove 404 doesn't serve it.
     await t.fetch('/api/v1/sub/tok_abc', { headers: { 'user-agent': 'Karing/1' } });
     expect(fetchCalls).toBe(1);
-    // Now the panel rejects the device-limited fetch with 404.
+    // Now the backend rejects the device-limited fetch with 404.
     mockStatus = 404;
     mockBody = 'not found';
     const res = await t.fetch('/api/v1/sub/tok_abc', {
@@ -284,7 +284,7 @@ describe('GET /api/v1/sub/<token>', () => {
   test('with device enforcement OFF, x-hwid is NOT forwarded (and the request uses the cache path)', async () => {
     const t = convexTest(schema, modules);
     await seedSub(t); // no enableDeviceEnforcement — the toggle defaults off
-    // Review B-F1: an x-hwid on an enforcement-off deploy has zero panel effect
+    // Review B-F1: an x-hwid on an enforcement-off deploy has zero backend effect
     // (FCP never sends a hwidDeviceLimit), so forwarding would only REGISTER
     // arbitrary devices (the stuffing vector). It must be dropped.
     const res = await t.fetch('/api/v1/sub/tok_abc', {
@@ -304,7 +304,7 @@ describe('GET /api/v1/sub/<token>', () => {
   test('the per-token rate limit 429s a UA-rotating burst past the cap (Review B-F1)', async () => {
     const t = convexTest(schema, modules);
     await seedSub(t);
-    // 60/min per token; rotate the UA so every request is a live panel fetch.
+    // 60/min per token; rotate the UA so every request is a live backend fetch.
     let last: Response | null = null;
     for (let i = 0; i < 61; i++) {
       last = await t.fetch('/api/v1/sub/tok_abc', { headers: { 'user-agent': `Rot/${i}` } });
@@ -328,7 +328,7 @@ describe('GET /api/v1/sub/<token>', () => {
     expect(res2.status).toBe(200);
   });
 
-  test('the panel landing page is sandboxed + nosniff (same-origin XSS guard)', async () => {
+  test('the backend landing page is sandboxed + nosniff (same-origin XSS guard)', async () => {
     const t = convexTest(schema, modules);
     await seedSub(t);
     const res = await t.fetch('/api/v1/sub/tok_abc', { headers: { 'user-agent': 'Mozilla/5' } });

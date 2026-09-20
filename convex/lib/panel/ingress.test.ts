@@ -25,7 +25,7 @@ const ingress: IngressMapping = {
 const origin = { kind: 'panel-node' as const, backendServerId: 'b1' as never, nodeName: 'node-a' };
 
 describe('applyIngress', () => {
-  test('a mapped loopback inbound becomes the external TLS listener', () => {
+  test('a mapped loopback transport becomes the external TLS listener', () => {
     const [out] = applyIngress([cdn], ingress);
     expect(out).toMatchObject({
       listen: null,
@@ -36,7 +36,7 @@ describe('applyIngress', () => {
     });
   });
 
-  test('no mapping, a stale port or a stale path leave the inbound as it is', () => {
+  test('no mapping, a stale port or a stale path leave the transport as it is', () => {
     expect(applyIngress([cdn], null)[0]).toBe(cdn);
     expect(applyIngress([cdn], { ...ingress, internal: [] })[0]).toBe(cdn);
     expect(
@@ -50,7 +50,7 @@ describe('applyIngress', () => {
     ).toBe(cdn);
   });
 
-  test('discovery refuses the loopback inbound without an ingress and maps it with one', async () => {
+  test('discovery refuses the loopback transport without an ingress and maps it with one', async () => {
     const without = await mapInboundsToListeners([cdn], { existingKeys: [], origin });
     expect(without.candidates).toHaveLength(0);
     expect(without.unsupported[0]).toMatchObject({ tag: 'VLESS_WS_CDN', reason: 'loopback' });

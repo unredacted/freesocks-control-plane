@@ -21,7 +21,7 @@ describe('classifyRequest', () => {
   });
 
   test('every 5xx, every other 4xx and every timeout is uncertain', () => {
-    // Measured: the panel answers an invalid config with 500 and stores nothing,
+    // Measured: the backend answers an invalid config with 500 and stores nothing,
     // but a gateway can answer a 5xx while upstream commits. Never on the list.
     for (const status of [400, 404, 409, 422, 429, 500, 502, 503, 504])
       expect(classifyRequest({ kind: 'http', status })).toBe('uncertain');
@@ -139,7 +139,7 @@ describe('asyncWorkFinished', () => {
         { nodeUuid: 'n2', lastStatusChange: 't1', isDisabled: false },
       ]),
     ).toBe(true);
-    // One node has not applied yet (unreachable: the panel delivers on reconnect).
+    // One node has not applied yet (unreachable: the backend delivers on reconnect).
     expect(
       asyncWorkFinished(before, [
         { nodeUuid: 'n1', lastStatusChange: 't0', isDisabled: false },

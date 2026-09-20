@@ -340,8 +340,8 @@ describe('route-level scope enforcement', () => {
   test('remnawave placement routes enforce the servers scope (moved off settings:write)', async () => {
     const t = convexTest(schema, modules);
     // The pool bind moved from admin:settings:write (the old /connection-profiles
-    // route) to admin:servers:write — the Ansible panel-bootstrap token that mints
-    // per-node squads must now carry servers:write to bind them.
+    // route) to admin:servers:write — the Ansible backend-bootstrap token that mints
+    // per-node mode groups must now carry servers:write to bind them.
     const serversW = await insertToken(t, {
       scopes: ['admin:servers:write'],
       subjectType: 'service',
@@ -1549,7 +1549,7 @@ describe('connection-mode admin routes', () => {
   });
 });
 
-describe('analytics relay (POST /api/v1/telemetry + admin config)', () => {
+describe('analytics origin (POST /api/v1/telemetry + admin config)', () => {
   const A_UUID = 'b1f0a2c4-1234-4abc-9def-0123456789ab';
 
   /** Store an analytics config directly (bypassing the admin PATCH). */
@@ -1770,7 +1770,7 @@ describe('analytics relay (POST /api/v1/telemetry + admin config)', () => {
         {
           'cf-ipcountry': 'IR',
           'cf-region-code': 'THR',
-          'cf-ipcity': 'Tehran', // inbound city must NOT be forwarded
+          'cf-ipcity': 'Tehran', // transport city must NOT be forwarded
           'x-forwarded-for': '203.0.113.60',
         },
       ),

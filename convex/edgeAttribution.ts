@@ -1,5 +1,5 @@
 /**
- * Relay attribution for member issue reports: which origin (by the key's pinned
+ * Origin attribution for member issue reports: which origin (by the key's pinned
  * node) and — only when the member said which connection failed and that choice
  * maps to exactly one edge — which edge. Also the per-member-per-window dedupe
  * mark that turns a report into a 0/1 detector contribution. Everything here is
@@ -33,7 +33,7 @@ export interface EdgeAttribution {
  * The edge comes ONLY from the persisted render snapshot
  * (`subscriptions.lastRender`: what this subscriber was actually handed). An
  * assignment is never recomputed here: with several listeners a body may
- * resolve only some of them, so a recomputation over the relay-wide pool could
+ * resolve only some of them, so a recomputation over the origin-wide pool could
  * name an edge the member never received and feed the detector false evidence.
  * No snapshot, or one from an older epoch, leaves the report at origin level.
  */
@@ -47,7 +47,7 @@ export async function resolveEdgeAttribution(
   const origin = await relayForBackendNode(db, sub.backendServerId, sub.pinnedNode ?? undefined);
   if (!origin) return null;
   // The publication epoch the key's content was last rendered against vs the
-  // relay's current one: catches EVERY pool change (publish, unpublish,
+  // origin's current one: catches EVERY pool change (publish, unpublish,
   // adoption), not only rotations. Keys never rendered fall back to the
   // delivery-time vs last-rotation comparison.
   const renderedEpoch = sub.lastRender?.epoch ?? sub.lastRenderedEpoch;

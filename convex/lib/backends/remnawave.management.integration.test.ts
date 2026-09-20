@@ -1,24 +1,24 @@
 // @vitest-environment node
 /**
- * MANAGEMENT CONTRACT PROBE: pins, against a REAL Remnawave panel, the write
+ * MANAGEMENT CONTRACT PROBE: pins, against a REAL Remnawave backend, the write
  * behaviours that server management is designed around (docs/backends.md,
  * "Management contract"). These are not FCP provider functions yet; the probe
- * speaks the panel API directly so the facts are established BEFORE any code
+ * speaks the backend API directly so the facts are established BEFORE any code
  * depends on them:
  *
  *  - an inbound keeps its uuid across a config PATCH while its tag and
- *    protocol are unchanged (listener bindings, Hosts and squads hang off it);
- *  - the panel has no conditional update (a bogus precondition is ignored), so
+ *    protocol are unchanged (listener bindings, Hosts and mode groups hang off it);
+ *  - the backend has no conditional update (a bogus precondition is ignored), so
  *    exclusive-writer coordination is FCP's job;
  *  - an auth rejection (401) stores nothing, so it may sit on the pre-mutation
  *    allowlist; an INVALID CONFIG also stores nothing but answers 500, and a
  *    5xx can never be on that list, so that outcome is settled by reading back;
- *  - what the panel normalises on write (the change token must apply the same
+ *  - what the backend normalises on write (the change token must apply the same
  *    normalisation or every verify would false-fail);
- *  - inbound tags are unique panel-wide, not per profile;
- *  - the node, squad and Host write shapes.
+ *  - inbound tags are unique backend-wide, not per profile;
+ *  - the node, mode group and Host write shapes.
  *
- * No node is connected to this panel, so nothing here proves node-side effects
+ * No node is connected to this backend, so nothing here proves node-side effects
  * (application, restart completion): that is the managed-node harness's job.
  *
  * Gated like the user-lifecycle test; run via `bun run test:integration:remnawave`.
@@ -34,11 +34,11 @@ const API_TOKEN = process.env.REMNAWAVE_TEST_TOKEN;
 
 interface Answer {
   status: number;
-  /** The unwrapped `response`, or the raw JSON when the panel did not wrap it. */
+  /** The unwrapped `response`, or the raw JSON when the backend did not wrap it. */
   data: any;
 }
 
-/** Raw panel call that never throws on a status: the probe asserts on it. */
+/** Raw backend call that never throws on a status: the probe asserts on it. */
 async function api(
   method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
   path: string,
@@ -115,7 +115,7 @@ const rawInbound = (profile: any, tag: string) =>
   (profile?.config?.inbounds ?? []).find((i: any) => i.tag === tag);
 
 describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave management contract (integration)', () => {
-  // Tags are unique panel-wide, so every run uses its own.
+  // Tags are unique backend-wide, so every run uses its own.
   const run = randomUUID().slice(0, 8);
   const tagA = `fcp-a-${run}`;
   const tagB = `fcp-b-${run}`;
@@ -176,7 +176,7 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave management contract (integra
     ]);
   });
 
-  test("FCP's observation reads the live panel and carries nothing secret", async () => {
+  test("FCP's observation reads the live backend and carries nothing secret", async () => {
     const seen = await remnawaveObservePanel(
       { baseUrl: BASE_URL!, apiToken: API_TOKEN!, timeoutMs: 20_000 },
       'integration-digest-key',
@@ -192,7 +192,7 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave management contract (integra
       target: 'target.example:443',
       serverNames: ['a.example', 'b.example', 'd.example'],
     });
-    // Derived from the private key the panel holds; a real X25519 public key.
+    // Derived from the private key the backend holds; a real X25519 public key.
     expect(a.realityAuth?.publicKey).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(a.realityAuth?.digest).toMatch(/^[0-9a-f]{64}$/);
     const blob = JSON.stringify(seen);
@@ -246,7 +246,7 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave management contract (integra
       sent: true,
     });
     const after = await w.readProfile(cfg, profileUuid, KEY);
-    // The panel normalises on write; the prediction must survive that exactly.
+    // The backend normalises on write; the prediction must survive that exactly.
     expect(after.changeToken).toBe(preview.expectedToken);
     const a = after.inbounds.find((i) => i.tag === tagA)!;
     expect(a.reality).toEqual({ target: 'target.example:8443', serverNames: ops[0].names });
@@ -272,7 +272,7 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave management contract (integra
     await w.applyProfilePatch(cfg, profileUuid, reset, back.baseToken, KEY);
   });
 
-  test('records what the panel normalises on write', async () => {
+  test('records what the backend normalises on write', async () => {
     const before = await api('GET', `config-profiles/${profileUuid}`);
     const config = structuredClone(before.data.config);
     const rs = rawInbound({ config }, tagB).streamSettings.realitySettings;
@@ -286,9 +286,9 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave management contract (integra
     expect(ok(patched)).toBe(true);
     const after = await api('GET', `config-profiles/${profileUuid}`);
     const stored = rawInbound(after.data, tagB);
-    // The change token applies EXACTLY this normalisation (lib/panel/digest.ts
+    // The change token applies EXACTLY this normalisation (lib/backend/digest.ts
     // `normalizeForToken`): whitespace trimmed, case and duplicates kept, the
-    // submitted publicKey kept, `settings.clients` cleared. A panel that
+    // submitted publicKey kept, `settings.clients` cleared. A backend that
     // normalises differently would make every predicted token false-fail.
     expect(stored.streamSettings.realitySettings.serverNames).toEqual([
       'C.Example',
@@ -297,7 +297,7 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave management contract (integra
     ]);
     expect(stored.streamSettings.realitySettings.publicKey).toBe(publicKey);
     expect(stored.settings.clients).toEqual([]);
-    // The panel must never hand back the client list it was sent.
+    // The backend must never hand back the client list it was sent.
     expect(JSON.stringify(after.data)).not.toContain('"email":"probe"');
   });
 
@@ -314,7 +314,7 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave management contract (integra
         },
       },
     );
-    // A panel that honoured preconditions would answer 412 here.
+    // A backend that honoured preconditions would answer 412 here.
     expect(patched.status).not.toBe(412);
     expect(ok(patched)).toBe(true);
   });
@@ -338,11 +338,11 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave management contract (integra
       uuid: profileUuid,
       config: { inbounds: 'not-an-array' },
     });
-    // The pinned panel answers 500 here, not a 4xx, and the ledger's rules are
+    // The pinned backend answers 500 here, not a 4xx, and the ledger's rules are
     // built on that: a 5xx can never sit on the pre-mutation allowlist (a
     // gateway can answer one while upstream commits), so this outcome is
     // `uncertain` and is settled by reading back, exactly as this test does. A
-    // panel that moved it to a 4xx would let the classification be revisited;
+    // backend that moved it to a 4xx would let the classification be revisited;
     // pin the status so that cannot happen silently. FCP validates a config's
     // shape itself before it ever sends one.
     expect(bad.status).toBe(500);
@@ -364,7 +364,7 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave management contract (integra
     expect(after.data.name).toBe(before.data.name);
   });
 
-  test('inbound tags are unique panel-wide, not per profile', async () => {
+  test('inbound tags are unique backend-wide, not per profile', async () => {
     const clash = await api('POST', 'config-profiles', {
       name: `FCP contract ${run} clash`,
       config: profileConfig([realityInbound(tagA, 20450, ['z.example'])]),
@@ -390,9 +390,9 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave management contract (integra
       streamSettings: { network: 'tcp', security: 'none' },
     };
     const patched = await api('PATCH', 'config-profiles', { uuid: profileUuid, config });
-    // The panel ACCEPTS this and replaces the inbound's uuid, which is why a
-    // patch op may never change an inbound's protocol (lib/panel/patchOps.ts):
-    // every Host, squad and listener binding hangs off that uuid. A panel that
+    // The backend ACCEPTS this and replaces the inbound's uuid, which is why a
+    // patch op may never change an inbound's protocol (lib/backend/patchOps.ts):
+    // every Host, mode group and listener binding hangs off that uuid. A backend that
     // started refusing it would call for different handling, so the outcome is
     // pinned, not merely recorded.
     expect(patched.status).toBe(200);
@@ -401,7 +401,7 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave management contract (integra
     expect(uuidOfTag(after.data, tagB)).not.toBe(uuidOfTag(before.data, tagB));
   });
 
-  test("FCP's management writes drive the live panel, and every result is read back", async () => {
+  test("FCP's management writes drive the live backend, and every result is read back", async () => {
     const cfg = {
       type: 'remnawave' as const,
       baseUrl: BASE_URL!,
@@ -488,7 +488,7 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave management contract (integra
     expect((await node()).isDisabled).toBe(false);
     await w.restartNode(cfg, nodeUuid);
     await w.deleteNode(cfg, nodeUuid);
-    // The panel queues the removal: the row leaves shortly after, not with the answer.
+    // The backend queues the removal: the row leaves shortly after, not with the answer.
     let gone = false;
     for (let i = 0; i < 20 && !gone; i++) {
       gone = !(await w.readNodeStatus(cfg)).some((n) => n.nodeUuid === nodeUuid);
@@ -498,7 +498,7 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave management contract (integra
     created.nodes = created.nodes.filter((u) => u !== nodeUuid);
   });
 
-  test('squads: create, rename, change inbounds, delete', async () => {
+  test('mode groups: create, rename, change inbounds, delete', async () => {
     const profile = await api('GET', `config-profiles/${profileUuid}`);
     const a = uuidOfTag(profile.data, tagA)!;
     const b = uuidOfTag(profile.data, tagB)!;
@@ -568,7 +568,7 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave management contract (integra
       port: 443,
     });
     // Pinned: this is why a create whose answer was lost is settled by
-    // DISCOVERY and never by a second create (lib/panel/ops.ts).
+    // DISCOVERY and never by a second create (lib/backend/ops.ts).
     expect(twin.status).toBe(201);
     created.hosts.push(twin.data.uuid);
     expect(twin.data.uuid).not.toBe(hostUuid);
@@ -586,7 +586,7 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave management contract (integra
     created.hosts = [];
   });
 
-  test('nodes: create a panel row, rename, disable, enable, restart, delete', async () => {
+  test('nodes: create a backend row, rename, disable, enable, restart, delete', async () => {
     const profile = await api('GET', `config-profiles/${profileUuid}`);
     const a = uuidOfTag(profile.data, tagA)!;
     const made = await api('POST', 'nodes', {

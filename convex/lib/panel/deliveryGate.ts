@@ -16,7 +16,7 @@ export interface GateResources {
 
 export interface NodeGate {
   state: 'open' | 'blocked';
-  /** The panel-wide gate version (bumped on any disposition or resource-set change). */
+  /** The backend-wide gate version (bumped on any disposition or resource-set change). */
   gateVersion: number;
   /** What the node is served with when open; empty when unmanaged. */
   committed: GateResources;

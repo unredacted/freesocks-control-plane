@@ -1,21 +1,21 @@
 /**
- * Typed edits of a panel config profile (pure; unit-tested). The panel takes a
+ * Typed edits of a backend config profile (pure; unit-tested). The backend takes a
  * profile's config WHOLESALE (`PATCH /api/config-profiles` replaces it and
- * re-derives the inbounds), so an edit is a read-modify-write, and the modify
+ * re-derives the transports), so an edit is a read-modify-write, and the modify
  * step is the dangerous one. This module is that step, and nothing else:
  *
  *  - a CLOSED set of operations. There is no raw JSON edit;
  *  - it refuses rather than guesses: a config that is not an object, an empty
- *    `inbounds` (writing that would strip the node), a tag that is missing or
- *    appears twice, an operation aimed at an inbound of the wrong kind;
+ *    `transports` (writing that would strip the node), a tag that is missing or
+ *    appears twice, an operation aimed at a transport of the wrong kind;
  *  - everything it does not name is carried over UNTOUCHED, by reference, key
  *    material included. It never reads a secret and never returns one;
- *  - it never changes an inbound's protocol, tag, or position: the panel keeps
- *    an inbound's uuid only while tag and protocol hold (measured), and
- *    listener bindings, Hosts and squads hang off that uuid.
+ *  - it never changes a transport's protocol, tag, or position: the backend keeps
+ *    a transport's uuid only while tag and protocol hold (measured), and
+ *    listener bindings, Hosts and mode groups hang off that uuid.
  *
  * `dest` and `target` are the same setting under its old and new name; the
- * edit writes whichever the inbound already carries.
+ * edit writes whichever the transport already carries.
  */
 import { parseRealityTarget } from '../edges/inboundMapping';
 import { normalizeName } from '../edges/registration';
@@ -26,7 +26,7 @@ export type PatchOp =
 
 export const PATCH_OP_IDS = ['setRealityServerNames', 'setRealityTarget'] as const;
 
-/** Production Xray takes 1024 names on one inbound (measured); the working cap is lower. */
+/** Production Xray takes 1024 names on one transport (measured); the working cap is lower. */
 export const MAX_SERVER_NAMES = 512;
 
 export class PatchRefused extends Error {
@@ -67,7 +67,7 @@ export function checkPatchOps(ops: readonly PatchOp[]): PatchOp[] {
   const seen = new Set<string>();
   return ops.map((raw) => {
     const tag = typeof raw?.inboundTag === 'string' ? raw.inboundTag : '';
-    if (!tag) refuse('validation', 'An inbound tag is required');
+    if (!tag) refuse('validation', 'An transport tag is required');
     const key = `${raw.op}:${tag}`;
     if (seen.has(key)) refuse('validation', `${raw.op} is listed twice for ${tag}`);
     seen.add(key);
@@ -81,7 +81,7 @@ export function checkPatchOps(ops: readonly PatchOp[]): PatchOp[] {
         if (!names.includes(norm)) names.push(norm);
       }
       if (names.length === 0)
-        refuse('validation', 'A REALITY inbound needs at least one server name');
+        refuse('validation', 'A REALITY transport needs at least one server name');
       if (names.length > MAX_SERVER_NAMES)
         refuse('servers.too_many_names', `At most ${MAX_SERVER_NAMES} server names per inbound`);
       return { op: raw.op, inboundTag: tag, names };
@@ -111,7 +111,7 @@ export function applyPatchOps(config: unknown, rawOps: readonly PatchOp[]): Patc
   if (!Array.isArray(inbounds) || inbounds.length === 0)
     return refuse(
       'servers.profile_malformed',
-      'The profile lists no inbounds. Writing it back would strip its nodes',
+      'The profile lists no transports. Writing it back would strip its nodes',
     );
   const next = [...inbounds];
   const changes: PatchChange[] = [];
@@ -140,7 +140,7 @@ export function applyPatchOps(config: unknown, rawOps: readonly PatchOp[]): Patc
         changes.push({ inboundTag: op.inboundTag, field: 'serverNames', before, after: op.names });
       }
     } else {
-      // Write the key the inbound already uses; a config carrying both keeps both in step.
+      // Write the key the transport already uses; a config carrying both keeps both in step.
       const keys = (['target', 'dest'] as const).filter((k) => typeof rs[k] === 'string');
       const use = keys.length > 0 ? keys : (['target'] as const);
       const before = typeof rs[use[0]] === 'string' ? (rs[use[0]] as string) : null;

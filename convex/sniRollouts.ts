@@ -1,22 +1,22 @@
 /**
- * Server-name rollouts: a family's names go onto its panel inbound, and reach
+ * Server-name rollouts: a family's names go onto its backend transport, and reach
  * members only after each NODE has proven it accepts them.
  *
  * Order, and why:
  *
- *   ADD     panel first  ->  panel confirmed (a read-back)  ->  per node: an
+ *   ADD     backend first  ->  backend confirmed (a read-back)  ->  per node: an
  *           AUTHENTICATED session with a test link  ->  only then is the name
  *           handed to that node's members.
- *   REMOVE  the reverse: a name leaves the relays first (with its drain), and
- *           stays on the panel for as long as any relay hands it out or it is
+ *   REMOVE  the reverse: a name leaves the origins first (with its drain), and
+ *           stays on the backend for as long as any origin hands it out or it is
  *           still draining (`planAllowlist` retains it); a later rollout drops it.
  *
- * A panel read-back proves the PANEL holds a name. It says nothing about a node
- * (measured: with a node held off the panel, the panel lists the name, a plain
+ * A backend read-back proves the PANEL holds a name. It says nothing about a node
+ * (measured: with a node held off the backend, the backend lists the name, a plain
  * TLS handshake with it completes, and no member can connect). So acceptance is
  * a RECEIPT: an operator connects through one of the node's verified edges with
  * an isolated test link that presents the name. One receipt proves that name on
- * that node. If the name is a WITNESS (this inbound has never listed it
+ * that node. If the name is a WITNESS (this transport has never listed it
  * before), a node that authenticates it must be running the generation that
  * introduced it, so the same receipt proves the whole generation there.
  *
@@ -46,7 +46,7 @@ const refuse = (code: string, message: string): never => {
 const actor = { actorAdminId: v.optional(v.id('adminUsers')) };
 const RECEIPT_TTL_MS = 60 * 60_000;
 
-/** Non-retired listeners bound to this inbound, with their relay. */
+/** Non-retired listeners bound to this transport, with their origin. */
 async function boundListeners(ctx: { db: MutationCtx['db'] }, b: Doc<'sniInboundBindings'>) {
   const relays = await ctx.db
     .query('relays')
@@ -85,12 +85,15 @@ export const plan = internalQuery({
     const onPanel =
       profile?.inbounds.find((i) => i.inboundUuid === b.inboundUuid)?.reality?.serverNames ?? null;
     if (!onPanel)
-      return refuse('servers.unknown_inbound', 'The inbound is not on the panel. Refresh Servers');
+      return refuse(
+        'servers.unknown_inbound',
+        'The transport is not on the backend. Refresh Servers',
+      );
     const names = await ctx.db
       .query('sniNames')
       .withIndex('by_family_seq', (q) => q.eq('familyId', family._id))
       .collect();
-    // A name stays on the panel for as long as a relay hands it out or it is
+    // A name stays on the backend for as long as an origin hands it out or it is
     // still draining, whoever it belongs to and whatever its family says now.
     const now = Date.now();
     const inUse = new Set<string>();
@@ -111,7 +114,7 @@ export const plan = internalQuery({
     const before = new Set(onPanel);
     const after = new Set(planned.names);
     const added = planned.names.filter((n) => !before.has(n));
-    // A witness has never been listed by this inbound, under any binding.
+    // A witness has never been listed by this transport, under any binding.
     let witness: string | undefined;
     for (const name of added) {
       const seen = await ctx.db
@@ -186,11 +189,11 @@ export const begin = internalMutation({
 });
 
 /**
- * Follow the panel op: confirmed when its result was SEEN on the panel, failed
+ * Follow the backend op: confirmed when its result was SEEN on the backend, failed
  * when it was refused. Called from every place a look can settle the op, not
- * only from `start`: the run's own look may fail (a panel read timeout) and the
+ * only from `start`: the run's own look may fail (a backend read timeout) and the
  * op then settles minutes later under the reconcile cron, so the rollout must
- * follow it from there too or it stays `writing` with the panel already holding
+ * follow it from there too or it stays `writing` with the backend already holding
  * its names.
  */
 async function syncRollout(ctx: MutationCtx, rolloutId: Id<'sniRollouts'>) {
@@ -208,7 +211,7 @@ async function syncRollout(ctx: MutationCtx, rolloutId: Id<'sniRollouts'>) {
     const b = await ctx.db.get(r.bindingId);
     if (b) {
       await ctx.db.patch(b._id, { panelConfirmedGeneration: r.generation, updatedAt: now });
-      // From now on these names HAVE been listed by this inbound.
+      // From now on these names HAVE been listed by this transport.
       for (const name of r.added) {
         const seen = await ctx.db
           .query('sniInboundNameHistory')
@@ -271,9 +274,9 @@ export const syncByOp = internalMutation({
 });
 
 /**
- * Push a binding's allowlist: plan, preview against the live panel, claim and
+ * Push a binding's allowlist: plan, preview against the live backend, claim and
  * write through the operations ledger (the ONE path that may edit a managed
- * inbound), then follow it. Members get nothing from this; see `issueReceipt`.
+ * transport), then follow it. Members get nothing from this; see `issueReceipt`.
  */
 export const start = internalAction({
   args: { bindingId: v.id('sniInboundBindings'), ...actor },
@@ -340,7 +343,7 @@ export const receiptContext = internalQuery({
     if (r.phase !== 'panel_confirmed')
       refuse(
         'edge.sni.rollout_not_confirmed',
-        'The panel has not been seen to hold these names yet',
+        'The backend has not been seen to hold these names yet',
       );
     const b = await ctx.db.get(r.bindingId);
     if (!b || b.generation !== r.generation)
@@ -349,7 +352,7 @@ export const receiptContext = internalQuery({
     const listener = edge ? await ctx.db.get(edge.listenerId) : null;
     if (!edge || !listener) return refuse('not_found', 'Edge not found');
     if (listener.panelBinding?.configProfileInboundUuid !== b.inboundUuid)
-      refuse('validation', 'That edge does not front this inbound');
+      refuse('validation', 'That edge does not front this transport');
     // The proof rides on an endpoint an operator already confirmed: an
     // untested edge would make a failure ambiguous (the name, or the path?).
     if (!verificationCurrent(edge, listener))
@@ -467,7 +470,7 @@ export const confirmReceipt = internalMutation({
     const b = r ? await ctx.db.get(r.bindingId) : null;
     if (!r || !b || r.phase !== 'panel_confirmed' || b.generation !== rc.generation)
       return voidAs('superseded', 'edge.sni.superseded', 'A newer rollout replaced this one');
-    // The panel must still hold exactly the config this generation wrote.
+    // The backend must still hold exactly the config this generation wrote.
     const profile = await ctx.db
       .query('panelProfiles')
       .withIndex('by_server_uuid', (q) =>

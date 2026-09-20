@@ -1,10 +1,10 @@
 /**
  * Operator-facing reads for the redesigned Admin -> Edges section (docs/edges.md
- * § "Operations"): the guided setup status (relay-scoped, draft or fleet), the
+ * § "Operations"): the guided setup status (origin-scoped, draft or fleet), the
  * ranked attention list, the preflight dry run, the merged timeline, the
- * quarantine resolver view, provider usage, a relay lookup by slug and the
+ * quarantine resolver view, provider usage, an origin lookup by slug and the
  * delivery bindings. Everything here READS; the writes stay in their own
- * modules (edgeRotations.start, hostOps.adoptListenerHost, relays.*).
+ * modules (edgeRotations.start, hostOps.adoptListenerHost, origins.*).
  *
  * The step logic lives in lib/edges/setupStatus.ts (pure); this module only
  * gathers facts. Nothing here returns credentials or addresses a deployment
@@ -457,10 +457,10 @@ function stepsView(steps: SetupStep[]) {
 }
 
 /**
- * `GET setup-status[?relay=<slug>]` / `POST setup-status { draft }`.
- * Relay scope judges every step for THAT relay; a draft judges steps 1 to 3
+ * `GET setup-status[?origin=<slug>]` / `POST setup-status { draft }`.
+ * Origin scope judges every step for THAT origin; a draft judges steps 1 to 3
  * against the intended listeners before the row exists; the fleet scope is the
- * per-step aggregation over every relay plus the relays to resume.
+ * per-step aggregation over every origin plus the origins to resume.
  */
 export const setupStatus = internalQuery({
   args: { relaySlug: v.optional(v.string()), draft: v.optional(draftValidator) },
@@ -473,7 +473,7 @@ export const setupStatus = internalQuery({
         .query('relays')
         .withIndex('by_slug', (q) => q.eq('slug', relaySlug))
         .unique();
-      if (!relay) throw new ConvexError({ code: 'not_found', message: 'Relay not found' });
+      if (!relay) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
       const f = await relayFacts(ctx, relay, cfg, { withPreview: true });
       const input: SetupInput = {
         origin: await originFacts(ctx.db, relay.origin),
@@ -600,7 +600,7 @@ export const setupStatus = internalQuery({
     }
     let steps: SetupStep[];
     if (perRelay.length === 0) {
-      // No relay yet: the fleet-level facts alone (accounts, templates, config).
+      // No origin yet: the fleet-level facts alone (accounts, templates, config).
       const input: SetupInput = {
         origin: null,
         listeners: [],
@@ -852,7 +852,7 @@ export const attention = internalQuery({
           since: iso(relay.restore.startedAt),
         });
       }
-      // A guided relay with something published but its binding still deferred:
+      // A guided origin with something published but its binding still deferred:
       // members get the raw body until go-live claims the binding.
       if (relay.bindingDeferred && published > 0 && relay.enabled && !relay.restore) {
         items.push({
@@ -906,7 +906,7 @@ export const attention = internalQuery({
       if (relay.suspicion?.state === 'suspected') {
         // A one-click replace needs ONE target: the single published edge the
         // evidence names. Anything else (no edge-level evidence, several edges)
-        // is a decision for the relay page, not a blind call.
+        // is a decision for the origin page, not a blind call.
         const evidenced = [
           ...new Set(relay.suspicion.edgeEvidence.map((e) => e.edgeId as string)),
         ].filter((id) => edges.some((e) => e._id === id && e.publication === 'published'));
@@ -929,9 +929,9 @@ export const attention = internalQuery({
       }
       // Endpoint verification (lib/edges/verification.ts). Three cards, one
       // action each (`verify_endpoint` on the edge that needs the test):
-      //  needs_test     critical: the relay is suspected AND its automatic
+      //  needs_test     critical: the origin is suspected AND its automatic
       //                 replacement was refused for want of a TESTED spare
-      //                 (`edge.no_verified_spare`), or a suspected relay has
+      //                 (`edge.no_verified_spare`), or a suspected origin has
       //                 only untested L4 spares;
       //  retest_needed  warning: a published / standby L4 edge whose tick went
       //                 stale (listener revision or configuration changed);
@@ -1057,7 +1057,7 @@ export const attention = internalQuery({
         const standbys = idle.length;
         // The publish action names the first standby that would actually pass
         // the publish checks; with none publishable the operator is sent to the
-        // relay page instead of a call that cannot run.
+        // origin page instead of a call that cannot run.
         let publishable: string | null = null;
         for (const e of idle) {
           if ((await checkPublishable(ctx, e, cfg.requireProviderHealth)).ok) {
@@ -1115,7 +1115,7 @@ export const attention = internalQuery({
         });
       }
     }
-    // Temporary test keys whose panel delete kept failing (edgeTestCredentials.ts).
+    // Temporary test keys whose backend delete kept failing (edgeTestCredentials.ts).
     const failedKeys = await ctx.db
       .query('edgeTestCredentials')
       .withIndex('by_removal_expires', (q) => q.eq('removal', 'failed'))
@@ -1194,7 +1194,7 @@ export const preflight = internalQuery({
   args: preflightArgs,
   handler: async (ctx, a) => {
     const relay = await ctx.db.get(a.relayId);
-    if (!relay) throw new ConvexError({ code: 'not_found', message: 'Relay not found' });
+    if (!relay) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     const cfg = await resolveEdgeConfig(ctx.db);
     const listeners = await listenersOf(ctx, relay._id);
     const listener = a.listenerKey
@@ -1324,12 +1324,12 @@ function subjectOf(
   }
 }
 
-/** Merged audit rows for a relay: its own, its live edges', its rotations', its listeners' and its edges' probe verdicts. Newest first. */
+/** Merged audit rows for an origin: its own, its live edges', its rotations', its listeners' and its edges' probe verdicts. Newest first. */
 export const timeline = internalQuery({
   args: { relayId: v.id('relays'), take: v.optional(v.number()) },
   handler: async (ctx, { relayId, take }) => {
     const relay = await ctx.db.get(relayId);
-    if (!relay) throw new ConvexError({ code: 'not_found', message: 'Relay not found' });
+    if (!relay) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     const cap = Math.min(Math.max(take ?? TIMELINE_CAP, 10), 300);
     const rows: Doc<'auditLog'>[] = [];
     const pull = async (targetType: string, targetId: string, n: number) => {
@@ -1467,13 +1467,13 @@ export interface QuarantineViewResult {
 /**
  * The resolver's view: per listener, the binding the rotation replaced
  * (`previous`), the one it wrote (`current`), and, when the live Host list is
- * supplied (the inspect action), what the panel serves and which it matches.
+ * supplied (the inspect action), what the backend serves and which it matches.
  */
 export const quarantineView = internalQuery({
   args: { relayId: v.id('relays'), live: v.optional(v.array(liveHostValidator)) },
   handler: async (ctx, { relayId, live }): Promise<QuarantineViewResult> => {
     const relay = await ctx.db.get(relayId);
-    if (!relay) throw new ConvexError({ code: 'not_found', message: 'Relay not found' });
+    if (!relay) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     const rotation = relay.quarantine ? await ctx.db.get(relay.quarantine.rotationId) : null;
     const listeners = (await listenersOf(ctx, relayId)).filter((l) => !l.retired);
     const toEdge = rotation?.toEdgeId ? await ctx.db.get(rotation.toEdgeId) : null;
@@ -1564,16 +1564,16 @@ export const quarantineView = internalQuery({
   },
 });
 
-/** Pull the live Host list from the panel and fill the resolver's live column (throttled route). */
+/** Pull the live Host list from the backend and fill the resolver's live column (throttled route). */
 export const quarantineInspect = internalAction({
   args: { relayId: v.id('relays') },
   handler: async (ctx: ActionCtx, { relayId }): Promise<QuarantineViewResult> => {
     const relay = await ctx.runQuery(internal.relays.get, { id: relayId });
-    if (!relay) throw new ConvexError({ code: 'not_found', message: 'Relay not found' });
+    if (!relay) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     if (!relay.backendServerId)
       throw new ConvexError({
         code: 'edge.host_not_applicable',
-        message: 'this origin has no panel',
+        message: 'this origin has no backend',
       });
     const hosts = await ctx.runAction(internal.backends.listHosts, {
       backendServerId: relay.backendServerId,
@@ -1681,7 +1681,7 @@ export const providersUsage = internalQuery({
 
 // --- lookups -------------------------------------------------------------------------------------
 
-/** The full admin view of one relay by slug (the per-relay page's header; servers:read, never the register scope). */
+/** The full admin view of one origin by slug (the per-origin page's header; servers:read, never the register scope). */
 export const relayLookup = internalQuery({
   args: { slug: v.string() },
   handler: async (ctx, { slug }) => {
@@ -1693,7 +1693,7 @@ export const relayLookup = internalQuery({
   },
 });
 
-/** Every delivery binding with whether a relay row still claims it (a released or orphaned `keep-dark` is what the operator looks for). */
+/** Every delivery binding with whether an origin row still claims it (a released or orphaned `keep-dark` is what the operator looks for). */
 export const deliveryBindings = internalQuery({
   args: {},
   handler: async (ctx) => {

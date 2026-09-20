@@ -142,7 +142,7 @@ describe('computeSetupStatus', () => {
     expect(codes(r, 'account')).toEqual(['no_compatible_account']);
   });
 
-  test('a tested but unqualified account passes the account step; the edge step is current with no_edge and members_dark is a warning on the relay step', () => {
+  test('a tested but unqualified account passes the account step; the edge step is current with no_edge and members_dark is a warning on the origin step', () => {
     const r = computeSetupStatus(base());
     expect(step(r, 'account').status).toBe('done');
     expect(step(r, 'template').status).toBe('done');
@@ -153,7 +153,7 @@ describe('computeSetupStatus', () => {
     expect(r.context).toMatchObject({ accountId: 'acct1', listenerKey: 'a' });
   });
 
-  test('listener problems block the relay step per listener key', () => {
+  test('listener problems block the origin step per listener key', () => {
     const r = computeSetupStatus(
       base({
         listeners: [
@@ -326,7 +326,7 @@ describe('computeSetupStatus', () => {
       ],
     });
 
-  test('rendering: disabled switch, disabled relay, a preview that did not apply and mismatches each block', () => {
+  test('rendering: disabled switch, disabled origin, a preview that did not apply and mismatches each block', () => {
     const r = computeSetupStatus(
       base({
         accounts: [account({ qualified: true, qualificationCurrent: true })],
@@ -413,7 +413,7 @@ describe('computeSetupStatus', () => {
     expect(step(on, 'automation').warnings.map((w) => w.code)).toEqual(['l7_auto_select_blocked']);
   });
 
-  test('origin problems: a missing backend blocks; missing Host management on a panel node is only a warning', () => {
+  test('origin problems: a missing backend blocks; missing Host management on a backend node is only a warning', () => {
     const missing = computeSetupStatus(
       base({
         origin: {

@@ -1,5 +1,5 @@
 /**
- * Shared renderer input/output. A renderer takes the panel body for ONE pinned
+ * Shared renderer input/output. A renderer takes the backend body for ONE pinned
  * node, the LISTENER MATCHERS (how each listener's template entry is found in
  * the body and what it must speak) and the subscriber's assigned endpoints, and
  * emits the same format with the templates replaced by complete, labelled

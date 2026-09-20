@@ -155,7 +155,7 @@ export const listLocations = internalQuery({
  * freshness refresh — the same pull the healthcheck cron does every 10 min).
  * Best-effort: false on any failure, keeping the last snapshot. Callers gate it
  * behind `remnawaveNodes.claimStatsRefresh` so a burst of members polling can't
- * stampede the panel.
+ * stampede the backend.
  */
 export const refreshNodeStats = internalAction({
   args: { id: v.id('backendServers') },
@@ -174,7 +174,7 @@ export const refreshNodeStats = internalAction({
       }
       return true;
     } catch {
-      return false; // panel unreachable: the cached snapshot stays authoritative
+      return false; // backend unreachable: the cached snapshot stays authoritative
     }
   },
 });
@@ -287,8 +287,8 @@ export const healthcheck = internalAction({
               /* node stats unavailable this cycle; picker falls back gracefully */
             }
           }
-          // Best-effort per-NODE inventory for the relay block detector + the
-          // relay picker (same isolation: never marks the instance unhealthy).
+          // Best-effort per-NODE inventory for the origin block detector + the
+          // origin picker (same isolation: never marks the instance unhealthy).
           if (provider.getNodeInventory) {
             try {
               const nodes = await provider.getNodeInventory(s.config as BackendConfig);
@@ -300,7 +300,7 @@ export const healthcheck = internalAction({
               /* inventory unavailable this cycle; the detector reads stale/unknown */
             }
           }
-          // Best-effort panel observation for server management (read-only, and
+          // Best-effort backend observation for server management (read-only, and
           // only when an operator turned it on): the same isolation again.
           if (observe && provider.observePanel) await observeInstance(ctx, s);
         } catch {
@@ -315,9 +315,9 @@ export const healthcheck = internalAction({
  * Enforce the no-client-IP-logging posture on every active Remnawave instance's
  * config profiles (docs/privacy.md §5), via each provider's `hardenLogging` — a
  * SAFE read-modify-write that touches only the Xray `log`/`policy`, preserving
- * inbounds/Reality/routing. `dryRun` reports what WOULD change without writing.
+ * transports/Reality/routing. `dryRun` reports what WOULD change without writing.
  * Backends with no config-profile concept (Outline) are skipped. A per-instance
- * failure is isolated + reported, never thrown, so one unreachable panel can't
+ * failure is isolated + reported, never thrown, so one unreachable backend can't
  * block the rest. Writing restarts the affected nodes (Remnawave auto-push).
  */
 export const hardenRemnawaveLogging = internalAction({
@@ -348,7 +348,7 @@ export const hardenRemnawaveLogging = internalAction({
       try {
         const report = await provider.hardenLogging(s.config as BackendConfig, { dryRun });
         // This edit is FCP's own but does not go through the ops ledger: read the
-        // panel again as a new baseline so it is not flagged as somebody else's.
+        // backend again as a new baseline so it is not flagged as somebody else's.
         if (!dryRun && report.profiles.some((p) => p.changed) && provider.observePanel)
           await ctx
             .runAction(internal.panelObserve.refresh, { backendServerId: s._id, ownEdit: true })
@@ -374,23 +374,23 @@ export const hardenRemnawaveLogging = internalAction({
 });
 
 /**
- * OPERATOR-RUN, one panel upgrade at a time: re-key every subscription on a
- * Remnawave panel that has been upgraded to 3.x from its 2.x `uuid` to the
+ * OPERATOR-RUN, one backend upgrade at a time: re-key every subscription on a
+ * Remnawave backend that has been upgraded to 3.x from its 2.x `uuid` to the
  * instance-scoped numeric id (`<backendServerId>:<id>`). Remnawave 3.0 dropped
  * the user uuid, so every per-user call on a 2.x-era key 400s on the upgraded
- * panel until it is remapped; the key's `shortUuid` survives the upgrade and is
+ * backend until it is remapped; the key's `shortUuid` survives the upgrade and is
  * the join (`GET /api/users/by-short-uuid`). Runbook: docs/backends.md
- * "Upgrading a panel to Remnawave 3.x".
+ * "Upgrading a backend to Remnawave 3.x".
  *
  * Safe to rerun: already-scoped rows are skipped, the remap is compare-and-set,
- * and `dryRun` reports without writing. A panel that still reports a 2.x
+ * and `dryRun` reports without writing. A backend that still reports a 2.x
  * version is skipped outright (its keys are correct as they are). A key the
- * panel no longer knows is counted as `missing` and left alone for the operator
+ * backend no longer knows is counted as `missing` and left alone for the operator
  * (its tombstone/regenerate path will surface it). Bounded per run by
  * `maxPages` × `pageSize` rows (50 × 100 by default, to stay inside one
  * action's time budget); an incomplete run reports `continueCursor`, which the
  * next run takes as `cursor` (+ `serverId`) to RESUME — a run without a cursor
- * starts from the panel's first row again (cheap for already-scoped rows, but
+ * starts from the backend's first row again (cheap for already-scoped rows, but
  * it never gets past `maxPages` on a large fleet, which is how prod stalled on
  * 2026-09-03 before this arg existed).
  */
@@ -409,7 +409,7 @@ interface UserIdMigrationRow {
   complete: boolean;
   // Where this run stopped when `complete` is false: pass it back as `cursor`
   // (with the same `serverId`) so the next run RESUMES instead of re-walking
-  // the rows already done. Null once the panel's rows are exhausted.
+  // the rows already done. Null once the backend's rows are exhausted.
   continueCursor: string | null;
 }
 
@@ -420,7 +420,7 @@ export const migrateRemnawaveUserIds = internalAction({
     maxPages: v.optional(v.number()),
     pageSize: v.optional(v.number()),
     // Resume point from a previous run's `continueCursor` (requires `serverId`:
-    // a cursor is only meaningful within one panel's row sequence).
+    // a cursor is only meaningful within one backend's row sequence).
     cursor: v.optional(v.string()),
   },
   handler: async (
@@ -428,7 +428,7 @@ export const migrateRemnawaveUserIds = internalAction({
     { dryRun = false, serverId, maxPages = 50, pageSize = 100, cursor: startCursor },
   ): Promise<{ dryRun: boolean; servers: UserIdMigrationRow[] }> => {
     if (startCursor !== undefined && !serverId)
-      throw new Error('cursor requires serverId (a cursor belongs to one panel)');
+      throw new Error('cursor requires serverId (a cursor belongs to one backend)');
     const all = serverId
       ? [await ctx.runQuery(internal.backendServers.getById, { id: serverId })]
       : await ctx.runQuery(internal.backendServers.listActiveWithSecret, {});
@@ -454,11 +454,11 @@ export const migrateRemnawaveUserIds = internalAction({
         row.panelVersion = (await remnawaveFleetStats(cfg)).panelVersion;
         major = remnawaveMajorVersion(row.panelVersion);
       } catch {
-        out.push({ ...row, skipped: 'panel unreachable (version unknown) — nothing changed' });
+        out.push({ ...row, skipped: 'backend unreachable (version unknown) — nothing changed' });
         continue;
       }
       if (major === null || major < 3) {
-        out.push({ ...row, skipped: 'panel is not 3.x — its 2.x uuids are still correct' });
+        out.push({ ...row, skipped: 'backend is not 3.x — its 2.x uuids are still correct' });
         continue;
       }
       let cursor: string | null = startCursor ?? null;
@@ -482,7 +482,7 @@ export const migrateRemnawaveUserIds = internalAction({
           row.scanned++;
           // Already scoped (issued on / migrated to 3.x) → nothing to do.
           if (scopedServerId(sub.backendUserId) !== null) continue;
-          if (sub.state === 'deleted') continue; // hard-deleted rows never hit the panel again
+          if (sub.state === 'deleted') continue; // hard-deleted rows never hit the backend again
           row.legacy++;
           let resolved: string | null;
           try {
@@ -496,7 +496,7 @@ export const migrateRemnawaveUserIds = internalAction({
             continue;
           }
           if (!isNumericBackendUserId(resolved)) {
-            // A 3.x panel answering with a uuid would contradict its version;
+            // A 3.x backend answering with a uuid would contradict its version;
             // never write a guess.
             row.failed++;
             continue;

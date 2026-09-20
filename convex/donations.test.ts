@@ -319,7 +319,7 @@ describe('donations.applyFreeBonus', () => {
 
   test('a failing chunk does not abort the run, sets NO marker, and audits donation.bonus_partial', async () => {
     const { t, freeTierId, instanceId } = await setup();
-    // A second instance whose panel is down; one key on each.
+    // A second instance whose backend is down; one key on each.
     const deadInstanceId = await t.run((ctx) =>
       ctx.db.insert('backendServers', {
         backend: 'remnawave',

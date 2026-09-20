@@ -1,11 +1,11 @@
 /**
- * A front node's declared ingress (pure). The WebSocket inbound of the
+ * A front node's declared ingress (pure). The WebSocket transport of the
  * bootstrap profile listens on loopback: the node's public address never
  * reaches it, and discovery rightly refuses it (`loopback`). What reaches it is
  * Caddy on the node, terminating TLS on the public port with the origin
  * hostname's certificate and proxying the path. Only the machine side can
  * describe that hop, so the node's intent carries it, versioned, and
- * `applyIngress` turns the loopback inbound into what the world sees: TLS on
+ * `applyIngress` turns the loopback transport into what the world sees: TLS on
  * the external port, the origin hostname as its certificate name, the same
  * path. The origin probe then verifies that external hop exactly as it does
  * for any HTTPS origin; nothing here asserts that the hop works.
@@ -41,11 +41,11 @@ function isLoopback(listen: string | null | undefined): boolean {
 }
 
 /**
- * Rewrite each loopback inbound that the ingress maps into the externally
- * visible listener. An inbound without a mapping (or one whose declared
- * internal port or path disagree with the panel) is returned unchanged, so it
+ * Rewrite each loopback transport that the ingress maps into the externally
+ * visible listener. An transport without a mapping (or one whose declared
+ * internal port or path disagree with the backend) is returned unchanged, so it
  * still fails discovery as `loopback`: a stale declaration never promotes an
- * inbound it does not describe.
+ * transport it does not describe.
  */
 export function applyIngress(
   inbounds: readonly PanelInbound[],

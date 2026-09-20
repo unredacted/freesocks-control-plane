@@ -1,4 +1,4 @@
-/** The CLASH subscription template (YAML, byte-exact: the panel splices proxies at the anchors). */
+/** The CLASH subscription template (YAML, byte-exact: the backend splices proxies at the anchors). */
 export const CLASH_YAML = String.raw`mixed-port: 7890
 socks-port: 7891
 redir-port: 7892

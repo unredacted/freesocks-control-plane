@@ -1,6 +1,6 @@
 /**
  * Custom probe targets: operator-entered host:port pairs probed alongside the
- * derived targets (edge addresses, relay nodes) from Telemetry → Probes. They
+ * derived targets (edge addresses, origin nodes) from Telemetry → Probes. They
  * are operator evidence only and never reach the block detector. Audits carry
  * the label, never the address.
  */

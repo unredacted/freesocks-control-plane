@@ -1,9 +1,9 @@
 /**
- * Test helper: a fake Remnawave panel (and a fake Outline server) behind the
+ * Test helper: a fake Remnawave backend (and a fake Outline server) behind the
  * routing fetch stub, with a mutable user table keyed by USERNAME so the
  * persisted mint operations can be exercised end to end through the real
  * provider code: create, re-find by name, delete, list Hosts, serve a
- * subscription body per user agent, list node inbounds. Every value is RFC
+ * subscription body per user agent, list node transports. Every value is RFC
  * 5737 / `*.example`. Not a test file itself.
  */
 import { jsonRes, mockFetch, type Captured, type FetchStub } from './mockFetch';
@@ -32,11 +32,11 @@ export interface FakePanelOptions {
   hosts?: FakePanelHost[];
   /**
    * The subscription body served for a short id + user agent (null = 404).
-   * `user` is the panel user behind the short id when FCP created it here;
+   * `user` is the backend user behind the short id when FCP created it here;
    * null for a member short id the test seeded directly.
    */
   body?: (user: FakePanelUser | null, userAgent: string, shortId: string) => string | null;
-  /** `GET /api/nodes` + `GET /api/config-profiles/{uuid}` payloads for inbound discovery. */
+  /** `GET /api/nodes` + `GET /api/config-profiles/{uuid}` payloads for transport discovery. */
   nodes?: unknown[];
   profiles?: Record<string, unknown>;
 }
@@ -52,7 +52,7 @@ export interface FakePanel {
   failCreateWith: number | null;
   /** Every delete answers this status while set. */
   failDeleteWith: number | null;
-  /** Requests the panel saw, by method + path. */
+  /** Requests the backend saw, by method + path. */
   calls: Captured[];
 }
 

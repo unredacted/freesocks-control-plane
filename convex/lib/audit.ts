@@ -40,12 +40,12 @@ export interface AuditEntry {
 export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>> = {
   'subscription.switch_backend': ['fromBackend', 'toBackend', 'fromTier', 'toTier'],
   // Member switches connection mode (transport) within a backend. `inPlace` marks
-  // an in-place squad re-point (existing key kept) vs a re-issue fallback.
+  // an in-place mode group re-point (existing key kept) vs a re-issue fallback.
   'subscription.switch_mode': ['fromMode', 'toMode', 'inPlace'],
   // Member moves their key to a different server, keeping their mode. `reason` is
   // a bounded enum the member picked (never free text); `fromNode` is the node
   // name they left — operator infrastructure, already shown to the member, and
-  // the whole point of the record. Never a placement/squad uuid.
+  // the whole point of the record. Never a placement/mode group uuid.
   'subscription.switch_server': ['reason', 'inPlace', 'movedPlacement', 'movedNodePin', 'fromNode'],
   // Member reported a connection problem (nothing changed about their key).
   // Reason enum + backend only — the consented geo lives in the UNLINKED
@@ -57,9 +57,9 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // bring-up misconfiguration signal. `requestedMode` is a non-secret mode id.
   'subscription.issued_without_placement': ['requestedMode'],
   // Issuance-saga compensation couldn't delete the freshly-minted backend user
-  // (bounded retries exhausted): an ORPHAN proxy account exists panel-side with
+  // (bounded retries exhausted): an ORPHAN proxy account exists backend-side with
   // no local row. The operator's manual cleanup queue. backendUserId is the
-  // panel-side account id (non-secret; needed to find + delete the orphan).
+  // backend-side account id (non-secret; needed to find + delete the orphan).
   'subscription.compensation_failed': ['backend', 'backendUserId'],
   // The post-issuance tombstone of a superseded key failed past the bounded
   // retry — TWO live keys exist until an operator deletes the old one.
@@ -68,7 +68,7 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // the local row was marked deleted so the sweep moves on, but the backend
   // key may still exist — the operator's manual cleanup queue.
   'subscription.tombstone_abandoned': ['backend', 'backendUserId', 'attempts'],
-  // The donation fleet re-cap finished INCOMPLETE (a panel was down mid-run or
+  // The donation fleet re-cap finished INCOMPLETE (a backend was down mid-run or
   // the page cap hit): the applied marker was deliberately NOT set, so the next
   // hourly run re-pushes. Surfaced because the start-of-run heartbeat alone
   // would make the cron look healthy.
@@ -103,7 +103,7 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
     'heroSubtitle',
     'heroTitles',
   ],
-  // Analytics relay config. Booleans + presence/hash flags ONLY: the Umami
+  // Analytics origin config. Booleans + presence/hash flags ONLY: the Umami
   // host is an apiUrl-class value (and an exfiltration target if repointed) and
   // the website id is a correlatable UUID, so neither is ever persisted here.
   // `umamiUrlHash` (truncated sha-256 of the cleaned URL, '' when unset) makes
@@ -243,13 +243,13 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'admin.connection_mode_family.update': ['slug'],
   'admin.connection_mode_family.delete': ['slug'],
   // Admin/IaC binds a mode's placement pool on one backend. `poolBound` /
-  // `boundCount` are booleans/counts — the config contents (squad UUIDs) are
+  // `boundCount` are booleans/counts — the config contents (mode group UUIDs) are
   // NEVER logged (only which mode's pool + whether/how many it's bound to).
   'admin.backend.mode_placement.update': ['backend', 'modeSlug', 'poolBound', 'boundCount'],
   // Admin enforced the no-client-IP-logging posture on the Remnawave config
   // profiles (Xray log/policy). Counts only — no config content is logged.
   'admin.remnawave.logging_hardened': ['instances', 'profilesChanged', 'profilesTotal'],
-  // Server management: which switches moved, never a value from a panel.
+  // Server management: which switches moved, never a value from a backend.
   'servers.config.update': ['changedKeys'],
   'servers.host.create': ['backendSlug', 'label', 'outcome', 'code'],
   'servers.host.update': ['backendSlug', 'label', 'outcome', 'code'],
@@ -287,7 +287,7 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'servers.node.retired': ['backendSlug', 'name', 'confirmedBy'],
   // The one-shot migration off contract v1 (counts only).
   'servers.contract.migrated': ['handoffs', 'reservations', 'setups', 'intents'],
-  // Operator-run 2.x→3.x key-id remap on one upgraded panel (counts only).
+  // Operator-run 2.x→3.x key-id remap on one upgraded backend (counts only).
   'admin.remnawave.user_ids_migrated': [
     'panelVersion',
     'remapped',
@@ -303,7 +303,7 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'admin.admin.reactivate': ['username'],
   'admin.passkey.revoke': ['deviceLabel'],
 
-  // --- relay edges (provider-managed load balancers). Payloads carry slugs,
+  // --- origin edges (provider-managed load balancers). Payloads carry slugs,
   // provider ids, edge/rotation ids, counts and codes ONLY: never an address,
   // handle, template body, probe token or provider credential.
   'edge.provider_account.create': ['name', 'provider'],
@@ -354,7 +354,7 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'relay.qualification_credential': ['slug', 'minted', 'revoked', 'replaced', 'adopted'],
   // Temporary test credentials (edgeTestCredentials.ts): booleans + counts only.
   'edge.test_credential': ['relaySlug', 'purpose', 'issued', 'removed', 'failed', 'attempts'],
-  // `restore` = the delete entered the restore workflow first (a guided relay).
+  // `restore` = the delete entered the restore workflow first (a guided origin).
   'relay.delete': ['slug', 'force', 'disposition', 'restore'],
   // The direct-Host hide ledger + restore workflow (edgeHostHides.ts /
   // edgeRestore.ts): counts, remarks, phases and purposes; never an address.
@@ -441,7 +441,7 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'admin.edge.maintenance': ['frozen', 'reason'],
   // The explicit bootstrap provision from a tested but unqualified account.
   'admin.edge.test_provision': ['slug', 'listenerKey', 'accountName', 'provider', 'rotationId'],
-  // An operator-created panel Host taken over for a listener (hostMode handoff).
+  // An operator-created backend Host taken over for a listener (hostMode handoff).
   'relay.host.adopt_requested': ['relaySlug', 'listenerKey'],
   'edge.delivery.binding_released': ['relaySlug', 'backendServerId'],
   'relay.registered': [
@@ -476,7 +476,7 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'edge.sni.names.accepted': ['relaySlug', 'listenerKey', 'generation', 'count', 'witness'],
   'relay.host.created': ['relaySlug', 'listenerKey', 'discovered'],
   'relay.host.deleted': ['relaySlug', 'listenerKey'],
-  // A Host the ledger called present was gone from the panel on re-observation.
+  // A Host the ledger called present was gone from the backend on re-observation.
   'relay.host.lost': ['relaySlug', 'listenerKey'],
   'relay.host.adopted': ['relaySlug', 'listenerKey'],
   'relay.host.released': ['relaySlug', 'listenerKey'],

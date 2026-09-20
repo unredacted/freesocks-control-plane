@@ -62,7 +62,7 @@ export function postureKnob(name: 'FS_HPKE_REQUIRED' | 'FS_HPKE_ADMIN_REQUIRED')
 }
 
 /**
- * A Request-like view over the inbound request with a replacement parsed body.
+ * A Request-like view over the transport request with a replacement parsed body.
  * We do NOT reconstruct a real Request: the Convex isolate does not let you read
  * a body back out of `new Request(url, { body })`, which silently breaks the
  * handler's readJson(). The handlers only touch `.headers`, `.json()`, `.text()`,

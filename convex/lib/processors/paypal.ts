@@ -203,7 +203,7 @@ async function customIdFromOrder(
 
 /**
  * Verify a PayPal webhook via the verify-signature API, then parse + (for an
- * approved order) capture. `headers` carries the inbound `paypal-*` headers.
+ * approved order) capture. `headers` carries the transport `paypal-*` headers.
  */
 export async function verifyAndParse(args: {
   rawBody: string;

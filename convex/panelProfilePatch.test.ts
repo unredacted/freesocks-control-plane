@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 /**
  * The guarded config-profile edit (`POST {slug}/profiles/{uuid}/preview` then
- * `.../apply`): a read-modify-write of a profile the panel replaces wholesale
+ * `.../apply`): a read-modify-write of a profile the backend replaces wholesale
  * and offers no conditional update for.
  *
  *  - the preview writes nothing and says who feels the change;
@@ -9,10 +9,10 @@
  *    changed in between is refused and NOTHING is sent;
  *  - key material passes through in memory: what was sent still carries the
  *    private key and short ids untouched, and no row, response or audit entry does;
- *  - a name a relay still hands out may not be removed;
- *  - the affected relay is claimed: a rotation or a registration started
+ *  - a name an origin still hands out may not be removed;
+ *  - the affected origin is claimed: a rotation or a registration started
  *    meanwhile is refused, and the bridge (the op itself) still does its work;
- *  - the claims hold until the nodes' own clocks move, not when the panel row changes;
+ *  - the claims hold until the nodes' own clocks move, not when the backend row changes;
  *  - new names are NOT activated on a listener; a new target moves its revision.
  */
 import { convexTest, type TestConvex } from 'convex-test';
@@ -98,7 +98,7 @@ function installPanel(): Panel {
       if (method === 'PATCH' && path === '/api/config-profiles') {
         const body = JSON.parse(init.body as string);
         panel.patches.push(body);
-        // The panel clears client lists on write (measured).
+        // The backend clears client lists on write (measured).
         body.config.inbounds[0].settings.clients = [];
         panel.config = body.config;
         return json({});
@@ -202,7 +202,7 @@ describe('preview', () => {
     for (const s of SECRETS) expect(blob).not.toContain(s);
   });
 
-  test('refusals are codes, never panel text', async () => {
+  test('refusals are codes, never backend text', async () => {
     const { call } = await seed();
     const bad = await call('POST', `profiles/${PROFILE}/preview`, {
       ops: [{ op: 'setRealityServerNames', inboundTag: 'NOPE', names: ['x.example'] }],
@@ -229,7 +229,7 @@ describe('apply', () => {
       target: 'target.example:443',
     });
     expect(panel.patches[0].config.outbounds).toEqual([{ protocol: 'freedom', tag: 'DIRECT' }]);
-    // The panel row shows the change (token matches despite the panel clearing clients)...
+    // The backend row shows the change (token matches despite the backend clearing clients)...
     expect(op).toMatchObject({
       kind: 'profile',
       panelState: 'observed',
@@ -275,7 +275,7 @@ describe('apply', () => {
     expect(panel.patches).toEqual([]);
   });
 
-  test('new names are NOT handed to members by the edit; a relay keeps what it had', async () => {
+  test('new names are NOT handed to members by the edit; an origin keeps what it had', async () => {
     const { t, preview, apply, panel, listenerId, call } = await seed();
     const op = await (await apply(await preview(ADD))).json();
     panel.node.lastStatusChange = 't1';
@@ -285,7 +285,7 @@ describe('apply', () => {
     expect(l.revision).toBe(1);
   });
 
-  test('a name a relay still hands out, or that is still draining, may not be removed', async () => {
+  test('a name an origin still hands out, or that is still draining, may not be removed', async () => {
     const { t, preview, apply, panel, listenerId } = await seed();
     const without = (names: string[]) => [{ op: 'setRealityServerNames', inboundTag: TAG, names }];
     const res = await apply(await preview(without(['a.example', 'spare.example'])));
@@ -296,13 +296,13 @@ describe('apply', () => {
       (await (await apply(await preview(without(['a.example', 'spare.example'])))).json()).error
         .code,
     ).toBe('servers.name_in_use');
-    // A name no relay uses is free to go.
+    // A name no origin uses is free to go.
     const ok = await (await apply(await preview(without(['a.example', 'b.example'])))).json();
     expect(ok.panelState).toBe('observed');
     expect(panel.patches).toHaveLength(1);
   });
 
-  test('the relay is claimed: a rotation and a registration are refused meanwhile; the bridge still works', async () => {
+  test('the origin is claimed: a rotation and a registration are refused meanwhile; the bridge still works', async () => {
     const { t, preview, apply, panel, relayId, listenerId, call } = await seed();
     const retarget = [{ op: 'setRealityTarget', inboundTag: TAG, target: 'other.example:8443' }];
     const op = await (await apply(await preview(retarget))).json();
@@ -330,11 +330,11 @@ describe('apply', () => {
     ).rejects.toThrow();
     panel.node.lastStatusChange = 't1';
     await call('POST', `ops/${op.id}/observe`);
-    // Released: the relay's own work is welcome again.
+    // Released: the origin's own work is welcome again.
     await t.mutation(internal.relayListeners.retireName, { id: listenerId, names: ['b.example'] });
   });
 
-  test('a relay that is already rotating is left alone', async () => {
+  test('an origin that is already rotating is left alone', async () => {
     const { t, preview, apply, relayId, panel } = await seed();
     const rotationId = await t.run((ctx) =>
       ctx.db.insert('edgeRotations', {
@@ -375,7 +375,7 @@ describe('an edit made somewhere else', () => {
 
   test('a token that moved to something no FCP change expected is flagged until acknowledged', async () => {
     const { t, panel, serverId, call } = await seed();
-    // Somebody edits the profile in the panel UI: a short id, which shows in no redacted view.
+    // Somebody edits the profile in the backend UI: a short id, which shows in no redacted view.
     panel.config.inbounds[0].streamSettings.realitySettings.shortIds = ['0011223344556677'];
     await t.action(internal.panelObserve.refresh, { backendServerId: serverId });
     expect(await flagged(t)).toBeTypeOf('number');

@@ -3,13 +3,13 @@
  * `live` without a member ever seeing the node before the delivery commit.
  *
  *  - A DIRECT node is proven with an isolated test link built from the
- *    node's own test credential and the inbound's live parameters, and the
+ *    node's own test credential and the transport's live parameters, and the
  *    operator's tick is bound to the exact endpoint, revisions and parameters
  *    it tested (`confirmDirect` recomputes the binding from live rows).
  *  - The review card hashes the delivery SHAPE; approval creates one
  *    activation run with an immutable candidate snapshot of its own.
  *  - The run enables the direct Host (a candidate resource, filtered from
- *    members by the gate), rehearses the panel's real bodies in every client
+ *    members by the gate), rehearses the backend's real bodies in every client
  *    family, and the commit mutation re-validates everything and promotes the
  *    candidate: `intent.approved`, the committed resources, `live`.
  *  - A FRONTED node's run stops at `publish`: Autopilot publishes under the
@@ -168,7 +168,7 @@ export const review = internalQuery({
 const OPEN_SETUP_RUN = new Set(['running', 'waiting', 'needs_you']);
 
 /**
- * A front or relay node's candidates are the listeners of the Autopilot run
+ * A front or origin node's candidates are the listeners of the Autopilot run
  * protecting it, each with a live, verified standby (an L7 proof; an L4
  * revision-bound confirmation) before that run reaches publish and waits for
  * this approval. `code` null = verified now.
@@ -241,7 +241,7 @@ async function credentialContextOf(ctx: QueryCtx, intentId: Id<'panelNodeIntents
         !!r.backendShortId &&
         !!r.subscriptionUrl,
     ) ?? null;
-  // An issuance whose answer was lost: the row holds no panel identity.
+  // An issuance whose answer was lost: the row holds no backend identity.
   const unresolved = rows.find((r) => r.removal === 'pending' && !r.backendUserId) ?? null;
   const hostname = originHostnameOf(intent, setup);
   return {
@@ -291,7 +291,7 @@ async function ensureIntentCredential(
   if (c.unresolved) {
     // Discovery by name settles the lost issuance before anything is minted
     // again: found = adopted (and reused while it lasts), absent = it never
-    // landed. A panel without lookup keeps the block for the operator.
+    // landed. A backend without lookup keeps the block for the operator.
     let found: { backendUserId: string; backendShortId: string; subscriptionUrl: string } | null;
     try {
       found = await ctx.runAction(internal.backends.findUserByUsername, {
@@ -303,7 +303,7 @@ async function ensureIntentCredential(
       if (code === 'backend.lookup_unsupported')
         return refuse(
           'servers.credential_unresolved',
-          'A test credential of this node has an unknown outcome on the panel',
+          'A test credential of this node has an unknown outcome on the backend',
         );
       throw err;
     }
@@ -405,7 +405,7 @@ export const buildDirectTestLink = internalAction({
     if (!params)
       throw new ConvexError({
         code: 'servers.inbound_missing',
-        message: 'The REALITY inbound is gone',
+        message: 'The REALITY transport is gone',
       });
     const { protocolUuid } = await writes.userCredential(config, cred.backendUserId);
     if (!protocolUuid)

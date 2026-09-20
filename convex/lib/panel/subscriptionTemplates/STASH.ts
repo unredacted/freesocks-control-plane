@@ -1,4 +1,4 @@
-/** The STASH subscription template (YAML, byte-exact: the panel splices proxies at the anchors). */
+/** The STASH subscription template (YAML, byte-exact: the backend splices proxies at the anchors). */
 export const STASH_YAML = String.raw`proxy-groups:
   - name: → Remnawave
     type: select

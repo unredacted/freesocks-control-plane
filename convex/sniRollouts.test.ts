@@ -2,17 +2,17 @@
 /**
  * Server-name rollouts and acceptance receipts.
  *
- *  - a rollout writes the panel through the operations ledger and hands members
- *    NOTHING: the panel listing a name is not a node accepting it;
+ *  - a rollout writes the backend through the operations ledger and hands members
+ *    NOTHING: the backend listing a name is not a node accepting it;
  *  - a receipt (an operator's authenticated session with a test link) is the
  *    only thing that activates a name, and only on the node that proved it;
- *  - a WITNESS (a name this inbound never listed) proves the whole generation
+ *  - a WITNESS (a name this transport never listed) proves the whole generation
  *    on that node; a name that was listed before proves only itself;
  *  - a receipt is void after an expiry, a newer generation, a profile that
  *    moved, or a change to the edge's endpoint confirmation, and needs a
  *    verified edge to begin with;
- *  - names a relay still hands out, or that are still draining, stay on the
- *    panel whatever the family says;
+ *  - names an origin still hands out, or that are still draining, stay on the
+ *    backend whatever the family says;
  *  - activating proven names does not stale the endpoint confirmation.
  *
  * Fixtures use RFC 5737 addresses and `*.example` names only.
@@ -196,7 +196,7 @@ async function receipt(t: T, rolloutId: Id<'sniRollouts'>, edgeId: Id<'edges'>, 
 }
 
 describe('rollout', () => {
-  test('the plan keeps what a relay hands out, adds the qualified family names, and finds a witness', async () => {
+  test('the plan keeps what an origin hands out, adds the qualified family names, and finds a witness', async () => {
     const { t, bindingId } = await seed();
     const p = await t.query(internal.sniRollouts.plan, { bindingId });
     expect(p).toMatchObject({
@@ -209,17 +209,17 @@ describe('rollout', () => {
     });
   });
 
-  test('the panel is written, and members are handed NOTHING', async () => {
+  test('the backend is written, and members are handed NOTHING', async () => {
     const { t, panel, bindingId, listenerId } = await seed();
     const out = await t.action(internal.sniRollouts.start, { bindingId });
     expect(out).toMatchObject({ phase: 'panel_confirmed', added: 2, removed: 0 });
     expect(panel.patches).toBe(1);
     expect(panel.names).toEqual(['a.example', 'b.example', 'fresh-1.example', 'fresh-2.example']);
-    // The panel lists them. No node has proven anything: the relay hands out what it did before.
+    // The backend lists them. No node has proven anything: the origin hands out what it did before.
     expect(await activeNames(t, listenerId)).toEqual(['a.example', 'b.example']);
     const status = await t.query(internal.sniRollouts.status, { rolloutId: out.rolloutId! });
     // Only the family's usable names are counted: a.example and b.example were
-    // on the inbound before the family and no receipt can activate them.
+    // on the transport before the family and no receipt can activate them.
     expect(status.nodes).toMatchObject([
       { relaySlug: 'node-one', listenerKey: 'a', proven: 0, pending: 2, generationProven: false },
     ]);
@@ -248,7 +248,7 @@ describe('rollout', () => {
         edgeId: (await t.run((ctx) => ctx.db.query('edges').first()))!._id,
       }),
     ).rejects.toThrow(/rollout_not_confirmed/);
-    // The panel is readable again; the scheduled reconcile settles the op...
+    // The backend is readable again; the scheduled reconcile settles the op...
     panel.failReads = false;
     panel.node.lastStatusChange = 't1';
     await t.action(internal.panelWrites.reconcile, {});
@@ -259,10 +259,10 @@ describe('rollout', () => {
     expect(panel.patches).toBe(1);
   });
 
-  test('a name a relay still hands out, or that is still draining, stays on the panel', async () => {
+  test('a name an origin still hands out, or that is still draining, stays on the backend', async () => {
     const { t, panel, bindingId, listenerId } = await seed();
     await t.action(internal.sniRollouts.start, { bindingId });
-    // b.example is retired on the relay but still inside its drain.
+    // b.example is retired on the origin but still inside its drain.
     panel.node.lastStatusChange = 't1';
     await t.action(internal.panelWrites.reconcile, {});
     await t.mutation(internal.relayListeners.retireName, { id: listenerId, names: ['b.example'] });
@@ -338,8 +338,8 @@ describe('acceptance', () => {
     expect((await t.run((ctx) => ctx.db.get(relayId)))!.publicationEpoch).toBe(epoch0 + 1);
   });
 
-  test('a name the inbound listed BEFORE proves only itself', async () => {
-    // old-seen.example was on the inbound when the family was bound.
+  test('a name the transport listed BEFORE proves only itself', async () => {
+    // old-seen.example was on the transport when the family was bound.
     const t0 = convexTest(schema, modules);
     void t0;
     const { t, panel, bindingId, listenerId, edgeId } = await seed([

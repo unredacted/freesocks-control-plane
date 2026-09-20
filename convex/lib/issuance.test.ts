@@ -41,7 +41,7 @@ function stubCtx(opts: StubOpts = {}) {
       if (name === 'backends:deleteUser') {
         deleteAttempts++;
         calls.push({ fn: 'deleteUser', args });
-        if (deleteAttempts <= (opts.deleteFailures ?? 0)) throw new Error('panel unreachable');
+        if (deleteAttempts <= (opts.deleteFailures ?? 0)) throw new Error('backend unreachable');
         return null;
       }
       throw new Error(`unexpected action ${name}`);
@@ -119,7 +119,7 @@ describe('issueNewSubscription compensation', () => {
       action: 'subscription.compensation_failed',
       payload: { backend: 'remnawave', backendUserId: 'bu-1' },
     });
-    // The local row is still cleaned even though the panel delete failed.
+    // The local row is still cleaned even though the backend delete failed.
     expect(calls.some((c) => c.fn === 'markDeleted')).toBe(true);
   });
 

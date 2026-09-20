@@ -1,14 +1,14 @@
 /**
- * Server-management writes: Hosts and internal squads. Every write is a
+ * Server-management writes: Hosts and internal mode groups. Every write is a
  * `request*` mutation (validate against what FCP knows, then claim through the
  * ledger) followed by `run` (send ONCE, then look). The mutation refuses
  * anything that belongs to the edges machinery or that would strand members;
  * the ledger decides when a claim may be released (panelLedger.ts).
  *
- * What queues node work on the panel (measured against the panel's source and
- * the managed-node harness): changing a squad's inbounds and deleting a squad
+ * What queues node work on the backend (measured against the backend's source and
+ * the managed-node harness): changing a mode group's transports and deleting a mode group
  * re-apply the affected config profiles to their nodes; creating or renaming a
- * squad, and every Host write, do not. The first kind also claims those
+ * mode group, and every Host write, do not. The first kind also claims those
  * profiles and nodes and holds the claims until the nodes show the work ran.
  */
 import { ConvexError, v } from 'convex/values';
@@ -100,7 +100,7 @@ function checkHostFields(f: {
     refuse('validation', 'Unknown security layer');
 }
 
-/** The profile an inbound uuid belongs to, from the observation cache. */
+/** The profile a transport uuid belongs to, from the observation cache. */
 async function inboundBinding(ctx: MutationCtx, sid: Id<'backendServers'>, inboundUuid: string) {
   const profiles = await ctx.db
     .query('panelProfiles')
@@ -110,7 +110,7 @@ async function inboundBinding(ctx: MutationCtx, sid: Id<'backendServers'>, inbou
   if (!profile)
     return refuse(
       'servers.unknown_inbound',
-      'That inbound is not on this panel. Refresh and retry',
+      'That transport is not on this backend. Refresh and retry',
     );
   return { configProfileUuid: profile.profileUuid, configProfileInboundUuid: inboundUuid };
 }
@@ -155,7 +155,7 @@ async function cachedHost(ctx: MutationCtx, sid: Id<'backendServers'>, hostUuid:
     .query('panelHosts')
     .withIndex('by_server_uuid', (q) => q.eq('backendServerId', sid).eq('hostUuid', hostUuid))
     .unique();
-  return row ?? refuse('not_found', 'That Host is not on this panel. Refresh and retry');
+  return row ?? refuse('not_found', 'That Host is not on this backend. Refresh and retry');
 }
 
 async function assertHostEditable(ctx: MutationCtx, sid: Id<'backendServers'>, hostUuid: string) {
@@ -163,7 +163,7 @@ async function assertHostEditable(ctx: MutationCtx, sid: Id<'backendServers'>, h
   if (lock)
     refuse(
       'servers.host_edge_owned',
-      'This Host belongs to an edge. Change it from the relay it serves',
+      'This Host belongs to an edge. Change it from the origin it serves',
     );
 }
 
@@ -206,7 +206,7 @@ export const requestHostCreate = internalMutation({
     checkHostFields(a);
     const sid = a.backendServerId;
     if (looksLikeRelayRemark(a.remark, await nodeNames(ctx, sid)))
-      refuse('servers.relay_remark', 'Remarks ending in -relay belong to edges. Pick another');
+      refuse('servers.relay_remark', 'Remarks ending in -origin belong to edges. Pick another');
     const inbound = await inboundBinding(ctx, sid, a.inboundUuid);
     const identity = hostIdentity({
       remark: a.remark,
@@ -241,14 +241,14 @@ export const requestHostUpdate = internalMutation({
     await assertHostEditable(ctx, sid, a.hostUuid);
     if (a.remark !== undefined && a.remark !== current.remark) {
       if (looksLikeRelayRemark(a.remark, await nodeNames(ctx, sid)))
-        refuse('servers.relay_remark', 'Remarks ending in -relay belong to edges. Pick another');
+        refuse('servers.relay_remark', 'Remarks ending in -origin belong to edges. Pick another');
     }
     const { backendServerId: _s, hostUuid, actorAdminId, inboundUuid, ...rest } = a;
     const fields: PanelHostFields = { ...rest };
     const expected: Record<string, unknown> = { ...rest };
     // The postcondition is what a later read must SHOW, not what was asked. A
-    // cleared security layer is sent as the panel's own default word (the
-    // enumeration has no "unset"), and the panel reads it back as that word;
+    // cleared security layer is sent as the backend's own default word (the
+    // enumeration has no "unset"), and the backend reads it back as that word;
     // expecting null here would never be observed and the claim never released.
     if (expected.securityLayer === null) expected.securityLayer = 'DEFAULT';
     if (inboundUuid !== undefined) {
@@ -307,7 +307,7 @@ export const requestHostReorder = internalMutation({
     const known = new Set(rows.map((r) => r.hostUuid));
     const unique = new Set(a.hostUuids);
     if (unique.size !== a.hostUuids.length || unique.size !== known.size)
-      refuse('validation', 'The order must list every Host of this panel exactly once');
+      refuse('validation', 'The order must list every Host of this backend exactly once');
     for (const u of unique) if (!known.has(u)) refuse('validation', 'Unknown Host in the order');
     const order = a.hostUuids.map((hostUuid, i) => ({ hostUuid, viewPosition: i + 1 }));
     const opId = await claimOp(ctx, {
@@ -324,17 +324,17 @@ export const requestHostReorder = internalMutation({
   },
 });
 
-// --- squads --------------------------------------------------------------------------------------------
+// --- mode groups --------------------------------------------------------------------------------------------
 
 async function cachedSquad(ctx: MutationCtx, sid: Id<'backendServers'>, squadUuid: string) {
   const row = await ctx.db
     .query('panelSquads')
     .withIndex('by_server_uuid', (q) => q.eq('backendServerId', sid).eq('squadUuid', squadUuid))
     .unique();
-  return row ?? refuse('not_found', 'That squad is not on this panel. Refresh and retry');
+  return row ?? refuse('not_found', 'That mode group is not on this backend. Refresh and retry');
 }
 
-/** The squads operators put into mode placements (members are issued into them). */
+/** The mode groups operators put into mode placements (members are issued into them). */
 async function placedSquads(ctx: MutationCtx, sid: Id<'backendServers'>) {
   const server = await ctx.db.get(sid);
   const rows = await ctx.db
@@ -346,7 +346,7 @@ async function placedSquads(ctx: MutationCtx, sid: Id<'backendServers'>) {
 
 /**
  * The profiles that own any of `inboundUuids`, and the enabled nodes on them:
- * what the panel re-applies when a squad's inbounds change or it is deleted.
+ * what the backend re-applies when a mode group's transports change or it is deleted.
  */
 async function affectedByInbounds(
   ctx: MutationCtx,
@@ -388,7 +388,7 @@ export const requestSquadCreate = internalMutation({
   },
   handler: async (ctx, a) => {
     if (!SQUAD_NAME.test(a.name))
-      refuse('validation', 'A squad name is 2 to 20 letters, digits, dashes or underscores');
+      refuse('validation', 'A mode group name is 2 to 20 letters, digits, dashes or underscores');
     const sid = a.backendServerId;
     for (const u of a.inboundUuids) await inboundBinding(ctx, sid, u);
     const existing = await ctx.db
@@ -396,9 +396,9 @@ export const requestSquadCreate = internalMutation({
       .withIndex('by_server', (q) => q.eq('backendServerId', sid))
       .collect();
     if (existing.some((s) => s.name === a.name))
-      refuse('servers.squad_name_taken', 'A squad with that name already exists');
+      refuse('servers.squad_name_taken', 'A mode group with that name already exists');
     await assertNotTombstoned(ctx, sid, 'squad', a.name, a.restore === true);
-    // A NEW squad has no members, so the panel queues no node work for it.
+    // A NEW mode group has no members, so the backend queues no node work for it.
     const opId = await claimOp(ctx, {
       backendServerId: sid,
       kind: 'squad',
@@ -428,7 +428,7 @@ export const requestSquadUpdate = internalMutation({
     if (a.name === undefined && a.inboundUuids === undefined)
       refuse('validation', 'Nothing to change');
     if (a.name !== undefined && !SQUAD_NAME.test(a.name))
-      refuse('validation', 'A squad name is 2 to 20 letters, digits, dashes or underscores');
+      refuse('validation', 'A mode group name is 2 to 20 letters, digits, dashes or underscores');
     const claimKeys = [claimKey.squad(a.squadUuid)];
     const expected: Record<string, unknown> = {};
     let asyncNodeUuids: string[] | undefined;
@@ -441,10 +441,10 @@ export const requestSquadUpdate = internalMutation({
       if (a.inboundUuids.length === 0 && (await placedSquads(ctx, sid)).has(a.squadUuid))
         refuse(
           'servers.squad_in_placement',
-          'Members are issued into this squad. Take it out of the connection modes first',
+          'Members are issued into this mode group. Take it out of the connection modes first',
         );
       expected.inboundUuids = a.inboundUuids;
-      // The panel re-applies the profiles of BOTH the old and the new inbounds.
+      // The backend re-applies the profiles of BOTH the old and the new transports.
       const affected = await affectedByInbounds(ctx, sid, [
         ...current.inboundUuids,
         ...a.inboundUuids,
@@ -476,10 +476,10 @@ export const requestSquadDelete = internalMutation({
     if ((await placedSquads(ctx, sid)).has(a.squadUuid))
       refuse(
         'servers.squad_in_placement',
-        'Members are issued into this squad. Take it out of the connection modes first',
+        'Members are issued into this mode group. Take it out of the connection modes first',
       );
     if ((current.membersCount ?? 0) > 0)
-      refuse('servers.squad_has_members', 'This squad still has members');
+      refuse('servers.squad_has_members', 'This mode group still has members');
     // Deleting re-applies the profiles it referenced, members or not.
     const affected = await affectedByInbounds(ctx, sid, current.inboundUuids);
     const opId = await claimOp(ctx, {
@@ -506,10 +506,10 @@ async function cachedNode(ctx: MutationCtx, sid: Id<'backendServers'>, nodeUuid:
     .query('panelNodes')
     .withIndex('by_server_uuid', (q) => q.eq('backendServerId', sid).eq('nodeUuid', nodeUuid))
     .unique();
-  return row ?? refuse('not_found', 'That node is not on this panel. Refresh and retry');
+  return row ?? refuse('not_found', 'That node is not on this backend. Refresh and retry');
 }
 
-/** The relays whose origin is this panel node. */
+/** The origins whose origin is this backend node. */
 async function relaysOfNode(ctx: MutationCtx, sid: Id<'backendServers'>, nodeName: string) {
   const relays = await ctx.db
     .query('relays')
@@ -519,11 +519,11 @@ async function relaysOfNode(ctx: MutationCtx, sid: Id<'backendServers'>, nodeNam
 }
 
 /**
- * A node a relay stands in front of is part of a published path: its address is
- * what edges forward to, its inbounds are what listeners are bound to. Moving,
+ * A node an origin stands in front of is part of a published path: its address is
+ * what edges forward to, its transports are what listeners are bound to. Moving,
  * stopping or removing it from here would strand members behind edges that
  * still look healthy, so those changes are refused; they belong to a migration
- * that also moves the relay.
+ * that also moves the origin.
  */
 async function assertNotRelayOrigin(ctx: MutationCtx, sid: Id<'backendServers'>, nodeName: string) {
   const relays = await relaysOfNode(ctx, sid, nodeName);
@@ -535,13 +535,13 @@ async function assertNotRelayOrigin(ctx: MutationCtx, sid: Id<'backendServers'>,
 }
 
 /**
- * A node's NAME is an identifier well beyond the panel: relays, delivery
+ * A node's NAME is an identifier well beyond the backend: origins, delivery
  * requirements, the node role's token boundary and members' pinned keys all
  * refer to it. Renaming a node any of them refers to is refused.
  */
 async function assertRenameSafe(ctx: MutationCtx, sid: Id<'backendServers'>, nodeName: string) {
   const referenced = async (): Promise<string | null> => {
-    if ((await relaysOfNode(ctx, sid, nodeName)).length > 0) return 'a relay';
+    if ((await relaysOfNode(ctx, sid, nodeName)).length > 0) return 'an origin';
     const binding = await ctx.db
       .query('edgeDeliveryBindings')
       .withIndex('by_server_node', (q) => q.eq('backendServerId', sid).eq('nodeName', nodeName))
@@ -567,7 +567,7 @@ async function assertRenameSafe(ctx: MutationCtx, sid: Id<'backendServers'>, nod
     );
 }
 
-/** Inbound uuids must all belong to the profile, as Servers last read it. */
+/** Transport uuids must all belong to the profile, as Servers last read it. */
 async function checkProfileInbounds(
   ctx: MutationCtx,
   sid: Id<'backendServers'>,
@@ -578,12 +578,13 @@ async function checkProfileInbounds(
     .query('panelProfiles')
     .withIndex('by_server_uuid', (q) => q.eq('backendServerId', sid).eq('profileUuid', profileUuid))
     .unique();
-  if (!profile) return refuse('not_found', 'That profile is not on this panel. Refresh and retry');
+  if (!profile)
+    return refuse('not_found', 'That profile is not on this backend. Refresh and retry');
   const known = new Set(profile.inbounds.map((i) => i.inboundUuid));
   for (const u of inboundUuids)
     if (!known.has(u))
-      refuse('servers.unknown_inbound', 'An inbound does not belong to that profile');
-  if (inboundUuids.length === 0) refuse('validation', 'A node serves at least one inbound');
+      refuse('servers.unknown_inbound', 'An transport does not belong to that profile');
+  if (inboundUuids.length === 0) refuse('validation', 'A node serves at least one transport');
 }
 
 const NODE_NAME = /^[A-Za-z0-9 ._-]{3,30}$/;
@@ -615,8 +616,8 @@ export const requestNodeCreate = internalMutation({
       refuse('servers.node_name_taken', 'A node with that name already exists');
     await assertNotTombstoned(ctx, sid, 'node', a.name, a.restore === true);
     const { backendServerId: _s, actorAdminId, restore: _r, ...spec } = a;
-    // The panel ROW only. Installing the node and giving it its secret is the
-    // node role's job, against the panel directly.
+    // The backend ROW only. Installing the node and giving it its secret is the
+    // node role's job, against the backend directly.
     const opId = await claimOp(ctx, {
       backendServerId: sid,
       kind: 'node',
@@ -662,7 +663,7 @@ export const requestNodeUpdate = internalMutation({
       fields.countryCode = a.countryCode.toUpperCase();
       expected.countryCode = fields.countryCode;
     }
-    // These make the panel restart the node (measured); a name or country does not.
+    // These make the backend restart the node (measured); a name or country does not.
     let restarts = false;
     if (a.address !== undefined && a.address !== node.address) {
       if (a.address.trim().length < 2) refuse('validation', 'An address is required');
@@ -706,7 +707,7 @@ export const requestNodeUpdate = internalMutation({
   },
 });
 
-/** enable / disable / restart. The panel queues each; none is a no-op, so state is checked first. */
+/** enable / disable / restart. The backend queues each; none is a no-op, so state is checked first. */
 export const requestNodeAction = internalMutation({
   args: {
     backendServerId: v.id('backendServers'),
@@ -718,7 +719,7 @@ export const requestNodeAction = internalMutation({
     const sid = a.backendServerId;
     const node = await cachedNode(ctx, sid, a.nodeUuid);
     if (a.action === 'disable') await assertNotRelayOrigin(ctx, sid, node.name);
-    // A repeat enqueues panel work for nothing (measured): refuse instead of sending.
+    // A repeat enqueues backend work for nothing (measured): refuse instead of sending.
     if (a.action === 'enable' && !node.isDisabled)
       refuse('servers.already', 'This node is already on');
     if (a.action === 'disable' && node.isDisabled)
@@ -733,7 +734,7 @@ export const requestNodeAction = internalMutation({
       objectUuid: a.nodeUuid,
       claimKeys: [claimKey.node(a.nodeUuid)],
       intent: {},
-      // A restart names no field: the panel row looks the same before and
+      // A restart names no field: the backend row looks the same before and
       // after, so only the node's own clock settles it.
       postcondition: a.action === 'restart' ? {} : { isDisabled: a.action === 'disable' },
       asyncNodeUuids: [a.nodeUuid],
@@ -747,9 +748,9 @@ export const requestNodeAction = internalMutation({
  * Two different things, named as such:
  *
  *  - "Stop and remove" (the default): the node must ALREADY be off, as a
- *    settled step of its own. The panel deletes the row before it tells the
+ *    settled step of its own. The backend deletes the row before it tells the
  *    node to stop, so a row disappearing proves nothing about the process.
- *  - "Remove from panel" (`removeOnly`): the row goes; the process on the
+ *  - "Remove from backend" (`removeOnly`): the row goes; the process on the
  *    server may keep running and serving until someone stops it there.
  */
 export const requestNodeDelete = internalMutation({
@@ -766,7 +767,7 @@ export const requestNodeDelete = internalMutation({
     if (!a.removeOnly && !node.isDisabled)
       refuse(
         'servers.node_still_on',
-        'Turn the node off first and wait for that to finish, or choose to remove it from the panel only',
+        'Turn the node off first and wait for that to finish, or choose to remove it from the backend only',
       );
     const opId = await claimOp(ctx, {
       backendServerId: sid,
@@ -796,15 +797,15 @@ const patchOp = v.union(
 );
 
 /**
- * Claim a typed profile edit that was just previewed against the live panel.
+ * Claim a typed profile edit that was just previewed against the live backend.
  * Everything that could strand members or fight another workflow is refused
  * HERE, before anything is sent:
  *
- *  - a server name that a bound relay listener still hands out (or that is
- *    still draining there) may not be removed: retire it on the relay first;
- *  - a relay that is rotating, restoring, quarantined or mid-setup holds still;
- *  - the profile, every enabled node on it and every affected relay are claimed
- *    together, and the relay claims are what rotations, restores, registrations
+ *  - a server name that a bound origin listener still hands out (or that is
+ *    still draining there) may not be removed: retire it on the origin first;
+ *  - an origin that is rotating, restoring, quarantined or mid-setup holds still;
+ *  - the profile, every enabled node on it and every affected origin are claimed
+ *    together, and the origin claims are what rotations, restores, registrations
  *    and setup runs refuse against (`assertNoRelayPanelClaim`).
  */
 export const requestProfilePatch = internalMutation({
@@ -840,7 +841,8 @@ export const requestProfilePatch = internalMutation({
         q.eq('backendServerId', sid).eq('profileUuid', a.profileUuid),
       )
       .unique();
-    if (!cached) return refuse('not_found', 'That profile is not on this panel. Refresh and retry');
+    if (!cached)
+      return refuse('not_found', 'That profile is not on this backend. Refresh and retry');
     if (a.baseToken === a.expectedToken) refuse('validation', 'Nothing to change');
 
     const touched = new Map<string, string>();
@@ -851,7 +853,7 @@ export const requestProfilePatch = internalMutation({
     }
     const touchedUuids = new Set(touched.values());
 
-    // A family-managed inbound has ONE author of its allowlist and target: the
+    // A family-managed transport has ONE author of its allowlist and target: the
     // rollout, which hands names to members only after each node proved it
     // accepts them. A manual edit would bypass exactly that.
     if (!a.sniRollout)
@@ -865,11 +867,11 @@ export const requestProfilePatch = internalMutation({
         if (managed)
           refuse(
             'servers.inbound_sni_managed',
-            'A server-name family manages this inbound. Change its names in the family',
+            'A server-name family manages this transport. Change its names in the family',
           );
       }
 
-    // Relays whose listeners are bound to a touched inbound.
+    // Origins whose listeners are bound to a touched transport.
     const relays = await ctx.db
       .query('relays')
       .withIndex('by_backend_server', (q) => q.eq('backendServerId', sid))
@@ -980,7 +982,7 @@ async function writesFor(ctx: ActionCtx, backendServerId: Id<'backendServers'>) 
   return { writes, config: server.config as BackendConfig };
 }
 
-/** One look at the panel for this op; never throws (a failed look changes nothing). */
+/** One look at the backend for this op; never throws (a failed look changes nothing). */
 async function look(ctx: ActionCtx, opId: Id<'panelOps'>): Promise<boolean> {
   const op = await ctx.runQuery(internal.panelLedger.getForRun, { opId });
   if (!op || !op.open) return false;
@@ -1055,7 +1057,7 @@ export const run = internalAction({
     const intent = JSON.parse(op.intent);
 
     if (op.verb === 'create') {
-      // Discovery BEFORE the send: the panel enforces no uniqueness.
+      // Discovery BEFORE the send: the backend enforces no uniqueness.
       let matches = 0;
       let match: string | undefined;
       if (op.kind === 'host') {
@@ -1157,7 +1159,7 @@ export const run = internalAction({
 });
 
 /**
- * What a typed profile edit WOULD do, read from the live panel: the non-secret
+ * What a typed profile edit WOULD do, read from the live backend: the non-secret
  * before/after, and who feels it. Writes nothing. The tokens it returns are
  * what `requestProfilePatch` then conditions the write on.
  */
@@ -1188,10 +1190,10 @@ export const previewProfilePatch = internalAction({
     } catch (e) {
       if (e instanceof PatchRefused) throw new ConvexError({ code: e.code, message: e.message });
       if (e instanceof ConvexError) throw e;
-      // A panel fault while reading a profile: status and path only ever reach here.
+      // A backend fault while reading a profile: status and path only ever reach here.
       throw new ConvexError({
         code: 'backend.panel_read_failed',
-        message: 'The panel could not be read',
+        message: 'The backend could not be read',
       });
     }
   },

@@ -1,5 +1,5 @@
 /**
- * Digests of a panel config profile (pure; WebCrypto only, so it runs in the
+ * Digests of a backend config profile (pure; WebCrypto only, so it runs in the
  * default runtime). A config profile carries the REALITY private key, the short
  * ids and the client list. FCP never persists those values, yet it must be able
  * to tell that a profile CHANGED, and that what it changed is what it meant to.
@@ -20,11 +20,11 @@
  *    joins an endpoint confirmation's binding, so changing any of them
  *    correctly returns the endpoint to "needs a test".
  *
- * The panel NORMALISES a config on write (measured, docs/backends.md
+ * The backend NORMALISES a config on write (measured, docs/backends.md
  * "Management contract"): it trims each `serverNames` entry and clears
  * `settings.clients`. `normalizeForToken` applies the same two rules, so a
  * token computed from what FCP is about to send equals the token of what the
- * panel then stores. It does nothing else: the panel neither lowercases nor
+ * backend then stores. It does nothing else: the backend neither lowercases nor
  * de-duplicates names.
  *
  * None of these functions log, throw with a value, or return key material.
@@ -95,7 +95,7 @@ export function redactConfig(v: unknown): unknown {
   return out;
 }
 
-/** Apply exactly the panel's own write-time normalisation (see the header). */
+/** Apply exactly the backend's own write-time normalisation (see the header). */
 export function normalizeForToken(config: unknown): unknown {
   if (!isObj(config)) return config;
   const inbounds = Array.isArray(config.inbounds) ? config.inbounds : null;
@@ -175,7 +175,7 @@ export interface RealityAuth {
 }
 
 /**
- * The authentication identity of one REALITY inbound. `realitySettings` is the
+ * The authentication identity of one REALITY transport. `realitySettings` is the
  * raw object; nothing of it is returned except the derived PUBLIC key.
  */
 export async function realityAuthDigest(

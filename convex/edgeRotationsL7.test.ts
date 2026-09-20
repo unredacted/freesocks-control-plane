@@ -104,7 +104,7 @@ function fakeL7() {
   return { seen };
 }
 
-/** A panel that stores the full Host tuple, so the flip is observable. */
+/** A backend that stores the full Host tuple, so the flip is observable. */
 function fakePanel() {
   const hosts = [
     {
@@ -151,7 +151,7 @@ const originTransport = {
   acceptsHostHeader: 'any' as const,
 };
 
-/** The VLESS-over-WebSocket listener `w` behind the HTTPS origin (remark `node-one-relay-w`). */
+/** The VLESS-over-WebSocket listener `w` behind the HTTPS origin (remark `node-one-origin-w`). */
 function listenerW(over: Partial<ListenerSpecFixture> = {}): ListenerSpecFixture {
   return wsListener({
     listenerKey: 'w',
@@ -218,7 +218,7 @@ async function drain(t: ReturnType<typeof convexTest>, rotationId: Id<'edgeRotat
   throw new Error('drain: the rotation did not settle');
 }
 
-/** An adopted, published L7 (or L4) front on the relay's listener. */
+/** An adopted, published L7 (or L4) front on the origin's listener. */
 async function insertPublishedFront(
   t: ReturnType<typeof convexTest>,
   relayId: Id<'relays'>,
@@ -425,13 +425,13 @@ describe('edgeRotations: an L7 edge end to end', () => {
     const edgeId = r.toEdgeId!;
     const before = (await t.run((ctx) => ctx.db.get(listenerId)))!.revision;
     expect((await t.query(internal.edges.get, { id: edgeId }))!.frontQualification?.ok).toBe(true);
-    // The node role redeploys the inbound on a different path: what the proof
+    // The node role redeploys the transport on a different path: what the proof
     // exercised is no longer what a member would speak. (Not a rebind: the
     // standby may stay bound; the listener's revision moves.)
     const reg = await register(t, [listenerW({ transportParams: { path: '/other' } })]);
     expect(reg.changed).toBe(true);
     expect((await t.run((ctx) => ctx.db.get(listenerId)))!.revision).toBeGreaterThan(before);
-    // No Host flip is owed on an operator-managed relay, so the direct publish
+    // No Host flip is owed on an operator-managed origin, so the direct publish
     // reaches the publishability check, which refuses the stale proof.
     await t.mutation(internal.relays.update, { id: relayId, hostMode: 'operator' });
     await expect(t.mutation(internal.relays.publishEdge, { relayId, edgeId })).rejects.toThrow(
@@ -502,7 +502,7 @@ describe('edgeRotations: the L7 automatic-selection gate', () => {
       ctx.db.patch(relayId, {
         publishedEdgeIds: [edgeId],
         autoRotate: true,
-        // The default bound is two per relay per day.
+        // The default bound is two per origin per day.
         l7ReplacementsDayKey: today,
         l7ReplacementsToday: 2,
       }),
@@ -532,7 +532,7 @@ describe('edgeRotations: the L7 automatic-selection gate', () => {
     });
   });
 
-  /** A published L7 (or L4) front on the relay, as the detector's target. */
+  /** A published L7 (or L4) front on the origin, as the detector's target. */
   async function publishedFront(
     t: ReturnType<typeof convexTest>,
     relayId: Id<'relays'>,

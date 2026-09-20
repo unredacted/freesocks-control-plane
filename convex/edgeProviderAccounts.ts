@@ -1,5 +1,5 @@
 /**
- * Relay provider ACCOUNTS: one cloud account (+ region/zone/network settings)
+ * Origin provider ACCOUNTS: one cloud account (+ region/zone/network settings)
  * FCP may provision edges in. A sibling of mirrorProviders/backendServers: a
  * variable-length pool of secret-bearing rows.
  *
@@ -187,7 +187,7 @@ export const getInventory = internalQuery({
       }
     }
     if (inventory && Array.isArray(inventory.loadBalancers)) {
-      // `unowned` = no live edge ledger references the LB: what the relay import
+      // `unowned` = no live edge ledger references the LB: what the origin import
       // picker offers first (an owned one is already an edge).
       const owned = new Set<string>();
       for (const e of await ctx.db

@@ -1,5 +1,5 @@
 /**
- * Clash / Mihomo / Stash YAML renderer. The panel emits `proxies:` (one entry
+ * Clash / Mihomo / Stash YAML renderer. The backend emits `proxies:` (one entry
  * per Host, `name` = Host remark, `server`, `port`, `servername`) and
  * `proxy-groups:` whose `proxies` lists those names. Each listener's template
  * proxy is found by its matcher (name, or server:port, or the whole
@@ -7,7 +7,7 @@
  * it per assigned endpoint, drop the templates, replace their membership in
  * every group with the emitted names and (per rule) ensure a `url-test` group
  * named after the auto group, listed first in the selector. Comments are
- * dropped by the round trip (acceptable; the panel's template comments are
+ * dropped by the round trip (acceptable; the backend's template comments are
  * operator notes). Fail-open on any unknown shape.
  *
  * Removing a template never leaves a dangling reference: `rules` targets

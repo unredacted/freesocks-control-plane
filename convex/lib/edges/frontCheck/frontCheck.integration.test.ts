@@ -1,11 +1,11 @@
 /**
- * The front qualification against a PINNED Xray-core, the software the relay
+ * The front qualification against a PINNED Xray-core, the software the origin
  * nodes actually run.
  *
  * The fake servers in session.test.ts prove the checker handles every answer a
  * chain can give, but a fake written beside the checker can agree with it on
  * the same wrong bytes without anyone noticing. This test removes that risk:
- * real Xray inbounds over `ws`, `httpupgrade`, `grpc` and `xhttp`, a real VLESS client
+ * real Xray transports over `ws`, `httpupgrade`, `grpc` and `xhttp`, a real VLESS client
  * id, a real proxied request, and the same `qualifyFront` production calls.
  *
  * It runs only under the compat harness, which starts the container and mints
@@ -70,7 +70,7 @@ describe.skipIf(!BASE)('front qualification against pinned Xray-core', () => {
       { dial: { host: '127.0.0.1', port: portFor(protocol), ca } },
     );
 
-  test('websocket inbound accepts our handshake, VLESS request and framing', async () => {
+  test('websocket transport accepts our handshake, VLESS request and framing', async () => {
     const result = await run('ws', { path: '/relay-ws' });
     expect(result.code).toBeUndefined();
     expect(result.ok).toBe(true);
@@ -83,20 +83,20 @@ describe.skipIf(!BASE)('front qualification against pinned Xray-core', () => {
     expect(result.ok).toBe(true);
   });
 
-  test('grpc inbound accepts our Hunk framing on /<service>/Tun', async () => {
+  test('grpc transport accepts our Hunk framing on /<service>/Tun', async () => {
     const result = await run('grpc', { serviceName: 'relay-svc' });
     expect(result.code).toBeUndefined();
     expect(result.ok).toBe(true);
   });
 
-  test('xhttp inbound (packet-up) accepts our GET stream and sequenced POSTs', async () => {
+  test('xhttp transport (packet-up) accepts our GET stream and sequenced POSTs', async () => {
     const result = await run('xhttp', { path: '/relay-xh', mode: 'packet-up' });
     expect(result.code).toBeUndefined();
     expect(result.ok).toBe(true);
     expect(result.steps.map((s) => s.step)).toEqual(['tls', 'transport', 'vless', 'close']);
   });
 
-  test('xhttp: an inbound declared stream-only is reported as unsupported, never tried', async () => {
+  test('xhttp: a transport declared stream-only is reported as unsupported, never tried', async () => {
     const result = await run('xhttp', { path: '/relay-xh', mode: 'stream-one' });
     expect(result.ok).toBe(false);
     expect(result.code).toBe('transport_failed');
@@ -109,7 +109,7 @@ describe.skipIf(!BASE)('front qualification against pinned Xray-core', () => {
     expect(result.code).toMatch(/^(auth_failed|timeout_vless)$/);
   });
 
-  test('a path the inbound does not serve never becomes a tunnel', async () => {
+  test('a path the transport does not serve never becomes a tunnel', async () => {
     const result = await run('ws', { path: '/not-deployed' });
     expect(result.ok).toBe(false);
     expect(result.code).not.toBeUndefined();

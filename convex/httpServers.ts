@@ -6,8 +6,8 @@
  * and Host addresses, the same class of data the edges routes seal.
  *
  * Scopes: `admin:settings:*` for `config`, `admin:servers:read` for every
- * other route here. This surface is READ-ONLY toward the panel: `refresh`
- * re-reads one panel (throttled, it is the only route that makes a panel call)
+ * other route here. This surface is READ-ONLY toward the backend: `refresh`
+ * re-reads one backend (throttled, it is the only route that makes a backend call)
  * and `placements/validate` only computes over stored rows.
  *
  * `{slug}` is the backend server's slug. Responses are the shapes in
@@ -47,7 +47,7 @@ type Handler = (
 function statusFromCode(code: string): number {
   if (code === 'not_found') return 404;
   if (code === 'servers.manage_disabled') return 403;
-  // The panel could not be read: an upstream fault, not a refusal.
+  // The backend could not be read: an upstream fault, not a refusal.
   if (code === 'backend.panel_read_failed') return 502;
   if (code === 'conflict' || code.startsWith('servers.')) return 409;
   return 400;
@@ -61,15 +61,15 @@ function isReadOnlyPost(parts: string[]): boolean {
   if (parts.length === 3 && parts[1] === 'placements' && parts[2] === 'validate') return true;
   // A preview reads the profile and computes; it writes nothing.
   if (parts.length === 4 && parts[1] === 'profiles' && parts[3] === 'preview') return true;
-  // Looking at the panel again for an open op changes nothing on the panel.
+  // Looking at the backend again for an open op changes nothing on the backend.
   return parts.length === 4 && parts[1] === 'ops' && parts[3] === 'observe';
 }
 
 /**
  * `config` is a settings surface. Reads need `admin:servers:read`. A WRITE to a
- * panel needs `admin:servers:manage`, which is deliberately not
+ * backend needs `admin:servers:manage`, which is deliberately not
  * `admin:servers:write`: the node role's token holds that one. The role's
- * handoff report is the one write it may make here (it changes no panel).
+ * handoff report is the one write it may make here (it changes no backend).
  */
 /** `{slug}/nodes/by-name/{name}[/verb]`: the node role's own routes (docs/servers.md "Node lifecycle"). */
 export function isByNameRoute(parts: string[]): boolean {
@@ -105,9 +105,9 @@ function wrap(handler: Handler, sealedRoute: boolean) {
     const method = req.method.toUpperCase();
     const admin = await resolveAdmin(ctx, req, scopeFor(parts, method));
     if (!admin) return unauth();
-    // Whatever reaches a panel is throttled per actor: reads and writes apart.
+    // Whatever reaches a backend is throttled per actor: reads and writes apart.
     const readOnly = method === 'GET' || (method === 'POST' && isReadOnlyPost(parts));
-    // Of the role's routes only `bootstrap` reaches the panel (the node secret);
+    // Of the role's routes only `bootstrap` reaches the backend (the node secret);
     // enrollment and reports are records, reconciled from FCP's own actions.
     const byName = isByNameRoute(parts);
     const reachesPanel = readOnly
@@ -586,7 +586,7 @@ const deleteHandler: Handler = async (ctx, parts, admin, _body, query) => {
     const { opId } = await ctx.runMutation(internal.panelWrites.requestNodeDelete, {
       backendServerId: instance.id,
       nodeUuid: c,
-      // "Remove from panel" only; the default is "stop and remove".
+      // "Remove from backend" only; the default is "stop and remove".
       removeOnly: query.get('removeOnly') === '1',
       ...actorOf(admin),
     });

@@ -2,10 +2,10 @@
 /**
  * The restore workflow (convex/edgeRestore.ts), for all three purposes, with a
  * member download through the real fronted route between EVERY phase:
- * settle -> raw FCP body verified -> binding released with the relay enabled
+ * settle -> raw FCP body verified -> binding released with the origin enabled
  * and its edges published -> direct Hosts restored -> direct body verified ->
- * the purpose's finish. A direct Host is never enabled while the relay is
- * bound (pinned by an ordering assertion inside the panel write itself).
+ * the purpose's finish. A direct Host is never enabled while the origin is
+ * bound (pinned by an ordering assertion inside the backend write itself).
  */
 import { convexTest } from 'convex-test';
 import { afterEach, describe, expect, test, vi } from 'vitest';
@@ -77,10 +77,10 @@ function panelHosts(): PanelHostRow[] {
 }
 
 /**
- * Panel + relay `node-one` (REALITY listener `a`) with a verified published L4
+ * Backend + origin `node-one` (REALITY listener `a`) with a verified published L4
  * edge at EDGE_A, one member key pinned to the node, rendering on, and BOTH
  * direct Hosts hidden through the ledger (D2 approved). `bound` = the delivery
- * binding is claimed (a go-live happened); otherwise a guided relay before it.
+ * binding is claimed (a go-live happened); otherwise a guided origin before it.
  */
 async function world(opts: { bound: boolean }) {
   const panel = fakeHostPanel(panelHosts());
@@ -207,8 +207,8 @@ describe('judgeRawBody (pure)', () => {
   });
 });
 
-describe('acceptance 14: restore-direct deletion of a guided relay, a download between every phase', () => {
-  test('settle -> raw FCP body verified -> binding released with the relay enabled and edges published -> direct Hosts restored -> drain; a direct Host is never enabled while bound', async () => {
+describe('acceptance 14: restore-direct deletion of a guided origin, a download between every phase', () => {
+  test('settle -> raw FCP body verified -> binding released with the origin enabled and edges published -> direct Hosts restored -> drain; a direct Host is never enabled while bound', async () => {
     const w = await world({ bound: true });
     // Bound: the member gets the rendered body (edge address, never the origin).
     const rendered = await w.download();
@@ -267,7 +267,7 @@ describe('acceptance 14: restore-direct deletion of a guided relay, a download b
     await stillRendered();
     expect(await w.step()).toMatchObject({ phase: 'release_binding', advanced: true });
     await stillRendered();
-    // Phase 4: the binding goes while the relay stays enabled and its edge published.
+    // Phase 4: the binding goes while the origin stays enabled and its edge published.
     expect(await w.step()).toMatchObject({ phase: 'restore', advanced: true });
     expect((await w.binding())?.state).toBe('released');
     relay = await w.relay();
@@ -335,7 +335,7 @@ describe('acceptance 14: restore-direct deletion of a guided relay, a download b
     expect(d.reason).toBe('relay_disabled');
   });
 
-  test('a role-registered relay that never hid a Host still tears down at once', async () => {
+  test('a role-registered origin that never hid a Host still tears down at once', async () => {
     const panel = fakeHostPanel(panelHosts());
     const t = convexTest(schema, modules);
     const fx = await seedEdgeFixture(t, { listeners: [realityListener()] });
@@ -350,7 +350,7 @@ describe('acceptance 14: restore-direct deletion of a guided relay, a download b
 });
 
 describe('acceptance 5 + 25: cancel_setup after publication', () => {
-  test('edges stay published; settle + restore (an admin-edited Host released untouched); relay retained, owned + unbound, go_live_pending; upkeep still skips it', async () => {
+  test('edges stay published; settle + restore (an admin-edited Host released untouched); origin retained, owned + unbound, go_live_pending; upkeep still skips it', async () => {
     const w = await world({ bound: false });
     // Not bound: the member already gets the raw FCP-only body.
     const before = await w.download();
@@ -402,7 +402,7 @@ describe('acceptance 5 + 25: cancel_setup after publication', () => {
       att.items.some((i) => i.kind === 'go_live_pending' && i.relayId === (w.relayId as string)),
     ).toBe(true);
     expect(att.items.some((i) => i.kind === 'restore_in_progress')).toBe(false);
-    // Upkeep skips an owned relay: no rotation, the pool untouched.
+    // Upkeep skips an owned origin: no rotation, the pool untouched.
     const rep = await w.t.action(internal.edgeReconcile.run, {});
     expect(rep.started).toBe(0);
     expect((await w.relay()).activeRotationId).toBeUndefined();
@@ -414,7 +414,7 @@ describe('acceptance 5 + 25: cancel_setup after publication', () => {
 });
 
 describe('acceptance 25: release_requirement', () => {
-  test('retains everything (relay enabled, edges published), releases the binding after the raw FCP check, restores the Hosts and leaves the relay re-activatable', async () => {
+  test('retains everything (origin enabled, edges published), releases the binding after the raw FCP check, restores the Hosts and leaves the origin re-activatable', async () => {
     const w = await world({ bound: true });
     expect((await w.download()).body).toContain(EDGE_A);
     await w.t.mutation(internal.edgeRestore.start, {

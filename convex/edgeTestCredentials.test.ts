@@ -2,10 +2,10 @@
 /**
  * Temporary test credentials (docs/edges.md § "Publication"; acceptance 22 +
  * 27): the row exists BEFORE `issueUser`; closing the sheet (release),
- * cancelling the run (releaseForRelay) and a failed panel delete each leave a
+ * cancelling the run (releaseForRelay) and a failed backend delete each leave a
  * `pending` row the reconcile sweep removes (bounded retries, then attention
  * `test_key_cleanup`); an empty Outline server has no rehearsal credential
- * (`use_manual_setup`); Remnawave reuses the relay's qualification user and
+ * (`use_manual_setup`); Remnawave reuses the origin's qualification user and
  * writes no row.
  */
 import { convexTest } from 'convex-test';
@@ -105,7 +105,7 @@ describe('edgeTestCredentials (Outline temporary keys)', () => {
     for (const a of audits) expect(JSON.stringify(a)).not.toContain('ss://');
   });
 
-  test('the card closed: releaseForEdge expires the credential behind a link, scoped to the edge relay', async () => {
+  test('the card closed: releaseForEdge expires the credential behind a link, scoped to the edge origin', async () => {
     const { t, relayId, rows } = await seedOutline();
     const listener = await t.run((ctx) =>
       ctx.db
@@ -127,7 +127,7 @@ describe('edgeTestCredentials (Outline temporary keys)', () => {
     });
     expect(out).toEqual({ ok: true, released: true });
     expect((await rows())[0]!.expiresAt).toBeLessThanOrEqual(Date.now());
-    // A second call is a no-op; a credential of another relay is not found.
+    // A second call is a no-op; a credential of another origin is not found.
     expect(
       await t.mutation(internal.edgeTestCredentials.releaseForEdge, {
         edgeId: edgeId as Id<'edges'>,
@@ -136,7 +136,7 @@ describe('edgeTestCredentials (Outline temporary keys)', () => {
     ).toEqual({ ok: true, released: false });
   });
 
-  test('cancelling the run releases every pending row of the relay; the expiry (24 h) releases on its own', async () => {
+  test('cancelling the run releases every pending row of the origin; the expiry (24 h) releases on its own', async () => {
     const { t, relayId, outline, rows } = await seedOutline();
     await t.action(internal.edgeTestCredentials.ensure, { relayId, purpose: 'test_link' });
     expect(await t.mutation(internal.edgeTestCredentials.releaseForRelay, { relayId })).toEqual({
@@ -157,7 +157,7 @@ describe('edgeTestCredentials (Outline temporary keys)', () => {
     expect((await rows()).every((x) => x.removal === 'done')).toBe(true);
   });
 
-  test('a failed panel delete stays pending with backoff, then `failed` after the retry cap with attention `test_key_cleanup`; retry re-arms it', async () => {
+  test('a failed backend delete stays pending with backoff, then `failed` after the retry cap with attention `test_key_cleanup`; retry re-arms it', async () => {
     const { t, relayId, outline, rows } = await seedOutline();
     const r = await t.action(internal.edgeTestCredentials.ensure, {
       relayId,
@@ -190,7 +190,7 @@ describe('edgeTestCredentials (Outline temporary keys)', () => {
       action: 'open_relay',
       facts: { purpose: 'test_link', attempts: TEST_CREDENTIAL_MAX_ATTEMPTS },
     });
-    // The panel is back: the operator's retry re-arms the row and the sweep finishes it.
+    // The backend is back: the operator's retry re-arms the row and the sweep finishes it.
     outline.failDeleteWith = null;
     await t.mutation(internal.edgeTestCredentials.retryCleanup, { id });
     expect(await t.action(internal.edgeTestCredentials.sweep, {})).toMatchObject({ removed: 1 });
@@ -208,7 +208,7 @@ describe('edgeTestCredentials (Outline temporary keys)', () => {
 });
 
 describe('edgeTestCredentials (Remnawave: the qualification user)', () => {
-  test('both purposes reuse the relay credential through the persisted mint; no row is written; the second call reuses', async () => {
+  test('both purposes reuse the origin credential through the persisted mint; no row is written; the second call reuses', async () => {
     const panel = fakePanel();
     const t = convexTest(schema, modules);
     await insertPanelServer(t);
@@ -246,7 +246,7 @@ describe('edgeTestCredentials (Remnawave: the qualification user)', () => {
     expect(await t.run((ctx) => ctx.db.query('edgeTestCredentials').collect())).toEqual([]);
   });
 
-  test('a relay with no bound placement: the rehearsal credential is refused with choose_mode', async () => {
+  test('an origin with no bound placement: the rehearsal credential is refused with choose_mode', async () => {
     fakePanel();
     const t = convexTest(schema, modules);
     await insertPanelServer(t);

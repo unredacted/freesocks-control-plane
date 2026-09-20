@@ -1,10 +1,10 @@
 /**
  * Server-management configuration (`servers.manage.*` rows in `appSettings`).
- * Everything ships DORMANT: with the defaults FCP makes no additional panel
+ * Everything ships DORMANT: with the defaults FCP makes no additional backend
  * call and accepts no management write.
  *
- *  - `observe`: read each capable panel's nodes, config profiles, Hosts and
- *    squads at the tail of the backend healthcheck (and on demand). Read-only.
+ *  - `observe`: read each capable backend's nodes, config profiles, Hosts and
+ *    mode groups at the tail of the backend healthcheck (and on demand). Read-only.
  *  - `enabled`: accept management WRITES. Off, every write route refuses with
  *    `servers.manage_disabled`. Observation does not depend on it, and turning
  *    it off never hands ownership of anything back to another writer.

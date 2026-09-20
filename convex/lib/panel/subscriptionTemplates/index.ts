@@ -1,10 +1,10 @@
 /**
- * The panel's subscription templates FCP keeps in shape (pure). Moved from
- * the node role: the panel splices proxies into these bodies at the
+ * The backend's subscription templates FCP keeps in shape (pure). Moved from
+ * the node role: the backend splices proxies into these bodies at the
  * "# LEAVE THIS LINE!" anchors, so the YAML ones travel BYTE-EXACT (`String.raw`,
- * compared as their base64 encoding, which is what the panel stores), and the
- * JSON one is compared structurally. A template the panel does not have is
- * skipped; the panel owns the type list.
+ * compared as their base64 encoding, which is what the backend stores), and the
+ * JSON one is compared structurally. A template the backend does not have is
+ * skipped; the backend owns the type list.
  */
 import { sha256Hex } from '../../crypto';
 import { canonicalJson } from '../digest';
@@ -25,7 +25,7 @@ export const SUBSCRIPTION_TEMPLATES: Readonly<Record<TemplateFamily, DesiredTemp
   CLASH: { kind: 'yaml', body: CLASH_YAML },
 };
 
-/** Standard base64 of a UTF-8 string (the panel's `encodedTemplateYaml`). */
+/** Standard base64 of a UTF-8 string (the backend's `encodedTemplateYaml`). */
 export function base64Utf8(s: string): string {
   const bytes = new TextEncoder().encode(s);
   let bin = '';
@@ -55,7 +55,7 @@ export async function templateHash(d: DesiredTemplate): Promise<string> {
   return sha256Hex(d.kind === 'json' ? canonicalJson(d.body) : d.body);
 }
 
-/** The hash of what the panel holds, in the same terms, or null when it holds nothing. */
+/** The hash of what the backend holds, in the same terms, or null when it holds nothing. */
 export async function liveTemplateHash(live: {
   templateJson: unknown | null;
   encodedTemplateYaml: string | null;

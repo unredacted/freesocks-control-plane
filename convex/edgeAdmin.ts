@@ -1,5 +1,5 @@
 /**
- * Admin-facing relay reads/writes that span the relay modules: the summary the
+ * Admin-facing origin reads/writes that span the origin modules: the summary the
  * CMS renders, the config namespace (with write-only probe secrets), the IaC
  * by-slug view, the published-endpoint view, live LB snapshots, operator
  * resolutions for parked edges, and the per-family render preview. Route
@@ -192,7 +192,7 @@ export const configView = internalQuery({
  * PATCH the `edge.*` namespace. `patch` is the nested config shape (any subset);
  * `patch.secrets` carries write-only probe credentials (blank = keep). Audited as
  * the list of changed keys only. A `render.*` change alters what every member
- * receives, so it bumps every enabled relay's publication epoch (the /sub cache
+ * receives, so it bumps every enabled origin's publication epoch (the /sub cache
  * token) and refreshes the stored mirrors once.
  */
 export const patchConfig = internalMutation({
@@ -241,7 +241,7 @@ export const patchConfig = internalMutation({
  * `edge.autoProvisionToDesired` to `on`, and keep one verified spare per
  * listener (`edge.standbyPerListener = 1`) when turning on (left as-is when
  * turning off, so nobody's bill changes twice). Never `render.enabled` or
- * `l7.autoSelect`; no relay row is touched (a relay's own `autoRotate` keeps
+ * `l7.autoSelect`; no origin row is touched (an origin's own `autoRotate` keeps
  * its meaning under the global gate). Audited as the boolean only.
  */
 export const setAutomation = internalMutation({
@@ -400,7 +400,7 @@ function udpProviderAvailable(): boolean {
 }
 
 /**
- * The node role's view of a relay (`GET/PUT …/relays/by-slug/{slug}`): the
+ * The node role's view of an origin (`GET/PUT …/origins/by-slug/{slug}`): the
  * minimal projection. No detector state, no rotation limits, no pool-wide
  * provider names: a leaked register token learns none of them.
  */
@@ -463,7 +463,7 @@ export const relayBySlugView = internalQuery({
   },
 });
 
-/** The full admin view of a relay's listeners + endpoints (the CMS). */
+/** The full admin view of an origin's listeners + endpoints (the CMS). */
 export const relayListenersView = internalQuery({
   args: { relayId: v.id('relays') },
   handler: async (ctx, { relayId }) => {
@@ -823,9 +823,9 @@ export const publishedEdgeIdsOf = internalQuery({
 });
 
 /**
- * Nodes the panel currently lists (the healthcheck cron's inventory cache, or a
- * fresh pull via backendNodes.refreshNodeInventory), with whether a relay is
- * already registered for each: the "New relay" picker pre-fills from these.
+ * Nodes the backend currently lists (the healthcheck cron's inventory cache, or a
+ * fresh pull via backendNodes.refreshNodeInventory), with whether an origin is
+ * already registered for each: the "New origin" picker pre-fills from these.
  */
 export const nodeCandidates = internalQuery({
   args: { backendServerId: v.id('backendServers') },

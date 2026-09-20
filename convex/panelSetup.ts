@@ -997,7 +997,7 @@ export const readyFor = internalQuery({
  *    holds one any more (contract v1 is gone), and nothing may stay reserved.
  *  - A `panelSetups` row written before modes is removed with everything it
  *    fenced (its intents, their activation runs, retirements, obligations and
- *    holds). Such a row describes three fixed inbounds and squads, a shape
+ *    holds). Such a row describes three fixed transports and mode groups, a shape
  *    that no longer exists; the operator sets the backend up again, which
  *    ADOPTS what is there, and adopts each live node. Nothing on the backend
  *    and nothing a member holds is touched here: these are FCP's own rows.

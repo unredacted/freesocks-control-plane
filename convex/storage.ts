@@ -42,11 +42,11 @@ export interface MirrorValidation {
 }
 
 /**
- * Relay rendering for a mirror body under the EDGE-REQUIRED policy
+ * Origin rendering for a mirror body under the EDGE-REQUIRED policy
  * (docs/edges.md): a mirror serves the same rendered endpoints as the fronted
  * route (link-list family: no User-Agent here). Returns the body to upload, the
  * origin's publication epoch it was rendered against, and the validation record
- * for the mirror row. A place no relay covers passes the body through
+ * for the mirror row. A place no origin covers passes the body through
  * (`validated: null`). A covered place whose render is refused gets the
  * UNAVAILABLE STUB, never the origin body: the mirror URL is already
  * distributed, so the object itself must stop serving the origin.
@@ -457,7 +457,7 @@ async function refreshOneSubMirrors(
     // For a member who only ever uses the mirror URL this is the ONLY
     // place the pin gets written, and without it their next switch-server
     // finds no pin to rotate and refuses with `no_alternative` even
-    // though the squad has other nodes.
+    // though the mode group has other nodes.
     //
     // The pin must describe the node the member's mirror ACTUALLY serves,
     // so it is written at exactly the two points where that is true:
@@ -484,7 +484,7 @@ async function refreshOneSubMirrors(
           })
         : Promise.resolve(null);
     const tokenBefore = await tokenOf();
-    // Relay rendering (docs/edges.md): a mirror serves the same rendered
+    // Origin rendering (docs/edges.md): a mirror serves the same rendered
     // endpoints as the fronted route (link-list family: no User-Agent here).
     const rendered = await renderMirrorBody(
       ctx,
@@ -497,7 +497,7 @@ async function refreshOneSubMirrors(
     // The mirror now provably holds content generated at `contentAt` (and
     // rendered against the current epoch): stamp it exactly where the pin is
     // recorded, so a mirror-only member is not "never refreshed" forever to
-    // the relay heuristics.
+    // the origin heuristics.
     const stampContent = () =>
       ctx.runMutation(internal.subscriptions.markMirrorRefreshed, {
         subscriptionId: sub.id,

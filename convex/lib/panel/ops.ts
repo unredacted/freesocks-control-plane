@@ -1,15 +1,15 @@
 /**
- * The rules of a panel write (pure; unit-tested). See `panelOps` in schema.ts.
+ * The rules of a backend write (pure; unit-tested). See `panelOps` in schema.ts.
  *
- * A write to a panel has three independent facts, and conflating them is how a
+ * A write to a backend has three independent facts, and conflating them is how a
  * control plane ends up overwriting its own later work:
  *
  *   request      what happened to the HTTP exchange;
  *   panelState   whether the intended result was SEEN on a read made afterwards;
- *   asyncEffect  whether work the panel QUEUED behind the write has finished.
+ *   asyncEffect  whether work the backend QUEUED behind the write has finished.
  *
  * `request`: only an outcome on the pre-mutation ALLOWLIST proves nothing
- * changed. Measured on the panel (docs/backends.md "Management contract"): an
+ * changed. Measured on the backend (docs/backends.md "Management contract"): an
  * auth rejection stores nothing, while an invalid config also stores nothing
  * but answers 500, and a 5xx can never be on the list (a gateway can answer one
  * while upstream commits). So: no bytes sent, 401 and 403 are rejected; a 2xx is
@@ -95,7 +95,7 @@ export function displayState(op: OpFacts): OpDisplayState {
 /**
  * A Host being CREATED has no uuid and its attributes enforce no uniqueness (an
  * identical create is a second Host, measured). Its reserved identity is what
- * discovery looks for after a lost response: remark + inbound + address:port,
+ * discovery looks for after a lost response: remark + transport + address:port,
  * the same composite the edges Host machine matches on.
  */
 export function hostIdentity(h: {
@@ -162,9 +162,9 @@ export function fieldsMatch(
 export const GONE_LOOKS_REQUIRED = 2;
 
 /**
- * Whether the panel's queued node work behind a write is finished: for every
- * node recorded before the call, the panel's `lastStatusChange` has moved. A
- * node that is unreachable stays PENDING (the panel delivers on reconnect,
+ * Whether the backend's queued node work behind a write is finished: for every
+ * node recorded before the call, the backend's `lastStatusChange` has moved. A
+ * node that is unreachable stays PENDING (the backend delivers on reconnect,
  * measured), which is the honest answer. `isConnected` and `xrayUptime` are
  * deliberately not read: neither says anything about application (measured).
  */
@@ -200,7 +200,7 @@ export function hostLock(
   return null;
 }
 
-/** `<node>-relay[-<key>]`: a remark the edges machinery owns; an operator may not create one. */
+/** `<node>-origin[-<key>]`: a remark the edges machinery owns; an operator may not create one. */
 export function looksLikeRelayRemark(remark: string, nodeNames: readonly string[]): boolean {
   return nodeNames.some((n) => {
     const esc = n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

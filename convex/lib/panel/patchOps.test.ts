@@ -93,13 +93,13 @@ describe('applyPatchOps', () => {
       'a.example',
       'b.example',
     ]);
-    // Tag, protocol and position are never touched (the panel keys the inbound uuid on them).
+    // Tag, protocol and position are never touched (the backend keys the transport uuid on them).
     expect(
       next.inbounds.map((i: { tag: string; protocol: string }) => [i.tag, i.protocol]),
     ).toEqual(before.inbounds.map((i: { tag: string; protocol: string }) => [i.tag, i.protocol]));
   });
 
-  test('writes whichever of dest / target the inbound already carries', () => {
+  test('writes whichever of dest / target the transport already carries', () => {
     const out = applyPatchOps(config(), [
       { op: 'setRealityTarget', inboundTag: 'r2', target: 'new.example:8443' },
       { op: 'setRealityTarget', inboundTag: 'r1', target: 'new.example:8443' },

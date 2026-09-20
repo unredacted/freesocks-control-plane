@@ -1,12 +1,12 @@
 /**
- * Relay-edge configuration: the `edge.*` appSettings namespace (the
+ * Origin-edge configuration: the `edge.*` appSettings namespace (the
  * analyticsConfig.ts pattern — typed defaults, per-field sanitizers, a parallel
  * by_key resolver, partial-PATCH writes; deliberately NOT in SETTINGS_DEFAULTS).
  *
  * Three sub-namespaces:
- *   relay.*          rotation / pool / detector knobs (`EdgeConfig`)
- *   relay.render.*   how FCP renders relay endpoints per client family
- *   relay.probe.*    external/internal reachability probes
+ *   origin.*          rotation / pool / detector knobs (`EdgeConfig`)
+ *   origin.render.*   how FCP renders origin endpoints per client family
+ *   origin.probe.*    external/internal reachability probes
  * Probe credentials use the billing.secret.* pattern: `edge.secret.*` keys,
  * write-only (blank = unchanged), surfaced to the admin as set/not-set booleans.
  */
@@ -37,11 +37,11 @@ export type Ipv6Mode = 'inherit' | 'off' | 'auto-group-only' | 'both';
 
 /** Per-family rendering rule (stored as one JSON row per family). */
 export interface ClientRenderRule {
-  /** Render relay endpoints for this family; off = pass the panel body through. */
+  /** Render origin endpoints for this family; off = pass the backend body through. */
   enabled: boolean;
   /** Emit a named automatic group (sing-box urltest / Mihomo url-test) where the format has one. */
   autoGroup: boolean;
-  /** '' = the global relay.render.autoGroupName. */
+  /** '' = the global origin.render.autoGroupName. */
   autoGroupName: string;
   includeBackup: boolean;
   ipv6Mode: Ipv6Mode;
@@ -74,7 +74,7 @@ export function defaultClientRule(family: RenderClientFamily): ClientRenderRule 
 // --- main config -------------------------------------------------------------
 
 /**
- * The published-pool cap per relay. Coverage needs one slot per deployed
+ * The published-pool cap per origin. Coverage needs one slot per deployed
  * listener (`ensurePoolCapacity`), so the bound is the listener cap of a guided
  * setup, not a tuning knob.
  */
@@ -127,14 +127,14 @@ export interface EdgeConfig {
     minBaselineSamples: number;
     probeWeight: number;
     allowProbeOnlyAutoRotate: boolean;
-    /** Report rows read per relay per evaluation; past it the window is `incomplete` (no rotation). */
+    /** Report rows read per origin per evaluation; past it the window is `incomplete` (no rotation). */
     maxReportRowsPerEval: number;
   };
   /** L7 (CDN front) edges. */
   l7: {
     /** Automatic selection of L7 accounts (detector replacements, auto-provision). Off until the node role registers the L7 slot fields. */
     autoSelect: boolean;
-    /** Same-provider L7 replacements per relay per UTC day (a new hostname is not a new frontend IP). */
+    /** Same-provider L7 replacements per origin per UTC day (a new hostname is not a new frontend IP). */
     maxSameProviderReplacementsPerDay: number;
     /** Affected-country evidence wait for a detector-triggered L7 replacement. */
     qualifyTimeoutMinutes: number;
@@ -146,7 +146,7 @@ export interface EdgeConfig {
     maxRequalifyPerTick: number;
   };
   render: {
-    /** Master switch for FCP-rendered relay endpoints; off = the panel body passes through. */
+    /** Master switch for FCP-rendered origin endpoints; off = the backend body passes through. */
     enabled: boolean;
     autoGroupName: string;
     primaryLabel: string;
@@ -177,7 +177,7 @@ export interface EdgeConfig {
     preferEyeball: boolean;
     /** Gap between consecutive runs against the same external source within one batch (ms). */
     sourceSpacingMs: number;
-    /** Probe the IPv6 path of relay / custom targets (edge targets follow `render.ipv6Mode`). */
+    /** Probe the IPv6 path of origin / custom targets (edge targets follow `render.ipv6Mode`). */
     ipv6: boolean;
   };
 }

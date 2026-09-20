@@ -2,7 +2,7 @@
  * Node intents: the bootstrap contract v2 between the node role and FCP
  * (docs/servers.md "Node lifecycle"). The role enrolls a node ONCE (purpose,
  * name, label) and reports observations on every run; FCP owns the machine
- * settings (ingress, origin hostname, node port), the panel row, the direct
+ * settings (ingress, origin hostname, node port), the backend row, the direct
  * Host, the origin DNS record and the release to members. Every workflow
  * step is fenced by (generation, attempt) and resumed by the sweep; external
  * side effects are obligations persisted before the call.
@@ -249,7 +249,7 @@ export const enroll = internalMutation({
       });
       intent = (await ctx.db.get(intent._id))!;
     } else {
-      // An existing panel node or Host of this name that no intent owns is an
+      // An existing backend node or Host of this name that no intent owns is an
       // adoption decision for an admin, never the token's.
       const nodes = await ctx.db
         .query('panelNodes')
@@ -258,7 +258,7 @@ export const enroll = internalMutation({
       if (nodes.some((n) => n.name === a.name))
         refuse(
           'servers.node_exists_unowned',
-          'A node with this name exists on the panel. Adopt it from Servers first',
+          'A node with this name exists on the backend. Adopt it from Servers first',
         );
       const tomb = (
         await ctx.db
@@ -786,7 +786,7 @@ type ProgressPatch = Infer<typeof progressPatch>;
 
 /**
  * Record the revisions a run observed. A move under evidence already taken
- * (the profile token, the inbound, the REALITY material) or a direct node's
+ * (the profile token, the transport, the REALITY material) or a direct node's
  * endpoint moving under its Host is OBSERVED DRIFT (docs/servers.md "Node
  * lifecycle"): the invalidated evidence goes, running activations are
  * superseded, and a live node closes under a maintenance transition until it
@@ -960,7 +960,7 @@ export const progress = internalMutation({
   },
 });
 
-// --- the run: reconcile the panel row, the direct Host and the origin name ----------------------
+// --- the run: reconcile the backend row, the direct Host and the origin name ----------------------
 
 class Fenced extends Error {}
 
@@ -1292,8 +1292,8 @@ export interface BootstrapAnswer {
 }
 
 /**
- * What the role needs to configure the machine, plus the panel's node secret
- * read from the panel right now and returned to the caller only: never
+ * What the role needs to configure the machine, plus the backend's node secret
+ * read from the backend right now and returned to the caller only: never
  * persisted by FCP, never audited, never logged.
  */
 export const bootstrap = internalAction({
@@ -1332,7 +1332,7 @@ export const bootstrap = internalAction({
 
 // --- the delivery gate -------------------------------------------------------------------------------
 
-/** The gate for one node of one panel (docs/servers.md "Node lifecycle"). */
+/** The gate for one node of one backend (docs/servers.md "Node lifecycle"). */
 export async function nodeGateFor(
   ctx: { db: QueryCtx['db'] },
   sid: Id<'backendServers'>,
@@ -1367,7 +1367,7 @@ export async function heldNodeNames(
   return new Set(holds.filter((h) => !h.released).flatMap((h) => h.heldNodeNames));
 }
 
-/** The names of every enrolled node of a panel whose gate is closed (the pinner never picks one while another exists). */
+/** The names of every enrolled node of a backend whose gate is closed (the pinner never picks one while another exists). */
 export const blockedNodeNames = internalQuery({
   args: { backendServerId: v.id('backendServers') },
   handler: async (ctx, { backendServerId }) => {
@@ -1395,7 +1395,7 @@ export const nodeGate = internalQuery({
 /**
  * The role asks for a node to be retired. Only a request: the admin decides
  * whenever the node was ever live or anything of it is still out there
- * (Hosts, a relay, DNS, credentials); otherwise the ladder starts at once.
+ * (Hosts, an origin, DNS, credentials); otherwise the ladder starts at once.
  */
 export const requestRetirement = internalMutation({
   args: {
@@ -1791,7 +1791,7 @@ export const resumeSetup = internalMutation({
   },
 });
 
-/** On `panel-reconcile`: resume what an interrupted attempt left pending. */
+/** On `backend-reconcile`: resume what an interrupted attempt left pending. */
 export const sweep = internalAction({
   args: {},
   handler: async (ctx): Promise<{ intents: number; setups: number }> =>

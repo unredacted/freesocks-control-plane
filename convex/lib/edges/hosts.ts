@@ -1,14 +1,14 @@
 /**
- * Pure helpers for the relay layer's view of a backend's Hosts (client-facing
+ * Pure helpers for the origin layer's view of a backend's Hosts (client-facing
  * connection entries). Two jobs:
  *
  *  1. Find the TEMPLATE Host that belongs to an origin slot. The Ansible role
  *     creates exactly one per slot with the stable remark
- *     `<nodeHostname>-relay-<slotKey>`; the remark is the identity, so a
+ *     `<nodeHostname>-origin-<slotKey>`; the remark is the identity, so a
  *     friendly display label elsewhere never affects discovery.
- *  2. Diff a set of planned Hosts against what the panel actually holds
+ *  2. Diff a set of planned Hosts against what the backend actually holds
  *     (observe-then-write): which are already at the target, which still need
- *     a write, which vanished or changed inbound. A planned uuid that is missing
+ *     a write, which vanished or changed transport. A planned uuid that is missing
  *     is `hosts_changed`, NEVER convergence — an empty remaining set is not a
  *     success.
  *
@@ -29,8 +29,8 @@ export function templateHostRemark(nodeHostname: string, slotKey: string): strin
   return `${nodeHostname}-relay-${slotKey}`;
 }
 
-/** Matches every relay Host of a node: `<node>-relay`, `<node>-relay-<slotKey>`,
- *  and the legacy `<node>-relay-<hash6>` multi-SNI convention. */
+/** Matches every origin Host of a node: `<node>-origin`, `<node>-origin-<slotKey>`,
+ *  and the legacy `<node>-origin-<hash6>` multi-SNI convention. */
 export function relayRemarkRegex(nodeHostname: string): RegExp {
   const esc = nodeHostname.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp(`^${esc}-relay(?:-[a-z0-9]{1,16})?$`);
@@ -92,7 +92,7 @@ export interface HostPlanEntry {
 
 /**
  * The Host tuple a flip writes. `null` = the field must be CLEARED on the
- * panel; `undefined` = the field is not part of this target (not compared, not
+ * backend; `undefined` = the field is not part of this target (not compared, not
  * written), which keeps legacy callers that only move address/port working.
  */
 export interface HostTarget {
@@ -102,7 +102,7 @@ export interface HostTarget {
   host?: string | null;
 }
 
-/** `''` and `null` mean the same thing on the panel: the field carries nothing. */
+/** `''` and `null` mean the same thing on the backend: the field carries nothing. */
 function sameOptional(live: string | null | undefined, want: string | null): boolean {
   const l = live === undefined || live === null || live === '' ? null : live.trim().toLowerCase();
   const w = want === null || want === '' ? null : want.trim().toLowerCase();
@@ -114,9 +114,9 @@ export interface HostDiff {
   atTarget: HostPlanEntry[];
   /** Planned Hosts that still need a write. */
   needsWrite: HostPlanEntry[];
-  /** Planned uuids the panel no longer has. */
+  /** Planned uuids the backend no longer has. */
   missing: HostPlanEntry[];
-  /** Planned Hosts whose inbound binding changed (the role re-created them). */
+  /** Planned Hosts whose transport binding changed (the role re-created them). */
   changedInbound: HostPlanEntry[];
   /** True iff every planned Host is present, unchanged, and at the target. */
   converged: boolean;
@@ -129,7 +129,7 @@ export interface HostDiff {
  * Convergence requires a NON-EMPTY plan with every entry present and at target.
  * SNI / Host are compared only when the target defines them, so an L4 → L7
  * transition (which must also rewrite them) is not reported converged while the
- * panel still carries the previous layer's names.
+ * backend still carries the previous layer's names.
  */
 export function diffHosts(
   live: readonly BackendHost[],
@@ -174,7 +174,7 @@ export function diffHosts(
 
 /**
  * Build the plan entries from matched template Hosts (skipping leaking ones).
- * Captures the FULL previous tuple at version 2: `''` on the panel is recorded
+ * Captures the FULL previous tuple at version 2: `''` on the backend is recorded
  * as `null` (the Host carried nothing), which a rollback then clears again.
  */
 export function planFromMatches(matches: readonly SlotHostMatch[]): HostPlanEntry[] {

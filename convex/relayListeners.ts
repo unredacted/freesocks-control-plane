@@ -1,9 +1,9 @@
 /**
- * Relay LISTENERS: one port the origin answers on, what it speaks (protocol /
+ * Origin LISTENERS: one port the origin answers on, what it speaks (protocol /
  * stream transport / security, src/shared/contracts/edgeProtocolIds.ts), the
  * names and REALITY target the renderer needs, how the renderer finds its
- * entry in a subscription body, and, for a panel origin, the inbound it maps
- * to and the panel Host FCP owns for it. Edges bind to one listener.
+ * entry in a subscription body, and, for a backend origin, the transport it maps
+ * to and the backend Host FCP owns for it. Edges bind to one listener.
  *
  * Replaces the former slot + protocol-profile pair (a profile's names, target
  * and provider scope now live on the listener; fleet-wide name retirement is
@@ -49,7 +49,7 @@ import { nameRetireKeepsVerification } from './lib/edges/verification';
 
 export type Listener = Doc<'relayListeners'>;
 
-// --- validators shared with relays.ts (the registration body) --------------------------------
+// --- validators shared with origins.ts (the registration body) --------------------------------
 
 export const originTransportValidator = v.object({
   scheme: v.union(v.literal('http'), v.literal('https')),
@@ -125,7 +125,7 @@ export async function listenerByKey(
     .unique();
 }
 
-/** The template Host remark a listener owns (null = no panel Host). */
+/** The template Host remark a listener owns (null = no backend Host). */
 export function listenerRemark(l: Listener): string | null {
   return l.matchRule.kind === 'remark' ? l.matchRule.remark : null;
 }
@@ -135,9 +135,9 @@ export function activeNames(l: Pick<Listener, 'tlsNames'>): string[] {
 }
 
 /**
- * THE one server name written to a listener's panel Host, used for probes, and
+ * THE one server name written to a listener's backend Host, used for probes, and
  * shown as "the" name of an endpoint. It is what a member gets who copies a raw
- * config from the panel (no per-member selection happens there) and what every
+ * config from the backend (no per-member selection happens there) and what every
  * fallback uses, so it must be the safest name there is: the first active name
  * that is not known blocked in any curated country, else simply the first
  * active one. Stored order, so it only moves when that name leaves.
@@ -277,7 +277,7 @@ export interface ApplyRegistrationResult {
 }
 
 /**
- * Apply a registration body's listeners to a relay: create, update (material
+ * Apply a registration body's listeners to an origin: create, update (material
  * change only), leave unchanged, and prune the caller's own listeners the body
  * omits. One epoch bump for the whole body when anything changed. Throws
  * `edge.listener_in_use` when a rebind / prune would strand a non-destroyed
@@ -291,7 +291,7 @@ export async function applyRegistration(
   source: 'role' | 'admin',
   opts: { prune: boolean; actorAdminId?: Id<'adminUsers'> },
 ): Promise<ApplyRegistrationResult> {
-  // A server change that is bringing this relay's listeners back in step owns them meanwhile.
+  // A server change that is bringing this origin's listeners back in step owns them meanwhile.
   await assertNoRelayPanelClaim(ctx.db, relay);
   const specs = inputs.map((s) => validateListenerSpec(s, { origin: relay.origin }));
   const existing = await listenersOf(ctx, relay._id);
@@ -471,7 +471,7 @@ export async function applyRegistration(
           message: `${stranded.length} edge(s) front listener ${ex.listenerKey} on a layer this change no longer allows; destroy them before changing its origin transport`,
         });
     }
-    // A re-bound inbound gets a NEW panel Host; forget the old one.
+    // A re-bound transport gets a NEW backend Host; forget the old one.
     if (rebound && ex.host) row.host = { state: 'absent' };
     await ctx.db.patch(ex._id, {
       ...row,
@@ -514,7 +514,7 @@ export const upsert = internalMutation({
   handler: async (ctx, { relayId, spec, actorAdminId }) => {
     await assertAdmission(ctx.db, 'registration');
     const relay = await ctx.db.get(relayId);
-    if (!relay) throw new ConvexError({ code: 'not_found', message: 'Relay not found' });
+    if (!relay) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     const r = await applyRegistration(ctx, relay, [spec as ListenerSpecInput], 'admin', {
       prune: false,
       actorAdminId,
@@ -552,7 +552,7 @@ export const retire = internalMutation({
   },
   handler: async (ctx, { relayId, listenerKey, actorAdminId }) => {
     const relay = await ctx.db.get(relayId);
-    if (!relay) throw new ConvexError({ code: 'not_found', message: 'Relay not found' });
+    if (!relay) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     const l = await listenerByKey(ctx, relayId, listenerKey);
     if (!l || l.retired) return { ok: true as const };
     await assertNoRotationOrQuarantine(ctx.db, relay);
@@ -568,7 +568,7 @@ export const retire = internalMutation({
       throw new ConvexError({
         code: 'edge.host_present',
         message:
-          'Delete the listener’s panel Host first (or it will be removed by the Host cleanup)',
+          'Delete the listener’s backend Host first (or it will be removed by the Host cleanup)',
       });
     await ctx.db.patch(l._id, {
       retired: true,
@@ -599,7 +599,7 @@ export const setEnabled = internalMutation({
     const l = await ctx.db.get(id);
     if (!l) throw new ConvexError({ code: 'not_found', message: 'Listener not found' });
     const relay = await ctx.db.get(l.relayId);
-    if (!relay) throw new ConvexError({ code: 'not_found', message: 'Relay not found' });
+    if (!relay) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     if (l.enabled === enabled) return { ok: true as const };
     await assertNoRotationOrQuarantine(ctx.db, relay);
     await ctx.db.patch(id, { enabled, revision: l.revision + 1, updatedAt: Date.now() });
@@ -707,16 +707,16 @@ async function retireOn(
 
 /**
  * Family names that left their family (burned, retired, or no longer served by
- * the target) leave the relays too, with the normal drain. Two rules:
+ * the target) leave the origins too, with the normal drain. Two rules:
  *
- *  - `keepLast`: a name that merely stopped qualifying never takes a relay's
- *    LAST active name with it. A relay with one doubtful name still serves its
- *    members; a relay with none serves nobody. A burn passes `false`: a name
+ *  - `keepLast`: a name that merely stopped qualifying never takes an origin's
+ *    LAST active name with it. An origin with one doubtful name still serves its
+ *    members; an origin with none serves nobody. A burn passes `false`: a name
  *    known blocked is worse than no name.
- *  - a relay that is rotating, restoring, quarantined or being changed by
+ *  - an origin that is rotating, restoring, quarantined or being changed by
  *    Servers is skipped and counted, never forced.
  *
- * When the name that goes is the one the panel Host carries, the Host follows
+ * When the name that goes is the one the backend Host carries, the Host follows
  * (`hostOps.resyncSni`).
  */
 export async function retireFamilyNames(
@@ -783,7 +783,7 @@ export const retireName = internalMutation({
     const l = await ctx.db.get(id);
     if (!l) throw new ConvexError({ code: 'not_found', message: 'Listener not found' });
     const relay = await ctx.db.get(l.relayId);
-    if (!relay) throw new ConvexError({ code: 'not_found', message: 'Relay not found' });
+    if (!relay) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     await assertNoRotationOrQuarantine(ctx.db, relay);
     const cfg = await resolveEdgeConfig(ctx.db);
     const targets = new Set(names.map(normalizeName).filter((n): n is string => !!n));
@@ -809,8 +809,8 @@ export const retireName = internalMutation({
 });
 
 /**
- * Fleet-wide retirement of a burned name: every listener on every relay that
- * carries it, in ONE transaction, so it can never half-apply. A relay that is
+ * Fleet-wide retirement of a burned name: every listener on every origin that
+ * carries it, in ONE transaction, so it can never half-apply. An origin that is
  * rotating or quarantined refuses the whole call (the operator resolves that
  * first; nothing is retired anywhere).
  */
@@ -862,7 +862,7 @@ export const reactivateName = internalMutation({
     const l = await ctx.db.get(id);
     if (!l) throw new ConvexError({ code: 'not_found', message: 'Listener not found' });
     const relay = await ctx.db.get(l.relayId);
-    if (!relay) throw new ConvexError({ code: 'not_found', message: 'Relay not found' });
+    if (!relay) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     await assertNoRotationOrQuarantine(ctx.db, relay);
     const targets = new Set(names.map(normalizeName).filter((n): n is string => !!n));
     let count = 0;
@@ -910,7 +910,7 @@ export const setSniPick = internalMutation({
     const l = await ctx.db.get(id);
     if (!l) throw new ConvexError({ code: 'not_found', message: 'Listener not found' });
     const relay = await ctx.db.get(l.relayId);
-    if (!relay) throw new ConvexError({ code: 'not_found', message: 'Relay not found' });
+    if (!relay) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     await assertNoRotationOrQuarantine(ctx.db, relay);
     if (!protocolUsesSni(l))
       throw new ConvexError({

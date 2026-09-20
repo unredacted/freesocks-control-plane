@@ -1,7 +1,7 @@
 /**
- * Relay ORIGIN helpers (pure). A relay's origin is one of three kinds:
+ * Origin ORIGIN helpers (pure). An origin's origin is one of three kinds:
  *
- *   panel-node      a node on a Remnawave-style panel FCP knows: FCP can pin
+ *   backend-node      a node on a Remnawave-style backend FCP knows: FCP can pin
  *                   subscriptions to it and, when the backend has Host
  *                   management, own its client-facing Hosts (`hostMode: fcp`).
  *   backend-server  a whole backend server (an Outline instance): FCP renders
@@ -35,7 +35,7 @@ export function originNodeName(o: RelayOrigin): string | undefined {
 }
 
 /**
- * Who writes the client-facing Hosts. Only a panel node on a backend with Host
+ * Who writes the client-facing Hosts. Only a backend node on a backend with Host
  * management can hand them to FCP; every other kind has no Host at all.
  */
 export function deriveHostMode(o: RelayOrigin, caps: BackendCapabilities | null): HostMode {
@@ -68,7 +68,7 @@ export function describeOrigin(o: RelayOrigin): {
   return id ? { kind: o.kind, backendServerId: id as string } : { kind: o.kind };
 }
 
-/** Two origins name the same place (the one-relay-per-node / per-server rule). */
+/** Two origins name the same place (the one-origin-per-node / per-server rule). */
 export function sameOriginKey(a: RelayOrigin, b: RelayOrigin): boolean {
   if (a.kind !== b.kind) return false;
   if (a.kind === 'manual') return false;

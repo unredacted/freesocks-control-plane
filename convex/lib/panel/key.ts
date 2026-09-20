@@ -1,5 +1,5 @@
 /**
- * The key for the panel digests (convex/lib/panel/digest.ts).
+ * The key for the backend digests (convex/lib/backend/digest.ts).
  *
  * It must be STABLE for the life of a deployment: the REALITY authentication
  * digest joins an operator's endpoint confirmation, so a key that rotated

@@ -4,7 +4,7 @@
  *
  * An edge is ONE proxied DNS record in the account's zone: clients reach the
  * CDN on 443 with SNI = the minted hostname, the CDN terminates TLS and dials
- * the relay origin. Two resource kinds:
+ * the origin origin. Two resource kinds:
  *
  *  - `dns_record`: the proxied A/AAAA/CNAME carrying the edge hostname. Its
  *    `comment` is the ownership marker (`<prefix>:<spec.name>`), which is what
@@ -12,7 +12,7 @@
  *    and comments are capped at 100 characters there, so the comment is the
  *    only marker this adapter relies on.
  *  - `origin_rule`: an Origin Rule (`http_request_origin` phase) overriding the
- *    destination port, needed ONLY when the relay's origin port is not the
+ *    destination port, needed ONLY when the origin's origin port is not the
  *    zone encryption mode's effective default. Cloudflare dials port 80 for a
  *    `flexible` zone and 443 for `full`/`strict`; the client-facing port is
  *    always 443, so the incoming proxied-port allowlist never applies here.
@@ -555,7 +555,7 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
    * The DNS listing is authoritative and instant (`discoverySettleMs: 0`), so a
    * name with no record is `confirmed_absent` on the first look. Ownership is
    * proven by BOTH the comment marker (or a record id already in the ledger,
-   * for adopted records) AND the content matching the relay origin: a record
+   * for adopted records) AND the content matching the origin origin: a record
    * with our hostname but someone else's content is never adopted or deleted.
    */
   async discover(cfg, step, spec, ledger) {

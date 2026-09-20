@@ -704,7 +704,7 @@ describe('moving off contract v1', () => {
       const own = (await ctx.db.get(legacyIds.ownershipId))!;
       expect(own.state).toBe('owned');
       expect(own.reservation).toBeUndefined();
-      // The current backend is untouched, and nothing on a panel was called.
+      // The current backend is untouched, and nothing on a backend was called.
       expect((await ctx.db.get(current._id))!.state).toBe('ready');
     });
     expect(panel.writes.filter((w) => w.call.startsWith('DELETE'))).toHaveLength(0);

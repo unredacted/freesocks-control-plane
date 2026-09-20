@@ -1,15 +1,15 @@
 /// <reference types="vite/client" />
 /**
- * Server management, read half: panel observation (`panelObserve`) and the
+ * Server management, read half: backend observation (`panelObserve`) and the
  * admin surface over it (`/api/v1/admin/servers/*`).
  *
  *  - DORMANT by default: the healthcheck makes no observation call until
  *    `servers.manage.observe` is on, and a failing look never marks the
  *    instance unhealthy nor stores the provider's message.
- *  - The caches follow the panel: a row the panel stopped listing is deleted,
+ *  - The caches follow the backend: a row the backend stopped listing is deleted,
  *    a moved change token is stamped (a token made with another key is not).
  *  - NOTHING secret is stored or served: no private key, short id, client or
- *    certificate, in any `panel*` row, any response, or any audit row.
+ *    certificate, in any `backend*` row, any response, or any audit row.
  *  - Auth: read scope for the tree, settings scope for the switches; the
  *    sealing policy covers every verb.
  *
@@ -52,7 +52,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-// --- a mutable fake panel --------------------------------------------------------------------
+// --- a mutable fake backend --------------------------------------------------------------------
 
 interface FakePanel {
   names: string[];
@@ -244,7 +244,7 @@ const allPanelRows = (t: T) =>
     state: await ctx.db.query('panelObserveState').collect(),
   }));
 
-describe('panel observation', () => {
+describe('backend observation', () => {
   test('dormant by default: the healthcheck makes no observation call', async () => {
     const { t, panel } = await seed();
     await t.action(internal.backendServers.healthcheck, {});
@@ -277,7 +277,7 @@ describe('panel observation', () => {
     expect(blob).not.toContain('clients');
   });
 
-  test('the caches follow the panel, and a moved change token is stamped', async () => {
+  test('the caches follow the backend, and a moved change token is stamped', async () => {
     const { t, serverId, panel } = await seed();
     const look = () => t.action(internal.panelObserve.refresh, { backendServerId: serverId });
     await look();
@@ -300,7 +300,7 @@ describe('panel observation', () => {
     expect(rows.profiles[0].changeToken).not.toBe(token0);
     expect(rows.profiles[0].shapeHash).toBe(shape0);
     expect(rows.profiles[0].tokenChangedAt).toBeGreaterThan(0);
-    // The Host the panel stopped listing is gone.
+    // The Host the backend stopped listing is gone.
     expect(rows.hosts.map((h) => h.hostUuid)).toEqual(['h-1']);
   });
 
@@ -356,7 +356,7 @@ describe('panel observation', () => {
 });
 
 describe('/api/v1/admin/servers', () => {
-  test('the tree shows what already exists: node -> profile -> inbounds -> Hosts + squads', async () => {
+  test('the tree shows what already exists: node -> profile -> transports -> Hosts + mode groups', async () => {
     const { call } = await seed();
     const res = await call('POST', 'panel-a/refresh');
     expect(res.status).toBe(200);
@@ -365,7 +365,7 @@ describe('/api/v1/admin/servers', () => {
     const [node] = tree.nodes;
     expect(node).toMatchObject({ name: 'node-one', online: true, usersOnline: 4 });
     expect(node.profile).toMatchObject({ name: 'Default', inboundCount: 2 });
-    // Only the inbounds the node SERVES hang off it.
+    // Only the transports the node SERVES hang off it.
     expect(node.inbounds.map((i) => i.tag)).toEqual(['reality-in']);
     expect(node.inbounds[0]).toMatchObject({
       security: 'reality',
@@ -376,9 +376,9 @@ describe('/api/v1/admin/servers', () => {
     expect(node.inbounds[0].realityPublicKey).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(node.inbounds[0].hosts.map((h) => h.remark)).toEqual(['node-one-reality']);
     expect(node.inbounds[0].squads).toEqual([{ squadUuid: 's-1', name: 'free' }]);
-    // A Host on an inbound no node serves is what an operator must notice.
+    // A Host on a transport no node serves is what an operator must notice.
     expect(tree.unattached).toEqual({ profiles: [], hosts: ['points-nowhere'] });
-    // GET serves the same thing from the cache, with no panel call.
+    // GET serves the same thing from the cache, with no backend call.
     const cached = ServerTree.parse(await (await call('GET', 'panel-a/tree')).json());
     expect(cached.nodes[0].inbounds[0].serverNames).toEqual(['a.example', 'b.example']);
   });
@@ -405,7 +405,7 @@ describe('/api/v1/admin/servers', () => {
     ]);
   });
 
-  test('a panel that cannot be read is a 502 with a code, never the panel text', async () => {
+  test('a backend that cannot be read is a 502 with a code, never the backend text', async () => {
     const { call, panel } = await seed();
     panel.fail = true;
     const res = await call('POST', 'panel-a/refresh');

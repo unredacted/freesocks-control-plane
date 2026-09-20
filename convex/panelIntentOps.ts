@@ -354,7 +354,7 @@ function httpsStatus(
  * The external hop of a front node, as the world sees it: the name resolves
  * to the intended addresses, TLS presents a publicly valid certificate naming
  * it, the WebSocket path is proxied (an upgrade attempt is answered by the
- * inbound, not the decoy's 404), and a foreign Host header is answered.
+ * transport, not the decoy's 404), and a foreign Host header is answered.
  */
 export const checkFrontIngress = internalAction({
   args: {

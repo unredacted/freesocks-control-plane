@@ -1,5 +1,5 @@
 /**
- * The relay-edge PROVIDER contract: how FCP drives one cloud load-balancer API.
+ * The origin-edge PROVIDER contract: how FCP drives one cloud load-balancer API.
  *
  * Design rules (docs/edges.md):
  *  - Provisioning is an ordered list of RESOURCE STEPS. Each step is one provider
@@ -321,7 +321,7 @@ export interface CredentialTestResult {
  * wants to import: the ledger children FCP should record (with the real ids,
  * versions and metadata discovery needs), the hostname it serves, whether the
  * resource also serves other hostnames (`shared` = FCP may delete only its own
- * children), and what it dials (must equal the relay's origin to be owned).
+ * children), and what it dials (must equal the origin's origin to be owned).
  */
 export interface AdoptionInspection {
   resources: ChildResource[];

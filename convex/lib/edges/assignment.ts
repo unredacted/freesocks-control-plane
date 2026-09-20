@@ -1,5 +1,5 @@
 /**
- * Subscriber → endpoint ASSIGNMENT for relay origins (pure, deterministic).
+ * Subscriber → endpoint ASSIGNMENT for origin origins (pure, deterministic).
  *
  * Inputs: the subscriber's opaque `renderKey` (a random 64-hex secret minted
  * per subscription and never exposed — passed RAW, its first 32 bits seed the
@@ -88,7 +88,7 @@ export interface AssignedEndpoint {
   /**
    * The HTTP Host header the renderer must write (null = the protocol carries
    * none, leave the template's own parameters alone). Comes from the same
-   * `hostTargetFor` tuple the panel Host flip writes, so a render and a flip
+   * `hostTargetFor` tuple the backend Host flip writes, so a render and a flip
    * can never disagree.
    */
   hostHeader: string | null;

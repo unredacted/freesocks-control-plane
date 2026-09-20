@@ -1,11 +1,11 @@
 /**
- * Pure helpers for a node's DIRECT Hosts: the panel Hosts that still hand the
+ * Pure helpers for a node's DIRECT Hosts: the backend Hosts that still hand the
  * node's own address to members (the entries a guided setup hides once the
  * edges serve, and the restore workflow re-enables).
  *
- * A direct Host is: enabled, on one of THIS node's inbounds, dialling the
- * origin address, not an FCP relay remark (`<node>-relay-<key>`), and not a
- * Host a listener adopted (`legacyHosts`). `covered` = its inbound has a
+ * A direct Host is: enabled, on one of THIS node's transports, dialling the
+ * origin address, not an FCP origin remark (`<node>-origin-<key>`), and not a
+ * Host a listener adopted (`legacyHosts`). `covered` = its transport has a
  * frontable listener (the edge replaces it), `uncovered` = it does not (the
  * operator must approve hiding it, by uuid).
  */
@@ -26,13 +26,13 @@ export interface DirectHost {
 
 export interface DirectHostContext {
   originAddress: string;
-  /** The inbounds this node serves (lowercase or not; compared case-insensitively). */
+  /** The transports this node serves (lowercase or not; compared case-insensitively). */
   nodeInboundUuids: string[];
-  /** Remarks FCP owns on this node (listener remarks + the relay convention). */
+  /** Remarks FCP owns on this node (listener remarks + the origin convention). */
   fcpRemarks: string[];
   /** Hosts a listener adopted (never a direct Host, whatever their address). */
   legacyHostUuids: string[];
-  /** Inbounds a frontable listener covers. */
+  /** Transports a frontable listener covers. */
   coveredInboundUuids: string[];
 }
 
@@ -67,7 +67,7 @@ export function isDirectHost(h: BackendHost, ctx: DirectHostContext): boolean {
   return true;
 }
 
-/** The node's ENABLED direct Hosts, split by whether a frontable listener covers their inbound. */
+/** The node's ENABLED direct Hosts, split by whether a frontable listener covers their transport. */
 export function classifyDirectHosts(
   hosts: readonly BackendHost[],
   ctx: DirectHostContext,
@@ -137,7 +137,7 @@ export function observedTuple(h: BackendHost): {
 
 /**
  * Whether a live Host is still the one the ledger observed: address, port and
- * inbound agree (an administrator who re-pointed or re-bound it changed it, and
+ * transport agree (an administrator who re-pointed or re-bound it changed it, and
  * FCP then releases the row without writing).
  */
 export function sameTuple(

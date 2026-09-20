@@ -1,5 +1,5 @@
 /**
- * Panel Host operations for relay listeners whose Hosts FCP owns (hostMode
+ * Backend Host operations for origin listeners whose Hosts FCP owns (hostMode
  * `fcp`), as a PERSISTED STATE MACHINE (`relayListeners.host`, docs/edges.md
  * § "Host ownership"):
  *
@@ -11,9 +11,9 @@
  *                     └─uncertain→ unresolved ─discover→ present | absent
  *
  * Rules:
- *  - the INTENDED tuple (remark, address, port, sni, host, inbound uuid) is
+ *  - the INTENDED tuple (remark, address, port, sni, host, transport uuid) is
  *    persisted BEFORE any call, and discovery matches a Host on remark AND
- *    inbound uuid AND address:port, never remark alone;
+ *    transport uuid AND address:port, never remark alone;
  *  - after an uncertain CREATE an empty listing never authorises a retry: the
  *    op stays `unresolved` until the backend's settle floor passed AND two
  *    quiet looks were taken (`discoverySettleMs`-style), only then `absent`;
@@ -63,7 +63,7 @@ function sameOptional(a: string | null | undefined, b: string | null | undefined
   return n(a) === n(b);
 }
 
-/** A live Host is the intended one when remark, inbound AND address:port agree. */
+/** A live Host is the intended one when remark, transport AND address:port agree. */
 export function matchesIntent(h: BackendHost, intent: HostIntent): boolean {
   return (
     h.remark === intent.remark &&
@@ -108,13 +108,13 @@ export const claimCreate = internalMutation({
     if (!relay || relay.hostMode !== 'fcp')
       throw new ConvexError({
         code: 'edge.host_mode_unsupported',
-        message: 'FCP does not own this relay’s Hosts',
+        message: 'FCP does not own this origin’s Hosts',
       });
     const remark = listenerRemark(l);
     if (!remark || !l.panelBinding)
       throw new ConvexError({
         code: 'edge.host_not_applicable',
-        message: 'listener has no panel Host',
+        message: 'listener has no backend Host',
       });
     const st = l.host ?? { state: 'absent' as const };
     if (st.state === 'present' && st.uuid)
@@ -173,14 +173,14 @@ export const settleCreated = internalMutation({
 
 /**
  * Re-observe a Host the ledger calls `present` against the live listing. The
- * panel is the truth: a Host deleted or lost there must not be reported present
+ * backend is the truth: a Host deleted or lost there must not be reported present
  * from the database (a rotation would confirm an EMPTY plan and finish with no
  * Host pointing members at the published edge). Outcomes:
  *  - the uuid is listed → present;
  *  - the uuid is gone but exactly ONE Host carries the listener's remark and
- *    inbound → that Host takes its place (re-created out of band);
+ *    transport → that Host takes its place (re-created out of band);
  *  - several such Hosts → ambiguous (an operator decides);
- *  - none → absent, audited `relay.host.lost`, and a create may run.
+ *  - none → absent, audited `origin.host.lost`, and a create may run.
  */
 export const reobservePresent = internalMutation({
   args: {
@@ -479,7 +479,7 @@ export const ensureListenerHost = internalAction({
       }
       return { state: r.state === 'absent' ? 'creating' : (r.state as EnsureResult['state']) };
     }
-    // A Host the ledger calls present is verified against the panel before it
+    // A Host the ledger calls present is verified against the backend before it
     // is accepted: never `present` from the database alone.
     const known = c.listener.host;
     if (known?.state === 'present' && known.uuid) {
@@ -520,7 +520,7 @@ export const ensureListenerHost = internalAction({
       await ctx.runMutation(internal.hostOps.settleCreated, { listenerId, opId: claim.opId, uuid });
       return { state: 'present', uuid };
     } catch (err) {
-      // Unknown outcome: the panel may have created it. Park and discover later.
+      // Unknown outcome: the backend may have created it. Park and discover later.
       await ctx.runMutation(internal.hostOps.markUnresolved, { listenerId, opId: claim.opId });
       return { state: 'unresolved', detail: err instanceof Error ? err.name : 'error' };
     }
@@ -556,10 +556,10 @@ export const deleteListenerHost = internalAction({
 });
 
 /**
- * Reconcile pass: re-observe every unresolved Host op (all relays), delete the
- * FCP-owned Hosts of retired listeners and deleting relays, then the
+ * Reconcile pass: re-observe every unresolved Host op (all origins), delete the
+ * FCP-owned Hosts of retired listeners and deleting origins, then the
  * direct-Host ledger (convex/edgeHostHides.ts): settle its unsettled rows by
- * observation and re-observe the direct Hosts of bound guided relays (a
+ * observation and re-observe the direct Hosts of bound guided origins (a
  * reappeared covered / approved one is re-hidden, any other raises attention
  * `direct_host_reappeared`; both suppressed while a restore workflow runs).
  */
@@ -610,9 +610,9 @@ export const recordResyncedSni = internalMutation({
 });
 
 /**
- * The name a listener's panel Host carries was retired: write the listener's
+ * The name a listener's backend Host carries was retired: write the listener's
  * next choice onto the Host, address and port unchanged. A member who copies a
- * raw config from the panel gets this name, so it must not stay a retired one.
+ * raw config from the backend gets this name, so it must not stay a retired one.
  * Best effort: a failure leaves the Host as it was, and the next run (a
  * rotation, or the next retire) writes it.
  */
@@ -678,7 +678,7 @@ export const reconcileHosts = internalAction({
   },
 });
 
-/** Listeners with an unresolved Host op, or a present FCP Host that must go (retired / relay deleting). */
+/** Listeners with an unresolved Host op, or a present FCP Host that must go (retired / origin deleting). */
 export const pendingListeners = internalQuery({
   args: {},
   handler: async (ctx) => {
@@ -722,9 +722,9 @@ export const pendingListeners = internalQuery({
 // --- operator adoption (hostMode handoff) --------------------------------------------------------
 
 /**
- * Take over an operator-created panel Host for a listener (the `operator` ->
+ * Take over an operator-created backend Host for a listener (the `operator` ->
  * `fcp` handoff, docs/edges.md § "Host ownership"). The named Host must exist
- * on the panel, carry the listener's inbound uuid AND dial a published edge of
+ * on the backend, carry the listener's transport uuid AND dial a published edge of
  * that listener (`edge.host_adopt_mismatch` otherwise). Never by remark guessing.
  * Ownership becomes `adopted`; FCP updates it on flips from then on and never
  * deletes it. A Host whose remark differs from the listener's is remembered as
@@ -748,11 +748,11 @@ export const adoptHost = internalMutation({
     const l = await ctx.db.get(listenerId);
     if (!l) throw new ConvexError({ code: 'not_found', message: 'Listener not found' });
     const relay = await ctx.db.get(l.relayId);
-    if (!relay) throw new ConvexError({ code: 'not_found', message: 'Relay not found' });
+    if (!relay) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     if (!l.panelBinding)
       throw new ConvexError({
         code: 'edge.host_not_applicable',
-        message: 'listener has no panel inbound to adopt a Host for',
+        message: 'listener has no backend transport to adopt a Host for',
       });
     if (l.host?.op)
       throw new ConvexError({
@@ -765,7 +765,7 @@ export const adoptHost = internalMutation({
     )
       throw new ConvexError({
         code: 'edge.host_adopt_mismatch',
-        message: 'the Host does not point at this listener’s inbound',
+        message: 'the Host does not point at this listener’s transport',
       });
     // Dials a published edge of THIS listener.
     let dials: Id<'edges'> | null = null;
@@ -828,7 +828,7 @@ export const adoptHost = internalMutation({
   },
 });
 
-/** Look the named Host up on the panel, then adopt it (the CMS action). */
+/** Look the named Host up on the backend, then adopt it (the CMS action). */
 export const adoptListenerHost = internalAction({
   args: {
     relayId: v.id('relays'),
@@ -845,11 +845,11 @@ export const adoptListenerHost = internalAction({
     host: { uuid: string; ownership: 'adopted' };
   }> => {
     const relay = await ctx.runQuery(internal.relays.get, { id: relayId });
-    if (!relay) throw new ConvexError({ code: 'not_found', message: 'Relay not found' });
+    if (!relay) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     if (!relay.backendServerId)
       throw new ConvexError({
         code: 'edge.host_not_applicable',
-        message: 'this origin has no panel',
+        message: 'this origin has no backend',
       });
     const listeners = await ctx.runQuery(internal.relayListeners.listByRelay, { relayId });
     const l = listeners.find((x) => x.listenerKey === listenerKey && !x.retired);
@@ -859,7 +859,7 @@ export const adoptListenerHost = internalAction({
     if (!host)
       throw new ConvexError({
         code: 'edge.host_not_found',
-        message: 'the panel lists no Host with that uuid',
+        message: 'the backend lists no Host with that uuid',
       });
     return await ctx.runMutation(internal.hostOps.adoptHost, {
       listenerId: l.id as Id<'relayListeners'>,

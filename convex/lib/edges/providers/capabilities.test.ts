@@ -1,5 +1,5 @@
 /**
- * Drift guard between the relay capability record and the adapters. Every flag
+ * Drift guard between the origin capability record and the adapters. Every flag
  * with an observable adapter counterpart is cross-checked here: async flags
  * against the optional methods, `needsPrivateNetwork` against the settings
  * schema, `ipv6`/`idleTimeoutConfigurable` against the template fields,
@@ -152,7 +152,7 @@ function healthyScalewayApi() {
   );
 }
 
-describe('relay capability record ⇔ adapters', () => {
+describe('origin capability record ⇔ adapters', () => {
   test('every provider id has a capability row and an adapter', () => {
     for (const id of EDGE_PROVIDER_IDS) {
       expect(EDGE_PROVIDER_CAPABILITIES[id]).toBeDefined();

@@ -71,9 +71,9 @@ export const DEFAULT_CONNECTION_MODES: readonly DefaultModeRow[] = [
     order: 0,
   },
   {
-    // Ships dark: stays off until relay squads are bound and it has been
+    // Ships dark: stays off until origin mode groups are bound and it has been
     // tested. The operator turns it on in the admin CMS. URL delivery on
-    // purpose: a subscription re-fetch picks up a relay-edge address change,
+    // purpose: a subscription re-fetch picks up an origin-edge address change,
     // a copied raw config never would (raw configs stay an expert-only path).
     slug: 'freedom-reality',
     familySlug: 'freedom',

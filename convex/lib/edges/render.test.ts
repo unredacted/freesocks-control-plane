@@ -1,5 +1,5 @@
 /**
- * The pure relay renderer under the edge-required delivery policy: each
+ * The pure origin renderer under the edge-required delivery policy: each
  * listener's template entry is found by its match rule and verified against
  * what the listener speaks, the subscriber's assigned edges replace it, and
  * the result is judged (`delivery`): an empty pool, a missing / ambiguous /
@@ -360,7 +360,7 @@ describe('link-list rendering', () => {
   });
 
   test('a template whose security / type disagree with the listener is entry_mismatch', () => {
-    // A plain-TLS link where the listener claims REALITY: the wrong inbound matched.
+    // A plain-TLS link where the listener claims REALITY: the wrong transport matched.
     const tlsLink = `vless://${UUID}@${ORIGIN}:443?encryption=none&security=tls&sni=node.example&type=tcp#${encodeURIComponent(TEMPLATE)}`;
     const out = render(tlsLink);
     expect(out.applied).toBe(false);

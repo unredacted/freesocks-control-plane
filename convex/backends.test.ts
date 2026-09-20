@@ -30,7 +30,7 @@ describe('issuance spec helpers', () => {
   });
 
   test('gbToBytes rounds a fractional GB (donation bonus) to whole bytes', () => {
-    // 2.01 GB from a 201-cent month at 1 GB/$ — the panel rejects float bytes,
+    // 2.01 GB from a 201-cent month at 1 GB/$ — the backend rejects float bytes,
     // which previously wedged the fleet re-cap cron in a fail-retry loop.
     const b = gbToBytes(50 + 2.01);
     expect(Number.isInteger(b)).toBe(true);
@@ -41,7 +41,7 @@ describe('issuance spec helpers', () => {
   test('computeExpireAtIso: a member term wins; free carries the no-expiry sentinel', () => {
     const termMs = Date.UTC(2030, 0, 1);
     expect(computeExpireAtIso(termMs)).toBe(new Date(termMs).toISOString());
-    // Free (no membership): the far-future sentinel — the panel never expires a
+    // Free (no membership): the far-future sentinel — the backend never expires a
     // free key on its own clock; the usage-based idle sweep owns reclaim.
     const freeIso = computeExpireAtIso(null);
     const freeMs = Date.parse(freeIso);
@@ -190,9 +190,9 @@ describe('backends dispatch', () => {
   });
 
   test('a Remnawave 3.x numeric id is STORED scoped to its instance and STRIPPED for the provider', async () => {
-    // 3.x panels return a per-panel integer `id` and no uuid. Two panels both
+    // 3.x backends return a per-backend integer `id` and no uuid. Two backends both
     // mint user 42, so the stored form must carry the instance (the
-    // by_backend_user_id index is read with .unique()), while the panel only
+    // by_backend_user_id index is read with .unique()), while the backend only
     // ever sees the bare integer in paths/bodies.
     const user3 = {
       id: 42,
@@ -294,8 +294,8 @@ describe('backends dispatch', () => {
       'DELETE /api/users/42',
     ]);
 
-    // The fleet locate/repair path must NOT probe other panels with a scoped
-    // id: the same integer on another panel is a different user.
+    // The fleet locate/repair path must NOT probe other backends with a scoped
+    // id: the same integer on another backend is a different user.
     seen.length = 0;
     const located = await t.action(internal.backends.locateKeyInstance, {
       backend: 'remnawave',
@@ -349,7 +349,7 @@ describe('backends dispatch', () => {
   });
 });
 
-describe('backends dispatch: host disable + node inbound discovery', () => {
+describe('backends dispatch: host disable + node transport discovery', () => {
   async function seedOutline(t: ReturnType<typeof convexTest>): Promise<Id<'backendServers'>> {
     return t.run((ctx) =>
       ctx.db.insert('backendServers', {
@@ -668,7 +668,7 @@ describe('provisionMirror (opt-in lazy mirror)', () => {
 
 describe('remnawaveUpdateUser contract safety', () => {
   // Direct provider-fn tests against a fetch stub (like the logging suite):
-  // the panel's UPDATE DTO takes .optional() NOT .nullable() for
+  // the backend's UPDATE DTO takes .optional() NOT .nullable() for
   // trafficLimitBytes/expireAt and refuses past expiry dates — a bad body
   // 400s the WHOLE patch (re-enable + limits + placement lost).
   const cfg = { baseUrl: 'https://panel.test.example', apiToken: 'tok' };
@@ -698,7 +698,7 @@ describe('remnawaveUpdateUser contract safety', () => {
   const sentBody = (spy: ReturnType<typeof vi.fn>) =>
     JSON.parse(String((spy.mock.calls[0]?.[1] as RequestInit).body));
 
-  test('null trafficLimitBytes is coerced to 0 (the panel unlimited sentinel)', async () => {
+  test('null trafficLimitBytes is coerced to 0 (the backend unlimited sentinel)', async () => {
     const spy = stub();
     await remnawaveUpdateUser(cfg, okUser.uuid, { trafficLimitBytes: null });
     expect(sentBody(spy).trafficLimitBytes).toBe(0);
@@ -735,7 +735,7 @@ describe('remnawaveUpdateUser contract safety', () => {
     expect(sentBody(spy).hwidDeviceLimit).toBe(3);
   });
 
-  test('tolerates additive panel values: unknown status/strategy still parse', async () => {
+  test('tolerates additive backend values: unknown status/strategy still parse', async () => {
     stub({ ...okUser, status: 'SOME_FUTURE_STATUS', trafficLimitStrategy: 'QUARTER' });
     await expect(
       remnawaveUpdateUser(cfg, okUser.uuid, { trafficLimitBytes: 1 }),

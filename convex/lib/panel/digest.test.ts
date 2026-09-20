@@ -118,8 +118,8 @@ describe('changeToken', () => {
     expect(base).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  test('what FCP sends and what the panel stores hash alike (panel write normalisation)', async () => {
-    // The panel trims each server name and clears the client list; nothing else.
+  test('what FCP sends and what the backend stores hash alike (backend write normalisation)', async () => {
+    // The backend trims each server name and clears the client list; nothing else.
     const sent = config({ names: [' a.example ', 'b.example'] });
     const stored = config({ names: ['a.example', 'b.example'] });
     stored.inbounds[0].settings = { clients: [], decryption: 'none' } as never;
@@ -130,7 +130,7 @@ describe('changeToken', () => {
     );
   });
 
-  test('normalizeForToken leaves a config without inbounds, and non-objects, alone', () => {
+  test('normalizeForToken leaves a config without transports, and non-objects, alone', () => {
     expect(normalizeForToken({ log: {} })).toEqual({ log: {} });
     expect(normalizeForToken(null)).toBeNull();
     expect(normalizeForToken('x')).toBe('x');

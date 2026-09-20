@@ -1,12 +1,12 @@
 /**
  * Admin reads for server management (Admin -> Servers) plus its two switches.
- * Every read is served from the `panel*` caches `panelObserve` fills, so the
- * page shows what ALREADY exists on a panel without making a panel call, and
+ * Every read is served from the `backend*` caches `panelObserve` fills, so the
+ * page shows what ALREADY exists on a backend without making a backend call, and
  * nothing here can return a secret: the caches hold none.
  *
  * The central view is the TREE of one instance: each node with the config
- * profile it runs, the inbounds it serves, the Hosts members are handed for
- * those inbounds and the squads that grant them.
+ * profile it runs, the transports it serves, the Hosts members are handed for
+ * those transports and the mode groups that grant them.
  */
 import { ConvexError, v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
@@ -193,10 +193,10 @@ function mapHost(h: Doc<'panelHosts'>) {
 }
 
 /**
- * One instance as a tree: node -> profile -> served inbounds -> Hosts + squads.
+ * One instance as a tree: node -> profile -> served transports -> Hosts + mode groups.
  * A Host pinned to specific nodes appears under those only; an unpinned one
- * under every node serving its inbound. What hangs off no node (a profile no
- * node runs, a Host on an inbound no node serves) is returned as `unattached`,
+ * under every node serving its transport. What hangs off no node (a profile no
+ * node runs, a Host on a transport no node serves) is returned as `unattached`,
  * because that is exactly what an operator needs to notice.
  */
 export const tree = internalQuery({
@@ -318,8 +318,8 @@ export const tree = internalQuery({
 });
 
 /**
- * Who feels a change to these inbounds of a profile: the nodes the panel will
- * re-apply it to, and the relays whose listeners are bound to them.
+ * Who feels a change to these transports of a profile: the nodes the backend will
+ * re-apply it to, and the origins whose listeners are bound to them.
  */
 export const profileBlastRadius = internalQuery({
   args: {
@@ -362,11 +362,11 @@ export const profileBlastRadius = internalQuery({
 });
 
 /**
- * Check the squad pools operators pasted into mode placements against the
- * squads the panel really has. A pool is write-only over HTTP (it is never
- * echoed), so this answers in COUNTS and squad names, never the pasted uuids:
- * a uuid the panel lacks issues keys nobody can use, and a squad without an
- * inbound issues keys that connect to nothing.
+ * Check the mode group pools operators pasted into mode placements against the
+ * mode groups the backend really has. A pool is write-only over HTTP (it is never
+ * echoed), so this answers in COUNTS and mode group names, never the pasted uuids:
+ * a uuid the backend lacks issues keys nobody can use, and a mode group without an
+ * transport issues keys that connect to nothing.
  */
 export const validatePlacements = internalQuery({
   args: { slug: v.string() },
@@ -402,7 +402,7 @@ export const validatePlacements = internalQuery({
             modeSlug: p.modeSlug,
             squads: pool.length,
             // Several instances can share a backend type: a uuid missing HERE
-            // may live on another panel, so this is a count to look into, not
+            // may live on another backend, so this is a count to look into, not
             // a verdict.
             unknownHere: pool.length - present.length,
             withoutInbounds: present

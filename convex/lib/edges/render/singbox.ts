@@ -1,5 +1,5 @@
 /**
- * sing-box JSON renderer. The panel emits one outbound per Host tagged with the
+ * sing-box JSON renderer. The backend emits one outbound per Host tagged with the
  * Host remark, plus selector/urltest groups listing those tags. Each listener's
  * template outbound is found by its matcher (tag, or server:server_port, or the
  * whole single-outbound body) and verified against what the listener speaks;
@@ -156,7 +156,7 @@ export function renderSingbox(input: RenderInput): RenderOutput {
     if (ep.sni !== null && isObj(clone.tls)) clone.tls = { ...clone.tls, server_name: ep.sni };
     // The HTTP transports carry their own Host, which an L7 front must see as
     // its own hostname (and an L4 edge as the name it presents). `path` /
-    // `service_name` stay exactly as the panel wrote them: they are the node's
+    // `service_name` stay exactly as the backend wrote them: they are the node's
     // routing, not the front's.
     if (ep.hostHeader !== null && isObj(clone.transport)) {
       const transport = clone.transport;

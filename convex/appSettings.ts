@@ -20,7 +20,7 @@ export const SETTINGS_DEFAULTS = {
   // Issuance-time node placement (Remnawave): weights for choosing the
   // least-loaded node of a mode's placement pool. usersOnline is the primary
   // signal; bandwidth defaults to 0 (usersOnline-only) until the realtime shape
-  // is pinned against a live panel. Read by lib/remnawavePlacement.ts.
+  // is pinned against a live backend. Read by lib/remnawavePlacement.ts.
   'remnawave.nodePlacement.usersOnline_weight': 1,
   'remnawave.nodePlacement.bandwidth_weight': 0,
   // Free-account lifetime (days): drives both the issued key's backend expiry
@@ -39,7 +39,7 @@ export const SETTINGS_DEFAULTS = {
   // devices are effectively unlimited and the device UI is neutralized. ON =
   // per-tier hwidEnabled/hwidLimit apply and the connect UI gates apps by HWID
   // support. Enforcement ALSO requires HWID_DEVICE_LIMIT_ENABLED=true on the
-  // Remnawave panel (FCP can't read that); see docs/backends.md.
+  // Remnawave backend (FCP can't read that); see docs/backends.md.
   'devices.enforcementEnabled': false,
 } as const;
 

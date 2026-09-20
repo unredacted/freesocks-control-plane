@@ -619,7 +619,7 @@ describe('activating a direct node', () => {
       mode: 'privacy-reality',
     });
     // Its retirement has run its course: everything FCP made is gone and the
-    // panel row with it, so the machine is all that is left.
+    // backend row with it, so the machine is all that is left.
     const retirementId = await t.run(async (ctx) => {
       const id = await ctx.db.insert('panelRetirements', {
         backendServerId: serverId,

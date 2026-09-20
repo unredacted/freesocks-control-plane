@@ -1,10 +1,10 @@
 /**
- * The direct-node rehearsal check (pure): does a real panel body, in each
+ * The direct-node rehearsal check (pure): does a real backend body, in each
  * client family, carry an entry for the node's endpoint, and does that entry
  * say what the node serves (REALITY with the expected public key, presenting
  * the expected server name). Every one of a node's addresses is checked, since
  * one good entry says nothing about the others. Bodies are
- * what the panel actually generated for the test credential: a base64 or
+ * what the backend actually generated for the test credential: a base64 or
  * plain link list, a sing-box JSON config, or a Clash / Mihomo YAML.
  */
 import { decodeLinkList } from '../edges/render/links';
@@ -27,7 +27,7 @@ export type RehearsalFamily = 'links' | 'singbox' | 'clash';
 
 export interface RehearsalVerdict {
   found: boolean;
-  /** The entry names the endpoint but not the expected key (a stale profile, another inbound). */
+  /** The entry names the endpoint but not the expected key (a stale profile, another transport). */
   keyMismatch: boolean;
   /** The entry names the endpoint and the key, but serves another name. */
   sniMismatch?: boolean;
@@ -139,7 +139,7 @@ export function bodyHasEndpoint(
   return checkLinks(body, e);
 }
 
-/** The panel picks its template by User-Agent; these select the three families. */
+/** The backend picks its template by User-Agent; these select the three families. */
 export const REHEARSAL_USER_AGENTS: Readonly<Record<RehearsalFamily, string>> = {
   links: 'v2rayNG/1.8.29',
   singbox: 'SFI/1.11.0 sing-box/1.11.0',

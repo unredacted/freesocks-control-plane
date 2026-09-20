@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 /**
- * `GET relays/inbound-candidates`: the node's inbounds mapped to candidates
+ * `GET origins/transport-candidates`: the node's transports mapped to candidates
  * with `originTransport` filled where the origin probe succeeded (and the
  * layers recomputed), unknown nodes refused, nothing registered.
  */
@@ -105,7 +105,7 @@ async function seed() {
   return { t, panel, serverId };
 }
 
-describe('inbound candidates with the origin probe', () => {
+describe('transport candidates with the origin probe', () => {
   test('HTTP-transport candidates get their originTransport from the probe and become L7-frontable; the rest stay L4-only', async () => {
     const { t, serverId } = await seed();
     const probed: unknown[] = [];
@@ -141,7 +141,7 @@ describe('inbound candidates with the origin probe', () => {
     expect(reality.originTransport).toBeNull();
     expect(reality.probe).toBeNull();
     expect(reality.layers.layers).toEqual(['l4']);
-    // Only the HTTP-transport inbound was dialled, at the node's address and the inbound's port.
+    // Only the HTTP-transport transport was dialled, at the node's address and the transport's port.
     expect(probed).toEqual([
       { host: ORIGIN, port: 443, servername: 'ws.example', timeoutMs: 6000 },
     ]);

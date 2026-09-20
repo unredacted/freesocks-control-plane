@@ -33,7 +33,7 @@ afterEach(() => vi.unstubAllGlobals());
 const PUBLISHED = '198.51.100.1';
 const SPARE = '198.51.100.2';
 
-/** panel + gcore account (tested, trusted) + relay with one REALITY listener + a published, confirmed edge. */
+/** backend + gcore account (tested, trusted) + origin with one REALITY listener + a published, confirmed edge. */
 async function seed(opts: { qualified?: boolean } = {}) {
   const t = convexTest(schema, modules);
   const fx = await seedEdgeFixture(t, { qualified: opts.qualified ?? true });
@@ -199,7 +199,7 @@ describe('case 23: blocked primary, trusted account, untested spare', () => {
         force: true,
       }),
     ).rejects.toThrow(/no_verified_spare/);
-    // The detector records the refusal on the relay's suspicion (its own test
+    // The detector records the refusal on the origin's suspicion (its own test
     // pins that `lastRotateError` takes the thrown code); attention then raises
     // needs_test pointing at the untested spare.
     await t.run((ctx) =>

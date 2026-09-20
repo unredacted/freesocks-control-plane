@@ -1,7 +1,7 @@
 /**
  * Obligations: the rules for external side effects of the bootstrap
  * workflows (pure; the rows live in `panelObligations`). They follow the ops
- * ledger's rules (lib/panel/ops.ts): an obligation is persisted before the
+ * ledger's rules (lib/backend/ops.ts): an obligation is persisted before the
  * call, an unresolved one is never retried and never released by the clock,
  * and a superseded owner generation never releases it.
  *

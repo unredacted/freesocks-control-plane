@@ -1,5 +1,5 @@
 /**
- * Test helper: a fake Remnawave panel at `panel.example` with a MUTABLE Host
+ * Test helper: a fake Remnawave backend at `backend.example` with a MUTABLE Host
  * table. It answers the three calls the direct-Host ledger, the restore
  * workflow and the fronted subscription route make:
  *
@@ -9,7 +9,7 @@
  *   GET   /sub/<shortUuid>      a link-list body built from the ENABLED Hosts
  *                               (one vless line per Host, remark = the Host's)
  *
- * so what members download follows the panel's own Host state end to end.
+ * so what members download follows the backend's own Host state end to end.
  * Not a test file itself. Every value is RFC 5737 / `*.example`.
  */
 import { jsonRes, mockFetch, type FetchStub } from './mockFetch';
@@ -52,7 +52,7 @@ export function fakeHostPanel(initial: PanelHostRow[], mode: PatchMode = 'apply'
   let hook: ((p: { uuid: string; isDisabled: boolean }) => Promise<void>) | null = null;
   const patches: Array<{ uuid: string; isDisabled: boolean }> = [];
   let subFetches = 0;
-  // A real panel puts each Host's own server name in its entry, which is what
+  // A real backend puts each Host's own server name in its entry, which is what
   // tells two addresses of one node apart.
   const qs = (h: PanelHostRow) =>
     h.sni ? FAKE_REALITY_QS.replace('sni=target.example', `sni=${h.sni}`) : FAKE_REALITY_QS;

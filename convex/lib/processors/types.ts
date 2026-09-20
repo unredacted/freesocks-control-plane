@@ -1,7 +1,7 @@
 /**
  * Shared types for the self-service payment processors. Each processor is a pure
  * HTTP module (mirroring convex/lib/backends/*): it builds a hosted-checkout
- * redirect and verifies + parses inbound webhooks. The billing domain module
+ * redirect and verifies + parses transport webhooks. The billing domain module
  * (convex/billing.ts) constructs the per-processor config from env, dispatches,
  * and maps the parsed event onto applyMembership. Keeping these pure (config
  * injected, no Convex/env access here) makes them unit-testable with stubbed
