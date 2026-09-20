@@ -280,63 +280,69 @@ of FCP being reachable.
 
 ### The node role
 
-Two contracts exist. **Contract v2** (below, "Setting up a panel" and "Node lifecycle") is the
-one new deployments use: the role bootstraps the machine and reports, FCP writes the panel.
-**Contract v1** is what the previous role followed while both wrote the panel; its reservation
-routes stay for panels still on it.
-
-#### Contract v1 (legacy role)
-
-The Ansible role and FCP must not both write the same things. Before FCP accepts a write for an
-instance, the role reports that it follows the ownership protocol:
-`PUT /api/v1/admin/servers/{slug}/handoff {"roleContractVersion": 1}` (the role's existing
-`admin:servers:write` token may call it; it changes no panel). Version 1 means: the role no
-longer rewrites Hosts or squads it did not create in that run, and never recreates one FCP
-removed. Turning `servers.manage.enabled` off does not hand anything back to the role.
-
-**Reservations.** "Create it if it is absent" is how two writers make duplicates, and how one
-recreates what the other removed on purpose. So on an instance FCP manages the role asks first:
-
-| Call                                                                                                                            | Who                    | What                                                                                       |
-| ------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------ |
-| `POST {slug}/reservations {roleOpId, kind, identity}` (`kind: host` sends `host: {remark, inboundUuid, address, port}` instead) | the role's token       | One mutation decides. The same call again is the same answer.                              |
-| `PUT {slug}/reservations/{roleOpId} {"created": "<panel uuid>"}` or `{"rejected_pre_mutation": true}`                           | the role's token       | How the create ended. `created` makes the object owned; a pre-mutation refusal forgets it. |
-| `GET {slug}/reservations`                                                                                                       | `admin:servers:read`   | The open ones. A Host is listed by its remark only.                                        |
-| `POST {slug}/reservations/{roleOpId}/recover`                                                                                   | `admin:servers:manage` | The attested exit, with the same named conditions as an op's unknown outcome. Audited.     |
-
-`kind` is `node`, `squad` or `profile` (identity = the name), `inbound` (identity = the tag,
-unique panel-wide) or `host`. A reservation is refused with `servers.tombstoned` (removed on
-purpose, under any name it ever had), `servers.exists` (look it up instead),
-`servers.reservation_open` (another run holds it) or `servers.op_running` (the admin is creating
-it right now). While a reservation is open FCP does not create that identity either, not even
-with `restore: true`.
-
-A reservation **never times out**. If the role's answer is lost, it closes when FCP next sees
-the object on the panel (nobody else could have created it, so it is adopted as owned), or by
-the attested recovery. The role must treat an FCP it cannot reach as a refusal: with
-`fcp_managed` set it creates nothing and rewrites no profile.
+One contract: the role bootstraps the **machine** of a NEW node and reports (below, "Node
+lifecycle"); FCP writes the backend and releases to members. Nothing the role sends is a write
+to the backend, and FCP never waits on the role for anything on it. A backend that already has
+nodes is **adopted** (below), never re-bootstrapped: the role is not run for an existing
+machine.
 
 Not built yet: the firewall acknowledgement (FCP publishing the ports an edit needs and the role
 confirming them). Nothing FCP writes today opens a port: the typed profile edits change names
 and targets only.
 
-## Setting up a panel
+## Setting up a backend
 
 `convex/panelSetup.ts`. One durable workflow per backend server (`panelSetups`), started from
-Admin -> Servers ("Set up this panel") with names, targets and ports only: never a secret. Each
-step is idempotent and re-enterable; an interrupted attempt is resumed by the
+Admin -> Servers ("Set up this backend") with names, shapes and family slugs only: never a
+secret. Each step is idempotent and re-enterable; an interrupted attempt is resumed by the
 `panel-bootstrap-sweep` cron once its lease has expired.
 
-| Step       | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| observe    | A fresh look at the panel; everything below reads the cache.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| handoff    | `panelHandoff` v2 (`reportedBy: fcp-setup`) is written **only for a fresh panel**: no nodes, no Hosts, no open v1 reservation. Anything else stops at `needs_takeover`; `POST {slug}/setup/takeover` (typed, audited) records the operator's attestation that no v1 role writes remain, and is refused while a v1 reservation is open.                                                                                                                                                                                                                                                                                                                               |
-| profile    | The profile by name: adopted when compatible (`lib/panel/profileCompat.ts`: per tag the protocol, transport, security, listen, port, path, names, target and a usable key; its keys and short ids are never touched, the effective values come from it), otherwise created from the template (`lib/panel/profileTemplate.ts`, the role's shape, born with the privacy posture). The create is an obligation persisted first; the REALITY keys are generated inside the claimed attempt right before the call and exist nowhere else; a lost answer is discovered by name, never sent again. An incompatible profile is `servers.profile_incompatible:<tag>:<field>`. |
-| squads     | Three squads (fronted, direct, relay), each carrying its inbound, through the ledger.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| placements | `freedom-ws` ← fronted, `privacy-reality` ← direct, `freedom-reality` ← relay (`addSquadUuids`). A mode that does not exist is recorded `skipped` and blocks activation.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| templates  | The four subscription templates (`lib/panel/subscriptionTemplates/`, moved from the role, YAML byte-exact) reconciled on drift; a refused write (401/403) blocks activation unless the live template already matches.                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+**Modes.** A backend is set up for a list of modes (`PanelSetupInput.modes`, pre-filled from
+`DEFAULT_MODE_SETUP`; editable, a table, not a fixed set). Each names the connection mode it
+feeds (`slug`, which must exist in the catalog), the group on the backend (`name`, 2 to 20 plain
+characters; the transport tag is that name upper-cased), a **shape** and, for REALITY transports,
+the **server-name family** whose target and names the transport carries:
 
-The setup row also carries the panel-wide **delivery gate version** (below).
+| Mode (default)    | Shape                       | Transport                                           | Members reach it        |
+| ----------------- | --------------------------- | --------------------------------------------------- | ----------------------- |
+| `privacy-reality` | `reality` / `direct`        | VLESS + REALITY on 443                              | at the node's addresses |
+| `freedom-reality` | `reality` / `edge-l4`       | VLESS + REALITY on 443                              | through an L4 edge      |
+| `freedom-xhttp`   | `xhttp-reality` / `edge-l4` | VLESS over XHTTP under REALITY on 443 (no sing-box) | through an L4 edge      |
+| `freedom-ws`      | `ws` / `edge-l7`            | VLESS over WebSocket on loopback behind Caddy       | through an L7 edge      |
+
+Every REALITY transport listens on 443: a node serves ONE mode, so they never collide. A mode
+named by a node is the only thing the role needs to know about it (`node_mode`); the machine
+shape (Caddy or not, ingress, what an edge dials) follows from the mode's shape.
+
+| Step       | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| observe    | A fresh look at the backend; everything below reads the cache.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| families   | Every REALITY mode's family must exist, be on, and have a usable (qualified, active) name today: `servers.family_missing`, `servers.family_empty`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| profile    | The profile by name: adopted when compatible (`lib/panel/profileCompat.ts`: per mode the transport found under the mode's tag or a tag an earlier setup gave it, checked for protocol, network, security, listen, port, path, names, target and a usable key; keys and short ids never touched; an adopted tag is kept, since a backend keys transports by tag), otherwise created from the template (`lib/panel/profileTemplate.ts`: one transport per mode, born with the privacy posture, each REALITY transport with its family's target and usable names and its own key pair generated inside the claimed attempt). `servers.profile_incompatible:<tag>:<field>`. |
+| bind       | Each REALITY transport is bound to its family (`sniFamilies.bind`): the family is the one authoritative allowlist from then on, and later name changes are rollouts (docs/edges.md). An adopted transport forwarding elsewhere than the family's target is `servers.family_target_mismatch`.                                                                                                                                                                                                                                                                                                                                                                            |
+| groups     | Each mode's group, found under its name, or under a name an earlier setup gave the same mode (`FreeSocks-Reality` → `Privacy-Reality`, `FreeSocks-Relay` → `Freedom-Reality`, `FreeSocks-Fronted`/`FreeSocks-Fastly` → `Freedom-WebSocket`) and **renamed in place** through the ledger (its id and every member assignment survive; audited `servers.setup.group_renamed`), else created; carrying the mode's transport.                                                                                                                                                                                                                                               |
+| placements | Each group into its mode's pool (`addSquadUuids`). A mode that does not exist is recorded `skipped` and blocks activation of its nodes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| templates  | The four subscription templates (`lib/panel/subscriptionTemplates/`, YAML byte-exact) reconciled on drift; a refused write (401/403) blocks activation unless the live template already matches.                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+
+A ready row that still records a blocker (a drifted or refused template, a skipped placement, an
+unbound family, drifted privacy) is re-run on the next request so the blocker can clear. The
+setup row also carries the backend-wide **delivery gate version** (below).
+
+### Adopting a backend
+
+A backend that already has nodes or addresses is never quietly set up: `start` refuses with
+`servers.adopt_required` until the request carries `adopt: true` (the sheet's typed
+confirmation). Adopting means FCP becomes the backend's writer as it is: the profile is adopted
+under its existing tags, groups an earlier setup named are renamed in place, and nothing a
+member holds changes. The setup row records `adopted`.
+
+**Adopting a node** (`POST {slug}/nodes/adopt {nodeUuid, mode, externallyFronted?}`,
+`panelIntents.adoptNode`): a backend node that already serves members becomes an enrolled node
+that is **live at once**: its row must run the mode's transport; its addresses (a direct node's,
+by remark or address) become its committed set; evidence and approval are synthesized as
+`adopted`. A fronted node whose edge FCP does not run yet (an earlier tool made it) is
+`externallyFronted`: it needs no standbys and no origin name until Edges protects it, one node at
+a time, through the normal flow. The role is never run for an adopted machine.
 
 ## Node lifecycle
 
@@ -370,15 +376,30 @@ which closes the node (`unavailable`) until it is verified and approved again. T
 configuration is not claimed to remain served in that case.
 
 **Observed drift** is the same transition without anyone asking for it. When a reconcile finds
-the profile token, the inbound or the REALITY material moved under evidence already taken, or a
-direct node's endpoint moved under its Host (`panelIntents.observeRevisions`), the invalidated
-evidence goes, running activations are superseded, and a live node closes under a maintenance
-transition (reason `drift`, audited as `servers.node.drift`) until it is re-verified and approved
-again; the existing Host is brought to the new endpoint meanwhile. A lost DNS answer is settled by
-discovery on the next run (an absent record confirms a delete and fails a create, so the ladder
-never waits forever), and a record FCP owns for an address family no longer desired is withdrawn.
-Every resumed workflow re-reads `servers.manage.enabled` before a provider write outside the
-ledger (the profile create, the subscription templates, origin DNS) and parks while it is off.
+the REALITY material moved, or the profile token moved by somebody else's edit
+(`foreignEditAt`), under evidence already taken, or a direct node's endpoint moved under one of
+its addresses (`panelIntents.observeRevisions`), the invalidated evidence goes, running
+activations are superseded, and a live node closes under a maintenance transition (reason
+`drift`, audited as `servers.node.drift`) until it is re-verified and approved again; the
+existing addresses are brought to the new endpoint meanwhile (a name that arrived is a new
+address, a name that left is removed). A token FCP's own ledger moved (a family rollout, a
+hardening) is not drift: evidence and approval are re-stamped to the new revision, since what
+members hold still works, and a run in flight is superseded for a fresh approval. A lost DNS
+answer is settled by discovery on the next run (an absent record confirms a delete and fails a
+create, so the ladder never waits forever), and a record FCP owns for an address family no
+longer desired is withdrawn. Every resumed workflow re-reads `servers.manage.enabled` before a
+provider write outside the ledger (the profile create, the subscription templates, origin DNS)
+and parks while it is off.
+
+**A shared change** (a typed profile edit through `requestProfilePatch`; never a rollout, whose
+names reach members by per-node receipts) is applied in place under every node running the
+touched transports, so the maintenance transition comes BEFORE the write is admitted
+(`panelIntents.closeForSharedChange`): every affected enrolled node closes under one transition
+(reason `profile`; it reopens only through its own re-verification and commit), and every
+affected node FCP does not manage needs a treatment from the operator, `hold` (closed by name in
+`panelMaintenanceHolds` until an admin releases it: nothing re-verifies an unmanaged node) or
+`acknowledge` (it changes in place). "No intent means open" never bypasses this. Audited as
+`servers.profile.transition` / `servers.profile.transition_released` (counts only).
 
 **The delivery gate** (`lib/panel/deliveryGate.ts`, enforced in `edgeRender.deliveryPolicyFor`,
 the pinner's exclusion list, the subscription route, the mirror refresh): closed for an enrolled
@@ -400,7 +421,7 @@ confined to the token's registration boundary (backend servers and, optionally, 
 
 | Route              | What                                                                                                                                                                                        |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PUT`              | Enroll (`purpose`, `label`; taken once) or report observations (`management`, `publicIps`, `capabilities`; every run). The role never sends FCP-owned settings.                             |
+| `PUT`              | Enroll (`mode`, `label`; taken once) or report observations (`management`, `publicIps`, `capabilities`; every run). The role never sends FCP-owned settings.                                |
 | `GET`              | The node's own view: stage, disposition, revisions, the origin name, the retirement.                                                                                                        |
 | `POST …/bootstrap` | The machine configuration (node port, the Caddy routes of a front node, the origin hostname) and the node secret. `SEAL_BOTH`; bearer callers get plaintext over TLS as on every IaC route. |
 | `POST …/applied`   | `{appliedRevision, caddy.certificateReady, nodeStarted}`.                                                                                                                                   |
@@ -411,6 +432,11 @@ Refusals: `servers.panel_not_set_up`, `servers.contract_version`, `servers.node_
 (a panel node or Host of that name no intent owns: an admin adopts first), `servers.tombstoned`
 (an admin restores), `servers.purpose_change_needs_admin`, `servers.node_retiring`,
 `servers.registration_boundary`.
+
+A shared change (a profile edit, `POST {slug}/profiles/{uuid}/apply`) takes an `unmanaged`
+treatment (`hold` | `acknowledge`) whenever nodes FCP does not manage run the touched transports
+(`servers.unmanaged_nodes_affected` otherwise); `GET {slug}/nodes/intents` lists the open holds
+and `POST {slug}/holds/{id}/release` ends one. `POST {slug}/nodes/adopt` adopts a node (above).
 
 Admin routes on `{slug}/nodes/intents/{id}`: `GET review`, `POST test-link`, `POST confirm`,
 `POST approve {reviewHash}`, `POST settings {patch, maintenance}`, `POST maintenance` (finish),

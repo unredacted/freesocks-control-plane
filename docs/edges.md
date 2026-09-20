@@ -76,6 +76,7 @@ A listener speaks one valid combination of three fields (`src/shared/contracts/e
 | `vless`              | `raw`                         | `tls`     | server names = the certificate's                                  |
 | `vless`              | `ws` / `httpupgrade` / `grpc` | `tls`     | L7-frontable (the only authenticated L7 proof)                    |
 | `vless`              | `xhttp`                       | `tls`     | L7-frontable where the provider carries it; no sing-box (below)   |
+| `vless`              | `xhttp`                       | `reality` | L4 only (the node terminates); no sing-box (below)                |
 | `trojan`             | `raw` / `ws`                  | `tls`     | L4 only (no L7 proof)                                             |
 | `shadowsocks`        | `raw`                         | `none`    | address/port rewrite only; Outline keys are `ss://`               |
 | `hysteria2` / `tuic` | `udp`                         | `tls`     | registers, but no provider forwards UDP today (`no_udp_provider`) |
@@ -97,7 +98,9 @@ proof speaks `packet-up` (one `GET <path>/<session>` downstream, sequenced `POST
 in its `Referer`), the one mode every CDN passes; an inbound declared `stream-up` or
 `stream-one` refuses packet-up uploads, so its proof reports `transport_failed` / `mode` and it
 stays L4-only. `transportParams.mode` records what the inbound declares (`auto` when it declares
-nothing). It is only behind a real certificate: there is no `xhttp` + `reality` combination.
+nothing). Under REALITY (`vless/xhttp/reality`, the `freedom-xhttp` mode of a backend set up in
+Servers) the node terminates and impersonates its family's target, so only an L4 edge can front
+it; there is no front proof for it and an L7 provider never carries it.
 
 A deployable inbound (Caddy terminates TLS in front of it, as for WebSocket, so Xray listens on
 loopback and the listener is registered with the terminator's port and certificate name):
