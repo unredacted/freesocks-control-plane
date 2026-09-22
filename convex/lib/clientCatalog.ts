@@ -129,7 +129,7 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     license: 'GPL-3.0',
     sourceUrl: 'https://github.com/SagerNet/sing-box',
     easeOfUse: 'advanced',
-    ipv6: true, // dual-stack tun from the panel template (verified live 2026-08-30)
+    ipv6: true, // dual-stack tun from the backend template (verified live 2026-08-30)
     enabled: true,
     priority: 30,
   },

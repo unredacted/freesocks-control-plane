@@ -6,12 +6,12 @@
  * candidate only]` in dry-run: no pool change, no epoch bump, no Host write,
  * no snapshot.
  *
- * Before first publication the FCP Host (and its `<node>-relay-<key>` remark)
+ * Before first publication the FCP Host (and its `<node>-origin-<key>` remark)
  * does not exist in that body, and the renderer only makes a candidate
  * eligible when its listener's source entry matched, so the builder uses a
  * TEST-ONLY MATCHER: it resolves the body's entry for the EXACT intended
- * inbound (`panelBinding.configProfileInboundUuid` -> the panel Host(s) on
- * that inbound at `originAddress:originPort`, else the listener's own FCP
+ * transport (`panelBinding.configProfileInboundUuid` -> the backend Host(s) on
+ * that transport at `originAddress:originPort`, else the listener's own FCP
  * Host once one exists) and checks the entry against the listener's protocol
  * facts. An ambiguous or missing match is refused (`edge.test_link_no_match`);
  * the single matched entry is rendered through a TRANSIENT context (a
@@ -41,7 +41,7 @@ import { needsEndpointVerification, verificationBinding } from './lib/edges/veri
 import { toPublishedEdge } from './edgeRender';
 import { listenerRemark } from './relayListeners';
 
-/** A link-list client the panel serves plain share links to (the test link is always `links`). */
+/** A link-list client the backend serves plain share links to (the test link is always `links`). */
 export const TEST_LINK_USER_AGENT = 'v2rayNG/1.8.29';
 const TEST_RENDER_KEY = 'fcp-test-link';
 
@@ -78,7 +78,7 @@ export const context = internalQuery({
     if (!listener || listener.retired)
       throw new ConvexError({ code: 'edge.listener_retired', message: 'Listener not found' });
     const relay = await ctx.db.get(edge.relayId);
-    if (!relay) throw new ConvexError({ code: 'not_found', message: 'Relay not found' });
+    if (!relay) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     const binding = verificationBinding(edge, listener);
     if (!binding)
       throw new ConvexError({ code: 'edge.no_address', message: 'The edge has no address yet' });
@@ -131,7 +131,7 @@ type Ctx = FunctionReturnType<typeof internal.edgeTestLinks.context>;
 
 /**
  * The test-only matcher: the ONE line of a link-list body that is the
- * intended inbound's entry. `hosts` is the panel's Host list (null when the
+ * intended transport's entry. `hosts` is the backend's Host list (null when the
  * backend has none: the body is then matched by origin address:port alone).
  */
 export function selectTestEntry(
@@ -155,7 +155,7 @@ export function selectTestEntry(
     if (atOrigin.length === 1) return { line: atOrigin[0].line };
     return { code: atOrigin.length === 0 ? 'no_match' : 'ambiguous_match' };
   }
-  // The Hosts on the intended inbound (enabled) name the entries by remark.
+  // The Hosts on the intended transport (enabled) name the entries by remark.
   const onInbound = (hosts ?? []).filter(
     (h) =>
       !h.isDisabled &&
@@ -168,8 +168,8 @@ export function selectTestEntry(
       .map((h) => h.remark),
   );
   const remarkOf = (e: (typeof parsed)[number]) => fragmentText(e.uri!) ?? '';
-  // 1. The direct entry: named by a Host on the inbound AND at the origin address:port.
-  //    Without a Host list (or a panel binding) the address:port alone identifies it.
+  // 1. The direct entry: named by a Host on the transport AND at the origin address:port.
+  //    Without a Host list (or a backend binding) the address:port alone identifies it.
   const direct = parsed.filter(
     (e) =>
       sameAddress(e.uri!.host, c.originAddress) &&
@@ -236,8 +236,8 @@ export const build = internalAction({
         code: 'edge.test_link_no_match',
         message:
           picked.code === 'ambiguous_match'
-            ? 'The credential body carries more than one entry for this inbound'
-            : 'The credential body carries no entry for this inbound',
+            ? 'The credential body carries more than one entry for this transport'
+            : 'The credential body carries no entry for this transport',
       });
     // The transient context: one whole-body matcher over the single entry,
     // mapped to the candidate's listener; the candidate is the whole pool.

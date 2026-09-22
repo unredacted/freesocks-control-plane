@@ -2,7 +2,7 @@
   /**
    * Anonymous pageview beacon: fires trackPageview on every route change (and
    * on first paint, once /api/v1/config resolves) when the operator enabled
-   * the Umami relay. Renders nothing.
+   * the Umami origin. Renders nothing.
    *
    * Lives in its OWN component inside <QueryClientProvider> for the same
    * reason as PopWarm: configQuery() reads the query client from Svelte

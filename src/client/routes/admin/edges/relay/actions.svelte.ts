@@ -1,5 +1,5 @@
 /**
- * One mutation for the many small calls of the relay page (toggles, probes,
+ * One mutation for the many small calls of the origin page (toggles, probes,
  * retries). A job names its call, its success toast and what to refresh; an
  * `{ ok: false, code }` answer is turned into a refusal so it is never read as
  * success. Call `relayAction` during component init (it reads the query client).
@@ -16,7 +16,7 @@ import { EdgeRefusalError, edgeErrorMessage } from '../lib/edgeErrors';
 export interface RelayJob<T = unknown> {
   run: () => Promise<T>;
   success?: string | ((res: T) => string);
-  /** Extra invalidation beyond the relay subtree (e.g. one edge, the probes). */
+  /** Extra invalidation beyond the origin subtree (e.g. one edge, the probes). */
   also?: (qc: QueryClient) => void;
   after?: (res: T) => void;
   /** No error toast: the caller renders the failure (a dialog). */

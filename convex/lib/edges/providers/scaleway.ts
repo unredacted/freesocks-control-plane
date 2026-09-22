@@ -222,7 +222,7 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
         const lb = await sdk(cfg, step.id, () =>
           api.createLb({
             name: spec.name,
-            description: 'relay edge',
+            description: 'origin edge',
             type: tpl.type,
             projectId: cfg.projectId,
             ipIds,

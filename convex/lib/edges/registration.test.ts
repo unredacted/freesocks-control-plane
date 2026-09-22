@@ -1,5 +1,5 @@
 /**
- * The pure half of relay registration: spec validation against the catalogue
+ * The pure half of origin registration: spec validation against the catalogue
  * and the origin kind, the order-insensitive-for-names idempotency hash, the
  * name-merge ownership rules, the own-source-only prune diff and the
  * match-rule overlap check.
@@ -97,7 +97,7 @@ function code(fn: () => unknown): string | null {
 }
 
 describe('validateListenerSpec', () => {
-  test('a valid REALITY panel listener canonicalises: names normalised (order kept), remark derived, deployed defaults on', () => {
+  test('a valid REALITY backend listener canonicalises: names normalised (order kept), remark derived, deployed defaults on', () => {
     const c = validateListenerSpec(
       reality({
         tlsNames: ['B.Example.', 'a.example', 'b.example'],
@@ -337,12 +337,12 @@ describe('validateListenerSpec', () => {
     ).toThrow(/at most 16/);
   });
 
-  test('panelBinding: panel-node origins only; UUIDs and the inbound tag are checked', () => {
+  test('panelBinding: backend-node origins only; UUIDs and the transport tag are checked', () => {
     expect(() => validateListenerSpec(reality(), { origin: WHOLE_SERVER })).toThrow(
-      /panelBinding is only valid for a panel-node origin/,
+      /panelBinding is only valid for a backend-node origin/,
     );
     expect(() => validateListenerSpec(reality(), { origin: MANUAL })).toThrow(
-      /panelBinding is only valid for a panel-node origin/,
+      /panelBinding is only valid for a backend-node origin/,
     );
     expect(() =>
       validateListenerSpec(reality({ panelBinding: { ...BINDING, configProfileUuid: 'nope' } }), {
@@ -356,8 +356,8 @@ describe('validateListenerSpec', () => {
     ).toThrow(/inboundTag/);
   });
 
-  test('matchRule: defaults to the remark for a bound panel listener, to `address` otherwise; a remark rule needs a binding', () => {
-    // Without a binding a panel listener matches by address (no Host to own).
+  test('matchRule: defaults to the remark for a bound backend listener, to `address` otherwise; a remark rule needs a binding', () => {
+    // Without a binding a backend listener matches by address (no Host to own).
     const unbound = validateListenerSpec(reality({ panelBinding: null }), { origin: PANEL });
     expect(unbound.matchRule).toEqual({ kind: 'address' });
     expect(unbound.panelBinding).toBeUndefined();
@@ -465,7 +465,7 @@ describe('listenerConfigHash', () => {
         ),
       ],
       [
-        'inbound tag',
+        'transport tag',
         validateListenerSpec(reality({ panelBinding: { ...BINDING, inboundTag: 'OTHER' } }), {
           origin: PANEL,
         }),

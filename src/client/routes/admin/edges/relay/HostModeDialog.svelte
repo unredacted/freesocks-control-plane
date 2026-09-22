@@ -1,14 +1,14 @@
 <script lang="ts">
   /**
-   * Switch who writes the client-facing panel Hosts (`fcp` <-> `operator`), with
+   * Switch who writes the client-facing backend Hosts (`fcp` <-> `operator`), with
    * the consequences spelled out. `operator -> fcp` needs every listener Host
    * adopted first; the refusal (`host_adopt_required`) is shown in words.
    *
-   * Props: open (bindable); relay; listeners
+   * Props: open (bindable); origin; listeners
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
-  import type { HostMode, RelayAdmin, RelayListenerAdmin } from '@shared/contracts/edges';
+  import type { HostMode, OriginAdmin, RelayListenerAdmin } from '@shared/contracts/edges';
   import { invalidateRelay, updateRelay } from '@client/lib/edgesApi';
   import Link from '@client/components/Link.svelte';
   import { assertEdgeOk } from '../lib/edgeErrors';
@@ -18,7 +18,7 @@
 
   interface Props {
     open: boolean;
-    relay: RelayAdmin;
+    relay: OriginAdmin;
     listeners: RelayListenerAdmin[];
   }
   let { open = $bindable(false), relay, listeners }: Props = $props();
@@ -33,7 +33,7 @@
   async function run(): Promise<void> {
     assertEdgeOk(await updateRelay(relay.id, { hostMode: target }));
     toast.success(
-      target === 'fcp' ? 'FCP writes the panel Hosts now.' : 'You write the panel Hosts now.',
+      target === 'fcp' ? 'FCP writes the backend Hosts now.' : 'You write the backend Hosts now.',
     );
     invalidateRelay(qc, relay.slug);
   }
@@ -52,7 +52,7 @@
   {#if target === 'operator'}
     <ul class="list-disc space-y-1 ps-5 text-muted-foreground">
       <li>
-        Every existing Host stays in the panel and is marked as adopted: FCP never deletes it.
+        Every existing Host stays in the backend and is marked as adopted: FCP never deletes it.
       </li>
       <li>
         After each publish or rotation you must apply the Hosts plan (Listeners tab) yourself, or
@@ -66,8 +66,8 @@
   {:else}
     <ul class="list-disc space-y-1 ps-5 text-muted-foreground">
       <li>
-        FCP must first adopt the Host of every listener, so it knows exactly which panel rows it may
-        rewrite. It never guesses by name.
+        FCP must first adopt the Host of every listener, so it knows exactly which backend rows it
+        may rewrite. It never guesses by name.
       </li>
       <li>Adopted Hosts are rewritten on rotations but never deleted by FCP.</li>
     </ul>

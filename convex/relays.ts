@@ -1,9 +1,9 @@
 /**
- * RELAYS: an ORIGIN members reach only through edges. A relay's origin is a
- * panel node, a whole backend server or a hand-described address
+ * RELAYS: an ORIGIN members reach only through edges. An origin's origin is a
+ * backend node, a whole backend server or a hand-described address
  * (lib/edges/origin.ts); its LISTENERS (relayListeners.ts) say what the origin
  * speaks; its published POOL of edges is what members are handed. Owns the
- * relay CRUD (admin + the node role's by-slug registration), edge adoption,
+ * origin CRUD (admin + the node role's by-slug registration), edge adoption,
  * the delivery binding that keeps subscriptions of the origin edge-required,
  * and the published-pool bookkeeping (publish / unpublish with pool-index
  * inheritance and the publication epoch the render cache keys on). Rotation
@@ -134,7 +134,7 @@ function sameOrigin(a: RelayOrigin, b: RelayOrigin): boolean {
 }
 
 /**
- * One relay per place: per (backend server, node) for a panel node, per
+ * One origin per place: per (backend server, node) for a backend node, per
  * backend server for a whole-server origin. A manual origin is unique by slug.
  */
 async function assertOriginUnbound(db: Db, origin: RelayOrigin, selfId: Id<'relays'> | null) {
@@ -173,7 +173,7 @@ async function assertAddressChangeAllowed(db: Db, origin: Doc<'relays'>, next?: 
   if (edges.length > 0) {
     throw new ConvexError({
       code: 'edge.origin_address_locked',
-      message: 'Drain or destroy every edge of this relay before changing originAddress',
+      message: 'Drain or destroy every edge of this origin before changing originAddress',
     });
   }
 }
@@ -202,7 +202,7 @@ async function assertOriginIsNotAnEdge(db: Db, originAddress: string, selfId: Id
 
 /**
  * Keep the subscriptions of this origin edge-required, independently of the
- * relay row. `policyVersion` bumps whenever the binding is (re)claimed so the
+ * origin row. `policyVersion` bumps whenever the binding is (re)claimed so the
  * sub cache can key on it. Claiming a place changes what its members must
  * receive RIGHT NOW, so the mirrors are refreshed immediately: a mirror still
  * holding the origin's raw body must not wait for the six-hour cron (a
@@ -269,7 +269,7 @@ async function settleDeliveryBinding(
     });
   }
   // keep-dark: the binding stays active with the departed slug; members on the
-  // node stay unavailable until another relay claims it (or an operator releases).
+  // node stay unavailable until another origin claims it (or an operator releases).
 }
 
 /** The active binding covering (backend server, node) or the whole server; null = raw delivery. */
@@ -302,7 +302,7 @@ export const deliveryBinding = internalQuery({
     deliveryBindingFor(ctx.db, backendServerId, nodeName),
 });
 
-/** Operator release of a `keep-dark` binding left behind by a deleted relay. */
+/** Operator release of a `keep-dark` binding left behind by a deleted origin. */
 export const releaseDeliveryBinding = internalMutation({
   args: { id: v.id('edgeDeliveryBindings'), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, { id, actorAdminId }) => {
@@ -313,7 +313,7 @@ export const releaseDeliveryBinding = internalMutation({
       .withIndex('by_slug', (q) => q.eq('slug', b.relaySlug))
       .unique();
     if (relay && !relay.deleting)
-      throw new ConvexError({ code: 'conflict', message: 'The binding’s relay still exists' });
+      throw new ConvexError({ code: 'conflict', message: 'The binding’s origin still exists' });
     await ctx.db.patch(id, {
       state: 'released',
       policyVersion: b.policyVersion + 1,
@@ -514,7 +514,7 @@ export const getBySlug = internalQuery({
       .unique(),
 });
 
-/** Every relay (small, operator-managed table) for the reconcile cron. */
+/** Every origin (small, operator-managed table) for the reconcile cron. */
 export const listAll = internalQuery({
   args: {},
   handler: (ctx) => ctx.db.query('relays').collect(),
@@ -530,7 +530,7 @@ export const listEnabled = internalQuery({
 });
 
 /**
- * The relay behind a subscription's resolved place: the panel node it was
+ * The origin behind a subscription's resolved place: the backend node it was
  * pinned to, or the whole backend server. The attribution + render lookup.
  */
 export async function relayForBackendNode(
@@ -721,7 +721,7 @@ const originWriteArgs = {
   maxRotationsPerDay: v.optional(v.number()),
   drainMinutes: v.optional(v.number()),
   // The connection mode whose placement the L7 qualification user is minted on
-  // (null = the panel's default placement).
+  // (null = the backend's default placement).
   qualificationModeSlug: v.optional(v.union(v.string(), v.null())),
   actorAdminId: v.optional(v.id('adminUsers')),
 };
@@ -795,7 +795,7 @@ async function backendCapsOf(db: Db, origin: RelayOrigin) {
 
 /**
  * Insert-time options a guided setup passes (never a request body): defer the
- * delivery binding to go-live (`claimDeliveryBinding`) and mark the relay as
+ * delivery binding to go-live (`claimDeliveryBinding`) and mark the origin as
  * owned by the run (upkeep + the detector's automatic replacement skip it).
  */
 export interface InsertRelayOptions {
@@ -847,7 +847,7 @@ async function insertRelay(
     desiredPublished: p.desiredPublished ?? cfg.desiredPublishedDefault,
     standbyPerRelay: p.standbyPerRelay ?? cfg.standbyPerRelay,
     // An OVERRIDE of the global `edge.standbyPerListener`: persisted only when
-    // the caller set it, so a later change of the global applies to this relay
+    // the caller set it, so a later change of the global applies to this origin
     // (the reconcile reads `origin.standbyPerListener ?? cfg.standbyPerListener`).
     ...(p.standbyPerListener !== undefined ? { standbyPerListener: p.standbyPerListener } : {}),
     cooldownMs: p.cooldownMs ?? edgeMs.cooldown(cfg),
@@ -869,7 +869,7 @@ async function insertRelay(
 }
 
 /**
- * Claim the deferred delivery binding of a relay (the go-live step): upsert the
+ * Claim the deferred delivery binding of an origin (the go-live step): upsert the
  * binding (policy version bump + mirror refresh, exactly as an insert does) and
  * clear `bindingDeferred`. Not wired to any route yet: the activation policy
  * (`require-edges`) that decides WHEN this may run is a later release.
@@ -949,7 +949,8 @@ export const create = internalMutation({
       .query('relays')
       .withIndex('by_slug', (q) => q.eq('slug', slug))
       .unique();
-    if (dup) throw new ConvexError({ code: 'conflict', message: 'A relay with this slug exists' });
+    if (dup)
+      throw new ConvexError({ code: 'conflict', message: 'An origin with this slug exists' });
     const origin = await checkOrigin(ctx.db, originArg);
     const id = await insertRelay(ctx, slug, origin, a, {
       deferBinding: deferBinding === true,
@@ -985,8 +986,8 @@ export const update = internalMutation({
   args: { id: v.id('relays'), ...originWriteArgs },
   handler: async (ctx, { id, actorAdminId, ...a }) => {
     const row = await ctx.db.get(id);
-    if (!row) throw new ConvexError({ code: 'not_found', message: 'Relay not found' });
-    // A restore workflow's raw-body checks assume the relay holds still.
+    if (!row) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
+    // A restore workflow's raw-body checks assume the origin holds still.
     assertNoRestore(row);
     const p = patchFrom(a);
     await assertAddressChangeAllowed(ctx.db, row, p.originAddress);
@@ -1066,7 +1067,7 @@ export function assertWithinBoundary(
   }
 }
 
-/** Legacy manual-relay adoption carried by `operation_mode=adopt_relay` (docs/edges.md). */
+/** Legacy manual-origin adoption carried by `operation_mode=adopt_relay` (docs/edges.md). */
 const adoptionValidator = v.object({
   edge: v.object({ address: v.string(), port: v.number() }),
   hosts: v.array(
@@ -1122,7 +1123,7 @@ export const registerBySlug = internalMutation({
       if (existing.deleting)
         throw new ConvexError({
           code: 'edge.deleting',
-          message: 'This relay is being deleted; wait for the teardown to finish',
+          message: 'This origin is being deleted; wait for the teardown to finish',
         });
       // The caller inside a boundary must be allowed to touch the EXISTING row too.
       assertWithinBoundary(existing.origin, a.boundary);
@@ -1146,12 +1147,13 @@ export const registerBySlug = internalMutation({
         if (existing.origin.kind !== origin.kind)
           throw new ConvexError({
             code: 'edge.origin_kind_locked',
-            message: 'A relay’s origin kind cannot change; register a new relay',
+            message: 'An origin’s origin kind cannot change; register a new origin',
           });
         if (edges.length > 0)
           throw new ConvexError({
             code: 'edge.relay_reparent_locked',
-            message: 'Destroy every edge of this relay before moving it to another backend or node',
+            message:
+              'Destroy every edge of this origin before moving it to another backend or node',
           });
         await assertOriginUnbound(ctx.db, origin, id);
         p.origin = origin;
@@ -1164,7 +1166,7 @@ export const registerBySlug = internalMutation({
         lastRegisteredAt: now,
         updatedAt: changed.length ? now : existing.updatedAt,
       });
-      // A deferred relay stays deferred through a re-registration: the binding
+      // A deferred origin stays deferred through a re-registration: the binding
       // is claimed at go-live only.
       if (originChanged && !existing.bindingDeferred)
         await upsertDeliveryBinding(ctx, { origin, slug: a.slug });
@@ -1220,8 +1222,8 @@ export const registerBySlug = internalMutation({
 
 /**
  * Legacy adoption: the node already sits behind a manually run proxy with
- * panel Hosts the operator created. Record every legacy Host on the listener
- * whose inbound it carries (FCP never deletes them; the renderer keeps
+ * backend Hosts the operator created. Record every legacy Host on the listener
+ * whose transport it carries (FCP never deletes them; the renderer keeps
  * matching their remarks), import the proxy as an observe-only edge and publish
  * it at index 0 (operator hostMode: no flip). The operator validates and
  * adopts each Host in the CMS afterwards, then switches hostMode to `fcp`.
@@ -1289,16 +1291,16 @@ async function applyLegacyAdoption(
 }
 
 /**
- * Mark a relay for teardown; the edge-reconcile cron drains/destroys its edges
+ * Mark an origin for teardown; the edge-reconcile cron drains/destroys its edges
  * and removes the row. `disposition` says what happens to the delivery binding
  * of the origin: `restore-direct` releases it (raw delivery returns),
- * `keep-dark` keeps members on the node unavailable until another relay claims it.
+ * `keep-dark` keeps members on the node unavailable until another origin claims it.
  *
- * Re-sequenced for GUIDED relays (docs/edges.md § "Direct-Host hides and the
- * restore workflow"): a `restore-direct` delete of a relay that hid direct
+ * Re-sequenced for GUIDED origins (docs/edges.md § "Direct-Host hides and the
+ * restore workflow"): a `restore-direct` delete of an origin that hid direct
  * Hosts, or that a setup run bound, does NOT tear down at once. It enters the
  * restore workflow with purpose `delete_relay` (hides settled, the raw FCP body
- * verified, the binding released WHILE the relay stays enabled and its edges
+ * verified, the binding released WHILE the origin stays enabled and its edges
  * published, direct Hosts re-enabled, the direct body verified) and only its
  * last phase runs the deletion body below. `keep-dark` keeps the binding and
  * never restores a hidden Host (members stay dark by choice), so it tears down
@@ -1361,9 +1363,9 @@ export const requestDelete = internalMutation({
 });
 
 /**
- * A guided relay's delete restores first: it hid direct Hosts (a hide row
+ * A guided origin's delete restores first: it hid direct Hosts (a hide row
  * exists), or a setup run bound it (`setupStage` recorded) and the binding is
- * active. A role-registered relay with neither tears down at once, as before.
+ * active. A role-registered origin with neither tears down at once, as before.
  */
 async function needsRestoreWorkflow(db: DatabaseReader, row: Doc<'relays'>): Promise<boolean> {
   if (await hasHideRows(db, row._id)) return true;
@@ -1386,7 +1388,7 @@ export async function applyDeleteBody(
     force?: boolean;
     disposition?: DeleteDisposition;
     actorAdminId?: Id<'adminUsers'>;
-    /** The restore workflow already audited `relay.delete`; skip the second entry. */
+    /** The restore workflow already audited `origin.delete`; skip the second entry. */
     audited?: boolean;
   },
 ): Promise<void> {
@@ -1439,8 +1441,8 @@ export async function applyDeleteBody(
 }
 
 /**
- * Remove the relay row once every managed edge is destroyed and no FCP-owned
- * panel Host remains (the Host cleanup runs in the reconcile cron and deletes
+ * Remove the origin row once every managed edge is destroyed and no FCP-owned
+ * backend Host remains (the Host cleanup runs in the reconcile cron and deletes
  * them read-back-confirmed first).
  */
 export const finalizeDelete = internalMutation({
@@ -1471,7 +1473,7 @@ export const finalizeDelete = internalMutation({
       await ctx.db.delete(e._id);
     }
     await dropRollups('relay', id);
-    // The qualification credential is a panel user: deactivate it after the row
+    // The qualification credential is a backend user: deactivate it after the row
     // is gone (best effort; an orphan is a capped, expiring test account).
     const owedUsers = [
       ...(row.qualificationBackendUserId ? [row.qualificationBackendUserId] : []),
@@ -1839,13 +1841,13 @@ export const adoptEdge = internalMutation({
   },
   handler: async (ctx, a) => {
     const origin = await ctx.db.get(a.relayId);
-    if (!origin) throw new ConvexError({ code: 'not_found', message: 'Relay not found' });
+    if (!origin) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     const listener = await ctx.db.get(a.listenerId);
     await assertAdmission(ctx.db, 'adopt');
     if (!listener || listener.relayId !== a.relayId)
       throw new ConvexError({
         code: 'validation',
-        message: 'listener does not belong to the relay',
+        message: 'listener does not belong to the origin',
       });
     let accountRow: Doc<'edgeProviderAccounts'> | null = null;
     if (a.accountId) {
@@ -2021,7 +2023,7 @@ export const publishEdge = internalMutation({
     const origin = await ctx.db.get(relayId);
     const edge = await ctx.db.get(edgeId);
     if (!origin || !edge || edge.relayId !== relayId)
-      throw new ConvexError({ code: 'not_found', message: 'Relay/edge not found' });
+      throw new ConvexError({ code: 'not_found', message: 'Origin/edge not found' });
     await assertNoRotationOrQuarantine(ctx.db, origin);
     const cfg = await resolveEdgeConfig(ctx.db);
     const check = await checkPublishable(ctx, edge, cfg.requireProviderHealth);
@@ -2053,7 +2055,7 @@ export const publishEdge = internalMutation({
       throw new ConvexError({ code: 'edge.pool_index_taken', message: 'Pool index is occupied' });
     // A listener's template Host follows its FIRST published edge. When FCP
     // owns the Hosts and this edge would become that template, the direct path
-    // would leave the panel sending everyone to the previous address: the
+    // would leave the backend sending everyone to the previous address: the
     // rotation machine (kind `publish`) does the flip.
     const listener = await ctx.db.get(edge.listenerId);
     const becomesTemplate =
@@ -2064,7 +2066,7 @@ export const publishEdge = internalMutation({
       throw new ConvexError({
         code: 'edge.needs_rotation',
         message:
-          'Publishing the listener’s template edge needs the panel-Host flip; start a publish rotation',
+          'Publishing the listener’s template edge needs the backend-Host flip; start a publish rotation',
       });
     }
     const now = Date.now();
@@ -2107,7 +2109,7 @@ export const unpublishEdge = internalMutation({
     const origin = await ctx.db.get(relayId);
     const edge = await ctx.db.get(edgeId);
     if (!origin || !edge || edge.relayId !== relayId)
-      throw new ConvexError({ code: 'not_found', message: 'Relay/edge not found' });
+      throw new ConvexError({ code: 'not_found', message: 'Origin/edge not found' });
     await assertNoRotationOrQuarantine(ctx.db, origin);
     if (edge.publication !== 'published')
       return { ok: true as const, epoch: origin.publicationEpoch };
@@ -2192,7 +2194,7 @@ export const dropFromPool = internalMutation({
 
 /**
  * Coverage upkeep for the reconcile cron: raise / expand `desiredPublished`
- * for the relay's listeners (lib/edges/poolCapacity.ts). Returns what changed
+ * for the origin's listeners (lib/edges/poolCapacity.ts). Returns what changed
  * and how many uncovered listeners no expansion can make room for.
  */
 export const ensureCapacity = internalMutation({
@@ -2215,7 +2217,7 @@ export const rebalance = internalMutation({
   args: { relayId: v.id('relays'), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, { relayId, actorAdminId }) => {
     const origin = await ctx.db.get(relayId);
-    if (!origin) throw new ConvexError({ code: 'not_found', message: 'Relay not found' });
+    if (!origin) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     await assertNoRotationOrQuarantine(ctx.db, origin);
     const listeners = await listenersOf(ctx, relayId);
     const templates = new Set(

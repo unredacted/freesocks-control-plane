@@ -3,13 +3,13 @@
  * where its verdict is written.
  *
  * The session itself is a `"use node"` action (frontQualifyOps.ts) because it
- * speaks TLS, HTTP/2 and raw frames. Everything that reads or writes relay
+ * speaks TLS, HTTP/2 and raw frames. Everything that reads or writes origin
  * state stays here, so the action remains one bounded outbound operation that
  * returns plain data — the same split probeOps.ts and edgeProviderOps.ts use.
  *
  * Two functions:
  *  - `context` gathers the edge, its frozen intent, the listener's transport
- *    parameters and what it speaks, and the relay's qualification credential,
+ *    parameters and what it speaks, and the origin's qualification credential,
  *    and derives the BINDING the result will be valid for;
  *  - `record` writes `edges.frontQualification` and `edges.readiness.front`,
  *    re-deriving the binding from the live rows first: a listener or intent
@@ -65,7 +65,7 @@ function paramsOf(listener: Doc<'relayListeners'>): TransportParams {
 
 /**
  * Everything the session and the binding depend on, read in one transaction so
- * the action cannot observe a half-updated relay.
+ * the action cannot observe a half-updated origin.
  */
 async function gather(ctx: QueryCtx | MutationCtx, edgeId: Id<'edges'>) {
   const edge = await ctx.db.get(edgeId);
@@ -100,8 +100,8 @@ export const context = internalQuery({
     if (!g) return null;
     const cfg = await resolveEdgeConfig(ctx.db);
     // The qualification account is minted through the backend provider and its
-    // panel id doubles as the VLESS UUID on the panels FCP drives. Anything
-    // else (a composite id from a panel that separates them) is reported as a
+    // backend id doubles as the VLESS UUID on the backends FCP drives. Anything
+    // else (a composite id from a backend that separates them) is reported as a
     // missing credential rather than sent as a guess.
     const credentialId = g.relay.qualificationUserId ?? '';
     const proto = {

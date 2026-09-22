@@ -72,7 +72,7 @@ export interface EvaluationInput {
   baseline: BaselineSample[];
   usersOnline: number | null;
   loadStale: boolean;
-  /** The panel's online bit for the relay node; null = unknown. false = an outage, never a block. */
+  /** The backend's online bit for the origin node; null = unknown. false = an outage, never a block. */
   nodeOnline: boolean | null;
   edges: EdgeProbeState[];
   cfg: Pick<EdgeConfig, 'detect' | 'probe'>;
@@ -105,7 +105,7 @@ export interface Evaluation {
   /** Edges whose probes look like an outage rather than a block (never rotate for these). */
   outageEdges: string[];
   probeSourcesDown: boolean;
-  /** The relay node itself is offline per the panel: whatever else says, an outage. */
+  /** The origin node itself is offline per the backend: whatever else says, an outage. */
   nodeOffline: boolean;
   /** The report window was truncated at the read cap (see `WindowReports.incomplete`). */
   windowIncomplete: boolean;
@@ -335,7 +335,7 @@ export type AutoRotateVeto =
 /**
  * Pick the edge an automatic rotation should replace, or the reason it must not
  * run. Gate order follows docs/edges.md § Detector: enabled, autoRotate (global
- * + relay), suspected, edge-level evidence, not an outage, no quarantine, no
+ * + origin), suspected, edge-level evidence, not an outage, no quarantine, no
  * running rotation, cooldown, daily cap, manageable Host.
  */
 export function autoRotateDecision(args: {
@@ -343,7 +343,7 @@ export function autoRotateDecision(args: {
   cfg: Pick<EdgeConfig, 'enabled' | 'autoRotate' | 'detect'>;
   origin: {
     autoRotate: boolean;
-    /** A guided setup owns the relay: automatic replacement never touches it. */
+    /** A guided setup owns the origin: automatic replacement never touches it. */
     setupOwned?: boolean;
     quarantined: boolean;
     rotationActive: boolean;
@@ -356,7 +356,7 @@ export function autoRotateDecision(args: {
   now: number;
 }): { edgeId: string; source: 'reports' | 'probes' } | { veto: AutoRotateVeto } {
   const { evaluation: ev, cfg, origin } = args;
-  // 1. enabled  2. autoRotate (global, then the relay's own opt-in)  2b. not setup-owned
+  // 1. enabled  2. autoRotate (global, then the origin's own opt-in)  2b. not setup-owned
   if (!cfg.enabled || !cfg.autoRotate) return { veto: 'edge_disabled' };
   if (!origin.autoRotate) return { veto: 'auto_rotate_off' };
   if (origin.setupOwned) return { veto: 'setup_owned' };

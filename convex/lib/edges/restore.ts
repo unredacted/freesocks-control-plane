@@ -1,6 +1,6 @@
 /**
- * Starting the persisted RESTORE workflow (`relays.restore`; driven by
- * convex/edgeRestore.ts). Shared by `relays.requestDelete` (purpose
+ * Starting the persisted RESTORE workflow (`origins.restore`; driven by
+ * convex/edgeRestore.ts). Shared by `origins.requestDelete` (purpose
  * `delete_relay`) and `edgeRestore.start`, and kept out of both so neither
  * imports the other.
  */
@@ -30,7 +30,7 @@ export function assertNoRestore(relay: Pick<Doc<'relays'>, 'restore'>): void {
     });
 }
 
-/** Whether the relay ever hid a direct Host (a hide row exists, whatever its state). */
+/** Whether the origin ever hid a direct Host (a hide row exists, whatever its state). */
 export async function hasHideRows(db: DatabaseReader, relayId: Id<'relays'>): Promise<boolean> {
   const row = await db
     .query('edgeHostHides')
@@ -41,8 +41,8 @@ export async function hasHideRows(db: DatabaseReader, relayId: Id<'relays'>): Pr
 
 /**
  * Persist the workflow at its first phase. Refuses a second workflow
- * (`edge.restore_in_progress`) and a quarantined relay. Audited
- * `edge.relay.restore_started`.
+ * (`edge.restore_in_progress`) and a quarantined origin. Audited
+ * `edge.origin.restore_started`.
  */
 export async function startRestoreWorkflow(
   ctx: MutationCtx,
@@ -61,7 +61,7 @@ export async function startRestoreWorkflow(
       message: 'Origin is quarantined; resolve it first',
     });
   if (relay.deleting)
-    throw new ConvexError({ code: 'edge.deleting', message: 'Relay is being deleted' });
+    throw new ConvexError({ code: 'edge.deleting', message: 'Origin is being deleted' });
   const now = Date.now();
   await ctx.db.patch(relay._id, {
     restore: {

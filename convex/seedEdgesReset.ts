@@ -1,11 +1,11 @@
 /**
- * One-shot reset of the Edges tables before the generic-relay schema lands
+ * One-shot reset of the Edges tables before the generic-origin schema lands
  * (clean break; see docs/edges.md § "Reset drain"). A guarded DRAIN, not a
  * delete:
  *
  *   1. `freeze` (edgeMaintenance.freeze): no new edge work is admitted; every
  *      completion path (rotation steps, rollback, cancel, unpublish, destroy,
- *      quarantine / needs_operator resolution, relay delete, credential
+ *      quarantine / needs_operator resolution, origin delete, credential
  *      removal) keeps running.
  *   2. `status` (read-only, ANY environment): what still has to settle before
  *      a wipe is safe. The operator finishes that work through the ordinary

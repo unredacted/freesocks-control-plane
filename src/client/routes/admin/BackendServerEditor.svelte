@@ -329,7 +329,7 @@
       {#if backend === 'remnawave'}
         <div>
           <label class="text-xs text-muted-foreground mb-1 block" for="srv-baseurl"
-            >Panel base URL</label
+            >Backend base URL</label
           >
           <Input
             id="srv-baseurl"

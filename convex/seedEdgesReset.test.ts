@@ -114,7 +114,7 @@ describe('edge maintenance gate', () => {
     ).rejects.toThrow(refused);
   });
 
-  test('freeze still admits completion paths: unpublish, relay delete, thaw', async () => {
+  test('freeze still admits completion paths: unpublish, origin delete, thaw', async () => {
     const { t, relayId, listenerId } = await seed();
     const { edgeId } = await t.mutation(internal.relays.adoptEdge, {
       relayId,

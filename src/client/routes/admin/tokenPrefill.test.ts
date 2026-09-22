@@ -5,11 +5,11 @@ const parse = (href: string) => parseNewTokenParams(new URL(href, 'https://x.tes
 
 describe('new-token deep link', () => {
   it('round-trips a scope and a name', () => {
-    const href = newTokenHref({ scope: 'admin:edges:register', name: 'node role: relay-a' });
+    const href = newTokenHref({ scope: 'admin:edges:register', name: 'node role: origin-a' });
     expect(href.startsWith('/admin/tokens?new=1&')).toBe(true);
     expect(parse(href)).toMatchObject({
       scopes: ['admin:edges:register'],
-      name: 'node role: relay-a',
+      name: 'node role: origin-a',
     });
   });
 

@@ -1,5 +1,5 @@
 /**
- * Relay ROTATION machine: the only path that provisions, publishes and replaces
+ * Origin ROTATION machine: the only path that provisions, publishes and replaces
  * edges with a template-Host flip. One rotation row per run; the origin holds
  * at most one active rotation.
  *
@@ -17,7 +17,7 @@
  *    operation claim on the edge / rotation; an unsettled claim is re-observed
  *    (discover / list Hosts) before anything allocating or destroying runs again.
  *  - Hosts are observe-then-write: the plan is captured from the live list at the
- *    start of the flip; a planned Host that disappears or changes inbound is
+ *    start of the flip; a planned Host that disappears or changes transport is
  *    `hosts_changed`, which rolls back, never converges.
  *  - a rollback that cannot converge QUARANTINES the origin; nothing bypasses it.
  */
@@ -103,8 +103,8 @@ import type {
   ResourceStep,
 } from './lib/edges/providers/types';
 import { admitted, assertAdmission } from './lib/edges/maintenance';
-import { publicationAdmitted } from './lib/panel/activation';
-import { activatingRunFor, recordCandidateEdge } from './panelActivation';
+import { publicationAdmitted } from './lib/backend/activation';
+import { activatingRunFor, recordCandidateEdge } from './nodeActivation';
 
 type Rotation = Doc<'edgeRotations'>;
 type Edge = Doc<'edges'>;
@@ -145,7 +145,7 @@ async function auditRotation(
 
 // --- row-field readers (with the event-log fallback for rows created before the fields) ----
 
-/** Whether a forward Host write was ever CLAIMED (the panel may hold it even without a settle). */
+/** Whether a forward Host write was ever CLAIMED (the backend may hold it even without a settle). */
 function forwardWriteAttempted(r: Rotation): boolean {
   if (r.forwardWriteAttempted !== undefined) return r.forwardWriteAttempted;
   return !!r.flippedAt || r.events.some((e) => e.code === 'host_forward_written');
@@ -264,7 +264,7 @@ export const getForAdmin = internalQuery({
  * rotation itself, plus the rows the run remembered by id (`auditIds`: the
  * operator's request, publish/unpublish, rotated, burned, quarantine and its
  * resolution). Rows created before `auditIds` existed fall back to scanning the
- * relay's and edges' newest rows for a matching `rotationId` payload
+ * origin's and edges' newest rows for a matching `rotationId` payload
  * (`auditLog.payload` is untyped, so it cannot be indexed).
  */
 async function rotationAuditTrail(ctx: QueryCtx, r: Rotation) {
@@ -504,7 +504,7 @@ export async function collectStartBlockers(
   // of any kind while it runs (the same rule every pool / listener write applies).
   if (origin.restore)
     push('edge.restore_in_progress', 'A restore workflow is running on this origin');
-  // A guided setup owns the relay until go-live: only the run's own starts
+  // A guided setup owns the origin until go-live: only the run's own starts
   // (`setupRun`) touch its pool; a manual publish / replace / burn meanwhile
   // would change the endpoint under the run's hides and rehearsal.
   if (origin.setupOwned && !a.setupRun)
@@ -540,7 +540,7 @@ export async function collectStartBlockers(
       if (origin.hostMode === 'operator' && (await isTemplateEdge(ctx, targetEdge)) && !force) {
         push(
           'edge.hosts_operator_managed',
-          'The operator manages this relay\u2019s panel Hosts; replacing a template edge needs force',
+          'The operator manages this origin\u2019s backend Hosts; replacing a template edge needs force',
         );
       }
     }
@@ -594,7 +594,7 @@ export async function collectStartBlockers(
         if (approval === 'refused')
           push(
             'servers.node_not_approved',
-            'The node behind this relay is not approved for delivery',
+            'The node behind this origin is not approved for delivery',
           );
       }
     }
@@ -607,7 +607,7 @@ export async function collectStartBlockers(
     if (!listener || listener.relayId !== a.relayId || listener.retired) {
       push(
         'edge.listener_not_found',
-        'The requested listener does not exist on this relay or is retired',
+        'The requested listener does not exist on this origin or is retired',
       );
     } else {
       // A name-free HTTP-transport listener is usable: behind an L7 front the
@@ -641,13 +641,13 @@ export async function collectStartBlockers(
     }
   }
   // A new CDN hostname is not a new frontend IP (shared anycast), so repeated
-  // automatic L7 replacements on one relay are bounded per day.
+  // automatic L7 replacements on one origin are bounded per day.
   if (a.trigger === 'detector' && a.kind === 'replace' && targetEdge && !force) {
     if ((targetEdge.layer ?? 'l4') === 'l7') {
       const used =
         origin.l7ReplacementsDayKey === todayKey(now) ? (origin.l7ReplacementsToday ?? 0) : 0;
       if (used >= cfg.l7.maxSameProviderReplacementsPerDay) {
-        push('edge.l7_replacement_cap', 'Daily cap on L7 replacements for this relay reached');
+        push('edge.l7_replacement_cap', 'Daily cap on L7 replacements for this origin reached');
       }
     }
   }
@@ -695,14 +695,14 @@ function standbyEligible(edge: Edge, listener: Doc<'relayListeners'> | undefined
   return !!listener && verificationCurrent(edge, listener);
 }
 
-/** Whether some listener's panel Host / plan points at this edge. */
+/** Whether some listener's backend Host / plan points at this edge. */
 async function isTemplateEdge(ctx: { db: QueryCtx['db'] }, edge: Edge): Promise<boolean> {
   const listener = await ctx.db.get(edge.listenerId);
   return !!listener && listener.templateEdgeId === edge._id;
 }
 
 /**
- * Whether publishing `to` (replacing `target`, when given) must flip the panel
+ * Whether publishing `to` (replacing `target`, when given) must flip the backend
  * Host: FCP owns the Hosts AND `to` becomes its listener's template edge (the
  * listener has none yet, or its current one is the edge being replaced).
  */
@@ -751,7 +751,7 @@ export async function startRotation(
     throw new ConvexError({ code: first.code, message: first.message });
   }
   const origin = g.origin!;
-  // Not waived by anything: a server change holds this relay's listeners still.
+  // Not waived by anything: a server change holds this origin's listeners still.
   await assertNoRelayPanelClaim(ctx.db, origin);
   // An edge published for an activating node is one of that run's candidate
   // resources: members never see it before the delivery commit.
@@ -903,7 +903,7 @@ export const requestCancel = internalMutation({
     const now = Date.now();
     const origin = await ctx.db.get(r.relayId);
     if (r.phase === 'rolling_back') {
-      // A rollback is never aborted half-way (the panel Host must land on the
+      // A rollback is never aborted half-way (the backend Host must land on the
       // previous binding), but the request is RECORDED and audited so the
       // operator is not locked out silently: the rollback finishes on its own
       // (rolled_back) or parks the origin (quarantined) within its attempt caps.
@@ -1631,7 +1631,7 @@ export const applyPublish = internalMutation({
         at: now,
         level: 'info',
         code: 'published',
-        detail: `pool index ${poolIndex}${needsHostFlip ? ', panel Host flip follows' : origin.hostMode === 'operator' ? ', Host left to the operator' : origin.hostMode === 'none' ? ', no panel Host' : ''}`,
+        detail: `pool index ${poolIndex}${needsHostFlip ? ', backend Host flip follows' : origin.hostMode === 'operator' ? ', Host left to the operator' : origin.hostMode === 'none' ? ', no backend Host' : ''}`,
       }),
       updatedAt: now,
     });
@@ -1681,7 +1681,7 @@ export const setHostPlan = internalMutation({
       updatedAt: now,
     });
     if (a.templateHostUuid) {
-      // The plan found the listener's Host on the panel: it is present and, if
+      // The plan found the listener's Host on the backend: it is present and, if
       // FCP had not created it, adopted.
       const l = await ctx.db.get(a.listenerId);
       if (l)
@@ -1731,7 +1731,7 @@ export const claimHostOp = internalMutation({
     await ctx.db.patch(a.rotationId, {
       currentOp: op,
       // Set with the claim, not the settle: a PATCH that lands but times out
-      // before its settle still counts as "the panel may hold the new address".
+      // before its settle still counts as "the backend may hold the new address".
       ...(a.direction === 'forward'
         ? { flipAttempts: attempts, forwardWriteAttempted: true }
         : { rollbackAttempts: attempts }),
@@ -1888,7 +1888,7 @@ export const finalize = internalMutation({
       updatedAt: now,
     });
     // A detector-triggered L7 replacement that SUCCEEDED on the same provider
-    // counts against the relay's daily bound exactly like a blocked one: the
+    // counts against the origin's daily bound exactly like a blocked one: the
     // new hostname very probably resolves to the same shared anycast frontend,
     // so a censor that blocked the address is not answered by it. A
     // replacement that moved to another provider, or to another layer, is a
@@ -1989,7 +1989,7 @@ export const resolveQuarantine = internalMutation({
       if (i >= 0) standbys.splice(i, 1);
     };
     if (keep === 'previous' && rotation) {
-      // DB half of the rollback; the operator has fixed the panel Hosts by hand.
+      // DB half of the rollback; the operator has fixed the backend Hosts by hand.
       let published = origin.publishedEdgeIds;
       if (rotation.toEdgeId) {
         const to = await ctx.db.get(rotation.toEdgeId);
@@ -2038,7 +2038,7 @@ export const resolveQuarantine = internalMutation({
     } else if (rotation?.toEdgeId) {
       // Keep the CURRENT edge: the rolling_back pass already restored the
       // previous binding in the DB (previous published, new unpublished), so
-      // this is the inverse — the operator aligned the panel Host with the new
+      // this is the inverse — the operator aligned the backend Host with the new
       // edge by hand, and FCP's pool must say the same: new edge published at
       // the saved pool index, previous edge draining.
       const to = await ctx.db.get(rotation.toEdgeId);
@@ -2212,7 +2212,7 @@ export const edgeReachability = internalQuery({
 });
 
 /**
- * Count one same-provider L7 replacement against the relay's daily bound.
+ * Count one same-provider L7 replacement against the origin's daily bound.
  * Minting another CDN hostname does not guarantee a different frontend IP, so
  * a block that survives the replacement must not turn into an allocation loop.
  */
@@ -2586,7 +2586,7 @@ function resourceStepOf(s: Edge['steps'][number]): ResourceStep {
  * Code + short detail of a thrown error. Provider ops cross the action boundary
  * as `ConvexError<EdgeProviderOpsFailure>` (edgeProviderOps.ts), so the code,
  * HTTP status and retry/timeout flags are read from `err.data`; a plain Error
- * (a panel call, a mutation refusal) contributes only its body-free message.
+ * (a backend call, a mutation refusal) contributes only its body-free message.
  */
 function errCode(err: unknown): {
   code: string;
@@ -2642,7 +2642,7 @@ export const step = internalAction({
     }
     // Bounded retries: a run that exceeds its wall clock or keeps throwing must
     // end somewhere. Early phases fail; publishing / flipping roll back; once
-    // the panel may hold the new binding (confirming / rolling back) the
+    // the backend may hold the new binding (confirming / rolling back) the
     // origin is quarantined with the reason spelled out.
     // (A rollback the wall clock itself triggered must be allowed to run: in
     // `rolling_back` only the error budget + the Host attempt caps apply.)
@@ -3436,7 +3436,7 @@ type VerifyGate =
  *     verdict;
  *  2. for a DETECTOR-triggered replacement, probes of the new hostname from
  *     every country the evidence named. `reachable` everywhere proceeds; any
- *     `unreachable` fails (`replacement_blocked`, counted against the relay's
+ *     `unreachable` fails (`replacement_blocked`, counted against the origin's
  *     same-provider day bound, because a new hostname on the same CDN is often
  *     the same anycast frontend); anything else (timeout, `unknown`, `mixed`)
  *     fails `qualification_inconclusive`. An unknown result is never a success.
@@ -3561,9 +3561,9 @@ function protoOf(l: ListenerProto): ListenerProto {
   return { protocol: l.protocol, streamTransport: l.streamTransport, security: l.security };
 }
 
-/** The panel behind a relay whose Hosts FCP manages (a panel-node origin). */
+/** The backend behind an origin whose Hosts FCP manages (a backend-node origin). */
 function panelServerId(origin: Origin): Id<'backendServers'> {
-  if (!origin.backendServerId) throw new Error('relay has no panel');
+  if (!origin.backendServerId) throw new Error('origin has no backend');
   return origin.backendServerId;
 }
 
@@ -3583,7 +3583,7 @@ async function phaseHostFlip(ctx: ActionCtx, c: Ctx) {
     if (origin.hostMode === 'operator' && r.kind === 'replace' && !r.force) {
       // The flip was decided with FCP-managed Hosts at publish time; an operator
       // took them over since. Replacing the template edge without a Host write
-      // would leave the panel pointing at the old edge: roll back rather than
+      // would leave the backend pointing at the old edge: roll back rather than
       // "converge".
       await advanceCall(ctx, r._id, sv, {
         type: 'fail',
@@ -3593,13 +3593,13 @@ async function phaseHostFlip(ctx: ActionCtx, c: Ctx) {
       });
       return;
     }
-    // No panel Host at all (Outline, manual), or the operator writes it.
+    // No backend Host at all (Outline, manual), or the operator writes it.
     await advanceCall(ctx, r._id, sv, { type: 'host_converged', flipped: 0 });
     return;
   }
   const remark = listenerRemark(slot);
   if (!remark) {
-    // An address-matched listener has no panel Host to flip.
+    // An address-matched listener has no backend Host to flip.
     await advanceCall(ctx, r._id, sv, { type: 'host_converged', flipped: 0 });
     return;
   }
@@ -3664,7 +3664,7 @@ async function phaseHostFlip(ctx: ActionCtx, c: Ctx) {
       return;
     }
     if (!m.host) {
-      // No panel Host yet: FCP owns the Hosts, so it CREATES this listener's
+      // No backend Host yet: FCP owns the Hosts, so it CREATES this listener's
       // Host at the target through the Host state machine (persisted intent,
       // discovery after an uncertain outcome; convex/hostOps.ts). The plan is
       // then empty: the Host is born at the target, nothing to flip.
@@ -3757,7 +3757,7 @@ async function phaseHostFlip(ctx: ActionCtx, c: Ctx) {
     return;
   }
   try {
-    await ctx.runAction(internal.backends.updateHost, {
+    await ctx.runAction(internal.backends.updateAddress, {
       backendServerId: panelServerId(origin),
       uuid: entry.uuid,
       address: target.address,
@@ -3784,7 +3784,7 @@ async function phaseHostFlip(ctx: ActionCtx, c: Ctx) {
   await advanceCall(ctx, r._id, sv, { type: 'progress', delayMs: 0 });
 }
 
-/** A panel-unreachable pass during a flip: count it against the cap and retry after a poll. */
+/** A backend-unreachable pass during a flip: count it against the cap and retry after a poll. */
 export const bumpFlipAttempts = internalMutation({
   args: { rotationId: v.id('edgeRotations'), stepVersion: v.number(), detail: v.string() },
   handler: async (ctx, { rotationId, stepVersion, detail }) => {
@@ -3846,7 +3846,7 @@ async function phaseConfirming(ctx: ActionCtx, c: Ctx) {
   try {
     hosts = await listHosts(ctx, origin);
   } catch (err) {
-    // The panel is down after the Host write: bounded like the flip itself.
+    // The backend is down after the Host write: bounded like the flip itself.
     // Past the cap the rotation rolls back (itself bounded → quarantine).
     const { code, detail } = errCode(err);
     if (r.flipAttempts + 1 > cfg.maxFlipAttempts) {
@@ -3885,7 +3885,7 @@ async function phaseRollingBack(ctx: ActionCtx, c: Ctx) {
   if (r.hostPlan.length === 0 || !forwardWriteAttempted(r)) {
     // No forward Host write was ever claimed: the DB restore is the whole
     // rollback. (A claimed write whose settle was lost is NOT a shortcut: the
-    // panel may hold the new address, so it is re-observed below.)
+    // backend may hold the new address, so it is re-observed below.)
     await advanceCall(ctx, r._id, sv, { type: 'rolled_back' });
     return;
   }
@@ -3910,7 +3910,7 @@ async function phaseRollingBack(ctx: ActionCtx, c: Ctx) {
   }
   // Drift is judged by the SAME predicate the flip uses (`diffHosts`), entry by
   // entry: the inline check here used to accept a planned Host that had LOST its
-  // inbound binding (`h.inbound` null), which the flip treats as drift, so a
+  // transport binding (`h.transport` null), which the flip treats as drift, so a
   // rollback could keep writing to a Host the role had detached.
   let pendingEntry: Rotation['hostPlan'][number] | null = null;
   for (const p of r.hostPlan) {
@@ -3956,7 +3956,7 @@ async function phaseRollingBack(ctx: ActionCtx, c: Ctx) {
     return;
   }
   try {
-    await ctx.runAction(internal.backends.updateHost, {
+    await ctx.runAction(internal.backends.updateAddress, {
       backendServerId: panelServerId(origin),
       uuid: pendingEntry.uuid,
       address: rollbackTarget.address,

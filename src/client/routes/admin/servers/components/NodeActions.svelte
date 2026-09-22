@@ -3,7 +3,7 @@
    * The header actions of a node page: Edit, Restart (or Turn on), and a More
    * menu with Turn off and the two removes. Removing is two different things
    * and both are named: "Stop and remove" needs the node to be off already;
-   * "Remove from the panel only" says that the node process may keep running.
+   * "Remove from the backend only" says that the node process may keep running.
    *
    * Props: slug, node
    */
@@ -15,11 +15,11 @@
   import { Input } from '@client/components/ui/input';
   import { Label } from '@client/components/ui/label';
   import { deleteNode, nodeAction, updateNode } from '@client/lib/serversApi';
-  import type { PanelNodeView } from '../../../../../shared/contracts/servers';
+  import type { NodeView } from '../../../../../shared/contracts/servers';
   import ConfirmDialog from '../../edges/components/ConfirmDialog.svelte';
   import { runWrite } from '../lib/run';
 
-  let { slug, node }: { slug: string; node: PanelNodeView } = $props();
+  let { slug, node }: { slug: string; node: NodeView } = $props();
   const qc = useQueryClient();
   const uid = $props.id();
 
@@ -96,7 +96,7 @@
       </DropdownMenu.Item>
     {/if}
     <DropdownMenu.Item variant="destructive" onSelect={() => (removeOnlyOpen = true)}>
-      Remove from the panel only
+      Remove from the backend only
     </DropdownMenu.Item>
   </DropdownMenu.Content>
 </DropdownMenu.Root>
@@ -136,7 +136,7 @@
 />
 <ConfirmDialog
   bind:open={removeOnlyOpen}
-  title={`Remove ${node.name} from the panel only?`}
+  title={`Remove ${node.name} from the backend only?`}
   body="The panel forgets it, but the node keeps running and serving people until someone stops it on the machine. To stop it first, turn it off and choose Stop and remove."
   typed={node.name}
   confirmLabel="Remove from the panel"
@@ -152,7 +152,7 @@
     <Dialog.Header>
       <Dialog.Title>Edit {node.name}</Dialog.Title>
       <Dialog.Description
-        >Where the panel reaches the node, not where members connect.</Dialog.Description
+        >Where the backend reaches the node, not where members connect.</Dialog.Description
       >
     </Dialog.Header>
     <form

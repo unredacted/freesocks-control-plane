@@ -1,30 +1,30 @@
 /**
- * The persisted RESTORE workflow (`relays.restore`; docs/edges.md § "Direct-Host
- * hides and the restore workflow"): the one way a guided relay stops depending
+ * The persisted RESTORE workflow (`origins.restore`; docs/edges.md § "Direct-Host
+ * hides and the restore workflow"): the one way a guided origin stops depending
  * on its edges without an outage FCP would have caused itself.
  *
  *   freeze -> settle -> verify_fcp_raw -> release_binding -> restore -> verify_direct -> finish
  *
- *  1. freeze: no new direct-Host disable writes on the relay (every hide path
- *     checks `relays.restore`); waits for a running rotation to end.
+ *  1. freeze: no new direct-Host disable writes on the origin (every hide path
+ *     checks `origins.restore`); waits for a running rotation to end.
  *  2. settle: every outstanding hide row reaches `confirmed` or `released` by
  *     OBSERVATION (edgeHostHides.settle in `settle` mode). A claimed row is
  *     possibly written; a lease expiry alone never releases it.
- *  3. verify_fcp_raw (bound relays only): the RAW panel body of each non-dark
+ *  3. verify_fcp_raw (bound origins only): the RAW backend body of each non-dark
  *     cohort carries at least one FCP entry and no origin-address entry: what
  *     members receive the moment the binding is released is usable as-is.
- *  4. release_binding: the delivery binding is released WHILE the relay stays
+ *  4. release_binding: the delivery binding is released WHILE the origin stays
  *     enabled and its edges published. A direct Host is never re-enabled while
- *     the relay is bound: the renderer would answer `leak_detected` for every
+ *     the origin is bound: the renderer would answer `leak_detected` for every
  *     member.
  *  5. restore: each `confirmed` disable row is re-observed; still disabled at
  *     the observed tuple -> re-enabled through a `restore` row (read-back
  *     confirmed); changed or removed by an administrator -> released untouched.
  *  6. verify_direct: the raw body of each non-dark cohort carries an
  *     origin-address entry again.
- *  7. finish, by purpose: `cancel_setup` retains the relay (`setupOwned` +
+ *  7. finish, by purpose: `cancel_setup` retains the origin (`setupOwned` +
  *     `bindingDeferred`, edges published); `release_requirement` retains
- *     everything and leaves the relay re-activatable (`bindingDeferred`);
+ *     everything and leaves the origin re-activatable (`bindingDeferred`);
  *     `delete_relay` runs the deletion body only now.
  *
  * One phase advances per `step` (the reconcile cron drives it every tick); a
@@ -113,7 +113,7 @@ export const start = internalMutation({
   },
   handler: async (ctx, { relayId, purpose, actorAdminId, darkCohortKeys, force }) => {
     const relay = await ctx.db.get(relayId);
-    if (!relay) throw new ConvexError({ code: 'not_found', message: 'Relay not found' });
+    if (!relay) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     await assertNoRelayPanelClaim(ctx.db, relay);
     await startRestoreWorkflow(ctx, relay, {
       purpose,
@@ -242,7 +242,7 @@ export const advance = internalMutation({
 });
 
 /**
- * Phase 4: release the origin's delivery binding while the relay stays enabled
+ * Phase 4: release the origin's delivery binding while the origin stays enabled
  * and its edges published (raw delivery of the FCP-Host bodies from here on).
  * `release_requirement` also defers the binding so `require-edges` can re-apply
  * the full activation policy later.
@@ -286,7 +286,7 @@ export const releaseBinding = internalMutation({
         lastError: undefined,
         updatedAt: now,
       },
-      // Only an unbound relay may be re-activated by `require-edges`.
+      // Only an unbound origin may be re-activated by `require-edges`.
       ...(relay.restore.purpose !== 'delete_relay' ? { bindingDeferred: true } : {}),
       updatedAt: now,
     });
@@ -358,7 +358,7 @@ export const inProgress = internalQuery({
 
 // --- Node half: the driver ---------------------------------------------------------------------
 
-/** Fetch the RAW panel body of one cohort's representative (the sub route's fetch path, no render). */
+/** Fetch the RAW backend body of one cohort's representative (the sub route's fetch path, no render). */
 async function rawBodyOf(ctx: ActionCtx, c: RestoreContext['cohorts'][number]): Promise<string> {
   const fetched = await ctx.runAction(internal.backends.fetchSubscriptionContent, {
     backend: c.backend,
@@ -405,7 +405,7 @@ export interface StepResult {
   error: string | null;
 }
 
-/** Drive ONE phase of the relay's restore workflow. */
+/** Drive ONE phase of the origin's restore workflow. */
 export const step = internalAction({
   args: { relayId: v.id('relays') },
   handler: async (ctx, { relayId }): Promise<StepResult> => {
@@ -468,7 +468,7 @@ export const step = internalAction({
         return go('verify_direct');
       }
       case 'verify_direct': {
-        // Nothing was hidden and nothing is to be checked against: a relay that
+        // Nothing was hidden and nothing is to be checked against: an origin that
         // never had a direct Host has no direct entry to wait for.
         const hadHides = await ctx.runQuery(internal.edgeHostHides.status, { relayId });
         if (hadHides.rows.some((r) => r.intent === 'disable')) {
@@ -489,7 +489,7 @@ export const step = internalAction({
   },
 });
 
-/** The reconcile pass: one phase per relay in a restore workflow. */
+/** The reconcile pass: one phase per origin in a restore workflow. */
 export const reconcilePass = internalAction({
   args: {},
   handler: async (ctx): Promise<{ stepped: number; finished: number; errors: number }> => {

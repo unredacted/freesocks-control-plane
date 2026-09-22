@@ -287,7 +287,7 @@ export const FastlyTemplate = z.object({
    */
   overrideHost: z.enum(['hostname', 'origin']).default('hostname'),
   /** Comment stamped on the service (never the public hostname). */
-  serviceComment: z.string().max(64).default('relay edge'),
+  serviceComment: z.string().max(64).default('origin edge'),
 });
 export type FastlyTemplateParams = z.infer<typeof FastlyTemplate>;
 

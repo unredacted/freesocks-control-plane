@@ -1,13 +1,13 @@
 <script lang="ts">
   /**
-   * Delete a relay: the typed slug AND a required choice of what the members on
+   * Delete an origin: the typed slug AND a required choice of what the members on
    * this origin get afterwards (`restore-direct` | `keep-dark`).
    *
-   * Props: open (bindable); relay; edgeCount (non-destroyed edges that will be torn down)
+   * Props: open (bindable); origin; edgeCount (non-destroyed edges that will be torn down)
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
-  import type { RelayAdmin } from '@shared/contracts/edges';
+  import type { OriginAdmin } from '@shared/contracts/edges';
   import { Checkbox } from '@client/components/ui/checkbox';
   import { Label } from '@client/components/ui/label';
   import {
@@ -23,7 +23,7 @@
 
   interface Props {
     open: boolean;
-    relay: RelayAdmin;
+    relay: OriginAdmin;
     edgeCount: number;
   }
   let { open = $bindable(false), relay, edgeCount }: Props = $props();
@@ -43,19 +43,19 @@
     {
       id: 'restore-direct',
       title: 'Give members the direct address again',
-      text: 'Edge-required delivery is lifted for this origin. At their next refresh, members on this node receive the origin address itself, as before the relay existed. Choose this when the node stays in service without edges. The origin address becomes visible to members and to anyone watching them.',
+      text: 'Edge-required delivery is lifted for this origin. At their next refresh, members on this node receive the origin address itself, as before the origin existed. Choose this when the node stays in service without edges. The origin address becomes visible to members and to anyone watching them.',
     },
     {
       id: 'keep-dark',
       title: 'Keep members dark',
-      text: 'Edge-required delivery stays in force with no relay behind it. Members on this node are answered "temporarily unavailable" and keep their last configuration, which stops working once the edges are destroyed. Choose this when the origin address must never be handed out, for example before you register a new relay for it. The leftover binding can be released later from Settings.',
+      text: 'Edge-required delivery stays in force with no origin behind it. Members on this node are answered "temporarily unavailable" and keep their last configuration, which stops working once the edges are destroyed. Choose this when the origin address must never be handed out, for example before you register a new origin for it. The leftover binding can be released later from Settings.',
     },
   ];
 
   async function run(): Promise<void> {
     if (!disposition) return;
     assertEdgeOk(await deleteRelay(relay.id, disposition, force));
-    toast.success('Relay delete started. Its edges are torn down in the background.');
+    toast.success('Origin delete started. Its edges are torn down in the background.');
     invalidateRelay(qc, relay.slug);
     void qc.invalidateQueries({ queryKey: edgeKeys.deliveryBindings });
     router.navigate(edgesPaths.overview());
@@ -64,8 +64,8 @@
 
 <ActionConfirm
   bind:open
-  title={`Delete relay ${relay.slug}?`}
-  body={`This retires every listener and destroys ${edgeCount === 1 ? 'the 1 edge' : `all ${edgeCount} edges`} of the relay at the provider. It cannot be undone.`}
+  title={`Delete origin ${relay.slug}?`}
+  body={`This retires every listener and destroys ${edgeCount === 1 ? 'the 1 edge' : `all ${edgeCount} edges`} of the origin at the provider. It cannot be undone.`}
   typed={relay.slug}
   confirmLabel="Delete relay"
   danger
@@ -108,7 +108,7 @@
     <div class="mt-3 flex items-start gap-2">
       <Checkbox id="relay-delete-force" bind:checked={force} class="mt-0.5" />
       <div>
-        <Label for="relay-delete-force">Delete even though the relay is busy</Label>
+        <Label for="relay-delete-force">Delete even though the origin is busy</Label>
         <p class="text-xs text-muted-foreground">
           {relay.quarantine
             ? 'The relay is quarantined: FCP does not know which Hosts the panel serves. Forcing skips that question, so check the panel Hosts by hand afterwards.'

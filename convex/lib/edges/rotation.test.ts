@@ -154,7 +154,7 @@ describe('slotEligible + pickSlot (proto-aware)', () => {
     // `c` has no active name → ineligible. gcore is already published → upcloud wins when distinct is preferred.
     expect(pickSlot(slots, ['gcore'], true, null)?.slotId).toBe('a');
     expect(pickSlot(slots, ['gcore'], true, 'gcore')?.slotId).toBe('a');
-    // Without the distinct preference, the relay's preference decides, else key order.
+    // Without the distinct preference, the origin's preference decides, else key order.
     expect(pickSlot(slots, ['gcore'], false, 'gcore')?.slotId).toBe('b');
     expect(pickSlot(slots, [], false, null)?.slotId).toBe('a');
     expect(pickSlot([slot({ activeSnis: 0 })], [], true, null)).toBeNull();

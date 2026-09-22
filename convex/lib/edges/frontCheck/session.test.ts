@@ -98,7 +98,7 @@ moSW2vRmP6rSvhjezfEq8IIibRG6fT6j+2IqaHPqQgW6s1Wl3Zk=
 
 // --- the fake node ---------------------------------------------------------
 
-/** What the inbound at the far end of the tunnel does with our VLESS request. */
+/** What the transport at the far end of the tunnel does with our VLESS request. */
 type NodeRole = 'proxy204' | 'proxy200' | 'reject' | 'silent' | 'garbage';
 
 interface NodeAction {
@@ -325,8 +325,8 @@ function startGrpcServer(opts: { grpc: GrpcRole; node: NodeRole }): Promise<Runn
 type XhttpRole = 'ok' | 'forbidden' | 'html';
 
 /**
- * Xray's packet-up server in miniature: `GET /relay/<session>` is the
- * downstream, `POST /relay/<session>/<seq>` the uploads. Like the real server
+ * Xray's packet-up server in miniature: `GET /origin/<session>` is the
+ * downstream, `POST /origin/<session>/<seq>` the uploads. Like the real server
  * it refuses a request whose `Referer` carries no `x_padding` of 100 to 1000
  * bytes, which is the rule the checker was first caught breaking.
  */
@@ -484,7 +484,7 @@ describe('xhttp (packet-up)', () => {
     expect(await run(s.port, 'xhttp')).toMatchObject({ ok: false, code: 'auth_failed' });
   });
 
-  test('a stream-only inbound is refused before any request is made', async () => {
+  test('a stream-only transport is refused before any request is made', async () => {
     const s = await track(startXhttpServer({ xhttp: 'ok', node: 'proxy204' }));
     expect(await run(s.port, 'xhttp', { mode: 'stream-one' })).toMatchObject({
       ok: false,

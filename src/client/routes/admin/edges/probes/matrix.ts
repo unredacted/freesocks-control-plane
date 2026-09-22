@@ -25,12 +25,12 @@ export type Verdict = ProbeMatrixTarget['reachability']['byCountry'][number]['ve
 export const KIND_ORDER: readonly ProbeKind[] = ['edge', 'relay', 'custom'];
 export const KIND_LABELS: Record<ProbeKind, string> = {
   edge: 'Edges',
-  relay: 'Relay nodes',
+  relay: 'Origin nodes',
   custom: 'Custom targets',
 };
 export const KIND_SINGULAR: Record<ProbeKind, string> = {
   edge: 'Edge',
-  relay: 'Relay node',
+  relay: 'Origin node',
   custom: 'Custom',
 };
 
@@ -54,10 +54,10 @@ export function groupTargets(
 
 /**
  * The matrix `detail` is "<publication> · <provider|adopted>" for an edge,
- * "scheduled" / "manual only" for a relay node and "host:port" for a custom target.
+ * "scheduled" / "manual only" for an origin node and "host:port" for a custom target.
  */
 export function targetDetail(t: Pick<ProbeMatrixTarget, 'kind' | 'detail'>): string {
-  if (t.kind === 'relay') return t.detail === 'scheduled' ? 'Probed every round' : 'Relay node';
+  if (t.kind === 'relay') return t.detail === 'scheduled' ? 'Probed every round' : 'Origin node';
   if (t.kind !== 'edge') return t.detail;
   const [publication, provider] = t.detail.split(' · ');
   const words = [publication ? publicationLabel(publication) : ''];

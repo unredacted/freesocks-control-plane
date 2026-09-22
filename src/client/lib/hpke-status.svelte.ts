@@ -74,7 +74,7 @@ async function runAttestation(): Promise<void> {
 /**
  * Re-run the live key attestation and fold the fresh verdict into `hpkeSession`.
  * Throttled to one call per MIN_RECHECK_MS (pass `force` for an explicit user
- * action, e.g. opening the verify panel), and single-flighted so a burst of
+ * action, e.g. opening the verify backend), and single-flighted so a burst of
  * triggers - the interval firing as a tab is refocused - is one request.
  */
 export async function refreshAttestation(opts?: { force?: boolean }): Promise<void> {

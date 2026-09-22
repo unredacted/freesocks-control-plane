@@ -1,10 +1,10 @@
 /**
- * Shared convex-test fixtures for the edges area (generic-relay model). Every
+ * Shared convex-test fixtures for the edges area (generic-origin model). Every
  * value is RFC 5737 / RFC 3849 / `*.example`; nothing here names a real
  * deployment. Tests import `seedEdgeFixture` and reach for the ids they need.
  *
- *   backend server `panel-a` (remnawave) -> account `acct-a` (gcore, unqualified
- *   by default) -> relay `node-one` (panel-node origin, listener `a`:
+ *   backend server `backend-a` (remnawave) -> account `acct-a` (gcore, unqualified
+ *   by default) -> origin `node-one` (backend-node origin, listener `a`:
  *   vless/raw/reality on 443 with two names and a target).
  */
 import type { TestConvex } from 'convex-test';
@@ -118,6 +118,37 @@ export function shadowsocksListener(
   };
 }
 
+/**
+ * Mark a backend as set up by FCP (the one condition every management write
+ * checks): a ready setup row with no modes. Tests of the writes themselves
+ * need nothing more; the setup workflow has its own tests.
+ */
+export async function markBackendSetUp(t: T, serverId: Id<'backendServers'>): Promise<void> {
+  const now = Date.now();
+  await t.run(async (ctx) => {
+    const existing = await ctx.db
+      .query('panelSetups')
+      .withIndex('by_server', (q) => q.eq('backendServerId', serverId))
+      .unique();
+    if (existing) return;
+    await ctx.db.insert('panelSetups', {
+      backendServerId: serverId,
+      desired: '{}',
+      desiredHash: 'fixture',
+      generation: 1,
+      state: 'ready',
+      profileName: 'FreeSocks-Config',
+      modes: [],
+      templates: [],
+      originDns: null,
+      adopted: false,
+      gateVersion: 0,
+      createdAt: now,
+      updatedAt: now,
+    });
+  });
+}
+
 export async function insertPanelServer(
   t: T,
   opts: { slug?: string; backend?: 'remnawave' | 'outline' } = {},
@@ -199,7 +230,7 @@ export async function createAccount(
   return id;
 }
 
-/** Register a relay the way the node role does: origin + listeners in one PUT. */
+/** Register an origin the way the node role does: origin + listeners in one PUT. */
 export async function registerRelay(
   t: T,
   opts: {
@@ -262,7 +293,7 @@ export interface EdgeFixture {
 }
 
 /**
- * The standard fixture: panel + one gcore account + one panel-node relay with
+ * The standard fixture: backend + one gcore account + one backend-node origin with
  * the REALITY listener. `qualified` marks the account qualified.
  */
 export async function seedEdgeFixture(
@@ -295,7 +326,7 @@ export async function seedEdgeFixture(
 }
 
 /**
- * Observe-only import of an L4 edge at `ipv4` on the relay's listener
+ * Observe-only import of an L4 edge at `ipv4` on the origin's listener
  * (published when asked). By default the import carries the operator's
  * statement that the address already serves (`verified`, recorded as a
  * `named_connection` verification), which the publication gate needs for an

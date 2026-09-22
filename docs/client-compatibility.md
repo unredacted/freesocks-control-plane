@@ -1,6 +1,6 @@
 # Client compatibility CI
 
-`bun run test:compat` boots a disposable Remnawave panel, issues a test user, renders subscriptions through FCP's actual HTTP handler, and runs pinned client engines and the SFL Linux package. No existing account or production credentials are needed. Everything is in the **Client compatibility** workflow; the existing fast suite remains offline.
+`bun run test:compat` boots a disposable Remnawave backend, issues a test user, renders subscriptions through FCP's actual HTTP handler, and runs pinned client engines and the SFL Linux package. No existing account or production credentials are needed. Everything is in the **Client compatibility** workflow; the existing fast suite remains offline.
 
 ## What is proved
 
@@ -14,7 +14,7 @@
 | Report form          | Chromium and Firefox                                                               | Actual Svelte dialog and API transport; required reason, short/mobile viewport, no free-text box (support mailto shown instead), successful POST, failed POST retains the chosen reason, reopening starts clean. Responses are intercepted test fixtures. |
 | Deployed smoke       | Actual public FCP fronts/mirrors                                                   | Dedicated canary subscription returns expected format, cache headers and native engine validation. Read only; does not connect the tunnel.                                                                                                                |
 
-The integration harness executes FCP's real route, provider and cache logic in the **Convex test runtime**, not a deployed Convex server. The live panel and proxy traffic are real. The deployed smoke workflow covers the public HTTP deployment separately. Backend authentication and rate-limit behavior remain covered by the normal backend suite; the report-form browser tests inject 401/429/502 responses and do not perform a real login.
+The integration harness executes FCP's real route, provider and cache logic in the **Convex test runtime**, not a deployed Convex server. The live backend and proxy traffic are real. The deployed smoke workflow covers the public HTTP deployment separately. Backend authentication and rate-limit behavior remain covered by the normal backend suite; the report-form browser tests inject 401/429/502 responses and do not perform a real login.
 
 A reference engine pass is **not** a packaged Hiddify, Karing, Clash, or mobile application pass. Contract User-Agents are regression inputs, not assertions about every current app release. The exact SFL 1.14.0 identity was extracted from its checksum-verified package: `SFL (sing-box 1.14.0; language en_US)`. This exposed the old FCP normalization rule's missing space/parenthesis form. SFW uses the same form with a different prefix (upstream `sing-box-for-desktop/src/main/userAgent.ts` picks `SFL` on Linux and `SFW` otherwise); only the SFL string is captured from a package here.
 
@@ -34,7 +34,7 @@ bun run test:compat:browser
 bun --no-env-file scripts/compat/report.ts
 ```
 
-The integration stack binds loopback port 3000 and the packaged-app bridge uses port 4179. Do not run it concurrently with another Remnawave integration stack. Both panel fixtures and generated private keys are throwaway. The wrapper always tears down its own Compose project and volumes; it never uses the application's production Compose project. `.cache/compat` and `test-results` are ignored by Git. The application runs with a fresh user-data directory.
+The integration stack binds loopback port 3000 and the packaged-app bridge uses port 4179. Do not run it concurrently with another Remnawave integration stack. Both backend fixtures and generated private keys are throwaway. The wrapper always tears down its own Compose project and volumes; it never uses the application's production Compose project. `.cache/compat` and `test-results` are ignored by Git. The application runs with a fresh user-data directory.
 
 Downloads verify pinned SHA-256 before extraction/execution. `FCP_COMPAT_CHANNEL=latest` instead resolves official stable release assets and their GitHub SHA-256 digests, then executes the same tests; this runs nightly separately from the pinned PR gate. It does not rewrite the committed pins. A changed upstream import UI or format fails discovery and requires review before updating the pins.
 
@@ -44,7 +44,7 @@ The public artifact contains test names, statuses, artifact versions/hashes and 
 
 The Debian container smoke test is not an Xfce test. The same SFL adapter can run on disposable, signed-in Xfce VMs with labels `fcp-debian-13-xfce` and `fcp-mx-25-2-xfce`. Provision Docker, Node 24, Bun and a running Xfce desktop session; run the Actions runner inside that session so DISPLAY, XAUTHORITY and DBUS_SESSION_BUS_ADDRESS are available. Allow package installation for that disposable runner. Record and pin the OS image/checksum in the VM provisioning system.
 
-The nightly schedule also runs the provider contract test against a Remnawave 2.x panel (`REMNAWAVE_TEST_IMAGE=remnawave/backend:2.8.0`): production runs 3.x, but the provider stays dual-contract for panels that have not upgraded, and nothing on the PR gate boots a 2.x panel.
+The nightly schedule also runs the provider contract test against a Remnawave 2.x backend (`REMNAWAVE_TEST_IMAGE=remnawave/backend:2.8.0`): production runs 3.x, but the provider stays dual-contract for backends that have not upgraded, and nothing on the PR gate boots a 2.x backend.
 
 Enable repository variable `CLIENT_COMPAT_VM_RUNNERS=true` only after those runners are available. The job installs the verified package and sets `FCP_COMPAT_SFL_EXECUTABLE` to drive the actual desktop application. These jobs only run trusted main-branch code, never pull-request code. Destroy or reset each VM after the job. The runner label identifies the intended OS; inspect the OS record in the application result when certifying it.
 

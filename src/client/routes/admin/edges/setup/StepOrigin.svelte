@@ -1,10 +1,10 @@
 <script lang="ts">
   /**
-   * Step 1, origin source. With a relay: what it dials, read only (the origin
+   * Step 1, origin source. With an origin: what it dials, read only (the origin
    * kind never changes). With a draft: choose the origin and say what its
-   * inbound will speak, so the next steps are judged against it.
+   * transport will speak, so the next steps are judged against it.
    *
-   * Props: StepBodyProps + draft (bindable StoredDraft | null; null = relay mode)
+   * Props: StepBodyProps + draft (bindable StoredDraft | null; null = origin mode)
    */
   import Plus from '@lucide/svelte/icons/plus';
   import Trash2 from '@lucide/svelte/icons/trash-2';
@@ -29,7 +29,7 @@
 
   const servers = adminBackendServersQuery();
   const KIND_WORDS = {
-    'panel-node': 'A node of a panel',
+    'panel-node': 'A node of a backend',
     'backend-server': 'A whole backend server',
     manual: 'An address described by hand',
   } as const;
@@ -76,13 +76,13 @@
   {#if relay}
     <KeyValue title="What this relay's edges dial" rows={relayRows} columns={2} />
     <p class="text-muted-foreground text-sm">
-      The origin kind of a relay never changes. To front a different origin, start a new relay.
+      The kind of target never changes. To front something else, start a new origin.
     </p>
   {:else if draft}
     <div class="rounded-md border p-3 text-sm">
-      <p class="font-medium">Is the panel or server not registered yet?</p>
+      <p class="font-medium">Is the backend or server not registered yet?</p>
       <p class="text-muted-foreground">
-        A panel node or a backend server origin needs its backend registered first. An address you
+        A backend node or a backend server origin needs its backend registered first. An address you
         describe by hand needs nothing else.
       </p>
       <Link
@@ -98,7 +98,7 @@
     <section class="space-y-3">
       <div class="flex items-center justify-between gap-2">
         <div>
-          <h3 class="text-sm font-semibold">What will the inbound speak?</h3>
+          <h3 class="text-sm font-semibold">What will the transport speak?</h3>
           <p class="text-muted-foreground text-xs">
             Used to judge which provider accounts can front it. Nothing is created yet.
           </p>

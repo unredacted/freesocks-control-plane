@@ -1,15 +1,15 @@
 <script lang="ts">
   /**
-   * The relay table of the overview. Rows come from `EdgeSummary.relays`
+   * The origin table of the overview. Rows come from `EdgeSummary.origins`
    * (already filtered by the page); every derived cell is computed in
    * overview/derive.ts.
    *
    * Props:
-   *   rows: RelayRow[]
+   *   rows: OriginRow[]
    *   dark: ReadonlySet<string>               slugs the server reports as members dark
    *   busySlug?: string | null                a row whose action is in flight
-   *   onProvision: (row: RelayRow) => void    the page confirms (billable) and calls
-   *   onProbe: (row: RelayRow) => void
+   *   onProvision: (row: OriginRow) => void    the page confirms (billable) and calls
+   *   onProbe: (row: OriginRow) => void
    */
   import Ellipsis from '@lucide/svelte/icons/ellipsis';
   import * as Table from '@client/components/ui/table';
@@ -32,19 +32,19 @@
     relayLayers,
     suspicionChip,
     worstHealth,
-    type RelayRow,
+    type OriginRow,
   } from './derive';
 
   interface Props {
-    rows: RelayRow[];
+    rows: OriginRow[];
     dark: ReadonlySet<string>;
     busySlug?: string | null;
-    onProvision: (row: RelayRow) => void;
-    onProbe: (row: RelayRow) => void;
+    onProvision: (row: OriginRow) => void;
+    onProbe: (row: OriginRow) => void;
   }
   let { rows, dark, busySlug = null, onProvision, onProbe }: Props = $props();
 
-  function originLine(row: RelayRow): string {
+  function originLine(row: OriginRow): string {
     const o = row.relay.origin;
     return o.kind === 'panel-node'
       ? `${ORIGIN_KIND_LABELS[o.kind]}: ${o.nodeName}`
@@ -55,7 +55,7 @@
 <Table.Root>
   <Table.Header>
     <Table.Row>
-      <Table.Head>Relay</Table.Head>
+      <Table.Head>Origin</Table.Head>
       <Table.Head>Origin</Table.Head>
       <Table.Head>Layers</Table.Head>
       <Table.Head>Pool</Table.Head>
@@ -189,7 +189,7 @@
                 variant="destructive"
                 onSelect={() => router.navigate(edgesPaths.relay(relay.slug))}
               >
-                Delete on the relay page
+                Delete on the origin page
               </DropdownMenu.Item>
             </DropdownMenu.Content>
           </DropdownMenu.Root>

@@ -1,9 +1,9 @@
 /**
- * Inbound discovery (pure half): turn the inbounds a panel node serves
- * (`PanelInbound`, the provider's allowlisted projection) into relay listener
+ * Transport discovery (pure half): turn the transports a backend node serves
+ * (`BackendTransport`, the provider's allowlisted projection) into origin listener
  * candidates in the by-slug registration shape, or say why one cannot be a
- * listener. The guided setup builds its "protect every frontable inbound"
- * plan from this; nothing here touches the database or the panel.
+ * listener. The guided setup builds its "protect every frontable transport"
+ * plan from this; nothing here touches the database or the backend.
  *
  * Mapping:
  *   protocol   vless / trojan / shadowsocks; anything else (vmess, ...) -> `protocol`
@@ -26,12 +26,12 @@
  * Listener key: `slug10 + base36(sha256(tag))[0..6]`, deterministic across runs
  * and collision-resistant (two tags sharing their first ten alphanumerics get
  * different keys); at most 16 chars, matching the `[a-z0-9]{1,16}` slot-key
- * rule. Uniqueness is still enforced against the relay's existing keys and
+ * rule. Uniqueness is still enforced against the origin's existing keys and
  * within the batch: a collision after the digest is `invalid`.
  */
-import type { PanelInbound } from '../backends/types';
+import type { BackendTransport } from '../backends/types';
 import { sha256Hex } from '../crypto';
-import { applyIngress, type IngressMapping } from '../panel/ingress';
+import { applyIngress, type IngressMapping } from '../backend/ingress';
 import type { InboundUnsupportedCode } from '../../../src/shared/contracts/edgeCodes';
 import {
   isValidListenerCombo,
@@ -53,16 +53,16 @@ import {
 
 export type PanelNodeOrigin = Extract<RelayOrigin, { kind: 'panel-node' }>;
 
-export interface InboundCandidate {
+export interface TransportCandidate {
   /** The listener as a registration body carries it (no `originTransport`). */
   listenerSpec: ListenerSpecInput;
   /** Which edge layers can front it today (L4-only until an origin probe runs). */
   layers: ListenerLayers;
   /** Which subscription formats the renderer can rewrite for the combination. */
   formats: { links: boolean; singbox: boolean; clash: boolean };
-  /** The listener presents a server name but the inbound declares none: the operator must supply one before registering. */
+  /** The listener presents a server name but the transport declares none: the operator must supply one before registering. */
   needsName: boolean;
-  /** The panel inbound tag this candidate came from. */
+  /** The backend transport tag this candidate came from. */
   sourceTag: string;
 }
 
@@ -74,21 +74,21 @@ export interface UnsupportedInbound {
 }
 
 export interface InboundMappingOptions {
-  /** Listener keys the relay already holds (uniqueness is enforced against them). */
+  /** Listener keys the origin already holds (uniqueness is enforced against them). */
   existingKeys: readonly string[];
-  /** The relay's panel-node origin: names the default Host remark rule. */
+  /** The origin's backend-node origin: names the default Host remark rule. */
   origin: PanelNodeOrigin;
   /**
    * The node's declared ingress (a front node's Caddy in front of a loopback
-   * inbound, `lib/panel/ingress.ts`): a mapped loopback inbound is discovered
+   * transport, `lib/backend/ingress.ts`): a mapped loopback transport is discovered
    * as the external TLS listener it is reached through. Without it, or for an
-   * inbound the declaration does not describe, loopback stays `loopback`.
+   * transport the declaration does not describe, loopback stays `loopback`.
    */
   ingress?: IngressMapping | null;
 }
 
 export interface InboundMapping {
-  candidates: InboundCandidate[];
+  candidates: TransportCandidate[];
   unsupported: UnsupportedInbound[];
 }
 
@@ -98,7 +98,7 @@ const DIGEST_LEN = 6;
 const NAME_PLACEHOLDER = 'name-pending.example';
 
 /**
- * The deterministic listener key for a panel inbound tag: the first ten
+ * The deterministic listener key for a backend transport tag: the first ten
  * lowercase alphanumerics of the tag, then six base36 digits of sha256(tag).
  */
 export async function listenerKeyForTag(tag: string): Promise<string> {
@@ -170,11 +170,11 @@ function refusalDetail(err: unknown): string {
   return err instanceof Error ? err.message : 'validation';
 }
 
-export async function mapInboundsToListeners(
-  inbounds: readonly PanelInbound[],
+export async function mapTransportsToListeners(
+  inbounds: readonly BackendTransport[],
   opts: InboundMappingOptions,
 ): Promise<InboundMapping> {
-  const candidates: InboundCandidate[] = [];
+  const candidates: TransportCandidate[] = [];
   const unsupported: UnsupportedInbound[] = [];
   const taken = new Set(opts.existingKeys);
   const ctx = { origin: opts.origin };
@@ -260,7 +260,7 @@ export async function mapInboundsToListeners(
       transportParams = {};
       if (ib.xhttp?.path) transportParams.path = ib.xhttp.path;
       if (ib.xhttp?.host) transportParams.host = ib.xhttp.host;
-      // Xray's default when the inbound declares none.
+      // Xray's default when the transport declares none.
       transportParams.mode = ib.xhttp?.mode ?? 'auto';
     }
 

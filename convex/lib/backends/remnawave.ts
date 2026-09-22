@@ -5,14 +5,14 @@
  * shapes are still validated with zod.
  *
  * CONTRACT VERSIONS. Remnawave 2.x addresses a user by `uuid`; 3.0 dropped the
- * user uuid and addresses users by their per-panel numeric `id` (path params,
+ * user uuid and addresses users by their per-backend numeric `id` (path params,
  * `PATCH /api/users` body `id`, hwid `userId`, bulk `userIds`). Everything else
- * FCP touches (shortUuid + the public subscription URL, internal squads, nodes,
+ * FCP touches (shortUuid + the public subscription URL, internal mode groups, nodes,
  * config profiles, system stats) is unchanged. The provider speaks BOTH: the
  * contract is inferred from the shape of the RAW id it is handed (a UUID → 2.x,
- * an integer → 3.x), so a mixed fleet keeps working while panels are upgraded
- * one at a time, and a freshly issued key simply carries whichever id the panel
- * returned. Numeric ids are only unique per panel — the dispatch scopes them to
+ * an integer → 3.x), so a mixed fleet keeps working while backends are upgraded
+ * one at a time, and a freshly issued key simply carries whichever id the backend
+ * returned. Numeric ids are only unique per backend — the dispatch scopes them to
  * the instance before storing (convex/lib/backendUserId.ts); this module always
  * sees the bare id. See docs/backends.md "Remnawave API contract".
  */
@@ -31,25 +31,25 @@ import type {
   BackendHostPatch,
   BackendHostCreate,
   NodeInventoryRow,
-  PanelInbound,
+  BackendTransport,
   PanelHostCreate,
-  PanelHostFields,
+  BackendAddressFields,
   PanelNodeCreate,
-  PanelNodeFields,
+  BackendNodeFields,
   PanelNodeStatus,
   PanelObservation,
-  PanelObservedHost,
-  PanelObservedInbound,
-  PanelObservedProfile,
-  PanelObservedSquad,
+  ObservedAddress,
+  ObservedTransport,
+  ObservedProfile,
+  ObservedModeGroup,
   PanelInboundTestParams,
   PanelSubscriptionTemplate,
   PanelSubscriptionTemplateRef,
   ProfilePatchPreview,
 } from './types';
 import { farFutureExpiryIso, isFarFutureExpiry } from './types';
-import { changeToken, realityAuthDigest, shapeHash } from '../panel/digest';
-import { applyPatchOps, type PatchOp } from '../panel/patchOps';
+import { changeToken, realityAuthDigest, shapeHash } from '../backend/digest';
+import { applyPatchOps, type PatchOp } from '../backend/patchOps';
 
 export interface RemnawaveConfig {
   baseUrl: string;
@@ -57,7 +57,7 @@ export interface RemnawaveConfig {
   timeoutMs?: number;
 }
 
-// Tolerant at the boundary: an additive panel value (a new status / reset
+// Tolerant at the boundary: an additive backend value (a new status / reset
 // period in some future Remnawave release) must never fail-parse the whole
 // user — that would break issuance and the account view outright. Unknown
 // statuses map to 'unknown' in toState; an unknown strategy falls back to
@@ -67,26 +67,26 @@ const RemnawaveUserStatus = z.string();
 
 const RemnawaveUser = z
   .object({
-    // Identity: 2.x panels return `uuid` (+ a numeric `id` nobody used); 3.x
-    // panels return ONLY the numeric `id`. At least one must be present
-    // (refined below) — `panelUserId()` picks the one the panel addresses by.
+    // Identity: 2.x backends return `uuid` (+ a numeric `id` nobody used); 3.x
+    // backends return ONLY the numeric `id`. At least one must be present
+    // (refined below) — `panelUserId()` picks the one the backend addresses by.
     uuid: z.string().uuid().optional(),
     id: z.number().int().nonnegative().optional(),
     shortUuid: z.string(),
     // The VLESS credential (present on create and get); the L7 front
-    // qualification authenticates with it. Lenient: absent on exotic panels.
+    // qualification authenticates with it. Lenient: absent on exotic backends.
     vlessUuid: z.string().uuid().nullish(),
     username: z.string(),
     status: RemnawaveUserStatus,
     trafficLimitBytes: z.number().int().nonnegative().nullable(),
     trafficLimitStrategy: TrafficLimitStrategy,
     // The reset anchor for the member's "resets in N days" hint. Display-only
-    // string; nullish on NO_RESET tiers / older panels (kept lenient like the
+    // string; nullish on NO_RESET tiers / older backends (kept lenient like the
     // device dates so a format change can't fail-parse the whole user).
     lastTrafficResetAt: z.string().nullish(),
     // LEGACY / CREATE-response fallback. Remnawave omits used traffic on the CREATE
     // response (a brand-new user has used nothing) → default to 0 so issuance parses.
-    // Older panels also carried it here on GET. Newer panels moved it under
+    // Older backends also carried it here on GET. Newer backends moved it under
     // `userTraffic` (below); toState prefers that and only falls back to this.
     usedTrafficBytes: z
       .number()
@@ -96,7 +96,7 @@ const RemnawaveUser = z
       .transform((v) => v ?? 0),
     // Remnawave 2.x nests per-user used traffic here on GET /api/users/{uuid}
     // (the flat top-level `usedTrafficBytes` no longer exists on GET). Kept lenient
-    // like the device dates — a panel shape change must never fail-parse the whole
+    // like the device dates — a backend shape change must never fail-parse the whole
     // user (that silent-0 masking is exactly what broke the account traffic counter).
     // Extra siblings (lifetimeUsedTrafficBytes/…) are stripped by z.object.
     // `onlineAt` lives here too (2.x and 3.x both nest it under userTraffic);
@@ -107,14 +107,14 @@ const RemnawaveUser = z
         onlineAt: z.string().nullish(),
       })
       .nullish(),
-    // Panel-side "last seen online" stamp — the closest per-user liveness signal
+    // Backend-side "last seen online" stamp — the closest per-user liveness signal
     // Remnawave exposes (there is no live-connection list). Display-only string,
     // kept lenient like the device dates; surfaced on the admin Live-details
     // expander. Legacy flat location; toState prefers `userTraffic.onlineAt`.
     onlineAt: z.string().nullish(),
     expireAt: z.string().datetime().nullable(),
     hwidDeviceLimit: z.number().int().nonnegative().nullable(),
-    // Plain string, matching the panel contract (z.string(), not .url()) — a
+    // Plain string, matching the backend contract (z.string(), not .url()) — a
     // relative or scheme-odd subscription URL must not fail-parse the user.
     subscriptionUrl: z.string(),
   })
@@ -124,7 +124,7 @@ const RemnawaveUser = z
 type RemnawaveUser = z.infer<typeof RemnawaveUser>;
 
 /**
- * The id this panel addresses the user by: the 2.x `uuid` when present, else
+ * The id this backend addresses the user by: the 2.x `uuid` when present, else
  * the 3.x numeric `id` as a decimal string. This is the RAW provider id (the
  * dispatch scopes numeric ones to the instance before persisting).
  */
@@ -137,7 +137,7 @@ function panelUserId(user: { uuid?: string | null; id?: number | null }): string
 
 /**
  * Contract inference from the raw id: an INTEGER is a 3.x numeric id; anything
- * else (a 2.x uuid) goes out on the 2.x shapes verbatim — the panel validates
+ * else (a 2.x uuid) goes out on the 2.x shapes verbatim — the backend validates
  * it, so a malformed value fails loudly there rather than being guessed here.
  */
 function isNumericId(rawId: string): boolean {
@@ -151,7 +151,7 @@ function numericId(rawId: string): number {
 // The device object Remnawave returns. Extra fields (userId/osVersion/
 // userAgent/requestIp) are stripped by Zod — we deliberately do NOT surface the
 // IP or user-agent (metadata minimization). Dates are kept as plain strings
-// (display-only), so a panel date-format change can't fail-parse the whole list.
+// (display-only), so a backend date-format change can't fail-parse the whole list.
 const HwidDevice = z.object({
   hwid: z.string(),
   platform: z.string().nullish(),
@@ -175,7 +175,7 @@ class RemnawaveApiError extends Error {
   ): Promise<RemnawaveApiError> {
     // A SENSITIVE call carries key material in its request or response (a
     // config profile holds the REALITY private key, short ids and the client
-    // list), and a panel rejection can echo fragments of what was submitted.
+    // list), and a backend rejection can echo fragments of what was submitted.
     // Such an error names the status and the path and nothing else: the body is
     // not even read, so it cannot reach the message, the meta or the logs.
     if (sensitive) {
@@ -204,7 +204,7 @@ class RemnawaveApiError extends Error {
 }
 
 /** True when the error is a Remnawave HTTP 404 (e.g. a HWID-gated subscription
- *  fetch made without a valid x-hwid header — the panel rejects it). Lets the
+ *  fetch made without a valid x-hwid header — the backend rejects it). Lets the
  *  fronted route pass the rejection through as 404 rather than a generic 502. */
 export function isRemnawaveNotFound(err: unknown): boolean {
   return err instanceof RemnawaveApiError && err.meta?.status === 404;
@@ -220,8 +220,8 @@ function unwrap(json: unknown): unknown {
 
 /**
  * Join an API path onto the instance baseUrl WITHOUT dropping a base path
- * prefix: `new URL('/api/x', 'https://host/panel/')` yields `https://host/api/x`
- * (the leading slash replaces the whole path), silently breaking panels hosted
+ * prefix: `new URL('/api/x', 'https://host/backend/')` yields `https://host/api/x`
+ * (the leading slash replaces the whole path), silently breaking backends hosted
  * under a subpath. (Review D-#11.)
  */
 function joinUrl(baseUrl: string, path: string): string {
@@ -405,7 +405,7 @@ export async function remnawaveHardenLogging(
     try {
       // Read the FULL config per profile before writing: the PATCH replaces
       // the config WHOLESALE, so writing from a possibly-partial LIST row
-      // would wipe any keys the list omits (a future panel version). Never
+      // would wipe any keys the list omits (a future backend version). Never
       // PATCH from the list representation. (Review D-#14.)
       const full = await call(cfg, {
         method: 'GET',
@@ -454,19 +454,19 @@ function toState(user: RemnawaveUser, devices: BackendDevice[]): UserState {
             ? 'expired'
             : 'unknown';
   return {
-    // 0 is the panel's UNLIMITED sentinel (the update path coerces FCP's null →
+    // 0 is the backend's UNLIMITED sentinel (the update path coerces FCP's null →
     // 0 on send); map it back to null on read so member/admin surfaces render
     // "Unlimited" instead of "… / 0 B".
     trafficLimitBytes: user.trafficLimitBytes || null,
     // Prefer the nested (2.x) location; fall back to the flat legacy field (a real
-    // value on older panels, 0 on the CREATE response). Fixes the counter that sat
-    // at "0 B" once the panel moved this under `userTraffic`.
+    // value on older backends, 0 on the CREATE response). Fixes the counter that sat
+    // at "0 B" once the backend moved this under `userTraffic`.
     usedTrafficBytes: user.userTraffic?.usedTrafficBytes ?? user.usedTrafficBytes,
     trafficLimitStrategy: user.trafficLimitStrategy,
     lastTrafficResetAt: user.lastTrafficResetAt ?? undefined,
     onlineAt: user.userTraffic?.onlineAt ?? user.onlineAt ?? undefined,
     // The far-future write sentinel reads back as "no expiry" — free keys carry
-    // it (they never expire on the panel's clock), and members shouldn't see a
+    // it (they never expire on the backend's clock), and members shouldn't see a
     // 10-year countdown.
     expireAt: user.expireAt && !isFarFutureExpiry(user.expireAt) ? user.expireAt : null,
     status,
@@ -501,8 +501,8 @@ function toRemnawaveTag(tag: string | undefined): string | undefined {
 }
 
 /**
- * Best-effort cleanup of a just-created panel user after an AMBIGUOUS create
- * failure (schema mismatch / timeout / 5xx): the panel may have persisted the
+ * Best-effort cleanup of a just-created backend user after an AMBIGUOUS create
+ * failure (schema mismatch / timeout / 5xx): the backend may have persisted the
  * user while we lost the response, and the issuance saga never learns the uuid.
  * Issuance usernames are unique per attempt (`freesocks-<slug>-<16hex>`), so a
  * username match can only be the user this attempt created. A definitive 4xx
@@ -527,13 +527,13 @@ async function cleanupAmbiguousCreate(cfg: RemnawaveConfig, username: string): P
 }
 
 /**
- * The panel-reported `subscriptionUrl` is trusted ONLY on the panel's own
+ * The backend-reported `subscriptionUrl` is trusted ONLY on the backend's own
  * origin. FCP later fetches it (unauthenticated) and re-serves the body
  * publicly at /api/v1/sub/<token> + uploads it to S3 mirrors — an off-origin
- * URL would, after a panel-token compromise, make the control plane fetch and
+ * URL would, after a backend-token compromise, make the control plane fetch and
  * republish an attacker-chosen internal address (confused deputy, Review
  * D-#4). Off-origin or malformed → the conventional /api/sub/<shortUuid> on
- * the panel origin.
+ * the backend origin.
  */
 function pinnedSubscriptionUrl(cfg: RemnawaveConfig, url: string, shortUuid: string): string {
   try {
@@ -563,7 +563,7 @@ export async function remnawaveIssueUser(
         // Remnawave restricts tags to [A-Z0-9_]; coerce our lowercase slug.
         tag: toRemnawaveTag(spec.tag),
         description: spec.description,
-        // The opaque placement handle IS the internal-squad UUID for Remnawave.
+        // The opaque placement handle IS the internal-mode group UUID for Remnawave.
         activeInternalSquads: spec.placement ? [spec.placement] : undefined,
       },
       schema: RemnawaveUser,
@@ -575,7 +575,7 @@ export async function remnawaveIssueUser(
     throw err;
   }
   return {
-    // uuid on a 2.x panel, the numeric id on 3.x — see the header note.
+    // uuid on a 2.x backend, the numeric id on 3.x — see the header note.
     backendUserId: panelUserId(user),
     backendShortId: user.shortUuid,
     subscriptionUrl: pinnedSubscriptionUrl(cfg, user.subscriptionUrl, user.shortUuid),
@@ -589,7 +589,7 @@ export async function remnawaveIssueUser(
  * the same path on 2.x and 3.x, the one the health probe already relies on).
  * Returns the issued shape (the raw provider id, the short uuid, the pinned
  * subscription URL, the VLESS uuid) or null on a 404. Anything else throws:
- * an unreachable panel is not "no such user".
+ * an unreachable backend is not "no such user".
  */
 export async function remnawaveFindUserByUsername(
   cfg: RemnawaveConfig,
@@ -633,7 +633,7 @@ async function listDevices(cfg: RemnawaveConfig, backendUserId: string): Promise
       lastSeenAt: d.updatedAt ?? undefined,
     }));
   } catch {
-    // Some panel versions don't expose this endpoint; degrade to "no devices".
+    // Some backend versions don't expose this endpoint; degrade to "no devices".
     return [];
   }
 }
@@ -641,10 +641,10 @@ async function listDevices(cfg: RemnawaveConfig, backendUserId: string): Promise
 /**
  * Revoke one HWID device from a user, freeing a slot under the tier's device
  * cap without the nuclear full-key regenerate. Unlike listDevices (which
- * degrades to "no devices" on panels without the endpoint), a failed delete
+ * degrades to "no devices" on backends without the endpoint), a failed delete
  * THROWS — the member asked for a specific effect and must not be told it
  * succeeded when it didn't. The response body is version-dependent (some
- * panels echo the remaining device list), so it is deliberately not parsed.
+ * backends echo the remaining device list), so it is deliberately not parsed.
  */
 export async function remnawaveDeleteDevice(
   cfg: RemnawaveConfig,
@@ -707,7 +707,7 @@ export async function remnawaveGetUserUsage(
   };
 }
 
-// Fleet observability from two panel endpoints (both admin, read-only). Schemas
+// Fleet observability from two backend endpoints (both admin, read-only). Schemas
 // pick only what the dashboard shows; unknown fields are stripped. Traffic totals
 // arrive as bigint strings, so parse to Number for display (beta-scale safe).
 const SystemStatsResponse = z.object({
@@ -741,9 +741,9 @@ export async function remnawaveFleetStats(cfg: RemnawaveConfig): Promise<FleetSt
 }
 
 // --- Hosts (client-facing connection entries) --------------------------------
-// The relay-edge flip repoints the ADDRESS of a slot's template Host. Hosts are
+// The origin-edge flip repoints the ADDRESS of a slot's template Host. Hosts are
 // uuid-addressed on 2.x and 3.x alike (the 3.x numeric-id change touched users
-// only). Lenient schema: only the fields the relay layer reads.
+// only). Lenient schema: only the fields the origin layer reads.
 const HostRow = z.object({
   uuid: z.string(),
   remark: z.string(),
@@ -756,7 +756,7 @@ const HostRow = z.object({
     .object({ configProfileUuid: z.string(), configProfileInboundUuid: z.string() })
     .nullish(),
 });
-// (unwrapped) either a bare array or { hosts: [...] } depending on panel version.
+// (unwrapped) either a bare array or { hosts: [...] } depending on backend version.
 const HostsResponse = z.union([z.array(HostRow), z.object({ hosts: z.array(HostRow) })]);
 
 function toBackendHost(h: z.infer<typeof HostRow>): BackendHost {
@@ -765,7 +765,7 @@ function toBackendHost(h: z.infer<typeof HostRow>): BackendHost {
     remark: h.remark,
     address: h.address,
     port: h.port,
-    // The panel returns an unset field as `null` on some versions and `''` on
+    // The backend returns an unset field as `null` on some versions and `''` on
     // others; both mean "the Host carries none", so they read back the same.
     sni: h.sni ? h.sni : null,
     host: h.host ? h.host : null,
@@ -774,7 +774,7 @@ function toBackendHost(h: z.infer<typeof HostRow>): BackendHost {
   };
 }
 
-/** GET /api/hosts — every Host on the panel (small, operator-managed list). */
+/** GET /api/hosts — every Host on the backend (small, operator-managed list). */
 export async function remnawaveListHosts(cfg: RemnawaveConfig): Promise<BackendHost[]> {
   const res = await call(cfg, { method: 'GET', path: '/api/hosts', schema: HostsResponse });
   const rows = Array.isArray(res) ? res : res.hosts;
@@ -783,12 +783,12 @@ export async function remnawaveListHosts(cfg: RemnawaveConfig): Promise<BackendH
 
 /**
  * PATCH /api/hosts { uuid, address, port, sni?, host? } repoints one Host. The
- * uuid travels in the BODY (the panel's update contract). Fields the patch
+ * uuid travels in the BODY (the backend's update contract). Fields the patch
  * leaves `undefined` are OMITTED, so the Host's inbound/fingerprint/path and any
  * name the caller did not ask about are untouched. The caller confirms by
  * re-listing (observe-then-write); the echoed row is not trusted as proof.
  *
- * Clearing sends `''`, not `null`: the panel's update DTO validates these
+ * Clearing sends `''`, not `null`: the backend's update DTO validates these
  * fields as optional STRINGS (the same shape as the user DTO documented at
  * `remnawaveUpdateUser`), so a null would 400 and reject the whole PATCH,
  * losing the address move with it. `''` and `null` read back alike
@@ -846,7 +846,7 @@ export async function remnawaveCreateHost(
 
 /**
  * PATCH /api/hosts { uuid, isDisabled } flips ONE Host's disabled bit and
- * nothing else: the panel's update DTO omits every field the body leaves out
+ * nothing else: the backend's update DTO omits every field the body leaves out
  * (see `remnawaveUpdateHost`), so the address, port, names, inbound and
  * fingerprint are untouched. The caller confirms by re-listing and reading
  * `isDisabled` back (observe-then-write); the echoed row is not trusted.
@@ -882,7 +882,7 @@ export async function remnawaveDeleteHost(cfg: RemnawaveConfig, uuid: string): P
   }
 }
 
-/** GET /api/nodes → one row per panel node (name, users online, connected). */
+/** GET /api/nodes → one row per backend node (name, users online, connected). */
 export async function remnawaveGetNodeInventory(cfg: RemnawaveConfig): Promise<NodeInventoryRow[]> {
   const nodes = await call(cfg, { method: 'GET', path: '/api/nodes', schema: NodesResponse });
   return nodes.map((n) => ({
@@ -898,19 +898,19 @@ export async function remnawaveGetNodeInventory(cfg: RemnawaveConfig): Promise<N
 
 // --- Node-load placement telemetry ------------------------------------------
 // FCP homes a new key to the least-loaded NODE. A key is assigned to an internal
-// SQUAD (activeInternalSquads), and a squad maps to one or more nodes; the squad's
-// load is aggregated from those nodes. We therefore fetch: the squad list, the
-// per-squad node membership (accessible-nodes), and the per-node load (/api/nodes)
+// SQUAD (activeInternalSquads), and a mode group maps to one or more nodes; the mode group's
+// load is aggregated from those nodes. We therefore fetch: the mode group list, the
+// per-mode group node membership (accessible-nodes), and the per-node load (/api/nodes)
 // + best-effort realtime bandwidth. All schemas are LENIENT (strip unknowns,
-// nullish) so a panel-version field drift degrades gracefully rather than failing
+// nullish) so a backend-version field drift degrades gracefully rather than failing
 // the whole cron. Field names verified against remnawave/backend `main` (nodes.schema,
-// internal-squads accessible-nodes command) — re-confirm on a panel upgrade.
+// internal-mode groups accessible-nodes command) — re-confirm on a backend upgrade.
 
 const InternalSquadsResponse = z.object({
   internalSquads: z.array(z.object({ uuid: z.string(), name: z.string() })),
 });
 
-// A config-profile inbound row as the panel derives it from the profile's
+// A config-profile inbound row as the backend derives it from the profile's
 // Xray config (`ConfigProfileInboundsSchema` in remnawave/backend): the same
 // shape appears under a node's `configProfile.activeInbounds` and under a
 // profile's `inbounds`. Only `uuid` + `tag` are read; the row's `rawInbound`
@@ -922,7 +922,7 @@ const ConfigProfileInboundRef = z.object({ uuid: z.string(), tag: z.string() });
 // the node's active config profile for inbound discovery. Verified against
 // remnawave/backend `libs/contract/models/nodes.schema.ts`
 // (`configProfile.activeConfigProfileUuid` + `activeInbounds[]`); the
-// `configProfileUuid` spelling is accepted as a tolerance for older panels.
+// `configProfileUuid` spelling is accepted as a tolerance for older backends.
 const NodesResponse = z.array(
   z.object({
     uuid: z.string(),
@@ -970,7 +970,7 @@ function plainPort(v: unknown): number | null {
 
 /**
  * Project one raw Xray inbound (a `config.inbounds[]` entry) onto the
- * allowlisted `PanelInbound` shape. ONLY these paths are read: `tag`,
+ * allowlisted `BackendTransport` shape. ONLY these paths are read: `tag`,
  * `protocol`, `port`, `streamSettings.network`, `.security`,
  * `.realitySettings.{dest,target,serverNames}`, `.tlsSettings.serverName`,
  * `.wsSettings.{path,host,headers.Host}`, `.httpupgradeSettings.{path,host}`
@@ -979,10 +979,10 @@ function plainPort(v: unknown): number | null {
  * are never touched. Pure; exported for the redaction test. Returns null when
  * the entry has no usable tag.
  */
-export function projectXrayInbound(
+export function projectXrayTransport(
   raw: unknown,
   binding: { configProfileUuid: string; configProfileInboundUuid: string; active: boolean },
-): PanelInbound | null {
+): BackendTransport | null {
   const ib = obj(raw);
   if (!ib) return null;
   const tag = str(ib.tag);
@@ -990,7 +990,7 @@ export function projectXrayInbound(
   const stream = obj(ib.streamSettings) ?? {};
   const network = (str(stream.network) ?? 'tcp').toLowerCase();
   const security = (str(stream.security) ?? 'none').toLowerCase();
-  const out: PanelInbound = {
+  const out: BackendTransport = {
     tag,
     configProfileUuid: binding.configProfileUuid,
     configProfileInboundUuid: binding.configProfileInboundUuid,
@@ -1032,19 +1032,19 @@ export function projectXrayInbound(
 }
 
 /**
- * The inbounds one panel node serves, for relay listener discovery:
+ * The inbounds one backend node serves, for origin listener discovery:
  * `GET /api/nodes` finds the node's active config profile (+ which of its
  * inbounds the node has active), `GET /api/config-profiles/{uuid}` supplies
  * the profile's Xray `config.inbounds[]` and the derived inbound rows; the two
  * are joined BY TAG (the inbound uuid a Host binds to lives only on the derived
  * row; the stream settings only in the raw config). Every entry goes through
- * `projectXrayInbound`, so nothing beyond the allowlist leaves this function.
+ * `projectXrayTransport`, so nothing beyond the allowlist leaves this function.
  * A node without an active profile answers `[]`; an unknown node uuid throws.
  */
 export async function remnawaveListNodeInbounds(
   cfg: RemnawaveConfig,
   nodeUuid: string,
-): Promise<PanelInbound[]> {
+): Promise<BackendTransport[]> {
   const nodes = await call(cfg, { method: 'GET', path: '/api/nodes', schema: NodesResponse });
   const node = nodes.find((n) => n.uuid === nodeUuid);
   if (!node) throw new RemnawaveApiError('Remnawave node not found on /api/nodes', { status: 404 });
@@ -1062,15 +1062,15 @@ export async function remnawaveListNodeInbounds(
   const uuidByTag = new Map((profile.inbounds ?? []).map((i) => [i.tag, i.uuid]));
   const config = obj(profile.config);
   const rawInbounds = Array.isArray(config?.inbounds) ? config.inbounds : [];
-  const out: PanelInbound[] = [];
+  const out: BackendTransport[] = [];
   for (const raw of rawInbounds) {
     const tag = str(obj(raw)?.tag);
     if (!tag) continue;
     const inboundUuid = uuidByTag.get(tag);
-    // No derived row = the panel has not indexed this inbound; a Host cannot
+    // No derived row = the backend has not indexed this inbound; a Host cannot
     // bind to it, so there is nothing a listener could map to.
     if (!inboundUuid) continue;
-    const projected = projectXrayInbound(raw, {
+    const projected = projectXrayTransport(raw, {
       configProfileUuid: profile.uuid,
       configProfileInboundUuid: inboundUuid,
       active: activeUuids.has(inboundUuid) || activeTags.has(tag),
@@ -1080,7 +1080,7 @@ export async function remnawaveListNodeInbounds(
   return out;
 }
 
-// /api/internal-squads/{uuid}/accessible-nodes → (unwrapped) { accessibleNodes: [{ uuid, … }] }.
+// /api/internal-mode groups/{uuid}/accessible-nodes → (unwrapped) { accessibleNodes: [{ uuid, … }] }.
 const AccessibleNodesResponse = z.object({
   accessibleNodes: z.array(z.object({ uuid: z.string() })),
 });
@@ -1102,10 +1102,10 @@ const RealtimeNodesResponse = z
   .nullish();
 
 /**
- * Per-placement (per-squad) load snapshot for node placement. Aggregates each
- * squad's node load from /api/nodes over the squad's accessible-nodes. The
- * per-squad accessible-nodes calls fan out IN PARALLEL (was N+1 sequential 8s
- * timeouts — slow at fleet squad counts); the cron runs it every 10 min
+ * Per-placement (per-mode group) load snapshot for node placement. Aggregates each
+ * mode group's node load from /api/nodes over the mode group's accessible-nodes. The
+ * per-mode group accessible-nodes calls fan out IN PARALLEL (was N+1 sequential 8s
+ * timeouts — slow at fleet mode group counts); the cron runs it every 10 min
  * best-effort.
  */
 export async function remnawaveGetNodeStats(cfg: RemnawaveConfig): Promise<NodeStats[]> {
@@ -1144,7 +1144,7 @@ export async function remnawaveGetNodeStats(cfg: RemnawaveConfig): Promise<NodeS
           schema: AccessibleNodesResponse,
         });
       } catch {
-        // A squad whose node membership can't be read is emitted as unroutable
+        // A mode group whose node membership can't be read is emitted as unroutable
         // (nodeCount 0 → the picker deprioritizes/skips it), never dropped silently.
         return {
           placement: squad.uuid,
@@ -1186,11 +1186,11 @@ export async function remnawaveUpdateUser(
 ): Promise<void> {
   // Remnawave's update is `PATCH /api/users` with the target IN THE BODY (the
   // route has no path param; the DTO requires an id or username): `uuid` on a
-  // 2.x panel, the numeric `id` on 3.x. Seed it here.
+  // 2.x backend, the numeric `id` on 3.x. Seed it here.
   const body: Record<string, unknown> = isNumericId(backendUserId)
     ? { id: numericId(backendUserId) }
     : { uuid: backendUserId };
-  // The panel's UPDATE DTO takes `.optional()` NOT `.nullable()` here: a null
+  // The backend's UPDATE DTO takes `.optional()` NOT `.nullable()` here: a null
   // 400s and the WHOLE PATCH is rejected (re-enable + expiry + placement +
   // limits all lost). null means unlimited in FCP (resolveTrafficLimitBytes),
   // and 0 is Remnawave's documented unlimited sentinel — coerce. (CREATE
@@ -1202,7 +1202,7 @@ export async function remnawaveUpdateUser(
     // Same DTO refuses null AND past dates ("cannot be in the past") — either
     // rejects the whole PATCH. A past entitlement expiry (e.g. an admin
     // re-tiering a lapsed member) is clamped to a near-future floor: FCP's
-    // grace sweep, not the panel's date, governs actual disablement. A null
+    // grace sweep, not the backend's date, governs actual disablement. A null
     // expireAt is simply omitted (Remnawave requires a date; there is no
     // "clear" semantics on update).
     const t = Date.parse(patch.expireAt);
@@ -1221,7 +1221,7 @@ export async function remnawaveUpdateUser(
   if (patch.description !== undefined) body.description = patch.description;
   if (patch.tag !== undefined) body.tag = toRemnawaveTag(patch.tag);
   if (patch.placement !== undefined) {
-    // The placement handle IS the squad UUID; present+null/'' clears it, a value sets it.
+    // The placement handle IS the mode group UUID; present+null/'' clears it, a value sets it.
     body.activeInternalSquads = patch.placement ? [patch.placement] : [];
   }
   await call(cfg, {
@@ -1235,7 +1235,7 @@ export async function remnawaveUpdateUser(
 /**
  * Bulk-set `trafficLimitBytes` on many users in ONE call — Remnawave
  * `POST /api/users/bulk/update` (`{ uuids, fields }` on 2.x, `{ userIds, fields }`
- * with JSON numbers on 3.x; 500 ids per call max, panel-side). Used by the
+ * with JSON numbers on 3.x; 500 ids per call max, backend-side). Used by the
  * donation free-bandwidth bonus to re-cap the whole free fleet efficiently
  * instead of a PATCH per user. The caller chunks to ≤500 Remnawave ids of ONE
  * instance; mid-migration a chunk can still mix uuid- and id-shaped keys, so the
@@ -1258,12 +1258,12 @@ export async function remnawaveBulkUpdateTrafficLimit(
 }
 
 /**
- * Resolve the id a panel CURRENTLY addresses a user by, from the key's stable
+ * Resolve the id a backend CURRENTLY addresses a user by, from the key's stable
  * `shortUuid` (`GET /api/users/by-short-uuid/{shortUuid}` — same route on 2.x
- * and 3.x). Returns the 2.x uuid on a 2.x panel and the numeric id (as a decimal
- * string) on 3.x; null when the panel no longer knows the user. This is the
+ * and 3.x). Returns the 2.x uuid on a 2.x backend and the numeric id (as a decimal
+ * string) on 3.x; null when the backend no longer knows the user. This is the
  * remap primitive for the 2.x→3.x key migration (backendServers.migrateRemnawaveUserIds):
- * a 2.x-era key's uuid is GONE from the panel after the upgrade, but its
+ * a 2.x-era key's uuid is GONE from the backend after the upgrade, but its
  * shortUuid survives.
  */
 export async function remnawaveResolveUserIdByShortUuid(
@@ -1283,21 +1283,21 @@ export async function remnawaveResolveUserIdByShortUuid(
   }
 }
 
-/** Major version of the panel's reported semver (`3.4.2` → 3); null if unparseable. */
+/** Major version of the backend's reported semver (`3.4.2` → 3); null if unparseable. */
 export function remnawaveMajorVersion(panelVersion: string): number | null {
   const m = /^v?(\d+)\./.exec(panelVersion.trim());
   return m ? Number(m[1]) : null;
 }
 
 /**
- * True when the panel rejected a status action because the user is ALREADY in
- * the requested state: the enable/disable actions are NOT idempotent panel-side
+ * True when the backend rejected a status action because the user is ALREADY in
+ * the requested state: the enable/disable actions are NOT idempotent backend-side
  * — enable on an ACTIVE user 400s with `A030 "User already enabled"` (disable
  * on a disabled user: `A029 "User already disabled"`). FCP wants set-semantics
  * ("make it active"), so the caller treats the no-op transition as success —
  * without this, EVERY tier push to an enabled key (e.g. a free→member upgrade)
  * threw on its unconditional re-enable and the membership never reached the
- * panel.
+ * backend.
  */
 function isAlreadyInRequestedStatus(err: unknown, active: boolean): boolean {
   if (!(err instanceof RemnawaveApiError) || err.meta?.status !== 400) return false;
@@ -1364,17 +1364,17 @@ export async function remnawaveDeleteUser(
 
 /**
  * Remnawave picks the subscription FORMAT by User-Agent, keying on the client
- * app's UA prefix. Probed live against the production panel (2026-08-30):
+ * app's UA prefix. Probed live against the production backend (2026-08-30):
  * "SFA/…" → sing-box JSON, but the newer official sing-box shells fall through
  * to the base64 default — which sing-box then fails to import ("decode config:
- * invalid character 'd'…", base64 of vless://). Until the panel recognizes
+ * invalid character 'd'…", base64 of vless://). Until the backend recognizes
  * them, rewrite a UA that IS sing-box but lacks a recognized prefix to a
- * canonical SFA one, carrying the core version through (the panel may pick the
+ * canonical SFA one, carrying the core version through (the backend may pick the
  * legacy vs modern template by it). Deliberately narrow — only UAs that START
  * with "SFL/" / "SFW/", the official desktop shells' "SFL (sing-box ..." /
  * "SFW (sing-box ..." form (sing-box-for-desktop `src/main/userAgent.ts`: the
  * app name is SFL on Linux, SFW elsewhere), or "sing-box" — so sing-box-CORED
- * third-party apps with their own panel templates (Karing, Happ, …) are never
+ * third-party apps with their own backend templates (Karing, Happ, …) are never
  * touched. `lib/edges/clientFamilies.ts` keeps the same shell list.
  */
 const SINGBOX_RECOGNIZED_UA_RE = /^SF[AIMT]\//;
@@ -1395,20 +1395,20 @@ export async function remnawaveFetchSubscription(
   subscriptionUrl?: string,
   hwidHeaders?: Record<string, string>,
 ): Promise<SubscriptionContent> {
-  // The raw content lives at the panel-provided PUBLIC subscription URL (the
+  // The raw content lives at the backend-provided PUBLIC subscription URL (the
   // shortUuid is the capability), NOT the admin API — `/api/subscriptions/...`
   // doesn't exist and 404s. Fetch that URL with NO admin Bearer (it's public).
   // Fall back to the conventional `/api/sub/<shortUuid>` only if we weren't
   // handed a URL (legacy callers); no UA → Remnawave serves the default base64
   // subscription rather than an HTML landing page. A stored URL is re-pinned
-  // to the panel origin (rows stored before the pinning fix, Review D-#4).
+  // to the backend origin (rows stored before the pinning fix, Review D-#4).
   const url = subscriptionUrl
     ? pinnedSubscriptionUrl(cfg, subscriptionUrl, backendShortId)
     : joinUrl(cfg.baseUrl, `/api/sub/${backendShortId}`);
   const headers: Record<string, string> = {};
   const ua = normalizeSubscriptionUserAgent(userAgent);
   if (ua) headers['user-agent'] = ua;
-  // Forward the client's HWID identification headers so the panel registers the
+  // Forward the client's HWID identification headers so the backend registers the
   // device + enforces the limit (with HWID_DEVICE_LIMIT_ENABLED on, a fetch
   // without x-hwid is rejected 404 — the caller passes that through).
   if (hwidHeaders) for (const [k, val] of Object.entries(hwidHeaders)) headers[k] = val;
@@ -1418,7 +1418,7 @@ export async function remnawaveFetchSubscription(
     const res = await fetch(url, { headers, signal: controller.signal });
     if (!res.ok) throw await RemnawaveApiError.fromResponse(res, 'subscription content');
     // Pass through the well-known subscription metadata headers (never a secret)
-    // so the FCP-fronted URL is a faithful stand-in for the panel URL — the proxy
+    // so the FCP-fronted URL is a faithful stand-in for the backend URL — the proxy
     // app still sees its traffic/expiry counters + update cadence.
     const passthrough: Record<string, string> = {};
     for (const h of [
@@ -1440,7 +1440,7 @@ export async function remnawaveFetchSubscription(
   }
 }
 
-// A well-formed but absent username: the panel answers 404 (reachable + token
+// A well-formed but absent username: the backend answers 404 (reachable + token
 // accepted) rather than 200, which is exactly what a health probe wants. The
 // by-username route is the same on 2.x and 3.x, whereas `/api/users/{id}` wants
 // a uuid on 2.x and an integer on 3.x (the other shape 400s — and a 400 is NOT
@@ -1450,7 +1450,7 @@ const HEALTH_PROBE_USERNAME = 'fcp-health-probe-absent';
 
 /**
  * Reachability + auth probe for the healthcheck cron + the admin
- * test-connection button. A 2xx or 404 means the panel is up and the token was
+ * test-connection button. A 2xx or 404 means the backend is up and the token was
  * accepted; 401/403 means bad credentials; anything else (or a network error)
  * is unhealthy. `keyCount` is not cheaply available from Remnawave, so it is
  * `null` — the healthcheck then LEAVES the locally-bumped estimate alone instead
@@ -1495,11 +1495,11 @@ export async function remnawaveTestConnection(
   }
 }
 
-// --- Panel observation (server management) -----------------------------------
+// --- Backend observation (server management) -----------------------------------
 
 // The observation schemas are SEPARATE from the ones above on purpose: those
 // parse exactly what their feature reads, and widening them would widen what
-// every existing caller accepts. All extra fields are nullish (a panel that
+// every existing caller accepts. All extra fields are nullish (a backend that
 // lacks one degrades to "unknown", never to a parse failure).
 const ObservedHostRow = z.object({
   uuid: z.string(),
@@ -1575,22 +1575,22 @@ export async function observeConfigProfile(
     inbounds?: { uuid: string; tag: string }[] | null;
   },
   digestKey: string,
-): Promise<PanelObservedProfile> {
+): Promise<ObservedProfile> {
   const uuidByTag = new Map((profile.inbounds ?? []).map((i) => [i.tag, i.uuid]));
   const config = obj(profile.config);
   const rawInbounds = Array.isArray(config?.inbounds) ? config.inbounds : [];
-  const inbounds: PanelObservedInbound[] = [];
+  const inbounds: ObservedTransport[] = [];
   for (const raw of rawInbounds) {
     const tag = str(obj(raw)?.tag);
     if (!tag) continue;
-    const projected = projectXrayInbound(raw, {
+    const projected = projectXrayTransport(raw, {
       configProfileUuid: profile.uuid,
       configProfileInboundUuid: uuidByTag.get(tag) ?? '',
       active: false,
     });
     if (!projected) continue;
     const { active: _active, ...inbound } = projected;
-    const out: PanelObservedInbound = inbound;
+    const out: ObservedTransport = inbound;
     if (inbound.security === 'reality') {
       const rs = obj(obj(obj(raw)?.streamSettings)?.realitySettings);
       out.realityAuth = await realityAuthDigest(rs, digestKey);
@@ -1608,7 +1608,7 @@ export async function observeConfigProfile(
 
 /**
  * Read everything server management shows: nodes, config profiles, Hosts and
- * internal squads. READ-ONLY. Each profile is fetched by uuid (the list row is
+ * internal mode groups. READ-ONLY. Each profile is fetched by uuid (the list row is
  * never trusted to be complete) and reduced by `observeConfigProfile` before
  * anything leaves this function. `digestKey` keys the digests; it is the
  * caller's to supply so this module stays free of environment access.
@@ -1628,7 +1628,7 @@ export async function remnawaveObservePanel(
       sensitive: true,
     }),
   ]);
-  const profiles: PanelObservedProfile[] = [];
+  const profiles: ObservedProfile[] = [];
   for (const p of Array.isArray(listed) ? listed : listed.configProfiles) {
     const full = await call(cfg, {
       method: 'GET',
@@ -1659,7 +1659,7 @@ export async function remnawaveObservePanel(
   };
 }
 
-function mapObservedHosts(rows: z.infer<typeof ObservedHostsResponse>): PanelObservedHost[] {
+function mapObservedHosts(rows: z.infer<typeof ObservedHostsResponse>): ObservedAddress[] {
   return (Array.isArray(rows) ? rows : rows.hosts).map((h) => ({
     hostUuid: h.uuid,
     remark: h.remark,
@@ -1681,7 +1681,7 @@ function mapObservedHosts(rows: z.infer<typeof ObservedHostsResponse>): PanelObs
   }));
 }
 
-function mapObservedSquads(rows: z.infer<typeof ObservedSquadsResponse>): PanelObservedSquad[] {
+function mapObservedSquads(rows: z.infer<typeof ObservedSquadsResponse>): ObservedModeGroup[] {
   return rows.internalSquads.map((sq) => ({
     squadUuid: sq.uuid,
     name: sq.name,
@@ -1690,15 +1690,15 @@ function mapObservedSquads(rows: z.infer<typeof ObservedSquadsResponse>): PanelO
   }));
 }
 
-// --- Panel writes (server management) ------------------------------------------
+// --- Backend writes (server management) ------------------------------------------
 //
 // ONE outbound call each, no retry: a write whose answer is lost must be settled
-// by the operations ledger LOOKING at the panel, never by sending it again (an
+// by the operations ledger LOOKING at the backend, never by sending it again (an
 // identical Host create is a second Host, measured). Shapes are the ones the
-// management contract probe pins against a live panel.
+// management contract probe pins against a live backend.
 
-/** `null` clears a text field (the panel takes ''), absent leaves it. */
-function hostBody(f: PanelHostFields): Record<string, unknown> {
+/** `null` clears a text field (the backend takes ''), absent leaves it. */
+function hostBody(f: BackendAddressFields): Record<string, unknown> {
   const body: Record<string, unknown> = {};
   const text = (k: 'sni' | 'host' | 'path' | 'tag') => {
     if (f[k] !== undefined) body[k] = f[k] ?? '';
@@ -1710,7 +1710,7 @@ function hostBody(f: PanelHostFields): Record<string, unknown> {
   text('host');
   text('path');
   text('tag');
-  // Enumerations: null is the panel's own "unset".
+  // Enumerations: null is the backend's own "unset".
   if (f.alpn !== undefined) body.alpn = f.alpn;
   if (f.fingerprint !== undefined) body.fingerprint = f.fingerprint;
   if (f.securityLayer !== undefined) body.securityLayer = f.securityLayer ?? 'DEFAULT';
@@ -1739,7 +1739,7 @@ export async function remnawaveManageCreateHost(
 export async function remnawaveManageUpdateHost(
   cfg: RemnawaveConfig,
   hostUuid: string,
-  fields: PanelHostFields,
+  fields: BackendAddressFields,
 ): Promise<void> {
   await call(cfg, {
     method: 'PATCH',
@@ -1793,13 +1793,13 @@ export async function remnawaveDeleteSquad(cfg: RemnawaveConfig, squadUuid: stri
   });
 }
 
-export async function remnawaveReadHosts(cfg: RemnawaveConfig): Promise<PanelObservedHost[]> {
+export async function remnawaveReadHosts(cfg: RemnawaveConfig): Promise<ObservedAddress[]> {
   return mapObservedHosts(
     await call(cfg, { method: 'GET', path: '/api/hosts', schema: ObservedHostsResponse }),
   );
 }
 
-export async function remnawaveReadSquads(cfg: RemnawaveConfig): Promise<PanelObservedSquad[]> {
+export async function remnawaveReadSquads(cfg: RemnawaveConfig): Promise<ObservedModeGroup[]> {
   return mapObservedSquads(
     await call(cfg, {
       method: 'GET',
@@ -1846,11 +1846,11 @@ export async function remnawaveReadNodeStatus(cfg: RemnawaveConfig): Promise<Pan
 
 // --- node writes ---------------------------------------------------------------------------------
 //
-// FCP creates and changes the PANEL ROW of a node. It never asks the panel for
+// FCP creates and changes the PANEL ROW of a node. It never asks the backend for
 // the node's own secret (`/api/keygen`): installing a node and giving it that
-// secret is the node role's job, done against the panel directly.
+// secret is the node role's job, done against the backend directly.
 
-function nodeBody(f: PanelNodeFields): Record<string, unknown> {
+function nodeBody(f: BackendNodeFields): Record<string, unknown> {
   const body: Record<string, unknown> = {};
   if (f.name !== undefined) body.name = f.name;
   if (f.address !== undefined) body.address = f.address;
@@ -1889,7 +1889,7 @@ export async function remnawaveCreateNode(
 export async function remnawaveUpdateNode(
   cfg: RemnawaveConfig,
   nodeUuid: string,
-  fields: PanelNodeFields,
+  fields: BackendNodeFields,
 ): Promise<void> {
   await call(cfg, {
     method: 'PATCH',
@@ -1932,10 +1932,10 @@ export async function remnawaveDeleteNode(cfg: RemnawaveConfig, nodeUuid: string
 
 // --- Guarded config-profile edit (server management) ---------------------------------------
 //
-// The panel replaces a profile's config WHOLESALE and offers no conditional
+// The backend replaces a profile's config WHOLESALE and offers no conditional
 // update (measured: stale preconditions are ignored). So: read the full config,
 // refuse unless it is still the one the operator previewed, apply a CLOSED set
-// of typed edits (lib/panel/patchOps.ts), send once. The config, key material
+// of typed edits (lib/backend/patchOps.ts), send once. The config, key material
 // included, exists only inside these functions; what leaves them is digests and
 // the non-secret before/after.
 
@@ -1976,7 +1976,7 @@ export async function remnawaveApplyProfilePatch(
   digestKey: string,
 ): Promise<{ sent: true } | { sent: false; reason: 'profile_changed' | 'nothing_to_change' }> {
   // Read again, as late as possible: the window in which another writer can
-  // slip in is this function, and nothing the panel offers can close it.
+  // slip in is this function, and nothing the backend offers can close it.
   const full = await readFullProfile(cfg, profileUuid);
   if ((await changeToken(full.config, digestKey)) !== baseToken)
     return { sent: false, reason: 'profile_changed' };
@@ -1990,8 +1990,8 @@ export async function remnawaveApplyProfilePatch(
     sensitive: true,
     // A profile with hundreds of names and several nodes answers in tens of
     // milliseconds (measured), but the write must not be cut short by the
-    // default read timeout: an abort while the panel commits is an `uncertain`
-    // outcome that fences the profile, its nodes and its relays until settled.
+    // default read timeout: an abort while the backend commits is an `uncertain`
+    // outcome that fences the profile, its nodes and its origins until settled.
     timeoutMs: Math.max(cfg.timeoutMs ?? 8000, PROFILE_WRITE_TIMEOUT_MS),
   });
   return { sent: true };
@@ -2000,9 +2000,9 @@ export async function remnawaveApplyProfilePatch(
 /** How long a profile PATCH may take before it is given up on (never below the instance's own). */
 const PROFILE_WRITE_TIMEOUT_MS = 30_000;
 
-// --- Panel setup (bootstrap contract v2) -------------------------------------------------------
+// --- Backend setup (bootstrap contract v2) -------------------------------------------------------
 //
-// What "Set up this panel" and the node role's bootstrap need beyond the
+// What "Set up this backend" and the node role's bootstrap need beyond the
 // management writes: creating the profile, the node secret, the subscription
 // templates, and the live parameters of one REALITY inbound for an isolated
 // test link. Every call is `sensitive`: key material or a credential travels
@@ -2111,7 +2111,7 @@ export async function remnawaveReadInboundForTest(
   );
   const inboundUuid = (full.inbounds ?? []).find((i) => i.tag === tag)?.uuid;
   if (!raw || !inboundUuid) return null;
-  const projected = projectXrayInbound(raw, {
+  const projected = projectXrayTransport(raw, {
     configProfileUuid: full.uuid,
     configProfileInboundUuid: inboundUuid,
     active: true,
@@ -2153,6 +2153,6 @@ export async function remnawaveReadProfile(
   cfg: RemnawaveConfig,
   profileUuid: string,
   digestKey: string,
-): Promise<PanelObservedProfile> {
+): Promise<ObservedProfile> {
   return observeConfigProfile(await readFullProfile(cfg, profileUuid), digestKey);
 }

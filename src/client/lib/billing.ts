@@ -1,6 +1,6 @@
 /**
  * Shared membership pricing math, derived entirely from the DB duration prices
- * (Admin → Billing). The self-upgrade panel, the gift-code panel, and the tier
+ * (Admin → Billing). The self-upgrade backend, the gift-code backend, and the tier
  * comparison card all render a per-month rate (and a "save X%" badge) from these,
  * so the savings recompute when an admin edits a price - there is no separate
  * stored discount field to keep in sync.

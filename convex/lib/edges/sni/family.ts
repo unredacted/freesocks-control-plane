@@ -1,18 +1,18 @@
 /**
  * Server-name families (pure; unit-tested): importing a pasted list, judging a
- * qualification handshake, and choosing which names go onto an inbound.
+ * qualification handshake, and choosing which names go onto a transport.
  *
- * The panel allowlist of an inbound is ONE list with a hard cap, and it has
+ * The backend allowlist of a transport is ONE list with a hard cap, and it has
  * three kinds of tenant: the family's names, names that are not the family's
- * but that a relay still hands out (they must keep working), and names that
+ * but that an origin still hands out (they must keep working), and names that
  * were retired but are still inside their drain (members may still hold them).
  * The cap is over ALL of them, so the family's share is what is left after the
  * other two and a headroom kept free for the next drain: retiring one name and
- * adding its replacement needs both on the panel at once.
+ * adding its replacement needs both on the backend at once.
  */
 import { normalizeName } from '../registration';
 
-/** Production Xray takes 1024 names on one inbound (measured); this is the working cap. */
+/** Production Xray takes 1024 names on one transport (measured); this is the working cap. */
 export const PANEL_ALLOWLIST_MAX = 512;
 export const DRAIN_HEADROOM = 64;
 export const MAX_NAMES_PER_FAMILY = 4096;
@@ -110,7 +110,7 @@ export function judgeHandshake(r: HandshakeResult, opts: { requireH2: boolean })
   return { ok: true, tlsVersion, alpn };
 }
 
-// --- what goes onto the inbound ----------------------------------------------------------------------
+// --- what goes onto the transport ----------------------------------------------------------------------
 
 export interface FamilyNameLike {
   name: string;
@@ -129,11 +129,11 @@ export interface AllowlistPlan {
 }
 
 /**
- * The panel allowlist for one inbound. `retained` = names on the inbound today
- * that are not the family's but that a relay still hands out, or that are still
+ * The backend allowlist for one transport. `retained` = names on the transport today
+ * that are not the family's but that an origin still hands out, or that are still
  * draining: they stay, whatever the family says. The family then fills what is
  * left under the cap minus the drain headroom, in `seq` order, so every node on
- * the inbound and every listener sees the same choice.
+ * the transport and every listener sees the same choice.
  */
 export function planAllowlist(
   family: readonly FamilyNameLike[],
@@ -155,7 +155,7 @@ export function planAllowlist(
   };
 }
 
-/** `host:port` of a static target, as the panel spells a REALITY target. */
+/** `host:port` of a static target, as the backend spells a REALITY target. */
 export function targetString(t: { address: string; port: number }): string {
   return t.address.includes(':') ? `[${t.address}]:${t.port}` : `${t.address}:${t.port}`;
 }

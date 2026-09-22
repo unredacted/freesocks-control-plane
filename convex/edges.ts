@@ -1,5 +1,5 @@
 /**
- * Relay EDGE rows: one provider load balancer each. This module owns the row
+ * Origin EDGE rows: one provider load balancer each. This module owns the row
  * mutations the rotation machine and the reconcile cron drive:
  *
  *  - `insertPlanned` reserves capacity + budget and inserts the row in ONE
@@ -174,7 +174,7 @@ export function mapEdgeAdmin(e: Edge, listener?: Doc<'relayListeners'> | null) {
     // The binding itself stays server-side (ids + hashes). `current` is the
     // cheap display answer: passing, unexpired and taken against the hostname
     // the edge now carries. The authoritative gate re-derives the WHOLE binding
-    // inside the publishing mutation (relays.checkPublishable), which can also
+    // inside the publishing mutation (origins.checkPublishable), which can also
     // see a slot or profile write this view cannot.
     frontQualification: e.frontQualification
       ? {
@@ -346,7 +346,7 @@ export interface PlannedEdgeInput {
 /**
  * Reserve capacity + one allocation and insert the planned edge, atomically
  * (shared by the mutation below and the rotation machine's selection commit).
- * Throws typed codes: relay.capacity, relay.budget.
+ * Throws typed codes: origin.capacity, origin.budget.
  */
 export async function insertPlannedEdge(
   ctx: { db: import('./_generated/server').DatabaseWriter },

@@ -115,7 +115,7 @@ describe('priority regression: multi-backend mode, no pools bound anywhere', () 
       const subs = await ctx.db.query('subscriptions').collect();
       expect(subs).toHaveLength(1);
       expect(subs[0]!.backendPlacement).toBeUndefined();
-      // The squad-less-key audit is a placement-capable concept: it must NOT
+      // The mode group-less-key audit is a placement-capable concept: it must NOT
       // fire for a backend with no placement at all.
       const audits = await ctx.db
         .query('auditLog')
@@ -125,7 +125,7 @@ describe('priority regression: multi-backend mode, no pools bound anywhere', () 
     });
   });
 
-  test('remnawave: all-unbound bring-up issues squad-less + AUDITED (the WS1 safety net)', async () => {
+  test('remnawave: all-unbound bring-up issues mode group-less + AUDITED (the WS1 safety net)', async () => {
     const t = convexTest(schema, modules);
     const tierId = await seedTier(t, 'remnawave');
     const userId: Id<'users'> = await t.run((ctx) =>

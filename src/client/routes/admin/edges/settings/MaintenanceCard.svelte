@@ -56,7 +56,7 @@
   <header class="px-4 py-3">
     <h2 id="settings-maintenance-title" class="font-medium">Maintenance</h2>
     <p class="text-muted-foreground mt-0.5 text-sm">
-      Pause the admission of new edge work before a risky change, for example a panel upgrade.
+      Pause the admission of new edge work before a risky change, for example a backend upgrade.
     </p>
   </header>
   <div class="space-y-4 border-t px-4 py-4">

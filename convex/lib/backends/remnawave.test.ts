@@ -114,15 +114,15 @@ describe('remnawaveIssueUser', () => {
     // far-future sentinel (Remnawave REQUIRES the field).
     expect(calls[0]!.body).toMatchObject({ username: 'fs_user', tag: 'FREE' });
     expect(typeof calls[0]!.body!.expireAt).toBe('string');
-    // No strategy supplied → defaults to MONTH; no squad → field omitted.
+    // No strategy supplied → defaults to MONTH; no mode group → field omitted.
     expect(calls[0]!.body!.trafficLimitStrategy).toBe('MONTH');
     expect(calls[0]!.body!.activeInternalSquads).toBeUndefined();
   });
 
-  test('pins an OFF-ORIGIN panel-reported subscriptionUrl to the panel fallback (Review D-#4)', async () => {
-    // A compromised panel returning an attacker-chosen URL must not make FCP
+  test('pins an OFF-ORIGIN backend-reported subscriptionUrl to the backend fallback (Review D-#4)', async () => {
+    // A compromised backend returning an attacker-chosen URL must not make FCP
     // fetch + publicly re-serve it: anything off the instance's own origin is
-    // replaced by the conventional /api/sub/<shortUuid> on the panel origin.
+    // replaced by the conventional /api/sub/<shortUuid> on the backend origin.
     mockFetch((path, method) => {
       if (path === '/api/users' && method === 'POST')
         return jsonRes(
@@ -196,7 +196,7 @@ describe('remnawaveIssueUser', () => {
   });
 
   test('a schema-mismatch create attempts orphan cleanup by username, then throws', async () => {
-    // The panel CREATED the user but the response can't be parsed (version
+    // The backend CREATED the user but the response can't be parsed (version
     // drift): we lost the uuid, so the only handle is the unique username.
     mockFetch((path, method) => {
       if (path === '/api/users' && method === 'POST') return jsonRes({ uuid: 'not-a-uuid' });
@@ -291,12 +291,12 @@ describe('remnawaveGetUser', () => {
     ]);
   });
 
-  test('surfaces the panel onlineAt stamp (and tolerates its absence)', async () => {
+  test('surfaces the backend onlineAt stamp (and tolerates its absence)', async () => {
     routeUserAndDevices(userObj({ onlineAt: '2026-07-20T12:34:56.000Z' }));
     const withStamp = await remnawaveGetUser(cfg, UUID);
     expect(withStamp.onlineAt).toBe('2026-07-20T12:34:56.000Z');
 
-    routeUserAndDevices(userObj()); // older panels omit the field entirely
+    routeUserAndDevices(userObj()); // older backends omit the field entirely
     const withoutStamp = await remnawaveGetUser(cfg, UUID);
     expect(withoutStamp.onlineAt).toBeUndefined();
   });
@@ -329,7 +329,7 @@ describe('remnawaveGetUser', () => {
     expect(state.usedTrafficBytes).toBe(4096);
   });
 
-  // 0 is the panel's UNLIMITED sentinel (the update path sends null → 0); the
+  // 0 is the backend's UNLIMITED sentinel (the update path sends null → 0); the
   // read path must map it back to null or the member hero renders "… / 0 B"
   // instead of the Unlimited badge.
   test.each([
@@ -343,8 +343,8 @@ describe('remnawaveGetUser', () => {
   });
 });
 
-describe('remnawaveUpdateUser (Bug 14: squad clear vs set vs absent)', () => {
-  test('omits activeInternalSquads when the squad field is absent', async () => {
+describe('remnawaveUpdateUser (Bug 14: mode group clear vs set vs absent)', () => {
+  test('omits activeInternalSquads when the mode group field is absent', async () => {
     mockFetch(() => jsonRes(userObj()));
     await remnawaveUpdateUser(cfg, UUID, { trafficLimitBytes: 10 });
     expect(calls[0]!.method).toBe('PATCH');
@@ -355,13 +355,13 @@ describe('remnawaveUpdateUser (Bug 14: squad clear vs set vs absent)', () => {
     expect(calls[0]!.body!.trafficLimitBytes).toBe(10);
   });
 
-  test('clears the squad when placement is present and null', async () => {
+  test('clears the mode group when placement is present and null', async () => {
     mockFetch(() => jsonRes(userObj()));
     await remnawaveUpdateUser(cfg, UUID, { placement: null });
     expect(calls[0]!.body!.activeInternalSquads).toEqual([]);
   });
 
-  test('sets the squad when placement is present and a value', async () => {
+  test('sets the mode group when placement is present and a value', async () => {
     mockFetch(() => jsonRes(userObj()));
     await remnawaveUpdateUser(cfg, UUID, { placement: 'sq-9' });
     expect(calls[0]!.body!.activeInternalSquads).toEqual(['sq-9']);
@@ -378,7 +378,7 @@ describe('remnawaveSetStatus (dedicated enable/disable action)', () => {
     expect(calls[1]!.path).toBe(`/api/users/${UUID}/actions/disable`);
   });
 
-  // The panel's actions endpoints are NOT idempotent: enable on an ACTIVE user
+  // The backend's actions endpoints are NOT idempotent: enable on an ACTIVE user
   // 400s (A030), disable on a disabled user 400s (A029). FCP treats "already in
   // the requested state" as success — the tier push unconditionally re-enables
   // before every update, so without this every free→member upgrade of a live
@@ -475,7 +475,7 @@ describe('normalizeSubscriptionUserAgent', () => {
 });
 
 describe('remnawaveFetchSubscription', () => {
-  test('fetches the panel-provided public subscription URL (no admin token), forwards UA', async () => {
+  test('fetches the backend-provided public subscription URL (no admin token), forwards UA', async () => {
     mockFetch(
       () =>
         new Response('vmess://node\n', { status: 200, headers: { 'content-type': 'text/yaml' } }),
@@ -544,7 +544,7 @@ describe('remnawaveFetchSubscription', () => {
       undefined,
       'http://169.254.169.254/latest/meta-data',
     );
-    expect(calls[0]!.path).toBe('/api/sub/short123'); // the panel-origin fallback
+    expect(calls[0]!.path).toBe('/api/sub/short123'); // the backend-origin fallback
   });
 
   test('a baseUrl path prefix is preserved on every API call (Review D-#11)', async () => {
@@ -610,7 +610,7 @@ describe('remnawaveHealth / remnawaveTestConnection', () => {
  * Remnawave 3.x: the user uuid is gone; users are addressed by their numeric
  * `id`. The provider infers the contract from the raw id's shape — an integer
  * string is 3.x, anything else goes out on the 2.x (uuid) shapes — so both
- * panel generations are driven by the same code (docs/backends.md).
+ * backend generations are driven by the same code (docs/backends.md).
  */
 describe('Remnawave 3.x contract (numeric user ids)', () => {
   /** A 3.x user: numeric id, NO uuid, onlineAt nested under userTraffic. */
@@ -797,7 +797,7 @@ describe('error redaction', () => {
   });
 
   // A config profile carries the REALITY private key, the short ids and the
-  // client list, and a panel rejection can echo what was submitted. Every
+  // client list, and a backend rejection can echo what was submitted. Every
   // config-profile call is therefore SENSITIVE: status + path, nothing else.
   const KEY = 'REALITY_PRIVATE_KEY_DO_NOT_LEAK';
   const profile = {
@@ -860,13 +860,13 @@ describe('error redaction', () => {
     expect(JSON.stringify(report)).not.toContain(KEY);
   });
 
-  test("a non-sensitive call still reports the panel's own error text", async () => {
+  test("a non-sensitive call still reports the backend's own error text", async () => {
     mockFetch(() => new Response('User not found', { status: 404 }));
     await expect(remnawaveGetUser(cfg, UUID)).rejects.toThrow(/User not found/);
   });
 });
 
-describe('hosts + node inventory (relay edges)', () => {
+describe('hosts + node inventory (origin edges)', () => {
   const hostRow = {
     uuid: 'h-1',
     remark: 'node-a-relay-a1',
@@ -907,7 +907,7 @@ describe('hosts + node inventory (relay edges)', () => {
       method: 'PATCH',
       body: { uuid: 'h-1', address: '203.0.113.5', port: 443 },
     });
-    // An absent sni/host leaves the panel's value alone: it is not in the body.
+    // An absent sni/host leaves the backend's value alone: it is not in the body.
     expect(Object.keys(calls[0].body ?? {}).sort()).toEqual(['address', 'port', 'uuid']);
   });
 
@@ -923,7 +923,7 @@ describe('hosts + node inventory (relay edges)', () => {
     expect(calls[0].body).toMatchObject({ sni: 'cdn.example', host: 'cdn.example' });
     calls.length = 0;
     mockFetch(() => jsonRes({ response: hostRow }));
-    // The panel's update DTO validates these as optional STRINGS: a null would
+    // The backend's update DTO validates these as optional STRINGS: a null would
     // 400 and reject the whole PATCH, losing the address move with it.
     await remnawaveUpdateHost(cfg, {
       uuid: 'h-1',
@@ -942,7 +942,7 @@ describe('hosts + node inventory (relay edges)', () => {
     expect(rows[0].host).toBeNull();
   });
 
-  test('remnawaveUpdateHost surfaces a panel error without the URL host', async () => {
+  test('remnawaveUpdateHost surfaces a backend error without the URL host', async () => {
     mockFetch(() => new Response('nope', { status: 400 }));
     await expect(
       remnawaveUpdateHost(cfg, { uuid: 'h-1', address: '203.0.113.5', port: 443 }),

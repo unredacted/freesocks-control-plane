@@ -1,8 +1,8 @@
 /**
  * The guided setup's DRAFT: the origin and the listeners the operator intends,
- * kept in this browser until step 4 creates the relay. It is not progress
+ * kept in this browser until step 4 creates the origin. It is not progress
  * state (the server judges every step); it only lets steps 1 to 3 be judged
- * against the intended listeners before a relay row exists.
+ * against the intended listeners before an origin row exists.
  *
  * Storage is best effort: a private window or blocked site data simply means
  * the draft does not survive a reload.

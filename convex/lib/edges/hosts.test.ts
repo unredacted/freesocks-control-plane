@@ -30,7 +30,7 @@ describe('remarks', () => {
     expect(re.test('node-a-relay-a1')).toBe(true);
     expect(re.test('node-a-relay-6a536a')).toBe(true);
     expect(re.test('node-a-reality')).toBe(false);
-    expect(re.test('node-a-relay-ws')).toBe(true); // any short key is a relay remark
+    expect(re.test('node-a-relay-ws')).toBe(true); // any short key is an origin remark
     expect(re.test('node-ab-relay')).toBe(false); // prefix-sharing hostname
     expect(re.test('xnode-a-relay')).toBe(false);
   });
@@ -90,7 +90,7 @@ describe('matchSlotHosts', () => {
     ]);
   });
 
-  test('planFromMatches records an empty panel field as a known null, not as unknown', () => {
+  test('planFromMatches records an empty backend field as a known null, not as unknown', () => {
     const plan = planFromMatches(
       matchSlotHosts([host({ uuid: 'u1', sni: '', host: '' })], slots, '198.51.100.7'),
     );
@@ -161,7 +161,7 @@ describe('diffHosts', () => {
     );
     expect(d2.changedInbound.map((p) => p.uuid)).toEqual(['u2']);
     expect(d2.converged).toBe(false);
-    // A binding that DISAPPEARED (inbound null on the live row) is the same drift.
+    // A binding that DISAPPEARED (transport null on the live row) is the same drift.
     const d3 = diffHosts(
       [
         host({ uuid: 'u1', address: '203.0.113.5' }),
@@ -188,7 +188,7 @@ describe('diffHosts', () => {
 describe('diffHosts: the full tuple', () => {
   const plan = [{ uuid: 'u1', oldAddress: '192.0.2.10', oldPort: 443, inboundUuid: 'in-1' }];
 
-  test('an L4 → L7 transition is not converged while the panel keeps the old SNI', () => {
+  test('an L4 → L7 transition is not converged while the backend keeps the old SNI', () => {
     const live = [host({ uuid: 'u1', address: 'cdn.example', port: 443, sni: 'www.example' })];
     const target = { address: 'cdn.example', port: 443, sni: 'cdn.example', host: 'cdn.example' };
     const d = diffHosts(live, plan, target);

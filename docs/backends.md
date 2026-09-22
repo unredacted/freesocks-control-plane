@@ -107,7 +107,7 @@ Higher-level code never calls `fetch` directly; it runs the dispatch actions:
 - **`/account` reads** call `internal.backends.getUser`.
 - **The FCP-fronted subscription URL** (`GET /api/v1/sub/<token>`, `convex/http.ts`) calls
   `internal.backends.fetchSubscriptionContent` to serve the member's config from our own origin
-  instead of the backend panel URL. Public + unauthenticated (the opaque per-sub `subToken` is the
+  instead of the backend backend URL. Public + unauthenticated (the opaque per-sub `subToken` is the
   capability), with a short server-side TTL cache on `subscriptions.subCache` keyed by User-Agent
   (Remnawave formats config by UA). It forwards the caller's UA (with one sing-box normalization
   exception — see "Subscription formats" below) and re-emits the allowlisted
@@ -201,17 +201,17 @@ capabilities.
 The Remnawave provider (`convex/lib/backends/remnawave.ts`) targets these exact routes, verified
 against the upstream contract in `remnawave/backend` (`libs/contract/api/{routes,controllers}.ts` +
 the NestJS controllers) on **both the 2.x and the 3.x line**. Remnawave **3.0.0 dropped the user
-`uuid`**: users are addressed by their per-panel numeric `id` (path params, the `PATCH /api/users`
-body, HWID `userId`, bulk `userIds`); `shortUuid`, squads, nodes, config profiles, system stats and
+`uuid`**: users are addressed by their per-backend numeric `id` (path params, the `PATCH /api/users`
+body, HWID `userId`, bulk `userIds`); `shortUuid`, mode groups, nodes, config profiles, system stats and
 the public subscription URL are unchanged. The provider infers the contract **from the shape of the
 id it is handed** — an integer string is a 3.x id, anything else goes out on the 2.x shapes — so a
-mixed fleet keeps working while panels are upgraded one at a time, and a freshly issued key simply
-carries whichever id the panel returned. The rows below show `{user}` where the two differ only by
-that value (`{uuid}` on 2.x, `{id}` on 3.x). If you self-host a different panel version, confirm
+mixed fleet keeps working while backends are upgraded one at a time, and a freshly issued key simply
+carries whichever id the backend returned. The rows below show `{user}` where the two differ only by
+that value (`{uuid}` on 2.x, `{id}` on 3.x). If you self-host a different backend version, confirm
 these still match (the integration harness, `bun run test:integration:remnawave`, runs the whole
-table against a real panel; `REMNAWAVE_TEST_IMAGE=remnawave/backend:2.8.0` runs it against 2.x).
+table against a real backend; `REMNAWAVE_TEST_IMAGE=remnawave/backend:2.8.0` runs it against 2.x).
 
-**Stored id form.** Numeric ids are only unique per panel (two panels both mint user `2`), but
+**Stored id form.** Numeric ids are only unique per backend (two backends both mint user `2`), but
 `subscriptions.backendUserId` is read through a unique index. The dispatch (`convex/backends.ts`)
 therefore stores a numeric id **scoped to its instance** — `<backendServerId>:<id>` — and strips the
 scope right before every provider call (`convex/lib/backendUserId.ts`); a 2.x uuid is stored
@@ -219,34 +219,34 @@ verbatim. Nothing outside the dispatch converts, and the admin UI shows the stor
 that was missing when the `PATCH /api/users/{uuid}` / `/api/hwid-devices` mismatches shipped (they
 "passed" only because the tests mocked the wrong paths too).
 
-| Op                  | Method + path                                                                                                                         | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| issue               | `POST /api/users`                                                                                                                     | body carries `activeInternalSquads: [placement]` — the generic `placement` handle mapped to a squad UUID (see "Node placement")                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| get                 | `GET /api/users/{user}`                                                                                                               |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| update              | `PATCH /api/users`                                                                                                                    | **the target is in the request BODY, not the path** (the route has no path param): `uuid` on 2.x, a JSON-number `id` on 3.x (the DTO requires one of them or `username`). The DTO takes `.optional()` NOT `.nullable()` for `trafficLimitBytes`/`expireAt`/`hwidDeviceLimit`, and refuses past expiry dates — the provider coerces `null` traffic → `0` (the panel's unlimited sentinel), omits a `null` expireAt or `null` hwidDeviceLimit (no clear semantics on update), and clamps a past expireAt to now+5min (FCP's grace sweep governs actual disablement)                                                                                                                                                                  |
-| set status          | `POST /api/users/{user}/actions/{enable\|disable}`                                                                                    | dedicated action endpoints, not a `status` field on update. **NOT idempotent panel-side**: enable on an ACTIVE user 400s (`A030 "User already enabled"`), disable on a disabled user 400s (`A029`) — the provider swallows the matching-direction rejection (set-semantics), since the tier push unconditionally re-enables before every update                                                                                                                                                                                                                                                                                                                                                                                    |
-| reset traffic       | `POST /api/users/{user}/actions/reset-traffic`                                                                                        |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| delete              | `DELETE /api/users/{user}`                                                                                                            | a 404 is treated as success (idempotent teardown)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| list devices        | `GET /api/hwid/devices/{user}`                                                                                                        | the HWID controller is `/api/hwid`; the user is a **path** param (not a query)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| delete device       | `POST /api/hwid/devices/delete`                                                                                                       | body `{ userUuid, hwid }` on 2.x, `{ userId, hwid }` (number) on 3.x                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| user usage          | `GET /api/bandwidth-stats/users/{user}?start&end`                                                                                     | member usage trend; **aggregate only** — the per-node `series`/`topNodes` are dropped (privacy)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| fleet stats         | `GET /api/system/stats` + `GET /api/system/stats/recap`                                                                               | admin dashboard (online / nodes / countries / traffic + panel `version`); cached by the healthcheck cron                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| node stats          | `GET /api/internal-squads` + `…/{uuid}/accessible-nodes` + `GET /api/nodes` (+ best-effort `GET /api/bandwidth-stats/nodes/realtime`) | per-squad node load (usersOnline / online / realtime bytes) → the issuance-time node-placement picker; cached in `remnawaveNodeStats` by the cron                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| bulk update         | `POST /api/users/bulk/update`                                                                                                         | body `{ uuids, fields }` on 2.x / `{ userIds, fields }` (numbers) on 3.x — a mixed chunk goes out as two calls; ids chunked ≤500 per call; used by the donation free-bandwidth re-cap (`donations.applyFreeBonus` — see `docs/billing.md`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| config profiles     | `GET /api/config-profiles` + `PATCH /api/config-profiles`                                                                             | the Xray logging privacy harden (see below); PATCH is a **full-replace** of one profile's `config`, so the provider always GET-merges first                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| host disable        | `PATCH /api/hosts { uuid, isDisabled }`                                                                                               | the edges hide/restore ledger flips ONE Host's disabled bit; nothing else travels (the update DTO omits absent fields), so address/port/names/inbound stay untouched; confirmed by re-listing (`setHostDisabled`, capability `hostDisable`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| node inbounds       | `GET /api/nodes` + `GET /api/config-profiles/{uuid}`                                                                                  | relay listener discovery: the node row's `configProfile.activeConfigProfileUuid` + `activeInbounds[].{uuid,tag}` (verified against `libs/contract/models/nodes.schema.ts`; the `configProfileUuid` spelling is tolerated) select the profile, whose `config.inbounds[]` (raw Xray) is joined BY TAG with its derived `inbounds[].{uuid,tag}` rows. **Allowlisted read**: tag, protocol, port, `streamSettings.{network,security}`, REALITY `dest`/`target` + `serverNames`, TLS `serverName`, ws/httpupgrade `path`/`host`, gRPC `serviceName`, xhttp `path`/`host`/`mode`. Never `settings.clients`, `privateKey`, `shortIds`, certificates or the derived row's `rawInbound` (`listNodeInbounds`, capability `inboundDiscovery`) |
-| sub content         | the public subscription URL (or `/api/sub/{shortUuid}`)                                                                               | fetched with NO admin token; forwards the client's `user-agent` + HWID headers (see "HWID / device limits" below)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| resolve by short id | `GET /api/users/by-short-uuid/{shortUuid}`                                                                                            | the 2.x→3.x key migration join (`backendServers.migrateRemnawaveUserIds`): the shortUuid survives the panel upgrade, the uuid does not                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| health probe        | `GET /api/users/by-username/fcp-health-probe-absent`                                                                                  | a 404 = reachable + token accepted. Version-neutral on purpose: `/api/users/{user}` 400s (not 404s) when the id shape does not match the panel's generation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Op                  | Method + path                                                                                                                         | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| issue               | `POST /api/users`                                                                                                                     | body carries `activeInternalSquads: [placement]` — the generic `placement` handle mapped to a mode group UUID (see "Node placement")                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| get                 | `GET /api/users/{user}`                                                                                                               |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| update              | `PATCH /api/users`                                                                                                                    | **the target is in the request BODY, not the path** (the route has no path param): `uuid` on 2.x, a JSON-number `id` on 3.x (the DTO requires one of them or `username`). The DTO takes `.optional()` NOT `.nullable()` for `trafficLimitBytes`/`expireAt`/`hwidDeviceLimit`, and refuses past expiry dates — the provider coerces `null` traffic → `0` (the backend's unlimited sentinel), omits a `null` expireAt or `null` hwidDeviceLimit (no clear semantics on update), and clamps a past expireAt to now+5min (FCP's grace sweep governs actual disablement)                                                                                                                                                                 |
+| set status          | `POST /api/users/{user}/actions/{enable\|disable}`                                                                                    | dedicated action endpoints, not a `status` field on update. **NOT idempotent backend-side**: enable on an ACTIVE user 400s (`A030 "User already enabled"`), disable on a disabled user 400s (`A029`) — the provider swallows the matching-direction rejection (set-semantics), since the tier push unconditionally re-enables before every update                                                                                                                                                                                                                                                                                                                                                                                   |
+| reset traffic       | `POST /api/users/{user}/actions/reset-traffic`                                                                                        |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| delete              | `DELETE /api/users/{user}`                                                                                                            | a 404 is treated as success (idempotent teardown)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| list devices        | `GET /api/hwid/devices/{user}`                                                                                                        | the HWID controller is `/api/hwid`; the user is a **path** param (not a query)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| delete device       | `POST /api/hwid/devices/delete`                                                                                                       | body `{ userUuid, hwid }` on 2.x, `{ userId, hwid }` (number) on 3.x                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| user usage          | `GET /api/bandwidth-stats/users/{user}?start&end`                                                                                     | member usage trend; **aggregate only** — the per-node `series`/`topNodes` are dropped (privacy)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| fleet stats         | `GET /api/system/stats` + `GET /api/system/stats/recap`                                                                               | admin dashboard (online / nodes / countries / traffic + backend `version`); cached by the healthcheck cron                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| node stats          | `GET /api/internal-squads` + `…/{uuid}/accessible-nodes` + `GET /api/nodes` (+ best-effort `GET /api/bandwidth-stats/nodes/realtime`) | per-mode group node load (usersOnline / online / realtime bytes) → the issuance-time node-placement picker; cached in `remnawaveNodeStats` by the cron                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| bulk update         | `POST /api/users/bulk/update`                                                                                                         | body `{ uuids, fields }` on 2.x / `{ userIds, fields }` (numbers) on 3.x — a mixed chunk goes out as two calls; ids chunked ≤500 per call; used by the donation free-bandwidth re-cap (`donations.applyFreeBonus` — see `docs/billing.md`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| config profiles     | `GET /api/config-profiles` + `PATCH /api/config-profiles`                                                                             | the Xray logging privacy harden (see below); PATCH is a **full-replace** of one profile's `config`, so the provider always GET-merges first                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| host disable        | `PATCH /api/hosts { uuid, isDisabled }`                                                                                               | the edges hide/restore ledger flips ONE Host's disabled bit; nothing else travels (the update DTO omits absent fields), so address/port/names/transport stay untouched; confirmed by re-listing (`setHostDisabled`, capability `hostDisable`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| node transports     | `GET /api/nodes` + `GET /api/config-profiles/{uuid}`                                                                                  | origin listener discovery: the node row's `configProfile.activeConfigProfileUuid` + `activeInbounds[].{uuid,tag}` (verified against `libs/contract/models/nodes.schema.ts`; the `configProfileUuid` spelling is tolerated) select the profile, whose `config.inbounds[]` (raw Xray) is joined BY TAG with its derived `inbounds[].{uuid,tag}` rows. **Allowlisted read**: tag, protocol, port, `streamSettings.{network,security}`, REALITY `dest`/`target` + `serverNames`, TLS `serverName`, ws/httpupgrade `path`/`host`, gRPC `serviceName`, xhttp `path`/`host`/`mode`. Never `settings.clients`, `privateKey`, `shortIds`, certificates or the derived row's `rawInbound` (`listNodeInbounds`, capability `inboundDiscovery`) |
+| sub content         | the public subscription URL (or `/api/sub/{shortUuid}`)                                                                               | fetched with NO admin token; forwards the client's `user-agent` + HWID headers (see "HWID / device limits" below)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| resolve by short id | `GET /api/users/by-short-uuid/{shortUuid}`                                                                                            | the 2.x→3.x key migration join (`backendServers.migrateRemnawaveUserIds`): the shortUuid survives the backend upgrade, the uuid does not                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| health probe        | `GET /api/users/by-username/fcp-health-probe-absent`                                                                                  | a 404 = reachable + token accepted. Version-neutral on purpose: `/api/users/{user}` 400s (not 404s) when the id shape does not match the backend's generation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
 Most responses are wrapped in `{ response: ... }`; the provider's `unwrap()` tolerates both wrapped
 and bare. HWID device metadata is surfaced as `platform` / `deviceModel` / first-seen / last-seen
 (mapped from `createdAt` / `updatedAt`); the device `requestIp` and `userAgent` are deliberately
-**not** read (metadata minimization). Subscription content is fetched from the panel's public
+**not** read (metadata minimization). Subscription content is fetched from the backend's public
 subscription URL, not an admin API route.
 
-**Token scopes.** The FCP panel token needs, beyond user + HWID management, the **read** scopes
+**Token scopes.** The FCP backend token needs, beyond user + HWID management, the **read** scopes
 `user-usage:read`, `stats:read`, and `recap:read` for the usage/fleet observability, plus
 **node-read** (`nodes:read` / `internal-squads:read`) for the node-placement telemetry
 (`getNodeStats`). All the observability additions are read-only, so keep the token
@@ -256,30 +256,30 @@ issue, they just stop favoring the emptier node. Two features DO write beyond us
 the **config-profiles read+write** scope for the logging harden below, and the **bulk user
 update** used by the donation re-cap — grant them only if you use those features.
 
-## Upgrading a panel to Remnawave 3.x
+## Upgrading a backend to Remnawave 3.x
 
-The panel upgrade is an operator step outside FCP (the Ansible role does not manage the panel
-image). FCP's part is a one-shot re-key of that panel's existing subscriptions, because a 2.x-era
-key's `uuid` no longer exists on the upgraded panel — every per-user call on it 400s until the row
-is remapped to the numeric id. Do the panels **one at a time**; keys on panels still running 2.x
-are untouched (the migration skips any panel that reports a 2.x version).
+The backend upgrade is an operator step outside FCP (the Ansible role does not manage the backend
+image). FCP's part is a one-shot re-key of that backend's existing subscriptions, because a 2.x-era
+key's `uuid` no longer exists on the upgraded backend — every per-user call on it 400s until the row
+is remapped to the numeric id. Do the backends **one at a time**; keys on backends still running 2.x
+are untouched (the migration skips any backend that reports a 2.x version).
 
 1. **Deploy FCP** at a release that includes the dual-contract provider (2026-09-01 or later).
-   Nothing changes for 2.x panels; new keys on a 3.x panel are stored scoped from the start.
-2. **Upgrade the panel.** Remnawave 2.8.1+ requires `APP_SECRET` (not `change_me`) in the panel
-   env — the container exits at startup without it. **Set `APP_SECRET` to the panel's current
-   `JWT_AUTH_SECRET` value**: it is the JWT signing secret and it signs the panel's **API
+   Nothing changes for 2.x backends; new keys on a 3.x backend are stored scoped from the start.
+2. **Upgrade the backend.** Remnawave 2.8.1+ requires `APP_SECRET` (not `change_me`) in the backend
+   env — the container exits at startup without it. **Set `APP_SECRET` to the backend's current
+   `JWT_AUTH_SECRET` value**: it is the JWT signing secret and it signs the backend's **API
    tokens** too (FCP's, the Ansible role's), which are verified by signature and then looked up
    by uuid — a different value invalidates every API token and every admin session at once, so
    you would have to mint a new token and update the FCP backend-server config before anything
    works again. `JWT_API_TOKENS_SECRET` was never read by the code and can be dropped;
    `JWT_AUTH_SECRET` is ignored from 3.0 on. (The `I_UNDERSTAND_REST_API_BREAKING_CHANGES`
    gate seen in 3.0 dev builds was removed before the 3.0.0 release; no released 3.x reads it.)
-   Existing panel users keep their `id` and `shortUuid` across the upgrade; the `uuid` column
+   Existing backend users keep their `id` and `shortUuid` across the upgrade; the `uuid` column
    is dropped.
-3. **Re-key that panel's subscriptions** from the deployer container (bare `bunx convex run`
+3. **Re-key that backend's subscriptions** from the deployer container (bare `bunx convex run`
    does not work on the operator host — see `docs/beta-deploy.md` § One-off functions). Dry-run
-   first; the report is per panel (`scanned` / `legacy` / `remapped` / `missing` / `failed` /
+   first; the report is per backend (`scanned` / `legacy` / `remapped` / `missing` / `failed` /
    `conflicts` / `complete`):
 
    ```sh
@@ -287,20 +287,20 @@ are untouched (the migration skips any panel that reports a 2.x version).
    bunx convex run backendServers:migrateRemnawaveUserIds '{}'
    ```
 
-   Each run walks up to 50 pages of 100 rows per panel (one action's time budget). While
+   Each run walks up to 50 pages of 100 rows per backend (one action's time budget). While
    `complete` is false the report carries `continueCursor`: rerun with
    `{"serverId": "<that panel's serverId>", "cursor": "<continueCursor>"}` to RESUME from there
-   (a run without a cursor starts over from the panel's first row, so on a large fleet it would
-   never get past the first 5,000). `serverId` alone limits a run to one panel. The remap is
+   (a run without a cursor starts over from the backend's first row, so on a large fleet it would
+   never get past the first 5,000). `serverId` alone limits a run to one backend. The remap is
    compare-and-set and skips rows that are already scoped, so reruns are safe; every write
    run audits `admin.remnawave.user_ids_migrated` with the counts. `missing` rows are keys the
-   panel no longer knows (the member's next regenerate re-issues them); `conflicts` means the
-   panel reported an id another row already holds — investigate before touching those.
+   backend no longer knows (the member's next regenerate re-issues them); `conflicts` means the
+   backend reported an id another row already holds — investigate before touching those.
 
-4. **Verify**: Admin → Backend servers shows the new panel version in fleet stats, the
+4. **Verify**: Admin → Backend servers shows the new backend version in fleet stats, the
    healthcheck cron stays green, and an affected member's account page loads live usage.
 
-The integration harness pins a 3.x panel (`docker-compose.remnawave-test.yml`); its env file
+The integration harness pins a 3.x backend (`docker-compose.remnawave-test.yml`); its env file
 (`docker/remnawave-test/.env`) already carries `APP_SECRET`.
 
 ## Xray logging privacy harden (Config Profiles)
@@ -315,40 +315,40 @@ Admin → Remnawave has a fleet-wide **no-log enforcement** card backed by two r
 - `POST /api/v1/admin/remnawave/harden-logging` — applies it: for each non-compliant profile the
   provider (`hardenXrayLoggingConfig` in `remnawave.ts`) GETs the profile, merges ONLY the
   `log` + `policy` keys, and PATCHes the full config back. It **refuses a profile with no
-  inbounds** (a malformed read must never wipe a config), and the compliance check compares
-  **field-by-field, never by JSON string** — the panel stores configs in Postgres `jsonb`,
+  transports** (a malformed read must never wipe a config), and the compliance check compares
+  **field-by-field, never by JSON string** — the backend stores configs in Postgres `jsonb`,
   which canonically reorders object keys, so a stringify-compare reports false drift forever.
   Applying restarts the affected nodes (Xray reloads config); it is idempotent — re-applying a
   compliant fleet is a no-op.
 
-This covers the panel-config half of the no-log posture; the node-container logging driver and
-the Reality/inbound settings remain the province of `ansible-role-freesocks` (see
+This covers the backend-config half of the no-log posture; the node-container logging driver and
+the Reality/transport settings remain the province of `ansible-role-freesocks` (see
 `docs/privacy.md` §5).
 
-## Testing the Remnawave integration against a real panel
+## Testing the Remnawave integration against a real backend
 
 The fast suite (`bun run test`) mocks `fetch`, so it can't catch a wrong endpoint path
 or a response-shape drift — it only proves the code matches _our own_ mock. The
 **integration test** closes that gap by driving the real provider (`remnawave.ts`)
-against a **live Remnawave panel**:
+against a **live Remnawave backend**:
 
 ```
 bun run test:integration:remnawave     # needs Docker
 ```
 
-That one command (`scripts/remnawave-integration.sh`) stands up an ephemeral panel
+That one command (`scripts/remnawave-integration.sh`) stands up an ephemeral backend
 (`docker-compose.remnawave-test.yml`, pinned to the latest Remnawave release + Postgres 18),
 bootstraps an admin + mints an API token (`scripts/remnawave-test-bootstrap.mjs`), runs
 `convex/lib/backends/remnawave.integration.test.ts` (the full user lifecycle: issue → get →
-update → enable/disable → reset-traffic → delete), then tears the panel down. It's excluded
+update → enable/disable → reset-traffic → delete), then tears the backend down. It's excluded
 from the fast suite (`vitest.integration.config.ts`; gated on `REMNAWAVE_TEST_URL` +
 `REMNAWAVE_TEST_TOKEN`), so it never blocks CI unless explicitly run.
 
 Two Remnawave quirks the harness handles (both bit us / would bite a naive caller):
 
-- **Proxy guard.** The panel's `ProxyCheckMiddleware` rejects any request without
+- **Proxy guard.** The backend's `ProxyCheckMiddleware` rejects any request without
   `X-Forwarded-Proto: https` + `X-Forwarded-For`. A Caddy sidecar injects them —
-  mirroring the beta/prod topology (FCP → reverse proxy → panel), so the provider is
+  mirroring the beta/prod topology (FCP → reverse proxy → backend), so the provider is
   tested **unmodified**. In production the same headers come from the real TLS proxy.
 - **Controller names ≠ OpenAPI resource labels.** The HWID controller is `/api/hwid`
   (not `hwid-user-devices`) and the API-tokens controller is `/api/tokens` (not
@@ -360,40 +360,40 @@ Two Remnawave quirks the harness handles (both bit us / would bite a naive calle
 When adding a new backend read/write (§"Adding a backend type"), extend the integration
 test so the real contract stays pinned by an executable check, not just a comment.
 
-### Management contract (nodes, config profiles, squads, Hosts)
+### Management contract (nodes, config profiles, mode groups, Hosts)
 
 The same command also runs `remnawave.management.integration.test.ts`, a **contract probe**
-for the panel's management writes. FCP has no provider functions for most of these yet; the
-probe speaks the panel API directly so the behaviours are established before any code depends
-on them. Measured on the pinned panel (`remnawave/backend:3.4.4`), no node connected:
+for the backend's management writes. FCP has no provider functions for most of these yet; the
+probe speaks the backend API directly so the behaviours are established before any code depends
+on them. Measured on the pinned backend (`remnawave/backend:3.4.4`), no node connected:
 
-| Behaviour                                                                | Result                                         | Consequence for a caller                                                                                               |
-| ------------------------------------------------------------------------ | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| Inbound uuid across a config `PATCH`, tag and protocol unchanged         | **stable**                                     | Listener bindings, Hosts and squads survive a `serverNames` / target edit                                              |
-| Inbound protocol changed under the same tag                              | accepted (200), **uuid replaced**              | A patch op must never change an inbound's protocol                                                                     |
-| Conditional update (`If-Match`, `If-Unmodified-Since` with stale values) | **ignored** (200, not 412)                     | The panel offers no precondition. One writer at a time is the caller's job                                             |
-| Profile-name-only `PATCH` (`{uuid, name}`)                               | accepted; `config` and inbound uuids untouched | A rename is not a config change                                                                                        |
-| Invalid `config` (`inbounds` not an array)                               | refused with **500**; nothing stored           | Not a 4xx. A 5xx is never proof that nothing happened, so settle it by reading back. Validate the shape before sending |
-| Wrong bearer token                                                       | **401**; nothing stored                        | Safe to treat as rejected before any change                                                                            |
-| Same inbound tag in a second profile                                     | **409**                                        | Tags are unique **panel-wide**, not per profile                                                                        |
-| Identical Host created twice                                             | second create succeeds (**201**), new uuid     | Host attributes enforce no uniqueness. A lost create response must be resolved by discovery, never by a second create  |
-| Partial Host `PATCH` (`remark`, `fingerprint`)                           | only the named fields change                   | Address, port and SNI need not be re-sent                                                                              |
-| `POST /api/hosts/actions/reorder` `{hosts:[{uuid, viewPosition}]}`       | 200                                            |                                                                                                                        |
-| Squad rename (`PATCH {uuid, name}`)                                      | inbound assignment kept                        |                                                                                                                        |
-| Squad `PATCH {uuid, inbounds}`                                           | replaces the assignment                        |                                                                                                                        |
-| Node `PATCH {uuid, name, tags}`                                          | profile assignment kept; tags stored verbatim  |                                                                                                                        |
-| Repeat `actions/disable` on a disabled node                              | **200** again                                  | Not an error, and not a guaranteed no-op: read the state first and skip the call                                       |
-| `actions/restart` with `{forceRestart: true}`                            | **202** (2.x: **200**)                         | The answer means "queued", not "restarted", on either version                                                          |
-| `xrayUptime` on a node that never connected                              | **`0`**                                        | A zero or missing uptime says nothing about when Xray started                                                          |
+| Behaviour                                                                | Result                                           | Consequence for a caller                                                                                               |
+| ------------------------------------------------------------------------ | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| Transport uuid across a config `PATCH`, tag and protocol unchanged       | **stable**                                       | Listener bindings, Hosts and mode groups survive a `serverNames` / target edit                                         |
+| Transport protocol changed under the same tag                            | accepted (200), **uuid replaced**                | A patch op must never change a transport's protocol                                                                    |
+| Conditional update (`If-Match`, `If-Unmodified-Since` with stale values) | **ignored** (200, not 412)                       | The backend offers no precondition. One writer at a time is the caller's job                                           |
+| Profile-name-only `PATCH` (`{uuid, name}`)                               | accepted; `config` and transport uuids untouched | A rename is not a config change                                                                                        |
+| Invalid `config` (`inbounds` not an array)                               | refused with **500**; nothing stored             | Not a 4xx. A 5xx is never proof that nothing happened, so settle it by reading back. Validate the shape before sending |
+| Wrong bearer token                                                       | **401**; nothing stored                          | Safe to treat as rejected before any change                                                                            |
+| Same transport tag in a second profile                                   | **409**                                          | Tags are unique **backend-wide**, not per profile                                                                      |
+| Identical Host created twice                                             | second create succeeds (**201**), new uuid       | Host attributes enforce no uniqueness. A lost create response must be resolved by discovery, never by a second create  |
+| Partial Host `PATCH` (`remark`, `fingerprint`)                           | only the named fields change                     | Address, port and SNI need not be re-sent                                                                              |
+| `POST /api/hosts/actions/reorder` `{hosts:[{uuid, viewPosition}]}`       | 200                                              |                                                                                                                        |
+| Mode group rename (`PATCH {uuid, name}`)                                 | transport assignment kept                        |                                                                                                                        |
+| Mode group `PATCH {uuid, inbounds}`                                      | replaces the assignment                          |                                                                                                                        |
+| Node `PATCH {uuid, name, tags}`                                          | profile assignment kept; tags stored verbatim    |                                                                                                                        |
+| Repeat `actions/disable` on a disabled node                              | **200** again                                    | Not an error, and not a guaranteed no-op: read the state first and skip the call                                       |
+| `actions/restart` with `{forceRestart: true}`                            | **202** (2.x: **200**)                           | The answer means "queued", not "restarted", on either version                                                          |
+| `xrayUptime` on a node that never connected                              | **`0`**                                          | A zero or missing uptime says nothing about when Xray started                                                          |
 
-What the panel **normalises** on a config write: it trims whitespace around each
+What the backend **normalises** on a config write: it trims whitespace around each
 `serverNames` entry, and it clears `settings.clients`. It does **not** lowercase or
 de-duplicate names (`C.Example` and `c.example` are both kept), and it keeps a submitted
 `realitySettings.publicKey`. Anything that compares a written config with a read-back must
 apply the same normalisation first.
 
-Nothing in this probe proves a **node-side** effect: no node is attached to the test panel.
-Those are measured against a real panel-managed node by
+Nothing in this probe proves a **node-side** effect: no node is attached to the test backend.
+Those are measured against a real backend-managed node by
 `bun run test:integration:remnawave-node` ([servers.md](servers.md) § What a node does with a
 profile).
 
@@ -406,20 +406,20 @@ admin-tunable) and skips instances at their optional `maxKeys` cap (all-at-capac
 
 Remnawave adds a second, **Remnawave-local** layer: which **node** a key lands on.
 Remnawave has no entry-node balancer — a key's node is decided by which **internal
-squad** it's assigned to, and the operator models **one internal squad per node**
+mode group** it's assigned to, and the operator models **one internal mode group per node**
 (via Ansible). So FCP does one-time, **sticky-per-key node placement** at issuance:
 home each new key to the emptiest node.
 
 The generic layer stays backend-agnostic: it carries an opaque **`placement`
 handle** (a `string`) end to end (`IssueUserSpec.placement`, persisted as
 `subscriptions.backendPlacement` on placement-capable backends only). Only
-Remnawave-local code interprets it as a squad UUID
+Remnawave-local code interprets it as a mode group UUID
 (`activeInternalSquads: [placement]`); Outline has no placement concept. Nothing
 in `lib/backends/{types,registry}.ts`, `backends.ts`, `issuance.ts`, or
-`subscriptions.ts` mentions "squad".
+`subscriptions.ts` mentions "mode group".
 
 **The placement seam** (`convex/lib/placement.ts`): a `PlacementResolver` per
-placement-capable backend — `resolveTarget` (the (placement, panel) pair a new
+placement-capable backend — `resolveTarget` (the (placement, backend) pair a new
 key issues into), `boundModeSlugs`/`boundCounts` (per-backend availability +
 admin feedback), `effectiveGate` (the re-issue anti-downgrade gate), and
 `applyConfigPatch`/`summarize` (the write-only admin binding). Domain code
@@ -435,19 +435,19 @@ How a placement is chosen for Remnawave (all Remnawave-local, under
   grouped under a `connectionModeFamilies` row — full admin CRUD at
   **Admin → Connection modes**; compiled defaults in
   `convex/lib/connectionModes.ts` seed a fresh deploy and serve reads while the
-  tables are empty) binds a **pool** of squad UUIDs per backend, stored as a
+  tables are empty) binds a **pool** of mode group UUIDs per backend, stored as a
   `modePlacements` row keyed `(modeSlug, backend)` with a backend-defined JSON
   config (Remnawave: `{"squadUuids": [...]}`). Bind it in **Admin → Remnawave**
   (one UUID per line, per mode) or via
   `PATCH /api/v1/admin/backends/remnawave/mode-placements` (scope
-  `admin:servers:write`) — the route the Ansible role's panel-bootstrap PATCHes
+  `admin:servers:write`) — the route the Ansible role's backend-bootstrap PATCHes
   (its legacy `/admin/remnawave/mode-placements` alias was removed 2026-07-30
   once the role converged). Per mode the patch composes three ops (applied replace → add →
   remove): `squadUuids` (full replace; `[]` clears), `addSquadUuids` (union,
   deduped), and `removeSquadUuids` — the add/remove forms exist so a node deploy
   can append or detach just ITSELF without knowing the rest of the pool.
   Replace/add entries are UUID-validated server-side; remove accepts any string
-  so pre-validation garbage can be purged. Squad UUIDs are **write-only** (never
+  so pre-validation garbage can be purged. Mode group UUIDs are **write-only** (never
   echoed back; audited as `poolBound` + pool size; reads get summaries only).
 - A mode declares **backend applicability** (`connectionModes.backends[]`, the
   clients-catalog pattern) and is **available** on a backend when it is enabled
@@ -456,37 +456,37 @@ How a placement is chosen for Remnawave (all Remnawave-local, under
   ships the per-backend result; the SPA judges availability against the
   member's own backend.
 - At issuance FCP picks the **least-loaded node** of the mode's pool
-  (`pickByNodeLoad`): per-squad node load — `usersOnline` (primary) + optional
+  (`pickByNodeLoad`): per-mode group node load — `usersOnline` (primary) + optional
   realtime bandwidth (secondary; weights `remnawave.nodePlacement.*_weight`, default
-  usersOnline-only) — is aggregated from the squad's accessible nodes and cached in
+  usersOnline-only) — is aggregated from the mode group's accessible nodes and cached in
   `remnawaveNodeStats` by the `backend-healthcheck` cron (~10 min). Fresh + online
-  squads win (lowest load first); stale / offline / unroutable ones sort last but
+  mode groups win (lowest load first); stale / offline / unroutable ones sort last but
   stay selectable; a single-element or empty pool short-circuits.
 - The chosen placement is **persisted on the subscription row**
   (`subscriptions.backendPlacement`). A tier push (`lifecycle.pushTierToBackend`)
   re-sends _that_ placement — it never re-picks (a legacy row with none resolves
-  deterministically, pinned to its recorded panel) — so renewals/downgrades can't thrash a live
+  deterministically, pinned to its recorded backend) — so renewals/downgrades can't thrash a live
   key across nodes. Only **regenerate** / **switch-mode** / **switch-backend**
   re-pick.
-- **Multi-panel pairing (2026-07-16):** a mode's pool may span several panels, and
-  a squad UUID only exists on its own panel — so issuance resolves the
-  **(placement, panel) pair together** (`resolvePlacementTarget`): each pool squad
-  is attributed to its panel via its `remnawaveNodeStats` row and the pick pins
-  `issueUser` to that instance (`pinServerId`). A squad with no stats row yet
+- **Multi-backend pairing (2026-07-16):** a mode's pool may span several backends, and
+  a mode group UUID only exists on its own backend — so issuance resolves the
+  **(placement, backend) pair together** (`resolvePlacementTarget`): each pool mode group
+  is attributed to its backend via its `remnawaveNodeStats` row and the pick pins
+  `issueUser` to that instance (`pinServerId`). A mode group with no stats row yet
   (bring-up) can't be attributed; the pick then falls back to the historical
-  global behavior. The in-place mode switch hard-pins to the key's OWN panel and
-  falls back to a re-issue when the target mode has no squad there. **Admin →
-  Remnawave** shows a read-only per-placement node-load panel
+  global behavior. The in-place mode switch hard-pins to the key's OWN backend and
+  falls back to a re-issue when the target mode has no mode group there. **Admin →
+  Remnawave** shows a read-only per-placement node-load backend
   (`GET /api/v1/admin/remnawave/node-stats`, scope `admin:servers:read`).
 - **Locations (member-facing):** a backend-server row may carry a `location` code
   - display label ("MCI" / "Kansas City, MO"; Admin → Servers or the by-slug
-    upsert). One panel manages one location's nodes by convention. Active located
+    upsert). One backend manages one location's nodes by convention. Active located
     Remnawave instances are projected publicly as `publicConfig.locations`
     (code/label/online/load-band only); a member may pick one when creating/regenerating a
     key (persisted as `users.preferredLocation`; 'auto' = least-loaded anywhere).
     The filter is **fail-soft**: a stale/offline location never blocks issuance.
 - **Member node status:** `GET /api/v1/account/node-status` reports the online
-  bit of the squad behind the member's key (refreshed on demand, at most once per
+  bit of the mode group behind the member's key (refreshed on demand, at most once per
   instance per minute via a serializable stampede guard; instance-health fallback
   for Outline/legacy keys), plus the key's location and the location's coarse
   **load band**. The SPA polls it (~30s) for the hero badge; the Access Pass
@@ -499,36 +499,36 @@ How a placement is chosen for Remnawave (all Remnawave-local, under
   incidents and the censorship-availability matrix (Admin → Status). Bands only,
   never raw counts — see `docs/privacy.md`.
 
-Operator sizing: one squad per node, add them all to the mode's pool, and FCP fills
+Operator sizing: one mode group per node, add them all to the mode's pool, and FCP fills
 the emptiest node at issuance. `maxKeys` on an instance is the generic hard cap for
-the multi-panel / Outline case.
+the multi-backend / Outline case.
 
 ## HWID / device limits
 
 Remnawave enforces per-user device limits by **device fingerprint (HWID)**, and
 it takes **two** conditions to actually enforce:
 
-1. **Panel:** `HWID_DEVICE_LIMIT_ENABLED=true` on the Remnawave panel (set in the
-   panel's own env / the Ansible role — **FCP can neither read nor set it**).
+1. **Backend:** `HWID_DEVICE_LIMIT_ENABLED=true` on the Remnawave backend (set in the
+   backend's own env / the Ansible role — **FCP can neither read nor set it**).
 2. **Per-user:** a non-null `hwidDeviceLimit` on the user, which FCP sends only
    when _both_ the tier opts in (`hwidEnabled`) _and_ the deployment-level toggle
    `devices.enforcementEnabled` is on (Admin → Settings → Device limits).
 
 When enforced, a subscription fetched **without** a valid `x-hwid` header is
-rejected by the panel with **404**; a fetch **with** `x-hwid` registers/refreshes
+rejected by the backend with **404**; a fetch **with** `x-hwid` registers/refreshes
 that device and counts it against the limit.
 
 **The FCP front forwards HWID headers — only while enforcement is on.** Members
 fetch their config from `GET /api/v1/sub/<token>` (the FCP origin), and FCP
-fetches the panel server-side. It forwards the client's `x-hwid` /
+fetches the backend server-side. It forwards the client's `x-hwid` /
 `x-device-os` / `x-ver-os` / `x-device-model`, and **bypasses the UA cache when
-`x-hwid` is present** (each device must reach the panel to register + be
-counted). A panel 404 is passed through as 404 (authoritative — not a 502, and
+`x-hwid` is present** (each device must reach the backend to register + be
+counted). A backend 404 is passed through as 404 (authoritative — not a 502, and
 never a stale body). Without this forwarding, enforcement _and_ device
 registration would be dead through the front (the device list would always be
 empty) — this was a latent gap. **Gate:** forwarding happens only when
 `devices.enforcementEnabled` is on — with the toggle off FCP never sends a
-panel-side `hwidDeviceLimit`, so forwarding would only register arbitrary
+backend-side `hwidDeviceLimit`, so forwarding would only register arbitrary
 devices with zero enforcement benefit (the headers are then dropped and the
 normal UA-cache path applies). The route is also per-token rate-limited
 (`subscription.fetch.token`, default 60/min) against UA-rotating cache-bypass
@@ -559,9 +559,9 @@ forwards the caller's `User-Agent` upstream (`http.ts` →
 override, passes Remnawave's `Content-Type` + body straight back, and caches
 per-exact-UA. So a **Clash-family client** (Clash Verge Rev, FlClash, Mihomo Party,
 Clash Meta) that imports the fronted URL receives Clash YAML **iff the Remnawave
-panel is configured to emit Clash output for that UA** — a **panel / Ansible
+backend is configured to emit Clash output for that UA** — a **backend / Ansible
 subscription-template** concern, _not_ an FCP code change. If Clash clients get
-base64 instead of YAML, fix the panel's subscription templates; the FCP front
+base64 instead of YAML, fix the backend's subscription templates; the FCP front
 already does the right thing.
 
 **The ONE exception to exact-UA forwarding** (`normalizeSubscriptionUserAgent`,
@@ -569,17 +569,17 @@ already does the right thing.
 official desktop shells' `SFL (sing-box ...` / `SFW (sing-box ...` form (the app
 name is SFL on Linux and SFW elsewhere, per sing-box-for-desktop's
 `src/main/userAgent.ts`), or `sing-box` is rewritten to a canonical
-`SFA/<ver> (sing-box <ver>)` before the panel fetch,
-carrying the client's core version through. The panel keys its sing-box output
+`SFA/<ver> (sing-box <ver>)` before the backend fetch,
+carrying the client's core version through. The backend keys its sing-box output
 on the app prefix and (probed live 2026-08-30) recognizes `SFA/SFI/SFM/SFT` but
 not the newer SFL client or the bare CLI — those fell through to the base64
 default, which sing-box rejects on import (`decode config: invalid character
 'd'`). Only those UA shapes (the official SFL/SFW shells and the bare CLI) are
-rewritten; recognized prefixes and sing-box-cored apps with their own panel
+rewritten; recognized prefixes and sing-box-cored apps with their own backend
 templates (Karing, Happ) pass through verbatim. `lib/edges/clientFamilies.ts`
 (the edge-render family classifier) carries the same shell prefix list — change
 both together. The fronted route's cache stays keyed by the **original** UA, so the
-rewrite never changes which cache bucket a client hits. If a future panel
+rewrite never changes which cache bucket a client hits. If a future backend
 version learns the SFL prefix and serves it something SFL-specific, this
 normalization masks that — remove it then.
 
@@ -603,26 +603,26 @@ an unverified one-tap import scheme.
 ## Host management and node inventory (edges)
 
 Two optional provider capabilities back `docs/edges.md`: `hostManagement`
-(`listHosts` / `updateHost` / `createHost` / `deleteHost`: list the panel's client-facing
-connection entries, repoint ONE of them by uuid, create one for a relay listener, delete
+(`listHosts` / `updateHost` / `createHost` / `deleteHost`: list the backend's client-facing
+connection entries, repoint ONE of them by uuid, create one for an origin listener, delete
 one by uuid) and `nodeInventory` (`getNodeInventory`: per-node online + users-online, cached
 in `backendNodeInventory` by the healthcheck cron). Remnawave implements all of them
 (`GET /api/hosts`, `PATCH /api/hosts { uuid, address, port, sni?, host? }`,
 `POST /api/hosts { inbound, remark, address, port, sni?, host?, isDisabled }`,
 `DELETE /api/hosts/{uuid}` (404 = success), `GET /api/nodes`); a backend without them throws
-`backend.hosts_unsupported` from the dispatch (`convex/backends.ts`). The relay layer writes
-ONE Host per relay LISTENER (remark `<node>-relay-<listenerKey>`) and only when the relay's
+`backend.hosts_unsupported` from the dispatch (`convex/backends.ts`). The origin layer writes
+ONE Host per origin LISTENER (remark `<node>-relay-<listenerKey>`) and only when the origin's
 `hostMode` is `fcp`; every create and delete goes through the persisted Host state machine
-(`convex/hostOps.ts`: intent persisted before the call, discovery by remark AND inbound AND
+(`convex/hostOps.ts`: intent persisted before the call, discovery by remark AND transport AND
 address:port after an uncertain outcome, deletes confirmed only by read-back), and FCP never
-touches a Host's inbound, path or fingerprint.
+touches a Host's transport, path or fingerprint.
 
 Two further optional capabilities serve the guided (autopilot) setup: `hostDisable`
 (`setHostDisabled(uuid, disabled)`: flip ONE Host's disabled bit and nothing else, so FCP can
 hide a node's old direct Hosts while its edges serve members and restore them later; Remnawave
 `PATCH /api/hosts { uuid, isDisabled }`, dispatch `backends.setHostDisabled`, refused with
 `backend.hosts_unsupported` elsewhere) and `inboundDiscovery` (`listNodeInbounds(nodeUuid)`:
-the inbounds a node serves as the allowlisted `PanelInbound` projection in
+the transports a node serves as the allowlisted `PanelInbound` projection in
 `convex/lib/backends/types.ts`; Remnawave joins `GET /api/nodes` with
 `GET /api/config-profiles/{uuid}` by tag, see the contract table; dispatch
 `backends.listNodeInbounds`, refused with `backend.inbounds_unsupported`). `hostDisable`
@@ -634,17 +634,17 @@ Host ops have none either (the fake edge provider stops at the provider layer).
 `updateHost` takes `{ uuid, address, port, sni?, host? }`. `address` and `port`
 always move. `sni` and `host` are three-valued: **absent** leaves the field alone
 (the field is omitted from the PATCH body), a **string** sets it, and **null**
-CLEARS it. A clear is sent as `''`, never `null`: the panel's update DTO
+CLEARS it. A clear is sent as `''`, never `null`: the backend's update DTO
 validates these as optional strings, so a null would 400 and reject the whole
 PATCH, losing the address move with it. `''` and `null` read back alike
 (`listHosts` normalises both to `null`), so a cleared field compares equal
-whichever the panel returns. An edge layer change (an L4 IP front to an L7
+whichever the backend returns. An edge layer change (an L4 IP front to an L7
 hostname front or back) rewrites the whole `{address, port, sni, host}` tuple, so
 no stale name from the previous layer is left behind.
 
-### Backends as relay origins
+### Backends as origin targets
 
-A relay's origin may be a **panel node** (needs `nodePinning`; Hosts FCP-managed when
+An origin's target may be a **backend node** (needs `nodePinning`; Hosts FCP-managed when
 `hostManagement` is present), a whole **backend server** (an Outline instance: FCP renders its
 single access key by address rewrite, there is no Host, delivery is a dynamic
 `ssconf://<fcp>/api/v1/sub/<token>` key and TCP-only because no edge provider forwards UDP), or
@@ -660,7 +660,7 @@ Backends need credentials that must never leak:
 - Never write a raw secret into a log line or an audit `payload`. The healthcheck + the
   `OutlineApiError` / `RemnawaveApiError` classes deliberately avoid the config.
 - Custom error classes for backend HTTP calls record only status + path, never the URL.
-- A Remnawave error normally also carries a short slice of the panel's own error text (useful:
+- A Remnawave error normally also carries a short slice of the backend's own error text (useful:
   validation and auth messages). **Config-profile calls are the exception.** A profile holds the
   REALITY private key, the short ids and the client list, and a rejection can echo what was
   submitted, so every such call is made with `sensitive: true` (`call()` in `remnawave.ts`): the

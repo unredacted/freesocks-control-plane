@@ -209,11 +209,11 @@ export const accountQuery = (enabled?: () => boolean) =>
   }));
 
 /**
- * Aggregate usage trend for the member's key (the usage-panel sparkline). Lazy:
- * only fetched while `enabled()` (the panel is open), so it doesn't add a live
+ * Aggregate usage trend for the member's key (the usage-backend sparkline). Lazy:
+ * only fetched while `enabled()` (the backend is open), so it doesn't add a live
  * backend call to every account view. Pinned to the SAME 60s cadence as
  * accountQuery (staleTime + focused refetchInterval) so the usage graph and the
- * traffic counter refresh together; the timer only runs while the panel is mounted.
+ * traffic counter refresh together; the timer only runs while the backend is mounted.
  */
 export const accountUsageQuery = (enabled: () => boolean) =>
   createQuery(() => ({
@@ -306,7 +306,7 @@ export const adminReferralConfigQuery = () =>
     staleTime: 60_000,
   }));
 
-/** Admin analytics-relay config (Umami URL + website id — admin-only, never
+/** Admin analytics-origin config (Umami URL + website id — admin-only, never
  *  in /api/v1/config, so the Settings card can't read it from configQuery). */
 export const adminAnalyticsQuery = () =>
   createQuery(() => ({
@@ -395,7 +395,7 @@ export const billingOrderQuery = (refGetter: () => string | null) =>
 
 /**
  * Gift codes the member has purchased (masked: prefix + status). For the "codes
- * you've bought" panel; gated so it isn't fetched while still anonymous.
+ * you've bought" backend; gated so it isn't fetched while still anonymous.
  */
 export const accountCodesQuery = (enabled?: () => boolean) =>
   createQuery(() => ({
@@ -707,7 +707,7 @@ export const adminMembershipCodesQuery = (statusRef: () => string) =>
     };
   });
 
-// --- Relay edges (Admin → Relay edges; docs/edges.md) ---------------------------
+// --- Origin edges (Admin → Origin edges; docs/edges.md) ---------------------------
 // Every route under /api/v1/admin/edges/ is HPKE-sealed by verb class; the
 // apiClient seals/opens per the shared route policy, so these are plain calls.
 

@@ -1,5 +1,5 @@
 /**
- * Guided setup ("Autopilot") runs: protect a panel node with edges by walking
+ * Guided setup ("Autopilot") runs: protect a backend node with edges by walking
  * ONE authoritative stage machine (docs/edges.md § "Guided setup runs"):
  *
  *   prepare -> credential -> provision -> verify -> try_it -> publish
@@ -15,8 +15,8 @@
  *    rotation row stores `{runId, generation}` and its terminal hook
  *    (`onRotationTerminal`, scheduled by `releaseOrigin`) reports THAT stored
  *    generation. Duplicates and stale generations are no-ops;
- *  - `relays.setupOwned` is set at stage 1 and cleared ONLY by go-live (or by
- *    removal): a failed / cancelled / unbound run leaves the relay owned, so
+ *  - `origins.setupOwned` is set at stage 1 and cleared ONLY by go-live (or by
+ *    removal): a failed / cancelled / unbound run leaves the origin owned, so
  *    reconcile upkeep and the detector keep their hands off it;
  *  - members keep receiving the raw origin body through stage 5; from stage 6
  *    (hides) they depend on the edge; stage 8 binds in ONE mutation after
@@ -82,7 +82,7 @@ import { SETUP_RUN_STAGES, type SetupRunStage } from '../src/shared/contracts/ed
 import type { HideResult, HideStatus } from './edgeHostHides';
 import type { RehearsalResult } from './edgeRehearsal';
 import type { TestLinkResult } from './edgeTestLinks';
-import { activatingRunFor, promoteCandidate } from './panelActivation';
+import { activatingRunFor, promoteCandidate } from './nodeActivation';
 
 type Run = Doc<'edgeSetupRuns'>;
 type Relay = Doc<'relays'>;
@@ -210,7 +210,7 @@ const defaultOps: StageOps = {
   rehearse: (ctx, a) => ctx.runAction(internal.edgeRehearsal.run, a),
   vectorNow: async (ctx, relayId) => {
     const v = await ctx.runQuery(internal.edgeRehearsal.vectorNow, { relayId });
-    if (!v) throw new ConvexError({ code: 'not_found', message: 'Relay not found' });
+    if (!v) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     return v;
   },
   restoreStart: async (ctx, a) => {
@@ -498,7 +498,7 @@ export const rungFor = internalQuery({
   },
 });
 
-/** What the stages need to know about the relay in one read. */
+/** What the stages need to know about the origin in one read. */
 export const relayContext = internalQuery({
   args: { runId: v.id('edgeSetupRuns') },
   handler: async (ctx, { runId }) => {
@@ -554,8 +554,8 @@ function l7ProofCurrent(e: Edge, l: Listener | null, now: number): boolean {
 
 /**
  * Insert a run (`POST setup-runs`, after the plan action validated the hash and
- * the account). A relay a previous run left `setupOwned` is reused: the new
- * run (generation 1 of its own row) resumes at the relay's recorded stage.
+ * the account). An origin a previous run left `setupOwned` is reused: the new
+ * run (generation 1 of its own row) resumes at the origin's recorded stage.
  */
 export const insert = internalMutation({
   args: {
@@ -590,8 +590,8 @@ export const insert = internalMutation({
     if (plan.existingRelay) {
       const relay = await ctx.db.get(plan.existingRelay.id as Id<'relays'>);
       if (relay && relay.setupOwned && !relay.deleting) {
-        // The relay's listeners must still be what the new plan discovered:
-        // an inbound added, removed or changed on the panel since the previous
+        // The origin's listeners must still be what the new plan discovered:
+        // a transport added, removed or changed on the backend since the previous
         // run would otherwise resume at a stage that never provisions, tests
         // or hides for it. Refused rather than reconciled in place.
         await assertPlanMatchesRelay(ctx, relay, plan);
@@ -602,7 +602,7 @@ export const insert = internalMutation({
           recorded && (SETUP_RUN_STAGES as readonly string[]).includes(recorded)
             ? recorded
             : 'credential';
-        // A recorded terminal stage resumes at go_live (the relay is still owned).
+        // A recorded terminal stage resumes at go_live (the origin is still owned).
         if (stage === 'done') stage = 'go_live';
       }
     }
@@ -658,7 +658,7 @@ export const insert = internalMutation({
 /**
  * The one transition mutation the step action reports through. Guarded by
  * `stepVersion`; bumps it; records the event; audits a `needs_you` and a
- * terminal failure; mirrors the stage onto `relays.setupStage`; schedules the
+ * terminal failure; mirrors the stage onto `origins.setupStage`; schedules the
  * next step when asked (`scheduleMs`), else leaves the run waiting for a hook
  * or the operator.
  */
@@ -1094,7 +1094,7 @@ async function stagePrepare(ctx: ActionCtx, run: Run): Promise<null> {
   let relayId = run.relayId;
   let relaySlug = run.relaySlug;
   if (!relayId) {
-    // A relay a previous run left owned is reused; any other relay on the node refuses.
+    // An origin a previous run left owned is reused; any other origin on the node refuses.
     if (ctxRow.existingRelay) {
       if (!ctxRow.existingRelay.setupOwned)
         return tr(ctx, run, {
@@ -1529,11 +1529,11 @@ async function stageRehearse(ctx: ActionCtx, run: Run): Promise<null> {
   }
   if (!res.ok) {
     // An APPROVED dark cohort: the operator consented to hiding the Hosts of an
-    // unsupported-only inbound set, so a member group whose whole body went
+    // unsupported-only transport set, so a member group whose whole body went
     // with them now receives nothing FCP can serve. That cohort is excluded
     // from the `serve` requirement (plan 1.6) instead of blocking go-live for
     // everyone else; it is derived from the bodies themselves, after the
-    // hides, never guessed from squad membership. Any other failure stays a
+    // hides, never guessed from mode group membership. Any other failure stays a
     // failure.
     const dark = approvedDarkCohorts(res, run);
     if (dark.length > 0 && attempts < MAX_REHEARSAL_ATTEMPTS)
@@ -1577,9 +1577,9 @@ const STAGE_INDEX = Object.fromEntries(SETUP_RUN_STAGES.map((s, i) => [s, i])) a
 >;
 
 /**
- * A reused (still setup-owned) relay must carry exactly the listeners the new
+ * A reused (still setup-owned) origin must carry exactly the listeners the new
  * plan discovered, at the same configuration: the required keys must exist,
- * non-retired, with the canonical hash of the plan's spec, and the relay must
+ * non-retired, with the canonical hash of the plan's spec, and the origin must
  * hold no extra deployed listener the plan no longer lists. Otherwise
  * `edge.plan_changed`: the operator removes protection and starts again.
  */
@@ -1617,7 +1617,7 @@ async function assertPlanMatchesRelay(
   if (changed.length > 0)
     throw new ConvexError({
       code: 'edge.plan_changed',
-      message: `The node's inbounds changed since this relay was set up (${[...new Set(changed)].join(', ')}); remove protection and start again`,
+      message: `The node's transports changed since this origin was set up (${[...new Set(changed)].join(', ')}); remove protection and start again`,
     });
 }
 
@@ -1747,7 +1747,7 @@ export const goLive = internalMutation({
     // The local version vector must be the one stage 7 rehearsed.
     const nowVector = await ops.vectorNow(ctx as unknown as QueryRunner, relay._id);
     if (!vectorsEqual(nowVector, r.rehearsal.vector)) return back('rehearse', 'vector_drift');
-    // No FCP Host operation claimed on the relay; every required listener
+    // No FCP Host operation claimed on the origin; every required listener
     // published by its own edge; L7 proofs current; L4 confirmations current.
     const listeners = (await listenersOf(ctx, relay._id)).filter((l) => !l.retired);
     if (listeners.some((l) => l.host?.op)) return back('rehearse', 'host_op_claimed');
@@ -1777,7 +1777,7 @@ export const goLive = internalMutation({
     if (!cfg.render.enabled) {
       await upsertSettingRow(ctx, EDGE_KEYS['render.enabled'], 'true', r.actorAdminId);
       renderEnabled = true;
-      // Like a render.* config change: every enabled relay re-keys its cache.
+      // Like a render.* config change: every enabled origin re-keys its cache.
       const others = await ctx.db
         .query('relays')
         .withIndex('by_enabled', (q) => q.eq('enabled', true))
@@ -2155,9 +2155,9 @@ export const resume = internalMutation({
 });
 
 /**
- * Cancel: before stage 5 nothing was published, so the relay is deleted
+ * Cancel: before stage 5 nothing was published, so the origin is deleted
  * `restore-direct` (which cancels the live rotation, drains the standbys for
- * the reconcile destroy and lets the relay delete remove the credential);
+ * the reconcile destroy and lets the origin delete remove the credential);
  * stages 5-7 keep the published edges and run the restore workflow
  * (`edgeRestore.start`, purpose `cancel_setup`); after go-live there is no
  * cancel.
@@ -2190,7 +2190,7 @@ export const cancel = internalAction({
       disposition = 'restore';
     }
     // A temporary test credential minted for this run expires now rather than
-    // at its 24 h TTL (the sweep removes it; a relay delete releases too).
+    // at its 24 h TTL (the sweep removes it; an origin delete releases too).
     if (r.relayId)
       await ctx.runMutation(internal.edgeTestCredentials.releaseForRelay, { relayId: r.relayId });
     await ctx.runMutation(internal.edgeSetupRuns.markCancelled, {
@@ -2242,8 +2242,8 @@ export const markCancelled = internalMutation({
 // --- require-edges (the only other path to the binding) --------------------------------------------
 
 /**
- * `POST relays/{id}/require-edges`: apply the SAME activation policy to a
- * deferred relay (a run that finished unbound, a failed run whose edges the
+ * `POST origins/{id}/require-edges`: apply the SAME activation policy to a
+ * deferred origin (a run that finished unbound, a failed run whose edges the
  * operator published by hand): every published L4 edge without a current
  * confirmation goes through the `try_it` card first (the response returns the
  * pending endpoints instead of binding), then stages 7-8 verbatim. Never a
@@ -2258,14 +2258,14 @@ export const requireEdges = internalMutation({
   handler: async (ctx, { relayId, accountId, actorAdminId }) => {
     const relay = await ctx.db.get(relayId);
     if (!relay || relay.deleting)
-      throw new ConvexError({ code: 'not_found', message: 'Relay not found' });
+      throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     if (!relay.bindingDeferred)
       throw new ConvexError({
         code: 'edge.not_deferred',
-        message: 'The relay already binds its origin',
+        message: 'The origin already binds its origin',
       });
     if (!relay.enabled)
-      throw new ConvexError({ code: 'edge.relay_disabled', message: 'Enable the relay first' });
+      throw new ConvexError({ code: 'edge.relay_disabled', message: 'Enable the origin first' });
     if (relay.quarantine)
       throw new ConvexError({ code: 'edge.quarantined', message: 'Resolve the quarantine first' });
     if (relay.activeRotationId) {
@@ -2276,7 +2276,7 @@ export const requireEdges = internalMutation({
     if (!relay.backendServerId || !relay.nodeName)
       throw new ConvexError({
         code: 'edge.origin_kind_locked',
-        message: 'Only a panel-node relay',
+        message: 'Only a backend-node origin',
       });
     const active = await activeRunForOrigin(ctx.db, relay.backendServerId, relay.nodeName);
     if (active)
@@ -2343,7 +2343,7 @@ export const requireEdges = internalMutation({
     if (!account)
       throw new ConvexError({
         code: 'validation',
-        message: 'accountId is required for this relay',
+        message: 'accountId is required for this origin',
       });
     const plan: SetupPlanSnapshot = {
       backendServerId: relay.backendServerId as string,
@@ -2376,7 +2376,7 @@ export const requireEdges = internalMutation({
       },
       activeRunId: null,
     };
-    // A relay left deferred by a cancel or a released requirement has its direct
+    // An origin left deferred by a cancel or a released requirement has its direct
     // Hosts back: the run re-enters at the Host review / hide stage, never
     // straight at the rehearsal (those origin entries would be `leak_detected`).
     const stage: SetupRunStage = pending.length > 0 ? 'try_it' : 'hide_direct_hosts';

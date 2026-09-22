@@ -18,7 +18,7 @@
  *
  *  - `backendUserId` crosses this layer in two forms: the STORED form (what the
  *    subscription row, audit payloads and every caller hold — globally unique)
- *    and the PROVIDER form (the bare id the panel speaks). A per-instance numeric
+ *    and the PROVIDER form (the bare id the backend speaks). A per-instance numeric
  *    id (Remnawave 3.x, Outline) is scoped `<backendServerId>:<id>` on the way in
  *    (right after `issue`) and stripped on the way out (right before every
  *    provider call) — see convex/lib/backendUserId.ts. Nothing outside this file
@@ -40,7 +40,7 @@ import type {
   UsageSeries,
   UserState,
   BackendHost,
-  PanelInbound,
+  BackendTransport,
 } from './lib/backends/types';
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
 import { backendIdValidator } from './lib/backendIds';
@@ -95,10 +95,10 @@ export const issueUser = internalAction({
     backend: backendId,
     spec: issueSpec,
     // Pin issuance to ONE instance (Remnawave node placement resolves the
-    // placement and its panel TOGETHER — a squad UUID only exists on its own
-    // panel, so the paired pick must not be re-rolled here). Unusable pin
+    // placement and its backend TOGETHER — a mode group UUID only exists on its own
+    // backend, so the paired pick must not be re-rolled here). Unusable pin
     // (gone/inactive/wrong type) → backend.unavailable, never a silent re-pick
-    // that would break the (placement, panel) pairing.
+    // that would break the (placement, backend) pairing.
     pinServerId: v.optional(v.id('backendServers')),
   },
   handler: async (
@@ -160,7 +160,7 @@ export const issueUser = internalAction({
       }
       throw err;
     }
-    // Persist the globally-unique form (a per-panel integer gets scoped to this
+    // Persist the globally-unique form (a per-backend integer gets scoped to this
     // instance); the provider only ever saw/needs the bare id above.
     return {
       ...issued,
@@ -262,8 +262,8 @@ export const deleteUser = internalAction({
 /**
  * Locate which ACTIVE instance actually hosts a key by probing the fleet — the
  * repair path for a subscription whose stored `backendServerId` is stale (its
- * panel row was re-registered) or absent (legacy). Bounded by the fleet size;
- * a per-instance failure (404 = not this panel; anything else = unreachable)
+ * backend row was re-registered) or absent (legacy). Bounded by the fleet size;
+ * a per-instance failure (404 = not this backend; anything else = unreachable)
  * just moves on. Returns the hosting instance's id, or null when no active
  * instance answers for the key.
  */
@@ -272,7 +272,7 @@ export const locateKeyInstance = internalAction({
   handler: async (ctx, { backend, backendUserId }): Promise<string | null> => {
     if (mockBackendEnabled()) return null;
     // A scoped (per-instance integer) id is only meaningful on the instance it
-    // names — the same integer on another panel is a DIFFERENT user, so a fleet
+    // names — the same integer on another backend is a DIFFERENT user, so a fleet
     // probe would "find" a stranger's key and repoint the sub at it. Probe only
     // the named instance; if that row is gone, the key cannot be relocated.
     const scope = scopedServerId(backendUserId);
@@ -287,7 +287,7 @@ export const locateKeyInstance = internalAction({
         );
         return server._id as string;
       } catch {
-        continue; // not on this panel (404) or unreachable — try the next
+        continue; // not on this backend (404) or unreachable — try the next
       }
     }
     return null;
@@ -338,7 +338,7 @@ export const setUserStatus = internalAction({
 // (Remnawave bulk/update). Resolves the instance by its id (the caller — the
 // donation free-bandwidth apply — already grouped user ids by server). A backend
 // with no bulk primitive (Outline) is a silent no-op; the caller can fall back to
-// per-user updateUser. Caller chunks ids to the panel's ≤500 limit.
+// per-user updateUser. Caller chunks ids to the backend's ≤500 limit.
 export const bulkUpdateTrafficLimit = internalAction({
   args: {
     backendServerId: v.id('backendServers'),
@@ -361,7 +361,7 @@ export const bulkUpdateTrafficLimit = internalAction({
 });
 
 // Aggregate member usage series (read-only). Best-effort: degrades to null when
-// unsupported (Outline / older panel) or unreachable, so the account page never
+// unsupported (Outline / older backend) or unreachable, so the account page never
 // breaks on it. Read live, never persisted.
 export const getUserUsage = internalAction({
   args: { backend: backendId, backendUserId: v.string(), days: v.optional(v.number()) },
@@ -384,14 +384,14 @@ export const getUserUsage = internalAction({
 });
 
 /**
- * Relay-edge Host management (Remnawave Hosts): list the instance's client-facing
+ * Origin-edge Host management (Remnawave Hosts): list the instance's client-facing
  * connection entries, and repoint ONE of them. Both are thin dispatches over the
  * optional provider capability; a backend without it throws a typed error.
  */
 /**
- * A read-only panel listing that failed, as a coded error an admin route can
+ * A read-only backend listing that failed, as a coded error an admin route can
  * show. The Remnawave error class is written to be loggable (path, status and
- * a short slice of the panel's own error text; never the URL or the token), so
+ * a short slice of the backend's own error text; never the URL or the token), so
  * its message is passed on. Anything else is reduced to its class name:
  * validator and network errors can embed values.
  */
@@ -424,7 +424,7 @@ export const listHosts = internalAction({
   },
 });
 
-export const createHost = internalAction({
+export const createAddress = internalAction({
   args: {
     backendServerId: v.id('backendServers'),
     remark: v.string(),
@@ -438,24 +438,24 @@ export const createHost = internalAction({
     const server = await ctx.runQuery(internal.backendServers.getById, { id: backendServerId });
     if (!server) throw new ConvexError({ code: 'backend.not_found' });
     const provider = PROVIDERS[server.backend];
-    if (!provider.createHost) throw new ConvexError({ code: 'backend.hosts_unsupported' });
-    return provider.createHost(server.config as BackendConfig, h);
+    if (!provider.createAddress) throw new ConvexError({ code: 'backend.hosts_unsupported' });
+    return provider.createAddress(server.config as BackendConfig, h);
   },
 });
 
-export const deleteHost = internalAction({
+export const deleteAddress = internalAction({
   args: { backendServerId: v.id('backendServers'), uuid: v.string() },
   handler: async (ctx, { backendServerId, uuid }): Promise<null> => {
     const server = await ctx.runQuery(internal.backendServers.getById, { id: backendServerId });
     if (!server) throw new ConvexError({ code: 'backend.not_found' });
     const provider = PROVIDERS[server.backend];
-    if (!provider.deleteHost) throw new ConvexError({ code: 'backend.hosts_unsupported' });
-    await provider.deleteHost(server.config as BackendConfig, uuid);
+    if (!provider.deleteAddress) throw new ConvexError({ code: 'backend.hosts_unsupported' });
+    await provider.deleteAddress(server.config as BackendConfig, uuid);
     return null;
   },
 });
 
-export const updateHost = internalAction({
+export const updateAddress = internalAction({
   args: {
     backendServerId: v.id('backendServers'),
     uuid: v.string(),
@@ -469,8 +469,8 @@ export const updateHost = internalAction({
     const server = await ctx.runQuery(internal.backendServers.getById, { id: backendServerId });
     if (!server) throw new ConvexError({ code: 'backend.not_found' });
     const provider = PROVIDERS[server.backend];
-    if (!provider.updateHost) throw new ConvexError({ code: 'backend.hosts_unsupported' });
-    await provider.updateHost(server.config as BackendConfig, {
+    if (!provider.updateAddress) throw new ConvexError({ code: 'backend.hosts_unsupported' });
+    await provider.updateAddress(server.config as BackendConfig, {
       uuid,
       address,
       port,
@@ -484,7 +484,7 @@ export const updateHost = internalAction({
 });
 
 /**
- * Flip ONE Host's disabled bit (the relay hide/restore ledger: FCP hides a
+ * Flip ONE Host's disabled bit (the origin hide/restore ledger: FCP hides a
  * node's direct Hosts while its edges serve members, and restores them on
  * cancel/release/delete). The bit alone travels; the caller confirms by
  * re-listing. No dev mock branch: the Host ops above have none either (the
@@ -503,14 +503,14 @@ export const setHostDisabled = internalAction({
 });
 
 /**
- * The inbounds one panel node serves (relay listener discovery), as the
+ * The transports one backend node serves (origin listener discovery), as the
  * provider's allowlisted projection: never credentials, private keys, short
  * ids or certificate material. A backend without the capability throws
  * `backend.inbounds_unsupported`.
  */
 export const listNodeInbounds = internalAction({
   args: { backendServerId: v.id('backendServers'), nodeUuid: v.string() },
-  handler: async (ctx, { backendServerId, nodeUuid }): Promise<PanelInbound[]> => {
+  handler: async (ctx, { backendServerId, nodeUuid }): Promise<BackendTransport[]> => {
     const server = await ctx.runQuery(internal.backendServers.getById, { id: backendServerId });
     if (!server) throw new ConvexError({ code: 'backend.not_found' });
     const provider = PROVIDERS[server.backend];
@@ -518,7 +518,7 @@ export const listNodeInbounds = internalAction({
     try {
       return await provider.listNodeInbounds(server.config as BackendConfig, nodeUuid);
     } catch (err) {
-      throw panelReadFailure("the node's inbound listing", err);
+      throw panelReadFailure("the node's transport listing", err);
     }
   },
 });
@@ -527,7 +527,7 @@ export const listNodeInbounds = internalAction({
  * Re-find a user FCP created on ONE instance by its username (the persisted
  * mint operations discover an issued user after a crash between the create
  * and the store). Returns the issued shape with the STORED id form, or null
- * when the panel has no such user. A backend without a name lookup throws
+ * when the backend has no such user. A backend without a name lookup throws
  * `backend.lookup_unsupported`.
  */
 export const findUserByUsername = internalAction({
@@ -558,18 +558,18 @@ export const fetchSubscriptionContent = internalAction({
     backendServerId: v.optional(v.id('backendServers')),
     backendShortId: v.string(),
     userAgent: v.optional(v.string()),
-    // The panel-provided public subscription URL — the actual location of the
+    // The backend-provided public subscription URL — the actual location of the
     // raw content. Remnawave fetches THIS (the shortUuid is a public capability,
     // no admin token), not the admin API. Callers resolve it from the sub row.
     subscriptionUrl: v.optional(v.string()),
     // HWID identification headers forwarded from the member's proxy app (the
-    // FCP-fronted /api/v1/sub/ route), so panel device registration + limits work.
+    // FCP-fronted /api/v1/sub/ route), so backend device registration + limits work.
     hwidHeaders: v.optional(v.record(v.string(), v.string())),
     // The node this key was PREVIOUSLY pinned to (set at issuance from the old
     // subscription's pinnedNode) — excluded from the pin pick when others
     // exist, so a regenerated key lands on a different node.
     excludeNode: v.optional(v.string()),
-    // Skip the node pin and return the panel body whole: the relay test link
+    // Skip the node pin and return the backend body whole: the origin test link
     // resolves ONE node's entry itself (by Host identity), so a pin that
     // rendezvous-picked another node of the placement would hide it.
     unpinned: v.optional(v.boolean()),
@@ -598,10 +598,10 @@ export const fetchSubscriptionContent = internalAction({
         subscriptionUrl,
         hwidHeaders,
       );
-      // Pin each key to ONE node's endpoints: the panel serves every Host of
-      // the shared squad, which would expose the whole fleet in every
+      // Pin each key to ONE node's endpoints: the backend serves every Host of
+      // the shared mode group, which would expose the whole fleet in every
       // subscription. Filter down to the pinned node's lines (deterministic
-      // rendezvous pick on the panel user id — stable per key, moves only when
+      // rendezvous pick on the backend user id — stable per key, moves only when
       // the pinned node disappears, e.g. rotation/teardown).
       if (
         !unpinned &&
@@ -612,7 +612,7 @@ export const fetchSubscriptionContent = internalAction({
         // maintenance, retiring; docs/servers.md "Node lifecycle") are never
         // picked while another node exists; a body that can only resolve to one
         // is refused by the delivery policy afterwards.
-        const gated = await ctx.runQuery(internal.panelIntents.blockedNodeNames, {
+        const gated = await ctx.runQuery(internal.nodeIntents.blockedNodeNames, {
           backendServerId,
         });
         const pinned = pinSubscriptionToNode(fetched.content, backendShortId, [
@@ -623,7 +623,7 @@ export const fetchSubscriptionContent = internalAction({
       }
       return fetched;
     } catch (err) {
-      // A panel 404 on a HWID-gated fetch (no/invalid x-hwid) is AUTHORITATIVE,
+      // A backend 404 on a HWID-gated fetch (no/invalid x-hwid) is AUTHORITATIVE,
       // not an outage — surface it as a typed error so the fronted route passes
       // 404 through instead of serving a stale entry or a generic 502.
       if (capabilitiesOf(server.backend).fetch404IsDeviceRejection && isRemnawaveNotFound(err)) {

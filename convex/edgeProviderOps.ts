@@ -1,6 +1,6 @@
 'use node';
 /**
- * Relay-edge provider operations — the "use node" half of the relay layer.
+ * Origin-edge provider operations — the "use node" half of the origin layer.
  *
  * Everything that talks to a cloud load-balancer provider's API (provisioning
  * steps, discovery, describe/inspect, inventory, destroy) runs here so provider
@@ -9,7 +9,7 @@
  * (with its credentials) through an internal query, builds the adapter config,
  * performs exactly the requested operation and returns plain data. Every state
  * change goes back through the isolate mutations (edgeRotations / edges),
- * which are the sole writers of relay state.
+ * which are the sole writers of origin state.
  *
  * Errors: an adapter throws `EdgeProviderError` (status + short code, never a
  * body/URL/credential), but a plain Error's extra fields do NOT survive
@@ -249,7 +249,7 @@ async function loadAdapter(
   if (!acct) {
     throw new ConvexError<EdgeProviderOpsFailure>({
       code: 'account_missing',
-      message: 'relay account not found',
+      message: 'origin account not found',
       step: 'load',
       retryable: false,
       timedOut: false,
@@ -522,7 +522,7 @@ export const rotateCredentials = internalAction({
       if (!acct)
         throw new ConvexError<EdgeProviderOpsFailure>({
           code: 'account_missing',
-          message: 'relay account not found',
+          message: 'origin account not found',
           retryable: false,
           timedOut: false,
         });

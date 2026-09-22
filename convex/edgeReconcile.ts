@@ -1,5 +1,5 @@
 /**
- * Relay reconcile cron (`edge-reconcile`): the recovery loop that makes the
+ * Origin reconcile cron (`edge-reconcile`): the recovery loop that makes the
  * rotation machine safe to interrupt anywhere.
  *
  *  1. re-kick rotations whose next step went stale (a crashed action);
@@ -13,11 +13,11 @@
  *     child is confirmed gone; the attempt cap parks it as `needs_operator`;
  *  5. pool upkeep (config-gated: `edge.enabled` AND the per-action flag —
  *     `autoPublishStandby` / `autoProvisionToDesired`; a manual `start` runs
- *     regardless; a `setupOwned` relay is skipped): listener-aware — first
+ *     regardless; a `setupOwned` origin is skipped): listener-aware — first
  *     every deployed, enabled listener without a template edge gets its own
  *     standby published or a provision FOR IT (after `ensureCapacity` raised /
- *     expanded `desiredPublished`), then the relay-wide fill to
- *     `desiredPublished`, then spares (`standbyPerRelay` relay-wide plus
+ *     expanded `desiredPublished`), then the origin-wide fill to
+ *     `desiredPublished`, then spares (`standbyPerRelay` origin-wide plus
  *     `standbyPerListener` per coverage listener);
  *  6. finish origin deletes once every managed edge is destroyed.
  *
@@ -25,7 +25,7 @@
  * publishes on it until the operator resolves the quarantine.
  *
  * Every provider call runs under an edge op claim; every DB change is a
- * mutation in edges / relays / edgeRotations / edgeReconcileMutations.
+ * mutation in edges / origins / edgeRotations / edgeReconcileMutations.
  */
 import { ConvexError, v } from 'convex/values';
 import { internalAction } from './_generated/server';
@@ -255,7 +255,7 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
       // Observe-only edges: nothing to discover, describe or destroy. A failed /
       // cancelled adopted row is simply forgotten, and so is a DRAINING one once
       // its drain has elapsed: FCP never calls a provider for it, so without
-      // this it would stay `draining` for good, keep its relay's delete from
+      // this it would stay `draining` for good, keep its origin's delete from
       // finishing and keep counting against the account's live-edge cap.
       const drained =
         edge.status === 'draining' && edge.drainUntil !== undefined && edge.drainUntil <= now;
@@ -344,9 +344,9 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
     }
   }
 
-  // 4b. Panel Host operations: re-observe unresolved creates/deletes, remove the
-  // FCP-owned Hosts of retired listeners and deleting relays (read-back confirmed),
-  // settle the direct-Host hide ledger and re-observe bound guided relays.
+  // 4b. Backend Host operations: re-observe unresolved creates/deletes, remove the
+  // FCP-owned Hosts of retired listeners and deleting origins (read-back confirmed),
+  // settle the direct-Host hide ledger and re-observe bound guided origins.
   try {
     await ctx.runAction(internal.hostOps.reconcileHosts, {});
   } catch (err) {
@@ -354,7 +354,7 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
     console.warn(`[edge-reconcile] host ops: ${errText(err)}`);
   }
 
-  // 4c. Restore workflows (edgeRestore.ts): one phase per relay per tick.
+  // 4c. Restore workflows (edgeRestore.ts): one phase per origin per tick.
   try {
     await ctx.runAction(internal.edgeRestore.reconcilePass, {});
   } catch (err) {
@@ -383,7 +383,7 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
         continue;
       }
       if (!origin.enabled || origin.quarantine || origin.activeRotationId) continue;
-      // A guided setup owns the relay: nothing here publishes or provisions on it.
+      // A guided setup owns the origin: nothing here publishes or provisions on it.
       if (origin.setupOwned) continue;
       // A restore workflow holds the pool still until it finishes.
       if (origin.restore) continue;
@@ -422,7 +422,7 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
       const free = freeSlotCount(origin.publishedEdgeIds, desired);
       // 5a. Listener-aware upkeep: every deployed, enabled listener without a
       // template edge gets its OWN standby published, else a provision FOR IT.
-      // One listener per tick (each action occupies the relay).
+      // One listener per tick (each action occupies the origin).
       const target = free > 0 ? uncovered[0] : undefined;
       if (target) {
         const own = standbysOf(target.id);
@@ -448,10 +448,10 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
           await provision(target.id, true);
           continue;
         }
-        // Nothing automatic can cover it this tick; fall through to the relay-wide rules.
+        // Nothing automatic can cover it this tick; fall through to the origin-wide rules.
       }
       if (publishedNow < desired && uncovered.length === 0) {
-        // 5b. Relay-wide fill (every listener covered): any publishable standby, else a provision.
+        // 5b. Origin-wide fill (every listener covered): any publishable standby, else a provision.
         if (cfg.autoPublishStandby && standbys.length > 0) {
           const res = await ctx.runMutation(internal.edgeReconcileMutations.publishStandby, {
             relayId: origin._id,
@@ -476,7 +476,7 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
           continue;
         }
       } else if (publishedNow >= desired && cfg.autoProvisionToDesired) {
-        // 5c. Spares: the relay-wide reserve (`standbyPerRelay`, unchanged) plus
+        // 5c. Spares: the origin-wide reserve (`standbyPerRelay`, unchanged) plus
         // `standbyPerListener` verified standbys per coverage listener.
         if (standbys.length < origin.standbyPerRelay) {
           await provision(null, false);

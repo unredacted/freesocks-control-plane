@@ -1,14 +1,14 @@
 <script lang="ts">
   /**
-   * Guided setup (`/admin/edges/setup`). URL state: `?relay=<slug>` (the relay
+   * Guided setup (`/admin/edges/setup`). URL state: `?origin=<slug>` (the origin
    * being set up), `?step=<id>` (a peek at a step other than the current one),
-   * `?new=1` (working from a draft, before the relay exists), `?rotation=<id>`
+   * `?new=1` (working from a draft, before the origin exists), `?rotation=<id>`
    * (the rotation drawer).
    *
    * The SERVER drives the wizard: which step is current, what blocks it and
    * what is done all come from setup-status, re-read after every action. The
    * only thing kept in the browser is the DRAFT (origin + intended listeners)
-   * used to judge steps 1 to 3 before a relay row exists.
+   * used to judge steps 1 to 3 before an origin row exists.
    */
   import { untrack } from 'svelte';
   import { router } from '@client/stores/router.svelte';

@@ -1,6 +1,6 @@
 /**
  * Anonymous pageview beacon → POST /api/v1/telemetry (the server-side Umami
- * relay). PRIVACY RULES (docs/privacy.md):
+ * origin). PRIVACY RULES (docs/privacy.md):
  *
  * - Raw fetch with `credentials: 'omit'`, NEVER apiClient and NEVER
  *   navigator.sendBeacon: apiClient attaches PoP signatures (signEligible()

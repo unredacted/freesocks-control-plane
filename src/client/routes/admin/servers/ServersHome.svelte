@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
    * Servers home (`/admin/servers[?instance=<slug>]`): one status sentence,
-   * what needs you, one row per node, the quiet leftovers, squads, recent
+   * what needs you, one row per node, the quiet leftovers, mode groups, recent
    * changes, and the two switches in the footer. A node's details and every
    * action on it live on its own page (NodePage).
    *
@@ -24,6 +24,7 @@
     invalidateServers,
     patchServerConfig,
     refreshServer,
+    releaseHold,
     serverKeys,
     serverSummaryQuery,
     serverTreeQuery,
@@ -32,13 +33,13 @@
   import { router } from '@client/stores/router.svelte';
   import SectionHeader from '../edges/components/SectionHeader.svelte';
   import StatusDot from '../edges/simple/StatusDot.svelte';
+  import AdoptNodeDialog from './components/AdoptNodeDialog.svelte';
   import OpsList from './components/OpsList.svelte';
   import SetupSheet from './components/SetupSheet.svelte';
-  import SquadsCard from './components/SquadsCard.svelte';
+  import ModeGroupsCard from './components/ModeGroupsCard.svelte';
   import { codeOf } from './lib/run';
   import { pickInstance, serversPaths } from './lib/routes';
   import {
-    PURPOSE_WORDS,
     ago,
     countryLabel,
     fleetSentence,
@@ -54,12 +55,26 @@
   const summary = serverSummaryQuery();
   let slug = $derived(pickInstance(router.search, summary.data?.instances ?? []));
   const tree = serverTreeQuery(() => slug);
-  // The bootstrap contract: the panel's setup and its enrolled nodes.
+  // The bootstrap contract: the backend's setup and its enrolled nodes.
   const setup = setupQuery(() => slug);
   const intents = intentsQuery(() => slug);
   const providers = providersQuery();
   let setupOpen = $state(false);
   let setupRow = $derived(setup.data ? setupWords(setup.data) : null);
+  // Adopting a node that already serves members (a row without an intent).
+  let adoptOpen = $state(false);
+  let adoptTarget = $state<{ nodeUuid: string; name: string } | null>(null);
+  let holds = $derived(intents.data?.holds ?? []);
+  async function release(holdId: string) {
+    try {
+      await releaseHold(slug!, holdId);
+      toast.success('Hold released.');
+    } catch (e) {
+      toast.error(serverErrorWords(codeOf(e)));
+    } finally {
+      invalidateServers(qc);
+    }
+  }
   let originAccounts = $derived(
     (providers.data?.accounts ?? [])
       .filter((a) => a.provider === 'cloudflare' && typeof a.settings.zoneName === 'string')
@@ -71,7 +86,7 @@
   let instance = $derived(summary.data?.instances.find((i) => i.slug === slug) ?? null);
   let observeOn = $derived(summary.data?.config['manage.observe'] ?? false);
   let manageOn = $derived(summary.data?.config['manage.enabled'] ?? false);
-  let canWrite = $derived(manageOn && !!instance?.writable && !!instance?.handoffCurrent);
+  let canWrite = $derived(manageOn && !!instance?.writable && !!instance?.setUp);
   let refreshing = $state(false);
   let saving = $state(false);
 
@@ -185,23 +200,36 @@
       </p>
     </div>
 
-    {#if attention.length > 0 || (manageOn && setupRow) || (manageOn && instance && !instance.handoffCurrent && !setupRow)}
+    {#if attention.length > 0 || holds.length > 0 || (manageOn && setupRow) || (manageOn && instance && !instance.setUp && !setupRow)}
       <section aria-labelledby="needs-you">
         <h2 id="needs-you" class="mb-3 text-base font-semibold">Needs you</h2>
         <ul class="space-y-2">
+          {#each holds as h (h.id)}
+            <li
+              class="flex flex-wrap items-center gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm"
+            >
+              <span class="min-w-0 flex-1">
+                {h.heldNodeNames.join(', ')}
+                {h.heldNodeNames.length === 1 ? 'is' : 'are'} held closed since a profile change
+                {ago(Date.now() - Date.parse(h.since))}. They are not enrolled, so nothing re-checks
+                them: release the hold once you have.
+              </span>
+              {#if canWrite}
+                <Button variant="outline" size="sm" onclick={() => release(h.id)}>Release</Button>
+              {/if}
+            </li>
+          {/each}
           {#if manageOn && setupRow}
             <li
               class="flex flex-wrap items-center gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm"
             >
               <span class="min-w-0 flex-1">{setupRow}</span>
-              <Button variant="outline" size="sm" onclick={() => (setupOpen = true)}>
-                {setup.data?.state === 'needs_takeover' ? 'Take over' : 'Set up'}
-              </Button>
+              <Button variant="outline" size="sm" onclick={() => (setupOpen = true)}>Set up</Button>
             </li>
-          {:else if manageOn && instance && !instance.handoffCurrent}
+          {:else if manageOn && instance && !instance.setUp}
             <li class="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm">
-              Changes are allowed, but this panel is not set up yet, so they are refused. Set it up
-              first.
+              Changes are allowed, but this backend is not set up yet, so they are refused. Set it
+              up first.
             </li>
           {/if}
           {#each attention as row (row.key)}
@@ -230,7 +258,7 @@
     <section aria-label="Nodes">
       {#if t.nodes.length === 0}
         <p class="text-muted-foreground text-sm">
-          A node appears here once the node role has registered it with the panel.
+          A node appears here once the node role has registered it with the backend.
         </p>
       {:else}
         <ul class="space-y-2">
@@ -249,9 +277,7 @@
                   <span class="flex flex-wrap items-baseline gap-x-2">
                     <span class="font-medium">{node.name}</span>
                     {#if intent}
-                      <span class="text-muted-foreground text-xs"
-                        >{PURPOSE_WORDS[intent.purpose]}</span
-                      >
+                      <span class="text-muted-foreground text-xs">{intent.mode.name}</span>
                     {/if}
                     {#if country}<span class="text-muted-foreground text-xs">{country}</span>{/if}
                   </span>
@@ -264,6 +290,18 @@
                   aria-hidden="true"
                 />
               </Link>
+              {#if !intent && canWrite && setup.data?.state === 'ready'}
+                <div class="mt-1 flex justify-end">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onclick={() => {
+                      adoptTarget = { nodeUuid: node.nodeUuid, name: node.name };
+                      adoptOpen = true;
+                    }}>Adopt as an enrolled node</Button
+                  >
+                </div>
+              {/if}
             </li>
           {/each}
         </ul>
@@ -278,7 +316,13 @@
     </section>
 
     {#if slug}
-      <SquadsCard {slug} tree={t} {canWrite} />
+      <ModeGroupsCard {slug} tree={t} {canWrite} />
+      <AdoptNodeDialog
+        bind:open={adoptOpen}
+        {slug}
+        node={adoptTarget}
+        modes={setup.data?.modes ?? []}
+      />
       <SetupSheet
         bind:open={setupOpen}
         {slug}

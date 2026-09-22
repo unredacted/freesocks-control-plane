@@ -10,10 +10,10 @@
  */
 export const ROLE_VAR_LABELS: Record<string, string> = {
   fcp_relay_slug: 'The slug the role registers under',
-  fcp_relay_listeners: 'Listener keys this relay already has',
+  fcp_relay_listeners: 'Listener keys this origin already has',
   fcp_relay_register_path: 'Where the role sends its registration',
   fcp_relay_register_scope: 'The scope the role token needs',
-  fcp_relay_host_mode: 'Who writes the panel Hosts',
+  fcp_relay_host_mode: 'Who writes the backend Hosts',
 };
 
 const ORDER = Object.keys(ROLE_VAR_LABELS);

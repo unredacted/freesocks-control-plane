@@ -28,7 +28,7 @@ Files: `docker-compose.stack.yml`, `Caddyfile`, `docker/web.Dockerfile`,
   stack comes up regardless).
 - The repo checked out on the host (it is the build context). Nothing else: the
   SPA build, function deploy, and seeding all run inside the stack.
-- A real **Remnawave panel** (base URL + API token) if you want the subscription
+- A real **Remnawave backend** (base URL + API token) if you want the subscription
   step to mint real keys. Beta has no dev mock. Account creation never needs a
   backend; only the proxy-subscription step does, and with no backend instance it
   shows "no active instances" (see §4).
@@ -326,8 +326,8 @@ Everything the deployer applies on `up` (deploy, env, seed) stays the normal pat
 
 Operator-run one-offs that live in the code (all safe to rerun): `seed:seedCutover`,
 `userStats:reconcileUserCounts`, `lifecycle:purgeInactiveFree`, and
-`backendServers:migrateRemnawaveUserIds` (the 2.x → 3.x panel re-key — runbook in
-`docs/backends.md` § "Upgrading a panel to Remnawave 3.x"; dry-run with `{"dryRun": true}` first).
+`backendServers:migrateRemnawaveUserIds` (the 2.x → 3.x backend re-key — runbook in
+`docs/backends.md` § "Upgrading a backend to Remnawave 3.x"; dry-run with `{"dryRun": true}` first).
 
 ## 7. Turning on app-layer encryption later
 
@@ -388,12 +388,12 @@ See `docs/threat-model-cdn-blinding.md`.
     they reach the backend — so `resolveCountry` mirror tiering and the analytics geo options
     also depend on the flag) + origin locked to CF-only traffic.
   - **(d) Cloudflare in front of a Pangolin-style tunnel** (CF → Pangolin → Caddy): XFF **cannot**
-    carry the visitor here — Pangolin discards the inbound chain (see (b)), so Cloudflare's
+    carry the visitor here — Pangolin discards the transport chain (see (b)), so Cloudflare's
     appended visitor entry is destroyed and no `TRUSTED_PROXY_HOPS` value recovers it. Use
     `cf-connecting-ip` instead, which Pangolin passes through untouched: topology (c)'s two flags,
     since the origin only accepts CF-sourced traffic via the tunnel. For **analytics-only** geo
     (without widening the security-path trust), the Admin → Settings analytics card's "Visitor IP
-    source" (`analytics.ipHeader`) reads the header for the Umami relay alone.
+    source" (`analytics.ipHeader`) reads the header for the Umami origin alone.
 
   `CF_FRONTED` unset trusts no `cf-connecting-ip` (it would be spoofable); with
   `CADDY_TRUST_CF_HEADER` unset Caddy strips it upstream anyway, so the two layers can't disagree.

@@ -40,7 +40,12 @@ describe('resolveModeCatalog', () => {
     const { families, modes } = await t.run((ctx) => resolveModeCatalog(ctx.db));
     expect(families.map((f) => f.id)).toEqual(['freedom', 'privacy']);
     expect(families.map((f) => f.iconId)).toEqual(['zap', 'shield-check']);
-    expect(modes.map((m) => m.id)).toEqual(['freedom-ws', 'freedom-reality', 'privacy-reality']);
+    expect(modes.map((m) => m.id)).toEqual([
+      'freedom-ws',
+      'freedom-reality',
+      'freedom-xhttp',
+      'privacy-reality',
+    ]);
     // freedom-reality ships dark; the other two are enabled.
     expect(modes.find((m) => m.id === 'freedom-reality')!.enabled).toBe(false);
     expect(modes.find((m) => m.id === 'freedom-ws')!.enabled).toBe(true);
@@ -274,7 +279,7 @@ describe('memberMode', () => {
   test('projects the member’s mode even when DISABLED (deliveryStyle + family survive)', async () => {
     const t = convexTest(schema, modules);
     // freedom-reality ships dark; a member left on it must still resolve it
-    // (URL delivery, so a relay-edge address change reaches them on refresh).
+    // (URL delivery, so an origin-edge address change reaches them on refresh).
     const out = await t.query(internal.connectionModes.memberMode, {
       modeId: 'freedom-reality',
       backend: 'remnawave',
@@ -439,6 +444,7 @@ describe('admin CRUD', () => {
     expect(rows.map((r) => r.slug).sort()).toEqual([
       'freedom-reality',
       'freedom-ws',
+      'freedom-xhttp',
       'privacy-reality',
     ]);
     expect(rows.find((r) => r.slug === 'freedom-reality')!.enabled).toBe(true);
@@ -610,7 +616,12 @@ describe('internal list (validation surface)', () => {
     const t = convexTest(schema, modules);
     await bindPool(t, 'freedom-ws', [SQUAD]);
     const modes = await t.query(internal.connectionModes.list, {});
-    expect(modes.map((m) => m.id)).toEqual(['freedom-ws', 'freedom-reality', 'privacy-reality']);
+    expect(modes.map((m) => m.id)).toEqual([
+      'freedom-ws',
+      'freedom-reality',
+      'freedom-xhttp',
+      'privacy-reality',
+    ]);
     const ws = modes.find((m) => m.id === 'freedom-ws')!;
     expect(ws.bound).toBe(true);
     expect(ws.availableBackends).toEqual(['remnawave']);

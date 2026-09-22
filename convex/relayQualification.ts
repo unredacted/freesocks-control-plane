@@ -1,26 +1,26 @@
 /**
- * The L7 front-qualification CREDENTIAL: a panel account FCP mints on the
- * relay's placement so the authenticated test session (lib/edges/frontCheck)
+ * The L7 front-qualification CREDENTIAL: a backend account FCP mints on the
+ * origin's placement so the authenticated test session (lib/edges/frontCheck)
  * travels exactly the path a member's key takes. The account is a normal
  * member-shaped user with a tiny traffic cap and no expiry, tagged so an
- * operator recognises it on the panel; only its protocol UUID is kept
- * (`relays.qualificationUserId`) plus the panel user id needed to deactivate it
+ * operator recognises it on the backend; only its protocol UUID is kept
+ * (`origins.qualificationUserId`) plus the backend user id needed to deactivate it
  * and its own subscription locator (the test link + the empty-node rehearsal
  * fetch that body).
  *
- * Minting is a PERSISTED OPERATION (`relays.qualificationMint`, docs/edges.md
- * § "Publication"): the deterministic username is written BEFORE any panel
+ * Minting is a PERSISTED OPERATION (`origins.qualificationMint`, docs/edges.md
+ * § "Publication"): the deterministic username is written BEFORE any backend
  * call, so a crash between `issueUser` and `store` is settled on the next
  * `ensure` by re-finding the user by name (the version-neutral by-username
  * read) and adopting it instead of minting a second one. A stored credential
  * is reused only when its binding {backendServerId, placement, modeSlug}
  * equals the request; a different binding (after the operator chose another
- * mode) replaces it, and the old panel user goes through the same owed-removal
+ * mode) replaces it, and the old backend user goes through the same owed-removal
  * ledger every removal uses.
  *
- * Deactivation is never assumed: a panel delete that fails is recorded on the
- * relay (`qualificationRemovalPending`) and retried on the next mint, revoke or
- * relay delete, so a capped test account cannot be silently orphaned. Nothing
+ * Deactivation is never assumed: a backend delete that fails is recorded on the
+ * origin (`qualificationRemovalPending`) and retried on the next mint, revoke or
+ * origin delete, so a capped test account cannot be silently orphaned. Nothing
  * here is logged or audited beyond booleans.
  */
 import { ConvexError, v } from 'convex/values';
@@ -39,7 +39,7 @@ export const QUALIFICATION_TRAFFIC_LIMIT_BYTES = 50 * 1024 * 1024;
 export const QUALIFICATION_TAG = 'fcp-qualify';
 
 /**
- * The settle rule for a pending mint whose user cannot be found: the panel
+ * The settle rule for a pending mint whose user cannot be found: the backend
  * must have had this long AND this many quiet by-username looks since the
  * claim before a new user is issued under a new name (a create that lost its
  * response may still land).
@@ -66,7 +66,7 @@ export function sameMintBinding(a: MintBinding, b: MintBinding): boolean {
   );
 }
 
-/** Test seam: replace the panel-user removal (to simulate a transient panel failure). */
+/** Test seam: replace the backend-user removal (to simulate a transient backend failure). */
 type Remover = (
   backend: BackendId,
   backendUserId: string,
@@ -87,9 +87,9 @@ export function __setEnsureFailpointForTests(f: typeof failpoint): void {
 const purposeValidator = v.union(v.literal('qualification'), v.literal('rehearsal'));
 
 /**
- * What ensuring needs, read in one transaction: the relay, its panel, the
+ * What ensuring needs, read in one transaction: the origin, its backend, the
  * binding the request resolves to (an explicit placement, else the mode's
- * placement on this panel), the pending or stored operation, and the owed
+ * placement on this backend), the pending or stored operation, and the owed
  * removals. Null for a manual origin (nothing to mint on).
  */
 export const ensureContext = internalQuery({
@@ -101,12 +101,12 @@ export const ensureContext = internalQuery({
   handler: async (ctx, { relayId, placement, modeSlug }) => {
     const relay = await ctx.db.get(relayId);
     if (!relay) return null;
-    if (!relay.backendServerId) return null; // a manual origin has no panel to mint on
+    if (!relay.backendServerId) return null; // a manual origin has no backend to mint on
     const server = await ctx.db.get(relay.backendServerId);
     if (!server) return null;
     const caps = capabilitiesOf(server.backend);
     // The mode decides the placement (absent = the resolver's default pool for
-    // this panel); an explicit placement wins. A backend without a placement
+    // this backend); an explicit placement wins. A backend without a placement
     // concept binds to null.
     const slug: string | null = modeSlug ?? relay.qualificationModeSlug ?? null;
     let resolved: string | null = null;
@@ -165,12 +165,12 @@ const mintOpValidator = v.object({
   claimedAt: v.number(),
 });
 
-/** Step 1 of the operation: the intent (username included) lands before any panel call. */
+/** Step 1 of the operation: the intent (username included) lands before any backend call. */
 export const claimMint = internalMutation({
   args: { relayId: v.id('relays'), op: mintOpValidator },
   handler: async (ctx, { relayId, op }) => {
     const relay = await ctx.db.get(relayId);
-    if (!relay) throw new ConvexError({ code: 'not_found', message: 'Relay not found' });
+    if (!relay) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     await ctx.db.patch(relayId, {
       qualificationMint: { ...op, state: 'intended', looks: 0 },
       updatedAt: Date.now(),
@@ -228,7 +228,7 @@ export const store = internalMutation({
   },
   handler: async (ctx, a) => {
     const relay = await ctx.db.get(a.relayId);
-    if (!relay) throw new ConvexError({ code: 'not_found', message: 'Relay not found' });
+    if (!relay) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     await ctx.db.patch(a.relayId, {
       qualificationUserId: a.protocolUuid,
       qualificationBackendUserId: a.backendUserId,
@@ -275,7 +275,7 @@ export const clear = internalMutation({
   },
 });
 
-/** Replace the relay's list of panel users whose deactivation is still owed. */
+/** Replace the origin's list of backend users whose deactivation is still owed. */
 export const setPendingRemovals = internalMutation({
   args: { relayId: v.id('relays'), pending: v.array(v.string()) },
   handler: async (ctx, { relayId, pending }) => {
@@ -294,8 +294,8 @@ type RunActionCtx = { runAction: (fn: never, args: never) => Promise<unknown> };
 type RunCtx = RunActionCtx & { runMutation: (fn: never, args: never) => Promise<unknown> };
 
 /**
- * One panel delete. The instance is passed as a HINT: a qualification user has
- * no subscription row, so without it the dispatch could not resolve the panel
+ * One backend delete. The instance is passed as a HINT: a qualification user has
+ * no subscription row, so without it the dispatch could not resolve the backend
  * and would report an absent key as already gone.
  */
 async function removeOnce(
@@ -317,7 +317,7 @@ async function removeOnce(
   }
 }
 
-/** Deactivate a panel user; `ok:false` means the caller must keep the id for a retry. */
+/** Deactivate a backend user; `ok:false` means the caller must keep the id for a retry. */
 export const removeBackendUser = internalAction({
   args: {
     backend: backendIdValidator,
@@ -330,8 +330,8 @@ export const removeBackendUser = internalAction({
 });
 
 /**
- * Deactivate a panel user known only by the USERNAME of an unsettled mint
- * operation (the relay row is gone; nothing else can owe it). Best effort:
+ * Deactivate a backend user known only by the USERNAME of an unsettled mint
+ * operation (the origin row is gone; nothing else can owe it). Best effort:
  * a user that is not there is success.
  */
 export const removeByUsername = internalAction({
@@ -396,10 +396,10 @@ export interface EnsureResult {
 }
 
 /**
- * Ensure the relay holds a qualification credential covering the requested
+ * Ensure the origin holds a qualification credential covering the requested
  * binding (plan: the persisted mint operation). Idempotent under retry:
  *
- *  1. a stored credential with the same binding is reused (no panel call);
+ *  1. a stored credential with the same binding is reused (no backend call);
  *     `force` re-mints regardless (the operator's explicit re-mint);
  *  2. a pending operation (`intended` / `issued` / `unresolved`) is settled by
  *     the by-username read: found -> adopted into the store; not found -> the
@@ -433,10 +433,10 @@ export const ensure = internalAction({
         ...(a.modeSlug !== undefined ? { modeSlug: a.modeSlug } : {}),
       });
     let c = await read();
-    if (!c) throw new ConvexError({ code: 'not_found', message: 'Relay not found' });
+    if (!c) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     // The empty-node rehearsal body must come from a REAL placement (the node's
-    // squad), or it proves nothing about the node; the operator's explicit
-    // qualification mint keeps minting on the panel default as before.
+    // mode group), or it proves nothing about the node; the operator's explicit
+    // qualification mint keeps minting on the backend default as before.
     if (a.purpose === 'rehearsal' && c.placementRequired && c.placement === null)
       return { ok: false, code: 'choose_mode', reused: false };
     if (!c.lookupSupported) {
@@ -653,7 +653,7 @@ export const mint = internalAction({
 });
 
 /**
- * Revoke: the panel account is deactivated FIRST; only a successful removal
+ * Revoke: the backend account is deactivated FIRST; only a successful removal
  * clears the stored credential. A failed removal keeps the credential (the
  * operator sees it is still minted) and reports `backend_delete_failed`.
  */
@@ -664,7 +664,7 @@ export const revoke = internalAction({
     { relayId, actorAdminId },
   ): Promise<{ ok: boolean; code?: string; pendingRemovals?: number }> => {
     const c = await ctx.runQuery(internal.relayQualification.mintContext, { relayId });
-    if (!c) throw new ConvexError({ code: 'not_found', message: 'Relay not found' });
+    if (!c) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     // Owed removals from earlier attempts are retried whatever happens below.
     const stillOwed = await settleRemovals(
       ctx as never,

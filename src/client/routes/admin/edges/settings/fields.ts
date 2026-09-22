@@ -45,14 +45,14 @@ export const BASIC_SWITCHES: Field[] = [
     path: 'autoRotate',
     label: 'Automatic rotation',
     helper:
-      'On: a relay that also opted in gets its suspected edge replaced without asking. Off: suspicions only show up as attention items.',
+      'On: an origin that also opted in gets its suspected edge replaced without asking. Off: suspicions only show up as attention items.',
   },
   {
     kind: 'switch',
     path: 'render.enabled',
     label: 'Render edge addresses into subscriptions',
     helper:
-      'On: members of an edge-required relay receive edge addresses. Off: those members get no subscription at all, because the origin is never handed out.',
+      'On: members of an edge-required origin receive edge addresses. Off: those members get no subscription at all, because the origin is never handed out.',
   },
   {
     kind: 'switch',
@@ -74,14 +74,14 @@ export const BASIC_NUMBERS: Field[] = [
   {
     kind: 'number',
     path: 'desiredPublishedDefault',
-    label: 'Published edges per relay',
+    label: 'Published edges per origin',
     unit: 'edges',
-    helper: 'The pool size a new relay starts with. Each relay can override it.',
+    helper: 'The pool size a new origin starts with. Each origin can override it.',
   },
   {
     kind: 'number',
     path: 'standbyPerRelay',
-    label: 'Standbys per relay',
+    label: 'Standbys per origin',
     unit: 'edges',
     helper: 'Ready edges kept in reserve so a replacement is instant. Each one is billed.',
   },
@@ -91,21 +91,21 @@ export const BASIC_NUMBERS: Field[] = [
     label: 'Standbys per listener',
     unit: 'edges',
     helper:
-      'Ready edges kept in reserve for each deployed listener, on top of the per-relay standbys. Automatic protection sets this to one. Each one is billed.',
+      'Ready edges kept in reserve for each deployed listener, on top of the per-origin standbys. Automatic protection sets this to one. Each one is billed.',
   },
   {
     kind: 'number',
     path: 'cooldownMinutes',
     label: 'Cooldown between rotations',
     unit: 'min',
-    helper: 'How long a relay rests after a rotation before automation may rotate it again.',
+    helper: 'How long an origin rests after a rotation before automation may rotate it again.',
   },
   {
     kind: 'number',
     path: 'maxRotationsPerRelayPerDay',
-    label: 'Rotations per relay per day',
+    label: 'Rotations per origin per day',
     unit: 'per day',
-    helper: 'The daily cap on automatic rotations of one relay.',
+    helper: 'The daily cap on automatic rotations of one origin.',
   },
   {
     kind: 'number',
@@ -122,7 +122,7 @@ export const AUTO_PROVISION: Field = {
   path: 'autoProvisionToDesired',
   label: 'Provision up to the desired pool size automatically',
   helper:
-    'On: the control plane creates edges on its own until every relay reaches its pool size. This spends provider budget without asking. Off: you provision each edge yourself.',
+    'On: the control plane creates edges on its own until every origin reaches its pool size. This spends provider budget without asking. Off: you provision each edge yourself.',
 };
 
 /**
@@ -201,7 +201,7 @@ export const ROTATION_FIELDS: Field[] = [
     path: 'maxRotationMinutes',
     label: 'Longest rotation run',
     unit: 'min',
-    helper: 'Past this a run rolls back, or quarantines the relay if it cannot.',
+    helper: 'Past this a run rolls back, or quarantines the origin if it cannot.',
   },
   {
     kind: 'number',
@@ -236,14 +236,14 @@ export const ROTATION_FIELDS: Field[] = [
     path: 'maxFlipAttempts',
     label: 'Publish attempts',
     unit: 'tries',
-    helper: 'Tries to write the new address to the panel before rolling back.',
+    helper: 'Tries to write the new address to the backend before rolling back.',
   },
   {
     kind: 'number',
     path: 'maxRollbackAttempts',
     label: 'Rollback attempts',
     unit: 'tries',
-    helper: 'Tries to restore the previous state before the relay is quarantined.',
+    helper: 'Tries to restore the previous state before the origin is quarantined.',
   },
   {
     kind: 'number',
@@ -339,7 +339,7 @@ export const RULE_FIELDS: RuleField[] = [
     key: 'enabled',
     label: 'Render for this client family',
     helper:
-      'Off: this family is not rendered, so its members on an edge-required relay get no subscription.',
+      'Off: this family is not rendered, so its members on an edge-required origin get no subscription.',
   },
   {
     kind: 'switch',
@@ -430,7 +430,7 @@ export const DETECTOR_FIELDS: Field[] = [
   {
     kind: 'number',
     path: 'detect.minReporters',
-    label: 'Reporters needed per relay',
+    label: 'Reporters needed per origin',
     unit: 'members',
     helper: 'Distinct members that must report before reports can raise a suspicion.',
   },
@@ -496,7 +496,7 @@ export const DETECTOR_FIELDS: Field[] = [
     path: 'detect.suspectAt',
     label: 'Suspect at score',
     step: 0.05,
-    helper: 'A relay becomes suspected at or above this score.',
+    helper: 'An origin becomes suspected at or above this score.',
   },
   {
     kind: 'number',
@@ -571,7 +571,7 @@ export const PROBE_FIELDS: Field[] = [
     path: 'probe.suspectedIntervalMinutes',
     label: 'Interval while suspected',
     unit: 'min',
-    helper: 'A suspected relay is probed this often instead.',
+    helper: 'A suspected origin is probed this often instead.',
   },
   {
     kind: 'number',
@@ -612,7 +612,7 @@ export const PROBE_FIELDS: Field[] = [
     kind: 'switch',
     path: 'probe.ipv6',
     label: 'Probe IPv6 paths',
-    helper: 'Applies to relay and custom targets. Edge targets follow the rendering IPv6 setting.',
+    helper: 'Applies to origin and custom targets. Edge targets follow the rendering IPv6 setting.',
   },
 ];
 export const PROBE_COUNTRIES_PATH = 'probe.countries';
@@ -621,7 +621,7 @@ export const L7_FIELDS: Field[] = [
   {
     kind: 'number',
     path: 'l7.maxSameProviderReplacementsPerDay',
-    label: 'Same-provider replacements per relay per day',
+    label: 'Same-provider replacements per origin per day',
     unit: 'per day',
     helper:
       'A new hostname on the same CDN shares its addresses, so repeating it rarely helps. 0 forbids it.',

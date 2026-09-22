@@ -4,7 +4,7 @@
  * every write, a claimed row is settled only by observation (never by a lease
  * expiry alone), a late-landing disable is caught rather than reversed, the
  * reconcile pass retries an unsettled disable and re-hides a reappeared direct
- * Host on a bound guided relay (or raises `direct_host_reappeared`), and
+ * Host on a bound guided origin (or raises `direct_host_reappeared`), and
  * delivery stays fail-closed (`leak_detected`) in between. Plus the pure
  * classifier and the cohort walk.
  */
@@ -18,7 +18,7 @@ import { classifyDirectHosts, listingHash } from './lib/edges/directHosts';
 import { cohortReportForOrigin } from './lib/edges/cohorts';
 import { HIDE_MAX_ATTEMPTS, judgeLook } from './edgeHostHides';
 import { HOST_OP_TTL_MS, HOST_SETTLE_MS } from './hostOps';
-import { fakeHostPanel, type PanelHostRow } from './lib/edges/testing/fakeHostPanel';
+import { fakeHostPanel, type AddressRow } from './lib/edges/testing/fakeHostPanel';
 import {
   FIXTURE_CONFIG_PROFILE,
   FIXTURE_INBOUND,
@@ -49,8 +49,8 @@ const inbound = (uuid: string) => ({
   configProfileInboundUuid: uuid,
 });
 
-/** The panel's Hosts on the node: FCP's template + a covered direct Host (+ an uncovered one). */
-function panelHosts(opts: { uncovered?: boolean; d1Disabled?: boolean } = {}): PanelHostRow[] {
+/** The backend's Hosts on the node: FCP's template + a covered direct Host (+ an uncovered one). */
+function panelHosts(opts: { uncovered?: boolean; d1Disabled?: boolean } = {}): AddressRow[] {
   return [
     {
       uuid: FCP_UUID,
@@ -87,12 +87,12 @@ function panelHosts(opts: { uncovered?: boolean; d1Disabled?: boolean } = {}): P
 }
 
 /**
- * The world: panel + relay `node-one` (REALITY listener `a`, FCP Hosts) with a
+ * The world: backend + origin `node-one` (REALITY listener `a`, FCP Hosts) with a
  * verified, published L4 edge at EDGE_A, one member key pinned to the node,
- * rendering on. `deferred` = a guided relay before go-live (no binding).
+ * rendering on. `deferred` = a guided origin before go-live (no binding).
  */
 async function world(
-  opts: { deferred?: boolean; hosts?: PanelHostRow[]; mode?: 'apply' | 'ignore' | 'fail' } = {},
+  opts: { deferred?: boolean; hosts?: AddressRow[]; mode?: 'apply' | 'ignore' | 'fail' } = {},
 ) {
   const panel = fakeHostPanel(opts.hosts ?? panelHosts(), opts.mode);
   const t = convexTest(schema, modules);
@@ -183,7 +183,7 @@ describe('classifyDirectHosts (pure)', () => {
     coveredInboundUuids: [FIXTURE_INBOUND],
   };
 
-  test('enabled Hosts on the node inbounds at the origin address, not FCP, not legacy; covered by listener inbound', () => {
+  test('enabled Hosts on the node transports at the origin address, not FCP, not legacy; covered by listener transport', () => {
     const { covered, uncovered } = classifyDirectHosts(panelHosts({ uncovered: true }), ctx);
     expect(covered.map((h) => h.uuid)).toEqual([D1]);
     expect(uncovered.map((h) => h.uuid)).toEqual([D2]);
@@ -194,8 +194,8 @@ describe('classifyDirectHosts (pure)', () => {
     });
   });
 
-  test('a disabled Host, another node’s inbound, an edge address, an FCP remark and a legacy uuid are never direct', () => {
-    const hosts: PanelHostRow[] = [
+  test('a disabled Host, another node’s transport, an edge address, an FCP remark and a legacy uuid are never direct', () => {
+    const hosts: AddressRow[] = [
       ...panelHosts({ d1Disabled: true }),
       {
         uuid: 'other',
@@ -408,7 +408,7 @@ describe('edgeHostHides.hide', () => {
 });
 
 describe('acceptance 4: a partial Host-disable (the write did not land)', () => {
-  test('a PATCH the panel accepted but did not apply leaves the row written; the reconcile pass confirms it once the disable lands late', async () => {
+  test('a PATCH the backend accepted but did not apply leaves the row written; the reconcile pass confirms it once the disable lands late', async () => {
     vi.useFakeTimers({ now: NOW });
     const { t, panel, relayId, rows } = await world({ deferred: true, mode: 'ignore' });
     const r = await t.action(internal.edgeHostHides.hide, { relayId, approvedUuids: [] });
@@ -420,7 +420,7 @@ describe('acceptance 4: a partial Host-disable (the write did not land)', () => 
     await t.action(internal.hostOps.reconcileHosts, {});
     expect((await rows())[0].state).toBe('written');
     expect(panel.patches).toHaveLength(1);
-    // The panel applies it late: the next look confirms (never reverses).
+    // The backend applies it late: the next look confirms (never reverses).
     panel.find(D1).isDisabled = true;
     await t.action(internal.hostOps.reconcileHosts, {});
     [row] = await rows();
@@ -496,7 +496,7 @@ describe('acceptance 4: a partial Host-disable (the write did not land)', () => 
     await t.action(internal.edgeRestore.step, { relayId }); // -> settle
     vi.setSystemTime(NOW + HOST_OP_TTL_MS + 1);
     await t.action(internal.edgeRestore.step, { relayId }); // quiet look 1
-    // The panel applies the disable after the lease expired.
+    // The backend applies the disable after the lease expired.
     panel.find(D1).isDisabled = true;
     panel.setPatchMode('apply');
     vi.setSystemTime(NOW + HOST_OP_TTL_MS + HOST_SETTLE_MS + 1);
@@ -585,7 +585,7 @@ describe('acceptance 18: settlement of a claimed `intended` row', () => {
   });
 });
 
-describe('acceptance 17: a direct Host reappears on a bound guided relay', () => {
+describe('acceptance 17: a direct Host reappears on a bound guided origin', () => {
   test('delivery answers leak_detected (never the origin body); reconcile re-hides a covered one and delivery serves again', async () => {
     const { t, panel, relayId, download, relay } = await world();
     const hid = await t.action(internal.edgeHostHides.hide, { relayId, approvedUuids: [] });
@@ -594,13 +594,13 @@ describe('acceptance 17: a direct Host reappears on a bound guided relay', () =>
     expect(ok.status).toBe(200);
     expect(ok.body).toContain(EDGE_A);
     expect(ok.body).not.toContain(FIXTURE_ORIGIN);
-    // Someone re-enables the direct Host in the panel.
+    // Someone re-enables the direct Host in the backend.
     panel.find(D1).isDisabled = false;
     const leak = await download();
     expect(leak.status).toBe(503);
     expect(leak.reason).toBe('leak_detected');
     expect(leak.body).not.toContain(FIXTURE_ORIGIN);
-    // The reconcile pass re-hides it (a hide row exists for it, and its inbound is covered).
+    // The reconcile pass re-hides it (a hide row exists for it, and its transport is covered).
     const r = await t.action(internal.edgeHostHides.reobserveDirect, {});
     expect(r).toEqual({ relays: 1, rehidden: 1, alerted: 0 });
     expect(panel.find(D1).isDisabled).toBe(true);
@@ -618,7 +618,7 @@ describe('acceptance 17: a direct Host reappears on a bound guided relay', () =>
   test('an uncovered, never-approved direct Host raises direct_host_reappeared instead of a write; suppressed while a restore runs', async () => {
     const { t, panel, relayId, relay } = await world();
     await t.action(internal.edgeHostHides.hide, { relayId, approvedUuids: [] });
-    // A new direct Host on an inbound no listener covers appears.
+    // A new direct Host on a transport no listener covers appears.
     panel.hosts.push({
       uuid: D2,
       remark: `${FIXTURE_NODE}-ws`,

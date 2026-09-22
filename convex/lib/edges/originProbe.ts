@@ -1,11 +1,11 @@
 /**
  * The origin probe (docs/edges.md § "Listener catalogue", discovery): how an
- * L7 front may dial a node's HTTP-transport inbound, measured from the control
+ * L7 front may dial a node's HTTP-transport transport, measured from the control
  * plane. Pure: every socket is injected (`OriginProbeDeps`); the `"use node"`
  * half (convex/edgeOriginProbeOps.ts) supplies the real ones.
  *
  * Per listener security:
- *  - `none`: the inbound speaks plaintext HTTP; a TCP answer on the port is
+ *  - `none`: the transport speaks plaintext HTTP; a TCP answer on the port is
  *    enough -> `{ scheme: 'http' }` (L7-only: a forwarder cannot add the TLS
  *    the CDN terminated).
  *  - `tls`: a handshake with SNI = the first server name. `certPublic` = the

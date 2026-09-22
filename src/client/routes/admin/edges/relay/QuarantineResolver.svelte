@@ -1,17 +1,17 @@
 <script lang="ts">
   /**
-   * Resolve a quarantined relay. A rotation stopped half way through switching
-   * the panel Hosts and could not roll back, so FCP no longer knows which binding
-   * members get. Per listener: the previous binding, what the panel serves right
-   * now ("Inspect panel", throttled) and the current binding, with the matching
+   * Resolve a quarantined origin. A rotation stopped half way through switching
+   * the backend Hosts and could not roll back, so FCP no longer knows which binding
+   * members get. Per listener: the previous binding, what the backend serves right
+   * now ("Inspect backend", throttled) and the current binding, with the matching
    * one highlighted; then "Keep previous" / "Keep current" with an editable,
    * generated justification that is written to the audit log.
    *
-   * Props: relay; onOpenEdge(edgeId); onOpenRotation(rotationId)
+   * Props: origin; onOpenEdge(edgeId); onOpenRotation(rotationId)
    */
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
-  import type { RelayAdmin } from '@shared/contracts/edges';
+  import type { OriginAdmin } from '@shared/contracts/edges';
   import * as Card from '@client/components/ui/card';
   import { Badge } from '@client/components/ui/badge';
   import { Button } from '@client/components/ui/button';
@@ -42,7 +42,7 @@
   } from './relayLogic';
 
   interface Props {
-    relay: RelayAdmin;
+    relay: OriginAdmin;
     onOpenEdge: (edgeId: string) => void;
     onOpenRotation: (rotationId: string) => void;
   }
@@ -57,7 +57,7 @@
     mutationFn: () => inspectRelayQuarantine(relay.id),
     onSuccess: (data) => {
       qc.setQueryData(edgeKeys.relayQuarantine(relay.slug), data);
-      toast.success('Read the Hosts from the panel.');
+      toast.success('Read the Hosts from the backend.');
     },
   }));
 
@@ -90,8 +90,8 @@
       <Badge variant="danger">Needs your decision</Badge>
     </Card.Title>
     <Card.Description>
-      A rotation changed the panel Hosts of this relay and could neither finish nor undo it. FCP
-      stopped touching the relay so it cannot make things worse: no rotation, publish or unpublish
+      A rotation changed the backend Hosts of this origin and could neither finish nor undo it. FCP
+      stopped touching the origin so it cannot make things worse: no rotation, publish or unpublish
       runs until you say which binding is the real one.
     </Card.Description>
     {#if relay.quarantine}
@@ -116,10 +116,10 @@
     {/if}
 
     <ol class="list-decimal space-y-1 ps-5 text-muted-foreground">
-      <li>Inspect the panel to see which Host it serves for each listener right now.</li>
+      <li>Inspect the backend to see which Host it serves for each listener right now.</li>
       <li>
-        Keep the binding the panel serves. If the listeners disagree, fix the odd Host in the panel
-        first, inspect again, then decide.
+        Keep the binding the backend serves. If the listeners disagree, fix the odd Host in the
+        backend first, inspect again, then decide.
       </li>
     </ol>
 
@@ -192,10 +192,10 @@
 
       {#if view.extraHosts.length > 0}
         <section class="space-y-1 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3">
-          <h3 class="font-medium">Other Hosts under this relay's names</h3>
+          <h3 class="font-medium">Other Hosts under this origin's names</h3>
           <p class="text-xs text-muted-foreground">
-            The panel serves these too and no listener claims them: duplicates or leftovers from an
-            earlier setup. Members may be handed them. Remove them in the panel if they are not
+            The backend serves these too and no listener claims them: duplicates or leftovers from
+            an earlier setup. Members may be handed them. Remove them in the backend if they are not
             meant to exist.
           </p>
           <ul class="space-y-0.5 font-mono text-xs">

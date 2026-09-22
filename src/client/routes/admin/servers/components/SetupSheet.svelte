@@ -1,97 +1,123 @@
 <script lang="ts">
   /**
-   * "Set up this panel" (docs/servers.md "Setting up a panel"): the profile
-   * name, the two REALITY decoys with their names, the squad names, and the
-   * account whose zone front nodes get their origin names in. One press;
-   * the sheet then shows the run as it goes. A panel that already has nodes
-   * needs the typed takeover first.
+   * "Set up this backend" (docs/servers.md "Setting up a backend"): the profile
+   * name, the modes the backend serves (a table, pre-filled with the four
+   * defaults: each a connection mode, a group name, a shape and, for REALITY,
+   * the server-name family whose target and names its transport carries), and
+   * the account whose zone WebSocket nodes get their origin names in. One
+   * press; the sheet then shows the run as it goes. A backend that already
+   * has nodes or addresses is adopted after a typed confirmation. Nothing here
+   * is a secret: keys are made on the way and kept nowhere.
    *
    * Props: open (bindable), slug, setup (the current view), accounts
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
+  import Trash2 from '@lucide/svelte/icons/trash-2';
   import { Button } from '@client/components/ui/button';
   import { Input } from '@client/components/ui/input';
   import { Label } from '@client/components/ui/label';
   import * as Sheet from '@client/components/ui/sheet';
   import { Switch } from '@client/components/ui/switch';
-  import { invalidateServers, startSetup, takeoverPanel } from '@client/lib/serversApi';
-  import type { PanelSetupView } from '../../../../../shared/contracts/servers';
+  import { adminConnectionModesQuery } from '@client/lib/queries';
+  import { invalidateServers, startSetup } from '@client/lib/serversApi';
+  import { familiesQuery } from '@client/lib/sniApi';
+  import {
+    DEFAULT_MODE_SETUP,
+    MODE_SHAPES,
+    type ModeSetupInput,
+    type BackendSetupView,
+  } from '../../../../../shared/contracts/servers';
   import ConfirmDialog from '../../edges/components/ConfirmDialog.svelte';
   import StatusDot from '../../edges/simple/StatusDot.svelte';
   import { codeOf } from '../lib/run';
-  import { serverErrorWords, setupWords } from '../lib/words';
+  import { serverErrorWords, setupWords, shapeWords } from '../lib/words';
 
   interface Props {
     open: boolean;
     slug: string;
-    setup: PanelSetupView | null;
+    setup: BackendSetupView | null;
     accounts: { id: string; name: string; zoneName: string }[];
   }
   let { open = $bindable(false), slug, setup, accounts }: Props = $props();
   const qc = useQueryClient();
   const uid = $props.id();
+  const catalog = adminConnectionModesQuery();
+  const families = familiesQuery();
+
+  type Row = ModeSetupInput & { key: number };
+  let seq = 0;
+  const rowOf = (m: ModeSetupInput): Row => ({
+    ...m,
+    ws: m.ws ? { ...m.ws } : undefined,
+    key: seq++,
+  });
 
   let profileName = $state('FreeSocks-Config');
-  let realityTarget = $state('');
-  let realityNames = $state('');
-  let relayTarget = $state('');
-  let relayNames = $state('');
-  let acceptProxyProtocol = $state(false);
-  let squadFronted = $state('FreeSocks-Fronted');
-  let squadReality = $state('FreeSocks-Reality');
-  let squadRelay = $state('FreeSocks-Relay');
+  let rows = $state<Row[]>(DEFAULT_MODE_SETUP.map(rowOf));
   let originAccountId = $state('');
   let busy = $state(false);
-  let takeoverOpen = $state(false);
+  let adoptOpen = $state(false);
 
-  const parseTarget = (s: string) => {
-    const m = /^([^:\s]+)(?::(\d{1,5}))?$/.exec(s.trim());
-    return m ? { address: m[1]!, port: m[2] ? Number(m[2]) : 443 } : null;
-  };
-  const parseNames = (s: string) =>
-    s
-      .split(/[\s,]+/)
-      .map((n) => n.trim())
-      .filter(Boolean);
+  const shapeKey = (s: { transport: string; fronting: string }) => `${s.transport}/${s.fronting}`;
+  const isReality = (r: Row) => r.shape.transport !== 'ws';
+  const knownModes = $derived(catalog.data?.modes ?? []);
+  const familyRows = $derived((families.data?.families ?? []).filter((f) => f.enabled));
 
-  async function submit() {
-    const reality = parseTarget(realityTarget);
-    const relay = parseTarget(relayTarget);
-    if (!reality || !relay) {
-      toast.error('Each decoy is a host, or host:port.');
-      return;
-    }
-    busy = true;
-    try {
-      await startSetup(slug, {
-        profileName: profileName.trim(),
-        cdn: { path: '/ws', port: 8443 },
-        reality: { target: reality, serverNames: parseNames(realityNames) },
-        relay: { target: relay, serverNames: parseNames(relayNames), acceptProxyProtocol },
-        squads: {
-          fronted: squadFronted.trim(),
-          reality: squadReality.trim(),
-          relay: squadRelay.trim(),
-        },
-        originDns: originAccountId ? { accountId: originAccountId } : null,
-      });
-    } catch (e) {
-      toast.error(serverErrorWords(codeOf(e)));
-    } finally {
-      busy = false;
-      invalidateServers(qc);
-    }
+  function setShape(r: Row, key: string) {
+    const s = MODE_SHAPES.find((m) => shapeKey(m) === key);
+    if (!s) return;
+    r.shape = { ...s };
+    if (s.transport === 'ws') {
+      r.familySlug = undefined;
+      r.ws ??= { path: '/ws', port: 8443 };
+    } else r.ws = undefined;
+  }
+  function addRow() {
+    rows = [
+      ...rows,
+      rowOf({
+        slug: '',
+        name: '',
+        shape: { transport: 'reality', fronting: 'edge-l4' },
+        acceptProxyProtocol: false,
+      }),
+    ];
+  }
+  const removeRow = (key: number) => (rows = rows.filter((r) => r.key !== key));
+
+  function input(adopt: boolean) {
+    return {
+      profileName: profileName.trim(),
+      modes: rows.map(({ key: _k, ...m }) => ({
+        ...m,
+        slug: m.slug.trim(),
+        name: m.name.trim(),
+        familySlug: isReality(m as Row) ? m.familySlug || undefined : undefined,
+        ws: m.shape.transport === 'ws' ? m.ws : undefined,
+      })),
+      originDns: originAccountId ? { accountId: originAccountId } : null,
+      adopt,
+    };
   }
 
-  async function takeover() {
-    takeoverOpen = false;
+  async function submit(adopt = false) {
+    if (rows.length === 0) {
+      toast.error('Keep at least one mode.');
+      return;
+    }
+    for (const r of rows)
+      if (isReality(r) && !r.familySlug) {
+        toast.error(`Pick a server-name family for ${r.name || r.slug || 'each REALITY mode'}.`);
+        return;
+      }
     busy = true;
     try {
-      await takeoverPanel(slug);
-      await submit();
+      await startSetup(slug, input(adopt));
     } catch (e) {
-      toast.error(serverErrorWords(codeOf(e)));
+      const code = codeOf(e);
+      if (code === 'servers.adopt_required' && !adopt) adoptOpen = true;
+      else toast.error(serverErrorWords(code));
     } finally {
       busy = false;
       invalidateServers(qc);
@@ -100,15 +126,22 @@
 
   let running = $derived(setup?.running ?? false);
   let status = $derived(setup ? setupWords(setup) : null);
+  const familyState: Record<string, string> = {
+    none: '',
+    bound: 'family bound',
+    unbound: 'family not bound yet',
+    target_mismatch: 'family target differs',
+  };
 </script>
 
 <Sheet.Root bind:open>
-  <Sheet.Content side="right" class="gap-0 overflow-y-auto sm:max-w-xl">
+  <Sheet.Content side="right" class="gap-0 overflow-y-auto sm:max-w-2xl">
     <Sheet.Header class="border-b">
-      <Sheet.Title>Set up this panel</Sheet.Title>
+      <Sheet.Title>Set up this backend</Sheet.Title>
       <Sheet.Description>
-        The profile and its three inbounds, the squads and the connection modes they feed, and the
-        subscription templates. Nothing here is a secret: keys are made on the way and kept nowhere.
+        The modes this backend serves, each with its transport, its group and (REALITY) the family
+        of server names it borrows. Nothing here is a secret: keys are made on the way and kept
+        nowhere.
       </Sheet.Description>
     </Sheet.Header>
 
@@ -118,20 +151,26 @@
           <StatusDot
             dot={setup.state === 'ready' ? 'green' : setup.state === 'failed' ? 'red' : 'amber'}
           />
-          {status ?? 'The panel is set up.'}
+          {status ??
+            (setup.adopted ? 'The backend is adopted and set up.' : 'The backend is set up.')}
           {#if setup.step && running}<span class="text-muted-foreground">({setup.step})</span>{/if}
         </p>
-        {#if setup.state === 'ready' && setup.inbounds}
+        {#if setup.modes.length > 0}
           <ul class="text-muted-foreground space-y-1 text-sm">
-            <li>
-              Profile {setup.profile?.name}: {setup.inbounds.cdn.tag}, {setup.inbounds.reality.tag}, {setup
-                .inbounds.relay.tag}.
-            </li>
-            <li>
-              Squads: {setup.squads.map((s) => s.name).join(', ')}. Modes bound:
-              {setup.placements.filter((p) => p.state === 'bound').length} of {setup.placements
-                .length}.
-            </li>
+            {#each setup.modes as m (m.slug)}
+              <li>
+                <span class="text-foreground font-medium">{m.name}</span>: {shapeWords(m.shape)}
+                {#if m.transport}, port {m.transport.port}{/if}
+                {#if m.familySlug}, names from {m.familySlug}{/if}
+                {#if m.placement !== 'bound'}, <span class="text-amber-700 dark:text-amber-300"
+                    >mode not bound</span
+                  >{/if}
+                {#if m.family === 'unbound' || m.family === 'target_mismatch'}, <span
+                    class="text-amber-700 dark:text-amber-300">{familyState[m.family]}</span
+                  >{/if}
+                {#if m.group.renamedFrom}, renamed from {m.group.renamedFrom}{/if}
+              </li>
+            {/each}
             {#if setup.originDns}<li>Origin names under {setup.originDns.zoneName}.</li>{/if}
           </ul>
         {/if}
@@ -142,83 +181,139 @@
           class="space-y-4"
           onsubmit={(e) => {
             e.preventDefault();
-            if (setup?.state === 'needs_takeover') takeoverOpen = true;
-            else void submit();
+            void submit();
           }}
         >
           <div class="space-y-1.5">
             <Label for={`${uid}-profile`}>Profile name</Label>
             <Input id={`${uid}-profile`} bind:value={profileName} autocomplete="off" />
           </div>
+
           <fieldset class="space-y-3">
-            <legend class="text-sm font-medium">Direct nodes (REALITY)</legend>
-            <div class="space-y-1.5">
-              <Label for={`${uid}-rt`}>Decoy site (host or host:port)</Label>
-              <Input
-                id={`${uid}-rt`}
-                bind:value={realityTarget}
-                placeholder="decoy.example"
-                autocomplete="off"
-                spellcheck={false}
-              />
-            </div>
-            <div class="space-y-1.5">
-              <Label for={`${uid}-rn`}>Server names the decoy serves</Label>
-              <Input
-                id={`${uid}-rn`}
-                bind:value={realityNames}
-                placeholder="decoy.example, www.decoy.example"
-                autocomplete="off"
-                spellcheck={false}
-              />
-            </div>
-          </fieldset>
-          <fieldset class="space-y-3">
-            <legend class="text-sm font-medium">Relay nodes (REALITY behind an edge)</legend>
-            <div class="space-y-1.5">
-              <Label for={`${uid}-lt`}>Decoy site</Label>
-              <Input
-                id={`${uid}-lt`}
-                bind:value={relayTarget}
-                placeholder="relay-decoy.example"
-                autocomplete="off"
-                spellcheck={false}
-              />
-            </div>
-            <div class="space-y-1.5">
-              <Label for={`${uid}-ln`}>Server names the decoy serves</Label>
-              <Input
-                id={`${uid}-ln`}
-                bind:value={relayNames}
-                autocomplete="off"
-                spellcheck={false}
-              />
-            </div>
-            <div class="flex items-center gap-3">
-              <Switch id={`${uid}-pp`} bind:checked={acceptProxyProtocol} />
-              <Label for={`${uid}-pp`} class="font-normal">The edges send PROXY protocol</Label>
-            </div>
-          </fieldset>
-          <fieldset class="space-y-3">
-            <legend class="text-sm font-medium">Squads</legend>
-            <div class="grid grid-cols-3 gap-3">
-              <Input bind:value={squadFronted} aria-label="Fronted squad" autocomplete="off" />
-              <Input bind:value={squadReality} aria-label="Direct squad" autocomplete="off" />
-              <Input bind:value={squadRelay} aria-label="Relay squad" autocomplete="off" />
-            </div>
+            <legend class="text-sm font-medium">Modes</legend>
             <p class="text-muted-foreground text-xs">
-              Fronted feeds Freedom (WebSocket), direct feeds Privacy (REALITY), relay feeds Freedom
-              (REALITY).
+              One transport per mode. A node serves one mode; members reach a direct node at its own
+              address and a fronted one through an edge. REALITY modes take their site and server
+              names from a family (Edges, Server names).
             </p>
+            <div class="space-y-3">
+              {#each rows as r (r.key)}
+                <div class="bg-card space-y-2 rounded-md border p-3">
+                  <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                    <div class="space-y-1">
+                      <Label for={`${uid}-slug-${r.key}`} class="text-xs">Connection mode</Label>
+                      <select
+                        id={`${uid}-slug-${r.key}`}
+                        class="bg-background w-full rounded-md border px-2 py-1.5 text-sm"
+                        bind:value={r.slug}
+                      >
+                        <option value="">Pick a mode</option>
+                        {#each knownModes as m (m.id)}
+                          <option value={m.id}>{m.label ?? m.id}{m.enabled ? '' : ' (off)'}</option>
+                        {/each}
+                      </select>
+                    </div>
+                    <div class="space-y-1">
+                      <Label for={`${uid}-name-${r.key}`} class="text-xs"
+                        >Group name on the backend</Label
+                      >
+                      <Input
+                        id={`${uid}-name-${r.key}`}
+                        bind:value={r.name}
+                        autocomplete="off"
+                        spellcheck={false}
+                      />
+                    </div>
+                    <div class="space-y-1">
+                      <Label for={`${uid}-shape-${r.key}`} class="text-xs">Shape</Label>
+                      <select
+                        id={`${uid}-shape-${r.key}`}
+                        class="bg-background w-full rounded-md border px-2 py-1.5 text-sm"
+                        value={shapeKey(r.shape)}
+                        onchange={(e) => setShape(r, (e.currentTarget as HTMLSelectElement).value)}
+                      >
+                        {#each MODE_SHAPES as s (shapeKey(s))}
+                          <option value={shapeKey(s)}>{shapeWords(s)}</option>
+                        {/each}
+                      </select>
+                    </div>
+                  </div>
+                  <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                    {#if isReality(r)}
+                      <div class="space-y-1 sm:col-span-2">
+                        <Label for={`${uid}-fam-${r.key}`} class="text-xs">Server-name family</Label
+                        >
+                        <select
+                          id={`${uid}-fam-${r.key}`}
+                          class="bg-background w-full rounded-md border px-2 py-1.5 text-sm"
+                          bind:value={r.familySlug}
+                        >
+                          <option value={undefined}>Pick a family</option>
+                          {#each familyRows as f (f.slug)}
+                            <option value={f.slug}
+                              >{f.label} ({f.target.address}, {f.counts.ready} usable)</option
+                            >
+                          {/each}
+                        </select>
+                        {#if familyRows.length === 0}
+                          <p class="text-xs text-amber-700 dark:text-amber-300">
+                            No family yet. Add one under Edges, Server names, and let its names
+                            qualify.
+                          </p>
+                        {/if}
+                      </div>
+                      {#if r.shape.fronting === 'edge-l4'}
+                        <div class="flex items-center gap-2 self-end pb-1.5">
+                          <Switch id={`${uid}-pp-${r.key}`} bind:checked={r.acceptProxyProtocol} />
+                          <Label for={`${uid}-pp-${r.key}`} class="text-xs font-normal"
+                            >Edges send PROXY protocol</Label
+                          >
+                        </div>
+                      {/if}
+                    {:else if r.ws}
+                      <div class="space-y-1">
+                        <Label for={`${uid}-path-${r.key}`} class="text-xs">Path</Label>
+                        <Input
+                          id={`${uid}-path-${r.key}`}
+                          bind:value={r.ws.path}
+                          autocomplete="off"
+                        />
+                      </div>
+                      <div class="space-y-1">
+                        <Label for={`${uid}-port-${r.key}`} class="text-xs">Loopback port</Label>
+                        <Input
+                          id={`${uid}-port-${r.key}`}
+                          type="number"
+                          bind:value={r.ws.port}
+                          autocomplete="off"
+                        />
+                      </div>
+                    {/if}
+                    <div class="flex justify-end self-end">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        class="text-destructive"
+                        aria-label={`Remove ${r.name || 'this mode'}`}
+                        onclick={() => removeRow(r.key)}><Trash2 class="size-4" /></Button
+                      >
+                    </div>
+                  </div>
+                </div>
+              {/each}
+            </div>
+            <Button type="button" size="sm" variant="outline" onclick={addRow}>Add a mode</Button>
           </fieldset>
+
           <div class="space-y-1.5">
-            <Label for={`${uid}-dns`}>Origin names for front nodes</Label>
+            <Label for={`${uid}-dns`}>Origin names for WebSocket nodes</Label>
             <select
               id={`${uid}-dns`}
               class="bg-background w-full rounded-md border px-3 py-2 text-sm"
               bind:value={originAccountId}
             >
-              <option value="">The role gives each front node its hostname</option>
+              <option value="">No managed zone: set each node's hostname in its settings</option>
               {#each accounts as a (a.id)}
                 <option value={a.id}>{a.name} ({a.zoneName})</option>
               {/each}
@@ -226,9 +321,7 @@
           </div>
           <Sheet.Footer>
             <Button type="button" variant="outline" onclick={() => (open = false)}>Close</Button>
-            <Button type="submit" disabled={busy || running}>
-              {setup?.state === 'needs_takeover' ? 'Take over and set up' : 'Set up'}
-            </Button>
+            <Button type="submit" disabled={busy || running}>Set up</Button>
           </Sheet.Footer>
         </form>
       {:else}
@@ -241,11 +334,14 @@
 </Sheet.Root>
 
 <ConfirmDialog
-  bind:open={takeoverOpen}
-  title="Take over this panel?"
-  body="No node role must still write to this panel. From now on FCP is its only writer; the old role would fight it."
+  bind:open={adoptOpen}
+  title="Adopt this backend?"
+  body="It already has nodes or addresses. FCP becomes its writer: the profile is adopted as it is (keys untouched), groups an earlier setup named are renamed in place, and nothing a member holds changes."
   typed={slug}
-  confirmLabel="Take over"
+  confirmLabel="Adopt"
   danger
-  onConfirm={takeover}
+  onConfirm={() => {
+    adoptOpen = false;
+    void submit(true);
+  }}
 />

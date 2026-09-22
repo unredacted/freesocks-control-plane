@@ -8,14 +8,18 @@
 import { internalAction, internalMutation } from './_generated/server';
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
-import { SETTINGS_DEFAULTS } from './appSettings';
+import { SETTINGS_DEFAULTS, upsertSettingRow } from './appSettings';
 import { DEFAULT_CLIENTS } from './lib/clientCatalog';
 import {
+  BUILT_IN_MODES_VERSION,
   CONNECTION_MODE_DEFAULT_KEY,
   DEFAULT_CONNECTION_MODES,
   DEFAULT_CONNECTION_MODE_FAMILIES,
   resolveModeCatalog,
 } from './lib/connectionModes';
+
+/** The built-ins version this deployment's mode catalog was last brought up to. */
+const BUILT_IN_MODES_VERSION_KEY = 'connectionModes.builtInsVersion';
 import { fakeEdgeProviderEnabled } from './lib/edges/providers/fake';
 import { mockBackendEnabled } from './lib/backends/mock';
 
@@ -113,7 +117,7 @@ export const seedAppSettings = internalMutation({
  * is unset (a fresh install adds instances entirely via the CMS).
  *
  * STEADY-STATE OWNERSHIP: once an `ansible-role-freesocks` deploy registers the
- * panel (`fcp_register_remnawave_panel`), the role is the single ongoing writer
+ * backend (`fcp_register_remnawave_panel`), the role is the single ongoing writer
  * via the idempotent `PUT …/backend-servers/by-slug/{slug}` upsert. The two do
  * not fight: this seed only inserts when the `remnawave-primary` slug is ABSENT,
  * and the role's upsert is keep-secret-on-blank, so a converge that omits the
@@ -267,6 +271,20 @@ export const seedConnectionModes = internalMutation({
       ctx.db.query('connectionModeFamilies').first(),
       ctx.db.query('connectionModes').first(),
     ]);
+    const insertMode = async (m: (typeof DEFAULT_CONNECTION_MODES)[number]) => {
+      await ctx.db.insert('connectionModes', {
+        slug: m.slug,
+        familySlug: m.familySlug,
+        deliveryStyle: m.deliveryStyle,
+        enabled: m.enabled,
+        isFamilyDefault: m.isFamilyDefault,
+        isCensorshipRecommended: m.isCensorshipRecommended,
+        backends: [...m.backends],
+        order: m.order,
+        updatedAt: now,
+      });
+      modesInserted++;
+    };
     if (!famAny && !modeAny) {
       for (const f of DEFAULT_CONNECTION_MODE_FAMILIES) {
         await ctx.db.insert('connectionModeFamilies', {
@@ -278,21 +296,26 @@ export const seedConnectionModes = internalMutation({
         });
         familiesInserted++;
       }
-      for (const m of DEFAULT_CONNECTION_MODES) {
-        await ctx.db.insert('connectionModes', {
-          slug: m.slug,
-          familySlug: m.familySlug,
-          deliveryStyle: m.deliveryStyle,
-          enabled: m.enabled,
-          isFamilyDefault: m.isFamilyDefault,
-          isCensorshipRecommended: m.isCensorshipRecommended,
-          backends: [...m.backends],
-          order: m.order,
-          updatedAt: now,
-        });
-        modesInserted++;
+      for (const m of DEFAULT_CONNECTION_MODES) await insertMode(m);
+    } else {
+      // A built-in ADDED since this deployment was seeded is inserted once,
+      // by version: a mode an admin removed after that version stays removed.
+      const versionRow = await ctx.db
+        .query('appSettings')
+        .withIndex('by_key', (q) => q.eq('key', BUILT_IN_MODES_VERSION_KEY))
+        .unique();
+      const seen = versionRow ? Number(JSON.parse(versionRow.value)) || 0 : 1;
+      if (seen < BUILT_IN_MODES_VERSION) {
+        const present = new Set(
+          (await ctx.db.query('connectionModes').collect()).map((m) => m.slug),
+        );
+        // Only the built-ins ADDED after what this deployment has seen: one it
+        // was seeded with and an admin then deleted stays deleted.
+        for (const m of DEFAULT_CONNECTION_MODES)
+          if ((m.since ?? 1) > seen && !present.has(m.slug)) await insertMode(m);
       }
     }
+    await upsertSettingRow(ctx, BUILT_IN_MODES_VERSION_KEY, JSON.stringify(BUILT_IN_MODES_VERSION));
     return { familiesInserted, modesInserted };
   },
 });
@@ -311,7 +334,7 @@ const LEGACY_MODE_ID_SUCCESSORS: Readonly<Record<string, string>> = {
  *   - `connectionMode.<id>.*` copy/enabled overrides — the DEFAULT POINTER
  *     `connectionMode.default` is KEPT (still the live default-mode store),
  *   - `connectionModeFamily.*` family overrides,
- *   - `remnawave.modePlacement.*` squad pools (now `modePlacements` rows).
+ *   - `remnawave.modePlacement.*` mode group pools (now `modePlacements` rows).
  * It also re-keys any censorship-matrix cells still stored under a pre-rename
  * mode id (belt and braces for a deployment that ran an EARLY build of the
  * migration release, before its seed learned the matrix rewrite).
@@ -320,7 +343,7 @@ const LEGACY_MODE_ID_SUCCESSORS: Readonly<Record<string, string>> = {
  * (this deployment jumped straight to post-shim code); deploy the 2026-07-28
  * release first:
  *   1. refuses while any user still holds a pre-rename mode id;
- *   2. refuses while a non-empty appSettings squad pool has NO modePlacements
+ *   2. refuses while a non-empty appSettings mode group pool has NO modePlacements
  *      row for its (successor) slug even though that mode is still in the
  *      catalog — deleting it would destroy the only copy of the pool.
  * Idempotent: a re-run deletes nothing and returns 0.
@@ -351,7 +374,7 @@ export const cleanupLegacyModeSettings = internalMutation({
     // resolves against, so a pool for a default slug is still load-bearing.
     const catalogSlugs = new Set((await resolveModeCatalog(ctx.db)).modes.map((m) => m.id));
 
-    // Guard 2: verify every still-relevant squad pool was actually absorbed
+    // Guard 2: verify every still-relevant mode group pool was actually absorbed
     // into `modePlacements` before deleting its appSettings copy. A pool for a
     // mode the admin has since DELETED from the catalog is dead either way and
     // does not block; an emptied/absent pool has nothing to lose.
@@ -545,7 +568,7 @@ export const seedCutover = internalAction({
 
 /**
  * DEV ONLY: the starting state for walking the edges setup flow locally with
- * the fake edge provider (lib/edges/providers/fake.ts): one panel row the mock
+ * the fake edge provider (lib/edges/providers/fake.ts): one backend row the mock
  * backend answers for, and one TESTED-but-unqualified account per layer (the
  * fake shadows `upcloud` for L4 and `cloudflare` for L7), so the flow exercised
  * is the bootstrap from zero qualified accounts. Refuses outside the double gate
@@ -567,7 +590,7 @@ export const seedDevEdges = internalMutation({
     if (!panel) {
       const id = await ctx.db.insert('backendServers', {
         backend: 'remnawave',
-        name: 'Dev panel (mock)',
+        name: 'Dev backend (mock)',
         slug: 'dev-panel',
         config: { type: 'remnawave', baseUrl: 'https://panel.example', apiToken: 'dev' },
         isActive: true,

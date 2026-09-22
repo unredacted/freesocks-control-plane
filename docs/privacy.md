@@ -9,7 +9,7 @@ accidentally regress it).
 
 > Scope: the **at-rest / logging** posture across the whole chain — the control
 > plane (§1–4) AND the proxy data plane (§5). The data plane necessarily _carries_
-> user traffic; §5 is the required node/panel config that stops it from _logging or
+> user traffic; §5 is the required node/backend config that stops it from _logging or
 > storing_ the client IP. The confidentiality/availability trade-offs of the
 > transport itself live in
 > [`threat-model-cdn-blinding.md`](threat-model-cdn-blinding.md).
@@ -50,15 +50,15 @@ accidentally regress it).
   (`subscriptions.sniRegion`): they chose to say it, it is one of a short curated list, they can
   set it back to Automatic (which removes it), it follows them to a re-issued key, and it is sent
   to no analytics or telemetry.
-- **Device identification (HWID) is opt-in and panel-side.** When the admin
+- **Device identification (HWID) is opt-in and backend-side.** When the admin
   enables device-limit enforcement, a proxy app that sends `x-hwid` gets that
-  device id forwarded to the Remnawave panel, which keeps its own device rows;
+  device id forwarded to the Remnawave backend, which keeps its own device rows;
   members can see and revoke those devices from the account page. When
   enforcement is off (the default), no HWID is requested or stored anywhere.
 - The FCP-fronted subscription route keeps a **short-lived per-user-agent
   content cache** on the subscription row, so proxy apps with different app
   signatures get the right config format without every app re-hitting the
-  panel. It stores the app's User-Agent string next to the cached body,
+  backend. It stores the app's User-Agent string next to the cached body,
   bounded to a few entries, and it is deleted with the subscription row — it
   is never exported to the audit log or any other table.
 - **Public fleet telemetry is deliberately coarse.** The public `/api/v1/status`
@@ -116,7 +116,7 @@ If a future Convex version renames that log target, the request lines will
 reappear; fall back to `RUST_LOG=warn` (loses info-level operational detail but
 guarantees no request lines).
 
-## 5. Proxy data plane (Remnawave panel + Xray nodes)
+## 5. Proxy data plane (Remnawave backend + Xray nodes)
 
 The nodes carry the actual user traffic, so this is where a client's source IP is
 most exposed. This posture lives in the **Remnawave Config Profile** (pushed
@@ -126,10 +126,10 @@ privacy guarantee, not optional.
 FCP can now **enforce the config-profile half itself**: Admin → Remnawave has a
 no-log card that dry-runs a compliance check (`GET
 /api/v1/admin/remnawave/logging-status`) and applies exactly the `log` + `policy`
-settings below to every profile via the panel API (`POST
+settings below to every profile via the backend API (`POST
 /api/v1/admin/remnawave/harden-logging`; safe GET→merge→PATCH, refuses a profile
-with no inbounds, key-order-independent check). The node-container logging driver
-and the inbound/Reality settings remain Ansible-only. See `docs/backends.md`
+with no transports, key-order-independent check). The node-container logging driver
+and the transport/Reality settings remain Ansible-only. See `docs/backends.md`
 §"Xray logging privacy harden".
 
 - **Xray logging OFF.** The Xray access log records `from <client-ip> …` for every
@@ -151,39 +151,39 @@ and the inbound/Reality settings remain Ansible-only. See `docs/backends.md`
   "policy": { "levels": { "0": { "statsUserOnline": false } } }
   ```
 
-  Trade-off: the panel then shows no online-user counts / drop-connection, and
+  Trade-off: the backend then shows no online-user counts / drop-connection, and
   FCP's node-placement loses its `usersOnline` signal (it degrades to
   declaration-order — keys still issue).
 
 - **Node host retains nothing.** With `access:"none"` Xray emits no connection
   lines for `docker logs` / journald to capture; as belt-and-suspenders, set the
   node container's logging driver to `none`.
-- **Panel logging OFF (defaults).** Keep `IS_HTTP_LOGGING_ENABLED=false` +
-  `ENABLE_DEBUG_LOGS=false`. The panel stores no client IP for FCP's flows — the
+- **Backend logging OFF (defaults).** Keep `IS_HTTP_LOGGING_ENABLED=false` +
+  `ENABLE_DEBUG_LOGS=false`. The backend stores no client IP for FCP's flows — the
   `requestIp` it records on an HWID device row is FCP's egress IP (FCP fetches the
   subscription server-side), and FCP strips even that at the Zod boundary
   (`convex/lib/backends/remnawave.ts`).
 - **Verify (live):** on a node `docker logs <xray>` shows no connection/IP lines;
-  the panel "IP Management" / online view is empty; a client still connects.
+  the backend "IP Management" / online view is empty; a client still connects.
 
-## 5b. Edges (relays behind replaceable fronts)
+## 5b. Edges (origins behind replaceable fronts)
 
 - **Edge-required delivery never leaks an origin.** A subscription whose node or backend
-  server is covered by a relay is served a rendered body (edge addresses only) or a 503,
+  server is covered by an origin is served a rendered body (edge addresses only) or a 503,
   never the origin body; every outgoing entry is checked against the origin address; the
   account view and the issuance responses hand out only the fronted token URL; stored S3
   mirrors are re-rendered or replaced by an unavailable stub. `docs/edges.md` § "Rendering".
 - **No member data in the edges area.** Probes measure FCP's own addresses; report
   attribution uses a peppered per-member dedupe mark and the member's own render snapshot
-  (`subscriptions.lastRender`: epoch + edge ids, no addresses); audit payloads carry relay
+  (`subscriptions.lastRender`: epoch + edge ids, no addresses); audit payloads carry origin
   slugs, listener keys and codes, never addresses, hostnames or provider account names.
 
-## 6. Analytics (optional self-hosted Umami relay)
+## 6. Analytics (optional self-hosted Umami origin)
 
 FCP can report **anonymous pageview counts** to an operator-run
 [Umami](https://umami.is) instance. It ships **off** and is configured entirely
 in Admin → Settings (the `analytics.*` appSettings namespace). The design is a
-**server-side relay**, not the stock Umami integration:
+**server-side origin**, not the stock Umami integration:
 
 - **No Umami script is ever loaded** (the zero-third-party-scripts posture
   holds). A ~40-line bundled beacon (`src/client/lib/analytics.ts`) POSTs to
@@ -205,7 +205,7 @@ in Admin → Settings (the `analytics.*` appSettings namespace). The design is a
 - **The beacon is anonymous by construction.** It is a raw `fetch` with
   `credentials: 'omit'` — never `apiClient` (which would attach a PoP
   signature binding the pageview to the member's session) and never
-  `navigator.sendBeacon` (which cannot drop cookies same-origin). The relay
+  `navigator.sendBeacon` (which cannot drop cookies same-origin). The origin
   route reads no cookie and resolves no member. The client's User-Agent is
   forwarded transiently (Umami drops UA-less events), CR/LF-stripped, and is
   never logged or audited.
@@ -227,7 +227,7 @@ in Admin → Settings (the `analytics.*` appSettings namespace). The design is a
   With forwarding on, `analytics.geoMode` picks the granularity: **`full`**
   (the default) sends `payload.ip` as above — Umami derives country, region,
   and city, and keeps real per-visitor uniqueness. **`coarse`** never sends the
-  IP at all: the relay copies the fronting Cloudflare edge's `cf-ipcountry` +
+  IP at all: the origin copies the fronting Cloudflare edge's `cf-ipcountry` +
   `cf-region-code` request headers onto the outbound Umami call (Umami reads
   provider geo headers when `payload.ip` is absent), and the city header is
   **never** sent — city is structurally absent from the operator's Umami, and
@@ -238,12 +238,12 @@ in Admin → Settings (the `analytics.*` appSettings namespace). The design is a
   itself behind Cloudflare with IP geolocation enabled will overwrite the
   relayed `cf-ipcountry` — disable geolocation on that zone. CF's non-country
   sentinels (`XX` unknown, `T1` Tor) are dropped rather than recorded. The
-  inbound geo headers are covered by the same Caddy gate as the IP header:
+  transport geo headers are covered by the same Caddy gate as the IP header:
   with `CADDY_TRUST_CF_HEADER` unset (the default) Caddy strips
   `CF-IPCountry`/`CF-Region-Code`/`CF-IPCity` before the backend, so a client
   can't spoof geo values into the operator's Umami on a deployment that isn't
   genuinely Cloudflare-fronted.
-- **The IP the relay forwards is operator-selectable — analytics-only trust.**
+- **The IP the origin forwards is operator-selectable — analytics-only trust.**
   By default it is the fail-closed `resolveClientIp` (the `CF_FRONTED` /
   `TRUSTED_PROXY_HOPS` env trust that also feeds rate limiting — right-anchored
   XFF hop counting handles CDN → tunnel → edge chains generically; tune the hop
@@ -251,7 +251,7 @@ in Admin → Settings (the `analytics.*` appSettings namespace). The design is a
   XFF doesn't survive, `analytics.ipHeader` names a **single-IP fronting-CDN
   header** to read instead (`cf-connecting-ip`, `fastly-client-ip`, or a custom
   name; `x-forwarded-for` is refused — that's what hop counting is for). This
-  trust is **deliberately scoped to the relay** and never feeds
+  trust is **deliberately scoped to the origin** and never feeds
   `resolveClientIp`, so an `admin:settings:write` token cannot widen the
   security-path IP trust; a header the chain doesn't actually set is
   client-spoofable, and the worst case is wrong geo in the operator's own
@@ -263,7 +263,7 @@ in Admin → Settings (the `analytics.*` appSettings namespace). The design is a
   `admin.analytics.change` stores booleans plus a truncated hash of the URL
   (`umamiUrlHash`), so a silent repoint of this exfiltration-capable endpoint
   is detectable without the host ever being persisted.
-- **Fail-soft + silent:** the relay answers 202 regardless of Umami's outcome,
+- **Fail-soft + silent:** the origin answers 202 regardless of Umami's outcome,
   bounds the outbound call to 1s, reads no response body, and logs nothing (a
   log line here would carry a UA/IP). A per-IP rate-limit policy
   (`telemetry.send`) caps the outbound amplification. Counts are therefore
@@ -292,7 +292,7 @@ one-click decline). What it does and does not do:
   userId, no subscriptionId, and no IP. They answer "what is failing, where,
   on which networks" — never "who". The per-user audit log records only the
   bounded reason enum, exactly as before. City-level geo exists **nowhere else
-  in the system** (the analytics relay deliberately never reads `cf-ipcity`);
+  in the system** (the analytics origin deliberately never reads `cf-ipcity`);
   here it exists only with the member's consent and the operator's opt-in.
 - **Operator gates (`diagnostics.*`, Admin → Telemetry):** a master switch,
   a per-field allowlist (country / city / ASN), and `cloudflareEnabled` —
@@ -308,11 +308,11 @@ one-click decline). What it does and does not do:
 
 ## 8. Edges: reachability probes and report attribution
 
-The relay-edge layer (`docs/edges.md`) adds two flows that touch third parties or
+The origin-edge layer (`docs/edges.md`) adds two flows that touch third parties or
 member reports. Neither adds member data anywhere.
 
 - **Reachability probes** ask measurement services (Globalping, check-host.net,
-  optionally RIPE Atlas) to open TCP connections to **FCP's own addresses** (edges, opted-in relay nodes, and
+  optionally RIPE Atlas) to open TCP connections to **FCP's own addresses** (edges, opted-in origin nodes, and
   operator-entered targets)
   from the configured countries, so the operator learns whether an edge is
   blocked where it matters. The request carries an operator-owned address and a
@@ -320,7 +320,7 @@ member reports. Neither adds member data anywhere.
   the deployment. Results (vantage country/ASN, reachable or not) are stored per
   edge. Probes are off by default (`edge.probe.enabled`); tokens for the
   services are write-only settings.
-- **Report attribution** labels a member's issue report with the relay origin
+- **Report attribution** labels a member's issue report with the origin
   behind their key (the node they were pinned to) and, only when they said which
   connection failed and that maps to exactly one edge, the edge. These are
   operator infrastructure labels on the same UNLINKED `issueReports` row; no

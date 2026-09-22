@@ -58,15 +58,17 @@ describe('seedConnectionModes: fresh deploy', () => {
   test('inserts the compiled defaults into empty tables', async () => {
     const t = convexTest(schema, modules);
     const out = await t.mutation(internal.seed.seedConnectionModes, {});
-    expect(out).toMatchObject({ familiesInserted: 2, modesInserted: 3 });
+    expect(out).toMatchObject({ familiesInserted: 2, modesInserted: 4 });
     const fams = await t.run((ctx) => ctx.db.query('connectionModeFamilies').collect());
     const modes = await t.run((ctx) => ctx.db.query('connectionModes').collect());
     expect(fams.map((f) => f.slug).sort()).toEqual(['freedom', 'privacy']);
     expect(modes.map((m) => m.slug).sort()).toEqual([
       'freedom-reality',
       'freedom-ws',
+      'freedom-xhttp',
       'privacy-reality',
     ]);
+    expect(modes.find((m) => m.slug === 'freedom-xhttp')!.enabled).toBe(false); // ships dark
     // Fresh rows carry NO admin copy (null → the SPA's i18n).
     expect(fams.every((f) => f.label === undefined)).toBe(true);
     expect(modes.find((m) => m.slug === 'freedom-reality')!.enabled).toBe(false); // ships dark
@@ -104,9 +106,39 @@ describe('seedConnectionModes: fresh deploy', () => {
     await t.mutation(internal.seed.seedConnectionModes, {});
     const modes = await t.run((ctx) => ctx.db.query('connectionModes').collect());
     // Not resurrected, not clobbered.
-    expect(modes.map((m) => m.slug).sort()).toEqual(['freedom-ws', 'privacy-reality']);
+    expect(modes.map((m) => m.slug).sort()).toEqual([
+      'freedom-ws',
+      'freedom-xhttp',
+      'privacy-reality',
+    ]);
     expect(modes.find((m) => m.slug === 'freedom-ws')!.label).toBe('Tunnel Mode');
     expect(modes.find((m) => m.slug === 'freedom-ws')!.enabled).toBe(false);
+  });
+
+  // A deployment seeded before a built-in existed gets that ONE built-in, and
+  // nothing it deleted on purpose from an earlier catalog comes back.
+  test('a version bump adds only the built-in it introduced', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.seedConnectionModes, {});
+    await t.mutation(internal.connectionModes.removeMode, { slug: 'freedom-reality' });
+    await t.mutation(internal.connectionModes.removeMode, { slug: 'freedom-xhttp' });
+    // Back to what the catalog looked like at version 1.
+    await t.run(async (ctx) => {
+      const row = await ctx.db
+        .query('appSettings')
+        .withIndex('by_key', (q) => q.eq('key', 'connectionModes.builtInsVersion'))
+        .unique();
+      await ctx.db.patch(row!._id, { value: JSON.stringify(1) });
+    });
+    await t.mutation(internal.seed.seedConnectionModes, {});
+    const modes = await t.run((ctx) => ctx.db.query('connectionModes').collect());
+    // freedom-xhttp arrived with version 2; freedom-reality was a version 1
+    // built-in the admin removed, and stays removed.
+    expect(modes.map((m) => m.slug).sort()).toEqual([
+      'freedom-ws',
+      'freedom-xhttp',
+      'privacy-reality',
+    ]);
   });
 });
 
@@ -317,7 +349,7 @@ describe('seedCutover integration', () => {
   test('one call seeds the catalog; a second deploy is zero work', async () => {
     const t = convexTest(schema, modules);
     const out = await t.action(internal.seed.seedCutover, {});
-    expect(out.modesInserted).toBe(3);
+    expect(out.modesInserted).toBe(4);
     expect(out.modeFamiliesInserted).toBe(2);
     // Second deploy: fully converged, zero work.
     const out2 = await t.action(internal.seed.seedCutover, {});

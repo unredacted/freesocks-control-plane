@@ -1,13 +1,13 @@
 <script lang="ts">
   /**
-   * Edit the server names and the target of one REALITY inbound: write, preview
-   * (what changes, which nodes restart, which relays feel it), then apply. The
+   * Edit the server names and the target of one REALITY transport: write, preview
+   * (what changes, which nodes restart, which origins feel it), then apply. The
    * apply is conditioned on the profile still being what the preview read.
    *
-   * A name listed on the panel is not yet a name a node accepts, so new names
+   * A name listed on the backend is not yet a name a node accepts, so new names
    * are NOT given to members by this edit (docs/servers.md).
    *
-   * Props: open (bindable), slug, profileUuid, inbound
+   * Props: open (bindable), slug, profileUuid, transport
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -17,7 +17,7 @@
   import { Label } from '@client/components/ui/label';
   import { applyProfilePatch, previewProfilePatch } from '@client/lib/serversApi';
   import type {
-    PanelInboundView,
+    TransportView,
     ProfilePatchOp,
     ProfilePatchPreview,
   } from '../../../../../shared/contracts/servers';
@@ -28,7 +28,7 @@
     open: boolean;
     slug: string;
     profileUuid: string;
-    inbound: PanelInboundView;
+    inbound: TransportView;
   }
   let { open = $bindable(false), slug, profileUuid, inbound }: Props = $props();
   const qc = useQueryClient();
@@ -57,12 +57,14 @@
   let needsTyped = $derived((preview?.restartsNodes.length ?? 0) > 1);
   let canApply = $derived(!!preview?.changed && (!needsTyped || typed.trim() === inbound.tag));
 
+  let unmanaged = $state<'hold' | 'acknowledge'>('hold');
+
   async function doPreview() {
     if (!dirty || busy) return;
     const ops: ProfilePatchOp[] = [];
-    if (namesChanged) ops.push({ op: 'setRealityServerNames', inboundTag: inbound.tag, names });
+    if (namesChanged) ops.push({ op: 'setRealityServerNames', transportTag: inbound.tag, names });
     if (targetChanged)
-      ops.push({ op: 'setRealityTarget', inboundTag: inbound.tag, target: target.trim() });
+      ops.push({ op: 'setRealityTarget', transportTag: inbound.tag, target: target.trim() });
     busy = true;
     try {
       preview = await previewProfilePatch(slug, profileUuid, ops);
@@ -78,7 +80,7 @@
     busy = true;
     try {
       const p = preview;
-      const op = await runWrite(qc, () => applyProfilePatch(slug, profileUuid, p));
+      const op = await runWrite(qc, () => applyProfilePatch(slug, profileUuid, p, unmanaged));
       if (op) open = false;
       else preview = null;
     } finally {
@@ -133,10 +135,10 @@
     {:else}
       <div class="space-y-3 text-sm" aria-live="polite">
         {#if !preview.changed}
-          <p>The panel already has exactly this. There is nothing to apply.</p>
+          <p>The backend already has exactly this. There is nothing to apply.</p>
         {:else}
           <ul class="space-y-2">
-            {#each preview.changes as c (c.inboundTag + c.field)}
+            {#each preview.changes as c (c.transportTag + c.field)}
               <li class="bg-muted/30 rounded-md border p-3">
                 {#if c.field === 'serverNames'}
                   {@const was = Array.isArray(c.before) ? c.before : []}
@@ -177,6 +179,22 @@
             <p class="text-muted-foreground">
               New names reach members only after a node has proven it accepts them.
             </p>
+          {/if}
+          {#if preview.restartsNodes.length > 0}
+            <div class="space-y-1.5">
+              <Label for={`${uid}-unmanaged`}>Nodes FCP does not manage that run this</Label>
+              <select
+                id={`${uid}-unmanaged`}
+                class="bg-background w-full rounded-md border px-3 py-2 text-sm"
+                bind:value={unmanaged}
+              >
+                <option value="hold">Hold them closed until I release them</option>
+                <option value="acknowledge">They change in place; I acknowledge that</option>
+              </select>
+              <p class="text-muted-foreground text-xs">
+                Enrolled nodes close on their own and come back once verified and approved again.
+              </p>
+            </div>
           {/if}
           {#if needsTyped}
             <div class="space-y-1.5">

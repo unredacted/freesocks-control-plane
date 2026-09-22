@@ -8,7 +8,7 @@ publication + reproducible rebuilder (`docs/oob-verification.md`) and the verifi
 (`verifier-extension/`, the active-CDN defense, published through the web store).
 
 > **Naming:** this feature is called **"HPKE"** everywhere: the SPA badge, verify
-> panel, member copy, code identifiers, env knobs, routes, and this doc. It was
+> backend, member copy, code identifiers, env knobs, routes, and this doc. It was
 > called "E2EE" until 2026-09-16, when the identifiers were renamed for accuracy
 > (see "What this is, stated honestly" below). The only place the old name
 > survives is the v1 wire constant `SUITE_ID` / `INFO_PREFIX` in
@@ -88,7 +88,7 @@ captured session cookie from being replayed. Call it **CDN-blinding for sensitiv
   because nothing on them is a crown-jewel secret): the passkey login ceremony and the passkey
   management routes (`/api/v1/account/passkey/*`, `GET /api/v1/account/passkeys`: challenges,
   attestations, credential ids), device revoke (`POST /api/v1/account/devices/revoke`: a hwid the
-  proxy client already reports to the panel over its own TLS), usage / node-status / referrals /
+  proxy client already reports to the backend over its own TLS), usage / node-status / referrals /
   codes reads, logout, and `DELETE /api/v1/mirror`. Sealing is confidentiality for account numbers,
   proxy config / URLs, bearer codes and infra credentials; it is not applied to identifiers or
   single-use ceremonies.
@@ -205,12 +205,12 @@ remove POP_REQUIRED` where the CLI is configured). Takes effect on the next requ
 - **Out-of-band trust + reproducible build.** A signed release + `.onion` mirror publish the manifest
   fingerprint (Ed25519 + ML-DSA-65) and the reproducible `dist-sha256`; CI builds twice and asserts
   identical output. The real active-CDN defense (a store-delivered verifier) is Phase 4. An in-app
-  **HPKE banner + "Verify connection" panel** surface the active status + the same fingerprints (plus a
+  **HPKE banner + "Verify connection" backend** surface the active status + the same fingerprints (plus a
   live manifest-attestation check) so users can read them off the running page and compare off-CDN — a
   convenience layer over this OOB trust root, never a substitute for it. The live check's verdict is
   split by which test failed: only a **signature failure or a revoked kid** (i.e. a swapped key) raises
   the loud bar, while "no live epoch published / the one served had expired" and "endpoint unreachable"
-  stay quiet panel detail, since all of those leave the client sealing to the pinned static key and a
+  stay quiet backend detail, since all of those leave the client sealing to the pinned static key and a
   CDN can already force that fallback by blocking the endpoint. See `docs/oob-verification.md`
   § "What the live attestation check reports".
 
@@ -298,7 +298,7 @@ remove POP_REQUIRED` where the CLI is configured). Takes effect on the next requ
   the dumb-client fallback; keep it dormant unless needed, and prefer a well-fronted primary endpoint.
 - **The FCP-fronted subscription URL (`GET /api/v1/sub/<token>`) is the first-party analogue of that
   mirror trade-off, on our OWN edge.** The **evade** delivery path now hands the client an FCP-origin
-  subscription URL (in place of the backend panel URL) so the proxy app fetches config from us — this
+  subscription URL (in place of the backend backend URL) so the proxy app fetches config from us — this
   hides the backend origin and gives us a cache/control point, but it also means the config transits
   the FCP edge in plaintext for that unauthenticated fetch (a dumb proxy client can't do the reveal
   leg — the same inherent limit as the content-fetch gap above). It does NOT regress the account-plane

@@ -1,7 +1,7 @@
 // @vitest-environment node
 /**
  * END-TO-END integration test: drives FCP's Remnawave provider against a REAL,
- * live Remnawave panel (docker-compose.remnawave-test.yml, pinned to the latest
+ * live Remnawave backend (docker-compose.remnawave-test.yml, pinned to the latest
  * release). This is the safety net the mocked unit suite can't be — it would have
  * caught the endpoint-path + response-shape drift we hit twice (the PATCH-with-
  * uuid-in-body update and the /api/hwid/devices/* paths), because here a wrong
@@ -28,7 +28,7 @@ import {
   type RemnawaveConfig,
 } from './remnawave';
 
-/** Poll `read` until it yields `want` (≤ ~5s), then assert — for eventually-consistent panel writes. */
+/** Poll `read` until it yields `want` (≤ ~5s), then assert — for eventually-consistent backend writes. */
 async function eventually<T>(read: () => Promise<T>, want: T): Promise<void> {
   let got: T = await read();
   for (let i = 0; i < 25 && got !== want; i++) {
@@ -42,7 +42,7 @@ const BASE_URL = process.env.REMNAWAVE_TEST_URL;
 const API_TOKEN = process.env.REMNAWAVE_TEST_TOKEN;
 const GIB = 1024 ** 3;
 
-describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave provider — real panel (integration)', () => {
+describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave provider — real backend (integration)', () => {
   const cfg: RemnawaveConfig = { baseUrl: BASE_URL!, apiToken: API_TOKEN!, timeoutMs: 15_000 };
   // Unique per run; Remnawave usernames are [a-zA-Z0-9_-], 3-36 chars.
   const username = `fcp_it_${Date.now()}`;
@@ -60,9 +60,9 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave provider — real panel (int
       expireAt: null, // → far-future sentinel; FCP owns lifecycle
       tag: 'member',
     });
-    // A 2.x panel hands back the user uuid, a 3.x panel the numeric id — the
+    // A 2.x backend hands back the user uuid, a 3.x backend the numeric id — the
     // provider speaks both (docs/backends.md); the rest of this test is
-    // shape-agnostic on purpose so it runs against either panel generation.
+    // shape-agnostic on purpose so it runs against either backend generation.
     expect(issued.backendUserId).toMatch(/^(?:[0-9a-f-]{36}|\d+)$/i);
     expect(issued.backendShortId).toBeTruthy();
     expect(issued.subscriptionUrl).toMatch(/^https?:\/\//);
@@ -93,7 +93,7 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave provider — real panel (int
     expect(typeof fleet.onlineNow).toBe('number');
     expect(typeof fleet.nodesTotal).toBe('number');
     expect(fleet.panelVersion).toBeTruthy();
-    // The id shape the panel handed out must agree with the version it reports:
+    // The id shape the backend handed out must agree with the version it reports:
     // this is the invariant the 2.x→3.x key migration relies on.
     const major = remnawaveMajorVersion(fleet.panelVersion);
     expect(major).not.toBeNull();

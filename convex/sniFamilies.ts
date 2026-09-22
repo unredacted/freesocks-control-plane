@@ -4,8 +4,8 @@
  *
  * A family is a TARGET plus the names that target genuinely serves. A name may
  * be used only once it qualifies against the target (sniQualifyOps.ts). Binding
- * a family to a panel inbound makes it the one authoritative allowlist for that
- * inbound; what reaches members is decided later, per node, by proof.
+ * a family to a backend transport makes it the one authoritative allowlist for that
+ * transport; what reaches members is decided later, per node, by proof.
  *
  * Audit payloads carry slugs and COUNTS only, never a hostname.
  */
@@ -256,7 +256,7 @@ export const create = internalMutation({
 
 /**
  * Label, the enabled switch and the HTTP/2 requirement. The TARGET is
- * immutable: every name was qualified against it, and an inbound's allowlist is
+ * immutable: every name was qualified against it, and a transport's allowlist is
  * only safe for the target it was built for. A different target is a new family.
  */
 export const update = internalMutation({
@@ -294,7 +294,7 @@ export const remove = internalMutation({
       .withIndex('by_family', (q) => q.eq('familyId', f._id))
       .first();
     if (bound)
-      refuse('edge.sni.family_in_use', 'An inbound still uses this family. Unbind it first');
+      refuse('edge.sni.family_in_use', 'A transport still uses this family. Unbind it first');
     const names = await namesOf(ctx, f._id);
     // A burned name stays known (it must never be offered again, by any family).
     for (const n of names) if (n.status !== 'burned') await ctx.db.delete(n._id);
@@ -387,7 +387,7 @@ export const setNames = internalMutation({
       else continue;
       count++;
     }
-    // A name out of use here leaves the relays too. A burn may take a relay's
+    // A name out of use here leaves the origins too. A burn may take an origin's
     // last name (a name known blocked is worse than none); a retire may not.
     const left =
       a.action === 'burn' || a.action === 'retire'
@@ -427,9 +427,9 @@ export async function countryMarks(ctx: { db: QueryCtx['db'] }, name: string) {
 /**
  * An operator's judgement: these names work / are blocked / are unjudged in one
  * curated country. A name that is fine elsewhere can be blocked in one place, so
- * "usable" is per country. The marks are copied onto every relay listener that
+ * "usable" is per country. The marks are copied onto every origin listener that
  * carries the name (a render reads them from there, with no extra reads), and
- * those relays' renders move on at once.
+ * those origins' renders move on at once.
  */
 export const setCountry = internalMutation({
   args: {
@@ -472,7 +472,7 @@ export const setCountry = internalMutation({
     const touched = new Set(wanted);
     const listeners = await ctx.db.query('relayListeners').collect();
     const relays = new Set<Id<'relays'>>();
-    // Listeners whose panel Host name (`hostSniOf`) moves with the marks.
+    // Listeners whose backend Host name (`hostSniOf`) moves with the marks.
     const hostMoved = new Map<Id<'relayListeners'>, Id<'relays'>>();
     for (const l of listeners) {
       if (l.retired || !(l.tlsNames ?? []).some((n) => touched.has(n.name))) continue;
@@ -499,7 +499,7 @@ export const setCountry = internalMutation({
       if (!relay) continue;
       await bumpEpochAndRefresh(ctx, relay);
       // The Host follows its name (as it does on a retire): a name just judged
-      // blocked must not stay on the panel Host, which is what a member who
+      // blocked must not stay on the backend Host, which is what a member who
       // copies the raw config gets.
       if (relay.hostMode !== 'fcp') continue;
       for (const [listenerId, rid] of hostMoved)
@@ -581,8 +581,8 @@ export const recordQualification = internalMutation({
       : fails >= cfg.suspendAfterFails
         ? 'suspended'
         : n.status;
-    // The target stopped serving it: it leaves the relays, but never as a
-    // relay's last name (a doubtful name still serves members; none serves nobody).
+    // The target stopped serving it: it leaves the origins, but never as a
+    // origin's last name (a doubtful name still serves members; none serves nobody).
     if (status === 'suspended' && n.status !== 'suspended')
       await retireFamilyNames(ctx, [n.name], { keepLast: true, by: 'admin' });
     await ctx.db.patch(a.id, {
@@ -601,10 +601,19 @@ export const recordQualification = internalMutation({
   },
 });
 
-// --- binding a family to an inbound ---------------------------------------------------------------------------
+// --- binding a family to a transport ---------------------------------------------------------------------------
 
 export const bind = internalMutation({
-  args: { slug: v.string(), backendSlug: v.string(), inboundTag: v.string(), ...actor },
+  args: {
+    slug: v.string(),
+    backendSlug: v.string(),
+    inboundTag: v.string(),
+    // The exact transport, where the caller knows it (setup does): a tag is only
+    // unique per profile, so a second profile reusing a conventional tag such
+    // as VLESS_REALITY must not make an unambiguous binding fail.
+    inboundUuid: v.optional(v.string()),
+    ...actor,
+  },
   handler: async (ctx, a) => {
     const cfg = await resolveSniConfig(ctx.db);
     if (!cfg.enabled) refuse('edge.sni.disabled', 'Server-name families are switched off');
@@ -620,21 +629,23 @@ export const bind = internalMutation({
       .withIndex('by_server', (q) => q.eq('backendServerId', server._id))
       .collect();
     const hits = profiles.flatMap((p) =>
-      p.inbounds.filter((i) => i.tag === a.inboundTag).map((i) => ({ p, i })),
+      p.inbounds
+        .filter((i) => (a.inboundUuid ? i.inboundUuid === a.inboundUuid : i.tag === a.inboundTag))
+        .map((i) => ({ p, i })),
     );
     if (hits.length !== 1)
       return refuse(
         'servers.unknown_inbound',
-        'That inbound is not on this panel. Refresh Servers',
+        'That transport is not on this backend. Refresh Servers',
       );
     const { p, i } = hits[0];
     if (i.security !== 'reality' || !i.reality)
-      return refuse('servers.not_reality', 'Only a REALITY inbound takes a server-name family');
+      return refuse('servers.not_reality', 'Only a REALITY transport takes a server-name family');
     // An allowlist is only safe for the target it was qualified against.
     if (!sameTarget(parseRealityTarget(i.reality.target), f.target))
       refuse(
         'edge.sni.target_mismatch',
-        'The inbound forwards to a different target than this family was checked against',
+        'The transport forwards to a different target than this family was checked against',
       );
     const taken = await ctx.db
       .query('sniInboundBindings')
@@ -642,8 +653,8 @@ export const bind = internalMutation({
         q.eq('backendServerId', server._id).eq('inboundUuid', i.inboundUuid),
       )
       .unique();
-    if (taken) refuse('conflict', 'This inbound already has a family');
-    // Everything the inbound lists today has been accepted before: none of it
+    if (taken) refuse('conflict', 'This transport already has a family');
+    // Everything the transport lists today has been accepted before: none of it
     // can ever serve as a witness that a NEW generation was applied.
     for (const name of i.reality.serverNames) {
       const norm = normalizeName(name);
@@ -681,7 +692,7 @@ export const bind = internalMutation({
   },
 });
 
-/** Unbind: the names stay on the panel and on the relays; only the management link goes. */
+/** Unbind: the names stay on the backend and on the origins; only the management link goes. */
 export const unbind = internalMutation({
   args: { bindingId: v.id('sniInboundBindings'), ...actor },
   handler: async (ctx, a) => {

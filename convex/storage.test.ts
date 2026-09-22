@@ -151,7 +151,7 @@ describe('mirror refresh records the pinned node', () => {
     vi.unstubAllGlobals();
   });
 
-  /** A mirrored sub whose stored hash may or may not match what the panel serves. */
+  /** A mirrored sub whose stored hash may or may not match what the backend serves. */
   async function seedMirroredSub(t: ReturnType<typeof convexTest>, rawContentHash: string) {
     return t.run(async (ctx) => {
       const tierId = await ctx.db.insert('tiers', {
@@ -268,7 +268,7 @@ describe('mirror refresh records the pinned node', () => {
     await t.run(async (ctx) => {
       const sub = (await ctx.db.get(subId))!;
       expect(sub.lastDeliveredContentAt).toBeGreaterThanOrEqual(before);
-      // No fronted delivery happened, and no relay origin renders this node.
+      // No fronted delivery happened, and no origin origin renders this node.
       expect(sub.lastDeliveredAt).toBeUndefined();
       expect(sub.lastRenderedEpoch).toBeUndefined();
     });
@@ -372,7 +372,7 @@ describe('provisionMirror honours the pending node switch', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: string | URL) => {
-        // The S3 PUT goes through the AWS SDK, not fetch; only the panel read
+        // The S3 PUT goes through the AWS SDK, not fetch; only the backend read
         // lands here.
         uploaded.push(String(input));
         return new Response(RAW, { status: 200 });
@@ -381,7 +381,7 @@ describe('provisionMirror honours the pending node switch', () => {
 
     const res = await t.action(internal.storage.provisionMirror, { userId, countryCode: null });
 
-    // The panel read happened (so the fetch leg ran with the exclusion applied)
+    // The backend read happened (so the fetch leg ran with the exclusion applied)
     // and the upload then failed against the unroutable S3 endpoint.
     expect(uploaded.some((u) => u.includes('/sub/short1'))).toBe(true);
     expect(res.status).toBe('error');

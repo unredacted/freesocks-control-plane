@@ -90,7 +90,7 @@ export const reportIssue = internalMutation({
     detectedCity: v.optional(v.union(v.string(), v.null())),
     detectedAsn: v.optional(v.union(v.number(), v.null())),
     requestId: v.optional(v.string()),
-    // Relay attribution (docs/edges.md): which connection the member said
+    // Origin attribution (docs/edges.md): which connection the member said
     // failed, and the peppered per-member-per-window dedupe key (computed in
     // the HTTP action; never the member id).
     connectionChoice: v.optional(v.union(v.string(), v.null())),

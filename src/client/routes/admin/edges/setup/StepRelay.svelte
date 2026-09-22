@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * Step 4, relay and listener. Two paths side by side: register here, or let
+   * Step 4, origin and listener. Two paths side by side: register here, or let
    * the node role register (copyable role variables, a link to mint its token).
    *
    * Props: StepBodyProps + draft (StoredDraft | null) + onRelayCreated(slug) + onWatchSlug(slug)
@@ -63,7 +63,7 @@
     >
       <p class="font-semibold">Members on this node are unavailable right now.</p>
       <p>
-        This relay requires an edge, so members whose key lives on it receive a temporary failure
+        This origin requires an edge, so members whose key lives on it receive a temporary failure
         instead of a subscription until an edge is published and rendering is on. Finish the steps
         below without a long pause.
       </p>
@@ -76,13 +76,13 @@
       <CardHeader>
         <CardTitle class="text-base">Register here</CardTitle>
         <CardDescription>
-          Describe the relay and its listeners in this console. Good for a manual origin or a
+          Describe the origin and its listeners in this console. Good for a manual origin or a
           backend server, and for a node the role does not manage.
         </CardDescription>
       </CardHeader>
       <CardContent class="space-y-3">
         {#if !relay}
-          <Button onclick={() => (newRelayOpen = true)}>Create the relay</Button>
+          <Button onclick={() => (newRelayOpen = true)}>Create the origin</Button>
           {#if draft && (draft.origin || draft.listeners.length > 0)}
             <p class="text-muted-foreground text-xs">
               The form opens with the origin and the listeners you described in step 1.
@@ -138,7 +138,7 @@
       <CardHeader>
         <CardTitle class="text-base">Waiting for the node role</CardTitle>
         <CardDescription>
-          The node role registers the relay and its listeners itself, with one idempotent call,
+          The node role registers the origin and its listeners itself, with one idempotent call,
           every time it runs. Nothing to type here.
         </CardDescription>
       </CardHeader>
@@ -153,7 +153,7 @@
         {:else}
           <p class="text-sm">
             Pick the slug the role will register under, give the role a token, run it, then watch
-            for the relay here.
+            for the origin here.
           </p>
           <RoleVarsCard roleVars={null} backendServerId={status.context.backendServerId ?? null} />
           <form

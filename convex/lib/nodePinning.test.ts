@@ -33,7 +33,7 @@ describe('nodeNameFromLink', () => {
     expect(nodeNameFromLink('vless://u@x.org:443')).toBeNull();
     expect(nodeNameFromLink('vless://u@x.org:443#plainname')).toBeNull();
   });
-  test('relay template remarks (<node>-relay-<slotKey>) pin with their node', () => {
+  test('origin template remarks (<node>-origin-<slotKey>) pin with their node', () => {
     expect(nodeNameFromLink(`vless://u@x.org:443?security=reality#${NODE_B}-relay-a`)).toBe(NODE_B);
     expect(nodeNameFromLink(`vless://u@x.org:443#${NODE_B}-relay-gc1`)).toBe(NODE_B);
     expect(nodeNameFromTag(`${NODE_B}-relay-a`)).toBe(NODE_B);
@@ -114,7 +114,7 @@ describe('pinSubscriptionToNode', () => {
     expect(keptNodes).toHaveLength(1);
   });
 
-  test('single-node content passes through verbatim AND reports the node (the one-squad-per-node topology)', () => {
+  test('single-node content passes through verbatim AND reports the node (the one-mode group-per-node topology)', () => {
     const body = [wsLink(NODE_A, 'a1.example.org'), wsLink(NODE_A, 'a2.example.org')].join('\n');
     const res = pinSubscriptionToNode(body, 'k');
     expect(res.content).toBe(body);

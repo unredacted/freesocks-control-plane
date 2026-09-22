@@ -33,7 +33,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-/** No test here may reach a provider or the panel. */
+/** No test here may reach a provider or the backend. */
 function forbidNetwork() {
   vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
     throw new Error(`unexpected fetch ${String(input)}`);
@@ -179,7 +179,7 @@ describe('coverage: capacity follows the deployed listeners', () => {
     expect((await relayOf(t, eight.id)).desiredPublished).toBe(8);
   });
 
-  test('a new relay carries no standbyPerListener override: the global default applies until the relay sets its own', async () => {
+  test('a new origin carries no standbyPerListener override: the global default applies until the origin sets its own', async () => {
     const { t, relayId, listenerIds } = await world({ listeners: 'a', hostMode: 'operator' });
     expect((await relayOf(t, relayId)).standbyPerListener).toBeUndefined();
     await t.run((ctx) => upsertSettingRow(ctx, 'edge.enabled', 'true'));
@@ -187,7 +187,7 @@ describe('coverage: capacity follows the deployed listeners', () => {
     await t.mutation(internal.relays.update, { id: relayId, desiredPublished: 1 });
     await adoptL4Edge(t, relayId, listenerIds.a, { ipv4: '198.51.100.1', publish: true });
     expect((await run(t)).started).toBe(0);
-    // A later change of the GLOBAL applies to the relay (no stale copy on the row).
+    // A later change of the GLOBAL applies to the origin (no stale copy on the row).
     await t.run((ctx) => upsertSettingRow(ctx, 'edge.standbyPerListener', '1'));
     expect((await run(t)).started).toBe(1);
     expect((await relayOf(t, relayId)).standbyPerListener).toBeUndefined();
@@ -345,7 +345,7 @@ describe('coverage: listener-aware reconcile upkeep', () => {
     ).rejects.toThrow(/0\.\.2/);
   });
 
-  test('a setupOwned relay is skipped by upkeep even with a standby and the switches on', async () => {
+  test('a setupOwned origin is skipped by upkeep even with a standby and the switches on', async () => {
     forbidNetwork();
     const t = convexTest(schema, modules);
     const serverId = await insertPanelServer(t);
@@ -430,9 +430,9 @@ describe('deferred binding and setup ownership', () => {
     expect((await audits(t, 'relay.create'))[0]?.payload).toMatchObject({ bindingDeferred: true });
   });
 
-  test('by-slug registration binds immediately, and a re-registration of a deferred relay keeps it deferred', async () => {
+  test('by-slug registration binds immediately, and a re-registration of a deferred origin keeps it deferred', async () => {
     const { t, serverId, relayId, policy } = await guided();
-    // A by-slug re-registration of the guided relay (identical origin; the CMS
+    // A by-slug re-registration of the guided origin (identical origin; the CMS
     // path, since the listener is admin-owned): still no binding.
     await t.mutation(internal.relays.registerBySlug, {
       slug: 'guided',
@@ -517,7 +517,7 @@ describe('deferred binding and setup ownership', () => {
 });
 
 describe('the automation switch', () => {
-  test('sets exactly the listed keys, touches no relay row, and audits the boolean', async () => {
+  test('sets exactly the listed keys, touches no origin row, and audits the boolean', async () => {
     const { t, relayId } = await world({ listeners: 'a' });
     const setting = (key: string) =>
       t
@@ -556,7 +556,7 @@ describe('the automation switch', () => {
       render: { enabled: false },
       l7: { autoSelect: false },
     });
-    // No relay row changed (its own autoRotate keeps its meaning under the gate).
+    // No origin row changed (its own autoRotate keeps its meaning under the gate).
     expect(await relayOf(t, relayId)).toEqual(before);
     expect((await audits(t, 'edge.automation.set'))[0]?.payload).toEqual({ on: true });
     // Off: the four switches go off; the spare count is left as it was.

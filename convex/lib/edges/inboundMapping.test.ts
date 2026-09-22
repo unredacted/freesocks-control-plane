@@ -1,5 +1,5 @@
 /**
- * Golden tests for inbound discovery: every supported combination maps to the
+ * Golden tests for transport discovery: every supported combination maps to the
  * by-slug listener shape, every unsupported reason is named, the listener key
  * algorithm is deterministic and collision-resistant, and nothing secret can
  * cross the mapper (its input is already the allowlisted projection; the
@@ -9,11 +9,11 @@
  */
 import { describe, expect, test } from 'vitest';
 import type { Id } from '../../_generated/dataModel';
-import type { PanelInbound } from '../backends/types';
+import type { BackendTransport } from '../backends/types';
 import { isSlotKey } from './hosts';
 import {
   listenerKeyForTag,
-  mapInboundsToListeners,
+  mapTransportsToListeners,
   parseRealityTarget,
   type PanelNodeOrigin,
 } from './inboundMapping';
@@ -26,7 +26,7 @@ const ORIGIN: PanelNodeOrigin = {
 const PROFILE = '0f1e2d3c-4b5a-4968-8776-655443322110';
 const INBOUND = '11111111-2222-4333-8444-555555555555';
 
-function inbound(over: Partial<PanelInbound> & { tag: string }): PanelInbound {
+function inbound(over: Partial<BackendTransport> & { tag: string }): BackendTransport {
   return {
     configProfileUuid: PROFILE,
     configProfileInboundUuid: INBOUND,
@@ -40,8 +40,8 @@ function inbound(over: Partial<PanelInbound> & { tag: string }): PanelInbound {
   };
 }
 
-async function map(inbounds: PanelInbound[], existingKeys: string[] = []) {
-  return mapInboundsToListeners(inbounds, { existingKeys, origin: ORIGIN });
+async function map(inbounds: BackendTransport[], existingKeys: string[] = []) {
+  return mapTransportsToListeners(inbounds, { existingKeys, origin: ORIGIN });
 }
 
 describe('listenerKeyForTag', () => {
@@ -96,7 +96,7 @@ describe('parseRealityTarget', () => {
   });
 });
 
-describe('mapInboundsToListeners: supported combinations', () => {
+describe('mapTransportsToListeners: supported combinations', () => {
   test('vless/raw/reality -> realityTarget + tlsNames from serverNames', async () => {
     const { candidates, unsupported } = await map([
       inbound({
@@ -274,7 +274,7 @@ describe('mapInboundsToListeners: supported combinations', () => {
   });
 });
 
-describe('mapInboundsToListeners: unsupported reasons', () => {
+describe('mapTransportsToListeners: unsupported reasons', () => {
   test('one row per reason', async () => {
     const { candidates, unsupported } = await map([
       inbound({ tag: 'OFF', active: false }),
@@ -310,7 +310,7 @@ describe('mapInboundsToListeners: unsupported reasons', () => {
     ]);
   });
 
-  test('an XHTTP inbound behind a certificate maps to a listener with its path, host and mode', async () => {
+  test('an XHTTP transport behind a certificate maps to a listener with its path, host and mode', async () => {
     const { candidates, unsupported } = await map([
       inbound({
         tag: 'VLESS_XHTTP',
@@ -342,7 +342,7 @@ describe('mapInboundsToListeners: unsupported reasons', () => {
     expect(candidates[0].layers.layers).toEqual(['l4']);
   });
 
-  test('a loopback-bound inbound is reported as such, with the address it listens on', async () => {
+  test('a loopback-bound transport is reported as such, with the address it listens on', async () => {
     const { candidates, unsupported } = await map([
       inbound({ tag: 'VLESS_WS_CDN', network: 'ws', security: 'none', listen: '127.0.0.1' }),
       inbound({ tag: 'V6', listen: '[::1]' }),
@@ -356,7 +356,7 @@ describe('mapInboundsToListeners: unsupported reasons', () => {
     expect(candidates.some((c) => c.sourceTag === 'PUBLIC')).toBe(true);
   });
 
-  test('inactive wins over every other reason (nothing to fix on a served-nowhere inbound)', async () => {
+  test('inactive wins over every other reason (nothing to fix on a served-nowhere transport)', async () => {
     const { unsupported } = await map([
       inbound({ tag: 'vmess-off', protocol: 'vmess', active: false }),
     ]);
@@ -364,8 +364,8 @@ describe('mapInboundsToListeners: unsupported reasons', () => {
   });
 });
 
-describe('mapInboundsToListeners: listener keys', () => {
-  test('a key already on the relay makes the inbound invalid (never a duplicate listener)', async () => {
+describe('mapTransportsToListeners: listener keys', () => {
+  test('a key already on the origin makes the transport invalid (never a duplicate listener)', async () => {
     const key = await listenerKeyForTag('VLESS_REALITY');
     const { candidates, unsupported } = await map([inbound({ tag: 'VLESS_REALITY' })], [key]);
     expect(candidates).toEqual([]);
@@ -404,7 +404,7 @@ describe('mapInboundsToListeners: listener keys', () => {
   });
 });
 
-describe('mapInboundsToListeners: nothing secret leaves', () => {
+describe('mapTransportsToListeners: nothing secret leaves', () => {
   test('the output never carries key material, short ids, clients or certificates', async () => {
     const out = await map([
       inbound({ tag: 'VLESS_REALITY' }),

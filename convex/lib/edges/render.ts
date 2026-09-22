@@ -1,7 +1,7 @@
 /**
- * Relay endpoint rendering: turn the panel's subscription body (already pinned
+ * Origin endpoint rendering: turn the backend's subscription body (already pinned
  * to ONE node) into the subscriber's primary/backup connections for that
- * node's relay listeners. Pure: the caller resolves assignment + rules + labels
+ * node's origin listeners. Pure: the caller resolves assignment + rules + labels
  * and hands them in; this module only transforms text and checks the result.
  *
  * Edge-required delivery (docs/edges.md): a body that comes back from here
@@ -241,7 +241,7 @@ export interface RenderResult extends RenderOutput {
  * result under the edge-required policy.
  *
  * Empty pool rule: when the subscriber has NO assignable edge the template
- * entries still point at whatever the panel Host carries and must be DROPPED
+ * entries still point at whatever the backend Host carries and must be DROPPED
  * regardless of the family rule's flags. Under edge-required delivery an empty
  * pool is `unavailable` (never an empty body: an empty 200 would wipe the
  * client's configuration, a 503 keeps its last one).

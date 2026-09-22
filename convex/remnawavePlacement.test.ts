@@ -2,7 +2,7 @@
 /**
  * Issuance-time node placement: the least-loaded-node picker
  * (lib/remnawavePlacement.pickByNodeLoad) over the cron-fed remnawaveNodeStats
- * cache, plus the remnawaveGetNodeStats provider aggregation (squad → nodes →
+ * cache, plus the remnawaveGetNodeStats provider aggregation (mode group → nodes →
  * per-node load).
  */
 import { convexTest } from 'convex-test';
@@ -132,13 +132,13 @@ describe('remnawaveGetNodeStats (provider aggregation)', () => {
 
   afterEach(() => vi.unstubAllGlobals());
 
-  // Route the panel's endpoints to canned JSON.
+  // Route the backend's endpoints to canned JSON.
   function stubPanel(handlers: Record<string, unknown>): void {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string) => {
         const path = new URL(url).pathname;
-        // accessible-nodes is /api/internal-squads/{uuid}/accessible-nodes
+        // accessible-nodes is /api/internal-mode groups/{uuid}/accessible-nodes
         const key = path.includes('/accessible-nodes') ? `accessible:${path.split('/')[3]}` : path;
         const body = handlers[key];
         if (body === undefined) return new Response('null', { status: 404 });
@@ -150,7 +150,7 @@ describe('remnawaveGetNodeStats (provider aggregation)', () => {
     );
   }
 
-  test('aggregates per-squad load over its accessible nodes (1:1 and 1:many)', async () => {
+  test('aggregates per-mode group load over its accessible nodes (1:1 and 1:many)', async () => {
     stubPanel({
       '/api/internal-squads': {
         internalSquads: [
@@ -175,7 +175,7 @@ describe('remnawaveGetNodeStats (provider aggregation)', () => {
     expect(b).toMatchObject({ usersOnline: 6, online: true, nodeCount: 2 });
   });
 
-  test('a squad mapping to zero known nodes is emitted as unroutable (nodeCount 0, offline)', async () => {
+  test('a mode group mapping to zero known nodes is emitted as unroutable (nodeCount 0, offline)', async () => {
     stubPanel({
       '/api/internal-squads': { internalSquads: [{ uuid: 'sq-x', name: 'X' }] },
       '/api/nodes': [
@@ -216,7 +216,12 @@ describe('resolveBoundModeCounts', () => {
       }),
     );
     const counts = await t.run((ctx) => resolveBoundModeCounts(ctx.db));
-    expect(counts).toEqual({ 'freedom-ws': 3, 'freedom-reality': 0, 'privacy-reality': 0 });
+    expect(counts).toEqual({
+      'freedom-ws': 3,
+      'freedom-reality': 0,
+      'freedom-xhttp': 0,
+      'privacy-reality': 0,
+    });
   });
 
   test('a stale pre-refactor appSettings pool is IGNORED (the table is the only store)', async () => {
@@ -229,14 +234,19 @@ describe('resolveBoundModeCounts', () => {
       });
     });
     const counts = await t.run((ctx) => resolveBoundModeCounts(ctx.db));
-    expect(counts).toEqual({ 'freedom-ws': 0, 'freedom-reality': 0, 'privacy-reality': 0 });
+    expect(counts).toEqual({
+      'freedom-ws': 0,
+      'freedom-reality': 0,
+      'freedom-xhttp': 0,
+      'privacy-reality': 0,
+    });
     expect(await t.run((ctx) => resolveModeSquadPool(ctx.db, 'freedom-ws'))).toEqual([]);
     const bound = await t.run(async (ctx) => [...(await resolveBoundModeIds(ctx.db))]);
     expect(bound).toEqual([]);
   });
 });
 
-// --- resolvePlacementTarget (multi-panel: placement + panel picked together) --
+// --- resolvePlacementTarget (multi-backend: placement + backend picked together) --
 
 async function seedLocatedServer(
   t: ReturnType<typeof convexTest>,
@@ -278,7 +288,7 @@ async function bindPool(t: ReturnType<typeof convexTest>, modeId: string, squads
 }
 
 describe('resolvePlacementTarget', () => {
-  test('pairs the placement with its own panel (least-loaded across panels)', async () => {
+  test('pairs the placement with its own backend (least-loaded across backends)', async () => {
     const t = convexTest(schema, modules);
     const mci = await seedLocatedServer(t, { slug: 'mci', location: 'MCI' });
     const ams = await seedLocatedServer(t, { slug: 'ams', location: 'AMS' });
@@ -292,12 +302,12 @@ describe('resolvePlacementTarget', () => {
     expect(target).toEqual({ placement: 'sq-ams', serverId: ams });
   });
 
-  test('excludePlacement skips the squad the key is already on (switch server)', async () => {
+  test('excludePlacement skips the mode group the key is already on (switch server)', async () => {
     const t = convexTest(schema, modules);
     const mci = await seedLocatedServer(t, { slug: 'mci', location: 'MCI' });
     const ams = await seedLocatedServer(t, { slug: 'ams', location: 'AMS' });
     await bindPool(t, 'freedom-ws', ['sq-mci', 'sq-ams']);
-    // The least-loaded squad is the one the member is ALREADY on, so without the
+    // The least-loaded mode group is the one the member is ALREADY on, so without the
     // exclusion the "switch" would return them to the same server.
     await seedNode(t, mci, { placement: 'sq-mci', usersOnline: 1 });
     await seedNode(t, ams, { placement: 'sq-ams', usersOnline: 50 });
@@ -310,16 +320,16 @@ describe('resolvePlacementTarget', () => {
     expect(target).toEqual({ placement: 'sq-ams', serverId: ams });
   });
 
-  test('never offers a placement that lives on an INACTIVE panel', async () => {
+  test('never offers a placement that lives on an INACTIVE backend', async () => {
     const t = convexTest(schema, modules);
     const mci = await seedLocatedServer(t, { slug: 'mci', location: 'MCI' });
     const ams = await seedLocatedServer(t, { slug: 'ams', location: 'AMS', isActive: false });
     await bindPool(t, 'freedom-ws', ['sq-mci', 'sq-ams']);
     await seedNode(t, mci, { placement: 'sq-mci', usersOnline: 1 });
     await seedNode(t, ams, { placement: 'sq-ams', usersOnline: 0 });
-    // Excluding the only live squad leaves one attributed to a deactivated panel.
-    // Handing it back unpinned would let issueUser pick the ACTIVE panel on its
-    // own, minting a (squad, wrong-panel) key that cannot route — and a
+    // Excluding the only live mode group leaves one attributed to a deactivated backend.
+    // Handing it back unpinned would let issueUser pick the ACTIVE backend on its
+    // own, minting a (mode group, wrong-backend) key that cannot route — and a
     // switch-server would tombstone the working key to create it.
     const target = await t.run((ctx) =>
       resolvePlacementTarget(ctx.db, 'freedom-ws', { excludePlacement: 'sq-mci' }),
@@ -327,9 +337,9 @@ describe('resolvePlacementTarget', () => {
     expect(target).toEqual({ placement: null, serverId: null });
   });
 
-  test('still fails soft for a genuinely UNATTRIBUTED squad on a single panel', async () => {
+  test('still fails soft for a genuinely UNATTRIBUTED mode group on a single backend', async () => {
     // The fail-soft this branch exists for: no stats row at all (bring-up), one
-    // active panel, so the (squad, panel) pair cannot mismatch.
+    // active backend, so the (mode group, backend) pair cannot mismatch.
     const t = convexTest(schema, modules);
     await seedLocatedServer(t, { slug: 'mci', location: 'MCI' });
     await bindPool(t, 'freedom-ws', ['sq-new']);
@@ -337,7 +347,7 @@ describe('resolvePlacementTarget', () => {
     expect(target).toEqual({ placement: 'sq-new', serverId: null });
   });
 
-  test('excludePlacement fails soft on a single-squad pool (still resolves it)', async () => {
+  test('excludePlacement fails soft on a single-mode group pool (still resolves it)', async () => {
     const t = convexTest(schema, modules);
     const mci = await seedLocatedServer(t, { slug: 'mci', location: 'MCI' });
     await bindPool(t, 'freedom-ws', ['sq-mci']);
@@ -350,7 +360,7 @@ describe('resolvePlacementTarget', () => {
     expect(target).toEqual({ placement: 'sq-mci', serverId: mci });
   });
 
-  test('a location pick narrows to that panel even when another is less loaded', async () => {
+  test('a location pick narrows to that backend even when another is less loaded', async () => {
     const t = convexTest(schema, modules);
     const mci = await seedLocatedServer(t, { slug: 'mci', location: 'MCI' });
     const ams = await seedLocatedServer(t, { slug: 'ams', location: 'AMS' });
@@ -363,7 +373,7 @@ describe('resolvePlacementTarget', () => {
     expect(target).toEqual({ placement: 'sq-mci', serverId: mci });
   });
 
-  test('an unknown/stale location code fails soft to any panel, never blocks issuance', async () => {
+  test('an unknown/stale location code fails soft to any backend, never blocks issuance', async () => {
     const t = convexTest(schema, modules);
     const ams = await seedLocatedServer(t, { slug: 'ams', location: 'AMS' });
     await bindPool(t, 'freedom-ws', ['sq-ams']);
@@ -374,7 +384,7 @@ describe('resolvePlacementTarget', () => {
     expect(target).toEqual({ placement: 'sq-ams', serverId: ams });
   });
 
-  test('an at-capacity panel is excluded for NEW keys (location pick falls elsewhere)', async () => {
+  test('an at-capacity backend is excluded for NEW keys (location pick falls elsewhere)', async () => {
     const t = convexTest(schema, modules);
     const mci = await seedLocatedServer(t, {
       slug: 'mci',
@@ -392,7 +402,7 @@ describe('resolvePlacementTarget', () => {
     expect(target).toEqual({ placement: 'sq-ams', serverId: ams });
   });
 
-  test('onlyServerId pins to that panel; a mode with no squad there resolves null', async () => {
+  test('onlyServerId pins to that backend; a mode with no mode group there resolves null', async () => {
     const t = convexTest(schema, modules);
     const mci = await seedLocatedServer(t, { slug: 'mci', location: 'MCI' });
     const ams = await seedLocatedServer(t, { slug: 'ams', location: 'AMS' });
@@ -401,14 +411,14 @@ describe('resolvePlacementTarget', () => {
     await seedNode(t, mci, { placement: 'sq-mci', usersOnline: 5 });
     await seedNode(t, ams, { placement: 'sq-ams', usersOnline: 1 });
     await seedNode(t, ams, { placement: 'sq-ams-priv', usersOnline: 1 });
-    // Pinned to MCI: the evade squad on MCI wins despite AMS being idler.
+    // Pinned to MCI: the evade mode group on MCI wins despite AMS being idler.
     expect(
       await t.run((ctx) =>
         resolvePlacementTarget(ctx.db, 'freedom-ws', { onlyServerId: mci as string }),
       ),
     ).toEqual({ placement: 'sq-mci', serverId: mci });
-    // Privacy has no squad on MCI (its only squad is attributed to AMS) → null,
-    // the caller falls back to a re-issue that may move panels.
+    // Privacy has no mode group on MCI (its only mode group is attributed to AMS) → null,
+    // the caller falls back to a re-issue that may move backends.
     expect(
       await t.run((ctx) =>
         resolvePlacementTarget(ctx.db, 'privacy-reality', { onlyServerId: mci as string }),
@@ -416,7 +426,7 @@ describe('resolvePlacementTarget', () => {
     ).toEqual({ placement: null, serverId: null });
   });
 
-  test('onlyServerId keeps UNATTRIBUTED squads eligible (bring-up / single panel)', async () => {
+  test('onlyServerId keeps UNATTRIBUTED mode groups eligible (bring-up / single backend)', async () => {
     const t = convexTest(schema, modules);
     const mci = await seedLocatedServer(t, { slug: 'mci', location: 'MCI' });
     await bindPool(t, 'privacy-reality', ['sq-unobserved']);
@@ -428,7 +438,7 @@ describe('resolvePlacementTarget', () => {
     ).toEqual({ placement: 'sq-unobserved', serverId: mci });
   });
 
-  test('bring-up (no stats rows at all): global pick, no panel pin', async () => {
+  test('bring-up (no stats rows at all): global pick, no backend pin', async () => {
     const t = convexTest(schema, modules);
     await seedLocatedServer(t, { slug: 'mci', location: 'MCI' });
     await bindPool(t, 'freedom-ws', ['sq-a', 'sq-b']);
@@ -436,19 +446,19 @@ describe('resolvePlacementTarget', () => {
     expect(target).toEqual({ placement: 'sq-a', serverId: null });
   });
 
-  test('MULTI-panel with zero attributable squads signals fail-loud (no dead keys)', async () => {
+  test('MULTI-backend with zero attributable mode groups signals fail-loud (no dead keys)', async () => {
     const t = convexTest(schema, modules);
     await seedLocatedServer(t, { slug: 'mci', location: 'MCI' });
     await seedLocatedServer(t, { slug: 'ams', location: 'AMS' });
     await bindPool(t, 'freedom-ws', ['sq-a', 'sq-b']);
-    // No stats rows: the (squad, panel) pair can't be resolved, and an unpinned
-    // pick could mint a squad onto the wrong panel — a dead key. The caller
+    // No stats rows: the (mode group, backend) pair can't be resolved, and an unpinned
+    // pick could mint a mode group onto the wrong backend — a dead key. The caller
     // (account.resolveIssueTarget) turns this flag into a 503 instead.
     const target = await t.run((ctx) => resolvePlacementTarget(ctx.db, 'freedom-ws'));
     expect(target).toEqual({ placement: null, serverId: null, unattributedMultiPanel: true });
   });
 
-  test('multi-panel WITH attribution still pairs normally', async () => {
+  test('multi-backend WITH attribution still pairs normally', async () => {
     const t = convexTest(schema, modules);
     const mci = await seedLocatedServer(t, { slug: 'mci', location: 'MCI' });
     await seedLocatedServer(t, { slug: 'ams', location: 'AMS' });
@@ -458,7 +468,7 @@ describe('resolvePlacementTarget', () => {
     expect(target).toEqual({ placement: 'sq-a', serverId: mci });
   });
 
-  test('no pool bound anywhere: null placement (caller audits the squad-less key)', async () => {
+  test('no pool bound anywhere: null placement (caller audits the mode group-less key)', async () => {
     const t = convexTest(schema, modules);
     await seedLocatedServer(t, { slug: 'mci', location: 'MCI' });
     expect(await t.run((ctx) => resolvePlacementTarget(ctx.db, 'freedom-ws'))).toEqual({

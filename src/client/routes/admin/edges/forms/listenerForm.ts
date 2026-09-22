@@ -36,9 +36,9 @@ export interface ListenerForm {
   path: string;
   host: string;
   serviceName: string;
-  /** XHTTP only: the mode the inbound serves. */
+  /** XHTTP only: the mode the transport serves. */
   xhttpMode: string;
-  /** How a CDN front reaches this inbound; off = raw TCP to the inbound (L4 only). */
+  /** How a CDN front reaches this transport; off = raw TCP to the transport (L4 only). */
   frontable: boolean;
   scheme: 'http' | 'https';
   certPublic: boolean;
@@ -159,12 +159,12 @@ export function listenerFormIssues(form: ListenerForm, originKind: OriginKind): 
   const bind = form.bindPanel && originKind === 'panel-node';
   if (bind) {
     if (!TAG_RE.test(form.inboundTag))
-      out.push('The inbound tag uses capital letters, digits and underscores only.');
+      out.push('The transport tag uses capital letters, digits and underscores only.');
     if (!UUID_RE.test(form.configProfileUuid)) out.push('The config profile id is a UUID.');
-    if (!UUID_RE.test(form.configProfileInboundUuid)) out.push('The inbound id is a UUID.');
+    if (!UUID_RE.test(form.configProfileInboundUuid)) out.push('The transport id is a UUID.');
   }
   if (form.matchRule === 'remark') {
-    if (!bind) out.push('Matching by remark needs the panel inbound to be bound.');
+    if (!bind) out.push('Matching by remark needs the backend transport to be bound.');
     if (form.remark.trim() === '') out.push('Enter the remark to match.');
   }
   return out;

@@ -3,7 +3,7 @@
    * One rotation (provision / publish / replace) in a side sheet: phase in words,
    * progress, steps, the event log, the audit trail, and Cancel while the run can
    * still be cancelled. Polls every 2 s until the rotation is terminal
-   * (`rotationQuery`), then invalidates the relay once so the page behind it
+   * (`rotationQuery`), then invalidates the origin once so the page behind it
    * catches up.
    *
    * Open by setting `rotationId` (pages keep it in `?rotation=`); `onClose` must clear it.
@@ -11,7 +11,7 @@
    * Props:
    *   rotationId: string | null
    *   relaySlug: string                     for invalidateRelay(qc, slug) on terminal / cancel
-   *   relayId: string                       cancel is a relay-level call
+   *   relayId: string                       cancel is an origin-level call
    *   onClose: () => void
    *   onOpenEdge?: (edgeId: string) => void makes the rotation's edge a button (e.g. swap to the edge drawer)
    */
@@ -54,7 +54,7 @@
   const rotation = rotationQuery(() => rotationId);
   const r = $derived(rotation.data ?? null);
 
-  // Invalidate the relay ONCE per rotation, when it is first seen terminal.
+  // Invalidate the origin ONCE per rotation, when it is first seen terminal.
   let settledFor: string | null = null;
   $effect(() => {
     if (r && r.terminal && settledFor !== r.id) {

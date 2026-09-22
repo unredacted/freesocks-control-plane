@@ -157,7 +157,7 @@ The issue spec accepts a superset of fields. Outline ignores:
 
 - `hwidDeviceLimit` (Outline has no HWID concept)
 - `trafficLimitStrategy` (Outline rolls on a server-wide window, not per-user)
-- `placement` (the opaque node-placement handle; Remnawave-specific — a squad UUID there)
+- `placement` (the opaque node-placement handle; Remnawave-specific — a mode group UUID there)
 - `expireAt` (Outline has no per-key expiry; the control plane's cleanup cron handles
   free-tier expiry by deleting the key locally and on the Outline server)
 

@@ -3,7 +3,7 @@
  * (which calls the "use node" generator in lib/hpkeCrypto.ts, the only place the
  * X-Wing keypair + manifest signature can be produced) and read on the login
  * path: the current epoch key is published via /config, and openRequest resolves
- * an inbound envelope's epoch kid back to its seed here.
+ * a transport envelope's epoch kid back to its seed here.
  *
  * The `seed` field is a short-lived secret destroyed by sweepExpired; never log
  * it or return it from a public query. `current`/`byKid` deliberately return the

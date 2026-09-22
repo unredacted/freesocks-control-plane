@@ -45,7 +45,7 @@ describe('deriveDelivery', () => {
   it('a manual origin has nothing to deliver', () => {
     expect(deriveDelivery({ relay: relay({ origin: { kind: 'manual' } }) }).kind).toBe('manual');
   });
-  it('is dark with an empty pool, a disabled relay or rendering off', () => {
+  it('is dark with an empty pool, a disabled origin or rendering off', () => {
     expect(deriveDelivery({ relay: relay({ publishedCount: 0 }) })).toMatchObject({
       kind: 'dark',
       code: 'empty_pool',
@@ -55,7 +55,7 @@ describe('deriveDelivery', () => {
       'render_disabled',
     );
   });
-  it('prefers the server attention item for this relay and ignores other relays', () => {
+  it('prefers the server attention item for this origin and ignores other origins', () => {
     const item = (relayId: string): AttentionItem =>
       ({ kind: 'members_dark', relayId, code: 'render_disabled' }) as AttentionItem;
     expect(deriveDelivery({ relay: relay(), attention: [item('r1')] }).code).toBe(
@@ -90,7 +90,7 @@ describe('suspicionChip', () => {
     baselineWarm: true,
     veto: null,
   };
-  it('says nothing for a clear relay or no data', () => {
+  it('says nothing for a clear origin or no data', () => {
     expect(suspicionChip(null)).toBeNull();
     expect(suspicionChip({ ...base, state: 'clear' })).toBeNull();
   });
@@ -160,7 +160,7 @@ describe('quarantine helpers', () => {
 });
 
 describe('misc', () => {
-  it('collects the probe targets of a relay', () => {
+  it('collects the probe targets of a origin', () => {
     const keys = relayProbeTargetKeys('r1', [{ id: 'e1' }, { id: 'e2' }] as EdgeAdmin[]);
     expect([...keys].sort()).toEqual(['edge:e1', 'edge:e2', 'relay:r1']);
   });

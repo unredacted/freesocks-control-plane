@@ -71,9 +71,9 @@ const status = (over: Record<string, unknown> = {}) => ({
 
 describe('families', () => {
   test('a family in one line, and its dot', () => {
-    expect(familyLine(family())).toBe('3 names ready · used by 1 inbound');
+    expect(familyLine(family())).toBe('3 names ready · used by 1 transport');
     expect(familyLine(family({ bindings: 0 }, { ready: 1, waiting: 2, failing: 1 }))).toBe(
-      '1 name ready · 2 waiting for a check · 1 failing · not used by any inbound',
+      '1 name ready · 2 waiting for a check · 1 failing · not used by any transport',
     );
     expect(familyDot(family())).toBe('green');
     expect(familyDot(family({}, { failing: 1 }))).toBe('amber');
@@ -157,7 +157,7 @@ describe('rollouts', () => {
     expect(planWords(plan({ overflow: 3 })).join(' ')).toMatch(/3 ready names will wait/);
   });
 
-  test('being on the panel is not being given to members', () => {
+  test('being on the backend is not being given to members', () => {
     expect(rolloutWords(status()).sentence).toMatch(/once it has proven it/);
     expect(rolloutWords(status()).dot).toBe('amber');
     const proven = status({

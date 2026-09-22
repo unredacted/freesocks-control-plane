@@ -21,7 +21,7 @@
     /** Free-tier key: the expiry stat becomes activity-framed ("Active while
      *  you use it") — free keys never expire on a calendar; only accounts idle
      *  for `idleDays` are paused. Ignores `expiresAt` entirely (keys issued
-     *  before the no-expiry cutover may still carry a stale panel date). */
+     *  before the no-expiry cutover may still carry a stale backend date). */
     freeTier?: boolean;
     /** The idle window (publicConfig.freeTierDays) for the free-key subline. */
     idleDays?: number;

@@ -14,7 +14,7 @@ const gcoreSettings = { projectId: 11, regionId: 22 };
 
 type T = ReturnType<typeof convexTest>;
 
-/** A minimal live edge referencing `accountId` (relay + listener fixtures included). */
+/** A minimal live edge referencing `accountId` (origin + listener fixtures included). */
 async function insertLiveEdge(
   t: T,
   accountId: Id<'edgeProviderAccounts'>,
@@ -1196,7 +1196,7 @@ describe('edgeProviderAccounts: the DNS-account reference', () => {
     const { t, dnsId, fastlyId } = await pair();
     await t.mutation(internal.edgeProviderAccounts.recordTest, { id: fastlyId, ok: true });
     const template = await t.run((ctx) => resolveTemplateFor(ctx, 'fastly', null, null, fastlyId));
-    // A relay with a WebSocket listener and an active Fastly front of the account.
+    // An origin with a WebSocket listener and an active Fastly front of the account.
     const { relayId, listenerId } = await t.run(async (ctx) => {
       const serverId = await ctx.db.insert('backendServers', {
         backend: 'remnawave',

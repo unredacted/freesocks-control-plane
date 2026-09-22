@@ -1,7 +1,7 @@
 /**
- * Shared relay guards and pool-side helpers used by relays.ts,
- * relayListeners.ts, edges.ts and the rotation machine. Kept out of relays.ts
- * so the listener module and the relay module can import each other's
+ * Shared origin guards and pool-side helpers used by origins.ts,
+ * relayListeners.ts, edges.ts and the rotation machine. Kept out of origins.ts
+ * so the listener module and the origin module can import each other's
  * public surface without a cycle.
  */
 import { ConvexError } from 'convex/values';
@@ -12,7 +12,7 @@ import { isTerminalPhase } from './rotation';
 import { EDGE_LIVE_STATUSES, LIVE_EDGE_SCAN_LIMIT } from './pool';
 
 /**
- * Every NON-DESTROYED edge of a relay, read through the `(relayId, status)`
+ * Every NON-DESTROYED edge of an origin, read through the `(relayId, status)`
  * index one status at a time and bounded per status.
  */
 export async function liveEdgesOfRelay(
@@ -41,11 +41,11 @@ export function assertNotQuarantined(origin: Doc<'relays'>) {
 }
 
 /**
- * Server management claims a relay (`relay:<id>` in `panelClaims`) while it
- * changes the config profile one of the relay's listeners is bound to, and
+ * Server management claims an origin (`origin:<id>` in `panelClaims`) while it
+ * changes the config profile one of the origin's listeners is bound to, and
  * holds the claim until the listeners are back in step. Every workflow that
  * moves the pool, the listeners or the Hosts refuses meanwhile: a rotation
- * started between the panel write and the listener update would snapshot a
+ * started between the backend write and the listener update would snapshot a
  * listener that is about to change under it.
  */
 export async function assertNoRelayPanelClaim(db: DatabaseReader, origin: Doc<'relays'>) {
@@ -95,7 +95,7 @@ export async function scheduleMirrorRefresh(ctx: MutationCtx) {
 }
 
 /**
- * A change that alters what subscribers should receive: bump the relay's
+ * A change that alters what subscribers should receive: bump the origin's
  * publication epoch (the /sub cache token + assignment) and refresh mirrors.
  */
 export async function bumpEpochAndRefresh(ctx: MutationCtx, origin: Doc<'relays'>) {

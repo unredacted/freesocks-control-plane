@@ -3,11 +3,11 @@
  * creation that echoes it (`POST setup-runs`). Docs: docs/edges.md § "Guided
  * setup runs".
  *
- * The plan answers "what would protecting this node do" from the panel:
- *   - inbounds via `backends.listNodeInbounds` + the pure `mapInboundsToListeners`
+ * The plan answers "what would protecting this node do" from the backend:
+ *   - transports via `backends.listNodeInbounds` + the pure `mapTransportsToListeners`
  *     (the frontable ones are the required listeners, cap 8);
- *   - the node's DIRECT panel Hosts via `backends.listHosts` + `classifyDirectHosts`
- *     (covered = its inbound is frontable in every format; uncovered = the
+ *   - the node's DIRECT backend Hosts via `backends.listHosts` + `classifyDirectHosts`
+ *     (covered = its transport is frontable in every format; uncovered = the
  *     operator must consent, BY UUID, to hiding it, or keep members on the
  *     direct address);
  *   - which provider accounts can front the whole required set and why not;
@@ -16,16 +16,16 @@
  * `planHash` covers the required listener specs + the direct-Host identities +
  * the offered account ids; a run creation must echo it (`edge.plan_stale`).
  *
- * The panel calls are reached through `planOps`, a seam the tests replace.
+ * The backend calls are reached through `planOps`, a seam the tests replace.
  */
 import { ConvexError, v } from 'convex/values';
 import { internalAction, internalQuery } from './_generated/server';
 import type { ActionCtx, QueryCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
-import type { BackendHost, PanelInbound } from './lib/backends/types';
+import type { BackendHost, BackendTransport } from './lib/backends/types';
 import { RENDER_CLIENT_FAMILIES, resolveEdgeConfig } from './lib/edgeConfig';
-import { mapInboundsToListeners } from './lib/edges/inboundMapping';
+import { mapTransportsToListeners } from './lib/edges/inboundMapping';
 import { applyOriginProbes, originProbeTargets } from './edgeOriginProbe';
 import type { OriginProbeOutcome } from './lib/edges/originProbe';
 import { classifyDirectHosts } from './lib/edges/directHosts';
@@ -48,9 +48,9 @@ export interface PlanOps {
   listNodeInbounds(
     ctx: ActionCtx,
     a: { backendServerId: Id<'backendServers'>; nodeUuid: string },
-  ): Promise<PanelInbound[]>;
+  ): Promise<BackendTransport[]>;
   listHosts(ctx: ActionCtx, a: { backendServerId: Id<'backendServers'> }): Promise<BackendHost[]>;
-  /** The origin probe for HTTP-transport inbounds (fills `originTransport`; lib/edges/originProbe.ts). */
+  /** The origin probe for HTTP-transport transports (fills `originTransport`; lib/edges/originProbe.ts). */
   probeOrigins(
     ctx: ActionCtx,
     a: { targets: ReturnType<typeof originProbeTargets> },
@@ -65,7 +65,7 @@ const defaultPlanOps: PlanOps = {
 
 let planOps: PlanOps = defaultPlanOps;
 
-/** Test seam: replace the panel calls (null = the defaults). */
+/** Test seam: replace the backend calls (null = the defaults). */
 export function __setPlanOpsForTests(over: Partial<PlanOps> | null): void {
   planOps = over ? { ...defaultPlanOps, ...over } : defaultPlanOps;
 }
@@ -92,7 +92,7 @@ async function planContextOf(
     if (!node)
       throw new ConvexError({
         code: 'edge.node_not_found',
-        message: 'The node is not in the panel inventory; refresh the node list first',
+        message: 'The node is not in the backend inventory; refresh the node list first',
       });
     const relay = await relayForBackendNode(ctx.db, backendServerId, node.name);
     const relayListeners = relay
@@ -252,7 +252,7 @@ export async function buildPlan(
   if (!originAddress)
     throw new ConvexError({
       code: 'edge.node_address_missing',
-      message: 'The panel reports no address for this node',
+      message: 'The backend reports no address for this node',
     });
   const origin = {
     kind: 'panel-node' as const,
@@ -260,14 +260,14 @@ export async function buildPlan(
     nodeName: c.node.name,
     nodeUuid: a.nodeUuid,
   };
-  const inbounds = await planStage("reading the node's inbounds from the panel", () =>
+  const inbounds = await planStage("reading the node's transports from the backend", () =>
     planOps.listNodeInbounds(ctx, a),
   );
-  const mapped = await planStage('mapping the inbounds to listeners', () =>
-    mapInboundsToListeners(inbounds, { existingKeys: [], origin }),
+  const mapped = await planStage('mapping the transports to listeners', () =>
+    mapTransportsToListeners(inbounds, { existingKeys: [], origin }),
   );
-  // The mapper leaves HTTP-transport inbounds without `originTransport` (L4
-  // only); the origin probe fills it in, exactly as the inbound-candidates
+  // The mapper leaves HTTP-transport transports without `originTransport` (L4
+  // only); the origin probe fills it in, exactly as the transport-candidates
   // route does, so a WS / HTTP-upgrade / gRPC origin can be offered an L7 account.
   const targets = originProbeTargets(mapped.candidates, originAddress);
   // The probe handles an unreachable origin per target; a throw here is a fault
@@ -313,12 +313,12 @@ export async function buildPlan(
   const frontable = planInbounds.filter((i) => i.frontable);
   const tooManyInbounds = frontable.length > MAX_REQUIRED_LISTENERS;
   const required = frontable.slice(0, MAX_REQUIRED_LISTENERS);
-  // Direct Hosts: the node's own inbounds are the ACTIVE ones the panel listed.
+  // Direct Hosts: the node's own transports are the ACTIVE ones the backend listed.
   const nodeInboundUuids = inbounds.filter((i) => i.active).map((i) => i.configProfileInboundUuid);
   const coveredInboundUuids = required
     .filter((i) => i.formats.links && i.formats.singbox && i.formats.clash)
     .map((i) => (i.listenerSpec as ListenerSpecInput).panelBinding!.configProfileInboundUuid);
-  const hosts = await planStage('reading the Hosts from the panel', () =>
+  const hosts = await planStage('reading the Hosts from the backend', () =>
     planOps.listHosts(ctx, { backendServerId: a.backendServerId }),
   );
   const classified = classifyDirectHosts(hosts, {
@@ -390,7 +390,7 @@ export const plan = internalAction({
 /**
  * `POST setup-runs {backendServerId, nodeUuid, accountId, planHash, approvedHideUuids[], keepDirect?}`:
  * re-plans, refuses a stale hash (`edge.plan_stale`), an unoffered account
- * (`edge.account_incompatible`), too many inbounds (`edge.too_many_inbounds`),
+ * (`edge.account_incompatible`), too many transports (`edge.too_many_inbounds`),
  * an unknown approved uuid (`validation`), then persists the run and schedules
  * its first step.
  */

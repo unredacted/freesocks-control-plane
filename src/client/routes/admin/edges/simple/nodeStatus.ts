@@ -4,24 +4,24 @@
  * of a guided setup run.
  *
  * Exports:
- *   nodeStatus(row, ctx)          -> NodeStatus for one relay row
+ *   nodeStatus(row, ctx)          -> NodeStatus for one origin row
  *   fleetSentence(statuses)       -> the home's headline
  *   runIsLive(run)                a run that is still going (not terminal)
  *   plainStage(stage)             machine stage -> 1..4 (done -> 5)
  *   PLAIN_STAGES                  the four stage labels, in order
- *   liveRunFor(runs, slug)        the live run of a relay, if any
+ *   liveRunFor(runs, slug)        the live run of an origin, if any
  */
 import type { z } from 'zod';
 import type {
   AttentionItem,
   EdgeSummary,
-  RelayAdmin,
+  OriginAdmin,
   SetupRunAdmin,
 } from '../../../../../shared/contracts/edges';
 import type { SetupRunStage } from '../../../../../shared/contracts/edgeCodes';
 import { codeLabel } from '../../../../lib/edgeCodes';
 
-export type RelayRow = z.infer<typeof EdgeSummary>['relays'][number];
+export type OriginRow = z.infer<typeof EdgeSummary>['relays'][number];
 export type Dot = 'green' | 'amber' | 'red' | 'blue' | 'grey';
 
 export interface NodeStatus {
@@ -82,7 +82,7 @@ export interface StatusContext {
 }
 
 type RelayLike = Pick<
-  RelayAdmin,
+  OriginAdmin,
   | 'slug'
   | 'enabled'
   | 'quarantine'

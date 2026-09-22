@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 /**
- * The one server name a listener's panel Host carries (`hostSniOf`), family
- * names leaving the relays by themselves, and the Host following its name.
+ * The one server name a listener's backend Host carries (`hostSniOf`), family
+ * names leaving the origins by themselves, and the Host following its name.
  *
  * Fixtures use RFC 5737 addresses and `*.example` names only.
  */
@@ -71,8 +71,8 @@ describe('hostSniOf', () => {
   });
 });
 
-describe('family names leave the relays by themselves', () => {
-  test('a burn retires the name on the relays, with its drain', async () => {
+describe('family names leave the origins by themselves', () => {
+  test('a burn retires the name on the origins, with its drain', async () => {
     const { t, listenerId } = await seed();
     const out = await t.mutation(internal.sniFamilies.setNames, {
       slug: 'fam',
@@ -88,7 +88,7 @@ describe('family names leave the relays by themselves', () => {
     expect(l.revision).toBe(1);
   });
 
-  test("a BURN takes a relay's last name: a name known blocked is worse than none", async () => {
+  test("a BURN takes an origin's last name: a name known blocked is worse than none", async () => {
     const { t, listenerId } = await seed(['only.example']);
     const out = await t.mutation(internal.sniFamilies.setNames, {
       slug: 'fam',
@@ -101,7 +101,7 @@ describe('family names leave the relays by themselves', () => {
     expect(l.tlsNames![0]).toMatchObject({ status: 'retired', retiredBy: 'admin' });
   });
 
-  test("a name that merely stopped qualifying never takes a relay's LAST name with it", async () => {
+  test("a name that merely stopped qualifying never takes an origin's LAST name with it", async () => {
     const { t, listenerId } = await seed(['only.example']);
     const [due] = (await t.query(internal.sniFamilies.dueForQualification, {})).names;
     await t.mutation(internal.sniFamilies.recordQualification, {
@@ -132,7 +132,7 @@ describe('family names leave the relays by themselves', () => {
     expect(await active(t, listenerId)).toEqual(['one.example', 'three.example']);
   });
 
-  test('a relay that is rotating is skipped and counted, never forced', async () => {
+  test('an origin that is rotating is skipped and counted, never forced', async () => {
     const { t, relayId, listenerId } = await seed();
     const rotationId = await t.run((ctx) =>
       ctx.db.insert('edgeRotations', {
@@ -251,7 +251,7 @@ describe('the Host follows its server name', () => {
     expect(again.filter((f) => f.name.includes('resyncSni'))).toHaveLength(1);
   });
 
-  test('a Host the machine is working on, an operator-owned Host and a rotating relay are left alone', async () => {
+  test('a Host the machine is working on, an operator-owned Host and a rotating origin are left alone', async () => {
     const { t, relayId, listenerId } = await seed();
     await withHost(t, relayId, listenerId, 'gone.example');
     const writes = stubPanel();

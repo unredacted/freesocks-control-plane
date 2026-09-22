@@ -234,7 +234,7 @@ export async function outlineUpdate(
 ): Promise<void> {
   if (patch.trafficLimitBytes !== undefined)
     await setDataLimit(cfg, backendUserId, patch.trafficLimitBytes);
-  // hwid / strategy / squad / tag / description / expireAt: not applicable to Outline.
+  // hwid / strategy / mode group / tag / description / expireAt: not applicable to Outline.
   // Status changes go through outlineSetStatus (the setStatus provider op).
 }
 

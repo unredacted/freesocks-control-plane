@@ -1,16 +1,16 @@
 /**
- * Relay rendering, DB half: resolve what a subscription's origin publishes
+ * Origin rendering, DB half: resolve what a subscription's origin publishes
  * (edges, listeners, the client-family rule) so the fronted /sub route, the
  * mirror refresh and the admin preview can apply the pure renderer, and judge
  * the EDGE-REQUIRED delivery policy.
  *
- * A subscription is edge-required when a delivery binding (relays.ts) covers
+ * A subscription is edge-required when a delivery binding (origins.ts) covers
  * the node it actually resolved to or its whole backend server. For such a
  * subscription the route serves a rendered body that passed every check, or an
  * unavailable response: never the origin body, whatever switch is off.
  * `epochFor` is the cache token: the origin's publication epoch together with
  * the binding's policy version while the subscription is edge-required, null
- * for a subscription no relay covers.
+ * for a subscription no origin covers.
  */
 import { v } from 'convex/values';
 import { internalQuery } from './_generated/server';
@@ -35,8 +35,8 @@ import { parseIntent } from './lib/edges/intent';
 import { qualificationBinding, qualificationVerdict } from './lib/edges/frontCheck/binding';
 import { needsEndpointVerification, verificationCurrent } from './lib/edges/verification';
 import type { EdgeRenderContext } from './lib/edges/renderPipeline';
-import { gateToken, type NodeGate } from './lib/panel/deliveryGate';
-import { nodeGateFor } from './panelIntents';
+import { gateToken, type NodeGate } from './lib/backend/deliveryGate';
+import { nodeGateFor } from './nodeIntents';
 import { deliveryBindingFor, relayForBackendNode } from './relays';
 import { listenersOf } from './relayListeners';
 import { resolveSniConfig } from './lib/sniConfig';
@@ -195,7 +195,7 @@ export function toPublishedEdge(
   };
 }
 
-/** Delivery style of a backend: Outline hands out ONE key, a panel a subscription. */
+/** Delivery style of a backend: Outline hands out ONE key, a backend a subscription. */
 export async function deliveryStyleOf(
   ctx: { db: QueryCtx['db'] },
   backendServerId: Id<'backendServers'>,
@@ -223,7 +223,7 @@ export interface DeliveryPolicy {
  * The delivery policy for a subscription at the place it RESOLVED to (the node
  * the body was pinned to, or the whole server). Evaluated AFTER the fetch by
  * the route, so a first fetch with no stored pin and a pin that moved onto a
- * relay node are both classified by the node the body belongs to.
+ * origin node are both classified by the node the body belongs to.
  */
 export async function deliveryPolicyFor(
   ctx: { db: QueryCtx['db'] },
@@ -252,8 +252,8 @@ export const deliveryPolicy = internalQuery({
 
 /**
  * Cache token for a subscription's place: `<policyVersion>:<epoch>` while the
- * place is edge-required (the epoch is the relay's, or -1 when the binding has
- * no live relay), null for a place no relay covers (raw delivery, no token).
+ * place is edge-required (the epoch is the origin's, or -1 when the binding has
+ * no live origin), null for a place no origin covers (raw delivery, no token).
  */
 async function epochTokenFor(
   ctx: { db: QueryCtx['db'] },
@@ -261,7 +261,7 @@ async function epochTokenFor(
 ): Promise<{ token: string | null; relay: Doc<'relays'> | null }> {
   // A place with a managed node carries the gate in its token even under raw
   // delivery, so a gate change re-keys the cache; a place with none keeps the
-  // null token (no relay, no gate: nothing to re-key on).
+  // null token (no origin, no gate: nothing to re-key on).
   const gate = policy.gate.disposition !== null ? `g${gateToken(policy.gate)}` : null;
   if (!policy.required) return { token: gate, relay: null };
   const relay = policy.relayId ? await ctx.db.get(policy.relayId) : null;
@@ -288,7 +288,7 @@ export const epochFor = internalQuery({
  * are judged per country there (`sensitive`) with the curated countries. A
  * cached body must not reach a request that infers a curated country when it
  * could carry a name blocked there (lib/edges/sni/country.ts). A place no live
- * relay covers renders nothing, so it has no country logic either.
+ * origin covers renders nothing, so it has no country logic either.
  */
 export const renderContextFor = internalQuery({
   args: { backendServerId: v.id('backendServers'), nodeName: v.optional(v.string()) },
@@ -340,7 +340,7 @@ export type SubscriptionRenderDecision =
 
 /**
  * What the route must do with a fetched body for one subscription + client
- * family at the place it resolved to: pass it through (no relay covers the
+ * family at the place it resolved to: pass it through (no origin covers the
  * place), render it, or refuse it (edge-required but nothing can render).
  * `nodeName` is the node the body was pinned to (the route knows it before the
  * row is updated); absent = the whole backend server.
@@ -373,7 +373,7 @@ export const decideForSubscription = internalQuery({
       return { kind: 'unavailable', reason: 'render_disabled', relaySlug: relay.slug };
     const family = a.family as RenderClientFamily;
     const rule = effectiveRule(cfg.render, cfg.render.clients[family]);
-    // A family whose rule is off used to pass the panel body through; under
+    // A family whose rule is off used to pass the backend body through; under
     // edge-required delivery there is no passthrough, so it is unavailable.
     if (!rule.enabled)
       return { kind: 'unavailable', reason: 'render_disabled', relaySlug: relay.slug };

@@ -17,7 +17,7 @@
    *
    * Props:
    *   kind: StatusKind        'status' (edge status) | 'health' | 'publication' | 'phase' (rotation)
-   *                           | 'readiness' (dns/certificate/front) | 'host' (panel Host state)
+   *                           | 'readiness' (dns/certificate/front) | 'host' (backend Host state)
    *                           | 'setup' (setup step status) | 'severity' (attention)
    *   value: string           the raw server value
    *   label?: string          override the words

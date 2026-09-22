@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * Create a relay: its origin, a slug, and (optionally) its first listeners.
+   * Create an origin: its target, a slug, and (optionally) its first listeners.
    * The node role can register the listeners instead, so none is required here.
    *
    * Props:
@@ -150,9 +150,9 @@
 <Dialog.Root bind:open>
   <Dialog.Content class="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
     <Dialog.Header>
-      <Dialog.Title>New relay</Dialog.Title>
+      <Dialog.Title>New origin</Dialog.Title>
       <Dialog.Description>
-        A relay is one origin that sits behind edges. Members covered by it are served through a
+        An origin is one place that sits behind edges. Members covered by it are served through a
         published edge, never the origin itself.
       </Dialog.Description>
     </Dialog.Header>

@@ -6,7 +6,7 @@
  *   2. `serverKeys`, the TanStack key tree rooted at ['admin','servers'];
  *   3. `*Query()` wrappers with their polling cadence, plus invalidators.
  *
- * Cadence: the panel is only re-read every ten minutes (the healthcheck) or on
+ * Cadence: the backend is only re-read every ten minutes (the healthcheck) or on
  * an explicit Refresh, so the cached tree is polled gently (60 s).
  */
 import { createQuery, type QueryClient } from '@tanstack/svelte-query';
@@ -15,17 +15,17 @@ import { apiClient } from './api';
 import {
   ActivationReview,
   DirectTestLink,
+  AdoptNodeResult,
   NodeIntentList,
   PanelOpList,
-  PanelOpView,
-  PanelSetupView,
+  OpView,
+  BackendSetupView,
   PlacementValidation,
   ProfilePatchPreview,
-  ReservationList,
   ServerSummary,
   ServerTree,
-  type PanelSetupInput,
-  type HostWrite,
+  type BackendSetupInput,
+  type AddressWrite,
   type NodeWrite,
   type ProfilePatchOp,
   type RecoveryAttestation,
@@ -38,7 +38,7 @@ const slugPath = (slug: string) => `${BASE}/${encodeURIComponent(slug)}`;
 export const fetchServerSummary = () => apiClient.get(`${BASE}/summary`, ServerSummary);
 export const fetchServerTree = (slug: string) =>
   apiClient.get(`${slugPath(slug)}/tree`, ServerTree);
-/** Re-read the panel now; answers the fresh tree. Rate-limited server-side. */
+/** Re-read the backend now; answers the fresh tree. Rate-limited server-side. */
 export const refreshServer = (slug: string) =>
   apiClient.post(`${slugPath(slug)}/refresh`, {}, ServerTree);
 export const validatePlacements = (slug: string) =>
@@ -52,47 +52,47 @@ type Patch<T> = Partial<Omit<T, 'restore'>>;
 
 export const fetchOps = (slug: string) => apiClient.get(`${slugPath(slug)}/ops`, PanelOpList);
 export const observeOp = (slug: string, id: string) =>
-  apiClient.post(`${slugPath(slug)}/ops/${encodeURIComponent(id)}/observe`, {}, PanelOpView);
+  apiClient.post(`${slugPath(slug)}/ops/${encodeURIComponent(id)}/observe`, {}, OpView);
 /** The server makes the fresh read itself; the operator attests the other three. */
 export const recoverOp = (
   slug: string,
   id: string,
   attest: Omit<RecoveryAttestation, 'freshReadAt'>,
-) => apiClient.post(`${slugPath(slug)}/ops/${encodeURIComponent(id)}/recover`, attest, PanelOpView);
+) => apiClient.post(`${slugPath(slug)}/ops/${encodeURIComponent(id)}/recover`, attest, OpView);
 
-export const createHost = (slug: string, host: HostWrite) =>
-  apiClient.post(`${slugPath(slug)}/hosts`, host, PanelOpView);
-export const updateHost = (slug: string, uuid: string, fields: Patch<HostWrite>) =>
-  apiClient.patch(`${slugPath(slug)}/hosts/${encodeURIComponent(uuid)}`, fields, PanelOpView);
-export const deleteHost = (slug: string, uuid: string) =>
-  apiClient.delete(`${slugPath(slug)}/hosts/${encodeURIComponent(uuid)}`, PanelOpView);
+export const createAddress = (slug: string, address: AddressWrite) =>
+  apiClient.post(`${slugPath(slug)}/addresses`, address, OpView);
+export const updateAddress = (slug: string, uuid: string, fields: Patch<AddressWrite>) =>
+  apiClient.patch(`${slugPath(slug)}/addresses/${encodeURIComponent(uuid)}`, fields, OpView);
+export const deleteAddress = (slug: string, uuid: string) =>
+  apiClient.delete(`${slugPath(slug)}/addresses/${encodeURIComponent(uuid)}`, OpView);
 
-export interface SquadWrite {
+export interface ModeGroupWrite {
   name: string;
-  inboundUuids: string[];
+  transportUuids: string[];
   restore?: boolean;
 }
-export const createSquad = (slug: string, squad: SquadWrite) =>
-  apiClient.post(`${slugPath(slug)}/squads`, squad, PanelOpView);
-export const updateSquad = (slug: string, uuid: string, fields: Patch<SquadWrite>) =>
-  apiClient.patch(`${slugPath(slug)}/squads/${encodeURIComponent(uuid)}`, fields, PanelOpView);
-export const deleteSquad = (slug: string, uuid: string) =>
-  apiClient.delete(`${slugPath(slug)}/squads/${encodeURIComponent(uuid)}`, PanelOpView);
+export const createModeGroup = (slug: string, group: ModeGroupWrite) =>
+  apiClient.post(`${slugPath(slug)}/modeGroups`, group, OpView);
+export const updateModeGroup = (slug: string, uuid: string, fields: Patch<ModeGroupWrite>) =>
+  apiClient.patch(`${slugPath(slug)}/modeGroups/${encodeURIComponent(uuid)}`, fields, OpView);
+export const deleteModeGroup = (slug: string, uuid: string) =>
+  apiClient.delete(`${slugPath(slug)}/modeGroups/${encodeURIComponent(uuid)}`, OpView);
 
 export const createNode = (slug: string, node: NodeWrite) =>
-  apiClient.post(`${slugPath(slug)}/nodes`, node, PanelOpView);
+  apiClient.post(`${slugPath(slug)}/nodes`, node, OpView);
 export const updateNode = (
   slug: string,
   uuid: string,
   fields: Patch<Omit<NodeWrite, 'configProfileUuid'>> & { configProfileUuid?: string },
-) => apiClient.patch(`${slugPath(slug)}/nodes/${encodeURIComponent(uuid)}`, fields, PanelOpView);
+) => apiClient.patch(`${slugPath(slug)}/nodes/${encodeURIComponent(uuid)}`, fields, OpView);
 export const nodeAction = (slug: string, uuid: string, action: 'enable' | 'disable' | 'restart') =>
-  apiClient.post(`${slugPath(slug)}/nodes/${encodeURIComponent(uuid)}/${action}`, {}, PanelOpView);
-/** `removeOnly`: take the row off the panel and say the process may keep running. */
+  apiClient.post(`${slugPath(slug)}/nodes/${encodeURIComponent(uuid)}/${action}`, {}, OpView);
+/** `removeOnly`: take the row off the backend and say the process may keep running. */
 export const deleteNode = (slug: string, uuid: string, removeOnly: boolean) =>
   apiClient.delete(
     `${slugPath(slug)}/nodes/${encodeURIComponent(uuid)}${removeOnly ? '?removeOnly=1' : ''}`,
-    PanelOpView,
+    OpView,
   );
 
 export const previewProfilePatch = (slug: string, profileUuid: string, ops: ProfilePatchOp[]) =>
@@ -106,6 +106,8 @@ export const applyProfilePatch = (
   slug: string,
   profileUuid: string,
   preview: ProfilePatchPreview,
+  /** What happens to nodes FCP does not manage that run the touched transports. */
+  unmanaged?: 'hold' | 'acknowledge',
 ) =>
   apiClient.post(
     `${slugPath(slug)}/profiles/${encodeURIComponent(profileUuid)}/apply`,
@@ -113,10 +115,20 @@ export const applyProfilePatch = (
       ops: preview.ops,
       baseToken: preview.baseToken,
       expectedToken: preview.expectedToken,
-      inboundUuids: preview.inboundUuids,
+      transportUuids: preview.transportUuids,
+      ...(unmanaged ? { unmanaged } : {}),
     },
-    PanelOpView,
+    OpView,
   );
+
+/** Adopt a node that already serves members, as it is (live at once). */
+export const adoptNode = (
+  slug: string,
+  body: { nodeUuid: string; mode: string; externallyFronted?: boolean },
+) => apiClient.post(`${slugPath(slug)}/nodes/adopt`, body, AdoptNodeResult);
+/** Release the hold a shared change put on nodes FCP does not manage. */
+export const releaseHold = (slug: string, holdId: string) =>
+  apiClient.post(`${slugPath(slug)}/holds/${encodeURIComponent(holdId)}/release`, {}, Ok);
 
 /** "I have looked at it": clears the edited-elsewhere flag of one profile. */
 export const acknowledgeForeignEdit = (slug: string, profileUuid: string) =>
@@ -126,22 +138,11 @@ export const acknowledgeForeignEdit = (slug: string, profileUuid: string) =>
     Ok,
   );
 
-export const fetchReservations = (slug: string) =>
-  apiClient.get(`${slugPath(slug)}/reservations`, ReservationList);
-export const recoverReservation = (slug: string, roleOpId: string, attest: RecoveryAttestation) =>
-  apiClient.post(
-    `${slugPath(slug)}/reservations/${encodeURIComponent(roleOpId)}/recover`,
-    attest,
-    Ok,
-  );
-
-// --- the bootstrap contract: setting up a panel, enrolled nodes, activation ---------------------
+// --- the bootstrap contract: setting up a backend, enrolled nodes, activation ---------------------
 export const fetchSetup = (slug: string) =>
-  apiClient.get(`${slugPath(slug)}/setup`, PanelSetupView);
-export const startSetup = (slug: string, input: PanelSetupInput) =>
-  apiClient.post(`${slugPath(slug)}/setup`, input, PanelSetupView);
-export const takeoverPanel = (slug: string) =>
-  apiClient.post(`${slugPath(slug)}/setup/takeover`, {}, PanelSetupView);
+  apiClient.get(`${slugPath(slug)}/setup`, BackendSetupView);
+export const startSetup = (slug: string, input: BackendSetupInput) =>
+  apiClient.post(`${slugPath(slug)}/setup`, input, BackendSetupView);
 
 export const fetchIntents = (slug: string) =>
   apiClient.get(`${slugPath(slug)}/nodes/intents`, NodeIntentList);
@@ -165,6 +166,9 @@ export const retireNode = (
   decision?: { disposition: 'keep-dark' | 'migrate'; targetIntentId?: string },
 ) =>
   apiClient.post(`${intentPath(slug, id)}/retire`, decision ?? {}, z.object({ stage: z.string() }));
+/** An adopted node's machine is never run by the role: an admin confirms it is gone. */
+export const confirmWiped = (slug: string, id: string) =>
+  apiClient.post(`${intentPath(slug, id)}/wiped`, {}, z.object({ stage: z.string() }));
 export const finishMaintenance = (slug: string, id: string) =>
   apiClient.post(`${intentPath(slug, id)}/maintenance`, {}, z.object({ ok: z.literal(true) }));
 export const patchNodeSettings = (
@@ -185,7 +189,6 @@ export const serverKeys = {
   summary: [...ROOT, 'summary'] as const,
   tree: (slug: string) => [...ROOT, 'tree', slug] as const,
   ops: (slug: string) => [...ROOT, 'ops', slug] as const,
-  reservations: (slug: string) => [...ROOT, 'reservations', slug] as const,
   setup: (slug: string) => [...ROOT, 'setup', slug] as const,
   intents: (slug: string) => [...ROOT, 'intents', slug] as const,
   review: (slug: string, id: string) => [...ROOT, 'review', slug, id] as const,
@@ -246,14 +249,6 @@ export const opsQuery = (slug: () => string | null, enabled: () => boolean) =>
     enabled: !!slug() && enabled(),
     refetchInterval: (q: { state: { data?: { ops: { open: boolean }[] } } }) =>
       q.state.data?.ops.some((o) => o.open) ? 5_000 : 60_000,
-  }));
-
-export const reservationsQuery = (slug: () => string | null, enabled: () => boolean) =>
-  createQuery(() => ({
-    queryKey: serverKeys.reservations(slug() ?? ''),
-    queryFn: () => fetchReservations(slug()!),
-    enabled: !!slug() && enabled(),
-    refetchInterval: 60_000,
   }));
 
 export function invalidateServers(qc: QueryClient): void {

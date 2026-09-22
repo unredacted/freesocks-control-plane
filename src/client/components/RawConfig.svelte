@@ -17,7 +17,7 @@
    * server-side and delivered over the SEALED reveal-leg channel (the CDN sees
    * ciphertext), so a member can copy it by hand WITHOUT their proxy client
    * pulling the subscription URL through a CDN in plaintext. Fetched only while
-   * the panel is open - a deliberate, on-demand reveal, not auto-loaded.
+   * the backend is open - a deliberate, on-demand reveal, not auto-loaded.
    *
    * The COLLAPSED variant (url-delivery modes, e.g. Freedom Mode) gates the
    * first expand behind a confirm dialog: the raw config is a snapshot that can
@@ -30,7 +30,7 @@
     /** Open on mount + auto-open when promoted (privacy mode makes this the
      *  recommended delivery method, so it starts expanded). */
     startOpen?: boolean;
-    /** Render as the PRIMARY config panel: always open, titled, no collapse
+    /** Render as the PRIMARY config backend: always open, titled, no collapse
      *  toggle, primary border. Privacy mode makes the raw config the headline. */
     prominent?: boolean;
   }

@@ -45,7 +45,7 @@
      *  regenerate modal). Omitted = not offered (single-location deploys). */
     onPickLocation?: () => void;
     /** Open the report-issue dialog (same handler as the pass's red button) -
-     *  a member stuck in this panel is exactly who should tell us why. */
+     *  a member stuck in this backend is exactly who should tell us why. */
     onReportIssue?: () => void;
   }
   let {
@@ -77,7 +77,7 @@
   let copiedUrl = $state<string | null>(null);
 
   // A NEW key (regenerate/switch) retires every mirror minted against the old
-  // one: re-sync from props when the subscription URL changes, or the panel
+  // one: re-sync from props when the subscription URL changes, or the backend
   // would keep offering the dead key's 404 URLs until remount. (Intentionally
   // keyed off subscriptionUrl only — a provision's local `added` entry must
   // survive the parent's subsequent refetch of the SAME key.)

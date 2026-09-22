@@ -1,5 +1,5 @@
 /**
- * The origin of a relay as the forms hold it (pure; unit-tested).
+ * The target of an origin as the forms hold it (pure; unit-tested).
  *
  * One flat draft covers the three origin kinds so a segmented control can
  * switch kind without losing what was typed. The admin create call names the
@@ -97,7 +97,7 @@ export function addressIssue(raw: string): string | null {
 
 export function originIssue(o: OriginDraft): string | null {
   if (o.kind === 'panel-node') {
-    if (!o.backendServerId) return 'Choose the panel the node belongs to.';
+    if (!o.backendServerId) return 'Choose the backend the node belongs to.';
     if (!o.nodeName) return 'Choose the node.';
   } else if (o.kind === 'backend-server') {
     if (!o.backendServerId) return 'Choose the backend server.';

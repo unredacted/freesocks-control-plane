@@ -41,7 +41,7 @@ export const ATTENTION_ACTION_PLAN = {
     type: 'call',
     confirm: {
       title: 'Publish this edge?',
-      body: 'Members of this relay start receiving the edge address on their next subscription refresh.',
+      body: 'Members of this origin start receiving the edge address on their next subscription refresh.',
       confirmLabel: 'Publish',
       danger: false,
     },
@@ -138,10 +138,10 @@ export function attentionTarget(item: AttentionItem): string {
   }
 }
 
-/** What the row is about, in words: "relay <slug>", plus the listener when known. */
+/** What the row is about, in words: "origin <slug>", plus the listener when known. */
 export function attentionSubject(item: AttentionItem): string {
   const parts: string[] = [];
-  if (item.relaySlug) parts.push(`Relay ${item.relaySlug}`);
+  if (item.relaySlug) parts.push(`Origin ${item.relaySlug}`);
   if (item.listenerKey) parts.push(`listener ${item.listenerKey}`);
   return parts.join(', ');
 }

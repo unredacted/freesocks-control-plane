@@ -1,8 +1,8 @@
 <script lang="ts">
   /**
-   * One inbound a family is bound to: what the next write would do, the write
+   * One transport a family is bound to: what the next write would do, the write
    * itself, and then, per node, the test that lets members be given the new
-   * names. Being on the panel is never treated as a node accepting a name.
+   * names. Being on the backend is never treated as a node accepting a name.
    *
    * Props: binding
    */
@@ -70,8 +70,8 @@
     plan = null;
     toast.message(
       started.rolloutId
-        ? 'Sent to the panel. It shows up here once the panel has it.'
-        : 'The panel already had exactly this.',
+        ? 'Sent to the backend. It shows up here once the backend has it.'
+        : 'The backend already had exactly this.',
     );
   }
 
@@ -131,7 +131,7 @@
           {/each}
         </details>
         <Button size="sm" class="mt-2" disabled={busy} onclick={() => (writeOpen = true)}>
-          Write to the panel
+          Write to the backend
         </Button>
       {/if}
     </div>

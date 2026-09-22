@@ -10,7 +10,7 @@
  */
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
-  projectXrayInbound,
+  projectXrayTransport,
   remnawaveListNodeInbounds,
   remnawaveSetHostDisabled,
   type RemnawaveConfig,
@@ -58,7 +58,7 @@ describe('remnawaveSetHostDisabled', () => {
     mockFetch(() => jsonRes({ response: { uuid: 'h-1', isDisabled: true } }));
     await remnawaveSetHostDisabled(cfg, 'h-1', true);
     expect(calls[0]).toMatchObject({ path: '/api/hosts', method: 'PATCH' });
-    // Nothing else travels: the panel omits absent fields, so the address,
+    // Nothing else travels: the backend omits absent fields, so the address,
     // port, names, inbound and fingerprint stay exactly as they were.
     expect(calls[0].body).toEqual({ uuid: 'h-1', isDisabled: true });
     mockFetch(() => jsonRes({ response: { uuid: 'h-1', isDisabled: false } }));
@@ -66,14 +66,14 @@ describe('remnawaveSetHostDisabled', () => {
     expect(calls[0].body).toEqual({ uuid: 'h-1', isDisabled: false });
   });
 
-  test('surfaces a panel error without the URL host', async () => {
+  test('surfaces a backend error without the URL host', async () => {
     mockFetch(() => new Response('nope', { status: 400 }));
     await expect(remnawaveSetHostDisabled(cfg, 'h-1', true)).rejects.toThrow(/400 on \/api\/hosts/);
     await expect(remnawaveSetHostDisabled(cfg, 'h-1', true)).rejects.not.toThrow(/panel\.internal/);
   });
 });
 
-// A profile as a 3.x panel returns it: the raw Xray config (with everything an
+// A profile as a 3.x backend returns it: the raw Xray config (with everything an
 // operator would put there, secrets included) plus the derived inbound rows
 // (`ConfigProfileInboundsSchema`, whose `rawInbound` repeats the whole inbound).
 const PROFILE_UUID = '0f1e2d3c-4b5a-4968-8776-655443322110';
@@ -125,7 +125,7 @@ const rawConfig = {
       settings: { clients: [{ id: 'VMESS_SECRET' }] },
       streamSettings: { network: 'kcp' },
     },
-    // Not indexed by the panel (no derived row): nothing a Host could bind to.
+    // Not indexed by the backend (no derived row): nothing a Host could bind to.
     { tag: 'UNINDEXED', port: 9000, protocol: 'vless', settings: { clients: [] } },
     // No tag: skipped.
     { port: 9001, protocol: 'vless' },
@@ -278,7 +278,7 @@ describe('remnawaveListNodeInbounds', () => {
   });
 });
 
-describe('projectXrayInbound', () => {
+describe('projectXrayTransport', () => {
   const binding = {
     configProfileUuid: PROFILE_UUID,
     configProfileInboundUuid: IN_REALITY,
@@ -286,7 +286,7 @@ describe('projectXrayInbound', () => {
   };
 
   test('reads the allowlist only (the `target` alias, empty names dropped)', () => {
-    const out = projectXrayInbound(
+    const out = projectXrayTransport(
       {
         tag: 'R',
         port: 443,
@@ -322,15 +322,15 @@ describe('projectXrayInbound', () => {
 
   test('carries the `listen` address (a loopback-bound inbound is not reachable from outside)', () => {
     const base = { tag: 'W', port: 8443, protocol: 'vless', streamSettings: { network: 'ws' } };
-    expect(projectXrayInbound({ ...base, listen: '127.0.0.1' }, binding)).toMatchObject({
+    expect(projectXrayTransport({ ...base, listen: '127.0.0.1' }, binding)).toMatchObject({
       listen: '127.0.0.1',
     });
-    expect(projectXrayInbound(base, binding)).not.toHaveProperty('listen');
+    expect(projectXrayTransport(base, binding)).not.toHaveProperty('listen');
   });
 
   test('httpupgrade, grpc and the ws host field vs the legacy Host header', () => {
     expect(
-      projectXrayInbound(
+      projectXrayTransport(
         {
           tag: 'H',
           port: 80,
@@ -344,7 +344,7 @@ describe('projectXrayInbound', () => {
       ),
     ).toMatchObject({ security: 'none', httpupgrade: { path: '/u', host: 'h.example' } });
     expect(
-      projectXrayInbound(
+      projectXrayTransport(
         {
           tag: 'G',
           port: 2053,
@@ -360,7 +360,7 @@ describe('projectXrayInbound', () => {
       ),
     ).toMatchObject({ tls: { serverName: null }, grpc: { serviceName: 's' } });
     expect(
-      projectXrayInbound(
+      projectXrayTransport(
         {
           tag: 'W',
           port: 443,
@@ -377,7 +377,7 @@ describe('projectXrayInbound', () => {
 
   test('ports: a numeric string is a port; a list, a range and a bad number are not', () => {
     const p = (port: unknown) =>
-      projectXrayInbound({ tag: 'P', port, protocol: 'vless' }, binding)?.port;
+      projectXrayTransport({ tag: 'P', port, protocol: 'vless' }, binding)?.port;
     expect(p(443)).toBe(443);
     expect(p('443')).toBe(443);
     expect(p(' 8443 ')).toBe(8443);
@@ -389,8 +389,8 @@ describe('projectXrayInbound', () => {
   });
 
   test('no tag or not an object: nothing', () => {
-    expect(projectXrayInbound({ port: 443 }, binding)).toBeNull();
-    expect(projectXrayInbound('nope', binding)).toBeNull();
-    expect(projectXrayInbound(null, binding)).toBeNull();
+    expect(projectXrayTransport({ port: 443 }, binding)).toBeNull();
+    expect(projectXrayTransport('nope', binding)).toBeNull();
+    expect(projectXrayTransport(null, binding)).toBeNull();
   });
 });

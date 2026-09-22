@@ -137,18 +137,18 @@ async function seed() {
   return { t, relayId, subId, edges: ids, now };
 }
 
-describe('resolveEdgeAttribution: which relay, and whether the member has the current pool', () => {
-  test('the origin is found by (backend server, pinned node); a whole-server relay covers unpinned keys; nothing else attributes', async () => {
+describe('resolveEdgeAttribution: which origin, and whether the member has the current pool', () => {
+  test('the origin is found by (backend server, pinned node); a whole-server origin covers unpinned keys; nothing else attributes', async () => {
     const s = await seed();
     await s.t.run(async (ctx) => {
       const sub = (await ctx.db.get(s.subId))!;
-      // The panel-node relay by its node.
+      // The backend-node origin by its node.
       expect(await relayForBackendNode(ctx.db, sub.backendServerId!, 'node-one')).toMatchObject({
         slug: 'node-one',
       });
-      // Another node on the same panel: no relay (a node relay never covers its neighbours).
+      // Another node on the same backend: no origin (a node origin never covers its neighbours).
       expect(await relayForBackendNode(ctx.db, sub.backendServerId!, 'node-two')).toBeNull();
-      // An unpinned key on the panel: no whole-server relay yet → null.
+      // An unpinned key on the backend: no whole-server origin yet → null.
       expect(await relayForBackendNode(ctx.db, sub.backendServerId!, undefined)).toBeNull();
       expect(
         await resolveEdgeAttribution(ctx.db, { ...sub, pinnedNode: 'node-two' }, 'primary', s.now),
@@ -158,7 +158,7 @@ describe('resolveEdgeAttribution: which relay, and whether the member has the cu
       ).toBeNull();
       expect(await resolveEdgeAttribution(ctx.db, null, 'primary', s.now)).toBeNull();
     });
-    // A whole-server relay on a SECOND panel covers every key of that panel, pinned or not.
+    // A whole-server origin on a SECOND backend covers every key of that backend, pinned or not.
     await s.t.run((ctx) =>
       ctx.db.insert('backendServers', {
         backend: 'outline',
@@ -194,7 +194,7 @@ describe('resolveEdgeAttribution: which relay, and whether the member has the cu
         slug: 'whole-b',
       });
       // An unpinned subscription (Outline keys never carry a node) attributes to
-      // the whole-server relay instead of losing its report.
+      // the whole-server origin instead of losing its report.
       const sub = (await ctx.db.get(s.subId))!;
       const unpinned = { ...sub, backend: 'outline' as const, backendServerId: b._id };
       delete (unpinned as { pinnedNode?: string }).pinnedNode;
@@ -279,7 +279,7 @@ describe('resolveEdgeAttribution reads the persisted render snapshot, never a re
     });
   });
 
-  test('a body that resolved only one listener: the recomputed relay-wide pick is NOT used', async () => {
+  test('a body that resolved only one listener: the recomputed origin-wide pick is NOT used', async () => {
     const s = await seed();
     // The render key's pool-wide primary is the v6-only edge (seed), but this
     // subscriber's body only matched an entry the first edge could serve.

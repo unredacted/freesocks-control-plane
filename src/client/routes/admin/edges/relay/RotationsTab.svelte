@@ -1,15 +1,15 @@
 <script lang="ts">
   /**
-   * The Rotations tab: every provision / publish / replace run of the relay. A
+   * The Rotations tab: every provision / publish / replace run of the origin. A
    * row opens the rotation drawer (`?rotation=`); the running one can be cancelled.
    *
-   * Props: relay; onOpenRotation(rotationId)
+   * Props: origin; onOpenRotation(rotationId)
    */
   import * as Table from '@client/components/ui/table';
   import { Badge } from '@client/components/ui/badge';
   import { Button } from '@client/components/ui/button';
   import { Skeleton } from '@client/components/ui/skeleton';
-  import type { RelayAdmin } from '@shared/contracts/edges';
+  import type { OriginAdmin } from '@shared/contracts/edges';
   import { cancelRelayRotation, edgeKeys, relayRotationsQuery } from '@client/lib/edgesApi';
   import AdminListState from '../../AdminListState.svelte';
   import StatusBadge from '../components/StatusBadge.svelte';
@@ -20,7 +20,7 @@
   import { rotationDurationMs, rotationOutcomeWords } from './relayLogic';
 
   interface Props {
-    relay: RelayAdmin;
+    relay: OriginAdmin;
     onOpenRotation: (rotationId: string) => void;
   }
   let { relay, onOpenRotation }: Props = $props();

@@ -1,5 +1,5 @@
 /**
- * Loose base64 handling for subscription bodies. Panels and mirrors wrap the
+ * Loose base64 handling for subscription bodies. Backends and mirrors wrap the
  * link list in base64 with either alphabet (standard `+/` or URL-safe `-_`),
  * with or without `=` padding, and with or without line breaks. `atob` accepts
  * only the padded standard form, so normalise before decoding and treat any

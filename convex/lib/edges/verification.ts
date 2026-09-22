@@ -2,7 +2,7 @@
  * Configuration-bound endpoint verification (docs/edges.md § "Publication").
  *
  * An L4 edge cannot be proven server-side: nothing in this stack opens an
- * authenticated REALITY session, and panel online bits do not identify the
+ * authenticated REALITY session, and backend online bits do not identify the
  * path a member used. So an L4 endpoint is `verified` ONLY by a human, per
  * endpoint, against the exact configuration they were shown:
  *
@@ -90,7 +90,7 @@ export function verificationEndpoint(edge: VerificationEdgeLike): string | null 
  * Whether RETIRING a server name leaves an operator's endpoint confirmation
  * standing. True for a REALITY listener only.
  *
- * The confirmation proves "this endpoint forwards to this inbound, with this
+ * The confirmation proves "this endpoint forwards to this transport, with this
  * key material, over this path". On REALITY the names are an allowlist the
  * node checks: taking one away changes neither the path nor the keys, and the
  * names that remain are exactly the ones that were accepted when the test was

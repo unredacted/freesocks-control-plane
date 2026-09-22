@@ -1,7 +1,7 @@
 /**
  * Pure helpers for the guided setup run machine (convex/edgeSetupRuns.ts):
  * stage order, terminal states, the bounded event log, the version vector
- * stage 8 compares against stage 7, the plan hash and the relay slug a node
+ * stage 8 compares against stage 7, the plan hash and the origin slug a node
  * gets. No db, no clock.
  */
 import {
@@ -52,7 +52,7 @@ export function nextStage(stage: SetupRunStage): SetupRunStage | null {
   return i >= 0 && i + 1 < SETUP_RUN_STAGES.length ? SETUP_RUN_STAGES[i + 1] : null;
 }
 
-/** Stages 1..4b: a cancel deletes the relay (nothing was published). */
+/** Stages 1..4b: a cancel deletes the origin (nothing was published). */
 export function cancelDeletesRelay(stage: SetupRunStage): boolean {
   return stageIndex(stage) < stageIndex('publish');
 }
@@ -118,7 +118,7 @@ export async function planHashOf(input: {
   );
 }
 
-/** One discovered inbound in the plan snapshot (the required set is the frontable ones). */
+/** One discovered transport in the plan snapshot (the required set is the frontable ones). */
 export interface SetupPlanInbound {
   listenerKey: string;
   sourceTag: string;
@@ -158,7 +158,7 @@ export interface SetupPlanSnapshot {
   originAddress: string;
   relaySlug: string;
   inbounds: SetupPlanInbound[];
-  /** Listener keys of the frontable inbounds (cap 8). */
+  /** Listener keys of the frontable transports (cap 8). */
   requiredListeners: string[];
   tooManyInbounds: boolean;
   directHosts: SetupPlanDirectHost[];
@@ -167,7 +167,7 @@ export interface SetupPlanSnapshot {
   familiesDisabled: string[];
   /** No subscription is pinned to the node (the rehearsal uses the credential's own body). */
   emptyNode: boolean;
-  /** A relay a previous run left `setupOwned` (the new run resumes at its recorded stage). */
+  /** An origin a previous run left `setupOwned` (the new run resumes at its recorded stage). */
   existingRelay: { id: string; slug: string; setupStage: string | null } | null;
   /** A non-terminal run already owns this origin. */
   activeRunId: string | null;
@@ -175,7 +175,7 @@ export interface SetupPlanSnapshot {
 
 const SLUG_MAX = 40;
 
-/** The relay slug a node gets: its name, lowercased and slug-safe (`[a-z0-9][a-z0-9-]{1,62}`). */
+/** The origin slug a node gets: its name, lowercased and slug-safe (`[a-z0-9][a-z0-9-]{1,62}`). */
 export function slugForNode(nodeName: string): string {
   let s = nodeName
     .toLowerCase()

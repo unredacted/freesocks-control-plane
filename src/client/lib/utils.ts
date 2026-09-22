@@ -21,7 +21,7 @@ export type WithElementRef<T, U extends HTMLElement = HTMLElement> = T & { ref?:
  * `subToken`, build the FCP-fronted URL from the CURRENT origin - the SPA and the
  * `/api` surface share one public origin, so `<origin>/api/v1/sub/<token>` is
  * same-origin and routes to Convex, which serves the config (cached) and hides the
- * backend panel URL. Building it here (not server-side) needs no deployment-origin
+ * backend backend URL. Building it here (not server-side) needs no deployment-origin
  * env var and fronts every UI surface uniformly. The token arrives HPKE-sealed in
  * the account reveal-leg; only the proxy client's later fetch of this URL is
  * necessarily unsealed (a dumb client can't decrypt). Falls back to the raw backend
@@ -33,7 +33,7 @@ export function subscriptionDisplayUrl(
   opts: { dynamicAccessKey?: boolean } = {},
 ): string {
   if (subToken && typeof location !== 'undefined') {
-    // A single-key backend behind relay edges (docs/edges.md): a static key
+    // A single-key backend behind origin edges (docs/edges.md): a static key
     // would embed one edge address and break on rotation, so the member imports
     // an Outline DYNAMIC access key that re-fetches this same fronted route.
     if (opts.dynamicAccessKey && location.protocol === 'https:') {

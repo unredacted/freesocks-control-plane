@@ -135,12 +135,12 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
     description: 'Server-name families: delete attributed report counts older than the window',
   },
   {
-    name: 'panel-reconcile',
+    name: 'backend-reconcile',
     everyMs: 5 * MIN,
-    description: 'Server management: settle open panel changes by looking at the panel',
+    description: 'Server management: settle open backend changes by looking at the backend',
   },
   {
-    name: 'panel-bootstrap-sweep',
+    name: 'backend-bootstrap-sweep',
     everyMs: 5 * MIN,
     description:
       'Server management: resume bootstrap workflows an interrupted attempt left pending',
@@ -149,32 +149,32 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
     name: 'edge-reconcile',
     everyMs: 5 * MIN,
     description:
-      'Relay edges: re-kick rotations, settle ledgers, health, drain → destroy, pool upkeep',
+      'Origin edges: re-kick rotations, settle ledgers, health, drain → destroy, pool upkeep',
   },
   {
     name: 'edge-probe',
     everyMs: 5 * MIN,
-    description: 'Relay edges: budgeted reachability probes of published edges',
+    description: 'Origin edges: budgeted reachability probes of published edges',
   },
   {
     name: 'edge-block-detector',
     everyMs: 5 * MIN,
-    description: 'Relay edges: score reports + load + probes per origin; opt-in auto-rotate',
+    description: 'Origin edges: score reports + load + probes per origin; opt-in auto-rotate',
   },
   {
     name: 'retention-edge-probes',
     everyMs: DAY,
-    description: 'Prune settled relay probe runs past the retention window',
+    description: 'Prune settled origin probe runs past the retention window',
   },
   {
     name: 'retention-edges',
     everyMs: DAY,
-    description: 'Prune destroyed relay edges past the retention window',
+    description: 'Prune destroyed origin edges past the retention window',
   },
   {
     name: 'retention-edge-rotations',
     everyMs: DAY,
-    description: 'Prune terminal relay rotations past the retention window',
+    description: 'Prune terminal origin rotations past the retention window',
   },
 ];
 

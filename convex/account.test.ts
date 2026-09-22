@@ -526,7 +526,7 @@ describe('account.switchBackend guards', () => {
 /**
  * switchMode saga: re-issue the member's key into the chosen connection mode's
  * least-loaded node (transport choice), tombstone the old key with 24h grace,
- * record the choice — WITHIN the same backend (no tier/peer change). The squad
+ * record the choice — WITHIN the same backend (no tier/peer change). The mode group
  * UUID (placement) must flow into issuance but never reach the audit log.
  */
 describe('account.switchMode saga', () => {
@@ -630,7 +630,7 @@ describe('account.switchMode saga', () => {
     const tierId = await seedTier(t, { backend: 'remnawave' });
     const userId = await seedUser(t, tierId);
     // freedom-reality ships dark. Binding a pool must not make it selectable —
-    // the operator turns it on deliberately, in the admin panel.
+    // the operator turns it on deliberately, in the admin backend.
     await t.run((ctx) =>
       ctx.db.insert('modePlacements', {
         modeSlug: 'freedom-reality',
@@ -671,7 +671,7 @@ describe('account.switchMode saga', () => {
     });
   });
 
-  test('switches IN PLACE: PATCHes the existing key’s squad, keeps the same sub row/URL/token, audits without the squad uuid', async () => {
+  test('switches IN PLACE: PATCHes the existing key’s mode group, keeps the same sub row/URL/token, audits without the mode group uuid', async () => {
     vi.stubEnv('DEV_MOCK_BACKEND', '');
     vi.stubEnv('ENVIRONMENT', 'production');
     const SQUAD = '11111111-2222-3333-4444-555555555555';
@@ -714,7 +714,7 @@ describe('account.switchMode saga', () => {
       // Currently on evade → switching to privacy is a real change.
       await ctx.db.patch(userId, { currentSubscriptionId: subId, connectionModeId: 'freedom-ws' });
     });
-    // The only HTTP an in-place switch makes is the squad PATCH (PATCH /api/users).
+    // The only HTTP an in-place switch makes is the mode group PATCH (PATCH /api/users).
     const fetchMock = vi.fn(
       async (_input: string | URL, _init?: RequestInit) =>
         new Response(
@@ -746,7 +746,7 @@ describe('account.switchMode saga', () => {
       oldSubscriptionDeletedAt: null,
     });
 
-    // The squad moved via PATCH /api/users (uuid in body) — NOT a create POST.
+    // The mode group moved via PATCH /api/users (uuid in body) — NOT a create POST.
     const patchCall = fetchMock.mock.calls.find(
       ([input, init]) => String(input).includes('/api/users') && init?.method === 'PATCH',
     );
@@ -781,11 +781,11 @@ describe('account.switchMode saga', () => {
       const payload = JSON.stringify(audit!.payload ?? {});
       expect(payload).toContain('privacy'); // toMode recorded
       expect(payload).toContain('inPlace'); // marked in-place
-      expect(payload).not.toContain(SQUAD); // the squad uuid is NEVER audited
+      expect(payload).not.toContain(SQUAD); // the mode group uuid is NEVER audited
     });
   });
 
-  test('repairs a STALE backendServerId (re-registered panel) and still switches in place', async () => {
+  test('repairs a STALE backendServerId (re-registered backend) and still switches in place', async () => {
     vi.stubEnv('DEV_MOCK_BACKEND', '');
     vi.stubEnv('ENVIRONMENT', 'production');
     const SQUAD = '11111111-2222-3333-4444-555555555555';
@@ -799,7 +799,7 @@ describe('account.switchMode saga', () => {
         config: JSON.stringify({ squadUuids: [SQUAD] }),
         updatedAt: Date.now(),
       });
-      // The panel row the sub was issued against was deleted + re-registered
+      // The backend row the sub was issued against was deleted + re-registered
       // (e.g. an Ansible by-slug re-create): the sub's pointer is now stale,
       // which used to force the re-issue fallback on EVERY mode switch.
       const staleId = await ctx.db.insert('backendServers', {
@@ -839,7 +839,7 @@ describe('account.switchMode saga', () => {
       await ctx.db.patch(userId, { currentSubscriptionId: subId, connectionModeId: 'freedom-ws' });
       return { activeInstanceId: liveId };
     });
-    // The probe GETs the user off the live panel; the switch PATCHes the squad.
+    // The probe GETs the user off the live backend; the switch PATCHes the mode group.
     const fetchMock = vi.fn(
       async (_input: string | URL, _init?: RequestInit) =>
         new Response(
@@ -880,7 +880,7 @@ describe('account.switchMode saga', () => {
       expect(subs).toHaveLength(1);
       expect(subs[0]!.backendUserId).toBe('old-key-uuid'); // not re-issued
       expect(subs[0]!.backendPlacement).toBe(SQUAD);
-      // The stale pointer was repaired to the live panel row.
+      // The stale pointer was repaired to the live backend row.
       expect(subs[0]!.backendServerId).toBe(activeInstanceId);
     });
   });
@@ -925,7 +925,7 @@ describe('account.switchMode saga', () => {
       });
       await ctx.db.patch(userId, { currentSubscriptionId: subId, connectionModeId: 'freedom-ws' });
     });
-    // Force the fallback: the in-place squad PATCH 500s, the re-issue POST works.
+    // Force the fallback: the in-place mode group PATCH 500s, the re-issue POST works.
     const fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
       const method = init?.method ?? 'GET';
       if (String(input).includes('/api/users') && method === 'PATCH')
@@ -1032,7 +1032,7 @@ describe('account.switchMode saga', () => {
 
     const res = await t.action(internal.account.switchMode, { userId, target: 'privacy-reality' });
     expect(res).toMatchObject({ ok: true, mode: { id: 'privacy-reality' } });
-    // A create POST happened (re-issue), homing into the mode's squad.
+    // A create POST happened (re-issue), homing into the mode's mode group.
     const createCall = fetchMock.mock.calls.find(
       ([input, init]) => String(input).includes('/api/users') && init?.method === 'POST',
     );
@@ -1162,7 +1162,7 @@ describe('account.switchMode saga', () => {
     });
   });
 
-  test('regenerate with NO pool bound anywhere issues squad-less + audits (WS1 bring-up)', async () => {
+  test('regenerate with NO pool bound anywhere issues mode group-less + audits (WS1 bring-up)', async () => {
     vi.stubEnv('DEV_MOCK_BACKEND', '');
     vi.stubEnv('ENVIRONMENT', 'production');
     const t = convexTest(schema, modules);
@@ -1206,7 +1206,7 @@ describe('account.switchMode saga', () => {
     const createCall = fetchMock.mock.calls.find(
       ([input, init]) => String(input).includes('/api/users') && init?.method === 'POST',
     );
-    // Still issues (bring-up must not hard-fail) but with no squad…
+    // Still issues (bring-up must not hard-fail) but with no mode group…
     expect(JSON.parse(String(createCall![1]!.body)).activeInternalSquads).toBeUndefined();
     // …and it's audited loudly so an admin knows to bind a pool.
     await t.run(async (ctx) => {
@@ -1272,7 +1272,7 @@ describe('deleteSubscriptionEverywhere ordering (P1-5)', () => {
   test('a failing backend DELETE leaves the local row disabled (not deleted) and keyCount untouched', async () => {
     const t = convexTest(schema, modules);
     const { subId, instanceId } = await seedDueTombstone(t);
-    // Every DELETE to the panel returns 500 → remnawaveDeleteUser throws (a 500 is
+    // Every DELETE to the backend returns 500 → remnawaveDeleteUser throws (a 500 is
     // NOT the idempotent 404 short-circuit), so deleteSubscriptionEverywhere must
     // propagate without marking the row.
     const fetchMock = vi.fn(
@@ -1397,13 +1397,13 @@ describe('account.getNodeStatus', () => {
     return { userId, serverId: serverId! };
   }
 
-  test('fresh placement stats: online + the NEUTRAL location label (never the squad name)', async () => {
+  test('fresh placement stats: online + the NEUTRAL location label (never the mode group name)', async () => {
     const t = convexTest(schema, modules);
     const { userId } = await seedPlacedSub(t, { placement: 'sq-a', online: true });
     const res = await t.action(internal.account.getNodeStatus, { userId });
     expect(res.node).toMatchObject({
       online: true,
-      // The panel's squad/node name ('Node A') often encodes infra detail —
+      // The backend's mode group/node name ('Node A') often encodes infra detail —
       // the member sees the curated location label instead.
       label: 'Kansas City, MO',
       location: { code: 'MCI', label: 'Kansas City, MO' },
@@ -1444,7 +1444,7 @@ describe('account.getNodeStatus', () => {
     expect(res.node).toBeNull();
   });
 
-  test('stale stats trigger ONE stampede-guarded refresh; a failing panel keeps the cache', async () => {
+  test('stale stats trigger ONE stampede-guarded refresh; a failing backend keeps the cache', async () => {
     const t = convexTest(schema, modules);
     const { userId } = await seedPlacedSub(t, {
       placement: 'sq-a',
@@ -1455,7 +1455,7 @@ describe('account.getNodeStatus', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const res = await t.action(internal.account.getNodeStatus, { userId });
-    // Refresh attempted (claim won) but the panel failed → cached verdict kept.
+    // Refresh attempted (claim won) but the backend failed → cached verdict kept.
     expect(fetchMock).toHaveBeenCalled();
     expect(res.node).toMatchObject({ online: true, label: 'Kansas City, MO' });
 
@@ -1632,7 +1632,7 @@ describe('account.switchServer', () => {
     });
   }
 
-  /** Panel stub: answers the squad PATCH with a plausible user record. */
+  /** Backend stub: answers the mode group PATCH with a plausible user record. */
   function panelStub() {
     return vi.fn(
       async (_input: string | URL, _init?: RequestInit) =>
@@ -1656,7 +1656,7 @@ describe('account.switchServer', () => {
     );
   }
 
-  test('moves to another squad IN PLACE, keeping the key, URL and token', async () => {
+  test('moves to another mode group IN PLACE, keeping the key, URL and token', async () => {
     vi.stubEnv('DEV_MOCK_BACKEND', '');
     vi.stubEnv('ENVIRONMENT', 'production');
     const t = convexTest(schema, modules);
@@ -1682,7 +1682,7 @@ describe('account.switchServer', () => {
       oldSubscriptionDeletedAt: null,
     });
 
-    // The move is a PATCH onto the SAME panel user, never a create.
+    // The move is a PATCH onto the SAME backend user, never a create.
     const patchCall = fetchMock.mock.calls.find(
       ([input, init]) => String(input).includes('/api/users') && init?.method === 'PATCH',
     );
@@ -1700,7 +1700,7 @@ describe('account.switchServer', () => {
       expect(only.backendUserId).toBe('old-key-uuid');
       expect(only.subToken).toBe('tok-abc'); // saved link unchanged
       expect(only.backendPlacement).toBe(SQUAD_B);
-      // The node pin is rotated too: the new squad may still span nodes.
+      // The node pin is rotated too: the new mode group may still span nodes.
       expect(only.excludeNode).toBe('xray1');
       expect(only.pinnedNode).toBeUndefined();
       expect(only.subCache).toBeUndefined();
@@ -1709,7 +1709,7 @@ describe('account.switchServer', () => {
     });
   });
 
-  test('records the reason and the node left, never the squad uuid', async () => {
+  test('records the reason and the node left, never the mode group uuid', async () => {
     vi.stubEnv('DEV_MOCK_BACKEND', '');
     vi.stubEnv('ENVIRONMENT', 'production');
     const t = convexTest(schema, modules);
@@ -1745,7 +1745,7 @@ describe('account.switchServer', () => {
     });
   });
 
-  test('with only one squad, rotates the NODE PIN instead (no panel call at all)', async () => {
+  test('with only one mode group, rotates the NODE PIN instead (no backend call at all)', async () => {
     vi.stubEnv('DEV_MOCK_BACKEND', '');
     vi.stubEnv('ENVIRONMENT', 'production');
     const t = convexTest(schema, modules);
@@ -1760,13 +1760,13 @@ describe('account.switchServer', () => {
       }),
     );
     await seedKey(t, userId, { placement: SQUAD_A, pinnedNode: 'xray1' });
-    await seedNodeStats(t, SQUAD_A, 3); // the squad really does span other nodes
+    await seedNodeStats(t, SQUAD_A, 3); // the mode group really does span other nodes
     const fetchMock = panelStub();
     vi.stubGlobal('fetch', fetchMock);
 
     const res = await t.action(internal.account.switchServer, { userId, reason: 'disconnects' });
     expect(res).toMatchObject({ ok: true, inPlace: true });
-    // A single-squad pool has nowhere to PATCH to — the pin does the work.
+    // A single-mode group pool has nowhere to PATCH to — the pin does the work.
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes('/api/users'))).toBe(
       false,
     );
@@ -1782,7 +1782,7 @@ describe('account.switchServer', () => {
     });
   });
 
-  test('refuses instead of claiming a move when the squad has only ONE node', async () => {
+  test('refuses instead of claiming a move when the mode group has only ONE node', async () => {
     // The pin is set, so the old code rotated it and reported success — but
     // pickNode drops the exclusion rather than empty a one-node pool, so the very
     // next fetch serves the SAME server. Telling the member their key moved was a
@@ -1801,7 +1801,7 @@ describe('account.switchServer', () => {
       }),
     );
     await seedKey(t, userId, { placement: SQUAD_A, pinnedNode: 'xray1' });
-    await seedNodeStats(t, SQUAD_A, 1); // one squad, ONE node behind it
+    await seedNodeStats(t, SQUAD_A, 1); // one mode group, ONE node behind it
     vi.stubGlobal('fetch', panelStub());
 
     const res = await t.action(internal.account.switchServer, { userId, reason: 'slow' });
@@ -1816,7 +1816,7 @@ describe('account.switchServer', () => {
   });
 
   test('refuses on a STALE node count, even when it says multiple nodes', async () => {
-    // A squad that has since shrunk to one node still reads >1 from an old
+    // A mode group that has since shrunk to one node still reads >1 from an old
     // snapshot; trusting it would put us right back to promising a move that
     // cannot happen. Same staleness bar pickByNodeLoad applies.
     vi.stubEnv('DEV_MOCK_BACKEND', '');
@@ -1894,7 +1894,7 @@ describe('account.switchServer', () => {
         updatedAt: Date.now(),
       }),
     );
-    // One squad AND no pin yet (the key has never been served).
+    // One mode group AND no pin yet (the key has never been served).
     await seedKey(t, userId, { placement: SQUAD_A });
     const fetchMock = panelStub();
     vi.stubGlobal('fetch', fetchMock);
@@ -1910,10 +1910,10 @@ describe('account.switchServer', () => {
     });
   });
 
-  test("re-issues across panels when the member's own panel is a dead end", async () => {
-    // One squad on this panel, one node behind it — both cheap levers are out.
-    // But the mode pool has a squad on ANOTHER panel, which the same-panel lookup
-    // deliberately hides (`onlyServerId` is a hard pin). Without the cross-panel
+  test("re-issues across backends when the member's own backend is a dead end", async () => {
+    // One mode group on this backend, one node behind it — both cheap levers are out.
+    // But the mode pool has a mode group on ANOTHER backend, which the same-backend lookup
+    // deliberately hides (`onlyServerId` is a hard pin). Without the cross-backend
     // probe the member could never leave, despite a whole other location bound.
     vi.stubEnv('DEV_MOCK_BACKEND', '');
     vi.stubEnv('ENVIRONMENT', 'production');
@@ -1938,7 +1938,7 @@ describe('account.switchServer', () => {
         config: JSON.stringify({ squadUuids: [SQUAD_A, SQUAD_B] }),
         updatedAt: Date.now(),
       });
-      // Attribute each squad to its own panel; SQUAD_A is single-node, so the pin
+      // Attribute each mode group to its own backend; SQUAD_A is single-node, so the pin
       // rotation is not an option either.
       await ctx.db.insert('remnawaveNodeStats', {
         backendServerId: instanceId,
@@ -1991,13 +1991,13 @@ describe('account.switchServer', () => {
       const fresh = (await ctx.db.query('subscriptions').collect()).find(
         (x) => x.state === 'active',
       )!;
-      expect(fresh.backendPlacement).toBe(SQUAD_B); // the other panel's squad
+      expect(fresh.backendPlacement).toBe(SQUAD_B); // the other backend's mode group
       expect(fresh.backendServerId).toBe(otherPanel);
       expect(fresh.subToken).toBe('tok-abc'); // saved link still works
     });
   });
 
-  test('a failed panel PATCH falls back to a re-issue that CARRIES the sub token', async () => {
+  test('a failed backend PATCH falls back to a re-issue that CARRIES the sub token', async () => {
     vi.stubEnv('DEV_MOCK_BACKEND', '');
     vi.stubEnv('ENVIRONMENT', 'production');
     const t = convexTest(schema, modules);
@@ -2012,7 +2012,7 @@ describe('account.switchServer', () => {
       }),
     );
     await seedKey(t, userId, { placement: SQUAD_A, pinnedNode: 'xray1' });
-    // PATCH fails (e.g. the panel user was deleted by hand); POST (create) works.
+    // PATCH fails (e.g. the backend user was deleted by hand); POST (create) works.
     const fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
       if (String(input).includes('/api/users') && init?.method === 'PATCH') {
         return new Response('{"message":"not found"}', { status: 404 });
@@ -2057,7 +2057,7 @@ describe('account.switchServer', () => {
   test("never re-homes into ANOTHER mode when the member's own mode is unbound", async () => {
     // resolvePlacementPool falls back across modes (own -> default -> any bound),
     // which is right at issuance but would silently move this key into a
-    // different mode's squad — changing the transport the member chose while the
+    // different mode's mode group — changing the transport the member chose while the
     // UI still shows the original. regenerate/switch-backend refuse here; so must
     // this. No pin either, so there is nothing safe left to do.
     vi.stubEnv('DEV_MOCK_BACKEND', '');
@@ -2090,7 +2090,7 @@ describe('account.switchServer', () => {
   });
 
   test('an unbound mode still permits the transport-safe NODE PIN rotation', async () => {
-    // Rotating the pin moves inside the member's CURRENT squad, so it cannot
+    // Rotating the pin moves inside the member's CURRENT mode group, so it cannot
     // change their transport — no reason to withhold it just because an admin
     // unbound their mode.
     vi.stubEnv('DEV_MOCK_BACKEND', '');
@@ -2117,9 +2117,9 @@ describe('account.switchServer', () => {
     await t.run(async (ctx) => {
       const sub = (await ctx.db.query('subscriptions').collect())[0]!;
       expect(sub.excludeNode).toBe('xray1');
-      expect(sub.backendPlacement).toBe(SQUAD_A); // squad untouched → transport intact
+      expect(sub.backendPlacement).toBe(SQUAD_A); // mode group untouched → transport intact
     });
-    // No panel PATCH: the pin is a local move.
+    // No backend PATCH: the pin is a local move.
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes('/api/users'))).toBe(
       false,
     );
@@ -2150,15 +2150,15 @@ describe('account.switchServer', () => {
       expect(sub.pinnedNode).toBeUndefined();
       expect(sub.backendPlacement).toBe(SQUAD_A); // no placement move attempted
     });
-    // Purely local: no panel call at all.
+    // Purely local: no backend call at all.
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes('/api/users'))).toBe(
       false,
     );
   });
 
-  test('a LEGACY key with no recorded squad refuses on a single-panel deployment', async () => {
-    // With no source placement AND no second panel, nothing can prove a move:
-    // the resolved squad may be the one the key already sits in, so re-issuing
+  test('a LEGACY key with no recorded mode group refuses on a single-backend deployment', async () => {
+    // With no source placement AND no second backend, nothing can prove a move:
+    // the resolved mode group may be the one the key already sits in, so re-issuing
     // would tombstone a working key and re-register the member's devices to land
     // them on the same server. Refuse instead. (regenerate still records a
     // placement for such a row, after which its switches are provable.)
@@ -2186,15 +2186,15 @@ describe('account.switchServer', () => {
       expect(subs).toHaveLength(1); // working key untouched
       expect(subs[0]!.state).toBe('active');
     });
-    // Neither a squad PATCH nor a create was attempted.
+    // Neither a mode group PATCH nor a create was attempted.
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes('/api/users'))).toBe(
       false,
     );
   });
 
-  test('a LEGACY key DOES re-issue when another panel is available', async () => {
-    // A different panel is the one proof that survives an unknown squad: a key
-    // created on panel B is by definition not on panel A.
+  test('a LEGACY key DOES re-issue when another backend is available', async () => {
+    // A different backend is the one proof that survives an unknown mode group: a key
+    // created on backend B is by definition not on backend A.
     vi.stubEnv('DEV_MOCK_BACKEND', '');
     vi.stubEnv('ENVIRONMENT', 'production');
     const t = convexTest(schema, modules);

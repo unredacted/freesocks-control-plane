@@ -1120,7 +1120,7 @@ describe('adminApi connection modes + placements (DB-driven catalog)', () => {
     expect(JSON.stringify(placed)).not.toContain(REALITY_UUID);
     expect(JSON.stringify(placed)).not.toContain(FRONTED_UUID);
 
-    // Catalog copy + default via the CRUD mutations — no squads on this surface.
+    // Catalog copy + default via the CRUD mutations — no mode groups on this surface.
     await t.mutation(internal.connectionModes.updateMode, {
       slug: 'privacy-reality',
       label: 'Max privacy',
@@ -1141,7 +1141,7 @@ describe('adminApi connection modes + placements (DB-driven catalog)', () => {
     // over i18n for the built-ins).
     expect(ws.label).toBeNull();
     expect(ws.description).toBeNull();
-    // Neither the catalog view nor the pool return ever carries a squad UUID.
+    // Neither the catalog view nor the pool return ever carries a mode group UUID.
     expect(JSON.stringify(out)).not.toContain(REALITY_UUID);
     expect(JSON.stringify(out)).not.toContain(FRONTED_UUID);
 
@@ -1481,7 +1481,7 @@ describe('characterization: backendServersList masks every secret', () => {
     await t.run(async (ctx) => {
       await ctx.db.insert('backendServers', {
         backend: 'remnawave',
-        name: 'RW Panel',
+        name: 'RW Backend',
         slug: 'rw-panel',
         config: {
           type: 'remnawave',

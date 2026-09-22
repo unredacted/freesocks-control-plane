@@ -38,7 +38,7 @@ export async function issueNewSubscription(
     backend: BackendId;
     spec: IssueUserSpec;
     // Pin to one instance — set when node placement resolved the (placement,
-    // panel) pair together (the squad only exists on that panel).
+    // backend) pair together (the mode group only exists on that backend).
     pinServerId?: Id<'backendServers'> | null;
     // The node the PREVIOUS key was pinned to (regenerate) — stored on the new
     // row and avoided on the next fetch's pin pick (different node guaranteed).

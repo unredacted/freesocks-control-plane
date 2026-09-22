@@ -24,7 +24,7 @@ export function familyLine(f: SniFamilySummary): string {
   if (c.failing) parts.push(`${c.failing} failing`);
   if (c.suspended) parts.push(`${c.suspended} suspended`);
   parts.push(
-    f.bindings === 0 ? 'not used by any inbound' : `used by ${plural(f.bindings, 'inbound')}`,
+    f.bindings === 0 ? 'not used by any transport' : `used by ${plural(f.bindings, 'transport')}`,
   );
   return parts.join(' · ');
 }
@@ -106,25 +106,27 @@ export function importWords(r: SniImportResult): string[] {
   return out;
 }
 
-/** What pressing "Write to the panel" would do. */
+/** What pressing "Write to the backend" would do. */
 export function planWords(p: SniRolloutPlan): string[] {
-  if (!p.changed) return ['The panel already lists exactly the names this family wants there.'];
+  if (!p.changed) return ['The backend already lists exactly the names this family wants there.'];
   const out: string[] = [];
-  if (p.added.length) out.push(`${plural(p.added.length, 'name')} will be added to the inbound.`);
+  if (p.added.length) out.push(`${plural(p.added.length, 'name')} will be added to the transport.`);
   if (p.removed.length)
     out.push(
       `${plural(p.removed.length, 'name')} will be removed. None of them is still given to members.`,
     );
   if (p.overflow)
-    out.push(`${plural(p.overflow, 'ready name')} will wait: the inbound's list is full for now.`);
+    out.push(
+      `${plural(p.overflow, 'ready name')} will wait: the transport's list is full for now.`,
+    );
   if (p.added.length)
     out.push(
       p.witness
         ? 'One test per node will prove all of the new names at once.'
-        : 'Each new name has to be tested by itself on each node, because each has been on this inbound before.',
+        : 'Each new name has to be tested by itself on each node, because each has been on this transport before.',
     );
   out.push(
-    'The panel pushes this to every node on the profile. People connected there are cut off for a few seconds.',
+    'The backend pushes this to every node on the profile. People connected there are cut off for a few seconds.',
   );
   return out;
 }
@@ -132,19 +134,19 @@ export function planWords(p: SniRolloutPlan): string[] {
 export function rolloutWords(s: SniRolloutStatus): { dot: Dot; sentence: string } {
   switch (s.phase) {
     case 'writing':
-      return { dot: 'amber', sentence: 'Being written to the panel.' };
+      return { dot: 'amber', sentence: 'Being written to the backend.' };
     case 'failed':
       return { dot: 'red', sentence: 'The write did not go through. See Servers, Recent changes.' };
     case 'superseded':
       return { dot: 'grey', sentence: 'Replaced by a newer write.' };
     case 'panel_confirmed': {
       const pending = s.nodes.reduce((n, x) => n + x.pending, 0);
-      if (s.added === 0) return { dot: 'green', sentence: 'On the panel. Nothing new to prove.' };
+      if (s.added === 0) return { dot: 'green', sentence: 'On the backend. Nothing new to prove.' };
       return pending === 0
-        ? { dot: 'green', sentence: 'On the panel, and every node has proven the new names.' }
+        ? { dot: 'green', sentence: 'On the backend, and every node has proven the new names.' }
         : {
             dot: 'amber',
-            sentence: 'On the panel. A node hands out a new name once it has proven it.',
+            sentence: 'On the backend. A node hands out a new name once it has proven it.',
           };
     }
   }
@@ -160,28 +162,29 @@ const ERROR_WORDS: Record<string, string> = {
   'edge.sni.bad_target': 'The target has to be a public host name and a port.',
   'edge.sni.cap': 'This family is full.',
   'edge.sni.disabled': 'Server name families are turned off. Turn them on first.',
-  'edge.sni.family_in_use': 'An inbound still uses this family. Unbind it first.',
+  'edge.sni.family_in_use': 'A transport still uses this family. Unbind it first.',
   'edge.sni.target_mismatch':
-    "The inbound's target site is not this family's target. Every name must be one the target really serves.",
-  'edge.sni.binding_changed': 'This inbound changed since the page loaded. Reload and look again.',
+    "The transport's target site is not this family's target. Every name must be one the target really serves.",
+  'edge.sni.binding_changed':
+    'This transport changed since the page loaded. Reload and look again.',
   'edge.sni.profile_moved':
-    'The profile changed on the panel since this was written. Write the names again before testing.',
-  'edge.sni.rollout_not_confirmed': 'The names are not on the panel yet.',
+    'The profile changed on the backend since this was written. Write the names again before testing.',
+  'edge.sni.rollout_not_confirmed': 'The names are not on the backend yet.',
   'edge.sni.receipt_expired': 'That test link has expired. Make a new one.',
   'edge.sni.superseded': 'A newer write replaced this one. Test against the newer one.',
   'edge.sni.country_not_curated':
     'That country is not on the list of countries names are judged for.',
-  'servers.manage_disabled': 'Changing panels is turned off under Servers.',
-  'servers.handoff_missing': 'The node role has not handed this panel over yet.',
+  'servers.manage_disabled': 'Changing backends is turned off under Servers.',
+  'servers.handoff_missing': 'The node role has not handed this backend over yet.',
   'servers.op_running': 'Another change to this profile is still running.',
   'servers.op_uncertain':
     'An earlier change to this profile has an unknown outcome. Settle it under Servers.',
   'servers.name_in_use': 'Members are still given one of the names being removed.',
-  // Binding to an inbound reads the Servers cache.
+  // Binding to a transport reads the Servers cache.
   'servers.unknown_inbound':
-    'That inbound is not on this panel as last read. Refresh under Servers, then pick again.',
-  'servers.not_reality': 'Only a REALITY inbound takes a family.',
-  'edge.panel_op_running': 'A server change is still running on this relay.',
+    'That transport is not on this backend as last read. Refresh under Servers, then pick again.',
+  'servers.not_reality': 'Only a REALITY transport takes a family.',
+  'edge.panel_op_running': 'A server change is still running on this origin.',
   conflict: 'That already exists, or it is already settled. Reload and look again.',
   not_found: 'That no longer exists. Reload and look again.',
   validation: 'Something in the form is not valid.',

@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 /**
- * Relay attribution on member reports (through the real route) and the block
+ * Origin attribution on member reports (through the real route) and the block
  * detector's evaluation → suspicion → gated automatic rotation.
  */
 import { convexTest } from 'convex-test';
@@ -177,7 +177,7 @@ async function handed(
   });
 }
 
-describe('relay attribution on member reports', () => {
+describe('origin attribution on member reports', () => {
   test('a report carries the origin slug; the edge only for an explicit choice; the first report per window weighs 1', async () => {
     const s = await seed();
     const m = await member(s.t, s.tierId, s.serverId, 1);
@@ -331,7 +331,7 @@ describe('relay attribution on member reports', () => {
   });
 });
 
-describe('relay block detector', () => {
+describe('origin block detector', () => {
   const NOW = 1_800_000_000_000;
 
   test('edge evidence counts deduplicated reporters: repeats by one member (weight 0) add nothing', async () => {
@@ -687,8 +687,8 @@ describe('relay block detector', () => {
     const t = convexTest(schema, modules);
     const serverB = await insertPanelServer(t, { slug: 'panel-b' });
     await t.run((ctx) => upsertSettingRow(ctx, 'edge.render.enabled', 'true'));
-    // A whole-server origin: the listener has no panel binding, so the fixture
-    // strips it and the relay derives hostMode `none`.
+    // A whole-server origin: the listener has no backend binding, so the fixture
+    // strips it and the origin derives hostMode `none`.
     const { relayId, listenerId } = await registerRelay(t, {
       slug: 'server-b',
       kind: 'backend-server',
@@ -910,7 +910,7 @@ describe('relay block detector', () => {
     // edgeA sits at index 0 and is the listener's template edge.
     expect((await s.t.run((ctx) => ctx.db.get(s.listenerId)))!.templateEdgeId).toBe(s.edgeA);
     await edgeReports(s.t, s.edgeA);
-    // The operator owns the panel Hosts: the detector may not move the template
+    // The operator owns the backend Hosts: the detector may not move the template
     // edge (its Host would keep pointing at the burned address).
     await s.t.mutation(internal.relays.update, { id: s.relayId, hostMode: 'operator' });
     const held = await s.t.action(internal.edgeDetector.run, {});

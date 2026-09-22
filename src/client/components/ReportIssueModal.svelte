@@ -13,7 +13,7 @@
    * NO free-text box: a member who needs to say more is pointed at the
    * operator's support email (`site.supportEmail`, admin-set; the line is
    * absent when none is configured). The optional consent block attaches
-   * editable network context. When the key sits behind relay edges the member
+   * editable network context. When the key sits behind origin edges the member
    * may also say which connection they were using (the labels the pass shows;
    * optional, feeds edge attribution). Purely presentational; the mutation lives in
    * the page.

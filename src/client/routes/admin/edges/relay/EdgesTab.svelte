@@ -1,15 +1,15 @@
 <script lang="ts">
   /**
-   * The Edges tab: every edge of the relay in one table, with names joined from
+   * The Edges tab: every edge of the origin in one table, with names joined from
    * the provider accounts and the listeners. A row opens the edge drawer
    * (`?edge=`); the row menu holds every edge action.
    *
-   * Props: relay; edges; listeners; accounts; loading; error; onRetry; onOpenEdge; onRotationStarted
+   * Props: origin; edges; listeners; accounts; loading; error; onRetry; onOpenEdge; onRotationStarted
    */
   import type {
     EdgeAdmin,
     EdgeProviderAccountAdmin,
-    RelayAdmin,
+    OriginAdmin,
     RelayListenerAdmin,
   } from '@shared/contracts/edges';
   import * as Table from '@client/components/ui/table';
@@ -30,7 +30,7 @@
   import { edgeAddress } from './relayLogic';
 
   interface Props {
-    relay: RelayAdmin;
+    relay: OriginAdmin;
     edges: EdgeAdmin[];
     listeners: RelayListenerAdmin[];
     accounts: EdgeProviderAccountAdmin[];

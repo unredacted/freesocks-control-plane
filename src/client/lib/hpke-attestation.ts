@@ -29,7 +29,7 @@ const TAMPER_FAILURES: readonly AttestationFailure[] = ['signature', 'revoked'];
  *                  sealing to the manifest-pinned STATIC key, so nothing is
  *                  unprotected and nothing points at tampering: this is an operator
  *                  signal (rotation wedged, or a cache handed us an old response)
- *                  and shows only as detail in the verify panel. It must NOT reuse
+ *                  and shows only as detail in the verify backend. It must NOT reuse
  *                  `warn` - saying "don't enter your account number" because a cron
  *                  is behind trains users to ignore the one alarm that counts.
  *  - `unreachable` couldn't reach the endpoint (a network blip); the pinned key is

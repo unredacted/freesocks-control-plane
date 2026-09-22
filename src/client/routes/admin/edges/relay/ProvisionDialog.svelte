@@ -1,14 +1,14 @@
 <script lang="ts">
   /**
-   * Provision one more edge for the relay (spends provider budget), behind a dry
+   * Provision one more edge for the origin (spends provider budget), behind a dry
    * run. The listener may be left to FCP; "publish when ready" makes it a
    * published edge instead of a standby.
    *
-   * Props: open (bindable); relay; listeners; onStarted(rotationId)
+   * Props: open (bindable); origin; listeners; onStarted(rotationId)
    */
   import { createQuery, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
-  import type { RelayAdmin, RelayListenerAdmin } from '@shared/contracts/edges';
+  import type { OriginAdmin, RelayListenerAdmin } from '@shared/contracts/edges';
   import { Checkbox } from '@client/components/ui/checkbox';
   import { Label } from '@client/components/ui/label';
   import * as Select from '@client/components/ui/select';
@@ -19,7 +19,7 @@
 
   interface Props {
     open: boolean;
-    relay: RelayAdmin;
+    relay: OriginAdmin;
     listeners: RelayListenerAdmin[];
     /** Preselect a listener (the Listeners tab's "Provision an edge for this listener"). */
     listenerKey?: string | null;

@@ -450,7 +450,7 @@ export const deleteTier = internalMutation({
 
 /**
  * Idempotent tier upsert addressed by slug — the IaC converge primitive for
- * tiers + the mechanism behind declarative squad↔tier binding (the squad UUID
+ * tiers + the mechanism behind declarative mode group↔tier binding (the mode group UUID
  * is just a tier field). Mirrors `upsertBackendServerBySlug`: all fields are
  * optional and the slug is authoritative (from the path).
  *  - MISSING tier → CREATE, defaulting the mechanical entitlement fields so a
@@ -1000,7 +1000,7 @@ const AUTOMATION_ALLOWED_SCOPES = [
   'admin:servers:read',
   'admin:servers:write',
   'admin:status:read',
-  // The node role's relay registration; needs `registerBackendSlugs` (its boundary).
+  // The node role's origin registration; needs `registerBackendSlugs` (its boundary).
   'admin:edges:register',
 ] as const;
 
@@ -1464,9 +1464,9 @@ export const updateBackendServer = internalMutation({
 /**
  * Throw `server.in_use` while any non-deleted subscription still points at the
  * instance. ONE bounded read per live state via the (backendServerId, state)
- * index — the former `.collect()` of every subscription on the panel would trip
+ * index — the former `.collect()` of every subscription on the backend would trip
  * Convex's per-execution read limit (8 MiB / 32k docs; sub docs carry subCache)
- * on any real panel and 500 instead of rejecting (2026-09-04 audit).
+ * on any real backend and 500 instead of rejecting (2026-09-04 audit).
  */
 async function assertBackendServerUnused(
   db: DatabaseReader,
@@ -1497,7 +1497,7 @@ export const deleteBackendServer = internalMutation({
     await assertBackendServerUnused(ctx.db, id);
     await ctx.db.delete(id);
     // Its node-stats cache rows dangle otherwise (the picker would keep
-    // attributing squads to a gone panel).
+    // attributing mode groups to a gone backend).
     const stats = await ctx.db
       .query('remnawaveNodeStats')
       .withIndex('by_server', (q) => q.eq('backendServerId', id))
@@ -1631,7 +1631,7 @@ export const deleteBackendServerBySlug = internalMutation({
       .unique();
     if (!row) return { ok: true as const, deleted: false };
     // Same in-use guard as the by-id path (this is the Ansible route; it used
-    // to delete unconditionally and orphan every key on the panel).
+    // to delete unconditionally and orphan every key on the backend).
     await assertBackendServerUnused(ctx.db, row._id);
     await ctx.db.delete(row._id);
     await writeAuditLog(ctx, {
@@ -2142,7 +2142,7 @@ export const setTheme = internalMutation({
 
 /**
  * Set the HPKE verification config (V-config): the off-CDN channels shown in the
- * "Verify connection" panel + the master show/hide toggle. Sanitizes each URL
+ * "Verify connection" backend + the master show/hide toggle. Sanitizes each URL
  * (https-only for release/source; .onion for the mirror) so a bad value stores as
  * '' rather than a broken/unsafe link. Audited (URLs are non-secret).
  */
@@ -2355,7 +2355,7 @@ export const setSiteConfig = internalMutation({
 });
 
 /**
- * Set the analytics-relay config (self-hosted Umami). Sanitizes the base URL
+ * Set the analytics-origin config (self-hosted Umami). Sanitizes the base URL
  * (https-only + SSRF denylist, else '') and website id (UUID, else '') so a
  * bad value stores harmlessly. `umamiUrlHash` is computed by the HTTP caller
  * (truncated sha-256 of the CLEANED url; Web Crypto isn't available in this

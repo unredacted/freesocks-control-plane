@@ -99,7 +99,7 @@ export const relayWindow = internalQuery({
       distinctReporters: s.distinctReporters,
       usersOnline: s.usersOnline,
     }));
-    // Only a panel node has a load / online signal (backend node inventory).
+    // Only a backend node has a load / online signal (backend node inventory).
     const panelNode = origin.origin.kind === 'panel-node' ? origin.origin : null;
     const inv = panelNode
       ? await ctx.db
@@ -199,7 +199,7 @@ export const recordEvaluation = internalMutation({
     if (!origin) return null;
     const ev = a.evaluation as Evaluation;
     const prev = origin.suspicion;
-    // The baseline describes NORMAL operation. A sample taken while the relay
+    // The baseline describes NORMAL operation. A sample taken while the origin
     // is suspected, rotating, cooling down after a rotation or behind an
     // offline node would teach the detector that a block looks normal, so it
     // is not appended to the ring. Nor is one whose numbers are not the truth:

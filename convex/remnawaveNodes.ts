@@ -67,7 +67,7 @@ export const getPlacementStats = internalQuery({
  * check-and-stamp on a per-instance appState key. Only the FIRST caller inside
  * a freshness window wins the claim (OCC conflicts collapse concurrent
  * claimers); everyone else serves the cached snapshot. Bounds the member
- * node-status endpoint to ≤1 panel sweep per instance per window regardless of
+ * node-status endpoint to ≤1 backend sweep per instance per window regardless of
  * how many members are polling.
  */
 export const claimStatsRefresh = internalMutation({
@@ -90,7 +90,7 @@ export const claimStatsRefresh = internalMutation({
   },
 });
 
-/** Per-mode bound-squad counts for the admin placement editor's feedback badge
+/** Per-mode bound-mode group counts for the admin placement editor's feedback badge
  *  (pool SIZES only — never the UUIDs themselves). */
 export const listModePlacementCounts = internalQuery({
   args: {},
@@ -101,7 +101,7 @@ export const listModePlacementCounts = internalQuery({
 });
 
 /** Per-placement node load for the admin CMS (read-only; no secrets — the
- *  placement is a squad UUID the admin set, load numbers are safe). */
+ *  placement is a mode group UUID the admin set, load numbers are safe). */
 export const listNodeStats = internalQuery({
   args: {},
   handler: async (ctx) => {
