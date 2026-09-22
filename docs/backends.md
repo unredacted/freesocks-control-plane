@@ -383,7 +383,7 @@ on them. Measured on the pinned backend (`remnawave/backend:3.4.4`), no node con
 | Mode group `PATCH {uuid, inbounds}`                                      | replaces the assignment                          |                                                                                                                        |
 | Node `PATCH {uuid, name, tags}`                                          | profile assignment kept; tags stored verbatim    |                                                                                                                        |
 | Repeat `actions/disable` on a disabled node                              | **200** again                                    | Not an error, and not a guaranteed no-op: read the state first and skip the call                                       |
-| `actions/restart` with `{forceRestart: true}`                            | **202**                                          | The answer means "queued", not "restarted"                                                                             |
+| `actions/restart` with `{forceRestart: true}`                            | **202** (2.x: **200**)                           | The answer means "queued", not "restarted", on either version                                                          |
 | `xrayUptime` on a node that never connected                              | **`0`**                                          | A zero or missing uptime says nothing about when Xray started                                                          |
 
 What the backend **normalises** on a config write: it trims whitespace around each
