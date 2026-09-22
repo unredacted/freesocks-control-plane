@@ -31,6 +31,11 @@ import { remnawaveObservePanel } from './remnawave';
 
 const BASE_URL = process.env.REMNAWAVE_TEST_URL;
 const API_TOKEN = process.env.REMNAWAVE_TEST_TOKEN;
+/**
+ * The panel's major version. The harness pins a 3.x image; the nightly job
+ * overrides it with REMNAWAVE_TEST_IMAGE (a 2.x tag) to prove the 2.x paths.
+ */
+const PANEL_MAJOR = Number(/:(\d+)\./.exec(process.env.REMNAWAVE_TEST_IMAGE ?? '')?.[1] ?? 3);
 
 interface Answer {
   status: number;
@@ -631,9 +636,10 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave management contract (integra
       forceRestart: true,
     });
     observed.restartBody = restarted.data;
-    // 202: the answer means "queued", not "restarted". The ledger settles a
-    // restart by the node's own clock for exactly this reason.
-    expect(restarted.status).toBe(202);
+    // 3.x answers 202 ("queued", not "restarted"); 2.x answers 200. Neither
+    // means the node restarted: the ledger settles a restart by the node's own
+    // clock for exactly this reason.
+    expect(restarted.status).toBe(PANEL_MAJOR >= 3 ? 202 : 200);
 
     const gone = await api('DELETE', `nodes/${nodeUuid}`);
     expect(ok(gone)).toBe(true);
