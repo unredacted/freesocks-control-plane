@@ -118,7 +118,7 @@ services:
   postgres:
     # Pinned by digest like every other image (re-pin on upgrade:
     # docker buildx imagetools inspect postgres:18).
-    image: postgres:18@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280
+    image: postgres:18@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722
     pids_limit: 512
     restart: unless-stopped
     logging: *log
@@ -224,7 +224,7 @@ services:
     # NOT `latest` — so a Dependabot bump names the actual version change instead
     # of "latest moved". Re-pin by hand if needed:
     # docker buildx imagetools inspect tiago2/cap:<version>.
-    image: tiago2/cap:3.1.11@sha256:c29417b6270d1fddc6a0603c08d972f89a12de81889d09c3f97a0915422fba5e
+    image: tiago2/cap:3.1.14@sha256:8a83e06c4fde9ada7cfe15528c79885bbdfdf886863fd97c02666e40014cfa9c
     pids_limit: 256
     restart: unless-stopped
     logging: *log
@@ -261,7 +261,7 @@ services:
     # Pinned by digest (re-pin: docker buildx imagetools inspect valkey/valkey:9-alpine).
     # Cap uses it purely as a Redis-compatible store (challenges/tokens), so the
     # 8→9 bump is transparent; the --save/--appendonly flags below are unchanged.
-    image: valkey/valkey:9-alpine@sha256:a0dbf4c1d5708782907c10e2c72deff317518518b5288a58416981d9db95d30b
+    image: valkey/valkey:9-alpine@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11
     pids_limit: 128
     restart: unless-stopped
     logging: *log
