@@ -285,7 +285,7 @@ const NEW_HOST = {
   remark: 'node-one-alt',
   address: '192.0.2.11',
   port: 8443,
-  inboundUuid: 'i-1',
+  transportUuid: 'i-1',
   sni: 'b.example',
 };
 const claims = (t: T) => t.run((ctx) => ctx.db.query('panelClaims').collect());
@@ -476,7 +476,7 @@ describe('Hosts', () => {
       remark: 'node-one-direct',
       address: '192.0.2.10',
       port: 443,
-      inboundUuid: 'i-1',
+      transportUuid: 'i-1',
     };
     expect((await (await call('POST', 'panel-a/addresses', again)).json()).error.code).toBe(
       'servers.tombstoned',
@@ -513,7 +513,10 @@ describe('Hosts', () => {
     expect((await call('POST', 'panel-a/addresses', { ...NEW_HOST, alpn: 'spdy' })).status).toBe(
       400,
     );
-    const unknown = await call('POST', 'panel-a/addresses', { ...NEW_HOST, inboundUuid: 'i-nope' });
+    const unknown = await call('POST', 'panel-a/addresses', {
+      ...NEW_HOST,
+      transportUuid: 'i-nope',
+    });
     expect((await unknown.json()).error.code).toBe('servers.unknown_inbound');
     expect((await call('PATCH', 'panel-a/addresses/h-nope', { sni: 'x.example' })).status).toBe(
       404,
@@ -521,11 +524,43 @@ describe('Hosts', () => {
   });
 });
 
+describe('the request contract', () => {
+  test('pre-rename fields are refused by name, alone or next to the new ones; nothing is claimed', async () => {
+    const { t, call } = await seed();
+    const cases: [string, string, unknown, string][] = [
+      [
+        'POST',
+        'panel-a/addresses',
+        { ...NEW_HOST, transportUuid: undefined, inboundUuid: 'i-1' },
+        'inboundUuid',
+      ],
+      ['POST', 'panel-a/addresses', { ...NEW_HOST, inboundUuid: 'i-1' }, 'inboundUuid'],
+      ['PATCH', 'panel-a/addresses/h-1', { inboundUuid: 'i-1' }, 'inboundUuid'],
+      ['POST', 'panel-a/modeGroups', { name: 'paid', inboundUuids: ['i-1'] }, 'inboundUuids'],
+      [
+        'POST',
+        'panel-a/modeGroups',
+        { name: 'paid', inboundUuids: ['i-1'], transportUuids: ['i-1'] },
+        'inboundUuids',
+      ],
+      ['PATCH', 'panel-a/modeGroups/s-1', { inboundUuids: ['i-1'] }, 'inboundUuids'],
+    ];
+    for (const [method, path, body, field] of cases) {
+      const res = await call(method, path, body);
+      expect(res.status, `${method} ${path}`).toBe(400);
+      expect((await res.json()).error.message).toContain(field);
+    }
+    expect(await ops(t)).toEqual([]);
+    // A body the contract cannot read at all is a 400 too, never a half-sent write.
+    expect((await call('POST', 'panel-a/modeGroups', { name: 7 })).status).toBe(400);
+  });
+});
+
 describe('squads', () => {
   test('create and rename queue no node work and take no profile claim', async () => {
     const { t, call } = await seed();
     const made = await (
-      await call('POST', 'panel-a/modeGroups', { name: 'paid', inboundUuids: ['i-1'] })
+      await call('POST', 'panel-a/modeGroups', { name: 'paid', transportUuids: ['i-1'] })
     ).json();
     expect(made).toMatchObject({ state: 'done', asyncEffect: 'none' });
     const renamed = await (
@@ -535,15 +570,18 @@ describe('squads', () => {
     const all = await ops(t);
     expect(all.flatMap((o) => o.claimKeys).some((k) => k.startsWith('profile:'))).toBe(false);
     expect(
-      (await (await call('POST', 'panel-a/modeGroups', { name: 'paid', inboundUuids: [] })).json())
-        .error.code,
+      (
+        await (
+          await call('POST', 'panel-a/modeGroups', { name: 'paid', transportUuids: [] })
+        ).json()
+      ).error.code,
     ).toBe('servers.squad_name_taken');
   });
 
   test('changing transports claims the profile and its nodes; the mode group row alone never releases them', async () => {
     const { t, call, serverId, panel } = await seed();
     const op = await (
-      await call('PATCH', 'panel-a/modeGroups/s-1', { inboundUuids: ['i-1', 'i-2'] })
+      await call('PATCH', 'panel-a/modeGroups/s-1', { transportUuids: ['i-1', 'i-2'] })
     ).json();
     // The backend row already shows the change, but the node has not applied yet.
     expect(panel.squads[0].inbounds.map((i) => i.uuid)).toEqual(['i-1', 'i-2']);
@@ -595,7 +633,7 @@ describe('squads', () => {
       'servers.squad_in_placement',
     );
     expect(
-      (await (await call('PATCH', 'panel-a/modeGroups/s-1', { inboundUuids: [] })).json()).error
+      (await (await call('PATCH', 'panel-a/modeGroups/s-1', { transportUuids: [] })).json()).error
         .code,
     ).toBe('servers.squad_in_placement');
     expect(panel.writes).toEqual([]);

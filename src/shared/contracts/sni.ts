@@ -64,6 +64,10 @@ export const SniBinding = z.object({
 });
 export type SniBinding = z.infer<typeof SniBinding>;
 
+/** `POST …/families/{slug}/bind`: bind a family to one REALITY transport of a backend. */
+export const SniBindRequest = z.object({ backendSlug: z.string(), transportTag: z.string() });
+export type SniBindRequest = z.infer<typeof SniBindRequest>;
+
 export const SniFamilyDetail = z.object({
   family: SniFamilySummary,
   curatedCountries: z.array(z.string()),

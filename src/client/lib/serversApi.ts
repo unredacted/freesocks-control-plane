@@ -25,8 +25,12 @@ import {
   ServerSummary,
   ServerTree,
   type BackendSetupInput,
+  type AddressPatch,
   type AddressWrite,
+  type ModeGroupPatch,
+  type ModeGroupWrite,
   type NodeWrite,
+  type ProfilePatchApply,
   type ProfilePatchOp,
   type RecoveryAttestation,
   type ServerManageConfig,
@@ -62,19 +66,14 @@ export const recoverOp = (
 
 export const createAddress = (slug: string, address: AddressWrite) =>
   apiClient.post(`${slugPath(slug)}/addresses`, address, OpView);
-export const updateAddress = (slug: string, uuid: string, fields: Patch<AddressWrite>) =>
+export const updateAddress = (slug: string, uuid: string, fields: AddressPatch) =>
   apiClient.patch(`${slugPath(slug)}/addresses/${encodeURIComponent(uuid)}`, fields, OpView);
 export const deleteAddress = (slug: string, uuid: string) =>
   apiClient.delete(`${slugPath(slug)}/addresses/${encodeURIComponent(uuid)}`, OpView);
 
-export interface ModeGroupWrite {
-  name: string;
-  transportUuids: string[];
-  restore?: boolean;
-}
 export const createModeGroup = (slug: string, group: ModeGroupWrite) =>
   apiClient.post(`${slugPath(slug)}/modeGroups`, group, OpView);
-export const updateModeGroup = (slug: string, uuid: string, fields: Patch<ModeGroupWrite>) =>
+export const updateModeGroup = (slug: string, uuid: string, fields: ModeGroupPatch) =>
   apiClient.patch(`${slugPath(slug)}/modeGroups/${encodeURIComponent(uuid)}`, fields, OpView);
 export const deleteModeGroup = (slug: string, uuid: string) =>
   apiClient.delete(`${slugPath(slug)}/modeGroups/${encodeURIComponent(uuid)}`, OpView);
@@ -117,7 +116,7 @@ export const applyProfilePatch = (
       expectedToken: preview.expectedToken,
       transportUuids: preview.transportUuids,
       ...(unmanaged ? { unmanaged } : {}),
-    },
+    } satisfies ProfilePatchApply,
     OpView,
   );
 

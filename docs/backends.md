@@ -443,9 +443,12 @@ How a placement is chosen for Remnawave (all Remnawave-local, under
   `admin:servers:write`) — the route the Ansible role's backend-bootstrap PATCHes
   (its legacy `/admin/remnawave/mode-placements` alias was removed 2026-07-30
   once the role converged). Per mode the patch composes three ops (applied replace → add →
-  remove): `squadUuids` (full replace; `[]` clears), `addSquadUuids` (union,
-  deduped), and `removeSquadUuids` — the add/remove forms exist so a node deploy
-  can append or detach just ITSELF without knowing the rest of the pool.
+  remove): `groupUuids` (full replace; `[]` clears), `addGroupUuids` (union,
+  deduped), and `removeGroupUuids` — the add/remove forms exist so a node deploy
+  can append or detach just ITSELF without knowing the rest of the pool. The
+  pre-rename names `squadUuids` / `addSquadUuids` / `removeSquadUuids` are still
+  accepted (node roles older than contract v2 send them); one mode's entry may not
+  mix the two vocabularies (400).
   Replace/add entries are UUID-validated server-side; remove accepts any string
   so pre-validation garbage can be purged. Mode group UUIDs are **write-only** (never
   echoed back; audited as `poolBound` + pool size; reads get summaries only).

@@ -175,16 +175,20 @@ function requireStringList(raw: unknown, field: string): string[] {
 function requireUuidList(raw: unknown, field: string): string[] {
   const list = requireStringList(raw, field);
   const bad = list.filter((s) => !SQUAD_UUID_RE.test(s));
-  if (bad.length) throw new Error(`not a squad UUID: ${bad.join(', ')}`);
+  if (bad.length) throw new Error(`not a mode group UUID: ${bad.join(', ')}`);
   return list;
 }
 
 /**
  * One mode's placement-config patch → the JSON string to store. Three
- * composable ops (applied replace → add → remove):
- *   - `squadUuids`       full replace; `[]` clears the pool
- *   - `addSquadUuids`    union into the stored pool (deduped)
- *   - `removeSquadUuids` drop from the stored pool
+ * composable ops (applied replace → add → remove), in the admin API's words:
+ *   - `groupUuids`       full replace; `[]` clears the pool
+ *   - `addGroupUuids`    union into the stored pool (deduped)
+ *   - `removeGroupUuids` drop from the stored pool
+ * The pre-rename names (`squadUuids`, `addSquadUuids`, `removeSquadUuids`) are
+ * still accepted: node roles older than contract v2 send them headlessly. One
+ * entry may not mix the two vocabularies (ambiguous, refused). The stored JSON
+ * keeps its `squadUuids` key.
  * add/remove exist so a headless node deploy can append/detach ITSELF without
  * knowing the rest of the pool (the UUIDs are write-only — there is no GET).
  * Replace/add entries must be mode group UUIDs (server-side guard for UI-less
@@ -197,19 +201,24 @@ export function applyRemnawaveConfigPatch(
   entry: unknown,
 ): string | null {
   if (!entry || typeof entry !== 'object') return null;
-  const { squadUuids, addSquadUuids, removeSquadUuids } = entry as Record<string, unknown>;
-  if (squadUuids === undefined && addSquadUuids === undefined && removeSquadUuids === undefined) {
-    return null;
-  }
+  const e = entry as Record<string, unknown>;
+  const current = { replace: 'groupUuids', add: 'addGroupUuids', remove: 'removeGroupUuids' };
+  const legacy = { replace: 'squadUuids', add: 'addSquadUuids', remove: 'removeSquadUuids' };
+  const has = (names: typeof current) => Object.values(names).some((k) => e[k] !== undefined);
+  if (has(current) && has(legacy))
+    throw new Error('use groupUuids / addGroupUuids / removeGroupUuids, not both vocabularies');
+  const names = has(legacy) ? legacy : current;
+  const replace = e[names.replace];
+  const add = e[names.add];
+  const remove = e[names.remove];
+  if (replace === undefined && add === undefined && remove === undefined) return null;
   let pool =
-    squadUuids !== undefined
-      ? requireUuidList(squadUuids, 'squadUuids')
+    replace !== undefined
+      ? requireUuidList(replace, names.replace)
       : poolFromConfig(existingConfigJson);
-  if (addSquadUuids !== undefined) {
-    pool = pool.concat(requireUuidList(addSquadUuids, 'addSquadUuids'));
-  }
-  if (removeSquadUuids !== undefined) {
-    const drop = new Set(requireStringList(removeSquadUuids, 'removeSquadUuids'));
+  if (add !== undefined) pool = pool.concat(requireUuidList(add, names.add));
+  if (remove !== undefined) {
+    const drop = new Set(requireStringList(remove, names.remove));
     pool = pool.filter((s) => !drop.has(s));
   }
   return JSON.stringify({ squadUuids: sanitizePool(pool) });

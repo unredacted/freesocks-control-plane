@@ -754,7 +754,7 @@ most two handshakes a second, oldest-checked first, `qualifyPerTick` per run, ag
 words (`q_cert`, `q_tls12`, `q_no_h2`, `q_timeout`, `q_resolve`, `q_private_target`,
 `q_unreachable`), never a handshake error string.
 
-**Binding** (`POST sni/families/{slug}/bind {backendSlug, inboundTag}`) is refused unless the
+**Binding** (`POST sni/families/{slug}/bind {backendSlug, transportTag}`) is refused unless the
 transport is REALITY, is on the backend as Servers last read it, has no family yet, and its target
 **is** the family's target (`edge.sni.target_mismatch`). From then on the transport's names and
 target are no longer edited by hand (`servers.inbound_sni_managed`): they have one author.
