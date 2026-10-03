@@ -21,6 +21,7 @@ import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { signValue } from './lib/cookies';
+import { ProfilePatchPreview } from '../src/shared/contracts/servers';
 import {
   FIXTURE_CONFIG_PROFILE as PROFILE,
   FIXTURE_INBOUND as INBOUND,
@@ -161,7 +162,7 @@ async function seed() {
       ops: p.ops,
       baseToken: p.baseToken,
       expectedToken: p.expectedToken,
-      inboundUuids: p.inboundUuids,
+      transportUuids: p.transportUuids,
       ...(unmanaged ? { unmanaged } : {}),
     });
   return {
@@ -179,10 +180,41 @@ async function seed() {
 const ADD = [
   {
     op: 'setRealityServerNames',
-    inboundTag: TAG,
+    transportTag: TAG,
     names: ['a.example', 'b.example', 'spare.example', 'new.example'],
   },
 ];
+
+describe('the request contract', () => {
+  test('pre-rename fields are refused by name, top level and inside ops, alone or mixed', async () => {
+    const { call, preview, panel } = await seed();
+    const legacyOp = { op: 'setRealityServerNames', inboundTag: TAG, names: ['a.example'] };
+    const mixedOp = { ...legacyOp, transportTag: TAG };
+    for (const ops of [[legacyOp], [mixedOp]]) {
+      const res = await call('POST', `profiles/${PROFILE}/preview`, { ops });
+      expect(res.status).toBe(400);
+      expect((await res.json()).error.message).toContain('ops[0].inboundTag');
+    }
+    const p = await preview(ADD);
+    const good = {
+      ops: p.ops,
+      baseToken: p.baseToken,
+      expectedToken: p.expectedToken,
+      transportUuids: p.transportUuids,
+      unmanaged: 'acknowledge',
+    };
+    for (const body of [
+      { ...good, transportUuids: undefined, inboundUuids: p.transportUuids },
+      { ...good, inboundUuids: p.transportUuids },
+      { ...good, ops: [{ ...p.ops[0], inboundTag: TAG }] },
+    ]) {
+      const res = await call('POST', `profiles/${PROFILE}/apply`, body);
+      expect(res.status).toBe(400);
+      expect((await res.json()).error.message).toMatch(/inbound(Uuids|Tag)/);
+    }
+    expect(panel.patches).toEqual([]);
+  });
+});
 
 describe('preview', () => {
   test('writes nothing, shows the non-secret change and who feels it', async () => {
@@ -198,6 +230,10 @@ describe('preview', () => {
     });
     expect(p.changes[0]).toMatchObject({ field: 'serverNames', after: ADD[0].names });
     expect(p.baseToken).not.toBe(p.expectedToken);
+    // The answer is the declared contract, in the contract's words.
+    expect(ProfilePatchPreview.safeParse(p).success).toBe(true);
+    expect(p.transportUuids).toBeDefined();
+    expect(p.changes[0].transportTag).toBe(TAG);
     const blob = JSON.stringify(p);
     for (const s of SECRETS) expect(blob).not.toContain(s);
   });
@@ -205,11 +241,11 @@ describe('preview', () => {
   test('refusals are codes, never backend text', async () => {
     const { call } = await seed();
     const bad = await call('POST', `profiles/${PROFILE}/preview`, {
-      ops: [{ op: 'setRealityServerNames', inboundTag: 'NOPE', names: ['x.example'] }],
+      ops: [{ op: 'setRealityServerNames', transportTag: 'NOPE', names: ['x.example'] }],
     });
     expect((await bad.json()).error.code).toBe('servers.unknown_inbound');
     const raw = await call('POST', `profiles/${PROFILE}/preview`, {
-      ops: [{ op: 'rawJson', inboundTag: TAG }],
+      ops: [{ op: 'rawJson', transportTag: TAG }],
     });
     expect(raw.status).toBe(400);
   });
@@ -287,7 +323,9 @@ describe('apply', () => {
 
   test('a name an origin still hands out, or that is still draining, may not be removed', async () => {
     const { t, preview, apply, panel, listenerId } = await seed();
-    const without = (names: string[]) => [{ op: 'setRealityServerNames', inboundTag: TAG, names }];
+    const without = (names: string[]) => [
+      { op: 'setRealityServerNames', transportTag: TAG, names },
+    ];
     const res = await apply(await preview(without(['a.example', 'spare.example'])));
     expect((await res.json()).error.code).toBe('servers.name_in_use');
     // Retired but still inside its drain: members may still hold it.
@@ -304,7 +342,7 @@ describe('apply', () => {
 
   test('the origin is claimed: a rotation and a registration are refused meanwhile; the bridge still works', async () => {
     const { t, preview, apply, panel, relayId, listenerId, call } = await seed();
-    const retarget = [{ op: 'setRealityTarget', inboundTag: TAG, target: 'other.example:8443' }];
+    const retarget = [{ op: 'setRealityTarget', transportTag: TAG, target: 'other.example:8443' }];
     const op = await (await apply(await preview(retarget))).json();
     expect(op.open).toBe(true);
     // The op's own bridge ran under its claim: the listener follows, and is due a retest.

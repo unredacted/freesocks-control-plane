@@ -28,11 +28,24 @@ import {
 } from './lib/adminHttp';
 import { sealed } from './lib/hpke';
 import { errorJson, json, readJson, resolveAdmin, type AdminAuth } from './lib/http';
+import type { z } from 'zod';
 import {
+  AddressPatch,
+  AddressWrite,
+  BackendSetupInput,
+  DirectTestConfirm,
+  ModeGroupPatch,
+  ModeGroupWrite,
   NodeAppliedReport,
   NodeRegistration,
-  BackendSetupInput,
+  ProfilePatchApply,
+  ProfilePatchPreviewRequest,
+  type ProfilePatchOp,
+  type ProfilePatchPreview,
 } from '../src/shared/contracts/servers';
+import { findLegacyField, LEGACY, type LegacySpec } from './lib/legacyFields';
+import type { PatchOp } from './lib/backend/patchOps';
+import type { ProfilePatchPreviewView } from './backendWrites';
 
 const PREFIX = '/api/v1/admin/servers/';
 
@@ -77,7 +90,9 @@ export function isByNameRoute(parts: string[]): boolean {
 }
 
 export function scopeFor(parts: string[], method: string): string | string[] {
-  if (parts[0] === 'config')
+  // Exactly `/config`: a longer path starting with `config` is a backend slug's
+  // route and takes that route's own scope, never the settings one.
+  if (parts.length === 1 && parts[0] === 'config')
     return method === 'GET' ? 'admin:settings:read' : 'admin:settings:write';
   // The role's routes: its fleet token, or a register token confined to its boundary.
   if (isByNameRoute(parts))
@@ -225,32 +240,72 @@ async function byNameHandler(
 
 const actorOf = (admin: AdminAuth) => ({ actorAdminId: admin.adminUserId ?? undefined });
 
+/**
+ * A write body, parsed. Obsolete renamed fields are refused BY NAME on the raw
+ * input (zod would strip them silently), then the contract schema projects the
+ * accepted fields. The internal mutations keep the stored names; the mapping
+ * from the contract's words happens here, at the boundary.
+ */
+function parseWrite<T>(
+  schema: z.ZodType<T>,
+  body: unknown,
+  legacy: LegacySpec,
+): { ok: true; data: T } | { ok: false; res: Response } {
+  const old = findLegacyField(body, legacy);
+  if (old)
+    return {
+      ok: false,
+      res: errorJson('validation', `${old} is no longer accepted (renamed in the admin API)`, 400),
+    };
+  const parsed = schema.safeParse(body);
+  if (!parsed.success) {
+    const where = parsed.error.issues[0]?.path.join('.') ?? '';
+    return {
+      ok: false,
+      res: errorJson(
+        'validation',
+        `The request body is not usable${where ? `: ${where}` : ''}`,
+        400,
+      ),
+    };
+  }
+  return { ok: true, data: parsed.data };
+}
+
+const toPatchOps = (ops: readonly ProfilePatchOp[]): PatchOp[] =>
+  ops.map((o) =>
+    o.op === 'setRealityServerNames'
+      ? { op: o.op, inboundTag: o.transportTag, names: o.names }
+      : { op: o.op, inboundTag: o.transportTag, target: o.target },
+  );
+
+/** The preview in the contract's words (`transport*`, never the backend's `inbound*`). */
+function previewToContract(p: ProfilePatchPreviewView): ProfilePatchPreview {
+  const { inboundUuids, changes, ops, ...rest } = p;
+  return {
+    ...rest,
+    transportUuids: inboundUuids,
+    changes: changes.map(({ inboundTag, ...c }) => ({ ...c, transportTag: inboundTag })),
+    ops: ops.map((o) =>
+      o.op === 'setRealityServerNames'
+        ? { op: o.op, transportTag: o.inboundTag, names: o.names }
+        : { op: o.op, transportTag: o.inboundTag, target: o.target },
+    ),
+  };
+}
+
 /** The mutation validated and claimed; now send once and look, and answer the op. */
 async function runOp(ctx: ActionCtx, opId: Id<'panelOps'>) {
   await ctx.runAction(internal.backendWrites.run, { opId });
   return json(await ctx.runQuery(internal.backendLedger.view, { opId }));
 }
 
-const HOST_FIELDS = [
-  'remark',
-  'address',
-  'port',
-  'sni',
-  'host',
-  'path',
-  'alpn',
-  'fingerprint',
-  'securityLayer',
-  'isDisabled',
-  'isHidden',
-  'tag',
-  'inboundUuid',
-  'nodeUuids',
-] as const;
-/** Only the known Host fields travel on; an unknown key is dropped, never forwarded. */
-function hostFieldsOf(body: Record<string, unknown>): Record<string, unknown> {
+/** An address write in the contract's words, as the internal mutation's (stored) field names. */
+function hostFieldsOf(w: AddressPatch): Record<string, unknown> {
+  const { transportUuid, ...rest } = w;
   const out: Record<string, unknown> = {};
-  for (const k of HOST_FIELDS) if (body[k] !== undefined) out[k] = body[k];
+  for (const [k, v] of Object.entries(rest)) if (v !== undefined) out[k] = v;
+  if (transportUuid !== undefined) out.inboundUuid = transportUuid;
   return out;
 }
 
@@ -284,12 +339,14 @@ const getHandler: Handler = async (ctx, parts) => {
       }),
     });
   }
-  if (a && b === 'nodes' && c === 'intents' && parts[4] === 'review')
-    return json(
-      await ctx.runQuery(internal.nodeActivation.review, {
-        intentId: parts[3] as Id<'panelNodeIntents'>,
-      }),
-    );
+  if (a && b === 'nodes' && c === 'intents' && parts[3] && parts[4] === 'review' && !parts[5]) {
+    const intentId = await ctx.runQuery(internal.serverAdmin.intentOnServer, {
+      slug: a,
+      intentId: parts[3],
+    });
+    if (!intentId) return notFound();
+    return json(await ctx.runQuery(internal.nodeActivation.review, { intentId }));
+  }
   return notFound();
 };
 
@@ -307,25 +364,28 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
   }
   if (a && b === 'profiles' && c && (d === 'preview' || d === 'apply')) {
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
-    if (d === 'preview')
-      return json(
-        await ctx.runAction(internal.backendWrites.previewProfilePatch, {
-          backendServerId: instance.id,
-          profileUuid: c,
-          ops: body.ops,
-        }),
-      );
+    if (d === 'preview') {
+      const w = parseWrite(ProfilePatchPreviewRequest, body, LEGACY.profilePreview);
+      if (!w.ok) return w.res;
+      const view = await ctx.runAction(internal.backendWrites.previewProfilePatch, {
+        backendServerId: instance.id,
+        profileUuid: c,
+        ops: toPatchOps(w.data.ops),
+      });
+      return json(previewToContract(view));
+    }
     // Apply takes what the preview answered, verbatim: the write is conditioned
     // on the profile still having THAT token.
+    const w = parseWrite(ProfilePatchApply, body, LEGACY.profileApply);
+    if (!w.ok) return w.res;
     const { opId } = await ctx.runMutation(internal.backendWrites.requestProfilePatch, {
       backendServerId: instance.id,
       profileUuid: c,
-      ops: body.ops as never,
-      baseToken: String(body.baseToken ?? ''),
-      expectedToken: String(body.expectedToken ?? ''),
-      inboundUuids: (body.inboundUuids ?? {}) as Record<string, string>,
-      unmanaged:
-        body.unmanaged === 'hold' || body.unmanaged === 'acknowledge' ? body.unmanaged : undefined,
+      ops: toPatchOps(w.data.ops),
+      baseToken: w.data.baseToken,
+      expectedToken: w.data.expectedToken,
+      inboundUuids: w.data.transportUuids,
+      unmanaged: w.data.unmanaged,
       ...actorOf(admin),
     });
     return runOp(ctx, opId);
@@ -355,18 +415,33 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
   // test link, its bound confirmation, and the approval of a review. Before
   // the generic node writes: `nodes/intents/{id}/{verb}` is not a node uuid.
   if (a && b === 'nodes' && c === 'intents' && d) {
-    const [, , , , intentIdRaw, verb] = parts;
-    const intentId = intentIdRaw as Id<'panelNodeIntents'>;
-    if (verb === 'test-link')
-      return json(await ctx.runAction(internal.nodeActivation.buildDirectTestLink, { intentId }));
-    if (verb === 'confirm')
+    const [, , , intentIdRaw, verb, extra] = parts;
+    if (!verb || extra) return notFound();
+    // The node must belong to the backend the path names.
+    const intentId = await ctx.runQuery(internal.serverAdmin.intentOnServer, {
+      slug: a,
+      intentId: intentIdRaw ?? '',
+    });
+    if (!intentId) return notFound();
+    if (verb === 'test-link') {
+      const { link, binding } = await ctx.runAction(internal.nodeActivation.buildDirectTestLink, {
+        intentId,
+      });
+      const { inboundUuid, ...rest } = binding;
+      return json({ link, binding: { ...rest, transportUuid: inboundUuid } });
+    }
+    if (verb === 'confirm') {
+      const w = parseWrite(DirectTestConfirm, body, LEGACY.directConfirm);
+      if (!w.ok) return w.res;
+      const { transportUuid, ...binding } = w.data.binding;
       return json(
         await ctx.runMutation(internal.nodeActivation.confirmDirect, {
           intentId,
-          binding: body.binding as never,
+          binding: { ...binding, inboundUuid: transportUuid },
           ...actorOf(admin),
         }),
       );
+    }
     if (verb === 'approve')
       return json(
         await ctx.runMutation(internal.nodeActivation.approve, {
@@ -458,15 +533,18 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
     const sid = instance.id;
     if (b === 'addresses' && !c) {
+      const w = parseWrite(AddressWrite, body, LEGACY.addressCreate);
+      if (!w.ok) return w.res;
+      const { restore, ...fields } = w.data;
       const { opId } = await ctx.runMutation(internal.backendWrites.requestAddressCreate, {
         backendServerId: sid,
-        ...(hostFieldsOf(body) as {
+        ...(hostFieldsOf(fields) as {
           remark: string;
           address: string;
           port: number;
           inboundUuid: string;
         }),
-        restore: body.restore === true,
+        restore: restore === true,
         ...actorOf(admin),
       });
       return runOp(ctx, opId);
@@ -480,11 +558,13 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
       return runOp(ctx, opId);
     }
     if (b === 'modeGroups' && !c) {
+      const w = parseWrite(ModeGroupWrite, body, LEGACY.modeGroup);
+      if (!w.ok) return w.res;
       const { opId } = await ctx.runMutation(internal.backendWrites.requestModeGroupCreate, {
         backendServerId: sid,
-        name: String(body.name ?? ''),
-        inboundUuids: Array.isArray(body.inboundUuids) ? body.inboundUuids.map(String) : [],
-        restore: body.restore === true,
+        name: w.data.name,
+        inboundUuids: w.data.transportUuids,
+        restore: w.data.restore === true,
         ...actorOf(admin),
       });
       return runOp(ctx, opId);
@@ -550,25 +630,29 @@ const patchHandler: Handler = async (ctx, parts, admin, body) => {
     });
     return runOp(ctx, opId);
   }
-  if (a && c && !d && (b === 'addresses' || b === 'modeGroups')) {
+  if (a && c && !d && b === 'addresses') {
+    const w = parseWrite(AddressPatch, body, LEGACY.addressPatch);
+    if (!w.ok) return w.res;
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
-    const { opId } =
-      b === 'addresses'
-        ? await ctx.runMutation(internal.backendWrites.requestAddressUpdate, {
-            backendServerId: instance.id,
-            hostUuid: c,
-            ...hostFieldsOf(body),
-            ...actorOf(admin),
-          })
-        : await ctx.runMutation(internal.backendWrites.requestModeGroupUpdate, {
-            backendServerId: instance.id,
-            squadUuid: c,
-            name: typeof body.name === 'string' ? body.name : undefined,
-            inboundUuids: Array.isArray(body.inboundUuids)
-              ? body.inboundUuids.map(String)
-              : undefined,
-            ...actorOf(admin),
-          });
+    const { opId } = await ctx.runMutation(internal.backendWrites.requestAddressUpdate, {
+      backendServerId: instance.id,
+      hostUuid: c,
+      ...hostFieldsOf(w.data),
+      ...actorOf(admin),
+    });
+    return runOp(ctx, opId);
+  }
+  if (a && c && !d && b === 'modeGroups') {
+    const w = parseWrite(ModeGroupPatch, body, LEGACY.modeGroup);
+    if (!w.ok) return w.res;
+    const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
+    const { opId } = await ctx.runMutation(internal.backendWrites.requestModeGroupUpdate, {
+      backendServerId: instance.id,
+      squadUuid: c,
+      name: w.data.name,
+      inboundUuids: w.data.transportUuids,
+      ...actorOf(admin),
+    });
     return runOp(ctx, opId);
   }
   if (parts.length === 1 && parts[0] === 'config')

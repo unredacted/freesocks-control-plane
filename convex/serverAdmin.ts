@@ -159,6 +159,25 @@ export const instanceBySlug = internalQuery({
   },
 });
 
+/**
+ * The enrolled node `intentId` names, only if it belongs to the backend `slug`
+ * names (null otherwise, including for a malformed id). Every intent route goes
+ * through this: a valid id under another backend's path is not found.
+ */
+export const intentOnServer = internalQuery({
+  args: { slug: v.string(), intentId: v.string() },
+  handler: async (ctx, { slug, intentId }) => {
+    const server = await ctx.db
+      .query('backendServers')
+      .withIndex('by_slug', (q) => q.eq('slug', slug))
+      .unique();
+    const id = ctx.db.normalizeId('panelNodeIntents', intentId);
+    if (!server || !id) return null;
+    const intent = await ctx.db.get(id);
+    return intent && intent.backendServerId === server._id ? id : null;
+  },
+});
+
 function mapInbound(i: Doc<'panelProfiles'>['inbounds'][number]) {
   return {
     tag: i.tag,

@@ -215,7 +215,11 @@ export const AddressWrite = z.object({
   path: z.string().nullable().optional(),
   alpn: z.string().nullable().optional(),
   fingerprint: z.string().nullable().optional(),
+  securityLayer: z.string().nullable().optional(),
   isDisabled: z.boolean().optional(),
+  isHidden: z.boolean().optional(),
+  tag: z.string().nullable().optional(),
+  nodeUuids: z.array(z.string()).optional(),
   restore: z.boolean().optional(),
 });
 export type AddressWrite = z.infer<typeof AddressWrite>;
@@ -240,6 +244,33 @@ export const ProfilePatchOp = z.discriminatedUnion('op', [
   z.object({ op: z.literal('setRealityTarget'), transportTag: z.string(), target: z.string() }),
 ]);
 export type ProfilePatchOp = z.infer<typeof ProfilePatchOp>;
+
+/** `PATCH …/addresses/{uuid}`: every field optional (a `transportUuid` moves the address). */
+export const AddressPatch = AddressWrite.omit({ restore: true }).partial();
+export type AddressPatch = z.infer<typeof AddressPatch>;
+
+/** `POST …/modeGroups` (create) and, all optional, `PATCH …/modeGroups/{uuid}`. */
+export const ModeGroupWrite = z.object({
+  name: z.string(),
+  transportUuids: z.array(z.string()),
+  restore: z.boolean().optional(),
+});
+export type ModeGroupWrite = z.infer<typeof ModeGroupWrite>;
+export const ModeGroupPatch = ModeGroupWrite.omit({ restore: true }).partial();
+export type ModeGroupPatch = z.infer<typeof ModeGroupPatch>;
+
+/** `POST …/profiles/{uuid}/preview`. */
+export const ProfilePatchPreviewRequest = z.object({ ops: z.array(ProfilePatchOp) });
+
+/** `POST …/profiles/{uuid}/apply`: what the preview answered, verbatim. */
+export const ProfilePatchApply = z.object({
+  ops: z.array(ProfilePatchOp),
+  baseToken: z.string(),
+  expectedToken: z.string(),
+  transportUuids: z.record(z.string(), z.string()),
+  unmanaged: z.enum(['hold', 'acknowledge']).optional(),
+});
+export type ProfilePatchApply = z.infer<typeof ProfilePatchApply>;
 
 // --- bootstrap contract v2: backend setup (modes) --------------------------------------------
 
@@ -523,6 +554,15 @@ export const DirectTestLink = z.object({
   }),
 });
 export type DirectTestLink = z.infer<typeof DirectTestLink>;
+
+/**
+ * `POST …/confirm`: the binding the test link answered, echoed back. Its
+ * output-only `intentId` and `issuedAt` are accepted and discarded (the path
+ * names the node; the server recomputes everything else from live rows).
+ */
+export const DirectTestConfirm = z.object({
+  binding: DirectTestLink.shape.binding.omit({ intentId: true, issuedAt: true }),
+});
 
 /** `POST …/bootstrap`: the machine configuration plus the node secret, served once per call. */
 export const NodeBootstrap = z.object({

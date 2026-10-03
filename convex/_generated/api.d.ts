@@ -87,6 +87,7 @@ import type * as lib_hpkeCrypto from "../lib/hpkeCrypto.js";
 import type * as lib_http from "../lib/http.js";
 import type * as lib_issuance from "../lib/issuance.js";
 import type * as lib_issueTelemetry from "../lib/issueTelemetry.js";
+import type * as lib_legacyFields from "../lib/legacyFields.js";
 import type * as lib_loadBands from "../lib/loadBands.js";
 import type * as lib_locations from "../lib/locations.js";
 import type * as lib_membershipCode from "../lib/membershipCode.js";
@@ -248,6 +249,7 @@ declare const fullApi: ApiFromModules<{
   "lib/http": typeof lib_http;
   "lib/issuance": typeof lib_issuance;
   "lib/issueTelemetry": typeof lib_issueTelemetry;
+  "lib/legacyFields": typeof lib_legacyFields;
   "lib/loadBands": typeof lib_loadBands;
   "lib/locations": typeof lib_locations;
   "lib/membershipCode": typeof lib_membershipCode;

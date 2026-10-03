@@ -7,6 +7,16 @@ Admin -> Servers shows, and will later manage, what lives on a proxy backend: it
 one bounded provider call per action, one HTTP prefix with a dispatcher, contracts in
 `src/shared/contracts/servers.ts`.
 
+**Request bodies are the contract's words.** Every write route parses its body with the shared
+zod write schema (`AddressWrite`, `AddressPatch`, `ModeGroupWrite`, `ModeGroupPatch`,
+`ProfilePatchPreviewRequest`, `ProfilePatchApply`, `DirectTestConfirm`, `NodeRegistration`, …)
+and maps it onto the internal mutations' stored names at the HTTP boundary (`transportUuid` →
+`inboundUuid`, `transportTag` → `inboundTag`). A field the API renamed (`inboundUuid`,
+`inboundUuids`, `inboundTag`, also inside `ops[]` and `binding`) is refused by name with a 400
+BEFORE parsing (`convex/lib/legacyFields.ts`), because a zod object would otherwise drop it
+silently. Responses are mapped back the same way (the profile preview answers `transportUuids`
+and `changes[].transportTag`; the direct test link answers `binding.transportUuid`).
+
 **It ships dormant.** Reading a backend and changing it are separate switches, both off. Today
 the writes cover **Hosts**, **internal mode groups** and two typed edits of a **config profile**
 (REALITY server names and target); node writes follow.

@@ -1533,6 +1533,29 @@ describe('connection-mode admin routes', () => {
     // No config contents anywhere in the response.
     expect(JSON.stringify(body)).not.toContain(SQUAD);
 
+    // The admin UI's words (`groupUuids`) bind the pool too; a body mixing both
+    // vocabularies for one mode is refused, and nothing is written.
+    const viaUi = await t.fetch('/api/v1/admin/backends/remnawave/mode-placements', {
+      method: 'PATCH',
+      headers: { authorization: `Bearer ${write}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ modes: { 'freedom-ws': { groupUuids: [SQUAD] } } }),
+    });
+    expect(viaUi.status).toBe(200);
+    const after = (await (
+      await t.fetch('/api/v1/admin/backends/remnawave/mode-placements', {
+        headers: { authorization: `Bearer ${read}` },
+      })
+    ).json()) as { placements: Array<{ modeId: string; bound: boolean }> };
+    expect(after.placements.find((p) => p.modeId === 'freedom-ws')).toMatchObject({ bound: true });
+    const mixed = await t.fetch('/api/v1/admin/backends/remnawave/mode-placements', {
+      method: 'PATCH',
+      headers: { authorization: `Bearer ${write}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        modes: { 'privacy-reality': { groupUuids: [], addSquadUuids: [SQUAD] } },
+      }),
+    });
+    expect(mixed.status).toBe(400);
+
     const outline = await t.fetch('/api/v1/admin/backends/outline/mode-placements', {
       method: 'PATCH',
       headers: { authorization: `Bearer ${write}`, 'content-type': 'application/json' },

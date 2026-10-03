@@ -226,8 +226,8 @@ describe('binding a family to a transport', () => {
   test('refused while dormant, on a non-REALITY transport, and when the targets differ', async () => {
     const { call } = await seed();
     await call('POST', 'families', family);
-    const bind = (slug: string, inboundTag: string) =>
-      call('POST', `families/${slug}/bind`, { backendSlug: 'panel-a', inboundTag });
+    const bind = (slug: string, transportTag: string) =>
+      call('POST', `families/${slug}/bind`, { backendSlug: 'panel-a', transportTag });
     expect((await (await bind('fam-a', 'REALITY_IN')).json()).error.code).toBe('edge.sni.disabled');
     await call('PATCH', 'config', { enabled: true });
     expect((await (await bind('fam-a', 'WS_IN')).json()).error.code).toBe('servers.not_reality');
@@ -248,7 +248,7 @@ describe('binding a family to a transport', () => {
     await call('PATCH', 'config', { enabled: true });
     const bound = await call('POST', 'families/fam-a/bind', {
       backendSlug: 'panel-a',
-      inboundTag: 'REALITY_IN',
+      transportTag: 'REALITY_IN',
     });
     expect(bound.status).toBe(200);
     const history = await t.run((ctx) => ctx.db.query('sniInboundNameHistory').collect());
@@ -260,10 +260,19 @@ describe('binding a family to a transport', () => {
       (
         await call('POST', 'families/fam-a/bind', {
           backendSlug: 'panel-a',
-          inboundTag: 'REALITY_IN',
+          transportTag: 'REALITY_IN',
         })
       ).status,
     ).toBe(409);
+    // The pre-rename field is refused by name, alone or alongside the new one.
+    for (const body of [
+      { backendSlug: 'panel-a', inboundTag: 'REALITY_IN' },
+      { backendSlug: 'panel-a', inboundTag: 'REALITY_IN', transportTag: 'REALITY_IN' },
+    ]) {
+      const res = await call('POST', 'families/fam-a/bind', body);
+      expect(res.status).toBe(400);
+      expect((await res.json()).error.message).toContain('inboundTag');
+    }
     // A family in use is not deleted.
     expect((await (await call('DELETE', 'families/fam-a')).json()).error.code).toBe(
       'edge.sni.family_in_use',
@@ -279,7 +288,10 @@ describe('binding a family to a transport', () => {
     const { t, serverId, call } = await seed();
     await call('POST', 'families', family);
     await call('PATCH', 'config', { enabled: true });
-    await call('POST', 'families/fam-a/bind', { backendSlug: 'panel-a', inboundTag: 'REALITY_IN' });
+    await call('POST', 'families/fam-a/bind', {
+      backendSlug: 'panel-a',
+      transportTag: 'REALITY_IN',
+    });
     await t.mutation(internal.serverAdmin.patchConfig, { patch: { 'manage.enabled': true } });
     await markBackendSetUp(t, serverId);
     await expect(

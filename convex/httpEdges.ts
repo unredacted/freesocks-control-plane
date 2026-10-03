@@ -21,6 +21,8 @@ import type { RateLimitPolicyKey } from './lib/rateLimitPolicy';
 import type { InspectResult, Inventory } from './lib/edges/providers/types';
 import { parseTargetKey } from './probes';
 import { assertWithinBoundary, type RegistrationBoundary } from './relays';
+import { findLegacyField, LEGACY } from './lib/legacyFields';
+import { SniBindRequest } from '../src/shared/contracts/sni';
 
 const PREFIX = '/api/v1/admin/edges/';
 
@@ -552,15 +554,21 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           ...act,
         }),
       );
-    if (b === 'families' && c && d === 'bind' && !e)
+    if (b === 'families' && c && d === 'bind' && !e) {
+      // Contract words in, stored words on: an old `inboundTag` is refused by name.
+      const old = findLegacyField(body, LEGACY.sniBind);
+      if (old) return errorJson('validation', `${old} is no longer accepted`, 400);
+      const parsed = SniBindRequest.safeParse(body);
+      if (!parsed.success) return errorJson('validation', 'The bind body is not usable', 400);
       return json(
         await ctx.runMutation(internal.sniFamilies.bind, {
           slug: c,
-          backendSlug: String(body.backendSlug ?? ''),
-          inboundTag: String(body.inboundTag ?? ''),
+          backendSlug: parsed.data.backendSlug,
+          inboundTag: parsed.data.transportTag,
           ...act,
         }),
       );
+    }
     if (b === 'qualify' && !c) return json(await ctx.runAction(internal.sniQualifyOps.run, {}));
     if (b === 'bindings' && c && d === 'plan' && !e)
       return json(
