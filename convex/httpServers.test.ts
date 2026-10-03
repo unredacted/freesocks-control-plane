@@ -484,6 +484,14 @@ describe('/api/v1/admin/servers', () => {
     expect(scopeFor(['config'], 'PATCH')).toBe('admin:settings:write');
     expect(scopeFor(['panel-a', 'tree'], 'GET')).toBe('admin:servers:read');
     expect(scopeFor(['panel-a', 'refresh'], 'POST')).toBe('admin:servers:read');
+    // Only exactly `/config` is a settings route: a longer path whose first
+    // segment is `config` is a backend slug's route and keeps that route's scope.
+    expect(scopeFor(['config', 'nodes', 'intents', 'x', 'test-link'], 'POST')).toBe(
+      'admin:servers:manage',
+    );
+    expect(scopeFor(['config', 'nodes', 'intents', 'x', 'review'], 'GET')).toBe(
+      'admin:servers:read',
+    );
     for (const m of ['GET', 'POST', 'PATCH'])
       expect(routePolicy('/api/v1/admin/servers/panel-a/tree', m)).toBeDefined();
   });

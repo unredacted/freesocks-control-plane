@@ -90,7 +90,9 @@ export function isByNameRoute(parts: string[]): boolean {
 }
 
 export function scopeFor(parts: string[], method: string): string | string[] {
-  if (parts[0] === 'config')
+  // Exactly `/config`: a longer path starting with `config` is a backend slug's
+  // route and takes that route's own scope, never the settings one.
+  if (parts.length === 1 && parts[0] === 'config')
     return method === 'GET' ? 'admin:settings:read' : 'admin:settings:write';
   // The role's routes: its fleet token, or a register token confined to its boundary.
   if (isByNameRoute(parts))
@@ -337,12 +339,14 @@ const getHandler: Handler = async (ctx, parts) => {
       }),
     });
   }
-  if (a && b === 'nodes' && c === 'intents' && parts[4] === 'review')
-    return json(
-      await ctx.runQuery(internal.nodeActivation.review, {
-        intentId: parts[3] as Id<'panelNodeIntents'>,
-      }),
-    );
+  if (a && b === 'nodes' && c === 'intents' && parts[3] && parts[4] === 'review' && !parts[5]) {
+    const intentId = await ctx.runQuery(internal.serverAdmin.intentOnServer, {
+      slug: a,
+      intentId: parts[3],
+    });
+    if (!intentId) return notFound();
+    return json(await ctx.runQuery(internal.nodeActivation.review, { intentId }));
+  }
   return notFound();
 };
 
@@ -411,8 +415,14 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
   // test link, its bound confirmation, and the approval of a review. Before
   // the generic node writes: `nodes/intents/{id}/{verb}` is not a node uuid.
   if (a && b === 'nodes' && c === 'intents' && d) {
-    const [, , , intentIdRaw, verb] = parts;
-    const intentId = intentIdRaw as Id<'panelNodeIntents'>;
+    const [, , , intentIdRaw, verb, extra] = parts;
+    if (!verb || extra) return notFound();
+    // The node must belong to the backend the path names.
+    const intentId = await ctx.runQuery(internal.serverAdmin.intentOnServer, {
+      slug: a,
+      intentId: intentIdRaw ?? '',
+    });
+    if (!intentId) return notFound();
     if (verb === 'test-link') {
       const { link, binding } = await ctx.runAction(internal.nodeActivation.buildDirectTestLink, {
         intentId,

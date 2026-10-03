@@ -14,12 +14,12 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
-import { insertPanelServer } from './lib/edges/testing/fixtures';
+import { FIXTURE_PANEL_SLUG, insertPanelServer } from './lib/edges/testing/fixtures';
 import { generateRealityKey } from './lib/backend/realityKeys';
 import { closeForSharedChange } from './nodeIntents';
 import { signValue } from './lib/cookies';
+import { sha256Hex } from './lib/crypto';
 import { ActivationReview, DirectTestLink } from '../src/shared/contracts/servers';
-import { FIXTURE_PANEL_SLUG } from './lib/edges/testing/fixtures';
 
 const modules = import.meta.glob('./**/*.*s');
 type T = TestConvex<typeof schema>;
@@ -433,6 +433,77 @@ describe('the activation routes over HTTP', () => {
     expect(run.state).toBe('committed');
 
     expect((await call('POST', `${base}/no-such-verb`, {})).status).toBe(404);
+  });
+
+  test('an intent is only reachable under its own backend, and settings scope never reaches it', async () => {
+    const { t, intentId } = await seedLiveDirect();
+    const call = await adminCall(t);
+    // A second backend: a valid id under ITS path is not found, for every verb.
+    await insertPanelServer(t, { slug: 'panel-b' });
+    const cookieless = (path: string, init: RequestInit) =>
+      t.fetch(`/api/v1/admin/servers/${path}`, init);
+    const viaOther = await call('GET', `nodes/intents/${intentId}/review`);
+    expect(viaOther.status).toBe(200);
+    const sid = `asid-${Math.random().toString(36).slice(2)}`;
+    const adminUserId = await t.run((ctx) =>
+      ctx.db.insert('adminUsers', {
+        username: 'op2',
+        displayName: 'Op',
+        isActive: true,
+        updatedAt: Date.now(),
+      }),
+    );
+    await t.mutation(internal.sessions.create, {
+      sid,
+      kind: 'admin',
+      adminUserId,
+      ttlMs: 3_600_000,
+    });
+    const cookie = `fs_admin_session=${await signValue(sid, 'test-admin-sign')}`;
+    const headers = { cookie, 'content-type': 'application/json' };
+    for (const [method, verb] of [
+      ['GET', 'review'],
+      ['POST', 'test-link'],
+      ['POST', 'approve'],
+      ['POST', 'retire'],
+    ] as const) {
+      const res = await cookieless(`panel-b/nodes/intents/${intentId}/${verb}`, {
+        method,
+        headers,
+        body: method === 'GET' ? undefined : '{}',
+      });
+      expect(res.status, `${method} ${verb}`).toBe(404);
+    }
+    // A malformed id is not found either, never a server error.
+    expect((await call('POST', 'nodes/intents/not-an-id/test-link', {})).status).toBe(404);
+
+    // A token holding only the settings scope cannot reach an intent through a
+    // path that starts with `config`.
+    const plaintext = `fsv1_${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+    await t.run(async (ctx) => {
+      await ctx.db.insert('apiTokens', {
+        name: 'settings-only',
+        tokenHash: await sha256Hex(plaintext),
+        tokenPrefix: plaintext.slice(0, 12),
+        createdByAdminId: adminUserId,
+        scopes: ['admin:settings:write', 'admin:settings:read'],
+        subjectType: 'service',
+        updatedAt: Date.now(),
+      });
+    });
+    const bearer = { authorization: `Bearer ${plaintext}`, 'content-type': 'application/json' };
+    for (const [method, verb] of [
+      ['POST', 'test-link'],
+      ['POST', 'approve'],
+      ['GET', 'review'],
+    ] as const) {
+      const res = await cookieless(`config/nodes/intents/${intentId}/${verb}`, {
+        method,
+        headers: bearer,
+        body: method === 'GET' ? undefined : '{}',
+      });
+      expect([401, 403], `${method} ${verb}`).toContain(res.status);
+    }
   });
 
   test('retire is routed', async () => {
