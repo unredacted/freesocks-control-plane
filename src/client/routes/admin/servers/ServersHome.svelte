@@ -61,6 +61,21 @@
   const providers = providersQuery();
   let setupOpen = $state(false);
   let setupRow = $derived(setup.data ? setupWords(setup.data) : null);
+  // A setup run finishes in the background, and only the setup query polls
+  // while it runs: when it stops, everything else on the page (the summary's
+  // "set up" flag, the tree's groups and transports) is re-read at once.
+  let setupWasRunning = false;
+  $effect(() => {
+    const running = setup.data?.running ?? false;
+    if (setupWasRunning && !running) invalidateServers(qc);
+    setupWasRunning = running;
+  });
+  // Closing the sheet re-reads too, whatever the run did meanwhile.
+  let sheetWasOpen = false;
+  $effect(() => {
+    if (sheetWasOpen && !setupOpen) invalidateServers(qc);
+    sheetWasOpen = setupOpen;
+  });
   // Adopting a node that already serves members (a row without an intent).
   let adoptOpen = $state(false);
   let adoptTarget = $state<{ nodeUuid: string; name: string } | null>(null);
