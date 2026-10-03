@@ -16,7 +16,9 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { FIXTURE_PANEL_SLUG, insertPanelServer } from './lib/edges/testing/fixtures';
 import { generateRealityKey } from './lib/backend/realityKeys';
-import { closeForSharedChange } from './nodeIntents';
+import { addressRemark, closeForSharedChange } from './nodeIntents';
+import { remarkTag } from './lib/backend/hostRemark';
+import { claimKey, hostIdentity } from './lib/backend/ops';
 import { signValue } from './lib/cookies';
 import { sha256Hex } from './lib/crypto';
 import { ActivationReview, DirectTestLink } from '../src/shared/contracts/servers';
@@ -266,7 +268,9 @@ async function runUntil<R extends { state: string }>(
   throw new Error('run did not settle');
 }
 
-async function seedLiveDirect() {
+async function seedLiveDirect(
+  opts: { nodeName?: string; names?: string[]; expectReady?: boolean } = {},
+) {
   const t = convexTest(schema, modules);
   const serverId = await insertPanelServer(t);
   const panel = installPanel();
@@ -281,7 +285,7 @@ async function seedLiveDirect() {
   });
   await t.mutation(internal.sniFamilies.importNames, {
     slug: 'fam-direct',
-    lines: ['decoy-a.example'],
+    lines: opts.names ?? ['decoy-a.example'],
   });
   for (const n of (await t.query(internal.sniFamilies.dueForQualification, {})).names)
     await t.mutation(internal.sniFamilies.recordQualification, {
@@ -303,7 +307,7 @@ async function seedLiveDirect() {
   panel.profiles[0].publicKeyByTag[TAG] = realityPublicKey(priv);
   const { intentId } = await t.mutation(internal.nodeIntents.enroll, {
     backendServerId: serverId,
-    name: 'node-a',
+    name: opts.nodeName ?? 'node-a',
     mode: 'privacy-reality',
     contractVersion: 2,
     observed: {
@@ -319,7 +323,7 @@ async function seedLiveDirect() {
     nodeStarted: true,
   });
   const intent = await settled(() => t.run((ctx) => ctx.db.get(intentId)));
-  expect(intent.activation.stage).toBe('machine_ready');
+  if (opts.expectReady !== false) expect(intent.activation.stage).toBe('machine_ready');
   return { t, serverId, panel, intentId };
 }
 
@@ -512,6 +516,120 @@ describe('the activation routes over HTTP', () => {
     const res = await call('POST', `nodes/intents/${intentId}/retire`, {});
     expect(res.status).toBe(200);
     expect(typeof (await res.json()).stage).toBe('string');
+  });
+});
+
+describe('a direct node with long names', () => {
+  test('a generated three-word name and long server names: every address is made, each remark fits', async () => {
+    const names = [
+      'decoy-a.example',
+      'a-much-longer-server-name.decoy-a.example',
+      'another-long-one.decoy-a.example',
+    ];
+    const { t, panel, intentId } = await seedLiveDirect({
+      nodeName: 'yammers-differs-noodled',
+      names,
+    });
+    const intent = (await t.run((ctx) => ctx.db.get(intentId)))!;
+    expect(intent.state).toBe('ready');
+    expect(intent.addressUuids).toHaveLength(names.length);
+    const mine = panel.hosts.filter((h) =>
+      String(h.remark).startsWith('yammers-differs-noodled | '),
+    );
+    expect(mine.map((h) => h.sni).sort()).toEqual([...names].sort());
+    for (const h of mine) expect(String(h.remark).length).toBeLessThanOrEqual(40);
+  });
+});
+
+describe("reconcile refusals that are not the node's fault", () => {
+  test('a write still in flight on the same address parks the node as pending, never blocked', async () => {
+    const { t, serverId, panel, intentId } = await seedLiveDirect();
+    const [own] = await t.run((c) => c.db.query('panelHosts').collect());
+    await addFamilyName(t, serverId, panel);
+    // An earlier attempt's create of the new address is still running.
+    const identity = hostIdentity({
+      remark: addressRemark('node-a', 'www.decoy-a.example'),
+      inboundUuid: own!.configProfileInboundUuid!,
+      address: own!.address,
+      port: own!.port,
+    });
+    const anyOp = (await t.run((c) => c.db.query('panelOps').first()))!;
+    await t.run((c) =>
+      c.db.insert('panelClaims', {
+        backendServerId: serverId,
+        key: claimKey.hostIdentity(identity),
+        opId: anyOp._id,
+        generation: 1,
+        claimedAt: Date.now(),
+      }),
+    );
+    await t.mutation(internal.nodeIntents.enroll, {
+      backendServerId: serverId,
+      name: 'node-a',
+      mode: 'privacy-reality',
+      contractVersion: 2,
+      observed: {
+        management: { address: '192.0.2.10', port: 2222 },
+        publicIps: { v4: '203.0.113.10' },
+        capabilities: { caddy: false, ipv6: false },
+      },
+    });
+    const intent = await settled(() => t.run((c) => c.db.get(intentId)));
+    expect(intent.state).toBe('pending');
+    expect(intent.code).toBe('servers.op_running');
+  });
+
+  test('two server names that land on one compact remark stop the node, visibly, before any address', async () => {
+    // A known pair whose seven-character tags coincide.
+    const a = '1etmhq07oa38uyrx6dw.example.com';
+    const b = '1myi4yqgexffqcgg5p0.example.com';
+    expect(remarkTag(a)).toBe(remarkTag(b));
+    const { t, panel, intentId } = await seedLiveDirect({
+      nodeName: 'yammers-differs-noodled',
+      names: [a, b],
+      expectReady: false,
+    });
+    const intent = (await t.run((c) => c.db.get(intentId)))!;
+    expect(intent.state).toBe('blocked');
+    expect(intent.code).toBe('servers.address_remark_collision');
+    expect(
+      panel.hosts.filter((h) => String(h.remark).startsWith('yammers-differs-noodled')),
+    ).toEqual([]);
+  });
+});
+
+describe('a parked reconcile', () => {
+  const park = async (code: string, roleContactMsAgo: number) => {
+    const { t, intentId } = await seedLiveDirect();
+    const attemptId = 'attempt-test';
+    const intent = (await t.run((ctx) => ctx.db.get(intentId)))!;
+    await t.run((ctx) =>
+      ctx.db.patch(intentId, {
+        claim: { attemptId, expiresAt: Date.now() + 60_000 },
+        observed: { ...intent.observed, at: Date.now() - roleContactMsAgo },
+        appliedAt: Date.now() - roleContactMsAgo,
+      }),
+    );
+    const before = (await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect()))
+      .length;
+    await t.mutation(internal.nodeIntents.progress, {
+      intentId,
+      generation: intent.generation,
+      attemptId,
+      patch: { state: 'pending', code, release: true },
+    });
+    const after = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
+    return after.slice(before).map((s) => s.name);
+  };
+
+  test('is tried again shortly when it waits on something that settles by itself', async () => {
+    expect(await park('servers.op_running', 60_000)).toContain('nodeIntents:resume');
+    expect(await park('servers.node_offline', 60_000)).toContain('nodeIntents:resume');
+  });
+
+  test('waits for the sweep when an operator has to act, or the role stopped polling long ago', async () => {
+    expect(await park('servers.manage_disabled', 60_000)).not.toContain('nodeIntents:resume');
+    expect(await park('servers.op_running', 60 * 60_000)).not.toContain('nodeIntents:resume');
   });
 });
 

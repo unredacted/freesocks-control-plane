@@ -32,6 +32,7 @@ import { nodeGateOf, type NodeGate } from './lib/backend/deliveryGate';
 import { CLAIM_LEASE_MS, claimAvailable, desiredHashOf, fenceHolds } from './lib/backend/fencing';
 import type { IngressMapping } from './lib/backend/ingress';
 import { LABEL_RE, originHostname, originLabel } from './lib/backend/originDns';
+import { ADDRESS_SEP, addressRemark, ownsAddress } from './lib/backend/hostRemark';
 import { type ModeShape } from './lib/backend/profileTemplate';
 import { resolveServerConfig } from './lib/serverConfig';
 import { observeInstance } from './backendObserve';
@@ -149,18 +150,9 @@ export function originAddressOf(intent: Intent, hostname: string | undefined): s
   return intent.observed.publicIps.v4 ?? intent.observed.management.address;
 }
 
-/**
- * The remark of a direct node's address for one family name. The separator is
- * a character neither a node name (`[A-Za-z0-9 ._-]`) nor a host name can
- * carry, so the node a remark names is never in doubt: `node-a` must not read
- * `node-a-west | x.example` as its own (and delete it as extra).
- */
-export const ADDRESS_SEP = ' | ';
-export const addressRemark = (nodeName: string, sni: string): string =>
-  `${nodeName}${ADDRESS_SEP}${sni}`;
-/** Whether a remark FCP wrote names this node. */
-export const ownsAddress = (nodeName: string, remark: string): boolean =>
-  remark.startsWith(`${nodeName}${ADDRESS_SEP}`);
+// The remark of a direct node's address for one server name (always within the
+// backend's 40-character cap): `convex/lib/backend/hostRemark.ts`.
+export { ADDRESS_SEP, addressRemark, ownsAddress };
 /**
  * A node's own addresses: the ones it has recorded (an adopted node's carry
  * whatever remarks the operator gave them) plus any remark FCP wrote for this
@@ -956,9 +948,37 @@ export const progress = internalMutation({
       ? undefined
       : { attemptId: f.attemptId, expiresAt: now + CLAIM_LEASE_MS };
     await ctx.db.patch(f.intentId, next);
+    // A run that parks on something that settles by itself is tried again
+    // shortly while the role is waiting on it, instead of at the next sweep
+    // (up to five minutes later, longer than the role polls).
+    const code = patch.code ?? null;
+    if (
+      patch.release &&
+      patch.state === 'pending' &&
+      code !== null &&
+      QUICK_RETRY_CODES.has(code) &&
+      now - lastRoleContact(intent) < QUICK_RETRY_WINDOW_MS
+    )
+      await ctx.scheduler.runAfter(QUICK_RETRY_MS, internal.nodeIntents.resume, {
+        intentId: f.intentId,
+      });
     return { ok: true as const };
   },
 });
+
+/** Pending codes that clear without anyone acting: a write settling, a read catching up, a node coming up. */
+const QUICK_RETRY_CODES = new Set([
+  'servers.op_running',
+  'servers.observe_lag',
+  'servers.node_offline',
+  'servers.obligation_unresolved',
+  'servers.origin_not_resolving',
+  'servers.origin_certificate',
+]);
+const QUICK_RETRY_MS = 30_000;
+/** Only while the role is likely polling: within this long of its last enrollment or report. */
+const QUICK_RETRY_WINDOW_MS = 20 * 60_000;
+const lastRoleContact = (i: Intent): number => Math.max(i.observed.at, i.appliedAt ?? 0);
 
 // --- the run: reconcile the backend row, the direct Host and the origin name ----------------------
 
@@ -1076,6 +1096,12 @@ export const reconcile = internalAction({
             sni,
           }))
         : [];
+      // A compact remark is a short tag of the server name: two names may land
+      // on the same tag. That is never collapsed into one address silently.
+      if (new Set(wanted.map((w) => w.remark)).size < wanted.length) {
+        await stop('blocked', 'servers.address_remark_collision');
+        return null;
+      }
       const moved = c.addresses.filter((h) => {
         const w = wanted.find((x) => x.remark === h.remark);
         return w && (h.address !== w.address || h.port !== w.port || (h.sni ?? null) !== w.sni);
@@ -1105,11 +1131,16 @@ export const reconcile = internalAction({
       //    tuple as approved. A name that arrived is a new address (a
       //    candidate until the next commit).
       if (direct) {
-        const ops: Promise<{ opId: Id<'panelOps'> }>[] = [];
+        // One write at a time: each request is claimed, sent and looked at
+        // before the next is made. Started together, a refusal of one left the
+        // rest as unhandled rejections, which on the backend ended the whole
+        // run before it could record why (the node sat in `pending` with no
+        // code until its lease expired).
+        const ops: (() => Promise<{ opId: Id<'panelOps'> }>)[] = [];
         for (const w of wanted) {
           const have = c.addresses.find((h) => h.remark === w.remark);
           if (!have)
-            ops.push(
+            ops.push(() =>
               ctx.runMutation(internal.backendWrites.requestAddressCreate, {
                 backendServerId: sid,
                 ...w,
@@ -1120,7 +1151,7 @@ export const reconcile = internalAction({
               }),
             );
           else if (moved.some((m) => m.hostUuid === have.hostUuid))
-            ops.push(
+            ops.push(() =>
               ctx.runMutation(internal.backendWrites.requestAddressUpdate, {
                 backendServerId: sid,
                 hostUuid: have.hostUuid,
@@ -1131,15 +1162,15 @@ export const reconcile = internalAction({
             );
         }
         for (const h of extra)
-          ops.push(
+          ops.push(() =>
             ctx.runMutation(internal.backendWrites.requestAddressDelete, {
               backendServerId: sid,
               hostUuid: h.hostUuid,
             }),
           );
         if (ops.length > 0) {
-          for (const p of ops) {
-            const { opId } = await p;
+          for (const make of ops) {
+            const { opId } = await make();
             const r = await ctx.runAction(internal.backendWrites.run, { opId });
             if (r.open) {
               await stop('pending', 'servers.op_running');
@@ -1183,7 +1214,11 @@ export const reconcile = internalAction({
       return null;
     } catch (err) {
       if (err instanceof Fenced) return null;
-      await stop('blocked', codeOf(err));
+      // A write still in flight on the same item (an earlier attempt's create
+      // the backend has not shown yet) settles by itself: park, never block.
+      // An outcome nobody knows (`servers.op_uncertain`) needs an operator.
+      const code = codeOf(err);
+      await stop(code === 'servers.op_running' ? 'pending' : 'blocked', code);
       return null;
     }
   },

@@ -39,6 +39,7 @@ import { assertNoRotationOrQuarantine } from './lib/edges/relayGuards';
 import { panelDigestKey } from './lib/backend/key';
 import { PatchRefused, checkPatchOps, type PatchOp } from './lib/backend/patchOps';
 import { closeForSharedChange } from './nodeIntents';
+import { HOST_REMARK_MAX } from './lib/backend/hostRemark';
 import { claimOp } from './backendLedger';
 import { observeInstance } from './backendObserve';
 
@@ -87,8 +88,8 @@ function checkHostFields(f: {
   fingerprint?: string | null;
   securityLayer?: string | null;
 }) {
-  if (f.remark !== undefined && (f.remark.trim().length < 1 || f.remark.length > 40))
-    refuse('validation', 'A remark is 1 to 40 characters');
+  if (f.remark !== undefined && (f.remark.trim().length < 1 || f.remark.length > HOST_REMARK_MAX))
+    refuse('validation', `A remark is 1 to ${HOST_REMARK_MAX} characters`);
   if (f.address !== undefined && f.address.trim().length < 2)
     refuse('validation', 'An address is required');
   if (f.port !== undefined && (!Number.isInteger(f.port) || f.port < 1 || f.port > 65535))
