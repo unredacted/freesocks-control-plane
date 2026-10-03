@@ -16,7 +16,9 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { FIXTURE_PANEL_SLUG, insertPanelServer } from './lib/edges/testing/fixtures';
 import { generateRealityKey } from './lib/backend/realityKeys';
-import { closeForSharedChange } from './nodeIntents';
+import { addressRemark, closeForSharedChange } from './nodeIntents';
+import { remarkTag } from './lib/backend/hostRemark';
+import { claimKey, hostIdentity } from './lib/backend/ops';
 import { signValue } from './lib/cookies';
 import { sha256Hex } from './lib/crypto';
 import { ActivationReview, DirectTestLink } from '../src/shared/contracts/servers';
@@ -266,7 +268,9 @@ async function runUntil<R extends { state: string }>(
   throw new Error('run did not settle');
 }
 
-async function seedLiveDirect(opts: { nodeName?: string; names?: string[] } = {}) {
+async function seedLiveDirect(
+  opts: { nodeName?: string; names?: string[]; expectReady?: boolean } = {},
+) {
   const t = convexTest(schema, modules);
   const serverId = await insertPanelServer(t);
   const panel = installPanel();
@@ -319,7 +323,7 @@ async function seedLiveDirect(opts: { nodeName?: string; names?: string[] } = {}
     nodeStarted: true,
   });
   const intent = await settled(() => t.run((ctx) => ctx.db.get(intentId)));
-  expect(intent.activation.stage).toBe('machine_ready');
+  if (opts.expectReady !== false) expect(intent.activation.stage).toBe('machine_ready');
   return { t, serverId, panel, intentId };
 }
 
@@ -534,6 +538,63 @@ describe('a direct node with long names', () => {
     );
     expect(mine.map((h) => h.sni).sort()).toEqual([...names].sort());
     for (const h of mine) expect(String(h.remark).length).toBeLessThanOrEqual(40);
+  });
+});
+
+describe("reconcile refusals that are not the node's fault", () => {
+  test('a write still in flight on the same address parks the node as pending, never blocked', async () => {
+    const { t, serverId, panel, intentId } = await seedLiveDirect();
+    const [own] = await t.run((c) => c.db.query('panelHosts').collect());
+    await addFamilyName(t, serverId, panel);
+    // An earlier attempt's create of the new address is still running.
+    const identity = hostIdentity({
+      remark: addressRemark('node-a', 'www.decoy-a.example'),
+      inboundUuid: own!.configProfileInboundUuid!,
+      address: own!.address,
+      port: own!.port,
+    });
+    const anyOp = (await t.run((c) => c.db.query('panelOps').first()))!;
+    await t.run((c) =>
+      c.db.insert('panelClaims', {
+        backendServerId: serverId,
+        key: claimKey.hostIdentity(identity),
+        opId: anyOp._id,
+        generation: 1,
+        claimedAt: Date.now(),
+      }),
+    );
+    await t.mutation(internal.nodeIntents.enroll, {
+      backendServerId: serverId,
+      name: 'node-a',
+      mode: 'privacy-reality',
+      contractVersion: 2,
+      observed: {
+        management: { address: '192.0.2.10', port: 2222 },
+        publicIps: { v4: '203.0.113.10' },
+        capabilities: { caddy: false, ipv6: false },
+      },
+    });
+    const intent = await settled(() => t.run((c) => c.db.get(intentId)));
+    expect(intent.state).toBe('pending');
+    expect(intent.code).toBe('servers.op_running');
+  });
+
+  test('two server names that land on one compact remark stop the node, visibly, before any address', async () => {
+    // A known pair whose seven-character tags coincide.
+    const a = '1etmhq07oa38uyrx6dw.example.com';
+    const b = '1myi4yqgexffqcgg5p0.example.com';
+    expect(remarkTag(a)).toBe(remarkTag(b));
+    const { t, panel, intentId } = await seedLiveDirect({
+      nodeName: 'yammers-differs-noodled',
+      names: [a, b],
+      expectReady: false,
+    });
+    const intent = (await t.run((c) => c.db.get(intentId)))!;
+    expect(intent.state).toBe('blocked');
+    expect(intent.code).toBe('servers.address_remark_collision');
+    expect(
+      panel.hosts.filter((h) => String(h.remark).startsWith('yammers-differs-noodled')),
+    ).toEqual([]);
   });
 });
 

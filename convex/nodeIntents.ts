@@ -1096,6 +1096,12 @@ export const reconcile = internalAction({
             sni,
           }))
         : [];
+      // A compact remark is a short tag of the server name: two names may land
+      // on the same tag. That is never collapsed into one address silently.
+      if (new Set(wanted.map((w) => w.remark)).size < wanted.length) {
+        await stop('blocked', 'servers.address_remark_collision');
+        return null;
+      }
       const moved = c.addresses.filter((h) => {
         const w = wanted.find((x) => x.remark === h.remark);
         return w && (h.address !== w.address || h.port !== w.port || (h.sni ?? null) !== w.sni);
@@ -1208,7 +1214,11 @@ export const reconcile = internalAction({
       return null;
     } catch (err) {
       if (err instanceof Fenced) return null;
-      await stop('blocked', codeOf(err));
+      // A write still in flight on the same item (an earlier attempt's create
+      // the backend has not shown yet) settles by itself: park, never block.
+      // An outcome nobody knows (`servers.op_uncertain`) needs an operator.
+      const code = codeOf(err);
+      await stop(code === 'servers.op_running' ? 'pending' : 'blocked', code);
       return null;
     }
   },

@@ -316,6 +316,8 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.revision_stale': 'The machine settings changed. Run the role again.',
   'servers.revision_unknown': 'That machine revision was never handed out.',
   'servers.reconcile_failed': 'The node could not be reconciled with the backend.',
+  'servers.address_remark_collision':
+    'Two server names of this node would get the same address name. Remove one of them from the family, then run the role again.',
   'servers.maintenance_required':
     'This change rewrites the running path. Start it as a maintenance transition: the node is closed until it is approved again.',
   'servers.maintenance_open': 'A maintenance transition is open on this node.',
