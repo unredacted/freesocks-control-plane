@@ -3,423 +3,214 @@
 [![CI](https://github.com/unredacted/freesocks-control-plane/actions/workflows/ci.yml/badge.svg)](https://github.com/unredacted/freesocks-control-plane/actions/workflows/ci.yml)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 
-[FreeSocks](https://freesocks.org) distributes free, open & uncensored proxy access to
-people in countries experiencing heavy Internet censorship. This repository is the
-**control plane** that runs the service: the sign-up flow, member accounts, proxy-key
-issuance, entitlements, payments, and the admin console — everything except the proxy
-servers themselves.
+[FreeSocks](https://freesocks.org) gives free proxy access to people in countries where the
+Internet is heavily censored. This repository is the software that runs the service: the
+website, accounts, key handout, payments and the admin console. The proxy servers themselves
+live elsewhere; this app creates and manages the keys people use to connect to them.
 
-It is built for hostile networks and privacy-hostile environments:
+Anyone can run their own copy. It is built to be self-hosted from start to finish, with no
+outside services required.
 
-- **Anonymous accounts.** No email, no phone, no password. Visitors pass a self-hosted
-  proof-of-work captcha and receive a random **account number** — the only credential,
-  stored only as a peppered keyed hash.
-- **No client IPs at rest.** The application, the reverse proxy, and the captcha service
-  are all configured to persist no client IP, even hashed ([`docs/privacy.md`](docs/privacy.md)).
-- **No third-party anything at runtime.** Zero external scripts, fonts, or CDNs: the
-  captcha WASM, fonts, and all assets are bundled and served same-origin under a pure
-  `'self'` CSP.
-- **Payments without payer identity.** Optional memberships and donations are payable
-  with Bitcoin (via a self-hosted BTCPay Server), other cryptocurrencies, card, or
-  PayPal — all as redirects to processor-hosted pages, with **zero payer PII stored**.
-  Donations fund a shared monthly bandwidth bonus for every free user; the public
-  impact surfaces show only GB and user counts, never dollar amounts
-  ([`docs/billing.md`](docs/billing.md)).
-- **Sealed channel + proof-of-possession sessions** to blind fronting CDNs
-  ([`docs/threat-model-cdn-blinding.md`](docs/threat-model-cdn-blinding.md)).
+## What people can do
 
-Technically it is a **self-hosted [Convex](https://convex.dev) backend + a static Svelte 5
-SPA** that hands out subscription URLs from pluggable proxy backends —
-[Remnawave](https://remna.st) (multi-protocol; shown to users as **"Xray"**) or
-[Outline](https://getoutline.org/) (Shadowsocks) — with a passkey-gated admin CMS for
-tier, user, backend, token, and runtime-config management. Everything is designed to be
-self-hosted by any operator; see [Quick start](#quick-start-local-via-docker) and
-[`docs/convex-self-hosting.md`](docs/convex-self-hosting.md).
+- **Get an account without giving anything away.** No email, phone number or password. A
+  visitor solves a short puzzle that runs in their browser and gets a random 32-digit
+  account number. That number is the only way back into the account, so the site makes
+  them save it before moving on.
+- **Get a connection key.** One click creates a key that works with common proxy apps. The
+  site recommends apps for each platform and shows a QR code.
+- **Choose how they connect.** Pick a server location, or let the service choose the least
+  busy one. Pick a mode suited to getting past blocking, or one suited to privacy.
+- **Fix things themselves.** Replace a key, move to another server, change their account
+  number, remove a device, add a passkey for quicker sign-in, or report that a connection
+  isn't working.
+- **Check the network.** A public status page shows which locations are up, how busy they
+  are, where each mode is known to work, and any ongoing incidents.
+- **Support the service.** Buy a membership (Bitcoin, other cryptocurrencies, card or
+  PayPal), redeem a membership code, refer a friend, or donate. Donations add extra monthly
+  bandwidth for every free user.
 
-> **New here?** [`docs/project-inventory.md`](docs/project-inventory.md) is the at-a-glance
-> map: every feature (live / deferred), the open to-dos, and a register of intentional
-> scaffolding. Read it before removing anything as "dead code".
+The site is available in English, Persian, Arabic, Russian and Chinese.
 
-## Stack
+## What operators can do
 
-### Backend: self-hosted Convex (`convex/`)
+Operators manage everything from an admin console that only accepts passkeys. From there they
+can:
 
-The entire backend is a Convex deployment: queries, mutations, and actions, plus an HTTP
-router and native cron jobs. There is no separate web framework or edge worker.
+- add proxy servers and choose which ones new keys go to
+- set up plans (free, member, and any others) and what each one allows
+- look up and help users by their support ID, which is safe to share
+- create membership codes, configure payments, and see revenue
+- edit the status page, recommended apps, site banner, theme and rate limits
+- set up storage mirrors, so people can still fetch their keys if the main site is blocked
+- read user problem reports and a full audit log
+- create API tokens with limited permissions for automation
 
-- **[Convex](https://docs.convex.dev) 1.40**: reactive document DB + serverless functions, run **self-hosted** (Docker; SQLite or Postgres). Schema and validators are TypeScript (`v.*`), so there is no SQL and no migration set.
-- **HTTP router** (`convex/http.ts`): every public route is an `httpAction`, served on the Convex HTTP-actions port (`:3211`). This is the surface the SPA and API consumers call.
-- **Native crons** (`convex/crons.ts`): grace/disable sweep, tombstone sweep, backend healthcheck (+ node-load cache), idle-free-user deactivation (deactivate-and-retain, never delete), user-status counts reconcile, hourly donation-bonus reconcile, session/rate-limit/replay-guard + admin-invite sweeps, HPKE epoch-key rotation, append-only-table retention sweeps (incl. the admin + member WebAuthn challenge tables), billing pending/gift-reveal sweeps, and S3 mirror refresh. Each sweep stamps a heartbeat surfaced on the admin dashboard.
-- **Self-hosted [Cap](https://trycap.dev) captcha** (the `cap` + `valkey` services in the **beta** compose stack, `docker-compose.stack.yml`; the base dev `docker-compose.yml` is backend + dashboard only — local dev uses `CAP_DEV_BYPASS=true`) gates anonymous account creation + login; verified server-side in `convex/lib/captcha.ts`. The widget + its proof-of-work WASM are bundled and served same-origin — no third-party scripts.
-- **Proxy backends**: **Remnawave** and **Outline** behind a common action dispatch (`convex/backends.ts` + `convex/lib/backends/*`); per-tier backend selection plus optional end-user choice. See [`docs/backends.md`](docs/backends.md).
-- **`@simplewebauthn/server`** for passkey auth (`"use node"` action modules): admins are passkey-only; members can **opt in** to passkeys as a convenience login (the account number stays the only recovery credential).
-- **`@aws-sdk/client-s3`** for optional multi-provider subscription mirroring (a `"use node"` action module).
-- **TypeScript 6** strict throughout.
+Server setup can also be automated with the companion Ansible role,
+[ansible-role-freesocks](https://github.com/unredacted/ansible-role-freesocks).
 
-### Frontend: Svelte 5 SPA (`src/client/`)
+## How it protects people
 
-- **Svelte 5** in runes mode (`$state`, `$derived`, `$effect`, `$props`); no SvelteKit, just a custom client-side router on the History API (`src/client/stores/router.svelte.ts`).
-- **TanStack Svelte Query 6** for every data fetch and mutation, with a single `QueryClient` and an explicit `queryKeys` registry in `src/client/lib/queries.ts`.
-- **A thin cookie-auth `apiClient`** (`src/client/lib/api.ts`, `credentials:'include'`) that calls the Convex HTTP surface and Zod-validates every response. The client does **not** use the Convex reactive client; authenticated data flows over the HTTP actions so the session cookie stays httpOnly.
-- **shadcn-svelte** components copied as source into `src/client/components/ui/`, over **bits-ui** headless primitives.
-- **Tailwind CSS 4** via `@tailwindcss/vite`; Inter / Inter Tight / JetBrains Mono bundled and self-hosted via `@fontsource/*` (no third-party font CDN).
-- **`@simplewebauthn/browser`** for admin passkey ceremonies; **qrcode** for the subscription QR; **svelte-sonner** toasts; **mode-watcher** theming; **`@cap.js/widget`** (bundled) for the captcha.
-- **i18n** uses Paraglide/inlang (`messages/*.json` is the authoritative source, compiled to typed messages; `t()` in `src/client/lib/i18n/` shims over them): English + Farsi, Arabic, Russian, Simplified Chinese, with RTL driven off `<html dir>` and a persisted language switcher. The critical user-journey strings are translated; `bun run i18n:review` generates per-locale native-review packets (`translation-review/*.md`) and the native-speaker review pass is in progress.
+- **No stored IP addresses.** The app, the web server and the puzzle service are all set up
+  to keep no visitor IPs, not even scrambled ones. See [privacy.md](docs/privacy.md).
+- **No personal details.** Accounts have no name, email or phone. Account numbers are stored
+  in a form that can't be turned back into the number. Payments happen on the payment
+  provider's own page, and FCP keeps nothing about who paid.
+- **Nothing loaded from other sites.** Fonts, scripts and the puzzle all come from the same
+  server as the page, so no third party sees who visits.
+- **Protection from the middle.** When turned on, the browser encrypts its requests so that
+  only the backend can read them, and ties each sign-in to a key that never leaves the
+  device. A CDN or proxy in between can't read the traffic or reuse a stolen cookie. See
+  [threat-model-cdn-blinding.md](docs/threat-model-cdn-blinding.md).
+- **Replaceable entry points.** Servers can sit behind front addresses that FCP creates,
+  tests from the affected countries, and swaps out when one gets blocked. This is called
+  **Edges** and is off until an operator sets it up. See [edges.md](docs/edges.md).
+- **Idle accounts are paused, not deleted.** A free key that hasn't been used for a while is
+  taken back, but the account stays. Signing in again brings it back.
 
-### Shared contracts (`src/shared/contracts/`)
-
-Zod schemas the client uses for response parsing and types. Since the server now validates
-with Convex `v.*` validators, these are client-side, but they remain the declared shape of
-the API surface. Keep the client and the Convex HTTP handlers in agreement.
-
-### Tooling
-
-- **Bun** as the package manager and CLI launcher (`bun.lock` is the only lockfile; the exact version is `packageManager` in `package.json`, which the Docker base images and CI both derive from). The Convex backend runs on Convex's own V8 runtime.
-- **Vite 8** builds the SPA (the only build artifact; the backend is `convex/`).
-- **Vitest 4** with **`convex-test`** for an in-memory Convex test harness (no backend needed).
-- **svelte-check** alongside `tsc -b` in the typecheck pipeline; **ESLint 10** + **Prettier 3**.
-- **Playwright 1.58** (dev-only) for the report-form browser tests and for driving the packaged SFL Electron app over CDP in the client-compatibility suite.
-
-## Project layout
+## How it works
 
 ```
-convex/                            The backend (Convex functions)
-├── schema.ts                      defineSchema tables + indexes (no SQL/migrations)
-├── http.ts                        httpRouter: every public route as an httpAction
-├── crons.ts                       native scheduled jobs
-├── seed.ts                        idempotent cutover seed (default tiers + settings)
-├── freeTier.ts                    Cap-gated anon account creation + serializable cap
-├── account.ts                     getAccountView / regenerate / switchBackend / refresh
-├── auth.ts, accountId.ts          account-number login / rotate / mint
-├── supportId.ts                   non-secret FS-XXXX-XXXX support handle (mint/lookup)
-├── membershipCodes.ts             admin-minted redemption codes; member redeem (single-use)
-├── lifecycle.ts                   setMembership seam + grace/disable + cleanup sweeps
-├── billing.ts, donations.ts       self-service checkout/grant + donations & free-bandwidth bonus
-├── backends.ts                    proxy-backend dispatch (action)
-├── backendServers.ts              generic backend-instance pool (DB half) + healthcheck
-├── remnawaveNodes.ts              node-load telemetry + mode-placement pools (issuance placement)
-├── connectionModes.ts             member connection-mode read/switch (families + sub-modes)
-├── clients.ts                     DB-driven recommended-client catalog (admin CRUD)
-├── webauthn.ts                    admin passkey ceremonies + bootstrap ("use node")
-├── memberWebauthn.ts, memberPasskeys.ts   opt-in member passkeys ("use node" + data half)
-├── apiTokens.ts                   fsv1_ token mint/resolve (scoped)
-├── webhooks.ts                    generic billing webhook (HMAC + dedupe)
-├── storage.ts                     S3 subscription mirrors ("use node")
-├── retention.ts                   daily append-only-table retention sweeps
-├── health.ts                      /readyz deep readiness (DB ping)
-├── analytics.ts                   optional self-hosted Umami relay (server-side; docs/privacy.md §6)
-├── subscriptions.ts, tiers.ts, users.ts, admins.ts, appSettings.ts,
-│   publicConfig.ts, audit.ts, rateLimits.ts, sessions.ts, adminApi.ts,
-│   userStats.ts, cronHeartbeat.ts, keyEpochs.ts, keyRevocations.ts, replayGuard.ts
-└── lib/
-    ├── http.ts                    error envelope, client-IP, resolveMember/Admin/Bearer (scoped)
-    ├── cookies.ts, crypto.ts, accountId.ts, supportId.ts, captcha.ts,
-    │   membershipCode.ts, rateLimitPolicy.ts, issuance.ts, connectionModes.ts,
-    │   remnawavePlacement.ts, clientCatalog.ts, donationBonus.ts, billingConfig.ts,
-    │   siteConfig.ts, statusCounters.ts, analyticsConfig.ts, umami.ts
-    ├── processors/{nowpayments,btcpay,stripe,paypal}.ts   billing rails
-    └── backends/{types,registry,remnawave,outline}.ts   pure HTTP backend fns
+ Website:     browser ──► web server (Caddy) ──► Convex backend ──► database
+                              │
+                              └── serves the website files
 
-src/
-├── client/                        Svelte 5 SPA (Vite, shadcn-svelte)
-│   ├── App.svelte, main.ts        Root: QueryClientProvider, router switch
-│   ├── routes/                    Home, GetAccount, Account, Login + admin/*
-│   ├── components/                ui/ (shadcn primitives), AppHeader, SubscriptionHero, …
-│   ├── lib/                       api.ts (fetch + Zod), queries.ts, query-client.ts, utils.ts
-│   └── stores/router.svelte.ts    History-API router
-└── shared/contracts/              Zod contracts the client parses responses with
-
-docker-compose.yml                 self-hosted Convex backend + dashboard (compose project "fcp")
-.env.docker.example                docker env template (copy to .env.docker)
-verifier-extension/                MV3 bundle-verifier scaffold (CDN-blinding Phase 4)
-tests/compat/                      client-compatibility suite: manifest, real-panel integration test,
-                                   SFL app driver, report-form Playwright specs
-scripts/compat/                    its runner, pinned downloads, deployed smoke, coverage report, certify gate
-docker/compat/                     engine + packaged-SFL images, isolated origin, SFL daemon entrypoint
-docker-compose.compat.yml          proxy/client/origin networks layered on docker-compose.remnawave-test.yml
+ Connecting:  proxy app ──► edge (optional) ──► proxy server
 ```
 
-## Prerequisites
+- **Backend:** [Convex](https://convex.dev), self-hosted in Docker. It holds the database,
+  the API the website calls, and the scheduled jobs (expiring memberships, health checks,
+  cleanup). All backend code is in [`convex/`](convex/).
+- **Website:** a Svelte app built into plain static files ([`src/client/`](src/client/)).
+  A web server hands out those files and passes `/api` requests to the backend.
+- **Proxy servers:** FCP talks to proxy software through a common interface. Two are
+  supported: [Remnawave](https://remna.st), which runs Xray and is shown to users as
+  "Xray", and [Outline](https://getoutline.org) (Shadowsocks), which ships turned off. See
+  [backends.md](docs/backends.md).
+- **Puzzle:** [Cap](https://trycap.dev), a self-hosted proof-of-work check, stops bots
+  from creating accounts without tracking anyone.
 
-- **Bun ≥ 1.3** (`brew install oven-sh/bun/bun` or `curl -fsSL https://bun.sh/install | bash`).
-- **Docker** (Compose v2) for the self-hosted Convex backend.
+## Run it locally
 
-## Quick start (local, via Docker)
-
-The self-hosted Convex backend runs from the root `docker-compose.yml` (Compose
-project **`fcp`**). Its config lives in **`.env.docker`** (deliberately separate
-from `.env` / `.env.local`, which Vite and the Convex CLI load).
+You need [Bun](https://bun.sh) (the version is pinned in `package.json`) and Docker with
+Compose v2. Use Bun only; `bun.lock` is the only lockfile.
 
 ```bash
-# 1. Docker backend config. Defaults are fine for throwaway local dev; set a real
-#    INSTANCE_SECRET (openssl rand -hex 32) for any persistent instance.
+# 1. Start the backend in Docker
 cp .env.docker.example .env.docker
-
-# 2. Install deps, then start the backend + dashboard (Docker).
 bun install
-bun run selfhost:up        # starts fcp-backend-1 + fcp-dashboard-1
-bun run selfhost:env       # reads an admin key from the backend -> writes .env.local
+bun run selfhost:up        # backend + its dashboard
+bun run selfhost:env       # writes .env.local so the CLI can reach the backend
 
-# 3. Deploy convex/ and run the SPA together (watch mode).
-bun run dev                # `convex dev` (pushes convex/) + `vite` (the SPA)
+# 2. Give the backend its settings (once)
+for k in SESSION_SIGNING_KEY ADMIN_SESSION_SIGNING_KEY ADMIN_BOOTSTRAP_SECRET IP_HASH_SALT ACCOUNT_ID_PEPPER; do
+  bunx convex env set "$k" "$(openssl rand -hex 32)"
+done
+bunx convex env set ENVIRONMENT development
+bunx convex env set CAP_DEV_BYPASS true            # skip the puzzle in local dev
+bunx convex env set WEBAUTHN_RP_ID localhost
+bunx convex env set WEBAUTHN_ORIGIN http://localhost:5173
 
-# 4. Seed default tiers + settings (idempotent).
+# 3. Run the backend code and the website (reloads on change)
+bun run dev
+
+# 4. In another terminal, load the default plans and settings (safe to repeat)
 bunx convex run seed:seedCutover '{}'
 ```
 
-Then:
+Open the website at http://localhost:5173 and the Convex dashboard at http://localhost:6791.
+To create the first admin, go to `/admin` and enter your `ADMIN_BOOTSTRAP_SECRET`
+(`bunx convex env get ADMIN_BOOTSTRAP_SECRET`).
 
-- **SPA** → http://localhost:5173 · **Convex dashboard** → http://localhost:6791
-- Backend API `:3210`, HTTP actions `:3211`; Vite proxies the SPA's same-origin
-  `/api/*` to `:3211` (`vite.config.ts`).
+If the website says it can't reach the server, the Docker backend has stopped: run
+`bun run selfhost:up` again. To start over with an empty database, run
+`docker compose --env-file .env.docker down -v`.
 
-> **The Docker backend is a separate process from `bun run dev`.** `bun run dev`
-> only starts the SPA + the Convex CLI watch; the backend is `bun run selfhost:up`
-> and must stay running (it now auto-restarts with Docker via `restart:
-unless-stopped`, but a `down` removes it). If API calls fail with
-> "TypeError: Failed to fetch", the backend is down: `bun run selfhost:up`.
+## Run it in production
 
-Set Convex **deployment** env vars with `bunx convex env set NAME value` (separate
-from the SPA's build-time `VITE_*`); the full required/optional list is in
-[`docs/convex-self-hosting.md §5`](docs/convex-self-hosting.md). Reset the backend
-to a clean slate with `docker compose --env-file .env.docker down -v` (wipes the
-`fcp_data` volume).
-
-To exercise the CDN-blinding sealed channel locally (the "HPKE" feature; it was
-called "E2EE" until 2026-09-16), also generate its keys
-(`bun scripts/gen-hpke-keys.mjs`), `bunx convex env set` the printed `FS_*` secrets,
-and append the printed `VITE_FS_*` public vars to `.env.local`. See
-[`docs/threat-model-cdn-blinding.md`](docs/threat-model-cdn-blinding.md).
-
-See **[`docs/convex-self-hosting.md`](docs/convex-self-hosting.md)** for the complete
-self-hosting walkthrough and the production cutover runbook.
-
-## Deploy
-
-The two halves ship independently to a self-hosted Convex deployment, **deployed
-manually** (CI runs checks only — there is no auto-deploy workflow; the beta
-docker-compose stack's `deployer` service runs `convex deploy` on `up`):
+Production runs as a single Docker Compose stack ([`docker-compose.stack.yml`](docker-compose.stack.yml)):
+Postgres, the Convex backend, Caddy (HTTPS and the website), the Cap puzzle service, backups,
+and a one-time job that deploys the code and loads the defaults. In short:
 
 ```bash
-# Backend: typecheck + push convex/ functions, schema, HTTP router, crons
-CONVEX_SELF_HOSTED_URL=... CONVEX_SELF_HOSTED_ADMIN_KEY=... bunx convex deploy -y
-
-# SPA: static build; a reverse proxy serves dist/ and routes /api -> the actions origin
-VITE_CONVEX_SITE_URL=https://app.example.org bun run build   # your deployment's public origin
+cp .env.beta.example .env.beta
+cp .env.convex.example .env.convex
+bun run bootstrap          # fills in every secret that can be generated
+# edit both files to add your domain, puzzle keys and any payment keys
+docker compose -f docker-compose.stack.yml --env-file .env.beta up -d --build
 ```
 
-Convex does **not** serve the SPA. A reverse proxy (Caddy/nginx/…) terminates TLS, serves
-the static `dist/` with history-API fallback, and routes `/api/*` + `/healthz` to the
-Convex HTTP-actions origin. The full cutover runbook (stand up, set env, seed, bootstrap the
-first admin passkey, reverse-proxy config, verification checklist) is in
-**[`docs/convex-self-hosting.md`](docs/convex-self-hosting.md)**.
+Then open `/admin`, register your passkey, and add a proxy server. The full guide, including
+updates, backups and rollback, is [beta-deploy.md](docs/beta-deploy.md). Every setting and
+secret is explained in [secrets.md](docs/secrets.md) and
+[convex-self-hosting.md](docs/convex-self-hosting.md).
 
-## Architecture
+## Checks
 
-Highlights:
-
-- **Anonymous flow**: `POST /api/v1/account`, Cap-captcha-gated, no email. Account creation is
-  **decoupled from proxy issuance** (so a backend outage can't block sign-up): it mints the
-  one-time **account number** (revealed via a blocking two-step modal — download it, then paste
-  it back to verify before continuing) + a non-secret **support ID** + a member session. The
-  per-(IP, day) cap is a **serializable rate-limit reservation** inside
-  `freeTier.createFreeAccount` (the admin-tunable `freetier.create` policy, released on
-  failure; no durable IP record), so concurrent bursts can't over-issue. Sign-up also
-  mints the member's own **referral code** and, when the link carried one, binds the
-  account to its referrer (an invalid code never blocks sign-up). The proxy key is
-  created separately by the signed-in member.
-- **Member flow**: the account number is the only credential (an optional **passkey** can be
-  added as a convenience login; the number remains the sole recovery path).
-  `POST /api/v1/auth/account-login` (Cap + strict per-IP/per-(prefix,IP) rate limits +
-  constant-time) sets the signed `fs_session` cookie; the member can **rotate** it
-  (`/api/v1/account/account-id/rotate`), **regenerate**, **switch backend**, or **switch
-  connection mode** for their key, and **redeem a membership code**
-  (`/api/v1/account/redeem-code`). There is no OIDC.
-- **Transparency surfaces**: a public **network-status page** (`/status` +
-  `GET /api/v1/status`) shows per-location online state and **coarse load bands**
-  (never raw user counts), an operator-curated **censorship-availability matrix**
-  (country × connection mode), and operator-published **incidents** — all edited in
-  the CMS (**Admin → Status**) with no redeploy. The member's Access Pass shows which
-  node its key is on and deep-links to that location's card.
-- **Edges**: any origin (a backend node, a whole Outline server, or a hand-described
-  address) sits behind replaceable fronts ("edges") that FCP provisions, publishes as a
-  per-origin pool (primary + backup), renders into each member's subscription with a
-  stable assignment, probes from the countries that matter, and rotates when blocked,
-  all with a recovery-first ledger, per-rotation audit trails and a sealed admin
-  surface. What the origin speaks is described per listener (VLESS, Trojan,
-  Shadowsocks and more, over raw TCP or an HTTP transport, with REALITY, TLS or no
-  security); an edge is either an L4 provider-managed load balancer or an L7 CDN front
-  (a hostname carrying WebSocket, HTTP Upgrade or gRPC), with DNS records and
-  certificates managed end to end and an authenticated end-to-end check before an L7
-  edge is published. Delivery is edge-required: a covered key is served edge addresses
-  or nothing, never the origin. Ships dormant ([`docs/edges.md`](docs/edges.md)).
-- **Referral program**: every member has a shareable `FSR-…` code; a sign-up through
-  it binds the new account. Rewards vest only on the referee's **first paid
-  membership** (any rail, gift codes included): the referee gets bonus days instantly,
-  the referrer's bonus vests after a holding period, capped monthly — configured from
-  Admin → Billing ([`docs/billing.md`](docs/billing.md)).
-- **Entitlements**: `tiers` drive limits; `lifecycle.setMembership` is the single seam that
-  sets a user's tier + expiry. Driven by admin edits, **admin-minted redemption codes** a
-  member redeems (the day-1 paid path), and the **billing webhook** (`POST /api/webhooks/billing`,
-  HMAC-verified + deduped) for the future portal. A cron sweep moves lapsed members
-  `active → grace → disabled`.
-- **Admin CMS**: passkey-only auth (first-run bootstrap wizard, then WebAuthn), separate
-  from member sessions. A landing **dashboard** (health + a shared `GET /admin/status`); tiers
-  (CRUD + **duplicate**); users (search by support ID / prefix; disable / **re-enable** /
-  reset-traffic / resync / **grant membership**; paginated); **admins** (invite links +
-  deactivate/reactivate + per-passkey revoke, under a last-admin guard); API tokens (create /
-  reveal-once / revoke); backend servers (CRUD + test-connection, incl. against stored
-  credentials); **Remnawave** (connection-mode placement pools, node-load stats, and the
-  Xray no-log hardening card); **client apps** (the DB-driven recommended-client catalog);
-  **billing** (per-rail config + a readiness check + the **referral program** knobs);
-  **storage** mirrors; **rate-limit
-  policies**; **membership codes**; the **status page** (incidents, censorship matrix,
-  load thresholds); an admin-configurable **theme** + site announcement
-  banner; settings; and a filterable **audit log**. The Ansible role drives a subset over
-  idempotent **by-slug / by-name** routes using an **automation token**.
-- **Subscription delivery**: the issuance saga (`convex/lib/issuance.ts`) creates the
-  backend user, optionally mirrors the content to N S3 providers
-  ([`@aws-sdk/client-s3`](https://www.npmjs.com/package/@aws-sdk/client-s3)), and persists
-  the row. Re-issue/switch tombstone the old key with a 24h grace window before the cron
-  hard-deletes it.
-- **Proxy backends**: Remnawave and Outline run side-by-side behind a single action
-  dispatch (`convex/backends.ts`). A tier is bound to one backend; admins can run a
-  Remnawave free tier alongside an Outline free tier, or expose backend choice to end users
-  via `subscription.user_choice_enabled`. See [`docs/backends.md`](docs/backends.md) and
-  [`docs/outline-setup.md`](docs/outline-setup.md).
-- **Runtime config**: the `appSettings` table backs admin-toggleable config (backend
-  enable/disable, default backend, user-choice gate, backend labels, pool scoring
-  weights, the connection-mode catalog + placement pools, device-limit enforcement,
-  rate-limit policies (`ratelimit.*`), billing + donation config (`billing.*`), the
-  theme, and the site banner (`site.*`)). Defaults are compiled in
-  (`convex/appSettings.ts` and the per-namespace resolvers).
-
-## API consumers (services, integrations)
-
-### Endpoints (served by `convex/http.ts`)
-
-- **Public / member:** `GET /healthz` (liveness), `GET /readyz` (deep readiness),
-  `GET /api/v1/config`, `GET /api/v1/hpke/keys` (HPKE epoch keys + revocations),
-  `GET /api/v1/status` (public network status: locations, load bands, incidents),
-  `POST /api/v1/account` (create), `GET /api/v1/account`, `GET /api/v1/account/usage`,
-  `GET /api/v1/account/referrals` (referral code + stats),
-  `POST /api/v1/auth/account-login`, `POST /api/v1/auth/logout`, `GET /api/v1/me`,
-  `POST /api/v1/account/{regenerate,switch-backend,switch-mode,refresh-membership,redeem-code}`,
-  `POST /api/v1/account/connection-mode` (persist the picked mode),
-  `POST /api/v1/account/account-id/rotate`, `POST /api/v1/account/devices/revoke`,
-  the opt-in member-passkey routes (`GET /api/v1/account/passkeys`,
-  `POST /api/v1/account/passkey/*`, `POST /api/v1/auth/passkey/authenticate/*`),
-  `GET /api/v1/sub/<token>` (the FCP-fronted subscription URL),
-  `GET /api/v1/subscription/content` (sealed raw-config reveal),
-  `POST /api/v1/mirror/request` + `GET /api/v1/mirror` (opt-in S3 mirror),
-  `POST /api/v1/billing/checkout` + `GET /api/v1/billing/order/*` (self-service
-  membership + donations),
-  `POST /api/v1/account/gift-codes/ack` + `GET /api/v1/account/codes` (gift purchases).
-- **Admin (cookie or scope-checked token):** `GET|POST|PATCH|DELETE /api/v1/admin/{status,tiers,users,admins,tokens,audit,settings,rate-limits,membership-codes,backend-servers,backends/{backend}/mode-placements,billing,mirror-providers,theme,site,verification,clients,connection-modes,connection-mode-families,client-ip,status/{page,incidents},referrals/config,remnawave/{node-stats,logging-status,harden-logging}}/*` — every route enforces a scope on token callers (several features share the broader `admin:settings:*` / `admin:users:*` scopes rather than one scope per feature); the Ansible role's idempotent `by-slug` / `by-name` upserts live under these.
-- **Plumbing:** `GET|POST /api/admin/auth/*` (WebAuthn passkey ceremonies + bootstrap),
-  `POST /api/webhooks/billing` (generic HMAC transport), and the processor webhooks
-  `POST /api/webhooks/{nowpayments,btcpay,stripe,paypal}`.
-
-### Authentication paths
-
-Three accepted mechanisms; each `httpAction` resolves identity via `convex/lib/http.ts`:
-
-| Path          | Format                                | Used by                                                     |
-| ------------- | ------------------------------------- | ----------------------------------------------------------- |
-| Member cookie | `Cookie: fs_session=…`                | Web SPA (account-number login, or an opt-in member passkey) |
-| Admin cookie  | `Cookie: fs_admin_session=…`          | Admin CMS (WebAuthn passkey)                                |
-| Bearer token  | `Authorization: Bearer fsv1_<random>` | Services, automation, monitoring                            |
-
-A `fsv1_` token can be a **service** token (acts with its own scopes) or a **user** token
-(`subjectType: user`, acts as a specific member). There is **no OIDC / JWT path**.
-
-### Admin-issued API tokens
-
-Admins mint tokens through the admin CMS at `/admin/tokens`. The plaintext is shown **once**
-on creation and never recoverable thereafter; only `SHA-256(token)` is stored. Tokens have
-a name, an explicit scope set (vocabulary in `src/shared/contracts/scopes.ts`, e.g.
-`subscription:read`, `admin:users:write`), optional expiry, debounced last-used tracking,
-and soft-revoke.
-
-## Testing
+Every change must pass these. CI runs the same ones.
 
 ```bash
-bun run test         # vitest + convex-test (in-memory; no running backend needed)
-bun run typecheck    # tsc -b (client+shared) + tsc on convex/ + svelte-check
-bun run lint         # eslint + prettier --check
-bun run build        # tsc -b + vite build → static SPA in dist/
-
-# Integration suites (Docker; disposable fixtures only, nothing touches a deployment)
-bun run test:integration:remnawave   # provider contract against a throwaway Remnawave panel
-bun run test:compat                  # client compatibility: real panel → FCP handler → pinned client engines + the packaged SFL app
-bun run test:compat:browser          # report-issue dialog in Chromium + Firefox (Playwright)
+bun run test                  # unit and backend tests, no running server needed
+bun run typecheck
+bun run convex:bundle-check   # the backend code will bundle the way a deploy does
+bun run lint                  # `bun run format` fixes formatting
+bun run build
 ```
 
-The client-compatibility suite (`docs/client-compatibility.md`) is the **Client compatibility**
-GitHub workflow. On every PR it renders each catalogued client's subscription through FCP's real
-HTTP handler against a live throwaway Remnawave backend (exact User-Agent cache isolation, refresh
-after a Host change), drives pinned sing-box and Mihomo engines through a REALITY tunnel to an
-origin only the proxy can reach (HTTPS, remote DNS, UDP DNS, wrong-credential fail-closed), and
-imports + refreshes the subscription in the checksum-verified SFL Linux package (deep link and
-manual URL entry). A nightly job repeats it against the latest upstream releases; a manual
-workflow smoke-tests deployed fronts with a dedicated canary subscription. Apps the suite cannot
-drive stay explicitly "manual verification required" (`scripts/compat/certify.ts`).
+Two larger suites run in Docker against throwaway servers:
 
-## Frontend conventions
+```bash
+bun run test:integration:remnawave   # FCP against a real Remnawave panel
+bun run test:compat                  # real proxy apps import and use FCP's keys
+```
 
-### Data fetching: TanStack Query only
+See [client-compatibility.md](docs/client-compatibility.md) for what the second one proves.
 
-Every fetch goes through a factory in `src/client/lib/queries.ts` that wraps `createQuery`
-or `createInfiniteQuery`, calling the `apiClient` (`src/client/lib/api.ts`), which
-Zod-validates the response. Cache keys are exported via the `queryKeys` registry so
-mutations can `queryClient.invalidateQueries({ queryKey: queryKeys.X })`. Avoid direct
-`fetch()` from components; add a query factory instead. User feedback goes through
-`svelte-sonner`. Reference pattern: `Account.svelte`'s regenerate / rotate / refresh
-mutations.
+## Where things are
 
-### Component conventions
+| Path                    | What's there                                                                   |
+| ----------------------- | ------------------------------------------------------------------------------ |
+| `convex/`               | The whole backend: data model, API routes, scheduled jobs                      |
+| `convex/lib/`           | Shared backend helpers, proxy-server adapters, payment adapters                |
+| `src/client/`           | The website, including the admin console under `routes/admin/`                 |
+| `src/shared/contracts/` | The shape of every API response, shared by both sides                          |
+| `messages/`             | Translations, one file per language                                            |
+| `docker/`, `Caddyfile`  | Images and web server config for the production stack                          |
+| `scripts/`              | Setup, key generation and test runners                                         |
+| `tests/compat/`         | The client compatibility suite                                                 |
+| `verifier-extension/`   | Early browser extension that checks the website hasn't been changed in transit |
 
-- shadcn-svelte primitives are imported from `@client/components/ui/<name>`; the directory
-  barrels re-export named members (`Card`, `CardHeader`, etc.).
-- Layout: `AppHeader.svelte` + `App.svelte`'s footer wrap every non-admin route; admin
-  routes use `AdminLayout.svelte` with its own sidebar.
-- Loading states: `<Skeleton>` placeholders matching the loaded layout, not flat "Loading…"
-  text. Destructive confirmations use shadcn-svelte `AlertDialog`, not `window.confirm()`.
+## Documentation
 
-### Typography
-
-Inter (body) + Inter Tight (display) + JetBrains Mono (code), bundled and self-hosted via
-`@fontsource/*` (imported in `src/client/main.ts`); the page never contacts
-`fonts.googleapis.com` / `fonts.gstatic.com` or any third-party host, a deliberate privacy /
-censorship-resistance choice. There are **no third-party runtime scripts at all** — the Cap
-captcha widget + its proof-of-work WASM + pako are bundled and served same-origin.
-Apply `tabular-nums` to counters, file sizes, dates, and any number that re-renders.
-
-The control plane also never persists a client IP anywhere by default (app, Caddy, and Cap
-are all configured for it); the end-to-end posture + a downstream-deployer checklist is in
-[`docs/privacy.md`](docs/privacy.md).
-
-### Router
-
-`src/client/stores/router.svelte.ts` is a History-API router exposing a reactive
-`router.pathname` rune; route resolution is an `{#if}` cascade in `App.svelte`. To add a
-route: import the component, add an arm, and link via `<Link href="/foo">`. There is no
-file-based routing because SvelteKit is not in the stack.
+| Read this                                                         | To learn about                                       |
+| ----------------------------------------------------------------- | ---------------------------------------------------- |
+| [project-inventory.md](docs/project-inventory.md)                 | Every feature, what's finished, and what's left      |
+| [beta-deploy.md](docs/beta-deploy.md)                             | Running the full stack on a server                   |
+| [convex-self-hosting.md](docs/convex-self-hosting.md)             | The backend, its settings, and the web server setup  |
+| [secrets.md](docs/secrets.md)                                     | Every secret: who creates it and how to change it    |
+| [backends.md](docs/backends.md)                                   | How FCP talks to proxy servers, and adding a new one |
+| [outline-setup.md](docs/outline-setup.md)                         | Adding an Outline server                             |
+| [servers.md](docs/servers.md)                                     | Viewing and managing what runs on a proxy server     |
+| [edges.md](docs/edges.md)                                         | Replaceable front addresses for proxy servers        |
+| [billing.md](docs/billing.md)                                     | Memberships, payments, donations and referrals       |
+| [btcpay-server-runbook.md](docs/btcpay-server-runbook.md)         | Running the BTCPay server for Bitcoin payments       |
+| [privacy.md](docs/privacy.md)                                     | What is never stored, and how to keep it that way    |
+| [account-number-design.md](docs/account-number-design.md)         | How account-number sign-in works                     |
+| [threat-model-cdn-blinding.md](docs/threat-model-cdn-blinding.md) | Encryption between the browser and the backend       |
+| [oob-verification.md](docs/oob-verification.md)                   | Checking the website you got is the one we built     |
+| [client-compatibility.md](docs/client-compatibility.md)           | Testing real proxy apps against FCP                  |
 
 ## Contributing
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the toolchain (Bun-only), local setup, the
-checks a change must pass, and the project conventions that matter most (contracts,
-data-fetching, and the never-log-secrets rules).
+Code, docs, translations, and testing from inside censored networks all help. Start with
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Security
 
-Please report vulnerabilities privately — see [`SECURITY.md`](SECURITY.md). Do not open
-public issues for security problems: this software protects people in high-risk
-environments.
+Report security problems privately, as described in [SECURITY.md](SECURITY.md). Please don't
+open a public issue: people in high-risk places depend on this software.
 
 ## License
 
-[AGPL-3.0-or-later](LICENSE). If you run a modified version of this software as a
-network service, the AGPL requires you to offer its source code to the users of that
-service.
+[AGPL-3.0-or-later](LICENSE). If you run a modified version as a public service, you must
+offer its source code to the people who use it.
