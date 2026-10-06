@@ -15,8 +15,8 @@ outside services required.
 
 - **Get an account without giving anything away.** No email, phone number or password. A
   visitor solves a short puzzle that runs in their browser and gets a random 32-digit
-  account number. That number is the only way back into the account, so the site makes
-  them save it before moving on.
+  account number. They can add a passkey later for quicker sign-in, but the number is the
+  only way to recover the account, so the site makes them save it before moving on.
 - **Get a connection key.** One click creates a key that works with common proxy apps. The
   site recommends apps for each platform and shows a QR code.
 - **Choose how they connect.** Pick a server location, or let the service choose the least
@@ -130,15 +130,37 @@ If the website says it can't reach the server, the Docker backend has stopped: r
 
 Production runs as a single Docker Compose stack ([`docker-compose.stack.yml`](docker-compose.stack.yml)):
 Postgres, the Convex backend, Caddy (HTTPS and the website), the Cap puzzle service, backups,
-and a one-time job that deploys the code and loads the defaults. In short:
+and a one-time job that deploys the code and loads the defaults. To set it up:
 
-```bash
-cp .env.beta.example .env.beta
-cp .env.convex.example .env.convex
-bun run bootstrap          # fills in every secret that can be generated
-# edit both files to add your domain, puzzle keys and any payment keys
-docker compose -f docker-compose.stack.yml --env-file .env.beta up -d --build
-```
+1. Create the two settings files and fill in every secret that can be generated:
+
+   ```bash
+   cp .env.beta.example .env.beta
+   cp .env.convex.example .env.convex
+   bun run bootstrap
+   ```
+
+2. Fill in the rest by hand. In `.env.beta`: your domain, an email for HTTPS certificates,
+   and offsite backup storage (`BACKUP_S3_*`, plus `BACKUP_AGE_PUBLIC_KEY` to encrypt the
+   backups). Accounts are anonymous and can't be rebuilt after a disk loss, so the backup
+   service refuses to run without offsite storage unless you set
+   `BACKUP_ALLOW_LOCAL_ONLY=true` on a throwaway server. In `.env.convex`: your passkey
+   domain (`WEBAUTHN_*`) and any payment keys.
+
+3. Start the puzzle service and the web server, then create the puzzle keys. Open
+   `https://your-domain/cap`, sign in with the `CAP_ADMIN_KEY` that `bootstrap` printed,
+   create a site key, and copy its key and secret into `CAP_SITE_KEY` and `CAP_SECRET` in
+   `.env.convex`. The deploy step refuses to run until these are set.
+
+   ```bash
+   docker compose -f docker-compose.stack.yml --env-file .env.beta up -d --build web cap
+   ```
+
+4. Start everything. This deploys the code and loads the defaults:
+
+   ```bash
+   docker compose -f docker-compose.stack.yml --env-file .env.beta up -d --build
+   ```
 
 Then open `/admin`, register your passkey, and add a proxy server. The full guide, including
 updates, backups and rollback, is [beta-deploy.md](docs/beta-deploy.md). Every setting and
@@ -212,5 +234,5 @@ open a public issue: people in high-risk places depend on this software.
 
 ## License
 
-[AGPL-3.0-or-later](LICENSE). If you run a modified version as a public service, you must
-offer its source code to the people who use it.
+[AGPL-3.0-or-later](LICENSE). If you run a modified version that people use over a network,
+public or private, you must offer them its source code.

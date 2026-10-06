@@ -38,8 +38,10 @@ If you change how FCP talks to proxy servers or how keys reach apps, also run th
 - **Never log or store secrets or identifying data.** That includes API keys, Outline server
   URLs (they contain a secret), visitor IP addresses, and account numbers. For an account
   number, only the first 4 digits may appear anywhere.
-- Error messages from proxy servers and payment providers must not carry URLs or response
-  bodies. The existing adapters show how.
+- Errors from proxy servers and edge providers must not carry URLs or response bodies, since
+  those can contain secrets. Payment adapters may keep a short, truncated response body in
+  server-side errors so operators can see why a payment failed, but never a URL, key or
+  payer detail. The existing adapters show both patterns.
 - A new audit-log action needs an entry in `AUDIT_PAYLOAD_ALLOWLIST` (`convex/lib/audit.ts`),
   which decides which fields get recorded.
 - If your change touches anything promised in [docs/privacy.md](docs/privacy.md) or the threat
