@@ -331,9 +331,9 @@ jobs:
           - [ ] \`backup\` service healthy (fresh heartbeat) on beta
           - [ ] Pre-upgrade \`convex export\` + env capture taken on beta
           - [ ] Merge
-          - [ ] Deploy beta (\`pull\` + \`up -d --force-recreate backend dashboard keygen deployer\`), watch for \`MigrationComplete(N)\` — do NOT restart mid-migration
+          - [ ] Deploy beta (\`pull\` + \`up -d --force-recreate backend dashboard keygen deployer\`), wait for \`Migration complete\` in the backend log — do NOT restart mid-migration
           - [ ] Beta verified: \`/readyz\` 200, deployer \`[deploy] OK\`, dashboard loads, next backup cycle green
-          - [ ] Soaked ≥3 days on beta — earliest prod deploy: **$prod_date**
+          - [ ] Soaked ≥3 days on beta, counted from the beta deploy — no earlier than **$prod_date**
           - [ ] Prod: fresh pre-flight (its OWN export), deploy, verify
 
           > **CI note:** this PR was opened by \`GITHUB_TOKEN\`, so pull-request CI

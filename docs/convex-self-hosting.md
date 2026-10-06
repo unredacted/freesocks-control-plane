@@ -391,7 +391,7 @@ bunx convex import --replace-all snapshot.zip
 > (`precompiled-<date>-<sha7>`), backend and dashboard must be on the SAME sha,
 > and `git log <pinned>..<target>` is the changelog (Convex stopped maintaining
 > `self-hosted/CHANGELOG.md` in 2025-09). Upgrades run in-place DB migrations,
-> so export first and watch for `MigrationComplete(N)`.
+> so export first and wait for `Migration complete` in the backend log.
 >
 > Dependabot cannot see past a git-sha tag, so
 > `.github/workflows/convex-repin.yml` opens a monthly re-pin PR (anchored to
