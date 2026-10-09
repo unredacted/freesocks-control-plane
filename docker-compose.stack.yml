@@ -59,8 +59,8 @@ services:
     # guaranteed to be compatible" (self-hosted/CHANGELOG.md). One git sha tags
     # both images; convex/deployPins.test.ts enforces it.
     #
-    # Upgrading runs in-place DB migrations. Take an export first, then watch for
-    # `MigrationComplete(N)` in the backend log (self-hosted/advanced/upgrading.md).
+    # Upgrading runs in-place DB migrations. Take an export first, then wait for
+    # `Migration complete` in the backend log (self-hosted/advanced/upgrading.md).
     # Full procedure: docs/beta-deploy.md § Upgrading the Convex backend.
     image: ghcr.io/get-convex/convex-backend:6422278e11c9ea384f54a455c248010559bd6807@sha256:bcbe82c68a06ae2b8445cce837123198329deb89249a9a5199bc73b8261e107b
     pids_limit: 512

@@ -640,8 +640,9 @@ prod.
 
 ```sh
 docker compose -f docker-compose.stack.yml --env-file .env.beta logs backend | grep -i migration
-# expect MigrationComplete(N); a big jump may run several and take a while —
-# do NOT restart the backend mid-migration.
+# each `Executing Migration N/M` line names the line to wait for (`Migrated N`);
+# done at `db metadata version up to date at M` + `Migration complete`. A big
+# jump may run several and take a while — do NOT restart the backend mid-migration.
 docker compose -f docker-compose.stack.yml --env-file .env.beta logs --tail=40 deployer   # [deploy] OK
 curl -fsS https://beta.freesocks.org/readyz
 docker compose -f docker-compose.stack.yml --env-file .env.beta ps   # nothing unhealthy/restarting
