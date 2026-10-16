@@ -96,7 +96,7 @@
   {:else if shown.length === 0}
     <AdminListState
       emptyText={relay.origin.kind === 'panel-node'
-        ? 'No listener yet. Run the node role so it registers the transports of this node, or use Add listener to describe one by hand.'
+        ? 'No listener yet. Protect the node from Edges to add its transports, or use Add listener to describe one by hand.'
         : 'No listener yet. Use Add listener to describe the port this origin answers on.'}
     />
   {:else}

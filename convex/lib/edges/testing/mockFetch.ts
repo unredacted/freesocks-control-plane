@@ -93,6 +93,26 @@ export function mockFetch(handler: Handler): FetchStub {
   };
 }
 
+/** A handler that answers only the calls it owns (null = not mine). */
+export type PartialHandler = (
+  call: Captured,
+  index: number,
+) => Response | null | Promise<Response | null>;
+
+/**
+ * Compose fakes that each own some hosts (a backend, a provider API): the
+ * first one that answers wins; a call nobody owns is a test failure.
+ */
+export function routeFetch(...handlers: PartialHandler[]): Handler {
+  return async (call, index) => {
+    for (const h of handlers) {
+      const r = await h(call, index);
+      if (r) return r;
+    }
+    throw new Error(`unexpected ${call.method} ${call.url}`);
+  };
+}
+
 /** Assert no secret or host string appears in an error's message or meta. */
 export function errorBlob(err: unknown): string {
   const e = err as { message?: string; meta?: unknown };

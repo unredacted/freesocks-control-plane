@@ -28,7 +28,6 @@ import {
   settingsBody,
 } from '../forms/providerFields';
 import { draftIsEmpty, emptyDraft, parseDraft, toSetupDraft } from './draft';
-import { formatRoleVars, roleVarRows } from './roleVars';
 import { STEP_COPY, isSetupStepId, resolveShownStep, stepNote, stepperSteps } from './steps';
 import { backendServersHref, issueLink } from './issueActions';
 
@@ -247,37 +246,6 @@ describe('draft storage', () => {
       ],
     });
     expect(toSetupDraft(emptyDraft())).toEqual({ origin: null, listeners: [] });
-  });
-});
-
-describe('role vars', () => {
-  const vars = {
-    fcp_relay_host_mode: 'fcp',
-    zzz_extra: 'a b',
-    fcp_relay_listeners: 'reality,ws',
-    fcp_relay_slug: 'node1',
-    fcp_relay_register_scope: 'admin:edges:register',
-  };
-  it('orders known keys first and formats YAML-style lines', () => {
-    expect(roleVarRows(vars).map((r) => r.key)).toEqual([
-      'fcp_relay_slug',
-      'fcp_relay_listeners',
-      'fcp_relay_register_scope',
-      'fcp_relay_host_mode',
-      'zzz_extra',
-    ]);
-    expect(formatRoleVars(vars)).toBe(
-      [
-        'fcp_relay_slug: node1',
-        'fcp_relay_listeners: [reality, ws]',
-        'fcp_relay_register_scope: "admin:edges:register"',
-        'fcp_relay_host_mode: fcp',
-        'zzz_extra: "a b"',
-      ].join('\n'),
-    );
-    expect(formatRoleVars(null)).toBe('');
-    expect(formatRoleVars({ fcp_relay_listeners: '' })).toBe('fcp_relay_listeners: []');
-    expect(formatRoleVars({ a: 'true', b: '123' })).toBe('a: "true"\nb: "123"');
   });
 });
 

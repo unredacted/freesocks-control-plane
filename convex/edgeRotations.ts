@@ -103,8 +103,11 @@ import type {
   ResourceStep,
 } from './lib/edges/providers/types';
 import { admitted, assertAdmission } from './lib/edges/maintenance';
-import { publicationAdmitted } from './lib/backend/activation';
-import { activatingRunFor, recordCandidateEdge } from './nodeActivation';
+import {
+  publicationAdmission,
+  recordCandidateEdge,
+  type PublicationAdmission,
+} from './nodeActivation';
 
 type Rotation = Doc<'edgeRotations'>;
 type Edge = Doc<'edges'>;
@@ -453,26 +456,27 @@ export interface StartBlocker {
  * failed is skipped rather than reported twice.
  */
 /**
- * The node approval a publication needs (docs/servers.md "Node lifecycle"):
- * `unmanaged` for an origin that is not an enrolled node; `committed` for a
- * live node with no run open; `candidate` for a node whose one activating run
- * this publication belongs to; `refused` otherwise (unapproved, maintenance,
- * retiring).
+ * The node approval one edge publication needs (docs/servers.md "Node
+ * lifecycle"), compared with what is being published: `unmanaged` for an
+ * origin that is not an enrolled node; `committed` for a live node with no
+ * activation running whose committed review this edge fits (a replacement
+ * address in the approved shape); `candidate` for an edge of the node's one
+ * running activation, in the shape it approved; `refused` with the reason
+ * otherwise. A guided setup run checks the same function before it starts
+ * its publish, and parks instead of failing.
  */
-async function publicationApproval(
+export async function publicationApproval(
   ctx: { db: QueryCtx['db'] },
   origin: Origin,
-): Promise<'unmanaged' | 'committed' | 'candidate' | 'refused'> {
-  if (origin.origin.kind !== 'panel-node' || !origin.backendServerId) return 'unmanaged';
-  const act = await activatingRunFor(ctx, origin.backendServerId, origin.origin.nodeName);
-  if (!act) return 'unmanaged';
-  const admitted = publicationAdmitted({
-    disposition: act.intent.delivery.disposition,
-    underMaintenance: !!act.intent.maintenance,
-    matchesCommitted: !act.run,
-    matchesApprovedCandidate: !!act.run,
+  to: Edge,
+): Promise<PublicationAdmission> {
+  if (origin.origin.kind !== 'panel-node' || !origin.backendServerId) return { kind: 'unmanaged' };
+  const listener = await ctx.db.get(to.listenerId);
+  return publicationAdmission(ctx, origin.backendServerId, origin.origin.nodeName, {
+    listenerKey: listener?.listenerKey ?? '',
+    accountId: to.accountId ? String(to.accountId) : null,
+    templateHash: to.templateHash ?? null,
   });
-  return admitted ?? 'refused';
 }
 
 export async function collectStartBlockers(
@@ -485,13 +489,23 @@ export async function collectStartBlockers(
   cfg: EdgeConfig | null;
   targetEdge: Edge | null;
   listenerId: Id<'relayListeners'> | undefined;
+  /** A publish's node approval (null for any other kind). */
+  approval: PublicationAdmission | null;
 }> {
   const blockers: StartBlocker[] = [];
   const push = (code: string, message: string) => blockers.push({ code, message });
+  let approval: PublicationAdmission | null = null;
   const origin = await ctx.db.get(a.relayId);
   if (!origin) {
     push('not_found', 'Origin not found');
-    return { blockers, origin: null, cfg: null, targetEdge: null, listenerId: a.listenerId };
+    return {
+      blockers,
+      origin: null,
+      cfg: null,
+      targetEdge: null,
+      listenerId: a.listenerId,
+      approval,
+    };
   }
   const cfg = await resolveEdgeConfig(ctx.db);
   const now = opts.now ?? Date.now();
@@ -588,13 +602,15 @@ export async function collectStartBlockers(
         // The node's approval (docs/servers.md "Node lifecycle"): an enrolled
         // node's edge is published under its committed approval, or as a
         // candidate of its one activating run; never while it is unapproved,
-        // under maintenance or retiring. Manual, reconcile and setup publishes
-        // all pass through here.
-        const approval = await publicationApproval(ctx, origin);
-        if (approval === 'refused')
+        // under maintenance or retiring, nor in a shape nobody approved.
+        // Manual, reconcile and setup publishes all pass through here.
+        approval = await publicationApproval(ctx, origin, to);
+        if (approval.kind === 'refused')
           push(
-            'servers.node_not_approved',
-            'The node behind this origin is not approved for delivery',
+            approval.code,
+            approval.code === 'servers.node_not_approved'
+              ? 'The node behind this origin is not approved for delivery'
+              : `The node behind this origin cannot take this edge now (${approval.code})`,
           );
       }
     }
@@ -651,7 +667,7 @@ export async function collectStartBlockers(
       }
     }
   }
-  return { blockers, origin, cfg, targetEdge, listenerId };
+  return { blockers, origin, cfg, targetEdge, listenerId, approval };
 }
 
 export const start = internalMutation({
@@ -755,15 +771,8 @@ export async function startRotation(
   await assertNoRelayPanelClaim(ctx.db, origin);
   // An edge published for an activating node is one of that run's candidate
   // resources: members never see it before the delivery commit.
-  if (
-    a.kind === 'publish' &&
-    a.toEdgeId &&
-    origin.origin.kind === 'panel-node' &&
-    origin.backendServerId
-  ) {
-    const act = await activatingRunFor(ctx, origin.backendServerId, origin.origin.nodeName);
-    if (act?.run) await recordCandidateEdge(ctx, act.run, a.toEdgeId);
-  }
+  if (a.kind === 'publish' && a.toEdgeId && g.approval?.kind === 'candidate')
+    await recordCandidateEdge(ctx, g.approval.run, a.toEdgeId);
   const listenerId = g.listenerId;
   const id = await ctx.db.insert('edgeRotations', {
     relayId: a.relayId,
@@ -2268,6 +2277,8 @@ export interface SelectionRequest {
   requestedAccountId?: Id<'edgeProviderAccounts'>;
   requestedTemplateId?: Id<'edgeTemplates'>;
   allowUnqualified?: boolean;
+  /** Started by a guided setup run (the operator chose its account). */
+  setupRun?: { runId: Id<'edgeSetupRuns'>; generation: number };
 }
 
 export interface SelectionContext {
@@ -2389,8 +2400,9 @@ export async function selectionContext(
   const layers = listenerLayers(listener).layers;
   // Every trigger except an operator's own request is "automatic" for the L7
   // gate: an unproven front must not reach members because a cron or the
-  // detector chose it.
-  const allowL7 = rotation.trigger === 'manual' || l7SelectionAllowed(cfg);
+  // detector chose it. A guided setup run's account IS the operator's own
+  // choice, and its front is proven (stage verify) before anything publishes.
+  const allowL7 = rotation.trigger === 'manual' || !!rotation.setupRun || l7SelectionAllowed(cfg);
   const eligibleAccounts = accountsForSlot(
     (await ctx.db.query('edgeProviderAccounts').collect()).filter((a) => a.enabled),
     { layers, proto: protoOf(listener), allowL7 },

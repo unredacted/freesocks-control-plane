@@ -276,7 +276,7 @@ async function publishedEndpoints(
   // Role-usable endpoints ONLY: an edge that lost its address or listener must
   // make the role keep waiting, not configure a dud. (Assignment and preview
   // use the full, flagged pool elsewhere.)
-  const { published } = await publishedEdgesOf(ctx, origin);
+  const { published } = await publishedEdgesOf(ctx, origin, { kind: 'member' });
   const listeners = await listenersOf(ctx, origin._id);
   // An L7 front answers DNS long before it carries the transport: require a
   // current, passing end-to-end proof, re-derived from the live rows.
@@ -493,7 +493,12 @@ export const endpoints = internalQuery({
     const origin = await ctx.db.get(relayId);
     if (!origin) return null;
     const cfg = await resolveEdgeConfig(ctx.db);
-    const { published } = await publishedEdgesOf(ctx, origin, { includeIneligible: true });
+    const { published } = await publishedEdgesOf(
+      ctx,
+      origin,
+      { kind: 'member' },
+      { includeIneligible: true },
+    );
     // The sample must be assigned under the SAME family rule the renderer uses,
     // not under a default: with IPv6 emission off for a family, an edge that
     // only has a v6 address is not assignable, so a sample computed with v6
@@ -547,9 +552,12 @@ export async function renderPreviewFor(
 ) {
   {
     const cfg = await resolveEdgeConfig(ctx.db);
-    const { published, matchers } = await publishedEdgesOf(ctx, origin, {
-      includeIneligible: true,
-    });
+    const { published, matchers } = await publishedEdgesOf(
+      ctx,
+      origin,
+      { kind: 'member' },
+      { includeIneligible: true },
+    );
     const format = CLIENT_FAMILY_FORMATS[fam];
     // The preview body must speak what the listeners speak: one template entry
     // per listener (by its remark, or a synthetic one for an address-matched

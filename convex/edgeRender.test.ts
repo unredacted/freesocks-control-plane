@@ -433,7 +433,11 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     stubPanel();
     const { t, relayId, listenerId } = await seed();
     const pool = async () =>
-      (await t.run(async (ctx) => publishedEdgesOf(ctx, (await ctx.db.get(relayId))!))).published;
+      (
+        await t.run(async (ctx) =>
+          publishedEdgesOf(ctx, (await ctx.db.get(relayId))!, { kind: 'member' }),
+        )
+      ).published;
     expect((await pool())[0].sniPick).toBeUndefined();
     await t.mutation(internal.relayListeners.setSniPick, { id: listenerId, version: 'hrw1' });
     expect((await pool())[0].sniPick).toBe('hrw1');
@@ -442,7 +446,9 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
   test('publishedEdgesOf returns the pool with listener matchers; decideForSubscription hands the route a render context', async () => {
     stubPanel();
     const { t, subId, relayId, listenerId, edgeA } = await seed();
-    const view = await t.run(async (ctx) => publishedEdgesOf(ctx, (await ctx.db.get(relayId))!));
+    const view = await t.run(async (ctx) =>
+      publishedEdgesOf(ctx, (await ctx.db.get(relayId))!, { kind: 'member' }),
+    );
     expect(view.matchers).toEqual([
       {
         listenerKey: 'a',
@@ -491,8 +497,12 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     // A disabled listener keeps its pool index but is ineligible (default view drops it).
     await t.run((ctx) => ctx.db.patch(listenerId, { enabled: false }));
     const relay = (await t.run((ctx) => ctx.db.get(relayId)))!;
-    expect((await t.run((ctx) => publishedEdgesOf(ctx, relay))).published).toEqual([]);
-    const all = await t.run((ctx) => publishedEdgesOf(ctx, relay, { includeIneligible: true }));
+    expect(
+      (await t.run((ctx) => publishedEdgesOf(ctx, relay, { kind: 'member' }))).published,
+    ).toEqual([]);
+    const all = await t.run((ctx) =>
+      publishedEdgesOf(ctx, relay, { kind: 'member' }, { includeIneligible: true }),
+    );
     expect(all.published[0]).toMatchObject({ edgeId: edgeA, poolIndex: 0, eligible: false });
     expect(all.matchers).toEqual([]);
   });
@@ -524,7 +534,12 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     await t.run((ctx) => ctx.db.patch(edgeA, { layer: 'l7', addresses: { hostname: HOSTNAME } }));
     await proveFront(t, edgeA, HOSTNAME);
     const view = await t.run(async (ctx) =>
-      publishedEdgesOf(ctx, (await ctx.db.get(relayId))!, { includeIneligible: true }),
+      publishedEdgesOf(
+        ctx,
+        (await ctx.db.get(relayId))!,
+        { kind: 'member' },
+        { includeIneligible: true },
+      ),
     );
     expect(view.published).toHaveLength(1);
     expect(view.published[0]).toMatchObject({ layer: 'l7', addresses: { hostname: HOSTNAME } });
@@ -568,7 +583,12 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     });
     expect(rec).toEqual({ ok: false, code: 'front_error' });
     const failed = await t.run(async (ctx) =>
-      publishedEdgesOf(ctx, (await ctx.db.get(relayId))!, { includeIneligible: true }),
+      publishedEdgesOf(
+        ctx,
+        (await ctx.db.get(relayId))!,
+        { kind: 'member' },
+        { includeIneligible: true },
+      ),
     );
     expect(failed.published[0].eligible).toBe(false);
     expect((await t.run((ctx) => ctx.db.get(relayId)))!.publicationEpoch).toBe(epochBefore + 1);
@@ -597,7 +617,12 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     // for an active edge): the record no longer describes the live endpoint.
     await t.run((ctx) => ctx.db.patch(edgeB, { addresses: { v4: '198.51.100.9' } }));
     const view = await t.run(async (ctx) =>
-      publishedEdgesOf(ctx, (await ctx.db.get(relayId))!, { includeIneligible: true }),
+      publishedEdgesOf(
+        ctx,
+        (await ctx.db.get(relayId))!,
+        { kind: 'member' },
+        { includeIneligible: true },
+      ),
     );
     expect(view.published.map((p) => [p.edgeId, p.eligible ?? true])).toEqual([
       [edgeA, true],

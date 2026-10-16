@@ -41,7 +41,7 @@ import {
   resolveEdgeConfig,
   type EdgeConfig,
 } from './lib/edgeConfig';
-import { startRotation } from './edgeRotations';
+import { publicationApproval, startRotation } from './edgeRotations';
 import {
   claimDeliveryBinding,
   liveEdgesOfRelay,
@@ -82,7 +82,14 @@ import { SETUP_RUN_STAGES, type SetupRunStage } from '../src/shared/contracts/ed
 import type { HideResult, HideStatus } from './edgeHostHides';
 import type { RehearsalResult } from './edgeRehearsal';
 import type { TestLinkResult } from './edgeTestLinks';
-import { activatingRunFor, promoteCandidate } from './nodeActivation';
+import {
+  activatingRunFor,
+  activationVectorFor,
+  blockActivation,
+  promoteCandidate,
+} from './nodeActivation';
+import { isDirect, modeEntry, modeSlug } from './nodeIntents';
+import { setupReady } from './backendSetup';
 
 type Run = Doc<'edgeSetupRuns'>;
 type Relay = Doc<'relays'>;
@@ -152,6 +159,18 @@ const rehearsalV = v.object({
     renderConfigHash: v.string(),
     publicationEpoch: v.number(),
     qualificationEvidenceIds: v.array(v.string()),
+    activation: v.optional(
+      v.union(
+        v.null(),
+        v.object({
+          runId: v.string(),
+          machineRevision: v.number(),
+          configRevision: v.string(),
+          authRevision: v.union(v.string(), v.null()),
+          deliveryRevision: v.string(),
+        }),
+      ),
+    ),
   }),
   hostsObservation: v.object({ at: v.number(), version: v.number(), hash: v.string() }),
   darkCohortKeys: v.array(v.string()),
@@ -181,7 +200,12 @@ export interface StageOps {
   hideStatus(ctx: QueryRunner, relayId: Id<'relays'>): Promise<HideStatus>;
   rehearse(
     ctx: ActionCtx,
-    a: { relayId: Id<'relays'>; darkCohortKeys: string[] },
+    a: {
+      relayId: Id<'relays'>;
+      darkCohortKeys: string[];
+      /** An enrolled node's activation: the rehearsal renders exactly its candidates. */
+      activationRunId?: Id<'panelActivationRuns'>;
+    },
   ): Promise<RehearsalResult>;
   vectorNow(ctx: QueryRunner, relayId: Id<'relays'>): Promise<SetupVector>;
   restoreStart(
@@ -277,11 +301,20 @@ async function auditRun(
   });
 }
 
+/** The enrolled node a run protects, as the admin projection names it (null = unmanaged). */
+export interface RunEnrolled {
+  slug: string;
+  intentId: string;
+  stage: string;
+}
+
 /** The admin projection (`GET setup-runs/{id}`); never the plan's addresses beyond the origin the operator typed. */
-export function mapRunAdmin(r: Run) {
+export function mapRunAdmin(r: Run, enrolled: RunEnrolled | null = null) {
   const plan = parsePlan(r);
   return {
     id: r._id as string,
+    enrolled,
+    activationRunId: (r.activationRunId as string | undefined) ?? null,
     relayId: (r.relayId as string | undefined) ?? null,
     relaySlug: r.relaySlug,
     backendServerId: r.backendServerId as string,
@@ -364,11 +397,72 @@ export const get = internalQuery({
   handler: (ctx, { id }) => ctx.db.get(id),
 });
 
+/**
+ * The enrolled node behind a run (docs/servers.md "Node lifecycle"): the
+ * approval card at `node_not_approved` calls the Servers routes with it.
+ */
+async function enrolledOf(
+  ctx: { db: QueryCtx['db'] },
+  r: Run,
+  slugs: Map<string, string | null> = new Map(),
+): Promise<RunEnrolled | null> {
+  const intent = await ctx.db
+    .query('panelNodeIntents')
+    .withIndex('by_server_name', (q) =>
+      q.eq('backendServerId', r.backendServerId).eq('name', r.nodeName),
+    )
+    .unique();
+  if (!intent) return null;
+  const key = r.backendServerId as string;
+  if (!slugs.has(key)) slugs.set(key, (await ctx.db.get(r.backendServerId))?.slug ?? null);
+  const slug = slugs.get(key);
+  if (!slug) return null;
+  return { slug, intentId: intent._id as string, stage: intent.activation.stage };
+}
+
+/**
+ * Whether a run's node is an ENROLLED node fronted by edges: its members can
+ * only ever be served through the edges (docs/servers.md "Node lifecycle"),
+ * so "keep them on the direct address" does not exist for it.
+ */
+async function frontedEnrolled(
+  ctx: { db: QueryCtx['db'] },
+  backendServerId: Id<'backendServers'>,
+  nodeName: string,
+): Promise<boolean> {
+  const intent = await ctx.db
+    .query('panelNodeIntents')
+    .withIndex('by_server_name', (q) =>
+      q.eq('backendServerId', backendServerId).eq('name', nodeName),
+    )
+    .unique();
+  if (!intent) return false;
+  const setup = await ctx.db
+    .query('panelSetups')
+    .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
+    .unique();
+  if (!setupReady(setup)) return true;
+  try {
+    return !isDirect(modeEntry(setup, modeSlug(intent)).shape);
+  } catch {
+    // A mode the setup no longer lists fails closed: treated as fronted.
+    return true;
+  }
+}
+
+const refuseKeepDirect = (): never => {
+  throw new ConvexError({
+    code: 'edge.keep_direct_enrolled',
+    message:
+      'An enrolled node fronted by edges has no direct address to keep members on; remove protection instead',
+  });
+};
+
 export const getForAdmin = internalQuery({
   args: { id: v.id('edgeSetupRuns') },
   handler: async (ctx, { id }) => {
     const r = await ctx.db.get(id);
-    return r ? mapRunAdmin(r) : null;
+    return r ? mapRunAdmin(r, await enrolledOf(ctx, r)) : null;
   },
 });
 
@@ -395,7 +489,10 @@ export const listForAdmin = internalQuery({
           .take(10)),
       );
     }
-    return { runs: out.map(mapRunAdmin), generatedAt: new Date().toISOString() };
+    const slugs = new Map<string, string | null>();
+    const runs = [];
+    for (const r of out) runs.push(mapRunAdmin(r, await enrolledOf(ctx, r, slugs)));
+    return { runs, generatedAt: new Date().toISOString() };
   },
 });
 
@@ -444,6 +541,7 @@ export async function localVectorFor(
     renderConfigHash: fnv1a64Hex(canonicalJson(cfg.render)),
     publicationEpoch: relay?.publicationEpoch ?? 0,
     qualificationEvidenceIds,
+    activation: relay ? await activationVectorFor(ctx, relay) : null,
   };
 }
 
@@ -515,6 +613,7 @@ export const relayContext = internalQuery({
       listeners,
       edges,
       cfg,
+      frontedEnrolled: await frontedEnrolled(ctx, run.backendServerId, run.nodeName),
       verification: Object.fromEntries(
         run.listeners.map((rl) => {
           const l = listeners.find((x) => x.listenerKey === rl.listenerKey);
@@ -524,7 +623,10 @@ export const relayContext = internalQuery({
             {
               current: !!l && !!e && (!needsEndpointVerification(e) || verificationCurrent(e, l)),
               proofOk: !!e && l7ProofCurrent(e, l ?? null, now),
-              published: !!l && !!e && l.templateEdgeId === e._id && e.publication === 'published',
+              // In the pool, on a listener whose FCP Host exists (its template
+              // edge). A live node's replacement joins the pool beside the
+              // committed template without moving the Host pointer.
+              published: !!l && !!e && !!l.templateEdgeId && e.publication === 'published',
               live: !!e && LIVE_CANDIDATE.has(e.status),
             },
           ];
@@ -583,6 +685,8 @@ export const insert = internalMutation({
         code: 'edge.account_incompatible',
         message: 'The account cannot front this node',
       });
+    if (a.keepDirect === true && (await frontedEnrolled(ctx, backendServerId, plan.nodeName)))
+      refuseKeepDirect();
     const now = Date.now();
     let relayId: Id<'relays'> | undefined;
     let stage: SetupRunStage = 'prepare';
@@ -733,11 +837,40 @@ export const transition = internalMutation({
         verdicts: verdictsOf(after),
       });
     }
+    if (a.state === 'failed' || a.state === 'done_unbound')
+      await onSetupRunEnded(ctx, r, r.generation);
     if (a.scheduleMs !== undefined && !terminal && a.state !== 'needs_you')
       await scheduleStep(ctx, r._id, a.scheduleMs);
     return { ok: true as const };
   },
 });
+
+/**
+ * Every terminal writer of a setup run calls this with the row as it read it
+ * BEFORE its write and the generation it is ending. A run that ends without
+ * going live leaves the node's activation with nothing to publish its
+ * candidate: the activation is blocked and the node parks where it can be
+ * approved again. Only the activation this run is bound to (both links agree,
+ * it is still the node's current run) and only for the run's CURRENT
+ * generation: a late hook of an older attempt or an older run is a no-op.
+ */
+export async function onSetupRunEnded(
+  ctx: MutationCtx,
+  setupRun: Run,
+  endingGeneration: number,
+  code = 'servers.setup_run_ended',
+): Promise<void> {
+  // The generation is read from the row as it stands (every writer that moves
+  // the generation calls this BEFORE its write): a hook for an attempt that
+  // was already replaced does nothing.
+  const current = await ctx.db.get(setupRun._id);
+  if (!current?.activationRunId || endingGeneration !== current.generation) return;
+  const act = await ctx.db.get(current.activationRunId);
+  if (!act || act.setupRunId !== current._id || act.state !== 'running') return;
+  const intent = await ctx.db.get(act.intentId);
+  if (!intent || intent.activation.currentRunId !== act._id) return;
+  await blockActivation(ctx, act, code);
+}
 
 function verdictsOf(run: Run): string {
   return run.listeners.map((l) => `${l.listenerKey}:${l.verify}`).join(',');
@@ -779,6 +912,20 @@ export const startStageRotation = internalMutation({
     const cfg = await resolveEdgeConfig(ctx.db);
     const now = Date.now();
     const next = r.stepVersion + 1;
+    // An enrolled node's edge reaches members only under the node's approval
+    // (docs/servers.md "Node lifecycle"). Checked HERE, in the same
+    // transaction as the start: an approval that already landed admits the
+    // publish, one that has not parks the run for it (never a failure), and
+    // the approval wakes exactly this run.
+    if (a.kind === 'publish' && entry.edgeId) {
+      const relay = await ctx.db.get(r.relayId);
+      const edge = await ctx.db.get(entry.edgeId);
+      if (relay && edge) {
+        const approval = await publicationApproval(ctx, relay, edge);
+        if (approval.kind === 'refused')
+          return parkForApproval(ctx, r, approval.code, a.listenerKey);
+      }
+    }
     try {
       const { rotationId } = await startRotation(ctx, {
         relayId: r.relayId,
@@ -828,6 +975,9 @@ export const startStageRotation = internalMutation({
         await scheduleStep(ctx, r._id, edgeMs.poll(cfg));
         return { ok: false as const, code };
       }
+      // The node's approval moved between the check above and the start (or a
+      // rotation refused for its own approval reasons): park, never fail.
+      if (NODE_APPROVAL_CODES.has(code)) return parkForApproval(ctx, r, code, a.listenerKey);
       const need =
         code === 'edge.maintenance'
           ? { code: 'maintenance' }
@@ -856,17 +1006,68 @@ export const startStageRotation = internalMutation({
           stage: r.stage,
           code: need.code,
         });
-      else
+      else {
         await auditRun(ctx, after, 'edge.setup_run.finished', {
           outcome: 'failed',
           stage: r.stage,
           code,
           verdicts: verdictsOf(after),
         });
+        await onSetupRunEnded(ctx, r, r.generation);
+      }
       return { ok: false as const, code };
     }
   },
 });
+
+/** Refusals that are the NODE's approval, not the provider's: a setup run parks on them. */
+const NODE_APPROVAL_CODES: ReadonlySet<string> = new Set([
+  'servers.node_not_approved',
+  'servers.maintenance_open',
+  'servers.maintenance_required',
+  'servers.node_retiring',
+  'servers.review_stale',
+]);
+
+/**
+ * Park a run at publish until the node's approval (`needs_you`
+ * `node_not_approved`, the detail is the node's stage): nothing is published,
+ * the standbys stay as they are, and `approve` wakes this run.
+ */
+async function parkForApproval(
+  ctx: MutationCtx,
+  r: Run,
+  code: string,
+  listenerKey: string,
+): Promise<{ ok: false; code: string }> {
+  const now = Date.now();
+  const intent = await ctx.db
+    .query('panelNodeIntents')
+    .withIndex('by_server_name', (q) =>
+      q.eq('backendServerId', r.backendServerId).eq('name', r.nodeName),
+    )
+    .unique();
+  const need = { code: 'node_not_approved', detail: intent?.activation.stage ?? code };
+  await ctx.db.patch(r._id, {
+    state: 'needs_you',
+    need,
+    expect: undefined,
+    stepVersion: r.stepVersion + 1,
+    nextStepAt: undefined,
+    events: appendRunEvent(r.events, {
+      at: now,
+      level: 'info',
+      code: 'publish_held',
+      detail: `${listenerKey}: ${code}`,
+    }),
+    updatedAt: now,
+  });
+  await auditRun(ctx, (await ctx.db.get(r._id))!, 'edge.setup_run.needs_operator', {
+    stage: r.stage,
+    code: need.code,
+  });
+  return { ok: false, code };
+}
 
 /**
  * The terminal hook `releaseOrigin` schedules for a rotation carrying
@@ -960,13 +1161,15 @@ export const onRotationTerminal = internalMutation({
         stage: r.stage,
         code: need.code,
       });
-    else
+    else {
       await auditRun(ctx, after, 'edge.setup_run.finished', {
         outcome: 'failed',
         stage: r.stage,
         code: outcome,
         verdicts: verdictsOf(after),
       });
+      await onSetupRunEnded(ctx, r, generation);
+    }
     return { acted: true as const, reason: need.code };
   },
 });
@@ -1417,7 +1620,8 @@ async function stagePublish(ctx: ActionCtx, run: Run): Promise<null> {
   }));
   const target = listeners.find((l) => !l.published);
   if (!target) {
-    if (run.keepDirect)
+    // An enrolled fronted node has no direct address to keep (refused at create and resume).
+    if (run.keepDirect && !c.frontedEnrolled)
       return tr(ctx, run, {
         stage: 'done',
         state: 'done_unbound',
@@ -1509,9 +1713,12 @@ async function stageRehearse(ctx: ActionCtx, run: Run): Promise<null> {
   const disabled = RENDER_CLIENT_FAMILIES.filter((f) => !c.cfg.render.clients[f].enabled);
   if (disabled.length > 0) return needsYou(ctx, run, 'family_disabled', disabled[0]);
   const attempts = (run.rehearsal?.attempts ?? 0) + 1;
+  // An enrolled node rehearses ITS activation's candidates (the edges the
+  // commit will promote), never the committed edges members hold now.
   const res = await ops.rehearse(ctx, {
     relayId: run.relayId,
     darkCohortKeys: run.rehearsal?.darkCohortKeys ?? [],
+    ...(run.activationRunId ? { activationRunId: run.activationRunId } : {}),
   });
   if (res.familiesDisabled.length > 0)
     return needsYou(ctx, run, 'family_disabled', res.familiesDisabled[0]);
@@ -1754,7 +1961,7 @@ export const goLive = internalMutation({
     for (const entry of r.listeners) {
       const l = listeners.find((x) => x.listenerKey === entry.listenerKey);
       const e = entry.edgeId ? await ctx.db.get(entry.edgeId) : null;
-      if (!l || !e || l.templateEdgeId !== e._id || e.publication !== 'published')
+      if (!l || !e || !l.templateEdgeId || e.publication !== 'published')
         return back('publish', 'not_published', entry.listenerKey);
       if (entry.layer === 'l7') {
         if (!e.frontQualification?.ok || e.frontQualification.expiresAt <= now)
@@ -1801,10 +2008,28 @@ export const goLive = internalMutation({
     if (relay.origin.kind === 'panel-node' && relay.backendServerId) {
       const act = await activatingRunFor(ctx, relay.backendServerId, relay.origin.nodeName);
       if (act) {
-        if (!act.run) return need('node_not_approved', act.intent.activation.stage);
         const edgeIds = r.listeners.map((l) => l.edgeId).filter((e): e is Id<'edges'> => !!e);
-        const p = await promoteCandidate(ctx, act.run, { edgeIds });
-        if (!p.ok) return need('node_not_approved', p.code);
+        if (act.run) {
+          if (r.activationRunId && act.run._id !== r.activationRunId)
+            return need('node_not_approved', 'servers.run_superseded');
+          const p = await promoteCandidate(ctx, act.run, { edgeIds });
+          if (!p.ok) {
+            // A candidate the approval no longer describes is blocked: the node
+            // parks for a fresh approval, whose wake re-runs the rehearsal.
+            if (STALE_CANDIDATE_CODES.has(p.code)) await blockActivation(ctx, act.run, p.code);
+            return need('node_not_approved', p.code);
+          }
+        } else {
+          // No activation running: a re-protected LIVE node binds without a
+          // promotion only when every edge fits what members were approved
+          // for; anything else waits for a review and an approval.
+          for (const id of edgeIds) {
+            const e = await ctx.db.get(id);
+            const admission = e ? await publicationApproval(ctx, relay, e) : null;
+            if (admission?.kind !== 'committed')
+              return need('node_not_approved', act.intent.activation.stage);
+          }
+        }
       }
     }
     await claimDeliveryBinding(ctx, relay);
@@ -1850,6 +2075,91 @@ export const goLive = internalMutation({
       verdicts: verdictsOf(after),
     });
     return { ok: true as const, code: 'live' };
+  },
+});
+
+/** Promotion refusals that mean the approved candidate is no longer what would go live. */
+const STALE_CANDIDATE_CODES: ReadonlySet<string> = new Set([
+  'servers.review_stale',
+  'servers.standbys_unverified',
+  'servers.revision_moved',
+]);
+
+// --- the node's approval wakes the run --------------------------------------------------------------
+
+/**
+ * Re-enter a run that waits for the operator under a NEW generation (a
+ * rotation hook or a wake of the old attempt becomes a no-op), at `stage`.
+ * Shared by `resume` and the approval wake.
+ */
+async function reenterStage(
+  ctx: MutationCtx,
+  r: Run,
+  a: {
+    stage: SetupRunStage;
+    events: Array<{ at: number; level: 'info' | 'warn' | 'error'; code: string; detail?: string }>;
+    patch?: Partial<Run>;
+  },
+): Promise<void> {
+  const now = Date.now();
+  let events = r.events;
+  for (const e of a.events) events = appendRunEvent(events, e);
+  await ctx.db.patch(r._id, {
+    ...a.patch,
+    stage: a.stage,
+    state: 'running',
+    need: undefined,
+    expect: undefined,
+    generation: r.generation + 1,
+    stepVersion: r.stepVersion + 1,
+    ...(a.stage !== r.stage ? { stageEnteredAt: now } : {}),
+    events,
+    updatedAt: now,
+  });
+  if (a.stage !== r.stage && r.relayId) {
+    const relay = await ctx.db.get(r.relayId);
+    if (relay?.setupOwned) await ctx.db.patch(relay._id, { setupStage: a.stage, updatedAt: now });
+  }
+  await scheduleStep(ctx, r._id, 0);
+}
+
+/**
+ * Scheduled by the node's approval with the setup run's generation as the
+ * approval read it. Acts only when that run is still at that generation,
+ * still waiting for this approval, bound to this activation, and the
+ * activation is still the node's current one; anything else (a retry since,
+ * a newer approval, a superseded run) is a no-op. A run past its publish
+ * returns to the rehearsal: a new approval is a new candidate, and an old
+ * rehearsal never satisfies it.
+ */
+export const wakeForApproval = internalMutation({
+  args: {
+    setupRunId: v.id('edgeSetupRuns'),
+    activationRunId: v.id('panelActivationRuns'),
+    generation: v.number(),
+  },
+  handler: async (ctx, a) => {
+    const r = await ctx.db.get(a.setupRunId);
+    if (!r || isTerminalRunState(r.state)) return { acted: false as const, reason: 'terminal' };
+    if (r.generation !== a.generation) return { acted: false as const, reason: 'generation' };
+    if (r.state !== 'needs_you' || r.need?.code !== 'node_not_approved')
+      return { acted: false as const, reason: 'not_waiting' };
+    if (r.activationRunId !== a.activationRunId)
+      return { acted: false as const, reason: 'not_bound' };
+    const act = await ctx.db.get(a.activationRunId);
+    if (!act || act.state !== 'running' || act.setupRunId !== r._id)
+      return { acted: false as const, reason: 'activation_not_running' };
+    const intent = await ctx.db.get(act.intentId);
+    if (!intent || intent.activation.currentRunId !== act._id)
+      return { acted: false as const, reason: 'superseded' };
+    const now = Date.now();
+    const stage: SetupRunStage = STAGE_INDEX[r.stage] > STAGE_INDEX.rehearse ? 'rehearse' : r.stage;
+    await reenterStage(ctx, r, {
+      stage,
+      events: [{ at: now, level: 'info', code: 'approved', detail: `back at ${stage}` }],
+      patch: { rehearsal: undefined },
+    });
+    return { acted: true as const, reason: stage };
   },
 });
 
@@ -2105,12 +2415,14 @@ export const resume = internalMutation({
           code: 'validation',
           message: 'The run is not waiting for a review',
         });
+      if (await frontedEnrolled(ctx, r.backendServerId, r.nodeName)) refuseKeepDirect();
       keepDirect = true;
       finishUnbound = true;
     } else {
       events.push({ at: now, level: 'info', code: 'resume', detail: r.stage });
     }
     if (finishUnbound) {
+      await onSetupRunEnded(ctx, r, r.generation);
       await ctx.db.patch(r._id, {
         stage: 'done',
         state: 'done_unbound',
@@ -2131,25 +2443,18 @@ export const resume = internalMutation({
       });
       return { ok: true as const, state: 'done_unbound' as const, accountTrusted };
     }
-    let evs = r.events;
-    for (const e of events) evs = appendRunEvent(evs, e);
-    await ctx.db.patch(r._id, {
+    await reenterStage(ctx, r, {
       stage,
-      state: 'running',
-      need: undefined,
-      expect: undefined,
-      listeners,
-      approvedHideUuids: approved,
-      planRevision,
-      keepDirect,
-      testedEndpoints,
-      reviewDelta: undefined,
-      generation: r.generation + 1,
-      stepVersion: r.stepVersion + 1,
-      events: evs,
-      updatedAt: now,
+      events,
+      patch: {
+        listeners,
+        approvedHideUuids: approved,
+        planRevision,
+        keepDirect,
+        testedEndpoints,
+        reviewDelta: undefined,
+      },
     });
-    await scheduleStep(ctx, r._id, 0);
     return { ok: true as const, state: 'running' as const, accountTrusted };
   },
 });
@@ -2212,6 +2517,8 @@ export const markCancelled = internalMutation({
     const r = await ctx.db.get(runId);
     if (!r || isTerminalRunState(r.state)) return null;
     const now = Date.now();
+    // Read before the generation moves: the hook ends THIS attempt.
+    await onSetupRunEnded(ctx, r, r.generation, 'servers.setup_run_cancelled');
     await ctx.db.patch(runId, {
       state: 'cancelled',
       expect: undefined,

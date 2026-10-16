@@ -303,7 +303,7 @@ export const HOST_MODE_WORDS: Record<HostMode, { label: string; explain: string 
   operator: {
     label: 'You write the Hosts',
     explain:
-      'FCP never writes to the backend. You apply the Hosts plan by hand or through the node role. Replacing the first edge of a listener is refused unless forced, because FCP cannot switch members over.',
+      'FCP never writes to the backend. You apply the Hosts plan in the backend yourself. Replacing the first edge of a listener is refused unless forced, because FCP cannot switch members over.',
   },
   none: {
     label: 'No Hosts',

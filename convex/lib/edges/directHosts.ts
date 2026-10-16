@@ -26,6 +26,11 @@ export interface DirectHost {
 
 export interface DirectHostContext {
   originAddress: string;
+  /**
+   * Other addresses that are the node itself (an enrolled node whose origin is
+   * a hostname: its public addresses), so a Host dialling one is direct too.
+   */
+  alsoAddresses?: string[];
   /** The transports this node serves (lowercase or not; compared case-insensitively). */
   nodeInboundUuids: string[];
   /** Remarks FCP owns on this node (listener remarks + the origin convention). */
@@ -61,7 +66,11 @@ export function toDirectHost(h: BackendHost): DirectHost {
 export function isDirectHost(h: BackendHost, ctx: DirectHostContext): boolean {
   const inbound = h.inbound?.configProfileInboundUuid?.toLowerCase();
   if (!inbound || !lower(ctx.nodeInboundUuids).has(inbound)) return false;
-  if (!sameAddress(h.address, ctx.originAddress)) return false;
+  if (
+    !sameAddress(h.address, ctx.originAddress) &&
+    !(ctx.alsoAddresses ?? []).some((a) => sameAddress(h.address, a))
+  )
+    return false;
   if (ctx.fcpRemarks.includes(h.remark)) return false;
   if (ctx.legacyHostUuids.includes(h.uuid)) return false;
   return true;

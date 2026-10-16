@@ -176,6 +176,38 @@ export function ingressOf(intent: Intent, hostname: string | undefined): Ingress
   };
 }
 
+/**
+ * What an enrolled node's edges dial and how its loopback transports are
+ * reached (docs/servers.md "Node lifecycle"): the origin address FCP gives
+ * the role (never the management address), the declared ingress, and, when
+ * that origin is a hostname, the public addresses a direct Host could still
+ * dial the node at. The setup plan and transport discovery read the node from
+ * here, not from the backend's node row. Null for a node FCP does not manage.
+ */
+export async function enrolledOriginOf(
+  ctx: { db: QueryCtx['db'] },
+  sid: Id<'backendServers'>,
+  nodeName: string,
+): Promise<{
+  originAddress: string;
+  ingress: IngressMapping | null;
+  directAddresses: string[];
+} | null> {
+  const intent = await intentByName(ctx, sid, nodeName);
+  if (!intent) return null;
+  const setup = await readySetup(ctx, sid);
+  const hostname = originHostnameOf(intent, setup);
+  const originAddress = originAddressOf(intent, hostname);
+  const ips = [intent.observed.publicIps.v4, intent.observed.publicIps.v6].filter(
+    (x): x is string => !!x && x !== originAddress,
+  );
+  return {
+    originAddress,
+    ingress: ingressOf(intent, hostname),
+    directAddresses: IPV4.test(originAddress) || originAddress.includes(':') ? [] : ips,
+  };
+}
+
 function revisionsOf(intent: Intent): Revisions {
   return {
     machineRevision: intent.machineRevision,
@@ -1037,6 +1069,13 @@ export const reconcile = internalAction({
           return null;
         }
         await observeInstance(ctx, c.server);
+        // The node list Edges plans from learns the new node now, not at the
+        // next healthcheck (a protect run started meanwhile would not find it).
+        try {
+          await ctx.runAction(internal.backendNodes.refreshNodeInventory, { backendServerId: sid });
+        } catch {
+          // Best effort: the healthcheck refreshes the inventory too.
+        }
         c = await load();
         if (!c.node) {
           await stop('pending', 'servers.observe_lag');
@@ -1487,6 +1526,65 @@ export const requestRetirement = internalMutation({
  * Finish a maintenance transition: the node is re-verified from the earliest
  * affected stage and approved again before it is served; nothing reopens here.
  */
+/**
+ * An admin closes one node for maintenance (docs/servers.md "Node lifecycle"):
+ * the gate closes (a live node's members get the unavailable answer), every
+ * open activation run is superseded, and the node returns to members only
+ * through Finish maintenance and a fresh activation. The way to add what a
+ * live node's open gate cannot isolate (a direct node's new address, a new
+ * fronted listener).
+ */
+export const startMaintenance = internalMutation({
+  args: {
+    intentId: v.id('panelNodeIntents'),
+    reason: v.optional(v.string()),
+    actorAdminId: v.optional(v.id('adminUsers')),
+  },
+  handler: async (ctx, { intentId, reason, actorAdminId }) => {
+    const intent = await ctx.db.get(intentId);
+    if (!intent) return refuse('not_found', 'No such node');
+    if (intent.state === 'retiring' || intent.state === 'retired')
+      refuse('servers.node_retiring', 'This node is being retired');
+    if (intent.maintenance) return { ok: true as const, stage: intent.activation.stage };
+    const now = Date.now();
+    for (const r of await ctx.db
+      .query('panelActivationRuns')
+      .withIndex('by_intent', (q) => q.eq('intentId', intent._id))
+      .collect())
+      if (r.state === 'running' || r.state === 'blocked' || r.state === 'review')
+        await ctx.db.patch(r._id, { state: 'superseded', updatedAt: now });
+    const stage =
+      intent.activation.stage === 'activating' || intent.activation.stage === 'live'
+        ? 'awaiting_approval'
+        : intent.activation.stage;
+    await ctx.db.patch(intentId, {
+      delivery: {
+        ...intent.delivery,
+        disposition: intent.delivery.disposition === 'live' ? 'unavailable' : 'staged',
+      },
+      maintenance: {
+        id: crypto.randomUUID(),
+        reason: (reason ?? 'operator').slice(0, 60),
+        since: now,
+        byAdminId: actorAdminId,
+      },
+      activation: { ...intent.activation, stage, reviewHash: undefined, currentRunId: undefined },
+      updatedAt: now,
+    });
+    await bumpGateVersion(ctx, intent.backendServerId);
+    const server = await ctx.db.get(intent.backendServerId);
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: actorAdminId ?? undefined,
+      action: 'servers.node.maintenance_started',
+      targetType: 'panel_node_intent',
+      targetId: intentId,
+      payload: { backendSlug: server?.slug ?? '', name: intent.name },
+    });
+    return { ok: true as const, stage };
+  },
+});
+
 export const finishMaintenance = internalMutation({
   args: { intentId: v.id('panelNodeIntents'), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, { intentId, actorAdminId }) => {

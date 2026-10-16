@@ -1538,7 +1538,12 @@ describe('edgeReconcile: renewing a front qualification before it lapses', () =>
   async function renderable(t: ReturnType<typeof convexTest>, relayId: Id<'relays'>) {
     return await t.run(async (ctx) => {
       const origin = (await ctx.db.get(relayId))!;
-      const { published } = await publishedEdgesOf(ctx, origin, { includeIneligible: true });
+      const { published } = await publishedEdgesOf(
+        ctx,
+        origin,
+        { kind: 'member' },
+        { includeIneligible: true },
+      );
       return published.map((p) => ({ edgeId: p.edgeId, eligible: p.eligible !== false }));
     });
   }

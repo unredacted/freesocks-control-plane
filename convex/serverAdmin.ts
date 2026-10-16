@@ -88,6 +88,17 @@ export const intentsView = internalQuery({
     for (const i of intents) {
       const retirement = i.retirementId ? await ctx.db.get(i.retirementId) : null;
       const run = i.activation.currentRunId ? await ctx.db.get(i.activation.currentRunId) : null;
+      // The guided setup run protecting this node right now (fronted nodes).
+      const protection =
+        (
+          await ctx.db
+            .query('edgeSetupRuns')
+            .withIndex('by_origin', (q) =>
+              q.eq('backendServerId', backendServerId).eq('nodeName', i.name),
+            )
+            .collect()
+        ).find((r) => r.state === 'running' || r.state === 'waiting' || r.state === 'needs_you') ??
+        null;
       out.push({
         id: i._id as string,
         name: i.name,
@@ -105,6 +116,14 @@ export const intentsView = internalQuery({
         maintenance: !!i.maintenance,
         run: run
           ? { id: run._id as string, state: run.state, stage: run.stage, code: run.code ?? null }
+          : null,
+        protection: protection
+          ? {
+              runId: protection._id as string,
+              stage: protection.stage,
+              state: protection.state,
+              need: protection.need?.code ?? null,
+            }
           : null,
         retirement: retirement ? { stage: retirement.stage, code: retirement.code ?? null } : null,
         registeredAt: new Date(i.registeredAt).toISOString(),

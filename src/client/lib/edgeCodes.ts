@@ -139,7 +139,7 @@ const COPY = {
   no_relay: {
     label: 'No origin yet',
     explain: 'The origin row does not exist: the origin has not been registered.',
-    fix: 'Finish the origin step, or let the node role register it.',
+    fix: 'Finish the origin step, or protect the node from Edges.',
   },
   relay_deleting: {
     label: 'Origin is deleting',
@@ -149,12 +149,12 @@ const COPY = {
     label: 'No listener',
     explain:
       'The origin has no listener, so nothing says which port and protocol edges should carry.',
-    fix: 'Add a listener, or register the node with the role.',
+    fix: 'Add a listener, or protect the node from Edges.',
   },
   listener_not_deployed: {
     label: 'Listener not deployed',
-    explain: 'The node has not confirmed this listener is live yet.',
-    fix: 'Run the node role, or mark the listener deployed once the transport is up.',
+    explain: 'This listener is not marked as live on the node yet.',
+    fix: 'Mark the listener deployed once the transport is up.',
   },
   listener_disabled: {
     label: 'Listener disabled',
@@ -527,7 +527,7 @@ const COPY = {
   origin_transport_missing: {
     label: 'Origin transport missing',
     explain: 'The listener does not declare how a CDN front should dial the origin.',
-    fix: 'Register the listener origin transport with the node role.',
+    fix: 'Edit the listener and turn on "A CDN front can reach this transport", or protect the node from Edges.',
   },
   // --- preflight warnings ---------------------------------------------------------------
   edge_disabled: {
@@ -770,6 +770,12 @@ const COPY = {
     explain: 'A guided setup owns this origin, so automatic replacement leaves it alone.',
     fix: 'Finish or cancel the setup run.',
   },
+  // A guided run's event: it parked at publish until the enrolled node is approved.
+  publish_held: {
+    label: 'Waiting for go-live approval',
+    explain: 'Every address is tested. Going live waits for your approval of the node.',
+    fix: 'Approve go-live.',
+  },
 } as const satisfies Record<KnownCode, CodeCopy> & Record<string, CodeCopy>;
 
 // --- discovered transports that cannot become listeners --------------------------------------
@@ -786,7 +792,7 @@ export const INBOUND_UNSUPPORTED_COPY: Record<InboundUnsupportedCode, CodeCopy> 
     label: 'Reached only from inside the node',
     explain:
       'The transport listens on a loopback address, so a provider address cannot dial it directly. Something on the node (usually a TLS terminator) accepts outside connections and forwards to it.',
-    fix: 'Register the listener with the port and transport the terminator exposes (through the node role or the origin form), or make the transport listen publicly with TLS of its own.',
+    fix: 'Add the listener with the port and transport the terminator exposes (Add listener on the origin), or make the transport listen publicly with TLS of its own.',
   },
   tag: {
     label: 'Tag cannot be bound',
@@ -945,6 +951,12 @@ const REFUSAL_COPY = {
     label: 'Node address unknown',
     explain: 'The backend reports no address for this node, so its origin cannot be probed.',
     fix: 'Set the node address on the backend, then refresh the node list.',
+  },
+  keep_direct_enrolled: {
+    label: 'Direct address not kept',
+    explain:
+      'This node is enrolled in Servers, so it goes live behind its new addresses only. Members cannot stay on the direct one.',
+    fix: 'Protect it and hide the hosts the addresses cannot carry.',
   },
 } as const satisfies Record<string, CodeCopy>;
 
@@ -1308,9 +1320,9 @@ export const SETUP_RUN_NEED_COPY: Record<SetupRunNeed, CodeCopy> = {
     fix: 'Try again.',
   },
   node_not_approved: {
-    label: 'Node not approved',
-    explain: 'The node behind this origin is enrolled and its activation has not been approved.',
-    fix: 'Approve the node in Servers, then check again.',
+    label: 'Approve go-live',
+    explain: 'Every address works. The node goes live for members once you approve it.',
+    fix: 'Approve go-live.',
   },
   quarantined: {
     label: 'Paused for safety',

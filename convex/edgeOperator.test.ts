@@ -107,13 +107,9 @@ describe('setup-status', () => {
       listenerKey: 'a',
       originKind: 'panel-node',
     });
-    // roleVars carry public values only: no token, no address.
-    expect(s.roleVars).toMatchObject({
-      fcp_relay_slug: 'node-one',
-      fcp_relay_listeners: 'a',
-      fcp_relay_register_scope: 'admin:edges:register',
-    });
-    expect(JSON.stringify(s.roleVars)).not.toContain('203.0.113');
+    // No node-role variables any more (the role registers nothing here), and no address.
+    expect(s).not.toHaveProperty('roleVars');
+    expect(JSON.stringify(s)).not.toContain('203.0.113');
 
     await markTested(t, accountId);
     s = await get('setup-status?relay=node-one', SetupStatusResponse);
@@ -440,7 +436,7 @@ describe('attention, timeline, usage, lookups, maintenance', () => {
     await t.mutation(internal.relays.publishEdge, { relayId, edgeId });
     const tl = await get(`relays/${relayId}/timeline`, TimelineResponse);
     const actions = tl.entries.map((e) => e.action);
-    expect(actions).toContain('relay.registered');
+    expect(actions).toContain('relay.create');
     expect(actions).toContain('edge.adopted');
     expect(actions).toContain('edge.published');
     const subjects = new Set(tl.entries.map((e) => e.subject));

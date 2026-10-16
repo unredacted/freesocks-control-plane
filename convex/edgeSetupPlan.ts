@@ -37,6 +37,7 @@ import { EDGE_PROVIDER_CAPABILITIES, edgeLayerOf } from './lib/edges/providers/c
 import { todayKey, liveEdgesOfAccount, relayForBackendNode } from './relays';
 import { accountTested } from './edgeProviderAccounts';
 import { listenersOf } from './relayListeners';
+import { enrolledOriginOf } from './nodeIntents';
 import { isTerminalRunState, planHashOf, slugForNode } from './lib/edges/setupRuns';
 import type { SetupPlanAccount, SetupPlanInbound, SetupPlanSnapshot } from './lib/edges/setupRuns';
 import type { ListenerSpecInput } from './lib/edges/registration';
@@ -127,6 +128,11 @@ async function planContextOf(
       backendServerId,
       nodeName: node.name,
     });
+    // An enrolled node is planned from its intent (the origin FCP gives the
+    // role and its declared ingress), never from the backend's node row: that
+    // address is the MANAGEMENT one, and a loopback WebSocket behind Caddy is
+    // only frontable through the ingress.
+    const enrolled = await enrolledOriginOf(ctx, backendServerId, node.name);
     return {
       backend: server.backend as string,
       node: {
@@ -134,6 +140,7 @@ async function planContextOf(
         address: node.address ?? null,
         port: node.port ?? null,
       },
+      enrolled,
       relay: relay
         ? {
             id: relay._id,
@@ -248,7 +255,7 @@ export async function buildPlan(
   // Only the two keys: `create` hands its whole argument object here.
   const a = { backendServerId: args.backendServerId, nodeUuid: args.nodeUuid };
   const c = await ctx.runQuery(internal.edgeSetupPlan.planContext, a);
-  const originAddress = c.relay?.originAddress ?? c.node.address;
+  const originAddress = c.relay?.originAddress ?? c.enrolled?.originAddress ?? c.node.address;
   if (!originAddress)
     throw new ConvexError({
       code: 'edge.node_address_missing',
@@ -264,7 +271,11 @@ export async function buildPlan(
     planOps.listNodeInbounds(ctx, a),
   );
   const mapped = await planStage('mapping the transports to listeners', () =>
-    mapTransportsToListeners(inbounds, { existingKeys: [], origin }),
+    mapTransportsToListeners(inbounds, {
+      existingKeys: [],
+      origin,
+      ingress: c.enrolled?.ingress ?? null,
+    }),
   );
   // The mapper leaves HTTP-transport transports without `originTransport` (L4
   // only); the origin probe fills it in, exactly as the transport-candidates
@@ -323,6 +334,7 @@ export async function buildPlan(
   );
   const classified = classifyDirectHosts(hosts, {
     originAddress,
+    alsoAddresses: c.enrolled?.directAddresses ?? [],
     nodeInboundUuids,
     fcpRemarks: [
       ...(c.relay?.fcpRemarks ?? []),
@@ -369,6 +381,7 @@ export async function buildPlan(
         ? { id: c.relay.id as string, slug: c.relay.slug, setupStage: c.relay.setupStage }
         : null,
     activeRunId: c.activeRunId,
+    enrolled: !!c.enrolled,
   };
   const planHash = await planHashOf({
     listenerSpecs: required.map((i) => i.listenerSpec),

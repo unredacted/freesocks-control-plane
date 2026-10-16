@@ -19,7 +19,6 @@ import {
   FIXTURE_CONFIG_PROFILE,
   FIXTURE_NODE,
   FIXTURE_ORIGIN,
-  FIXTURE_PANEL_SLUG,
   insertPanelServer,
   realityListener,
   registerRelay,
@@ -71,36 +70,28 @@ const setEnabledRaw = (
 ) => t.run((ctx) => ctx.db.patch(id, { enabled }));
 
 describe('coverage: capacity follows the deployed listeners', () => {
-  test('by-slug registration raises desiredPublished to the listener count and warns edge.pool_raised', async () => {
+  test('creating an origin with its listeners raises desiredPublished to the listener count and warns edge.pool_raised', async () => {
     forbidNetwork();
     const t = convexTest(schema, modules);
-    await insertPanelServer(t);
-    const r = await t.mutation(internal.relays.registerBySlug, {
+    const serverId = await insertPanelServer(t);
+    const r = await t.mutation(internal.relays.create, {
       slug: 'node-three',
-      origin: { kind: 'panel-node', backendSlug: FIXTURE_PANEL_SLUG, nodeName: FIXTURE_NODE },
+      origin: { kind: 'panel-node', backendServerId: serverId, nodeName: FIXTURE_NODE },
       originAddress: FIXTURE_ORIGIN,
       listeners: [
         realityListener(),
         shadowsocksListener(),
         wsListener({ originPort: 8443 }),
       ] as never,
-      source: 'role',
     });
     expect(r.warnings).toEqual(['edge.pool_raised']);
     expect((await relayOf(t, r.id)).desiredPublished).toBe(3);
-    const [reg] = await audits(t, 'relay.registered');
-    expect(reg?.payload).toMatchObject({ poolRaised: true });
-    // An identical re-registration changes nothing and warns nothing.
-    const again = await t.mutation(internal.relays.registerBySlug, {
-      slug: 'node-three',
-      origin: { kind: 'panel-node', backendSlug: FIXTURE_PANEL_SLUG, nodeName: FIXTURE_NODE },
-      originAddress: FIXTURE_ORIGIN,
-      listeners: [
-        realityListener(),
-        shadowsocksListener(),
-        wsListener({ originPort: 8443 }),
-      ] as never,
-      source: 'role',
+    const [created] = await audits(t, 'relay.create');
+    expect(created?.payload).toMatchObject({ poolRaised: true });
+    // The same listener again through the CMS changes nothing and warns nothing.
+    const again = await t.mutation(internal.relayListeners.upsert, {
+      relayId: r.id,
+      spec: shadowsocksListener() as never,
     });
     expect(again.warnings).toEqual([]);
     expect(again.changed).toBe(false);
@@ -133,10 +124,10 @@ describe('coverage: capacity follows the deployed listeners', () => {
     expect((await relayOf(t, relayId)).desiredPublished).toBe(1);
   });
 
-  test('a ninth deployed, enabled listener is refused (edge.listener_cap) at registration and at the CMS upsert; eight are fine', async () => {
+  test('a ninth deployed, enabled listener is refused (edge.listener_cap) at create and at the CMS upsert; eight are fine', async () => {
     forbidNetwork();
     const t = convexTest(schema, modules);
-    await insertPanelServer(t);
+    const serverId = await insertPanelServer(t);
     const listener = (i: number) =>
       realityListener({
         listenerKey: `l${i}`,
@@ -149,25 +140,26 @@ describe('coverage: capacity follows the deployed listeners', () => {
       });
     const body = (n: number) => ({
       slug: 'node-cap',
-      origin: {
-        kind: 'panel-node' as const,
-        backendSlug: FIXTURE_PANEL_SLUG,
-        nodeName: FIXTURE_NODE,
-      },
+      origin: { kind: 'panel-node' as const, backendServerId: serverId, nodeName: FIXTURE_NODE },
       originAddress: FIXTURE_ORIGIN,
       listeners: Array.from({ length: n }, (_, i) => listener(i + 1)) as never,
-      source: 'role' as const,
     });
-    await expect(t.mutation(internal.relays.registerBySlug, body(9))).rejects.toThrow(
+    await expect(t.mutation(internal.relays.create, body(9))).rejects.toThrow(
       /listener_cap.*at most 8|at most 8/,
     );
-    const eight = await t.mutation(internal.relays.registerBySlug, body(8));
+    // The refused create left nothing behind.
+    expect(await t.query(internal.relays.getBySlug, { slug: 'node-cap' })).toBeNull();
+    const eight = await t.mutation(internal.relays.create, body(8));
     expect((await relayOf(t, eight.id)).desiredPublished).toBe(8);
-    // The identical body again is not "a ninth".
-    expect((await t.mutation(internal.relays.registerBySlug, body(8))).changed).toBe(false);
-    await expect(t.mutation(internal.relays.registerBySlug, body(9))).rejects.toThrow(
-      /listener_cap/,
-    );
+    // An existing listener re-stated is not "a ninth".
+    expect(
+      (
+        await t.mutation(internal.relayListeners.upsert, {
+          relayId: eight.id,
+          spec: listener(8) as never,
+        })
+      ).changed,
+    ).toBe(false);
     await expect(
       t.mutation(internal.relayListeners.upsert, { relayId: eight.id, spec: listener(9) as never }),
     ).rejects.toThrow(/listener_cap/);
@@ -430,24 +422,19 @@ describe('deferred binding and setup ownership', () => {
     expect((await audits(t, 'relay.create'))[0]?.payload).toMatchObject({ bindingDeferred: true });
   });
 
-  test('by-slug registration binds immediately, and a re-registration of a deferred origin keeps it deferred', async () => {
+  test('a plain create binds immediately, and a listener change on a deferred origin keeps it deferred', async () => {
     const { t, serverId, relayId, policy } = await guided();
-    // A by-slug re-registration of the guided origin (identical origin; the CMS
-    // path, since the listener is admin-owned): still no binding.
-    await t.mutation(internal.relays.registerBySlug, {
-      slug: 'guided',
-      origin: { kind: 'panel-node', backendSlug: FIXTURE_PANEL_SLUG, nodeName: FIXTURE_NODE },
-      originAddress: FIXTURE_ORIGIN,
-      listeners: [realityListener()] as never,
-      source: 'admin',
-      pruneListeners: false,
+    // A CMS listener change on the guided origin (a material one): still no binding.
+    await t.mutation(internal.relayListeners.upsert, {
+      relayId,
+      spec: realityListener({ tlsNames: ['a.example', 'c.example'] }) as never,
     });
     expect((await relayOf(t, relayId)).bindingDeferred).toBe(true);
     expect((await policy()).required).toBe(false);
-    // A fresh role registration of another node binds at once.
-    const other = await t.mutation(internal.relays.registerBySlug, {
+    // A plain create of another node binds at once.
+    const other = await t.mutation(internal.relays.create, {
       slug: 'node-two',
-      origin: { kind: 'panel-node', backendSlug: FIXTURE_PANEL_SLUG, nodeName: 'node-two' },
+      origin: { kind: 'panel-node', backendServerId: serverId, nodeName: 'node-two' },
       originAddress: '203.0.113.11',
       listeners: [
         realityListener({
@@ -458,7 +445,6 @@ describe('deferred binding and setup ownership', () => {
           },
         }),
       ] as never,
-      source: 'role',
     });
     expect((await relayOf(t, other.id)).bindingDeferred).toBeUndefined();
     expect(

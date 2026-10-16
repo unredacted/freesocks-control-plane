@@ -15,11 +15,11 @@
   import { searchParam, setSearchParams } from '@client/lib/urlState.svelte';
   import { setupDraftStatusQuery, setupStatusQuery, relayLookupQuery } from '@client/lib/edgesApi';
   import { ApiCallError } from '@client/lib/api';
+  import { Button } from '@client/components/ui/button';
   import SectionHeader from './components/SectionHeader.svelte';
   import { edgesPaths } from './lib/routes';
   import SetupContextPicker from './setup/SetupContextPicker.svelte';
   import SetupWizard from './setup/SetupWizard.svelte';
-  import WaitingForRelay from './setup/WaitingForRelay.svelte';
   import {
     clearDraft,
     draftIsEmpty,
@@ -84,9 +84,6 @@
     draft = emptyDraft();
     router.navigate(edgesPaths.setup({ relay: slug }), { replace: true });
   }
-  function watchSlug(slug: string) {
-    router.navigate(edgesPaths.setup({ relay: slug }), { replace: true });
-  }
   function leaveRelay() {
     setSearchParams({ relay: null, step: null, rotation: null, new: null });
   }
@@ -101,14 +98,15 @@
 {#if relaySlug === null && !draftMode}
   <SetupContextPicker hasDraft={hadDraft || !draftIsEmpty(draft)} onStartNew={startNew} />
 {:else if unknownRelay && relaySlug}
-  <WaitingForRelay
-    slug={relaySlug}
-    onCheck={() => {
-      void relayStatus.refetch();
-      void relay.refetch();
-    }}
-    onLeave={leaveRelay}
-  />
+  <div class="max-w-2xl space-y-3 rounded-lg border p-4">
+    <h2 class="text-base font-semibold">
+      No origin <span class="font-mono">{relaySlug}</span>
+    </h2>
+    <p class="text-muted-foreground text-sm">
+      No origin with this slug exists. It may have been deleted, or the link has a typo.
+    </p>
+    <Button variant="outline" onclick={leaveRelay}>Choose something else</Button>
+  </div>
 {:else}
   <SetupWizard
     {status}
@@ -117,7 +115,6 @@
     bind:draft
     {draftMode}
     {onRelayCreated}
-    onWatchSlug={watchSlug}
     onLeave={leaveRelay}
   />
 {/if}

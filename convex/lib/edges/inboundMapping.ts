@@ -1,9 +1,9 @@
 /**
  * Transport discovery (pure half): turn the transports a backend node serves
  * (`BackendTransport`, the provider's allowlisted projection) into origin listener
- * candidates in the by-slug registration shape, or say why one cannot be a
- * listener. The guided setup builds its "protect every frontable transport"
- * plan from this; nothing here touches the database or the backend.
+ * candidates in the listener spec shape (`relays.create`), or say why one
+ * cannot be a listener. The guided setup builds its "protect every frontable
+ * transport" plan from this; nothing here touches the database or the backend.
  *
  * Mapping:
  *   protocol   vless / trojan / shadowsocks; anything else (vmess, ...) -> `protocol`

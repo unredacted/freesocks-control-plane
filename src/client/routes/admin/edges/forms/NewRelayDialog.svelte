@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
    * Create an origin: its target, a slug, and (optionally) its first listeners.
-   * The node role can register the listeners instead, so none is required here.
+   * Listeners can be added later from the origin's Listeners tab, so none is required here.
    *
    * Props:
    *   open: boolean (bindable)
@@ -184,7 +184,7 @@
           >
             {submitted && slugProblem
               ? slugProblem
-              : 'The stable name of the relay. The node role registers under the same slug.'}
+              : 'The stable name of the origin, used in its page links.'}
           </p>
         </div>
         <div class="space-y-1.5">
@@ -209,8 +209,8 @@
           <div>
             <h3 class="text-sm font-semibold">Listeners</h3>
             <p class="text-muted-foreground text-xs">
-              Optional here: the node role can register them. Without a deployed listener no edge
-              can be provisioned.
+              Optional here: you can add them later from the Listeners tab. Without a deployed
+              listener no edge can be provisioned.
             </p>
           </div>
           <Button type="button" size="sm" variant="outline" onclick={addListener}>

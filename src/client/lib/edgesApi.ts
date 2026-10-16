@@ -164,7 +164,7 @@ export interface ValidateTemplateBody {
   params: unknown;
 }
 
-/** The admin create shape: the backend by ID (the node role's PUT uses the slug). */
+/** The admin create shape: the backend by ID (the setup draft names it by slug). */
 export type CreateRelayOrigin =
   | { kind: 'panel-node'; backendServerId: string; nodeName: string; nodeUuid?: string | null }
   | { kind: 'backend-server'; backendServerId: string }
@@ -398,6 +398,7 @@ export const refreshNodeCandidates = (backendServerId: string) =>
     { backendServerId },
     NodeCandidatesLoose,
   );
+/** An origin's minimal projection by slug (the setup's Host plan reads it). */
 export const fetchRelayBySlug = (slug: string) =>
   apiClient.get(`${BASE}/relays/by-slug/${enc(slug)}`, RelayBySlugResponse);
 export const createRelay = (body: CreateRelayBody) =>

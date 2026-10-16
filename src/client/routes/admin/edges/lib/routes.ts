@@ -93,9 +93,17 @@ function withSearch(path: string, params?: Params): string {
 
 const enc = encodeURIComponent;
 export const edgesPaths = {
-  /** The section root: the nodes list (`?protect=1` opens the Protect-a-node sheet, `?run=<id>` its progress). */
-  home: (params?: { protect?: string | null; run?: string | null }) =>
-    withSearch('/admin/edges', params),
+  /**
+   * The section root: the nodes list (`?protect=1` opens the Protect-a-node sheet,
+   * `?run=<id>` its progress). With `protect`, `server` (a backend's slug or id) and
+   * `node` (its node uuid) preselect the node, as the Servers page links to it.
+   */
+  home: (params?: {
+    protect?: string | null;
+    run?: string | null;
+    server?: string | null;
+    node?: string | null;
+  }) => withSearch('/admin/edges', params),
   /** The simple per-node page (`?test=<edgeId>` opens the test card for that address). */
   node: (slug: string, params?: { test?: string | null }) =>
     withSearch(`/admin/edges/nodes/${enc(slug)}`, params),

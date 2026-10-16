@@ -91,6 +91,9 @@ describe('resolveEdgesRoute / edgesPaths', () => {
     expect(edgesPaths.overview()).toBe('/admin/edges/advanced/relays');
     expect(edgesPaths.home()).toBe('/admin/edges');
     expect(edgesPaths.home({ protect: '1' })).toBe('/admin/edges?protect=1');
+    expect(edgesPaths.home({ protect: '1', server: 'main', node: 'n 1', run: null })).toBe(
+      '/admin/edges?protect=1&server=main&node=n+1',
+    );
     expect(edgesPaths.node('a b', { test: 'e1' })).toBe('/admin/edges/nodes/a%20b?test=e1');
     expect(edgesPaths.advanced()).toBe('/admin/edges/advanced');
   });

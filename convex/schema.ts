@@ -739,6 +739,30 @@ export default defineSchema({
     // The FCP-fronted subscription route resolves the sub by its opaque token.
     .index('by_sub_token', ['subToken']),
 
+  // The mirror barrier (docs/servers.md "Node lifecycle"): one row per mirror
+  // upload, opened BEFORE the object is written with the delivery token the
+  // body was rendered under. Settled only when the token read AFTER a
+  // successful upload is still that token (then dropped); an upload that raced a policy move
+  // (maintenance, a delivery binding, a candidate set) stays open, and the
+  // repair pass re-renders and re-uploads under the current policy, or
+  // withdraws the object. Holds no content and no address.
+  mirrorUploads: defineTable({
+    subscriptionId: v.id('subscriptions'),
+    objectPath: v.string(),
+    providers: v.array(v.string()),
+    // The delivery token (edgeRender.epochFor) the body was rendered under; null = no place token.
+    tokenBefore: v.union(v.string(), v.null()),
+    // `initial`: the first upload of a new mirror (the row may not reference it yet).
+    kind: v.union(v.literal('initial'), v.literal('refresh'), v.literal('repair')),
+    // A settled obligation is deleted: every row is an open one.
+    state: v.literal('open'),
+    attempts: v.number(),
+    startedAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_state', ['state', 'updatedAt'])
+    .index('by_subscription', ['subscriptionId', 'state']),
+
   tierHistory: defineTable({
     userId: v.id('users'),
     fromTierId: v.optional(v.id('tiers')),
@@ -1754,6 +1778,10 @@ export default defineSchema({
     stepVersion: v.number(),
     // The rotation whose terminal outcome the run is waiting for.
     expect: v.optional(v.object({ rotationId: v.id('edgeRotations'), generation: v.number() })),
+    // The enrolled node's activation run this run publishes for, set by the
+    // node's approval and never changed by a retry or a resume (ownership; the
+    // generation above is only the attempt fence). docs/servers.md "Node lifecycle".
+    activationRunId: v.optional(v.id('panelActivationRuns')),
     listeners: v.array(
       v.object({
         listenerKey: v.string(),
@@ -1805,6 +1833,20 @@ export default defineSchema({
           renderConfigHash: v.string(),
           publicationEpoch: v.number(),
           qualificationEvidenceIds: v.array(v.string()),
+          // The activation candidate the rehearsal rendered (an enrolled node):
+          // a later approval is a new candidate an old rehearsal cannot satisfy.
+          activation: v.optional(
+            v.union(
+              v.null(),
+              v.object({
+                runId: v.string(),
+                machineRevision: v.number(),
+                configRevision: v.string(),
+                authRevision: v.union(v.string(), v.null()),
+                deliveryRevision: v.string(),
+              }),
+            ),
+          ),
         }),
         hostsObservation: v.object({ at: v.number(), version: v.number(), hash: v.string() }),
         darkCohortKeys: v.array(v.string()),
@@ -2797,6 +2839,9 @@ export default defineSchema({
   panelActivationRuns: defineTable({
     backendServerId: v.id('backendServers'),
     intentId: v.id('panelNodeIntents'),
+    // A fronted node's guided setup run that publishes this candidate: set at
+    // approval, immutable (ownership, never an attempt fence).
+    setupRunId: v.optional(v.id('edgeSetupRuns')),
     generation: v.number(),
     stepVersion: v.number(),
     state: v.union(

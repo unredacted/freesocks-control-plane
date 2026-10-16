@@ -44,7 +44,8 @@ export type NeedAction =
   | 'continue'
   | 'review'
   | 'family'
-  | 'quarantine';
+  | 'quarantine'
+  | 'approve';
 
 export interface NeedButton {
   label: string;
@@ -103,7 +104,12 @@ export function needButtons(code: string): NeedButtons {
     case 'quarantined':
       return { primary: B('Review', 'quarantine') };
     case 'node_not_approved':
-      return { primary: B('Check again', 'retry'), hint: 'Approve the node in Servers first.' };
+      // The approval card below carries this button. No retry: the run would only
+      // park here again, and it carries on by itself once the node is approved.
+      return {
+        primary: B('Approve go-live', 'approve'),
+        hint: 'The run carries on by itself once you approve.',
+      };
     case 'coverage_incomplete':
     case 'rehearsal_failed':
     default:

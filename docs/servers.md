@@ -394,7 +394,7 @@ registered → bootstrap_available → machine_applied → machine_ready → can
 | `machine_applied`     | The role reported `appliedRevision == machineRevision`. Idempotent; a lower revision is `servers.revision_stale` (run the role again), a higher one `servers.revision_unknown`; a report never regresses a stage.                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `machine_ready`       | The node op that applied the current profile and transport is done by its own ledger evidence, the node is online, the profile token has not moved; a front node's origin name resolves to the intended addresses, presents a publicly valid certificate naming it, proxies the WebSocket path and answers a foreign Host header.                                                                                                                                                                                                                                                                                                 |
 | `candidates_verified` | Direct: the isolated **direct test link** (the node's own test credential, the transport's live parameters) confirmed against a **binding** recomputed from live rows: endpoint, machine, config and authentication revisions, the parameters tested, the credential. A moved endpoint refuses (`servers.confirmation_stale`). Fronted: every listener of the open Autopilot run (the one waiting at publish for this approval) has a live, verified standby (L7 proof; L4 confirmation); recorded as `standbys_verified` evidence at approval, refused as `servers.standbys_missing` / `servers.standbys_unverified` until then. |
-| `awaiting_approval`   | The review card hashes the delivery **shape** (purpose, ingress, profile revision, listeners, provider account + template, subscription templates, the Host tuple), never individual addresses.                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `awaiting_approval`   | The review card hashes the delivery **shape** (mode, ingress, profile revision, every listener with its provider account + template, subscription templates, the Host tuple), never individual addresses.                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `activating`          | Approval creates one run with an **immutable candidate snapshot** (`panelActivationRuns`); older runs are superseded. A direct run enables the addresses as **candidate resources**, rehearses the backend's real bodies in every client family (`lib/backend/rehearsal.ts`), and commits. The rehearsal reads EVERY address the run would commit, each with the server name it is there to serve (links `sni`, sing-box `tls.server_name`, Clash `servername`) and the expected REALITY key: one entry proves nothing about the others, and the detail records `<family>:<name>:absent                                           | key | sni`. A failed rehearsal disables the Host again and releases nothing. A run that blocks or fails **parks** the node at `awaiting_approval` with no current run (`staged` again unless it was live): the next approval supersedes it and starts a fresh run. |
 | `live`                | `nodeActivation.commit`: one mutation that re-validates the approval, the evidence, the rehearsal and open obligations, then **promotes the snapshot** (`intent.approved`, the committed resources), opens the gate, bumps the gate version. A fronted node's Autopilot go-live calls the same promotion inside its own mutation; no independent go-live exists while an activation is unapproved, blocked or superseded.                                                                                                                                                                                                         |
 
@@ -438,11 +438,92 @@ affected node FCP does not manage needs a treatment from the operator, `hold` (c
 
 **The delivery gate** (`lib/backend/deliveryGate.ts`, enforced in `edgeRender.deliveryPolicyFor`,
 the pinner's exclusion list, the subscription route, the mirror refresh): closed for an enrolled
-node that is not live, under maintenance or retiring, open for an unmanaged node. Every render
-carries the gate version; the route and the mirror refresh re-read it after rendering and never
-attach content rendered under an older policy to a newer token. **Publication** is admitted by
-`edgeRotations` only under a node's committed approval or as a candidate of its one activating
-run (`servers.node_not_approved` otherwise), for manual, reconcile and setup publishes alike.
+node that is not live, under maintenance or retiring, open for an unmanaged node. Its
+**candidate set** is every resource of every activation run that never committed (running,
+blocked, under review, superseded, failed), minus what the committed set holds: a superseded or
+blocked run's candidate stays isolated until a later commit takes it over. Every render carries
+the gate token (gate version, committed set, a hash of the candidate set); the route and the
+mirror refresh re-read it after rendering and never attach content rendered under an older
+policy to a newer token. **Publication** is admitted by `edgeRotations` only under a node's
+committed approval or as a candidate of its one activating run (below), for manual, reconcile
+and setup publishes alike.
+
+### A fronted node's activation
+
+A node behind edges is taken live by its guided setup run (docs/edges.md "Guided setup runs")
+and its approval, all in one place, the protect sheet: **Start** (from the ready node), **Try
+it** (one tick per new L4 address; an L7 front is proven by its own session) and **Approve
+go-live** (the review card, `NodeApprovalCard`; the Servers node page shows the same card as a
+mirror). FCP never starts a run by itself.
+
+- **Planned from the intent.** An enrolled node's plan and transport discovery read the node from
+  its intent (`nodeIntents.enrolledOriginOf`): the origin FCP gives the role (the origin name of a
+  WebSocket node, else its public address; never the management address) and the declared ingress,
+  so a loopback WebSocket behind Caddy is frontable at L7. A Host dialling the node's public address
+  counts as direct when the origin is a name. Enrollment refreshes the backend node list as soon
+  as it creates the node, so the node can be protected at once.
+- **Parked at publish, never failed.** The run's publish step checks the node's approval in the
+  same transaction as the publish start (`edgeRotations.publicationApproval`). Without one the run
+  waits (`needs_you`, `node_not_approved`, the detail is the node's stage, event `publish_held`)
+  with nothing published; a refusal the start itself reports for the node's own reasons parks the
+  same way.
+- **Ownership is stable; the generation is an attempt fence.** The approval binds the activation
+  run (`setupRunId`) and the setup run (`activationRunId`) to each other; neither changes when the
+  run is retried or resumed (those bump the setup run's generation). A newer approval of the same
+  node supersedes the old activation run and rebinds the open setup run.
+- **The approval wakes exactly that run.** `approve` (fronted) is allowed from `machine_ready`,
+  `candidates_verified`, `awaiting_approval` and, for a re-approval, `live`, when every listener
+  of the open setup run has a verified standby; it records `standbys_verified`, seeds the new run's
+  candidates with those standbys (minus anything already committed) and schedules
+  `edgeSetupRuns.wakeForApproval {setupRunId, activationRunId, generation}`. The wake acts only
+  while the setup run is still at that generation, waiting for this approval, bound to this
+  activation, and the activation is the node's current one; it re-enters the run (a new
+  generation). A run past its publish goes back to the rehearsal with the old rehearsal dropped,
+  and the rehearsal vector names the activation candidate: a new approval is never satisfied by an
+  old rehearsal.
+- **A stale candidate parks for a fresh approval.** Go-live promotes the run's snapshot in its own
+  mutation (`promoteCandidate`, which compares the machine, config, authentication AND delivery
+  revisions); on `servers.review_stale`, `servers.standbys_unverified` or `servers.revision_moved`
+  the activation is blocked (`blockActivation`: the node parks at `awaiting_approval`, a live node
+  keeping its committed delivery) and the setup run waits at `node_not_approved` for the next
+  approval. Every terminal writer of a setup run (a failure, a cancel, an unbound finish) calls
+  `onSetupRunEnded` with the generation it ends, read before any increment: the bound activation is
+  blocked only when both links agree, it is still the node's current run, and the generation is
+  the run's current one, so a late hook of an older attempt or another run does nothing.
+- **Candidates are isolated, rehearsals render them.** `edgeRender.publishedEdgesOf` takes a
+  required selection context: `member` (the subscription route, mirrors, previews) drops every
+  candidate edge; `activation` (internal, the setup run's rehearsal only) selects exactly that
+  activation run's candidates, after checking it is the node's current, running one, and writes
+  nothing (no binding, cache, mirror, pin or render snapshot). A live node's replacement therefore
+  rehearses on the edges its commit promotes while members keep the committed ones; after the
+  commit the replacement joins what members get.
+- **Admission compares the publication with the approval** (`nodeActivation.publicationAdmission`,
+  the publish pre-check and the rotation start gate): `candidate` when the node's running
+  activation approved this listener with this account and template; `committed` when the node is
+  live with no activation running, its revisions are the committed ones and the publication fits
+  the committed review (a replacement ADDRESS reuses the approval); refused otherwise (another
+  account, template, listener or revision needs a review; maintenance and retirement refuse).
+  The review lists every required listener with its account and template (`shape.listeners`),
+  never one representative edge. A re-protect of a live node within its approved shape reaches
+  go-live and binds without a new approval; outside it, it parks for the review.
+- **Candidate Hosts on a live node.** A direct node's body reaches members as the backend serves
+  it, so an address a candidate would enable cannot be kept out of it; a fronted listener without
+  a committed template edge would get a new Host or a moved Host pointer. Either needs the gate
+  closed first: the review shows `servers.maintenance_required` and approval refuses it until
+  the node is closed for maintenance (`POST …/maintenance {start: true}`, then Finish
+  maintenance and a fresh activation with the gate closed).
+- **Keep members on the direct address** does not exist for an enrolled fronted node: refused as
+  `edge.keep_direct_enrolled` when a run is created and when it resumes (the plan reports
+  `enrolled`, and the sheet hides the choice). Removing protection stays the restore workflow's job.
+- **The mirror barrier.** An S3 mirror upload takes real time and the delivery token can move
+  while it is in flight, which a check before the upload cannot see. Every upload (a first mirror
+  as well as a refresh) opens a `mirrorUploads` obligation with the token its body was rendered
+  under BEFORE the object is written, and settles it only when the token read after a successful
+  upload is unchanged. An open obligation past its in-flight grace is repaired by the
+  `mirror-barrier-repair` cron (`storage.repairMirrorUploads`, every 5 min): the subscription's
+  mirror is re-rendered and re-uploaded under the current policy (the unavailable stub when its
+  place is gated or edge-required with nothing to render), or a copy no subscription references
+  is withdrawn. Rows hold a subscription id, the object path, provider names and the token.
 
 **Authorization decision.** A staged node serves a shared transport: an existing credential could
 authenticate on it if someone learned its address. That is accepted (REALITY keys are per transport
@@ -451,8 +532,10 @@ surface; the direct Host is enabled only during the run's rehearsal and disabled
 
 ### Node registration (contract v2)
 
-Routes on `{slug}/nodes/by-name/{name}`, scope `admin:servers:write` or `admin:edges:register`
-confined to the token's registration boundary (backend servers and, optionally, node names):
+Routes on `{slug}/nodes/by-name/{name}`, scope `admin:servers:write` (a `GET` also takes
+`admin:servers:read`) or `admin:edges:register` confined to the token's registration boundary
+(backend servers and, optionally, node names). A token holding `admin:servers:manage` is never
+bounded:
 
 | Route              | What                                                                                                                                                                                        |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -474,7 +557,8 @@ treatment (`hold` | `acknowledge`) whenever nodes FCP does not manage run the to
 and `POST {slug}/holds/{id}/release` ends one. `POST {slug}/nodes/adopt` adopts a node (above).
 
 Admin routes on `{slug}/nodes/intents/{id}`: `GET review`, `POST test-link`, `POST confirm`,
-`POST approve {reviewHash}`, `POST settings {patch, maintenance}`, `POST maintenance` (finish),
+`POST approve {reviewHash}`, `POST settings {patch, maintenance}`, `POST maintenance {start:
+true}` (close the node for maintenance) and `POST maintenance` (finish),
 `POST retire [{disposition}]`, `POST wiped` (an ADOPTED node's machine confirmed gone by an
 admin, since no role runs it; the role's own `POST {slug}/nodes/by-name/{name}/wiped` does this
 for a machine FCP bootstrapped).

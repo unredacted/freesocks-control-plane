@@ -58,7 +58,8 @@ health flags) and the adapter's template schema.
 
 `hostMode` says who writes the client-facing Hosts: `fcp` (FCP creates, flips and deletes
 them through a persisted state machine, see **Host ownership**), `operator` (FCP never writes;
-the by-slug response carries a `hostsPlan` to apply) or `none` (there is no Host). The
+the origin's `hostsPlan`, shown by the guided setup and the Listeners tab, says what to create)
+or `none` (there is no Host). The
 handoff is explicit: `fcp → operator` keeps every Host and marks it `adopted`; `operator →
 fcp` needs every listener's Host validated and adopted first (`edge.host_adopt_required`).
 One origin per node, one per whole server (`edge.node_already_bound` /
@@ -216,13 +217,13 @@ flip.
 **Coverage.** The pool exists to give every deployed, enabled, non-retired listener ("coverage
 listener") a published edge, so capacity follows the listeners (`convex/lib/edges/poolCapacity.ts`):
 `ensurePoolCapacity` raises `desiredPublished` to the coverage-listener count (bound 1..8,
-`MAX_DESIRED_PUBLISHED`; the node role's PUT and the admin create answer `warnings:
-['edge.pool_raised']` when it did) on every registration, admin listener add and listener
+`MAX_DESIRED_PUBLISHED`; the admin create and the listener upsert answer `warnings:
+['edge.pool_raised']` when it did) on every origin create, admin listener add and listener
 re-enable, and the reconcile cron applies it each tick. A pool that is already FULL while a
 listener is uncovered is **expanded** within the cap (`desiredPublished = min(8, published +
 uncovered)`, audited `edge.pool_expanded`); it is never shrunk. The cap is enforced where the
-operator can act on it rather than clamped silently: a listener body (the role's PUT or the
-CMS upsert) that would leave more than eight deployed, enabled listeners is refused
+operator can act on it rather than clamped silently: a listener body (the create or the CMS
+upsert) that would leave more than eight deployed, enabled listeners is refused
 (`edge.listener_cap`; a pre-existing excess is not made worse), and `relays.update` refuses
 lowering `desiredPublished` below the coverage-listener count (`edge.pool_below_coverage`).
 **Reserved allocation**
@@ -241,8 +242,8 @@ unpublishing changes what members receive.
 body never sets them): no delivery binding is written, so the origin keeps serving its raw body,
 and there is NO shortcut that binds it when an edge publishes. Only `claimDeliveryBinding`
 (the go-live step; not routed yet) upserts the binding, bumps its policy version, refreshes the
-mirrors and clears the flag. A by-slug registration always binds at once; a re-registration of a
-deferred origin keeps it deferred. While `setupOwned`, reconcile upkeep and the detector's
+mirrors and clears the flag. A plain create binds at once; a listener change on a deferred
+origin keeps it deferred. While `setupOwned`, reconcile upkeep and the detector's
 automatic replacement (veto `setup_owned`) leave the origin alone, whatever the run's state. A rotation start of any kind on an owned origin that does not come from the run itself (`setupRun`) is refused (`edge.setup_owned`): a manual publish, replace or burn would change the endpoint under the run's hides and rehearsal.
 `setup-status` warns `binding_deferred` on the publish step (never `members_dark`, which needs
 a binding); attention raises `go_live_pending` once an edge is published.
@@ -403,8 +404,8 @@ configuration, an empty 200 would wipe it. The policy is judged AFTER the fetch 
 node the body actually belongs to, so a first fetch without a stored pin and a pin that moved
 onto an origin node are both classified correctly. Only bodies that passed are cached (the cache
 token is `<bindingPolicyVersion>:<epoch>`). A place no origin covers passes the body through.
-Registering an origin therefore takes members on that origin dark until an edge is published and
-rendering is on; the setup flow and the node role say so.
+Creating an origin therefore takes members on that origin dark until an edge is published and
+rendering is on; the setup flow says so.
 
 **Delivery rehearsal** (`convex/edgeRehearsal.ts`, the guided setup's stage before go-live).
 Before the binding is claimed, delivery is proven with the real renderer over **cohorts** derived
@@ -426,7 +427,7 @@ attempts, then `listingChanged`), and the FINAL listing is the observation the g
 starts from.
 
 Mirrors follow the same policy: each mirror row records what its object holds (`validated`:
-policy version, epoch, edges); registering an origin revalidates the origin's mirrors, replacing
+policy version, epoch, edges); creating an origin revalidates the origin's mirrors, replacing
 a raw object with a fresh render or, when nothing can render, with an **unavailable stub**
 (the URL is already distributed, so the object itself must stop serving the origin). The
 account view and the issuance responses hand out ONLY the fronted token URL for a covered key
@@ -438,7 +439,7 @@ edge is **TCP-only** today (no adapter forwards UDP).
 
 | Operation                                 | Precondition                                                                                                                                                                                                                                                                                         | Spends budget                      | Writes Hosts                                                                  | Result                                                                                                                                    |
 | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| Register origin (role PUT / admin)        | origin + listeners in one body                                                                                                                                                                                                                                                                       | no                                 | no                                                                            | origin + listeners upserted; an identical body changes nothing; the origin's subscriptions become edge-required                           |
+| Create origin (admin)                     | origin + listeners in one body                                                                                                                                                                                                                                                                       | no                                 | no                                                                            | origin + listeners created (a slug in use is a `conflict`); the origin's subscriptions become edge-required                               |
 | Import edge                               | origin + listener; optionally a provider account + the load balancer picked from its inventory                                                                                                                                                                                                       | no                                 | no                                                                            | edge `active`; managed when imported from an account, observe-only when entered by address (`managed:false`, never destroyed)             |
 | Provision edge                            | qualified account (the listener's provider scope when set; any otherwise), template, capacity                                                                                                                                                                                                        | yes                                | no                                                                            | edge `active` + `unpublished` (or published when requested)                                                                               |
 | Publish edge                              | active, has an address of its layer, listener deployed + enabled (+ an active name for a name-presenting listener behind L4), and verified for its CURRENT configuration: the operator's per-endpoint confirmation behind L4 (`edge.unverified_endpoint` otherwise), a current front proof behind L7 | no                                 | listener Host only when the edge becomes the listener's template edge (`fcp`) | `published` at the lowest free index; epoch++                                                                                             |
@@ -456,7 +457,7 @@ All under `/api/v1/admin/edges/`, sealed by verb like every other route; the rea
 
 | Route                                                            | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET setup-status?relay=<slug>` / `POST setup-status {draft}`    | **Origin-scoped** readiness: nine steps (origin, account, template, origin, edge, qualification, publish, rendering, automation), each `done / ready / blocked / skipped` with blockers and warnings as codes, the selected context, `currentStep` and `roleVars` (public values only: never a token or an address). A draft (origin + listener triples) is judged before the origin exists. Without either, the fleet aggregate plus the origins whose setup can be resumed. Manual origins skip `rendering`.                                                                                                                                                                              |
+| `GET setup-status?relay=<slug>` / `POST setup-status {draft}`    | **Origin-scoped** readiness: nine steps (origin, account, template, origin, edge, qualification, publish, rendering, automation), each `done / ready / blocked / skipped` with blockers and warnings as codes, the selected context and `currentStep` (never a token or an address). A draft (origin + listener triples) is judged before the origin exists. Without either, the fleet aggregate plus the origins whose setup can be resumed. Manual origins skip `rendering`.                                                                                                                                                                                                              |
 | `POST relays/{id}/test-provision`                                | The bootstrap path: ordinary selection excludes unqualified accounts, so a fresh account could never get its first edge. Explicit `{accountId, templateId?, listenerKey}`; the account must be enabled and **tested** but may be unqualified; budgets, capacity and layer compatibility apply; the result is always unpublished. Audited `admin.edge.test_provision`.                                                                                                                                                                                                                                                                                                                       |
 | `POST relays/{id}/preflight`                                     | Dry run of `provision / publish / replace / test-provision`: every guard a real start applies (the FIRST blocker is the code the start would throw), the selection the machine would make, plan-phase refusals that need no adapter, and delivery warnings (`render_disabled`, `members_dark`, ...). Writes nothing.                                                                                                                                                                                                                                                                                                                                                                        |
 | `GET edges/{id}/verification-binding` + `POST edges/{id}/verify` | The L4 endpoint test. The GET returns `{endpoint, listenerKey, listenerRevision, configHash}` (plus whether the gate would pass once confirmed) exactly as the confirmation must echo it; the POST (origin-write scope) recomputes the binding from the live rows and refuses a mismatch (`edge.verification_stale`) rather than stamping a configuration the operator did not see. Records `edges.verification` (`method: test_link` from the isolated test link, `named_connection` for retesting a published address by its `<node>-relay-<key>` connection) and audits `edge.verified` (ids and the listener key only). L7 edges refuse: their authenticated proof is the verification. |
@@ -485,17 +486,17 @@ protects a backend node by answering two questions (which node, which account), 
 new L4 address once from a real client, and pressing Go live; FCP does everything else. ONE
 authoritative stage machine, every stage idempotent and re-enterable:
 
-| #   | Stage               | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Members download    |
-| --- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
-| 1   | `prepare`           | registration admitted; account tested, enabled and offered by the plan; `relays.create` with every frontable listener, `deferBinding` + `setupOwned`, `autoRotate: true`, `desiredPublished = max(default, required)` (bound 8). An origin a previous run left owned is reused at its recorded `setupStage` only while its listeners still match what the new plan discovered (same keys, same canonical hash, no extra deployed listener); otherwise `edge.plan_changed` and the operator removes protection first. Switching the account (`retry {accountId}`) is allowed only before anything is published (`edge.account_switch_late`); candidates of the old account are cancelled, never re-labelled. | raw origin body     |
-| 2   | `credential`        | `relayQualification.ensure` for an L7 listener (`qualification`) or an EMPTY backend node (`rehearsal`); an empty Outline server is `use_manual_setup`; a placement problem is `choose_mode`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | unchanged           |
-| 3   | `provision`         | per required listener without a live candidate: ONE mutation starts `provision` (`publishOnDone: false`, `requestedAccountId`, `allowUnqualified`) AND records `expect`; a live unpublished edge on the listener is reused. `edge.busy` / `edge.concurrency` wait and poll; `edge.maintenance` asks the operator                                                                                                                                                                                                                                                                                                                                                                                            | unchanged           |
-| 4   | `verify`            | per standby: outside probes (`trigger: 'qualification'`) + the internal shape run, judged by `partialRungFor` (`partial` is the L4 ceiling); L7 runs the front proof. `unreachable` (or a timeout) asks the operator (`address_unreachable`: try another address, or accept partial)                                                                                                                                                                                                                                                                                                                                                                                                                        | unchanged           |
-| 4b  | `try_it`            | one isolated **test link** per L4 endpoint lacking a current confirmation (`edgeTestLinks.build`; a published address gets a named-connection retest instead); the card's ticks echo `{edgeId, endpoint, listenerRevision, configHash}` into `edgeVerification.confirm` (`edge.verification_stale` rebuilds the card). Skipped when every listener is L7                                                                                                                                                                                                                                                                                                                                                    | unchanged           |
-| 5   | `publish`           | per required listener: `publish` rotation (`admission: 'setup.complete'`, so a freeze declared meanwhile does not strand admitted work) through the UNCHANGED gate; `pool_full_standby` = `coverage_incomplete`; quarantine = `quarantined`. `keepDirect` finishes `done_unbound` here                                                                                                                                                                                                                                                                                                                                                                                                                      | direct AND FCP Host |
-| 6   | `hide_direct_hosts` | every L4 confirmation re-checked (stale = back to the card); `edgeHostHides.hide` with the EXACT approved uuids; an uncovered Host the consent did not name = `review_changed` (a new consent bumps `planRevision`); `hide_failed`; pending rows are polled                                                                                                                                                                                                                                                                                                                                                                                                                                                 | FCP Hosts only      |
-| 7   | `rehearse`          | every client family's render rule on (`family_disabled`); `edgeRehearsal.run` (fresh cohort bodies through the real renderer, listing before and after); expired proofs re-run and the rehearsal repeats (bounded); the version vector + the FINAL Host observation are persisted                                                                                                                                                                                                                                                                                                                                                                                                                           | unchanged           |
-| 8   | `go_live`           | ONE mutation: no active rotation, no quarantine, origin enabled; the local vector equals the rehearsal's; the observation younger than 60 s; every L7 proof `expiresAt` ahead; every hide row settled and none outstanding; no FCP Host op claimed; every required listener published by its own edge, L4 with a current confirmation; `render.enabled` turned on if off (`edge.render.enabled_by_setup`); then `claimDeliveryBinding` and `setupOwned` cleared. A failed check sends the run BACK (7, 6 or the card)                                                                                                                                                                                       | rendered body       |
+| #   | Stage               | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Members download    |
+| --- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
+| 1   | `prepare`           | registration admitted; account tested, enabled and offered by the plan; `relays.create` with every frontable listener, `deferBinding` + `setupOwned`, `autoRotate: true`, `desiredPublished = max(default, required)` (bound 8). An origin a previous run left owned is reused at its recorded `setupStage` only while its listeners still match what the new plan discovered (same keys, same canonical hash, no extra deployed listener); otherwise `edge.plan_changed` and the operator removes protection first. Switching the account (`retry {accountId}`) is allowed only before anything is published (`edge.account_switch_late`); candidates of the old account are cancelled, never re-labelled.                                                                                 | raw origin body     |
+| 2   | `credential`        | `relayQualification.ensure` for an L7 listener (`qualification`) or an EMPTY backend node (`rehearsal`); an empty Outline server is `use_manual_setup`; a placement problem is `choose_mode`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | unchanged           |
+| 3   | `provision`         | per required listener without a live candidate: ONE mutation starts `provision` (`publishOnDone: false`, `requestedAccountId`, `allowUnqualified`) AND records `expect`; a live unpublished edge on the listener is reused. `edge.busy` / `edge.concurrency` wait and poll; `edge.maintenance` asks the operator                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | unchanged           |
+| 4   | `verify`            | per standby: outside probes (`trigger: 'qualification'`) + the internal shape run, judged by `partialRungFor` (`partial` is the L4 ceiling); L7 runs the front proof. `unreachable` (or a timeout) asks the operator (`address_unreachable`: try another address, or accept partial)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | unchanged           |
+| 4b  | `try_it`            | one isolated **test link** per L4 endpoint lacking a current confirmation (`edgeTestLinks.build`; a published address gets a named-connection retest instead); the card's ticks echo `{edgeId, endpoint, listenerRevision, configHash}` into `edgeVerification.confirm` (`edge.verification_stale` rebuilds the card). Skipped when every listener is L7                                                                                                                                                                                                                                                                                                                                                                                                                                    | unchanged           |
+| 5   | `publish`           | per required listener: the node's approval is checked in the same mutation as the start (an enrolled node without one PARKS: `needs_you` `node_not_approved`, nothing published, docs/servers.md "A fronted node's activation"); then a `publish` rotation (`admission: 'setup.complete'`, so a freeze declared meanwhile does not strand admitted work) through the UNCHANGED gate; `pool_full_standby` = `coverage_incomplete`; quarantine = `quarantined`. `keepDirect` finishes `done_unbound` here (never for an enrolled fronted node)                                                                                                                                                                                                                                                | direct AND FCP Host |
+| 6   | `hide_direct_hosts` | every L4 confirmation re-checked (stale = back to the card); `edgeHostHides.hide` with the EXACT approved uuids; an uncovered Host the consent did not name = `review_changed` (a new consent bumps `planRevision`); `hide_failed`; pending rows are polled                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | FCP Hosts only      |
+| 7   | `rehearse`          | every client family's render rule on (`family_disabled`); `edgeRehearsal.run` (fresh cohort bodies through the real renderer, listing before and after; an enrolled node renders exactly its activation's candidates); expired proofs re-run and the rehearsal repeats (bounded); the version vector (with the activation candidate) + the FINAL Host observation are persisted                                                                                                                                                                                                                                                                                                                                                                                                             | unchanged           |
+| 8   | `go_live`           | ONE mutation: no active rotation, no quarantine, origin enabled; the local vector equals the rehearsal's; the observation younger than 60 s; every L7 proof `expiresAt` ahead; every hide row settled and none outstanding; no FCP Host op claimed; every required listener's edge published (in the pool, on a listener whose FCP Host exists), L4 with a current confirmation; `render.enabled` turned on if off (`edge.render.enabled_by_setup`); an enrolled node's candidate promoted in the same mutation (a live node with no activation binds only when every edge fits its committed approval); then `claimDeliveryBinding` and `setupOwned` cleared. A failed check sends the run BACK (7, 6 or the card); a stale candidate blocks the activation and waits for a fresh approval | rendered body       |
 
 Fencing: a rotation the run starts stores `setupRun: {runId, generation}`; `releaseOrigin`
 (every terminal transition) schedules `edgeSetupRuns.onRotationTerminal` with THAT stored
@@ -508,6 +509,14 @@ failed, cancelled or unbound run leaves the origin owned. Cancel before stage 5 
 `restore-direct` (nothing was published; the delete cancels the live rotation, drains the
 standbys for the reconcile destroy and removes the credential); at stages 5-7 the published edges
 stay and `edgeRestore.start` runs with purpose `cancel_setup`; after go-live there is no cancel.
+An ENROLLED node (docs/servers.md "A fronted node's activation"): the run parks at publish
+until the node is approved; the approval binds the run (`activationRunId`) and its activation
+(`setupRunId`) for good and wakes the run through `wakeForApproval`, fenced by the generation the
+approval read (a run past publish returns to the rehearsal); every terminal writer calls
+`onSetupRunEnded` with the generation it ends, which blocks the bound activation (a cancel after
+the approval parks the node for a fresh one). The provision rotation of a setup run may pick an
+L7 account whatever `edge.l7.autoSelect` says: the operator chose it, and its front is proven
+before anything publishes.
 Vocabularies: `SETUP_RUN_STAGES` / `SETUP_RUN_STATES` / `SETUP_RUN_NEEDS` /
 `SETUP_ACCOUNT_REASONS` in `src/shared/contracts/edgeCodes.ts`. Audit:
 `edge.setup_run.{started,needs_operator,go_live,finished,cancelled}` and
@@ -674,8 +683,8 @@ and last error. Audited `edge.relay.restore_started` / `edge.relay.restore_finis
 `relays.requestDelete` is re-sequenced accordingly: a `restore-direct` delete of an origin that
 hid direct Hosts (or that a setup run bound) enters the workflow with purpose `delete_relay`
 (response `restore: true`) instead of tearing down at once; `keep-dark` keeps the binding,
-never restores a hidden Host and tears down at once, as before; a role-registered origin that
-never hid a Host is unchanged.
+never restores a hidden Host and tears down at once, as before; an origin that never hid a Host
+and was not bound by a setup run is unchanged.
 
 ### The rotation machine
 
@@ -692,7 +701,7 @@ claims, four-outcome discovery, observe-then-write Hosts, shared external locks,
 quarantine, audit trail; see the sections of the previous release in git history for the
 long form). Two things changed: the Host plan is captured, flipped and rolled back **per
 listener**, and when FCP owns the Hosts and no Host exists for the listener yet, the flip
-CREATES it through the Host state machine instead of waiting for the role.
+CREATES it through the Host state machine instead of waiting for the operator.
 
 ### Reconcile cron (`edge-reconcile`, 5 min)
 
@@ -994,10 +1003,11 @@ manual.
 ## Sealing
 
 Every route under `/api/v1/admin/edges/` is sealed by verb (GET reveals, POST seals both legs,
-PATCH/PUT seal the request, DELETE carries nothing). Dual-mode plaintext stays for `fsv1_`
-callers; `FS_HPKE_ADMIN_REQUIRED=true` refuses plaintext from cookie-session callers. Config
-routes need `admin:settings:*`, everything else `admin:servers:*`, and the registration
-routes additionally accept **`admin:edges:register`** (see the node role contract).
+PATCH seals the request, DELETE carries nothing; there is no PUT). Dual-mode plaintext stays
+for `fsv1_` callers; `FS_HPKE_ADMIN_REQUIRED=true` refuses plaintext from cookie-session
+callers. Config routes need `admin:settings:*`, everything else `admin:servers:*`. No route
+here accepts `admin:edges:register`: that scope is the node role's, on the Servers by-name
+routes only (see the node role contract).
 
 ## Node role contract (Ansible)
 
@@ -1021,55 +1031,27 @@ node's declared ingress, and publication is admitted only under the node's appro
   Cloudflare `strict` validates the hostname the node's single-name certificate does not carry and
   is unsupported in this version.
 
-**Contract v1** (the origin-registering role) follows.
+**Contract v1 is retired.** The origin-registering role (`PUT …/relays/by-slug/{slug}`, its
+`DELETE` and listener companions, and the `operation_mode=adopt_relay` legacy adoption) is gone:
+the PUT answers 404 and registers nothing. Origins the v1 role registered keep their rows
+(role-owned listeners, `lastRegisteredAt`) and are managed in the CMS; their role-owned
+listeners can be enabled, disabled, have names retired and be retired there, but not edited
+(`edge.listener_key_owned`): a change is a new listener under another key.
+`GET …/relays/by-slug/{slug}` stays as an admin read of an origin's minimal projection
+(`publishedEndpoints`, `connectionPlan`, `hostsPlan`).
 
-The role registers an origin with ONE idempotent body and reads back what to configure. Token:
-an `fsv1_` token with `admin:edges:register`, minted with a **registration boundary**
-(`apiTokens.edgeRegistration`: the backend servers and, optionally, the node names it may
-register for). Such a token may call only the by-slug routes below, and only for origins
-inside its boundary (`edge.registration_boundary` otherwise); a boundary-less register token
-may register nothing. Credential rotation = mint a new token with the same boundary and revoke
-the old one; nothing on the origin row references a token. The boundary is set at mint: in
-the CMS (Admin → API tokens; ticking the scope reveals the backend-server and node-name
-inputs, and the guided setup's "Mint role token" link presets them) or from the control plane
+**The role's token.** An `fsv1_` token with `admin:edges:register`, minted with a
+**registration boundary** (`apiTokens.edgeRegistration`: the backend servers and, optionally,
+the node names it may act for), accepted only on the Servers `{slug}/nodes/by-name/{name}`
+routes (`servers.registration_boundary` outside the boundary); a boundary-less register token
+may act for nothing. A token holding `admin:servers:write` (the fleet token) or
+`admin:servers:manage` is not bounded. Credential rotation = mint a new token with the same
+boundary and revoke the old one. The boundary is set at mint: in the CMS (Admin → API tokens;
+ticking the scope reveals the backend-server and node-name inputs) or from the control plane
 with `adminApi:mintAutomationToken '{"scopes":["admin:edges:register"],
 "registerBackendSlugs":["<slug>"],"registerNodeNames":["<node>"]}'`. The mint refuses the
 scope without a boundary and a boundary without the scope (`validation`); the audit row
 carries counts only.
-
-1. `PUT /api/v1/admin/edges/relays/by-slug/{slug}` with
-   `{ origin, originAddress, locationCode?, label?, listeners[], pruneListeners? }` where
-   `origin` is `{ kind:'panel-node', backendSlug, nodeName, nodeUuid? }`,
-   `{ kind:'backend-server', backendSlug }` or `{ kind:'manual' }`, and each listener is
-   `{ listenerKey, protocol, streamTransport, security, originPort, tlsNames?, realityTarget?,
-transportParams?, originTransport?, panelBinding?, matchRule?, deployed? }`. **Idempotent**:
-   an identical body changes nothing but `lastRegisteredAt` (no listener revision bump, no
-   epoch bump, no mirror refresh, no qualification invalidation). Listeners the body omits are
-   retired (`pruneListeners`, default true) ONLY when the role registered them; admin-created
-   listeners are never touched (`edge.listener_key_owned` if the body names one). The role can
-   add names and retire its own; it can never reactivate an admin-retired name or shorten a
-   drain. A rebind or prune under a non-destroyed edge is refused (`edge.listener_in_use`).
-   The response is the minimal projection: `origin { slug, hostMode, delivery, enabled,
-deleting, publicationEpoch, originAddress, lastRegisteredAt }`, `listeners[]` (with
-   `layers` and `excluded` reasons), `publishedEndpoints[]` (role-usable only), `connectionPlan[]`
-   (what a client must dial per listener) and `hostsPlan { mode, hosts[] }` (non-empty only
-   for `operator`), plus `registration` (what changed).
-2. `GET` the same path to poll; `hostsPlan.mode === 'fcp'` means FCP creates and flips the
-   backend Hosts itself: the role writes nothing. With `mode === 'operator'` the role applies
-   `hostsPlan.hosts[]` verbatim (remark, address, port, sni, host, transport) with GET-first
-   drift replacement. With `mode === 'none'` there is no Host.
-3. Teardown: `DELETE …/by-slug/{slug}?disposition=restore-direct|keep-dark` (default
-   `restore-direct`: the node is decommissioned, raw delivery of its subscriptions returns);
-   `DELETE …/by-slug/{slug}/listeners/{key}` retires one listener.
-4. **Legacy adoption** (`operation_mode=adopt_relay` in the role): a node that already sits
-   behind a manually run proxy with operator-created Hosts registers with
-   `hostModeRequest:'operator'` and `adoption: { edge: { address, port }, hosts: [{ uuid,
-remark, inboundUuid, sni? }] }`. FCP records the legacy Hosts on their listeners (never
-   deleted; the renderer keeps matching their remarks), imports the proxy as an observe-only
-   edge carrying the operator's statement that it already serves (a `named_connection`
-   verification: the adoption payload IS that statement) and publishes it at index 0 without
-   a flip. The operator then validates and adopts each Host in the CMS and switches
-   `hostMode` to `fcp`.
 
 Node pinning understands the origin remark (`convex/lib/nodePinning.ts`).
 
@@ -1099,7 +1081,7 @@ A manual "Mark unqualified" holds automatic trust off until an operator trusts a
 credentials change. Editing credentials or settings, or a template change that moves the
 account's effective template, clears the qualification (and its evidence).
 
-**Bootstrap an origin.** Register it (role or CMS) with its listeners, add a provider account,
+**Bootstrap an origin.** Create it in the CMS with its listeners, add a provider account,
 provision or import an edge on a listener, publish it, enable rendering, preview each client
 family. Until the first publish with rendering on, members on that origin receive 503.
 

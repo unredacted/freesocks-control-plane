@@ -404,22 +404,6 @@ function configFacts(cfg: EdgeConfig): SetupInput['config'] {
   };
 }
 
-const ROLE_PATH = '/api/v1/admin/edges/relays/by-slug/';
-
-/** Public values the node role needs; never a token, never an address. */
-function roleVars(relay: Relay, listeners: Listener[]): Record<string, string> {
-  return {
-    fcp_relay_slug: relay.slug,
-    fcp_relay_listeners: listeners
-      .filter((l) => !l.retired)
-      .map((l) => l.listenerKey)
-      .join(','),
-    fcp_relay_register_path: `${ROLE_PATH}${encodeURIComponent(relay.slug)}`,
-    fcp_relay_register_scope: 'admin:edges:register',
-    fcp_relay_host_mode: relay.hostMode,
-  };
-}
-
 const draftValidator = v.object({
   origin: v.union(
     v.object({
@@ -484,7 +468,6 @@ export const setupStatus = internalQuery({
         config: configFacts(cfg),
       };
       const r = computeSetupStatus(input);
-      const listenerRows = await listenersOf(ctx, relay._id);
       return {
         scope: 'relay' as const,
         steps: stepsView(r.steps),
@@ -497,7 +480,6 @@ export const setupStatus = internalQuery({
           backendServerId: (relay.backendServerId as string | undefined) ?? null,
           ...r.context,
         },
-        roleVars: roleVars(relay, listenerRows),
         resume: [],
         generatedAt: now,
       };
@@ -576,7 +558,6 @@ export const setupStatus = internalQuery({
           backendServerId,
           ...r.context,
         },
-        roleVars: null,
         resume: [],
         generatedAt: now,
       };
@@ -645,7 +626,6 @@ export const setupStatus = internalQuery({
         listenerKey: null,
         edgeId: null,
       },
-      roleVars: null,
       resume: perRelay
         .filter((p) => !p.result.complete)
         .map((p) => ({

@@ -4,6 +4,7 @@ import {
   evidenceHolds,
   gateOpen,
   publicationAdmitted,
+  publicationFits,
   retainEvidence,
   reviewHashOf,
   stageAfterChange,
@@ -83,8 +84,7 @@ describe('reviewHash', () => {
     ingress: null,
     configRevision: 'c1',
     authRevision: 'a1',
-    listenerKeys: ['k1'],
-    provider: { accountId: 'acc', templateHash: 't1' },
+    listeners: [{ listenerKey: 'k1', accountId: 'acc', templateHash: 't1' }],
     subscriptionTemplates: { SINGBOX: 'h1' },
     addressTuples: [],
   };
@@ -95,10 +95,56 @@ describe('reviewHash', () => {
       subscriptionTemplates: { ...shape.subscriptionTemplates },
     });
     expect(a).toBe(b);
-    expect(await reviewHashOf({ ...shape, listenerKeys: ['k1', 'k2'] })).not.toBe(a);
+    // Every listener counts, never one representative edge.
     expect(
-      await reviewHashOf({ ...shape, provider: { accountId: 'acc', templateHash: 't2' } }),
+      await reviewHashOf({
+        ...shape,
+        listeners: [
+          ...shape.listeners,
+          { listenerKey: 'k2', accountId: 'acc', templateHash: 't1' },
+        ],
+      }),
     ).not.toBe(a);
+    expect(
+      await reviewHashOf({
+        ...shape,
+        listeners: [{ listenerKey: 'k1', accountId: 'acc', templateHash: 't2' }],
+      }),
+    ).not.toBe(a);
+  });
+});
+
+describe('publicationFits', () => {
+  const approved = {
+    listeners: [
+      { listenerKey: 'k1', accountId: 'acc', templateHash: 't1' },
+      { listenerKey: 'k2', accountId: 'acc', templateHash: null },
+    ],
+  };
+  test('a replacement address within the approved shape fits; another account, template or listener does not', () => {
+    expect(
+      publicationFits(approved, { listenerKey: 'k1', accountId: 'acc', templateHash: 't1' }),
+    ).toBe(true);
+    expect(
+      publicationFits(approved, { listenerKey: 'k2', accountId: 'acc', templateHash: null }),
+    ).toBe(true);
+    expect(
+      publicationFits(approved, { listenerKey: 'k1', accountId: 'other', templateHash: 't1' }),
+    ).toBe(false);
+    expect(
+      publicationFits(approved, { listenerKey: 'k1', accountId: 'acc', templateHash: 't2' }),
+    ).toBe(false);
+    expect(
+      publicationFits(approved, { listenerKey: 'k3', accountId: 'acc', templateHash: 't1' }),
+    ).toBe(false);
+  });
+  test('an approval without a per-listener shape (or none at all) fits nothing', () => {
+    expect(publicationFits(null, { listenerKey: 'k1', accountId: 'acc', templateHash: 't1' })).toBe(
+      false,
+    );
+    expect(
+      publicationFits({} as never, { listenerKey: 'k1', accountId: 'acc', templateHash: 't1' }),
+    ).toBe(false);
   });
 });
 

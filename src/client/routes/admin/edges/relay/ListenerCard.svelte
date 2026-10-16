@@ -196,7 +196,7 @@
           {l.security === 'none'
             ? 'This listener presents no name.'
             : l.source === 'role'
-              ? 'None registered. The node role has to send the names this listener answers to.'
+              ? 'None yet. Use Edit to add the names this listener answers to.'
               : 'None yet. Use Edit to add the names this listener answers to: without one, nothing can be published behind an L4 edge.'}
         </p>
       {:else}
@@ -236,7 +236,7 @@
                     size="sm"
                     disabled={locked || act.isPending || n.retiredBy === 'role'}
                     title={n.retiredBy === 'role'
-                      ? 'The node role retired this name. It comes back when the role registers it again.'
+                      ? 'The node role retired this name, so it cannot be reactivated here.'
                       : undefined}
                     onclick={() =>
                       act.mutate({
@@ -320,7 +320,7 @@
       <KeyValue
         title="Panel inbound"
         description={l.source === 'role'
-          ? 'Read only: the node role owns these and sends them again with every registration.'
+          ? 'Set by the node role when it registered this listener.'
           : undefined}
         rows={inboundRows}
         columns={1}
@@ -422,7 +422,7 @@
 <ActionConfirm
   bind:open={deleteOpen}
   title={`Retire listener ${l.listenerKey}?`}
-  body={`The listener stops existing for FCP: nothing can be provisioned or published for it, and FCP deletes the address it created for it on the backend. ${edgeCount > 0 ? `It is refused while edges use it: ${edgeCount} still do, so destroy or delete them on the Edges tab first.` : 'No edge uses it, so this goes through.'}${l.source === 'role' ? ' The node role registered this listener and will register it again on its next run unless you remove it there too.' : ''}`}
+  body={`The listener stops existing for FCP: nothing can be provisioned or published for it, and FCP deletes the address it created for it on the backend. ${edgeCount > 0 ? `It is refused while edges use it: ${edgeCount} still do, so destroy or delete them on the Edges tab first.` : 'No edge uses it, so this goes through.'}${l.source === 'role' ? ' It does not come back: the node role no longer registers listeners.' : ''}`}
   typed={l.listenerKey}
   confirmLabel="Retire listener"
   danger

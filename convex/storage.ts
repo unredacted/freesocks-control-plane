@@ -145,6 +145,13 @@ export type S3Op =
   | { kind: 'delete'; key: string };
 export type S3Send = (provider: S3Provider, op: S3Op) => Promise<void>;
 
+let sendImpl: S3Send | null = null;
+/** Test seam: replace the S3 call for every upload/delete this module makes (null = the SDK). */
+export function __setS3SendForTests(send: S3Send | null): void {
+  sendImpl = send;
+}
+const s3Send: S3Send = (p, op) => (sendImpl ?? realSend)(p, op);
+
 const realSend: S3Send = async (p, op) => {
   const client = clientFor(p);
   if (op.kind === 'put') {
@@ -267,6 +274,16 @@ export const provisionMirror = internalAction({
     } catch {
       return { status: 'error', remaining: Math.max(0, cap - used) };
     }
+    // The delivery token the body is rendered under: re-read after the upload
+    // (the mirror barrier below).
+    const tokenOf = () =>
+      context.backendServerId
+        ? ctx.runQuery(internal.edgeRender.epochFor, {
+            backendServerId: context.backendServerId,
+            nodeName: fetched.pinnedNode ?? undefined,
+          })
+        : Promise.resolve(null);
+    const tokenBefore = await tokenOf();
     // The first upload is rendered like every later refresh: a mirror must
     // never hold the template entries (the origin / index-0 address) until the
     // sweep comes round.
@@ -281,16 +298,31 @@ export const provisionMirror = internalAction({
     // One capability token per sub, reused across providers (stable + unguessable).
     const objectPath = context.objectPath ?? `mirrors/${randomHex(16)}`;
 
+    // The obligation exists BEFORE the object does: an upload that races a
+    // policy move is repaired or withdrawn later, never trusted.
+    const obligationId = await ctx.runMutation(internal.mirrorUploads.open, {
+      subscriptionId: context.subscriptionId,
+      objectPath,
+      providers: [provider.name],
+      tokenBefore,
+      kind: 'initial',
+    });
     let entry: SubscriptionMirror | undefined;
     try {
-      const mirrors = await uploadToProviders([provider], {
-        objectPath,
-        content: rendered.content,
-        contentType: fetched.contentType,
-      });
+      const mirrors = await uploadToProviders(
+        [provider],
+        {
+          objectPath,
+          content: rendered.content,
+          contentType: fetched.contentType,
+        },
+        s3Send,
+      );
       entry = mirrors[0];
       if (entry && rendered.validated) entry = { ...entry, validated: rendered.validated };
     } catch {
+      // Nothing was written: nothing to repair.
+      await ctx.runMutation(internal.mirrorUploads.settle, { id: obligationId });
       return { status: 'error', remaining: Math.max(0, cap - used) };
     }
     if (!entry) return { status: 'error', remaining: Math.max(0, cap - used) };
@@ -327,6 +359,10 @@ export const provisionMirror = internalAction({
       contentAt,
       renderedEpoch: rendered.renderedEpoch,
     });
+    // Settled only if nothing moved while the object was written; otherwise
+    // the repair pass re-renders it under the policy that holds now.
+    if ((await tokenOf()) === tokenBefore)
+      await ctx.runMutation(internal.mirrorUploads.settle, { id: obligationId });
     return {
       status: 'ok',
       publicUrl: entry.publicUrl,
@@ -350,7 +386,7 @@ export const clearMirrorsForUser = internalAction({
     });
     if (items.length > 0) {
       const providers = await ctx.runQuery(internal.mirrorProviders.listAllWithSecret, {});
-      await deleteFromProviders(providers, items);
+      await deleteFromProviders(providers, items, s3Send);
     }
     return { removed: items.length };
   },
@@ -362,7 +398,7 @@ export const deleteMirrors = internalAction({
   args: { items: v.array(v.object({ provider: v.string(), objectPath: v.string() })) },
   handler: async (ctx, { items }) => {
     const providers = await ctx.runQuery(internal.mirrorProviders.listAllWithSecret, {});
-    await deleteFromProviders(providers, items);
+    await deleteFromProviders(providers, items, s3Send);
     return null;
   },
 });
@@ -437,6 +473,7 @@ async function refreshOneSubMirrors(
   // describes the content it uploaded, so an ordinary refresh would match and
   // decline to repair the object.
   force = false,
+  kind: 'refresh' | 'repair' = 'refresh',
 ): Promise<boolean> {
   try {
     // Re-upload only to THIS sub's providers that are still active.
@@ -513,13 +550,34 @@ async function refreshOneSubMirrors(
       await stampContent();
       return false;
     }
+    // The mirror barrier: the obligation is open before the object is
+    // written, and settles below only if the token did not move meanwhile.
+    const obligationId = await ctx.runMutation(internal.mirrorUploads.open, {
+      subscriptionId: sub.id,
+      objectPath: sub.objectPath,
+      providers: targets.map((t) => t.name),
+      tokenBefore,
+      kind,
+    });
     // Throws only if EVERY provider failed (caught below → sub skipped,
     // pin deliberately unrecorded: the mirror still serves the old node).
-    const uploaded = await uploadToProviders(targets, {
-      objectPath: sub.objectPath,
-      content,
-      contentType: fetched.contentType,
-    });
+    let uploaded: SubscriptionMirror[];
+    try {
+      uploaded = await uploadToProviders(
+        targets,
+        {
+          objectPath: sub.objectPath,
+          content,
+          contentType: fetched.contentType,
+        },
+        s3Send,
+      );
+    } catch (err) {
+      // Nothing was written by THIS upload: its own obligation is settled
+      // (an earlier open one of the object stays open).
+      await ctx.runMutation(internal.mirrorUploads.settle, { id: obligationId });
+      throw err;
+    }
     const mirrors = uploaded.map((m) =>
       rendered.validated ? { ...m, validated: rendered.validated } : m,
     );
@@ -540,13 +598,23 @@ async function refreshOneSubMirrors(
     // the healthy providers every 6h until the broken one recovers) and
     // both advance together on the first clean round.
     const allSucceeded = failedProviders.length === 0;
+    // The token moved while the object was written: the body may describe a
+    // policy that no longer holds. Nothing is stamped; the obligation stays
+    // open and the repair pass re-renders under the current one.
+    const moved = (await tokenOf()) !== tokenBefore;
     await ctx.runMutation(internal.subscriptions.updateMirrors, {
       subscriptionId: sub.id,
       successes: mirrors,
       failedProviders,
-      ...(allSucceeded ? { rawContentHash: hash } : {}),
+      ...(allSucceeded && !moved ? { rawContentHash: hash } : {}),
     });
+    if (moved) return true;
+    // A clean round settles this obligation and every earlier one of the object.
     if (allSucceeded) {
+      await ctx.runMutation(internal.mirrorUploads.settle, {
+        id: obligationId,
+        subscriptionId: sub.id,
+      });
       await recordPin();
       await stampContent();
     }
@@ -583,6 +651,50 @@ export const refreshMirrorsForSubscription = internalAction({
     );
     return null;
   },
+});
+
+/**
+ * Cron: the repair pass of the mirror barrier (convex/mirrorUploads.ts). An
+ * open obligation past its in-flight grace is an upload whose policy moved
+ * under it: a mirror a subscription still references is re-rendered and
+ * re-uploaded under the CURRENT policy (forced; the unavailable stub when its
+ * place is gated or edge-required with nothing to render), which settles the
+ * obligation only under a stable token; an object nothing references any more
+ * (a lost first upload, a re-issued key) is withdrawn. Bounded per run.
+ */
+export const repairMirrorUploads = internalAction({
+  args: {},
+  handler: async (ctx): Promise<{ repaired: number; withdrawn: number }> =>
+    runWithCronOutcome(ctx, 'mirror-barrier-repair', async () => {
+      const due = await ctx.runQuery(internal.mirrorUploads.listDue, { now: Date.now() });
+      let repaired = 0;
+      let withdrawn = 0;
+      if (due.length === 0) return { repaired, withdrawn };
+      const active = await ctx.runQuery(internal.mirrorProviders.listActiveWithSecret, {});
+      const byName = new Map(active.map((p) => [p.name, p]));
+      for (const o of due) {
+        await ctx.runMutation(internal.mirrorUploads.markAttempt, { id: o.id });
+        if (o.residueProviders.length > 0) {
+          // Residue: a copy no subscription references (deactivated providers included).
+          const all = await ctx.runQuery(internal.mirrorProviders.listAllWithSecret, {});
+          await deleteFromProviders(
+            all,
+            o.residueProviders.map((provider) => ({ provider, objectPath: o.objectPath })),
+            s3Send,
+          );
+          withdrawn++;
+        }
+        if (!o.referenced) {
+          await ctx.runMutation(internal.mirrorUploads.settle, { id: o.id });
+          continue;
+        }
+        const target = await ctx.runQuery(internal.subscriptions.mirrorRefreshTarget, {
+          subscriptionId: o.subscriptionId,
+        });
+        if (target && (await refreshOneSubMirrors(ctx, byName, target, true, 'repair'))) repaired++;
+      }
+      return { repaired, withdrawn };
+    }),
 });
 
 /**

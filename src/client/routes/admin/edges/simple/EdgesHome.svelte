@@ -2,7 +2,8 @@
   /**
    * Edges home (`/admin/edges`): one status sentence, what needs you, one row
    * per protected node, "Protect a node". URL state: `?protect=1` opens the
-   * protect sheet, `?run=<id>` opens a run's progress.
+   * protect sheet (`&server=<slug>&node=<uuid>` preselect a node, as the Servers
+   * page links to it), `?run=<id>` opens a run's progress.
    *
    * The technical dashboard this replaced lives on under Advanced (All origins).
    */
@@ -54,6 +55,8 @@
 
   const protectParam = searchParam('protect');
   const runParam = searchParam('run');
+  const serverParam = searchParam('server');
+  const nodeParam = searchParam('node');
   const sheetOpen = $derived(protectParam.value === '1' || runParam.value !== '');
 
   const items = $derived(attention.data?.items ?? []);
@@ -141,11 +144,12 @@
     }
   }
 
+  // The preset node (`server`, `node`) belongs to one opening of the sheet only.
   function openProtect() {
-    setSearchParams({ protect: '1', run: null });
+    setSearchParams({ protect: '1', run: null, server: null, node: null });
   }
   function closeSheet() {
-    setSearchParams({ protect: null, run: null });
+    setSearchParams({ protect: null, run: null, server: null, node: null });
     invalidateOverview(qc);
   }
 </script>
@@ -231,7 +235,8 @@
               {row}
               status={statuses[i]!}
               runId={run?.id ?? null}
-              onOpenRun={(id) => setSearchParams({ run: id, protect: null })}
+              onOpenRun={(id) =>
+                setSearchParams({ run: id, protect: null, server: null, node: null })}
             />
           </li>
         {/each}
@@ -286,7 +291,9 @@
     open={sheetOpen}
     runId={runParam.value || null}
     startAtAccount={!hasAccount}
-    onRunCreated={(id) => setSearchParams({ run: id, protect: null })}
+    server={serverParam.value || null}
+    node={nodeParam.value || null}
+    onRunCreated={(id) => setSearchParams({ run: id, protect: null, server: null, node: null })}
     onClose={closeSheet}
   />
 {/if}

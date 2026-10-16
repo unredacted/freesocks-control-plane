@@ -29,8 +29,9 @@ export const ApiScope = z.enum([
   // profiles). Separate from `admin:servers:write` on purpose: the node role's
   // token holds that one and must not gain the power to change a panel here.
   'admin:servers:manage',
-  // Node-role registration of relays + listeners (edges): the by-slug routes
-  // only, confined to the token's registration boundary (apiTokens.edgeRegistration).
+  // The node role's bounded token: the Servers `{slug}/nodes/by-name/{name}`
+  // routes only, confined to the token's registration boundary (backend servers
+  // and, optionally, node names; apiTokens.edgeRegistration).
   'admin:edges:register',
   'admin:status:read',
 ]);
