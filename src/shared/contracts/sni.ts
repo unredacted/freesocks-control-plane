@@ -14,7 +14,69 @@ export const SniConfig = z.object({
   curatedCountries: z.array(z.string()),
 });
 export type SniConfig = z.infer<typeof SniConfig>;
-export const SniConfigView = z.object({ config: SniConfig });
+
+/** Checks of names from inside opted-in countries (`edge.sni.vantage.*`; docs/edges.md). */
+export const SniVantageConfig = z.object({
+  enabled: z.boolean(),
+  countries: z.array(z.string()),
+  sources: z.object({ globalping: z.boolean(), ripeatlas: z.boolean() }),
+  intervalHours: z.number(),
+  hourlyBudget: z.number(),
+  perCountryLimit: z.number(),
+  batchNames: z.number(),
+  windowDays: z.number(),
+  minVantages: z.number(),
+  minNetworks: z.number(),
+  autoApply: z.boolean(),
+});
+export type SniVantageConfig = z.infer<typeof SniVantageConfig>;
+
+export const SniConfigView = z.object({
+  config: SniConfig,
+  vantage: SniVantageConfig,
+  /** Which sources can run now (RIPE Atlas needs its key). */
+  vantageSources: z.object({ globalping: z.boolean(), ripeatlas: z.boolean() }),
+});
+export type SniConfigView = z.infer<typeof SniConfigView>;
+
+/** `PATCH …/sni/config`: any subset, the vantage block nested. */
+export type SniConfigPatch = Partial<SniConfig> & {
+  vantage?: Partial<Omit<SniVantageConfig, 'sources'>> & {
+    sources?: Partial<SniVantageConfig['sources']>;
+  };
+};
+
+/** Why the checks suggest nothing (lib/edges/sni/vantage.ts `SuggestReason`). */
+export const SNI_VANTAGE_REASONS = [
+  'no_data',
+  'not_enough_vantages',
+  'not_enough_networks',
+  'not_paired',
+  'needs_repeat',
+  'no_control',
+  'mixed',
+  'reports_disagree',
+] as const;
+
+/** What the checks from one country say about one name, judged now. */
+export const SniVantageRow = z.object({
+  country: z.string(),
+  latest: z.enum(['ok', 'failing', 'mixed', 'none']),
+  suggestion: z.enum(['proven', 'blocked']).nullable(),
+  reason: z.enum(SNI_VANTAGE_REASONS).nullable(),
+  /** Against the mark standing today: an operator's mark is never replaced. */
+  decision: z.enum(['suggest', 'agrees', 'conflict', 'none']),
+  okVantages: z.number(),
+  okNetworks: z.number(),
+  failVantages: z.number(),
+  failNetworks: z.number(),
+  pathFailures: z.number(),
+  reportsAgree: z.boolean(),
+  lastAt: z.string().nullable(),
+  lastOkAt: z.string().nullable(),
+  lastRequestedAt: z.string().nullable(),
+});
+export type SniVantageRow = z.infer<typeof SniVantageRow>;
 
 export const SniFamilySummary = z.object({
   id: z.string(),
@@ -50,6 +112,10 @@ export const SniNameRow = z.object({
   provenIn: z.array(z.string()),
   /** Curated countries where member reports single this name out. A hint, never a verdict. */
   suspectIn: z.array(z.string()),
+  /** Countries whose mark was written by the checks themselves (`autoApply`), not an operator. */
+  probeMarkedIn: z.array(z.string()),
+  /** What the checks from inside each country say. */
+  vantage: z.array(SniVantageRow),
 });
 export type SniNameRow = z.infer<typeof SniNameRow>;
 
@@ -71,6 +137,13 @@ export type SniBindRequest = z.infer<typeof SniBindRequest>;
 export const SniFamilyDetail = z.object({
   family: SniFamilySummary,
   curatedCountries: z.array(z.string()),
+  vantage: z.object({
+    enabled: z.boolean(),
+    /** Opted-in AND curated: the only countries checks run from. */
+    countries: z.array(z.string()),
+    autoApply: z.boolean(),
+    sources: z.array(z.enum(['globalping', 'ripeatlas'])),
+  }),
   names: z.array(SniNameRow),
   bindings: z.array(SniBinding),
 });
@@ -144,3 +217,19 @@ export const SniReceiptConfirmed = z.object({
   activated: z.number(),
   witness: z.boolean(),
 });
+
+/** `POST …/families/{slug}/vantage {snis, country}`: check these names from there now. */
+export const SniVantageRequested = z.object({
+  batches: z.number(),
+  measurements: z.number(),
+  skipped: z.number(),
+});
+export type SniVantageRequested = z.infer<typeof SniVantageRequested>;
+
+/** `POST …/families/{slug}/vantage/apply {snis, country}`: record the current suggestions. */
+export const SniVantageApplied = z.object({
+  proven: z.number(),
+  blocked: z.number(),
+  skipped: z.number(),
+});
+export type SniVantageApplied = z.infer<typeof SniVantageApplied>;
