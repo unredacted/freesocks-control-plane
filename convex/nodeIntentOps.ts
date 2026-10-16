@@ -344,11 +344,22 @@ function httpsStatus(
         resolve(res.statusCode ?? null);
       },
     );
+    // A transport that ACCEPTS the WebSocket handshake answers 101: Node hands
+    // that to 'upgrade' (never 'response'), and without a listener it destroys
+    // the socket and only emits 'close', taking the timeout with it. The check
+    // then never returned and held the node's reconcile forever.
+    req.on('upgrade', (res, socket) => {
+      socket.destroy();
+      resolve(res.statusCode ?? null);
+    });
     req.on('error', () => resolve(null));
     req.on('timeout', () => {
       req.destroy();
       resolve(null);
     });
+    // Last resort: whatever closed the request without an answer is no answer
+    // (a settled promise ignores a later resolve).
+    req.on('close', () => resolve(null));
     req.end();
   });
 }
