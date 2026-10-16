@@ -1310,6 +1310,8 @@ export const PLAIN_ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
   thaw: 'Resume new work',
   rebalance: 'Make room',
   require_edges: 'Go live',
+  protect_node: 'Protect the node',
+  open_node: 'Review go-live',
 };
 
 export const ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
