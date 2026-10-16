@@ -20,11 +20,20 @@
  */
 import { v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
+import type { MutationCtx } from './_generated/server';
+import type { Id } from './_generated/dataModel';
 
 /** An obligation younger than this may still be an upload in flight: the repair leaves it alone. */
 export const REPAIR_GRACE_MS = 2 * 60_000;
 const REPAIR_BATCH = 25;
 
+/**
+ * Open an obligation before an upload. It supersedes (drops) every earlier
+ * open one of the same object whose providers this upload writes too: the
+ * newer write decides what the object holds, so one record per object stays
+ * open at most, however often the policy flaps. Returns whether it superseded
+ * any, so an upload that then writes nothing keeps its record open.
+ */
 export const open = internalMutation({
   args: {
     subscriptionId: v.id('subscriptions'),
@@ -35,15 +44,47 @@ export const open = internalMutation({
   },
   handler: async (ctx, a) => {
     const now = Date.now();
-    return ctx.db.insert('mirrorUploads', {
+    let superseded = 0;
+    for (const r of await ctx.db
+      .query('mirrorUploads')
+      .withIndex('by_subscription', (q) =>
+        q.eq('subscriptionId', a.subscriptionId).eq('state', 'open'),
+      )
+      .collect()) {
+      // one subscription's open uploads: a handful at most
+      if (r.objectPath !== a.objectPath || !r.providers.every((p) => a.providers.includes(p)))
+        continue;
+      await ctx.db.delete(r._id);
+      superseded++;
+    }
+    const id = await ctx.db.insert('mirrorUploads', {
       ...a,
       state: 'open' as const,
       attempts: 0,
       startedAt: now,
       updatedAt: now,
     });
+    return { id, superseded };
   },
 });
+
+/**
+ * A re-issue carried the mirrors onto a new subscription row (the object now
+ * serves the new key): its open obligations follow, so the repair judges the
+ * object by the row that holds it.
+ */
+export async function moveOpenUploads(
+  ctx: MutationCtx,
+  from: Id<'subscriptions'>,
+  to: Id<'subscriptions'>,
+): Promise<void> {
+  const now = Date.now();
+  for (const r of await ctx.db
+    .query('mirrorUploads')
+    .withIndex('by_subscription', (q) => q.eq('subscriptionId', from).eq('state', 'open'))
+    .collect())
+    await ctx.db.patch(r._id, { subscriptionId: to, updatedAt: now });
+}
 
 /**
  * Settle (drop) obligations an upload under a stable token satisfied: the

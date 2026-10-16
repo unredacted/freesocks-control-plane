@@ -8,6 +8,7 @@ import type { DatabaseReader } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { ConvexError, v } from 'convex/values';
+import { moveOpenUploads } from './mirrorUploads';
 import { randomHex } from './lib/crypto';
 import { backendIdValidator, type BackendId } from './lib/backendIds';
 
@@ -186,6 +187,9 @@ export const insertSubscription = internalMutation({
       state: 'active',
       updatedAt: Date.now(),
     });
+    // The carried objects' open upload obligations follow them (the mirror barrier).
+    if (carriedMirrors && a.carrySubTokenFromId)
+      await moveOpenUploads(ctx, a.carrySubTokenFromId, inserted);
     return inserted;
   },
 });

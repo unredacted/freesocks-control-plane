@@ -1041,12 +1041,28 @@ async function parkForApproval(
   listenerKey: string,
 ): Promise<{ ok: false; code: string }> {
   const now = Date.now();
-  const intent = await ctx.db
-    .query('panelNodeIntents')
-    .withIndex('by_server_name', (q) =>
-      q.eq('backendServerId', r.backendServerId).eq('name', r.nodeName),
-    )
-    .unique();
+  const intentOf = () =>
+    ctx.db
+      .query('panelNodeIntents')
+      .withIndex('by_server_name', (q) =>
+        q.eq('backendServerId', r.backendServerId).eq('name', r.nodeName),
+      )
+      .unique();
+  // The node's running activation (this run's own) refused the publication:
+  // the candidate no longer fits what was approved. It is blocked, so the node
+  // parks where a fresh approval can be given, and that approval wakes this run.
+  const before = await intentOf();
+  const act = before?.activation.currentRunId
+    ? await ctx.db.get(before.activation.currentRunId)
+    : null;
+  if (
+    act &&
+    act.state === 'running' &&
+    act.setupRunId === r._id &&
+    code !== 'servers.node_not_approved'
+  )
+    await blockActivation(ctx, act, code);
+  const intent = await intentOf();
   const need = { code: 'node_not_approved', detail: intent?.activation.stage ?? code };
   await ctx.db.patch(r._id, {
     state: 'needs_you',
@@ -1722,6 +1738,11 @@ async function stageRehearse(ctx: ActionCtx, run: Run): Promise<null> {
   });
   if (res.familiesDisabled.length > 0)
     return needsYou(ctx, run, 'family_disabled', res.familiesDisabled[0]);
+  // The activation this run was approved for is no longer the node's running
+  // one (superseded, blocked): nothing can be proven until the next approval,
+  // which wakes the run here.
+  if (res.failures.some((f) => f.reason === 'activation_superseded'))
+    return needsYou(ctx, run, 'node_not_approved', 'servers.run_superseded');
   if (res.proofsExpired.length > 0) {
     // Re-run the expired proofs, then rehearse again (bounded).
     for (const edgeId of res.proofsExpired) await ops.runFrontProof(ctx, edgeId as Id<'edges'>);
@@ -2014,9 +2035,26 @@ export const goLive = internalMutation({
             return need('node_not_approved', 'servers.run_superseded');
           const p = await promoteCandidate(ctx, act.run, { edgeIds });
           if (!p.ok) {
-            // A candidate the approval no longer describes is blocked: the node
-            // parks for a fresh approval, whose wake re-runs the rehearsal.
-            if (STALE_CANDIDATE_CODES.has(p.code)) await blockActivation(ctx, act.run, p.code);
+            // An obligation of the node still in flight settles by itself: go-live is tried again.
+            if (p.code === 'servers.obligation_unresolved') {
+              await ctx.db.patch(runId, {
+                state: 'waiting',
+                stepVersion: next,
+                events: appendRunEvent(r.events, {
+                  at: now,
+                  level: 'info',
+                  code: 'waiting',
+                  detail: p.code,
+                }),
+                updatedAt: now,
+              });
+              await scheduleStep(ctx, runId, edgeMs.poll(await resolveEdgeConfig(ctx.db)));
+              return { ok: false as const, code: p.code };
+            }
+            // Anything else means the approved candidate cannot go live as it
+            // stands: it is blocked, the node parks for a fresh approval (the
+            // review names why), and that approval's wake re-runs the rehearsal.
+            await blockActivation(ctx, act.run, p.code);
             return need('node_not_approved', p.code);
           }
         } else {
@@ -2077,13 +2115,6 @@ export const goLive = internalMutation({
     return { ok: true as const, code: 'live' };
   },
 });
-
-/** Promotion refusals that mean the approved candidate is no longer what would go live. */
-const STALE_CANDIDATE_CODES: ReadonlySet<string> = new Set([
-  'servers.review_stale',
-  'servers.standbys_unverified',
-  'servers.revision_moved',
-]);
 
 // --- the node's approval wakes the run --------------------------------------------------------------
 

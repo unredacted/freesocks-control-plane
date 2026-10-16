@@ -47,6 +47,7 @@ import { TEST_CREDENTIAL_TAG, testCredentialUsername } from './edgeTestCredentia
 import {
   isDirect,
   modeEntry,
+  nodeGateFor,
   modeSlug,
   originAddressOf,
   originHostnameOf,
@@ -54,6 +55,7 @@ import {
 } from './nodeIntents';
 import { bumpGateVersion, setupReady, type Setup } from './backendSetup';
 import { relayForBackendNode, scheduleMirrorRefresh } from './relays';
+import { isCandidateEdge, type NodeGate } from './lib/backend/deliveryGate';
 
 const refuse = (code: string, message: string): never => {
   throw new ConvexError({ code, message });
@@ -299,11 +301,21 @@ async function liveIsolationBlocker(
     const extra = (intent.addressUuids ?? []).some((u) => !committed.hostUuids.includes(u));
     return extra ? 'servers.maintenance_required' : null;
   }
+  const gate = await nodeGateFor(ctx, intent.backendServerId, intent.name);
   for (const l of await frontedListenersOf(ctx, intent)) {
-    if (!l.templateEdgeId || !committed.edgeIds.includes(l.templateEdgeId as string))
-      return 'servers.maintenance_required';
+    if (pointerMoves(gate, l.templateEdgeId)) return 'servers.maintenance_required';
   }
   return null;
+}
+
+/**
+ * Whether a candidate on this listener of a LIVE node would need a new Host
+ * or a moved Host pointer: the listener has no template edge, or its template
+ * is itself a candidate (members are not served through it yet). A template
+ * an automatic replacement moved stays fine: what members get is what counts.
+ */
+function pointerMoves(gate: NodeGate, templateEdgeId: Id<'edges'> | null): boolean {
+  return !templateEdgeId || isCandidateEdge(gate, templateEdgeId as string);
 }
 
 /** What keeps a node from being approved, as code words (the first is what `approve` refuses with). */
@@ -1066,9 +1078,18 @@ export async function promoteCandidate(
   ).some((o) => o.state === 'pending' || o.state === 'sent' || o.state === 'unresolved');
   if (open) return { ok: false, code: 'servers.obligation_unresolved' };
   const at = Date.now();
+  // What members are served from now on: this run's set, plus every edge of
+  // the previous commit still published (a replacement joins the pool beside
+  // the committed edges; the replace or unpublish that retires them is its own
+  // decision), so a later approval never mistakes a served edge for a candidate.
+  const kept: string[] = [];
+  for (const id of intent.approved?.committed.edgeIds ?? []) {
+    const e = await ctx.db.get(id as Id<'edges'>);
+    if (e && e.publication === 'published' && e.status === 'active') kept.push(id);
+  }
   const committed = {
     hostUuids: run.resources.hostUuids,
-    edgeIds: [...new Set([...run.resources.edgeIds, ...(extra.edgeIds ?? [])])],
+    edgeIds: [...new Set([...kept, ...run.resources.edgeIds, ...(extra.edgeIds ?? [])])],
   };
   await ctx.db.patch(run._id, {
     state: 'committed',
@@ -1275,9 +1296,32 @@ export async function publicationAdmission(
     now.deliveryRevision !== a.deliveryRevision
   )
     return { kind: 'refused', code: 'servers.node_not_approved' };
-  if (!publicationFits(await committedReviewOf(ctx, intent), pub))
-    return { kind: 'refused', code: 'servers.node_not_approved' };
+  // The committed approval's shape; a review stored before the per-listener
+  // shape (or an adopted node's, which has none) is read as the shape members
+  // are served through now: each listener's template edge.
+  const committedShape = await committedReviewOf(ctx, intent);
+  const shape = committedShape?.listeners
+    ? committedShape
+    : { listeners: await servedListenersOf(ctx, intent) };
+  if (!publicationFits(shape, pub)) return { kind: 'refused', code: 'servers.node_not_approved' };
   return { kind: 'committed' };
+}
+
+/** Each listener of a fronted node with the account and template of its template edge (what is served). */
+async function servedListenersOf(
+  ctx: { db: QueryCtx['db'] },
+  intent: Intent,
+): Promise<ReviewListener[]> {
+  const out: ReviewListener[] = [];
+  for (const l of await frontedListenersOf(ctx, intent)) {
+    const e = l.templateEdgeId ? await ctx.db.get(l.templateEdgeId) : null;
+    out.push({
+      listenerKey: l.listenerKey,
+      accountId: e?.accountId ? String(e.accountId) : null,
+      templateHash: e?.templateHash ?? null,
+    });
+  }
+  return out;
 }
 
 /** Whether publishing on this listener of a live node would add or move a committed Host pointer. */
@@ -1286,9 +1330,9 @@ async function isolationBreaks(
   intent: Intent,
   listenerKey: string,
 ): Promise<boolean> {
-  const committed = new Set(intent.approved?.committed.edgeIds ?? []);
+  const gate = await nodeGateFor(ctx, intent.backendServerId, intent.name);
   const l = (await frontedListenersOf(ctx, intent)).find((x) => x.listenerKey === listenerKey);
-  return !l?.templateEdgeId || !committed.has(l.templateEdgeId as string);
+  return pointerMoves(gate, l?.templateEdgeId ?? null);
 }
 
 /**

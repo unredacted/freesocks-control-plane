@@ -300,13 +300,14 @@ export const provisionMirror = internalAction({
 
     // The obligation exists BEFORE the object does: an upload that races a
     // policy move is repaired or withdrawn later, never trusted.
-    const obligationId = await ctx.runMutation(internal.mirrorUploads.open, {
+    const obligation = await ctx.runMutation(internal.mirrorUploads.open, {
       subscriptionId: context.subscriptionId,
       objectPath,
       providers: [provider.name],
       tokenBefore,
       kind: 'initial',
     });
+    const obligationId = obligation.id;
     let entry: SubscriptionMirror | undefined;
     try {
       const mirrors = await uploadToProviders(
@@ -321,8 +322,9 @@ export const provisionMirror = internalAction({
       entry = mirrors[0];
       if (entry && rendered.validated) entry = { ...entry, validated: rendered.validated };
     } catch {
-      // Nothing was written: nothing to repair.
-      await ctx.runMutation(internal.mirrorUploads.settle, { id: obligationId });
+      // Nothing was written: nothing to repair (unless it replaced an open record of the object).
+      if (obligation.superseded === 0)
+        await ctx.runMutation(internal.mirrorUploads.settle, { id: obligationId });
       return { status: 'error', remaining: Math.max(0, cap - used) };
     }
     if (!entry) return { status: 'error', remaining: Math.max(0, cap - used) };
@@ -552,13 +554,14 @@ async function refreshOneSubMirrors(
     }
     // The mirror barrier: the obligation is open before the object is
     // written, and settles below only if the token did not move meanwhile.
-    const obligationId = await ctx.runMutation(internal.mirrorUploads.open, {
+    const obligation = await ctx.runMutation(internal.mirrorUploads.open, {
       subscriptionId: sub.id,
       objectPath: sub.objectPath,
       providers: targets.map((t) => t.name),
       tokenBefore,
       kind,
     });
+    const obligationId = obligation.id;
     // Throws only if EVERY provider failed (caught below → sub skipped,
     // pin deliberately unrecorded: the mirror still serves the old node).
     let uploaded: SubscriptionMirror[];
@@ -573,9 +576,10 @@ async function refreshOneSubMirrors(
         s3Send,
       );
     } catch (err) {
-      // Nothing was written by THIS upload: its own obligation is settled
-      // (an earlier open one of the object stays open).
-      await ctx.runMutation(internal.mirrorUploads.settle, { id: obligationId });
+      // Nothing was written by THIS upload: its obligation is settled, unless
+      // it replaced an open one of the object (which then still stands for it).
+      if (obligation.superseded === 0)
+        await ctx.runMutation(internal.mirrorUploads.settle, { id: obligationId });
       throw err;
     }
     const mirrors = uploaded.map((m) =>
@@ -609,12 +613,14 @@ async function refreshOneSubMirrors(
       ...(allSucceeded && !moved ? { rawContentHash: hash } : {}),
     });
     if (moved) return true;
-    // A clean round settles this obligation and every earlier one of the object.
+    // Nothing moved: the obligation is met, a partial round included (a
+    // provider that failed still holds its previous object, which its own
+    // upload settled; the next refresh retries it).
+    await ctx.runMutation(internal.mirrorUploads.settle, {
+      id: obligationId,
+      subscriptionId: sub.id,
+    });
     if (allSucceeded) {
-      await ctx.runMutation(internal.mirrorUploads.settle, {
-        id: obligationId,
-        subscriptionId: sub.id,
-      });
       await recordPin();
       await stampContent();
     }

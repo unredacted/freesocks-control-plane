@@ -208,6 +208,8 @@ interface World {
   backend: FakeBackend;
   calls: { rehearsedEdges: string[][]; s3: Array<{ op: S3Op; provider: string }> };
   hooks: {
+    /** Runs once before the next rehearsal reads anything (a move while the run is at 7). */
+    beforeRehearsal: (() => Promise<void>) | null;
     /** Runs once after the next rehearsal returned (a policy move between 7 and 8). */
     afterRehearsal: (() => Promise<void>) | null;
     /** While set, every rehearsal fails (the run waits at `rehearsal_failed`). */
@@ -267,7 +269,12 @@ async function world(): Promise<World> {
   );
   expect((await t.run((c) => c.db.get(started.setupId)))!.state).toBe('ready');
   const calls: World['calls'] = { rehearsedEdges: [], s3: [] };
-  const hooks: World['hooks'] = { afterRehearsal: null, holdRehearsal: false, duringPut: null };
+  const hooks: World['hooks'] = {
+    beforeRehearsal: null,
+    afterRehearsal: null,
+    holdRehearsal: false,
+    duringPut: null,
+  };
   return { t, serverId, backend, calls, hooks };
 }
 
@@ -400,6 +407,9 @@ function installSeams(w: World) {
       };
     },
     rehearse: async (ctx, a) => {
+      const before = w.hooks.beforeRehearsal;
+      w.hooks.beforeRehearsal = null;
+      if (before) await before();
       // The production rehearsal, with a record of which edges it rendered.
       const c = await ctx.runQuery(internal.edgeRehearsal.context, {
         relayId: a.relayId,
@@ -890,6 +900,14 @@ describe("a live node's replacement stays a candidate until its commit", () => {
     if (member.kind === 'render')
       expect(member.context.published.map((p) => p.edgeId)).toContain(e2);
     expect((await gateOf(t, serverId)).candidates.edgeIds).toEqual([]);
+    // What members are served stays committed: the edge it replaced beside the
+    // new one (still published), so the next review is not mistaken for a new Host.
+    const after = await intentOf(t, live.intentId);
+    expect([...after.approved!.committed.edgeIds].sort()).toEqual(
+      [live.e1 as string, e2 as string].sort(),
+    );
+    const next = await t.query(internal.nodeActivation.review, { intentId: live.intentId });
+    expect(next.blockers).not.toContain('servers.maintenance_required');
   });
 
   test('a re-protect within the approved shape reaches done without a new approval', async () => {
@@ -982,6 +1000,77 @@ describe('ownership links and attempt fencing', () => {
     expect(intent.activation.currentRunId).toBeUndefined();
     expect(intent.delivery.disposition).toBe('staged');
     expect((await gateOf(t, serverId)).state).toBe('blocked');
+  });
+
+  test('a candidate that stops fitting its approval before it publishes blocks the activation: a fresh approval is possible and wakes the run', async () => {
+    const w = await world();
+    const { t } = w;
+    installSeams(w);
+    const { l4 } = await accounts(t);
+    const intentId = await enrollReady(w, { name: NODE, mode: 'freedom-reality', v4: ORIGIN_V4 });
+    const cookie = await adminCookie(t);
+    const runId = await protectToPark(w, { nodeName: NODE, accountId: l4 });
+    const parkedAt = (await setupRun(t, runId)).generation;
+    const { runId: actId } = await approveOverHttp(t, cookie, intentId);
+    // Before the wake publishes, the standby is moved to another account under it.
+    const other = await createAccount(t, { provider: 'upcloud', name: 'acct-l4-other' });
+    const edgeId = (await setupRun(t, runId)).listeners[0]!.edgeId!;
+    await t.run((c) => c.db.patch(edgeId, { accountId: other }));
+    const held = await drive(
+      t,
+      () => setupRun(t, runId),
+      (r) =>
+        (r.generation > parkedAt && r.state === 'needs_you') ||
+        ['done', 'failed', 'cancelled'].includes(r.state),
+      'run to the refused publication',
+    );
+    expect([held.stage, held.need?.code]).toEqual(['publish', 'node_not_approved']);
+    expect((await activationRun(t, actId)).state).toBe('blocked');
+    expect((await activationRun(t, actId)).code).toBe('servers.review_stale');
+    expect((await intentOf(t, intentId)).activation.stage).toBe('awaiting_approval');
+    // The review describes the new shape and can be approved; that approval wakes the run.
+    const { runId: act2 } = await approveOverHttp(t, cookie, intentId);
+    const done = await drive(t, () => setupRun(t, runId), movedOn, 'run after the re-approval');
+    expect([done.stage, done.state]).toEqual(['done', 'done']);
+    expect((await activationRun(t, act2)).state).toBe('committed');
+  });
+
+  test('an activation superseded while the run rehearses waits for the next approval, which wakes it', async () => {
+    const w = await world();
+    const { t } = w;
+    installSeams(w);
+    const { l4 } = await accounts(t);
+    const intentId = await enrollReady(w, { name: NODE, mode: 'freedom-reality', v4: ORIGIN_V4 });
+    const cookie = await adminCookie(t);
+    const runId = await protectToPark(w, { nodeName: NODE, accountId: l4 });
+    // A maintenance pass on the node while the run is at its rehearsal.
+    w.hooks.beforeRehearsal = async () => {
+      await t.mutation(internal.nodeIntents.startMaintenance, { intentId });
+      await t.mutation(internal.nodeIntents.finishMaintenance, { intentId });
+    };
+    const { runId: act1 } = await approveOverHttp(t, cookie, intentId);
+    const waiting = await drive(
+      t,
+      () => setupRun(t, runId),
+      (r) => movedOn(r) || (r.stage === 'rehearse' && r.state === 'needs_you'),
+      'run to the superseded rehearsal',
+    );
+    expect([waiting.stage, waiting.state, waiting.need?.code]).toEqual([
+      'rehearse',
+      'needs_you',
+      'node_not_approved',
+    ]);
+    expect((await activationRun(t, act1)).state).toBe('superseded');
+    await drive(
+      t,
+      () => intentOf(t, intentId),
+      (i) => !i.claim,
+      'the reconcile after maintenance',
+    );
+    const { runId: act2 } = await approveOverHttp(t, cookie, intentId);
+    const done = await drive(t, () => setupRun(t, runId), movedOn, 'run after the next approval');
+    expect([done.stage, done.state]).toEqual(['done', 'done']);
+    expect((await activationRun(t, act2)).state).toBe('committed');
   });
 
   test('a go-live waiting for a fresh approval can be cancelled; nothing was bound', async () => {
@@ -1219,6 +1308,127 @@ describe('the mirror barrier', () => {
     expect(await t.query(internal.mirrorUploads.openFor, { subscriptionId: live.subId })).toEqual(
       [],
     );
+  });
+
+  test('a provider that keeps failing does not pile up records: a partial round under a stable policy settles', async () => {
+    const w = await world();
+    const { t } = w;
+    const live = await liveL4(w);
+    await withMirrorProvider(t);
+    await t.run(async (ctx) => {
+      await ctx.db.insert('mirrorProviders', {
+        name: 'p2',
+        endpoint: 'https://s3-2.example',
+        bucket: 'b2',
+        publicUrl: 'https://cdn-2.example',
+        region: 'auto',
+        accessKeyId: 'ak2',
+        secretAccessKey: 'sk2',
+        isActive: true,
+        priority: 1,
+        updatedAt: Date.now(),
+      });
+      await ctx.db.patch(live.subId, {
+        subscriptionMirrors: [
+          {
+            provider: 'p1',
+            publicUrl: 'https://cdn.example/mirrors/m1',
+            objectPath: 'mirrors/m1',
+            status: 'ok',
+          },
+          {
+            provider: 'p2',
+            publicUrl: 'https://cdn-2.example/mirrors/m1',
+            objectPath: 'mirrors/m1',
+            status: 'ok',
+          },
+        ],
+      });
+    });
+    __setS3SendForTests(async (provider) => {
+      if (provider.name === 'p2') throw new Error('provider down');
+    });
+    for (let i = 0; i < 3; i++)
+      await t.action(internal.storage.refreshMirrorsForSubscription, {
+        subscriptionId: live.subId,
+        force: true,
+      });
+    expect(await t.query(internal.mirrorUploads.openFor, { subscriptionId: live.subId })).toEqual(
+      [],
+    );
+    // A policy that keeps moving under the uploads leaves ONE open record, not one per pass.
+    __setS3SendForTests(async () => {
+      await t.run((c) =>
+        c.db.patch(live.intentId, { updatedAt: Date.now() }).then(() =>
+          c.db
+            .query('panelSetups')
+            .withIndex('by_server', (q) => q.eq('backendServerId', w.serverId))
+            .unique()
+            .then((s) => c.db.patch(s!._id, { gateVersion: s!.gateVersion + 1 })),
+        ),
+      );
+    });
+    for (let i = 0; i < 3; i++) {
+      vi.advanceTimersByTime(REPAIR_GRACE_MS + 1_000);
+      await t.action(internal.storage.refreshMirrorsForSubscription, {
+        subscriptionId: live.subId,
+        force: true,
+      });
+      await t.action(internal.storage.repairMirrorUploads, {});
+    }
+    expect(
+      (await t.query(internal.mirrorUploads.openFor, { subscriptionId: live.subId })).length,
+    ).toBeLessThanOrEqual(1);
+  });
+
+  test('a re-issue that carries the mirror takes its open record along: the repair rewrites the object, never withdraws it', async () => {
+    const w = await world();
+    const { t } = w;
+    const live = await liveL4(w);
+    await withMirrorProvider(t);
+    await t.run((ctx) =>
+      ctx.db.patch(live.subId, {
+        subscriptionMirrors: [
+          {
+            provider: 'p1',
+            publicUrl: 'https://cdn.example/mirrors/m1',
+            objectPath: 'mirrors/m1',
+            status: 'ok',
+          },
+        ],
+      }),
+    );
+    w.hooks.duringPut = () =>
+      t.mutation(internal.nodeIntents.startMaintenance, { intentId: live.intentId }).then(() => {});
+    await t.action(internal.storage.refreshMirrorsForSubscription, {
+      subscriptionId: live.subId,
+      force: true,
+    });
+    expect(
+      await t.query(internal.mirrorUploads.openFor, { subscriptionId: live.subId }),
+    ).toHaveLength(1);
+    // The member's key is re-issued: the mirror moves to the new row.
+    const old = (await t.run((c) => c.db.get(live.subId)))!;
+    const newSub = await t.mutation(internal.subscriptions.insertSubscription, {
+      userId: old.userId,
+      backend: 'remnawave',
+      backendUserId: old.backendUserId,
+      backendShortId: old.backendShortId,
+      backendServerId: old.backendServerId,
+      subscriptionUrl: old.subscriptionUrl,
+      subscriptionMirrors: [],
+      carrySubTokenFromId: live.subId,
+    });
+    expect(await t.query(internal.mirrorUploads.openFor, { subscriptionId: newSub })).toHaveLength(
+      1,
+    );
+    const deletesBefore = w.calls.s3.filter((x) => x.op.kind === 'delete').length;
+    vi.advanceTimersByTime(REPAIR_GRACE_MS + 1_000);
+    await t.action(internal.storage.repairMirrorUploads, {});
+    expect(w.calls.s3.filter((x) => x.op.kind === 'delete').length).toBe(deletesBefore);
+    const rewritten = w.calls.s3.filter((x) => x.op.kind === 'put').at(-1)!.op as { body: string };
+    expect(rewritten.body).toBe(MIRROR_UNAVAILABLE_STUB);
+    expect(await t.query(internal.mirrorUploads.openFor, { subscriptionId: newSub })).toEqual([]);
   });
 
   test('an upload under a stable policy settles at once', async () => {
