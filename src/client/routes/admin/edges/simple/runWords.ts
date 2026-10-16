@@ -218,9 +218,13 @@ export function planWords(
     ? `Going live also turns on protected delivery for ${plural(plan.renderGlobal.affectedRelays.length, 'other node', 'other nodes')} that ${plan.renderGlobal.affectedRelays.length === 1 ? 'is' : 'are'} ready for it${plan.renderGlobal.affectedRelays.length > 0 ? ` (${plan.renderGlobal.affectedRelays.join(', ')})` : ''}.`
     : null;
   const button = uncovered ? hideButton(uncovered.count) : 'Protect this node';
-  const frontable = plan.inbounds.filter((i) => i.frontable);
+  // The protected transports only: on a node with more than one run takes, the
+  // plan lists every frontable one but the run carries the chosen ones.
+  const protectedOnes = plan.inbounds.filter(
+    (i) => i.frontable && plan.requiredListeners.includes(i.listenerKey),
+  );
   const all = (k: 'links' | 'singbox' | 'clash') =>
-    frontable.length > 0 && frontable.every((i) => i.formats[k]);
+    protectedOnes.length > 0 && protectedOnes.every((i) => i.formats[k]);
   const names = [
     all('links') ? 'link' : null,
     all('singbox') ? 'sing-box' : null,

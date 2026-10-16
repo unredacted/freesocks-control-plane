@@ -147,17 +147,27 @@
         .filter(([, v]) => v !== ''),
     );
 
+  /** What a discovery is asked with; an answer counts only while the form still says this. */
+  const snapshot = () => ({
+    provider,
+    credentials: cleanCredentials(),
+    settings: settingsBody(provider, values),
+  });
+  type Snapshot = ReturnType<typeof snapshot>;
+  const sameSnapshot = (a: Snapshot, b: Snapshot) => JSON.stringify(a) === JSON.stringify(b);
+
   // Set by Connect: its successful answer opens the placement (a re-list from a
   // project or region pick does not move the step).
   let connecting = false;
   const discover = createMutation(() => ({
-    mutationFn: () =>
-      discoverProviderOptions({
-        provider,
-        credentials: cleanCredentials(),
-        settings: settingsBody(provider, values),
-      }),
-    onSuccess: (r) => {
+    mutationFn: (s: Snapshot) => discoverProviderOptions(s),
+    onSuccess: (r, asked) => {
+      // The provider, a credential or a setting changed while it was asked:
+      // the answer belongs to another form, so it is dropped (ask again).
+      if (!sameSnapshot(asked, snapshot())) {
+        connecting = false;
+        return;
+      }
       discovered = r;
       values = applyDiscovery(provider, values, { discovered: r, accounts });
       // Connected: on to the placement (Connect has nothing else to decide).
@@ -199,7 +209,7 @@
     if (f.from === 'networks') next['subnetId'] = '';
     values = next;
     // Lists below a project or a region depend on it.
-    if (f.from === 'projects' || f.from === 'regions') discover.mutate();
+    if (f.from === 'projects' || f.from === 'regions') discover.mutate(snapshot());
   }
 
   let testOutcome = $state<{ ok: boolean; code: string | null; detail?: string | null } | null>(
@@ -287,7 +297,7 @@
     if (credentialIssues.length > 0 || unfit(provider)) return;
     // Always asks again: the credentials may have changed since the last answer.
     connecting = true;
-    discover.mutate();
+    discover.mutate(snapshot());
   }
   /** The region hint: an L4 address near the node keeps the extra hop short. */
   const regionHint = $derived(
@@ -301,6 +311,8 @@
 {#snippet settingField(f: ProviderField)}
   {@const opts = optionsFor(f, ctx)}
   {@const current = values[f.key] ?? ''}
+  <!-- Credential-step settings are part of what Connect asks with: held while it runs. -->
+  {@const held = locked || (f.step === 'credentials' && discover.isPending)}
   <div class="space-y-1.5">
     <Label for={`${uid}-${f.key}`}>{f.label}{f.required ? '' : ' (optional)'}</Label>
     {#if f.kind === 'select' && opts.length > 0}
@@ -308,7 +320,7 @@
         type="single"
         value={current}
         onValueChange={(v: string) => onFieldChange(f, v === '__none' ? '' : v)}
-        disabled={locked}
+        disabled={held}
       >
         <Select.Trigger id={`${uid}-${f.key}`} class="w-full">
           {opts.find((o) => o.id === current)?.label ?? (current || 'Choose one')}
@@ -333,7 +345,7 @@
         value={current}
         placeholder={f.placeholder}
         readonly={f.readOnly === true && (discovered?.zones?.length ?? 0) > 0}
-        disabled={locked}
+        disabled={held}
         oninput={(e) => onFieldChange(f, e.currentTarget.value)}
       />
       {#if f.kind === 'select' && f.from !== 'subnets'}
@@ -363,6 +375,7 @@
               type="single"
               value={provider}
               onValueChange={(v: string) => setProvider(v as EdgeProviderId)}
+              disabled={discover.isPending}
             >
               <Select.Trigger id={`${uid}-provider`} class="w-full">
                 {providerLabel(provider)}
@@ -391,7 +404,12 @@
           </div>
           <div class="space-y-1.5">
             <Label for={`${uid}-name`}>Account name</Label>
-            <Input id={`${uid}-name`} bind:value={name} placeholder="Main account" />
+            <Input
+              id={`${uid}-name`}
+              bind:value={name}
+              placeholder="Main account"
+              disabled={discover.isPending}
+            />
             <p class="text-muted-foreground text-xs">Only shown to admins.</p>
           </div>
         </div>
@@ -410,6 +428,7 @@
                 autocomplete="off"
                 class="font-mono"
                 value={credentials[c] ?? ''}
+                disabled={discover.isPending}
                 oninput={(e) => (credentials = { ...credentials, [c]: e.currentTarget.value })}
               />
               <p class="text-muted-foreground text-xs">Write only: it is never shown again.</p>
@@ -502,7 +521,7 @@
               size="sm"
               class="h-11 sm:h-7"
               disabled={discover.isPending}
-              onclick={() => discover.mutate()}
+              onclick={() => discover.mutate(snapshot())}
             >
               {discover.isPending ? 'Connecting' : 'Connect again'}
             </Button>

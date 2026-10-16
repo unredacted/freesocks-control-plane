@@ -1327,6 +1327,8 @@ export const PreflightRequest = z.object({
   listenerKey: z.string().optional(),
   accountId: z.string().optional(),
   templateId: z.string().optional(),
+  /** `provision` only: false checks an unpublished spare, as `provision {publish: false}` starts it. */
+  publish: z.boolean().optional(),
   trigger: z.enum(['manual', 'detector', 'api', 'reconcile']).optional(),
 });
 export type PreflightRequest = z.infer<typeof PreflightRequest>;

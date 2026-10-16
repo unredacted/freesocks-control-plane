@@ -169,6 +169,26 @@ describe('planWords', () => {
       'Works for link and Clash subscriptions; other formats keep the direct address.',
     );
   });
+  it('judges the formats by the protected transports only (a choice on a busy node)', () => {
+    const w = planWords(
+      {
+        nodeName: 'n',
+        inbounds: [
+          inbound({}),
+          inbound({
+            listenerKey: 'other',
+            sourceTag: 'other',
+            formats: { links: true, singbox: false, clash: false },
+          }),
+        ],
+        requiredListeners: ['main'],
+        directHosts: [],
+        renderGlobal: { willEnable: false, affectedRelays: [] },
+      },
+      'Acc',
+    );
+    expect(w.formats).toBe('Works for every subscription format.');
+  });
   it('is quiet when nothing needs consent', () => {
     const w = planWords(
       {

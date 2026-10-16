@@ -6,7 +6,10 @@
    * is generated from what the check found (justificationText); the Advanced
    * page keeps the editable reason and the side-by-side bindings ("Details").
    *
-   * Props: relay (OriginAdmin with a `quarantine`)
+   * Props:
+   *   relay: OriginAdmin (with a `quarantine`)
+   *   onResolved?: () => void   after the decision landed: a setup run parked on
+   *                             the pause is not woken by it, so its card retries it
    */
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -32,8 +35,9 @@
 
   interface Props {
     relay: OriginAdmin;
+    onResolved?: () => void;
   }
-  let { relay }: Props = $props();
+  let { relay, onResolved }: Props = $props();
 
   const qc = useQueryClient();
   const viewQ = relayQuarantineQuery({ slug: () => relay.slug, id: () => relay.id });
@@ -66,6 +70,7 @@
     toast.success(`Unpaused. FCP keeps the ${WHICH[keep]} addresses.`);
     invalidateRelay(qc, relay.slug);
     invalidateOverview(qc);
+    onResolved?.();
   }
 </script>
 

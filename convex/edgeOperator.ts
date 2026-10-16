@@ -1160,6 +1160,8 @@ const preflightArgs = {
   listenerKey: v.optional(v.string()),
   accountId: v.optional(v.id('edgeProviderAccounts')),
   templateId: v.optional(v.id('edgeTemplates')),
+  /** `provision` only: false = the edge stays an unpublished spare (no standby is published instead). */
+  publish: v.optional(v.boolean()),
   trigger: v.optional(
     v.union(v.literal('manual'), v.literal('detector'), v.literal('api'), v.literal('reconcile')),
   ),
@@ -1192,7 +1194,9 @@ export const preflight = internalQuery({
       targetEdgeId: a.kind === 'replace' ? a.edgeId : undefined,
       toEdgeId: a.kind === 'publish' ? a.edgeId : undefined,
       listenerId: listener?._id,
-      publishOnDone: a.kind === 'provision',
+      // The same mode the provision route starts: `publish: false` keeps the
+      // result a spare, so no existing standby is picked to be published.
+      publishOnDone: a.kind === 'provision' && a.publish !== false,
       requestedAccountId: isTest || a.accountId ? a.accountId : undefined,
       requestedTemplateId: a.templateId,
       allowUnqualified: isTest,

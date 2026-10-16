@@ -352,7 +352,8 @@
           >
         </p>
       {:else if need.code === 'quarantined' && pausedRelay.data?.quarantine}
-        <PausedCard relay={pausedRelay.data} />
+        <!-- Resolving the pause does not wake the run: it carries on through a retry. -->
+        <PausedCard relay={pausedRelay.data} onResolved={() => retry()} />
       {/if}
 
       {#if choosingAccount}

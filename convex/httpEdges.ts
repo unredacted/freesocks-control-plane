@@ -846,6 +846,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
             typeof body.templateId === 'string' && body.templateId
               ? id<'edgeTemplates'>(body.templateId)
               : undefined,
+          ...(body.publish === false ? { publish: false } : {}),
           trigger: triggerOf(body.trigger),
         }),
       );
