@@ -26,6 +26,7 @@
  *    `qualificationEvidenceIds`) is what the go-live mutation compares against
  *    `vectorNow` before it binds.
  */
+import { verificationListenersOf } from './lib/edges/verificationContext';
 import { v } from 'convex/values';
 import type { FunctionReturnType } from 'convex/server';
 import { internalAction, internalQuery } from './_generated/server';
@@ -117,7 +118,10 @@ async function vectorOf(
   cfg: EdgeConfig,
   now: number,
 ): Promise<{ vector: RehearsalVector; proofsExpired: Id<'edges'>[] }> {
-  const listeners = (await listenersOf(ctx, relay._id)).filter((l) => !l.retired);
+  // With the enrolled node's auth revision: an L4 tick binds to it.
+  const listeners = (
+    await verificationListenersOf(ctx.db, relay, await listenersOf(ctx, relay._id))
+  ).filter((l) => !l.retired);
   const edges = (await liveEdgesOfRelay(ctx.db, relay._id)).filter(
     (e) => e.publication === 'published' && e.status === 'active',
   );

@@ -1276,6 +1276,107 @@ describe('refusals', () => {
   });
 });
 
+describe("an L4 endpoint tick binds to the enrolled node's REALITY key", () => {
+  /** The node's REALITY key (or a short id, or a clock bound) moves: its auth digest changes. */
+  const rekey = (t: T, intentId: Id<'panelNodeIntents'>) =>
+    t.run((c) => c.db.patch(intentId, { authRevision: 'auth-moved' }));
+
+  test('a key move before approval: approval refuses until each address is tried again, then succeeds', async () => {
+    const w = await world();
+    const { t } = w;
+    installSeams(w);
+    const accts = await accounts(t);
+    const intentId = await enrollReady(w, { name: NODE, mode: 'freedom-reality', v4: ORIGIN_V4 });
+    await seedMember(w, NODE);
+    const cookie = await adminCookie(t);
+    const runId = await protectToPark(w, { nodeName: NODE, accountId: accts.l4 });
+    const l4 = (await setupRun(t, runId)).listeners
+      .filter((l) => l.layer === 'l4')
+      .map((l) => l.edgeId as Id<'edges'>);
+    expect(l4.length).toBeGreaterThan(0);
+    // Ticked and approvable before the key moves.
+    expect((await t.query(internal.nodeActivation.review, { intentId })).blockers).toEqual([]);
+
+    await rekey(t, intentId);
+    const review = await t.query(internal.nodeActivation.review, { intentId });
+    // The review card says why; the refusal keeps its code.
+    expect(review.blockers).toContain('servers.standbys_unverified:key_changed');
+    await expect(
+      t.mutation(internal.nodeActivation.approve, { intentId, reviewHash: review.reviewHash }),
+    ).rejects.toThrow(/servers\.standbys_unverified/);
+    const stale = (await t.query(internal.edgeOperator.attention, {})).items.filter(
+      (i) => i.kind === 'retest_needed',
+    );
+    expect(stale.map((i) => i.code)).toEqual(l4.map(() => 'reality_key_changed'));
+    // The binding a client echoes keeps its shape: the digest is folded in, never shown.
+    const binding = (await t.query(internal.edgeVerification.binding, { edgeId: l4[0]! }))!;
+    expect(JSON.stringify(binding)).not.toContain('auth-moved');
+
+    // Try it again with the new key: the tick binds to it, and the approval follows.
+    for (const e of l4) await verifyL4Edge(t, e);
+    const rec = (await t.run((c) => c.db.get(l4[0]!)))!.verification!;
+    expect(rec.authRevision).toBe('auth-moved');
+    await approveOverHttp(t, cookie, intentId);
+    const done = await drive(t, () => setupRun(t, runId), movedOn, 'setup run after approval');
+    expect([done.stage, done.state]).toEqual(['done', 'done']);
+  });
+
+  test('an L7 front (proven by its own session) is not held by a key move', async () => {
+    const w = await world();
+    const { t } = w;
+    installSeams(w);
+    const l7Fake = installFakeL7();
+    try {
+      const { l7 } = await accounts(t);
+      const intentId = await enrollReady(w, {
+        name: NODE_W,
+        mode: 'freedom-ws',
+        v4: ORIGIN_W_V4,
+        hostname: ORIGIN_W_NAME,
+      });
+      await seedMember(w, NODE_W);
+      await protectToPark(w, { nodeName: NODE_W, accountId: l7 });
+      await rekey(t, intentId);
+      const review = await t.query(internal.nodeActivation.review, { intentId });
+      expect(review.blockers.filter((b) => b.startsWith('servers.standbys'))).toEqual([]);
+    } finally {
+      l7Fake.uninstall();
+    }
+  });
+
+  test('a key move on a LIVE node is drift: it closes exactly as before, and its addresses need the tick again', async () => {
+    const w = await world();
+    const { t, serverId } = w;
+    const live = await liveL4(w);
+    expect((await fetchSub(t)).status).toBe(200);
+    const intent = (await t.run((c) => c.db.get(live.intentId)))!;
+    await t.run((c) =>
+      c.db.patch(live.intentId, { claim: { attemptId: 'a-1', expiresAt: Date.now() + 60_000 } }),
+    );
+    const r = await t.mutation(internal.nodeIntents.observeRevisions, {
+      intentId: live.intentId,
+      generation: intent.generation,
+      attemptId: 'a-1',
+      configRevision: intent.configRevision!,
+      authRevision: 'auth-moved',
+      hostMoved: false,
+      ownChange: true,
+    });
+    expect(r).toEqual({ ok: true, drift: true });
+    const after = (await t.run((c) => c.db.get(live.intentId)))!;
+    expect(after.delivery.disposition).toBe('unavailable');
+    expect(after.maintenance?.reason).toBe('drift');
+    expect((await gateOf(t, serverId)).state).toBe('blocked');
+    // Members were held off by the drift, as before: the gate, not the tick, answers.
+    const res = await fetchSub(t);
+    expect(res.status).toBe(503);
+    expect(res.headers.get('x-fcp-delivery')).toBe('node_gated');
+    // The served address's tick no longer counts under the new key.
+    const view = await t.query(internal.edgeVerification.binding, { edgeId: live.e1 });
+    expect(view?.verification.current).toBe(false);
+  });
+});
+
 describe('the operator hears about a node that waits on them', () => {
   test('ready to protect, then waiting for approval, then nothing once live', async () => {
     const w = await world();

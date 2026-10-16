@@ -370,6 +370,10 @@ const relayEdgeVerification = v.object({
     v.literal('l7_proof'),
     v.literal('probe'),
   ),
+  // An enrolled node's REALITY auth revision the record was taken under (it is
+  // folded into `configHash` too): only read to SAY why a record went stale
+  // (the key moved). Database only; never in a binding a client sees.
+  authRevision: v.optional(v.string()),
 });
 // Provider-account trust evidence (lib/edges/autoQualify.ts): who trusted the
 // account and, when it came from an endpoint, the exact configuration that was

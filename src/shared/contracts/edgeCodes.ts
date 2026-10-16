@@ -440,3 +440,12 @@ export const INBOUND_UNSUPPORTED_CODES = [
   'invalid',
 ] as const;
 export type InboundUnsupportedCode = (typeof INBOUND_UNSUPPORTED_CODES)[number];
+
+/**
+ * Why an L4 endpoint's tick no longer counts (lib/edges/verification.ts
+ * `verificationStaleReason`): the address, the listener or its configuration
+ * moved, or (an enrolled node) only its REALITY key, short ids or clock bounds
+ * did, so no client has proven the new key through that address.
+ */
+export const VERIFICATION_STALE_REASONS = ['verification_stale', 'reality_key_changed'] as const;
+export type VerificationStaleReason = (typeof VERIFICATION_STALE_REASONS)[number];

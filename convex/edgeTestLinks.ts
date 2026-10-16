@@ -23,6 +23,7 @@
  * (`edgeVerification.binding` derives the same one from the same rows), so
  * `POST edges/{id}/verify` accepts it and refuses a mismatch.
  */
+import { verificationListenerOf } from './lib/edges/verificationContext';
 import { ConvexError, v } from 'convex/values';
 import type { FunctionReturnType } from 'convex/server';
 import { internalAction, internalQuery } from './_generated/server';
@@ -85,7 +86,7 @@ export const context = internalQuery({
       throw new ConvexError({ code: 'edge.listener_retired', message: 'Listener not found' });
     const relay = await ctx.db.get(edge.relayId);
     if (!relay) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
-    const binding = verificationBinding(edge, listener);
+    const binding = verificationBinding(edge, await verificationListenerOf(ctx.db, listener));
     if (!binding)
       throw new ConvexError({ code: 'edge.no_address', message: 'The edge has no address yet' });
     if (!relay.backendServerId)

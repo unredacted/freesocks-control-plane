@@ -27,6 +27,7 @@
  * tests replace (`__setStageOpsForTests`); the defaults call the internal
  * functions by name.
  */
+import { verificationListenersOf } from './lib/edges/verificationContext';
 import { ConvexError, v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import type { ActionCtx, MutationCtx, QueryCtx } from './_generated/server';
@@ -57,6 +58,7 @@ import {
   needsEndpointVerification,
   verificationBinding,
   verificationCurrent,
+  verificationStaleReason,
 } from './lib/edges/verification';
 import { partialRungFor } from './lib/edges/verifyRung';
 import { edgeLayerOf, providerHealthSatisfies } from './lib/edges/providers/capabilities';
@@ -604,7 +606,10 @@ export const relayContext = internalQuery({
     if (!run?.relayId) return null;
     const relay = await ctx.db.get(run.relayId);
     if (!relay) return null;
-    const listeners = (await listenersOf(ctx, relay._id)).filter((l) => !l.retired);
+    // With the enrolled node's auth revision: an L4 tick binds to it.
+    const listeners = (
+      await verificationListenersOf(ctx.db, relay, await listenersOf(ctx, relay._id))
+    ).filter((l) => !l.retired);
     const edges = await liveEdgesOfRelay(ctx.db, relay._id);
     const cfg = await resolveEdgeConfig(ctx.db);
     const now = Date.now();
@@ -622,6 +627,12 @@ export const relayContext = internalQuery({
             rl.listenerKey,
             {
               current: !!l && !!e && (!needsEndpointVerification(e) || verificationCurrent(e, l)),
+              // Stale only because the enrolled node's REALITY key moved.
+              keyChanged:
+                !!l &&
+                !!e &&
+                needsEndpointVerification(e) &&
+                verificationStaleReason(e, l) === 'reality_key_changed',
               proofOk: !!e && l7ProofCurrent(e, l ?? null, now),
               // In the pool, on a listener whose FCP Host exists (its template
               // edge). A live node's replacement joins the pool beside the
@@ -633,7 +644,13 @@ export const relayContext = internalQuery({
         }),
       ) as Record<
         string,
-        { current: boolean; proofOk: boolean; published: boolean; live: boolean }
+        {
+          current: boolean;
+          keyChanged: boolean;
+          proofOk: boolean;
+          published: boolean;
+          live: boolean;
+        }
       >,
     };
   },
@@ -1612,7 +1629,25 @@ async function stageTryIt(ctx: ActionCtx, run: Run): Promise<null> {
     );
     return advance(ctx, run, { listeners, testLinks: null });
   }
-  return needsYou(ctx, run, 'try_it', `${links.length} endpoint(s)`, { testLinks: links });
+  return needsYou(ctx, run, 'try_it', tryItDetail(run, c, links.length), { testLinks: links });
+}
+
+/**
+ * The `try_it` card's detail: `reality_key_changed` when every address to try
+ * again was ticked before and only the node's REALITY key moved since (the
+ * card says so in words), else the count.
+ */
+function tryItDetail(
+  run: Run,
+  c: { verification: Record<string, { current: boolean; keyChanged: boolean }> },
+  count: number,
+): string {
+  const pending = run.listeners.filter(
+    (l) => l.layer === 'l4' && !c.verification[l.listenerKey]?.current,
+  );
+  return pending.length > 0 && pending.every((l) => c.verification[l.listenerKey]?.keyChanged)
+    ? 'reality_key_changed'
+    : `${count} endpoint(s)`;
 }
 
 // --- stage 5: publish -----------------------------------------------------------------------------------
@@ -1691,9 +1726,10 @@ async function stageHide(ctx: ActionCtx, run: Run): Promise<null> {
   );
   if (stale.length > 0) {
     const links = await pendingTestLinks(ctx, run, c);
-    return needsYou(ctx, run, 'try_it', `retest ${stale.map((l) => l.listenerKey).join(',')}`, {
-      testLinks: links,
-    });
+    const detail = stale.every((l) => c.verification[l.listenerKey]?.keyChanged)
+      ? 'reality_key_changed'
+      : `retest ${stale.map((l) => l.listenerKey).join(',')}`;
+    return needsYou(ctx, run, 'try_it', detail, { testLinks: links });
   }
   const res = await ops.hideHosts(ctx, {
     relayId: run.relayId,
@@ -1976,8 +2012,11 @@ export const goLive = internalMutation({
     const nowVector = await ops.vectorNow(ctx as unknown as QueryRunner, relay._id);
     if (!vectorsEqual(nowVector, r.rehearsal.vector)) return back('rehearse', 'vector_drift');
     // No FCP Host operation claimed on the origin; every required listener
-    // published by its own edge; L7 proofs current; L4 confirmations current.
-    const listeners = (await listenersOf(ctx, relay._id)).filter((l) => !l.retired);
+    // published by its own edge; L7 proofs current; L4 confirmations current
+    // (bound to the enrolled node's auth revision too).
+    const listeners = (
+      await verificationListenersOf(ctx.db, relay, await listenersOf(ctx, relay._id))
+    ).filter((l) => !l.retired);
     if (listeners.some((l) => l.host?.op)) return back('rehearse', 'host_op_claimed');
     for (const entry of r.listeners) {
       const l = listeners.find((x) => x.listenerKey === entry.listenerKey);
@@ -2629,9 +2668,9 @@ export const requireEdges = internalMutation({
         code: 'edge.setup_run_active',
         message: 'A setup run owns this node',
       });
-    const listeners = (await listenersOf(ctx, relayId)).filter(
-      (l) => !l.retired && l.deployed && l.enabled,
-    );
+    const listeners = (
+      await verificationListenersOf(ctx.db, relay, await listenersOf(ctx, relayId))
+    ).filter((l) => !l.retired && l.deployed && l.enabled);
     const edges = await liveEdgesOfRelay(ctx.db, relayId);
     const entries: RunListener[] = [];
     const pending: Array<{

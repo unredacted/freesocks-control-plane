@@ -536,9 +536,11 @@ const BLOCKER_WORDS: Record<string, string> = {
     'The node is not at a step where it can be approved. Wait for the step it is on to finish.',
   'servers.maintenance_required':
     'Put the node in maintenance first: a live node gets a new address only while members are held off it.',
+  'servers.standbys_unverified:key_changed':
+    'The node’s REALITY key changed since its new addresses were tried. Try each one again with the new key (its protection progress, or the node in Edges), then approve.',
 };
 export function blockerWords(code: string): string {
-  return BLOCKER_WORDS[code.split(':')[0] ?? ''] ?? serverErrorWords(code);
+  return BLOCKER_WORDS[code] ?? BLOCKER_WORDS[code.split(':')[0] ?? ''] ?? serverErrorWords(code);
 }
 
 // --- one change to a backend, in words ------------------------------------------------------------

@@ -257,7 +257,16 @@ configuration it holds now**: an L7 front needs a current authenticated proof
 operator's own confirmation** (`edges.verification`, `lib/edges/verification.ts`), taken per
 endpoint against `{endpoint, listenerKey, listenerRevision, configHash}` where `configHash`
 covers the listener's idempotency hash, the edge's template hash and its addresses / forwarding
-ports. Refusal code `edge.unverified_endpoint`. The record proves nothing by itself:
+ports and, when the origin is an **enrolled** node, the node's REALITY authentication revision
+(`panelNodeIntents.authRevision`: the keyed digest of its key pair, short ids and clock bounds).
+The digest is folded into the hash, never shown or echoed on its own, so the binding a
+confirmation echoes keeps its shape; every builder and checker resolves it the same way
+(`lib/edges/verificationContext.ts`). A key, short-id or clock-bound change therefore returns an
+enrolled node's L4 endpoints to "needs a test" (no client has proven the new key through them;
+attention `retest_needed` with code `reality_key_changed`, the Try it card and the approval card
+say so). Unmanaged nodes, whole-server, manual and Outline origins carry no auth component and
+behave as before; L7 proofs and the probe `partial` rung are not bound to it. Refusal code
+`edge.unverified_endpoint`. The record proves nothing by itself:
 `verificationCurrent` compares revision and hash, so a listener revision bump or a
 re-addressing returns the endpoint to "needs a test" (attention `retest_needed`) without
 anybody clearing anything. One name change is deliberately **not** a revision bump:

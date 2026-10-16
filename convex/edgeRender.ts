@@ -12,6 +12,7 @@
  * the binding's policy version while the subscription is edge-required, null
  * for a subscription no origin covers.
  */
+import { verificationListenersOf } from './lib/edges/verificationContext';
 import { v } from 'convex/values';
 import { internalQuery } from './_generated/server';
 import type { QueryCtx } from './_generated/server';
@@ -154,7 +155,12 @@ export async function publishedEdgesOf(
   context: EdgeSelectionContext,
   opts: { includeIneligible?: boolean } = {},
 ): Promise<{ published: PublishedEdge[]; matchers: RenderMatcher[] }> {
-  const listeners = await listenersOf(ctx, origin._id);
+  // With the enrolled node's auth revision: an L4 tick binds to it.
+  const listeners = await verificationListenersOf(
+    ctx.db,
+    origin,
+    await listenersOf(ctx, origin._id),
+  );
   const matchers = listeners
     .filter((l) => !l.retired && l.deployed && l.enabled)
     .map((l) => matcherOf(l, origin.originAddress));

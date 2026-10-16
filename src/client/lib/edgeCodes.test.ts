@@ -16,6 +16,7 @@ import {
   SETUP_STEP_IDS,
   SETUP_STEP_STATUSES,
   WORKFLOW_CODES,
+  VERIFICATION_STALE_REASONS,
 } from '../../shared/contracts/edgeCodes';
 import {
   ATTENTION_ACTION_LABELS,
@@ -56,6 +57,7 @@ const EVERY_CODE = [
   ...DELIVERY_UNAVAILABLE_CODES,
   ...POOL_CODES,
   ...WORKFLOW_CODES,
+  ...VERIFICATION_STALE_REASONS,
 ];
 
 const EM_DASH = '—';

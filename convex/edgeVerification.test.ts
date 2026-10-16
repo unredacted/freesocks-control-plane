@@ -863,3 +863,15 @@ describe('probe protocol branching', () => {
     expect(ssRuns.some(([, p]) => p === 'tls-sni')).toBe(false);
   });
 });
+
+describe('the REALITY key binding is for enrolled nodes only', () => {
+  test('an unmanaged node (no node intent) keeps its tick exactly as before: no auth component', async () => {
+    const { t, publishedEdgeId } = await seed();
+    const view = (await t.query(internal.edgeVerification.binding, { edgeId: publishedEdgeId }))!;
+    expect(view.verification.current).toBe(true);
+    // The stored record carries no auth revision, and its hash is the plain one.
+    const edge = (await t.run((ctx) => ctx.db.get(publishedEdgeId)))!;
+    expect(edge.verification?.authRevision).toBeUndefined();
+    expect(edge.verification?.configHash).toBe(view.configHash);
+  });
+});

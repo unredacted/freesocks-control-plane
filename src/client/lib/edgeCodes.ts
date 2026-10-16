@@ -863,6 +863,12 @@ const COPY = {
       'This provider account has a daily allocation budget of 0, which means no limit: a runaway loop could create billable resources without bound.',
     fix: 'Set a daily allocation budget on the account.',
   },
+  reality_key_changed: {
+    label: 'Node key changed',
+    explain:
+      'The node’s REALITY key (or its short ids or clock settings) changed since this address was tried, so nothing has proven the new key through it.',
+    fix: 'Try the address again from a client with the new key.',
+  },
   family_disabled: {
     label: 'App family off',
     explain:

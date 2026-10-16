@@ -44,7 +44,9 @@ import {
   needsEndpointVerification,
   verificationCurrent,
   verificationStale,
+  verificationStaleReason,
 } from './lib/edges/verification';
+import { verificationListenersOf } from './lib/edges/verificationContext';
 import { publishedCount } from './lib/edges/pool';
 import { EDGE_TEMPLATES, validateTemplateParams } from './lib/edges/providers/templates';
 import { fakeShadowedIds } from './lib/edges/providers/fake';
@@ -857,7 +859,12 @@ export const attention = internalQuery({
           const k = e.accountId as string;
           staleByAccount.set(k, (staleByAccount.get(k) ?? 0) + 1);
         }
-      const listeners = await listenersOf(ctx, relay._id);
+      // With the enrolled node's auth revision: the endpoint ticks bind to it.
+      const listeners = await verificationListenersOf(
+        ctx.db,
+        relay,
+        await listenersOf(ctx, relay._id),
+      );
       if (relay.quarantine) {
         items.push({
           ...base(relay),
@@ -1149,7 +1156,8 @@ export const attention = internalQuery({
             severity: 'warning',
             edgeId: e._id as string,
             listenerKey: l.listenerKey,
-            code: 'verification_stale',
+            // `reality_key_changed` when only the node's REALITY key moved.
+            code: verificationStaleReason(e, l) ?? 'verification_stale',
             facts: {
               publication: e.publication,
               verifiedRevision: e.verification?.listenerRevision ?? null,

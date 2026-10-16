@@ -103,6 +103,7 @@ import type {
   ResourceStep,
 } from './lib/edges/providers/types';
 import { admitted, assertAdmission } from './lib/edges/maintenance';
+import { verificationListenersOf, type VerifiableListener } from './lib/edges/verificationContext';
 import { countFleetRotation, fleetRotationsToday, readFleetBrake } from './lib/edges/fleet';
 import { hostSecurityLayer } from './hostOps';
 import {
@@ -733,7 +734,7 @@ async function verifiedSpareFor(
  * only with a CURRENT operator confirmation (an untested spare is never picked
  * over provisioning, and never published by a rotation).
  */
-function standbyEligible(edge: Edge, listener: Doc<'relayListeners'> | undefined): boolean {
+function standbyEligible(edge: Edge, listener: VerifiableListener | undefined): boolean {
   if ((edge.layer ?? edgeLayerOf(edge.provider)) === 'l7') return true;
   return !!listener && verificationCurrent(edge, listener);
 }
@@ -2413,7 +2414,12 @@ export async function selectionContext(
   const publishedProviders = edges
     .filter((e) => e.publication === 'published' && e.provider)
     .map((e) => e.provider as string);
-  const slotRows = await listenersOf(ctx, origin._id);
+  // With the enrolled node's auth revision: a standby's tick binds to it.
+  const slotRows = await verificationListenersOf(
+    ctx.db,
+    origin,
+    await listenersOf(ctx, origin._id),
+  );
   let slot: Doc<'relayListeners'> | null = null;
   // A requested slot (the row field; `reason` carried it before the field
   // existed) is binding: a retired or vanished one FAILS the run instead of
