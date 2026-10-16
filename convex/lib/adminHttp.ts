@@ -19,17 +19,15 @@ import type { RateLimitPolicyKey } from './rateLimitPolicy';
 
 export const notFound = () => errorJson('not_found', 'Not found', 404);
 
-/** A token holding this scope is never confined to a registration boundary. */
-const UNBOUNDED_SCOPE = 'admin:servers:manage';
-
 /**
- * A bearer caller admitted ONLY by the register scope is confined to its
+ * A bearer caller not holding the route's full scope is confined to its
  * token's registration boundary (docs/servers.md "Node registration"): the
- * backend servers and, optionally, the node names it may act for. A register
- * token without a boundary may act for nothing. Returns null (unbounded) for a
- * cookie session, for a token holding any of `fullScope` (one scope or an
- * any-of list), and for a token holding `admin:servers:manage`, which already
- * writes to the backend itself.
+ * backend servers and, optionally, the node names it may act for. A token
+ * without a boundary may act for nothing. Returns null (unbounded) for a
+ * cookie session and for a token holding any of `fullScope` (one scope or an
+ * any-of list). `admin:servers:manage` is deliberately NOT unbounding: the
+ * role's routes hand out the backend's node secret (`bootstrap`), which
+ * backend-write automation must never be able to export on its own.
  */
 export async function registrationBoundaryOf(
   ctx: ActionCtx,
@@ -37,7 +35,7 @@ export async function registrationBoundaryOf(
   fullScope: string | readonly string[],
 ): Promise<{ backendServerIds: string[]; nodeNames?: string[] } | null> {
   if (!admin.tokenId || !admin.tokenScopes) return null;
-  const unbounded = [...(typeof fullScope === 'string' ? [fullScope] : fullScope), UNBOUNDED_SCOPE];
+  const unbounded = typeof fullScope === 'string' ? [fullScope] : fullScope;
   if (unbounded.some((s) => admin.tokenScopes!.includes(s))) return null;
   const boundary = await ctx.runQuery(internal.apiTokens.registrationBoundary, {
     tokenId: admin.tokenId,

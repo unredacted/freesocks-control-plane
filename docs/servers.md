@@ -540,8 +540,8 @@ surface; the direct Host is enabled only during the run's rehearsal and disabled
 
 Routes on `{slug}/nodes/by-name/{name}`, scope `admin:servers:write` (a `GET` also takes
 `admin:servers:read`) or `admin:edges:register` confined to the token's registration boundary
-(backend servers and, optionally, node names). A token holding `admin:servers:manage` is never
-bounded:
+(backend servers and, optionally, node names). `admin:servers:manage` is accepted but bounded the
+same way: backend-write automation never reaches a node's secret (`bootstrap`) on its own:
 
 | Route              | What                                                                                                                                                                                        |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
