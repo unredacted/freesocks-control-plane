@@ -134,11 +134,7 @@ export const stage = internalMutation({
         'A port change of this profile is still waiting. Finish or cancel it first',
       );
     const impact = await portChangeImpact(ctx, sid, a.profileUuid, inboundUuid, op.port);
-    const intents = await ctx.db
-      .query('panelNodeIntents')
-      .withIndex('by_server', (q) => q.eq('backendServerId', sid))
-      .collect();
-    const unmanaged = impact.nodes.filter((n) => !intents.some((i) => i.name === n.name));
+    const unmanaged = impact.nodes.filter((n) => !n.intentId);
     if (unmanaged.length > 0 && !a.unmanaged)
       refuse(
         'servers.unmanaged_nodes_affected',
@@ -302,15 +298,27 @@ export const admit = internalMutation({
     }
     // A node that no longer serves the transport (turned off, removed, moved
     // to another one) will not listen on the port: its wait is over.
-    const serving = new Set(impact.nodes.map((n) => n.name));
+    // Matched by enrolled node as well as by name: a node mid-rename may carry
+    // either name for the length of a look.
+    const serves = (r: Requirement) =>
+      impact.nodes.some(
+        (n) => n.name === r.nodeName || (!!r.intentId && n.intentId === r.intentId),
+      );
     for (const r of rows)
-      if (r.state === 'waiting' && !serving.has(r.nodeName)) {
+      if (r.state === 'waiting' && !serves(r)) {
         await ctx.db.patch(r._id, { state: 'cancelled', updatedAt: now });
         r.state = 'cancelled';
       }
     let added = 0;
     for (const n of impact.nodes) {
-      if (rows.some((r) => r.nodeName === n.name && r.state !== 'cancelled')) continue;
+      if (
+        rows.some(
+          (r) =>
+            r.state !== 'cancelled' &&
+            (r.nodeName === n.name || (!!n.intentId && r.intentId === n.intentId)),
+        )
+      )
+        continue;
       await ctx.db.insert('panelPortRequirements', {
         backendServerId: change.backendServerId,
         changeId,

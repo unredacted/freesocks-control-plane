@@ -240,11 +240,20 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.squad_has_members': 'This group still has members. Move them first.',
   'servers.squad_name_taken': 'A group with that name already exists.',
   // Nodes.
-  'servers.node_name_taken': 'A node with that name already exists.',
+  'servers.node_name_taken': 'A node has, or had, that name. Pick another one.',
   'servers.node_relay_origin':
     'An origin in Edges covers this node. Its address, port and transports are changed there, and it is not turned off or removed here.',
-  'servers.node_rename_referenced':
-    'Origins or pinned members refer to this node by name, so it cannot be renamed yet.',
+  'servers.node_rename_separate': 'A node is renamed on its own. Use Rename.',
+  'servers.node_rename_running': 'This node is being renamed. Wait for that to finish.',
+  'servers.node_rename_not_running': 'That rename is not running any more.',
+  'servers.rename_host_refused':
+    'The backend refused to rename one of its addresses. Fix what it refused, then press Retry.',
+  'servers.node_rename_foreign_hosts':
+    'An origin in front of this node uses Hosts the operator writes. Their remarks name the node, and they are not changed from here.',
+  'servers.node_name_origin':
+    'An origin in front of this node keeps its name as a DNS label: lower-case letters, digits and dashes only.',
+  'servers.node_name_too_long':
+    'With this name a Host remark would be longer than the backend allows. Pick a shorter name.',
   'servers.node_still_on': 'Turn the node off first, and wait for that to finish.',
   'servers.node_off': 'This node is turned off.',
   'servers.already': 'It is already in that state.',
@@ -742,4 +751,42 @@ export function portChangeable(i: Pick<TransportView, 'port' | 'listen'>): boole
     .toLowerCase()
     .replace(/^\[|\]$/g, '');
   return !(l === 'localhost' || l === '::1' || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(l));
+}
+
+// --- renaming a node ----------------------------------------------------------------------------
+
+export interface RenameLike {
+  from: string;
+  to: string;
+  state: 'running' | 'done' | 'failed';
+  step: 'backend' | 'hosts' | 'subscriptions' | 'done';
+  code: string | null;
+  refusedHosts?: { remark: string; code: string }[];
+}
+
+const RENAME_STEP: Record<RenameLike['step'], string> = {
+  backend: 'Renaming it on the backend.',
+  hosts: 'Renaming the addresses that carry its name.',
+  subscriptions: "Moving members' keys to the new name.",
+  done: 'Finishing.',
+};
+
+/** Where a rename stands. Members keep connecting throughout; the old name keeps working. */
+export function renameWords(r: RenameLike): { dot: Dot; sentence: string } {
+  if (r.state === 'done') return { dot: 'green', sentence: `Renamed from ${r.from}.` };
+  if (r.state === 'failed')
+    return { dot: 'grey', sentence: `Not renamed to ${r.to}: ${serverErrorWords(r.code)}` };
+  if (r.code === 'servers.rename_host_refused')
+    return {
+      dot: 'red',
+      sentence: `Renaming to ${r.to} holds: the backend refused to rename ${r.refusedHosts?.map((h) => h.remark).join(', ') || 'an address'}. Members keep connecting. Fix what it refused, then retry.`,
+    };
+  const waiting =
+    r.code === 'servers.op_running' || r.code === 'servers.op_uncertain'
+      ? ' Waiting for a change on the backend to settle.'
+      : '';
+  return {
+    dot: 'amber',
+    sentence: `Being renamed from ${r.from} to ${r.to}. ${RENAME_STEP[r.step]}${waiting} Members keep connecting.`,
+  };
 }

@@ -33,6 +33,7 @@ import {
   type RequestOutcome,
 } from './lib/backend/ops';
 import { resolveServerConfig } from './lib/serverConfig';
+import { bridgeNodeRename } from './lib/backend/nodeRename';
 
 type Op = Doc<'panelOps'>;
 
@@ -420,14 +421,16 @@ export const applyLook = internalMutation({
           const gone = !nodes.some((n) => n.nodeUuid === op.objectUuid);
           patch.quietLooks = gone ? op.quietLooks + 1 : 0;
           seen = gone && patch.quietLooks >= GONE_LOOKS_REQUIRED;
-        } else
+        } else {
           // update / enable / disable / restart: the named fields of the row. A
           // restart names none, so the row alone never settles it: its evidence
-          // is the node's own clock, below.
+          // is the node's own clock, below. A rename's id is not a field.
+          const { renameId: _rename, ...fields } = expected;
           seen = fieldsMatch(
             nodes.find((n) => n.nodeUuid === op.objectUuid) as Record<string, unknown> | undefined,
-            expected,
+            fields,
           );
+        }
       }
       if (op.kind === 'squad' && squads) {
         if (op.verb === 'create') {
@@ -463,6 +466,15 @@ export const applyLook = internalMutation({
     // and a later look simply tries again. It runs under the op's own claims.
     if (seen && op.kind === 'profile' && op.panelState !== 'observed')
       await bridgeProfilePatch(ctx, next);
+    // A rename moves every FCP row keyed by the node's name in the same
+    // transaction that sees the backend row carry the new one.
+    if (
+      seen &&
+      op.kind === 'node' &&
+      op.panelState !== 'observed' &&
+      typeof expected.renameId === 'string'
+    )
+      await bridgeNodeRename(ctx, expected.renameId as Id<'panelNodeRenames'>, op._id);
     if (claimsReleasable(next)) {
       await own(ctx, next);
       await syncCache(ctx, next, hosts, squads);

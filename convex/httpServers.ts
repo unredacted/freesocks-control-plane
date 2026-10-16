@@ -38,6 +38,7 @@ import {
   ModeGroupWrite,
   NodeAppliedReport,
   NodeRegistration,
+  NodeRenameRequest,
   PortChangeAcknowledge,
   ProfilePatchApply,
   ProfilePatchPreviewRequest,
@@ -402,6 +403,14 @@ const getHandler: Handler = async (ctx, parts) => {
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
     return json(await ctx.runQuery(internal.backendSetup.view, { backendServerId: instance.id }));
   }
+  if (a && b === 'renames' && !c) {
+    const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
+    return json({
+      renames: await ctx.runQuery(internal.backendNodeRenames.listForServer, {
+        backendServerId: instance.id,
+      }),
+    });
+  }
   if (a && b === 'port-changes' && !c) {
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
     return json({
@@ -493,6 +502,17 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
       ...actorOf(admin),
     });
     return json(await ctx.runQuery(internal.backendPortChanges.view, { changeId }));
+  }
+  // A rename that holds on Host remarks the backend refused: try them again.
+  if (a && b === 'renames' && c && d === 'retry' && !parts[4]) {
+    const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
+    const renameId = await ctx.runQuery(internal.backendNodeRenames.onServer, {
+      backendServerId: instance.id,
+      renameId: c,
+    });
+    if (!renameId) return notFound();
+    await ctx.runMutation(internal.backendNodeRenames.retry, { renameId, ...actorOf(admin) });
+    return json(await ctx.runQuery(internal.backendNodeRenames.view, { renameId }));
   }
   if (a && b === 'port-changes' && c && (d === 'acknowledge' || d === 'cancel') && !parts[4]) {
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
@@ -647,6 +667,18 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
         ...actorOf(admin),
       });
       return runOp(ctx, opId);
+    }
+    // A rename moves every reference to the name (docs/servers.md "Renaming a node").
+    if (d === 'rename' && !parts[4]) {
+      const w = parseWrite(NodeRenameRequest, body, {});
+      if (!w.ok) return w.res;
+      const { renameId } = await ctx.runMutation(internal.backendNodeRenames.request, {
+        backendServerId: instance.id,
+        nodeUuid: c,
+        name: w.data.name,
+        ...actorOf(admin),
+      });
+      return json(await ctx.runQuery(internal.backendNodeRenames.view, { renameId }));
     }
     if (d === 'enable' || d === 'disable' || d === 'restart') {
       const { opId } = await ctx.runMutation(internal.backendWrites.requestNodeAction, {

@@ -339,6 +339,30 @@ export const PortChangeList = z.object({ changes: z.array(PortChangeView) });
 /** `POST …/port-changes/{id}/acknowledge`: an admin confirms nodes no role reports for. */
 export const PortChangeAcknowledge = z.object({ nodeNames: z.array(z.string()).min(1).max(200) });
 
+/** `POST {slug}/nodes/{uuid}/rename`. */
+export const NodeRenameRequest = z.object({ name: z.string() });
+
+/**
+ * A node rename (docs/servers.md "Renaming a node"): the backend row first,
+ * then the Host remarks FCP wrote, then members' pins. Members keep
+ * connecting throughout; the old name keeps resolving to the node.
+ */
+export const NodeRenameView = z.object({
+  id: z.string(),
+  nodeUuid: z.string(),
+  from: z.string(),
+  to: z.string(),
+  state: z.enum(['running', 'done', 'failed']),
+  step: z.enum(['backend', 'hosts', 'subscriptions', 'done']),
+  code: z.string().nullable(),
+  /** Host remarks the backend refused to change: the rename holds until an operator retries. */
+  refusedHosts: z.array(z.object({ remark: z.string(), code: z.string() })).default([]),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type NodeRenameView = z.infer<typeof NodeRenameView>;
+export const NodeRenameList = z.object({ renames: z.array(NodeRenameView) });
+
 /** A port a node's firewall must let in, as the node role reads it. */
 export const FirewallPort = z.object({
   port: z.number(),
