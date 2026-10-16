@@ -285,7 +285,10 @@
       Cancelled after {elapsed}.
     {:else}
       {elapsed} so far.
-      {#if latest}{plainWords(codeLabel(latest.code))}{#if latest.detail}: {latest.detail}{/if}.{/if}
+      <!-- While the run needs you, the card below says what; the raw event would repeat it. -->
+      {#if latest && run.state !== 'needs_you'}{plainWords(
+          codeLabel(latest.code),
+        )}{#if latest.detail}: {latest.detail}{/if}.{/if}
     {/if}
   </p>
 

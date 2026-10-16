@@ -1597,6 +1597,7 @@ const PLAIN_AUDIT_LABELS: Record<string, string> = {
   'edge.setup_run.finished': 'Protection finished',
   'edge.setup_run.cancelled': 'Protection cancelled',
   'admin.edge.provision': 'Address requested',
+  'admin.edge.test_provision': 'Test address requested',
   'admin.edge.rotate': 'Replacement requested',
   'admin.edge.burn': 'Replacement requested (blocked)',
   'probe.verdict': 'Reachability changed',

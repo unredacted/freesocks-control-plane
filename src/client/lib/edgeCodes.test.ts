@@ -318,6 +318,7 @@ describe('plain words (the simple screens)', () => {
       'Resume new work when the maintenance is over.',
     );
     expect(plainWords('Publish an edge.')).toBe('Put an address in use.');
+    expect(plainAuditActionLabel('admin.edge.test_provision')).toBe('Test address requested');
     for (const label of Object.values(PLAIN_ATTENTION_ACTION_LABELS)) {
       expect(label).not.toMatch(/\b(Thaw|Qualify|Publish|Provision|edge|origin)\b/);
     }
