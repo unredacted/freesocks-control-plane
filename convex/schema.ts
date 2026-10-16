@@ -2699,6 +2699,7 @@ export default defineSchema({
               listen: v.string(),
               port: v.number(),
               path: v.string(),
+              upstream: v.optional(v.literal('h2c')),
             }),
           ),
         }),

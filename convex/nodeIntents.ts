@@ -30,7 +30,7 @@ import {
 } from './lib/backend/activation';
 import { nodeGateOf, type NodeGate } from './lib/backend/deliveryGate';
 import { CLAIM_LEASE_MS, claimAvailable, desiredHashOf, fenceHolds } from './lib/backend/fencing';
-import type { IngressMapping } from './lib/backend/ingress';
+import { ingressRoute, type IngressMapping, type IngressRoute } from './lib/backend/ingress';
 import { LABEL_RE, originHostname, originLabel } from './lib/backend/originDns';
 import { ADDRESS_SEP, addressRemark, ownsAddress } from './lib/backend/hostRemark';
 import { type ModeShape } from './lib/backend/profileTemplate';
@@ -542,6 +542,7 @@ const settingsPatch = v.object({
           listen: v.string(),
           port: v.number(),
           path: v.string(),
+          upstream: v.optional(v.literal('h2c')),
         }),
       ),
     }),
@@ -1405,7 +1406,7 @@ export interface BootstrapAnswer {
   ingress: {
     hostname: string;
     externalPort: number;
-    routes: { path: string; port: number }[];
+    routes: IngressRoute[];
   } | null;
   origin: { hostname: string | null; dns: Intent['origin']['dns'] };
 }
@@ -1441,7 +1442,7 @@ export const bootstrap = internalAction({
         ? {
             hostname: ingress.hostname,
             externalPort: ingress.external.port,
-            routes: ingress.internal.map((i) => ({ path: i.path, port: i.port })),
+            routes: ingress.internal.map(ingressRoute),
           }
         : null,
       origin: { hostname: c.hostname ?? null, dns: c.intent.origin.dns },

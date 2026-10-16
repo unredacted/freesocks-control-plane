@@ -13,6 +13,7 @@ export interface FakePanelUser {
   shortUuid: string;
   username: string;
   vlessUuid: string;
+  trojanPassword: string;
   subscriptionUrl: string;
 }
 
@@ -79,6 +80,7 @@ export function fakePanel(opts: FakePanelOptions = {}): FakePanel {
     uuid: u.uuid,
     shortUuid: u.shortUuid,
     vlessUuid: u.vlessUuid,
+    trojanPassword: u.trojanPassword,
     username: u.username,
     status: 'ACTIVE',
     trafficLimitBytes: 0,
@@ -106,6 +108,7 @@ export function fakePanel(opts: FakePanelOptions = {}): FakePanel {
         shortUuid: `short${seq}`,
         username: body.username,
         vlessUuid: uuidLike(1_000_000 + seq),
+        trojanPassword: `trojan-pw-${seq}`,
         subscriptionUrl: `${baseUrl}/api/sub/short${seq}`,
       };
       users.set(u.username, u);

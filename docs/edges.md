@@ -101,6 +101,13 @@ Outside the matrix altogether:
 - **sing-box over XHTTP**: sing-box has no XHTTP transport, so the panel leaves an XHTTP entry
   out of a sing-box body and FCP has nothing to render.
 
+A gRPC transport on loopback behind the node's ingress (`lib/backend/ingress.ts`) is reached by
+its service name as the route path (`/<serviceName>`, the calls are `/<serviceName>/Tun`), and
+only through a route that declares `upstream: "h2c"`: the role must proxy it over HTTP/2
+cleartext (Caddy `reverse_proxy h2c://127.0.0.1:<port>`), and a route without the marker is
+HTTP/1.1, which no gRPC stream crosses, so the transport stays loopback. No connection mode
+declares such a route yet; the bootstrap answer carries the marker for when one does.
+
 ### UDP
 
 No edge is offered for a UDP listener (Hysteria 2, TUIC): `udp` is false for every provider in
