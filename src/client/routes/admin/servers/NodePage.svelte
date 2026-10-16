@@ -10,7 +10,12 @@
   import { Button } from '@client/components/ui/button';
   import { Skeleton } from '@client/components/ui/skeleton';
   import Link from '@client/components/Link.svelte';
-  import { intentsQuery, serverSummaryQuery, serverTreeQuery } from '@client/lib/serversApi';
+  import {
+    intentsQuery,
+    renamesQuery,
+    serverSummaryQuery,
+    serverTreeQuery,
+  } from '@client/lib/serversApi';
   import { router } from '@client/stores/router.svelte';
   import type { AddressView, TransportView } from '../../../../shared/contracts/servers';
   import SectionHeader from '../edges/components/SectionHeader.svelte';
@@ -30,6 +35,7 @@
     nodeNotes,
     nodeWords,
     portChangeable,
+    renameWords,
     serverErrorWords,
     serverNamesLabel,
   } from './lib/words';
@@ -39,6 +45,16 @@
   let slug = $derived(pickInstance(router.search, summary.data?.instances ?? []));
   const tree = serverTreeQuery(() => slug);
   const intents = intentsQuery(() => slug);
+  const renames = renamesQuery(() => slug);
+  // A rename of this node still running, or one that stopped, shown until it is old news.
+  let renaming = $derived(
+    (renames.data?.renames ?? []).find(
+      (r) =>
+        r.nodeUuid === uuid &&
+        (r.state === 'running' ||
+          (r.state === 'failed' && Date.now() - Date.parse(r.updatedAt) < 24 * 3600_000)),
+    ) ?? null,
+  );
   let instance = $derived(summary.data?.instances.find((i) => i.slug === slug) ?? null);
   let node = $derived(tree.data?.nodes.find((n) => n.nodeUuid === uuid) ?? null);
   // The enrolled node behind this backend row, when the node role enrolled it.
@@ -107,6 +123,13 @@
               Add a transport
             </Button>
           {/if}
+        </p>
+      {/if}
+      {#if renaming}
+        {@const rw = renameWords(renaming)}
+        <p class="mt-1 flex items-center gap-2 text-sm" role="status">
+          <StatusDot dot={rw.dot} />
+          {rw.sentence}
         </p>
       {/if}
       {#if notes.length > 0}

@@ -14,10 +14,18 @@
   import * as DropdownMenu from '@client/components/ui/dropdown-menu';
   import { Input } from '@client/components/ui/input';
   import { Label } from '@client/components/ui/label';
-  import { deleteNode, nodeAction, updateNode } from '@client/lib/serversApi';
+  import { toast } from 'svelte-sonner';
+  import {
+    deleteNode,
+    invalidateServers,
+    nodeAction,
+    renameNode,
+    updateNode,
+  } from '@client/lib/serversApi';
   import type { NodeView } from '../../../../../shared/contracts/servers';
   import ConfirmDialog from '../../edges/components/ConfirmDialog.svelte';
-  import { runWrite } from '../lib/run';
+  import { codeOf, runWrite } from '../lib/run';
+  import { serverErrorWords } from '../lib/words';
 
   let { slug, node }: { slug: string; node: NodeView } = $props();
   const qc = useQueryClient();
@@ -51,17 +59,33 @@
     editOpen = true;
   }
 
-  /** Only what changed is sent: an untouched field cannot restart the node. */
+  /**
+   * Only what changed is sent: an untouched field cannot restart the node. A
+   * new name is a rename of its own (it moves every reference to the name).
+   */
   async function saveEdit() {
     const fields: Parameters<typeof updateNode>[2] = {};
-    if (name.trim() !== node.name) fields.name = name.trim();
+    const newName = name.trim();
     if (address.trim() !== (node.address ?? '')) fields.address = address.trim();
     if (port.trim() !== '' && Number(port) !== node.port) fields.port = Number(port);
     if (country.trim().toUpperCase() !== (node.countryCode ?? ''))
       fields.countryCode = country.trim().toUpperCase();
     editOpen = false;
-    if (Object.keys(fields).length === 0) return;
-    await act(() => updateNode(slug, node.nodeUuid, fields));
+    if (Object.keys(fields).length > 0) await act(() => updateNode(slug, node.nodeUuid, fields));
+    if (newName !== node.name) await rename(newName);
+  }
+
+  async function rename(to: string) {
+    busy = true;
+    try {
+      await renameNode(slug, node.nodeUuid, to);
+      toast.success(`Renaming ${node.name} to ${to}. Members keep connecting.`);
+    } catch (e) {
+      toast.error(serverErrorWords(codeOf(e)));
+    } finally {
+      busy = false;
+      invalidateServers(qc);
+    }
   }
 
   let restarts = $derived(
@@ -188,6 +212,12 @@
       </div>
       {#if restarts}
         <p class="text-muted-foreground text-sm">A new address or port restarts the node.</p>
+      {/if}
+      {#if name.trim() !== node.name}
+        <p class="text-muted-foreground text-sm">
+          A new name is carried over to everything that refers to the node, its addresses included.
+          Members keep connecting, and the old name keeps working for the node role.
+        </p>
       {/if}
       <Dialog.Footer>
         <Button type="button" variant="outline" onclick={() => (editOpen = false)}>Cancel</Button>
