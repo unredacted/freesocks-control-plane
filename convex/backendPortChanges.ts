@@ -298,15 +298,27 @@ export const admit = internalMutation({
     }
     // A node that no longer serves the transport (turned off, removed, moved
     // to another one) will not listen on the port: its wait is over.
-    const serving = new Set(impact.nodes.map((n) => n.name));
+    // Matched by enrolled node as well as by name: a node mid-rename may carry
+    // either name for the length of a look.
+    const serves = (r: Requirement) =>
+      impact.nodes.some(
+        (n) => n.name === r.nodeName || (!!r.intentId && n.intentId === r.intentId),
+      );
     for (const r of rows)
-      if (r.state === 'waiting' && !serving.has(r.nodeName)) {
+      if (r.state === 'waiting' && !serves(r)) {
         await ctx.db.patch(r._id, { state: 'cancelled', updatedAt: now });
         r.state = 'cancelled';
       }
     let added = 0;
     for (const n of impact.nodes) {
-      if (rows.some((r) => r.nodeName === n.name && r.state !== 'cancelled')) continue;
+      if (
+        rows.some(
+          (r) =>
+            r.state !== 'cancelled' &&
+            (r.nodeName === n.name || (!!n.intentId && r.intentId === n.intentId)),
+        )
+      )
+        continue;
       await ctx.db.insert('panelPortRequirements', {
         backendServerId: change.backendServerId,
         changeId,
