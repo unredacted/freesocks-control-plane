@@ -431,6 +431,35 @@ describe('deliveryOf', () => {
     );
   });
 
+  test('a binding left by a departed origin: dark relay_missing, whatever this origin publishes', () => {
+    // Not this origin's binding: it names one deleted keep-dark, so members get a 503.
+    expect(d({ bound: false, foreignBinding: true })).toEqual({
+      kind: 'dark',
+      code: 'relay_missing',
+    });
+    expect(
+      membersDarkCode({
+        bound: false,
+        foreignBinding: true,
+        published: 2,
+        enabled: true,
+        renderEnabled: true,
+      }),
+    ).toBe('relay_missing');
+    // The status says so too: needs-you, not protected.
+    const st = originStatusOf(
+      facts({
+        bound: false,
+        foreignBinding: true,
+        bindingDeferred: true,
+        published: 1,
+        attention: [{ kind: 'members_dark', severity: 'critical', code: 'relay_missing' }],
+      }),
+    );
+    expect([st.kind, st.dot, st.code]).toEqual(['needs-you', 'red', 'members_dark']);
+    expect(st.delivery).toEqual({ kind: 'dark', code: 'relay_missing' });
+  });
+
   test('degraded on a soft render problem, using the sample render reason', () => {
     expect(
       d({ renderBlockers: blockers({ code: 'preview_not_applied', detail: 'no_match' }) }),

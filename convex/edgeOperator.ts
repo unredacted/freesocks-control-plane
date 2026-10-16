@@ -329,9 +329,7 @@ async function relayFacts(
   const active = relay.activeRotationId ? await ctx.db.get(relay.activeRotationId) : null;
   const lastTerminal = rotations.find((r) => isTerminalPhase(r.phase)) ?? null;
   const server = relay.backendServerId ? await ctx.db.get(relay.backendServerId) : null;
-  const binding = relay.backendServerId
-    ? await deliveryBindingFor(ctx.db, relay.backendServerId, relay.nodeName ?? undefined)
-    : null;
+  const bindingState = await bindingStateOf(ctx.db, relay);
   const endpoints = await connectionPlanCount(ctx, relay);
   let preview: SetupInput['render']['preview'] = null;
   if (
@@ -389,7 +387,8 @@ async function relayFacts(
           }
         : null,
       edges: await edgeFacts(ctx, relay, cfg),
-      deliveryRequired: !!binding,
+      deliveryRequired: bindingState.bound,
+      foreignBinding: bindingState.foreign,
       bindingDeferred: relay.bindingDeferred === true,
       connectionPlanCount: endpoints,
       // Mirror validation is driven by the mirror refresh cron over every
@@ -495,6 +494,7 @@ export const setupStatus = internalQuery({
       const delivery = deliveryOf({
         originKind: relay.origin.kind,
         bound: f.relay.deliveryRequired,
+        foreignBinding: f.relay.foreignBinding === true,
         published: f.relay.publishedCount,
         enabled: relay.enabled,
         renderEnabled: input.render.enabled,
@@ -810,11 +810,31 @@ async function nodeAttention(ctx: QueryCtx, relays: Relay[]): Promise<AttentionI
   return out;
 }
 
-/** The delivery binding that covers an origin (a manual origin has none). */
+/** The delivery binding that covers an origin's node (a manual origin has none). */
 async function bindingOf(db: Db, relay: Relay) {
   return relay.origin.kind !== 'manual' && relay.backendServerId
     ? deliveryBindingFor(db, relay.backendServerId, relay.nodeName ?? undefined)
     : null;
+}
+
+/**
+ * Whose binding covers the origin's node. `bound`: it names this origin (its
+ * members are served through it). `foreign`: it names an origin that no longer
+ * exists (deleted `keep-dark`), so members get `relay_missing` whatever this
+ * origin publishes. A binding naming another live origin is neither.
+ */
+async function bindingStateOf(
+  db: Db,
+  relay: Relay,
+): Promise<{ binding: Doc<'edgeDeliveryBindings'> | null; bound: boolean; foreign: boolean }> {
+  const binding = await bindingOf(db, relay);
+  if (!binding) return { binding, bound: false, foreign: false };
+  if (binding.relaySlug === relay.slug) return { binding, bound: true, foreign: false };
+  const named = await db
+    .query('relays')
+    .withIndex('by_slug', (q) => q.eq('slug', binding.relaySlug))
+    .unique();
+  return { binding, bound: false, foreign: !named || named.deleting === true };
 }
 
 /**
@@ -843,7 +863,7 @@ async function statusFactsOf(
   db: Db,
   relay: Relay,
   edges: Edge[],
-  bound: boolean,
+  bindingState: { bound: boolean; foreign: boolean },
   renderEnabled: boolean,
 ): Promise<Omit<OriginStatusFacts, 'attention'>> {
   const pool: OriginStatusFacts['pool'][number][] = [];
@@ -872,7 +892,8 @@ async function statusFactsOf(
     published: publishedCount(relay.publishedEdgeIds),
     pool,
     standbys: edges.filter((e) => e.status === 'active' && e.publication === 'unpublished').length,
-    bound,
+    bound: bindingState.bound,
+    foreignBinding: bindingState.foreign,
     renderEnabled,
     run: runFacts,
   };
@@ -910,11 +931,11 @@ export const attention = internalQuery({
     const statusFacts = new Map<string, Omit<OriginStatusFacts, 'attention'>>();
     for (const relay of relays) {
       if (relay.deleting) {
-        const bound = !!(await bindingOf(ctx.db, relay));
+        const state = await bindingStateOf(ctx.db, relay);
         const edges = await liveEdgesOfRelay(ctx.db, relay._id);
         statusFacts.set(
           relay._id as string,
-          await statusFactsOf(ctx.db, relay, edges, bound, cfg.render.enabled),
+          await statusFactsOf(ctx.db, relay, edges, state, cfg.render.enabled),
         );
         continue;
       }
@@ -982,10 +1003,12 @@ export const attention = internalQuery({
         }
       }
       const published = publishedCount(relay.publishedEdgeIds);
-      const binding = await bindingOf(ctx.db, relay);
+      const bindingState = await bindingStateOf(ctx.db, relay);
+      const binding = bindingState.binding;
       // The one `members_dark` rule (the origin status's `dark` delivery too).
       const darkCode = membersDarkCode({
-        bound: !!binding,
+        bound: bindingState.bound,
+        foreignBinding: bindingState.foreign,
         published,
         enabled: relay.enabled,
         renderEnabled: cfg.render.enabled,
@@ -1004,7 +1027,7 @@ export const attention = internalQuery({
       }
       statusFacts.set(
         relay._id as string,
-        await statusFactsOf(ctx.db, relay, edges, !!binding, cfg.render.enabled),
+        await statusFactsOf(ctx.db, relay, edges, bindingState, cfg.render.enabled),
       );
       // A direct Host reappeared on a bound guided node and could not be
       // re-hidden: delivery is fail-closed (`leak_detected`) until it is hidden.
@@ -1690,12 +1713,8 @@ export const preflight = internalQuery({
     if (!cfg.probe.enabled) warnings.push({ code: 'probe_disabled', detail: null });
     if (!process.env.EDGE_MARK_PEPPER) warnings.push({ code: 'mark_pepper_missing', detail: null });
     if (relay.backendServerId && relay.origin.kind !== 'manual') {
-      const binding = await deliveryBindingFor(
-        ctx.db,
-        relay.backendServerId,
-        relay.nodeName ?? undefined,
-      );
-      if (binding && publishedCount(relay.publishedEdgeIds) === 0)
+      const { bound } = await bindingStateOf(ctx.db, relay);
+      if (bound && publishedCount(relay.publishedEdgeIds) === 0)
         warnings.push({ code: 'members_dark', detail: relay.slug });
     }
     const seen = new Set<string>();

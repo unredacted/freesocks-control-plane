@@ -178,6 +178,31 @@ describe('the attention response carries the one origin status', () => {
     expect(a.fleet).toEqual({ kind: 'needs-you', dot: 'amber', count: 3, total: 5, protected: 1 });
   });
 
+  test("a node's binding left by a departed origin is not this origin's: members are dark (relay_missing)", async () => {
+    const t = convexTest(schema, modules);
+    const f = await seedEdgeFixture(t);
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.render.enabled', 'true'));
+    await adoptL4Edge(t, f.relayId, f.listenerId, { publish: true });
+    // The binding still names the origin deleted keep-dark before this one.
+    await t.run(async (ctx) => {
+      const binding = (await ctx.db.query('edgeDeliveryBindings').collect()).find(
+        (b) => b.relaySlug === 'node-one',
+      )!;
+      await ctx.db.patch(binding._id, { relaySlug: 'node-gone' });
+    });
+    const a = AttentionResponse.parse(await t.query(internal.edgeOperator.attention, {}));
+    const st = a.origins.find((o) => o.relayId === f.relayId)!.status;
+    expect(st.delivery).toEqual({ kind: 'dark', code: 'relay_missing' });
+    expect([st.kind, st.code]).toEqual(['needs-you', 'members_dark']);
+    expect(a.items.find((i) => i.kind === 'members_dark' && i.relayId === f.relayId)).toMatchObject(
+      { severity: 'critical', code: 'relay_missing' },
+    );
+    const setup = SetupStatusResponse.parse(
+      await t.query(internal.edgeOperator.setupStatus, { relaySlug: 'node-one' }),
+    );
+    expect(setup.delivery).toEqual({ kind: 'dark', code: 'relay_missing' });
+  });
+
   test('a finished run no longer counts, and an empty fleet says so', async () => {
     const t = convexTest(schema, modules);
     let a = AttentionResponse.parse(await t.query(internal.edgeOperator.attention, {}));

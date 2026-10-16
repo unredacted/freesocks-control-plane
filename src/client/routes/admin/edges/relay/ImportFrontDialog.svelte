@@ -38,7 +38,7 @@
   import { protocolLine, providerLabel } from '../lib/format';
   import { edgeErrorMessage } from '../lib/edgeErrors';
   import { relativeTime } from '../lib/time';
-  import { addressIssue } from '../forms/origin';
+  import { importFrontIssues } from './importFront';
 
   interface Props {
     open: boolean;
@@ -114,22 +114,17 @@
       (Number.isInteger(portNumber) && portNumber >= 1 && portNumber <= 65535),
   );
   // What keeps the import from being sent, in words (shown once Import was pressed).
-  const issues = $derived.by(() => {
-    const out: string[] = [];
-    if (!listener) out.push('Choose the listener this front forwards to.');
-    if (source === 'account') {
-      if (!accountId) out.push('Choose the account the resource lives in.');
-      else if (!resourceId) out.push('Choose the resource.');
-    } else if (hostname.trim() === '' && ipv4.trim() === '') {
-      out.push('Give the hostname of a CDN front or the IPv4 address of a load balancer.');
-    }
-    if (ipv4.trim() !== '') {
-      const problem = addressIssue(ipv4);
-      if (problem) out.push(problem);
-    }
-    if (!portOk) out.push('The port is a number between 1 and 65535.');
-    return out;
-  });
+  const issues = $derived(
+    importFrontIssues({
+      hasListener: !!listener,
+      source,
+      accountId,
+      resourceId,
+      hostname,
+      ipv4,
+      port,
+    }),
+  );
   const valid = $derived(issues.length === 0);
 
   const refresh = createMutation(() => ({

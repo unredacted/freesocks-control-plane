@@ -1072,6 +1072,16 @@ const REFUSAL_COPY = {
     explain: 'Only a node the node role enrolled is protected again from here.',
     fix: 'Use Replace address on its addresses instead.',
   },
+  reprotect_mixed_accounts: {
+    label: 'More than one account',
+    explain: 'This node is served through addresses from more than one provider account.',
+    fix: 'Replace its addresses one at a time from Origin details instead.',
+  },
+  reprotect_no_room: {
+    label: 'No room for new addresses',
+    explain: 'The node already uses as many addresses as one origin may.',
+    fix: 'Remove an address from Origin details first, then protect it again.',
+  },
 } as const satisfies Record<string, CodeCopy>;
 
 export const EDGE_REFUSAL_COPY: Record<string, CodeCopy> = REFUSAL_COPY;

@@ -76,6 +76,7 @@ import { parseIntent } from './lib/edges/intent';
 import { fnv1a64Hex, listenerConfigHash, validateListenerSpec } from './lib/edges/registration';
 import type { ListenerSpecInput } from './lib/edges/registration';
 import { MAX_DESIRED_PUBLISHED } from './lib/edgeConfig';
+import { publishedCount } from './lib/edges/pool';
 import {
   MAX_OBSERVATION_AGE_MS,
   MAX_REHEARSAL_ATTEMPTS,
@@ -906,16 +907,87 @@ export async function onSetupRunEnded(
   await blockActivation(ctx, act, code);
 }
 
-/** A re-protect run that ended without going live gives the live origin back. */
+/**
+ * A re-protect run that ended without going live gives the live origin back,
+ * and the room it made for its new addresses (`restoreReprotectPool`).
+ */
 async function releaseReprotectOrigin(ctx: MutationCtx, run: Run): Promise<void> {
   if (!run.relayId) return;
   const relay = await ctx.db.get(run.relayId);
-  if (!relay || (!relay.setupOwned && relay.setupStage === undefined)) return;
+  if (!relay) return;
+  await restoreReprotectPool(ctx, run, relay);
+  if (!relay.setupOwned && relay.setupStage === undefined) return;
   await ctx.db.patch(relay._id, {
     setupOwned: undefined,
     setupStage: undefined,
     updatedAt: Date.now(),
   });
+}
+
+/**
+ * Room for a re-protect's new addresses. Each one is published BESIDE what
+ * members already hold, so a full pool would keep every candidate a standby
+ * (`pool_full_standby`) and the run could never go live. The pool is widened
+ * to what is published, plus one slot per transport of the run that has no
+ * published address of the run yet, plus the slots reserved for uncovered
+ * listeners (`allocatePoolIndex`), bounded by MAX_DESIRED_PUBLISHED: past that
+ * `edge.reprotect_no_room`. Go-live retires the replaced addresses and gives
+ * the room back (`retireReplacedEdges`), and so does a run that ends without
+ * going live.
+ */
+async function ensureReprotectRoom(
+  ctx: MutationCtx,
+  relay: Relay,
+  newAddresses: number,
+): Promise<void> {
+  // Coverage listeners with no template edge hold their reserved slots.
+  const uncovered = (await listenersOf(ctx, relay._id)).filter(
+    (l) => l.deployed && l.enabled && !l.retired && !l.templateEdgeId,
+  ).length;
+  const needed = publishedCount(relay.publishedEdgeIds) + newAddresses + uncovered;
+  if (needed <= relay.desiredPublished) return;
+  if (needed > MAX_DESIRED_PUBLISHED)
+    throw new ConvexError({
+      code: 'edge.reprotect_no_room',
+      message: `This origin has no room for a new address per transport (at most ${MAX_DESIRED_PUBLISHED} in use); remove an address first`,
+    });
+  await ctx.db.patch(relay._id, { desiredPublished: needed, updatedAt: Date.now() });
+}
+
+/** The pool size a re-protect found, back (never below what is published now). */
+async function restoreReprotectPool(ctx: MutationCtx, run: Run, relay: Relay): Promise<void> {
+  const before = parsePlan(run).reprotect?.desiredBefore;
+  if (before === undefined) return;
+  const fresh = (await ctx.db.get(relay._id)) ?? relay;
+  const desired = Math.max(before, publishedCount(fresh.publishedEdgeIds));
+  if (fresh.desiredPublished !== desired)
+    await ctx.db.patch(relay._id, { desiredPublished: desired, updatedAt: Date.now() });
+}
+
+/**
+ * Go-live of a re-protect: the new addresses take the places of the ones they
+ * replace. Every other published edge on a run transport is drained (members
+ * move at their next refresh, as after a Replace) once that transport's new
+ * address is published; a transport whose new address is not published keeps
+ * what it has. Then the pool size is given back.
+ */
+async function retireReplacedEdges(ctx: MutationCtx, run: Run, relay: Relay): Promise<number> {
+  const keep = new Set(run.listeners.map((l) => l.edgeId).filter((e): e is Id<'edges'> => !!e));
+  const listeners = await listenersOf(ctx, relay._id);
+  const retire: Edge[] = [];
+  for (const entry of run.listeners) {
+    const l = listeners.find((x) => x.listenerKey === entry.listenerKey && !x.retired);
+    const fresh = entry.edgeId ? await ctx.db.get(entry.edgeId) : null;
+    if (!l || !fresh || fresh.publication !== 'published') continue;
+    for (const id of relay.publishedEdgeIds) {
+      if (!id || keep.has(id)) continue;
+      const e = await ctx.db.get(id);
+      if (e && e.listenerId === l._id && e.publication === 'published') retire.push(e);
+    }
+  }
+  for (const e of retire) await unpublishFromPool(ctx, relay, e, {});
+  await restoreReprotectPool(ctx, run, relay);
+  return retire.length;
 }
 
 function verdictsOf(run: Run): string {
@@ -2145,6 +2217,8 @@ export const goLive = internalMutation({
       }
     }
     await claimDeliveryBinding(ctx, relay);
+    // A re-protect's new addresses take the places of the ones they replace.
+    const retired = r.kind === 'reprotect' ? await retireReplacedEdges(ctx, r, relay) : 0;
     await ctx.db.patch(relay._id, {
       setupOwned: undefined,
       setupStage: undefined,
@@ -2173,7 +2247,12 @@ export const goLive = internalMutation({
       stepVersion: next,
       nextStepAt: undefined,
       finishedAt: now,
-      events: appendRunEvent(r.events, { at: now, level: 'info', code: 'live' }),
+      events: appendRunEvent(r.events, {
+        at: now,
+        level: 'info',
+        code: 'live',
+        ...(retired > 0 ? { detail: `${retired} replaced address(es) draining` } : {}),
+      }),
       updatedAt: now,
     });
     const after = (await ctx.db.get(runId))!;
@@ -2411,8 +2490,18 @@ export const retry = internalMutation({
       }),
       updatedAt: now,
     });
-    if (reclaim && r.relayId)
+    if (reclaim && r.relayId) {
+      const relay = await ctx.db.get(r.relayId);
+      if (relay) {
+        let missing = 0;
+        for (const l of listeners) {
+          const e = l.edgeId ? await ctx.db.get(l.edgeId) : null;
+          if (!e || e.publication !== 'published') missing++;
+        }
+        await ensureReprotectRoom(ctx, relay, missing);
+      }
       await ctx.db.patch(r.relayId, { setupOwned: true, setupStage: stage, updatedAt: now });
+    }
     await scheduleStep(ctx, r._id, 0);
     return { ok: true as const, generation: r.generation + 1, stage };
   },
@@ -2795,8 +2884,13 @@ export const cancelReprotect = internalMutation({
         const e = await ctx.db.get(id);
         if (!e || e.relayId !== relay._id) continue;
         if (e.publication === 'unpublished' && LIVE_CANDIDATE.has(e.status)) drop.push(e);
-        else if (e.publication === 'published' && gate && isCandidateEdge(gate, e._id as string))
-          unpublish.push(e);
+        else if (e.publication !== 'published') continue;
+        // A candidate members never got goes; so does an address of this run
+        // a committed admission published beside the transport's existing
+        // ones (every edge here is the run's own: a re-protect reuses none).
+        // Only an address that is the transport's last served one stays.
+        else if (gate && isCandidateEdge(gate, e._id as string)) unpublish.push(e);
+        else if (await servedBesides(ctx, relay, e, ids)) unpublish.push(e);
       }
       // The pool guard of every unpublish (quarantine, restore, a backend
       // claim), checked before anything is written.
@@ -2813,6 +2907,25 @@ export const cancelReprotect = internalMutation({
     return { ok: true as const, disposition: 'candidates' as const };
   },
 });
+
+/**
+ * Whether the edge's transport keeps another published address that is not
+ * the run's own (`runEdges`): only then does dropping it leave members served.
+ */
+async function servedBesides(
+  ctx: { db: QueryCtx['db'] },
+  relay: Relay,
+  edge: Edge,
+  runEdges: ReadonlySet<Id<'edges'>>,
+): Promise<boolean> {
+  for (const id of relay.publishedEdgeIds) {
+    if (!id || id === edge._id || runEdges.has(id)) continue;
+    const other = await ctx.db.get(id);
+    if (other && other.listenerId === edge.listenerId && other.publication === 'published')
+      return true;
+  }
+  return false;
+}
 
 // --- require-edges (the only other path to the binding) --------------------------------------------
 
@@ -3082,8 +3195,19 @@ export const reprotect = internalMutation({
         code: 'edge.coverage_incomplete',
         message: 'No listener of this origin is served by a published edge',
       });
-    // The account members are served through now (the first template edge that names one).
-    const accountId = served.find((s) => s.template.accountId)?.template.accountId;
+    // The account members are served through now. One run has one account,
+    // so an origin served through several (one transport moved to another
+    // provider) is refused rather than forced onto the first one's.
+    const accountIds = new Set(
+      served.map((s) => s.template.accountId).filter((a): a is Id<'edgeProviderAccounts'> => !!a),
+    );
+    if (accountIds.size > 1)
+      throw new ConvexError({
+        code: 'edge.reprotect_mixed_accounts',
+        message:
+          'This origin is served through more than one provider account; protect it again one account at a time from Origin details',
+      });
+    const accountId = [...accountIds][0];
     const account = accountId ? await ctx.db.get(accountId) : null;
     if (!account || !account.enabled || !accountTested(account))
       throw new ConvexError({
@@ -3093,6 +3217,9 @@ export const reprotect = internalMutation({
     const layer = edgeLayerOf(account.provider);
     const requiredListeners = served.map((s) => s.listener.listenerKey);
     const nodeUuid = relay.origin.kind === 'panel-node' ? (relay.origin.nodeUuid ?? '') : '';
+    // Room for one new address per transport, beside what members hold.
+    const desiredBefore = relay.desiredPublished;
+    await ensureReprotectRoom(ctx, relay, requiredListeners.length);
     const plan: SetupPlanSnapshot = {
       backendServerId: backendServerId as string,
       backend: '',
@@ -3120,6 +3247,7 @@ export const reprotect = internalMutation({
       existingRelay: { id: relay._id as string, slug: relay.slug, setupStage: null },
       activeRunId: null,
       enrolled: true,
+      reprotect: { desiredBefore },
     };
     const stage: SetupRunStage = 'prepare';
     const now = Date.now();

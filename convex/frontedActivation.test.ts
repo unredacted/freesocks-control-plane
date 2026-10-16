@@ -1034,6 +1034,7 @@ describe('re-protect a live node (its own run kind)', () => {
     const e1Address = await edgeAddress(t, live.e1);
     await memberBody(t, e1Address);
 
+    const desiredBefore = (await relayRow(t, live.relayId)).desiredPublished;
     const { runId, run, e2, e2Address } = await reprotectToTryIt(w, live);
     const view = SetupRunAdmin.parse(
       await t.query(internal.edgeSetupRuns.getForAdmin, { id: runId }),
@@ -1074,14 +1075,17 @@ describe('re-protect a live node (its own run kind)', () => {
     expect(seen?.body).toContain(e1Address);
     expect(seen?.body).not.toContain(ORIGIN_V4);
 
-    // Done: the committed edge stays, the new one joined, the node is handed back.
+    // Done: the new address took the old one's place (it drains, as after a
+    // Replace), the pool is its old size again, the node is handed back.
     const relay = await relayRow(t, live.relayId);
-    expect(relay.publishedEdgeIds).toEqual(expect.arrayContaining([live.e1, e2]));
+    expect(relay.publishedEdgeIds.filter(Boolean)).toEqual([e2]);
+    expect((await t.run((c) => c.db.get(live.e1)))!.publication).toBe('draining');
+    expect(relay.desiredPublished).toBe(desiredBefore);
     expect(relay.setupOwned).toBeUndefined();
     expect(relay.setupStage).toBeUndefined();
     expect(await bindingOf(t, serverId)).toBeTruthy();
     expect((await gateOf(t, serverId)).state).toBe('open');
-    await memberBody(t, e1Address);
+    await memberBody(t, e2Address, [e1Address]);
     // No new approval was needed: the one committed activation is the original.
     const acts = await t.run((c) => c.db.query('panelActivationRuns').collect());
     expect(acts.map((a) => a.state)).toEqual(['committed']);
@@ -1134,10 +1138,12 @@ describe('re-protect a live node (its own run kind)', () => {
     expect(seen?.body).not.toContain(ORIGIN_V4);
     expect(w.calls.rehearsedEdges.at(-1)).toEqual([e2 as string]);
 
-    // Promoted at go-live: now members get the replacement beside the committed edge.
+    // Promoted at go-live: members get the replacement, which took the old
+    // address's place (the old one drains, as after a Replace).
     expect((await activationRun(t, actId)).state).toBe('committed');
     expect((await gateOf(t, serverId)).candidates.edgeIds).toEqual([]);
-    expect(await memberBody(t, e1Address)).toContain(e2Address);
+    await memberBody(t, e2Address, [e1Address]);
+    expect((await t.run((c) => c.db.get(live.e1)))!.publication).toBe('draining');
     expect((await relayRow(t, live.relayId)).setupOwned).toBeUndefined();
   });
 
@@ -1281,6 +1287,90 @@ describe('re-protect a live node (its own run kind)', () => {
     const gone = await edgesPost(t, live.cookie, `relays/${live.relayId}/reprotect`);
     expect(gone.status).toBe(404);
     expect(await errorCode(gone)).toBe('not_found');
+  });
+
+  test('cancel drops every new address of the run, also one a committed admission already published', async () => {
+    const w = await world();
+    const { t, serverId } = w;
+    const live = await liveL4(w);
+    const e1Address = await edgeAddress(t, live.e1);
+    const desiredBefore = (await relayRow(t, live.relayId)).desiredPublished;
+    const { runId, e2, e2Address } = await reprotectToTryIt(w, live);
+    // Within the approved shape the new address is published under the
+    // committed admission (no candidate), then the run waits at its rehearsal.
+    w.hooks.holdRehearsal = true;
+    await tickAll(t, runId);
+    const held = await drive(t, () => setupRun(t, runId), parked, 'run to the held rehearsal');
+    expect([held.stage, held.need?.code]).toEqual(['rehearse', 'rehearsal_failed']);
+    expect((await relayRow(t, live.relayId)).publishedEdgeIds).toContain(e2);
+    expect((await gateOf(t, serverId)).candidates.edgeIds).toEqual([]);
+
+    const res = await edgesPost(t, live.cookie, `setup-runs/${runId}/cancel`);
+    expect(res.status).toBe(200);
+    expect(SetupRunCancelResponse.parse(await res.json()).disposition).toBe('candidates');
+    // The run's own address leaves the pool to drain; the committed one stays.
+    const dropped = (await t.run((c) => c.db.get(e2)))!;
+    expect([dropped.publication, dropped.status]).toEqual(['draining', 'draining']);
+    const relay = await relayRow(t, live.relayId);
+    expect(relay.publishedEdgeIds.filter(Boolean)).toEqual([live.e1]);
+    expect(relay.desiredPublished).toBe(desiredBefore);
+    expect(relay.setupOwned).toBeUndefined();
+    expect((await bindingOf(t, serverId))?.state).toBe('active');
+    await memberBody(t, e1Address, [e2Address]);
+  });
+
+  test('a full pool gets room for the new address, and Protect again twice in a row goes live both times', async () => {
+    const w = await world();
+    const { t, serverId } = w;
+    const live = await liveL4(w);
+    // Nothing free in the pool: each new address must be given room.
+    await t.run((c) => c.db.patch(live.relayId, { desiredPublished: 1 }));
+    let current = live.e1;
+    for (const round of [1, 2]) {
+      const { runId, e2, e2Address } = await reprotectToTryIt(w, live);
+      expect((await relayRow(t, live.relayId)).desiredPublished).toBe(2);
+      await tickAll(t, runId);
+      const done = await drive(t, () => setupRun(t, runId), movedOn, `re-protect ${round}`);
+      expect([done.stage, done.state]).toEqual(['done', 'done']);
+      // The new address took the old one's place; the room is given back.
+      const relay = await relayRow(t, live.relayId);
+      expect(relay.publishedEdgeIds.filter(Boolean)).toEqual([e2]);
+      expect(relay.desiredPublished).toBe(1);
+      expect((await t.run((c) => c.db.get(current)))!.publication).toBe('draining');
+      expect((await bindingOf(t, serverId))?.state).toBe('active');
+      await memberBody(t, e2Address);
+      current = e2;
+    }
+  });
+
+  test('refused with no room left, and for an origin served through more than one account', async () => {
+    const w = await world();
+    const { t } = w;
+    const live = await liveL4(w);
+    // Already at the most addresses one origin may use.
+    const full = Array.from({ length: 8 }, () => live.e1);
+    await t.run((c) => c.db.patch(live.relayId, { publishedEdgeIds: full, desiredPublished: 8 }));
+    const noRoom = await edgesPost(t, live.cookie, `relays/${live.relayId}/reprotect`);
+    expect(noRoom.status).toBe(409);
+    expect(await errorCode(noRoom)).toBe('edge.reprotect_no_room');
+    expect((await relayRow(t, live.relayId)).setupOwned).toBeFalsy();
+    await t.run((c) =>
+      c.db.patch(live.relayId, { publishedEdgeIds: [live.e1], desiredPublished: 2 }),
+    );
+    // A second transport served through another account.
+    await t.run(async (c) => {
+      const e1 = (await c.db.get(live.e1))!;
+      const l1 = (await c.db.get(e1.listenerId))!;
+      const { _id: _l, _creationTime: _lc, ...listener } = l1;
+      const l2 = await c.db.insert('relayListeners', { ...listener, listenerKey: 'second' });
+      const { _id: _e, _creationTime: _ec, ...edge } = e1;
+      const e2 = await c.db.insert('edges', { ...edge, listenerId: l2, accountId: live.l7 });
+      await c.db.patch(l2, { templateEdgeId: e2 });
+      await c.db.patch(live.relayId, { publishedEdgeIds: [live.e1, e2], desiredPublished: 3 });
+    });
+    const mixed = await edgesPost(t, live.cookie, `relays/${live.relayId}/reprotect`);
+    expect(mixed.status).toBe(409);
+    expect(await errorCode(mixed)).toBe('edge.reprotect_mixed_accounts');
   });
 
   test('a node not live behind its origin yet is refused: protect it first', async () => {

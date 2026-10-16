@@ -22,15 +22,19 @@ export interface NodeForm {
   transportUuids: string[];
 }
 
-/** Node names are how a lost create is found again: one plain label, like the role sends. */
-const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/;
+/**
+ * Node names are how a lost create is found again. The same rule as the
+ * server's node create (`backendWrites.requestNodeCreate`): 3 to 30 plain
+ * characters.
+ */
+const NAME_RE = /^[A-Za-z0-9 ._-]{3,30}$/;
 
 export function nodeFormProblems(f: NodeForm, takenNames: readonly string[] = []): string[] {
   const out: string[] = [];
   const name = f.name.trim();
   if (!name) out.push('Give the node a name.');
   else if (!NAME_RE.test(name))
-    out.push('Use letters, digits, dots, dashes or underscores in the name (up to 63).');
+    out.push('Use 3 to 30 letters, digits, spaces, dots, dashes or underscores in the name.');
   else if (takenNames.some((n) => n.toLowerCase() === name.toLowerCase()))
     out.push('Another node already has this name.');
   if (!f.address.trim()) out.push('Say where the backend reaches the node.');

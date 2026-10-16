@@ -624,11 +624,13 @@ mirror). FCP never starts a run by itself.
   (`POST /api/v1/admin/edges/relays/{id}/reprotect`, a `reprotect` setup run, docs/edges.md
   "Guided setup runs"): new candidate addresses on the listeners members are served through, a
   test link for each, then the admission above (no new approval within the approved shape; the
-  review card otherwise). Members keep what they have the whole time: the committed edges, the
-  binding and the open gate, and a candidate reaches them only when go-live commits it. Cancel
-  drops only the run's candidates (an unpublished one is destroyed, a published one drains; the
-  bound activation is blocked as for any cancel). A failure leaves the node live and hands the
-  origin back to upkeep and the detector; retry claims it again.
+  review card otherwise). Members keep what they have until go-live: the committed edges, the
+  binding and the open gate, and a candidate reaches them only when go-live commits it. At
+  go-live the new addresses take the old ones' places (the old ones drain, as after a Replace).
+  Cancel drops only the run's new addresses (an unpublished one is destroyed, a published one
+  drains; the bound activation is blocked as for any cancel). A failure leaves the node live and
+  hands the origin back to upkeep and the detector; retry claims it again. One run has one
+  provider account: a node served through several is refused (`edge.reprotect_mixed_accounts`).
 - **Candidate Hosts on a live node.** A direct node's body reaches members as the backend serves
   it, so an address a candidate would enable cannot be kept out of it; a fronted listener without
   a committed template edge would get a new Host or a moved Host pointer. Either needs the gate

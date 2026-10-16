@@ -413,7 +413,7 @@
   <ActionConfirm
     bind:open={againOpen}
     title={`Protect ${name} again?`}
-    body="FCP makes a new address for each transport, you try each one from a real app, and you approve go-live if the node needs it. Members keep the addresses they have until the new ones go live. Cancelling drops only the new addresses."
+    body="FCP makes a new address for each transport, you try each one from a real app, and you approve go-live if the node needs it. Members keep the addresses they have until the new ones go live, then the new ones take their places. Cancelling drops only the new addresses."
     confirmLabel="Protect again"
     run={async () => {
       const res = await reprotectRelay(relay.id);

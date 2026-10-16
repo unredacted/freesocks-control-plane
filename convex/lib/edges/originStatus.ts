@@ -11,7 +11,8 @@
  *                               query sorts by it; the status picks its item by it)
  *   attentionRankOf(kind)       index in ATTENTION_RANK (unknown kinds rank last)
  *   membersDarkCode(facts)      the `members_dark` rule: why a bound origin's members get
- *                               nothing (`empty_pool` | `relay_disabled` | `render_disabled`)
+ *                               nothing (`empty_pool` | `relay_disabled` | `render_disabled`),
+ *                               or why a node's binding left by a departed origin does (`relay_missing`)
  *   deliveryOf(facts)           what members get: manual | direct | serving | degraded | dark
  *   originStatusOf(facts)       the one status of an origin (kind, dot, code, run, counts)
  *   fleetStatusOf(statuses)     the fleet headline judgement
@@ -82,8 +83,14 @@ export type OriginKind = 'panel-node' | 'backend-server' | 'manual';
 
 export interface DeliveryFacts {
   originKind: OriginKind;
-  /** An active delivery binding covers the origin: its members are served edges only. */
+  /** An active delivery binding covers the origin AND names it: its members are served edges only. */
   bound: boolean;
+  /**
+   * An active binding covers the origin's node but names an origin that no
+   * longer exists (one deleted `keep-dark`): members are answered
+   * `relay_missing`, whatever this origin publishes.
+   */
+  foreignBinding?: boolean;
   /** Published edges (the pool's non-empty slots). */
   published: number;
   enabled: boolean;
@@ -97,17 +104,18 @@ export interface DeliveryFacts {
   renderBlockers?: ReadonlyArray<{ code: string; detail: string | null }> | null;
 }
 
-export type MembersDarkCode = 'empty_pool' | 'relay_disabled' | 'render_disabled';
+export type MembersDarkCode = 'empty_pool' | 'relay_disabled' | 'render_disabled' | 'relay_missing';
 
 /**
  * The `members_dark` rule (the attention item of the same name): a bound
- * origin whose members get no subscription body, and why. Null when the origin
- * is not bound or can serve.
+ * origin whose members get no subscription body, and why; or a node whose
+ * binding still names a departed origin (`relay_missing`, the 503 members get).
+ * Null when the origin is not bound (and no foreign binding covers it) or can serve.
  */
 export function membersDarkCode(
-  f: Pick<DeliveryFacts, 'bound' | 'published' | 'enabled' | 'renderEnabled'>,
+  f: Pick<DeliveryFacts, 'bound' | 'foreignBinding' | 'published' | 'enabled' | 'renderEnabled'>,
 ): MembersDarkCode | null {
-  if (!f.bound) return null;
+  if (!f.bound) return f.foreignBinding ? 'relay_missing' : null;
   if (f.published === 0) return 'empty_pool';
   if (!f.enabled) return 'relay_disabled';
   if (!f.renderEnabled) return 'render_disabled';
@@ -123,17 +131,18 @@ export const SOFT_RENDER_BLOCKERS = [
 
 /**
  * What members of one origin get right now: `manual` (nothing FCP serves maps
- * to it), `direct` (no delivery binding: the node's own address; a guided
- * origin's binding is deferred until go-live), `dark` (bound and nothing can
- * be served: the `members_dark` rule), `degraded` (bound and serving, but the
+ * to it), `dark` (the `members_dark` rule: bound and nothing can be served, or
+ * the node's binding names a departed origin), `direct` (no delivery binding:
+ * the node's own address; a guided origin's binding is deferred until
+ * go-live), `degraded` (bound and serving, but the
  * sample render hit a soft problem; `preview_not_applied` carries the sample
  * render's delivery reason as its detail), else `serving`.
  */
 export function deliveryOf(f: DeliveryFacts): OriginDelivery {
   if (f.originKind === 'manual') return { kind: 'manual', code: null };
-  if (!f.bound) return { kind: 'direct', code: null };
   const dark = membersDarkCode(f);
   if (dark) return { kind: 'dark', code: dark };
+  if (!f.bound) return { kind: 'direct', code: null };
   const soft = (f.renderBlockers ?? []).find((b) =>
     (SOFT_RENDER_BLOCKERS as readonly string[]).includes(b.code),
   );
@@ -200,6 +209,7 @@ export interface OriginStatusFacts {
   /** Active unpublished edges (spares). */
   standbys: number;
   bound: boolean;
+  foreignBinding?: boolean;
   renderEnabled: boolean;
   /** The origin's guided setup run, if any; a terminal run is ignored. */
   run: StatusRunFacts | null;

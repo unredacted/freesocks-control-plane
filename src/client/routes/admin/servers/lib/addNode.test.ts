@@ -18,7 +18,12 @@ describe('nodeFormProblems', () => {
   });
   test('each field says what it needs, in words', () => {
     expect(nodeFormProblems(form({ name: ' ' }))).toEqual(['Give the node a name.']);
-    expect(nodeFormProblems(form({ name: 'bad name' }))[0]).toMatch(/letters, digits/);
+    // The server's rule: 3 to 30 plain characters.
+    expect(nodeFormProblems(form({ name: 'bad/name' }))[0]).toMatch(/3 to 30 letters/);
+    expect(nodeFormProblems(form({ name: 'ab' }))[0]).toMatch(/3 to 30 letters/);
+    expect(nodeFormProblems(form({ name: 'n'.repeat(31) }))[0]).toMatch(/3 to 30 letters/);
+    expect(nodeFormProblems(form({ name: 'n'.repeat(30) }))).toEqual([]);
+    expect(nodeFormProblems(form({ name: 'node c.1_x' }))).toEqual([]);
     expect(nodeFormProblems(form({ name: 'Node-C' }), ['node-c'])).toEqual([
       'Another node already has this name.',
     ]);

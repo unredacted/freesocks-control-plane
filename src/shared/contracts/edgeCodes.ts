@@ -354,6 +354,9 @@ export const WORKFLOW_CODES = [
   // that is not an enrolled node
   'reprotect_not_bound',
   'reprotect_not_enrolled',
+  // ... served through more than one provider account, or with no room for the new addresses
+  'reprotect_mixed_accounts',
+  'reprotect_no_room',
 ] as const;
 export type WorkflowCode = (typeof WORKFLOW_CODES)[number];
 

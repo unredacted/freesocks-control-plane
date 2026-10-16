@@ -642,20 +642,29 @@ through this origin (refused otherwise: `edge.reprotect_not_bound` for an origin
 `edge.setup_run_active`, `edge.busy`, `edge.maintenance`, quarantine, restore and a disabled
 origin). Its plan is read from the origin's own rows like `require-edges`: the listeners members
 are served through (deployed, enabled, with a published template edge; none is
-`edge.coverage_incomplete`) and the account of their template edges (missing, disabled or
-untested is `edge.account_incompatible`). It starts at stage 1 on the existing origin, owns it
+`edge.coverage_incomplete`) and the ONE account of their template edges (missing, disabled or
+untested is `edge.account_incompatible`; an origin served through several accounts is
+`edge.reprotect_mixed_accounts`). Each new address is published beside what members hold, so
+the run first makes room: `desiredPublished` is widened to the published addresses plus one per
+transport plus the slots reserved for uncovered listeners, at most `MAX_DESIRED_PUBLISHED`
+(beyond it `edge.reprotect_no_room`); the size it found is kept in the plan snapshot
+(`reprotect.desiredBefore`). It starts at stage 1 on the existing origin, owns it
 (`setupOwned`) while it runs, and never reuses an edge at stage 3: every candidate is a fresh
 address with a fresh test link, so a REALITY key change is proven through a new address, not a
 named-connection retest of a committed one. Publication follows the node's admission rules
-(docs/servers.md "A fronted node's activation"). Members keep the committed delivery throughout:
-the binding, the committed edges and the open gate are never touched. Any ending other than
-`done` hands the origin back (`onSetupRunEnded` clears `setupOwned`, so upkeep and the detector
-protect the node again); `retry` of a failed one claims it again while the origin still binds the
-node and nothing else owns it. Its cancel (`cancelReprotect`, one mutation, disposition
-`candidates`) drops only the run's own candidates: an unpublished one is cancelled for the
-reconcile destroy, a published candidate (one the node's gate keeps from members) drains out of
-the pool, an edge published under the committed approval stays; never a delete, a restore or a
-binding change. It is refused with `edge.busy` while a rotation runs on the origin (nothing
+(docs/servers.md "A fronted node's activation"). Members keep the committed delivery until
+go-live: the binding, the committed edges and the open gate are never touched before it. At
+go-live the new addresses take the old ones' places: every other published edge on a run
+transport whose new address is published drains (members move at their next refresh, as after
+a Replace) and the pool size goes back to `desiredBefore`. Any ending other than `done` hands
+the origin back (`onSetupRunEnded` clears `setupOwned` and gives the room back, so upkeep and
+the detector protect the node again); `retry` of a failed one claims it again (and makes room
+again) while the origin still binds the node and nothing else owns it. Its cancel
+(`cancelReprotect`, one mutation, disposition `candidates`) drops only the run's own new
+addresses: an unpublished one is cancelled for the reconcile destroy, a published one (a
+candidate the gate keeps from members, or one a committed admission already published) drains
+out of the pool unless it is its transport's last served address; never a delete, a restore or
+a binding change. It is refused with `edge.busy` while a rotation runs on the origin (nothing
 changes; cancel again in a moment).
 An ENROLLED node (docs/servers.md "A fronted node's activation"): the run parks at publish
 until the node is approved; the approval binds the run (`activationRunId`) and its activation
