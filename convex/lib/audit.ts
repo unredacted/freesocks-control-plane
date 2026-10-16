@@ -386,6 +386,8 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
     'relaySlug',
     'runId',
     'stage',
+    // `reprotect` for a live node protected again (absent on a first protection).
+    'kind',
     'listeners',
     'accountName',
     'provider',
