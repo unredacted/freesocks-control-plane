@@ -1277,6 +1277,25 @@ describe('re-protect a live node (its own run kind)', () => {
       /setup_run_active/,
     );
     await t.run((c) => c.db.patch(live.relayId, { setupOwned: undefined }));
+    // Not while the node is being renamed (its rotations would be refused mid-run).
+    const renameId = await t.run((c) =>
+      c.db.insert('panelNodeRenames', {
+        backendServerId: w.serverId,
+        nodeUuid: '00000000-0000-4000-8000-000000000001',
+        from: NODE,
+        to: 'node-renamed',
+        relayIds: [live.relayId],
+        state: 'running',
+        step: 'backend',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+    await t.run((c) => c.db.patch(live.relayId, { renaming: { renameId, since: Date.now() } }));
+    const renaming = await edgesPost(t, live.cookie, `relays/${live.relayId}/reprotect`);
+    expect(renaming.status).toBe(409);
+    expect(await errorCode(renaming)).toBe('edge.panel_op_running');
+    await t.run((c) => c.db.patch(live.relayId, { renaming: undefined }));
     // A node the role never enrolled is not protected again from here.
     await t.run((c) => c.db.delete(live.intentId));
     const unmanaged = await edgesPost(t, live.cookie, `relays/${live.relayId}/reprotect`);

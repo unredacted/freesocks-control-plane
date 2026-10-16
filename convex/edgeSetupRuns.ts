@@ -57,7 +57,7 @@ import {
 } from './relays';
 import { releaseTestCredentialsOf } from './edgeTestCredentials';
 import { isCandidateEdge } from './lib/backend/deliveryGate';
-import { assertNoRotationOrQuarantine } from './lib/edges/relayGuards';
+import { assertNoRelayPanelClaim, assertNoRotationOrQuarantine } from './lib/edges/relayGuards';
 import { confirmEndpoint } from './edgeVerification';
 import { listenersOf } from './relayListeners';
 import { accountTested } from './edgeProviderAccounts';
@@ -3194,6 +3194,9 @@ export const reprotect = internalMutation({
     }
     if (!(await admitted(ctx.db)))
       throw new ConvexError({ code: 'edge.maintenance', message: 'Edges are in maintenance' });
+    // A node rename or a server change moving this origin's listeners: its
+    // rotations would be refused mid-run (`edge.panel_op_running`), so wait.
+    await assertNoRelayPanelClaim(ctx.db, relay);
     // What the committed delivery serves: every deployed, enabled listener with
     // a published template edge.
     const served: Array<{ listener: Listener; template: Edge }> = [];
