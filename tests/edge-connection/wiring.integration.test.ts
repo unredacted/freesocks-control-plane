@@ -20,11 +20,14 @@ import {
   env,
   fetchThroughClientEventually,
   forwarderConnections,
+  routeFront,
   startClient,
   stopClient,
   until,
   wireForwarder,
 } from './stack';
+import { OPERATOR_INBOUNDS, OPERATOR_NODES, operatorProfile } from './cells';
+import { configForEndpoint, type Endpoint } from './clients';
 
 async function api(method: string, path: string, body?: unknown): Promise<any> {
   const res = await fetch(new URL(`/api/${path}`, env.panelUrl), {
@@ -151,6 +154,8 @@ describe.skipIf(!ENABLED)('edge connection stack wiring (hand-written configs)',
 
   test('REALITY through the L4 forwarder and WebSocket through the L7 front reach the page', async () => {
     await wireForwarder(443, `${ADDR.realityNode.edge}:443`);
+    // What a proxied CNAME to the origin hostname is.
+    await routeFront(frontHost, { host: env.originHostname, port: 443 }, env.originHostname);
     const before = await forwarderConnections(443);
     await startClient(
       JSON.stringify({
@@ -219,5 +224,131 @@ describe.skipIf(!ENABLED)('edge connection stack wiring (hand-written configs)',
     expect(
       accessLog('ingress').some((e) => e.uri === env.wsPath && e.remoteIp === ADDR.front.edge),
     ).toBe(true);
+  });
+});
+
+/**
+ * The operator nodes' transports, each through its own edge, with hand-written
+ * endpoints: a forwarder address per L4 transport, a front hostname per L7
+ * one, every engine that speaks the transport. Proves the operator profile,
+ * the edges and both engines before FCP takes any of them through the
+ * lifecycle.
+ */
+describe.skipIf(!ENABLED)('operator transports through their edges (hand-written)', () => {
+  const created = {
+    users: [] as string[],
+    nodes: [] as string[],
+    squads: [] as string[],
+    profiles: [] as string[],
+  };
+  let secrets: { vless: string; trojan: string; ss: string };
+
+  afterAll(async () => {
+    stopClient();
+    for (const u of created.users) await api('DELETE', `users/${u}`).catch(() => null);
+    for (const u of created.nodes) await api('DELETE', `nodes/${u}`).catch(() => null);
+    for (const u of created.squads) await api('DELETE', `internal-squads/${u}`).catch(() => null);
+    for (const u of created.profiles) await api('DELETE', `config-profiles/${u}`).catch(() => null);
+  });
+
+  test('both operator nodes connect to the panel at their public address', async () => {
+    const profiles: Array<{ node: 'l4m' | 'l7m'; uuid: string; inbounds: string[] }> = [];
+    for (const node of ['l4m', 'l7m'] as const) {
+      const profile = await api('POST', 'config-profiles', {
+        name: `EC wiring ${node}`,
+        config: operatorProfile(node, env.tlsName),
+      });
+      created.profiles.push(profile.uuid);
+      profiles.push({
+        node,
+        uuid: profile.uuid,
+        inbounds: profile.inbounds.map((i: { uuid: string }) => i.uuid),
+      });
+    }
+    const squad = await api('POST', 'internal-squads', {
+      name: 'EC-wiring-ops',
+      inbounds: profiles.flatMap((p) => p.inbounds),
+    });
+    created.squads.push(squad.uuid);
+    // The user before the nodes: a node starts with the users it has then, and
+    // a user created while a node is still starting can miss it (a panel race;
+    // members of the lifecycle test are issued long after their node is up).
+    const user = await api('POST', 'users', {
+      username: `ec_wiring_ops_${Date.now()}`,
+      expireAt: '2099-01-01T00:00:00.000Z',
+      trafficLimitBytes: 0,
+      trafficLimitStrategy: 'NO_RESET',
+      activeInternalSquads: [squad.uuid],
+    });
+    created.users.push(user.uuid ?? String(user.id));
+    secrets = { vless: user.vlessUuid, trojan: user.trojanPassword, ss: user.ssPassword };
+    for (const p of profiles) {
+      const n = await api('POST', 'nodes', {
+        name: `ec-wiring-${p.node}`,
+        address: OPERATOR_NODES[p.node].edge,
+        port: 2222,
+        configProfile: { activeConfigProfileUuid: p.uuid, activeInbounds: p.inbounds },
+      });
+      created.nodes.push(n.uuid);
+    }
+    const connected = await until(
+      async () => {
+        const nodes = await Promise.all(created.nodes.map((u) => api('GET', `nodes/${u}`)));
+        return nodes.every((n) => n.isConnected);
+      },
+      180_000,
+      2000,
+    );
+    expect(connected, 'an operator node never connected to the panel').toBe(true);
+  });
+
+  test('every operator transport reaches the page through its edge, with every engine that speaks it', async () => {
+    const pool = [...ADDR.forwarderPool].reverse(); // the far end of the pool: the member test takes the near end
+    const failures: string[] = [];
+    for (const ib of OPERATOR_INBOUNDS) {
+      const node = OPERATOR_NODES[ib.node];
+      const l4 = ib.node === 'l4m';
+      const address = l4
+        ? pool.shift()!
+        : `w-${ib.tag.toLowerCase().replace(/_/g, '-')}.${env.l7Zone}`;
+      if (l4) await wireForwarder(443, `${node.edge}:${ib.port}`, address);
+      else await routeFront(address, { host: node.edge, port: ib.port }, address);
+      const e: Endpoint = {
+        protocol: ib.protocol,
+        server: address,
+        port: 443,
+        secret:
+          ib.protocol === 'vless'
+            ? secrets.vless
+            : ib.protocol === 'trojan'
+              ? secrets.trojan
+              : secrets.ss,
+        ...(ib.protocol === 'shadowsocks' ? { method: 'chacha20-ietf-poly1305' } : {}),
+        ...(ib.protocol === 'vless' && ib.network === 'raw' ? { flow: 'xtls-rprx-vision' } : {}),
+        security: ib.security,
+        ...(ib.security === 'tls' ? { sni: l4 ? env.tlsName : address, alpn: ib.alpn } : {}),
+        network: ib.network === 'raw' ? 'tcp' : ib.network,
+        ...(ib.path ? { path: ib.path } : {}),
+        ...(ib.serviceName ? { serviceName: ib.serviceName } : {}),
+        ...(ib.mode ? { mode: ib.mode } : {}),
+        ...(!l4 && ib.network !== 'grpc' ? { host: address } : {}),
+      };
+      const engines: Array<'singbox' | 'mihomo'> =
+        ib.network === 'xhttp' ? ['mihomo'] : ['singbox', 'mihomo'];
+      for (const engine of engines) {
+        const { config } = configForEndpoint(e, 1080, engine);
+        try {
+          await startClient(config, 1080, engine);
+          const page = await fetchThroughClientEventually(1080, 20_000);
+          if (page?.token !== env.originToken) failures.push(`${ib.tag}/${engine}`);
+          else if (page.peer !== node.origin) failures.push(`${ib.tag}/${engine}: wrong peer`);
+        } catch (err) {
+          failures.push(`${ib.tag}/${engine}: ${(err as Error).message}`);
+        } finally {
+          stopClient();
+        }
+      }
+    }
+    expect(failures).toEqual([]);
   });
 });

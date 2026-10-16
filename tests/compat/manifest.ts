@@ -131,3 +131,273 @@ export const clients: CompatibilityClient[] = [
       'Static ss:// key contract only; Outline application and Shadowsocks transport require device verification.',
   },
 ];
+
+/**
+ * THE SUPPORTED MATRIX of edge-fronted delivery (docs/edges.md "Supported
+ * matrix", rendered from this list and pinned to it by
+ * convex/edgeMatrix.test.ts): what a member's client can reach through an L4
+ * or an L7 edge, per protocol × transport × security × layer × client format.
+ *
+ * A `tested` cell is a claim only because a real connection test proves it:
+ * `bun run test:integration:edge-connection` takes a real node through the
+ * real lifecycle, fetches the member's real `/api/v1/sub` body in that format,
+ * and the pinned reference engine (sing-box or Mihomo, `artifacts` above)
+ * fetches a page through the edge with it (tests/edge-connection/cells.ts maps
+ * every tested cell to its case, and the harness refuses a cell without one).
+ * Everything else names why it is not offered.
+ */
+/** The reference engines a served body runs in (the subscription formats with an engine). */
+export type EdgeEngine = 'singbox' | 'mihomo';
+export type EdgeCellVerdict = 'tested' | { unsupported: string };
+export interface EdgeMatrixCell {
+  protocol: 'vless' | 'trojan' | 'shadowsocks' | 'hysteria2' | 'tuic';
+  streamTransport: 'raw' | 'ws' | 'httpupgrade' | 'grpc' | 'xhttp' | 'udp';
+  security: 'none' | 'tls' | 'reality';
+  layer: 'l4' | 'l7';
+  /**
+   * Where the node's transport comes from: a connection mode FCP builds the
+   * profile for (the node role enrolls the node), or an operator's own profile
+   * FCP discovers on a panel node. Null for a cell nothing serves.
+   */
+  source: { mode: string } | 'operator' | null;
+  engines: Record<EdgeEngine, EdgeCellVerdict>;
+  /**
+   * An Outline access key (`ss://`, delivered as the dynamic `ssconf://` key)
+   * from an Outline server origin: Shadowsocks rows only, connected with the
+   * Shadowsocks of the reference sing-box (what an Outline client speaks).
+   */
+  outline?: EdgeCellVerdict;
+}
+
+const NO_SINGBOX_XHTTP: EdgeCellVerdict = {
+  unsupported: 'sing-box has no XHTTP transport (the panel leaves the entry out of its body)',
+};
+const both: Record<EdgeEngine, EdgeCellVerdict> = { singbox: 'tested', mihomo: 'tested' };
+const none = (reason: string): Record<EdgeEngine, EdgeCellVerdict> => ({
+  singbox: { unsupported: reason },
+  mihomo: { unsupported: reason },
+});
+const NOT_HTTP = 'not an HTTP transport: a CDN front carries HTTP only';
+const NODE_TERMINATES = 'REALITY terminates on the node: a CDN front would have to terminate it';
+const NO_UDP =
+  'UDP: no edge adapter forwards UDP yet (docs/edges.md "UDP"); served direct, never fronted';
+
+export const edgeMatrix: EdgeMatrixCell[] = [
+  // L4: a TCP forwarder carries the member's bytes untouched to the node.
+  {
+    protocol: 'vless',
+    streamTransport: 'raw',
+    security: 'reality',
+    layer: 'l4',
+    source: { mode: 'freedom-reality' },
+    engines: both,
+  },
+  {
+    protocol: 'vless',
+    streamTransport: 'xhttp',
+    security: 'reality',
+    layer: 'l4',
+    source: { mode: 'freedom-xhttp' },
+    engines: { singbox: NO_SINGBOX_XHTTP, mihomo: 'tested' },
+  },
+  {
+    protocol: 'vless',
+    streamTransport: 'raw',
+    security: 'tls',
+    layer: 'l4',
+    source: 'operator',
+    engines: both,
+  },
+  {
+    protocol: 'vless',
+    streamTransport: 'ws',
+    security: 'tls',
+    layer: 'l4',
+    source: 'operator',
+    engines: both,
+  },
+  {
+    protocol: 'vless',
+    streamTransport: 'httpupgrade',
+    security: 'tls',
+    layer: 'l4',
+    source: 'operator',
+    engines: both,
+  },
+  {
+    protocol: 'vless',
+    streamTransport: 'grpc',
+    security: 'tls',
+    layer: 'l4',
+    source: 'operator',
+    engines: both,
+  },
+  {
+    protocol: 'vless',
+    streamTransport: 'xhttp',
+    security: 'tls',
+    layer: 'l4',
+    source: 'operator',
+    engines: { singbox: NO_SINGBOX_XHTTP, mihomo: 'tested' },
+  },
+  {
+    protocol: 'trojan',
+    streamTransport: 'raw',
+    security: 'tls',
+    layer: 'l4',
+    source: 'operator',
+    engines: both,
+  },
+  {
+    protocol: 'trojan',
+    streamTransport: 'ws',
+    security: 'tls',
+    layer: 'l4',
+    source: 'operator',
+    engines: both,
+  },
+  {
+    protocol: 'shadowsocks',
+    streamTransport: 'raw',
+    security: 'none',
+    layer: 'l4',
+    source: 'operator',
+    engines: both,
+    outline: 'tested',
+  },
+  {
+    protocol: 'hysteria2',
+    streamTransport: 'udp',
+    security: 'tls',
+    layer: 'l4',
+    source: null,
+    engines: none(NO_UDP),
+  },
+  {
+    protocol: 'tuic',
+    streamTransport: 'udp',
+    security: 'tls',
+    layer: 'l4',
+    source: null,
+    engines: none(NO_UDP),
+  },
+  // L7: a CDN terminates TLS and proxies HTTP to the node's own TLS.
+  {
+    protocol: 'vless',
+    streamTransport: 'ws',
+    security: 'tls',
+    layer: 'l7',
+    source: { mode: 'freedom-ws' },
+    engines: both,
+  },
+  {
+    protocol: 'vless',
+    streamTransport: 'httpupgrade',
+    security: 'tls',
+    layer: 'l7',
+    source: 'operator',
+    engines: both,
+  },
+  {
+    protocol: 'vless',
+    streamTransport: 'grpc',
+    security: 'tls',
+    layer: 'l7',
+    source: 'operator',
+    engines: both,
+  },
+  {
+    protocol: 'vless',
+    streamTransport: 'xhttp',
+    security: 'tls',
+    layer: 'l7',
+    source: 'operator',
+    engines: { singbox: NO_SINGBOX_XHTTP, mihomo: 'tested' },
+  },
+  {
+    protocol: 'trojan',
+    streamTransport: 'ws',
+    security: 'tls',
+    layer: 'l7',
+    source: 'operator',
+    engines: both,
+  },
+  {
+    protocol: 'vless',
+    streamTransport: 'raw',
+    security: 'reality',
+    layer: 'l7',
+    source: null,
+    engines: none(NODE_TERMINATES),
+  },
+  {
+    protocol: 'vless',
+    streamTransport: 'xhttp',
+    security: 'reality',
+    layer: 'l7',
+    source: null,
+    engines: none(NODE_TERMINATES),
+  },
+  {
+    protocol: 'vless',
+    streamTransport: 'raw',
+    security: 'tls',
+    layer: 'l7',
+    source: null,
+    engines: none(NOT_HTTP),
+  },
+  {
+    protocol: 'trojan',
+    streamTransport: 'raw',
+    security: 'tls',
+    layer: 'l7',
+    source: null,
+    engines: none(NOT_HTTP),
+  },
+  {
+    protocol: 'shadowsocks',
+    streamTransport: 'raw',
+    security: 'none',
+    layer: 'l7',
+    source: null,
+    engines: none(NOT_HTTP),
+    outline: { unsupported: NOT_HTTP },
+  },
+  {
+    protocol: 'hysteria2',
+    streamTransport: 'udp',
+    security: 'tls',
+    layer: 'l7',
+    source: null,
+    engines: none(NO_UDP),
+  },
+  {
+    protocol: 'tuic',
+    streamTransport: 'udp',
+    security: 'tls',
+    layer: 'l7',
+    source: null,
+    engines: none(NO_UDP),
+  },
+];
+
+/** What is outside the matrix altogether, and why (docs/edges.md lists these under the table). */
+export const edgeMatrixUnsupported: Array<{ what: string; reason: string }> = [
+  { what: 'VMess', reason: 'no renderer codec; not in the listener catalogue' },
+  {
+    what: 'Xray JSON subscriptions',
+    reason:
+      'the renderer rewrites share links, sing-box JSON and Clash/Mihomo YAML; an Xray JSON body is refused (`unsupported_format`), never served with the origin in it',
+  },
+  {
+    what: 'Outline keys over WebSocket (WSS dynamic keys)',
+    reason:
+      'an Outline origin is a plain Shadowsocks key rewritten by address; there is no WebSocket form to front',
+  },
+  { what: 'sing-box over XHTTP', reason: 'sing-box has no XHTTP transport' },
+];
+
+/** `protocol/streamTransport/security@layer`: the stable key of a matrix cell. */
+export const edgeCellKey = (
+  c: Pick<EdgeMatrixCell, 'protocol' | 'streamTransport' | 'security' | 'layer'>,
+) => `${c.protocol}/${c.streamTransport}/${c.security}@${c.layer}`;

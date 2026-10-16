@@ -41,8 +41,20 @@ function isLoopback(listen: string | null | undefined): boolean {
 }
 
 /**
+ * The route a gRPC transport is reached by: its service name as the path
+ * prefix (`/<serviceName>`; the calls are `/<serviceName>/Tun` and
+ * `/<serviceName>/TunMulti`), what the terminator proxies over HTTP/2.
+ */
+function grpcRoute(ib: BackendTransport): string | null {
+  const name = ib.grpc?.serviceName?.trim();
+  if (!name) return null;
+  return name.startsWith('/') ? name : `/${name}`;
+}
+
+/**
  * Rewrite each loopback transport that the ingress maps into the externally
- * visible listener. A transport without a mapping (or one whose declared
+ * visible listener. A mapping names the transport by tag, internal port and
+ * path (a gRPC transport's path is its service name, `grpcRoute`). A transport without a mapping (or one whose declared
  * internal port or path disagree with the backend) is returned unchanged, so it
  * still fails discovery as `loopback`: a stale declaration never promotes an
  * transport it does not describe.
@@ -56,7 +68,7 @@ export function applyIngress(
   return inbounds.map((ib) => {
     const m = byTag.get(ib.tag);
     if (!m || !isLoopback(ib.listen) || ib.port !== m.port) return ib;
-    const path = ib.ws?.path ?? ib.httpupgrade?.path ?? ib.xhttp?.path ?? null;
+    const path = ib.ws?.path ?? ib.httpupgrade?.path ?? ib.xhttp?.path ?? grpcRoute(ib) ?? null;
     if (path !== m.path) return ib;
     if (ib.security !== 'none') return ib;
     return {

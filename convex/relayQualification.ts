@@ -235,6 +235,7 @@ export const store = internalMutation({
   args: {
     relayId: v.id('relays'),
     protocolUuid: v.string(),
+    trojanPassword: v.optional(v.string()),
     backendUserId: v.string(),
     backendShortId: v.optional(v.string()),
     subscriptionUrl: v.optional(v.string()),
@@ -249,6 +250,7 @@ export const store = internalMutation({
     if (!relay) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     await ctx.db.patch(a.relayId, {
       qualificationUserId: a.protocolUuid,
+      qualificationTrojanPassword: a.trojanPassword,
       qualificationBackendUserId: a.backendUserId,
       qualificationSubscription:
         a.backendShortId && a.subscriptionUrl
@@ -276,6 +278,7 @@ export const clear = internalMutation({
     if (!relay) return { ok: true as const };
     await ctx.db.patch(a.relayId, {
       qualificationUserId: undefined,
+      qualificationTrojanPassword: undefined,
       qualificationBackendUserId: undefined,
       qualificationSubscription: undefined,
       qualificationMint: undefined,
@@ -510,6 +513,7 @@ export const ensure = internalAction({
         await ctx.runMutation(internal.relayQualification.store, {
           relayId: a.relayId,
           protocolUuid: found.protocolUuid,
+          trojanPassword: found.trojanPassword,
           backendUserId: found.backendUserId,
           backendShortId: found.backendShortId,
           subscriptionUrl: found.subscriptionUrl,
@@ -628,6 +632,7 @@ export const ensure = internalAction({
     await ctx.runMutation(internal.relayQualification.store, {
       relayId: a.relayId,
       protocolUuid: issued.protocolUuid,
+      trojanPassword: issued.trojanPassword,
       backendUserId: issued.backendUserId,
       backendShortId: issued.backendShortId,
       subscriptionUrl: issued.subscriptionUrl,

@@ -115,8 +115,9 @@ export const context = internalQuery({
     // An ENROLLED node's transport has no Host before its first publication
     // (FCP creates a fronted node's Host only when it publishes), so the
     // credential's body carries no entry to template from. For a REALITY
-    // listener the entry is built from the transport's live parameters, as
-    // the direct test link is (nodeActivation.buildDirectTestLink).
+    // listener (raw, or XHTTP under REALITY) the entry is built from the
+    // transport's live parameters, as the direct test link is
+    // (nodeActivation.buildDirectTestLink).
     const origin = relay.origin;
     const enrolled =
       origin.kind === 'panel-node' &&
@@ -131,13 +132,21 @@ export const context = internalQuery({
       listener.panelBinding &&
       listener.protocol === 'vless' &&
       listener.security === 'reality' &&
-      listener.streamTransport === 'raw'
+      (listener.streamTransport === 'raw' || listener.streamTransport === 'xhttp')
         ? {
             backend: server.backend,
             config: server.config,
             profileUuid: listener.panelBinding.configProfileUuid,
             tag: listener.panelBinding.inboundTag,
             remark: listenerRemark(listener) ?? listener.listenerKey,
+            stream:
+              listener.streamTransport === 'xhttp'
+                ? ({
+                    kind: 'xhttp',
+                    path: listener.transportParams?.path ?? '/',
+                    mode: listener.transportParams?.mode ?? 'auto',
+                  } as const)
+                : ({ kind: 'raw' } as const),
           }
         : null;
     return {
@@ -243,13 +252,17 @@ async function synthesizedEntry(
     (await panelDigestKey()).key,
   );
   if (!params) return null;
-  return realityEntryLine(uuid, c.originAddress, c.originPort, params, synth.remark);
+  return realityEntryLine(uuid, c.originAddress, c.originPort, params, synth.remark, synth.stream);
 }
 
+/** The stream of a REALITY transport: raw TCP, or XHTTP with its path and mode. */
+export type RealityStream = { kind: 'raw' } | { kind: 'xhttp'; path: string; mode: string };
+
 /**
- * One VLESS REALITY-over-raw-TCP share link (pure): the backend gives its
- * accounts XTLS Vision there, and Xray refuses a session asking for another
- * flow; an IPv6 origin is bracketed in the authority.
+ * One VLESS REALITY share link (pure). Over raw TCP the backend gives its
+ * accounts XTLS Vision, and Xray refuses a session asking for another flow;
+ * over XHTTP there is no flow and the link carries the path and mode. An IPv6
+ * origin is bracketed in the authority.
  */
 export function realityEntryLine(
   uuid: string,
@@ -257,12 +270,14 @@ export function realityEntryLine(
   port: number,
   params: { serverNames: string[]; publicKey: string; shortId: string },
   remark: string,
+  stream: RealityStream = { kind: 'raw' },
 ): string {
   const q = new URLSearchParams({
     encryption: 'none',
-    flow: REALITY_RAW_FLOW,
+    ...(stream.kind === 'raw'
+      ? { flow: REALITY_RAW_FLOW, type: 'tcp' }
+      : { type: 'xhttp', path: stream.path, mode: stream.mode }),
     security: 'reality',
-    type: 'tcp',
     sni: params.serverNames[0] ?? '',
     fp: 'chrome',
     pbk: params.publicKey,

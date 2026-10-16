@@ -452,6 +452,7 @@ function checkSpec(
   zoneSslMode?: string,
 ): void {
   checkTransport(providerId, spec);
+  // The port rule has its own refusal below (`grpc_requires_443`).
   checkProtocolCarried(providerId, proto);
   checkOriginTransport(providerId, spec, tpl, zoneSslMode);
   checkOriginPort(providerId, spec, proto);

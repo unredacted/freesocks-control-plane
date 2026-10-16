@@ -365,6 +365,62 @@ describe('mapTransportsToListeners: unsupported reasons', () => {
 });
 
 describe('mapTransportsToListeners: listener keys', () => {
+  test('Hysteria 2 and TUIC map as UDP listeners nothing can front yet: they stay direct', async () => {
+    const { candidates, unsupported } = await map([
+      // Xray's inbound is `hysteria` (Hysteria 2) with its own `hysteria` stream.
+      inbound({
+        tag: 'HY2',
+        protocol: 'hysteria',
+        network: 'hysteria',
+        security: 'tls',
+        port: 8446,
+        tls: { serverName: 'h.example' },
+        reality: undefined,
+      }),
+      // A stream the backend reports as plain tcp (absent) is still QUIC.
+      inbound({
+        tag: 'TUIC',
+        protocol: 'tuic',
+        network: 'tcp',
+        security: 'none',
+        port: 8447,
+        tls: { serverName: 'h.example' },
+        reality: undefined,
+      }),
+    ]);
+    expect(unsupported).toEqual([]);
+    expect(
+      candidates.map((c) => ({
+        key: `${c.listenerSpec.protocol}/${c.listenerSpec.streamTransport}/${c.listenerSpec.security}`,
+        port: c.listenerSpec.originPort,
+        names: c.listenerSpec.tlsNames,
+        layers: c.layers,
+        formats: c.formats,
+      })),
+    ).toEqual([
+      {
+        key: 'hysteria2/udp/tls',
+        port: 8446,
+        names: ['h.example'],
+        layers: {
+          layers: [],
+          excluded: { l4: 'no_udp_provider', l7: 'protocol_not_http_transport' },
+        },
+        formats: { links: true, singbox: true, clash: true },
+      },
+      {
+        key: 'tuic/udp/tls',
+        port: 8447,
+        names: ['h.example'],
+        layers: {
+          layers: [],
+          excluded: { l4: 'no_udp_provider', l7: 'protocol_not_http_transport' },
+        },
+        formats: { links: true, singbox: true, clash: true },
+      },
+    ]);
+  });
+
   test('a key already on the origin makes the transport invalid (never a duplicate listener)', async () => {
     const key = await listenerKeyForTag('VLESS_REALITY');
     const { candidates, unsupported } = await map([inbound({ tag: 'VLESS_REALITY' })], [key]);

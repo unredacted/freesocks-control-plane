@@ -63,8 +63,12 @@ export interface ListenerCombo extends ListenerProto {
   isHttpTransport: boolean;
   /** The renderer writes an HTTP Host header (ws / httpupgrade / xhttp; gRPC follows the SNI). */
   usesHostHeader: boolean;
-  /** Which authenticated end-to-end proof exists for an L7 front of this listener. */
-  l7Proof: 'vless' | 'unsupported';
+  /**
+   * Which authenticated end-to-end proof exists for an L7 front of this
+   * listener: a VLESS or a Trojan request for the qualification account,
+   * through the front and the node, answered by the target.
+   */
+  l7Proof: 'vless' | 'trojan' | 'unsupported';
   /** Legacy single-word protocol id the renderer codecs and Host logic used (kept for fixtures). */
   legacy: 'reality' | 'tls' | 'plain' | 'ws' | 'httpupgrade' | 'grpc' | 'xhttp' | 'udp';
 }
@@ -104,7 +108,9 @@ function combo(
     usesHostHeader:
       streamTransport === 'ws' || streamTransport === 'httpupgrade' || streamTransport === 'xhttp',
     l7Proof:
-      protocol === 'vless' && isHttpTransport && security === 'tls' ? 'vless' : 'unsupported',
+      isHttpTransport && security === 'tls' && (protocol === 'vless' || protocol === 'trojan')
+        ? protocol
+        : 'unsupported',
     legacy,
   };
 }

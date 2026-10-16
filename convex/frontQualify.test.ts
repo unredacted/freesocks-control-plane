@@ -105,7 +105,8 @@ describe('frontQualify.context', () => {
       serviceName: null,
       upgradeToken: 'websocket',
     });
-    expect(c!.credential).toEqual({ uuid: UUID });
+    expect(c!.credential).toEqual({ kind: 'vless', uuid: UUID });
+    expect(c!.provider).toBeNull(); // an imported fixture edge names no provider
     expect(c!.stepTimeoutMs).toBe(10_000);
     expect(c!.ttlMinutes).toBe(60);
     const listener = (await t.run((ctx) => ctx.db.get(listenerId)))!;
@@ -124,10 +125,23 @@ describe('frontQualify.context', () => {
   test('a listener without an authenticated proof is reported as not carried', async () => {
     const t = convexTest(schema, modules);
     const { edgeId, listenerId } = await seed(t, { qualificationUserId: UUID });
-    await t.run((ctx) => ctx.db.patch(listenerId, { protocol: 'trojan' }));
+    await t.run((ctx) => ctx.db.patch(listenerId, { streamTransport: 'raw' }));
     const c = await t.query(internal.frontQualify.context, { edgeId });
     expect(c!.carried).toBe(false);
-    expect(c!.proto.protocol).toBe('trojan');
+    expect(c!.proto.streamTransport).toBe('raw');
+  });
+
+  test("Trojan over WebSocket is proved with the same account's Trojan password", async () => {
+    const t = convexTest(schema, modules);
+    const { edgeId, listenerId, relayId } = await seed(t, { qualificationUserId: UUID });
+    await t.run((ctx) => ctx.db.patch(listenerId, { protocol: 'trojan' }));
+    // No password stored (a credential minted before Trojan proofs): no credential, not a guess.
+    let c = await t.query(internal.frontQualify.context, { edgeId });
+    expect(c!.carried).toBe(true);
+    expect(c!.credential).toBeNull();
+    await t.run((ctx) => ctx.db.patch(relayId, { qualificationTrojanPassword: 'tp' }));
+    c = await t.query(internal.frontQualify.context, { edgeId });
+    expect(c!.credential).toEqual({ kind: 'trojan', password: 'tp' });
   });
 
   test('an id that is not a usable VLESS uuid is no credential', async () => {
@@ -260,8 +274,14 @@ describe('frontQualifyOps.run', () => {
       ok: false,
       code: 'unsupported_protocol',
     });
-    // Trojan over ws is HTTP-carried but has no VLESS proof.
-    await t.run((ctx) => ctx.db.patch(listenerId, { streamTransport: 'ws', protocol: 'trojan' }));
+    // Shadowsocks is not HTTP-carried either.
+    await t.run((ctx) =>
+      ctx.db.patch(listenerId, {
+        protocol: 'shadowsocks',
+        streamTransport: 'raw',
+        security: 'none',
+      }),
+    );
     expect(await t.action(internal.frontQualifyOps.run, { edgeId })).toEqual({
       ok: false,
       code: 'unsupported_protocol',

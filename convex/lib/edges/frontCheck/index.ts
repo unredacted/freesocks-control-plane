@@ -7,9 +7,10 @@
  * certificate, answers 200 for its own error pages, and will happily complete a
  * WebSocket handshake with a rule that never reaches the origin. None of that
  * proves a member can connect. So the check opens the transport exactly as the
- * slot describes, authenticates with the origin's qualification VLESS UUID, asks
- * the node to proxy `www.gstatic.com:80` and requires the 204 to come back out
- * of the tunnel. Only that sequence proves the whole chain.
+ * slot describes, authenticates as the origin's qualification account (its
+ * VLESS id, or its Trojan password for a Trojan transport), asks the node to
+ * proxy `www.gstatic.com:80` and requires the 204 to come back out of the
+ * tunnel. Only that sequence proves the whole chain.
  *
  * Everything observable is reported as a step with a duration, and every
  * failure gets a specific code so the admin sees WHERE the chain broke. Detail
@@ -48,6 +49,7 @@ import {
   xhttpUploadPath,
 } from './xhttp';
 import { buildVlessRequest, parseVlessResponse } from './vless';
+import { buildTrojanRequest } from './trojan';
 import { tlsConnect, type ConnectFn } from './tls';
 
 /** The neutral, unauthenticated target the tunnel is asked to fetch. */
@@ -71,15 +73,20 @@ export interface FrontCheckResult {
   checkedAt: number;
 }
 
+/** The qualification account, in the form the listener's protocol authenticates. */
+export type FrontCredential =
+  | { kind: 'vless'; uuid: string }
+  | { kind: 'trojan'; password: string };
+
 export interface QualifyFrontArgs {
   /** The fronted hostname: the dial name, the SNI and the HTTP Host. */
   hostname: string;
   port?: number;
-  /** What the listener speaks; only a `vless` HTTP-transport `tls` listener has a proof. */
+  /** What the listener speaks; only a vless or trojan HTTP-transport `tls` listener has a proof. */
   proto: ListenerProto;
   params: TransportParams;
-  /** The qualification account's VLESS UUID. */
-  uuid: string;
+  /** The qualification account; its kind must be the listener's proof. */
+  credential: FrontCredential;
   stepTimeoutMs: number;
   /** Ceiling for the whole session (default: three steps' worth). */
   totalTimeoutMs?: number;
@@ -554,20 +561,28 @@ function openXhttpTunnel(
 }
 
 /**
- * The authenticated leg: one write carrying the VLESS request header plus the
- * HTTP request, then the VLESS response header and the target's status line.
+ * The authenticated leg: one write carrying the request header (VLESS or
+ * Trojan) plus the HTTP request, then (VLESS only: Trojan has none) the
+ * response header and the target's status line.
  */
 function runSession(tunnel: Tunnel, args: QualifyFrontArgs, timeoutMs: number): Promise<void> {
   const target = args.target ?? PROBE_TARGET;
-  const request = buildVlessRequest({
-    uuid: args.uuid,
-    host: target.host,
-    port: target.port,
-    payload: tunnelProbeRequest(target.host, target.path),
-  });
+  const payload = tunnelProbeRequest(target.host, target.path);
+  const cred = args.credential;
+  const request =
+    cred.kind === 'vless'
+      ? buildVlessRequest({ uuid: cred.uuid, host: target.host, port: target.port, payload })
+      : buildTrojanRequest({
+          password: cred.password,
+          host: target.host,
+          port: target.port,
+          payload,
+        });
   const session = new Promise<void>((resolve, reject) => {
     let buf: Uint8Array = new Uint8Array(0);
-    let stage: 'vless' | 'http' = 'vless';
+    // The step stays `vless` (the authenticated step) until the target answers.
+    let stage: 'vless' | 'http' = cred.kind === 'vless' ? 'vless' : 'http';
+    let answered = false;
     let done = false;
     const settle = (fn: () => void) => {
       if (done) return;
@@ -593,10 +608,20 @@ function runSession(tunnel: Tunnel, args: QualifyFrontArgs, timeoutMs: number): 
         try {
           head = parseHttpHead(buf);
         } catch {
-          settle(() => reject(new StepError('egress_failed', 'malformed')));
+          // A Trojan node that refused the account answers with its fallback
+          // (or nothing), never with the target: the authentication failed.
+          settle(() =>
+            reject(
+              new StepError(
+                cred.kind === 'trojan' && !answered ? 'auth_failed' : 'egress_failed',
+                'malformed',
+              ),
+            ),
+          );
           return;
         }
         if (!head) return;
+        answered = true;
         if (head.status === 204) settle(resolve);
         else settle(() => reject(new StepError('egress_failed', String(head.status))));
       },
@@ -606,7 +631,14 @@ function runSession(tunnel: Tunnel, args: QualifyFrontArgs, timeoutMs: number): 
           return;
         }
         settle(() =>
-          reject(new StepError(stage === 'vless' ? 'auth_failed' : 'egress_failed', 'closed')),
+          reject(
+            new StepError(
+              stage === 'vless' || (cred.kind === 'trojan' && !answered)
+                ? 'auth_failed'
+                : 'egress_failed',
+              'closed',
+            ),
+          ),
         );
       },
       error(err) {
@@ -617,7 +649,12 @@ function runSession(tunnel: Tunnel, args: QualifyFrontArgs, timeoutMs: number): 
           reject(
             err instanceof StepError
               ? err
-              : new StepError(stage === 'vless' ? 'auth_failed' : 'egress_failed', 'io'),
+              : new StepError(
+                  stage === 'vless' || (cred.kind === 'trojan' && !answered)
+                    ? 'auth_failed'
+                    : 'egress_failed',
+                  'io',
+                ),
           ),
         );
       },
@@ -678,8 +715,12 @@ export async function qualifyFront(
     );
   };
 
-  if (!protocolIsHttpTransport(args.proto) || protocolL7Proof(args.proto) !== 'vless')
+  const proof = protocolL7Proof(args.proto);
+  if (!protocolIsHttpTransport(args.proto) || proof === 'unsupported')
     return { ok: false, code: 'unsupported_protocol', steps, checkedAt };
+  // A credential of the wrong protocol could never authenticate: say so.
+  if (args.credential.kind !== proof)
+    return { ok: false, code: 'no_qualification_credential', detail: 'kind', steps, checkedAt };
   const stream = args.proto.streamTransport;
 
   let socket: TLSSocket | null = null;

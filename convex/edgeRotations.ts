@@ -2406,7 +2406,7 @@ export async function selectionContext(
   const allowL7 = rotation.trigger === 'manual' || !!rotation.setupRun || l7SelectionAllowed(cfg);
   const eligibleAccounts = accountsForSlot(
     (await ctx.db.query('edgeProviderAccounts').collect()).filter((a) => a.enabled),
-    { layers, proto: protoOf(listener), allowL7 },
+    { layers, proto: protoOf(listener), originPort: listener.originPort, allowL7 },
   );
   const accounts = eligibleAccounts;
   const failure = (code: string): SelectionContext => ({

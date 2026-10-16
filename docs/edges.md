@@ -8,7 +8,7 @@ frontable proxy. Today an edge is one of two **layers**:
 - **L4**: a provider-managed cloud load balancer that forwards a TCP port to the origin. The
   origin terminates its own protocol (REALITY, TLS, plain); the edge is an address.
 - **L7**: a CDN front that terminates TLS and HTTP and forwards an HTTP-carried transport
-  (WebSocket, HTTP Upgrade, gRPC) to the origin. The edge is a **hostname** under an
+  (WebSocket, HTTP Upgrade, gRPC, XHTTP) to the origin. The edge is a **hostname** under an
   operator-owned zone; the CDN's own certificate and anycast addresses serve it.
 
 Censors block the edge's public address or hostname, not the origin, so the edge is the unit
@@ -24,6 +24,105 @@ uses.
 Admin surface: **Admin → Edges** (`/admin/edges`) and `/api/v1/admin/edges/*`; probe
 telemetry lives under **Admin → Telemetry → Probes** (`/admin/telemetry/probes`). Every request
 under the API prefix is HPKE-sealed by verb class (see [Sealing](#sealing)).
+
+## Supported matrix
+
+What a member's client can reach through an edge, per protocol, stream transport, security,
+layer and client format. A **yes** is a claim only because a real connection test proves it:
+the release gate `bun run test:integration:edge-connection` (job **Member connects through an
+edge**, `docs/client-compatibility.md` "Edge connection") takes a real node through the real
+lifecycle, fetches the member's real `/api/v1/sub` body in that format, and the pinned
+reference engine (sing-box, or Mihomo for the Clash format) fetches a page through the edge
+with it. Everything else says why it is not offered. The table is rendered from
+`tests/compat/manifest.ts` (`edgeMatrix`; print it with `bun tests/compat/edgeMatrixTable.ts`)
+and pinned to it by `convex/edgeMatrix.test.ts`; the gate refuses a claimed cell it has no case
+for.
+
+<!-- edge-matrix:start -->
+
+| Protocol    | Transport    | Security | Layer | sing-box | Mihomo | Outline key | Notes                                                                                              |
+| ----------- | ------------ | -------- | ----- | -------- | ------ | ----------- | -------------------------------------------------------------------------------------------------- |
+| VLESS       | raw TCP      | REALITY  | L4    | yes      | yes    | n/a         | mode `freedom-reality`                                                                             |
+| VLESS       | XHTTP        | REALITY  | L4    | no       | yes    | n/a         | mode `freedom-xhttp`; sing-box has no XHTTP transport (the panel leaves the entry out of its body) |
+| VLESS       | raw TCP      | TLS      | L4    | yes      | yes    | n/a         | operator's profile                                                                                 |
+| VLESS       | WebSocket    | TLS      | L4    | yes      | yes    | n/a         | operator's profile                                                                                 |
+| VLESS       | HTTP Upgrade | TLS      | L4    | yes      | yes    | n/a         | operator's profile                                                                                 |
+| VLESS       | gRPC         | TLS      | L4    | yes      | yes    | n/a         | operator's profile                                                                                 |
+| VLESS       | XHTTP        | TLS      | L4    | no       | yes    | n/a         | operator's profile; sing-box has no XHTTP transport (the panel leaves the entry out of its body)   |
+| Trojan      | raw TCP      | TLS      | L4    | yes      | yes    | n/a         | operator's profile                                                                                 |
+| Trojan      | WebSocket    | TLS      | L4    | yes      | yes    | n/a         | operator's profile                                                                                 |
+| Shadowsocks | raw TCP      | none     | L4    | yes      | yes    | yes         | operator's profile; Outline key: an Outline server                                                 |
+| Hysteria 2  | UDP (QUIC)   | TLS      | L4    | no       | no     | n/a         | UDP: no edge adapter forwards UDP yet (docs/edges.md "UDP"); served direct, never fronted          |
+| TUIC        | UDP (QUIC)   | TLS      | L4    | no       | no     | n/a         | UDP: no edge adapter forwards UDP yet (docs/edges.md "UDP"); served direct, never fronted          |
+| VLESS       | WebSocket    | TLS      | L7    | yes      | yes    | n/a         | mode `freedom-ws`                                                                                  |
+| VLESS       | HTTP Upgrade | TLS      | L7    | yes      | yes    | n/a         | operator's profile                                                                                 |
+| VLESS       | gRPC         | TLS      | L7    | yes      | yes    | n/a         | operator's profile                                                                                 |
+| VLESS       | XHTTP        | TLS      | L7    | no       | yes    | n/a         | operator's profile; sing-box has no XHTTP transport (the panel leaves the entry out of its body)   |
+| Trojan      | WebSocket    | TLS      | L7    | yes      | yes    | n/a         | operator's profile                                                                                 |
+| VLESS       | raw TCP      | REALITY  | L7    | no       | no     | n/a         | REALITY terminates on the node: a CDN front would have to terminate it                             |
+| VLESS       | XHTTP        | REALITY  | L7    | no       | no     | n/a         | REALITY terminates on the node: a CDN front would have to terminate it                             |
+| VLESS       | raw TCP      | TLS      | L7    | no       | no     | n/a         | not an HTTP transport: a CDN front carries HTTP only                                               |
+| Trojan      | raw TCP      | TLS      | L7    | no       | no     | n/a         | not an HTTP transport: a CDN front carries HTTP only                                               |
+| Shadowsocks | raw TCP      | none     | L7    | no       | no     | no          | not an HTTP transport: a CDN front carries HTTP only                                               |
+| Hysteria 2  | UDP (QUIC)   | TLS      | L7    | no       | no     | n/a         | UDP: no edge adapter forwards UDP yet (docs/edges.md "UDP"); served direct, never fronted          |
+| TUIC        | UDP (QUIC)   | TLS      | L7    | no       | no     | n/a         | UDP: no edge adapter forwards UDP yet (docs/edges.md "UDP"); served direct, never fronted          |
+
+<!-- edge-matrix:end -->
+
+How the cells are proven:
+
+- **Source.** A _mode_ cell is a transport FCP builds the profile for (a connection mode of
+  Servers; the node role enrolls the node). An _operator's profile_ cell is a transport an
+  operator wrote into the node's Xray profile; FCP discovers it on the panel node and the
+  guided setup fronts it, one edge per transport. The **Outline key** column is an Outline
+  server origin (a whole backend server, set up by hand: Outline has no node inventory for
+  the guided setup): its member's `ss://` key, rewritten to the edge, connected with the
+  reference engine's Shadowsocks, which is what an Outline client speaks.
+- **L4** is proven with the UpCloud adapter behind a fake API wiring a real TCP forwarder (one
+  address per load balancer); **L7** with the Cloudflare adapter behind a fake API routing a
+  real CDN-style front (a proxied record per edge, its Origin Rule's port honoured). The other
+  adapters speak the same layer; their wire contracts are pinned by `wireContract.test.ts`.
+- **Share links** (v2rayN, v2rayNG, Hiddify, Shadowrocket and the like) are rendered for every
+  cell the catalogue lists, and the L4 isolated test link (Try it) is one, imported into the
+  engine that speaks it before every tick; no link-list application runs in the gate.
+- **gRPC behind a CDN** needs the origin on port 443 (Cloudflare proxies gRPC to 443 only; the
+  plan refuses another port as `origin_port_not_carried`) and the zone's gRPC switch on, a
+  dashboard-only setting FCP cannot read or flip: with it off the CDN answers 403 and the front
+  proof reports `grpc_disabled`.
+
+Outside the matrix altogether:
+
+- **VMess**: no renderer codec; not in the listener catalogue.
+- **Xray JSON subscriptions**: the renderer rewrites share links, sing-box JSON and
+  Clash/Mihomo YAML; an Xray JSON body is refused (`unsupported_format`), never served with the
+  origin in it.
+- **Outline keys over WebSocket (WSS dynamic keys)**: an Outline origin is a plain Shadowsocks
+  key rewritten by address; there is no WebSocket form to front.
+- **sing-box over XHTTP**: sing-box has no XHTTP transport, so the panel leaves an XHTTP entry
+  out of a sing-box body and FCP has nothing to render.
+
+### UDP
+
+No edge is offered for a UDP listener (Hysteria 2, TUIC): `udp` is false for every provider in
+`EDGE_PROVIDER_CAPABILITIES`, and stays false until an adapter forwards UDP AND a Hysteria 2
+connection through a UDP forwarder passes in the gate. Discovery maps both protocols
+(`hysteria2/udp/tls`, `tuic/udp/tls`) so the plan says why (`no_udp_provider`), and their
+direct Hosts are left alone: they keep serving members direct. On a node whose other
+transports are fronted, a direct UDP Host at the origin address would hand members the
+origin, so the plan lists it as uncovered and the run hides it only with the operator's
+approval (otherwise rehearsal refuses the leak).
+
+What the L4 adapters' providers offer (2026-10-16):
+
+| Adapter  | UDP listener in the provider's API                                      | FCP adapter |
+| -------- | ----------------------------------------------------------------------- | ----------- |
+| UpCloud  | no: frontends are `tcp` or `http` mode                                  | TCP only    |
+| Scaleway | no: its load balancer does not support UDP                              | TCP only    |
+| Gcore    | yes: listener protocol `UDP` (with a UDP health monitor, Octavia-style) | TCP only    |
+| OVHcloud | yes: Octavia-based, `UDP` listener protocol with a `UDP` pool           | TCP only    |
+
+Gcore and OVHcloud are where UDP fronting would start: a UDP listener and pool plus a UDP
+health check in the adapter, then the proof above.
 
 ## Model
 
@@ -71,19 +170,20 @@ an address that is a published edge is refused as an origin (`edge.origin_is_edg
 
 A listener speaks one valid combination of three fields (`src/shared/contracts/edgeProtocolIds.ts`):
 
-| protocol             | streamTransport               | security  | notes                                                             |
-| -------------------- | ----------------------------- | --------- | ----------------------------------------------------------------- |
-| `vless`              | `raw`                         | `reality` | REALITY: `realityTarget` + server names required                  |
-| `vless`              | `raw`                         | `tls`     | server names = the certificate's                                  |
-| `vless`              | `ws` / `httpupgrade` / `grpc` | `tls`     | L7-frontable (the only authenticated L7 proof)                    |
-| `vless`              | `xhttp`                       | `tls`     | L7-frontable where the provider carries it; no sing-box (below)   |
-| `vless`              | `xhttp`                       | `reality` | L4 only (the node terminates); no sing-box (below)                |
-| `trojan`             | `raw` / `ws`                  | `tls`     | L4 only (no L7 proof)                                             |
-| `shadowsocks`        | `raw`                         | `none`    | address/port rewrite only; Outline keys are `ss://`               |
-| `hysteria2` / `tuic` | `udp`                         | `tls`     | registers, but no provider forwards UDP today (`no_udp_provider`) |
+| protocol             | streamTransport               | security  | notes                                                           |
+| -------------------- | ----------------------------- | --------- | --------------------------------------------------------------- |
+| `vless`              | `raw`                         | `reality` | REALITY: `realityTarget` + server names required                |
+| `vless`              | `raw`                         | `tls`     | server names = the certificate's                                |
+| `vless`              | `ws` / `httpupgrade` / `grpc` | `tls`     | L7-frontable (a VLESS proof)                                    |
+| `vless`              | `xhttp`                       | `tls`     | L7-frontable where the provider carries it; no sing-box (below) |
+| `vless`              | `xhttp`                       | `reality` | L4 only (the node terminates); no sing-box (below)              |
+| `trojan`             | `raw` / `ws`                  | `tls`     | `ws` L7-frontable (a Trojan proof); `raw` L4 only               |
+| `shadowsocks`        | `raw`                         | `none`    | address/port rewrite only; Outline keys are `ss://`             |
+| `hysteria2` / `tuic` | `udp`                         | `tls`     | discovered; no provider forwards UDP (`no_udp_provider`, "UDP") |
 
 Anything else is `invalid_combination`. The catalogue derives `usesSni`, `needsTarget`,
-`isHttpTransport`, `usesHostHeader`, `transport` and `l7Proof`; `convex/lib/edges/protocols.ts`
+`isHttpTransport`, `usesHostHeader`, `transport` and `l7Proof` (`vless` or `trojan`: which
+authenticated request the front proof sends); `convex/lib/edges/protocols.ts`
 adds the CODEC table (which subscription formats the renderer can rewrite per combination,
 pinned by a test: a combination without a codec for every format it claims never ships).
 `vmess` has no codec and is not in the catalogue.
@@ -134,8 +234,10 @@ clients, private keys, short ids or certificates; `docs/backends.md`) yields `Pa
 and the pure `mapInboundsToListeners` (`convex/lib/edges/inboundMapping.ts`) turns each into a
 registration-shaped listener candidate or an `unsupported` row with a reason from
 `INBOUND_UNSUPPORTED_CODES` (`inactive`, `tag`, `protocol`, `transport`, `security`,
-`invalid`; worded in `src/client/lib/edgeCodes.ts`). vless / trojan / shadowsocks map; tcp or raw
-→ `raw`, ws / httpupgrade / grpc / xhttp (`splithttp`) → themselves (kcp, quic are `transport`); REALITY
+`invalid`; worded in `src/client/lib/edgeCodes.ts`). vless / trojan / shadowsocks map, and so do
+Hysteria 2 (Xray's `hysteria` inbound) and TUIC, as `udp` + `tls` whatever the stream says (QUIC
+is both); tcp or raw → `raw`, ws / httpupgrade / grpc / xhttp (`splithttp`) → themselves (kcp,
+quic are `transport`); REALITY
 `dest`/`target` + `serverNames` → `realityTarget` + `tlsNames`; TLS `serverName` → `tlsNames`
 (none = `needsName`: the operator supplies one before registering); ws / httpupgrade / xhttp
 path + host, the xhttp mode and gRPC serviceName → `transportParams`; the transport tag + profile uuids → `panelBinding`
@@ -148,9 +250,11 @@ origins/transport-candidates?backendServerId=&nodeUuid=` (throttled; `convex/edg
 with the `"use node"` sockets in `edgeOriginProbeOps.ts`, pure rules in
 `lib/edges/originProbe.ts`) returns the mapper output with `originTransport` filled where the
 probe succeeded and `layers` recomputed: security `none` -> a TCP answer on the port gives
-`{scheme: http}` (L7-only); `tls` -> a handshake with SNI = the first name, `certPublic` = the
-chain verifies against the system store, `certNames` = the leaf's names, `acceptsHostHeader:
-names` unless a request with a foreign Host header still answers 2xx (`any`). Like the internal
+`{scheme: http}` (L7-only); `tls` -> a handshake with SNI = the first name, offering the ALPN a
+front would (`h2` alone for gRPC, which an h2-only origin requires; `h2` and `http/1.1` for
+XHTTP; `http/1.1` otherwise), `certPublic` = the chain verifies against the system store,
+`certNames` = the leaf's names, `acceptsHostHeader: names` unless an HTTP/1.1 request with a
+foreign Host header still answers 2xx (`any`; never sent to a gRPC origin). Like the internal
 reachability probe it dials public literals only (a name is resolved first, every answer must be
 public, the literal is dialled). Without a successful probe the candidate stays L4-only and
 carries the probe's reason.
@@ -160,14 +264,14 @@ carries the probe's reason.
 `listenerLayers(listener)` (`convex/lib/edges/layers.ts`) decides which layers can carry a
 listener from the **complete** member-to-origin chain, never from the protocol name alone:
 
-| Listener                                                                                                                                                                          | L4                                   | L7  |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ | --- |
-| No origin transport declared: raw TCP to the transport                                                                                                                            | yes                                  |     |
-| Origin speaks plaintext HTTP behind the CDN (`originTransport.scheme = http`), HTTP transport                                                                                     |                                      | yes |
-| Origin speaks HTTPS, `vless` HTTP transport, certificate publicly trusted AND every active name covered by a certificate name (RFC 6125) AND the node accepts those names as Host | yes                                  | yes |
-| Origin speaks HTTPS, non-vless HTTP transport (no authenticated proof: `l7_proof_unsupported`)                                                                                    | yes                                  |     |
-| Origin speaks HTTPS, `reality` / raw `tls` / `none`                                                                                                                               | yes                                  |     |
-| UDP listener                                                                                                                                                                      | only with a provider declaring `udp` |     |
+| Listener                                                                                                                                                                                      | L4                                   | L7  |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ | --- |
+| No origin transport declared: raw TCP to the transport                                                                                                                                        | yes                                  |     |
+| Origin speaks plaintext HTTP behind the CDN (`originTransport.scheme = http`), HTTP transport                                                                                                 |                                      | yes |
+| Origin speaks HTTPS, `vless` or `trojan` HTTP transport, certificate publicly trusted AND every active name covered by a certificate name (RFC 6125) AND the node accepts those names as Host | yes                                  | yes |
+| Origin speaks HTTPS, HTTP transport without an authenticated proof (`l7_proof_unsupported`)                                                                                                   | yes                                  |     |
+| Origin speaks HTTPS, `reality` / raw `tls` / `none`                                                                                                                                           | yes                                  |     |
+| UDP listener                                                                                                                                                                                  | only with a provider declaring `udp` |     |
 
 `hostTargetFor(edge, proto, selectedSni)` is the single source of the Host tuple the backend
 Host and the renderer share: L7 → `{ hostname, 443, sni: hostname, host: hostname }`; L4 HTTP
@@ -183,9 +287,12 @@ has three dimensions: `dns`, `certificate` and `front` (the end-to-end qualifica
 
 **Front qualification.** Before an L7 edge is published or selected as a standby, FCP opens a
 short **authenticated test session** through it (TLS to `hostname:443`, the listener's
-transport exactly as deployed, then a VLESS request for the origin's qualification credential
-fetching a neutral `204` target). Only a `vless` HTTP-transport `tls` listener has such a proof
-(`l7Proof: 'vless'`); every other combination is `unsupported_protocol` and never L7-fronted.
+transport exactly as deployed, then a VLESS or Trojan request for the origin's qualification
+credential fetching a neutral `204` target). A `vless` HTTP-transport `tls` listener is proved
+with its VLESS id (`l7Proof: 'vless'`), Trojan over WebSocket with the same account's Trojan
+password (`l7Proof: 'trojan'`, stored next to the id as `qualificationTrojanPassword`, never
+returned by any read); a credential of the wrong kind is `no_qualification_credential`, every
+other combination is `unsupported_protocol` and never L7-fronted.
 The result is stored with its **binding** (hostname, listener id + revision, the three
 protocol fields, transport parameters, intent hash) and an expiry
 (`edge.l7.qualificationTtlMinutes`); publication re-derives the binding inside the mutation

@@ -1342,6 +1342,11 @@ export const SETUP_ACCOUNT_REASON_COPY: Record<SetupAccountReason, CodeCopy> = {
     label: 'Cannot carry every transport',
     explain: 'The account fronts at a layer one of the transports cannot use.',
   },
+  origin_port_not_carried: {
+    label: 'Wrong port for gRPC',
+    explain: 'A CDN passes gRPC only to a node listening on port 443.',
+    fix: 'Move the gRPC transport to port 443.',
+  },
   account_capacity_reached: {
     label: 'No room',
     explain: 'The account has fewer free edges than this node needs.',

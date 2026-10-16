@@ -78,13 +78,15 @@ jobs:
         run: bash docker/compat/frontcheck-down.sh
 
   edge-connection:
-    # The release gate for edges: a member connects THROUGH an edge with real
-    # software end to end. FCP takes a REALITY node (L4, behind a TCP forwarder)
-    # and a WebSocket node (L7, behind a CDN-style front) through the real
-    # lifecycle against a real panel and real nodes, then a pinned sing-box
-    # imports the served subscription and fetches a page only the nodes reach.
-    # Provider APIs are faked; see docs/client-compatibility.md "Edge connection".
-    name: Member connects through an edge (L4 and L7)
+    # The release gate for edges and the proof behind the supported matrix
+    # (docs/edges.md "Supported matrix"): a member connects THROUGH an edge with
+    # real software end to end, for every cell the matrix claims. FCP takes the
+    # enrolled nodes (REALITY and XHTTP+REALITY at L4, WebSocket at L7) and two
+    # operator nodes (every other TCP cell) through the real lifecycle against a
+    # real panel and real nodes, then the pinned sing-box and Mihomo import the
+    # served subscription and fetch a page only the nodes reach. Provider APIs
+    # are faked; see docs/client-compatibility.md "Edge connection".
+    name: Member connects through an edge (supported matrix)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:

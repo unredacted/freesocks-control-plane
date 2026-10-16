@@ -50,6 +50,50 @@ describe('applyIngress', () => {
     ).toBe(cdn);
   });
 
+  test('a gRPC transport is mapped by its service name as the path', async () => {
+    const grpc: BackendTransport = {
+      ...cdn,
+      tag: 'VLESS_GRPC_CDN',
+      port: 8444,
+      network: 'grpc',
+      ws: undefined,
+      grpc: { serviceName: 'relay-svc' },
+    };
+    const mapping: IngressMapping = {
+      ...ingress,
+      internal: [
+        { inboundTag: 'VLESS_GRPC_CDN', listen: '127.0.0.1', port: 8444, path: '/relay-svc' },
+      ],
+    };
+    expect(applyIngress([grpc], mapping)[0]).toMatchObject({
+      listen: null,
+      port: 443,
+      security: 'tls',
+      tls: { serverName: 'node-a.origin.example' },
+      grpc: { serviceName: 'relay-svc' },
+    });
+    // A route for another service, or none at all, is not this transport.
+    expect(
+      applyIngress([grpc], {
+        ...mapping,
+        internal: [{ ...mapping.internal[0]!, path: '/other-svc' }],
+      })[0],
+    ).toBe(grpc);
+    const unnamed = { ...grpc, grpc: { serviceName: null } };
+    expect(applyIngress([unnamed], mapping)[0]).toBe(unnamed);
+    const { candidates } = await mapTransportsToListeners([grpc], {
+      existingKeys: [],
+      origin,
+      ingress: mapping,
+    });
+    expect(candidates[0]!.listenerSpec).toMatchObject({
+      streamTransport: 'grpc',
+      security: 'tls',
+      originPort: 443,
+      transportParams: { serviceName: 'relay-svc' },
+    });
+  });
+
   test('discovery refuses the loopback transport without an ingress and maps it with one', async () => {
     const without = await mapTransportsToListeners([cdn], { existingKeys: [], origin });
     expect(without.candidates).toHaveLength(0);

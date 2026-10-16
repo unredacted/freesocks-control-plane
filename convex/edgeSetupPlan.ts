@@ -33,7 +33,12 @@ import { cohortReportForOrigin } from './lib/edges/cohorts';
 import { listenerLayers } from './lib/edges/layers';
 import { templateHostRemark } from './lib/edges/hosts';
 import { accountsForSlot } from './lib/edges/rotation';
-import { EDGE_PROVIDER_CAPABILITIES, edgeLayerOf } from './lib/edges/providers/capabilities';
+import {
+  EDGE_PROVIDER_CAPABILITIES,
+  edgeLayerOf,
+  originPortCarriedBy,
+} from './lib/edges/providers/capabilities';
+import type { EdgeProviderId } from './lib/edgeProviderIds';
 import { todayKey, liveEdgesOfAccount, relayForBackendNode } from './relays';
 import { accountTested } from './edgeProviderAccounts';
 import { listenersOf } from './relayListeners';
@@ -195,17 +200,24 @@ function accountCompatibility(
   // with the provider able to carry the protocol (accountsForSlot's rule).
   for (const inb of required) {
     const spec = inb.listenerSpec as ListenerSpecInput;
+    const proto = {
+      protocol: spec.protocol,
+      streamTransport: spec.streamTransport,
+      security: spec.security,
+    };
     const eligible = accountsForSlot([a], {
       layers: inb.layers,
-      proto: {
-        protocol: spec.protocol,
-        streamTransport: spec.streamTransport,
-        security: spec.security,
-      },
+      proto,
+      originPort: spec.originPort,
       allowL7: true,
     });
     if (eligible.length === 0) {
-      reasons.push('layer_mismatch');
+      // The layer and the transport fit, the port does not (gRPC behind a CDN
+      // is proxied to 443 only): say so, the operator moves the transport.
+      const portOnly =
+        accountsForSlot([a], { layers: inb.layers, proto, allowL7: true }).length > 0 &&
+        !originPortCarriedBy(a.provider as EdgeProviderId, proto, spec.originPort);
+      reasons.push(portOnly ? 'origin_port_not_carried' : 'layer_mismatch');
       break;
     }
   }
