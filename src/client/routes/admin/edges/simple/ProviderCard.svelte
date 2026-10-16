@@ -17,7 +17,7 @@
   import { edgesPaths } from '../lib/routes';
   import { isTested } from '../providers/accountWords';
   import StatusDot from './StatusDot.svelte';
-  import type { Dot } from './nodeStatus';
+  import type { Dot } from './runStages';
 
   interface Props {
     account: EdgeProviderAccountAdmin;

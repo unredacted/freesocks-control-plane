@@ -6,6 +6,9 @@
    * page links to it), `?run=<id>` opens a run's progress.
    *
    * The technical dashboard this replaced lives on under Advanced (All origins).
+   * Every status (the headline, each row) is the server's ONE judgement: the
+   * attention response's `fleet` and `origins[]`, worded by lib/statusWords.ts.
+   * A backend node's row opens its Servers node page (its one page).
    *
    * The "Turn on automatic protection" offer appears once a node is live (and on
    * the Live card of a run), never on the empty home.
@@ -31,9 +34,10 @@
     requireRelayEdges,
     retrySetupRun,
     setEdgeAutomation,
-    setupRunsQuery,
     thawMaintenance,
   } from '@client/lib/edgesApi';
+  import { serverSummaryQuery } from '@client/lib/serversApi';
+  import { nodeHomeOf } from '../../servers/lib/routes';
   import AdminListState from '../../AdminListState.svelte';
   import AttentionList from '../components/AttentionList.svelte';
   import SectionHeader from '../components/SectionHeader.svelte';
@@ -41,18 +45,18 @@
   import { attentionTarget } from '../lib/attention';
   import { edgeErrorMessage } from '../lib/edgeErrors';
   import { edgesPaths } from '../lib/routes';
+  import { fleetSentence, statusOf } from '../lib/statusWords';
   import EndpointTestCard from './EndpointTestCard.svelte';
   import NodeRow from './NodeRow.svelte';
   import ProtectSheet from './ProtectSheet.svelte';
   import StatusDot from './StatusDot.svelte';
-  import { fleetSentence, liveRunFor, nodeStatus } from './nodeStatus';
   import { automationOn } from './runWords';
 
   const qc = useQueryClient();
   const summary = edgeSummaryQuery();
   const attention = attentionQuery();
-  const runs = setupRunsQuery();
   const config = edgeConfigQuery();
+  const servers = serverSummaryQuery();
 
   const protectParam = searchParam('protect');
   const runParam = searchParam('run');
@@ -61,15 +65,16 @@
   const sheetOpen = $derived(protectParam.value === '1' || runParam.value !== '');
 
   const items = $derived(attention.data?.items ?? []);
-  const runList = $derived(runs.data?.runs ?? []);
   const rows = $derived(
     [...(summary.data?.relays ?? [])].sort((a, b) => a.relay.slug.localeCompare(b.relay.slug)),
   );
-  const ctx = $derived({ attention: items, runs: runList });
-  const statuses = $derived(rows.map((r) => nodeStatus(r, ctx)));
-  const headline = $derived(fleetSentence(statuses));
+  const statuses = $derived(rows.map((r) => statusOf(attention.data?.origins, r.relay.slug)));
+  const fleet = $derived(attention.data?.fleet ?? null);
   const automation = $derived(config.data ? automationOn(config.data.config) : null);
-  const anyLive = $derived(statuses.some((s) => s.kind === 'protected'));
+  const anyLive = $derived(statuses.some((s) => s?.kind === 'protected'));
+  /** A backend node's one page (Servers), else the edges page of the origin. */
+  const rowHref = (row: (typeof rows)[number]) =>
+    nodeHomeOf(row.relay.origin, servers.data?.instances) ?? edgesPaths.node(row.relay.slug);
 
   // The test card opened from a "Needs you" row (a spare, a retest, a go-live check).
   let testEdgeIds = $state<string[]>([]);
@@ -175,14 +180,14 @@
 </SectionHeader>
 
 <div class="space-y-8">
-  {#if summary.isPending || runs.isPending}
+  {#if summary.isPending || attention.isPending}
     <Skeleton class="h-6 w-64" />
   {:else if summary.isError}
     <AdminListState error={summary.error} onRetry={() => void summary.refetch()} />
-  {:else}
+  {:else if fleet}
     <p class="flex items-center gap-2 text-lg font-medium" role="status">
-      <StatusDot dot={headline.dot} class="size-3" />
-      {headline.text}
+      <StatusDot dot={fleet.dot} class="size-3" />
+      {fleetSentence(fleet)}
     </p>
   {/if}
 
@@ -249,12 +254,11 @@
     <section aria-label="Protected nodes">
       <ul class="space-y-2">
         {#each rows as row, i (row.relay.id)}
-          {@const run = liveRunFor(runList, row.relay.slug)}
           <li>
             <NodeRow
               {row}
-              status={statuses[i]!}
-              runId={run?.id ?? null}
+              status={statuses[i] ?? null}
+              href={rowHref(row)}
               onOpenRun={(id) =>
                 setSearchParams({ run: id, protect: null, server: null, node: null })}
             />

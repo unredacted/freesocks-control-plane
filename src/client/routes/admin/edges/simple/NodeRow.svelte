@@ -1,31 +1,35 @@
 <script lang="ts">
   /**
    * One protected node on the home: name, country, one plain sentence, a dot.
-   * The row is a link to the node page; a live run shows "Setting up, step N of
-   * 4" and opens the progress sheet instead.
+   * The sentence and the dot are the server's status of the origin (worded by
+   * lib/statusWords.ts). The row links to the node's page; a live run shows
+   * "Setting up, step N of 4" and opens the progress sheet instead.
    *
    * Props:
    *   row: OriginRow                       one EdgeSummary origin row
-   *   status: NodeStatus                  from nodeStatus()
-   *   runId?: string | null               the live run (the row opens its progress)
+   *   status: OriginStatus | null          the server's status (null while it loads)
+   *   href: string                         the node's page
    *   onOpenRun?: (runId: string) => void
    */
+  import type { z } from 'zod';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import Link from '@client/components/Link.svelte';
   import { countryName } from '@client/lib/countries';
-  import { edgesPaths } from '../lib/routes';
+  import type { EdgeSummary, OriginStatus } from '@shared/contracts/edges';
+  import { originSentence } from '../lib/statusWords';
   import StatusDot from './StatusDot.svelte';
-  import type { NodeStatus, OriginRow } from './nodeStatus';
 
+  type OriginRow = z.infer<typeof EdgeSummary>['relays'][number];
   interface Props {
     row: OriginRow;
-    status: NodeStatus;
-    runId?: string | null;
+    status: OriginStatus | null;
+    href: string;
     onOpenRun?: (runId: string) => void;
   }
-  let { row, status, runId = null, onOpenRun }: Props = $props();
+  let { row, status, href, onOpenRun }: Props = $props();
 
   const relay = $derived(row.relay);
+  const runId = $derived(status?.runId ?? null);
   const name = $derived(
     relay.label ?? (relay.origin.kind === 'panel-node' ? relay.origin.nodeName : relay.slug),
   );
@@ -35,13 +39,17 @@
 </script>
 
 {#snippet body()}
-  <StatusDot dot={status.dot} />
+  <StatusDot dot={status?.dot ?? 'grey'} />
   <span class="min-w-0 flex-1">
     <span class="flex flex-wrap items-baseline gap-x-2">
       <span class="font-medium">{name}</span>
       {#if country}<span class="text-muted-foreground text-xs">{country}</span>{/if}
     </span>
-    <span class="text-muted-foreground block text-sm">{status.sentence}</span>
+    {#if status}
+      <span class="text-muted-foreground block text-sm">{originSentence(status)}</span>
+    {:else}
+      <span class="bg-muted mt-1 block h-4 w-48 animate-pulse rounded-md" aria-hidden="true"></span>
+    {/if}
   </span>
   <ChevronRight class="text-muted-foreground size-4 shrink-0 rtl:rotate-180" aria-hidden="true" />
 {/snippet}
@@ -51,7 +59,7 @@
     {@render body()}
   </button>
 {:else}
-  <Link href={edgesPaths.node(relay.slug)} class={ROW}>
+  <Link {href} class={ROW}>
     {@render body()}
   </Link>
 {/if}

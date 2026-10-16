@@ -8,6 +8,7 @@
    *   value: OriginDraft (bindable)
    *   disabled?: boolean
    *   lockKind?: boolean              the kind of an existing origin never changes
+   *   kinds?: OriginKind[]            the kinds offered (default: all three)
    *   onchange?: (next: OriginDraft) => void
    */
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
@@ -30,15 +31,22 @@
     value: OriginDraft;
     disabled?: boolean;
     lockKind?: boolean;
+    kinds?: OriginKind[];
     onchange?: (next: OriginDraft) => void;
   }
-  let { value = $bindable(), disabled = false, lockKind = false, onchange }: Props = $props();
+  let {
+    value = $bindable(),
+    disabled = false,
+    lockKind = false,
+    kinds,
+    onchange,
+  }: Props = $props();
 
   const uid = $props.id();
   const qc = useQueryClient();
   const servers = adminBackendServersQuery();
 
-  const KINDS: Array<{ id: OriginKind; label: string; hint: string }> = [
+  const ALL_KINDS: Array<{ id: OriginKind; label: string; hint: string }> = [
     {
       id: 'panel-node',
       label: 'Backend node',
@@ -55,7 +63,8 @@
       hint: 'An address you describe by hand. Nothing FCP serves maps to it, so you wire clients yourself from the connection plan.',
     },
   ];
-  const kindHint = $derived(KINDS.find((k) => k.id === value.kind)?.hint ?? '');
+  const KINDS = $derived(ALL_KINDS.filter((k) => !kinds || kinds.includes(k.id)));
+  const kindHint = $derived(ALL_KINDS.find((k) => k.id === value.kind)?.hint ?? '');
 
   function patch(p: Partial<OriginDraft>) {
     value = { ...value, ...p };

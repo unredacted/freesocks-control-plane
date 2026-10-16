@@ -2,10 +2,14 @@
   /**
    * Create an origin: its target, a slug, and (optionally) its first listeners.
    * Listeners can be added later from the origin's Listeners tab, so none is required here.
+   * All origins opens it as "New origin" for a manual address or a whole Outline
+   * server (`kinds`); a backend node is protected with Autopilot instead. The
+   * new origin's page then offers its first edge.
    *
    * Props:
    *   open: boolean (bindable)
-   *   draft?: RelayPrefill | null      prefill (the guided setup's draft: origin + listener forms)
+   *   draft?: RelayPrefill | null      prefill (origin + listener forms)
+   *   kinds?: OriginKind[]             the origin kinds offered (the first is preselected)
    *   onCreated: (slug: string) => void
    */
   import { untrack } from 'svelte';
@@ -29,6 +33,7 @@
     suggestSlug,
     toCreateOrigin,
     type OriginDraft,
+    type OriginKind,
   } from './origin';
   import {
     emptyListenerForm,
@@ -42,9 +47,10 @@
   interface Props {
     open: boolean;
     draft?: RelayPrefill | null;
+    kinds?: OriginKind[];
     onCreated: (slug: string) => void;
   }
-  let { open = $bindable(false), draft = null, onCreated }: Props = $props();
+  let { open = $bindable(false), draft = null, kinds, onCreated }: Props = $props();
 
   const uid = $props.id();
   const qc = useQueryClient();
@@ -74,7 +80,7 @@
     }
     if (seeded) return;
     seeded = true;
-    origin = draft?.origin ? { ...draft.origin } : emptyOrigin();
+    origin = draft?.origin ? { ...draft.origin } : emptyOrigin(kinds?.[0]);
     listeners = withKeys(draft?.listeners ?? []);
     slug = suggestSlug(origin);
     slugTouched = false;
@@ -132,7 +138,7 @@
     onSuccess: () => {
       const created = slug.trim();
       invalidateRelay(qc, created);
-      toast.success(`Relay ${created} created`);
+      toast.success(`Origin ${created} created`);
       open = false;
       onCreated(created);
     },
@@ -159,7 +165,12 @@
     <form class="space-y-6" onsubmit={submit}>
       <section class="space-y-4">
         <h3 class="text-sm font-semibold">Origin</h3>
-        <OriginPicker bind:value={origin} disabled={create.isPending} onchange={onOriginChange} />
+        <OriginPicker
+          bind:value={origin}
+          {kinds}
+          disabled={create.isPending}
+          onchange={onOriginChange}
+        />
         {#if submitted && originProblem}
           <p class="text-destructive text-sm" role="alert">{originProblem}</p>
         {/if}

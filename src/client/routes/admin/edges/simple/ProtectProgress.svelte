@@ -61,7 +61,7 @@
   import { cn } from '@client/lib/utils';
   import PausedCard from './PausedCard.svelte';
   import TestCard from './TestCard.svelte';
-  import { PLAIN_STAGES, plainStage, runIsLive } from './nodeStatus';
+  import { PLAIN_STAGES, plainStage, runIsLive } from './runStages';
 
   interface Props {
     runId: string;
