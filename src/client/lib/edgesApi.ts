@@ -290,9 +290,16 @@ export type SetupRunCreateBody = z.infer<typeof SetupRunCreateRequest>;
 export type SetupRunRetryBody = z.infer<typeof SetupRunRetryRequest>;
 export type SetupRunContinueBody = z.infer<typeof SetupRunContinueRequest>;
 
-/** The read-only plan for one backend node (throttled: it lists the node's transports and Hosts). */
-export const planSetupRun = (backendServerId: string, nodeUuid: string) =>
-  apiClient.post(`${BASE}/setup-runs/plan`, { backendServerId, nodeUuid }, SetupPlanResponse);
+/**
+ * The read-only plan for one backend node (throttled: it lists the node's transports and Hosts).
+ * `listenerKeys` names the transports to protect on a node with more than one run takes.
+ */
+export const planSetupRun = (backendServerId: string, nodeUuid: string, listenerKeys?: string[]) =>
+  apiClient.post(
+    `${BASE}/setup-runs/plan`,
+    { backendServerId, nodeUuid, ...(listenerKeys ? { listenerKeys } : {}) },
+    SetupPlanResponse,
+  );
 export const createSetupRun = (body: SetupRunCreateBody) =>
   apiClient.post(`${BASE}/setup-runs`, body, SetupRunCreatedResponse);
 export const fetchSetupRuns = () => apiClient.get(`${BASE}/setup-runs`, SetupRunsResponse);
@@ -304,6 +311,13 @@ export const retrySetupRun = (runId: string, body: SetupRunRetryBody = {}) =>
   apiClient.post(`${BASE}/setup-runs/${enc(runId)}/retry`, body, SetupRunRetryResponse);
 export const continueSetupRun = (runId: string, body: SetupRunContinueBody = {}) =>
   apiClient.post(`${BASE}/setup-runs/${enc(runId)}/continue`, body, SetupRunContinueResponse);
+/**
+ * "Serve this node directly again": the restore workflow that releases
+ * edge-required delivery first, then puts the node's direct Hosts back
+ * (edges and listeners stay; the node can be protected again later).
+ */
+export const serveRelayDirect = (relayId: string) =>
+  apiClient.post(`${BASE}/relays/${enc(relayId)}/serve-direct`, {}, EdgeOkResponse);
 /** The activation policy on a deferred origin: pending untested L4 endpoints come back instead of a binding. */
 export const requireRelayEdges = (relayId: string, accountId?: string) =>
   apiClient.post(

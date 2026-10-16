@@ -38,6 +38,8 @@ function statusFromCode(code: string): number {
   if (code === 'not_found') return 404;
   // The backend (or a step that depends on it) failed: an upstream fault, not a refusal.
   if (code === 'backend.panel_read_failed' || code === 'edge.plan_step_failed') return 502;
+  // The hourly budget of checks from inside a country is a quota, like the probes'.
+  if (code === 'edge.sni.vantage_budget') return 429;
   if (code === 'conflict' || code.startsWith('edge.')) return 409;
   // The hourly probe budget is a quota: answer like a rate limit.
   if (code === 'probe.budget_exhausted') return 429;
@@ -133,6 +135,9 @@ export function throttlePolicyFor(parts: string[]): RateLimitPolicyKey | null {
   const [a, b, c, d] = parts;
   // Qualifying server names opens sockets from the control plane.
   if (a === 'sni' && b === 'qualify' && !c) return 'admin.edges.provider-call';
+  // Checking names from inside a country spends third-party measurements.
+  if (a === 'sni' && b === 'families' && c && d === 'vantage' && !parts[4])
+    return 'admin.edges.probe';
   // A rollout writes a backend profile; a test link fetches a credential body.
   if (
     a === 'sni' &&
@@ -514,6 +519,25 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           ...act,
         }),
       );
+    // Checks from inside a country: "check now", and applying what they suggest.
+    if (b === 'families' && c && d === 'vantage' && !e)
+      return json(
+        await ctx.runMutation(internal.sniVantage.requestNow, {
+          slug: c,
+          names: snis(body),
+          country: String(body.country ?? ''),
+          ...act,
+        }),
+      );
+    if (b === 'families' && c && d === 'vantage' && e === 'apply')
+      return json(
+        await ctx.runMutation(internal.sniVantage.applySuggestions, {
+          slug: c,
+          names: snis(body),
+          country: String(body.country ?? ''),
+          ...act,
+        }),
+      );
     if (b === 'families' && c && d === 'bind' && !e) {
       // Contract words in, stored words on: an old `inboundTag` is refused by name.
       const old = findLegacyField(body, LEGACY.sniBind);
@@ -591,11 +615,16 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
   // Guided setup runs: plan (read-only over the backend), create, and the three
   // operator verbs on a run (cancel / retry / continue).
   if (a === 'setup-runs') {
+    // The transports the operator chose on a node with more than one run takes.
+    const listenerKeys = Array.isArray(body.listenerKeys)
+      ? { listenerKeys: body.listenerKeys.filter((x): x is string => typeof x === 'string') }
+      : {};
     if (b === 'plan' && !c) {
       return json(
         await ctx.runAction(internal.edgeSetupPlan.plan, {
           backendServerId: id<'backendServers'>(String(body.backendServerId ?? '')),
           nodeUuid: String(body.nodeUuid ?? ''),
+          ...listenerKeys,
         }),
       );
     }
@@ -607,6 +636,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
         await ctx.runAction(internal.edgeSetupPlan.create, {
           backendServerId: id<'backendServers'>(String(body.backendServerId ?? '')),
           nodeUuid: String(body.nodeUuid ?? ''),
+          ...listenerKeys,
           accountId: id<'edgeProviderAccounts'>(String(body.accountId ?? '')),
           planHash: String(body.planHash ?? ''),
           approvedHideUuids: uuids,
@@ -624,6 +654,9 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           runId,
           ...(body.tryAnotherAddress === true ? { tryAnotherAddress: true } : {}),
           ...(body.acceptPartial === true ? { acceptPartial: true } : {}),
+          ...(typeof body.edgeId === 'string' && body.edgeId
+            ? { edgeId: id<'edges'>(body.edgeId) }
+            : {}),
           ...(typeof body.accountId === 'string' && body.accountId
             ? { accountId: id<'edgeProviderAccounts'>(body.accountId) }
             : {}),
@@ -837,6 +870,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
             typeof body.templateId === 'string' && body.templateId
               ? id<'edgeTemplates'>(body.templateId)
               : undefined,
+          ...(body.publish === false ? { publish: false } : {}),
           trigger: triggerOf(body.trigger),
         }),
       );
@@ -885,6 +919,11 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
             ...act,
           }),
         );
+      case 'serve-direct':
+        // "Serve this node directly again": the restore workflow with purpose
+        // `release_requirement` (binding released BEFORE any direct Host is
+        // restored; edges and listeners kept).
+        return json(await ctx.runMutation(internal.edgeRestore.serveDirect, { relayId, ...act }));
       case 'qualification-credential':
         // Mint (or re-mint) the backend account the L7 front qualification
         // authenticates with; the credential never leaves the server.

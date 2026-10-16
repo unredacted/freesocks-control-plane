@@ -40,7 +40,7 @@ const defaultDeps: OriginProbeDeps = {
       });
     });
   },
-  tlsInspect: async ({ host, port, servername, timeoutMs }) => {
+  tlsInspect: async ({ host, port, servername, alpn, timeoutMs }) => {
     const tls = await import('node:tls');
     return new Promise((resolve) => {
       let settled = false;
@@ -51,7 +51,7 @@ const defaultDeps: OriginProbeDeps = {
         resolve(r);
       };
       const socket = tls.connect(
-        { host, port, servername, rejectUnauthorized: false, ALPNProtocols: ['http/1.1'] },
+        { host, port, servername, rejectUnauthorized: false, ALPNProtocols: alpn },
         () => {
           const cert = socket.getPeerCertificate();
           const cn = (cert?.subject as { CN?: string } | undefined)?.CN;

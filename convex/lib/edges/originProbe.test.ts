@@ -72,6 +72,7 @@ describe('probeOriginTransport', () => {
       host: '203.0.113.10',
       port: 443,
       servername: 'ws.example',
+      alpn: ['http/1.1'],
       timeoutMs: 6000,
     });
     // The Host-acceptance request carries a name no origin serves on purpose.
@@ -174,5 +175,24 @@ describe('leafNames', () => {
     expect(leafNames(undefined, 'origin.example')).toEqual(['origin.example']);
     expect(leafNames('', 'Origin Certificate')).toEqual([]);
     expect(leafNames(null, 'origin')).toEqual([]);
+  });
+
+  test('a gRPC origin is offered h2 alone and never sent an HTTP/1.1 request', async () => {
+    const d = deps();
+    const out = await probeOriginTransport(d, ws({ streamTransport: 'grpc' }));
+    expect(out.originTransport).toEqual({
+      scheme: 'https',
+      certPublic: true,
+      certNames: ['ws.example', '*.alt.example'],
+      acceptsHostHeader: 'names',
+    });
+    expect(d.tlsInspect).toHaveBeenCalledWith(expect.objectContaining({ alpn: ['h2'] }));
+    expect(d.httpsStatus).not.toHaveBeenCalled();
+    // XHTTP offers both, as a front does.
+    const x = deps();
+    await probeOriginTransport(x, ws({ streamTransport: 'xhttp' }));
+    expect(x.tlsInspect).toHaveBeenCalledWith(
+      expect.objectContaining({ alpn: ['h2', 'http/1.1'] }),
+    );
   });
 });

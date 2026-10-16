@@ -6,6 +6,7 @@
  * plumbing is in httpEdges.ts.
  */
 import { ConvexError, v } from 'convex/values';
+import { verificationListenerOf } from './lib/edges/verificationContext';
 import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { upsertSettingRow } from './appSettings';
@@ -626,7 +627,10 @@ export const edgeDetail = internalQuery({
       .order('desc')
       .take(10);
     return {
-      edge: mapEdgeAdmin(e, await ctx.db.get(e.listenerId)),
+      edge: await (async () => {
+        const l = await ctx.db.get(e.listenerId);
+        return mapEdgeAdmin(e, l ? await verificationListenerOf(ctx.db, l) : null);
+      })(),
       live: parseLive(e),
       probes: probes.map((r) => ({
         id: r._id as string,

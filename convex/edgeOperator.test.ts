@@ -25,6 +25,7 @@ import {
   insertPanelServer,
   registerRelay,
   seedEdgeFixture,
+  verifyL4Edge,
 } from './lib/edges/testing/fixtures';
 import {
   AttentionResponse,
@@ -270,6 +271,41 @@ describe('test-provision and preflight', () => {
     p = await pre({ kind: 'provision', listenerKey: 'a' });
     expect(p.ok).toBe(false);
     expect(p.blockers.map((b) => b.code)).toEqual(['no_qualified_account']);
+  });
+
+  test('a spare: provision {publish: false} never publishes a standby instead, and its preflight checks the same mode', async () => {
+    const { t, call, relayId, listenerId, accountId } = await seed();
+    await markTested(t, accountId);
+    await adoptL4Edge(t, relayId, listenerId, { publish: true });
+    // A tested standby: what a publishing provision would put in use instead of creating one.
+    const standby = await adoptL4Edge(t, relayId, listenerId, {
+      ipv4: '198.51.100.8',
+      publish: false,
+    });
+    await verifyL4Edge(t, standby.edgeId);
+    await t.run((ctx) => ctx.db.patch(standby.edgeId, { health: 'online' }));
+    const pre = async (body: unknown) =>
+      PreflightResponse.parse(
+        await (await call('POST', `relays/${relayId}/preflight`, body)).json(),
+      );
+    await t.mutation(internal.edgeProviderAccounts.setQualified, {
+      id: accountId,
+      qualified: true,
+    });
+    const publishing = await pre({ kind: 'provision', listenerKey: 'a' });
+    expect(publishing.wouldSelect?.standbyEdgeId).toBe(standby.edgeId);
+    // As a spare it is a new edge from an account, never the standby put in use.
+    const spare = await pre({ kind: 'provision', listenerKey: 'a', publish: false });
+    expect(spare.wouldSelect?.standbyEdgeId ?? null).toBeNull();
+    expect(spare.wouldSelect?.accountId).toBe(accountId);
+    const res = await call('POST', `relays/${relayId}/provision`, {
+      listenerId,
+      publish: false,
+    });
+    expect(res.status).toBe(200);
+    const { rotationId } = (await res.json()) as { rotationId: string };
+    const r = await t.run((ctx) => ctx.db.get(rotationId as Id<'edgeRotations'>));
+    expect(r?.publishOnDone).toBe(false);
   });
 
   test('preflight property: its first blocker is the code a real start throws, and it writes nothing', async () => {

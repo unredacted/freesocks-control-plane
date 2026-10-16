@@ -8,10 +8,13 @@
  *  - `none`: the transport speaks plaintext HTTP; a TCP answer on the port is
  *    enough -> `{ scheme: 'http' }` (L7-only: a forwarder cannot add the TLS
  *    the CDN terminated).
- *  - `tls`: a handshake with SNI = the first server name. `certPublic` = the
- *    chain verifies against the system store; `certNames` = the leaf's names;
- *    `acceptsHostHeader` = `'names'` (conservative) unless one request with a
- *    FOREIGN Host header still answers 2xx (`'any'`).
+ *  - `tls`: a handshake with SNI = the first server name, offering the ALPN a
+ *    front would (`probeAlpn`: h2 for gRPC, which an origin serving only h2
+ *    refuses any other way). `certPublic` = the chain verifies against the
+ *    system store; `certNames` = the leaf's names; `acceptsHostHeader` =
+ *    `'names'` (conservative) unless one HTTP/1.1 request with a FOREIGN Host
+ *    header still answers 2xx (`'any'`; never tried on a gRPC origin, which
+ *    speaks no HTTP/1.1).
  *  - anything else (REALITY has no HTTP origin): not probed.
  *
  * Without a successful probe the listener stays L4-only and the plan says so.
@@ -39,6 +42,8 @@ export interface OriginProbeDeps {
     host: string;
     port: number;
     servername: string;
+    /** The ALPN protocols to offer (`probeAlpn`). */
+    alpn: string[];
     timeoutMs: number;
   }) => Promise<{
     ok: boolean;
@@ -70,6 +75,17 @@ export interface OriginProbeOutcome {
   originTransport: OriginTransport | null;
   /** Why no transport could be established (a short code, never an address). */
   reason?: string;
+}
+
+/**
+ * The ALPN a front offers the origin for a transport: gRPC rides HTTP/2 only
+ * (an h2-only origin rejects a handshake offering anything else), XHTTP either,
+ * WebSocket and HTTP Upgrade HTTP/1.1.
+ */
+export function probeAlpn(streamTransport: ListenerStreamTransport): string[] {
+  if (streamTransport === 'grpc') return ['h2'];
+  if (streamTransport === 'xhttp') return ['h2', 'http/1.1'];
+  return ['http/1.1'];
 }
 
 /** A Host header no origin serves for on purpose: does the node answer for ANY name? */
@@ -129,11 +145,14 @@ export async function probeOriginTransport(
     host: dial.host,
     port: req.originPort,
     servername,
+    alpn: probeAlpn(req.streamTransport),
     timeoutMs,
   });
   if (!hs.ok) return out(null, shortReason(hs.error, 'handshake_failed'));
   const certNames = [...new Set(hs.names.map((n) => n.trim().toLowerCase()).filter(Boolean))];
   let acceptsHostHeader: OriginTransport['acceptsHostHeader'] = 'names';
+  if (req.streamTransport === 'grpc')
+    return out({ scheme: 'https', certPublic: hs.authorized, certNames, acceptsHostHeader });
   try {
     const st = await deps.httpsStatus({
       host: dial.host,

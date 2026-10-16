@@ -140,6 +140,11 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
     description: 'Server-name families: delete attributed report counts older than the window',
   },
   {
+    name: 'sni-vantage',
+    everyMs: 10 * MIN,
+    description: 'Server-name families: check names from inside opted-in countries',
+  },
+  {
     name: 'backend-reconcile',
     everyMs: 5 * MIN,
     description: 'Server management: settle open backend changes by looking at the backend',
@@ -165,6 +170,11 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
     name: 'edge-block-detector',
     everyMs: 5 * MIN,
     description: 'Origin edges: score reports + load + probes per origin; opt-in auto-rotate',
+  },
+  {
+    name: 'alerts-dispatch',
+    everyMs: 5 * MIN,
+    description: 'Operator alerts: post new alert-worthy attention items to the webhook (opt-in)',
   },
   {
     name: 'retention-edge-probes',

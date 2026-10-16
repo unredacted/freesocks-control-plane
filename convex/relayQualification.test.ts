@@ -2,7 +2,12 @@ import { convexTest } from 'convex-test';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
-import { insertPanelServer, realityListener, registerRelay } from './lib/edges/testing/fixtures';
+import {
+  insertPanelServer,
+  realityListener,
+  registerRelay,
+  wsListener,
+} from './lib/edges/testing/fixtures';
 import { fakePanel } from './lib/edges/testing/fakePanel';
 import {
   __setEnsureFailpointForTests,
@@ -200,6 +205,48 @@ async function seedWithPanel() {
 }
 
 describe('relayQualification.ensure: the persisted mint operation', () => {
+  test('a stored credential without a Trojan password is completed from the same account, not re-minted', async () => {
+    const panel = fakePanel();
+    const t = convexTest(schema, modules);
+    await insertPanelServer(t);
+    const { relayId } = await registerRelay(t, {
+      listeners: [
+        realityListener(),
+        wsListener({
+          listenerKey: 'tw',
+          protocol: 'trojan',
+          panelBinding: {
+            inboundTag: 'TROJAN_WS',
+            configProfileUuid: '11111111-1111-4111-8111-111111111111',
+            configProfileInboundUuid: '55555555-5555-4555-8555-555555555555',
+          },
+        }),
+      ],
+    });
+    const relay = () => t.run((ctx) => ctx.db.get(relayId)).then((r) => r!);
+    const ensure = () =>
+      t.action(internal.relayQualification.ensure, {
+        relayId,
+        placement: 'sq-a',
+        purpose: 'qualification',
+      });
+    expect(await ensure()).toMatchObject({ ok: true, reused: false });
+    const user = [...panel.users.values()][0]!;
+    expect((await relay()).qualificationTrojanPassword).toBe(user.trojanPassword);
+    // A credential minted before Trojan proofs stored no password.
+    await t.run((ctx) => ctx.db.patch(relayId, { qualificationTrojanPassword: undefined }));
+    expect(await ensure()).toMatchObject({ ok: true, reused: true });
+    const row = await relay();
+    expect(row.qualificationTrojanPassword).toBe(user.trojanPassword);
+    expect(row.qualificationUserId).toBe(user.vlessUuid);
+    expect(panel.users.size).toBe(1);
+    expect(panel.deleted).toEqual([]);
+    // Complete now: the next reuse reads nothing from the backend.
+    const before = panel.calls.length;
+    expect(await ensure()).toMatchObject({ ok: true, reused: true });
+    expect(panel.calls.length).toBe(before);
+  });
+
   test('a crash after issueUser and before store: the retry re-finds the user by name and ADOPTS it (no second user)', async () => {
     const { t, relayId, panel, relay, createCalls } = await seedWithPanel();
     __setEnsureFailpointForTests((point) => {

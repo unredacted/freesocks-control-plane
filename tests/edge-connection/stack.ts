@@ -37,15 +37,29 @@ export const env = ENABLED
       l7Zone: need('EC_L7_ZONE'),
       wsPath: need('EC_WS_PATH'),
       wsPort: Number(need('EC_WS_PORT')),
+      tlsName: need('EC_TLS_NAME'),
+      outlinePassword: need('EC_OUTLINE_PASSWORD'),
     }
   : (null as never);
 
 /** Fixed addresses of the compose file. */
 export const ADDR = {
   realityNode: { control: '192.0.2.11', edge: '198.51.100.11', origin: '11.11.11.11' },
+  xhttpRealityNode: { control: '192.0.2.15', edge: '198.51.100.15', origin: '11.11.11.15' },
   wsNode: { control: '192.0.2.12', edge: '198.51.100.12', origin: '11.11.11.12' },
+  // The operator nodes: managed at their public address.
+  l4Matrix: { edge: '198.51.100.13', origin: '11.11.11.13' },
+  l7Matrix: { edge: '198.51.100.14', origin: '11.11.11.14' },
+  /** The Outline server's data plane (its management API is faked in the test). */
+  outline: { edge: '198.51.100.16', origin: '11.11.11.16' },
   forwarder: { client: '203.0.113.21', edge: '198.51.100.21', api: 'http://198.51.100.21:9000' },
-  front: { client: '203.0.113.22', edge: '198.51.100.22' },
+  /** The forwarder's address pool: one per load balancer the fake provider creates. */
+  forwarderPool: Array.from({ length: 20 }, (_, i) => `203.0.113.${141 + i}`),
+  front: {
+    client: '203.0.113.22',
+    edge: '198.51.100.22',
+    admin: 'http://198.51.100.22:2019',
+  },
   dns: '203.0.113.53',
   client: '203.0.113.100',
   originPage: '11.11.11.200',
@@ -54,7 +68,11 @@ export const ADDR = {
 /** Every address of a relay node: none of them may reach a member. */
 export const NODE_ADDRESSES: readonly string[] = [
   ...Object.values(ADDR.realityNode),
+  ...Object.values(ADDR.xhttpRealityNode),
   ...Object.values(ADDR.wsNode),
+  ...Object.values(ADDR.l4Matrix),
+  ...Object.values(ADDR.l7Matrix),
+  ...Object.values(ADDR.outline),
 ];
 
 const WORK = '.cache/edge-connection-test';
@@ -85,17 +103,27 @@ export async function until<T>(
 
 // --- the fake edges ---------------------------------------------------------------------------
 
-/** Wire the forwarder's frontend port to a backend (what a provider's LB create does). */
-export async function wireForwarder(port: number, target: string): Promise<void> {
+/**
+ * Wire one forwarder frontend (`address:port`, the forwarder's own address when
+ * none is named) to a backend: what a provider's load balancer does once its
+ * public address is attached.
+ */
+export async function wireForwarder(
+  port: number,
+  target: string,
+  address: string = ADDR.forwarder.client,
+): Promise<void> {
   const res = await realFetch(`${ADDR.forwarder.api}/forwards`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ port, target }),
+    body: JSON.stringify({ address, port, target }),
     signal: AbortSignal.timeout(10_000),
   });
-  if (!res.ok) throw new Error(`forwarder refused ${port} -> ${target}: HTTP ${res.status}`);
+  if (!res.ok)
+    throw new Error(`forwarder refused ${address}:${port} -> ${target}: HTTP ${res.status}`);
 }
 
+/** Per frontend (`address:port`): where it forwards and how many connections it carried. */
 export async function forwarderStats(): Promise<
   Record<string, { target: string; connections: number; failed: number }>
 > {
@@ -105,9 +133,57 @@ export async function forwarderStats(): Promise<
   return res.json();
 }
 
-/** Connections the forwarder carried on one frontend port so far. */
-export async function forwarderConnections(port: number): Promise<number> {
-  return (await forwarderStats())[String(port)]?.connections ?? 0;
+/** Connections the forwarder carried on one frontend so far. */
+export async function forwarderConnections(
+  port: number,
+  address: string = ADDR.forwarder.client,
+): Promise<number> {
+  return (await forwarderStats())[`${address}:${port}`]?.connections ?? 0;
+}
+
+/**
+ * Route one hostname of the fake CDN to an origin, as a proxied record does:
+ * TLS to `dial` (verified against the per-run CA, `serverName` as the SNI),
+ * the front's hostname as the Host. Replaces the hostname's route when it has
+ * one (a record's Origin Rule changes the port of an existing record).
+ */
+export async function routeFront(
+  hostname: string,
+  dial: { host: string; port: number },
+  serverName: string,
+): Promise<void> {
+  const id = `ec-route-${hostname.replace(/[^a-z0-9]/gi, '-')}`;
+  const route = {
+    '@id': id,
+    match: [{ host: [hostname] }],
+    handle: [
+      {
+        handler: 'reverse_proxy',
+        upstreams: [{ dial: `${dial.host}:${dial.port}` }],
+        headers: { request: { set: { Host: ['{http.request.host}'] } } },
+        // A CDN streams: an XHTTP download or a gRPC stream is never buffered.
+        flush_interval: -1,
+        transport: {
+          protocol: 'http',
+          tls: { server_name: serverName, root_ca_pem_files: ['/pki/ca.pem'] },
+        },
+      },
+    ],
+    terminal: true,
+  };
+  const admin = (method: string, path: string, body?: unknown) =>
+    realFetch(`${ADDR.front.admin}${path}`, {
+      method,
+      // Node's fetch marks itself a browser-style request (`sec-fetch-mode`),
+      // which Caddy's admin answers only for a named Origin.
+      headers: { 'content-type': 'application/json', origin: ADDR.front.admin },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(10_000),
+    });
+  // Drop the hostname's previous route (absent the first time: a 404, ignored).
+  await admin('DELETE', `/id/${id}`);
+  const res = await admin('PUT', '/config/apps/http/servers/srv0/routes/0', route);
+  if (!res.ok) throw new Error(`the front refused the route for a record: HTTP ${res.status}`);
 }
 
 interface AccessEntry {
@@ -127,7 +203,9 @@ export function accessLog(which: 'front' | 'ingress'): AccessEntry[] {
     .map((l) => JSON.parse(l))
     .filter((e) => e.request)
     .map((e) => ({
-      host: String(e.request.host ?? ''),
+      // The request's host without a port: sing-box's gRPC sends `:authority`
+      // as `name:443`, every other client the bare name.
+      host: String(e.request.host ?? '').replace(/:\d+$/, ''),
       uri: String(e.request.uri ?? ''),
       status: Number(e.status ?? 0),
       remoteIp: String(e.request.remote_ip ?? ''),
@@ -137,22 +215,37 @@ export function accessLog(which: 'front' | 'ingress'): AccessEntry[] {
 // --- the member's client ----------------------------------------------------------------------
 
 export function stopClient(): void {
-  spawnSync('docker', ['exec', 'ec-client', 'pkill', '-x', 'sing-box'], { stdio: 'ignore' });
+  for (const binary of ['sing-box', 'mihomo'])
+    spawnSync('docker', ['exec', 'ec-client', 'pkill', '-x', binary], { stdio: 'ignore' });
 }
 
-/** Validate and start sing-box with `config` (verbatim) in the client container. */
-export async function startClient(config: string, port = 1080): Promise<void> {
+/**
+ * Validate and start one reference engine with `config` (verbatim) in the
+ * client container: sing-box (JSON) or Mihomo (YAML).
+ */
+export async function startClient(
+  config: string,
+  port = 1080,
+  engine: 'singbox' | 'mihomo' = 'singbox',
+): Promise<void> {
   stopClient();
-  writeFileSync(`${WORK}/client/client.json`, config);
-  const check = spawnSync(
-    'docker',
-    ['exec', 'ec-client', 'sing-box', 'check', '-c', '/work/client.json'],
-    {
-      encoding: 'utf8',
-    },
-  );
-  if (check.status !== 0) throw new Error('sing-box refused the configuration (check failed)');
-  docker('exec', '-d', 'ec-client', 'sing-box', 'run', '-c', '/work/client.json');
+  const file = engine === 'singbox' ? 'client.json' : 'client.yaml';
+  writeFileSync(`${WORK}/client/${file}`, config);
+  const [binary, check, run] =
+    engine === 'singbox'
+      ? ['sing-box', ['check', '-c', `/work/${file}`], ['run', '-c', `/work/${file}`]]
+      : // Its own home directory: Mihomo writes its cache there and never downloads
+        // anything for a config without geo rules.
+        [
+          'mihomo',
+          ['-t', '-d', '/work/mihomo', '-f', `/work/${file}`],
+          ['-d', '/work/mihomo', '-f', `/work/${file}`],
+        ];
+  const checked = spawnSync('docker', ['exec', 'ec-client', binary, ...check], {
+    encoding: 'utf8',
+  });
+  if (checked.status !== 0) throw new Error(`${binary} refused the configuration (check failed)`);
+  docker('exec', '-d', 'ec-client', binary, ...run);
   const ready = await until(
     async () => {
       const r = spawnSync(
@@ -236,70 +329,4 @@ export function clientReachesDirectly(address: string, port: number): boolean {
     { stdio: 'ignore', timeout: 20_000 },
   );
   return r.status === 0;
-}
-
-/**
- * A served sing-box body, adapted to the sandbox and NOTHING else: the test
- * container has no TUN device (the mixed listener the template also declares
- * carries the test's requests instead) and the client network has no public
- * resolver (every plain DNS server of the template points at the network's
- * own resolver, tags kept so the template's rules still apply). The outbounds,
- * where everything FCP rendered lives, are untouched; the caller asserts it.
- */
-export function sandboxSingbox(body: string): { config: string; port: number } {
-  const c = JSON.parse(body);
-  c.inbounds = (c.inbounds ?? []).filter((i: { type: string }) => i.type !== 'tun');
-  const mixed = c.inbounds.find((i: { type: string }) => i.type === 'mixed');
-  if (!mixed) throw new Error('the served sing-box body has no mixed listener');
-  if (c.dns?.servers)
-    c.dns.servers = c.dns.servers.map((s: { type: string; tag: string }) =>
-      ['udp', 'tcp', 'tls', 'https', 'quic', 'h3'].includes(s.type)
-        ? { type: 'udp', tag: s.tag, server: ADDR.dns }
-        : s,
-    );
-  return { config: JSON.stringify(c), port: Number(mixed.listen_port) };
-}
-
-/**
- * A sing-box client config for ONE `vless://` share link (the try_it card's
- * isolated test link): what an operator's client does when it imports the
- * link. A mixed listener on `port`, the network's resolver, everything else
- * from the link.
- */
-export function singboxForLink(link: string, port = 1080): string {
-  const u = new URL(link);
-  if (u.protocol !== 'vless:') throw new Error('the test link is not a VLESS link');
-  const q = u.searchParams;
-  const security = q.get('security') ?? 'none';
-  const sni = q.get('sni') ?? undefined;
-  const outbound: Record<string, unknown> = {
-    type: 'vless',
-    tag: 'test-link',
-    server: u.hostname.replace(/^\[|\]$/g, ''),
-    server_port: Number(u.port || 443),
-    uuid: decodeURIComponent(u.username),
-  };
-  if (q.get('flow')) outbound.flow = q.get('flow');
-  if (security === 'reality')
-    outbound.tls = {
-      enabled: true,
-      server_name: sni,
-      utls: { enabled: true, fingerprint: q.get('fp') || 'chrome' },
-      reality: { enabled: true, public_key: q.get('pbk'), short_id: q.get('sid') ?? '' },
-    };
-  else if (security === 'tls') outbound.tls = { enabled: true, server_name: sni };
-  const type = q.get('type') ?? 'tcp';
-  if (type === 'ws')
-    outbound.transport = {
-      type: 'ws',
-      path: q.get('path') ?? '/',
-      ...(q.get('host') ? { headers: { Host: q.get('host') } } : {}),
-    };
-  return JSON.stringify({
-    log: { level: 'warn' },
-    dns: { servers: [{ type: 'udp', tag: 'ec-dns', server: ADDR.dns }], final: 'ec-dns' },
-    inbounds: [{ type: 'mixed', tag: 'in', listen: '127.0.0.1', listen_port: port }],
-    outbounds: [outbound],
-    route: { final: 'test-link', default_domain_resolver: 'ec-dns' },
-  });
 }

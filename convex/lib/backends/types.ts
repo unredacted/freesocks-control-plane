@@ -134,6 +134,11 @@ export interface IssuedUser {
    * its test session with it; absent = this backend cannot back that check.
    */
   protocolUuid?: string;
+  /**
+   * The same user's Trojan password, when the backend mints one: the L7 proof
+   * of a Trojan transport authenticates with it (`frontCheck/trojan.ts`).
+   */
+  trojanPassword?: string;
 }
 
 export interface BackendDevice {
@@ -187,6 +192,12 @@ export interface SubscriptionContent {
   // serve paths persist it on the subscription row so the NEXT issuance can
   // exclude it (regenerate → a different node).
   pinnedNode?: string;
+  // Node pinning ran on a body it understands that names no node: the
+  // backend's placeholder for a key whose node serves nothing yet
+  // (lib/nodePinning.ts `nodelessBody`). The fronted route never caches such a
+  // body: its cache token carries no node, so a node going live could not
+  // re-key it.
+  nodeless?: boolean;
 }
 
 /**

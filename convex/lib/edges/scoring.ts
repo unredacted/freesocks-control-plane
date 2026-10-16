@@ -330,13 +330,18 @@ export type AutoRotateVeto =
   | 'rotation_active'
   | 'cooldown'
   | 'daily_cap'
-  | 'hosts_unmanaged';
+  | 'hosts_unmanaged'
+  // The fleet guards (lib/edges/fleet.ts): a mass block holds every automatic
+  // rotation, and the fleet's own daily cap bounds them all together.
+  | 'fleet_brake'
+  | 'fleet_daily_cap';
 
 /**
  * Pick the edge an automatic rotation should replace, or the reason it must not
  * run. Gate order follows docs/edges.md § Detector: enabled, autoRotate (global
- * + origin), suspected, edge-level evidence, not an outage, no quarantine, no
- * running rotation, cooldown, daily cap, manageable Host.
+ * + origin), suspected, edge-level evidence, not an outage, the fleet brake and
+ * the fleet's daily cap, no quarantine, no running rotation, cooldown, daily
+ * cap, manageable Host.
  */
 export function autoRotateDecision(args: {
   evaluation: Evaluation;
@@ -354,6 +359,8 @@ export function autoRotateDecision(args: {
   };
   published: Array<{ edgeId: string; poolIndex: number }>;
   now: number;
+  /** The fleet guards; absent = neither applies (a unit test of one origin). */
+  fleet?: { brakeEngaged: boolean; rotationsToday: number; rotationsPerDay: number };
 }): { edgeId: string; source: 'reports' | 'probes' } | { veto: AutoRotateVeto } {
   const { evaluation: ev, cfg, origin } = args;
   // 1. enabled  2. autoRotate (global, then the origin's own opt-in)  2b. not setup-owned
@@ -383,6 +390,10 @@ export function autoRotateDecision(args: {
     if (!cfg.detect.allowProbeOnlyAutoRotate) return { veto: 'probe_only_disallowed' };
     if (ev.probeSourcesDown) return { veto: 'probe_sources_down' };
   }
+  // 5b. the fleet brake (a mass block) and the fleet's daily cap
+  if (args.fleet?.brakeEngaged) return { veto: 'fleet_brake' };
+  if (args.fleet && args.fleet.rotationsToday >= args.fleet.rotationsPerDay)
+    return { veto: 'fleet_daily_cap' };
   // 6. no quarantine  7. no running rotation  8. cooldown  9. daily cap
   if (origin.quarantined) return { veto: 'quarantined' };
   if (origin.rotationActive) return { veto: 'rotation_active' };

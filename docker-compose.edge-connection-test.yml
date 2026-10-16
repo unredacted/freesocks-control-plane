@@ -2,13 +2,19 @@
 # can connect through an edge, with real software end to end
 # (scripts/edge-connection-integration.sh, docs/client-compatibility.md).
 #
-#   - two panel-managed relay nodes: one serving REALITY on its public port
-#     (fronted at L4), one serving WebSocket on LOOPBACK behind its own ingress
-#     (Caddy in the node's network namespace, TLS for the node's origin
-#     hostname), fronted at L7;
-#   - a fake L4 edge (a plain TCP forwarder) and a fake L7 edge (a CDN-style
-#     WebSocket reverse proxy). The provider APIs are faked inside the test, so
-#     FCP "provisions" these two;
+#   - three ENROLLED relay nodes (the node role's contract, FCP's own profile):
+#     REALITY and XHTTP under REALITY on their public port (fronted at L4), and
+#     WebSocket on LOOPBACK behind its own ingress (Caddy in the node's network
+#     namespace, TLS for the node's origin hostname), fronted at L7;
+#   - two OPERATOR nodes (a profile the operator wrote, discovered by FCP): the
+#     L4 matrix node (VLESS/Trojan over TLS, Shadowsocks, XHTTP over TLS, Xray
+#     terminating TLS on its public ports) and the L7 matrix node (HTTP Upgrade,
+#     gRPC, XHTTP and Trojan over WebSocket, Xray terminating TLS on the ports a
+#     CDN dials); the supported matrix in docs/edges.md is what these prove;
+#   - a fake L4 edge (a plain TCP forwarder answering on one address per load
+#     balancer) and a fake L7 edge (a CDN-style reverse proxy, one route per
+#     proxied record). The provider APIs are faked inside the test, so FCP
+#     "provisions" these;
 #   - a sing-box client that can reach ONLY the edges, and a web page that ONLY
 #     the nodes can reach;
 #   - the test runner itself (profile `runner`), on the networks FCP needs: its
@@ -17,7 +23,8 @@
 #
 # Networks, all local to the test host and routing nowhere:
 #   ec-control  panel <-> nodes (management)
-#   ec-edge     edges <-> nodes, FCP's checks <-> nodes  (the nodes' "public" addresses)
+#   ec-edge     edges <-> nodes, FCP's checks <-> nodes  (the nodes' "public" addresses;
+#               the panel joins it too: an operator node is managed at its public address)
 #   ec-client   the member <-> the edges only              (internal: no route anywhere else)
 #   ec-origin   nodes <-> the web page only                (internal)
 # Addresses are documentation ranges (RFC 5737, except ec-origin: see there)
@@ -27,7 +34,7 @@
 # Nothing is published to the host.
 services:
   rw-test-backend:
-    networks: [default, ec-control]
+    networks: [default, ec-control, ec-edge]
 
   ec-node-reality:
     image: remnawave/node:3.4.1
@@ -47,6 +54,24 @@ services:
       ec-origin:
         ipv4_address: 11.11.11.11
 
+  # The XHTTP-under-REALITY node (freedom-xhttp), fronted at L4 like the REALITY one.
+  ec-node-xr:
+    image: remnawave/node:3.4.1
+    container_name: ec-node-xr
+    hostname: ec-node-xr
+    restart: 'no'
+    environment:
+      - NODE_PORT=2222
+      - SECRET_KEY=${EC_NODE_SECRET:?set by scripts/edge-connection-integration.sh}
+    cap_add: [NET_ADMIN]
+    networks:
+      ec-control:
+        ipv4_address: 192.0.2.15
+      ec-edge:
+        ipv4_address: 198.51.100.15
+      ec-origin:
+        ipv4_address: 11.11.11.15
+
   ec-node-ws:
     image: remnawave/node:3.4.1
     container_name: ec-node-ws
@@ -65,6 +90,56 @@ services:
         aliases: ['${EC_ORIGIN_HOSTNAME:?set by the run script}']
       ec-origin:
         ipv4_address: 11.11.11.12
+
+  # The operator nodes: managed by the panel at their public address (no node
+  # role, no intent), serving whatever profile the test writes as the operator.
+  ec-node-l4m:
+    image: remnawave/node:3.4.1
+    container_name: ec-node-l4m
+    hostname: ec-node-l4m
+    restart: 'no'
+    environment:
+      - NODE_PORT=2222
+      - SECRET_KEY=${EC_NODE_SECRET:?set by scripts/edge-connection-integration.sh}
+    cap_add: [NET_ADMIN]
+    networks:
+      ec-edge:
+        ipv4_address: 198.51.100.13
+      ec-origin:
+        ipv4_address: 11.11.11.13
+
+  ec-node-l7m:
+    image: remnawave/node:3.4.1
+    container_name: ec-node-l7m
+    hostname: ec-node-l7m
+    restart: 'no'
+    environment:
+      - NODE_PORT=2222
+      - SECRET_KEY=${EC_NODE_SECRET:?set by scripts/edge-connection-integration.sh}
+    cap_add: [NET_ADMIN]
+    networks:
+      ec-edge:
+        ipv4_address: 198.51.100.14
+      ec-origin:
+        ipv4_address: 11.11.11.14
+
+  # The Outline server's data plane: a Shadowsocks server answering the keys the
+  # test's fake Outline Manager API hands out (the pinned sing-box of the compat
+  # suite, a server config the run script writes). Outline origins are whole
+  # backend servers, fronted at L4 by address rewrite.
+  ec-outline:
+    platform: linux/amd64
+    image: fcp-compat-engine:local
+    container_name: ec-outline
+    restart: 'no'
+    command: [sing-box, run, -c, /outline/server.json]
+    volumes:
+      - ./.cache/edge-connection-test/outline:/outline:ro
+    networks:
+      ec-edge:
+        ipv4_address: 198.51.100.16
+      ec-origin:
+        ipv4_address: 11.11.11.16
 
   # The node role's ingress: shares the WebSocket node's network namespace, so
   # it reaches the loopback inbound and answers on the node's own addresses.
@@ -95,13 +170,16 @@ services:
         ipv4_address: 198.51.100.31
         aliases: ['${EC_REALITY_TARGET:?set by the run script}']
 
-  # The fake L4 edge. Its client-network address is what the fake provider
-  # answers as the load balancer's public IP.
+  # The fake L4 edge. Every load balancer the fake provider creates gets its
+  # own public address from the pool below (what a provider's floating IP is),
+  # all of them on this one forwarder.
   ec-l4-forwarder:
     image: oven/bun:${FCP_COMPAT_BUN_VERSION:?read from packageManager by the run script}
     container_name: ec-l4-forwarder
     restart: 'no'
     command: [bun, /forwarder.ts]
+    environment:
+      - EC_FORWARDER_ADDRESS=203.0.113.21
     volumes:
       - ./docker/edge-connection-test/forwarder.ts:/forwarder.ts:ro
     networks:
@@ -110,13 +188,33 @@ services:
       ec-edge:
         ipv4_address: 198.51.100.21
 
-  # The fake L7 edge: every hostname of the fake provider's zone lands here.
+  # The forwarder's address pool (203.0.113.141-160, clear of every fixed
+  # address) on its client-network interface: Docker gives a container one
+  # address per network, a provider gives every load balancer its own. Runs
+  # once in the forwarder's network namespace (busybox `ip` from the pinned
+  # Caddy image) and exits.
+  ec-l4-addresses:
+    image: caddy:2-alpine@sha256:6aeddd44c3078b0f9a35206472a11420648a79c184603ef95957d0a20044cb2b
+    container_name: ec-l4-addresses
+    restart: 'no'
+    network_mode: service:ec-l4-forwarder
+    cap_add: [NET_ADMIN]
+    entrypoint: [/bin/sh, -c]
+    command:
+      - >-
+        dev=$$(ip -o -4 addr show | awk '/ 203\.0\.113\.21\// {print $$2}');
+        [ -n "$$dev" ] || exit 1;
+        for i in $$(seq 141 160); do ip addr add 203.0.113.$$i/32 dev $$dev || exit 1; done
+    depends_on: [ec-l4-forwarder]
+
+  # The fake L7 edge: every hostname of the fake provider's zone lands here,
+  # and the fake provider API adds the route of each proxied record through the
+  # admin endpoint (edge network only).
   ec-l7-front:
     image: caddy:2-alpine@sha256:6aeddd44c3078b0f9a35206472a11420648a79c184603ef95957d0a20044cb2b
     container_name: ec-l7-front
     restart: 'no'
     environment:
-      - EC_ORIGIN_HOSTNAME
       - EC_L7_ZONE=${EC_L7_ZONE:?set by the run script}
     volumes:
       - ./docker/edge-connection-test/front.Caddyfile:/etc/caddy/Caddyfile:ro
@@ -202,9 +300,12 @@ services:
       - EC_L7_ZONE
       - EC_WS_PATH
       - EC_WS_PORT
+      - EC_TLS_NAME
+      - EC_OUTLINE_PASSWORD
       - NODE_EXTRA_CA_CERTS=${PWD}/.cache/edge-connection-test/pki/ca.pem
       - DEV_MOCK_BACKEND=false
       - EC_KEEP
+      - EC_ONLY
       - CI
       - GITHUB_ACTIONS
     networks: [default, ec-edge]

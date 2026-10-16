@@ -31,6 +31,7 @@ import {
   type TransportParams,
 } from './lib/edges/frontCheck/binding';
 import { isUuid } from './lib/edges/frontCheck/vless';
+import type { FrontCredential } from './lib/edges/frontCheck';
 import { protocolIsHttpTransport, protocolL7Proof } from './lib/edges/protocols';
 import { evaluateAutoQualificationFor } from './edgeProviderAccounts';
 
@@ -99,23 +100,34 @@ export const context = internalQuery({
     const g = await gather(ctx, edgeId);
     if (!g) return null;
     const cfg = await resolveEdgeConfig(ctx.db);
-    // The qualification account is minted through the backend provider and its
-    // backend id doubles as the VLESS UUID on the backends FCP drives. Anything
-    // else (a composite id from a backend that separates them) is reported as a
-    // missing credential rather than sent as a guess.
+    // The qualification account is minted through the backend provider: its
+    // VLESS UUID (anything else, a composite id from a backend that separates
+    // them, is reported as a missing credential rather than sent as a guess),
+    // and for a Trojan transport the same account's Trojan password.
     const credentialId = g.relay.qualificationUserId ?? '';
     const proto = {
       protocol: g.listener.protocol,
       streamTransport: g.listener.streamTransport,
       security: g.listener.security,
     };
+    const proof = protocolL7Proof(proto);
+    const trojanPassword = g.relay.qualificationTrojanPassword ?? '';
+    const credential: FrontCredential | null =
+      proof === 'trojan'
+        ? trojanPassword
+          ? { kind: 'trojan', password: trojanPassword }
+          : null
+        : isUuid(credentialId)
+          ? { kind: 'vless', uuid: credentialId }
+          : null;
     return {
       hostname: g.intent.hostname,
+      provider: g.edge.provider ?? null,
       proto,
       // Only an HTTP-carried listener with an authenticated proof can be qualified.
-      carried: protocolIsHttpTransport(proto) && protocolL7Proof(proto) === 'vless',
+      carried: protocolIsHttpTransport(proto) && proof !== 'unsupported',
       params: g.params,
-      credential: isUuid(credentialId) ? { uuid: credentialId } : null,
+      credential,
       credentialConfigured: credentialId.length > 0,
       stepTimeoutMs: cfg.l7.qualifyStepTimeoutMs,
       ttlMinutes: cfg.l7.qualificationTtlMinutes,

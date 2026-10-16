@@ -371,4 +371,26 @@ describe('realityEntryLine', () => {
     );
     expect(v4).toMatch(/@203\.0\.113\.20:443\?/);
   });
+
+  test('XHTTP under REALITY carries its path and mode and no flow', () => {
+    const link = realityEntryLine(
+      '11111111-2222-4333-8444-555555555555',
+      '203.0.113.20',
+      443,
+      params,
+      'r',
+      { kind: 'xhttp', path: '/', mode: 'auto' },
+    );
+    const q = new URL(link).searchParams;
+    expect(Object.fromEntries(q)).toMatchObject({
+      type: 'xhttp',
+      path: '/',
+      mode: 'auto',
+      security: 'reality',
+      sni: 'a.example',
+      pbk: 'PUBKEY',
+      sid: 'abcd',
+    });
+    expect(q.has('flow')).toBe(false);
+  });
 });

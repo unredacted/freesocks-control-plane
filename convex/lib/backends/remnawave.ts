@@ -78,6 +78,9 @@ const RemnawaveUser = z
     // The VLESS credential (present on create and get); the L7 front
     // qualification authenticates with it. Lenient: absent on exotic backends.
     vlessUuid: z.string().uuid().nullish(),
+    // The Trojan credential of the same user: the L7 proof of a Trojan
+    // transport authenticates with it. Lenient like the VLESS id.
+    trojanPassword: z.string().min(1).nullish(),
     username: z.string(),
     status: RemnawaveUserStatus,
     trafficLimitBytes: z.number().int().nonnegative().nullable(),
@@ -574,6 +577,7 @@ export async function remnawaveIssueUser(
     subscriptionUrl: pinnedSubscriptionUrl(cfg, user.subscriptionUrl, user.shortUuid),
     raw: user,
     protocolUuid: user.vlessUuid ?? undefined,
+    trojanPassword: user.trojanPassword ?? undefined,
   };
 }
 
@@ -605,6 +609,7 @@ export async function remnawaveFindUserByUsername(
     subscriptionUrl: pinnedSubscriptionUrl(cfg, user.subscriptionUrl, user.shortUuid),
     raw: user,
     protocolUuid: user.vlessUuid ?? undefined,
+    trojanPassword: user.trojanPassword ?? undefined,
   };
 }
 

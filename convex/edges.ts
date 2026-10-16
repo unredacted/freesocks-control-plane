@@ -28,6 +28,7 @@ import {
   verificationCurrent,
   verificationStale,
 } from './lib/edges/verification';
+import { verificationListenersOf, type VerifiableListener } from './lib/edges/verificationContext';
 
 /** Consecutive `gone` describes before the pool drop + status transition act. */
 export const GONE_OBSERVATIONS_REQUIRED = 2;
@@ -102,7 +103,7 @@ export function edgeProgress(edge: Edge): { done: number; total: number; percent
  * lets the L4 verification view say whether the confirmation is CURRENT; a
  * caller without it gets `current: null` (unknown), never a guess.
  */
-export function mapEdgeAdmin(e: Edge, listener?: Doc<'relayListeners'> | null) {
+export function mapEdgeAdmin(e: Edge, listener?: VerifiableListener | null) {
   const required = needsEndpointVerification(e);
   const rec = e.verification;
   const verification = {
@@ -247,10 +248,12 @@ export const listByRelay = internalQuery({
 export const listByRelayForAdmin = internalQuery({
   args: { relayId: v.id('relays') },
   handler: async (ctx, { relayId }) => {
-    const listeners = await ctx.db
+    const relay = await ctx.db.get(relayId);
+    const raw = await ctx.db
       .query('relayListeners')
       .withIndex('by_relay', (q) => q.eq('relayId', relayId))
       .collect();
+    const listeners = relay ? await verificationListenersOf(ctx.db, relay, raw) : [];
     return (
       await ctx.db
         .query('edges')

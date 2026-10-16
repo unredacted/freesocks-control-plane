@@ -126,16 +126,16 @@ describe('listener catalogue ⇔ codec table', () => {
 });
 
 describe('protocol helpers derive from the three fields', () => {
-  test('l7Proof is `vless` ONLY for vless + an HTTP transport + tls', () => {
+  test('l7Proof is the protocol ONLY for vless or trojan + an HTTP transport + tls', () => {
     for (const c of LISTENER_COMBOS) {
       const expected =
-        c.protocol === 'vless' &&
+        (c.protocol === 'vless' || c.protocol === 'trojan') &&
         (c.streamTransport === 'ws' ||
           c.streamTransport === 'httpupgrade' ||
           c.streamTransport === 'grpc' ||
           c.streamTransport === 'xhttp') &&
         c.security === 'tls'
-          ? 'vless'
+          ? c.protocol
           : 'unsupported';
       expect(protocolL7Proof(c), c.key).toBe(expected);
     }
@@ -144,8 +144,8 @@ describe('protocol helpers derive from the three fields', () => {
     expect(
       protocolL7Proof({ protocol: 'vless', streamTransport: 'httpupgrade', security: 'tls' }),
     ).toBe('vless');
-    // Trojan over WebSocket is HTTP-carried but has no authenticated proof.
-    expect(protocolL7Proof(TROJAN_WS)).toBe('unsupported');
+    // Trojan over WebSocket is HTTP-carried and proved with a Trojan request.
+    expect(protocolL7Proof(TROJAN_WS)).toBe('trojan');
     expect(protocolIsHttpTransport(TROJAN_WS)).toBe(true);
     expect(protocolL7Proof(REALITY)).toBe('unsupported');
     expect(protocolL7Proof(HY2)).toBe('unsupported');

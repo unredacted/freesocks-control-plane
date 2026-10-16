@@ -722,7 +722,10 @@ export const NodeBootstrap = z.object({
     .object({
       hostname: z.string(),
       externalPort: z.number(),
-      routes: z.array(z.object({ path: z.string(), port: z.number() })),
+      // `upstream: 'h2c'`: proxy this route over HTTP/2 cleartext (a gRPC transport).
+      routes: z.array(
+        z.object({ path: z.string(), port: z.number(), upstream: z.literal('h2c').optional() }),
+      ),
     })
     .nullable(),
   origin: z.object({ hostname: z.string().nullable(), dns: z.string() }),

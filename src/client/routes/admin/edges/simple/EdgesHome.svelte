@@ -6,6 +6,9 @@
    * page links to it), `?run=<id>` opens a run's progress.
    *
    * The technical dashboard this replaced lives on under Advanced (All origins).
+   *
+   * The "Turn on automatic protection" offer appears once a node is live (and on
+   * the Live card of a run), never on the empty home.
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -24,7 +27,6 @@
     invalidateConfig,
     invalidateOverview,
     invalidateRelay,
-    providersQuery,
     rebalanceRelay,
     requireRelayEdges,
     retrySetupRun,
@@ -51,7 +53,6 @@
   const attention = attentionQuery();
   const runs = setupRunsQuery();
   const config = edgeConfigQuery();
-  const providers = providersQuery();
 
   const protectParam = searchParam('protect');
   const runParam = searchParam('run');
@@ -68,12 +69,19 @@
   const statuses = $derived(rows.map((r) => nodeStatus(r, ctx)));
   const headline = $derived(fleetSentence(statuses));
   const automation = $derived(config.data ? automationOn(config.data.config) : null);
-  const hasAccount = $derived((providers.data?.accounts.length ?? 0) > 0);
+  const anyLive = $derived(statuses.some((s) => s.kind === 'protected'));
 
   // The test card opened from a "Needs you" row (a spare, a retest, a go-live check).
   let testEdgeIds = $state<string[]>([]);
   let testRelayId = $state<string | null>(null);
+  let testRelaySlug = $state<string | null>(null);
   let testRunId = $state<string | null>(null);
+  function closeTest() {
+    testEdgeIds = [];
+    testRelayId = null;
+    testRelaySlug = null;
+    testRunId = null;
+  }
 
   async function goLive(relayId: string, slug: string | null): Promise<void> {
     const res = await requireRelayEdges(relayId);
@@ -82,13 +90,12 @@
       // ticks go to that run, never to a second require-edges call.
       testEdgeIds = res.pending.map((p) => p.edgeId);
       testRelayId = relayId;
+      testRelaySlug = slug;
       testRunId = res.runId;
       toast.message('Test each address first. Going live continues once every one works.');
       return;
     }
-    testEdgeIds = [];
-    testRelayId = null;
-    testRunId = null;
+    closeTest();
     toast.success('Going live.');
     if (slug) invalidateRelay(qc, slug);
     else invalidateOverview(qc);
@@ -103,6 +110,8 @@
           if (!item.edgeId) break;
           testEdgeIds = [item.edgeId];
           testRelayId = null;
+          testRelaySlug = item.relaySlug;
+          testRunId = null;
           return;
         case 'require_edges':
           if (!item.relayId) break;
@@ -186,13 +195,24 @@
         {#if testEdgeIds.length > 0}
           <EndpointTestCard
             edgeIds={testEdgeIds}
-            onClose={() => (testEdgeIds = [])}
+            runId={testRunId}
+            onClose={closeTest}
+            onRetried={(id) => {
+              closeTest();
+              setSearchParams({ run: id, protect: null, server: null, node: null });
+            }}
+            onDoesNotWork={testRelaySlug
+              ? (edgeId) => {
+                  // The node page knows what the address is (in use or a spare) and how to replace it.
+                  const slug = testRelaySlug!;
+                  closeTest();
+                  router.navigate(edgesPaths.node(slug, { test: edgeId }));
+                }
+              : undefined}
             onAllDone={() => {
               const relayId = testRelayId;
               const runId = testRunId;
-              testEdgeIds = [];
-              testRelayId = null;
-              testRunId = null;
+              closeTest();
               // Every address ticked: resume the activation run the server opened
               // (it re-checks the confirmations and carries on to go-live).
               if (runId)
@@ -244,7 +264,7 @@
     </section>
   {/if}
 
-  {#if automation === false}
+  {#if automation === false && anyLive}
     <section class="rounded-lg border p-4" aria-labelledby="auto-title">
       <h2 id="auto-title" class="font-semibold">Turn on automatic protection</h2>
       <p class="text-muted-foreground mt-1 max-w-prose text-sm">
@@ -285,12 +305,11 @@
   </footer>
 </div>
 
-<!-- Mounted once the accounts are known: the sheet decides its first step from them. -->
-{#if sheetOpen && (providers.isSuccess || providers.isError)}
+<!-- The node always comes first; the account step adds one when there is none. -->
+{#if sheetOpen}
   <ProtectSheet
     open={sheetOpen}
     runId={runParam.value || null}
-    startAtAccount={!hasAccount}
     server={serverParam.value || null}
     node={nodeParam.value || null}
     onRunCreated={(id) => setSearchParams({ run: id, protect: null, server: null, node: null })}

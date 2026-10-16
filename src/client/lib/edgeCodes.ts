@@ -776,6 +776,105 @@ const COPY = {
     explain: 'Every address is tested. Going live waits for your approval of the node.',
     fix: 'Approve go-live.',
   },
+  // --- operations safety: attention, the fleet guards, delivery refusals ------------------
+  fleet_brake: {
+    label: 'Automatic replacement held',
+    explain:
+      'Many nodes look blocked at once, which points at a block on a whole provider or protocol, so FCP holds every automatic replacement instead of burning addresses.',
+    fix: 'Check the probes and the reports. It releases by itself once fewer nodes look blocked.',
+  },
+  fleet_rotation_cap: {
+    label: 'Daily replacement cap reached',
+    explain:
+      'Automatic replacements across all nodes reached the cap for today, so more wait until tomorrow (UTC).',
+    fix: 'Raise the fleet cap under Settings if these replacements are expected.',
+  },
+  fleet_daily_cap: {
+    label: 'Fleet daily cap reached',
+    explain: 'The cap on automatic replacements across all nodes is used up for today.',
+    fix: 'Wait for tomorrow (UTC), or raise the cap under Settings.',
+  },
+  outside_approved_shape: {
+    label: 'Outside the approved setup',
+    explain:
+      'No account or spare fits what this node was approved for, so nothing is published without a new review.',
+    fix: 'Review the node and approve it again with the account it should use.',
+  },
+  rotation_stuck: {
+    label: 'Replacement stuck',
+    explain:
+      'A rotation has been running for over an hour: a provider or the backend may not be answering.',
+    fix: 'Open the node to see the step it is waiting on.',
+  },
+  account_api_failing: {
+    label: 'Provider not answering',
+    explain:
+      'Several calls in a row to this provider account failed (timeouts, errors on its side or refused credentials), so new edges, health checks and clean-ups stall.',
+    fix: 'Check the provider status and the account credentials, then test them.',
+  },
+  health_stale: {
+    label: 'Health not refreshed',
+    explain:
+      'FCP could not refresh the health of some live edges of this account for over an hour.',
+    fix: 'Open the account: the provider may be refusing the reads.',
+  },
+  billable_idle: {
+    label: 'Paid for, serving nobody',
+    explain:
+      'Edges that cost money serve no member until you act: the node is paused for safety, or an edge waits for an operator.',
+    fix: 'Resolve the pause or the edge, so the resources are used or removed.',
+  },
+  delivery_refusals: {
+    label: 'Members refused',
+    explain:
+      'Members asked for their subscription in the last hour and got nothing usable. The reasons are counted.',
+    fix: 'Look at the reasons: a switch that is off, an empty pool or a node that is not live.',
+  },
+  family_rule_disabled: {
+    label: 'App family switched off',
+    explain:
+      'A client app family has its render rule off, so members using those apps get nothing from a protected node.',
+    fix: 'Turn the family back on under Settings, unless that is intended.',
+  },
+  node_ready_to_protect: {
+    label: 'Node ready to protect',
+    explain:
+      'An enrolled node meant to sit behind an edge is ready, and nothing protects it until you start.',
+    fix: 'Start protecting it.',
+  },
+  node_awaiting_approval: {
+    label: 'Waiting for your approval',
+    explain: 'A node is tested and goes live only once you approve it.',
+    fix: 'Open the node and approve go-live.',
+  },
+  node_gated: {
+    label: 'Node not live',
+    explain:
+      'The member is on a node that is not live yet, or is closed for maintenance, so nothing is handed out for it.',
+  },
+  policy_moved: {
+    label: 'Changed while answering',
+    explain:
+      'The delivery policy changed while the answer was being built, so it was not sent. The next refresh gets the current one.',
+  },
+  account_budget_unlimited: {
+    label: 'No daily spending limit',
+    explain:
+      'This provider account has a daily allocation budget of 0, which means no limit: a runaway loop could create billable resources without bound.',
+    fix: 'Set a daily allocation budget on the account.',
+  },
+  reality_key_changed: {
+    label: 'Node key changed',
+    explain:
+      'The node’s REALITY key (or its short ids or clock settings) changed since this address was tried, so nothing has proven the new key through it.',
+    fix: 'Try the address again from a client with the new key.',
+  },
+  family_disabled: {
+    label: 'App family off',
+    explain:
+      'The render rule for this client app family is off, so its members get nothing from a protected node.',
+    fix: 'Turn the family on under Settings.',
+  },
 } as const satisfies Record<KnownCode, CodeCopy> & Record<string, CodeCopy>;
 
 // --- discovered transports that cannot become listeners --------------------------------------
@@ -957,6 +1056,10 @@ const REFUSAL_COPY = {
     explain:
       'This node is enrolled in Servers, so it goes live behind its new addresses only. Members cannot stay on the direct one.',
     fix: 'Protect it and hide the hosts the addresses cannot carry.',
+  },
+  not_edge_required: {
+    label: 'Already direct',
+    explain: 'Members of this node already receive its own address.',
   },
 } as const satisfies Record<string, CodeCopy>;
 
@@ -1185,6 +1288,32 @@ export function setupStatusTone(s: SetupStepStatus): Tone {
 
 // --- attention -----------------------------------------------------------------------------
 
+/**
+ * The button labels the simple screens show (AttentionList `plain`): plain verbs,
+ * never the Advanced terms (Thaw, Qualify front, Publish).
+ */
+export const PLAIN_ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
+  resolve_quarantine: 'Review the pause',
+  resolve_operator: 'Look at the address',
+  look_at_host: 'Look at the backend',
+  open_setup: 'Resume protection',
+  open_relay: 'Open the node',
+  open_edge: 'Open the address',
+  open_account: 'Open the account',
+  open_settings: 'Open settings',
+  publish: 'Put it in use',
+  provision: 'Create an address',
+  qualify_front: 'Check the address',
+  rotate: 'Replace the address',
+  test_credentials: 'Test the account',
+  verify_endpoint: 'Test the address',
+  thaw: 'Resume new work',
+  rebalance: 'Make room',
+  require_edges: 'Go live',
+  protect_node: 'Protect the node',
+  open_node: 'Review go-live',
+};
+
 export const ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
   resolve_quarantine: 'Resolve quarantine',
   resolve_operator: 'Resolve edge',
@@ -1203,6 +1332,8 @@ export const ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
   thaw: 'Thaw',
   rebalance: 'Make room',
   require_edges: 'Go live',
+  protect_node: 'Protect node',
+  open_node: 'Open node',
 };
 
 export function severityTone(s: AttentionSeverity): Tone {
@@ -1214,19 +1345,40 @@ export const attentionSeverityTone = severityTone;
 
 // --- guided setup runs (Autopilot) -------------------------------------------------------------
 
-/** The four plain stages the progress view shows, mapped from the machine's ten. */
-export const SETUP_RUN_STAGE_LABELS: Record<SetupRunStage, string> = {
-  prepare: 'Creating the address',
-  credential: 'Creating the address',
-  provision: 'Creating the address',
-  verify: 'Checking from outside',
-  try_it: 'Checking it works',
-  publish: 'Going live',
-  hide_direct_hosts: 'Going live',
-  rehearse: 'Going live',
-  go_live: 'Going live',
-  done: 'Live',
+/** The four plain stages a guided run shows, in order. */
+export const SETUP_RUN_PLAIN_STAGES = [
+  'Creating the address',
+  'Checking from outside',
+  'Checking it works',
+  'Going live',
+] as const;
+
+/**
+ * The machine's ten stages folded onto the four plain ones (`done` = 5, past
+ * the last). The one table both the stage labels and the progress steps read,
+ * so a stage never has two names: `publish` is where an enrolled node waits
+ * for its go-live approval, so it belongs to "Going live".
+ */
+export const SETUP_RUN_STAGE_STEP: Record<SetupRunStage, 1 | 2 | 3 | 4 | 5> = {
+  prepare: 1,
+  credential: 1,
+  provision: 1,
+  verify: 2,
+  try_it: 3,
+  publish: 4,
+  hide_direct_hosts: 4,
+  rehearse: 4,
+  go_live: 4,
+  done: 5,
 };
+
+/** The plain stage label of each machine stage (`done` = Live). */
+export const SETUP_RUN_STAGE_LABELS = Object.fromEntries(
+  Object.entries(SETUP_RUN_STAGE_STEP).map(([stage, step]) => [
+    stage,
+    step === 5 ? 'Live' : SETUP_RUN_PLAIN_STAGES[step - 1],
+  ]),
+) as Record<SetupRunStage, string>;
 
 export const SETUP_RUN_STATE_LABELS: Record<SetupRunState, string> = {
   running: 'Working',
@@ -1265,8 +1417,8 @@ export const SETUP_RUN_NEED_COPY: Record<SetupRunNeed, CodeCopy> = {
   },
   too_many_inbounds: {
     label: 'Too many transports',
-    explain: 'The node serves more frontable transports than a guided run protects.',
-    fix: 'Use manual setup.',
+    explain: 'The node serves more transports than one run protects.',
+    fix: 'Pick the ones to protect.',
   },
   use_manual_setup: {
     label: 'Manual setup needed',
@@ -1296,8 +1448,8 @@ export const SETUP_RUN_NEED_COPY: Record<SetupRunNeed, CodeCopy> = {
   try_it: {
     label: 'Try each address',
     explain:
-      'Import each test link into a client (it uses a test account of its own), connect, load a page, then tick Works.',
-    fix: 'Continue (One of them does not work).',
+      'Import each test link into a client (it uses a test account of its own), connect, load a page, then answer Works or Doesn’t work.',
+    fix: 'Works (Doesn’t work).',
   },
   review_changed: {
     label: 'Hosts changed',
@@ -1326,8 +1478,8 @@ export const SETUP_RUN_NEED_COPY: Record<SetupRunNeed, CodeCopy> = {
   },
   quarantined: {
     label: 'Paused for safety',
-    explain: 'A rotation could not converge and paused the origin.',
-    fix: 'Review.',
+    explain: 'Replacing an address could not finish and paused this node.',
+    fix: 'Check the backend, then keep the old or the new addresses.',
   },
 };
 
@@ -1341,6 +1493,11 @@ export const SETUP_ACCOUNT_REASON_COPY: Record<SetupAccountReason, CodeCopy> = {
   layer_mismatch: {
     label: 'Cannot carry every transport',
     explain: 'The account fronts at a layer one of the transports cannot use.',
+  },
+  origin_port_not_carried: {
+    label: 'Wrong port for gRPC',
+    explain: 'A CDN passes gRPC only to a node listening on port 443.',
+    fix: 'Move the gRPC transport to port 443.',
   },
   account_capacity_reached: {
     label: 'No room',
@@ -1489,8 +1646,23 @@ export const PLAIN_WORDS: Record<string, string> = {
   quarantine: 'paused for safety',
   quarantined: 'paused for safety',
   'host flip': 'update the backend',
-  listener: 'inbound',
+  listener: 'transport',
   listeners: 'transports',
+  inbound: 'transport',
+  inbounds: 'transports',
+  rotations: 'address replacements',
+  endpoint: 'address',
+  endpoints: 'addresses',
+  thaw: 'resume new work',
+  // Whole fix phrases whose verb has no plain one-word swap (longest match wins).
+  'run qualify front on the edge': 'check the address',
+  'qualify the front again': 'check the address again',
+  'publish an edge': 'put an address in use',
+  'provision or import an edge': 'create or import an address',
+  'provision or publish an edge': 'create an address or put one in use',
+  'provision a new edge': 'create a new address',
+  'raise the published edges wanted': 'raise the number of addresses in use',
+  'edge work': 'new work',
 };
 
 /** Rewrite a technical sentence in plain words (whole-word, longest match first). */
@@ -1537,6 +1709,7 @@ const PLAIN_AUDIT_LABELS: Record<string, string> = {
   'edge.setup_run.finished': 'Protection finished',
   'edge.setup_run.cancelled': 'Protection cancelled',
   'admin.edge.provision': 'Address requested',
+  'admin.edge.test_provision': 'Test address requested',
   'admin.edge.rotate': 'Replacement requested',
   'admin.edge.burn': 'Replacement requested (blocked)',
   'probe.verdict': 'Reachability changed',

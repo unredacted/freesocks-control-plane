@@ -3,20 +3,25 @@
  * at L4, Cloudflare at L7) talk to fake provider APIs, and the fakes wire the
  * real edges of the stack.
  *
- *  - UpCloud: a load-balancer create wires the TCP forwarder's frontend port to
- *    exactly the backend member FCP asked for, and the floating address handed
- *    back is the forwarder's client-network address;
- *  - Cloudflare: a proxied DNS record under the zone is what a CDN front is;
- *    every name of the zone already lands on the stack's front (its resolver
- *    answers the whole zone), which proxies to the origin hostname. The fake
- *    records what FCP asked the record to point at.
+ *  - UpCloud: every floating address FCP allocates is the next one of the
+ *    forwarder's pool, and attaching it to a load balancer wires that address's
+ *    frontend port to exactly the backend member FCP asked for;
+ *  - Cloudflare: a proxied DNS record under the zone is what a CDN front is.
+ *    Every name of the zone already lands on the stack's front (its resolver
+ *    answers the whole zone); creating the record adds the front's route for
+ *    that name to the record's content, on the zone's origin port or the one
+ *    its Origin Rule sets. The fake records what FCP asked for.
+ *
+ *  - Outline: the Outline Manager API of the stack's Outline server (whose data
+ *    plane is real: `ec-outline`). Every key it hands out is a Shadowsocks key
+ *    for that server, as one Outline server's keys all reach it.
  *
  * Every other request goes to the real network only when its host is on the
  * allowlist (the panel); anything else is refused and recorded, so FCP cannot
  * reach the internet from this test without the test noticing.
  */
 import { vi } from 'vitest';
-import { ADDR, wireForwarder } from './stack';
+import { ADDR, routeFront, wireForwarder } from './stack';
 
 export interface Call {
   method: string;
@@ -71,13 +76,42 @@ interface DnsRecord {
   modified_on: string;
 }
 
-export function installProviderFakes(opts: { allowHosts: string[]; l7Zone: string }) {
+/** The fake Outline Manager's host: an operator's `apiUrl` names it (with its secret path). */
+export const OUTLINE_MANAGER_HOST = 'outline-manager.example';
+
+export function installProviderFakes(opts: {
+  allowHosts: string[];
+  l7Zone: string;
+  outline?: { address: string; port: number; password: string };
+}) {
   const realFetch = globalThis.fetch.bind(globalThis);
-  const calls = { upcloud: [] as Call[], cloudflare: [] as Call[] };
+  const calls = { upcloud: [] as Call[], cloudflare: [] as Call[], outline: [] as Call[] };
+  const outlineKeys = new Map<
+    string,
+    { id: string; name: string; accessUrl: string; dataLimit?: { bytes: number } }
+  >();
   const refused: string[] = [];
   const lbs = new Map<string, LoadBalancer>();
   const records = new Map<string, DnsRecord>();
+  /** The zone's Origin Rules phase (one entry point ruleset), as the API keeps it. */
+  let originPhase: { id: string; rules: Array<Record<string, unknown>> } | null = null;
+  const pool = [...ADDR.forwarderPool];
   let seq = 0;
+
+  /** What the front dials for a record: its content, on the rule's port or the zone's 443. */
+  const routeRecord = (rec: DnsRecord) => {
+    const rule = originPhase?.rules.find((r) =>
+      String(r.expression ?? '').includes(`"${rec.name}"`),
+    ) as { action_parameters?: { origin?: { port?: number } } } | undefined;
+    const port = rule?.action_parameters?.origin?.port ?? 443;
+    // A CNAME origin is dialled by its own name; an address origin is sent the
+    // edge hostname as its server name (the record's name is all a CDN knows).
+    return routeFront(
+      rec.name,
+      { host: rec.content, port },
+      rec.type === 'CNAME' ? rec.content : rec.name,
+    );
+  };
 
   async function upcloud(method: string, path: string, body: any): Promise<Response> {
     calls.upcloud.push({ method, path, body });
@@ -97,12 +131,9 @@ export function installProviderFakes(opts: { allowHosts: string[]; l7Zone: strin
         backends: body.backends ?? [],
         ip_addresses: [],
       };
-      // What a provider's LB does: frontend port -> the backend members.
-      for (const f of lb.frontends) {
-        const member = lb.backends.find((b) => b.name === f.default_backend)?.members[0];
-        if (!member) return json({ error: { error_code: 'BACKEND_INVALID' } }, 400);
-        await wireForwarder(f.port, `${member.ip}:${member.port}`);
-      }
+      for (const f of lb.frontends)
+        if (!lb.backends.find((b) => b.name === f.default_backend)?.members[0])
+          return json({ error: { error_code: 'BACKEND_INVALID' } }, 400);
       lbs.set(uuid, lb);
       return json(lb, 201);
     }
@@ -114,16 +145,23 @@ export function installProviderFakes(opts: { allowHosts: string[]; l7Zone: strin
           ),
         },
       });
-    if (p === '/ip_address' && method === 'POST')
-      return json(
-        { ip_address: { address: ADDR.forwarder.client, floating: 'yes', family: 'IPv4' } },
-        201,
-      );
+    if (p === '/ip_address' && method === 'POST') {
+      const address = pool.shift();
+      if (!address) return json({ error: { error_code: 'IP_ADDRESS_LIMIT' } }, 409);
+      return json({ ip_address: { address, floating: 'yes', family: 'IPv4' } }, 201);
+    }
     const attach = p.match(/^\/load-balancer\/([^/]+)\/ip-addresses$/);
     if (attach && method === 'POST') {
       const lb = lbs.get(attach[1]!);
       if (!lb) return json({ error: { error_code: 'LB_NOT_FOUND' } }, 404);
-      lb.ip_addresses.push(...(body.ip_addresses ?? []));
+      const added: Array<{ address: string }> = body.ip_addresses ?? [];
+      lb.ip_addresses.push(...added);
+      // What a provider's LB does from now on: address:frontend port -> the backend member.
+      for (const { address } of added)
+        for (const f of lb.frontends) {
+          const member = lb.backends.find((b) => b.name === f.default_backend)!.members[0]!;
+          await wireForwarder(f.port, `${member.ip}:${member.port}`, address);
+        }
       return json({});
     }
     const one = p.match(/^\/load-balancer\/([^/]+)$/);
@@ -192,6 +230,7 @@ export function installProviderFakes(opts: { allowHosts: string[]; l7Zone: strin
         modified_on: now,
       };
       records.set(rec.id, rec);
+      await routeRecord(rec);
       return envelope(rec);
     }
     const rec = rest.match(/^\/dns_records\/([^/]+)$/);
@@ -213,12 +252,99 @@ export function installProviderFakes(opts: { allowHosts: string[]; l7Zone: strin
       records.delete(rec[1]!);
       return envelope({ id: rec[1] });
     }
+    // The Origin Rules phase: read, create (PUT on the entry point) and add a rule.
+    if (rest === '/rulesets/phases/http_request_origin/entrypoint') {
+      if (method === 'GET')
+        return originPhase
+          ? envelope({ ...originPhase, phase: 'http_request_origin', kind: 'zone' })
+          : json(
+              {
+                success: false,
+                errors: [{ code: 10003, message: 'not found' }],
+                messages: [],
+                result: null,
+              },
+              404,
+            );
+      if (method === 'PUT') {
+        originPhase = {
+          id: `ecrs${String(++seq).padStart(28, '0')}`,
+          rules: (body.rules ?? []).map((r: Record<string, unknown>) => ({
+            ...r,
+            id: `ecr${String(++seq).padStart(29, '0')}`,
+          })),
+        };
+        for (const r of records.values()) await routeRecord(r);
+        return envelope({ ...originPhase, phase: 'http_request_origin', kind: 'zone' });
+      }
+    }
+    const addRule = rest.match(/^\/rulesets\/([^/]+)\/rules$/);
+    if (addRule && method === 'POST' && originPhase && addRule[1] === originPhase.id) {
+      const { zone_id: _zone, ...rule } = body ?? {};
+      originPhase.rules.push({ ...rule, id: `ecr${String(++seq).padStart(29, '0')}` });
+      for (const r of records.values()) await routeRecord(r);
+      return envelope({ ...originPhase, phase: 'http_request_origin', kind: 'zone' });
+    }
+    const oneRule = rest.match(/^\/rulesets\/([^/]+)\/rules\/([^/]+)$/);
+    if (oneRule && method === 'DELETE' && originPhase) {
+      originPhase.rules = originPhase.rules.filter((r) => r.id !== oneRule[2]);
+      return envelope({ ...originPhase, phase: 'http_request_origin', kind: 'zone' });
+    }
     refused.push(`cloudflare ${method} ${rest}`);
     return envelope(null, 404);
   }
 
+  /** The Outline Manager API (shadowbox), the paths FCP's provider calls under its secret prefix. */
+  function outline(method: string, path: string, body: any): Response {
+    calls.outline.push({ method, path, body });
+    const o = opts.outline;
+    if (!o) {
+      refused.push(`outline ${method}`);
+      return json({ message: 'no outline server' }, 404);
+    }
+    const p = path.replace(/^\/[^/]+/, ''); // drop the secret path segment
+    if (p === '/access-keys' && method === 'POST') {
+      const id = String(++seq);
+      const userInfo = Buffer.from(`chacha20-ietf-poly1305:${o.password}`).toString('base64url');
+      const key = {
+        id,
+        name: String(body?.name ?? ''),
+        accessUrl: `ss://${userInfo}@${o.address}:${o.port}/?outline=1#${encodeURIComponent(String(body?.name ?? id))}`,
+      };
+      outlineKeys.set(id, key);
+      return json(
+        { ...key, port: o.port, method: 'chacha20-ietf-poly1305', password: o.password },
+        201,
+      );
+    }
+    if (p === '/access-keys' && method === 'GET')
+      return json({ accessKeys: [...outlineKeys.values()] });
+    if (p === '/metrics/transfer' && method === 'GET')
+      return json({ bytesTransferredByUserId: {} });
+    const limit = p.match(/^\/access-keys\/([^/]+)\/data-limit$/);
+    if (limit) {
+      const k = outlineKeys.get(limit[1]!);
+      if (!k) return json({ message: 'not found' }, 404);
+      if (method === 'PUT') k.dataLimit = body?.limit;
+      if (method === 'DELETE') delete k.dataLimit;
+      return new Response(null, { status: 204 });
+    }
+    const one = p.match(/^\/access-keys\/([^/]+)$/);
+    if (one && method === 'GET') {
+      const k = outlineKeys.get(one[1]!);
+      return k ? json(k) : json({ message: 'not found' }, 404);
+    }
+    if (one && method === 'DELETE') {
+      outlineKeys.delete(one[1]!);
+      return new Response(null, { status: 204 });
+    }
+    refused.push(`outline ${method} ${p}`);
+    return json({ message: 'not found' }, 404);
+  }
+
   vi.stubGlobal('fetch', async (input: string | URL | Request, init: RequestInit = {}) => {
     const c = await capture(input, init);
+    if (c.url.hostname === OUTLINE_MANAGER_HOST) return outline(c.method, c.url.pathname, c.body);
     if (c.url.hostname === 'api.upcloud.com') return upcloud(c.method, c.url.pathname, c.body);
     if (c.url.hostname === 'api.cloudflare.com')
       return cloudflare(c.method, c.url.pathname, c.url.searchParams, c.body);
@@ -227,5 +353,5 @@ export function installProviderFakes(opts: { allowHosts: string[]; l7Zone: strin
     throw new TypeError(`edge connection test: no network for ${c.url.hostname}`);
   });
 
-  return { calls, refused, lbs, records };
+  return { calls, refused, lbs, records, outlineKeys };
 }

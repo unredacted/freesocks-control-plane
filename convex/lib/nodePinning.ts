@@ -37,6 +37,7 @@
 import YAML from 'yaml';
 import { decodeBase64Loose } from './edges/render/base64';
 import { mentionsAny } from './edges/render/refs';
+import { parseProxyUri } from './edges/render/uri';
 
 const PROXY_LINE_RE = /^(vless|vmess|trojan|ss|ssr|hy2|hysteria2|tuic):\/\//i;
 // Known transport suffixes the role appends to Host remarks (xhttp removed
@@ -192,6 +193,90 @@ export function pinSubscriptionToNode(
 /** A config pinner's outcome: null = unknown shape (verbatim, no node);
  *  `content` undefined = single node (verbatim WITH the node). */
 type ConfigPin = { node: string; content?: string } | null;
+
+/** An address no client can use: what a backend's placeholder entries point at. */
+function placeholderHost(host: unknown): boolean {
+  if (typeof host !== 'string') return false;
+  const h = host
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, '');
+  return h === '0.0.0.0' || h === '::' || h === '::1' || /^127\./.test(h) || h === 'localhost';
+}
+
+/** Outbound / proxy types that are not a proxy entry (routing helpers). */
+const NON_PROXY_TYPES = new Set([
+  'direct',
+  'block',
+  'dns',
+  'selector',
+  'urltest',
+  'select',
+  'url-test',
+  'fallback',
+  'load-balance',
+  'relay',
+]);
+
+/**
+ * Whether a body is the backend's PLACEHOLDER for a key whose node serves
+ * nothing yet: empty, or a shape the pinner understands whose every proxy
+ * entry names no node AND points at an unusable address (0.0.0.0, a
+ * loopback). A body with any real entry is not, whatever its remarks say, and
+ * neither is a shape the pinner does not know (HTML, another JSON, free text).
+ */
+export function nodelessBody(content: string): boolean {
+  try {
+    const trimmed = content.trim();
+    if (!trimmed) return true;
+    if (trimmed.startsWith('{')) {
+      const cfg = JSON.parse(trimmed) as { outbounds?: unknown };
+      if (!cfg || typeof cfg !== 'object' || !Array.isArray(cfg.outbounds)) return false;
+      return placeholderEntries(cfg.outbounds, 'tag', 'server');
+    }
+    if (trimmed.startsWith('<')) return false;
+    if (/^proxies:/m.test(trimmed) || /^proxy-groups:/m.test(trimmed)) {
+      const doc = YAML.parse(trimmed) as { proxies?: unknown } | null;
+      if (!doc || typeof doc !== 'object' || !Array.isArray(doc.proxies)) return false;
+      return placeholderEntries(doc.proxies, 'name', 'server');
+    }
+    let body = trimmed;
+    if (!PROXY_LINE_RE.test(trimmed)) {
+      const decoded = decodeBase64Loose(trimmed);
+      if (decoded === null) return false;
+      if (!decoded.trim()) return true;
+      if (!PROXY_LINE_RE.test(decoded.trim())) return false;
+      body = decoded;
+    }
+    const lines = body
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => PROXY_LINE_RE.test(l));
+    return (
+      lines.length > 0 &&
+      lines.every((l) => nodeNameFromLink(l) === null && placeholderHost(parseProxyUri(l)?.host))
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Every proxy entry of a config list is a placeholder (no node, unusable address); none at all counts too. */
+function placeholderEntries(
+  entries: unknown[],
+  nameKey: 'tag' | 'name',
+  hostKey: 'server',
+): boolean {
+  for (const e of entries) {
+    if (typeof e !== 'object' || e === null) return false;
+    const o = e as Record<string, unknown>;
+    if (typeof o.type === 'string' && NON_PROXY_TYPES.has(o.type)) continue;
+    const name = o[nameKey];
+    if (typeof name === 'string' && nodeNameFromTag(name)) return false;
+    if (!placeholderHost(o[hostKey])) return false;
+  }
+  return true;
+}
 
 function finish(original: string, pin: ConfigPin): PinResult {
   if (!pin) return { content: original, node: null };

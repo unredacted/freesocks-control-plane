@@ -5,6 +5,11 @@
    * per-node automatic switch, recent activity in plain words, and a More
    * menu (spare address, remove protection, advanced details). URL state:
    * `?test=<edgeId>` opens the test card for that address.
+   *
+   * A paused (quarantined) node shows the plain PausedCard on top. On the test
+   * card "Doesn't work" replaces that one address: an address in use opens
+   * "Replace now", a spare is renewed (SpareDialog), a go-live check retries
+   * its run for that line.
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -39,13 +44,14 @@
   import SectionHeader from '../components/SectionHeader.svelte';
   import Timeline from '../components/Timeline.svelte';
   import ActionConfirm from '../relay/ActionConfirm.svelte';
-  import ProvisionDialog from '../relay/ProvisionDialog.svelte';
   import ReplaceDialog from '../relay/ReplaceDialog.svelte';
   import { assertEdgeOk, edgeErrorMessage } from '../lib/edgeErrors';
   import { protocolLine } from '../lib/format';
   import { edgesPaths } from '../lib/routes';
   import EndpointTestCard from './EndpointTestCard.svelte';
   import ListenerAddresses from './ListenerAddresses.svelte';
+  import PausedCard from './PausedCard.svelte';
+  import SpareDialog from './SpareDialog.svelte';
   import StatusDot from './StatusDot.svelte';
   import { liveRunFor, nodeStatus } from './nodeStatus';
   import { automationOn } from './runWords';
@@ -104,6 +110,7 @@
     else choosing = kind;
   }
   let spareOpen = $state(false);
+  let renewing = $state<{ edgeId: string; listenerId: string; listenerKey: string } | null>(null);
   let removeOpen = $state(false);
   let testEdgeIds = $state<string[]>([]);
   // The activation run the server opened when go-live found untested addresses.
@@ -111,6 +118,24 @@
   $effect(() => {
     if (testParam.value) testEdgeIds = [testParam.value];
   });
+
+  function closeTest() {
+    testEdgeIds = [];
+    testParam.value = null;
+    testRunId = null;
+  }
+  /** "Doesn't work" outside a run: replace the address in use, or renew the spare. */
+  function doesNotWork(edgeId: string) {
+    const edge = edges.find((e) => e.id === edgeId);
+    if (!edge) return;
+    closeTest();
+    if (edge.publication === 'published') {
+      replacing = { kind: 'burn', edge };
+      return;
+    }
+    const listenerKey = listeners.find((l) => l.id === edge.listenerId)?.listenerKey;
+    if (listenerKey) renewing = { edgeId, listenerId: edge.listenerId, listenerKey };
+  }
 
   let autoBusy = $state(false);
   async function setAuto(next: boolean) {
@@ -229,18 +254,23 @@
       </p>
     {/if}
 
+    {#if relay.quarantine}
+      <PausedCard {relay} />
+    {/if}
+
     {#if testEdgeIds.length > 0}
       <EndpointTestCard
         edgeIds={testEdgeIds}
-        onClose={() => {
-          testEdgeIds = [];
-          testParam.value = null;
+        runId={testRunId}
+        onClose={closeTest}
+        onRetried={(id) => {
+          closeTest();
+          router.navigate(edgesPaths.home({ run: id }));
         }}
+        onDoesNotWork={doesNotWork}
         onAllDone={() => {
           const runId = testRunId;
-          testEdgeIds = [];
-          testParam.value = null;
-          testRunId = null;
+          closeTest();
           invalidateRelay(qc, slug);
           // Every address ticked: resume the activation run the server opened
           // rather than asking for go-live a second time.
@@ -323,6 +353,7 @@
   {#if replacing}
     <ReplaceDialog
       open={true}
+      plain
       kind={replacing.kind}
       {relay}
       edge={replacing.edge}
@@ -360,15 +391,10 @@
       </div>
     </ActionConfirm>
   {/if}
-  <ProvisionDialog
-    bind:open={spareOpen}
-    {relay}
-    {listeners}
-    onStarted={() =>
-      toast.success(
-        'Creating a spare address. The Edges overview will ask you to test it once it is ready.',
-      )}
-  />
+  <SpareDialog bind:open={spareOpen} {relay} />
+  {#if renewing}
+    <SpareDialog open={true} {relay} renew={renewing} onClose={() => (renewing = null)} />
+  {/if}
   <ActionConfirm
     bind:open={removeOpen}
     title={`Remove protection from ${name}?`}

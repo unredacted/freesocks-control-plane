@@ -640,7 +640,12 @@ mirror). FCP never starts a run by itself.
   node supersedes the old activation run and rebinds the open setup run.
 - **The approval wakes exactly that run.** `approve` (fronted) is allowed from `machine_ready`,
   `candidates_verified`, `awaiting_approval` and, for a re-approval, `live`, when every listener
-  of the open setup run has a verified standby; it records `standbys_verified`, seeds the new run's
+  of the open setup run has a verified standby whose L4 tick is still current: an L4 tick binds to
+  the node's REALITY authentication revision too (docs/edges.md "Publication"), so a key, short-id
+  or clock-bound change since the ticks refuses `servers.standbys_unverified` (the review card
+  says the key moved) until each address is tried again with the new key. On a live node the same
+  change is drift and closes it under maintenance first, as before. It records
+  `standbys_verified`, seeds the new run's
   candidates with those standbys (minus anything already committed) and schedules
   `edgeSetupRuns.wakeForApproval {setupRunId, activationRunId, generation}`. The wake acts only
   while the setup run is still at that generation, waiting for this approval, bound to this
@@ -704,14 +709,14 @@ Routes on `{slug}/nodes/by-name/{name}`, scope `admin:servers:write` (a `GET` al
 (backend servers and, optionally, node names). `admin:servers:manage` is accepted but bounded the
 same way: backend-write automation never reaches a node's secret (`bootstrap`) on its own:
 
-| Route              | What                                                                                                                                                                                        |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PUT`              | Enroll (`mode`, `label`; taken once) or report observations (`management`, `publicIps`, `capabilities`; every run). The role never sends FCP-owned settings.                                |
-| `GET`              | The node's own view: stage, disposition, revisions, the origin name, the retirement.                                                                                                        |
-| `POST …/bootstrap` | The machine configuration (node port, the Caddy routes of a front node, the origin hostname) and the node secret. `SEAL_BOTH`; bearer callers get plaintext over TLS as on every IaC route. |
-| `POST …/applied`   | `{appliedRevision, caddy.certificateReady, nodeStarted}`.                                                                                                                                   |
-| `DELETE`           | A retirement request (below).                                                                                                                                                               |
-| `POST …/wiped`     | The role's acknowledgement that the machine is cleaned up (`ready_to_wipe → retired`).                                                                                                      |
+| Route              | What                                                                                                                                                                                                                                                                                                         |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `PUT`              | Enroll (`mode`, `label`; taken once) or report observations (`management`, `publicIps`, `capabilities`; every run). The role never sends FCP-owned settings.                                                                                                                                                 |
+| `GET`              | The node's own view: stage, disposition, revisions, the origin name, the retirement.                                                                                                                                                                                                                         |
+| `POST …/bootstrap` | The machine configuration (node port, the Caddy routes of a front node, each `{path, port}` plus `upstream: "h2c"` when the transport is gRPC and must be proxied over HTTP/2 cleartext, the origin hostname) and the node secret. `SEAL_BOTH`; bearer callers get plaintext over TLS as on every IaC route. |
+| `POST …/applied`   | `{appliedRevision, caddy.certificateReady, nodeStarted}`.                                                                                                                                                                                                                                                    |
+| `DELETE`           | A retirement request (below).                                                                                                                                                                                                                                                                                |
+| `POST …/wiped`     | The role's acknowledgement that the machine is cleaned up (`ready_to_wipe → retired`).                                                                                                                                                                                                                       |
 
 Refusals: `servers.panel_not_set_up`, `servers.contract_version`, `servers.node_exists_unowned`
 (a backend node or Host of that name no intent owns: an admin adopts first), `servers.tombstoned`

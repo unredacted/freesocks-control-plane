@@ -36,13 +36,14 @@ import {
   verificationStale,
 } from './lib/edges/verification';
 import { partialRungFor } from './lib/edges/verifyRung';
+import { verificationListenerOf, type VerifiableListener } from './lib/edges/verificationContext';
 import { checkPublishable } from './relays';
 import { applyQualification } from './edgeProviderAccounts';
 
 const methodValidator = v.union(v.literal('test_link'), v.literal('named_connection'));
 
 /** The verification view the admin edge detail and the test-link builder share. */
-export function verificationView(edge: Doc<'edges'>, listener: Doc<'relayListeners'> | null) {
+export function verificationView(edge: Doc<'edges'>, listener: VerifiableListener | null) {
   const rec = edge.verification;
   const required = needsEndpointVerification(edge);
   const current = !!listener && verificationCurrent(edge, listener);
@@ -73,8 +74,9 @@ export const binding = internalQuery({
   handler: async (ctx, { edgeId }) => {
     const edge = await ctx.db.get(edgeId);
     if (!edge) return null;
-    const listener = await ctx.db.get(edge.listenerId);
-    if (!listener) return null;
+    const raw = await ctx.db.get(edge.listenerId);
+    if (!raw) return null;
+    const listener = await verificationListenerOf(ctx.db, raw);
     const b = verificationBinding(edge, listener);
     if (!b) return null;
     const cfg = await resolveEdgeConfig(ctx.db);
@@ -139,9 +141,10 @@ export async function confirmEndpoint(
       });
     if (edge.status !== 'active')
       throw new ConvexError({ code: 'edge.edge_not_active', message: 'The edge is not active' });
-    const listener = await ctx.db.get(edge.listenerId);
-    if (!listener || listener.retired)
+    const raw = await ctx.db.get(edge.listenerId);
+    if (!raw || raw.retired)
       throw new ConvexError({ code: 'edge.listener_retired', message: 'Listener not found' });
+    const listener = await verificationListenerOf(ctx.db, raw);
     const current = verificationBinding(edge, listener);
     const echoed = {
       endpoint: a.endpoint,
@@ -164,6 +167,8 @@ export async function confirmEndpoint(
         at: now,
         method: a.method,
         ...current!,
+        // Kept to say "the key moved" later; it is already in `configHash`.
+        ...(listener.authRevision ? { authRevision: listener.authRevision } : {}),
       },
       updatedAt: now,
     });
@@ -289,7 +294,9 @@ export async function refreshPartialRung(
   if (edge.verification?.rung === 'verified') return null;
   const listener = await ctx.db.get(edge.listenerId);
   if (!listener || listener.retired) return null;
-  const binding = verificationBinding(edge, listener);
+  // The probe rung is shape evidence: no key is involved, so it is bound
+  // WITHOUT the enrolled node's auth revision (a key change leaves it alone).
+  const binding = verificationBinding(edge, { ...listener, authRevision: null });
   if (!binding) return null;
   const cfg = await resolveEdgeConfig(ctx.db);
   const reachability = await ctx.db
@@ -372,7 +379,11 @@ export const reconcilePartialRungs = internalMutation({
       const rec = edge.verification;
       if (!rec || rec.rung !== 'partial' || !needsEndpointVerification(edge)) continue;
       const listener = await ctx.db.get(edge.listenerId);
-      const binding = listener && !listener.retired ? verificationBinding(edge, listener) : null;
+      // Bound like the rung itself: without the auth revision (shape evidence).
+      const binding =
+        listener && !listener.retired
+          ? verificationBinding(edge, { ...listener, authRevision: null })
+          : null;
       if (binding && recordMatchesBinding(rec, binding)) continue;
       await ctx.db.patch(edge._id, { verification: undefined, updatedAt: now });
       await auditRung(ctx, edge, listener?.listenerKey ?? rec.listenerKey, 'cleared');

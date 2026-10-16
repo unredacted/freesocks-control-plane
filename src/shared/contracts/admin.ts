@@ -598,3 +598,34 @@ export const AdminAnalyticsConfig = z.object({
   geoMode: z.enum(['full', 'coarse']).optional().default('full'),
 });
 export type AdminAnalyticsConfig = z.infer<typeof AdminAnalyticsConfig>;
+
+/** Operator alerts (`/api/v1/admin/alerts`): an opt-in webhook taking
+ *  ntfy-compatible JSON. The view never carries a secret: booleans for the
+ *  topic and the token, and only the webhook's origin (scheme + host). */
+export const AdminAlertsConfig = z.object({
+  enabled: z.boolean(),
+  urlSet: z.boolean(),
+  /** `https://host[:port]` of the stored webhook; '' = none. */
+  urlOrigin: z.string(),
+  topicSet: z.boolean(),
+  tokenSet: z.boolean(),
+  lastSentAt: z.string().nullable(),
+  lastAttemptAt: z.string().nullable(),
+  /** A short code (`network`, `timeout`, an HTTP status) from the last failed send. */
+  lastError: z.string().nullable(),
+  /** Alert-worthy items already sent and still open. */
+  openAlerts: z.number(),
+});
+export type AdminAlertsConfig = z.infer<typeof AdminAlertsConfig>;
+
+/** The PATCH body: a field left out keeps its stored value, '' clears it. */
+export const AdminAlertsPatch = z.object({
+  enabled: z.boolean().optional(),
+  url: z.string().optional(),
+  topic: z.string().optional(),
+  token: z.string().optional(),
+});
+export type AdminAlertsPatch = z.infer<typeof AdminAlertsPatch>;
+
+export const AdminAlertsTestResult = z.object({ ok: z.boolean(), error: z.string().nullable() });
+export type AdminAlertsTestResult = z.infer<typeof AdminAlertsTestResult>;

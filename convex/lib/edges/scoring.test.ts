@@ -9,7 +9,11 @@ import {
 } from './scoring';
 import type { Verdict } from './probes/verdict';
 
-const cfg = { detect: EDGE_DEFAULTS.detect, probe: { ...EDGE_DEFAULTS.probe, enabled: true } };
+// Probe-only evidence is opted IN here (the shipped default is off) so the probe path is exercised.
+const cfg = {
+  detect: { ...EDGE_DEFAULTS.detect, allowProbeOnlyAutoRotate: true },
+  probe: { ...EDGE_DEFAULTS.probe, enabled: true },
+};
 const HOUR = 60 * 60_000;
 const DAY = 24 * HOUR;
 const now = 1_800_000_000_000;
@@ -399,7 +403,11 @@ describe('autoRotateDecision', () => {
     maxRotationsPerDay: 3,
     hostManaged: true,
   };
-  const on = { enabled: true, autoRotate: true, detect: EDGE_DEFAULTS.detect };
+  const on = {
+    enabled: true,
+    autoRotate: true,
+    detect: { ...EDGE_DEFAULTS.detect, allowProbeOnlyAutoRotate: true },
+  };
   const published = [
     { edgeId: 'e1', poolIndex: 0 },
     { edgeId: 'e2', poolIndex: 1 },

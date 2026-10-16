@@ -370,6 +370,10 @@ const relayEdgeVerification = v.object({
     v.literal('l7_proof'),
     v.literal('probe'),
   ),
+  // An enrolled node's REALITY auth revision the record was taken under (it is
+  // folded into `configHash` too): only read to SAY why a record went stale
+  // (the key moved). Database only; never in a binding a client sees.
+  authRevision: v.optional(v.string()),
 });
 // Provider-account trust evidence (lib/edges/autoQualify.ts): who trusted the
 // account and, when it came from an endpoint, the exact configuration that was
@@ -730,12 +734,20 @@ export default defineSchema({
     // Instance→subs reference check before a backend-server delete (refuse
     // while keys still point at it).
     .index('by_backend_server', ['backendServerId'])
-    // Bounded "any live key on this backend?" probe for the instance-delete guard.
-    .index('by_backend_server_state', ['backendServerId', 'state'])
-    // (backendServerId, pinnedNode, state): the origin layer's COHORTS (one
-    // representative per placement among the keys pinned to a node), walked
-    // page by page (convex/lib/edges/cohorts.ts), never collected.
-    .index('by_backend_server_pinned', ['backendServerId', 'pinnedNode', 'state'])
+    // Bounded "any live key on this backend?" probe for the instance-delete guard;
+    // with the placement, the whole-server origin's COHORT walk (below).
+    .index('by_backend_server_state', ['backendServerId', 'state', 'backendPlacement'])
+    // (backendServerId, pinnedNode, state, backendPlacement): the origin layer's
+    // COHORTS (one representative per placement among the keys pinned to a
+    // node), found by an indexed walk over the DISTINCT placements (one read per
+    // placement, driven from an action; convex/lib/edges/cohorts.ts), never by
+    // reading every key.
+    .index('by_backend_server_pinned', [
+      'backendServerId',
+      'pinnedNode',
+      'state',
+      'backendPlacement',
+    ])
     // The FCP-fronted subscription route resolves the sub by its opaque token.
     .index('by_sub_token', ['subToken']),
 
@@ -1160,6 +1172,14 @@ export default defineSchema({
     // Last provider inventory pull (LBs / IPs / flavors), JSON, admin-only.
     inventorySnapshot: v.optional(v.string()),
     inventoryAt: v.optional(v.number()),
+    // Provider API health (edgeProviderOps `tracked`): consecutive calls that
+    // failed for a reason on the provider's side (timeout, network, 5xx,
+    // 401/403/429, an answer the adapter cannot read), reset by the first
+    // call that succeeds. Attention `account_api_failing` past a few in a row.
+    // `lastApiError` is a short code, never a body.
+    apiFailures: v.optional(v.number()),
+    apiFailingSince: v.optional(v.number()),
+    lastApiError: v.optional(v.string()),
     updatedAt: v.number(),
   })
     .index('by_name', ['name'])
@@ -1333,6 +1353,9 @@ export default defineSchema({
     // by FCP through the backend provider on the origin's placement; a member-
     // shaped credential so the proof travels a member's path).
     qualificationUserId: v.optional(v.string()),
+    // The same credential's Trojan password (a Trojan transport's L7 proof
+    // authenticates with it). Never returned by any admin read, like the id.
+    qualificationTrojanPassword: v.optional(v.string()),
     // The backend user behind that credential (the stored backendUserId form), so
     // it can be deactivated when the origin goes or the credential is re-minted.
     qualificationBackendUserId: v.optional(v.string()),
@@ -2532,7 +2555,105 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_name_country_day', ['name', 'country', 'day'])
-    .index('by_day', ['day']),
+    .index('by_day', ['day'])
+    // One country's counts, bounded per country (checks from inside a country).
+    .index('by_country_day', ['country', 'day']),
+
+  // Checks of server names from vantages inside curated countries
+  // (docs/edges.md "Checks from inside a country"). One row per MEASUREMENT:
+  // one name presented to one of FCP's own member-facing addresses, from one
+  // source, in one country. A BATCH is the names of one address measured from
+  // the same vantages (the controls of each other). No member data anywhere:
+  // the address is an operator-owned edge or opted-in origin, the vantages are
+  // third-party probes. Deleted after `edge.sni.vantage.windowDays`.
+  sniVantageProbes: defineTable({
+    name: v.string(),
+    familyId: v.id('sniFamilies'),
+    country: v.string(),
+    source: v.union(v.literal('globalping'), v.literal('ripeatlas')),
+    batch: v.string(),
+    targetKind: v.union(v.literal('edge'), v.literal('relay')),
+    targetRef: v.string(),
+    // What was dialled, so a run whose target moved under it is not misread.
+    address: v.string(),
+    port: v.number(),
+    trigger: v.union(v.literal('cron'), v.literal('manual')),
+    status: v.union(
+      v.literal('requested'),
+      v.literal('running'),
+      v.literal('finished'),
+      v.literal('failed'),
+      v.literal('timeout'),
+    ),
+    externalId: v.optional(v.string()),
+    // A short code when the measurement could not run (never service text).
+    error: v.optional(v.string()),
+    requestedAt: v.number(),
+    scheduledAt: v.number(),
+    startedAt: v.optional(v.number()),
+    finishedAt: v.optional(v.number()),
+    results: v.array(
+      v.object({
+        asn: v.optional(v.string()),
+        network: v.optional(v.string()),
+        vantageClass: v.union(v.literal('eyeball'), v.literal('datacenter'), v.literal('unknown')),
+        outcome: v.union(
+          v.literal('ok'),
+          v.literal('answered'),
+          v.literal('cert_mismatch'),
+          v.literal('reset'),
+          v.literal('timeout'),
+          v.literal('refused'),
+          v.literal('error'),
+        ),
+        rttMs: v.optional(v.number()),
+        error: v.optional(v.string()),
+      }),
+    ),
+  })
+    .index('by_batch_source', ['batch', 'source'])
+    .index('by_name_country_requested', ['name', 'country', 'requestedAt'])
+    .index('by_requested', ['requestedAt'])
+    .index('by_status_requested', ['status', 'requestedAt']),
+
+  // What the checks say about one name in one country (lib/edges/sni/vantage.ts
+  // `aggregateEvidence`), refreshed whenever one of its batches settles. The
+  // suggestion itself is derived at read time (it also depends on member
+  // reports and on the thresholds, which move independently).
+  sniVantageEvidence: defineTable({
+    familyId: v.id('sniFamilies'),
+    name: v.string(),
+    country: v.string(),
+    // When this pair was last put into a batch (the planner's "due" clock).
+    lastRequestedAt: v.number(),
+    measurements: v.number(),
+    okVantages: v.number(),
+    okNetworks: v.number(),
+    lastOkAt: v.optional(v.number()),
+    // The newest working check EVER (kept past the window: the transition marker).
+    everOkAt: v.optional(v.number()),
+    lastFailAt: v.optional(v.number()),
+    lastAt: v.optional(v.number()),
+    // The oldest measurement the aggregate rests on (requestedAt): once it leaves
+    // the window the sweep aggregates again. Absent = nothing in the window.
+    oldestAt: v.optional(v.number()),
+    latest: v.union(v.literal('ok'), v.literal('failing'), v.literal('mixed'), v.literal('none')),
+    streak: v.optional(
+      v.object({
+        nameFailures: v.number(),
+        networks: v.number(),
+        singled: v.number(),
+        pathFailures: v.number(),
+        batches: v.number(),
+        startedAt: v.number(),
+        transition: v.boolean(),
+      }),
+    ),
+    updatedAt: v.number(),
+  })
+    .index('by_name_country', ['name', 'country'])
+    .index('by_family', ['familyId'])
+    .index('by_oldest', ['oldestAt']),
 
   // TRANSITIONAL: the v1 role's handoff declaration. Contract v1 is gone and
   // nothing reads this; the table stays declared only so a deployment that has
@@ -2704,6 +2825,7 @@ export default defineSchema({
               listen: v.string(),
               port: v.number(),
               path: v.string(),
+              upstream: v.optional(v.literal('h2c')),
             }),
           ),
         }),

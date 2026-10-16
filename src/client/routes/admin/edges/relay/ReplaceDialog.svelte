@@ -4,7 +4,10 @@
    * address believed blocked), behind a dry run that says whether the run would
    * start and what it would pick. Mount it while wanted (`{#if}`) with `open={true}`.
    *
-   * Props: kind 'rotate' | 'burn'; origin; edge; onClose(); onStarted(rotationId)
+   * `plain` is the node page's wording (address, replace, spare) with only what
+   * blocks the start; the Advanced pages keep the full dry run.
+   *
+   * Props: kind 'rotate' | 'burn'; origin; edge; plain?; onClose(); onStarted(rotationId)
    */
   import { createQuery, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -18,6 +21,7 @@
     preflightRelay,
     rotateRelayEdge,
   } from '@client/lib/edgesApi';
+  import CodeNote from '../components/CodeNote.svelte';
   import PreflightPanel from '../components/PreflightPanel.svelte';
   import ActionConfirm from './ActionConfirm.svelte';
   import { edgeAddress } from './relayLogic';
@@ -27,10 +31,19 @@
     kind: 'rotate' | 'burn';
     relay: OriginAdmin;
     edge: EdgeAdmin;
+    plain?: boolean;
     onClose: () => void;
     onStarted: (rotationId: string) => void;
   }
-  let { open = $bindable(true), kind, relay, edge, onClose, onStarted }: Props = $props();
+  let {
+    open = $bindable(true),
+    kind,
+    relay,
+    edge,
+    plain = false,
+    onClose,
+    onStarted,
+  }: Props = $props();
 
   const qc = useQueryClient();
   const preflight = createQuery(() => ({
@@ -56,39 +69,77 @@
     const res = await (kind === 'burn'
       ? burnRelayEdge(relay.id, body)
       : rotateRelayEdge(relay.id, body));
-    toast.success(kind === 'burn' ? 'Burn started.' : 'Rotation started.');
+    if (!plain) toast.success(kind === 'burn' ? 'Burn started.' : 'Rotation started.');
     invalidateRelay(qc, relay.slug);
     onStarted(res.rotationId);
   }
+
+  const copy = $derived(
+    plain
+      ? {
+          title: kind === 'burn' ? `Replace ${name} now?` : `Replace ${name}?`,
+          body:
+            kind === 'burn'
+              ? 'Use this when the address looks blocked. FCP puts a tested spare (or a new address) in its place, members move over at their next refresh, and this one is retired after a short wait. A new address is billed by your provider.'
+              : 'FCP puts a tested spare (or a new address) in its place, members move over at their next refresh, and this one is retired afterwards. A new address is billed by your provider.',
+          confirm: kind === 'burn' ? 'Replace now' : 'Replace address',
+        }
+      : {
+          title: kind === 'burn' ? `Burn ${name}?` : `Rotate ${name}?`,
+          body:
+            kind === 'burn'
+              ? 'Use this when the address is believed blocked. A new edge takes its pool position, members are switched over, and the old edge drains for the short "burned" time before it is destroyed. Provisioning a replacement spends provider budget unless a compatible standby exists.'
+              : 'A new edge takes the pool position of this one, members are switched over, and the old edge drains for the normal drain time before it is destroyed. Provisioning a replacement spends provider budget unless a compatible standby exists.',
+          confirm: kind === 'burn' ? 'Burn and replace' : 'Rotate',
+        },
+  );
 </script>
 
 <ActionConfirm
   bind:open
-  title={kind === 'burn' ? `Burn ${name}?` : `Rotate ${name}?`}
-  body={kind === 'burn'
-    ? 'Use this when the address is believed blocked. A new edge takes its pool position, members are switched over, and the old edge drains for the short "burned" time before it is destroyed. Provisioning a replacement spends provider budget unless a compatible standby exists.'
-    : 'A new edge takes the pool position of this one, members are switched over, and the old edge drains for the normal drain time before it is destroyed. Provisioning a replacement spends provider budget unless a compatible standby exists.'}
-  confirmLabel={kind === 'burn' ? 'Burn and replace' : 'Rotate'}
+  title={copy.title}
+  body={copy.body}
+  confirmLabel={copy.confirm}
   danger={kind === 'burn'}
   disabled={preflight.isPending || blocked || (forceable && !force)}
   {onClose}
   run={start}
 >
-  <PreflightPanel
-    result={preflight.data}
-    pending={preflight.isPending}
-    error={preflight.error ?? undefined}
-    onRetry={() => void preflight.refetch()}
-    kind="replace"
-  />
+  {#if !plain}
+    <PreflightPanel
+      result={preflight.data}
+      pending={preflight.isPending}
+      error={preflight.error ?? undefined}
+      onRetry={() => void preflight.refetch()}
+      kind="replace"
+    />
+  {:else if preflight.error}
+    <PreflightPanel
+      result={undefined}
+      error={preflight.error}
+      onRetry={() => void preflight.refetch()}
+    />
+  {:else if blockers.length > 0}
+    <div class="space-y-1.5">
+      <p class="text-sm font-medium">It cannot start yet:</p>
+      {#each blockers as b, i (`${b.code}:${i}`)}
+        <CodeNote issue={b} compact />
+      {/each}
+    </div>
+  {/if}
   {#if forceable}
     <div class="mt-3 flex items-start gap-2">
       <Checkbox id={`force-${edge.id}`} bind:checked={force} class="mt-0.5" />
       <div>
-        <Label for={`force-${edge.id}`}>Override and start anyway</Label>
+        <Label for={`force-${edge.id}`}
+          >{plain ? 'Start anyway' : 'Override and start anyway'}</Label
+        >
         <p class="text-xs text-muted-foreground">
           The limits above protect budget and members. Overriding is recorded in the audit log.
-          {#if blockers.some((b) => b.code === 'hosts_operator_managed')}
+          {#if blockers.some((b) => b.code === 'hosts_operator_managed') && plain}
+            FCP does not update the backend for this node: change the address there yourself right
+            after, or members keep the old one.
+          {:else if blockers.some((b) => b.code === 'hosts_operator_managed')}
             FCP will not write the panel Hosts of this relay: you must apply the new Hosts plan
             yourself right after, or members keep dialling the old edge.
           {/if}

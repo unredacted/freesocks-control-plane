@@ -258,7 +258,7 @@ describe('edgeRotations: an L7 edge end to end', () => {
       // triple + transport parameters, never a guess.
       expect(args.proto).toEqual({ protocol: 'vless', streamTransport: 'ws', security: 'tls' });
       expect(args.params.path).toBe('/ws');
-      expect(args.uuid).toBe(QUALIFY_UUID);
+      expect(args.credential).toEqual({ kind: 'vless', uuid: QUALIFY_UUID });
       return { ok: true, steps: [], checkedAt: Date.now() };
     });
     const { t, relayId, listenerId } = await seed();

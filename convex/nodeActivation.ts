@@ -15,6 +15,12 @@
  *  - A FRONTED node's run stops at `publish`: Autopilot publishes under the
  *    publication guard and its go-live delegates to `promoteCandidate`.
  */
+import {
+  needsEndpointVerification,
+  verificationCurrent,
+  verificationStaleReason,
+} from './lib/edges/verification';
+import { verificationListenersOf } from './lib/edges/verificationContext';
 import { ConvexError, v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import type { ActionCtx, MutationCtx, QueryCtx } from './_generated/server';
@@ -247,6 +253,8 @@ async function openSetupRunOf(
 interface Standbys {
   /** null = verified now. */
   code: string | null;
+  /** Unverified only because the node's REALITY key moved since the ticks. */
+  keyChanged?: boolean;
   listenerKeys: string[];
   /** The open setup run whose standbys these are (absent = none). */
   runId?: Id<'edgeSetupRuns'>;
@@ -266,6 +274,39 @@ async function standbysOf(ctx: { db: QueryCtx['db'] }, intent: Intent): Promise<
   const edgeIds = run.listeners.map((l) => l.edgeId).filter((e): e is Id<'edges'> => !!e);
   if (run.listeners.length === 0 || run.listeners.some((l) => !l.edgeId || l.verify !== 'verified'))
     return { code: 'servers.standbys_unverified', listenerKeys, runId: run._id, edgeIds };
+  // The run's own verdict was taken when the operator ticked: an L4 tick
+  // binds to the node's REALITY auth revision too, so a key, short id or
+  // clock bound that moved since needs the addresses tried again (no client
+  // has proven the new key through them).
+  const relay = run.relayId ? await ctx.db.get(run.relayId) : null;
+  if (relay) {
+    const listeners = await verificationListenersOf(
+      ctx.db,
+      relay,
+      await ctx.db
+        .query('relayListeners')
+        .withIndex('by_relay', (q) => q.eq('relayId', relay._id))
+        .collect(),
+    );
+    let stale = false;
+    let keyChanged = true;
+    for (const rl of run.listeners) {
+      if (rl.layer === 'l7' || !rl.edgeId) continue;
+      const e = await ctx.db.get(rl.edgeId);
+      const l = listeners.find((x) => x.listenerKey === rl.listenerKey && !x.retired);
+      if (!e || !l || !needsEndpointVerification(e) || verificationCurrent(e, l)) continue;
+      stale = true;
+      if (verificationStaleReason(e, l) !== 'reality_key_changed') keyChanged = false;
+    }
+    if (stale)
+      return {
+        code: 'servers.standbys_unverified',
+        ...(keyChanged ? { keyChanged: true } : {}),
+        listenerKeys,
+        runId: run._id,
+        edgeIds,
+      };
+  }
   return { code: null, listenerKeys, runId: run._id, edgeIds };
 }
 
@@ -336,7 +377,8 @@ async function activationBlockers(
   // An adopted node whose edge FCP does not run yet has no standbys to show.
   // Every other fronted approval is driven by its open setup run: without
   // one, nothing would publish the candidate.
-  if (!direct && !intent.adopted?.externallyFronted && standbys?.code) out.push(standbys.code);
+  if (!direct && !intent.adopted?.externallyFronted && standbys?.code)
+    out.push(standbys.keyChanged ? `${standbys.code}:key_changed` : standbys.code);
   const mode = modeEntry(setup, modeSlug(intent));
   if (mode.placement !== 'bound') out.push('servers.placement_skipped');
   if (mode.family === 'unbound' || mode.family === 'target_mismatch')
@@ -674,7 +716,9 @@ export const approve = internalMutation({
     const direct = isDirect(modeEntry(setup, modeSlug(intent)).shape);
     const standbys = direct ? null : await standbysOf(ctx, intent);
     const blockers = await activationBlockers(ctx, intent, setup, direct, standbys);
-    if (blockers.length > 0) refuse(blockers[0]!, 'The node is not ready for approval');
+    // A blocker's `:detail` is for the review card; the refusal is its code.
+    if (blockers.length > 0)
+      refuse(blockers[0]!.split(':')[0]!, 'The node is not ready for approval');
     const now = Date.now();
     let evidence = intent.activation.evidence;
     if (!direct && standbys && !standbys.code) {

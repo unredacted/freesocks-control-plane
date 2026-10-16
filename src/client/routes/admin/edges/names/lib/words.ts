@@ -10,7 +10,11 @@ import type {
   SniNameRow,
   SniRolloutPlan,
   SniRolloutStatus,
+  SniVantageApplied,
+  SniVantageRequested,
+  SniVantageRow,
 } from '../../../../../../shared/contracts/sni';
+import { SNI_VANTAGE_REASONS } from '../../../../../../shared/contracts/sni';
 
 export type Dot = 'green' | 'amber' | 'red' | 'grey';
 
@@ -86,8 +90,102 @@ export function matchesFilter(n: SniNameRow, f: NameFilter): boolean {
   if (f === 'off') return off;
   const ready = n.status === 'active' && n.qualification === 'ok';
   // A suspected name is a problem to look at even though it is still ready.
-  if (f === 'problems') return (!ready && !off) || (!off && n.suspectIn.length > 0);
+  if (f === 'problems')
+    return (!ready && !off) || (!off && (n.suspectIn.length > 0 || vantageWantsLook(n)));
   return ready;
+}
+
+// --- checks from inside a country ---------------------------------------------------------------
+
+/** "today", "yesterday", "3 days ago" (UTC days are close enough for a hint). */
+export function ago(iso: string | null, now = Date.now()): string {
+  if (!iso) return 'never';
+  const days = Math.floor((now - Date.parse(iso)) / 86_400_000);
+  if (days <= 0) return 'today';
+  if (days === 1) return 'yesterday';
+  return `${days} days ago`;
+}
+
+/** Why the checks suggest nothing yet, in words. */
+export const VANTAGE_REASON_WORDS: Record<(typeof SNI_VANTAGE_REASONS)[number], string> = {
+  no_data: 'No check from there has finished yet.',
+  not_enough_vantages: 'Too few vantages so far to say.',
+  not_enough_networks: 'Seen from too few networks so far to say.',
+  not_paired:
+    'No vantage got through for another name from the same network, so it may be the network.',
+  needs_repeat: 'It failed once. It is checked again before anything is suggested.',
+  no_control:
+    'No name got through from there, so the address itself may be blocked. That is not about this name.',
+  mixed: 'Some checks got through and some did not.',
+  reports_disagree:
+    'Member reports from there single this name out, so working there is not suggested.',
+};
+
+/** Under the "Run checks" switch: what runs right now, and what is missing. */
+export function vantageState(
+  familiesOn: boolean,
+  checksOn: boolean,
+  countries: readonly string[],
+): string {
+  if (!familiesOn) return 'Server name families are off, so nothing runs either way.';
+  if (countries.length === 0) return 'Nothing runs until at least one country below is turned on.';
+  if (!checksOn) return `Off. Turned on, it checks from ${countries.join(', ')}.`;
+  return `Checking from ${countries.join(', ')}.`;
+}
+
+/** What the checks from one country saw, in one sentence. */
+export function vantageLine(r: SniVantageRow, now = Date.now()): string {
+  const when = `last checked ${ago(r.lastAt, now)}`;
+  const from = `From ${r.country}`;
+  if (r.latest === 'none')
+    return r.lastAt
+      ? `${from}: nothing conclusive yet (${when}).`
+      : `${from}: waiting for its first check.`;
+  if (r.latest === 'failing') {
+    if (r.failVantages === 0) return `${from}: no name of that address got through (${when}).`;
+    return `${from}: failed from ${plural(r.failVantages, 'vantage')} on ${plural(r.failNetworks, 'network')} while other names got through (${when}).`;
+  }
+  if (r.latest === 'mixed') return `${from}: some checks got through and some did not (${when}).`;
+  return `${from}: the handshake completed from ${plural(r.okVantages, 'vantage')} on ${plural(r.okNetworks, 'network')} (${when}).`;
+}
+
+/** What the checks suggest against the mark standing today. Null: nothing to say. */
+export function vantageSuggestionWords(r: SniVantageRow): string | null {
+  const claim =
+    r.suggestion === 'blocked' ? `it is blocked in ${r.country}` : `it works in ${r.country}`;
+  switch (r.decision) {
+    case 'suggest':
+      return `The checks suggest ${claim}.`;
+    case 'conflict':
+      return `The checks disagree with the mark an operator set: they suggest ${claim}.`;
+    case 'agrees':
+      return null;
+    case 'none':
+      return r.reason ? VANTAGE_REASON_WORDS[r.reason] : null;
+  }
+}
+
+/** A name the checks want an operator to look at: a block suggestion, or a conflict. */
+export function vantageWantsLook(n: SniNameRow): boolean {
+  return n.vantage.some(
+    (r) => r.decision === 'conflict' || (r.decision === 'suggest' && r.suggestion === 'blocked'),
+  );
+}
+
+export function vantageRequestedWords(r: SniVantageRequested): string {
+  const skipped = r.skipped
+    ? ` ${plural(r.skipped, 'name')} skipped: checked within the last hour, or on no published address.`
+    : '';
+  return `${plural(r.measurements, 'check')} started. Results arrive in a few minutes.${skipped}`;
+}
+
+export function vantageAppliedWords(r: SniVantageApplied): string {
+  const parts: string[] = [];
+  if (r.proven) parts.push(`${plural(r.proven, 'name')} marked as working`);
+  if (r.blocked) parts.push(`${plural(r.blocked, 'name')} marked as blocked`);
+  if (parts.length === 0)
+    return 'Nothing to apply: the checks suggest nothing new for those names.';
+  return `${parts.join(', ')}.${r.skipped ? ` ${plural(r.skipped, 'name')} left unchanged.` : ''}`;
 }
 
 /** What an import did, in one sentence per kind of line. */
@@ -174,6 +272,14 @@ const ERROR_WORDS: Record<string, string> = {
   'edge.sni.superseded': 'A newer write replaced this one. Test against the newer one.',
   'edge.sni.country_not_curated':
     'That country is not on the list of countries names are judged for.',
+  'edge.sni.vantage_off': 'Checks from inside countries are turned off. Turn them on first.',
+  'edge.sni.vantage_country': 'That country is not turned on for checks.',
+  'edge.sni.vantage_no_source':
+    'No measurement service can run. Turn one on, and for RIPE Atlas set its key under Settings.',
+  'edge.sni.vantage_too_soon': 'Those names were checked from there within the last hour.',
+  'edge.sni.vantage_no_target': 'None of those names is on a published address yet.',
+  'edge.sni.vantage_budget': 'The hourly budget for checks is spent. Try again later.',
+  'edge.maintenance': 'Edges are in maintenance. Nothing new starts until it ends.',
   'servers.manage_disabled': 'Changing backends is turned off under Servers.',
   'servers.handoff_missing': 'The node role has not handed this backend over yet.',
   'servers.op_running': 'Another change to this profile is still running.',

@@ -15,6 +15,7 @@ import { jsonRes, mockFetch } from '../testing/mockFetch';
 import {
   EDGE_PROVIDER_CAPABILITIES,
   discoveryMaySettle,
+  originPortCarriedBy,
   protocolCarriedBy,
   unsupportedTransport,
 } from './capabilities';
@@ -198,6 +199,17 @@ describe('origin capability record ⇔ adapters', () => {
     expect(protocolCarriedBy(id, REALITY)).toBe(false);
     expect(protocolCarriedBy(id, PLAIN)).toBe(false);
     expect(protocolCarriedBy(id, UDP)).toBe(false);
+    // gRPC behind a CDN rides HTTP/2 to an origin on 443 only; the other
+    // transports take whatever port the origin-port mode reaches.
+    const grpc = proto('vless', 'grpc', 'tls');
+    expect(originPortCarriedBy(id, grpc, 443)).toBe(true);
+    expect(originPortCarriedBy(id, grpc, 2083)).toBe(false);
+    expect(originPortCarriedBy(id, grpc)).toBe(true);
+    expect(originPortCarriedBy(id, proto('vless', 'ws', 'tls'), 2083)).toBe(true);
+    if (caps.l7Transports.includes('grpc')) {
+      expect(protocolCarriedBy(id, grpc, 443)).toBe(true);
+      expect(protocolCarriedBy(id, grpc, 8443)).toBe(false);
+    }
     expect(caps.originPortMode).not.toBe('any');
     // DNS is provided by exactly the providers others can reference.
     expect(caps.needsDnsAccount && caps.providesDns).toBe(false);
@@ -221,6 +233,8 @@ describe('origin capability record ⇔ adapters', () => {
       expect(protocolCarriedBy(id, PLAIN)).toBe(true);
       expect(protocolCarriedBy(id, proto('vless', 'ws', 'tls'))).toBe(true);
       expect(protocolCarriedBy(id, proto('vless', 'grpc', 'tls'))).toBe(true);
+      // A forwarder carries gRPC bytes on any port: the 443 rule is a CDN's.
+      expect(protocolCarriedBy(id, proto('vless', 'grpc', 'tls'), 8446)).toBe(true);
       expect(protocolCarriedBy(id, UDP)).toBe(caps.udp);
     },
   );

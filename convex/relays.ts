@@ -9,6 +9,7 @@
  * inheritance and the publication epoch the render cache keys on). Rotation
  * state lives in edgeRotations.ts; edge rows in edges.ts.
  */
+import { verificationListenerOf } from './lib/edges/verificationContext';
 import { ConvexError, v } from 'convex/values';
 import { resolveModeCatalog } from './lib/connectionModes';
 import { internalMutation, internalQuery } from './_generated/server';
@@ -1429,7 +1430,8 @@ async function insertAdoptedEdge(
   });
   if (a.verified && layer !== 'l7') {
     const inserted = (await ctx.db.get(edgeId))!;
-    const binding = verificationBinding(inserted, listener);
+    const verifiable = await verificationListenerOf(ctx.db, listener);
+    const binding = verificationBinding(inserted, verifiable);
     if (binding)
       await ctx.db.patch(edgeId, {
         verification: {
@@ -1438,6 +1440,7 @@ async function insertAdoptedEdge(
           at: now,
           method: 'named_connection',
           ...binding,
+          ...(verifiable.authRevision ? { authRevision: verifiable.authRevision } : {}),
         },
         updatedAt: now,
       });
@@ -1650,7 +1653,7 @@ export async function checkPublishable(
     (intent?.templateParams as { overrideHost?: unknown } | undefined)?.overrideHost,
   );
   if (edge.provider) {
-    if (!protocolCarriedBy(edge.provider, listener))
+    if (!protocolCarriedBy(edge.provider, listener, listener.originPort))
       return { ok: false, code: 'protocol_not_carried' };
     if (
       !listenerAllowsLayer(listener, edgeLayerOf(edge.provider), {
@@ -1689,7 +1692,7 @@ export async function checkPublishable(
   if (
     !opts.skipVerification &&
     needsEndpointVerification(edge) &&
-    !verificationCurrent(edge, listener)
+    !verificationCurrent(edge, await verificationListenerOf(ctx.db, listener))
   )
     return { ok: false, code: 'unverified_endpoint' };
   if (edge.managed && !providerHealthSatisfies(edge.provider, edge.health, requireHealth))
