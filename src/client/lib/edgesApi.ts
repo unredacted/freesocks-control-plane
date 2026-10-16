@@ -290,9 +290,16 @@ export type SetupRunCreateBody = z.infer<typeof SetupRunCreateRequest>;
 export type SetupRunRetryBody = z.infer<typeof SetupRunRetryRequest>;
 export type SetupRunContinueBody = z.infer<typeof SetupRunContinueRequest>;
 
-/** The read-only plan for one backend node (throttled: it lists the node's transports and Hosts). */
-export const planSetupRun = (backendServerId: string, nodeUuid: string) =>
-  apiClient.post(`${BASE}/setup-runs/plan`, { backendServerId, nodeUuid }, SetupPlanResponse);
+/**
+ * The read-only plan for one backend node (throttled: it lists the node's transports and Hosts).
+ * `listenerKeys` names the transports to protect on a node with more than one run takes.
+ */
+export const planSetupRun = (backendServerId: string, nodeUuid: string, listenerKeys?: string[]) =>
+  apiClient.post(
+    `${BASE}/setup-runs/plan`,
+    { backendServerId, nodeUuid, ...(listenerKeys ? { listenerKeys } : {}) },
+    SetupPlanResponse,
+  );
 export const createSetupRun = (body: SetupRunCreateBody) =>
   apiClient.post(`${BASE}/setup-runs`, body, SetupRunCreatedResponse);
 export const fetchSetupRuns = () => apiClient.get(`${BASE}/setup-runs`, SetupRunsResponse);

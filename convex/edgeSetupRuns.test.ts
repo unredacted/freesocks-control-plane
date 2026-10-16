@@ -26,12 +26,19 @@ import { __setStageOpsForTests, approvedDarkCohorts, type StageOps } from './edg
 import { __setPlanOpsForTests } from './edgeSetupPlan';
 import type { BackendTransport } from './lib/backends/types';
 import { MAX_OBSERVATION_AGE_MS, slugForNode, vectorsEqual } from './lib/edges/setupRuns';
+import { signValue } from './lib/cookies';
+import {
+  SetupPlanResponse,
+  type SetupRunCreateRequest,
+  type SetupRunRetryRequest,
+} from '../src/shared/contracts/edges';
 
 const modules = import.meta.glob('./**/*.*s');
 type T = TestConvex<typeof schema>;
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   vi.useRealTimers();
   __setStageOpsForTests(null);
   __setPlanOpsForTests(null);
@@ -356,6 +363,32 @@ async function relayOf(t: T, runId: Id<'edgeSetupRuns'>) {
   return (await t.run((ctx) => ctx.db.get(r.relayId!)))!;
 }
 
+/** A JSON POST to the edges admin routes as a signed-in admin (cookie, unsealed). */
+async function adminPost(t: T) {
+  vi.stubEnv('SESSION_SIGNING_KEY', 'test-sign');
+  vi.stubEnv('ADMIN_SESSION_SIGNING_KEY', 'test-admin-sign');
+  vi.stubEnv('IP_HASH_SALT', 'test-salt');
+  const adminUserId = await t.run((ctx) =>
+    ctx.db.insert('adminUsers', {
+      username: 'op',
+      displayName: 'Op',
+      isActive: true,
+      updatedAt: Date.now(),
+    }),
+  );
+  const sid = `asid-${Math.random().toString(36).slice(2)}`;
+  await t.mutation(internal.sessions.create, { sid, kind: 'admin', adminUserId, ttlMs: 3_600_000 });
+  const cookie = `fs_admin_session=${await signValue(sid, 'test-admin-sign')}`;
+  return async (path: string, body: unknown) => {
+    const res = await t.fetch(`/api/v1/admin/edges/${path}`, {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    return { status: res.status, json: (await res.json()) as Record<string, unknown> };
+  };
+}
+
 async function audits(t: T, action: string) {
   return t.run(async (ctx) =>
     (await ctx.db.query('auditLog').collect()).filter((a) => a.action === action),
@@ -460,6 +493,69 @@ describe('edgeSetupPlan', () => {
         approvedHideUuids: [HOST_A],
       }),
     ).rejects.toThrow(/validation/);
+  });
+
+  test('a node with more transports than a run takes: the plan lists them all, the run protects the ones the operator names', async () => {
+    // Nine Shadowsocks transports: one more than a run protects.
+    const many: BackendTransport[] = Array.from({ length: 9 }, (_, i) => ({
+      ...inboundS,
+      tag: `SS_${i + 1}`,
+      configProfileInboundUuid: `44444444-4444-4444-8444-44444444440${i + 1}`,
+      port: 8001 + i,
+    }));
+    const { t, serverId, accountId } = await seed({ inbounds: many, hosts: [] });
+    const all = await planFor(t, serverId);
+    expect(all.tooManyInbounds).toBe(true);
+    expect(all.inbounds.filter((i) => i.frontable)).toHaveLength(9);
+    const create = (planHash: string, listenerKeys?: string[]) =>
+      t.action(internal.edgeSetupPlan.create, {
+        backendServerId: serverId,
+        nodeUuid: NODE_UUID,
+        accountId,
+        planHash,
+        approvedHideUuids: [],
+        ...(listenerKeys ? { listenerKeys } : {}),
+      });
+    await expect(create(all.planHash)).rejects.toThrow(/too_many_inbounds/);
+    // The operator names two: the plan is for exactly those, under its own hash.
+    const keys = all.inbounds.filter((i) => i.frontable).map((i) => i.listenerKey);
+    const two = [keys[3]!, keys[7]!];
+    const post = await adminPost(t);
+    const planned = await post('setup-runs/plan', {
+      backendServerId: serverId,
+      nodeUuid: NODE_UUID,
+      listenerKeys: two,
+    });
+    expect(planned.status).toBe(200);
+    const chosen = SetupPlanResponse.parse(planned.json);
+    expect(chosen.tooManyInbounds).toBe(false);
+    expect(chosen.requiredListeners).toEqual(two);
+    expect(chosen.planHash).not.toBe(all.planHash);
+    // The create re-plans with the same choice; another choice is a stale hash.
+    await expect(create(chosen.planHash, [keys[0]!, keys[1]!])).rejects.toThrow(/plan_stale/);
+    const created = await post('setup-runs', {
+      backendServerId: serverId,
+      nodeUuid: NODE_UUID,
+      accountId,
+      planHash: chosen.planHash,
+      approvedHideUuids: [],
+      listenerKeys: two,
+    } satisfies SetupRunCreateRequest);
+    expect(created.status).toBe(200);
+    const runId = created.json.runId as string;
+    const r = await run(t, runId as Id<'edgeSetupRuns'>);
+    expect(r.listeners.map((l) => l.listenerKey)).toEqual(two);
+    // A choice is 1..8 distinct frontable transports.
+    const plan = (listenerKeys: string[]) =>
+      t.action(internal.edgeSetupPlan.plan, {
+        backendServerId: serverId,
+        nodeUuid: NODE_UUID,
+        listenerKeys,
+      });
+    await expect(plan([])).rejects.toThrow(/validation/);
+    await expect(plan(keys)).rejects.toThrow(/validation/);
+    await expect(plan([keys[0]!, keys[0]!])).rejects.toThrow(/validation/);
+    await expect(plan([keys[0]!, 'not-a-transport'])).rejects.toThrow(/validation/);
   });
 });
 
@@ -620,6 +716,69 @@ describe('edgeSetupRuns: two listeners (cases 2, 20)', () => {
       const entry = r.listeners.find((x) => x.listenerKey === l.listenerKey)!;
       expect(l.templateEdgeId).toBe(entry.edgeId);
     }
+  });
+});
+
+describe('edgeSetupRuns: one line does not work', () => {
+  test("Doesn't work on one line replaces only that address; the other line and its tick stand", async () => {
+    const { t, serverId, accountId } = await seed({
+      inbounds: [inboundA, inboundS],
+      hosts: [directHostA(), directHostS()],
+    });
+    const { runId } = await startRun(t, serverId, accountId);
+    let r = await pump(t, runId, settled);
+    expect(r.need?.code).toBe('try_it');
+    const [first, second] = r.testLinks!;
+    // A tick saved on its own keeps the card for the other line.
+    await t.mutation(internal.edgeSetupRuns.resume, {
+      runId,
+      confirmations: [
+        {
+          edgeId: first!.edgeId,
+          endpoint: first!.binding.endpoint,
+          listenerRevision: first!.binding.listenerRevision,
+          configHash: first!.binding.configHash,
+        },
+      ],
+    });
+    r = await pump(t, runId, settled);
+    expect(r.testLinks!.map((l) => l.edgeId)).toEqual([second!.edgeId]);
+    // The ticked line cannot be called broken; an edgeId belongs to try_it's
+    // "Doesn't work" only, and to a line of this run.
+    await expect(
+      t.mutation(internal.edgeSetupRuns.retry, {
+        runId,
+        tryAnotherAddress: true,
+        edgeId: first!.edgeId as Id<'edges'>,
+      }),
+    ).rejects.toThrow(/already confirmed/);
+    await expect(
+      t.mutation(internal.edgeSetupRuns.retry, { runId, edgeId: second!.edgeId as Id<'edges'> }),
+    ).rejects.toThrow(/validation/);
+    // "Doesn't work" on the other line (over HTTP, as the card sends it): only
+    // its candidate is cancelled and replaced.
+    const post = await adminPost(t);
+    const res = await post(`setup-runs/${runId}/retry`, {
+      tryAnotherAddress: true,
+      edgeId: second!.edgeId,
+    } satisfies SetupRunRetryRequest);
+    expect(res.status).toBe(200);
+    r = await pump(t, runId, settled);
+    expect(r.need?.code).toBe('try_it');
+    expect(r.testLinks).toHaveLength(1);
+    expect(r.testLinks![0]!.listenerKey).toBe(second!.listenerKey);
+    expect(r.testLinks![0]!.edgeId).not.toBe(second!.edgeId);
+    const entry = (key: string) => r.listeners.find((l) => l.listenerKey === key)!;
+    expect(entry(first!.listenerKey).edgeId).toBe(first!.edgeId);
+    const [kept, dropped] = await t.run(async (ctx) => [
+      await ctx.db.get(first!.edgeId as Id<'edges'>),
+      await ctx.db.get(second!.edgeId as Id<'edges'>),
+    ]);
+    expect(kept?.verification?.rung).toBe('verified');
+    expect(dropped?.status).toBe('cancelled');
+    await tickAll(t, runId);
+    r = await pump(t, runId, settled);
+    expect(r.state).toBe('done');
   });
 });
 

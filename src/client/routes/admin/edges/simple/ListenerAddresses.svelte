@@ -75,7 +75,12 @@
             {WORD[e.publication]}, {healthLabel(e.health).toLowerCase()}{#if t}, {t}{/if}
           </span>
           {#if t && t !== 'tested'}
-            <Button variant="link" size="sm" class="h-auto p-0" onclick={() => onTest(e.id)}>
+            <Button
+              variant="link"
+              size="sm"
+              class="h-auto min-h-11 p-0 sm:min-h-0"
+              onclick={() => onTest(e.id)}
+            >
               Test it
             </Button>
           {/if}

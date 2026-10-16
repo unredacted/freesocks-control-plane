@@ -27,7 +27,9 @@ import {
   ROTATION_PHASE_LABELS,
   SETUP_ACCOUNT_REASON_COPY,
   SETUP_RUN_NEED_COPY,
+  SETUP_RUN_PLAIN_STAGES,
   SETUP_RUN_STAGE_LABELS,
+  SETUP_RUN_STAGE_STEP,
   SETUP_RUN_STATE_LABELS,
   setupRunNeedCopy,
   SETUP_STATUS_LABELS,
@@ -40,6 +42,7 @@ import {
   humanizeCode,
   isTerminalPhase,
   phaseLabel,
+  PLAIN_ATTENTION_ACTION_LABELS,
   PLAIN_WORDS,
   plainAuditActionLabel,
   plainWords,
@@ -162,6 +165,14 @@ describe('INBOUND_UNSUPPORTED_COPY', () => {
 describe('guided setup run vocabularies', () => {
   test('every stage, state, need and account reason is worded, in sentences, without an em-dash or an API path', () => {
     for (const s of SETUP_RUN_STAGES) expect(SETUP_RUN_STAGE_LABELS[s].trim()).toBeTruthy();
+    // One table: a stage's label is the plain stage its step shows.
+    for (const s of SETUP_RUN_STAGES) {
+      const step = SETUP_RUN_STAGE_STEP[s];
+      expect(SETUP_RUN_STAGE_LABELS[s]).toBe(
+        step === 5 ? 'Live' : SETUP_RUN_PLAIN_STAGES[step - 1],
+      );
+    }
+    expect(SETUP_RUN_STAGE_LABELS.publish).toBe('Going live');
     for (const s of SETUP_RUN_STATES) expect(SETUP_RUN_STATE_LABELS[s].trim()).toBeTruthy();
     const offenders: string[] = [];
     const check = (code: string, e: { label: string; explain: string; fix?: string }) => {
@@ -290,6 +301,27 @@ describe('plain words (the simple screens)', () => {
     expect(PLAIN_WORDS.qualified).toBe('trusted');
     expect(PLAIN_WORDS.quarantine).toBe('paused for safety');
     expect(PLAIN_WORDS['host flip']).toBe('update the backend');
+    // Singular and plural say the same thing.
+    for (const [one, many] of [
+      ['origin', 'origins'],
+      ['edge', 'edges'],
+      ['standby', 'standbys'],
+      ['listener', 'listeners'],
+      ['inbound', 'inbounds'],
+      ['endpoint', 'endpoints'],
+      ['rotation', 'rotations'],
+    ] as const) {
+      expect(PLAIN_WORDS[many]!.startsWith(PLAIN_WORDS[one]!.split(' ')[0]!)).toBe(true);
+    }
+    expect(plainWords('Run Qualify front on the edge.')).toBe('Check the address.');
+    expect(plainWords('Thaw when the maintenance is over.')).toBe(
+      'Resume new work when the maintenance is over.',
+    );
+    expect(plainWords('Publish an edge.')).toBe('Put an address in use.');
+    expect(plainAuditActionLabel('admin.edge.test_provision')).toBe('Test address requested');
+    for (const label of Object.values(PLAIN_ATTENTION_ACTION_LABELS)) {
+      expect(label).not.toMatch(/\b(Thaw|Qualify|Publish|Provision|edge|origin)\b/);
+    }
     for (const text of [
       ...Object.values(PLAIN_WORDS),
       ...Object.values(RESTORE_PHASE_WORDS),

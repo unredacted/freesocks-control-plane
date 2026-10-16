@@ -42,8 +42,9 @@ import { isTerminalRunState, planHashOf, slugForNode } from './lib/edges/setupRu
 import type { SetupPlanAccount, SetupPlanInbound, SetupPlanSnapshot } from './lib/edges/setupRuns';
 import type { ListenerSpecInput } from './lib/edges/registration';
 import type { EdgeLayer } from './lib/edges/providers/capabilities';
+import { SETUP_RUN_MAX_LISTENERS } from '../src/shared/contracts/edgeCodes';
 
-const MAX_REQUIRED_LISTENERS = 8;
+const MAX_REQUIRED_LISTENERS = SETUP_RUN_MAX_LISTENERS;
 
 export interface PlanOps {
   listNodeInbounds(
@@ -230,6 +231,29 @@ function accountCompatibility(
   };
 }
 
+/**
+ * The transports the operator named for a node with more than one run protects:
+ * each must be a frontable transport of the plan, named once, and there must be
+ * 1..MAX_REQUIRED_LISTENERS of them (`validation` otherwise). Plan order is kept.
+ */
+function chosenListeners(frontable: SetupPlanInbound[], keys: string[]): SetupPlanInbound[] {
+  const wanted = new Set(keys);
+  if (wanted.size !== keys.length)
+    throw new ConvexError({ code: 'validation', message: 'listenerKeys names a transport twice' });
+  if (wanted.size === 0 || wanted.size > MAX_REQUIRED_LISTENERS)
+    throw new ConvexError({
+      code: 'validation',
+      message: `Name between 1 and ${MAX_REQUIRED_LISTENERS} transports`,
+    });
+  const out = frontable.filter((i) => wanted.has(i.listenerKey));
+  if (out.length !== wanted.size)
+    throw new ConvexError({
+      code: 'validation',
+      message: 'listenerKeys names a transport the plan cannot protect',
+    });
+  return out;
+}
+
 /** Build the snapshot for one node. Throws `not_found` / `edge.node_not_found`. */
 /**
  * One step of the plan. A coded refusal passes through; anything else becomes
@@ -250,7 +274,7 @@ async function planStage<T>(doing: string, fn: () => Promise<T>): Promise<T> {
 
 export async function buildPlan(
   ctx: ActionCtx,
-  args: { backendServerId: Id<'backendServers'>; nodeUuid: string },
+  args: { backendServerId: Id<'backendServers'>; nodeUuid: string; listenerKeys?: string[] },
 ): Promise<{ plan: SetupPlanSnapshot; planHash: string }> {
   // Only the two keys: `create` hands its whole argument object here.
   const a = { backendServerId: args.backendServerId, nodeUuid: args.nodeUuid };
@@ -325,8 +349,11 @@ export async function buildPlan(
     });
   }
   const frontable = planInbounds.filter((i) => i.frontable);
-  const tooManyInbounds = frontable.length > MAX_REQUIRED_LISTENERS;
-  const required = frontable.slice(0, MAX_REQUIRED_LISTENERS);
+  const chosen = args.listenerKeys ? chosenListeners(frontable, args.listenerKeys) : null;
+  // A node with more transports than one run protects is planned as is (the
+  // operator sees them all); the run takes only the ones the operator names.
+  const tooManyInbounds = chosen === null && frontable.length > MAX_REQUIRED_LISTENERS;
+  const required = chosen ?? frontable.slice(0, MAX_REQUIRED_LISTENERS);
   // Direct Hosts: the node's own transports are the ACTIVE ones the backend listed.
   const nodeInboundUuids = inbounds.filter((i) => i.active).map((i) => i.configProfileInboundUuid);
   const coveredInboundUuids = required
@@ -394,9 +421,17 @@ export async function buildPlan(
   return { plan, planHash };
 }
 
-/** `POST setup-runs/plan {backendServerId, nodeUuid}` (throttled like `quarantine/inspect`). */
+/**
+ * `POST setup-runs/plan {backendServerId, nodeUuid, listenerKeys?}` (throttled like
+ * `quarantine/inspect`). `listenerKeys` names the transports to protect when the
+ * node has more than one run takes (`tooManyInbounds`).
+ */
 export const plan = internalAction({
-  args: { backendServerId: v.id('backendServers'), nodeUuid: v.string() },
+  args: {
+    backendServerId: v.id('backendServers'),
+    nodeUuid: v.string(),
+    listenerKeys: v.optional(v.array(v.string())),
+  },
   handler: async (ctx, a) => {
     const { plan, planHash } = await buildPlan(ctx, a);
     return { ...plan, planHash, generatedAt: new Date().toISOString() };
@@ -404,16 +439,17 @@ export const plan = internalAction({
 });
 
 /**
- * `POST setup-runs {backendServerId, nodeUuid, accountId, planHash, approvedHideUuids[], keepDirect?}`:
- * re-plans, refuses a stale hash (`edge.plan_stale`), an unoffered account
- * (`edge.account_incompatible`), too many transports (`edge.too_many_inbounds`),
- * an unknown approved uuid (`validation`), then persists the run and schedules
- * its first step.
+ * `POST setup-runs {backendServerId, nodeUuid, accountId, planHash, approvedHideUuids[], keepDirect?, listenerKeys?}`:
+ * re-plans (with the same `listenerKeys` the plan was shown with), refuses a
+ * stale hash (`edge.plan_stale`), an unoffered account (`edge.account_incompatible`),
+ * too many transports without a choice (`edge.too_many_inbounds`), an unknown
+ * approved uuid (`validation`), then persists the run and schedules its first step.
  */
 export const create = internalAction({
   args: {
     backendServerId: v.id('backendServers'),
     nodeUuid: v.string(),
+    listenerKeys: v.optional(v.array(v.string())),
     accountId: v.id('edgeProviderAccounts'),
     planHash: v.string(),
     approvedHideUuids: v.array(v.string()),

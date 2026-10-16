@@ -60,3 +60,40 @@ export function buildImportLink(
   const build = SCHEME_BUILDERS[schemeId];
   return build ? build(subscriptionUrl, profileName) : null;
 }
+
+/**
+ * Catalog schemes whose apps also import ONE share link (`vless://`, `trojan://`,
+ * `ss://`...) by paste or QR scan, not only a subscription URL. The sing-box and
+ * Clash cores take whole profiles only; an app with no scheme is not claimed
+ * either way (its catalog row says nothing about share links).
+ */
+export const SHARE_LINK_SCHEMES: ReadonlySet<string> = new Set([
+  'hiddify',
+  'karing',
+  'v2rayng',
+  'shadowrocket',
+  'anywhere',
+]);
+
+/**
+ * The catalog apps that take this single share link (the admin test card's
+ * "Works in"), in catalog order: a share-link scheme and the link's backend
+ * (an `ss://` key is an Outline access key too, so the Outline apps count).
+ */
+export function shareLinkApps(
+  clients: ReadonlyArray<{ name: string; schemeId: string | null; backends: readonly string[] }>,
+  link: string,
+): string[] {
+  const scheme = /^([a-z0-9+.-]+):\/\//i.exec(link)?.[1]?.toLowerCase() ?? '';
+  if (!scheme) return [];
+  const names = clients
+    .filter(
+      (c) =>
+        (c.schemeId !== null &&
+          SHARE_LINK_SCHEMES.has(c.schemeId) &&
+          c.backends.includes('remnawave')) ||
+        (scheme === 'ss' && c.backends.includes('outline')),
+    )
+    .map((c) => c.name);
+  return [...new Set(names)];
+}

@@ -9,6 +9,12 @@
    * (NodeApprovalCard, the same one the Servers node page shows), and the run
    * carries on by itself once the approval lands.
    *
+   * At `try_it` each tick is saved on its own (`continue` with that one
+   * confirmation) and "Doesn't work" replaces that one address (`retry
+   * {tryAnotherAddress, edgeId}`); the run moves on once every line works. A
+   * paused (quarantined) node shows the plain PausedCard; the Live card offers
+   * automatic protection while it is off.
+   *
    * Props: runId; onClose()
    */
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
@@ -20,13 +26,24 @@
   import { router } from '@client/stores/router.svelte';
   import { adminConnectionModesQuery } from '@client/lib/queries';
   import {
+    automationOn,
+    hideButton,
+    moreDirectWords,
+    needButtons,
+    runTestLines,
+    type NeedAction,
+    type TestItem,
+  } from './runWords';
+  import {
     cancelSetupRun,
     continueSetupRun,
     edgeConfigQuery,
     invalidateConfig,
     invalidateOverview,
     patchEdgeConfig,
+    relayLookupQuery,
     retrySetupRun,
+    setEdgeAutomation,
     setupRunQuery,
     testProviderCredentials,
     thawMaintenance,
@@ -42,9 +59,9 @@
   import { edgesPaths } from '../lib/routes';
   import { durationLabel } from '../lib/time';
   import { cn } from '@client/lib/utils';
+  import PausedCard from './PausedCard.svelte';
   import TestCard from './TestCard.svelte';
   import { PLAIN_STAGES, plainStage, runIsLive } from './nodeStatus';
-  import { needButtons, runTestItems, type NeedAction, type TestItem } from './runWords';
 
   interface Props {
     runId: string;
@@ -90,16 +107,64 @@
   const retry = (body: SetupRunRetryBody = {}) => act.mutate(() => retrySetupRun(runId, body));
   const cont = (body: SetupRunContinueBody = {}) => act.mutate(() => continueSetupRun(runId, body));
 
-  // try_it: the ticks are collected here and sent together with Continue.
-  const items = $derived<TestItem[]>(run ? runTestItems(run) : []);
-  let ticked = $state(new Map<string, TestItem>());
-  const allTicked = $derived(items.length > 0 && items.every((i) => ticked.has(i.edgeId)));
-  $effect(() => {
-    // A new card (new generation or rebuilt links) starts blank.
-    void run?.generation;
-    void run?.testLinks;
-    ticked = new Map();
-  });
+  // try_it: every tick is saved on its own; the run rebuilds the card and moves
+  // on once every line works. Between a tick and the rebuilt card (the run is
+  // briefly `running` at try_it) the card stays up with its answers locked.
+  const lines = $derived(run ? runTestLines(run) : { items: [], done: new Set<string>() });
+  const testing = $derived(
+    !!run &&
+      run.stage === 'try_it' &&
+      lines.items.length > 0 &&
+      (need?.code === 'try_it' || run.state === 'running' || run.state === 'waiting'),
+  );
+  let busyLine = $state<string | null>(null);
+  async function answer(item: TestItem, job: () => Promise<unknown>): Promise<void> {
+    busyLine = item.edgeId;
+    try {
+      await job();
+      refresh();
+    } catch (e) {
+      toast.error(edgeErrorMessage(e));
+      // A stale binding: the run rebuilds the link, never stamped as shown.
+      void runQ.refetch();
+    } finally {
+      busyLine = null;
+    }
+  }
+  const works = (item: TestItem) =>
+    answer(item, () =>
+      continueSetupRun(runId, {
+        confirmations: [
+          {
+            edgeId: item.edgeId,
+            endpoint: item.endpoint,
+            listenerRevision: item.listenerRevision,
+            configHash: item.configHash,
+          },
+        ],
+      }).then((r) => {
+        if (r.accountTrusted) toast.success('Address tested. The provider account is now trusted.');
+      }),
+    );
+  const fails = (item: TestItem) =>
+    answer(item, () =>
+      retrySetupRun(runId, { tryAnotherAddress: true, edgeId: item.edgeId }).then(() =>
+        toast.message('Replacing that address. The new one comes back here to test.'),
+      ),
+    );
+
+  // A paused node: its relay row for the plain resolver card.
+  const pausedRelay = relayLookupQuery(() =>
+    need?.code === 'quarantined' && run ? run.relaySlug : null,
+  );
+
+  // Live: offer automatic protection while it is off (`config` is read below).
+  const turnOnAutomation = () =>
+    act.mutate(async () => {
+      await setEdgeAutomation(true);
+      invalidateConfig(qc);
+      toast.success('Automatic protection is on.');
+    });
 
   // Secondary pickers.
   let choosingAccount = $state(false);
@@ -108,6 +173,7 @@
   const modes = adminConnectionModesQuery();
   const config = edgeConfigQuery();
   const family = $derived(need?.detail ?? run?.plan.familiesDisabled[0] ?? null);
+  const automation = $derived(config.data ? automationOn(config.data.config) : null);
 
   function perform(action: NeedAction) {
     switch (action) {
@@ -139,14 +205,8 @@
         choosingMode = true;
         return;
       case 'continue':
-        return cont({
-          confirmations: [...ticked.values()].map((t) => ({
-            edgeId: t.edgeId,
-            endpoint: t.endpoint,
-            listenerRevision: t.listenerRevision,
-            configHash: t.configHash,
-          })),
-        });
+        // The test card saves each tick itself.
+        return;
       case 'review':
         // The review re-opens below (the delta); nothing to call yet.
         return;
@@ -225,14 +285,31 @@
       Cancelled after {elapsed}.
     {:else}
       {elapsed} so far.
-      {#if latest}{plainWords(codeLabel(latest.code))}{#if latest.detail}: {latest.detail}{/if}.{/if}
+      <!-- While the run needs you, the card below says what; the raw event would repeat it. -->
+      {#if latest && run.state !== 'needs_you'}{plainWords(
+          codeLabel(latest.code),
+        )}{#if latest.detail}: {latest.detail}{/if}.{/if}
     {/if}
   </p>
 
   {#if run.state === 'done'}
-    <div class="rounded-md border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm">
-      New subscription downloads on {run.nodeName} use the protected address. A configuration someone
-      copied by hand keeps working until they re-import it.
+    <div class="space-y-3 rounded-md border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm">
+      <p>
+        New subscription downloads on {run.nodeName} use the protected address. A configuration someone
+        copied by hand keeps working until they re-import it.
+      </p>
+      {#if automation === false}
+        <div class="space-y-2 border-t border-emerald-500/30 pt-3">
+          <p class="font-medium">Turn on automatic protection?</p>
+          <p class="text-muted-foreground">
+            FCP then watches every protected node and switches members to a tested spare address
+            when one looks blocked. It keeps one spare per transport, which your provider bills.
+          </p>
+          <Button class="h-11 sm:h-8" disabled={act.isPending} onclick={turnOnAutomation}>
+            Turn on
+          </Button>
+        </div>
+      {/if}
     </div>
   {:else if run.state === 'failed'}
     <CodeNote issue={{ code: run.need?.code ?? 'provider_failed' }} />
@@ -241,6 +318,12 @@
     {/if}
     <div class="flex gap-2">
       <Button disabled={act.isPending} onclick={() => retry()}>Try again</Button>
+    </div>
+  {:else if testing && need?.code !== 'try_it'}
+    <!-- The tick just saved: the run is rebuilding the card. -->
+    <div class="space-y-3 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+      <p class="font-medium">{setupRunNeedCopy('try_it').label}</p>
+      <TestCard items={lines.items} done={lines.done} locked onWorks={() => {}} />
     </div>
   {:else if need && needCopy && buttons}
     <div class="space-y-3 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
@@ -253,19 +336,24 @@
 
       {#if need.code === 'try_it'}
         <TestCard
-          {items}
-          done={new Set(ticked.keys())}
-          onWorks={(item) => (ticked = new Map([...ticked, [item.edgeId, item]]))}
+          items={lines.items}
+          done={lines.done}
+          busyId={busyLine}
+          locked={act.isPending}
+          onWorks={(item) => void works(item)}
+          onFails={(item) => void fails(item)}
         />
+        {#if buttons.hint}<p class="text-muted-foreground text-xs">{buttons.hint}</p>{/if}
       {:else if need.code === 'review_changed'}
         <p>
-          {run.reviewDelta.length === 1
-            ? 'One more host in the panel uses an inbound the address cannot carry:'
-            : `${run.reviewDelta.length} more addresses on the backend use a transport the address cannot carry:`}
+          {moreDirectWords(run.reviewDelta.length)}
           <span class="text-muted-foreground"
             >{run.reviewDelta.map((d) => d.remark).join(', ')}</span
           >
         </p>
+      {:else if need.code === 'quarantined' && pausedRelay.data?.quarantine}
+        <!-- Resolving the pause does not wake the run: it carries on through a retry. -->
+        <PausedCard relay={pausedRelay.data} onResolved={() => retry()} />
       {/if}
 
       {#if choosingAccount}
@@ -324,9 +412,7 @@
                 ],
               })}
           >
-            Protect and hide {run.reviewDelta.length} unsupported {run.reviewDelta.length === 1
-              ? 'host'
-              : 'addresses'}
+            {hideButton(run.reviewDelta.length)}
           </Button>
           <Button
             size="sm"
@@ -337,6 +423,8 @@
             Keep those members on the direct address
           </Button>
         </div>
+      {:else if need.code === 'try_it' || (need.code === 'quarantined' && pausedRelay.data?.quarantine)}
+        <!-- The card above carries its own answers. -->
       {:else if need.code === 'node_not_approved' && run.enrolled}
         {#if run.enrolled.stage === 'activating'}
           <!-- Approved: the run wakes in a moment and the card would only show a stage blocker. -->
@@ -356,7 +444,8 @@
         <div class="flex flex-wrap gap-2">
           <Button
             size="sm"
-            disabled={act.isPending || (need.code === 'try_it' && !allTicked)}
+            class="h-11 sm:h-7"
+            disabled={act.isPending}
             onclick={() => perform(buttons.primary.action)}
           >
             {need.code === 'family_disabled' && family

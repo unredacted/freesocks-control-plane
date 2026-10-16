@@ -46,11 +46,18 @@
   const chosen = $derived(usable.find((l) => l.listenerKey === chosenKey) ?? null);
 
   const preflight = createQuery(() => ({
-    queryKey: [...edgeKeys.relay(relay.slug), 'preflight', 'provision', chosenKey] as const,
+    queryKey: [
+      ...edgeKeys.relay(relay.slug),
+      'preflight',
+      'provision',
+      chosenKey,
+      publish,
+    ] as const,
     queryFn: () =>
       preflightRelay(relay.id, {
         kind: 'provision',
         trigger: 'manual',
+        publish,
         ...(chosenKey ? { listenerKey: chosenKey } : {}),
       }),
     enabled: open,
@@ -60,9 +67,10 @@
   const blocked = $derived((preflight.data?.blockers.length ?? 0) > 0);
 
   async function run(): Promise<void> {
+    // `publish` is always sent: the route reads a missing one as "publish when ready".
     const res = await provisionRelay(relay.id, {
       ...(chosen ? { listenerId: chosen.id } : {}),
-      ...(publish ? { publish: true } : {}),
+      publish,
     });
     toast.success('Provisioning started.');
     invalidateRelay(qc, relay.slug);
