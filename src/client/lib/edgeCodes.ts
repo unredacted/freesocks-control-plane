@@ -37,6 +37,7 @@ import type {
   SetupStepId,
   SetupStepStatus,
 } from '../../shared/contracts/edgeCodes';
+import { SETUP_RUN_STAGE_STEP } from '../../shared/contracts/edgeCodes';
 
 export type Tone = 'neutral' | 'muted' | 'info' | 'success' | 'warning' | 'danger';
 
@@ -1365,22 +1366,10 @@ export const SETUP_RUN_PLAIN_STAGES = [
 
 /**
  * The machine's ten stages folded onto the four plain ones (`done` = 5, past
- * the last). The one table both the stage labels and the progress steps read,
- * so a stage never has two names: `publish` is where an enrolled node waits
- * for its go-live approval, so it belongs to "Going live".
+ * the last). Defined next to SETUP_RUN_STAGES in the shared contract (the
+ * server's origin status reads the same table) and re-exported here.
  */
-export const SETUP_RUN_STAGE_STEP: Record<SetupRunStage, 1 | 2 | 3 | 4 | 5> = {
-  prepare: 1,
-  credential: 1,
-  provision: 1,
-  verify: 2,
-  try_it: 3,
-  publish: 4,
-  hide_direct_hosts: 4,
-  rehearse: 4,
-  go_live: 4,
-  done: 5,
-};
+export { SETUP_RUN_STAGE_STEP };
 
 /** The plain stage label of each machine stage (`done` = Live). */
 export const SETUP_RUN_STAGE_LABELS = Object.fromEntries(

@@ -710,6 +710,15 @@ are never shown bare: `src/shared/contracts/edgeCodes.ts` holds the vocabularies
 `src/client/lib/edgeCodes.ts` the words. Section paths are spelled only in
 `src/client/routes/admin/edges/lib/routes.ts`; API paths only in `src/client/lib/edgesApi.ts`.
 
+**One status source.** Every page reads an origin's status from the `attention` response:
+`origins[]` (one row per origin, deleting ones included, in slug order: kind, dot, code, the
+live setup run and its plain step, published / spare / offline counts, worst health, layers,
+whether any item names it, and what members get) and `fleet` (the headline: what matters most,
+its count, the total and the protected count). The per-origin Delivery card reads
+`setup-status`'s `delivery` (relay scope only), the same judgement plus `degraded` from the
+sample render. The judgement lives in `convex/lib/edges/originStatus.ts` (one pure function,
+ranked by the server's own attention order); the CMS only words its codes and counts.
+
 Member side: when the key sits behind edges the report dialog also asks which connection the
 member was using (optional; the labels the pass shows), and an edge-required single-key
 (Outline) subscription is shown as the dynamic access key.

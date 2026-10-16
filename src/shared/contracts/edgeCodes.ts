@@ -377,6 +377,26 @@ export const SETUP_RUN_STAGES = [
 export type SetupRunStage = (typeof SETUP_RUN_STAGES)[number];
 
 /**
+ * The machine's ten stages folded onto the four plain ones the operator sees
+ * (`done` = 5, past the last). The one table both the CMS stage labels and the
+ * server's origin status (`convex/lib/edges/originStatus.ts`) read, so a stage
+ * never has two names: `publish` is where an enrolled node waits for its
+ * go-live approval, so it belongs to "Going live" (4).
+ */
+export const SETUP_RUN_STAGE_STEP: Record<SetupRunStage, 1 | 2 | 3 | 4 | 5> = {
+  prepare: 1,
+  credential: 1,
+  provision: 1,
+  verify: 2,
+  try_it: 3,
+  publish: 4,
+  hide_direct_hosts: 4,
+  rehearse: 4,
+  go_live: 4,
+  done: 5,
+};
+
+/**
  * The most transports one guided run protects. A node with more frontable
  * transports is planned with `tooManyInbounds`; the operator then names up to
  * this many (`listenerKeys` on the plan and on the create).
