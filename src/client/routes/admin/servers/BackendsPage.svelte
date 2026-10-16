@@ -78,7 +78,6 @@
 </SectionHeader>
 
 <div class="space-y-8">
-
   {#if servers.isPending}
     <div class="space-y-3">
       {#each Array(3) as _, i (i)}
@@ -205,10 +204,7 @@
   />
 {/if}
 
-<AlertDialog.Root
-  open={!!pendingDelete}
-  onOpenChange={(o) => (o ? null : (pendingDelete = null))}
->
+<AlertDialog.Root open={!!pendingDelete} onOpenChange={(o) => (o ? null : (pendingDelete = null))}>
   <AlertDialog.Content>
     <AlertDialog.Header>
       <AlertDialog.Title>Remove "{pendingDelete?.name}"?</AlertDialog.Title>

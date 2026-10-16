@@ -125,16 +125,25 @@
       <Link href={edgesPaths.overview()} class="font-medium text-primary hover:underline">
         Go to all origins
       </Link>
-      <Link href={edgesPaths.overview({ new: '1' })} class="font-medium text-primary hover:underline">
+      <Link
+        href={edgesPaths.overview({ new: '1' })}
+        class="font-medium text-primary hover:underline"
+      >
         New origin
       </Link>
     </Card.Content>
   </Card.Root>
 {:else if relayQ.error && !relay}
-  <SectionHeader title={`Origin ${slug}`} back={{ href: edgesPaths.overview(), label: 'All origins' }} />
+  <SectionHeader
+    title={`Origin ${slug}`}
+    back={{ href: edgesPaths.overview(), label: 'All origins' }}
+  />
   <AdminListState error={relayQ.error} onRetry={() => void relayQ.refetch()} />
 {:else if !relay}
-  <SectionHeader title={`Origin ${slug}`} back={{ href: edgesPaths.overview(), label: 'All origins' }} />
+  <SectionHeader
+    title={`Origin ${slug}`}
+    back={{ href: edgesPaths.overview(), label: 'All origins' }}
+  />
   <div class="space-y-3">
     <Skeleton class="h-9 w-80" />
     <Skeleton class="h-40 w-full" />

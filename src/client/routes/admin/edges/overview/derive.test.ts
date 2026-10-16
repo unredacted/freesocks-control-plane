@@ -1,16 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { AttentionItem, EdgeSummary, OriginAdmin } from '../../../../../shared/contracts/edges';
 import {
-  attentionRelaySlugs,
-  darkRelaySlugs,
-  deliveryState,
+  EdgeSummary,
+  OriginAdmin,
+  OriginStatus,
+  type OriginStatusRow,
+} from '../../../../../shared/contracts/edges';
+import {
+  DELIVERY_LABELS,
   filterRelays,
   fleetTiles,
   parseFilter,
   parseLayer,
-  relayLayers,
+  statusIndex,
   suspicionChip,
-  worstHealth,
   type OriginRow,
 } from './derive';
 
@@ -74,15 +76,27 @@ function row(slug: string, pool: ReturnType<typeof entry>[], over: Record<string
     rotation: null,
   };
 }
-const item = (kind: string, relaySlug: string | null) =>
-  AttentionItem.parse({
-    id: `${kind}:${relaySlug}`,
-    kind,
-    severity: 'critical',
-    relaySlug,
-    relayId: relaySlug ? `id-${relaySlug}` : null,
-    action: 'open_relay',
-  });
+/** The server's status of an origin (convex/lib/edges/originStatus.ts), as the attention response carries it. */
+const status = (slug: string, over: Partial<OriginStatus>): OriginStatusRow => ({
+  relayId: `id-${slug}`,
+  relaySlug: slug,
+  status: OriginStatus.parse({
+    kind: 'protected',
+    dot: 'green',
+    code: null,
+    runId: null,
+    runKind: null,
+    step: null,
+    published: 1,
+    standbys: 0,
+    offline: 0,
+    worstHealth: 'online',
+    layers: ['l4'],
+    attention: false,
+    delivery: { kind: 'serving', code: null },
+    ...over,
+  }),
+});
 
 const rows = [
   row('alpha', [entry('e1', 'l4'), entry('e2', 'l7', 'degraded')]),
@@ -105,11 +119,19 @@ const summary = EdgeSummary.parse({
   generatedAt: NOW,
 });
 const parsedRows: OriginRow[] = summary.relays;
-const items = [
-  item('members_dark', 'bravo'),
-  item('edge_unreachable', 'charlie'),
-  item('maintenance_frozen', null),
-];
+const statuses = statusIndex([
+  status('alpha', { layers: ['l4', 'l7'], published: 2, worstHealth: 'degraded' }),
+  status('bravo', {
+    kind: 'unprotected',
+    dot: 'red',
+    published: 0,
+    layers: [],
+    worstHealth: null,
+    attention: true,
+    delivery: { kind: 'dark', code: 'empty_pool' },
+  }),
+  status('charlie', { kind: 'paused', dot: 'red', attention: true, worstHealth: 'offline' }),
+]);
 
 describe('overview derive', () => {
   it('parses URL state with a safe fallback', () => {
@@ -119,21 +141,17 @@ describe('overview derive', () => {
     expect(parseLayer(null)).toBe('all');
   });
 
-  it('derives layers, worst health and delivery state from the row', () => {
-    expect(relayLayers(parsedRows[0]!)).toEqual(['l4', 'l7']);
-    expect(relayLayers(parsedRows[1]!)).toEqual([]);
-    expect(worstHealth(parsedRows[0]!)).toBe('degraded');
-    expect(worstHealth(parsedRows[1]!)).toBeNull();
-    const dark = darkRelaySlugs(items);
-    expect(deliveryState(parsedRows[0]!, dark)).toBe('serving');
-    expect(deliveryState(parsedRows[1]!, dark)).toBe('dark');
-    expect(deliveryState(row('delta', []) as OriginRow, dark)).toBe('idle');
+  it('words every delivery kind the server judges', () => {
+    expect(DELIVERY_LABELS.dark).toBe('Members dark');
+    expect(DELIVERY_LABELS.direct).toBe('Direct address');
+    expect(Object.keys(DELIVERY_LABELS).sort()).toEqual(
+      ['dark', 'degraded', 'direct', 'manual', 'serving'].sort(),
+    );
   });
 
-  it('filters by problem and by layer', () => {
-    const ctx = { dark: darkRelaySlugs(items), attention: attentionRelaySlugs(items) };
+  it('filters by the server status: problem and layer', () => {
     const slugs = (f: Parameters<typeof filterRelays>[1], l: Parameters<typeof filterRelays>[2]) =>
-      filterRelays(parsedRows, f, l, ctx).map((r) => r.relay.slug);
+      filterRelays(parsedRows, f, l, statuses).map((r) => r.relay.slug);
     expect(slugs('all', 'all')).toEqual(['alpha', 'bravo', 'charlie']);
     expect(slugs('attention', 'all')).toEqual(['bravo', 'charlie']);
     expect(slugs('dark', 'all')).toEqual(['bravo']);
@@ -141,10 +159,15 @@ describe('overview derive', () => {
     expect(slugs('unpublished', 'all')).toEqual(['bravo']);
     expect(slugs('all', 'l7')).toEqual(['alpha']);
     expect(slugs('quarantined', 'l7')).toEqual([]);
+    // No status yet (the attention response is loading): only `all` matches.
+    expect(
+      filterRelays(parsedRows, 'dark', 'all', statusIndex([])).map((r) => r.relay.slug),
+    ).toEqual([]);
+    expect(filterRelays(parsedRows, 'all', 'all', statusIndex(undefined))).toHaveLength(3);
   });
 
   it('derives the tiles the summary has no figure for', () => {
-    const tiles = fleetTiles(summary, items, {
+    const tiles = fleetTiles(summary, statuses, {
       usedLastHour: 180,
       hourlyBudget: 200,
       enabled: true,
@@ -163,9 +186,14 @@ describe('overview derive', () => {
   });
 
   it('says so when probes are off or the budget is unknown', () => {
-    const off = fleetTiles(summary, [], { usedLastHour: null, hourlyBudget: 200, enabled: false });
+    const none = statusIndex([]);
+    const off = fleetTiles(summary, none, {
+      usedLastHour: null,
+      hourlyBudget: 200,
+      enabled: false,
+    });
     expect(off.find((t) => t.id === 'probe-budget')!.value).toBe('Off');
-    const unknown = fleetTiles(summary, [], {
+    const unknown = fleetTiles(summary, none, {
       usedLastHour: null,
       hourlyBudget: null,
       enabled: null,

@@ -277,7 +277,7 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   `backendServers` row of any type) and calls that type's provider from the registry
   (`convex/lib/backends/registry.ts`). The DB half (pool selection, key→instance resolution, the
   `backend-healthcheck` cron) is generic in `convex/backendServers.ts`; instances are admin-managed
-  ("Backend servers" CMS screen). See `backends.md`.
+  (the CMS Servers -> Backends tab). See `backends.md`.
 - **Remnawave** (surfaced to users as **"Xray"**): pure HTTP provider. **Live, default.** Instances
   are DB rows; the primary is seeded from `REMNAWAVE_*` env at cutover, then managed in the CMS.
 - **Outline**: pure HTTP provider + DB instances. **Dormant** (`outline.enabled=false`). See
@@ -294,12 +294,13 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   status/tier filters; disable / **re-enable** / reset-traffic / resync / **grant-or-extend
   membership**; backend shown; **paginated**); **Admins** (invite links + deactivate/reactivate
   - per-passkey revoke, §1.1); **API tokens** (create / reveal-once / revoke; scope **group**
-    toggles); **Backend servers** (CRUD + test-connection; secret `config`/`apiUrl` stored
-    server-side, only ever returned masked); **Remnawave** (per-mode node-placement mode group pools —
+    toggles); **Servers** (one leaf, three tabs: **Backends**, CRUD + test-connection, secret
+    `config`/`apiUrl` stored server-side, only ever returned masked, + the Xray no-log hardening
+    card; **Nodes**, each node's one page with its activation and edges; **Mode pools**, per-mode
+    node-placement mode group pools —
     write-only UUIDs, with per-mode bound counts — + a read-only per-placement node-load
-    table + the **Xray no-log hardening card**: dry-run `logging-status` / apply
-    `harden-logging` against every backend config profile; §"Xray logging privacy harden"
-    in `docs/backends.md`); **Billing** (per-rail config + a **readiness** check
+    table; the hardening card is a dry-run `logging-status` / apply `harden-logging` against
+    every backend config profile, §"Xray logging privacy harden" in `docs/backends.md`); **Billing** (per-rail config + a **readiness** check
     that flags enabled-but-misconfigured rails; §1.7); **Storage mirrors** (provider pool, §1.7);
     **Client apps** (the DB-driven recommended-client catalog — `convex/clients.ts`, `AdminClients.svelte`,
     `/admin/clients`; per-client `easeOfUse` (easy/moderate/advanced) + `openSource`/`license`/
@@ -620,7 +621,7 @@ stamped at start) surfaced as a freshness backend on the admin dashboard.
   oversight — don't file it as an i18n gap, and don't route admin strings through `t()`
   without revisiting the decision here.
 - Admin (lazy-loaded behind `AdminRouter`): `AdminEntry`/`AdminLogin`/`AdminBootstrap`/`AdminLayout`
-  - **Dashboard** / Tiers / Users / **Admins** / Tokens / BackendServers / **Remnawave** /
+  - **Dashboard** / Tiers / Users / **Admins** / Tokens / **Servers** (Backends, Nodes, Mode pools) /
     **Clients** / **Billing** / **Storage** mirrors / **RateLimits** / **MembershipCodes** /
     **Theme** / Settings / Audit pages + editors/modals. Custom History-API router; all data via TanStack Query + the
     zod-validating `apiClient` (`lib/api.ts`, `lib/queries.ts`); errors localized via `lib/errors.ts`.

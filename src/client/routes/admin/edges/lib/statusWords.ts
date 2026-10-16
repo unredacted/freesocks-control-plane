@@ -27,7 +27,8 @@ function runSentence(s: OriginStatus): string {
   const again = s.runKind === 'reprotect';
   const lead = again ? `Protecting again, step ${step} of 4` : `Setting up, step ${step} of 4`;
   if (s.kind === 'needs-you') {
-    if (s.code === 'node_not_approved') return 'Every address works. Waiting for you to approve go-live.';
+    if (s.code === 'node_not_approved')
+      return 'Every address works. Waiting for you to approve go-live.';
     return `${lead}. It needs you.`;
   }
   return again ? `${lead}. Members keep what they have.` : `${lead}.`;

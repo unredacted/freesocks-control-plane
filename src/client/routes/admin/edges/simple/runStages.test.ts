@@ -21,4 +21,3 @@ describe('plainStage', () => {
     expect(runIsLive({ state: 'done_unbound' })).toBe(false);
   });
 });
-

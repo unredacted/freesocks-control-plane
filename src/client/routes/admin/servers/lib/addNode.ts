@@ -84,7 +84,10 @@ export function placementLines(c: PlacementCheck): PlacementLine[] {
   for (const t of c.transports) {
     out.push(
       t.groups.length > 0
-        ? { ok: true, text: `${t.tag} is in the mode group${t.groups.length === 1 ? '' : 's'} ${list(t.groups)}.` }
+        ? {
+            ok: true,
+            text: `${t.tag} is in the mode group${t.groups.length === 1 ? '' : 's'} ${list(t.groups)}.`,
+          }
         : {
             ok: false,
             text: `${t.tag} is in no mode group, so no member can reach it through this node yet.`,
@@ -93,7 +96,10 @@ export function placementLines(c: PlacementCheck): PlacementLine[] {
   }
   for (const p of c.pools) {
     if (p.modeGroups === 0) {
-      out.push({ ok: false, text: `The ${p.modeSlug} pool is empty: that mode issues no keys here.` });
+      out.push({
+        ok: false,
+        text: `The ${p.modeSlug} pool is empty: that mode issues no keys here.`,
+      });
       continue;
     }
     if (p.unknownHere > 0)

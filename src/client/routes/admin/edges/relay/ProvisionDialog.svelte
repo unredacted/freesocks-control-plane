@@ -161,7 +161,9 @@
             ...(chosen ? { listenerId: chosen.id } : {}),
             publish,
           });
-      toast.success(named ? 'Provisioning started. The edge waits unpublished.' : 'Provisioning started.');
+      toast.success(
+        named ? 'Provisioning started. The edge waits unpublished.' : 'Provisioning started.',
+      );
       invalidateRelay(qc, relay.slug);
       invalidateProviders(qc);
       open = false;
@@ -233,8 +235,8 @@
         </Select.Root>
         <p class="text-muted-foreground text-xs">
           {#if named}
-            A named account may be one that is not trusted yet. Its edge waits unpublished, so you can
-            try it before members depend on it, then publish it from the edges table.
+            A named account may be one that is not trusted yet. Its edge waits unpublished, so you
+            can try it before members depend on it, then publish it from the edges table.
           {:else}
             FCP picks a trusted account that can carry the listener.
           {/if}

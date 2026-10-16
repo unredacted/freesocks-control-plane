@@ -21,16 +21,24 @@ const status = (over: Partial<OriginStatus> = {}): OriginStatus => ({
 
 describe('originSentence', () => {
   test('a live run speaks first, in four plain steps', () => {
-    expect(originSentence(status({ kind: 'setting-up', runId: 'r', runKind: 'protect', step: 2 }))).toBe(
-      'Setting up, step 2 of 4.',
-    );
+    expect(
+      originSentence(status({ kind: 'setting-up', runId: 'r', runKind: 'protect', step: 2 })),
+    ).toBe('Setting up, step 2 of 4.');
     expect(
       originSentence(
-        status({ kind: 'needs-you', runId: 'r', runKind: 'protect', step: 4, code: 'node_not_approved' }),
+        status({
+          kind: 'needs-you',
+          runId: 'r',
+          runKind: 'protect',
+          step: 4,
+          code: 'node_not_approved',
+        }),
       ),
     ).toBe('Every address works. Waiting for you to approve go-live.');
     expect(
-      originSentence(status({ kind: 'needs-you', runId: 'r', runKind: 'protect', step: 3, code: 'try_it' })),
+      originSentence(
+        status({ kind: 'needs-you', runId: 'r', runKind: 'protect', step: 3, code: 'try_it' }),
+      ),
     ).toBe('Setting up, step 3 of 4. It needs you.');
   });
 
@@ -39,12 +47,16 @@ describe('originSentence', () => {
       originSentence(status({ kind: 'setting-up', runId: 'r', runKind: 'reprotect', step: 1 })),
     ).toBe('Protecting again, step 1 of 4. Members keep what they have.');
     expect(
-      originSentence(status({ kind: 'needs-you', runId: 'r', runKind: 'reprotect', step: 3, code: 'try_it' })),
+      originSentence(
+        status({ kind: 'needs-you', runId: 'r', runKind: 'reprotect', step: 3, code: 'try_it' }),
+      ),
     ).toBe('Protecting again, step 3 of 4. It needs you.');
   });
 
   test('every other kind', () => {
-    expect(originSentence(status({ kind: 'removing', code: 'restore' }))).toBe('Removing protection.');
+    expect(originSentence(status({ kind: 'removing', code: 'restore' }))).toBe(
+      'Removing protection.',
+    );
     expect(originSentence(status({ kind: 'removing', code: 'deleting' }))).toBe('Being removed.');
     expect(originSentence(status({ kind: 'paused', dot: 'red' }))).toBe(
       'Paused for safety. It needs you.',
@@ -81,24 +93,24 @@ describe('fleetSentence', () => {
     expect(fleetSentence({ kind: 'empty', dot: 'grey', count: 0, total: 0, protected: 0 })).toBe(
       'No node is protected yet.',
     );
-    expect(fleetSentence({ kind: 'needs-you', dot: 'amber', count: 1, total: 3, protected: 2 })).toBe(
-      '1 node needs you.',
-    );
-    expect(fleetSentence({ kind: 'needs-you', dot: 'amber', count: 2, total: 3, protected: 1 })).toBe(
-      '2 nodes need you.',
-    );
-    expect(fleetSentence({ kind: 'setting-up', dot: 'blue', count: 1, total: 2, protected: 1 })).toBe(
-      'Setting up 1 node.',
-    );
-    expect(fleetSentence({ kind: 'not-live', dot: 'amber', count: 2, total: 2, protected: 0 })).toBe(
-      '2 nodes are not live yet.',
-    );
-    expect(fleetSentence({ kind: 'protected', dot: 'green', count: 1, total: 1, protected: 1 })).toBe(
-      'Your node is protected.',
-    );
-    expect(fleetSentence({ kind: 'protected', dot: 'green', count: 6, total: 6, protected: 6 })).toBe(
-      'All 6 nodes protected.',
-    );
+    expect(
+      fleetSentence({ kind: 'needs-you', dot: 'amber', count: 1, total: 3, protected: 2 }),
+    ).toBe('1 node needs you.');
+    expect(
+      fleetSentence({ kind: 'needs-you', dot: 'amber', count: 2, total: 3, protected: 1 }),
+    ).toBe('2 nodes need you.');
+    expect(
+      fleetSentence({ kind: 'setting-up', dot: 'blue', count: 1, total: 2, protected: 1 }),
+    ).toBe('Setting up 1 node.');
+    expect(
+      fleetSentence({ kind: 'not-live', dot: 'amber', count: 2, total: 2, protected: 0 }),
+    ).toBe('2 nodes are not live yet.');
+    expect(
+      fleetSentence({ kind: 'protected', dot: 'green', count: 1, total: 1, protected: 1 }),
+    ).toBe('Your node is protected.');
+    expect(
+      fleetSentence({ kind: 'protected', dot: 'green', count: 6, total: 6, protected: 6 }),
+    ).toBe('All 6 nodes protected.');
     expect(fleetSentence({ kind: 'partial', dot: 'green', count: 1, total: 3, protected: 1 })).toBe(
       '1 of 3 nodes protected.',
     );

@@ -119,7 +119,6 @@
       toast.error('Could not save node placement', { description: apiErrorMessage(err) });
     },
   }));
-
 </script>
 
 <SectionHeader
@@ -128,16 +127,15 @@
 />
 
 <div class="space-y-6">
-
   <Card>
     <CardHeader>
       <CardTitle class="text-base">Node placement pools</CardTitle>
       <CardDescription>
-        Bind each connection mode to a POOL of Remnawave internal-mode group UUIDs - one mode
-        group per node (create them on the backend, e.g. via the Ansible role). At issuance FCP
-        homes a new key to the least-loaded node of the chosen mode's pool. Mode group UUIDs are
-        write-only; one per line, 2+ = a load-balanced pool. Leave a field blank to keep the
-        current binding. The Ansible backend-bootstrap sets these automatically.
+        Bind each connection mode to a POOL of Remnawave internal-mode group UUIDs - one mode group
+        per node (create them on the backend, e.g. via the Ansible role). At issuance FCP homes a
+        new key to the least-loaded node of the chosen mode's pool. Mode group UUIDs are write-only;
+        one per line, 2+ = a load-balanced pool. Leave a field blank to keep the current binding.
+        The Ansible backend-bootstrap sets these automatically.
       </CardDescription>
     </CardHeader>
     <CardContent class="space-y-5 text-sm">
@@ -247,5 +245,4 @@
       {/if}
     </CardContent>
   </Card>
-
 </div>

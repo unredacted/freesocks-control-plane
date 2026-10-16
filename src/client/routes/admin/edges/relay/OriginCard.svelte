@@ -129,7 +129,10 @@
     >
     {#if backendServerId}
       <Card.Action>
-        <Link href={serversPaths.backends()} class="text-sm font-medium text-primary hover:underline">
+        <Link
+          href={serversPaths.backends()}
+          class="text-sm font-medium text-primary hover:underline"
+        >
           Backends
         </Link>
       </Card.Action>

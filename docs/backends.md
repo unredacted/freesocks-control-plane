@@ -12,7 +12,7 @@ dispatch works, and what's required to add another backend.
   TS, the Convex validators) derives from it.
 - A **backend instance** is one deployed server of a given type, with its own connection config +
   secret. Instances are rows in the **`backendServers`** table and are managed in the admin CMS
-  ("Backend servers"). Remnawave and Outline both have instances; a type can have many.
+  (Servers -> Backends). Remnawave and Outline both have instances; a type can have many.
 
 This split is what makes the system multi-backend: instance _management_ (pool selection at
 issuance, key->instance resolution, health, load counters) is fully generic, and only the per-type
@@ -138,7 +138,7 @@ connection secret:
 - `outline`: `{ apiUrl, websocketEnabled, websocketDomain?, prometheusUrl? }` (the `apiUrl` embeds a
   secret path segment)
 
-Admins add/edit/remove instances + run a pre-save test-connection in the CMS ("Backend servers");
+Admins add/edit/remove instances + run a pre-save test-connection in the CMS (Servers -> Backends);
 the secret is **never returned** to the SPA (responses mask it: `apiUrlMasked` for Outline,
 `apiTokenSet: boolean` for Remnawave). On edit, the secret field is blank and only re-submitted to
 rotate it — **Test connection** still works with the field blank: the request carries the instance
@@ -297,7 +297,7 @@ are untouched (the migration skips any backend that reports a 2.x version).
    backend no longer knows (the member's next regenerate re-issues them); `conflicts` means the
    backend reported an id another row already holds — investigate before touching those.
 
-4. **Verify**: Admin → Backend servers shows the new backend version in fleet stats, the
+4. **Verify**: Admin → Servers → Backends shows the new backend version in fleet stats, the
    healthcheck cron stays green, and an affected member's account page loads live usage.
 
 The integration harness pins a 3.x backend (`docker-compose.remnawave-test.yml`); its env file

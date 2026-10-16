@@ -239,7 +239,9 @@
               Add a spare address
             </DropdownMenu.Item>
             {#if canProtectAgain && !protectAgainFirst}
-              <DropdownMenu.Item onSelect={() => (againOpen = true)}>Protect again</DropdownMenu.Item>
+              <DropdownMenu.Item onSelect={() => (againOpen = true)}
+                >Protect again</DropdownMenu.Item
+              >
             {/if}
             <DropdownMenu.Item onSelect={() => router.navigate(edgesPaths.relay(relay.slug))}>
               Origin details

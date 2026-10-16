@@ -689,7 +689,7 @@ qualified -> trusted, quarantine -> paused for safety; `PLAIN_WORDS` in
   `attention` (the endpoint test opens the test card in place; go-live calls `require-edges`
   and renders the same card for whatever comes back pending), one row per protected node
   (name, country, one sentence, dot; a live run shows "Setting up, step N of 4" and opens its
-  progress), the primary **Protect a node**, and the automatic-protection switch (`POST
+  progress; a backend node's row opens its Servers node page), the primary **Protect a node**, and the automatic-protection switch (`POST
 automation`; a first-run card carries the cost and limitation sentences while it is off).
   `?protect=1` opens the protect sheet, `?run=<id>` a run's progress.
 - **Protect a node** (`ProtectSheet` + `ProtectProgress`): three questions and then the
@@ -707,13 +707,18 @@ setup-runs/plan` lists the transports in words, a closed "Not supported yet" dis
   renders the test card whose ticks echo `{edgeId, endpoint, listenerRevision, configHash}`;
   `review_changed` re-opens the review with the delta; `family_disabled` turns the family's
   render rule on through the config PATCH, then continues.
-- **Node page** (`/admin/edges/nodes/<slug>`, `NodePage`, no tabs): the status sentence,
-  "Addresses in use" per transport (a reduced pool strip + one plain line per address), the
-  primary **Replace address** (`ReplaceDialog`; "Replace now, address is blocked" under More),
-  the per-node "Replace addresses automatically" switch (origin `autoRotate`, captioned when the
-  global switch is off), "Recent activity" (the timeline through `plainAuditActionLabel`), and
-  More: add a spare address, remove protection (`restore-direct`; the restore workflow's phase
-  is shown while it runs), advanced details. `?test=<edgeId>` opens the test card.
+- **A node's edges** (`NodeEdgesPanel`, no tabs), part of the node's ONE page: a backend node's
+  Servers node page embeds it (docs/servers.md "The page") and `/admin/edges/nodes/<slug>`
+  redirects there (`nodeHomeOf`, keeping `?test=`); an origin that is not a backend node (manual,
+  a whole Outline server) keeps it at that address. The status sentence, "Addresses in use" per
+  transport (a reduced pool strip + one plain line per address), the primary **Replace
+  address** (`ReplaceDialog`; "Replace now, address is blocked" under More), the per-node
+  "Replace addresses automatically" switch (origin `autoRotate`, captioned when the global
+  switch is off), "Recent activity" (the timeline through `plainAuditActionLabel`), and More: add
+  a spare address, **Protect again** (an enrolled node live behind edges: a re-protect run, see
+  "Guided setup runs"; the primary action while the node waits to be protected again), Origin
+  details, remove protection (`restore-direct`; the restore workflow's phase is shown while it
+  runs). `?test=<edgeId>` opens the test card.
 - **Providers** (`/admin/edges/providers`): cards (Connected / Problem / Not tested, "3 of 6
   addresses used" from `providers/usage`, and the trust line: "Trusted automatically, checked
   with a real session on <date>" / "Tried with a real session by you on <date>" / "Reached from
@@ -721,16 +726,27 @@ setup-runs/plan` lists the transports in words, a closed "Not supported yet" dis
   dialog is the **Trust override**.
 - **Advanced** (`/admin/edges/advanced`): a plain list of links to the technical pages.
 
-**The technical pages**, unchanged and at their old addresses: **All origins**
-(`/admin/edges/advanced/relays`, the former dashboard: fleet tiles, attention list, readiness
-with resume links, origin table, probe chart), **Manual setup** (`/admin/edges/setup?relay=<slug>`,
-driven entirely by `setup-status`), the **per-origin page** (`/admin/edges/relays/<slug>`:
-overview, edges, listeners, rotations, probes; the quarantine resolver), the per-account page
+**The technical pages**: **All origins** (`/admin/edges/advanced/origins`, the former
+dashboard: fleet tiles, attention list, readiness whose steps link to where each is done
+(`setupStepTarget`), origin table, probe chart; **New origin** opens `NewRelayDialog` for a
+manual address or a whole Outline server), **Origin details** (`/admin/edges/relays/<slug>`:
+overview, edges, listeners, rotations, probes; the quarantine resolver; an origin that is not a
+backend node and has no edge yet shows the first-edge card: provision one, where a named, tested
+account is allowed before it is trusted and the edge waits unpublished, or import a front), the
+per-account page
 (`/admin/edges/providers/<id>`), **Templates**, **Probes** (the old `/admin/telemetry/probes`
 redirects) and **Settings** (Basics, Advanced sections, maintenance, delivery places). Codes
 are never shown bare: `src/shared/contracts/edgeCodes.ts` holds the vocabularies and
 `src/client/lib/edgeCodes.ts` the words. Section paths are spelled only in
 `src/client/routes/admin/edges/lib/routes.ts`; API paths only in `src/client/lib/edgesApi.ts`.
+
+A backend node is set up only with Autopilot (the protect sheet); the old step-by-step wizard
+is gone. Its addresses redirect (`legacyEdgesRedirect`, pinned by a test):
+`/admin/edges/setup?relay=<slug>` to that origin's details, `/admin/edges/setup` and
+`/admin/edges/advanced/relays` to All origins. One provision dialog (`ProvisionDialog`) covers
+both the ordinary provision (FCP picks a trusted account) and the bootstrap provision
+(`test-provision`, chosen automatically when the operator names an account), and one import
+dialog (`ImportFrontDialog`, with the inventory refresh) imports an existing front.
 
 **One status source.** Every page reads an origin's status from the `attention` response:
 `origins[]` (one row per origin, deleting ones included, in slug order: kind, dot, code, the

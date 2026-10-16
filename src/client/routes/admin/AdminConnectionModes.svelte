@@ -114,8 +114,7 @@
         transports inside them. A new mode ships unselectable until it is enabled here AND its
         placement pool is bound in <Link href={serversPaths.pools()} class="underline"
           >Servers, Mode pools</Link
-        >.
-        While the catalog is empty the picker falls back to the built-in defaults.
+        >. While the catalog is empty the picker falls back to the built-in defaults.
       </p>
     </div>
     <div class="flex gap-2">

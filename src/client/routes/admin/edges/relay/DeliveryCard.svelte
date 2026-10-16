@@ -1,8 +1,9 @@
 <script lang="ts">
   /**
-   * Edge-required delivery of one origin: are members served through edges, or
-   * dark, and why (derived in relayLogic.deriveDelivery from the origin, its
-   * setup status and the attention list). Also addresses the render preview.
+   * Edge-required delivery of one origin: are members served through edges, on
+   * the direct address, or dark, and why. The judgement is the server's
+   * (`setup-status`'s `delivery`, the same projection every page reads);
+   * lib/statusWords.ts words it. Also addresses the render preview.
    *
    * Props: origin
    */
@@ -13,17 +14,12 @@
   import Link from '@client/components/Link.svelte';
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
-  import {
-    attentionQuery,
-    edgeKeys,
-    serveRelayDirect,
-    setupStatusQuery,
-  } from '@client/lib/edgesApi';
+  import { edgeKeys, serveRelayDirect, setupStatusQuery } from '@client/lib/edgesApi';
   import ConfirmDialog from '../components/ConfirmDialog.svelte';
   import { SETUP_STEP_TITLES } from '@client/lib/edgeCodes';
   import RenderPreview from '../forms/RenderPreview.svelte';
-  import { edgesPaths } from '../lib/routes';
-  import { deriveDelivery } from './relayLogic';
+  import { setupStepTarget } from '../lib/routes';
+  import { deliveryWords } from '../lib/statusWords';
 
   interface Props {
     relay: OriginAdmin;
@@ -31,15 +27,9 @@
   let { relay }: Props = $props();
 
   const setupQ = setupStatusQuery(() => relay.slug);
-  const attentionQ = attentionQuery();
-  const delivery = $derived(
-    deriveDelivery({
-      relay,
-      setup: setupQ.data ?? null,
-      attention: attentionQ.data?.items ?? null,
-    }),
-  );
   const setup = $derived(setupQ.data ?? null);
+  const kind = $derived(setup?.delivery?.kind ?? null);
+  const delivery = $derived(setup?.delivery ? deliveryWords(setup.delivery) : null);
   let previewOpen = $state(false);
 
   // "Serve this node directly again" (the restore workflow, `release_requirement`):
@@ -63,7 +53,7 @@
   <Card.Header>
     <Card.Title class="flex flex-wrap items-center gap-2">
       Delivery
-      <Badge variant={delivery.tone}>{delivery.headline}</Badge>
+      {#if delivery}<Badge variant={delivery.tone}>{delivery.headline}</Badge>{/if}
     </Card.Title>
     <Card.Description>
       Delivery is edge-required: members on this origin get edge addresses or nothing, never the
@@ -71,10 +61,10 @@
     </Card.Description>
   </Card.Header>
   <Card.Content class="space-y-3 text-sm">
-    <p>{delivery.detail}</p>
-    {#if delivery.reason}
+    {#if delivery}<p>{delivery.detail}</p>{/if}
+    {#if delivery?.reason}
       <div
-        class={delivery.kind === 'dark'
+        class={kind === 'dark'
           ? 'rounded-md border border-destructive/40 bg-destructive/10 p-3'
           : 'rounded-md border border-amber-500/40 bg-amber-500/10 p-3'}
       >
@@ -86,10 +76,10 @@
     {/if}
     {#if setup && !setup.complete && setup.currentStep}
       <p class="text-muted-foreground">
-        Setup is not finished. Next step: {SETUP_STEP_TITLES[setup.currentStep]}.
+        Not ready yet. Next step: {SETUP_STEP_TITLES[setup.currentStep]}.
         <Link
-          href={edgesPaths.setup({ relay: relay.slug, step: setup.currentStep })}
-          class="font-medium text-primary hover:underline">Resume setup</Link
+          href={setupStepTarget(setup.currentStep, relay.slug)}
+          class="font-medium text-primary hover:underline">Do it</Link
         >
       </p>
     {/if}

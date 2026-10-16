@@ -81,7 +81,7 @@ describe('instances', () => {
   });
 });
 
-describe('/admin/edges/nodes/<slug> redirects to the node\'s one page', () => {
+describe("/admin/edges/nodes/<slug> redirects to the node's one page", () => {
   const instances = [{ id: 'sid-1', slug: 'panel-a' }];
   test('a backend node goes to its Servers node page, keeping the test card', () => {
     const origin = {

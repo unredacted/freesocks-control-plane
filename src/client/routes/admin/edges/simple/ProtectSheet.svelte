@@ -387,7 +387,10 @@
             </div>
             {#if presetTaken}
               <div class="space-y-2 rounded-md border p-3 text-sm" role="status">
-                <p>{presetTaken.name} is already protected.</p>
+                <p>
+                  {presetTaken.name} is already protected. To give it new addresses, use Protect
+                  again on its page.
+                </p>
                 <Button
                   size="sm"
                   variant="outline"

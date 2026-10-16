@@ -41,9 +41,9 @@
   <Card.Header>
     <Card.Title>Give it its first edge</Card.Title>
     <Card.Description>
-      Members of this origin are only ever given an edge's address. Provision one at a provider
-      (any tested account; it waits unpublished so you can try it first, then publish it from the
-      Edges tab), or import a front that already forwards here.
+      Members of this origin are only ever given an edge's address. Provision one at a provider (any
+      tested account; it waits unpublished so you can try it first, then publish it from the Edges
+      tab), or import a front that already forwards here.
     </Card.Description>
   </Card.Header>
   <Card.Content class="space-y-3">

@@ -40,8 +40,20 @@ describe('nodeFormProblems', () => {
 
 describe('placementCheck', () => {
   const groups = [
-    { groupUuid: 'g1', name: 'reality-b', membersCount: 3, transportTags: ['r'], transportUuids: ['t1'] },
-    { groupUuid: 'g2', name: 'reality-a', membersCount: 0, transportTags: ['r'], transportUuids: ['t1'] },
+    {
+      groupUuid: 'g1',
+      name: 'reality-b',
+      membersCount: 3,
+      transportTags: ['r'],
+      transportUuids: ['t1'],
+    },
+    {
+      groupUuid: 'g2',
+      name: 'reality-a',
+      membersCount: 0,
+      transportTags: ['r'],
+      transportUuids: ['t1'],
+    },
     { groupUuid: 'g3', name: 'ws', membersCount: 0, transportTags: [], transportUuids: [] },
   ];
   const pools = {

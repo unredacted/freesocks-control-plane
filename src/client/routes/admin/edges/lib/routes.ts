@@ -169,7 +169,9 @@ export function setupStepTarget(step: SetupStepId, slug: string | null): string 
     case 'origin':
       return slug ? edgesPaths.relay(slug) : edgesPaths.overview({ new: '1' });
     case 'relay':
-      return slug ? edgesPaths.relay(slug, { tab: 'listeners' }) : edgesPaths.overview({ new: '1' });
+      return slug
+        ? edgesPaths.relay(slug, { tab: 'listeners' })
+        : edgesPaths.overview({ new: '1' });
     case 'account':
       return edgesPaths.providers();
     case 'template':
