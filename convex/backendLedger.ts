@@ -110,14 +110,21 @@ export async function assertWritable(ctx: MutationCtx, backendServerId: Id<'back
   return server;
 }
 
-/** Insert the op and every claim, or refuse the whole thing. */
-export async function claimOp(ctx: MutationCtx, a: ClaimArgs): Promise<Id<'panelOps'>> {
-  await assertWritable(ctx, a.backendServerId);
-  const keys = [...new Set(a.claimKeys)];
-  for (const key of keys) {
+/**
+ * Everything `claimOp` would refuse, checked without writing: a caller that
+ * makes other writes before claiming (a maintenance transition) checks first,
+ * so a refusal it catches cannot leave those writes committed.
+ */
+export async function assertClaimable(
+  ctx: MutationCtx,
+  backendServerId: Id<'backendServers'>,
+  claimKeys: readonly string[],
+): Promise<void> {
+  await assertWritable(ctx, backendServerId);
+  for (const key of new Set(claimKeys)) {
     const held = await ctx.db
       .query('panelClaims')
-      .withIndex('by_server_key', (q) => q.eq('backendServerId', a.backendServerId).eq('key', key))
+      .withIndex('by_server_key', (q) => q.eq('backendServerId', backendServerId).eq('key', key))
       .unique();
     if (!held) continue;
     const holder = await ctx.db.get(held.opId);
@@ -128,6 +135,12 @@ export async function claimOp(ctx: MutationCtx, a: ClaimArgs): Promise<Id<'panel
       );
     refuse('servers.op_running', 'Another change is still running on this item');
   }
+}
+
+/** Insert the op and every claim, or refuse the whole thing. */
+export async function claimOp(ctx: MutationCtx, a: ClaimArgs): Promise<Id<'panelOps'>> {
+  await assertClaimable(ctx, a.backendServerId, a.claimKeys);
+  const keys = [...new Set(a.claimKeys)];
   const now = Date.now();
   const opId = await ctx.db.insert('panelOps', {
     backendServerId: a.backendServerId,
@@ -482,7 +495,10 @@ async function bridgeProfilePatch(ctx: MutationCtx, op: Op) {
     relayIds?: string[];
     inboundUuids?: Record<string, string>;
   };
-  await bridgePortChange(ctx, op, expected.ports ?? {}, expected.inboundUuids ?? {});
+  // A transport whose uuid moved anyway is fenced for an operator
+  // (`servers.inbound_uuid_changed`): nothing is re-pointed at the old uuid.
+  if (op.errorCode !== 'servers.inbound_uuid_changed')
+    await bridgePortChange(ctx, op, expected.ports ?? {}, expected.inboundUuids ?? {});
   const relayIds = (expected.relayIds ?? []) as Id<'relays'>[];
   if (relayIds.length === 0) return;
   await assertNoPanelClaim(

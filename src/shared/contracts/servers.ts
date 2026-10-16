@@ -317,7 +317,8 @@ export const PortChangeView = z.object({
   transportTag: z.string(),
   fromPort: z.number().nullable(),
   toPort: z.number(),
-  state: z.enum(['waiting', 'applying', 'applied', 'refused', 'cancelled']),
+  /** `recovered`: settled by a recorded recovery, which does not say whether the port moved. */
+  state: z.enum(['waiting', 'applying', 'applied', 'refused', 'cancelled', 'recovered']),
   code: z.string().nullable(),
   /** The change on the backend, once it was sent. */
   op: OpView.nullable(),

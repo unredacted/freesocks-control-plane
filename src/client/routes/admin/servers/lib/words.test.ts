@@ -516,6 +516,9 @@ describe('port changes in words', () => {
         .sentence,
     ).toMatch(/another change to this profile/);
     expect(portChangeWords({ ...change, state: 'applied' }).dot).toBe('green');
+    // A recovery says nothing about whether the port moved.
+    expect(portChangeWords({ ...change, state: 'recovered' })).toMatchObject({ dot: 'red' });
+    expect(portChangeWords({ ...change, state: 'recovered' }).sentence).toMatch(/is not known/);
     expect(
       portChangeWords({ ...change, state: 'refused', code: 'servers.profile_changed' }).sentence,
     ).toMatch(/^Not sent: The profile changed/);
@@ -534,7 +537,7 @@ describe('port changes in words', () => {
   });
 
   test('no em-dashes in any of it', () => {
-    const states = ['waiting', 'applying', 'applied', 'refused', 'cancelled'] as const;
+    const states = ['waiting', 'applying', 'applied', 'refused', 'cancelled', 'recovered'] as const;
     for (const state of states)
       expect(portChangeWords({ ...change, state }).sentence).not.toMatch(/—/);
     for (const k of ['reality', 'xhttp-reality', 'ws']) expect(templateWords(k)).not.toMatch(/—/);

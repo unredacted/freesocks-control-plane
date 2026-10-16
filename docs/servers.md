@@ -219,14 +219,15 @@ uuid; a new transport is appended. A uuid that moved anyway is flagged
   (`servers.port_change_staged`). The backend checks neither the range nor collisions (measured:
   it stores 70000, and two transports on one port), so FCP refuses a port out of range, a port a
   node on the transport already uses for another of its transports or for its own API
-  (`servers.port_taken`), a loopback transport (`servers.port_loopback`: it sits behind the
+  (`servers.port_taken`; the node's API port as FCP will set it and its own proxy's public port
+  count too), a loopback transport (`servers.port_loopback`: it sits behind the
   node's own proxy, whose route to it is a node setting), a port range (`servers.port_not_single`)
   and a transport an origin forwards to (`servers.port_edge_bound`: the edges dial its port).
 - **`addInboundFromTemplate`** adds a transport built exactly as setup builds a mode's
   (`lib/backend/profileTemplate.ts`: REALITY, XHTTP under REALITY, or a loopback WebSocket), with
   the tag and port asked for. A REALITY template names a server-name family; the preview answers
-  it with the family's target and the names usable today, and the apply takes that back
-  verbatim. Its **key pair is made inside the claimed attempt** and never stored, logged or
+  it with the family's target and the names usable today (a family that is turned off gives none:
+  `servers.family_missing`), and the apply takes that back verbatim. Its **key pair is made inside the claimed attempt** and never stored, logged or
   returned, so no preview can predict the token the profile will have: the preview answers
   `expectedToken: null`, and the attempt records the token it computed from its own fresh read
   immediately before the `PATCH` (`markSent`), which is what the look then settles on and what
@@ -351,19 +352,28 @@ acknowledge {nodeNames}`, refused for a `role` node: `servers.firewall_role_conf
    confirmation is audited (`servers.port_change.confirmed`, `by: role | operator`).
 3. **Apply.** The last confirmation admits the edit through the ledger in ONE transaction with
    the change (`admit`, then `run`): the claim is owned by that change (`portChangeId`; a port
-   op without it is refused), the maintenance transition closes every node on the transport
-   BEFORE the write (§ A shared change), and the one attempt is sent and looked at like every
-   profile edit. A node that started serving the transport since staging gets a requirement of
-   its own first and the change keeps waiting (`servers.firewall_unconfirmed`). A busy profile
-   (`servers.op_running`, `servers.op_uncertain`) or the switch turned off leaves it waiting, and
-   the `backend-reconcile` sweep sends it later; any other refusal ends it as `refused` with the
-   code. A profile edited between the preview and the send is refused with nothing sent
-   (`servers.profile_changed`), as for every profile edit.
+   op without it is refused), every refusal of the claim is checked BEFORE the maintenance
+   transition (so a change that is not admitted leaves no node closed and no hold behind), the
+   transition closes every node on the transport before the write (§ A shared change), and the
+   one attempt is sent and looked at like every profile edit. Admission re-reads who serves the
+   transport: a node that started serving it since staging gets a requirement of its own and the
+   change keeps waiting (`servers.firewall_unconfirmed`); a node that stopped serving it (turned
+   off, removed, moved) is no longer waited for. A busy profile (`servers.op_running`,
+   `servers.op_uncertain`) or the switch turned off leaves it waiting; the `backend-reconcile`
+   sweep looks at every waiting change again and sends what is ready. Any other refusal ends it
+   as `refused` with the code. A profile edited between the preview and the send is refused with
+   nothing sent (`servers.profile_changed`), as for every profile edit. The transport a change
+   names must be the one its tag names on the profile as last read (`servers.unknown_inbound`
+   otherwise, for every profile edit): the backend is edited by tag, the nodes are found by uuid.
 4. **Settle.** Once the moved transport is SEEN, the setup row's record of the mode's transport
    follows (the review and the node's addresses read their port from it) and every enrolled node
    on it is reconciled at once, so its own addresses move to the new port while it is still
-   closed; it comes back through its own verification (the direct test link dials the new port)
-   and approval. The change's outcome is its op's (`applying`, `applied`, `refused`).
+   closed (a reconcile already running is fenced by a new generation and runs again); it comes
+   back through its own verification (the direct test link dials the new port) and approval. A
+   transport whose uuid moved anyway (`servers.inbound_uuid_changed`) is not bridged: nothing is
+   re-pointed at the old uuid. The change's outcome is its op's (`applying`, `applied` only once
+   the edit was SEEN, `refused`), or `recovered` when a recorded recovery settled it: that says
+   nothing about whether the port moved, and the page says so.
 
 `POST {slug}/port-changes/{id}/cancel` withdraws a change that still waits (nothing was sent; a
 node that already opened the port keeps it open). `GET {slug}/port-changes` lists the open ones
@@ -378,8 +388,9 @@ The role repository implements this; FCP only describes it.
   answer carry `firewall.ports: [{port, protocol: 'tcp', reason}]`: every port the node's
   firewall must let in. `serving`: a transport the node serves listens there (loopback ones
   excepted), or its own proxy's public port (a WebSocket node's Caddy). `pending`: a staged
-  change waits for this node. The node's API port (`node.port`, the backend's channel to the
-  node) is the role's own business and is not listed.
+  change waits for this node; it stays listed after the role confirmed it, until the change is
+  sent and settled, cancelled or refused. The node's API port (`node.port`, the backend's channel
+  to the node) is the role's own business and is not listed.
 - **Open them.** On every run, let every listed port in (TCP, from anywhere) before reporting.
   The role MAY close a port it opened for FCP earlier that is no longer listed; it never closes
   SSH or the node API port on that basis.

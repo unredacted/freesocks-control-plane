@@ -518,13 +518,27 @@ export const adoptNode = internalMutation({
  * addresses): the same lease rule, so an attempt already running keeps it.
  */
 export const reconcileNow = internalMutation({
-  args: { intentId: v.id('panelNodeIntents') },
-  handler: async (ctx, { intentId }) => {
+  args: { intentId: v.id('panelNodeIntents'), retries: v.optional(v.number()) },
+  handler: async (ctx, { intentId, retries }) => {
     const intent = await ctx.db.get(intentId);
     if (!intent || intent.state === 'retiring' || intent.state === 'retired') return false;
-    return scheduleReconcile(ctx, intent);
+    if (await scheduleReconcile(ctx, intent)) return true;
+    // An attempt holds the lease and may have read the profile before the
+    // change: a new generation fences what it records, and its handover
+    // (`releaseOvertaken`) reconciles the node again with what is there now.
+    // A lease whose attempt died is not handed over: try again once it ran out.
+    await ctx.db.patch(intent._id, { generation: intent.generation + 1, updatedAt: Date.now() });
+    if ((retries ?? 0) < RECONCILE_NOW_RETRIES)
+      await ctx.scheduler.runAfter(CLAIM_LEASE_MS + 1_000, internal.nodeIntents.reconcileNow, {
+        intentId,
+        retries: (retries ?? 0) + 1,
+      });
+    return false;
   },
 });
+
+/** How often `reconcileNow` comes back for a lease that stays held (each a lease apart). */
+const RECONCILE_NOW_RETRIES = 3;
 
 /** Take the lease and schedule the reconcile, unless an attempt already holds it. */
 async function scheduleReconcile(ctx: MutationCtx, intent: Intent) {

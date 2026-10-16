@@ -50,7 +50,7 @@ import { patchOp } from './lib/backend/patchOpArgs';
 import { PROFILE_DEFAULTS } from './lib/backend/profileTemplate';
 import { addressesOf, closeForSharedChange } from './nodeIntents';
 import { HOST_REMARK_MAX } from './lib/backend/hostRemark';
-import { claimOp } from './backendLedger';
+import { assertClaimable, claimOp } from './backendLedger';
 import { observeInstance } from './backendObserve';
 
 const refuse = (code: string, message: string): never => {
@@ -877,15 +877,20 @@ export async function portChangeImpact(
     .collect();
   const out: PortNode[] = [];
   for (const n of nodes) {
-    if (n.port === port)
+    const intent =
+      intents.find((i) => i.nodeUuid === n.nodeUuid) ?? intents.find((i) => i.name === n.name);
+    // The node's API port (as the backend has it, and as FCP will set it) and
+    // its own proxy's public port are listeners on the same machine.
+    if (n.port === port || intent?.settings.nodePort === port)
       refuse('servers.port_taken', `${n.name} talks to the backend on port ${port}`);
+    if (intent?.settings.ingress?.externalPort === port)
+      refuse('servers.port_taken', `${n.name}'s own proxy listens on port ${port}`);
     const others = (inboundsOf.get(n.configProfileUuid ?? '') ?? []).filter(
       (i) => i.inboundUuid !== inboundUuid && n.activeInboundUuids.includes(i.inboundUuid),
     );
     const clash = others.find((i) => i.port === port);
     if (clash)
       refuse('servers.port_taken', `${n.name} already serves ${clash.tag} on port ${port}`);
-    const intent = intents.find((i) => i.name === n.name);
     const roleRuns =
       !!intent && !intent.adopted && intent.state !== 'retiring' && intent.state !== 'retired';
     out.push({
@@ -994,6 +999,13 @@ export async function claimProfilePatch(
     }
     const uuid = a.inboundUuids[op.inboundTag];
     if (!uuid) return refuse('servers.unknown_inbound', `No inbound is tagged ${op.inboundTag}`);
+    // The provider edits by TAG; who feels it (nodes, origins, firewalls) is
+    // computed by UUID. The two must name the same transport, as FCP last read it.
+    if (cached.inbounds.find((i) => i.tag === op.inboundTag)?.inboundUuid !== uuid)
+      refuse(
+        'servers.unknown_inbound',
+        `${op.inboundTag} is not that transport on this profile. Refresh and preview again`,
+      );
     touched.set(op.inboundTag, uuid);
     if (op.op === 'setInboundPort') {
       // Re-checked at the claim: a node may have moved onto the transport since.
@@ -1078,6 +1090,16 @@ export async function claimProfilePatch(
   for (const op of ops)
     if (op.op === 'setRealityTarget') targets[op.inboundTag] = parseRealityTarget(op.target)!;
 
+  const claimKeys = [
+    claimKey.profile(a.profileUuid),
+    ...nodes.map((n) => claimKey.node(n.nodeUuid)),
+    ...affected.map((r) => `relay:${r}`),
+  ];
+  // Every refusal of the claim comes before the transition: a caller that
+  // catches it (a staged port change keeps waiting) must not commit closed
+  // nodes and holds for a change that was not admitted.
+  await assertClaimable(ctx, sid, claimKeys);
+
   // An edit (never a rollout: names reach members by per-node receipts) is
   // applied in place under every node on the touched transports: the
   // maintenance transition over its blast radius comes BEFORE the claim. A new
@@ -1097,11 +1119,7 @@ export async function claimProfilePatch(
     verb: 'patch',
     label: cached.name,
     objectUuid: a.profileUuid,
-    claimKeys: [
-      claimKey.profile(a.profileUuid),
-      ...nodes.map((n) => claimKey.node(n.nodeUuid)),
-      ...affected.map((r) => `relay:${r}`),
-    ],
+    claimKeys,
     intent: { ops, baseToken: a.baseToken },
     postcondition: {
       // Null until the attempt has made the new transport's key (markSent).
@@ -1146,7 +1164,8 @@ export const familyForTemplate = internalQuery({
       .query('sniFamilies')
       .withIndex('by_slug', (q) => q.eq('slug', slug))
       .unique();
-    if (!family) return null;
+    // A family turned off gives no transport its names, as setup refuses it.
+    if (!family || !family.enabled) return null;
     const names = (
       await ctx.db
         .query('sniNames')
