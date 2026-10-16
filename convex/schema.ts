@@ -2857,6 +2857,61 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index('by_server', ['backendServerId']),
 
+  // A profile edit that opens a port (docs/servers.md "Firewall
+  // acknowledgement"): staged, NOT claimed, until every node that will listen
+  // there confirmed its firewall lets the port in. Then the edit is claimed
+  // through the ledger like any other (`opId`) and its state follows that op.
+  // `ops` is the non-secret JSON of the typed edit and the tokens the operator
+  // previewed; nothing here is key material.
+  panelPortChanges: defineTable({
+    backendServerId: v.id('backendServers'),
+    profileUuid: v.string(),
+    profileName: v.string(),
+    inboundTag: v.string(),
+    inboundUuid: v.string(),
+    fromPort: v.optional(v.number()),
+    toPort: v.number(),
+    ops: v.string(),
+    baseToken: v.string(),
+    expectedToken: v.string(),
+    inboundUuids: v.record(v.string(), v.string()),
+    unmanaged: v.optional(v.union(v.literal('hold'), v.literal('acknowledge'))),
+    // waiting: for confirmations (or for a busy profile); applying: claimed as
+    // `opId`, its outcome is the op's; refused: the claim was refused (`code`).
+    state: v.union(
+      v.literal('waiting'),
+      v.literal('applying'),
+      v.literal('refused'),
+      v.literal('cancelled'),
+    ),
+    code: v.optional(v.string()),
+    opId: v.optional(v.id('panelOps')),
+    actorAdminId: v.optional(v.id('adminUsers')),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_server', ['backendServerId'])
+    .index('by_state', ['state']),
+
+  // One node that must let a staged change's port in. `role`: an enrolled node
+  // the node role runs, confirmed by its applied report; `operator`: a node FCP
+  // does not run the role for (unmanaged, or adopted), confirmed by an admin.
+  panelPortRequirements: defineTable({
+    backendServerId: v.id('backendServers'),
+    changeId: v.id('panelPortChanges'),
+    nodeName: v.string(),
+    intentId: v.optional(v.id('panelNodeIntents')),
+    port: v.number(),
+    confirmedBy: v.union(v.literal('role'), v.literal('operator')),
+    state: v.union(v.literal('waiting'), v.literal('confirmed'), v.literal('cancelled')),
+    confirmedAt: v.optional(v.number()),
+    byAdminId: v.optional(v.id('adminUsers')),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_change', ['changeId'])
+    .index('by_server_node', ['backendServerId', 'nodeName']),
+
   // One activation attempt: an immutable candidate snapshot with its own
   // approval, the candidate resources it enables or publishes, and the
   // rehearsal it recorded. The delivery commit promotes exactly this snapshot.

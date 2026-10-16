@@ -235,6 +235,24 @@ export const NodeWrite = z.object({
 });
 export type NodeWrite = z.infer<typeof NodeWrite>;
 
+/**
+ * The catalogue a new transport is made from. A REALITY template names its
+ * server-name family; the preview answers it with the family's target and
+ * usable names filled in, and the apply takes that back verbatim.
+ */
+export const TransportTemplateOp = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.enum(['reality', 'xhttp-reality']),
+    port: z.number().int(),
+    familySlug: z.string().min(1).max(40).optional(),
+    target: z.string().optional(),
+    serverNames: z.array(z.string()).optional(),
+    acceptProxyProtocol: z.boolean().optional(),
+  }),
+  z.object({ kind: z.literal('ws'), port: z.number().int(), path: z.string() }),
+]);
+export type TransportTemplateOp = z.infer<typeof TransportTemplateOp>;
+
 export const ProfilePatchOp = z.discriminatedUnion('op', [
   z.object({
     op: z.literal('setRealityServerNames'),
@@ -242,6 +260,14 @@ export const ProfilePatchOp = z.discriminatedUnion('op', [
     names: z.array(z.string()),
   }),
   z.object({ op: z.literal('setRealityTarget'), transportTag: z.string(), target: z.string() }),
+  /** Move a transport to another port. Staged until the nodes' firewalls let it in. */
+  z.object({ op: z.literal('setInboundPort'), transportTag: z.string(), port: z.number().int() }),
+  /** Add a transport made from a template. No node serves it until one is assigned to it. */
+  z.object({
+    op: z.literal('addInboundFromTemplate'),
+    transportTag: z.string(),
+    template: TransportTemplateOp,
+  }),
 ]);
 export type ProfilePatchOp = z.infer<typeof ProfilePatchOp>;
 
@@ -262,15 +288,65 @@ export type ModeGroupPatch = z.infer<typeof ModeGroupPatch>;
 /** `POST …/profiles/{uuid}/preview`. */
 export const ProfilePatchPreviewRequest = z.object({ ops: z.array(ProfilePatchOp) });
 
-/** `POST …/profiles/{uuid}/apply`: what the preview answered, verbatim. */
+/**
+ * `POST …/profiles/{uuid}/apply` (and `…/port-change`): what the preview
+ * answered, verbatim. `expectedToken` is null only for a new REALITY transport,
+ * whose key is made in the attempt.
+ */
 export const ProfilePatchApply = z.object({
   ops: z.array(ProfilePatchOp),
   baseToken: z.string(),
-  expectedToken: z.string(),
+  expectedToken: z.string().nullable(),
   transportUuids: z.record(z.string(), z.string()),
   unmanaged: z.enum(['hold', 'acknowledge']).optional(),
 });
 export type ProfilePatchApply = z.infer<typeof ProfilePatchApply>;
+
+/** Who confirms that a node's firewall lets a port in: the node role, or an admin. */
+export const FirewallConfirmer = z.enum(['role', 'operator']);
+export type FirewallConfirmer = z.infer<typeof FirewallConfirmer>;
+
+/**
+ * A port change waiting for the nodes' firewalls (docs/servers.md "Firewall
+ * acknowledgement"). Nothing is sent until every node has confirmed the port.
+ */
+export const PortChangeView = z.object({
+  id: z.string(),
+  profileUuid: z.string(),
+  profileName: z.string(),
+  transportTag: z.string(),
+  fromPort: z.number().nullable(),
+  toPort: z.number(),
+  /** `recovered`: settled by a recorded recovery, which does not say whether the port moved. */
+  state: z.enum(['waiting', 'applying', 'applied', 'refused', 'cancelled', 'recovered']),
+  code: z.string().nullable(),
+  /** The change on the backend, once it was sent. */
+  op: OpView.nullable(),
+  nodes: z.array(
+    z.object({
+      name: z.string(),
+      confirmedBy: FirewallConfirmer,
+      state: z.enum(['waiting', 'confirmed', 'cancelled']),
+      confirmedAt: z.string().nullable(),
+    }),
+  ),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type PortChangeView = z.infer<typeof PortChangeView>;
+export const PortChangeList = z.object({ changes: z.array(PortChangeView) });
+
+/** `POST …/port-changes/{id}/acknowledge`: an admin confirms nodes no role reports for. */
+export const PortChangeAcknowledge = z.object({ nodeNames: z.array(z.string()).min(1).max(200) });
+
+/** A port a node's firewall must let in, as the node role reads it. */
+export const FirewallPort = z.object({
+  port: z.number(),
+  protocol: z.literal('tcp'),
+  /** `serving`: a transport (or the node's own proxy) listens there; `pending`: a staged change waits for it. */
+  reason: z.enum(['serving', 'pending']),
+});
+export type FirewallPort = z.infer<typeof FirewallPort>;
 
 // --- bootstrap contract v2: backend setup (modes) --------------------------------------------
 
@@ -428,6 +504,18 @@ export const NodeAppliedReport = z.object({
   appliedRevision: z.number().int().min(1),
   caddy: z.object({ certificateReady: z.boolean().optional() }).optional(),
   nodeStarted: z.boolean(),
+  /**
+   * The ports the node's firewall lets in for FCP after this run (every port the
+   * node's view listed, once opened). Confirms the pending port changes of this
+   * node whose port is listed. A role that omits it confirms nothing.
+   */
+  firewall: z
+    .object({
+      ports: z
+        .array(z.object({ port: z.number().int().min(1).max(65535), protocol: z.literal('tcp') }))
+        .max(64),
+    })
+    .optional(),
 });
 export type NodeAppliedReport = z.infer<typeof NodeAppliedReport>;
 
@@ -465,6 +553,8 @@ export const NodeRoleView = z.object({
   node: z.object({ uuid: z.string().nullable(), port: z.number() }),
   origin: z.object({ hostname: z.string().nullable(), dns: z.string() }),
   retirement: z.object({ stage: z.string(), code: z.string().nullable() }).nullable(),
+  /** Every port the node's firewall must let in (the node's own API port is the role's business). */
+  firewall: z.object({ ports: z.array(FirewallPort) }).default({ ports: [] }),
   updatedAt: z.string(),
 });
 export type NodeRoleView = z.infer<typeof NodeRoleView>;
@@ -617,6 +707,7 @@ export const NodeBootstrap = z.object({
     })
     .nullable(),
   origin: z.object({ hostname: z.string().nullable(), dns: z.string() }),
+  firewall: z.object({ ports: z.array(FirewallPort) }).default({ ports: [] }),
 });
 export type NodeBootstrap = z.infer<typeof NodeBootstrap>;
 
@@ -624,14 +715,15 @@ export type NodeBootstrap = z.infer<typeof NodeBootstrap>;
 export const ProfilePatchPreview = z.object({
   profileName: z.string(),
   baseToken: z.string(),
-  expectedToken: z.string(),
+  /** Null when a new REALITY transport's key is made in the attempt: the token is known only then. */
+  expectedToken: z.string().nullable(),
   changed: z.boolean(),
   changes: z.array(
     z.object({
       transportTag: z.string(),
-      field: z.enum(['serverNames', 'target']),
-      before: z.union([z.array(z.string()), z.string(), z.null()]),
-      after: z.union([z.array(z.string()), z.string()]),
+      field: z.enum(['serverNames', 'target', 'port', 'transport']),
+      before: z.union([z.array(z.string()), z.string(), z.number(), z.null()]),
+      after: z.union([z.array(z.string()), z.string(), z.number()]),
     }),
   ),
   touchedTags: z.array(z.string()),
@@ -645,5 +737,30 @@ export const ProfilePatchPreview = z.object({
       publishedEdges: z.number(),
     }),
   ),
+  /**
+   * A port change: the nodes whose firewall must let the new port in before
+   * anything is sent, and who confirms each. Null for an edit that opens no port.
+   */
+  firewall: z
+    .object({
+      port: z.number(),
+      nodes: z.array(
+        z.object({
+          name: z.string(),
+          confirmedBy: FirewallConfirmer,
+          /** False for a node FCP does not manage: it needs a treatment (`unmanaged`). */
+          enrolled: z.boolean(),
+        }),
+      ),
+    })
+    .nullable()
+    .default(null),
+  /**
+   * Addresses on a moved transport that FCP does not own: they keep the port
+   * they name (a forwarder in front may map it), so they are listed, never moved.
+   */
+  otherAddresses: z
+    .array(z.object({ remark: z.string(), address: z.string(), port: z.number() }))
+    .default([]),
 });
 export type ProfilePatchPreview = z.infer<typeof ProfilePatchPreview>;

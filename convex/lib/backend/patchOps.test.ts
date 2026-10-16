@@ -200,3 +200,160 @@ describe('checkPatchOps', () => {
     expect(code(() => checkPatchOps([{ ...t, inboundTag: '' }]))).toBe('validation');
   });
 });
+
+describe('setInboundPort', () => {
+  test('moves one transport and nothing else; tag, protocol and position hold', () => {
+    const before: any = config();
+    const out = applyPatchOps(before, [{ op: 'setInboundPort', inboundTag: 'r1', port: 8443 }]);
+    expect(out.changed).toBe(true);
+    expect(out.needsMaterial).toBe(false);
+    expect(out.changes).toEqual([{ inboundTag: 'r1', field: 'port', before: 443, after: 8443 }]);
+    const next = out.config as any;
+    expect(next.inbounds[0].port).toBe(8443);
+    expect(next.inbounds[0].tag).toBe('r1');
+    expect(next.inbounds[0].streamSettings).toBe(before.inbounds[0].streamSettings);
+    expect(next.inbounds[1]).toBe(before.inbounds[1]);
+    expect(next.inbounds[2]).toBe(before.inbounds[2]);
+    expect(before.inbounds[0].port).toBe(443);
+  });
+
+  test('the same port is no change', () => {
+    const before = config();
+    const out = applyPatchOps(before, [{ op: 'setInboundPort', inboundTag: 'r1', port: 443 }]);
+    expect(out.changed).toBe(false);
+    expect(out.config).toBe(before);
+  });
+
+  test('refuses a loopback transport, a port range, an unknown tag and a port out of range', () => {
+    const c: any = config();
+    c.inbounds[1].listen = '127.0.0.1';
+    expect(
+      code(() => applyPatchOps(c, [{ op: 'setInboundPort', inboundTag: 'ws', port: 9000 }])),
+    ).toBe('servers.port_loopback');
+    const ranged: any = config();
+    ranged.inbounds[0].port = '1000-2000';
+    expect(
+      code(() => applyPatchOps(ranged, [{ op: 'setInboundPort', inboundTag: 'r1', port: 9000 }])),
+    ).toBe('servers.port_not_single');
+    expect(
+      code(() =>
+        applyPatchOps(config(), [{ op: 'setInboundPort', inboundTag: 'nope', port: 9000 }]),
+      ),
+    ).toBe('servers.unknown_inbound');
+    // The backend stores 70000 without a word (measured): FCP refuses it.
+    for (const port of [0, 70000, 1.5])
+      expect(code(() => checkPatchOps([{ op: 'setInboundPort', inboundTag: 'r1', port }]))).toBe(
+        'validation',
+      );
+  });
+
+  test('is made on its own', () => {
+    expect(
+      code(() =>
+        checkPatchOps([
+          { op: 'setInboundPort', inboundTag: 'r1', port: 8443 },
+          { op: 'setRealityTarget', inboundTag: 'r1', target: 'x.example:443' },
+        ]),
+      ),
+    ).toBe('validation');
+  });
+});
+
+describe('addInboundFromTemplate', () => {
+  const reality: PatchOp = {
+    op: 'addInboundFromTemplate',
+    inboundTag: 'NEW_REALITY',
+    template: {
+      kind: 'reality',
+      port: 8443,
+      target: 'Decoy.Example:443',
+      serverNames: ['A.example', 'b.example', 'a.example'],
+      acceptProxyProtocol: false,
+    },
+  };
+
+  test('appends a transport built as setup builds one; nothing existing moves', () => {
+    const before: any = config();
+    const material = { NEW_REALITY: { privateKey: 'FRESH_KEY', shortIds: [''] } };
+    const out = applyPatchOps(before, [reality], material);
+    expect(out.needsMaterial).toBe(false);
+    expect(out.changes).toEqual([
+      { inboundTag: 'NEW_REALITY', field: 'transport', before: null, after: 'reality' },
+    ]);
+    const next = out.config as any;
+    expect(next.inbounds).toHaveLength(4);
+    for (let i = 0; i < 3; i++) expect(next.inbounds[i]).toBe(before.inbounds[i]);
+    const added = next.inbounds[3];
+    expect(added).toMatchObject({
+      tag: 'NEW_REALITY',
+      port: 8443,
+      protocol: 'vless',
+      settings: { clients: [], decryption: 'none' },
+      streamSettings: {
+        network: 'raw',
+        security: 'reality',
+        realitySettings: {
+          dest: 'decoy.example:443',
+          serverNames: ['a.example', 'b.example'],
+          privateKey: 'FRESH_KEY',
+          shortIds: [''],
+        },
+      },
+    });
+  });
+
+  test('without material a placeholder stands in and the result says it cannot be sent', () => {
+    const out = applyPatchOps(config(), [reality]);
+    expect(out.changed).toBe(true);
+    expect(out.needsMaterial).toBe(true);
+    expect(JSON.stringify(out.config)).not.toContain('FRESH_KEY');
+  });
+
+  test('a WebSocket transport needs no key and listens on loopback', () => {
+    const out = applyPatchOps(config(), [
+      {
+        op: 'addInboundFromTemplate',
+        inboundTag: 'NEW_WS',
+        template: { kind: 'ws', port: 9443, path: '/feed' },
+      },
+    ]);
+    expect(out.needsMaterial).toBe(false);
+    expect((out.config as any).inbounds[3]).toMatchObject({
+      tag: 'NEW_WS',
+      listen: '127.0.0.1',
+      port: 9443,
+      streamSettings: { network: 'ws', security: 'none', wsSettings: { path: '/feed' } },
+    });
+  });
+
+  test('refuses a tag the profile has, a bad template, and company in the same edit', () => {
+    expect(code(() => applyPatchOps(config(), [{ ...reality, inboundTag: 'r1' }]))).toBe(
+      'servers.tag_taken',
+    );
+    const bad = (template: unknown) =>
+      code(() =>
+        checkPatchOps([{ op: 'addInboundFromTemplate', inboundTag: 'T_NEW', template } as PatchOp]),
+      );
+    expect(bad({ kind: 'grpc', port: 443 })).toBe('servers.template_invalid');
+    expect(bad({ kind: 'reality', port: 443, target: 'no-port', serverNames: ['a.example'] })).toBe(
+      'servers.template_invalid',
+    );
+    expect(bad({ kind: 'reality', port: 443, target: 'x.example:443', serverNames: [] })).toBe(
+      'servers.template_invalid',
+    );
+    expect(bad({ kind: 'ws', port: 80, path: '/ws' })).toBe('servers.template_invalid');
+    expect(bad({ kind: 'ws', port: 9000, path: 'no-slash' })).toBe('servers.template_invalid');
+    expect(bad({ kind: 'ws', port: 99999, path: '/ws' })).toBe('validation');
+    expect(code(() => checkPatchOps([{ ...reality, inboundTag: 'has space' } as PatchOp]))).toBe(
+      'validation',
+    );
+    expect(
+      code(() =>
+        checkPatchOps([
+          reality,
+          { op: 'setRealityTarget', inboundTag: 'r1', target: 'x.example:443' },
+        ]),
+      ),
+    ).toBe('validation');
+  });
+});

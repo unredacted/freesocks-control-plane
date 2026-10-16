@@ -38,6 +38,7 @@ import { resolveServerConfig } from './lib/serverConfig';
 import { observeInstance } from './backendObserve';
 import { scheduleMirrorRefresh } from './lib/edges/relayGuards';
 import { bumpGateVersion, modeOf, setupReady, type Setup, type SetupMode } from './backendSetup';
+import { confirmFromRole, firewallPortsFor } from './lib/backend/portRequirements';
 
 const refuse = (code: string, message: string): never => {
   throw new ConvexError({ code, message });
@@ -512,6 +513,33 @@ export const adoptNode = internalMutation({
   },
 });
 
+/**
+ * Reconcile a node now, whatever its state (a moved transport re-addresses its
+ * addresses): the same lease rule, so an attempt already running keeps it.
+ */
+export const reconcileNow = internalMutation({
+  args: { intentId: v.id('panelNodeIntents'), retries: v.optional(v.number()) },
+  handler: async (ctx, { intentId, retries }) => {
+    const intent = await ctx.db.get(intentId);
+    if (!intent || intent.state === 'retiring' || intent.state === 'retired') return false;
+    if (await scheduleReconcile(ctx, intent)) return true;
+    // An attempt holds the lease and may have read the profile before the
+    // change: a new generation fences what it records, and its handover
+    // (`releaseOvertaken`) reconciles the node again with what is there now.
+    // A lease whose attempt died is not handed over: try again once it ran out.
+    await ctx.db.patch(intent._id, { generation: intent.generation + 1, updatedAt: Date.now() });
+    if ((retries ?? 0) < RECONCILE_NOW_RETRIES)
+      await ctx.scheduler.runAfter(CLAIM_LEASE_MS + 1_000, internal.nodeIntents.reconcileNow, {
+        intentId,
+        retries: (retries ?? 0) + 1,
+      });
+    return false;
+  },
+});
+
+/** How often `reconcileNow` comes back for a lease that stays held (each a lease apart). */
+const RECONCILE_NOW_RETRIES = 3;
+
 /** Take the lease and schedule the reconcile, unless an attempt already holds it. */
 async function scheduleReconcile(ctx: MutationCtx, intent: Intent) {
   const now = Date.now();
@@ -686,6 +714,11 @@ export const applied = internalMutation({
     appliedRevision: v.number(),
     certificateReady: v.optional(v.boolean()),
     nodeStarted: v.boolean(),
+    /**
+     * The ports the node's firewall lets in after this run: confirms this
+     * node's pending port changes (backendPortChanges.ts). Absent = no claim.
+     */
+    firewallPorts: v.optional(v.array(v.number())),
   },
   handler: async (ctx, a) => {
     const intent = await ctx.db.get(a.intentId);
@@ -700,6 +733,9 @@ export const applied = internalMutation({
     if (a.appliedRevision > intent.machineRevision)
       refuse('servers.revision_unknown', 'That machine revision was never served for this node');
     const now = Date.now();
+    // The firewall report holds whatever the revision: a run that only opened
+    // a port reports the same machine revision again.
+    if (a.firewallPorts) await confirmFromRole(ctx, intent, a.firewallPorts);
     // Idempotent: the same revision reported again changes nothing but the report.
     if (intent.appliedRevision === a.appliedRevision) {
       await ctx.db.patch(intent._id, {
@@ -1409,7 +1445,11 @@ export interface BootstrapAnswer {
     routes: IngressRoute[];
   } | null;
   origin: { hostname: string | null; dns: Intent['origin']['dns'] };
+  /** Every port the node's firewall must let in (docs/servers.md "Firewall acknowledgement"). */
+  firewall: { ports: FirewallPortRow[] };
 }
+
+type FirewallPortRow = { port: number; protocol: 'tcp'; reason: 'serving' | 'pending' };
 
 /**
  * What the role needs to configure the machine, plus the backend's node secret
@@ -1433,6 +1473,10 @@ export const bootstrap = internalAction({
       throw new ConvexError({ code: 'servers.unsupported_backend', message: 'Unsupported' });
     const secretKey = await writes.nodeSecret(c.server.config as BackendConfig);
     await ctx.runMutation(internal.nodeIntents.markBootstrapServed, { intentId });
+    const ports: FirewallPortRow[] = await ctx.runQuery(
+      internal.backendPortChanges.firewallForIntent,
+      { intentId },
+    );
     const ingress = c.ingress;
     return {
       machineRevision: c.intent.machineRevision,
@@ -1446,6 +1490,7 @@ export const bootstrap = internalAction({
           }
         : null,
       origin: { hostname: c.hostname ?? null, dns: c.intent.origin.dns },
+      firewall: { ports },
     };
   },
 });
@@ -1882,6 +1927,7 @@ export function roleView(
   intent: Intent,
   retirement: Doc<'panelRetirements'> | null,
   mode: { slug: string; name: string; shape: ModeShape },
+  firewall: FirewallPortRow[] = [],
 ) {
   return {
     name: intent.name,
@@ -1894,6 +1940,7 @@ export function roleView(
     node: { uuid: intent.nodeUuid ?? null, port: intent.settings.nodePort },
     origin: { hostname: intent.origin.hostname ?? null, dns: intent.origin.dns },
     retirement: retirement ? { stage: retirement.stage, code: retirement.code ?? null } : null,
+    firewall: { ports: firewall },
     updatedAt: new Date(intent.updatedAt).toISOString(),
   };
 }
@@ -1904,7 +1951,12 @@ export const roleViewByName = internalQuery({
     const intent = await intentByName(ctx, backendServerId, name);
     if (!intent) return null;
     const retirement = intent.retirementId ? await ctx.db.get(intent.retirementId) : null;
-    return roleView(intent, retirement, await modeRefOf(ctx, intent));
+    return roleView(
+      intent,
+      retirement,
+      await modeRefOf(ctx, intent),
+      await firewallPortsFor(ctx, intent),
+    );
   },
 });
 

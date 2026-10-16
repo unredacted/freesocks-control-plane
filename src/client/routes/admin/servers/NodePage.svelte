@@ -19,6 +19,9 @@
   import HostDialog from './components/HostDialog.svelte';
   import NamesDialog from './components/NamesDialog.svelte';
   import NodeActions from './components/NodeActions.svelte';
+  import AddTransportDialog from './components/AddTransportDialog.svelte';
+  import PortChangesCard from './components/PortChangesCard.svelte';
+  import PortDialog from './components/PortDialog.svelte';
   import { codeOf } from './lib/run';
   import { pickInstance, serversPaths } from './lib/routes';
   import {
@@ -26,6 +29,7 @@
     inboundSummary,
     nodeNotes,
     nodeWords,
+    portChangeable,
     serverErrorWords,
     serverNamesLabel,
   } from './lib/words';
@@ -53,6 +57,9 @@
   let hostFor = $state<{ inbound: TransportView; host: AddressView | null } | null>(null);
   let namesOpen = $state(false);
   let namesFor = $state<{ profileUuid: string; inbound: TransportView } | null>(null);
+  let portOpen = $state(false);
+  let portFor = $state<{ profileUuid: string; inbound: TransportView } | null>(null);
+  let addOpen = $state(false);
   const editHost = (inbound: TransportView, host: AddressView | null) => {
     hostFor = { inbound, host };
     hostOpen = true;
@@ -93,7 +100,14 @@
         {w.sentence}
       </p>
       {#if node.profile}
-        <p class="text-muted-foreground mt-1 text-sm">Runs the profile {node.profile.name}.</p>
+        <p class="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-2 text-sm">
+          Runs the profile {node.profile.name}.
+          {#if canWrite}
+            <Button variant="ghost" size="sm" class="-my-1" onclick={() => (addOpen = true)}>
+              Add a transport
+            </Button>
+          {/if}
+        </p>
       {/if}
       {#if notes.length > 0}
         <ul class="text-muted-foreground mt-1 space-y-1 text-sm" aria-label="Notes">
@@ -108,6 +122,10 @@
       <ActivationSection {slug} {intent} />
     {/if}
 
+    {#if node.profile}
+      <PortChangesCard {slug} profileUuid={node.profile.profileUuid} {canWrite} />
+    {/if}
+
     <section aria-labelledby="transports">
       <h2 id="transports" class="mb-3 text-base font-semibold">Transports</h2>
       {#if node.transports.length === 0}
@@ -117,10 +135,25 @@
           {#each node.transports as inbound (inbound.transportUuid)}
             {@const names = serverNamesLabel(inbound)}
             <li class="rounded-lg border p-3 text-sm">
-              <p class="font-medium break-all">
-                {inbound.tag}
-                <span class="text-muted-foreground font-normal">{inboundSummary(inbound)}</span>
-              </p>
+              <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <p class="font-medium break-all">
+                  {inbound.tag}
+                  <span class="text-muted-foreground font-normal">{inboundSummary(inbound)}</span>
+                </p>
+                {#if canWrite && node.profile && portChangeable(inbound)}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    class="-my-1"
+                    onclick={() => {
+                      portFor = { profileUuid: node.profile!.profileUuid, inbound };
+                      portOpen = true;
+                    }}
+                  >
+                    Change port
+                  </Button>
+                {/if}
+              </div>
 
               {#if names}
                 <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -222,6 +255,22 @@
       transportUuid={hostFor.inbound.transportUuid}
       transportTag={hostFor.inbound.tag}
       host={hostFor.host}
+    />
+  {/if}
+  {#if portFor}
+    <PortDialog
+      bind:open={portOpen}
+      {slug}
+      profileUuid={portFor.profileUuid}
+      inbound={portFor.inbound}
+    />
+  {/if}
+  {#if node.profile}
+    <AddTransportDialog
+      bind:open={addOpen}
+      {slug}
+      profileUuid={node.profile.profileUuid}
+      profileName={node.profile.name}
     />
   {/if}
   {#if namesFor}

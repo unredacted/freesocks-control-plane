@@ -300,14 +300,16 @@ export const start = internalAction({
       profileUuid: p.profileUuid,
       ops,
     });
-    if (!preview.changed)
+    // A names edit always predicts its token (only a new REALITY transport cannot).
+    if (!preview.changed || preview.expectedToken === null)
       return { rolloutId: null, phase: 'nothing_to_change', added: 0, removed: 0 };
+    const expectedToken = preview.expectedToken;
     const { opId } = await ctx.runMutation(internal.backendWrites.requestProfilePatch, {
       backendServerId: p.backendServerId,
       profileUuid: p.profileUuid,
       ops,
       baseToken: preview.baseToken,
-      expectedToken: preview.expectedToken,
+      expectedToken,
       inboundUuids: preview.inboundUuids,
       sniRollout: true,
       actorAdminId,
@@ -319,7 +321,7 @@ export const start = internalAction({
       added: p.added,
       removed: p.removed,
       witness: p.witness ?? undefined,
-      expectedToken: preview.expectedToken,
+      expectedToken,
       opId,
     });
     await ctx.runAction(internal.backendWrites.run, { opId });

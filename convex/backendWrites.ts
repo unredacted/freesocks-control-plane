@@ -12,8 +12,8 @@
  * profiles and nodes and holds the claims until the nodes show the work ran.
  */
 import { ConvexError, v } from 'convex/values';
-import type { ActionCtx, MutationCtx } from './_generated/server';
-import { internalAction, internalMutation } from './_generated/server';
+import type { ActionCtx, MutationCtx, QueryCtx } from './_generated/server';
+import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { runWithCronOutcome } from './cronHeartbeat';
@@ -37,10 +37,20 @@ import { poolFromConfig } from './lib/remnawavePlacement';
 import { parseRealityTarget } from './lib/edges/inboundMapping';
 import { assertNoRotationOrQuarantine } from './lib/edges/relayGuards';
 import { panelDigestKey } from './lib/backend/key';
-import { PatchRefused, checkPatchOps, type PatchOp } from './lib/backend/patchOps';
-import { closeForSharedChange } from './nodeIntents';
+import {
+  PatchRefused,
+  checkPatchOps,
+  needsFreshKeys,
+  opensPort,
+  type PatchMaterial,
+  type PatchOp,
+} from './lib/backend/patchOps';
+import { generateRealityKey } from './lib/backend/realityKeys';
+import { patchOp } from './lib/backend/patchOpArgs';
+import { PROFILE_DEFAULTS } from './lib/backend/profileTemplate';
+import { addressesOf, closeForSharedChange } from './nodeIntents';
 import { HOST_REMARK_MAX } from './lib/backend/hostRemark';
-import { claimOp } from './backendLedger';
+import { assertClaimable, claimOp } from './backendLedger';
 import { observeInstance } from './backendObserve';
 
 const refuse = (code: string, message: string): never => {
@@ -788,14 +798,110 @@ export const requestNodeDelete = internalMutation({
 
 // --- config profiles --------------------------------------------------------------------------------
 
-const patchOp = v.union(
-  v.object({
-    op: v.literal('setRealityServerNames'),
-    inboundTag: v.string(),
-    names: v.array(v.string()),
-  }),
-  v.object({ op: v.literal('setRealityTarget'), inboundTag: v.string(), target: v.string() }),
-);
+/** A node that would listen on a moved transport, and who confirms its firewall. */
+export interface PortNode {
+  name: string;
+  nodeUuid: string;
+  intentId?: Id<'panelNodeIntents'>;
+  /** `role`: an enrolled node the role runs. `operator`: unmanaged or adopted (no role runs it). */
+  confirmedBy: 'role' | 'operator';
+}
+
+function isLoopbackListen(listen: string | null | undefined): boolean {
+  if (!listen) return false;
+  const l = listen
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, '');
+  return l === 'localhost' || l === '::1' || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(l);
+}
+
+/**
+ * What moving one transport to `port` reaches, from what FCP last read, or a
+ * refusal: the nodes that will listen there (each must let the port in first),
+ * and the port it leaves. Refused when the transport is loopback (its port is
+ * the node proxy's route), when an origin forwards to it (the edges dial its
+ * port), or when a node serving it already uses the port for another of its
+ * transports or for its own API (the backend checks none of this, measured).
+ */
+export async function portChangeImpact(
+  ctx: { db: QueryCtx['db'] },
+  sid: Id<'backendServers'>,
+  profileUuid: string,
+  inboundUuid: string,
+  port: number,
+): Promise<{ fromPort: number | null; nodes: PortNode[] }> {
+  const profiles = await ctx.db
+    .query('panelProfiles')
+    .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+    .collect();
+  const profile = profiles.find((p) => p.profileUuid === profileUuid);
+  const inbound = profile?.inbounds.find((i) => i.inboundUuid === inboundUuid);
+  if (!profile || !inbound)
+    return refuse(
+      'servers.unknown_inbound',
+      'That transport is not on this backend. Refresh and retry',
+    );
+  if (isLoopbackListen(inbound.listen))
+    refuse(
+      'servers.port_loopback',
+      `${inbound.tag} listens on loopback behind the node's own proxy. Its port is not changed here`,
+    );
+  const relays = await ctx.db
+    .query('relays')
+    .withIndex('by_backend_server', (q) => q.eq('backendServerId', sid))
+    .collect();
+  for (const relay of relays) {
+    const bound = (
+      await ctx.db
+        .query('relayListeners')
+        .withIndex('by_relay', (q) => q.eq('relayId', relay._id))
+        .collect()
+    ).some((l) => !l.retired && l.panelBinding?.configProfileInboundUuid === inboundUuid);
+    if (bound)
+      refuse(
+        'servers.port_edge_bound',
+        `${relay.slug} forwards to this transport at its port. Remove that protection first`,
+      );
+  }
+  const inboundsOf = new Map(profiles.map((p) => [p.profileUuid, p.inbounds]));
+  const nodes = (
+    await ctx.db
+      .query('panelNodes')
+      .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+      .collect()
+  ).filter((n) => !n.isDisabled && n.activeInboundUuids.includes(inboundUuid));
+  const intents = await ctx.db
+    .query('panelNodeIntents')
+    .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+    .collect();
+  const out: PortNode[] = [];
+  for (const n of nodes) {
+    const intent =
+      intents.find((i) => i.nodeUuid === n.nodeUuid) ?? intents.find((i) => i.name === n.name);
+    // The node's API port (as the backend has it, and as FCP will set it) and
+    // its own proxy's public port are listeners on the same machine.
+    if (n.port === port || intent?.settings.nodePort === port)
+      refuse('servers.port_taken', `${n.name} talks to the backend on port ${port}`);
+    if (intent?.settings.ingress?.externalPort === port)
+      refuse('servers.port_taken', `${n.name}'s own proxy listens on port ${port}`);
+    const others = (inboundsOf.get(n.configProfileUuid ?? '') ?? []).filter(
+      (i) => i.inboundUuid !== inboundUuid && n.activeInboundUuids.includes(i.inboundUuid),
+    );
+    const clash = others.find((i) => i.port === port);
+    if (clash)
+      refuse('servers.port_taken', `${n.name} already serves ${clash.tag} on port ${port}`);
+    const roleRuns =
+      !!intent && !intent.adopted && intent.state !== 'retiring' && intent.state !== 'retired';
+    out.push({
+      name: n.name,
+      nodeUuid: n.nodeUuid,
+      ...(intent ? { intentId: intent._id } : {}),
+      confirmedBy: roleRuns ? 'role' : 'operator',
+    });
+  }
+  return { fromPort: inbound.port, nodes: out };
+}
 
 /**
  * Claim a typed profile edit that was just previewed against the live backend.
@@ -807,8 +913,228 @@ const patchOp = v.union(
  *  - an origin that is rotating, restoring, quarantined or mid-setup holds still;
  *  - the profile, every enabled node on it and every affected origin are claimed
  *    together, and the origin claims are what rotations, restores, registrations
- *    and setup runs refuse against (`assertNoRelayPanelClaim`).
+ *    and setup runs refuse against (`assertNoRelayPanelClaim`);
+ *  - a port change is claimed only for the staged change that owns it, once
+ *    every node has confirmed its firewall (backendPortChanges.ts): never
+ *    straight from a preview;
+ *  - a new transport's tag must be free on the whole backend (409 otherwise,
+ *    measured), and no node serves it yet, so nothing closes for it.
  */
+export async function claimProfilePatch(
+  ctx: MutationCtx,
+  a: {
+    backendServerId: Id<'backendServers'>;
+    profileUuid: string;
+    ops: PatchOp[];
+    baseToken: string;
+    expectedToken: string | null;
+    inboundUuids: Record<string, string>;
+    sniRollout?: boolean;
+    unmanaged?: 'hold' | 'acknowledge';
+    portChangeId?: Id<'panelPortChanges'>;
+    actorAdminId?: Id<'adminUsers'>;
+  },
+): Promise<{ opId: Id<'panelOps'>; restartsNodes: number; affectedRelays: number }> {
+  const sid = a.backendServerId;
+  let ops: PatchOp[];
+  try {
+    ops = checkPatchOps(a.ops);
+  } catch (e) {
+    if (e instanceof PatchRefused) return refuse(e.code, e.message);
+    throw e;
+  }
+  const cached = await ctx.db
+    .query('panelProfiles')
+    .withIndex('by_server_uuid', (q) =>
+      q.eq('backendServerId', sid).eq('profileUuid', a.profileUuid),
+    )
+    .unique();
+  if (!cached) return refuse('not_found', 'That profile is not on this backend. Refresh and retry');
+  // Only a new REALITY transport's token is unknown before the attempt makes its key.
+  if (a.expectedToken === null && !needsFreshKeys(ops))
+    refuse('validation', 'The preview did not say what the profile becomes');
+  if (a.baseToken === a.expectedToken) refuse('validation', 'Nothing to change');
+
+  if (opensPort(ops)) {
+    const change = a.portChangeId ? await ctx.db.get(a.portChangeId) : null;
+    if (
+      !change ||
+      change.state !== 'waiting' ||
+      change.backendServerId !== sid ||
+      change.profileUuid !== a.profileUuid ||
+      change.ops !== JSON.stringify(ops)
+    )
+      refuse(
+        'servers.port_change_staged',
+        'A port change waits for the nodes to open the port. Stage it as a port change',
+      );
+    const waiting = (
+      await ctx.db
+        .query('panelPortRequirements')
+        .withIndex('by_change', (q) => q.eq('changeId', change!._id))
+        .collect()
+    ).filter((r) => r.state === 'waiting');
+    if (waiting.length > 0)
+      refuse(
+        'servers.firewall_unconfirmed',
+        `${waiting[0]!.nodeName} has not confirmed that its firewall lets the port in`,
+      );
+  }
+
+  const touched = new Map<string, string>();
+  const ports: Record<string, number> = {};
+  for (const op of ops) {
+    if (op.op === 'addInboundFromTemplate') {
+      // Tags are unique across the whole backend, not per profile (409, measured).
+      const all = await ctx.db
+        .query('panelProfiles')
+        .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+        .collect();
+      if (all.some((p) => p.inbounds.some((i) => i.tag === op.inboundTag)))
+        refuse(
+          'servers.tag_taken',
+          `A transport is already tagged ${op.inboundTag} on this backend`,
+        );
+      continue;
+    }
+    const uuid = a.inboundUuids[op.inboundTag];
+    if (!uuid) return refuse('servers.unknown_inbound', `No inbound is tagged ${op.inboundTag}`);
+    // The provider edits by TAG; who feels it (nodes, origins, firewalls) is
+    // computed by UUID. The two must name the same transport, as FCP last read it.
+    if (cached.inbounds.find((i) => i.tag === op.inboundTag)?.inboundUuid !== uuid)
+      refuse(
+        'servers.unknown_inbound',
+        `${op.inboundTag} is not that transport on this profile. Refresh and preview again`,
+      );
+    touched.set(op.inboundTag, uuid);
+    if (op.op === 'setInboundPort') {
+      // Re-checked at the claim: a node may have moved onto the transport since.
+      await portChangeImpact(ctx, sid, a.profileUuid, uuid, op.port);
+      ports[op.inboundTag] = op.port;
+    }
+  }
+  const touchedUuids = new Set(touched.values());
+
+  // A family-managed transport has ONE author of its allowlist and target: the
+  // rollout, which hands names to members only after each node proved it
+  // accepts them. A manual edit would bypass exactly that. Its port is not the
+  // family's: a port change passes.
+  if (!a.sniRollout)
+    for (const op of ops) {
+      if (op.op !== 'setRealityServerNames' && op.op !== 'setRealityTarget') continue;
+      const uuid = touched.get(op.inboundTag)!;
+      const managed = await ctx.db
+        .query('sniInboundBindings')
+        .withIndex('by_server_inbound', (q) => q.eq('backendServerId', sid).eq('inboundUuid', uuid))
+        .unique();
+      if (managed)
+        refuse(
+          'servers.inbound_sni_managed',
+          'A server-name family manages this transport. Change its names in the family',
+        );
+    }
+
+  // Origins whose listeners are bound to a touched transport.
+  const relays = await ctx.db
+    .query('relays')
+    .withIndex('by_backend_server', (q) => q.eq('backendServerId', sid))
+    .collect();
+  const now = Date.now();
+  const affected: Id<'relays'>[] = [];
+  for (const relay of relays) {
+    const listeners = (
+      await ctx.db
+        .query('relayListeners')
+        .withIndex('by_relay', (q) => q.eq('relayId', relay._id))
+        .collect()
+    ).filter(
+      (l) =>
+        !l.retired && !!l.panelBinding && touchedUuids.has(l.panelBinding.configProfileInboundUuid),
+    );
+    if (listeners.length === 0) continue;
+    await assertNoRotationOrQuarantine(ctx.db, relay);
+    const runs = await ctx.db
+      .query('edgeSetupRuns')
+      .withIndex('by_relay', (q) => q.eq('relayId', relay._id))
+      .collect();
+    if (runs.some((r) => r.state === 'running' || r.state === 'waiting' || r.state === 'needs_you'))
+      refuse('servers.relay_setup_running', `A guided setup is still running on ${relay.slug}`);
+    for (const op of ops) {
+      if (op.op !== 'setRealityServerNames') continue;
+      const keep = new Set(op.names);
+      for (const l of listeners) {
+        if (l.panelBinding!.configProfileInboundUuid !== touched.get(op.inboundTag)) continue;
+        const stranded = (l.tlsNames ?? []).filter(
+          (n) =>
+            !keep.has(n.name) &&
+            (n.status === 'active' || (n.drainUntil !== undefined && n.drainUntil > now)),
+        );
+        if (stranded.length > 0)
+          refuse(
+            'servers.name_in_use',
+            `${relay.slug} still hands out ${stranded[0].name}. Retire it on the relay and let it drain first`,
+          );
+      }
+    }
+    affected.push(relay._id);
+  }
+
+  const nodes = (
+    await ctx.db
+      .query('panelNodes')
+      .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+      .collect()
+  ).filter((n) => !n.isDisabled && n.configProfileUuid === a.profileUuid);
+
+  const targets: Record<string, { address: string; port: number }> = {};
+  for (const op of ops)
+    if (op.op === 'setRealityTarget') targets[op.inboundTag] = parseRealityTarget(op.target)!;
+
+  const claimKeys = [
+    claimKey.profile(a.profileUuid),
+    ...nodes.map((n) => claimKey.node(n.nodeUuid)),
+    ...affected.map((r) => `relay:${r}`),
+  ];
+  // Every refusal of the claim comes before the transition: a caller that
+  // catches it (a staged port change keeps waiting) must not commit closed
+  // nodes and holds for a change that was not admitted.
+  await assertClaimable(ctx, sid, claimKeys);
+
+  // An edit (never a rollout: names reach members by per-node receipts) is
+  // applied in place under every node on the touched transports: the
+  // maintenance transition over its blast radius comes BEFORE the claim. A new
+  // transport touches no node's served path (no node serves it yet).
+  if (!a.sniRollout && touchedUuids.size > 0)
+    await closeForSharedChange(ctx, {
+      backendServerId: sid,
+      transportUuids: [...touchedUuids],
+      reason: 'profile',
+      unmanaged: a.unmanaged,
+      actorAdminId: a.actorAdminId,
+    });
+
+  const opId = await claimOp(ctx, {
+    backendServerId: sid,
+    kind: 'profile',
+    verb: 'patch',
+    label: cached.name,
+    objectUuid: a.profileUuid,
+    claimKeys,
+    intent: { ops, baseToken: a.baseToken },
+    postcondition: {
+      // Null until the attempt has made the new transport's key (markSent).
+      expectedToken: a.expectedToken,
+      inboundUuids: a.inboundUuids,
+      targets,
+      ports,
+      relayIds: affected,
+    },
+    asyncNodeUuids: nodes.map((n) => n.nodeUuid),
+    actorAdminId: a.actorAdminId,
+  });
+  return { opId, restartsNodes: nodes.length, affectedRelays: affected.length };
+}
+
 export const requestProfilePatch = internalMutation({
   args: {
     backendServerId: v.id('backendServers'),
@@ -816,7 +1142,7 @@ export const requestProfilePatch = internalMutation({
     ops: v.array(patchOp),
     /** From the preview the operator confirmed. */
     baseToken: v.string(),
-    expectedToken: v.string(),
+    expectedToken: v.union(v.string(), v.null()),
     inboundUuids: v.record(v.string(), v.string()),
     /** Set by the server-name rollout only; no HTTP route can pass it. */
     sniRollout: v.optional(v.boolean()),
@@ -827,145 +1153,28 @@ export const requestProfilePatch = internalMutation({
     unmanaged: v.optional(v.union(v.literal('hold'), v.literal('acknowledge'))),
     ...actor,
   },
-  handler: async (ctx, a) => {
-    const sid = a.backendServerId;
-    let ops: PatchOp[];
-    try {
-      ops = checkPatchOps(a.ops as PatchOp[]);
-    } catch (e) {
-      if (e instanceof PatchRefused) return refuse(e.code, e.message);
-      throw e;
-    }
-    const cached = await ctx.db
-      .query('panelProfiles')
-      .withIndex('by_server_uuid', (q) =>
-        q.eq('backendServerId', sid).eq('profileUuid', a.profileUuid),
-      )
+  handler: (ctx, a) => claimProfilePatch(ctx, { ...a, ops: a.ops as PatchOp[] }),
+});
+
+/** A REALITY template's family, resolved to the target and the names usable today. */
+export const familyForTemplate = internalQuery({
+  args: { slug: v.string() },
+  handler: async (ctx, { slug }) => {
+    const family = await ctx.db
+      .query('sniFamilies')
+      .withIndex('by_slug', (q) => q.eq('slug', slug))
       .unique();
-    if (!cached)
-      return refuse('not_found', 'That profile is not on this backend. Refresh and retry');
-    if (a.baseToken === a.expectedToken) refuse('validation', 'Nothing to change');
-
-    const touched = new Map<string, string>();
-    for (const op of ops) {
-      const uuid = a.inboundUuids[op.inboundTag];
-      if (!uuid) return refuse('servers.unknown_inbound', `No inbound is tagged ${op.inboundTag}`);
-      touched.set(op.inboundTag, uuid);
-    }
-    const touchedUuids = new Set(touched.values());
-
-    // A family-managed transport has ONE author of its allowlist and target: the
-    // rollout, which hands names to members only after each node proved it
-    // accepts them. A manual edit would bypass exactly that.
-    if (!a.sniRollout)
-      for (const uuid of touchedUuids) {
-        const managed = await ctx.db
-          .query('sniInboundBindings')
-          .withIndex('by_server_inbound', (q) =>
-            q.eq('backendServerId', sid).eq('inboundUuid', uuid),
-          )
-          .unique();
-        if (managed)
-          refuse(
-            'servers.inbound_sni_managed',
-            'A server-name family manages this transport. Change its names in the family',
-          );
-      }
-
-    // Origins whose listeners are bound to a touched transport.
-    const relays = await ctx.db
-      .query('relays')
-      .withIndex('by_backend_server', (q) => q.eq('backendServerId', sid))
-      .collect();
-    const now = Date.now();
-    const affected: Id<'relays'>[] = [];
-    for (const relay of relays) {
-      const listeners = (
-        await ctx.db
-          .query('relayListeners')
-          .withIndex('by_relay', (q) => q.eq('relayId', relay._id))
-          .collect()
-      ).filter(
-        (l) =>
-          !l.retired &&
-          !!l.panelBinding &&
-          touchedUuids.has(l.panelBinding.configProfileInboundUuid),
-      );
-      if (listeners.length === 0) continue;
-      await assertNoRotationOrQuarantine(ctx.db, relay);
-      const runs = await ctx.db
-        .query('edgeSetupRuns')
-        .withIndex('by_relay', (q) => q.eq('relayId', relay._id))
-        .collect();
-      if (
-        runs.some((r) => r.state === 'running' || r.state === 'waiting' || r.state === 'needs_you')
-      )
-        refuse('servers.relay_setup_running', `A guided setup is still running on ${relay.slug}`);
-      for (const op of ops) {
-        if (op.op !== 'setRealityServerNames') continue;
-        const keep = new Set(op.names);
-        for (const l of listeners) {
-          if (l.panelBinding!.configProfileInboundUuid !== touched.get(op.inboundTag)) continue;
-          const stranded = (l.tlsNames ?? []).filter(
-            (n) =>
-              !keep.has(n.name) &&
-              (n.status === 'active' || (n.drainUntil !== undefined && n.drainUntil > now)),
-          );
-          if (stranded.length > 0)
-            refuse(
-              'servers.name_in_use',
-              `${relay.slug} still hands out ${stranded[0].name}. Retire it on the relay and let it drain first`,
-            );
-        }
-      }
-      affected.push(relay._id);
-    }
-
-    const nodes = (
+    // A family turned off gives no transport its names, as setup refuses it.
+    if (!family || !family.enabled) return null;
+    const names = (
       await ctx.db
-        .query('panelNodes')
-        .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+        .query('sniNames')
+        .withIndex('by_family_seq', (q) => q.eq('familyId', family._id))
         .collect()
-    ).filter((n) => !n.isDisabled && n.configProfileUuid === a.profileUuid);
-
-    const targets: Record<string, { address: string; port: number }> = {};
-    for (const op of ops)
-      if (op.op === 'setRealityTarget') targets[op.inboundTag] = parseRealityTarget(op.target)!;
-
-    // An edit (never a rollout: names reach members by per-node receipts) is
-    // applied in place under every node on the touched transports: the
-    // maintenance transition over its blast radius comes BEFORE the claim.
-    if (!a.sniRollout)
-      await closeForSharedChange(ctx, {
-        backendServerId: sid,
-        transportUuids: [...touchedUuids],
-        reason: 'profile',
-        unmanaged: a.unmanaged,
-        actorAdminId: a.actorAdminId,
-      });
-
-    const opId = await claimOp(ctx, {
-      backendServerId: sid,
-      kind: 'profile',
-      verb: 'patch',
-      label: cached.name,
-      objectUuid: a.profileUuid,
-      claimKeys: [
-        claimKey.profile(a.profileUuid),
-        ...nodes.map((n) => claimKey.node(n.nodeUuid)),
-        ...affected.map((r) => `relay:${r}`),
-      ],
-      intent: { ops, baseToken: a.baseToken },
-      postcondition: {
-        expectedToken: a.expectedToken,
-        inboundUuids: a.inboundUuids,
-        targets,
-        relayIds: affected,
-      },
-      asyncNodeUuids: nodes.map((n) => n.nodeUuid),
-      actorAdminId: a.actorAdminId,
-    });
-    return { opId, restartsNodes: nodes.length, affectedRelays: affected.length };
+    )
+      .filter((n) => n.status === 'active' && n.qualification.state === 'ok')
+      .map((n) => n.name);
+    return { target: `${family.target.address}:${family.target.port}`, names };
   },
 });
 
@@ -981,6 +1190,22 @@ async function writesFor(ctx: ActionCtx, backendServerId: Id<'backendServers'>) 
       message: 'This backend type cannot be managed here',
     });
   return { writes, config: server.config as BackendConfig };
+}
+
+/**
+ * The key material a new REALITY transport needs, made for THIS attempt: it
+ * exists in this action's memory and the provider call only.
+ */
+function freshMaterial(ops: readonly PatchOp[]): PatchMaterial | undefined {
+  if (!needsFreshKeys(ops)) return undefined;
+  const out: Record<string, { privateKey: string; shortIds: readonly string[] }> = {};
+  for (const op of ops)
+    if (op.op === 'addInboundFromTemplate' && op.template.kind !== 'ws')
+      out[op.inboundTag] = {
+        privateKey: generateRealityKey().privateKey,
+        shortIds: PROFILE_DEFAULTS.shortIds,
+      };
+  return out;
 }
 
 /** One look at the backend for this op; never throws (a failed look changes nothing). */
@@ -1090,32 +1315,66 @@ export const run = internalAction({
             .filter((n) => (op.asyncNodes ?? []).some((a) => a.nodeUuid === n.nodeUuid))
             .map((n) => ({ nodeUuid: n.nodeUuid, before: n.lastStatusChange }))
         : undefined;
-    const sent = await ctx.runMutation(internal.backendLedger.markSent, {
-      opId,
-      attemptId: crypto.randomUUID(),
-      asyncNodes,
-    });
-    if (!sent.send) return { open: await look(ctx, opId) };
+    const attemptId = crypto.randomUUID();
+    // A profile edit records its attempt INSIDE the provider call, once the
+    // edit is computed from a fresh read: the token it will leave behind is
+    // known only then when the attempt makes a key (`beforeSend`).
+    if (op.kind !== 'profile') {
+      const sent = await ctx.runMutation(internal.backendLedger.markSent, {
+        opId,
+        attemptId,
+        asyncNodes,
+      });
+      if (!sent.send) return { open: await look(ctx, opId) };
+    }
 
     let objectUuid: string | undefined;
     let outcome: ReturnType<typeof classifyRequest>;
     let errorCode: string | undefined;
     try {
       if (op.kind === 'profile') {
+        let mark: { send: boolean; mismatch?: boolean; failed?: boolean } | null = null;
         const sent = await writes.applyProfilePatch(
           config,
           op.objectUuid!,
           intent.ops,
           intent.baseToken,
           (await panelDigestKey()).key,
+          {
+            material: freshMaterial(intent.ops),
+            beforeSend: async (expectedToken) => {
+              try {
+                mark = await ctx.runMutation(internal.backendLedger.markSent, {
+                  opId,
+                  attemptId,
+                  asyncNodes,
+                  expectedToken,
+                });
+              } catch {
+                // Whether the attempt was recorded is unknown: send nothing, and
+                // let the sweep settle it (released as never sent, or looked at).
+                mark = { send: false, failed: true };
+              }
+              return mark.send;
+            },
+          },
         );
         if (!sent.sent) {
+          const m = mark as { send: boolean; mismatch?: boolean; failed?: boolean } | null;
+          // Another run recorded the attempt first: it is that run's to finish.
+          if (m && !m.send && !m.mismatch) return { open: await look(ctx, opId) };
           // Someone else changed the profile since the preview (or there is
-          // nothing to do): the PATCH was never made.
+          // nothing to do, or the edit would not leave the previewed token):
+          // the PATCH was never made.
           await ctx.runMutation(internal.backendLedger.recordOutcome, {
             opId,
             request: 'rejected_pre_mutation',
-            errorCode: `servers.${sent.reason}`,
+            errorCode:
+              m?.mismatch || sent.reason === 'profile_changed'
+                ? 'servers.profile_changed'
+                : sent.reason === 'nothing_to_change'
+                  ? 'servers.nothing_to_change'
+                  : 'servers.not_admitted',
           });
           await ctx.runMutation(internal.sniRollouts.syncByOp, { opId });
           return { open: false };
@@ -1169,7 +1428,67 @@ export type ProfilePatchPreviewView = ProfilePatchPreview & {
   ops: PatchOp[];
   restartsNodes: string[];
   affectedRelays: { relaySlug: string; listenerKeys: string[]; publishedEdges: number }[];
+  firewall: {
+    port: number;
+    nodes: { name: string; confirmedBy: 'role' | 'operator'; enrolled: boolean }[];
+  } | null;
+  otherAddresses: { remark: string; address: string; port: number }[];
 };
+
+/**
+ * Who a port change reaches, for the preview: the nodes that must let the new
+ * port in (and who confirms each), and the addresses on the transport FCP does
+ * not own. Those keep the port they name: a forwarder in front of a node may
+ * map it, so FCP lists them and never moves them. An enrolled node's own
+ * addresses follow the port in its reconcile.
+ */
+export const portPreview = internalQuery({
+  args: {
+    backendServerId: v.id('backendServers'),
+    profileUuid: v.string(),
+    inboundUuid: v.string(),
+    port: v.number(),
+  },
+  handler: async (ctx, a) => {
+    const impact = await portChangeImpact(
+      ctx,
+      a.backendServerId,
+      a.profileUuid,
+      a.inboundUuid,
+      a.port,
+    );
+    const sid = a.backendServerId;
+    const [intents, hosts] = await Promise.all([
+      ctx.db
+        .query('panelNodeIntents')
+        .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+        .collect(),
+      ctx.db
+        .query('panelHosts')
+        .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+        .collect(),
+    ]);
+    const owned = new Set(intents.flatMap((i) => addressesOf(i, hosts).map((h) => h.hostUuid)));
+    return {
+      firewall: {
+        port: a.port,
+        nodes: impact.nodes.map((n) => ({
+          name: n.name,
+          confirmedBy: n.confirmedBy,
+          enrolled: !!n.intentId,
+        })),
+      },
+      otherAddresses: hosts
+        .filter(
+          (h) =>
+            h.configProfileInboundUuid === a.inboundUuid &&
+            !owned.has(h.hostUuid) &&
+            h.port === impact.fromPort,
+        )
+        .map((h) => ({ remark: h.remark, address: h.address, port: h.port })),
+    };
+  },
+});
 
 export const previewProfilePatch = internalAction({
   args: { backendServerId: v.id('backendServers'), profileUuid: v.string(), ops: v.any() },
@@ -1188,7 +1507,17 @@ export const previewProfilePatch = internalAction({
         profileUuid,
         inboundUuids: preview.touchedTags.map((t) => preview.inboundUuids[t]).filter(Boolean),
       });
-      return { ...preview, ops: checked, ...blast };
+      const portOp = checked.find((o) => o.op === 'setInboundPort');
+      const ports =
+        portOp && preview.changed
+          ? await ctx.runQuery(internal.backendWrites.portPreview, {
+              backendServerId,
+              profileUuid,
+              inboundUuid: preview.inboundUuids[portOp.inboundTag] ?? '',
+              port: portOp.port,
+            })
+          : { firewall: null, otherAddresses: [] };
+      return { ...preview, ops: checked, ...blast, ...ports };
     } catch (e) {
       if (e instanceof PatchRefused) throw new ConvexError({ code: e.code, message: e.message });
       if (e instanceof ConvexError) throw e;
@@ -1239,6 +1568,8 @@ export const reconcile = internalAction({
       for (const opId of released) await ctx.runMutation(internal.sniRollouts.syncByOp, { opId });
       let stillOpen = 0;
       for (const opId of toLook) if (await look(ctx, opId)) stillOpen++;
+      // A port change every node confirmed but a busy profile held back.
+      await ctx.runAction(internal.backendPortChanges.sweep, {});
       return { looked: toLook.length, stillOpen };
     }),
 });

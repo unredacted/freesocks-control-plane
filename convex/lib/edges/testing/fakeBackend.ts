@@ -2,8 +2,8 @@
  * Test helper: a fake Remnawave backend at `panel.example` with mutable tables
  * (config profiles, groups, Hosts, nodes, users), composable with other fakes
  * through `routeFetch` (mockFetch.ts). It answers what backend setup, node
- * enrollment, the activation runs and the edge machinery ask: profile and
- * group writes, Host create / update / delete, node create / update, user
+ * enrollment, the activation runs and the edge machinery ask: profile create
+ * and edit, group writes, Host create / update / delete, node create / update, user
  * issue / lookup / delete, and the subscription body, built from the ENABLED
  * Hosts in the format the user agent asks for (one entry per Host, remark =
  * the Host's, speaking its transport: REALITY over TCP or WebSocket over TLS).
@@ -183,6 +183,33 @@ export function createFakeBackend(opts: { host?: string } = {}): FakeBackend {
             realityPublicKey(i.streamSettings.realitySettings.privateKey) ?? 'pk';
       panel.profiles.push({ uuid, name: body.name, config: body.config, inbounds, publicKeyByTag });
       return json({ uuid }, 201);
+    }
+    if (path === '/api/config-profiles' && method === 'PATCH') {
+      // As the backend does (measured): the config is replaced wholesale, client
+      // lists are cleared, a transport keeps its uuid while its tag holds, a new
+      // tag gets a new one, and every node running the profile re-applies it.
+      const p = panel.profiles.find((x) => x.uuid === body.uuid);
+      if (p && body.config) {
+        const cfg = structuredClone(body.config);
+        for (const ib of cfg.inbounds ?? []) if (ib.settings?.clients) ib.settings.clients = [];
+        p.config = cfg;
+        p.inbounds = (cfg.inbounds as { tag: string }[]).map(
+          (ib) =>
+            (p.inbounds as { tag: string }[]).find((i) => i.tag === ib.tag) ?? {
+              uuid: UUID(++panel.seq),
+              tag: ib.tag,
+            },
+        );
+        p.publicKeyByTag ??= {};
+        for (const ib of cfg.inbounds as any[])
+          if (ib.streamSettings?.realitySettings?.privateKey && !p.publicKeyByTag[ib.tag])
+            p.publicKeyByTag[ib.tag] =
+              realityPublicKey(ib.streamSettings.realitySettings.privateKey) ?? 'pk';
+        for (const n of panel.nodes)
+          if (n.configProfile?.activeConfigProfileUuid === p.uuid)
+            n.lastStatusChange = `t${++panel.seq}`;
+      }
+      return json(p ?? null);
     }
     if (path === '/api/internal-squads' && method === 'POST') {
       const made = {

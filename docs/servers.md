@@ -9,7 +9,8 @@ one bounded provider call per action, one HTTP prefix with a dispatcher, contrac
 
 **Request bodies are the contract's words.** Every write route parses its body with the shared
 zod write schema (`AddressWrite`, `AddressPatch`, `ModeGroupWrite`, `ModeGroupPatch`,
-`ProfilePatchPreviewRequest`, `ProfilePatchApply`, `DirectTestConfirm`, `NodeRegistration`, …)
+`ProfilePatchPreviewRequest`, `ProfilePatchApply`, `PortChangeAcknowledge`, `DirectTestConfirm`,
+`NodeRegistration`, …)
 and maps it onto the internal mutations' stored names at the HTTP boundary (`transportUuid` →
 `inboundUuid`, `transportTag` → `inboundTag`). A field the API renamed (`inboundUuid`,
 `inboundUuids`, `inboundTag`, also inside `ops[]` and `binding`) is refused by name with a 400
@@ -18,8 +19,9 @@ silently. Responses are mapped back the same way (the profile preview answers `t
 and `changes[].transportTag`; the direct test link answers `binding.transportUuid`).
 
 **It ships dormant.** Reading a backend and changing it are separate switches, both off. Today
-the writes cover **Hosts**, **internal mode groups** and two typed edits of a **config profile**
-(REALITY server names and target); node writes follow.
+the writes cover **Hosts**, **internal mode groups**, **nodes** and four typed edits of a
+**config profile** (REALITY server names and target, a transport's port, a transport added from
+a template).
 
 Backends: a type takes part when its provider implements `observePanel` and declares the
 `panelObservation` capability (`convex/lib/backends/capabilities.ts`). Remnawave 3.x does;
@@ -115,6 +117,8 @@ Every write route that touches a profile is designed around what this run shows:
 | How many server names does production Xray take on one transport? | 64, 256, 512 and **1024** all work: first, middle and last name authenticate, a name beyond the list does not.                                                                                                                       |
 | Is `xrayUptime` evidence that Xray (re)started?                   | **No.** It read `0` or `2` on every read, before and after every change.                                                                                                                                                             |
 | Is `isConnected` evidence that a node applied a change?           | **No.** It stayed `true` for a node that was cut off (only `isConnecting` flipped). `lastStatusChange` moves on each application, but it is the backend's own clock about the backend's own view.                                    |
+| A transport moved to a port the node's firewall drops             | It serves nobody: the old port is gone seconds after the `PATCH`, the new one is dropped. Let in, the same client connects about 1 s later with nothing else changed. The transport keeps its uuid.                                  |
+| A transport added to the profile                                  | The node re-applies the profile and keeps exactly its own transports: nothing listens on the new one until a node is assigned to it.                                                                                                 |
 
 One harness detail worth knowing when building on it: current Xray refuses to proxy to private
 addresses, so the test's data network deliberately uses a non-private subnet; the REALITY
@@ -198,14 +202,40 @@ stale preconditions are ignored). An edit is therefore a read-modify-write, in t
    nothing else moved**, key material included.
 
 The edit itself is `convex/lib/backend/patchOps.ts`: a **closed set** of operations
-(`setRealityServerNames`, `setRealityTarget`), no raw JSON. It refuses a config that is not an
-object, an empty `inbounds` (writing that back would strip the nodes), a missing or duplicated
-tag, a non-REALITY transport. Everything it does not name is carried over by reference, the
-private key and short ids included; they exist only inside the provider call. It never changes
-a transport's tag, protocol or position, because the backend keeps a transport's uuid only while
-tag and protocol hold (measured) and listener bindings, Hosts and mode groups hang off that uuid. A
-uuid that moved anyway is flagged (`servers.inbound_uuid_changed`). Port changes and new
-transports are not offered yet: they need the node's firewall to be ready first.
+(`setRealityServerNames`, `setRealityTarget`, `setInboundPort`, `addInboundFromTemplate`), no raw
+JSON. It refuses a config that is not an object, an empty `inbounds` (writing that back would
+strip the nodes), a missing or duplicated tag, a non-REALITY transport for a names or target
+edit. Everything it does not name is carried over by reference, the private key and short ids
+included; they exist only inside the provider call. It never changes a transport's tag, protocol
+or position, because the backend keeps a transport's uuid only while tag and protocol hold
+(measured, a port change included) and listener bindings, Hosts and mode groups hang off that
+uuid; a new transport is appended. A uuid that moved anyway is flagged
+(`servers.inbound_uuid_changed`). A port change and a new transport are each made on their own
+(one op per edit).
+
+- **`setInboundPort`** moves one transport to another port. Every node serving it listens there
+  seconds after the write, so it is **staged** until each of those nodes has confirmed its
+  firewall lets the port in (§ Firewall acknowledgement); the apply route refuses it
+  (`servers.port_change_staged`). The backend checks neither the range nor collisions (measured:
+  it stores 70000, and two transports on one port), so FCP refuses a port out of range, a port a
+  node on the transport already uses for another of its transports or for its own API
+  (`servers.port_taken`; the node's API port as FCP will set it and its own proxy's public port
+  count too), a loopback transport (`servers.port_loopback`: it sits behind the
+  node's own proxy, whose route to it is a node setting), a port range (`servers.port_not_single`)
+  and a transport an origin forwards to (`servers.port_edge_bound`: the edges dial its port).
+- **`addInboundFromTemplate`** adds a transport built exactly as setup builds a mode's
+  (`lib/backend/profileTemplate.ts`: REALITY, XHTTP under REALITY, or a loopback WebSocket), with
+  the tag and port asked for. A REALITY template names a server-name family; the preview answers
+  it with the family's target and the names usable today (a family that is turned off gives none:
+  `servers.family_missing`), and the apply takes that back verbatim. Its **key pair is made inside the claimed attempt** and never stored, logged or
+  returned, so no preview can predict the token the profile will have: the preview answers
+  `expectedToken: null`, and the attempt records the token it computed from its own fresh read
+  immediately before the `PATCH` (`markSent`), which is what the look then settles on and what
+  tells the observer the edit was FCP's. A tag another transport of the backend has is refused
+  (`servers.tag_taken`; the backend answers 409). **No node serves a new transport** until it is
+  assigned to it (measured: the backend re-applies the profile to its nodes, and each keeps
+  exactly its own transports), so the add opens no port and closes no node. Setting the backend
+  up again with a mode whose group name gives this tag adopts it (§ Setting up a backend).
 
 The residual race is stated plainly: between FCP's last read and its `PATCH`, another writer's
 change would be overwritten and cannot be detected afterwards. That is why every FCP writer of
@@ -296,9 +326,82 @@ to the backend, and FCP never waits on the role for anything on it. A backend th
 nodes is **adopted** (below), never re-bootstrapped: the role is not run for an existing
 machine.
 
-Not built yet: the firewall acknowledgement (FCP publishing the ports an edit needs and the role
-confirming them). Nothing FCP writes today opens a port: the typed profile edits change names
-and targets only.
+The one thing FCP waits on the role for is a **firewall**: a port change is not sent until the
+role (or, for a node no role runs, an admin) has confirmed the new port is let in (§ Firewall
+acknowledgement).
+
+### Firewall acknowledgement
+
+A node must not be told to listen on a port its firewall drops (it would serve nobody, measured
+on a real node with the port dropped), and members must not be given a port before it is
+reachable. `convex/backendPortChanges.ts` (the only writer of `panelPortChanges` and
+`panelPortRequirements`) stages a port change instead of sending it:
+
+1. **Stage.** `POST {slug}/profiles/{uuid}/port-change` takes what the preview answered (the
+   preview of a port change lists the nodes and who confirms each, and the addresses on the
+   transport FCP does not own: those keep the port they name, since a forwarder in front of a
+   node may map it, so they are listed and never moved). It records the edit and **one
+   requirement per node serving the transport**: an enrolled node the role runs is confirmed by
+   the role (`role`); a node FCP does not manage, or an adopted one (no role runs its machine),
+   by an admin (`operator`). Nothing is claimed and nothing is sent: members keep the old port.
+   Nodes FCP does not manage need the usual treatment (`unmanaged: hold | acknowledge`), and one
+   port change per profile is open at a time (`servers.port_change_waiting`).
+2. **Confirm.** The role reads the pending port in its node's view and reports it in its applied
+   report (below); an admin confirms an `operator` node by name (`POST {slug}/port-changes/{id}/
+acknowledge {nodeNames}`, refused for a `role` node: `servers.firewall_role_confirms`). Each
+   confirmation is audited (`servers.port_change.confirmed`, `by: role | operator`).
+3. **Apply.** The last confirmation admits the edit through the ledger in ONE transaction with
+   the change (`admit`, then `run`): the claim is owned by that change (`portChangeId`; a port
+   op without it is refused), every refusal of the claim is checked BEFORE the maintenance
+   transition (so a change that is not admitted leaves no node closed and no hold behind), the
+   transition closes every node on the transport before the write (§ A shared change), and the
+   one attempt is sent and looked at like every profile edit. Admission re-reads who serves the
+   transport: a node that started serving it since staging gets a requirement of its own and the
+   change keeps waiting (`servers.firewall_unconfirmed`); a node that stopped serving it (turned
+   off, removed, moved) is no longer waited for. A busy profile (`servers.op_running`,
+   `servers.op_uncertain`) or the switch turned off leaves it waiting; the `backend-reconcile`
+   sweep looks at every waiting change again and sends what is ready. Any other refusal ends it
+   as `refused` with the code. A profile edited between the preview and the send is refused with
+   nothing sent (`servers.profile_changed`), as for every profile edit. The transport a change
+   names must be the one its tag names on the profile as last read (`servers.unknown_inbound`
+   otherwise, for every profile edit): the backend is edited by tag, the nodes are found by uuid.
+4. **Settle.** Once the moved transport is SEEN, the setup row's record of the mode's transport
+   follows (the review and the node's addresses read their port from it) and every enrolled node
+   on it is reconciled at once, so its own addresses move to the new port while it is still
+   closed (a reconcile already running is fenced by a new generation and runs again); it comes
+   back through its own verification (the direct test link dials the new port) and approval. A
+   transport whose uuid moved anyway (`servers.inbound_uuid_changed`) is not bridged: nothing is
+   re-pointed at the old uuid. The change's outcome is its op's (`applying`, `applied` only once
+   the edit was SEEN, `refused`), or `recovered` when a recorded recovery settled it: that says
+   nothing about whether the port moved, and the page says so.
+
+`POST {slug}/port-changes/{id}/cancel` withdraws a change that still waits (nothing was sent; a
+node that already opened the port keeps it open). `GET {slug}/port-changes` lists the open ones
+and the last few settled; the Servers page shows them as "Port changes", with each node's wait
+in words.
+
+#### What the node role does (contract v2, firewall)
+
+The role repository implements this; FCP only describes it.
+
+- **Read the ports.** The node's view (`GET {slug}/nodes/by-name/{name}`) and the bootstrap
+  answer carry `firewall.ports: [{port, protocol: 'tcp', reason}]`: every port the node's
+  firewall must let in. `serving`: a transport the node serves listens there (loopback ones
+  excepted), or its own proxy's public port (a WebSocket node's Caddy). `pending`: a staged
+  change waits for this node; it stays listed after the role confirmed it, until the change is
+  sent and settled, cancelled or refused. The node's API port (`node.port`, the backend's channel
+  to the node) is the role's own business and is not listed.
+- **Open them.** On every run, let every listed port in (TCP, from anywhere) before reporting.
+  The role MAY close a port it opened for FCP earlier that is no longer listed; it never closes
+  SSH or the node API port on that basis.
+- **Report them.** `POST …/applied` gains `firewall: {ports: [{port, protocol: 'tcp'}]}`: the
+  ports the firewall lets in for FCP after this run. FCP confirms every pending requirement of
+  THIS node whose port is listed, whatever the machine revision (a run that only opened a port
+  reports the same `appliedRevision` again, which is idempotent). A report without `firewall`
+  confirms nothing, so a role that predates this keeps a port change waiting (the Servers page
+  says which node), and nothing else changes for it.
+- **Gate on it.** A `pending` port in the view means a change waits for this node: run the role
+  again after opening it if the report was missed.
 
 ## Setting up a backend
 
@@ -623,7 +726,10 @@ surface (`src/shared/crypto/envelope.ts`): the responses carry node and Host add
 | `POST {slug}/nodes`, `PATCH` / `DELETE {slug}/nodes/{uuid}`, `POST {slug}/nodes/{uuid}/enable\|disable\|restart` | `admin:servers:manage` | Node writes. `DELETE ...?removeOnly=1` is "remove from backend".                                                 |
 | `POST {slug}/profiles/{uuid}/preview`                                                                            | `admin:servers:read`   | What a typed profile edit would do. Writes nothing.                                                              |
 | `POST {slug}/profiles/{uuid}/acknowledge`                                                                        | `admin:servers:manage` | An operator has seen that the profile was edited elsewhere.                                                      |
-| `POST {slug}/profiles/{uuid}/apply`                                                                              | `admin:servers:manage` | Apply a previewed edit, conditioned on the previewed token.                                                      |
+| `POST {slug}/profiles/{uuid}/apply`                                                                              | `admin:servers:manage` | Apply a previewed edit, conditioned on the previewed token. A port change is refused here: it is staged.         |
+| `POST {slug}/profiles/{uuid}/port-change`                                                                        | `admin:servers:manage` | Stage a previewed port change until every node's firewall lets the port in (§ Firewall acknowledgement).         |
+| `GET {slug}/port-changes`                                                                                        | `admin:servers:read`   | The open port changes, each node's wait, and the last few settled.                                               |
+| `POST {slug}/port-changes/{id}/acknowledge`, `POST {slug}/port-changes/{id}/cancel`                              | `admin:servers:manage` | An admin confirms nodes no role reports for; withdraw a change that still waits.                                 |
 | `GET {slug}/ops`                                                                                                 | `admin:servers:read`   | The last 50 ops of an instance.                                                                                  |
 | `POST {slug}/ops/{id}/observe`                                                                                   | `admin:servers:read`   | Look at the backend again for an open op. Changes nothing on the backend.                                        |
 | `POST {slug}/ops/{id}/recover`                                                                                   | `admin:servers:manage` | The attested recovery of an unknown outcome.                                                                     |
@@ -651,7 +757,9 @@ the header carries Edit, Restart or Turn on, and a More menu with Turn off,
 **Stop and remove** (offered only once the node is off) and **Remove from the backend only**
 (says the process may keep running); both removes are typed. On a transport: add, change or
 remove an address; edit a REALITY transport's names and target as write -> preview -> apply,
-typed when more than one node restarts. The home lists mode groups (add, rename, change transports,
+typed when more than one node restarts; **Change port** (write -> preview -> stage: the nodes and
+who confirms each, then "Port changes" lists what waits on whom) and, under the profile, **Add a
+transport** from a template. The home lists mode groups (add, rename, change transports,
 remove) and Recent changes ("Look again" on an open one, "Settle by hand" on an unknown
 outcome, asking for each recovery condition by name).
 

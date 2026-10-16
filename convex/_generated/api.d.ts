@@ -133,6 +133,7 @@ import type * as nodeIntents from "../nodeIntents.js";
 import type * as backendLedger from "../backendLedger.js";
 import type * as backendObligations from "../backendObligations.js";
 import type * as backendObserve from "../backendObserve.js";
+import type * as backendPortChanges from "../backendPortChanges.js";
 import type * as panelReservations from "../panelReservations.js";
 import type * as nodeRetirement from "../nodeRetirement.js";
 import type * as backendSetup from "../backendSetup.js";
@@ -299,6 +300,7 @@ declare const fullApi: ApiFromModules<{
   backendLedger: typeof backendLedger;
   backendObligations: typeof backendObligations;
   backendObserve: typeof backendObserve;
+  backendPortChanges: typeof backendPortChanges;
   panelReservations: typeof panelReservations;
   nodeRetirement: typeof nodeRetirement;
   backendSetup: typeof backendSetup;

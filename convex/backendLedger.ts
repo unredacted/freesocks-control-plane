@@ -18,6 +18,7 @@ import { ConvexError, v } from 'convex/values';
 import type { DatabaseReader } from './_generated/server';
 import { internalMutation, internalQuery, type MutationCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
+import { internal } from './_generated/api';
 import { writeAuditLog } from './lib/audit';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import type { ObservedAddress, ObservedModeGroup } from './lib/backends/types';
@@ -109,14 +110,21 @@ export async function assertWritable(ctx: MutationCtx, backendServerId: Id<'back
   return server;
 }
 
-/** Insert the op and every claim, or refuse the whole thing. */
-export async function claimOp(ctx: MutationCtx, a: ClaimArgs): Promise<Id<'panelOps'>> {
-  await assertWritable(ctx, a.backendServerId);
-  const keys = [...new Set(a.claimKeys)];
-  for (const key of keys) {
+/**
+ * Everything `claimOp` would refuse, checked without writing: a caller that
+ * makes other writes before claiming (a maintenance transition) checks first,
+ * so a refusal it catches cannot leave those writes committed.
+ */
+export async function assertClaimable(
+  ctx: MutationCtx,
+  backendServerId: Id<'backendServers'>,
+  claimKeys: readonly string[],
+): Promise<void> {
+  await assertWritable(ctx, backendServerId);
+  for (const key of new Set(claimKeys)) {
     const held = await ctx.db
       .query('panelClaims')
-      .withIndex('by_server_key', (q) => q.eq('backendServerId', a.backendServerId).eq('key', key))
+      .withIndex('by_server_key', (q) => q.eq('backendServerId', backendServerId).eq('key', key))
       .unique();
     if (!held) continue;
     const holder = await ctx.db.get(held.opId);
@@ -127,6 +135,12 @@ export async function claimOp(ctx: MutationCtx, a: ClaimArgs): Promise<Id<'panel
       );
     refuse('servers.op_running', 'Another change is still running on this item');
   }
+}
+
+/** Insert the op and every claim, or refuse the whole thing. */
+export async function claimOp(ctx: MutationCtx, a: ClaimArgs): Promise<Id<'panelOps'>> {
+  await assertClaimable(ctx, a.backendServerId, a.claimKeys);
+  const keys = [...new Set(a.claimKeys)];
   const now = Date.now();
   const opId = await ctx.db.insert('panelOps', {
     backendServerId: a.backendServerId,
@@ -193,14 +207,29 @@ export const markSent = internalMutation({
     asyncNodes: v.optional(
       v.array(v.object({ nodeUuid: v.string(), before: v.union(v.string(), v.null()) })),
     ),
+    /**
+     * A profile edit's token as computed for this attempt, from the read just
+     * made. It must be the one the claim expected; a claim that could not know
+     * it (a new REALITY transport's key is made here) records it now, BEFORE
+     * the send, so a look can settle the op and the observer knows it is ours.
+     */
+    expectedToken: v.optional(v.string()),
   },
-  handler: async (ctx, { opId, attemptId, asyncNodes }) => {
+  handler: async (ctx, { opId, attemptId, asyncNodes, expectedToken }) => {
     const op = await ctx.db.get(opId);
     if (!op || !op.open) return { send: false as const };
     if (op.attemptId) return { send: false as const };
+    let postcondition = op.postcondition;
+    if (expectedToken !== undefined) {
+      const expected = JSON.parse(op.postcondition) as { expectedToken?: string | null };
+      if (expected.expectedToken && expected.expectedToken !== expectedToken)
+        return { send: false as const, mismatch: true };
+      postcondition = JSON.stringify({ ...expected, expectedToken });
+    }
     await ctx.db.patch(opId, {
       attemptId,
       sentAt: Date.now(),
+      postcondition,
       ...(asyncNodes ? { asyncNodes } : {}),
       updatedAt: Date.now(),
     });
@@ -462,9 +491,14 @@ export const applyLook = internalMutation({
 async function bridgeProfilePatch(ctx: MutationCtx, op: Op) {
   const expected = JSON.parse(op.postcondition) as {
     targets?: Record<string, { address: string; port: number }>;
+    ports?: Record<string, number>;
     relayIds?: string[];
     inboundUuids?: Record<string, string>;
   };
+  // A transport whose uuid moved anyway is fenced for an operator
+  // (`servers.inbound_uuid_changed`): nothing is re-pointed at the old uuid.
+  if (op.errorCode !== 'servers.inbound_uuid_changed')
+    await bridgePortChange(ctx, op, expected.ports ?? {}, expected.inboundUuids ?? {});
   const relayIds = (expected.relayIds ?? []) as Id<'relays'>[];
   if (relayIds.length === 0) return;
   await assertNoPanelClaim(
@@ -495,6 +529,54 @@ async function bridgeProfilePatch(ctx: MutationCtx, op: Op) {
       });
     }
   }
+}
+
+/**
+ * A moved transport, once SEEN on the backend: the setup row's record of the
+ * mode's transport follows (the review and the node's addresses read their port
+ * from it), and every enrolled node serving it is reconciled now, so its own
+ * addresses are brought to the new port while it is still closed for
+ * maintenance (the transition closed it before the write was admitted). An
+ * origin never forwards to a moved transport: the claim refused that.
+ */
+async function bridgePortChange(
+  ctx: MutationCtx,
+  op: Op,
+  ports: Record<string, number>,
+  inboundUuids: Record<string, string>,
+) {
+  const moved = Object.entries(ports)
+    .map(([tag, port]) => ({ uuid: inboundUuids[tag], port }))
+    .filter((m): m is { uuid: string; port: number } => !!m.uuid);
+  if (moved.length === 0) return;
+  const setup = await ctx.db
+    .query('panelSetups')
+    .withIndex('by_server', (q) => q.eq('backendServerId', op.backendServerId))
+    .unique();
+  if (setup?.modes) {
+    let touched = false;
+    const modes = setup.modes.map((m) => {
+      const hit = moved.find((x) => x.uuid === m.transport?.uuid);
+      if (!hit || !m.transport || m.transport.port === hit.port) return m;
+      touched = true;
+      return { ...m, transport: { ...m.transport, port: hit.port } };
+    });
+    if (touched) await ctx.db.patch(setup._id, { modes, updatedAt: Date.now() });
+  }
+  const uuids = new Set(moved.map((m) => m.uuid));
+  const nodes = await ctx.db
+    .query('panelNodes')
+    .withIndex('by_server', (q) => q.eq('backendServerId', op.backendServerId))
+    .collect();
+  const serving = new Set(
+    nodes.filter((n) => n.activeInboundUuids.some((u) => uuids.has(u))).map((n) => n.name),
+  );
+  for (const intent of await ctx.db
+    .query('panelNodeIntents')
+    .withIndex('by_server', (q) => q.eq('backendServerId', op.backendServerId))
+    .collect())
+    if (serving.has(intent.name) && intent.state !== 'retiring' && intent.state !== 'retired')
+      await ctx.scheduler.runAfter(0, internal.nodeIntents.reconcileNow, { intentId: intent._id });
 }
 
 /**

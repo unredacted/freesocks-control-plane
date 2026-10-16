@@ -16,7 +16,7 @@
  * so the profile is born compliant. Key material is INJECTED by the caller
  * and never read back out of the result by anything but the provider call.
  */
-import { PRIVACY_XRAY_LOG } from '../backends/remnawave';
+import { PRIVACY_XRAY_LOG } from '../backends/xrayPrivacy';
 
 export type ModeTransport = 'reality' | 'xhttp-reality' | 'ws';
 export type ModeFronting = 'direct' | 'edge-l4' | 'edge-l7';

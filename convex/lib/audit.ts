@@ -288,6 +288,13 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'servers.node.retire_requested': ['backendSlug', 'name', 'stage'],
   'servers.node.retire_decided': ['backendSlug', 'name', 'disposition'],
   'servers.node.retired': ['backendSlug', 'name', 'confirmedBy'],
+  // A port change staged until every node's firewall lets the port in
+  // (docs/servers.md "Firewall acknowledgement"): the profile name, the port and
+  // counts; `by` is who confirmed (the node role, or an admin).
+  'servers.port_change.staged': ['backendSlug', 'label', 'port', 'nodes'],
+  'servers.port_change.confirmed': ['backendSlug', 'label', 'by', 'nodes', 'port'],
+  'servers.port_change.cancelled': ['backendSlug', 'label'],
+  'servers.port_change.admitted': ['backendSlug', 'label', 'outcome', 'code'],
   // The one-shot migration off contract v1 (counts only).
   'servers.contract.migrated': ['handoffs', 'reservations', 'setups', 'intents'],
   // Operator-run 2.x→3.x key-id remap on one upgraded backend (counts only).
