@@ -759,7 +759,8 @@ read adds one; a 404 or a 409 the caller handles does not; the first success res
 Three in a row raise attention `account_api_failing` (critical). A live managed edge whose
 health was not refreshed for an hour (or 30 polls) shows as `health_stale` on its account. A
 `dailyAllocationBudget` of 0 (no daily limit) is refused outside a development deployment
-(`ENVIRONMENT=development`); existing rows keep their value until the next edit.
+(`ENVIRONMENT=development`); existing rows keep their value until the next edit and show as
+`account_budget_unlimited`.
 `billable_idle` lists edges that cost money while serving nobody: a quarantined origin's managed
 edges, or an edge parked at `needs_operator` whose resources are still present.
 
@@ -789,13 +790,17 @@ outside a guided setup run, picks only a spare or an account whose shape (listen
 template) fits the enrolled node's approval; nothing fitting fails the selection with
 `outside_approved_shape`, and an automatic start (detector, reconcile) is refused with
 `edge.outside_approved_shape` instead of failing every tick. Where the run publishes, the
-approval is checked again: out of shape, the paid-for edge stays a standby; as a candidate of
-the node's running activation it is recorded as one.
+approval is checked again: out of shape, the paid-for edge stays a standby and a replace leaves
+its target served (the finalize drains a target only after a real swap); as a candidate of the
+node's running activation it is recorded as one, except for a replace, whose replacement must be
+servable at once. Pool upkeep's direct standby publish applies the same approval.
 
 **A burned last name.** When a burn takes a listener's last active name, its FCP-owned Host would
 keep handing out the burned one. `hostOps.resyncSni` withdraws it instead: the Host is deleted
-through the Host state machine (read-back confirmed), and the reconcile pass does the same for a
-Host left on a burned name. The listener serves nobody until it has a name again; its next
+through the Host state machine (read-back confirmed, the condition judged again inside the
+claim), and the reconcile pass does the same for a Host left on a burned name. Only a Host that
+carries one of the listener's own names follows them: an L7 Host carries its edge's hostname and
+is never rewritten or withdrawn here. The listener serves nobody until it has a name again; its next
 rotation creates the Host afresh. An adopted Host (the operator's) is never deleted.
 
 **A placeholder body is never cached.** A body the node pinner understands that names no node
@@ -807,7 +812,8 @@ never caches it. Unknown body shapes keep caching as before.
 (`lib/edges/cohorts.ts`) reads the first key of each DISTINCT placement over the
 `subscriptions` indexes that end in `backendPlacement`, one page of placements per query, driven
 from the action that needs it (`edgeCohorts.walk*`: the restore workflow, the rehearsal, the
-setup plan); the detector's report window and the test-key sweep page through their indexes
+setup plan), and refuses (`edge.cohorts_unbounded`) rather than judge a partial membership; the
+detector's report window and the test-key sweep page through their indexes
 from the action (one `paginate` per query, as Convex requires).
 
 ### Operator alerts
@@ -831,8 +837,8 @@ JSON:
 Alert-worthy: every critical item (quarantine, fleet brake, a provider whose API keeps failing,
 a stuck rotation, dark members, a reappeared direct Host, a blocked node with no tested spare, an
 ambiguous Host) plus `node_ready_to_protect` and `node_awaiting_approval`. An item is sent once
-while it stays on the list (`appState` `alerts:state` holds the sent ids); one that clears and
-comes back alerts again; a failed post records a short code (`network`, `timeout`, the status)
+while it stays on the list at any severity (`appState` `alerts:state` holds the sent ids); one
+that clears and comes back alerts again; a failed post records a short code (`network`, `timeout`, the status)
 and is retried next tick. **Alerts carry kinds, short codes and counts only**: never a member,
 a token, an address, a node or origin name, a provider or a region. The webhook URL must be
 https and pass the infra SSRF check (`ALLOW_INTERNAL_BACKENDS=true` admits http in

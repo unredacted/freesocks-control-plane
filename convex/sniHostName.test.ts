@@ -343,10 +343,28 @@ describe('the Host follows its server name', () => {
     });
     const calls = deletablePanel('only.example');
     const pending = await t.query(internal.hostOps.pendingListeners, {});
-    expect(pending).toEqual([{ kind: 'delete', listenerId }]);
-    const r = await t.action(internal.hostOps.deleteListenerHost, { listenerId });
-    expect(r.state).toBe('absent');
+    expect(pending).toEqual([{ kind: 'delete', listenerId, reason: 'burned_name' }]);
+    // Re-judged at the claim: a name added back since the listing cancels it.
+    const names = (await t.run((ctx) => ctx.db.get(listenerId)))!.tlsNames!;
+    await t.run((ctx) =>
+      ctx.db.patch(listenerId, {
+        tlsNames: [...names, { name: 'fresh.example', status: 'active' }],
+      }),
+    );
+    expect(
+      (
+        await t.action(internal.hostOps.deleteListenerHost, {
+          listenerId,
+          reason: 'burned_name',
+        })
+      ).state,
+    ).toBe('present');
+    expect(calls).toEqual([]);
+    await t.run((ctx) => ctx.db.patch(listenerId, { tlsNames: names }));
+    await t.action(internal.hostOps.reconcileHosts, {});
     expect(calls).toEqual(['DELETE /api/hosts/h-1']);
+    const after = (await t.run((ctx) => ctx.db.get(listenerId)))!;
+    expect(after.host?.state).toBe('absent');
   });
 
   test("an adopted Host (the operator's) is never deleted for a burned last name", async () => {

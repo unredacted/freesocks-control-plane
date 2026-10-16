@@ -46,8 +46,12 @@ export interface CohortPage {
 
 /** Distinct placements one page may look at (each is one index read). */
 export const COHORT_PAGE = 50;
-/** A walk stops after this many cohorts (placements are operator-scale: mode groups). */
-export const MAX_COHORTS = 500;
+/**
+ * Placements are operator-scale (mode groups). A walk that finds more than
+ * this many refuses (`edge.cohorts_unbounded`) rather than judge a partial
+ * membership: the restore and the rehearsal fail closed.
+ */
+export const MAX_COHORTS = 5000;
 
 export function cohortKeyOf(placement: string | null | undefined): string {
   return placement && placement.length > 0 ? placement : 'default';

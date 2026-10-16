@@ -7,9 +7,9 @@
  * Alert-worthy: every `critical` item (quarantine, a fleet brake, a provider
  * whose API keeps failing, a stuck rotation, dark members, ...) plus the two
  * prompts FCP never acts on by itself: a fronted node ready to protect and a
- * node waiting for approval. An item is sent once while it stays on the list
- * (`alerts:state` holds the ids already sent; an id that leaves the list is
- * forgotten, so a recurrence alerts again). A failed post keeps nothing, and
+ * node waiting for approval. An item is sent once while it stays on the list,
+ * at any severity (`alerts:state` holds the ids already sent; an id that
+ * leaves the list is forgotten, so a recurrence alerts again). A failed post keeps nothing, and
  * the next tick tries again.
  *
  * WHAT LEAVES: kinds, short codes and counts only. Never a member, a token, an
@@ -36,7 +36,7 @@ import {
 
 const STATE_KEY = 'alerts:state';
 /** At most this many ids are remembered (the attention list is operator-scale). */
-const MAX_SENT = 500;
+const MAX_SENT = 2000;
 const POST_TIMEOUT_MS = 10_000;
 
 /** The prompts that alert though they are not critical: FCP never acts on them alone. */
@@ -292,7 +292,9 @@ async function dispatchOnce(ctx: ActionCtx): Promise<DispatchReport> {
     .map((i) => ({ id: i.id, kind: i.kind, severity: i.severity, code: i.code }));
   const st: AlertState = await ctx.runQuery(internal.alerts.readState, {});
   const fresh = alertable.filter((i) => st.sent[i.id] === undefined);
-  const currentIds = alertable.map((i) => i.id);
+  // An id is remembered while its item is on the list at ANY severity, so an
+  // item that flaps between warning and critical alerts once, not per crossing.
+  const currentIds = items.map((i) => i.id);
   if (fresh.length === 0) {
     await ctx.runMutation(internal.alerts.recordDispatch, {
       currentIds,

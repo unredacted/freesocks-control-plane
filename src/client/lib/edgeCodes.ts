@@ -857,6 +857,12 @@ const COPY = {
     explain:
       'The delivery policy changed while the answer was being built, so it was not sent. The next refresh gets the current one.',
   },
+  account_budget_unlimited: {
+    label: 'No daily spending limit',
+    explain:
+      'This provider account has a daily allocation budget of 0, which means no limit: a runaway loop could create billable resources without bound.',
+    fix: 'Set a daily allocation budget on the account.',
+  },
   family_disabled: {
     label: 'App family off',
     explain:

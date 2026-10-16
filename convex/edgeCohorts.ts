@@ -4,7 +4,7 @@
  * the rehearsal and the setup plan never read an origin's keys in one
  * transaction, however many members it has.
  */
-import { v } from 'convex/values';
+import { ConvexError, v } from 'convex/values';
 import { internalQuery } from './_generated/server';
 import type { ActionCtx } from './_generated/server';
 import type { Id } from './_generated/dataModel';
@@ -56,7 +56,11 @@ export const originOfRelay = internalQuery({
   },
 });
 
-/** Every cohort of an origin, page by page (bounded at MAX_COHORTS). */
+/**
+ * Every cohort of an origin, page by page. Never a partial answer: past
+ * MAX_COHORTS it throws `edge.cohorts_unbounded`, so a check that needs every
+ * cohort fails closed instead of judging some of them.
+ */
 export async function walkCohorts(ctx: ActionCtx, origin: CohortOrigin): Promise<Cohort[]> {
   const out: Cohort[] = [];
   let cursor: CohortCursor | null = null;
@@ -67,10 +71,14 @@ export async function walkCohorts(ctx: ActionCtx, origin: CohortOrigin): Promise
       cursor,
     });
     out.push(...p.cohorts);
-    if (!p.next || out.length >= MAX_COHORTS) break;
+    if (out.length > MAX_COHORTS)
+      throw new ConvexError({
+        code: 'edge.cohorts_unbounded',
+        message: `More than ${MAX_COHORTS} member placements on one origin`,
+      });
+    if (!p.next) return out;
     cursor = p.next;
   }
-  return out.slice(0, MAX_COHORTS);
 }
 
 /** Every cohort of a relay ([] for a manual origin). */

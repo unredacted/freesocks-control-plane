@@ -267,9 +267,17 @@ describe('provider failures are visible', () => {
       /only in development/,
     );
     vi.stubEnv('ENVIRONMENT', 'development');
-    await expect(
-      createAccount(t, { name: 'acct-z', dailyAllocationBudget: 0 }),
-    ).resolves.toBeTruthy();
+    const id = await createAccount(t, { name: 'acct-z', dailyAllocationBudget: 0 });
+    expect((await attentionOf(t)).some((i) => i.kind === 'account_budget_unlimited')).toBe(false);
+    // An older row with no limit is pointed out outside development.
+    vi.unstubAllEnvs();
+    expect((await attentionOf(t)).find((i) => i.kind === 'account_budget_unlimited')).toMatchObject(
+      {
+        severity: 'warning',
+        accountId: id,
+        action: 'open_account',
+      },
+    );
   });
 
   test('a quarantined origin keeps paying for its edges: billable_idle', async () => {

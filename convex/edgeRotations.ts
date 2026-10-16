@@ -1574,7 +1574,10 @@ export const applyPublish = internalMutation({
     // members never see it before the commit.
     if (publishesUnderApproval(r)) {
       const approval = await publicationApproval(ctx, origin, to);
-      if (approval.kind === 'refused') {
+      // A replace needs a replacement members can be served at once: a
+      // candidate (hidden until its activation commits) would leave the
+      // swapped-out slot dark, so it stays a standby like a refused one.
+      if (approval.kind === 'refused' || (r.kind === 'replace' && approval.kind === 'candidate')) {
         await ctx.db.patch(rotationId, {
           phase: 'finalizing',
           stepVersion: next,
@@ -1582,7 +1585,7 @@ export const applyPublish = internalMutation({
             at: now,
             level: 'warn',
             code: 'outside_approved_shape',
-            detail: approval.code,
+            detail: approval.kind === 'refused' ? approval.code : 'activation_running',
           }),
           updatedAt: now,
         });
@@ -1930,7 +1933,12 @@ export const finalize = internalMutation({
     const now = Date.now();
     const to = r.toEdgeId ? await ctx.db.get(r.toEdgeId) : null;
     let from: Edge | null = null;
-    if (r.kind === 'replace' && r.targetEdgeId) {
+    // A replace drains its target only when the publish actually SWAPPED it out
+    // (`previousBinding`). One that ended with its new edge as a standby (not
+    // tested yet, or outside the node's approved shape) left the target in
+    // the pool: draining it now would darken that slot while it stays counted.
+    const swapped = r.kind === 'replace' && !!r.previousBinding;
+    if (swapped && r.targetEdgeId) {
       from = await ctx.db.get(r.targetEdgeId);
       if (from && from.status !== 'destroyed') {
         await ctx.db.patch(from._id, {
@@ -1990,7 +1998,7 @@ export const finalize = internalMutation({
           }
         : {}),
     });
-    if (r.kind === 'replace') {
+    if (swapped) {
       await auditRotation(ctx, r._id, {
         actorType: 'system',
         action: 'edge.rotated',
@@ -2380,10 +2388,14 @@ async function shapeAdmitted(
   ctx: { db: QueryCtx['db'] },
   origin: Origin,
   pub: { listenerKey: string; accountId: string | null; templateHash: string | null },
+  opts: { replace: boolean },
 ): Promise<boolean> {
   if (origin.origin.kind !== 'panel-node' || !origin.backendServerId) return true;
   const a = await publicationAdmission(ctx, origin.backendServerId, origin.origin.nodeName, pub);
-  return a.kind !== 'refused';
+  // A replace swaps a served edge out: its replacement must be servable at
+  // once, so a CANDIDATE of a running activation (hidden until the commit)
+  // would darken the slot. Only a committed fit (or no enrolled node) will do.
+  return opts.replace ? a.kind === 'committed' || a.kind === 'unmanaged' : a.kind !== 'refused';
 }
 
 export async function selectionContext(
@@ -2451,11 +2463,12 @@ export async function selectionContext(
   const listener = slot;
   const fitsApproval = async (accountId: string | null, templateHash: string | null) =>
     !underApproval ||
-    (await shapeAdmitted(ctx, origin, {
-      listenerKey: listener.listenerKey,
-      accountId,
-      templateHash,
-    }));
+    (await shapeAdmitted(
+      ctx,
+      origin,
+      { listenerKey: listener.listenerKey, accountId, templateHash },
+      { replace: rotation.kind === 'replace' },
+    ));
   const standbyCandidates = [];
   for (const e of edges) {
     const slotOfEdge = slotRows.find((s) => s._id === e.listenerId);

@@ -683,6 +683,7 @@ export const ATTENTION_RANK = [
   'pool_rebalance',
   'spare_untested',
   'pool_below_desired',
+  'account_budget_unlimited',
   'account_unqualified',
   'account_untested',
   'test_key_cleanup',
@@ -1261,6 +1262,25 @@ export const attention = internalQuery({
           facts: { name: a.name, provider: a.provider, failures: a.apiFailures ?? 0 },
           action: 'open_account',
           since: isoN(a.apiFailingSince),
+        });
+      }
+      // A daily budget of 0 means no limit on billable allocations; new rows
+      // refuse it outside development, older ones are pointed out here.
+      if (a.dailyAllocationBudget === 0 && process.env.ENVIRONMENT !== 'development') {
+        items.push({
+          id: `account_budget_unlimited:${a._id}`,
+          kind: 'account_budget_unlimited',
+          severity: 'warning',
+          relaySlug: null,
+          relayId: null,
+          edgeId: null,
+          listenerKey: null,
+          accountId: a._id as string,
+          rotationId: null,
+          code: null,
+          facts: { name: a.name, provider: a.provider },
+          action: 'open_account',
+          since: null,
         });
       }
       const stale = staleByAccount.get(a._id as string) ?? 0;

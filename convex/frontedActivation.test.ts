@@ -28,7 +28,12 @@ import { walkRelayCohorts } from './edgeCohorts';
 import { selectionContext } from './edgeRotations';
 import { resolveEdgeConfig } from './lib/edgeConfig';
 import type { Id } from './_generated/dataModel';
-import { FIXTURE_PANEL_SLUG, createAccount, insertPanelServer } from './lib/edges/testing/fixtures';
+import {
+  FIXTURE_PANEL_SLUG,
+  createAccount,
+  insertPanelServer,
+  verifyL4Edge,
+} from './lib/edges/testing/fixtures';
 import { createFakeBackend, type FakeBackend } from './lib/edges/testing/fakeBackend';
 import { createFakeUpcloud } from './lib/edges/testing/fakeEdgeWorld';
 import { z } from 'zod';
@@ -1415,6 +1420,89 @@ describe('automatic work on a live node stays in its approved shape', () => {
     expect(after.standbyEdgeIds).toContain(spare.edgeId);
     const rot = (await t.run((c) => c.db.get(rotationId)))!;
     expect(rot.events.map((e) => e.code)).toContain('outside_approved_shape');
+    await t.run((c) => c.db.patch(live.relayId, { activeRotationId: undefined }));
+
+    // A REPLACE whose new edge lands outside the shape keeps its target served:
+    // nothing was swapped, so the finalize drains nothing and records no rotation.
+    const replaceId = await t.run((ctx) =>
+      ctx.db.insert('edgeRotations', {
+        relayId: live.relayId,
+        kind: 'replace',
+        trigger: 'detector',
+        burn: true,
+        force: false,
+        targetEdgeId: live.e1,
+        toEdgeId: spare.edgeId as Id<'edges'>,
+        listenerId: e1.listenerId,
+        phase: 'publishing',
+        stepVersion: 1,
+        cancelRequested: false,
+        hostPlan: [],
+        flipAttempts: 0,
+        rollbackAttempts: 0,
+        pollAttempts: 0,
+        events: [],
+        startedAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+    await t.run((c) => c.db.patch(live.relayId, { activeRotationId: replaceId }));
+    expect(
+      await t.mutation(internal.edgeRotations.applyPublish, {
+        rotationId: replaceId,
+        stepVersion: 1,
+      }),
+    ).toMatchObject({ ok: true, poolIndex: null });
+    expect(
+      await t.mutation(internal.edgeRotations.finalize, { rotationId: replaceId, stepVersion: 2 }),
+    ).toEqual({ ok: true });
+    const target = (await t.run((c) => c.db.get(live.e1)))!;
+    expect([target.publication, target.status, target.burnedAt]).toEqual([
+      'published',
+      'active',
+      undefined,
+    ]);
+    expect((await t.run((c) => c.db.get(live.relayId)))!.publishedEdgeIds).toEqual(
+      before.publishedEdgeIds,
+    );
+    const rotated = await t.run((ctx) =>
+      ctx.db
+        .query('auditLog')
+        .filter((q) => q.eq(q.field('action'), 'edge.rotated'))
+        .collect(),
+    );
+    expect(
+      rotated.some((a) => (a.payload as { rotationId?: string }).rotationId === replaceId),
+    ).toBe(false);
+
+    // Pool upkeep's direct standby publish holds the spare to the shape too:
+    // with a free slot, the out-of-shape spare stays a spare...
+    await t.run((c) => c.db.patch(live.relayId, { desiredPublished: 2 }));
+    expect(
+      await t.mutation(internal.edgeReconcileMutations.publishStandby, {
+        relayId: live.relayId,
+        candidates: [spare.edgeId as Id<'edges'>],
+      }),
+    ).toEqual({ published: false, rotationId: null, awaitingVerification: false });
+    expect((await t.run((c) => c.db.get(spare.edgeId as Id<'edges'>)))!.publication).toBe(
+      'unpublished',
+    );
+    // ...and the same spare in the approved shape is published.
+    await t.run((c) =>
+      c.db.patch(spare.edgeId as Id<'edges'>, {
+        accountId: live.l4,
+        templateHash: e1.templateHash,
+      }),
+    );
+    await t.run((c) => c.db.patch(live.l4, { enabled: true }));
+    // (The account change moved the endpoint's configuration: confirm it again.)
+    await verifyL4Edge(t, spare.edgeId as Id<'edges'>);
+    expect(
+      await t.mutation(internal.edgeReconcileMutations.publishStandby, {
+        relayId: live.relayId,
+        candidates: [spare.edgeId as Id<'edges'>],
+      }),
+    ).toMatchObject({ published: true });
   });
 });
 

@@ -223,6 +223,7 @@ export const ATTENTION_KINDS = [
   'family_rule_disabled',
   'node_ready_to_protect',
   'node_awaiting_approval',
+  'account_budget_unlimited',
 ] as const;
 export type AttentionKind = (typeof ATTENTION_KINDS)[number];
 

@@ -400,7 +400,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
   test("the backend's placeholder (no node entry, no pin) is answered but never cached: the node going live is seen at once", async () => {
     // What the backend serves a key whose node serves nothing yet: no Host
     // remark names a node, so the pin resolves nothing.
-    const placeholder = `vless://${UUID}@198.51.100.70:443?${REALITY_QS}#placeholder`;
+    const placeholder = `vless://${UUID}@0.0.0.0:1?${REALITY_QS}#No%20hosts`;
     stubPanel(placeholder);
     const { t, subId } = await seed({ pinned: false });
     const first = await get(t);
