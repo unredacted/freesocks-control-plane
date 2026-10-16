@@ -24,7 +24,7 @@ import {
   seedEdgeFixture,
   shadowsocksListener,
 } from './lib/edges/testing/fixtures';
-import { selectTestEntry, TEST_LINK_USER_AGENT } from './edgeTestLinks';
+import { realityEntryLine, selectTestEntry, TEST_LINK_USER_AGENT } from './edgeTestLinks';
 import { parseProxyUri } from './lib/edges/render/uri';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -346,5 +346,29 @@ describe('the isolated test link', () => {
     await expect(t.action(internal.edgeTestLinks.build, { edgeId })).rejects.toThrow(
       /l7_proof_required/,
     );
+  });
+});
+
+describe('realityEntryLine', () => {
+  const params = { serverNames: ['a.example'], publicKey: 'PUBKEY', shortId: 'abcd' };
+  test('an IPv6 origin is bracketed, so the link parses; Vision is the flow', () => {
+    const v6 = realityEntryLine(
+      '11111111-2222-4333-8444-555555555555',
+      '2001:db8::20',
+      443,
+      params,
+      'r',
+    );
+    expect(v6).toMatch(/^vless:\/\/[0-9a-f-]+@\[2001:db8::20\]:443\?/);
+    expect(parseProxyUri(v6)?.host).toBe('2001:db8::20');
+    expect(v6).toContain('flow=xtls-rprx-vision');
+    const v4 = realityEntryLine(
+      '11111111-2222-4333-8444-555555555555',
+      '203.0.113.20',
+      443,
+      params,
+      'r',
+    );
+    expect(v4).toMatch(/@203\.0\.113\.20:443\?/);
   });
 });

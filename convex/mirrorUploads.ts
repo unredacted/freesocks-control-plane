@@ -109,11 +109,28 @@ export const settle = internalMutation({
           .collect() // one subscription's open uploads: a handful at most
       : [own];
     for (const r of rows) {
-      if (r._id !== own._id && r.objectPath !== own.objectPath) continue;
+      // An earlier record is met only for the copies this upload rewrote.
+      if (
+        r._id !== own._id &&
+        (r.objectPath !== own.objectPath || !r.providers.every((p) => own.providers.includes(p)))
+      )
+        continue;
       await ctx.db.delete(r._id);
       settled++;
     }
     return { settled };
+  },
+});
+
+/** Keep an obligation open for only these copies (the others were rewritten or withdrawn). */
+export const narrow = internalMutation({
+  args: { id: v.id('mirrorUploads'), providers: v.array(v.string()) },
+  handler: async (ctx, { id, providers }) => {
+    const r = await ctx.db.get(id);
+    if (!r) return null;
+    if (providers.length === 0) await ctx.db.delete(id);
+    else await ctx.db.patch(id, { providers, updatedAt: Date.now() });
+    return null;
   },
 });
 
@@ -149,6 +166,7 @@ export const listDue = internalQuery({
         id: r._id,
         subscriptionId: r.subscriptionId,
         objectPath: r.objectPath,
+        providers: r.providers,
         attempts: r.attempts,
         // A copy the subscription still serves is repaired in place; a copy
         // nothing references any more is residue and is withdrawn.

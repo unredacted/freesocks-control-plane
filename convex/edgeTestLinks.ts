@@ -35,6 +35,7 @@ import { panelDigestKey } from './lib/backend/key';
 import type { BackendHost } from './lib/backends/types';
 import { resolveEdgeConfig } from './lib/edgeConfig';
 import { sameAddress } from './lib/edges/hosts';
+import { hostPort } from './lib/edges/ip';
 import { effectiveRule, type DeliveryStyle, type EffectiveRule } from './lib/edges/render';
 import { decodeLinkList, linkAddresses } from './lib/edges/render/links';
 import { fragmentText, parseProxyUri, uriAgrees, uriSupported } from './lib/edges/render/uri';
@@ -242,8 +243,21 @@ async function synthesizedEntry(
     (await panelDigestKey()).key,
   );
   if (!params) return null;
-  // The backend gives its users XTLS Vision on a REALITY transport over raw
-  // TCP, and Xray refuses a session that asks for another flow.
+  return realityEntryLine(uuid, c.originAddress, c.originPort, params, synth.remark);
+}
+
+/**
+ * One VLESS REALITY-over-raw-TCP share link (pure): the backend gives its
+ * accounts XTLS Vision there, and Xray refuses a session asking for another
+ * flow; an IPv6 origin is bracketed in the authority.
+ */
+export function realityEntryLine(
+  uuid: string,
+  address: string,
+  port: number,
+  params: { serverNames: string[]; publicKey: string; shortId: string },
+  remark: string,
+): string {
   const q = new URLSearchParams({
     encryption: 'none',
     flow: REALITY_RAW_FLOW,
@@ -254,7 +268,7 @@ async function synthesizedEntry(
     pbk: params.publicKey,
     sid: params.shortId,
   });
-  return `vless://${uuid}@${c.originAddress}:${c.originPort}?${q.toString()}#${encodeURIComponent(synth.remark)}`;
+  return `vless://${uuid}@${hostPort(address, port)}?${q.toString()}#${encodeURIComponent(remark)}`;
 }
 
 export const build = internalAction({

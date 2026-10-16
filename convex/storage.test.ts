@@ -124,16 +124,16 @@ describe('deleteFromProviders', () => {
         ],
         send,
       ),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ failed: [] });
     expect(calls).toHaveLength(1);
     expect(calls[0]).toEqual({ bucket: 'bucket-1', op: { kind: 'delete', key: 'subs/abc' } });
   });
 
-  test('swallows a delete failure (best-effort)', async () => {
+  test('never throws on a delete failure, and names the provider it failed on', async () => {
     const { send } = recorder(() => true);
     await expect(
       deleteFromProviders([provider(1)], [{ provider: 'p1', objectPath: 'subs/abc' }], send),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ failed: ['p1'] });
   });
 });
 

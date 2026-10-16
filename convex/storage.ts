@@ -205,19 +205,26 @@ export async function uploadToProviders(
   return successes;
 }
 
-/** Best-effort delete of mirror objects across providers (injected list + send). */
+/**
+ * Best-effort delete of mirror objects across providers (injected list + send).
+ * Never throws; returns the providers whose delete did not go through (an
+ * unknown provider is nothing to delete), for a caller that must retry them.
+ */
 export async function deleteFromProviders(
   providers: S3Provider[],
   items: { provider: string; objectPath: string }[],
   send: S3Send = realSend,
-): Promise<void> {
-  await Promise.allSettled(
+): Promise<{ failed: string[] }> {
+  const results = await Promise.allSettled(
     items.map(async (it) => {
       const p = providers.find((x) => x.name === it.provider);
       if (!p) return;
       await send(p, { kind: 'delete', key: it.objectPath });
     }),
   );
+  return {
+    failed: items.filter((_, i) => results[i]!.status === 'rejected').map((it) => it.provider),
+  };
 }
 
 export interface ProvisionResult {
@@ -613,13 +620,21 @@ async function refreshOneSubMirrors(
       ...(allSucceeded && !moved ? { rawContentHash: hash } : {}),
     });
     if (moved) return true;
-    // Nothing moved: the obligation is met, a partial round included (a
-    // provider that failed still holds its previous object, which its own
-    // upload settled; the next refresh retries it).
-    await ctx.runMutation(internal.mirrorUploads.settle, {
-      id: obligationId,
-      subscriptionId: sub.id,
-    });
+    if (allSucceeded)
+      // Nothing moved and every copy was rewritten: the obligation is met (and
+      // every earlier one of these copies with it).
+      await ctx.runMutation(internal.mirrorUploads.settle, {
+        id: obligationId,
+        subscriptionId: sub.id,
+      });
+    // A provider that failed still serves a body rendered under an older policy:
+    // the obligation stays open for exactly those copies, so the repair pass
+    // retries them within minutes rather than at the next sweep.
+    else
+      await ctx.runMutation(internal.mirrorUploads.narrow, {
+        id: obligationId,
+        providers: failedProviders,
+      });
     if (allSucceeded) {
       await recordPin();
       await stampContent();
@@ -681,14 +696,23 @@ export const repairMirrorUploads = internalAction({
       for (const o of due) {
         await ctx.runMutation(internal.mirrorUploads.markAttempt, { id: o.id });
         if (o.residueProviders.length > 0) {
-          // Residue: a copy no subscription references (deactivated providers included).
+          // Residue: a copy no subscription references (deactivated providers
+          // included). Withdrawn only once every delete went through; a failed
+          // one keeps the obligation, so the next pass tries again.
           const all = await ctx.runQuery(internal.mirrorProviders.listAllWithSecret, {});
-          await deleteFromProviders(
+          const { failed } = await deleteFromProviders(
             all,
             o.residueProviders.map((provider) => ({ provider, objectPath: o.objectPath })),
             s3Send,
           );
+          if (failed.length > 0) continue;
           withdrawn++;
+          // What is left of the obligation is the copies the subscription still serves.
+          if (o.referenced)
+            await ctx.runMutation(internal.mirrorUploads.narrow, {
+              id: o.id,
+              providers: o.providers.filter((p) => !o.residueProviders.includes(p)),
+            });
         }
         if (!o.referenced) {
           await ctx.runMutation(internal.mirrorUploads.settle, { id: o.id });

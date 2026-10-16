@@ -1354,7 +1354,7 @@ describe('the mirror barrier', () => {
     );
   });
 
-  test('a provider that keeps failing does not pile up records: a partial round under a stable policy settles', async () => {
+  test('a provider that keeps failing keeps ONE open record for its copy (the repair retries it), and it settles once that copy is rewritten', async () => {
     const w = await world();
     const { t } = w;
     const live = await liveL4(w);
@@ -1397,6 +1397,13 @@ describe('the mirror barrier', () => {
         subscriptionId: live.subId,
         force: true,
       });
+    // The copy that was not rewritten may still serve an older policy's body.
+    const left = await t.query(internal.mirrorUploads.openFor, { subscriptionId: live.subId });
+    expect(left.map((o) => o.providers)).toEqual([['p2']]);
+    // The provider recovers: the repair rewrites its copy and the record settles.
+    __setS3SendForTests(async () => {});
+    vi.advanceTimersByTime(REPAIR_GRACE_MS + 1_000);
+    await t.action(internal.storage.repairMirrorUploads, {});
     expect(await t.query(internal.mirrorUploads.openFor, { subscriptionId: live.subId })).toEqual(
       [],
     );
@@ -1473,6 +1480,66 @@ describe('the mirror barrier', () => {
     const rewritten = w.calls.s3.filter((x) => x.op.kind === 'put').at(-1)!.op as { body: string };
     expect(rewritten.body).toBe(MIRROR_UNAVAILABLE_STUB);
     expect(await t.query(internal.mirrorUploads.openFor, { subscriptionId: newSub })).toEqual([]);
+  });
+
+  test('a residue copy whose delete fails stays open until the delete goes through', async () => {
+    const w = await world();
+    const { t } = w;
+    const live = await liveL4(w);
+    await withMirrorProvider(t);
+    // An upload of a copy nothing references any more (a lost first mirror).
+    const { id } = await t.mutation(internal.mirrorUploads.open, {
+      subscriptionId: live.subId,
+      objectPath: 'mirrors/orphan',
+      providers: ['p1'],
+      tokenBefore: null,
+      kind: 'initial',
+    });
+    __setS3SendForTests(async (_p, op) => {
+      if (op.kind === 'delete') throw new Error('provider down');
+    });
+    vi.advanceTimersByTime(REPAIR_GRACE_MS + 1_000);
+    await t.action(internal.storage.repairMirrorUploads, {});
+    const still = await t.query(internal.mirrorUploads.openFor, { subscriptionId: live.subId });
+    expect(still.map((o) => o._id)).toEqual([id]);
+    __setS3SendForTests(async (provider, op) => {
+      w.calls.s3.push({ op, provider: provider.name });
+    });
+    vi.advanceTimersByTime(REPAIR_GRACE_MS + 1_000);
+    await t.action(internal.storage.repairMirrorUploads, {});
+    expect(w.calls.s3.at(-1)).toEqual({
+      op: { kind: 'delete', key: 'mirrors/orphan' },
+      provider: 'p1',
+    });
+    expect(await t.query(internal.mirrorUploads.openFor, { subscriptionId: live.subId })).toEqual(
+      [],
+    );
+  });
+
+  test('closing a live node for maintenance rewrites its mirrors under the closed gate', async () => {
+    const w = await world();
+    const { t } = w;
+    const live = await liveL4(w);
+    await withMirrorProvider(t);
+    await t.run((ctx) =>
+      ctx.db.patch(live.subId, {
+        subscriptionMirrors: [
+          {
+            provider: 'p1',
+            publicUrl: 'https://cdn.example/mirrors/m1',
+            objectPath: 'mirrors/m1',
+            status: 'ok',
+          },
+        ],
+      }),
+    );
+    const before = w.calls.s3.length;
+    await t.mutation(internal.nodeIntents.startMaintenance, { intentId: live.intentId });
+    await vi.runAllTimersAsync();
+    await t.finishInProgressScheduledFunctions();
+    const puts = w.calls.s3.slice(before).filter((x) => x.op.kind === 'put');
+    expect(puts.length).toBeGreaterThan(0);
+    expect((puts.at(-1)!.op as { body: string }).body).toBe(MIRROR_UNAVAILABLE_STUB);
   });
 
   test('an upload under a stable policy settles at once', async () => {

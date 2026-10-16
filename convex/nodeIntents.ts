@@ -36,6 +36,7 @@ import { ADDRESS_SEP, addressRemark, ownsAddress } from './lib/backend/hostRemar
 import { type ModeShape } from './lib/backend/profileTemplate';
 import { resolveServerConfig } from './lib/serverConfig';
 import { observeInstance } from './backendObserve';
+import { scheduleMirrorRefresh } from './lib/edges/relayGuards';
 import { bumpGateVersion, modeOf, setupReady, type Setup, type SetupMode } from './backendSetup';
 
 const refuse = (code: string, message: string): never => {
@@ -646,6 +647,8 @@ export const patchSettings = internalMutation({
           byAdminId: a.actorAdminId,
         };
         await bumpGateVersion(ctx, intent.backendServerId);
+        // Mirror objects are static: they follow a closed gate only when rewritten.
+        await scheduleMirrorRefresh(ctx);
       }
       patch.desiredHash = await desiredHashOf({ observed: intent.observed, settings: next });
       patch.generation = intent.generation + 1;
@@ -953,6 +956,7 @@ export const observeRevisions = internalMutation({
         };
       } else if (d === 'activating') patch.delivery = { ...intent.delivery, disposition: 'staged' };
       await bumpGateVersion(ctx, intent.backendServerId);
+      if (d === 'live') await scheduleMirrorRefresh(ctx);
       const server = await ctx.db.get(intent.backendServerId);
       await writeAuditLog(ctx, {
         actorType: 'system',
@@ -1613,6 +1617,8 @@ export const startMaintenance = internalMutation({
       updatedAt: now,
     });
     await bumpGateVersion(ctx, intent.backendServerId);
+    // A live node's mirrors still hold its working body: rewritten under the closed gate.
+    if (intent.delivery.disposition === 'live') await scheduleMirrorRefresh(ctx);
     const server = await ctx.db.get(intent.backendServerId);
     await writeAuditLog(ctx, {
       actorType: 'admin',
@@ -1744,7 +1750,11 @@ export async function closeForSharedChange(
       byAdminId: a.actorAdminId,
       updatedAt: now,
     });
-  if (closed.length > 0 || held.length > 0) await bumpGateVersion(ctx, sid);
+  if (closed.length > 0 || held.length > 0) {
+    await bumpGateVersion(ctx, sid);
+    // Mirror objects are static: they follow the closed gates only when rewritten.
+    await scheduleMirrorRefresh(ctx);
+  }
   const server = await ctx.db.get(sid);
   await writeAuditLog(ctx, {
     actorType: a.actorAdminId ? 'admin' : 'system',
