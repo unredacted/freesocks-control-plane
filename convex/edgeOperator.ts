@@ -15,7 +15,12 @@ import { internalAction, internalQuery } from './_generated/server';
 import type { ActionCtx, QueryCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
-import { RENDER_CLIENT_FAMILIES, resolveEdgeConfig, type EdgeConfig } from './lib/edgeConfig';
+import {
+  RENDER_CLIENT_FAMILIES,
+  edgeMs,
+  resolveEdgeConfig,
+  type EdgeConfig,
+} from './lib/edgeConfig';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import { readMaintenance } from './lib/edges/maintenance';
 import { isTerminalPhase } from './lib/edges/rotation';
@@ -49,7 +54,10 @@ import {
   type SetupInput,
   type SetupStep,
 } from './lib/edges/setupStatus';
-import type { SetupStepId } from '../src/shared/contracts/edgeCodes';
+import type {
+  AttentionKind as AttentionKindCode,
+  SetupStepId,
+} from '../src/shared/contracts/edgeCodes';
 import {
   checkPublishable,
   deliveryBindingFor,
@@ -66,7 +74,10 @@ import {
   rotationListenerKey,
   selectionContext,
 } from './edgeRotations';
-import { accountTested } from './edgeProviderAccounts';
+import { accountTested, API_FAILING_AFTER } from './edgeProviderAccounts';
+import { readRefusals, REFUSAL_WINDOW_MS, REFUSALS_CRITICAL_AT } from './deliveryRefusals';
+import { fleetRotationsToday, readFleetBrake } from './lib/edges/fleet';
+import { modeRefOf } from './nodeIntents';
 import { requiredPoolSize } from './lib/edges/poolCapacity';
 import { uncoveredListeners } from './lib/edges/pool';
 import { renderPreviewFor } from './edgeAdmin';
@@ -641,19 +652,34 @@ export const setupStatus = internalQuery({
 
 // --- attention ------------------------------------------------------------------------------------
 
-const ATTENTION_RANK = [
+/**
+ * The server's ranking of every attention kind, most urgent first. The shared
+ * vocabulary (`ATTENTION_KINDS`) only appends; a test pins that this list holds
+ * exactly the same kinds.
+ */
+export const ATTENTION_RANK = [
   'quarantine',
+  'fleet_brake',
   'needs_operator',
+  'account_api_failing',
+  'rotation_stuck',
   'host_unresolved',
   'members_dark',
+  'delivery_refusals',
   'direct_host_reappeared',
+  'node_awaiting_approval',
   'go_live_pending',
   'needs_test',
   'rotation_failed',
+  'node_ready_to_protect',
   'qualification_lapsed',
   'retest_needed',
   'block_suspected',
   'edge_unreachable',
+  'fleet_rotation_cap',
+  'family_rule_disabled',
+  'billable_idle',
+  'health_stale',
   'pool_rebalance',
   'spare_untested',
   'pool_below_desired',
@@ -663,7 +689,7 @@ const ATTENTION_RANK = [
   'drift',
   'restore_in_progress',
   'maintenance_frozen',
-] as const;
+] as const satisfies readonly AttentionKindCode[];
 type AttentionKind = (typeof ATTENTION_RANK)[number];
 
 interface AttentionItem {
@@ -695,11 +721,105 @@ interface AttentionItem {
     | 'verify_endpoint'
     | 'thaw'
     | 'rebalance'
-    | 'require_edges';
+    | 'require_edges'
+    | 'protect_node'
+    | 'open_node';
   since: string | null;
 }
 
 const RECENT_FAILURE_MS = 24 * 60 * 60_000;
+/** A rotation still running after this long is stuck (its wall clock fails it later). */
+export const STUCK_ROTATION_MS = 60 * 60_000;
+/** A live managed edge whose provider health was not refreshed for this long (at least). */
+const HEALTH_STALE_MIN_MS = 60 * 60_000;
+
+/**
+ * The enrolled nodes that wait on the operator: a FRONTED node whose machine
+ * is ready and that nobody has started protecting (`node_ready_to_protect`),
+ * and a node whose go-live waits for an approval (`node_awaiting_approval`:
+ * tested and not approved yet, parked after a block, or a protect run parked
+ * at `node_not_approved`). Facts name the server and the node so the row can
+ * link to them; never an address.
+ */
+async function nodeAttention(ctx: QueryCtx, relays: Relay[]): Promise<AttentionItem[]> {
+  const out: AttentionItem[] = [];
+  // Operator-scale: one row per enrolled node.
+  const intents = await ctx.db.query('panelNodeIntents').collect();
+  const slugs = new Map<string, string | null>();
+  for (const i of intents) {
+    if (i.state === 'retiring' || i.state === 'retired') continue;
+    const sid = i.backendServerId as string;
+    if (!slugs.has(sid)) slugs.set(sid, (await ctx.db.get(i.backendServerId))?.slug ?? null);
+    const mode = await modeRefOf(ctx, i);
+    const fronted = mode.shape.fronting !== 'direct';
+    const open =
+      (
+        await ctx.db
+          .query('edgeSetupRuns')
+          .withIndex('by_origin', (q) =>
+            q.eq('backendServerId', i.backendServerId).eq('nodeName', i.name),
+          )
+          .collect()
+      ).find((r) => r.state === 'running' || r.state === 'waiting' || r.state === 'needs_you') ??
+      null;
+    const relay =
+      relays.find(
+        (r) =>
+          r.backendServerId === i.backendServerId &&
+          r.origin.kind === 'panel-node' &&
+          r.origin.nodeName === i.name,
+      ) ?? null;
+    const stage = i.activation.stage;
+    const common = {
+      relaySlug: relay?.slug ?? null,
+      relayId: relay ? (relay._id as string) : null,
+      edgeId: null,
+      listenerKey: null,
+      accountId: null,
+      rotationId: null,
+      facts: {
+        serverSlug: slugs.get(sid) ?? null,
+        nodeUuid: i.nodeUuid ?? null,
+        node: i.name,
+        stage,
+        ...(open ? { runId: open._id as string } : {}),
+      },
+    };
+    const waitingApproval =
+      stage === 'candidates_verified' ||
+      stage === 'awaiting_approval' ||
+      (open?.state === 'needs_you' && open.need?.code === 'node_not_approved');
+    if (waitingApproval) {
+      out.push({
+        ...common,
+        id: `node_awaiting_approval:${i._id}`,
+        kind: 'node_awaiting_approval',
+        severity: 'warning',
+        code: open?.need?.code ?? stage,
+        action: 'open_node',
+        since: iso(i.updatedAt),
+      });
+    } else if (
+      fronted &&
+      stage === 'machine_ready' &&
+      i.state === 'ready' &&
+      !i.adopted &&
+      !open &&
+      !relay?.setupOwned
+    ) {
+      out.push({
+        ...common,
+        id: `node_ready_to_protect:${i._id}`,
+        kind: 'node_ready_to_protect',
+        severity: 'warning',
+        code: null,
+        action: 'protect_node',
+        since: iso(i.updatedAt),
+      });
+    }
+  }
+  return out;
+}
 
 /** Server-ranked list of what needs the operator, one action per item. */
 export const attention = internalQuery({
@@ -720,9 +840,22 @@ export const attention = internalQuery({
       since: null,
     });
     const relays = await ctx.db.query('relays').collect();
+    // Provider health refresh: a live managed edge is described every few
+    // polls; one whose health has not been refreshed for this long means the
+    // refresh keeps failing (or never runs) for its account.
+    const healthStaleMs = Math.max(HEALTH_STALE_MIN_MS, edgeMs.poll(cfg) * 30);
+    const staleByAccount = new Map<string, number>();
     for (const relay of relays) {
       if (relay.deleting) continue;
       const edges = await liveEdgesOfRelay(ctx.db, relay._id);
+      // (A quarantined origin is skipped by the refresh on purpose.)
+      if (!relay.quarantine)
+        for (const e of edges) {
+          if (!e.managed || !e.accountId || e.status !== 'active') continue;
+          if (now - (e.lastHealthAt ?? e.statusChangedAt) <= healthStaleMs) continue;
+          const k = e.accountId as string;
+          staleByAccount.set(k, (staleByAccount.get(k) ?? 0) + 1);
+        }
       const listeners = await listenersOf(ctx, relay._id);
       if (relay.quarantine) {
         items.push({
@@ -844,6 +977,56 @@ export const attention = internalQuery({
           facts: { published },
           action: 'require_edges',
           since: isoN(relay.updatedAt),
+        });
+      }
+      // A rotation running far longer than any of its steps needs: the reconcile
+      // re-kicks it, and its wall clock ends it later, but the operator should
+      // look now (a provider that never answers, a Host that never settles).
+      if (relay.activeRotationId) {
+        const rot = await ctx.db.get(relay.activeRotationId);
+        if (rot && !isTerminalPhase(rot.phase) && now - rot.startedAt > STUCK_ROTATION_MS) {
+          items.push({
+            ...base(relay),
+            id: `rotation_stuck:${rot._id}`,
+            kind: 'rotation_stuck',
+            severity: 'critical',
+            rotationId: rot._id as string,
+            code: rot.phase,
+            facts: {
+              kind: rot.kind,
+              phase: rot.phase,
+              minutes: Math.round((now - rot.startedAt) / 60_000),
+            },
+            action: 'open_relay',
+            since: iso(rot.startedAt),
+          });
+        }
+      }
+      // Billable but idle: provider resources FCP pays for that serve nobody
+      // until the operator acts (a frozen origin's edges; an edge parked for
+      // an operator whose resources are still present).
+      const held = relay.quarantine
+        ? edges.filter((e) => e.managed && !!e.accountId)
+        : edges.filter(
+            (e) =>
+              e.managed &&
+              e.status === 'needs_operator' &&
+              e.resources.some((r) => r.deleteState !== 'confirmed_gone'),
+          );
+      if (held.length > 0) {
+        items.push({
+          ...base(relay),
+          id: `billable_idle:${relay._id}`,
+          kind: 'billable_idle',
+          severity: 'warning',
+          edgeId: held.length === 1 ? (held[0]._id as string) : null,
+          rotationId: relay.quarantine ? (relay.quarantine.rotationId as string) : null,
+          code: relay.quarantine ? 'quarantine' : 'needs_operator',
+          facts: { edges: held.length },
+          action: relay.quarantine ? 'resolve_quarantine' : 'resolve_operator',
+          since: relay.quarantine
+            ? iso(relay.quarantine.since)
+            : iso(Math.min(...held.map((e) => e.statusChangedAt))),
         });
       }
       const [last] = await lastRotations(ctx.db, relay._id);
@@ -1061,6 +1244,43 @@ export const attention = internalQuery({
     const accounts = await ctx.db.query('edgeProviderAccounts').collect();
     for (const a of accounts) {
       if (!a.enabled) continue;
+      // The provider's API keeps failing (timeouts, 5xx, refused credentials):
+      // every rotation, health refresh and destroy on this account stalls.
+      if ((a.apiFailures ?? 0) >= API_FAILING_AFTER) {
+        items.push({
+          id: `account_api_failing:${a._id}`,
+          kind: 'account_api_failing',
+          severity: 'critical',
+          relaySlug: null,
+          relayId: null,
+          edgeId: null,
+          listenerKey: null,
+          accountId: a._id as string,
+          rotationId: null,
+          code: a.lastApiError ?? null,
+          facts: { name: a.name, provider: a.provider, failures: a.apiFailures ?? 0 },
+          action: 'open_account',
+          since: isoN(a.apiFailingSince),
+        });
+      }
+      const stale = staleByAccount.get(a._id as string) ?? 0;
+      if (stale > 0) {
+        items.push({
+          id: `health_stale:${a._id}`,
+          kind: 'health_stale',
+          severity: 'warning',
+          relaySlug: null,
+          relayId: null,
+          edgeId: null,
+          listenerKey: null,
+          accountId: a._id as string,
+          rotationId: null,
+          code: null,
+          facts: { name: a.name, provider: a.provider, edges: stale },
+          action: 'open_account',
+          since: null,
+        });
+      }
       if (!accountTested(a)) {
         items.push({
           id: `account_untested:${a._id}`,
@@ -1096,6 +1316,15 @@ export const attention = internalQuery({
       }
     }
     // Temporary test keys whose backend delete kept failing (edgeTestCredentials.ts).
+    const fleetBase = {
+      relaySlug: null,
+      relayId: null,
+      edgeId: null,
+      listenerKey: null,
+      accountId: null,
+      rotationId: null,
+      code: null,
+    };
     const failedKeys = await ctx.db
       .query('edgeTestCredentials')
       .withIndex('by_removal_expires', (q) => q.eq('removal', 'failed'))
@@ -1118,6 +1347,79 @@ export const attention = internalQuery({
         since: iso(row.updatedAt),
       });
     }
+    // The fleet guards on automatic rotation (lib/edges/fleet.ts).
+    const brake = await readFleetBrake(ctx.db);
+    if (brake.engaged) {
+      items.push({
+        ...fleetBase,
+        id: 'fleet_brake',
+        kind: 'fleet_brake',
+        severity: 'critical',
+        facts: {
+          suspected: brake.suspected,
+          evaluated: brake.evaluated,
+          threshold: brake.threshold,
+        },
+        action: 'open_settings',
+        since: isoN(brake.since),
+      });
+    }
+    const fleetUsed = await fleetRotationsToday(ctx.db, now);
+    // (A cap of 0 means no automatic replacement at all: nothing was "reached".)
+    const fleetCap = cfg.detect.fleetRotationsPerDay;
+    if (cfg.enabled && cfg.autoRotate && fleetCap > 0 && fleetUsed >= fleetCap) {
+      items.push({
+        ...fleetBase,
+        id: 'fleet_rotation_cap',
+        kind: 'fleet_rotation_cap',
+        severity: 'warning',
+        facts: { used: fleetUsed, cap: cfg.detect.fleetRotationsPerDay },
+        action: 'open_settings',
+        since: null,
+      });
+    }
+    // Dark members, counted at the subscription route (deliveryRefusals.ts).
+    const refusals = await readRefusals(ctx.db, now);
+    if (refusals.total > 0) {
+      const top = Object.entries(refusals.byReason).sort((x, y) => y[1] - x[1])[0];
+      items.push({
+        ...fleetBase,
+        id: 'delivery_refusals',
+        kind: 'delivery_refusals',
+        severity: refusals.total >= REFUSALS_CRITICAL_AT ? 'critical' : 'warning',
+        code: top?.[0] ?? null,
+        facts: {
+          total: refusals.total,
+          byReason: refusals.byReason,
+          windowMinutes: Math.round(REFUSAL_WINDOW_MS / 60_000),
+        },
+        action: 'open_settings',
+        since: isoN(refusals.since),
+      });
+    }
+    // A client family whose render rule is off gets nothing at all on an
+    // edge-required node (there is no passthrough): its members are dark.
+    const familiesOff = RENDER_CLIENT_FAMILIES.filter((f) => !cfg.render.clients[f].enabled);
+    if (familiesOff.length > 0 && cfg.render.enabled) {
+      const anyBound = await ctx.db
+        .query('edgeDeliveryBindings')
+        .filter((q) => q.eq(q.field('state'), 'active'))
+        .first();
+      if (anyBound) {
+        items.push({
+          ...fleetBase,
+          id: 'family_rule_disabled',
+          kind: 'family_rule_disabled',
+          severity: 'warning',
+          facts: { families: familiesOff },
+          action: 'open_settings',
+          since: null,
+        });
+      }
+    }
+    // Enrolled nodes waiting on the operator (docs/servers.md "Node lifecycle"):
+    // FCP never starts a protect run or approves on its own, it asks.
+    items.push(...(await nodeAttention(ctx, relays)));
     const maintenance = await readMaintenance(ctx.db);
     if (maintenance.frozen) {
       items.push({

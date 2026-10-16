@@ -35,7 +35,8 @@ import type { Doc, Id } from './_generated/dataModel';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import { RENDER_CLIENT_FAMILIES, resolveEdgeConfig, type EdgeConfig } from './lib/edgeConfig';
 import { classifyClient } from './lib/edges/clientFamilies';
-import { cohortsForRelay, type Cohort } from './lib/edges/cohorts';
+import type { Cohort } from './lib/edges/cohorts';
+import { cohortValidator, walkRelayCohorts } from './edgeCohorts';
 import { formatSupported, type RenderFormat } from './lib/edges/protocols';
 import { fnv1a64Hex } from './lib/edges/registration';
 import { effectiveRule, type DeliveryStyle } from './lib/edges/render';
@@ -168,8 +169,10 @@ export const context = internalQuery({
     relayId: v.id('relays'),
     darkCohortKeys: v.array(v.string()),
     activationRunId: v.optional(v.id('panelActivationRuns')),
+    /** Every cohort of the origin, walked by the action beforehand (edgeCohorts.ts). */
+    cohorts: v.array(cohortValidator),
   },
-  handler: async (ctx, { relayId, darkCohortKeys, activationRunId }) => {
+  handler: async (ctx, { relayId, darkCohortKeys, activationRunId, cohorts: all }) => {
     const relay = await ctx.db.get(relayId);
     if (!relay || !relay.backendServerId) return null;
     const server = await ctx.db.get(relay.backendServerId);
@@ -202,7 +205,6 @@ export const context = internalQuery({
     const activationCurrent =
       !activationRunId || vector.activation?.runId === (activationRunId as string);
     const dark = new Set(darkCohortKeys);
-    const all = await cohortsForRelay(ctx, relay);
     const cohorts = all
       .filter((c) => !dark.has(c.key))
       .map((c) => ({ ...c, subscriptionId: c.subscriptionId as Id<'subscriptions'> }));
@@ -322,6 +324,7 @@ export const run = internalAction({
         relayId,
         darkCohortKeys,
         ...(activationRunId ? { activationRunId } : {}),
+        cohorts: await walkRelayCohorts(ctx, relayId),
       });
       if (!c) throw new Error('rehearsal: the origin has no backend origin');
       const failures: RehearsalFailure[] = [];

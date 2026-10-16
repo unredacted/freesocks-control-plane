@@ -29,7 +29,6 @@ import { mapTransportsToListeners } from './lib/edges/inboundMapping';
 import { applyOriginProbes, originProbeTargets } from './edgeOriginProbe';
 import type { OriginProbeOutcome } from './lib/edges/originProbe';
 import { classifyDirectHosts } from './lib/edges/directHosts';
-import { cohortReportForOrigin } from './lib/edges/cohorts';
 import { listenerLayers } from './lib/edges/layers';
 import { templateHostRemark } from './lib/edges/hosts';
 import { accountsForSlot } from './lib/edges/rotation';
@@ -124,10 +123,6 @@ async function planContextOf(
     )
       .filter((r) => !relay || r._id !== relay._id)
       .map((r) => r.slug);
-    const { cohorts, total } = await cohortReportForOrigin(ctx, {
-      backendServerId,
-      nodeName: node.name,
-    });
     // An enrolled node is planned from its intent (the origin FCP gives the
     // role and its declared ingress), never from the backend's node row: that
     // address is the MANAGEMENT one, and a loopback WebSocket behind Caddy is
@@ -176,7 +171,6 @@ async function planContextOf(
       familiesDisabled: RENDER_CLIENT_FAMILIES.filter((f) => !cfg.render.clients[f].enabled),
       otherEnabledRelays,
       activeRunId: activeRun ? (activeRun._id as string) : null,
-      members: { cohorts: cohorts.length, total },
     };
   }
 }
@@ -255,6 +249,12 @@ export async function buildPlan(
   // Only the two keys: `create` hands its whole argument object here.
   const a = { backendServerId: args.backendServerId, nodeUuid: args.nodeUuid };
   const c = await ctx.runQuery(internal.edgeSetupPlan.planContext, a);
+  // Whether anyone is on the node: the first page of the cohort walk is enough.
+  const { cohorts } = await ctx.runQuery(internal.edgeCohorts.page, {
+    backendServerId: a.backendServerId,
+    nodeName: c.node.name,
+    cursor: null,
+  });
   const originAddress = c.relay?.originAddress ?? c.enrolled?.originAddress ?? c.node.address;
   if (!originAddress)
     throw new ConvexError({
@@ -378,7 +378,7 @@ export async function buildPlan(
       affectedRelays: c.renderEnabled ? [] : c.otherEnabledRelays,
     },
     familiesDisabled: c.familiesDisabled,
-    emptyNode: c.members.total === 0,
+    emptyNode: cohorts.length === 0,
     existingRelay:
       c.relay && c.relay.setupOwned && !c.relay.deleting
         ? { id: c.relay.id as string, slug: c.relay.slug, setupStage: c.relay.setupStage }

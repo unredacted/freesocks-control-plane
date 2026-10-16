@@ -322,7 +322,7 @@ describe('origin attribution on member reports', () => {
     expect(rows[0].relayEdgeId).toBeUndefined();
     expect(await s.t.run((ctx) => ctx.db.query('relayReportMarks').collect())).toEqual([]);
     // The detector sees no reporter from it.
-    const w = (await s.t.query(internal.edgeDetector.relayWindow, {
+    const w = (await s.t.action(internal.edgeDetector.relayWindow, {
       relayId: s.relayId,
       now: Date.now(),
     }))!;
@@ -351,7 +351,7 @@ describe('origin block detector', () => {
         });
       }
     });
-    const w = (await s.t.query(internal.edgeDetector.relayWindow, {
+    const w = (await s.t.action(internal.edgeDetector.relayWindow, {
       relayId: s.relayId,
       now: NOW,
     }))!;
@@ -405,7 +405,7 @@ describe('origin block detector', () => {
     // 300 deduplicated repeats are written FIRST, so any `.take(N)` with N ≤ 300
     // would read nothing but zero-weight rows and see no reporter at all.
     await bulkReports(s.t, { zeroWeight: 300, weighted: 8 });
-    const w = (await s.t.query(internal.edgeDetector.relayWindow, {
+    const w = (await s.t.action(internal.edgeDetector.relayWindow, {
       relayId: s.relayId,
       now: NOW,
     }))!;
@@ -435,7 +435,7 @@ describe('origin block detector', () => {
       edgeId: s.edgeA,
       weightedFirst: true,
     });
-    const capped = (await s.t.query(internal.edgeDetector.relayWindow, {
+    const capped = (await s.t.action(internal.edgeDetector.relayWindow, {
       relayId: s.relayId,
       now: NOW,
     }))!;
@@ -451,7 +451,7 @@ describe('origin block detector', () => {
     expect(samples.some((x) => x.at === NOW)).toBe(false);
     // Raise the cap over the row count and the very same rows rotate.
     await s.t.run((ctx) => upsertSettingRow(ctx, 'edge.detect.maxReportRowsPerEval', '2000'));
-    const whole = (await s.t.query(internal.edgeDetector.relayWindow, {
+    const whole = (await s.t.action(internal.edgeDetector.relayWindow, {
       relayId: s.relayId,
       now: NOW,
     }))!;
@@ -711,7 +711,7 @@ describe('origin block detector', () => {
         lastStatsAt: NOW - 60_000,
       }),
     );
-    const w = (await t.query(internal.edgeDetector.relayWindow, { relayId, now: NOW }))!;
+    const w = (await t.action(internal.edgeDetector.relayWindow, { relayId, now: NOW }))!;
     expect(w.usersOnline).toBeNull();
     expect(w.nodeOnline).toBeNull();
     expect(w.loadStale).toBe(true);
@@ -746,6 +746,8 @@ describe('origin block detector', () => {
   test('edge evidence from probes + every gate open → a detector burn rotation of that edge; gates closed → veto recorded', async () => {
     vi.useFakeTimers({ now: NOW });
     const s = await seed();
+    // Probe-only automatic rotation is an opt-in (off by default).
+    await s.t.run((ctx) => upsertSettingRow(ctx, 'edge.detect.allowProbeOnlyAutoRotate', 'true'));
     await warmBaseline(s.t, s.relayId, 100);
     await nodeLoad(s.t, s.serverId, 5);
     const unreachable = (edgeId: Id<'edges'>) =>

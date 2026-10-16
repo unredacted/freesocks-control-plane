@@ -15,7 +15,7 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { upsertSettingRow } from './appSettings';
 import { clientRuleKey, defaultClientRule } from './lib/edgeConfig';
-import { cohortsForRelay } from './lib/edges/cohorts';
+import type { Cohort, CohortCursor, CohortPage } from './lib/edges/cohorts';
 import { fakeOutline, fakePanel, type FakePanelUser } from './lib/edges/testing/fakePanel';
 import {
   adoptL4Edge,
@@ -267,9 +267,16 @@ describe('the delivery rehearsal', () => {
     await addMember('sq-b');
     // A subscription pinned elsewhere is not a cohort of this node.
     await addMember('sq-b', 'node-two');
-    const viaRelay = await t.run(async (ctx) =>
-      cohortsForRelay(ctx, (await ctx.db.get(fx.relayId))!),
-    );
+    // The walk an action drives: one bounded query per page of placements.
+    const origin = (await t.query(internal.edgeCohorts.originOfRelay, { relayId: fx.relayId }))!;
+    const viaRelay: Cohort[] = [];
+    let cursor: CohortCursor | null = null;
+    for (;;) {
+      const page: CohortPage = await t.query(internal.edgeCohorts.page, { ...origin, cursor });
+      viaRelay.push(...page.cohorts);
+      if (!page.next) break;
+      cursor = page.next;
+    }
     expect(viaRelay.map((c) => c.key)).toEqual(['sq-a', 'sq-b']);
     expect(viaRelay.every((c) => c.nodeName === NODE)).toBe(true);
   });

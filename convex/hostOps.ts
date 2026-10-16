@@ -578,10 +578,19 @@ export const deleteListenerHost = internalAction({
 // --- the Host follows its server name -------------------------------------------------------------
 
 /**
- * What a resync would write: only for an FCP-owned Host that is settled
- * (`present`, no op in flight) whose recorded server name is no longer the one
- * the listener would choose (`hostSniOf`). A Host mid-create or mid-delete is
- * left to its own machine; a rotation writes the new tuple by itself.
+ * What a resync would do: only for a Host that is settled (`present`, no op in
+ * flight) whose recorded server name is no longer the one the listener would
+ * choose (`hostSniOf`). A Host mid-create or mid-delete is left to its own
+ * machine; a rotation writes the new tuple by itself.
+ *
+ *  - `write`: the listener has a next name; it goes onto the Host, address and
+ *    port unchanged.
+ *  - `withdraw`: the listener has NO active name left (a burn took the last
+ *    one) and the Host still hands out the burned one. A name known blocked is
+ *    worse than no Host: an FCP-owned Host is deleted through the Host state
+ *    machine (read-back confirmed). The listener serves nobody until it gets a
+ *    name again, and its next rotation creates the Host afresh. An adopted
+ *    Host (the operator's) is never deleted by FCP and is left as it is.
  */
 export const resyncSniContext = internalQuery({
   args: { listenerId: v.id('relayListeners') },
@@ -593,9 +602,15 @@ export const resyncSniContext = internalQuery({
     if (relay.activeRotationId || relay.restore || relay.quarantine) return null;
     const host = l.host;
     if (!host || host.state !== 'present' || host.op || !host.uuid || !host.intended) return null;
+    if (host.intended.sni === null) return null;
     const sni = hostSniOf(l);
-    if (!sni || host.intended.sni === sni || host.intended.sni === null) return null;
+    if (!sni) {
+      if (host.ownership !== 'fcp') return null;
+      return { kind: 'withdraw' as const, uuid: host.uuid };
+    }
+    if (host.intended.sni === sni) return null;
     return {
+      kind: 'write' as const,
       backendServerId: relay.backendServerId,
       uuid: host.uuid,
       address: host.intended.address,
@@ -630,9 +645,19 @@ export const recordResyncedSni = internalMutation({
  */
 export const resyncSni = internalAction({
   args: { listenerId: v.id('relayListeners') },
-  handler: async (ctx, { listenerId }): Promise<{ written: boolean }> => {
+  handler: async (ctx, { listenerId }): Promise<{ written: boolean; withdrawn?: boolean }> => {
     const c = await ctx.runQuery(internal.hostOps.resyncSniContext, { listenerId });
     if (!c) return { written: false };
+    if (c.kind === 'withdraw') {
+      // Never a burned name left live: delete it, confirmed only by read-back.
+      try {
+        const r = await ctx.runAction(internal.hostOps.deleteListenerHost, { listenerId });
+        return { written: false, withdrawn: r.state === 'absent' };
+      } catch {
+        // The claim, if taken, leaves an op the reconcile pass re-observes.
+        return { written: false, withdrawn: false };
+      }
+    }
     try {
       await ctx.runAction(internal.backends.updateAddress, {
         backendServerId: c.backendServerId,
@@ -723,8 +748,24 @@ export const pendingListeners = internalQuery({
           });
           continue;
         }
-        if (st.state === 'present' && st.ownership === 'fcp' && (l.retired || relay.deleting))
+        if (st.state === 'present' && st.ownership === 'fcp' && (l.retired || relay.deleting)) {
           out.push({ kind: 'delete', listenerId: l._id });
+          continue;
+        }
+        // The safety net under `resyncSni`'s withdraw: an FCP-owned Host still
+        // handing out a name the listener no longer has, with no name to move
+        // to (a burn took the last one). Left alone while the origin rotates,
+        // restores or is quarantined, like the resync itself.
+        const burnedName =
+          st.state === 'present' &&
+          st.ownership === 'fcp' &&
+          !st.op &&
+          !!st.intended?.sni &&
+          hostSniOf(l) === null &&
+          !relay.activeRotationId &&
+          !relay.restore &&
+          !relay.quarantine;
+        if (burnedName) out.push({ kind: 'delete', listenerId: l._id });
       }
     }
     return out;

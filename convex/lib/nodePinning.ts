@@ -193,6 +193,47 @@ export function pinSubscriptionToNode(
  *  `content` undefined = single node (verbatim WITH the node). */
 type ConfigPin = { node: string; content?: string } | null;
 
+/**
+ * Whether a body is one the pinner UNDERSTANDS yet that names no node: an
+ * empty body, a link list whose proxy lines carry no node remark, a sing-box
+ * config or a Clash / Mihomo config with no node-tagged entry. That is what a
+ * backend serves a key whose node serves nothing yet (its placeholder). An
+ * unknown shape (HTML, another JSON, free text) is NOT nodeless: it is simply
+ * not pinnable.
+ */
+export function nodelessBody(content: string): boolean {
+  try {
+    const trimmed = content.trim();
+    if (!trimmed) return true;
+    if (trimmed.startsWith('{')) {
+      const cfg = JSON.parse(trimmed) as { outbounds?: unknown };
+      if (!cfg || typeof cfg !== 'object' || !Array.isArray(cfg.outbounds)) return false;
+      const byNode = groupByNode(cfg.outbounds, 'tag');
+      return !!byNode && byNode.size === 0;
+    }
+    if (trimmed.startsWith('<')) return false;
+    if (/^proxies:/m.test(trimmed) || /^proxy-groups:/m.test(trimmed)) {
+      const doc = YAML.parse(trimmed) as { proxies?: unknown } | null;
+      if (!doc || typeof doc !== 'object' || !Array.isArray(doc.proxies)) return false;
+      const byNode = groupByNode(doc.proxies, 'name');
+      return !!byNode && byNode.size === 0;
+    }
+    let body = trimmed;
+    if (!PROXY_LINE_RE.test(trimmed)) {
+      const decoded = decodeBase64Loose(trimmed);
+      if (decoded === null || !PROXY_LINE_RE.test(decoded.trim())) return false;
+      body = decoded;
+    }
+    const lines = body
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => PROXY_LINE_RE.test(l));
+    return lines.length > 0 && lines.every((l) => nodeNameFromLink(l) === null);
+  } catch {
+    return false;
+  }
+}
+
 function finish(original: string, pin: ConfigPin): PinResult {
   if (!pin) return { content: original, node: null };
   return { content: pin.content ?? original, node: pin.node };

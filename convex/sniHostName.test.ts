@@ -274,4 +274,96 @@ describe('the Host follows its server name', () => {
     expect(await t.action(internal.hostOps.resyncSni, { listenerId })).toEqual({ written: false });
     expect(writes).toEqual([]);
   });
+
+  /**
+   * A panel that lists the one Host until it is deleted, and records the
+   * DELETEs and PATCHes it receives (no other write is expected).
+   */
+  const deletablePanel = (sni: string) => {
+    const calls: string[] = [];
+    let present = true;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL, init: RequestInit = {}) => {
+        const method = (init.method ?? 'GET').toUpperCase();
+        const path = new URL(String(input)).pathname;
+        if (method !== 'GET') calls.push(`${method} ${path}`);
+        if (method === 'DELETE' && path === '/api/hosts/h-1') present = false;
+        const hosts = present
+          ? [
+              {
+                uuid: 'h-1',
+                remark: 'node-one-relay-a',
+                address: '198.51.100.7',
+                port: 443,
+                sni,
+                inbound: { configProfileInboundUuid: 'i', configProfileUuid: 'p' },
+              },
+            ]
+          : [];
+        return new Response(JSON.stringify({ response: method === 'GET' ? hosts : {} }), {
+          headers: { 'content-type': 'application/json' },
+        });
+      }),
+    );
+    return calls;
+  };
+
+  test("a burn that takes the listener's LAST name withdraws its FCP Host: never a burned name left live", async () => {
+    const { t, relayId, listenerId } = await seed(['only.example']);
+    await withHost(t, relayId, listenerId, 'only.example');
+    const calls = deletablePanel('only.example');
+    await t.mutation(internal.sniFamilies.setNames, {
+      slug: 'fam',
+      names: ['only.example'],
+      action: 'burn',
+    });
+    // The burn schedules the resync like any retire of the Host's name.
+    const scheduled = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
+    expect(scheduled.some((f) => f.name.includes('resyncSni'))).toBe(true);
+    expect(await t.action(internal.hostOps.resyncSni, { listenerId })).toEqual({
+      written: false,
+      withdrawn: true,
+    });
+    // Deleted through the Host machine (read-back confirmed), never rewritten.
+    expect(calls).toEqual(['DELETE /api/hosts/h-1']);
+    const l = (await t.run((ctx) => ctx.db.get(listenerId)))!;
+    expect(l.host?.state).toBe('absent');
+    // Nothing more to do on the next pass.
+    expect(await t.action(internal.hostOps.resyncSni, { listenerId })).toEqual({ written: false });
+  });
+
+  test('the reconcile pass withdraws a Host left on a burned last name (the resync never ran)', async () => {
+    const { t, relayId, listenerId } = await seed(['only.example']);
+    await withHost(t, relayId, listenerId, 'only.example');
+    await t.mutation(internal.sniFamilies.setNames, {
+      slug: 'fam',
+      names: ['only.example'],
+      action: 'burn',
+    });
+    const calls = deletablePanel('only.example');
+    const pending = await t.query(internal.hostOps.pendingListeners, {});
+    expect(pending).toEqual([{ kind: 'delete', listenerId }]);
+    const r = await t.action(internal.hostOps.deleteListenerHost, { listenerId });
+    expect(r.state).toBe('absent');
+    expect(calls).toEqual(['DELETE /api/hosts/h-1']);
+  });
+
+  test("an adopted Host (the operator's) is never deleted for a burned last name", async () => {
+    const { t, relayId, listenerId } = await seed(['only.example']);
+    await withHost(t, relayId, listenerId, 'only.example');
+    await t.run(async (ctx) => {
+      const l = (await ctx.db.get(listenerId))!;
+      await ctx.db.patch(listenerId, { host: { ...l.host!, ownership: 'adopted' } });
+    });
+    const calls = deletablePanel('only.example');
+    await t.mutation(internal.sniFamilies.setNames, {
+      slug: 'fam',
+      names: ['only.example'],
+      action: 'burn',
+    });
+    expect(await t.action(internal.hostOps.resyncSni, { listenerId })).toEqual({ written: false });
+    expect(await t.query(internal.hostOps.pendingListeners, {})).toEqual([]);
+    expect(calls).toEqual([]);
+  });
 });

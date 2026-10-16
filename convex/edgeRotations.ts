@@ -103,6 +103,7 @@ import type {
   ResourceStep,
 } from './lib/edges/providers/types';
 import { admitted, assertAdmission } from './lib/edges/maintenance';
+import { countFleetRotation, fleetRotationsToday, readFleetBrake } from './lib/edges/fleet';
 import { hostSecurityLayer } from './hostOps';
 import {
   publicationAdmission,
@@ -533,6 +534,15 @@ export async function collectStartBlockers(
   if (a.trigger === 'detector' && !(cfg.enabled && cfg.autoRotate && origin.autoRotate)) {
     push('edge.auto_rotate_disabled', 'Automatic rotation is not enabled for this origin');
   }
+  // The fleet guards (lib/edges/fleet.ts), read in the same transaction that
+  // would start the rotation: a mass block holds every automatic rotation, and
+  // the fleet's daily cap bounds them together. Never applied to a manual start.
+  if (a.trigger === 'detector') {
+    if ((await readFleetBrake(ctx.db)).engaged)
+      push('edge.fleet_brake', 'Automatic rotation is held fleet-wide: many origins look blocked');
+    if ((await fleetRotationsToday(ctx.db, now)) >= cfg.detect.fleetRotationsPerDay)
+      push('edge.fleet_daily_cap', 'The fleet-wide daily cap on automatic rotations is reached');
+  }
   if ((await countActiveRotations(ctx)) >= cfg.maxConcurrentRotations) {
     push('edge.concurrency', 'Too many rotations in flight');
   }
@@ -667,6 +677,22 @@ export async function collectStartBlockers(
         push('edge.l7_replacement_cap', 'Daily cap on L7 replacements for this origin reached');
       }
     }
+  }
+  // An automatic run that would publish on an enrolled node and can only pick
+  // outside the node's approved shape is refused at the start, not left to
+  // fail at selection every tick (a new review is what it needs).
+  if (
+    blockers.length === 0 &&
+    (a.trigger === 'reconcile' || a.trigger === 'detector') &&
+    publishesUnderApproval(a) &&
+    origin.origin.kind === 'panel-node'
+  ) {
+    const sel = await selectionContext(ctx, { ...a, listenerId }, origin, targetEdge, cfg);
+    if (sel.accountFailure === 'outside_approved_shape')
+      push(
+        'edge.outside_approved_shape',
+        'Nothing fits what the node was approved for; review and approve it again',
+      );
   }
   return { blockers, origin, cfg, targetEdge, listenerId, approval };
 }
@@ -808,6 +834,7 @@ export async function startRotation(
     startedAt: now,
     updatedAt: now,
   });
+  if (a.trigger === 'detector') await countFleetRotation(ctx.db, now);
   const today = todayKey(now);
   await ctx.db.patch(a.relayId, {
     activeRotationId: id,
@@ -1539,6 +1566,35 @@ export const applyPublish = internalMutation({
       return { ok: true as const, poolIndex: null, needsHostFlip: false };
     }
     if (!check.ok) return { ok: false as const, code: check.code ?? 'not_publishable' };
+    // The node's approval, checked again where the result is published: the
+    // selection picked within the approved shape, but the node may have moved
+    // since (a new review, maintenance, retirement). Out of shape, the paid-for
+    // edge stays a standby and a replace leaves its target published; as a
+    // candidate of the node's running activation it is recorded as one, so
+    // members never see it before the commit.
+    if (publishesUnderApproval(r)) {
+      const approval = await publicationApproval(ctx, origin, to);
+      if (approval.kind === 'refused') {
+        await ctx.db.patch(rotationId, {
+          phase: 'finalizing',
+          stepVersion: next,
+          events: appendEvent(r.events, {
+            at: now,
+            level: 'warn',
+            code: 'outside_approved_shape',
+            detail: approval.code,
+          }),
+          updatedAt: now,
+        });
+        await ctx.db.patch(r.relayId, {
+          standbyEdgeIds: [...origin.standbyEdgeIds.filter((e) => e !== to._id), to._id],
+          updatedAt: now,
+        });
+        await scheduleStep(ctx, rotationId, 0);
+        return { ok: true as const, poolIndex: null, needsHostFlip: false };
+      }
+      if (approval.kind === 'candidate') await recordCandidateEdge(ctx, approval.run, to._id);
+    }
     if (r.kind === 'replace') {
       const target = r.targetEdgeId ? await ctx.db.get(r.targetEdgeId) : null;
       if (!target || target.publication !== 'published' || target.poolIndex === undefined)
@@ -2302,6 +2358,34 @@ export interface SelectionContext {
   } | null;
 }
 
+/**
+ * Whether a run publishes its own result under the NODE's approval: a replace
+ * or a provision that publishes when done, outside a guided setup run (whose
+ * own publish is admitted by its activation, `startStageRotation`).
+ */
+export function publishesUnderApproval(r: {
+  kind: SelectionRequest['kind'];
+  publishOnDone?: boolean;
+  setupRun?: SelectionRequest['setupRun'];
+}): boolean {
+  return !r.setupRun && (r.kind === 'replace' || (r.kind === 'provision' && !!r.publishOnDone));
+}
+
+/**
+ * Whether an edge of this shape (listener, account, template) could be
+ * published on the origin's node now (`publicationAdmission`): always for an
+ * origin that is not an enrolled node.
+ */
+async function shapeAdmitted(
+  ctx: { db: QueryCtx['db'] },
+  origin: Origin,
+  pub: { listenerKey: string; accountId: string | null; templateHash: string | null },
+): Promise<boolean> {
+  if (origin.origin.kind !== 'panel-node' || !origin.backendServerId) return true;
+  const a = await publicationAdmission(ctx, origin.backendServerId, origin.origin.nodeName, pub);
+  return a.kind !== 'refused';
+}
+
 export async function selectionContext(
   ctx: { db: QueryCtx['db'] },
   rotation: SelectionRequest,
@@ -2309,6 +2393,10 @@ export async function selectionContext(
   targetEdge: Edge | null,
   cfg: EdgeConfig,
 ): Promise<SelectionContext> {
+  // A result this run publishes by itself must fit what the node was approved
+  // for (docs/servers.md "Node lifecycle"): a standby or an account outside
+  // that shape is never picked, rather than paid for and then refused.
+  const underApproval = publishesUnderApproval(rotation);
   const edges = await liveEdgesOfRelay(ctx.db, origin._id);
   const publishedProviders = edges
     .filter((e) => e.publication === 'published' && e.provider)
@@ -2361,8 +2449,17 @@ export async function selectionContext(
       template: null,
     };
   const listener = slot;
-  const standby = pickStandby(
-    edges.map((e) => ({
+  const fitsApproval = async (accountId: string | null, templateHash: string | null) =>
+    !underApproval ||
+    (await shapeAdmitted(ctx, origin, {
+      listenerKey: listener.listenerKey,
+      accountId,
+      templateHash,
+    }));
+  const standbyCandidates = [];
+  for (const e of edges) {
+    const slotOfEdge = slotRows.find((s) => s._id === e.listenerId);
+    standbyCandidates.push({
       id: e._id,
       slotId: e.listenerId,
       provider: e.provider ?? null,
@@ -2370,14 +2467,19 @@ export async function selectionContext(
       status: e.status,
       publication: e.publication,
       health: e.health,
-      // An untested L4 spare is not a candidate (lib/edges/verification.ts).
+      // An untested L4 spare is not a candidate (lib/edges/verification.ts),
+      // nor one outside the node's approved shape.
       hasAddress:
         hasPublishableAddress(e) &&
-        standbyEligible(
-          e,
-          slotRows.find((s) => s._id === e.listenerId),
-        ),
-    })),
+        standbyEligible(e, slotOfEdge) &&
+        (e.listenerId !== slot._id ||
+          e.status !== 'active' ||
+          e.publication !== 'unpublished' ||
+          (await fitsApproval(e.accountId ? String(e.accountId) : null, e.templateHash ?? null))),
+    });
+  }
+  const standby = pickStandby(
+    standbyCandidates,
     slot._id,
     publishedProviders,
     targetEdge?._id ?? null,
@@ -2442,15 +2544,31 @@ export async function selectionContext(
     );
     if (rotation.requestedTemplateId && template.id !== rotation.requestedTemplateId)
       return failure('template_not_found');
+    if (!(await fitsApproval(a._id as string, template.hash)))
+      return failure('outside_approved_shape');
     return { listener, standbyId: null, ...(await describeAccount(ctx, a)), template };
   }
   if (accounts.length === 0) {
     return failure(layers.length === 0 ? 'no_compatible_layer' : 'no_account_for_layer');
   }
   const candidates = [];
+  let outsideShape = 0;
   for (const a of accounts) {
     // An account-scoped profile provisions from that account only.
     if (listener.providerScope?.accountId && a._id !== listener.providerScope.accountId) continue;
+    if (underApproval) {
+      const tpl = await resolveTemplateFor(
+        ctx,
+        a.provider,
+        null,
+        a.defaultTemplateId ?? null,
+        a._id,
+      );
+      if (!(await fitsApproval(a._id as string, tpl.hash))) {
+        outsideShape++;
+        continue;
+      }
+    }
     // Same rule as the insert-time capacity check: observe-only edges were not
     // provisioned by FCP and never consume its allocation.
     const live = (await liveEdgesOfAccount(ctx.db, a._id)).filter((e) => e.managed).length;
@@ -2480,7 +2598,10 @@ export async function selectionContext(
       listener,
       standbyId: null,
       account: null,
-      accountFailure: picked.code,
+      // Every account that could front the listener is outside what the node
+      // was approved for: a new review is the way forward, not another account.
+      accountFailure:
+        candidates.length === 0 && outsideShape > 0 ? 'outside_approved_shape' : picked.code,
       template: null,
     };
   const account = accounts.find((a) => (a._id as string) === picked.account.id)!;

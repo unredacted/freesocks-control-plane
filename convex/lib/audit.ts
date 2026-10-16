@@ -111,6 +111,8 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // `ipHeader` is a non-secret header NAME (cf-connecting-ip etc.) — auditing
   // it makes an IP-trust widening visible in the trail. `geoMode` records the
   // full-IP vs coarse-location choice (a privacy-posture change worth a trail).
+  // Operator alerts (convex/alerts.ts): booleans only; never the URL, topic or token.
+  'admin.alerts.change': ['enabled', 'urlChanged', 'topicSet', 'tokenSet'],
   'admin.analytics.change': [
     'enabled',
     'forwardIp',
@@ -431,6 +433,8 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
     'autoRotate',
   ],
   'edge.block_cleared': ['relaySlug', 'reason'],
+  // The fleet brake (lib/edges/fleet.ts): counts and the threshold only.
+  'edge.fleet_brake': ['engaged', 'suspected', 'evaluated', 'threshold'],
   'probe.run': ['targetKey', 'source', 'trigger'],
   'probe.verdict': ['targetKey', 'source', 'country', 'ipVersion', 'verdict'],
   'probe.requested': ['targets', 'runs', 'sources'],

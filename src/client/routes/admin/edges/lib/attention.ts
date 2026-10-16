@@ -14,7 +14,9 @@ import type { z } from 'zod';
 import type { AttentionItem as AttentionItemSchema } from '../../../../../shared/contracts/edges';
 import type { AttentionAction } from '../../../../../shared/contracts/edgeCodes';
 import { edgesPaths } from './routes';
+import { serversPaths } from '../../servers/lib/routes';
 import { durationLabel } from './time';
+import { codeLabel } from '../../../../lib/edgeCodes';
 
 export type AttentionItem = z.infer<typeof AttentionItemSchema>;
 
@@ -93,6 +95,9 @@ export const ATTENTION_ACTION_PLAN = {
   // and renders the test card for whatever comes back pending. Without
   // `onAction` the row navigates to the node page, which offers the same button.
   require_edges: { type: 'call', confirm: null },
+  // An enrolled node: the protect sheet with it preselected, or its page under Servers.
+  protect_node: { type: 'navigate' },
+  open_node: { type: 'navigate' },
 } as const satisfies Record<AttentionAction, AttentionPlan>;
 
 /**
@@ -135,7 +140,24 @@ export function attentionTarget(item: AttentionItem): string {
       return edgesPaths.settings({ section: 'maintenance' });
     case 'rebalance':
       return relay({ tab: 'edges' });
+    case 'protect_node':
+      return edgesPaths.home({
+        protect: '1',
+        server: factString(item, 'serverSlug'),
+        node: factString(item, 'nodeUuid'),
+      });
+    case 'open_node': {
+      const uuid = factString(item, 'nodeUuid');
+      const instance = factString(item, 'serverSlug') ?? undefined;
+      return uuid ? serversPaths.node(uuid, { instance }) : serversPaths.home({ instance });
+    }
   }
+}
+
+/** A string fact of the item, or null. */
+function factString(item: AttentionItem, key: string): string | null {
+  const v = item.facts[key];
+  return typeof v === 'string' && v !== '' ? v : null;
 }
 
 /** What the row is about, in words: "origin <slug>", plus the listener when known. */
@@ -175,6 +197,36 @@ export function attentionFactsLine(item: AttentionItem): string {
   if (attempts !== null) out.push(`${attempts} ${attempts === 1 ? 'attempt' : 'attempts'}`);
   const ageMs = num('ageMs');
   if (ageMs !== null) out.push(`for ${durationLabel(ageMs)}`);
+  // Operations safety facts.
+  const node = str('node');
+  if (node !== null) out.push(`Node ${node}`);
+  const failures = num('failures');
+  if (failures !== null) out.push(`${failures} failed calls in a row`);
+  const edges = num('edges');
+  if (edges !== null) out.push(`${edges} ${edges === 1 ? 'edge' : 'edges'}`);
+  const minutes = num('minutes');
+  if (minutes !== null) out.push(`running ${durationLabel(minutes * 60_000)}`);
+  const suspected = num('suspected');
+  const evaluated = num('evaluated');
+  if (suspected !== null && evaluated !== null)
+    out.push(`${suspected} of ${evaluated} nodes look blocked`);
+  const used = num('used');
+  const cap = num('cap');
+  if (used !== null && cap !== null) out.push(`${used} of ${cap} today`);
+  const total = num('total');
+  if (total !== null) out.push(`${total} refused in the last hour`);
+  const byReason = f['byReason'];
+  if (byReason && typeof byReason === 'object' && !Array.isArray(byReason)) {
+    const top = Object.entries(byReason as Record<string, unknown>)
+      .filter((e): e is [string, number] => typeof e[1] === 'number')
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([reason, n]) => `${codeLabel(reason)} ${n}`);
+    if (top.length > 0) out.push(top.join(', '));
+  }
+  const families = f['families'];
+  if (Array.isArray(families) && families.length > 0)
+    out.push(families.filter((x): x is string => typeof x === 'string').join(', '));
   const countries = f['countries'];
   if (Array.isArray(countries) && countries.length > 0) {
     const codes = countries.filter((c): c is string => typeof c === 'string').slice(0, 6);

@@ -385,7 +385,8 @@ export type SubscriptionRenderDecision =
         | 'relay_missing'
         | 'no_render_key'
         | 'node_gated'
-        | 'policy_moved';
+        | 'policy_moved'
+        | 'family_disabled';
       relaySlug: string | null;
     };
 
@@ -425,9 +426,10 @@ export const decideForSubscription = internalQuery({
     const family = a.family as RenderClientFamily;
     const rule = effectiveRule(cfg.render, cfg.render.clients[family]);
     // A family whose rule is off used to pass the backend body through; under
-    // edge-required delivery there is no passthrough, so it is unavailable.
+    // edge-required delivery there is no passthrough, so it is unavailable
+    // (its own reason, so the refusal counter tells it apart from a switch-off).
     if (!rule.enabled)
-      return { kind: 'unavailable', reason: 'render_disabled', relaySlug: relay.slug };
+      return { kind: 'unavailable', reason: 'family_disabled', relaySlug: relay.slug };
     // A key that has never been rendered has no render key yet: the caller
     // mints one (`subscriptions.ensureRenderKey`) and refuses only if that fails.
     const { published, matchers } = await publishedEdgesOf(

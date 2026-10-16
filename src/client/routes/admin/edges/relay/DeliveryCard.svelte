@@ -11,7 +11,15 @@
   import { Badge } from '@client/components/ui/badge';
   import { Button } from '@client/components/ui/button';
   import Link from '@client/components/Link.svelte';
-  import { attentionQuery, setupStatusQuery } from '@client/lib/edgesApi';
+  import { useQueryClient } from '@tanstack/svelte-query';
+  import { toast } from 'svelte-sonner';
+  import {
+    attentionQuery,
+    edgeKeys,
+    serveRelayDirect,
+    setupStatusQuery,
+  } from '@client/lib/edgesApi';
+  import ConfirmDialog from '../components/ConfirmDialog.svelte';
   import { SETUP_STEP_TITLES } from '@client/lib/edgeCodes';
   import RenderPreview from '../forms/RenderPreview.svelte';
   import { edgesPaths } from '../lib/routes';
@@ -33,6 +41,22 @@
   );
   const setup = $derived(setupQ.data ?? null);
   let previewOpen = $state(false);
+
+  // "Serve this node directly again" (the restore workflow, `release_requirement`):
+  // offered on an edge-required origin no setup run owns and no restore runs on.
+  // The server releases the binding BEFORE any direct Host is enabled again.
+  const qc = useQueryClient();
+  const canServeDirect = $derived(
+    relay.origin.kind !== 'manual' && !relay.bindingDeferred && !relay.setupOwned && !relay.restore,
+  );
+  let directOpen = $state(false);
+  async function serveDirect() {
+    await serveRelayDirect(relay.id);
+    void qc.invalidateQueries({ queryKey: edgeKeys.all });
+    toast.success('Putting the direct address back', {
+      description: 'Each step is checked first; the node page shows where it is.',
+    });
+  }
 </script>
 
 <Card.Root>
@@ -79,5 +103,32 @@
         <RenderPreview relayId={relay.id} />
       {/if}
     {/if}
+    {#if canServeDirect}
+      <div class="border-t pt-3">
+        <p class="text-muted-foreground">
+          {relay.quarantine
+            ? 'Members can be served this node directly again once the quarantine is resolved.'
+            : 'To stop using edges for this node, serve members its own address again.'}
+        </p>
+        <Button
+          class="mt-2"
+          variant="outline"
+          size="sm"
+          disabled={!!relay.quarantine}
+          onclick={() => (directOpen = true)}
+        >
+          Serve this node directly again
+        </Button>
+      </div>
+    {/if}
   </Card.Content>
 </Card.Root>
+
+<ConfirmDialog
+  bind:open={directOpen}
+  title="Serve this node directly again?"
+  body="Members stop receiving edge addresses for this node and get its own address back. FCP first checks that every member is served, releases edge-required delivery, and only then re-enables the direct addresses it hid. The edges stay, so the node can be protected again later."
+  confirmLabel="Serve directly"
+  danger
+  onConfirm={serveDirect}
+/>

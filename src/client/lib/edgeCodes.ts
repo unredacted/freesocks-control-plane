@@ -776,6 +776,93 @@ const COPY = {
     explain: 'Every address is tested. Going live waits for your approval of the node.',
     fix: 'Approve go-live.',
   },
+  // --- operations safety: attention, the fleet guards, delivery refusals ------------------
+  fleet_brake: {
+    label: 'Automatic replacement held',
+    explain:
+      'Many nodes look blocked at once, which points at a block on a whole provider or protocol, so FCP holds every automatic replacement instead of burning addresses.',
+    fix: 'Check the probes and the reports. It releases by itself once fewer nodes look blocked.',
+  },
+  fleet_rotation_cap: {
+    label: 'Daily replacement cap reached',
+    explain:
+      'Automatic replacements across all nodes reached the cap for today, so more wait until tomorrow (UTC).',
+    fix: 'Raise the fleet cap under Settings if these replacements are expected.',
+  },
+  fleet_daily_cap: {
+    label: 'Fleet daily cap reached',
+    explain: 'The cap on automatic replacements across all nodes is used up for today.',
+    fix: 'Wait for tomorrow (UTC), or raise the cap under Settings.',
+  },
+  outside_approved_shape: {
+    label: 'Outside the approved setup',
+    explain:
+      'No account or spare fits what this node was approved for, so nothing is published without a new review.',
+    fix: 'Review the node and approve it again with the account it should use.',
+  },
+  rotation_stuck: {
+    label: 'Replacement stuck',
+    explain:
+      'A rotation has been running for over an hour: a provider or the backend may not be answering.',
+    fix: 'Open the node to see the step it is waiting on.',
+  },
+  account_api_failing: {
+    label: 'Provider not answering',
+    explain:
+      'Several calls in a row to this provider account failed (timeouts, errors on its side or refused credentials), so new edges, health checks and clean-ups stall.',
+    fix: 'Check the provider status and the account credentials, then test them.',
+  },
+  health_stale: {
+    label: 'Health not refreshed',
+    explain:
+      'FCP could not refresh the health of some live edges of this account for over an hour.',
+    fix: 'Open the account: the provider may be refusing the reads.',
+  },
+  billable_idle: {
+    label: 'Paid for, serving nobody',
+    explain:
+      'Edges that cost money serve no member until you act: the node is paused for safety, or an edge waits for an operator.',
+    fix: 'Resolve the pause or the edge, so the resources are used or removed.',
+  },
+  delivery_refusals: {
+    label: 'Members refused',
+    explain:
+      'Members asked for their subscription in the last hour and got nothing usable. The reasons are counted.',
+    fix: 'Look at the reasons: a switch that is off, an empty pool or a node that is not live.',
+  },
+  family_rule_disabled: {
+    label: 'App family switched off',
+    explain:
+      'A client app family has its render rule off, so members using those apps get nothing from a protected node.',
+    fix: 'Turn the family back on under Settings, unless that is intended.',
+  },
+  node_ready_to_protect: {
+    label: 'Node ready to protect',
+    explain:
+      'An enrolled node meant to sit behind an edge is ready, and nothing protects it until you start.',
+    fix: 'Start protecting it.',
+  },
+  node_awaiting_approval: {
+    label: 'Waiting for your approval',
+    explain: 'A node is tested and goes live only once you approve it.',
+    fix: 'Open the node and approve go-live.',
+  },
+  node_gated: {
+    label: 'Node not live',
+    explain:
+      'The member is on a node that is not live yet, or is closed for maintenance, so nothing is handed out for it.',
+  },
+  policy_moved: {
+    label: 'Changed while answering',
+    explain:
+      'The delivery policy changed while the answer was being built, so it was not sent. The next refresh gets the current one.',
+  },
+  family_disabled: {
+    label: 'App family off',
+    explain:
+      'The render rule for this client app family is off, so its members get nothing from a protected node.',
+    fix: 'Turn the family on under Settings.',
+  },
 } as const satisfies Record<KnownCode, CodeCopy> & Record<string, CodeCopy>;
 
 // --- discovered transports that cannot become listeners --------------------------------------
@@ -957,6 +1044,10 @@ const REFUSAL_COPY = {
     explain:
       'This node is enrolled in Servers, so it goes live behind its new addresses only. Members cannot stay on the direct one.',
     fix: 'Protect it and hide the hosts the addresses cannot carry.',
+  },
+  not_edge_required: {
+    label: 'Already direct',
+    explain: 'Members of this node already receive its own address.',
   },
 } as const satisfies Record<string, CodeCopy>;
 
@@ -1203,6 +1294,8 @@ export const ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
   thaw: 'Thaw',
   rebalance: 'Make room',
   require_edges: 'Go live',
+  protect_node: 'Protect node',
+  open_node: 'Open node',
 };
 
 export function severityTone(s: AttentionSeverity): Tone {

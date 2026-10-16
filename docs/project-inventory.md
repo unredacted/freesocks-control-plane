@@ -590,7 +590,10 @@ Convex runs these natively (no Workers triggers, no node-cron):
   opted-in origin nodes, enabled custom targets) from the configured countries (no-op unless
   `edge.probe.enabled`). `retention-edge-probes` (daily) prunes settled runs after two weeks.
 - `edge-block-detector` (5 min): per-origin scoring of attributed reports, node load and probe
-  verdicts; automatic rotation only with edge-level evidence and every gate open.
+  verdicts; automatic rotation only with edge-level evidence and every gate open, held fleet-wide
+  by the fleet brake (a mass block) and the fleet's daily cap.
+- `alerts-dispatch` (5 min): opt-in operator alerts (`alerts.*`): new alert-worthy edge attention
+  items posted once to the operator's webhook as ntfy-compatible JSON, kinds and counts only.
 
 Every sweep stamps a per-cron heartbeat (`convex/cronHeartbeat.ts`, `cronHeartbeats` table,
 stamped at start) surfaced as a freshness backend on the admin dashboard.

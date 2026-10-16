@@ -360,7 +360,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     );
     const v2 = await get(t, 'v2rayNG/1.9.0');
     expect(v2.status).toBe(503);
-    expect(v2.headers.get('x-fcp-delivery')).toBe('render_disabled');
+    expect(v2.headers.get('x-fcp-delivery')).toBe('family_disabled');
     const other = await get(t, 'curl/8.0');
     expect(other.status).toBe(200);
     expect(await other.text()).toContain('FreeSocks%20Primary');
@@ -395,6 +395,47 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
         nodeName: 'node-nine',
       }),
     ).toMatchObject({ required: false, bindingVersion: null, relayId: null, relaySlug: null });
+  });
+
+  test("the backend's placeholder (no node entry, no pin) is answered but never cached: the node going live is seen at once", async () => {
+    // What the backend serves a key whose node serves nothing yet: no Host
+    // remark names a node, so the pin resolves nothing.
+    const placeholder = `vless://${UUID}@198.51.100.70:443?${REALITY_QS}#placeholder`;
+    stubPanel(placeholder);
+    const { t, subId } = await seed({ pinned: false });
+    const first = await get(t);
+    expect(first.status).toBe(200);
+    expect(await first.text()).toBe(placeholder);
+    expect(first.headers.get('cache-control')).toBe('private, no-store');
+    const sub = (await t.run((ctx) => ctx.db.get(subId)))!;
+    expect(sub.pinnedNode).toBeUndefined();
+    expect(sub.subCache).toBeUndefined();
+    // The node goes live: its body is what the very next request gets (no 30 s placeholder).
+    stubPanel();
+    const next = await get(t);
+    expect(next.status).toBe(200);
+    expect(await next.text()).toContain('FreeSocks%20Primary');
+    expect(fetchCalls).toBe(1);
+  });
+
+  test('every edge-required refusal is counted per reason, never the member or the node', async () => {
+    stubPanel();
+    const { t } = await seed({ renderEnabled: false });
+    expect((await get(t)).status).toBe(503);
+    expect((await get(t, 'curl/8.0')).status).toBe(503);
+    const a = await t.query(internal.edgeOperator.attention, {});
+    const item = a.items.find((i) => i.kind === 'delivery_refusals')!;
+    expect(item).toMatchObject({
+      severity: 'warning',
+      code: 'render_disabled',
+      relaySlug: null,
+      facts: { total: 2, byReason: { render_disabled: 2 }, windowMinutes: 60 },
+    });
+    // The rows hold reason codes and counts only.
+    const rows = await t.run((ctx) => ctx.db.query('appState').collect());
+    const shards = rows.filter((r) => r.key.startsWith('edge:refusals:'));
+    expect(shards.length).toBeGreaterThan(0);
+    for (const r of shards) expect(r.value).not.toMatch(/tok_|short-1|node-|198\.51/);
   });
 
   test('the cache token follows the delivery binding policy version', async () => {

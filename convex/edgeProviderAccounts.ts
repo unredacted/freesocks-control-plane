@@ -107,6 +107,8 @@ export interface RelayAccountWithSecret {
   defaultTemplateId: Id<'edgeTemplates'> | null;
   /** Row version for compare-and-set writes (a rotation applies only to the row it tested). */
   updatedAt: number;
+  /** Consecutive provider-side API failures (a success resets them). */
+  apiFailures: number;
 }
 
 function toWithSecret(r: Doc<'edgeProviderAccounts'>): RelayAccountWithSecret {
@@ -120,6 +122,7 @@ function toWithSecret(r: Doc<'edgeProviderAccounts'>): RelayAccountWithSecret {
     qualified: r.qualified,
     defaultTemplateId: r.defaultTemplateId ?? null,
     updatedAt: r.updatedAt,
+    apiFailures: r.apiFailures ?? 0,
   };
 }
 
@@ -237,6 +240,14 @@ function checkLimits(a: {
     (a.dailyAllocationBudget < 0 || a.dailyAllocationBudget > 1000)
   ) {
     throw new ConvexError({ code: 'validation', message: 'dailyAllocationBudget must be 0..1000' });
+  }
+  // 0 = no daily limit on billable allocations: a runaway loop could then spend
+  // without bound. Only a development deployment may say so.
+  if (a.dailyAllocationBudget === 0 && process.env.ENVIRONMENT !== 'development') {
+    throw new ConvexError({
+      code: 'validation',
+      message: 'dailyAllocationBudget 0 (no daily limit) is allowed only in development',
+    });
   }
   if (a.maxLiveEdges !== undefined && (a.maxLiveEdges < 1 || a.maxLiveEdges > 200)) {
     throw new ConvexError({ code: 'validation', message: 'maxLiveEdges must be 1..200' });
@@ -945,6 +956,39 @@ export const recordTest = internalMutation({
         ? { observedSettings: JSON.stringify(observed).slice(0, 4_000), observedAt: now }
         : {}),
       updatedAt: now,
+    });
+    return null;
+  },
+});
+
+/** A provider failing this many calls in a row is raised as attention `account_api_failing`. */
+export const API_FAILING_AFTER = 3;
+
+/**
+ * One provider API outcome of an account (edgeProviderOps `tracked`): a
+ * provider-side failure counts, a success resets the run. Writes only when the
+ * count moves, so a healthy account costs nothing. `updatedAt` is left alone:
+ * it is the row version a credential rotation compares against.
+ */
+export const recordApiOutcome = internalMutation({
+  args: { id: v.id('edgeProviderAccounts'), failure: v.union(v.string(), v.null()) },
+  handler: async (ctx, { id, failure }) => {
+    const row = await ctx.db.get(id);
+    if (!row) return null;
+    const now = Date.now();
+    if (failure === null) {
+      if ((row.apiFailures ?? 0) === 0) return null;
+      await ctx.db.patch(id, {
+        apiFailures: 0,
+        apiFailingSince: undefined,
+        lastApiError: undefined,
+      });
+      return null;
+    }
+    await ctx.db.patch(id, {
+      apiFailures: (row.apiFailures ?? 0) + 1,
+      apiFailingSince: row.apiFailingSince ?? now,
+      lastApiError: failure.slice(0, 64),
     });
     return null;
   },

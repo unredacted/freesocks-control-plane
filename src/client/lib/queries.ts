@@ -31,6 +31,7 @@ import {
   MirrorProviderAdmin,
   AdminConnectionModesResponse,
   RemnawaveNodeStatsResponse,
+  AdminAlertsConfig,
   AdminAnalyticsConfig,
   AdminReferralConfig,
   TierAdmin,
@@ -118,6 +119,7 @@ export const queryKeys = {
   accountReferrals: ['account', 'referrals'] as const,
   adminReferralConfig: ['admin', 'referral-config'] as const,
   adminAnalytics: ['admin', 'analytics'] as const,
+  adminAlerts: ['admin', 'alerts'] as const,
   adminEdgeSummary: ['admin', 'edges', 'summary'] as const,
   adminEdgeConfig: ['admin', 'edges', 'config'] as const,
   adminEdgeProviders: ['admin', 'edges', 'providers'] as const,
@@ -312,6 +314,14 @@ export const adminAnalyticsQuery = () =>
   createQuery(() => ({
     queryKey: queryKeys.adminAnalytics,
     queryFn: () => apiClient.get('/api/v1/admin/analytics', AdminAnalyticsConfig),
+    staleTime: 60_000,
+  }));
+
+/** Operator alerts (opt-in webhook; the view carries no secret). */
+export const adminAlertsQuery = () =>
+  createQuery(() => ({
+    queryKey: queryKeys.adminAlerts,
+    queryFn: () => apiClient.get('/api/v1/admin/alerts', AdminAlertsConfig),
     staleTime: 60_000,
   }));
 
