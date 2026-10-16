@@ -25,6 +25,7 @@ import type { Id } from './_generated/dataModel';
 import { insertPanelServer, realityListener, registerRelay } from './lib/edges/testing/fixtures';
 import { installFakeBackend, type FakeBackend } from './lib/edges/testing/fakeBackend';
 import { claimKey } from './lib/backend/ops';
+import { jsonRes, routeFetch, type Captured } from './lib/edges/testing/mockFetch';
 import { signValue } from './lib/cookies';
 import { PortChangeView, ProfilePatchPreview } from '../src/shared/contracts/servers';
 
@@ -498,6 +499,20 @@ describe('a change that cannot go out yet keeps waiting', () => {
     );
     expect(held.state).toBe('waiting');
     expect(profileWrites(s.panel)).toHaveLength(0);
+    // Not admitted, so nothing of the transition was committed: the node is not
+    // closed and no hold was written for a change that was not sent.
+    const meanwhile = await s.t.run(async (ctx) => ({
+      intent: await ctx.db.get(s.intentId),
+      holds: await ctx.db.query('panelMaintenanceHolds').collect(),
+    }));
+    expect(meanwhile.intent!.maintenance).toBeUndefined();
+    expect(meanwhile.holds).toEqual([]);
+    // The confirmed port stays listed for the role until the change is over:
+    // a role run now must not close it again.
+    expect((await roleView(s)).firewall.ports).toEqual([
+      { port: 443, protocol: 'tcp', reason: 'serving' },
+      { port: 8443, protocol: 'tcp', reason: 'pending' },
+    ]);
     // The other change settles; the sweep (backend-reconcile) sends this one.
     await s.t.run(async (ctx) => {
       await ctx.db.delete(blocker.claimId);
@@ -658,5 +673,267 @@ describe('a transport from a template', () => {
     expect(((await res.json()) as { error: { code: string } }).error.code).toBe(
       'servers.tag_taken',
     );
+  });
+});
+
+describe('review follow-ups', () => {
+  const codeOf = async (res: Response) =>
+    ((await res.json()) as { error: { code: string } }).error.code;
+
+  test('a transport uuid must be the one its tag names', async () => {
+    const s = await seed();
+    const p = await previewPort(s, 8443);
+    const wsUuid = (s.panel.profiles[0].inbounds as { uuid: string; tag: string }[]).find(
+      (i) => i.tag === 'FREEDOM_WEBSOCKET',
+    )!.uuid;
+    const forged = { ...p.transportUuids, [TAG]: wsUuid };
+    const body = {
+      ops: p.ops,
+      baseToken: p.baseToken,
+      expectedToken: p.expectedToken,
+      transportUuids: forged,
+    };
+    expect(await codeOf(await s.call('POST', `profiles/${s.profileUuid}/port-change`, body))).toBe(
+      'servers.unknown_inbound',
+    );
+    // The plain apply path checks the same, for every edit.
+    const names = await s.call('POST', `profiles/${s.profileUuid}/preview`, {
+      ops: [{ op: 'setRealityTarget', transportTag: TAG, target: 'decoy-b.example:443' }],
+    });
+    const n = ProfilePatchPreview.parse(await names.json());
+    const applied = await s.call('POST', `profiles/${s.profileUuid}/apply`, {
+      ops: n.ops,
+      baseToken: n.baseToken,
+      expectedToken: n.expectedToken,
+      transportUuids: { ...n.transportUuids, [TAG]: wsUuid },
+    });
+    expect(await codeOf(applied)).toBe('servers.unknown_inbound');
+    expect(profileWrites(s.panel)).toHaveLength(0);
+  });
+
+  test('a node that stopped serving the transport is no longer waited for', async () => {
+    const s = await seed();
+    await addStranger(s);
+    const change = PortChangeView.parse(await (await stagePort(s, 8443, 'acknowledge')).json());
+    // The stranger is moved off the transport before it was ever confirmed.
+    const stranger = s.panel.nodes.find((n) => n.name === 'stranger')!;
+    stranger.configProfile.activeInbounds = [];
+    await s.t.action(internal.backendObserve.refresh, { backendServerId: s.serverId });
+    await s.t.mutation(internal.nodeIntents.applied, {
+      intentId: s.intentId,
+      appliedRevision: 1,
+      nodeStarted: true,
+      firewallPorts: [443, 8443],
+    });
+    // The stranger's wait still stands until the change is looked at again.
+    expect((await changeOf(s, change.id)).state).toBe('waiting');
+    await s.t.action(internal.backendPortChanges.sweep, {});
+    const done = await until(
+      () => changeOf(s, change.id),
+      (c) => c.state === 'applied' || c.state === 'refused',
+    );
+    expect(done.state).toBe('applied');
+    expect(done.nodes.find((x) => x.name === 'stranger')!.state).toBe('cancelled');
+  });
+
+  test('a change settled by a recovery is not reported as applied', async () => {
+    const s = await seed();
+    // The backend's answer is lost and the profile never shows the edit.
+    s.panel.stub.route(
+      routeFetch(
+        (c: Captured) =>
+          c.method === 'PATCH' && c.path === '/api/config-profiles'
+            ? jsonRes({ message: 'bad gateway' }, 502)
+            : null,
+        s.panel.handle,
+      ),
+    );
+    const change = PortChangeView.parse(await (await stagePort(s, 8443)).json());
+    await s.t.mutation(internal.nodeIntents.applied, {
+      intentId: s.intentId,
+      appliedRevision: 1,
+      nodeStarted: true,
+      firewallPorts: [443, 8443],
+    });
+    const applying = await until(
+      () => changeOf(s, change.id),
+      (c) => c.state === 'applying' && c.op?.state === 'outcome_unknown',
+    );
+    await s.t.action(internal.backendWrites.recoverOp, {
+      opId: applying.op!.id as Id<'panelOps'>,
+      credentialsRevoked: true,
+      noInFlightExecutor: true,
+      queueDrained: true,
+    });
+    expect((await changeOf(s, change.id)).state).toBe('recovered');
+  });
+
+  test('every open change is listed, however many settled ones are newer', async () => {
+    const s = await seed();
+    const open = PortChangeView.parse(await (await stagePort(s, 8443)).json());
+    await s.t.run(async (ctx) => {
+      const now = Date.now();
+      for (let i = 0; i < 25; i++)
+        await ctx.db.insert('panelPortChanges', {
+          backendServerId: s.serverId,
+          profileUuid: `other-${i}`,
+          profileName: 'Other',
+          inboundTag: 'T',
+          inboundUuid: 'u',
+          toPort: 9000 + i,
+          ops: '[]',
+          baseToken: 'a',
+          expectedToken: 'b',
+          inboundUuids: {},
+          state: 'cancelled',
+          createdAt: now + i + 1,
+          updatedAt: now + i + 1,
+        });
+    });
+    const list = (await (await s.call('GET', 'port-changes')).json()) as {
+      changes: { id: string }[];
+    };
+    expect(list.changes.map((c) => c.id)).toContain(open.id);
+  });
+
+  test('the sweep finds a ready change behind more than 50 waiting ones', async () => {
+    const s = await seed();
+    const ready = await s.t.run(async (ctx) => {
+      const now = Date.now();
+      const base = {
+        backendServerId: s.serverId,
+        profileName: 'P',
+        inboundTag: 'T',
+        inboundUuid: 'u',
+        toPort: 9000,
+        ops: '[]',
+        baseToken: 'a',
+        expectedToken: 'b',
+        inboundUuids: {},
+        state: 'waiting' as const,
+      };
+      for (let i = 0; i < 60; i++) {
+        const changeId = await ctx.db.insert('panelPortChanges', {
+          ...base,
+          profileUuid: `w-${i}`,
+          createdAt: now + i,
+          updatedAt: now + i,
+        });
+        await ctx.db.insert('panelPortRequirements', {
+          backendServerId: s.serverId,
+          changeId,
+          nodeName: 'n',
+          port: 9000,
+          confirmedBy: 'operator',
+          state: 'waiting',
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+      return ctx.db.insert('panelPortChanges', {
+        ...base,
+        profileUuid: 'ready',
+        createdAt: now + 100,
+        updatedAt: now + 100,
+      });
+    });
+    expect(await s.t.query(internal.backendPortChanges.ready, {})).toContain(ready);
+    // Nothing to send for these bare rows: drop them before the sweep of later tests.
+    await s.t.run(async (ctx) => {
+      for (const c of await ctx.db.query('panelPortChanges').collect())
+        await ctx.db.patch(c._id, { state: 'cancelled' });
+    });
+  });
+
+  test("the node's own listeners count as taken ports", async () => {
+    const s = await seed();
+    // The API port FCP is about to give the node, not yet on the backend's row.
+    await s.t.run(async (ctx) => {
+      const intent = (await ctx.db.get(s.intentId))!;
+      await ctx.db.patch(s.intentId, { settings: { ...intent.settings, nodePort: 9443 } });
+    });
+    const res = await s.call('POST', `profiles/${s.profileUuid}/preview`, {
+      ops: [{ op: 'setInboundPort', transportTag: TAG, port: 9443 }],
+    });
+    expect(await codeOf(res)).toBe('servers.port_taken');
+  });
+
+  test('a family that is turned off gives no transport its names', async () => {
+    const s = await seed();
+    await s.t.mutation(internal.sniFamilies.update, { slug: 'fam-direct', enabled: false });
+    const res = await s.call('POST', `profiles/${s.profileUuid}/preview`, {
+      ops: [
+        {
+          op: 'addInboundFromTemplate',
+          transportTag: 'FREEDOM_REALITY',
+          template: { kind: 'reality', port: 443, familySlug: 'fam-direct' },
+        },
+      ],
+    });
+    expect(await codeOf(res)).toBe('servers.family_missing');
+  });
+
+  test('a moved uuid fences the port bridge: nothing is re-pointed at the old one', async () => {
+    const s = await seed();
+    // The backend replaces the transport's uuid on the write (it should not).
+    s.panel.stub.route(
+      routeFetch((c: Captured) => {
+        if (c.method !== 'PATCH' || c.path !== '/api/config-profiles') return null;
+        const res = s.panel.handle(c);
+        const ib = (s.panel.profiles[0].inbounds as { uuid: string; tag: string }[]).find(
+          (i) => i.tag === TAG,
+        )!;
+        ib.uuid = UUID(990);
+        return res;
+      }, s.panel.handle),
+    );
+    const change = PortChangeView.parse(await (await stagePort(s, 8443)).json());
+    await s.t.mutation(internal.nodeIntents.applied, {
+      intentId: s.intentId,
+      appliedRevision: 1,
+      nodeStarted: true,
+      firewallPorts: [443, 8443],
+    });
+    const done = await until(
+      () => changeOf(s, change.id),
+      (c) => c.state !== 'waiting' && c.state !== 'applying',
+    );
+    expect(done.op?.errorCode).toBe('servers.inbound_uuid_changed');
+    const setup = await s.t.run((ctx) =>
+      ctx.db
+        .query('panelSetups')
+        .withIndex('by_server', (q) => q.eq('backendServerId', s.serverId))
+        .unique(),
+    );
+    expect(setup!.modes!.find((m) => m.slug === 'privacy-reality')!.transport!.port).toBe(443);
+  });
+
+  test('a reconcile asked for while another holds the lease fences that attempt', async () => {
+    const s = await seed();
+    const before = (await s.t.run((ctx) => ctx.db.get(s.intentId)))!;
+    await s.t.run((ctx) =>
+      ctx.db.patch(s.intentId, { claim: { attemptId: 'busy', expiresAt: Date.now() + 60_000 } }),
+    );
+    expect(await s.t.mutation(internal.nodeIntents.reconcileNow, { intentId: s.intentId })).toBe(
+      false,
+    );
+    const after = (await s.t.run((ctx) => ctx.db.get(s.intentId)))!;
+    expect(after.generation).toBe(before.generation + 1);
+    // Its handover reconciles the node again under the new generation.
+    await s.t.mutation(internal.nodeIntents.releaseOvertaken, {
+      intentId: s.intentId,
+      generation: before.generation,
+      attemptId: 'busy',
+    });
+    await s.idle();
+    // A retry a lease later stands behind it, in case the attempt died: it is
+    // cancelled here so the test does not wait ten minutes for it.
+    await s.t.run(async (ctx) => {
+      const later = (await ctx.db.system.query('_scheduled_functions').collect()).filter(
+        (f) => f.name.includes('reconcileNow') && f.state.kind === 'pending',
+      );
+      expect(later).toHaveLength(1);
+      for (const f of later) await ctx.scheduler.cancel(f._id);
+    });
   });
 });

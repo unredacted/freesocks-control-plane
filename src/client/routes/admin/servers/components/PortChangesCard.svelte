@@ -34,14 +34,15 @@
   const changes = portChangesQuery(() => slug);
   const DAY = 24 * 3600_000;
 
-  // Open changes, and a refused one for a day so the operator sees why.
+  // Open changes, and a refused or hand-settled one for a day so the operator sees why.
   let shown = $derived(
     (changes.data?.changes ?? []).filter(
       (c) =>
         (!profileUuid || c.profileUuid === profileUuid) &&
         (c.state === 'waiting' ||
           c.state === 'applying' ||
-          (c.state === 'refused' && Date.now() - Date.parse(c.updatedAt) < DAY)),
+          ((c.state === 'refused' || c.state === 'recovered') &&
+            Date.now() - Date.parse(c.updatedAt) < DAY)),
     ),
   );
   let busy = $state(false);

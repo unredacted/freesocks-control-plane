@@ -10,6 +10,19 @@ import { internal } from '../../_generated/api';
 import type { Doc, Id } from '../../_generated/dataModel';
 import { writeAuditLog } from '../audit';
 
+/** Whether a change still holds its ports: waiting, or sent with its op still open. */
+async function changeOpen(
+  ctx: { db: QueryCtx['db'] },
+  changeId: Id<'panelPortChanges'>,
+): Promise<boolean> {
+  const change = await ctx.db.get(changeId);
+  if (!change) return false;
+  if (change.state === 'waiting') return true;
+  if (change.state !== 'applying' || !change.opId) return false;
+  const op = await ctx.db.get(change.opId);
+  return !!op?.open;
+}
+
 export async function requirementsOf(
   ctx: { db: QueryCtx['db'] },
   changeId: Id<'panelPortChanges'>,
@@ -127,13 +140,17 @@ export async function firewallPortsFor(
       if (inboundUuids.includes(i.inboundUuid) && i.port !== null && !isLoopback(i.listen))
         serving.add(i.port);
   if (intent.settings.ingress) serving.add(intent.settings.ingress.externalPort);
+  // A port stays listed from the moment a change asks for it until that change
+  // is over, CONFIRMED included: a role run between the confirmation and the
+  // send (a busy profile, the switch off) must not close it again.
   const pending = new Set<number>();
   for (const r of await ctx.db
     .query('panelPortRequirements')
     .withIndex('by_server_node', (q) => q.eq('backendServerId', sid).eq('nodeName', intent.name))
-    .collect())
-    if (r.state === 'waiting' && r.intentId === intent._id && !serving.has(r.port))
-      pending.add(r.port);
+    .collect()) {
+    if (r.state === 'cancelled' || r.intentId !== intent._id || serving.has(r.port)) continue;
+    if (await changeOpen(ctx, r.changeId)) pending.add(r.port);
+  }
   return [
     ...[...serving]
       .sort((a, b) => a - b)

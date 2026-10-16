@@ -115,6 +115,13 @@ export const stage = internalMutation({
     const inboundUuid = a.inboundUuids[op.inboundTag];
     if (!inboundUuid)
       return refuse('servers.unknown_inbound', `No inbound is tagged ${op.inboundTag}`);
+    // The backend is edited by TAG; the nodes that must open the port are found
+    // by UUID. Both must name the same transport, as FCP last read it.
+    if (profile.inbounds.find((i) => i.tag === op.inboundTag)?.inboundUuid !== inboundUuid)
+      refuse(
+        'servers.unknown_inbound',
+        `${op.inboundTag} is not that transport on this profile. Refresh and preview again`,
+      );
     let open = false;
     for (const c of await ctx.db
       .query('panelPortChanges')
@@ -289,6 +296,14 @@ export const admit = internalMutation({
       await audit(ctx, change, 'servers.port_change.admitted', { outcome: 'refused', code });
       return { opId: null, code };
     }
+    // A node that no longer serves the transport (turned off, removed, moved
+    // to another one) will not listen on the port: its wait is over.
+    const serving = new Set(impact.nodes.map((n) => n.name));
+    for (const r of rows)
+      if (r.state === 'waiting' && !serving.has(r.nodeName)) {
+        await ctx.db.patch(r._id, { state: 'cancelled', updatedAt: now });
+        r.state = 'cancelled';
+      }
     let added = 0;
     for (const n of impact.nodes) {
       if (rows.some((r) => r.nodeName === n.name && r.state !== 'cancelled')) continue;
@@ -351,22 +366,24 @@ export const apply = internalAction({
   },
 });
 
-/** Changes whose every requirement is confirmed but that still wait (a busy profile, a lost wake). */
+/**
+ * Every waiting change, for the sweep to look at again: one confirmed but held
+ * back (a busy profile, a lost wake), and one still waiting on a node that has
+ * since stopped serving the transport (`admit` lets go of that wait). Not a
+ * first page: one change per profile is open at a time, so these are few.
+ */
 export const ready = internalQuery({
   args: {},
-  handler: async (ctx) => {
-    const waiting = await ctx.db
-      .query('panelPortChanges')
-      .withIndex('by_state', (q) => q.eq('state', 'waiting'))
-      .take(50);
-    const out: Id<'panelPortChanges'>[] = [];
-    for (const c of waiting)
-      if ((await requirementsOf(ctx, c._id)).every((r) => r.state !== 'waiting')) out.push(c._id);
-    return out;
-  },
+  handler: async (ctx) =>
+    (
+      await ctx.db
+        .query('panelPortChanges')
+        .withIndex('by_state', (q) => q.eq('state', 'waiting'))
+        .collect()
+    ).map((c) => c._id),
 });
 
-/** On `backend-reconcile`: try again what waits only on a busy profile. */
+/** On `backend-reconcile`: look at every waiting change again; `admit` sends what is ready. */
 export const sweep = internalAction({
   args: {},
   handler: async (ctx): Promise<number> => {
@@ -382,7 +399,9 @@ export const sweep = internalAction({
 async function viewOf(ctx: { db: QueryCtx['db'] }, c: Change) {
   const op = c.opId ? await ctx.db.get(c.opId) : null;
   const rows: Requirement[] = await requirementsOf(ctx, c._id);
-  // A claimed change is what its op is: still open, refused before any change, or done.
+  // A claimed change is what its op is: still open, refused before any change,
+  // seen on the backend, or settled by hand (a recorded recovery proves nothing
+  // about whether the port moved).
   const state =
     c.state !== 'applying'
       ? c.state
@@ -390,7 +409,9 @@ async function viewOf(ctx: { db: QueryCtx['db'] }, c: Change) {
         ? 'applying'
         : op.request === 'rejected_pre_mutation'
           ? 'refused'
-          : 'applied';
+          : op.panelState === 'observed'
+            ? 'applied'
+            : 'recovered';
   return {
     id: c._id as string,
     profileUuid: c.profileUuid,
@@ -414,15 +435,31 @@ async function viewOf(ctx: { db: QueryCtx['db'] }, c: Change) {
 
 export type PortChangeRow = Awaited<ReturnType<typeof viewOf>>;
 
-/** The open changes of an instance and the last few settled ones, newest first. */
+/**
+ * EVERY open change of an instance (waiting, or claimed: its controls live
+ * here), and the last few others, newest first.
+ */
 export const listForServer = internalQuery({
   args: { backendServerId: v.id('backendServers') },
   handler: async (ctx, { backendServerId }) => {
-    const rows = await ctx.db
+    const recent = await ctx.db
       .query('panelPortChanges')
       .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
       .order('desc')
       .take(20);
+    // One open change per profile at a time: these stay few.
+    const open: Change[] = [];
+    for (const state of ['waiting', 'applying'] as const)
+      open.push(
+        ...(
+          await ctx.db
+            .query('panelPortChanges')
+            .withIndex('by_state', (q) => q.eq('state', state))
+            .collect()
+        ).filter((c) => c.backendServerId === backendServerId),
+      );
+    const byId = new Map([...open, ...recent].map((c) => [c._id as string, c]));
+    const rows = [...byId.values()].sort((a, b) => b.createdAt - a.createdAt);
     return Promise.all(rows.map((c) => viewOf(ctx, c)));
   },
 });

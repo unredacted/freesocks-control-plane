@@ -662,7 +662,7 @@ export interface PortChangeLike {
   transportTag: string;
   fromPort: number | null;
   toPort: number;
-  state: 'waiting' | 'applying' | 'applied' | 'refused' | 'cancelled';
+  state: 'waiting' | 'applying' | 'applied' | 'refused' | 'cancelled' | 'recovered';
   code: string | null;
   nodes: { name: string; confirmedBy: 'role' | 'operator'; state: string }[];
 }
@@ -707,6 +707,11 @@ export function portChangeWords(c: PortChangeLike): { dot: Dot; sentence: string
       return { dot: 'grey', sentence: `Not sent: ${serverErrorWords(c.code)}` };
     case 'cancelled':
       return { dot: 'grey', sentence: 'Cancelled. Nothing was sent.' };
+    case 'recovered':
+      return {
+        dot: 'red',
+        sentence: `Settled by hand. Whether the nodes listen on port ${c.toPort} is not known: look at the profile and the nodes.`,
+      };
   }
 }
 
