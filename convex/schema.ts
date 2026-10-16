@@ -1235,6 +1235,10 @@ export default defineSchema({
     // A setup run owns this origin: reconcile upkeep and the detector's automatic
     // replacement skip it until the run clears the flag (independent of the run's state).
     setupOwned: v.optional(v.boolean()),
+    // A node rename is moving this origin's node name and Host remarks
+    // (backendNodeRenames.ts): every pool, edge and listener write waits
+    // (`edge.panel_op_running`, the same guard as a server change's claim).
+    renaming: v.optional(v.object({ renameId: v.id('panelNodeRenames'), since: v.number() })),
     // Member cohorts the operator knowingly left without protected delivery at
     // go-live (their whole body went with the consented hides). The restore
     // workflow's raw-body checks skip them; without this the origin could never
@@ -1461,6 +1465,10 @@ export default defineSchema({
       }),
     ),
     host: v.optional(listenerHost),
+    // Remarks this listener's Host carried before its node was renamed: the
+    // renderer keeps matching them, so a body fetched before the Host changed
+    // (or a cached one) still resolves.
+    formerRemarks: v.optional(v.array(v.string())),
     // Legacy Hosts adopted from a manual deployment (never deleted by FCP).
     legacyHosts: v.optional(
       v.array(v.object({ uuid: v.string(), remark: v.string(), sni: v.optional(v.string()) })),
@@ -2799,6 +2807,9 @@ export default defineSchema({
       }),
     ),
     nodeUuid: v.optional(v.string()),
+    // Every name the node had before a rename, oldest first (backendNodeRenames.ts).
+    // The first is the name its origin DNS record's marker was written with.
+    formerNames: v.optional(v.array(v.string())),
     // A direct node's own addresses on the backend: one per family name.
     addressUuids: v.optional(v.array(v.string())),
     // TRANSITIONAL: the single Host of a pre-modes direct node.
@@ -2832,6 +2843,53 @@ export default defineSchema({
     byAdminId: v.optional(v.id('adminUsers')),
     updatedAt: v.number(),
   }).index('by_server', ['backendServerId']),
+
+  // A node rename (docs/servers.md "Renaming a node"): a resumable workflow
+  // that renames the backend row through the ledger, every FCP row keyed by
+  // the name in the transaction that SEES the new name, then the Host
+  // remarks FCP wrote (each through the ledger) and the subscriptions'
+  // pins (a paginated drain). `step` says what is next; `opId` is the
+  // ledger op the current step waits on.
+  panelNodeRenames: defineTable({
+    backendServerId: v.id('backendServers'),
+    nodeUuid: v.string(),
+    from: v.string(),
+    to: v.string(),
+    intentId: v.optional(v.id('panelNodeIntents')),
+    relayIds: v.array(v.id('relays')),
+    state: v.union(v.literal('running'), v.literal('done'), v.literal('failed')),
+    step: v.union(
+      v.literal('backend'),
+      v.literal('hosts'),
+      v.literal('subscriptions'),
+      v.literal('done'),
+    ),
+    opId: v.optional(v.id('panelOps')),
+    // The subscriptions drain's page cursor.
+    cursor: v.optional(v.string()),
+    code: v.optional(v.string()),
+    claim: v.optional(v.object({ attemptId: v.string(), expiresAt: v.number() })),
+    actorAdminId: v.optional(v.id('adminUsers')),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_server', ['backendServerId'])
+    .index('by_state', ['state']),
+
+  // A name a node had before a rename, and the name it has now. Lookups by a
+  // name that is not current (a subscription pinned before its drain, a body
+  // whose Hosts still carry the old remark, the node role calling by its old
+  // name) resolve through here. A former name stays reserved.
+  panelNodeAliases: defineTable({
+    backendServerId: v.id('backendServers'),
+    formerName: v.string(),
+    name: v.string(),
+    nodeUuid: v.string(),
+    renameId: v.id('panelNodeRenames'),
+    at: v.number(),
+  })
+    .index('by_server_former', ['backendServerId', 'formerName'])
+    .index('by_server', ['backendServerId']),
 
   // A profile edit that opens a port (docs/servers.md "Firewall
   // acknowledgement"): staged, NOT claimed, until every node that will listen

@@ -47,6 +47,7 @@ import {
 } from './lib/backend/patchOps';
 import { generateRealityKey } from './lib/backend/realityKeys';
 import { patchOp } from './lib/backend/patchOpArgs';
+import { currentNodeName } from './lib/backend/nodeAliases';
 import { PROFILE_DEFAULTS } from './lib/backend/profileTemplate';
 import { addressesOf, closeForSharedChange } from './nodeIntents';
 import { HOST_REMARK_MAX } from './lib/backend/hostRemark';
@@ -545,39 +546,6 @@ async function assertNotRelayOrigin(ctx: MutationCtx, sid: Id<'backendServers'>,
     );
 }
 
-/**
- * A node's NAME is an identifier well beyond the backend: origins, delivery
- * requirements, the node role's token boundary and members' pinned keys all
- * refer to it. Renaming a node any of them refers to is refused.
- */
-async function assertRenameSafe(ctx: MutationCtx, sid: Id<'backendServers'>, nodeName: string) {
-  const referenced = async (): Promise<string | null> => {
-    if ((await relaysOfNode(ctx, sid, nodeName)).length > 0) return 'an origin';
-    const binding = await ctx.db
-      .query('edgeDeliveryBindings')
-      .withIndex('by_server_node', (q) => q.eq('backendServerId', sid).eq('nodeName', nodeName))
-      .first();
-    if (binding) return 'a delivery requirement';
-    const pinned = await ctx.db
-      .query('subscriptions')
-      .withIndex('by_backend_server_pinned', (q) =>
-        q.eq('backendServerId', sid).eq('pinnedNode', nodeName),
-      )
-      .first();
-    if (pinned) return 'members whose keys are pinned to it';
-    const tokens = await ctx.db.query('apiTokens').collect();
-    if (tokens.some((t) => t.edgeRegistration?.nodeNames?.includes(nodeName)))
-      return 'an automation token';
-    return null;
-  };
-  const by = await referenced();
-  if (by)
-    refuse(
-      'servers.node_rename_referenced',
-      `This node's name is used by ${by}. It cannot be renamed here`,
-    );
-}
-
 /** Transport uuids must all belong to the profile, as Servers last read it. */
 async function checkProfileInbounds(
   ctx: MutationCtx,
@@ -625,6 +593,9 @@ export const requestNodeCreate = internalMutation({
       .collect();
     if (nodes.some((n) => n.name === a.name))
       refuse('servers.node_name_taken', 'A node with that name already exists');
+    // A name a renamed node had stays reserved: a pin or the role may still use it.
+    if (await currentNodeName(ctx.db, sid, a.name))
+      refuse('servers.node_name_taken', 'A node had that name before it was renamed');
     await assertNotTombstoned(ctx, sid, 'node', a.name, a.restore === true);
     const { backendServerId: _s, actorAdminId, restore: _r, ...spec } = a;
     // The backend ROW only. Installing the node and giving it its secret is the
@@ -662,13 +633,11 @@ export const requestNodeUpdate = internalMutation({
     const fields: BackendNodeFields = {};
     const expected: Record<string, unknown> = {};
     const claimKeys = [claimKey.node(a.nodeUuid)];
-    if (a.name !== undefined && a.name !== node.name) {
-      if (!NODE_NAME.test(a.name)) refuse('validation', 'A node name is 3 to 30 plain characters');
-      await assertRenameSafe(ctx, sid, node.name);
-      fields.name = a.name;
-      expected.name = a.name;
-      claimKeys.push(`nodename:${a.name.toLowerCase()}`);
-    }
+    // A node's NAME is an identifier well beyond the backend (origins, delivery
+    // bindings, pins, the node role): renaming runs as its own workflow that
+    // moves every reference (backendNodeRenames.ts).
+    if (a.name !== undefined && a.name !== node.name)
+      refuse('servers.node_rename_separate', 'A node is renamed on its own, as a rename');
     if (a.countryCode !== undefined) {
       if (!/^[A-Za-z]{2}$/.test(a.countryCode)) refuse('validation', 'A country is two letters');
       fields.countryCode = a.countryCode.toUpperCase();
@@ -885,7 +854,8 @@ export async function portChangeImpact(
     const clash = others.find((i) => i.port === port);
     if (clash)
       refuse('servers.port_taken', `${n.name} already serves ${clash.tag} on port ${port}`);
-    const intent = intents.find((i) => i.name === n.name);
+    const intent =
+      intents.find((i) => i.nodeUuid === n.nodeUuid) ?? intents.find((i) => i.name === n.name);
     const roleRuns =
       !!intent && !intent.adopted && intent.state !== 'retiring' && intent.state !== 'retired';
     out.push({
@@ -1551,6 +1521,8 @@ export const reconcile = internalAction({
       for (const opId of toLook) if (await look(ctx, opId)) stillOpen++;
       // A port change every node confirmed but a busy profile held back.
       await ctx.runAction(internal.backendPortChanges.sweep, {});
+      // A node rename a parked or interrupted attempt left running.
+      await ctx.runAction(internal.backendNodeRenames.sweep, {});
       return { looked: toLook.length, stillOpen };
     }),
 });

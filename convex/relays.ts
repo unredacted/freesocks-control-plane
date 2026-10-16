@@ -91,6 +91,7 @@ import {
   listenersOf,
 } from './relayListeners';
 import type { ListenerSpecInput } from './lib/edges/registration';
+import { currentNodeName } from './lib/backend/nodeAliases';
 
 export {
   assertNoRotationOrQuarantine,
@@ -266,13 +267,18 @@ export async function deliveryBindingFor(
   nodeName: string | undefined,
 ): Promise<Doc<'edgeDeliveryBindings'> | null> {
   if (nodeName) {
-    const byNode = await db
-      .query('edgeDeliveryBindings')
-      .withIndex('by_server_node', (q) =>
-        q.eq('backendServerId', backendServerId).eq('nodeName', nodeName),
-      )
-      .unique();
-    if (byNode && byNode.state === 'active') return byNode;
+    // A name a renamed node had (a pin not drained yet) is that node's binding.
+    for (const name of [nodeName, await currentNodeName(db, backendServerId, nodeName)]) {
+      if (!name) continue;
+      const byNode = await db
+        .query('edgeDeliveryBindings')
+        .withIndex('by_server_node', (q) =>
+          q.eq('backendServerId', backendServerId).eq('nodeName', name),
+        )
+        .unique();
+      if (byNode && byNode.state === 'active') return byNode;
+      if (byNode) break;
+    }
   }
   const byServer = await db
     .query('edgeDeliveryBindings')
@@ -526,13 +532,15 @@ export async function relayForBackendNode(
   nodeName: string | undefined,
 ): Promise<Doc<'relays'> | null> {
   if (nodeName) {
-    const byNode = await db
-      .query('relays')
-      .withIndex('by_node', (q) =>
-        q.eq('backendServerId', backendServerId).eq('nodeName', nodeName),
-      )
-      .unique();
-    if (byNode) return byNode;
+    // A name a renamed node had (a pin not drained yet) is that node's origin.
+    for (const name of [nodeName, await currentNodeName(db, backendServerId, nodeName)]) {
+      if (!name) continue;
+      const byNode = await db
+        .query('relays')
+        .withIndex('by_node', (q) => q.eq('backendServerId', backendServerId).eq('nodeName', name))
+        .unique();
+      if (byNode) return byNode;
+    }
   }
   const rows = await db
     .query('relays')

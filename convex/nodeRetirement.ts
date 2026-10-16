@@ -180,17 +180,20 @@ export const mark = internalMutation({
     if (a.tombstone) {
       const intent = await ctx.db.get(r.intentId);
       if (intent) {
+        // By any identity the node ever had: a renamed node keeps one row.
         const existing = (
           await ctx.db
             .query('panelOwnership')
             .withIndex('by_server_kind_identity', (q) =>
-              q
-                .eq('backendServerId', intent.backendServerId)
-                .eq('kind', 'node')
-                .eq('identity', intent.name),
+              q.eq('backendServerId', intent.backendServerId).eq('kind', 'node'),
             )
             .collect()
-        )[0];
+        ).find(
+          (o) =>
+            o.identity === intent.name ||
+            o.lookup.includes(intent.name) ||
+            (!!intent.nodeUuid && o.panelUuid === intent.nodeUuid),
+        );
         const now = Date.now();
         if (existing)
           await ctx.db.patch(existing._id, {

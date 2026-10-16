@@ -285,7 +285,8 @@ backend for a node's secret; that stays the node role's job, against the backend
 | Action                             | What is sent                                                                                                                                              | When it is done                                                                                                                                                                     |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Create                             | One `POST`. Never a second one: a lost answer is looked up by name and adopted.                                                                           | The row is seen.                                                                                                                                                                    |
-| Rename, country                    | One `PATCH`.                                                                                                                                              | The row shows the fields. The backend queues no node work for these.                                                                                                                |
+| Country                            | One `PATCH`.                                                                                                                                              | The row shows the fields. The backend queues no node work for this.                                                                                                                 |
+| Rename                             | A workflow of its own (§ Renaming a node): one `PATCH` of the row, then the Host remarks FCP wrote, each its own op.                                      | Every reference moved; the backend queues no node work for any of it.                                                                                                               |
 | Address, port, profile, transports | One `PATCH`. Profile and transports travel together.                                                                                                      | The row shows the fields **and** the node's `lastStatusChange` has moved since the call.                                                                                            |
 | Enable, disable                    | The action, only when the node is not already in that state (`servers.already`): a repeat makes the backend queue work for nothing.                       | Enable waits for the node's clock like an address change. Disable is done when the row says so.                                                                                     |
 | Restart                            | The action with `forceRestart: true` (a node otherwise skips a restart when its config hashes match). Refused on a node that is off (`servers.node_off`). | Only when `lastStatusChange` moves. The backend answers 202 on queue insertion, the row names nothing that changed, and `xrayUptime` and `isConnected` are not evidence (measured). |
@@ -295,12 +296,66 @@ backend for a node's secret; that stays the node role's job, against the backend
 While an op that restarts a node is open it holds `node:<uuid>`, so a second lifecycle change
 to the same node is refused (`servers.op_running`) rather than queued behind it.
 
-| Refusal                          | When                                                                                                                                                                             |
-| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `servers.node_relay_origin`      | An origin stands in front of this node: its address, port, profile and transports are what the origin forwards to, and it is not disabled or removed here. A restart is allowed. |
-| `servers.node_rename_referenced` | The node's **name** is an identifier: origins, delivery requirements and members pinned to a node refer to it. Renaming a referenced node is not offered in this version.        |
-| `servers.node_name_taken`        | As named. Node names are how a lost create is found again.                                                                                                                       |
-| `servers.unknown_inbound`        | A transport that is not part of the profile being assigned.                                                                                                                      |
+| Refusal                        | When                                                                                                                                                                             |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `servers.node_relay_origin`    | An origin stands in front of this node: its address, port, profile and transports are what the origin forwards to, and it is not disabled or removed here. A restart is allowed. |
+| `servers.node_rename_separate` | A name is changed only by a rename (§ Renaming a node): `PATCH` refuses it, because the name is an identifier origins, delivery requirements, pins and the node role refer to.   |
+| `servers.node_name_taken`      | As named. Node names are how a lost create is found again.                                                                                                                       |
+| `servers.unknown_inbound`      | A transport that is not part of the profile being assigned.                                                                                                                      |
+
+### Renaming a node
+
+A node's name is an identifier well beyond the backend row: origins and their delivery
+bindings, the node role's routes and token boundary, members' pins, holds, port requirements and
+the remarks of the Hosts FCP writes all carry it. `POST {slug}/nodes/{uuid}/rename {name}` starts
+a resumable workflow (`convex/backendNodeRenames.ts`, `panelNodeRenames`), one step at a time,
+every backend write through the ledger:
+
+1. **The backend row.** One node op renames the row. In the transaction that SEES the new name
+   (`applyLook` → `bridgeNodeRename`, `lib/backend/nodeRename.ts`), every FCP row keyed by the name
+   moves with it: the enrolled node (`name`, the old one kept in `formerNames`), the origins in
+   front of it (`nodeName`), their listeners' remarks (`matchRule`, the Host's intended remark;
+   the old remark kept in `formerRemarks`, which the renderer still matches), the delivery
+   binding (its `policyVersion` moves, so nothing rendered under the old name is served under the
+   new one), guided setup runs, holds, port requirements, ownership (`lookup` gains the new name),
+   the read caches, and the node role's token boundary (gains the new name, keeps the old). The old
+   name becomes an alias (`panelNodeAliases`).
+2. **The Host remarks.** The backend's Host listing is READ, and every Host whose remark is one of
+   FCP's forms for the old name (a direct node's `<node> | <name>`, rebuilt from the Host's own
+   server name; an origin listener's `<node>-relay[-<key>]`) is re-remarked in place, one op at a
+   time. Nothing else about a Host changes and none is created or deleted, so nothing a member
+   holds stops working, and a remark FCP's records missed is still found.
+3. **Members' pins.** The backend's subscriptions are walked a page at a time and a pin (or the
+   node a key is kept off) under the old name moves to the new one.
+
+While it runs, the node's origins are fenced (`relays.renaming`: rotations, restores,
+registrations, setup runs and listener writes answer `edge.panel_op_running`) and the node's own
+reconcile waits; it is reconciled under the new name when the rename finishes. A step whose write
+has an unknown outcome parks, and `backend-reconcile` resumes it once a look settled the write
+(or a recorded recovery and a fresh read decided it). A write refused before any change ends the
+rename with nothing moved.
+
+**The old name keeps answering.** A lookup by a name that is no longer current resolves through
+the alias: the node's origin and delivery binding (`relayForBackendNode`, `deliveryBindingFor`),
+its gate (`nodeGateFor`), the role's `…/nodes/by-name/{old name}` routes (an enroll under it
+reports observations for the same node), and the pin exclusion of gated nodes (a body whose Hosts
+still carry the old remark). A former name stays reserved: no node may take it. The origin DNS
+record's marker keeps the name the node was enrolled with, so FCP's own record never reads as
+somebody else's.
+
+Refused before anything is sent: a name a node has or had (`servers.node_name_taken`) or one
+removed on purpose (`servers.tombstoned`); a node retiring, with its own work in flight, or
+already being renamed (`servers.node_rename_running`); an origin in front of it that is rotating,
+restoring, quarantined or mid-setup, whose Hosts the operator writes or adopted
+(`servers.node_rename_foreign_hosts`: those remarks are theirs), for which the name is not a DNS
+label (`servers.node_name_origin`: origins keep it as one) or would make a Host remark longer
+than the backend allows (`servers.node_name_too_long`). Audited as
+`servers.node.rename_started`, `servers.node.renamed`, `servers.node.rename_failed` (the two names
+only).
+
+On a body that carries several nodes, the pin is a rendezvous hash over node names, so members of
+a renamed node may be pinned anew there; each lands on a node that serves. With one node per mode
+group (the usual topology) nothing moves.
 
 ### What is refused
 
@@ -391,6 +446,9 @@ The role repository implements this; FCP only describes it.
   says which node), and nothing else changes for it.
 - **Gate on it.** A `pending` port in the view means a change waits for this node: run the role
   again after opening it if the report was missed.
+- **A renamed node.** The by-name routes answer under the old name too, and the token boundary
+  gains the new one; the view's `name` is the current one. Switch the inventory's node name to it
+  when convenient.
 
 ## Setting up a backend
 
@@ -708,6 +766,7 @@ surface (`src/shared/crypto/envelope.ts`): the responses carry node and Host add
 | `POST {slug}/addresses`, `PATCH` / `DELETE {slug}/addresses/{uuid}`, `POST {slug}/addresses/reorder`             | `admin:servers:manage` | Address writes. Answer the op. Rate-limited (`admin.servers.panel-write`).                                       |
 | `POST {slug}/modeGroups`, `PATCH` / `DELETE {slug}/modeGroups/{uuid}`                                            | `admin:servers:manage` | Mode group writes.                                                                                               |
 | `POST {slug}/nodes`, `PATCH` / `DELETE {slug}/nodes/{uuid}`, `POST {slug}/nodes/{uuid}/enable\|disable\|restart` | `admin:servers:manage` | Node writes. `DELETE ...?removeOnly=1` is "remove from backend".                                                 |
+| `POST {slug}/nodes/{uuid}/rename`, `GET {slug}/renames`                                                          | manage / read          | Rename a node (§ Renaming a node), and the recent renames with the step each is at.                              |
 | `POST {slug}/profiles/{uuid}/preview`                                                                            | `admin:servers:read`   | What a typed profile edit would do. Writes nothing.                                                              |
 | `POST {slug}/profiles/{uuid}/acknowledge`                                                                        | `admin:servers:manage` | An operator has seen that the profile was edited elsewhere.                                                      |
 | `POST {slug}/profiles/{uuid}/apply`                                                                              | `admin:servers:manage` | Apply a previewed edit, conditioned on the previewed token. A port change is refused here: it is staged.         |

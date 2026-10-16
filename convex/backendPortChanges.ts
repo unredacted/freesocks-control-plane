@@ -127,11 +127,7 @@ export const stage = internalMutation({
         'A port change of this profile is still waiting. Finish or cancel it first',
       );
     const impact = await portChangeImpact(ctx, sid, a.profileUuid, inboundUuid, op.port);
-    const intents = await ctx.db
-      .query('panelNodeIntents')
-      .withIndex('by_server', (q) => q.eq('backendServerId', sid))
-      .collect();
-    const unmanaged = impact.nodes.filter((n) => !intents.some((i) => i.name === n.name));
+    const unmanaged = impact.nodes.filter((n) => !n.intentId);
     if (unmanaged.length > 0 && !a.unmanaged)
       refuse(
         'servers.unmanaged_nodes_affected',

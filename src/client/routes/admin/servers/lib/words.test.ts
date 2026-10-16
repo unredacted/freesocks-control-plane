@@ -7,6 +7,7 @@ import {
   portChangeWords,
   portChangeable,
   protectionWords,
+  renameWords,
   setupWords,
   stageWords,
   standbyWords,
@@ -547,4 +548,22 @@ test('a port is changed here only on a public, single-port transport', () => {
   expect(portChangeable({ port: 8443, listen: '127.0.0.1' })).toBe(false);
   expect(portChangeable({ port: 8443, listen: '[::1]' })).toBe(false);
   expect(portChangeable({ port: null, listen: '0.0.0.0' })).toBe(false);
+});
+
+test('a rename in words: where it stands, and that members keep connecting', () => {
+  const r = { from: 'node-a', to: 'node-b', code: null };
+  expect(renameWords({ ...r, state: 'running', step: 'hosts' })).toEqual({
+    dot: 'amber',
+    sentence:
+      'Being renamed from node-a to node-b. Renaming the addresses that carry its name. Members keep connecting.',
+  });
+  expect(
+    renameWords({ ...r, state: 'running', step: 'backend', code: 'servers.op_uncertain' }).sentence,
+  ).toMatch(/Waiting for a change on the backend to settle/);
+  expect(renameWords({ ...r, state: 'done', step: 'done' }).sentence).toBe('Renamed from node-a.');
+  expect(
+    renameWords({ ...r, state: 'failed', step: 'backend', code: 'servers.panel_refused' }).sentence,
+  ).toMatch(/^Not renamed to node-b: /);
+  for (const step of ['backend', 'hosts', 'subscriptions', 'done'] as const)
+    expect(renameWords({ ...r, state: 'running', step }).sentence).not.toMatch(/—/);
 });

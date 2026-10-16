@@ -39,6 +39,7 @@ import { observeInstance } from './backendObserve';
 import { scheduleMirrorRefresh } from './lib/edges/relayGuards';
 import { bumpGateVersion, modeOf, setupReady, type Setup, type SetupMode } from './backendSetup';
 import { confirmFromRole, firewallPortsFor } from './lib/backend/portRequirements';
+import { currentNodeName, formerNamesByName } from './lib/backend/nodeAliases';
 
 const refuse = (code: string, message: string): never => {
   throw new ConvexError({ code, message });
@@ -72,10 +73,20 @@ async function intentByName(
   sid: Id<'backendServers'>,
   name: string,
 ): Promise<Intent | null> {
-  return ctx.db
+  const exact = await ctx.db
     .query('panelNodeIntents')
     .withIndex('by_server_name', (q) => q.eq('backendServerId', sid).eq('name', name))
     .unique();
+  if (exact) return exact;
+  // A name the node had before a rename (the role's inventory, a pin not
+  // drained yet) is the same node.
+  const current = await currentNodeName(ctx.db, sid, name);
+  return current
+    ? ctx.db
+        .query('panelNodeIntents')
+        .withIndex('by_server_name', (q) => q.eq('backendServerId', sid).eq('name', current))
+        .unique()
+    : null;
 }
 
 async function readySetup(ctx: { db: QueryCtx['db'] }, sid: Id<'backendServers'>) {
@@ -795,8 +806,17 @@ async function loadContext(ctx: QueryCtx, intent: Intent) {
   const mode = modeEntry(setup, modeSlug(intent));
   const t = transportFor(setup, modeSlug(intent));
   const inbound = profile?.inbounds.find((i) => i.inboundUuid === t.uuid) ?? null;
+  // A rename in flight moves the node's name and its addresses' remarks; the
+  // run waits for it (the rename reconciles the node when it is done).
+  const renaming = (
+    await ctx.db
+      .query('panelNodeRenames')
+      .withIndex('by_state', (q) => q.eq('state', 'running'))
+      .collect()
+  ).some((r) => r.backendServerId === sid && r.intentId === intent._id);
   return {
     intent,
+    renaming,
     server: { _id: server._id, backend: server.backend, config: server.config, slug: server.slug },
     setup,
     mode: { slug: mode.slug, name: mode.name, shape: mode.shape },
@@ -1088,6 +1108,10 @@ export const reconcile = internalAction({
       // parks: the origin DNS writes below do not go through the ledger.
       if (!(await ctx.runQuery(internal.serverAdmin.manageEnabled, {}))) {
         await stop('pending', 'servers.manage_disabled');
+        return null;
+      }
+      if (c.renaming) {
+        await stop('pending', 'servers.node_rename_running');
         return null;
       }
       // The observation the row is compared against must be fresh.
@@ -1500,8 +1524,14 @@ export async function nodeGateFor(
         .withIndex('by_intent', (q) => q.eq('intentId', intent._id))
         .collect()
     : [];
-  // An unmanaged node is closed only by an open maintenance hold that names it.
-  const held = !intent && !!nodeName && (await heldNodeNames(ctx, sid)).has(nodeName);
+  // An unmanaged node is closed only by an open maintenance hold that names it
+  // (under its current name, when this is one it had before a rename).
+  const heldNames = !intent && nodeName ? await heldNodeNames(ctx, sid) : null;
+  const held =
+    !!heldNames &&
+    !!nodeName &&
+    (heldNames.has(nodeName) ||
+      heldNames.has((await currentNodeName(ctx.db, sid, nodeName)) ?? nodeName));
   return nodeGateOf(intent, runs, gateVersion, held);
 }
 
@@ -1526,12 +1556,16 @@ export const blockedNodeNames = internalQuery({
       .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
       .collect();
     const held = await heldNodeNames(ctx, backendServerId);
-    return [
+    const blocked = [
       ...intents
         .filter((i) => i.delivery.disposition !== 'live' || !!i.maintenance)
         .map((i) => i.name),
       ...held,
     ];
+    // A body whose Hosts still carry a renamed node's old remark names it by
+    // its old name: excluded under that name too.
+    const formers = await formerNamesByName(ctx.db, backendServerId);
+    return [...blocked, ...blocked.flatMap((n) => formers.get(n) ?? [])];
   },
 });
 
@@ -1724,7 +1758,16 @@ export async function closeForSharedChange(
     .query('panelNodeIntents')
     .withIndex('by_server', (q) => q.eq('backendServerId', sid))
     .collect();
-  const byName = new Map(intents.map((i) => [i.name, i]));
+  // Joined on the backend uuid first: a node in the middle of a rename has one
+  // name on the backend and the other here for the length of a look.
+  const intentOf = (n: { nodeUuid: string; name: string }) =>
+    intents.find((i) => i.nodeUuid === n.nodeUuid) ?? intents.find((i) => i.name === n.name);
+  const byName = new Map(
+    nodes.flatMap((n) => {
+      const i = intentOf(n);
+      return i ? [[n.name, i] as const] : [];
+    }),
+  );
   const unmanaged = nodes.filter((n) => !byName.has(n.name)).map((n) => n.name);
   if (unmanaged.length > 0 && !a.unmanaged)
     refuse(
@@ -1734,6 +1777,7 @@ export async function closeForSharedChange(
   const now = Date.now();
   const transitionId = crypto.randomUUID();
   const closed: string[] = [];
+  const closedIds: Id<'panelNodeIntents'>[] = [];
   for (const n of nodes) {
     const intent = byName.get(n.name);
     if (!intent || intent.state === 'retiring' || intent.state === 'retired') continue;
@@ -1766,6 +1810,7 @@ export async function closeForSharedChange(
       updatedAt: now,
     });
     closed.push(intent.name);
+    closedIds.push(intent._id);
   }
   const held = a.unmanaged === 'hold' ? unmanaged : [];
   const acknowledged = a.unmanaged === 'acknowledge' ? unmanaged : [];
@@ -1775,7 +1820,7 @@ export async function closeForSharedChange(
       transitionId,
       reason: a.reason,
       heldNodeNames: held,
-      closedIntentIds: closed.map((n) => byName.get(n)!._id),
+      closedIntentIds: closedIds,
       released: held.length === 0,
       since: now,
       byAdminId: a.actorAdminId,

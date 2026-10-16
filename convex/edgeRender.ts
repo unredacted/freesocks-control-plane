@@ -88,7 +88,7 @@ export function matcherOf(l: Doc<'relayListeners'>, originAddress: string): Rend
   return {
     listenerKey: l.listenerKey,
     rule: l.matchRule,
-    legacyRemarks: (l.legacyHosts ?? []).map((h) => h.remark),
+    legacyRemarks: [...(l.legacyHosts ?? []).map((h) => h.remark), ...(l.formerRemarks ?? [])],
     proto: { protocol: l.protocol, streamTransport: l.streamTransport, security: l.security },
     originAddress,
     originPort: l.originPort,
