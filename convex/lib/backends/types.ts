@@ -261,6 +261,8 @@ export interface BackendHostPatch {
   port: number;
   sni?: string | null;
   host?: string | null;
+  /** The client-facing security a Host overrides its inbound's with (Remnawave `securityLayer`); absent = leave it. */
+  securityLayer?: string;
 }
 
 /** A NEW client-facing Host FCP creates for an origin listener (hostMode `fcp`). */
@@ -270,6 +272,8 @@ export interface BackendHostCreate {
   port: number;
   sni?: string | null;
   host?: string | null;
+  /** The client-facing security over the inbound's own (an L7 listener behind an ingress: `TLS`). */
+  securityLayer?: string;
   inbound: { configProfileUuid: string; configProfileInboundUuid: string };
 }
 

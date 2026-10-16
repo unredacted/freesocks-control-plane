@@ -344,11 +344,22 @@ function httpsStatus(
         resolve(res.statusCode ?? null);
       },
     );
+    // A transport that ACCEPTS the WebSocket handshake answers 101: Node hands
+    // that to 'upgrade' (never 'response'), and without a listener it destroys
+    // the socket and only emits 'close', taking the timeout with it. The check
+    // then never returned and held the node's reconcile forever.
+    req.on('upgrade', (res, socket) => {
+      socket.destroy();
+      resolve(res.statusCode ?? null);
+    });
     req.on('error', () => resolve(null));
     req.on('timeout', () => {
       req.destroy();
       resolve(null);
     });
+    // Last resort: whatever closed the request without an answer is no answer
+    // (a settled promise ignores a later resolve).
+    req.on('close', () => resolve(null));
     req.end();
   });
 }
@@ -359,6 +370,26 @@ function httpsStatus(
  * it, the WebSocket path is proxied (an upgrade attempt is answered by the
  * transport, not the decoy's 404), and a foreign Host header is answered.
  */
+export interface FrontIngressCheck {
+  resolves: boolean;
+  answers: { v4: string[]; v6: string[] };
+  tlsValid: boolean;
+  certNames: string[];
+  pathProxied: boolean;
+  foreignHostAnswered: boolean;
+}
+type FrontIngressChecker = (a: {
+  hostname: string;
+  port: number;
+  path: string;
+  expected: { v4: string | null; v6: string | null };
+}) => Promise<FrontIngressCheck>;
+let ingressChecker: FrontIngressChecker | null = null;
+/** Test seam: answer the external-hop check without DNS or sockets (null = the real check). */
+export function __setFrontIngressCheckForTests(f: FrontIngressChecker | null): void {
+  ingressChecker = f;
+}
+
 export const checkFrontIngress = internalAction({
   args: {
     hostname: v.string(),
@@ -366,7 +397,8 @@ export const checkFrontIngress = internalAction({
     path: v.string(),
     expected: v.object({ v4: v.union(v.string(), v.null()), v6: v.union(v.string(), v.null()) }),
   },
-  handler: async (_ctx, a) => {
+  handler: async (_ctx, a): Promise<FrontIngressCheck> => {
+    if (ingressChecker) return ingressChecker(a);
     const answers = await resolveBoth(a.hostname);
     const resolves = verifyResolution(answers, a.expected);
     const dial = a.expected.v4 ?? answers.v4[0] ?? a.hostname;

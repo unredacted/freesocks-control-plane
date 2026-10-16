@@ -1,10 +1,10 @@
 /// <reference types="vite/client" />
 /**
- * Origins under the generic-origin model: by-slug registration (idempotent,
- * ownership-aware, boundary-confined), origin kinds and the derived hostMode,
- * the delivery binding, edge adoption + the published-pool bookkeeping, the
- * publish gates (checkPublishable codes) and the per-listener template edge
- * that turns a direct publish into "needs a rotation".
+ * Origins under the generic-origin model: create + listener changes through the
+ * admin paths, origin kinds and the derived hostMode, the delivery binding,
+ * edge adoption + the published-pool bookkeeping, the publish gates
+ * (checkPublishable codes) and the per-listener template edge that turns a
+ * direct publish into "needs a rotation".
  */
 import { convexTest, type TestConvex } from 'convex-test';
 import { describe, expect, test } from 'vitest';
@@ -15,7 +15,6 @@ import {
   FIXTURE_CONFIG_PROFILE,
   FIXTURE_NODE,
   FIXTURE_ORIGIN,
-  FIXTURE_PANEL_SLUG,
   FIXTURE_RELAY_SLUG,
   adoptL4Edge,
   verifyL4Edge,
@@ -79,63 +78,11 @@ async function startFakeRotation(t: T, relayId: Id<'relays'>) {
   return rotationId;
 }
 
-describe('origins: registration by slug', () => {
-  test('an XHTTP listener registers with its mode (the wire validator accepts `transportParams.mode`)', async () => {
-    const { t, relayId } = await seed();
-    const r = await t.mutation(internal.relays.registerBySlug, {
-      slug: FIXTURE_RELAY_SLUG,
-      origin: { kind: 'panel-node', backendSlug: FIXTURE_PANEL_SLUG, nodeName: FIXTURE_NODE },
-      originAddress: FIXTURE_ORIGIN,
-      listeners: [
-        realityListener(),
-        {
-          listenerKey: 'xh',
-          protocol: 'vless',
-          streamTransport: 'xhttp',
-          security: 'tls',
-          originPort: 443,
-          tlsNames: ['x.example'],
-          transportParams: { path: '/xh', mode: 'packet-up' },
-        },
-      ] as never,
-    });
-    expect(r.listeners.created).toEqual(['xh']);
-    const rows = await t.run((ctx) =>
-      ctx.db
-        .query('relayListeners')
-        .filter((q) => q.eq(q.field('relayId'), relayId))
-        .collect(),
-    );
-    expect(rows.find((l) => l.listenerKey === 'xh')?.transportParams).toEqual({
-      path: '/xh',
-      mode: 'packet-up',
-    });
-    // An unknown mode is a validation refusal, not a stored value.
-    await expect(
-      t.mutation(internal.relays.registerBySlug, {
-        slug: FIXTURE_RELAY_SLUG,
-        origin: { kind: 'panel-node', backendSlug: FIXTURE_PANEL_SLUG, nodeName: FIXTURE_NODE },
-        originAddress: FIXTURE_ORIGIN,
-        listeners: [
-          realityListener(),
-          {
-            listenerKey: 'xh',
-            protocol: 'vless',
-            streamTransport: 'xhttp',
-            security: 'tls',
-            originPort: 443,
-            tlsNames: ['x.example'],
-            transportParams: { path: '/xh', mode: 'warp-speed' },
-          },
-        ] as never,
-      }),
-    ).rejects.toThrow(/unknown xhttp mode/);
-  });
-
-  test('an identical body is idempotent: no listener revision bump, no epoch bump, no mirror refresh, only lastRegisteredAt moves', async () => {
+describe('origins: create, listeners, kinds and the delivery binding', () => {
+  test('a created origin: backend-node origin by id, edge-required, FCP-owned Hosts, not rotating; listeners start at revision 1', async () => {
     const { t, relayId, listenerId, serverId } = await seed();
-    const row0 = (await t.query(internal.relays.get, { id: relayId }))!;
-    expect(row0).toMatchObject({
+    const row = (await t.query(internal.relays.get, { id: relayId }))!;
+    expect(row).toMatchObject({
       backendServerId: serverId,
       nodeName: FIXTURE_NODE,
       hostMode: 'fcp',
@@ -143,251 +90,108 @@ describe('origins: registration by slug', () => {
       autoRotate: false,
       enabled: true,
     });
-    expect(row0.origin).toEqual({
+    expect(row.origin).toEqual({
       kind: 'panel-node',
       backendServerId: serverId,
       nodeName: FIXTURE_NODE,
     });
-    const l0 = (await listenerRow(t, listenerId))!;
-    expect(l0.revision).toBe(1);
-    expect(l0.source).toBe('role');
-    const e0 = row0.publicationEpoch;
-    const m0 = await mirrorRefreshes(t);
-    await t.run((ctx) => ctx.db.patch(relayId, { lastRegisteredAt: 1 }));
-    // Same body, names in ANOTHER order: still identical (set semantics).
-    const again = await registerRelay(t, {
-      listeners: [realityListener({ tlsNames: ['b.example', 'a.example'] })],
-    });
-    expect(again).toMatchObject({ relayId, created: false, changed: false });
-    const r = await t.mutation(internal.relays.registerBySlug, {
-      slug: FIXTURE_RELAY_SLUG,
-      origin: { kind: 'panel-node', backendSlug: FIXTURE_PANEL_SLUG, nodeName: FIXTURE_NODE },
-      originAddress: FIXTURE_ORIGIN,
-      listeners: [realityListener()] as never,
-    });
-    expect(r).toMatchObject({
-      id: relayId,
-      created: false,
-      changed: false,
-      listeners: {
-        created: [],
-        updated: [],
-        unchanged: ['a'],
-        retired: [],
-        owned: [],
-        blockedNames: [],
-        changed: false,
-      },
-      adopted: null,
-    });
-    const l1 = (await listenerRow(t, listenerId))!;
-    expect(l1.revision).toBe(1);
-    // Persisted name order is the ORIGINAL body's, never re-sorted.
-    expect(l1.tlsNames?.map((n) => n.name)).toEqual(['a.example', 'b.example']);
-    const row1 = (await t.query(internal.relays.get, { id: relayId }))!;
-    expect(row1.publicationEpoch).toBe(e0);
-    expect(row1.lastRegisteredAt).toBeGreaterThan(1);
-    expect(row1.updatedAt).toBe(row0.updatedAt);
-    expect(await mirrorRefreshes(t)).toBe(m0);
-    // The audit says what happened, never the address.
-    const regs = await audits(t, 'relay.registered');
-    expect(regs[regs.length - 1].payload).toEqual({
-      slug: FIXTURE_RELAY_SLUG,
-      created: false,
-      changed: false,
-      listenersCreated: 0,
-      listenersUpdated: 0,
-      listenersRetired: 0,
-    });
-    expect(JSON.stringify(regs)).not.toContain('203.0.113');
-    // An unknown backend slug is a validation error.
+    const l = (await listenerRow(t, listenerId))!;
+    expect(l.revision).toBe(1);
+    expect(l.tlsNames?.map((n) => n.name)).toEqual(['a.example', 'b.example']);
+    // The create is audited without the address.
+    const created = await audits(t, 'relay.create');
+    expect(created).toHaveLength(1);
+    expect(JSON.stringify(created)).not.toContain(FIXTURE_ORIGIN);
+    // A second origin under the same slug is a conflict, never an upsert.
     await expect(
-      registerRelay(t, { slug: 'node-two', backendSlug: 'missing', nodeName: 'node-two' }),
-    ).rejects.toThrow(/unknown backend slug/);
+      t.mutation(internal.relays.create, {
+        slug: FIXTURE_RELAY_SLUG,
+        origin: { kind: 'manual' },
+        originAddress: '203.0.113.77',
+      }),
+    ).rejects.toThrow(/slug exists/);
+  });
+
+  test('an XHTTP listener is accepted with its mode (the listener validator accepts `transportParams.mode`)', async () => {
+    const { t, relayId } = await seed();
+    const xh = {
+      listenerKey: 'xh',
+      protocol: 'vless',
+      streamTransport: 'xhttp',
+      security: 'tls',
+      originPort: 443,
+      tlsNames: ['x.example'],
+      transportParams: { path: '/xh', mode: 'packet-up' },
+    };
+    const r = await t.mutation(internal.relayListeners.upsert, { relayId, spec: xh as never });
+    expect(r.created).toBe(true);
+    expect((await listenerRow(t, r.id))!.transportParams).toEqual({
+      path: '/xh',
+      mode: 'packet-up',
+    });
+    // An unknown mode is a validation refusal, not a stored value.
+    await expect(
+      t.mutation(internal.relayListeners.upsert, {
+        relayId,
+        spec: {
+          ...xh,
+          listenerKey: 'xi',
+          transportParams: { path: '/xi', mode: 'warp-speed' },
+        } as never,
+      }),
+    ).rejects.toThrow(/unknown xhttp mode/);
   });
 
   test('a material change bumps the listener revision AND the epoch once, and refreshes the mirrors', async () => {
-    const { t, relayId, listenerId } = await seed();
+    const { t } = await seed();
+    const { relayId, listenerId } = await registerRelay(t, {
+      slug: 'node-two',
+      nodeName: 'node-two',
+      originAddress: '203.0.113.11',
+      source: 'admin',
+    });
     const e0 = await epochOf(t, relayId);
     const m0 = await mirrorRefreshes(t);
-    const r = await t.mutation(internal.relays.registerBySlug, {
-      slug: FIXTURE_RELAY_SLUG,
-      origin: { kind: 'panel-node', backendSlug: FIXTURE_PANEL_SLUG, nodeName: FIXTURE_NODE },
-      originAddress: FIXTURE_ORIGIN,
-      locationCode: 'XX1',
-      listeners: [
-        realityListener({ tlsNames: ['a.example', 'c.example'] }),
-        shadowsocksListener(),
-      ] as never,
+    const r = await t.mutation(internal.relayListeners.upsert, {
+      relayId,
+      spec: realityListener({ tlsNames: ['a.example', 'c.example'] }) as never,
     });
-    expect(r.changed).toBe(true);
-    expect(r.listeners).toMatchObject({ created: ['s'], updated: ['a'], changed: true });
+    expect(r).toMatchObject({ id: listenerId, created: false, changed: true });
     const l = (await listenerRow(t, listenerId))!;
     expect(l.revision).toBe(2);
-    // `b.example` left the body: retired by the role with a drain; `c.example` appended.
+    // `b.example` left the body: retired by the operator with a drain; `c.example` appended.
     const byName = Object.fromEntries((l.tlsNames ?? []).map((n) => [n.name, n]));
     expect(byName['a.example'].status).toBe('active');
-    expect(byName['b.example']).toMatchObject({ status: 'retired', retiredBy: 'role' });
+    expect(byName['b.example']).toMatchObject({ status: 'retired', retiredBy: 'admin' });
     expect(byName['b.example'].drainUntil).toBeGreaterThan(Date.now());
     expect(byName['c.example'].status).toBe('active');
     expect(l.tlsNames?.map((n) => n.name)).toEqual(['a.example', 'b.example', 'c.example']);
     expect(await epochOf(t, relayId)).toBe(e0 + 1);
     expect(await mirrorRefreshes(t)).toBe(m0 + 1);
-    expect((await t.query(internal.relays.get, { id: relayId }))!.locationCode).toBe('XX1');
     // The drain elapsing bumps the epoch again (retired names stop rendering).
     const scheduled = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
     expect(scheduled.some((s) => s.name === 'relayListeners:onNameDrainElapsed')).toBe(true);
-  });
-
-  test('a role body never reactivates an admin-retired name (blockedNames) but does reactivate its own', async () => {
-    const { t, relayId, listenerId } = await seed();
-    await t.mutation(internal.relayListeners.retireName, { id: listenerId, names: ['a.example'] });
-    const e1 = await epochOf(t, relayId);
-    // The role re-sends the full name list, including the burned name.
-    const r = await registerRelay(t);
-    expect(r.changed).toBe(false);
-    const full = await t.mutation(internal.relays.registerBySlug, {
-      slug: FIXTURE_RELAY_SLUG,
-      origin: { kind: 'panel-node', backendSlug: FIXTURE_PANEL_SLUG, nodeName: FIXTURE_NODE },
-      originAddress: FIXTURE_ORIGIN,
-      listeners: [realityListener()] as never,
-    });
-    // Judged on what the body would change (nothing), yet the role is told, every
-    // time, which name it wanted that an admin keeps retired.
-    expect(full.listeners.blockedNames).toEqual(['a.example']);
-    expect(full.changed).toBe(false);
-    const l = (await listenerRow(t, listenerId))!;
-    expect(l.tlsNames?.find((n) => n.name === 'a.example')).toMatchObject({
-      status: 'retired',
-      retiredBy: 'admin',
-    });
-    expect(await epochOf(t, relayId)).toBe(e1);
-    // A changed body (a new name) re-merges: the admin-retired name stays retired and is reported.
-    const changed = await t.mutation(internal.relays.registerBySlug, {
-      slug: FIXTURE_RELAY_SLUG,
-      origin: { kind: 'panel-node', backendSlug: FIXTURE_PANEL_SLUG, nodeName: FIXTURE_NODE },
-      originAddress: FIXTURE_ORIGIN,
-      listeners: [realityListener({ tlsNames: ['a.example', 'b.example', 'c.example'] })] as never,
-    });
-    expect(changed.listeners.blockedNames).toEqual(['a.example']);
-    const l2 = (await listenerRow(t, listenerId))!;
-    expect(l2.tlsNames?.find((n) => n.name === 'a.example')?.status).toBe('retired');
-    expect(l2.tlsNames?.find((n) => n.name === 'c.example')?.status).toBe('active');
-    // The role retires + reactivates its OWN names freely.
-    await t.mutation(internal.relays.registerBySlug, {
-      slug: FIXTURE_RELAY_SLUG,
-      origin: { kind: 'panel-node', backendSlug: FIXTURE_PANEL_SLUG, nodeName: FIXTURE_NODE },
-      originAddress: FIXTURE_ORIGIN,
-      listeners: [realityListener({ tlsNames: ['b.example'] })] as never,
-    });
-    expect(
-      (await listenerRow(t, listenerId))!.tlsNames?.find((n) => n.name === 'c.example'),
-    ).toMatchObject({ status: 'retired', retiredBy: 'role' });
-    const back = await t.mutation(internal.relays.registerBySlug, {
-      slug: FIXTURE_RELAY_SLUG,
-      origin: { kind: 'panel-node', backendSlug: FIXTURE_PANEL_SLUG, nodeName: FIXTURE_NODE },
-      originAddress: FIXTURE_ORIGIN,
-      listeners: [realityListener({ tlsNames: ['b.example', 'c.example'] })] as never,
-    });
-    expect(back.listeners.blockedNames).toEqual([]);
-    expect(
-      (await listenerRow(t, listenerId))!.tlsNames?.find((n) => n.name === 'c.example')?.status,
-    ).toBe('active');
-    // An admin reactivates the burned name explicitly.
-    expect(
-      await t.mutation(internal.relayListeners.reactivateName, {
-        id: listenerId,
-        names: ['a.example'],
-      }),
-    ).toEqual({ ok: true, reactivated: 1 });
-  });
-
-  test('prune touches only the caller’s own source; another source’s key is edge.listener_key_owned', async () => {
-    const { t, relayId } = await seed();
-    const admin = await t.mutation(internal.relayListeners.upsert, {
+    // The same body again changes nothing.
+    const again = await t.mutation(internal.relayListeners.upsert, {
       relayId,
-      spec: shadowsocksListener({ listenerKey: 'x' }) as never,
+      spec: realityListener({ tlsNames: ['a.example', 'c.example'] }) as never,
     });
-    expect(admin).toMatchObject({
-      created: true,
-      changed: true,
-      templateHostRemark: 'node-one-relay-x',
-    });
-    // The role's body omits `x`: the admin listener survives.
-    const r1 = await registerRelay(t);
-    expect(r1.changed).toBe(false);
-    expect((await listenerRow(t, admin.id))!.retired).toBe(false);
-    // The role's body omits its OWN `a`: pruned (retired, undeployed, revision bumped).
-    const r2 = await t.mutation(internal.relays.registerBySlug, {
-      slug: FIXTURE_RELAY_SLUG,
-      origin: { kind: 'panel-node', backendSlug: FIXTURE_PANEL_SLUG, nodeName: FIXTURE_NODE },
-      originAddress: FIXTURE_ORIGIN,
-      listeners: [wsListener()] as never,
-    });
-    expect(r2.listeners).toMatchObject({ created: ['w'], retired: ['a'], changed: true });
-    const a = (await t.run((ctx) =>
-      ctx.db
-        .query('relayListeners')
-        .withIndex('by_relay_key', (q) => q.eq('relayId', relayId).eq('listenerKey', 'a'))
-        .unique(),
-    ))!;
-    expect(a).toMatchObject({ retired: true, deployed: false, revision: 2 });
-    // pruneListeners:false keeps everything.
-    const r3 = await t.mutation(internal.relays.registerBySlug, {
-      slug: FIXTURE_RELAY_SLUG,
-      origin: { kind: 'panel-node', backendSlug: FIXTURE_PANEL_SLUG, nodeName: FIXTURE_NODE },
-      originAddress: FIXTURE_ORIGIN,
-      listeners: [] as never,
-      pruneListeners: false,
-    });
-    expect(r3.changed).toBe(false);
-    // The role naming the admin's key is refused (nothing applied).
-    await expect(
-      t.mutation(internal.relays.registerBySlug, {
-        slug: FIXTURE_RELAY_SLUG,
-        origin: { kind: 'panel-node', backendSlug: FIXTURE_PANEL_SLUG, nodeName: FIXTURE_NODE },
-        originAddress: FIXTURE_ORIGIN,
-        listeners: [
-          wsListener(),
-          shadowsocksListener({ listenerKey: 'x', originPort: 9999 }),
-        ] as never,
-      }),
-    ).rejects.toThrow(/listener_key_owned/);
-    expect((await listenerRow(t, admin.id))!.originPort).toBe(8388);
-    // An admin body prunes admin listeners only: `w` (role) survives an empty admin body.
-    const r4 = await t.mutation(internal.relays.registerBySlug, {
-      slug: FIXTURE_RELAY_SLUG,
-      origin: { kind: 'panel-node', backendSlug: FIXTURE_PANEL_SLUG, nodeName: FIXTURE_NODE },
-      originAddress: FIXTURE_ORIGIN,
-      listeners: [] as never,
+    expect(again.changed).toBe(false);
+    expect((await listenerRow(t, listenerId))!.revision).toBe(2);
+  });
+
+  test('edge.listener_in_use: ANY non-destroyed edge (a standby included) blocks a rebind and a retire', async () => {
+    const { t } = await seed();
+    const { relayId, listenerId } = await registerRelay(t, {
+      slug: 'node-two',
+      nodeName: 'node-two',
+      originAddress: '203.0.113.11',
       source: 'admin',
     });
-    expect(r4.listeners.retired).toEqual(['x']);
-    const w = await t.run((ctx) =>
-      ctx.db
-        .query('relayListeners')
-        .withIndex('by_relay_key', (q) => q.eq('relayId', relayId).eq('listenerKey', 'w'))
-        .unique(),
-    );
-    expect(w?.retired).toBe(false);
-    // A retired key re-stated by its owner comes back as an UPDATE (revision bumps).
-    const r5 = await registerRelay(t, { listeners: [wsListener(), realityListener()] });
-    expect(r5.changed).toBe(true);
-    const aBack = (await t.run((ctx) => ctx.db.get(a._id)))!;
-    expect(aBack).toMatchObject({ retired: false, deployed: true, revision: 3 });
-  });
-
-  test('edge.listener_in_use: ANY non-destroyed edge (a standby included) blocks a rebind, a prune and a retire', async () => {
-    const { t, relayId, listenerId } = await seed();
     // An unpublished adopted edge = a standby.
     const { edgeId } = await adoptL4Edge(t, relayId, listenerId, { publish: false });
-    const body = (l: ListenerSpecFixture[]) =>
-      t.mutation(internal.relays.registerBySlug, {
-        slug: FIXTURE_RELAY_SLUG,
-        origin: { kind: 'panel-node', backendSlug: FIXTURE_PANEL_SLUG, nodeName: FIXTURE_NODE },
-        originAddress: FIXTURE_ORIGIN,
-        listeners: l as never,
-      });
+    const upsert = (l: ListenerSpecFixture) =>
+      t.mutation(internal.relayListeners.upsert, { relayId, spec: l as never });
     for (const change of [
       { originPort: 8443 },
       {
@@ -399,20 +203,19 @@ describe('origins: registration by slug', () => {
       },
       { security: 'tls' as const, realityTarget: undefined },
     ]) {
-      await expect(body([realityListener(change)])).rejects.toThrow(/listener_in_use/);
+      await expect(upsert(realityListener(change))).rejects.toThrow(/listener_in_use/);
     }
-    await expect(body([])).rejects.toThrow(/listener_in_use/);
     await expect(
       t.mutation(internal.relayListeners.retire, { relayId, listenerKey: 'a' }),
     ).rejects.toThrow(/listener_in_use/);
     // A name-only change is not a rebind: the edge keeps its listener.
-    const r = await body([realityListener({ tlsNames: ['a.example', 'b.example', 'c.example'] })]);
-    expect(r.listeners.updated).toEqual(['a']);
+    const r = await upsert(realityListener({ tlsNames: ['a.example', 'b.example', 'c.example'] }));
+    expect(r.changed).toBe(true);
     // Destroyed: the listener is free again.
     await t.mutation(internal.edges.patchEdge, { edgeId, status: 'destroyed' });
-    await body([
+    await upsert(
       realityListener({ originPort: 8443, tlsNames: ['a.example', 'b.example', 'c.example'] }),
-    ]);
+    );
     expect((await listenerRow(t, listenerId))!.originPort).toBe(8443);
     await t.mutation(internal.relayListeners.retire, { relayId, listenerKey: 'a' });
     expect((await listenerRow(t, listenerId))!.retired).toBe(true);
@@ -456,57 +259,6 @@ describe('origins: registration by slug', () => {
         listeners: [realityListener({ protocol: 'shadowsocks' })],
       }),
     ).rejects.toThrow(/invalid_combination/);
-  });
-
-  test('refused on a deleting origin; origin kind is locked; re-parenting is locked while edges exist', async () => {
-    const { t, relayId, listenerId } = await seed();
-    await insertPanelServer(t, { slug: 'panel-b' });
-    await adoptL4Edge(t, relayId, listenerId);
-    await expect(registerRelay(t, { backendSlug: 'panel-b' })).rejects.toThrow(
-      /relay_reparent_locked/,
-    );
-    await expect(registerRelay(t, { kind: 'backend-server' })).rejects.toThrow(
-      /origin_kind_locked/,
-    );
-    await t.mutation(internal.relays.requestDelete, { id: relayId, disposition: 'keep-dark' });
-    await expect(registerRelay(t)).rejects.toThrow(/being deleted/);
-  });
-
-  test('re-parenting without edges moves the origin AND its delivery binding; the vacated node is claimable', async () => {
-    const { t, relayId, serverId } = await seed();
-    const before = await mirrorRefreshes(t);
-    const r = await registerRelay(t, { nodeName: 'node-two' });
-    expect(r).toMatchObject({ relayId, created: false, changed: true });
-    // Unchanged listeners bump no epoch, yet the newly covered node's mirrors may
-    // still hold its raw body: claiming the binding refreshes them at once.
-    expect(await mirrorRefreshes(t)).toBeGreaterThan(before);
-    const row = (await t.query(internal.relays.get, { id: relayId }))!;
-    expect(row.origin).toEqual({
-      kind: 'panel-node',
-      backendServerId: serverId,
-      nodeName: 'node-two',
-    });
-    expect(row.nodeName).toBe('node-two');
-    expect(
-      await t.query(internal.relays.deliveryBinding, {
-        backendServerId: serverId,
-        nodeName: 'node-two',
-      }),
-    ).toMatchObject({ relaySlug: FIXTURE_RELAY_SLUG, state: 'active' });
-    // The old node's binding row still exists (now pointing at this slug; the
-    // origin's re-registration re-claimed it) but a new origin may take the node.
-    const two = await registerRelay(t, {
-      slug: 'node-one-again',
-      nodeName: FIXTURE_NODE,
-      originAddress: '203.0.113.11',
-    });
-    expect(two.created).toBe(true);
-    expect(
-      await t.query(internal.relays.deliveryBinding, {
-        backendServerId: serverId,
-        nodeName: FIXTURE_NODE,
-      }),
-    ).toMatchObject({ relaySlug: 'node-one-again', state: 'active' });
   });
 
   test('the qualification placement mode is settable by an operator: a known mode slug is stored, an unknown one refused, null clears it', async () => {
@@ -592,7 +344,7 @@ describe('origins: registration by slug', () => {
     expect(mrow.hostMode).toBe('none');
     expect(mrow.backendServerId).toBeUndefined();
     expect(mrow.nodeName).toBeUndefined();
-    // Operator-owned Hosts by request (legacy adoption), only where Hosts exist.
+    // Operator-owned Hosts by request, only where Hosts exist.
     const op = await registerRelay(t, {
       slug: 'legacy',
       nodeName: 'legacy',
@@ -691,7 +443,7 @@ describe('origins: registration by slug', () => {
     await t.run((ctx) => ctx.db.patch(relayId, { publishedEdgeIds: [] }));
   });
 
-  test('a delivery binding is written on registration; delete needs a disposition; keep-dark survives, restore-direct releases', async () => {
+  test('a delivery binding is written on create; delete needs a disposition; keep-dark survives, restore-direct releases', async () => {
     const { t, relayId, serverId } = await seed();
     const b = (await t.query(internal.relays.deliveryBinding, {
       backendServerId: serverId,
@@ -792,7 +544,7 @@ describe('origins: registration by slug', () => {
       ok: true,
       deleted: false,
     });
-    // A binding is re-claimed (version bumped) when a new origin registers the node.
+    // A binding is re-claimed (version bumped) when a new origin takes the node.
     await t.mutation(internal.relays.finalizeDelete, { id: relayId });
     await registerRelay(t, { slug: 'node-one-v2' });
     expect(await t.run((ctx) => ctx.db.get(b._id))).toMatchObject({
@@ -800,61 +552,6 @@ describe('origins: registration by slug', () => {
       policyVersion: 3,
       relaySlug: 'node-one-v2',
     });
-  });
-
-  test('a register-scoped caller is confined to its boundary (assertWithinBoundary)', async () => {
-    const { t, serverId } = await seed();
-    const other = await insertPanelServer(t, { slug: 'panel-b' });
-    const inside = { backendServerIds: [serverId] };
-    const reg = (
-      slug: string,
-      backendSlug: string,
-      boundary: { backendServerIds: Id<'backendServers'>[]; nodeNames?: string[] },
-    ) =>
-      t.mutation(internal.relays.registerBySlug, {
-        slug,
-        origin: { kind: 'panel-node', backendSlug, nodeName: slug },
-        originAddress: '203.0.113.60',
-        listeners: [realityListener()] as never,
-        boundary,
-      });
-    await expect(reg('node-b', 'panel-b', inside)).rejects.toThrow(/registration_boundary/);
-    await expect(
-      reg('node-c', FIXTURE_PANEL_SLUG, { backendServerIds: [other], nodeNames: ['node-c'] }),
-    ).rejects.toThrow(/registration_boundary/);
-    await expect(
-      reg('node-c', FIXTURE_PANEL_SLUG, { backendServerIds: [serverId], nodeNames: ['node-z'] }),
-    ).rejects.toThrow(/registration_boundary/);
-    // An EMPTY boundary registers nothing.
-    await expect(reg('node-c', FIXTURE_PANEL_SLUG, { backendServerIds: [] })).rejects.toThrow(
-      /registration_boundary/,
-    );
-    // A manual origin is never inside a boundary.
-    await expect(
-      t.mutation(internal.relays.registerBySlug, {
-        slug: 'hand',
-        origin: { kind: 'manual' },
-        originAddress: '203.0.113.61',
-        listeners: [shadowsocksListener({ panelBinding: undefined })] as never,
-        boundary: inside,
-      }),
-    ).rejects.toThrow(/registration_boundary/);
-    const ok = await reg('node-c', FIXTURE_PANEL_SLUG, {
-      backendServerIds: [serverId],
-      nodeNames: ['node-c'],
-    });
-    expect(ok.created).toBe(true);
-    // The existing row is checked too: a body that would move it out of the boundary is refused,
-    // and so is touching an origin that already sits outside it.
-    await expect(
-      t.mutation(internal.relays.registerBySlug, {
-        slug: 'node-c',
-        origin: { kind: 'panel-node', backendSlug: 'panel-b', nodeName: 'node-c' },
-        originAddress: '203.0.113.60',
-        listeners: [realityListener()] as never,
-        boundary: { backendServerIds: [other] },
-      }),
-    ).rejects.toThrow(/registration_boundary/);
   });
 });
 
@@ -898,15 +595,12 @@ describe('origins: operator knobs and epochs', () => {
     expect(await epochOf(t, off)).toBe(beforeOff);
   });
 
-  test('originAddress is locked while the origin has live edges (update and registration alike)', async () => {
+  test('originAddress is locked while the origin has live edges', async () => {
     const { t, relayId, listenerId } = await seed();
     const e = await adoptL4Edge(t, relayId, listenerId, { ipv4: '198.51.100.1' });
     await expect(
       t.mutation(internal.relays.update, { id: relayId, originAddress: '203.0.113.99' }),
     ).rejects.toThrow(/origin_address_locked/);
-    await expect(registerRelay(t, { originAddress: '203.0.113.99' })).rejects.toThrow(
-      /origin_address_locked/,
-    );
     // The same address (or an unrelated field) is fine.
     await t.mutation(internal.relays.update, {
       id: relayId,
@@ -918,9 +612,6 @@ describe('origins: operator knobs and epochs', () => {
     expect((await t.query(internal.relays.get, { id: relayId }))!.originAddress).toBe(
       '203.0.113.99',
     );
-    // The role's next registration reports the address change as `changed`.
-    const r = await registerRelay(t, { originAddress: '203.0.113.98' });
-    expect(r.changed).toBe(true);
   });
 });
 

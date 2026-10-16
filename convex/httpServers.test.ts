@@ -29,6 +29,8 @@ import {
   ServerTree,
 } from '../src/shared/contracts/servers';
 import { scopeFor } from './httpServers';
+import { registrationBoundaryOf } from './lib/adminHttp';
+import type { Id } from './_generated/dataModel';
 import { insertPanelServer } from './lib/edges/testing/fixtures';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -192,7 +194,12 @@ async function adminCookie(t: T) {
   return `fs_admin_session=${await signValue(sid, ADMIN_SIGN_KEY)}`;
 }
 
-async function token(t: T, scopes: string[]): Promise<string> {
+/** An `fsv1_` token with `scopes`, optionally confined to a registration boundary. */
+async function token(
+  t: T,
+  scopes: string[],
+  edgeRegistration?: { backendServerIds: Id<'backendServers'>[]; nodeNames?: string[] },
+): Promise<string> {
   const plaintext = `fsv1_${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
   const tokenHash = await sha256Hex(plaintext);
   await t.run(async (ctx) => {
@@ -209,6 +216,7 @@ async function token(t: T, scopes: string[]): Promise<string> {
       createdByAdminId: admin,
       scopes,
       subjectType: 'service',
+      ...(edgeRegistration ? { edgeRegistration } : {}),
       updatedAt: Date.now(),
     });
   });
@@ -494,5 +502,98 @@ describe('/api/v1/admin/servers', () => {
     );
     for (const m of ['GET', 'POST', 'PATCH'])
       expect(routePolicy('/api/v1/admin/servers/panel-a/tree', m)).toBeDefined();
+    // The role's by-name routes: its fleet token holds `write` (maybe not `read`), so a GET takes either.
+    expect(scopeFor(['panel-a', 'nodes', 'by-name', 'node-one'], 'GET')).toEqual([
+      'admin:servers:read',
+      'admin:servers:write',
+      'admin:edges:register',
+      'admin:servers:manage',
+    ]);
+    for (const [verb, method] of [
+      [undefined, 'PUT'],
+      [undefined, 'DELETE'],
+      ['bootstrap', 'POST'],
+      ['applied', 'POST'],
+    ] as const)
+      expect(
+        scopeFor(['panel-a', 'nodes', 'by-name', 'node-one', ...(verb ? [verb] : [])], method),
+      ).toEqual(['admin:servers:write', 'admin:edges:register', 'admin:servers:manage']);
+  });
+
+  test('registration boundary: only the full scope (one or any-of) is unbounded; manage and register tokens are bounded', async () => {
+    const stored = { backendServerIds: ['s1'], nodeNames: ['node-one'] };
+    const runQuery = vi.fn(async () => stored);
+    const ctx = { runQuery } as never;
+    const tok = (scopes: string[]) => ({ tokenId: 'tok1' as never, tokenScopes: scopes });
+    // A cookie session is never bounded.
+    expect(await registrationBoundaryOf(ctx, {}, 'admin:servers:write')).toBeNull();
+    expect(
+      await registrationBoundaryOf(ctx, tok(['admin:servers:write']), 'admin:servers:write'),
+    ).toBeNull();
+    expect(
+      await registrationBoundaryOf(ctx, tok(['admin:servers:write']), [
+        'admin:servers:read',
+        'admin:servers:write',
+      ]),
+    ).toBeNull();
+    expect(runQuery).not.toHaveBeenCalled();
+    // Backend-write automation is not the node role: `manage` never unbounds.
+    expect(
+      await registrationBoundaryOf(
+        ctx,
+        tok(['admin:servers:manage', 'admin:edges:register']),
+        'admin:servers:write',
+      ),
+    ).toEqual(stored);
+    expect(
+      await registrationBoundaryOf(ctx, tok(['admin:edges:register']), 'admin:servers:write'),
+    ).toEqual(stored);
+    // A register token without a stored boundary may act for nothing.
+    runQuery.mockResolvedValueOnce(null as never);
+    expect(
+      await registrationBoundaryOf(ctx, tok(['admin:edges:register']), 'admin:servers:read'),
+    ).toEqual({ backendServerIds: [] });
+  });
+
+  test('the role routes (by-name) over HTTP: a write-only fleet token reads; a manage-only token never reaches the node secret; a register token stays inside its boundary', async () => {
+    const { t, serverId } = await seed();
+    const as = (tok: string, method: string, path: string, body?: unknown) =>
+      t.fetch(`/api/v1/admin/servers/${path}`, {
+        method,
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${tok}` },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+    const path = 'panel-a/nodes/by-name/node-one';
+    // Past auth and the boundary, a node that never enrolled is a plain 404.
+    const notEnrolled = async (res: Response) => {
+      expect(res.status).toBe(404);
+      expect(await res.json()).toMatchObject({ error: { code: 'not_found' } });
+    };
+    const fleet = await token(t, ['admin:servers:write']);
+    await notEnrolled(await as(fleet, 'GET', path));
+    // A manage-only token (backend-write automation) is not the node role: it has
+    // no boundary, so it acts for no node, bootstrap (the node secret) included.
+    const manage = await token(t, ['admin:servers:manage']);
+    for (const [method, sub] of [
+      ['GET', ''],
+      ['PUT', ''],
+      ['POST', '/bootstrap'],
+    ] as const) {
+      const res = await as(manage, method, `${path}${sub}`, method === 'GET' ? undefined : {});
+      expect(res.status, `${method} ${sub}`).toBe(403);
+      expect(await res.json()).toMatchObject({ error: { code: 'servers.registration_boundary' } });
+    }
+    // A register token: refused outside its boundary, admitted inside it.
+    const other = await insertPanelServer(t, { slug: 'panel-b' });
+    const outside = await token(t, ['admin:edges:register'], { backendServerIds: [other] });
+    const refused = await as(outside, 'GET', path);
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toMatchObject({
+      error: { code: 'servers.registration_boundary' },
+    });
+    const inside = await token(t, ['admin:edges:register'], { backendServerIds: [serverId] });
+    await notEnrolled(await as(inside, 'GET', path));
+    // The fleet token's write scope is still not `manage`: no backend write outside its routes.
+    expect((await as(fleet, 'POST', 'panel-a/hosts', {})).status).toBe(401);
   });
 });

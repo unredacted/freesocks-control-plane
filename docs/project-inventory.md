@@ -325,8 +325,8 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   is per connection mode.)
 
 - **Edges** (`/admin/edges`, `docs/edges.md`; scopes `admin:servers:*` for
-  infrastructure, `admin:settings:*` for the `edge.*` config, `admin:edges:register` for the
-  node role's by-slug registration, confined to the token's registration boundary): origins are
+  infrastructure, `admin:settings:*` for the `edge.*` config; no edges route takes the node
+  role's `admin:edges:register`, which is for the Servers by-name routes): origins are
   ANY origin (a backend node, a whole backend server such as Outline, or a manual address) with
   **listeners** (protocol / stream transport / security from a catalogue, names with
   retire/drain, REALITY target, origin transport, a match rule for the renderer, the backend
@@ -340,10 +340,10 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   **Edges → Probes** (`/admin/edges/probes`; the old `/admin/telemetry/probes` redirects) holds
   the reachability matrix over every probe target, run history, "probe now" and a probe audit
   feed; probe settings live under Edges → Settings. **Every
-  route under `/api/v1/admin/edges/` is HPKE-sealed by verb.** IaC: ONE idempotent
-  `PUT …/edges/relays/by-slug/{slug}` carrying origin + listeners (+ `GET`, `DELETE
-?disposition=`), the response carrying `publishedEndpoints`, `connectionPlan` and `hostsPlan`
-  for the node role. **The admin CMS section** (own lazy chunk,
+  route under `/api/v1/admin/edges/` is HPKE-sealed by verb.** The node role's by-slug
+  registration (`PUT …/edges/relays/by-slug/{slug}`, contract v1) is retired; `GET
+…/relays/by-slug/{slug}` stays as an admin read of `publishedEndpoints`, `connectionPlan` and
+  `hostsPlan`. **The admin CMS section** (own lazy chunk,
   `src/client/routes/admin/edges/`, one sidebar leaf under Servers with an in-page header
   `Nodes | Providers | Advanced`) has a **simple face** in plain words (the nodes home with
   "Protect a node" = the guided setup runs, a per-node page, provider cards; `simple/`) and,

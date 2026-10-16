@@ -351,10 +351,12 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.run_superseded': 'A newer approval replaced this one.',
   'servers.run_not_running': 'This activation is not running.',
   'servers.revision_moved': 'Something changed since the approval. Review and approve again.',
-  'servers.node_not_approved': 'The node behind this origin is not approved for delivery yet.',
-  'servers.standbys_missing': 'Protect this node in Edges first: its standbys come from there.',
+  'servers.node_not_approved':
+    'The node is waiting for your approval to go live. Approve it in its protection progress.',
+  'servers.standbys_missing':
+    'Protect this node in Edges first. Its new addresses come from there.',
   'servers.standbys_unverified':
-    'Not every standby of this node is verified yet. Finish the Edges setup up to publish.',
+    'Not every new address of this node is tested yet. Try each one in its protection progress.',
   'servers.credential_unresolved':
     'A test credential of this node has an unknown outcome on the backend. Look at its users.',
   'servers.delete_not_applied': 'An origin record was not removed. It is tried again.',
@@ -382,7 +384,17 @@ export function shapeWords(s: { transport: string; fronting: string }): string {
   return `${transport}, ${fronting}`;
 }
 
-/** One sentence and a dot for where an enrolled node is on its way to members. */
+/** The open guided setup run protecting a fronted node, as `NodeIntentView.protection` carries it. */
+export interface ProtectionLike {
+  state: string;
+  need: string | null;
+}
+
+/**
+ * One sentence and a dot for where an enrolled node is on its way to members.
+ * A fronted node (`mode.shape.fronting` not direct) goes live through its
+ * protection in Edges: Start, try each address, approve go-live.
+ */
 export function stageWords(i: {
   stage: string;
   disposition: string;
@@ -390,6 +402,8 @@ export function stageWords(i: {
   code: string | null;
   maintenance: boolean;
   retirement: { stage: string } | null;
+  mode?: { shape: { fronting: string } };
+  protection?: ProtectionLike | null;
 }): { dot: Dot; sentence: string } {
   if (i.retirement) {
     const s = i.retirement.stage;
@@ -403,6 +417,27 @@ export function stageWords(i: {
     return { dot: 'amber', sentence: 'Closed for maintenance. Finish it, then approve again.' };
   if (i.state === 'blocked')
     return { dot: 'red', sentence: `Stopped: ${serverErrorWords(i.code)}` };
+  const fronted = !!i.mode && i.mode.shape.fronting !== 'direct';
+  // Once approved (activating) the run's parked need is stale for a moment: the stage speaks.
+  const p = fronted && i.stage !== 'activating' ? (i.protection ?? null) : null;
+  if (p?.state === 'needs_you') {
+    if (p.need === 'node_not_approved')
+      return {
+        dot: 'amber',
+        sentence:
+          i.stage === 'live'
+            ? 'Live. Its new addresses are tested and wait for you to approve go-live.'
+            : 'Tested. Waiting for you to approve go-live.',
+      };
+    return {
+      dot: 'amber',
+      sentence:
+        i.stage === 'live'
+          ? 'Live. Its protection in Edges needs you.'
+          : 'Being protected in Edges. It needs you there.',
+    };
+  }
+  if (p && i.stage !== 'live') return { dot: 'amber', sentence: 'Being protected in Edges.' };
   switch (i.stage) {
     case 'registered':
       return {
@@ -414,11 +449,23 @@ export function stageWords(i: {
     case 'machine_applied':
       return { dot: 'amber', sentence: 'The role applied it. Checking the machine.' };
     case 'machine_ready':
-      return { dot: 'amber', sentence: 'The machine is ready. Test the connection, then approve.' };
+      return fronted
+        ? { dot: 'amber', sentence: 'The machine is ready. Protect it from Edges to go live.' }
+        : { dot: 'amber', sentence: 'The machine is ready. Test the connection, then approve.' };
     case 'candidates_verified':
-      return { dot: 'amber', sentence: 'Tested. Review and approve to release it to members.' };
+      return fronted
+        ? {
+            dot: 'amber',
+            sentence: 'Its addresses are tested. Approve go-live in its protection progress.',
+          }
+        : { dot: 'amber', sentence: 'Tested. Review and approve to release it to members.' };
     case 'awaiting_approval':
-      return { dot: 'amber', sentence: 'Waiting for your approval.' };
+      return fronted
+        ? {
+            dot: 'amber',
+            sentence: 'Waiting for you to approve go-live in its protection progress.',
+          }
+        : { dot: 'amber', sentence: 'Waiting for your approval.' };
     case 'activating':
       return {
         dot: 'amber',
@@ -431,6 +478,31 @@ export function stageWords(i: {
     default:
       return { dot: 'grey', sentence: 'Enrolled.' };
   }
+}
+
+/** The line beside "Open progress" on a fronted node's page, while its protection is open. */
+export function protectionWords(p: ProtectionLike, stage?: string): string {
+  if (stage === 'activating') return 'Approved. Its protection carries on in a moment.';
+  if (p.state === 'needs_you')
+    return p.need === 'node_not_approved'
+      ? 'Its new addresses are tested. Approve go-live below, or in its protection progress.'
+      : 'Its protection in Edges needs you.';
+  return 'Being protected in Edges. It carries on by itself.';
+}
+
+/**
+ * One standby a fronted node's approval releases, in words:
+ * `main: members get 203.0.113.7:443, an address in Main account.`
+ */
+export function standbyWords(s: {
+  listenerKey: string;
+  layer: 'l4' | 'l7';
+  endpoint: string | null;
+  accountName: string | null;
+}): string {
+  const kind = s.layer === 'l7' ? 'a CDN name' : 'an address';
+  const where = s.accountName ? `, ${kind} in ${s.accountName}` : '';
+  return `${s.listenerKey}: members get ${s.endpoint ?? 'a new address'}${where}.`;
 }
 
 /** The setup row in Needs you, or null when there is nothing to do. */
@@ -454,6 +526,20 @@ export function serverErrorWords(code: string | null | undefined): string {
 }
 /** Every code with its own words (pinned by the tests against the server's vocabulary). */
 export const WORDED_CODES: readonly string[] = Object.keys(ERROR_WORDS);
+
+/**
+ * The review card's blockers: a few codes read differently there than as a
+ * refused write (a toast); the rest share `serverErrorWords`.
+ */
+const BLOCKER_WORDS: Record<string, string> = {
+  'servers.stage':
+    'The node is not at a step where it can be approved. Wait for the step it is on to finish.',
+  'servers.maintenance_required':
+    'Put the node in maintenance first: a live node gets a new address only while members are held off it.',
+};
+export function blockerWords(code: string): string {
+  return BLOCKER_WORDS[code.split(':')[0] ?? ''] ?? serverErrorWords(code);
+}
 
 // --- one change to a backend, in words ------------------------------------------------------------
 

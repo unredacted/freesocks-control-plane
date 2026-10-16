@@ -8,24 +8,39 @@
    *   3. Review          one sentence, the consent for unsupported addresses, one button
    * A created run hands over to ProtectProgress (`runId`), which the URL keeps.
    *
+   * The node list can be re-read from the backend (Refresh). A link from the
+   * Servers page names the node (`server` = the backend's slug or id, `node` =
+   * its node uuid): it is picked for you, and when the list does not have it
+   * yet the list is refreshed once. A plan with exactly one compatible account
+   * picks that account.
+   *
    * Props:
    *   open: boolean
    *   runId: string | null              show a run's progress instead of the questions
    *   startAtAccount?: boolean          no provider account exists yet: open on the account step
+   *   server?: string | null            preselect this backend (slug or id; read once)
+   *   node?: string | null              preselect this node uuid on it (read once)
    *   onRunCreated: (runId: string) => void
    *   onClose: () => void
    */
   import { untrack } from 'svelte';
-  import { createMutation } from '@tanstack/svelte-query';
+  import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
   import { Button } from '@client/components/ui/button';
   import * as Sheet from '@client/components/ui/sheet';
   import * as Select from '@client/components/ui/select';
   import * as Collapsible from '@client/components/ui/collapsible';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
+  import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import { Skeleton } from '@client/components/ui/skeleton';
   import { adminBackendServersQuery } from '@client/lib/queries';
-  import { createSetupRun, nodeCandidatesQuery, planSetupRun } from '@client/lib/edgesApi';
+  import {
+    createSetupRun,
+    edgeKeys,
+    nodeCandidatesQuery,
+    planSetupRun,
+    refreshNodeCandidates,
+  } from '@client/lib/edgesApi';
   import { countryName } from '@client/lib/countries';
   import { SETUP_ACCOUNT_REASON_COPY, inboundUnsupportedCopy } from '@client/lib/edgeCodes';
   import type { SetupPlanResponse } from '@shared/contracts/edges';
@@ -45,10 +60,21 @@
     open: boolean;
     runId: string | null;
     startAtAccount?: boolean;
+    server?: string | null;
+    node?: string | null;
     onRunCreated: (runId: string) => void;
     onClose: () => void;
   }
-  let { open, runId, startAtAccount = false, onRunCreated, onClose }: Props = $props();
+  let {
+    open,
+    runId,
+    startAtAccount = false,
+    server = null,
+    node = null,
+    onRunCreated,
+    onClose,
+  }: Props = $props();
+  const qc = useQueryClient();
 
   type Step = 'node' | 'account' | 'review';
   // With no provider account at all the flow opens on the account step (adding one).
@@ -59,9 +85,16 @@
   // 1. Which node?
   const servers = adminBackendServersQuery();
   const panels = $derived((servers.data ?? []).filter((s) => s.config.type === 'remnawave'));
+  // The node a Servers link names, read once (the URL keeps it while the sheet is open).
+  const preset = untrack(() => ({ server: server ?? '', node: node ?? '' }));
   let serverId = $state('');
   $effect(() => {
-    if (serverId === '' && panels.length === 1) serverId = panels[0]!.id;
+    if (serverId !== '') return;
+    const named = preset.server
+      ? panels.find((p) => p.slug === preset.server || p.id === preset.server)
+      : undefined;
+    if (named) serverId = named.id;
+    else if (panels.length === 1) serverId = panels[0]!.id;
   });
   const candidates = nodeCandidatesQuery(() => serverId || null);
   const nodes = $derived(
@@ -69,6 +102,42 @@
   );
   let nodeUuid = $state('');
   let plan = $state<SetupPlanResponse | null>(null);
+
+  // The inventory is a cache: Refresh re-reads the backend (throttled server-side).
+  const refresh = createMutation(() => ({
+    mutationFn: (v: { id: string; manual: boolean }) => refreshNodeCandidates(v.id),
+    onSuccess: (_r, v) => qc.invalidateQueries({ queryKey: edgeKeys.nodeCandidates(v.id) }),
+    onError: (e, v) => {
+      if (v.manual) toast.error(edgeErrorMessage(e));
+    },
+  }));
+
+  // Resolving the preset node: pick it, or say it is protected already, or (after one
+  // refresh) that the list does not have it. Any choice by hand ends it.
+  let presetPending = $state(preset.node !== '');
+  let presetRefreshed = false;
+  let presetTaken = $state<{ name: string; relaySlug: string } | null>(null);
+  let presetMissing = $state(false);
+  $effect(() => {
+    if (!presetPending || !serverId || !candidates.data || refresh.isPending) return;
+    const found = candidates.data.nodes.find((n) => n.nodeUuid === preset.node);
+    if (found) {
+      presetPending = false;
+      if (found.relaySlug === null) untrack(() => pickNode(found.nodeUuid));
+      else presetTaken = { name: found.name, relaySlug: found.relaySlug };
+    } else if (!presetRefreshed) {
+      presetRefreshed = true;
+      untrack(() => refresh.mutate({ id: serverId, manual: false }));
+    } else {
+      presetPending = false;
+      presetMissing = true;
+    }
+  });
+  function endPreset() {
+    presetPending = false;
+    presetTaken = null;
+    presetMissing = false;
+  }
   const planM = createMutation(() => ({
     mutationFn: (uuid: string) => planSetupRun(serverId, uuid),
     onSuccess: (p) => {
@@ -97,6 +166,10 @@
   let accountId = $state('');
   const accounts = $derived(plan?.accounts ?? []);
   const compatible = $derived(accounts.filter((a) => a.compatible));
+  // Exactly one account can carry the node: it is the answer, picked for you.
+  $effect(() => {
+    if (accountId === '' && compatible.length === 1) accountId = compatible[0]!.id;
+  });
   const reasonWords = (reasons: string[]): string =>
     reasons
       .map(
@@ -200,6 +273,7 @@
                 type="single"
                 value={serverId}
                 onValueChange={(v) => {
+                  endPreset();
                   serverId = v;
                   nodeUuid = '';
                   plan = null;
@@ -217,7 +291,39 @@
             </div>
           {/if}
           {#if serverId}
-            {#if candidates.isPending}
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-sm font-medium">Node</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={refresh.isPending}
+                onclick={() => refresh.mutate({ id: serverId, manual: true })}
+              >
+                <RefreshCw
+                  class={refresh.isPending ? 'animate-spin motion-reduce:animate-none' : ''}
+                  aria-hidden="true"
+                />
+                {refresh.isPending ? 'Refreshing' : 'Refresh'}
+              </Button>
+            </div>
+            {#if presetTaken}
+              <div class="space-y-2 rounded-md border p-3 text-sm" role="status">
+                <p>{presetTaken.name} is already protected.</p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onclick={() => router.navigate(edgesPaths.node(presetTaken!.relaySlug))}
+                >
+                  Open the node
+                </Button>
+              </div>
+            {:else if presetMissing}
+              <p class="text-muted-foreground text-sm" role="status">
+                The node from Servers is not in this list yet. Refresh once it is online on the
+                backend, or pick another node.
+              </p>
+            {/if}
+            {#if candidates.isPending || (presetPending && refresh.isPending)}
               <Skeleton class="h-24 w-full" />
             {:else if candidates.isError}
               <AdminListState error={candidates.error} onRetry={() => void candidates.refetch()} />
@@ -236,7 +342,10 @@
                       value={n.nodeUuid}
                       checked={nodeUuid === n.nodeUuid}
                       disabled={taken}
-                      onchange={() => pickNode(n.nodeUuid)}
+                      onchange={() => {
+                        endPreset();
+                        pickNode(n.nodeUuid);
+                      }}
                     />
                     <span class="min-w-0 flex-1">
                       <span class="block font-medium">{n.name}</span>
@@ -400,7 +509,8 @@
           <Button disabled={create.isPending} onclick={() => create.mutate(false)}>
             {create.isPending ? 'Starting' : words.button}
           </Button>
-          {#if words.uncovered}
+          <!-- An enrolled node goes live through its approval only: it has no direct address to keep. -->
+          {#if words.uncovered && !plan?.enrolled}
             <Button variant="ghost" disabled={create.isPending} onclick={() => create.mutate(true)}>
               Keep those members on the direct address
             </Button>

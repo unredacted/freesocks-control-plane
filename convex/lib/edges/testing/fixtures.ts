@@ -10,7 +10,12 @@
 import type { TestConvex } from 'convex-test';
 import { internal } from '../../../_generated/api';
 import type { Id } from '../../../_generated/dataModel';
+import type { MutationCtx } from '../../../_generated/server';
 import type schema from '../../../schema';
+import { applyRegistration } from '../../../relayListeners';
+import { ensurePoolCapacity } from '../poolCapacity';
+import { assertAdmission } from '../maintenance';
+import type { ListenerSpecInput } from '../registration';
 
 type T = TestConvex<typeof schema>;
 
@@ -230,7 +235,15 @@ export async function createAccount(
   return id;
 }
 
-/** Register an origin the way the node role does: origin + listeners in one PUT. */
+/**
+ * An origin with its listeners, stored the way the retired node-role
+ * registration left its rows (existing deployments still carry them): the
+ * listeners owned by `source` (default `role`) and, for a role source, a
+ * `lastRegisteredAt` stamp. A new slug is created through `relays.create` (the
+ * admin path, by backend slug here). An EXISTING slug re-applies the listener
+ * body to it with `applyRegistration` (prune the caller's own omitted
+ * listeners, the same diff and refusals); the origin itself never changes.
+ */
 export async function registerRelay(
   t: T,
   opts: {
@@ -246,23 +259,72 @@ export async function registerRelay(
 ) {
   const kind = opts.kind ?? 'panel-node';
   const backendSlug = opts.backendSlug ?? FIXTURE_PANEL_SLUG;
-  const origin =
-    kind === 'panel-node'
-      ? { kind: 'panel-node' as const, backendSlug, nodeName: opts.nodeName ?? FIXTURE_NODE }
-      : kind === 'backend-server'
-        ? { kind: 'backend-server' as const, backendSlug }
-        : { kind: 'manual' as const };
+  const slug = opts.slug ?? FIXTURE_RELAY_SLUG;
+  const source = opts.source ?? 'role';
   const listeners = opts.listeners ?? [realityListener()];
-  const r = await t.mutation(internal.relays.registerBySlug, {
-    slug: opts.slug ?? FIXTURE_RELAY_SLUG,
-    origin,
-    originAddress: opts.originAddress ?? FIXTURE_ORIGIN,
-    listeners: listeners.map((l) =>
-      kind === 'panel-node' ? l : { ...l, panelBinding: undefined },
-    ) as never,
-    source: opts.source ?? 'role',
-    ...(opts.hostModeRequest ? { hostModeRequest: opts.hostModeRequest } : {}),
-  });
+  const body = listeners.map((l) =>
+    kind === 'panel-node' ? l : { ...l, panelBinding: undefined },
+  ) as unknown as ListenerSpecInput[];
+  const existing = await t.run((ctx) =>
+    ctx.db
+      .query('relays')
+      .withIndex('by_slug', (q) => q.eq('slug', slug))
+      .unique(),
+  );
+  let r: { id: Id<'relays'>; created: boolean; changed: boolean };
+  if (existing) {
+    r = await t.run(async (ctx) => {
+      const mctx = ctx as unknown as MutationCtx;
+      await assertAdmission(mctx.db, 'registration');
+      const reg = await applyRegistration(mctx, existing, body, source, { prune: true });
+      const capacity = await ensurePoolCapacity(mctx, (await mctx.db.get(existing._id))!);
+      if (source === 'role') await mctx.db.patch(existing._id, { lastRegisteredAt: Date.now() });
+      return {
+        id: existing._id,
+        created: false,
+        changed: reg.changed || capacity.to !== capacity.from,
+      };
+    });
+  } else {
+    const serverId =
+      kind === 'manual'
+        ? null
+        : await t.run(async (ctx) => {
+            const row = await ctx.db
+              .query('backendServers')
+              .withIndex('by_slug', (q) => q.eq('slug', backendSlug))
+              .unique();
+            if (!row) throw new Error(`unknown backend slug ${backendSlug}`);
+            return row._id;
+          });
+    const origin =
+      kind === 'panel-node'
+        ? {
+            kind: 'panel-node' as const,
+            backendServerId: serverId!,
+            nodeName: opts.nodeName ?? FIXTURE_NODE,
+          }
+        : kind === 'backend-server'
+          ? { kind: 'backend-server' as const, backendServerId: serverId! }
+          : { kind: 'manual' as const };
+    const created = await t.mutation(internal.relays.create, {
+      slug,
+      origin,
+      originAddress: opts.originAddress ?? FIXTURE_ORIGIN,
+      listeners: body as never,
+      ...(opts.hostModeRequest ? { hostMode: opts.hostModeRequest } : {}),
+    });
+    r = { id: created.id, created: true, changed: true };
+    if (source === 'role')
+      await t.run(async (ctx) => {
+        await ctx.db.patch(r.id, { lastRegisteredAt: Date.now() });
+        const own = await ctx.db
+          .query('relayListeners')
+          .withIndex('by_relay', (q) => q.eq('relayId', r.id))
+          .collect();
+        for (const l of own) await ctx.db.patch(l._id, { source: 'role' });
+      });
+  }
   const rows = await t.run((ctx) =>
     ctx.db
       .query('relayListeners')

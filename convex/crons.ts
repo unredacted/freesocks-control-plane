@@ -157,6 +157,9 @@ crons.interval(
 // content and re-upload it (skip-if-unchanged). No-op unless S3 mirroring is
 // configured. The censorship-fallback URL is only useful if it isn't stale.
 crons.interval('mirror-refresh', { hours: 6 }, internal.storage.refreshActiveMirrors, {});
+// The mirror barrier: an upload whose delivery policy moved while it was in
+// flight is re-rendered under the current one, or the object withdrawn.
+crons.interval('mirror-barrier-repair', { minutes: 5 }, internal.storage.repairMirrorUploads, {});
 
 // Self-heal the maintained user-status counter (statusCounters.ts) that feeds the
 // /status health-gate — recomputes it exactly, correcting any missed transition bump.

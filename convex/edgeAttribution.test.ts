@@ -117,7 +117,12 @@ async function seed() {
   const now = Date.now();
   const key = await t.run(async (ctx) => {
     const origin = (await ctx.db.get(relayId))!;
-    const { published } = await publishedEdgesOf(ctx, origin, { includeIneligible: true });
+    const { published } = await publishedEdgesOf(
+      ctx,
+      origin,
+      { kind: 'member' },
+      { includeIneligible: true },
+    );
     const opts = { now, preferDistinctProviders: false, includeBackup: true };
     for (let i = 0; i < 500; i++) {
       const candidate = ((i * 2654435761) >>> 0).toString(16).padStart(8, '0') + 'cd'.repeat(28);

@@ -13,7 +13,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
-import { jsonRes, mockFetch } from './lib/edges/testing/mockFetch';
+import { fakeEdgeWorld, type BackendAddress } from './lib/edges/testing/fakeEdgeWorld';
 import {
   FIXTURE_CONFIG_PROFILE,
   FIXTURE_INBOUND,
@@ -44,17 +44,6 @@ const VMESS_INBOUND = '55555555-5555-4555-8555-555555555555';
 const HOST_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
 const HOST_S = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2';
 const HOST_V = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3';
-
-interface BackendAddress {
-  uuid: string;
-  remark: string;
-  address: string;
-  port: number;
-  sni?: string;
-  host?: string;
-  isDisabled?: boolean;
-  inbound: { configProfileUuid: string; configProfileInboundUuid: string };
-}
 
 const inboundA: BackendTransport = {
   tag: 'VLESS_RELAY_A',
@@ -110,75 +99,8 @@ const directHostV = (): BackendAddress => ({
   inbound: { configProfileUuid: FIXTURE_CONFIG_PROFILE, configProfileInboundUuid: VMESS_INBOUND },
 });
 
-/**
- * A fake UpCloud (every create mints a fresh RFC 5737 address) + a fake backend
- * whose Hosts are observable (the publish rotation creates the FCP Host).
- */
 function fakeWorld(opts: { hosts?: BackendAddress[]; failCreateAt?: number } = {}) {
-  const panelHosts: BackendAddress[] = opts.hosts ?? [directHostA()];
-  const lbs = new Map<string, { uuid: string; name: string; operational_state: string }>();
-  let creates = 0;
-  let lbCreates = 0;
-  const stub = mockFetch((c) => {
-    if (new URL(c.url).hostname === 'panel.example') {
-      if (c.path === '/api/hosts' && c.method === 'GET') return jsonRes({ response: panelHosts });
-      if (c.path === '/api/hosts' && c.method === 'PATCH') {
-        const body = c.body as {
-          uuid: string;
-          address?: string;
-          port?: number;
-          sni?: string;
-          host?: string;
-          isDisabled?: boolean;
-        };
-        const h = panelHosts.find((x) => x.uuid === body.uuid);
-        if (h) {
-          if (body.address !== undefined) h.address = body.address;
-          if (body.port !== undefined) h.port = body.port;
-          if (body.sni !== undefined) h.sni = body.sni;
-          if (body.host !== undefined) h.host = body.host;
-          if (body.isDisabled !== undefined) h.isDisabled = body.isDisabled;
-        }
-        return jsonRes({ response: h ?? null });
-      }
-      if (c.path === '/api/hosts' && c.method === 'POST') {
-        creates++;
-        const body = c.body as BackendAddress;
-        const uuid = `cccccccc-cccc-4ccc-8ccc-${String(creates).padStart(12, '0')}`;
-        panelHosts.push({ ...body, uuid });
-        return jsonRes({ response: { uuid } });
-      }
-      return jsonRes({ message: 'not found' }, 404);
-    }
-    if (c.path === '/1.3/load-balancer' && c.method === 'POST') {
-      lbCreates++;
-      // Fail exactly the Nth load-balancer create (a transient provider error).
-      if (opts.failCreateAt !== undefined && lbCreates === opts.failCreateAt)
-        return jsonRes({ error: { error_code: 'INTERNAL' } }, 500);
-      const uuid = `lb-${lbs.size + 1}`;
-      lbs.set(uuid, {
-        uuid,
-        name: (c.body as { name: string }).name,
-        operational_state: 'running',
-      });
-      return jsonRes(lbs.get(uuid));
-    }
-    if (c.path === '/1.3/ip_address' && c.method === 'POST')
-      return jsonRes({ ip_address: { address: `198.51.100.${10 + lbs.size}`, floating: 'yes' } });
-    if (/^\/1\.3\/load-balancer\/[^/]+\/ip-addresses$/.test(c.path) && c.method === 'POST')
-      return jsonRes({});
-    const get = c.path.match(/^\/1\.3\/load-balancer\/([^/]+)$/);
-    if (get && c.method === 'GET') {
-      const lb = lbs.get(get[1]);
-      return lb ? jsonRes(lb) : jsonRes({ error: { error_code: 'LB_NOT_FOUND' } }, 404);
-    }
-    if (get && c.method === 'DELETE') {
-      lbs.delete(get[1]);
-      return jsonRes({});
-    }
-    throw new Error(`unexpected ${c.method} ${c.url}`);
-  });
-  return { stub, panelHosts, lbs, creates: () => creates, lbCreates: () => lbCreates };
+  return fakeEdgeWorld({ hosts: opts.hosts ?? [directHostA()], failCreateAt: opts.failCreateAt });
 }
 
 /** Backend + a TESTED but unqualified UpCloud account + the node in the inventory. */

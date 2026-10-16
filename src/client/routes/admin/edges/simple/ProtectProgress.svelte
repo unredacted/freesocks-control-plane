@@ -4,6 +4,11 @@
    * from the latest event, and the interruption card (one sentence, one button,
    * at most one secondary) when the run needs you. Polls the run every 3 s.
    *
+   * An enrolled node's run parks at publish (`node_not_approved`) until its
+   * go-live is approved: the card then holds the node's approval card
+   * (NodeApprovalCard, the same one the Servers node page shows), and the run
+   * carries on by itself once the approval lands.
+   *
    * Props: runId; onClose()
    */
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
@@ -30,6 +35,8 @@
   import { codeLabel, plainWords, setupRunNeedCopy } from '@client/lib/edgeCodes';
   import type { SetupRunContinueBody, SetupRunRetryBody } from '@client/lib/edgesApi';
   import AdminListState from '../../AdminListState.svelte';
+  import NodeApprovalCard from '../../servers/components/NodeApprovalCard.svelte';
+  import { serversPaths } from '../../servers/lib/routes';
   import CodeNote from '../components/CodeNote.svelte';
   import { edgeErrorMessage } from '../lib/edgeErrors';
   import { edgesPaths } from '../lib/routes';
@@ -154,6 +161,11 @@
         });
       case 'quarantine':
         if (run?.relaySlug) router.navigate(edgesPaths.relay(run.relaySlug, { tab: 'rotations' }));
+        return;
+      case 'approve':
+        // Reached only without an enrolled node to approve here (an older server
+        // answers no `enrolled`): the Servers page has the node's approval.
+        router.navigate(serversPaths.home());
         return;
     }
   }
@@ -325,6 +337,21 @@
             Keep those members on the direct address
           </Button>
         </div>
+      {:else if need.code === 'node_not_approved' && run.enrolled}
+        {#if run.enrolled.stage === 'activating'}
+          <!-- Approved: the run wakes in a moment and the card would only show a stage blocker. -->
+          <p class="text-muted-foreground" role="status">
+            Approved. The run carries on in a moment.
+          </p>
+        {:else}
+          <NodeApprovalCard
+            slug={run.enrolled.slug}
+            intentId={run.enrolled.intentId}
+            nodeName={run.nodeName}
+            fronted
+            onApproved={refresh}
+          />
+        {/if}
       {:else}
         <div class="flex flex-wrap gap-2">
           <Button
@@ -334,7 +361,9 @@
           >
             {need.code === 'family_disabled' && family
               ? `Turn on for ${family}`
-              : buttons.primary.label}
+              : need.code === 'node_not_approved'
+                ? 'Open Servers'
+                : buttons.primary.label}
           </Button>
           {#if buttons.secondary}
             <Button

@@ -1,12 +1,12 @@
 /// <reference types="vite/client" />
 /**
- * The origin admin surface (`/api/v1/admin/edges/*`): auth + scopes (incl. the
- * any-of register scope and its token boundary on the by-slug routes), the
- * node role's ONE-body registration round trip (origin + listeners → adopted
- * edge → publishedEndpoints / connectionPlan), the listener routes, the
- * removed profiles/slots routes, account creation without secret echo, the
- * render preview, config patches, and the sealing policy coverage of every
- * verb under the prefix.
+ * The origin admin surface (`/api/v1/admin/edges/*`): auth + scopes (the
+ * register scope reaches nothing here, and the retired by-slug registration
+ * PUT answers 404), the CMS round trip (origin + listeners → adopted edge →
+ * the by-slug view's publishedEndpoints / connectionPlan), the listener
+ * routes, the removed profiles/slots routes, account creation without secret
+ * echo, the render preview, config patches, and the sealing policy coverage
+ * of every verb under the prefix.
  */
 import { convexTest } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -46,12 +46,7 @@ import {
   RelayBySlugResponse,
   RelayEndpointsResponse,
 } from '../src/shared/contracts/edges';
-import {
-  isRegistrationRoute,
-  scopeFor,
-  throttlePolicyFor,
-  throttlePolicyForGet,
-} from './httpEdges';
+import { scopeFor, throttlePolicyFor, throttlePolicyForGet } from './httpEdges';
 import { __setEdgeProviderForTests } from './lib/edges/providers/registry';
 import { qualificationBinding } from './lib/edges/frontCheck/binding';
 import type { AdoptionInspection } from './lib/edges/providers/types';
@@ -142,9 +137,7 @@ async function seed() {
   return { t, cookie, call, serverId };
 }
 
-const ORIGIN_NODE_ONE = { kind: 'panel-node', backendSlug: 'panel-a', nodeName: 'node-one' };
-
-/** The node role's REALITY listener, provider-scoped to upcloud. */
+/** A REALITY listener, provider-scoped to upcloud. */
 const LISTENER_U = {
   listenerKey: 'u',
   protocol: 'vless',
@@ -161,11 +154,15 @@ const LISTENER_U = {
   },
 };
 
-const REGISTER_BODY = {
-  origin: ORIGIN_NODE_ONE,
-  originAddress: '203.0.113.10',
-  listeners: [LISTENER_U],
-};
+/** The CMS create body of origin `node-one` (a backend node of `panel-a`) with `listeners`. */
+function createBody(serverId: Id<'backendServers'>, listeners: unknown[] = [LISTENER_U]) {
+  return {
+    slug: 'node-one',
+    origin: { kind: 'panel-node', backendServerId: serverId, nodeName: 'node-one' },
+    originAddress: '203.0.113.10',
+    listeners,
+  };
+}
 
 type BySlugView = {
   relay: {
@@ -179,17 +176,15 @@ type BySlugView = {
   publishedEndpoints: Array<Record<string, unknown> & { poolIndex: number; listenerKey: string }>;
   connectionPlan: Array<Record<string, unknown>>;
   hostsPlan: { mode: string; hosts: unknown[] };
-  registration?: { created: boolean; changed: boolean; listeners: Record<string, unknown> };
 };
 
 /**
- * seed() + provider account + origin registered by the NODE ROLE (a bounded
- * register token, so listener `u` is role-owned) + a published (index 0) and
- * an unpublished adopted edge. `roleCall` re-registers as the role.
+ * seed() + provider account + origin `node-one` created in the CMS (listener
+ * `u`) + a published (index 0) and an unpublished adopted edge.
  */
 async function fixture() {
   const s = await seed();
-  const { call, t, serverId } = s;
+  const { call, serverId } = s;
   const acct = (await (
     await call('POST', 'providers', {
       provider: 'upcloud',
@@ -198,14 +193,9 @@ async function fixture() {
       credentials: { token: 'SECRET_TOKEN_VALUE' },
     })
   ).json()) as { id: string };
-  const roleCall = bearerCall(
-    t,
-    await token(t, ['admin:edges:register'], { backendServerIds: [serverId] }),
-  );
-  const view = (await (
-    await roleCall('PUT', 'relays/by-slug/node-one', REGISTER_BODY)
-  ).json()) as BySlugView;
-  const relayId = view.relay.id;
+  const created = await call('POST', 'relays', createBody(serverId));
+  expect(created.status).toBe(200);
+  const relayId = ((await created.json()) as { id: string }).id;
   const listeners = (await (await call('GET', `relays/${relayId}/listeners`)).json()) as {
     listeners: Array<{ id: string; listenerKey: string }>;
   };
@@ -229,7 +219,6 @@ async function fixture() {
   ).json()) as { edgeId: string };
   return {
     ...s,
-    roleCall,
     accountId: acct.id,
     relayId,
     listenerId,
@@ -249,7 +238,7 @@ function bearerCall(t: ReturnType<typeof convexTest>, tok: string) {
 }
 
 describe('origin admin routes', () => {
-  test('sealing policy: every verb under the prefix is covered (GET reveal, POST both, PATCH/PUT seal, DELETE plain)', () => {
+  test('sealing policy: every verb under the prefix is covered (GET reveal, POST both, PATCH seal, DELETE plain)', () => {
     const p = '/api/v1/admin/edges/relays/by-slug/x';
     expect(routePolicy(p, 'GET')).toEqual({ request: 'plain', response: 'reveal' });
     expect(routePolicy('/api/v1/admin/edges/render/preview', 'POST')).toEqual({
@@ -260,7 +249,6 @@ describe('origin admin routes', () => {
       request: 'seal',
       response: 'plain',
     });
-    expect(routePolicy(p, 'PUT')).toEqual({ request: 'seal', response: 'plain' });
     expect(routePolicy(p, 'DELETE')).toBeUndefined();
     expect(routePolicy('/api/v1/admin/edges/summary', 'GET')).toEqual({
       request: 'plain',
@@ -268,7 +256,7 @@ describe('origin admin routes', () => {
     });
   });
 
-  test('sealing policy by route class: every GET reveals, every POST seals both legs, PATCH/PUT seal the request, no DELETE is sealed', () => {
+  test('sealing policy by route class: every GET reveals, every POST seals both legs, PATCH seals the request, no DELETE is sealed', () => {
     const P = '/api/v1/admin/edges/';
     const REVEAL = { request: 'plain', response: 'reveal' };
     const BOTH = { request: 'seal', response: 'reveal' };
@@ -284,7 +272,6 @@ describe('origin admin routes', () => {
       'relays/r1/endpoints',
       'relays/r1/listeners',
       'relays/by-slug/n1',
-      'relays/by-slug/n1/listeners/u',
       'list?relayId=r1',
       'e1',
       'e1/live',
@@ -341,21 +328,18 @@ describe('origin admin routes', () => {
     for (const p of ['config', 'providers/acc1', 'templates/t1', 'relays/r1']) {
       expect(routePolicy(P + p, 'PATCH')).toEqual(REQ);
     }
-    expect(routePolicy(P + 'relays/by-slug/n1', 'PUT')).toEqual(REQ);
     for (const p of [
       'providers/acc1',
       'templates/t1',
       'relays/r1',
       'relays/r1/listeners/u',
-      'relays/by-slug/n1',
-      'relays/by-slug/n1/listeners/u',
       'e1',
     ]) {
       expect(routePolicy(P + p, 'DELETE')).toBeUndefined();
     }
   });
 
-  test('scope table: config → settings, everything else → servers; by-slug GET/PUT/DELETE accept the register scope (any-of)', () => {
+  test('scope table: config → settings, everything else → servers; no route takes the register scope', () => {
     expect(scopeFor(['config'], 'GET')).toBe('admin:settings:read');
     expect(scopeFor(['config'], 'PATCH')).toBe('admin:settings:write');
     expect(scopeFor(['summary'], 'GET')).toBe('admin:servers:read');
@@ -379,33 +363,19 @@ describe('origin admin routes', () => {
     expect(scopeFor(['setup-runs'], 'POST')).toBe('admin:servers:write');
     expect(scopeFor(['setup-runs', 'run1', 'continue'], 'POST')).toBe('admin:servers:write');
     expect(scopeFor(['relays', 'r1', 'require-edges'], 'POST')).toBe('admin:servers:write');
-    // The registration routes: any-of (register OR the full servers scope).
-    expect(scopeFor(['relays', 'by-slug', 'n'], 'GET')).toEqual([
-      'admin:edges:register',
-      'admin:servers:read',
-    ]);
-    expect(scopeFor(['relays', 'by-slug', 'n'], 'PUT')).toEqual([
-      'admin:edges:register',
-      'admin:servers:write',
-    ]);
-    expect(scopeFor(['relays', 'by-slug', 'n'], 'DELETE')).toEqual([
-      'admin:edges:register',
-      'admin:servers:write',
-    ]);
-    expect(scopeFor(['relays', 'by-slug', 'n', 'listeners', 'u'], 'GET')).toEqual([
-      'admin:edges:register',
-      'admin:servers:read',
-    ]);
-    expect(scopeFor(['relays', 'by-slug', 'n', 'listeners', 'u'], 'DELETE')).toEqual([
-      'admin:edges:register',
-      'admin:servers:write',
-    ]);
-    // POST / PATCH under by-slug are not registration verbs (and not routes).
-    expect(scopeFor(['relays', 'by-slug', 'n'], 'POST')).toBe('admin:servers:write');
-    expect(scopeFor(['relays', 'by-slug', 'n'], 'PATCH')).toBe('admin:servers:write');
-    expect(isRegistrationRoute(['relays', 'by-slug', 'n'])).toBe(true);
-    expect(isRegistrationRoute(['relays', 'by-slug'])).toBe(false);
-    expect(isRegistrationRoute(['relays', 'r1'])).toBe(false);
+    // The by-slug view is a plain read: the register scope is accepted nowhere under the prefix.
+    expect(scopeFor(['relays', 'by-slug', 'n'], 'GET')).toBe('admin:servers:read');
+    for (const [parts, method] of [
+      [['relays', 'by-slug', 'n'], 'GET'],
+      [['relays', 'by-slug', 'n'], 'DELETE'],
+      [['relays', 'by-slug', 'n', 'listeners', 'u'], 'GET'],
+      [['relays', 'r1'], 'DELETE'],
+      [['summary'], 'GET'],
+    ] as const) {
+      expect(scopeFor([...parts], method), `${method} ${parts.join('/')}`).not.toContain(
+        'admin:edges:register',
+      );
+    }
   });
 
   test('throttle table: the provider-calling POSTs and the probe POSTs are the only throttled routes', () => {
@@ -506,7 +476,7 @@ describe('origin admin routes', () => {
     });
     expect(validate.status).toBe(200);
     expect(await validate.json()).toHaveProperty('ok');
-    // The origin still exists and the account is untouched; the read scope satisfies the any-of by-slug GET.
+    // The origin still exists and the account is untouched; the read scope reads the by-slug view.
     expect((await reader('GET', `relays/by-slug/node-one`)).status).toBe(200);
     expect((await reader('GET', `relays/${relayId}/listeners`)).status).toBe(200);
 
@@ -529,140 +499,67 @@ describe('origin admin routes', () => {
     ).toBe(200);
   });
 
-  test('register token: GET/PUT/DELETE by-slug inside its boundary; 403 edge.registration_boundary outside; nothing else under the prefix', async () => {
+  test('the retired by-slug registration: PUT answers 404 and creates nothing; DELETE and the listener routes under it are gone too', async () => {
     const { t, call, serverId } = await seed();
-    const otherServer = await t.run((ctx) =>
-      ctx.db.insert('backendServers', {
-        backend: 'remnawave',
-        name: 'panel-b',
-        slug: 'panel-b',
-        config: { type: 'remnawave', baseUrl: 'https://panel-b.example', apiToken: 'tok' },
-        isActive: true,
-        priority: 0,
-        keyCount: 0,
-        updatedAt: Date.now(),
-      }),
-    );
+    const body = {
+      origin: { kind: 'panel-node', backendSlug: 'panel-a', nodeName: 'node-one' },
+      originAddress: '203.0.113.10',
+      listeners: [LISTENER_U],
+    };
+    // Neither the operator nor a register-scoped token can register through it.
     const bounded = bearerCall(
       t,
       await token(t, ['admin:edges:register'], { backendServerIds: [serverId] }),
     );
-    // Inside: the role registers, reads and updates its own node.
-    const put = await bounded('PUT', 'relays/by-slug/node-one', REGISTER_BODY);
-    expect(put.status).toBe(200);
-    const view = (await put.json()) as BySlugView;
-    expect(view.relay.slug).toBe('node-one');
-    expect(view.registration).toMatchObject({ created: true, changed: true });
-    expect(view.listeners.map((l) => l.listenerKey)).toEqual(['u']);
-    // A register token is a `role` source: no actor admin, the row is role-owned.
-    const row = (await t.run((ctx) =>
-      ctx.db
-        .query('relayListeners')
-        .withIndex('by_relay', (q) => q.eq('relayId', view.relay.id as Id<'relays'>))
-        .unique(),
-    ))!;
-    expect(row.source).toBe('role');
-    const again = (await (
-      await bounded('PUT', 'relays/by-slug/node-one', REGISTER_BODY)
-    ).json()) as BySlugView;
-    expect(again.registration).toMatchObject({ created: false, changed: false });
-    expect((await bounded('GET', 'relays/by-slug/node-one')).status).toBe(200);
-    const one = await bounded('GET', 'relays/by-slug/node-one/listeners/u');
-    expect(one.status).toBe(200);
-    expect(await one.json()).toMatchObject({
-      listenerKey: 'u',
-      templateHostRemark: 'node-one-relay-u',
-    });
-    expect((await bounded('GET', 'relays/by-slug/node-one/listeners/nope')).status).toBe(404);
-    expect((await bounded('GET', 'relays/by-slug/never-registered')).status).toBe(404);
-    // Outside: another backend server, or a node outside the token's node list.
-    const outside = await bounded('PUT', 'relays/by-slug/node-b', {
-      ...REGISTER_BODY,
-      origin: { kind: 'panel-node', backendSlug: 'panel-b', nodeName: 'node-b' },
-    });
-    expect(outside.status).toBe(403);
-    expect(await outside.json()).toMatchObject({ error: { code: 'edge.registration_boundary' } });
-    // A manual origin is never inside a boundary.
-    const manual = await bounded('PUT', 'relays/by-slug/hand', {
-      origin: { kind: 'manual' },
-      originAddress: '203.0.113.77',
-      listeners: [{ ...LISTENER_U, panelBinding: undefined }],
-    });
-    expect(manual.status).toBe(403);
-    // An origin registered by the operator on the OTHER backend: the bounded token may not read or delete it.
-    await call('PUT', 'relays/by-slug/node-b', {
-      ...REGISTER_BODY,
-      originAddress: '203.0.113.11',
-      origin: { kind: 'panel-node', backendSlug: 'panel-b', nodeName: 'node-b' },
-    });
-    expect((await bounded('GET', 'relays/by-slug/node-b')).status).toBe(403);
-    expect((await bounded('DELETE', 'relays/by-slug/node-b')).status).toBe(403);
-    expect((await bounded('DELETE', 'relays/by-slug/node-b/listeners/u')).status).toBe(403);
-    expect(await t.query(internal.relays.getBySlug, { slug: 'node-b' })).not.toBeNull();
-    // Node-scoped boundary: the listed node only.
-    const nodeBound = bearerCall(
-      t,
-      await token(t, ['admin:edges:register'], {
-        backendServerIds: [serverId, otherServer],
-        nodeNames: ['node-two'],
-      }),
-    );
-    expect((await nodeBound('GET', 'relays/by-slug/node-one')).status).toBe(403);
-    expect(
-      (
-        await nodeBound('PUT', 'relays/by-slug/node-two', {
-          ...REGISTER_BODY,
-          originAddress: '203.0.113.12',
-          origin: { kind: 'panel-node', backendSlug: 'panel-a', nodeName: 'node-two' },
-        })
-      ).status,
-    ).toBe(200);
-    // A register token WITHOUT a boundary may register nothing.
-    const unbounded = bearerCall(t, await token(t, ['admin:edges:register']));
-    const none = await unbounded('PUT', 'relays/by-slug/node-three', {
-      ...REGISTER_BODY,
-      originAddress: '203.0.113.13',
-      origin: { kind: 'panel-node', backendSlug: 'panel-a', nodeName: 'node-three' },
-    });
-    expect(none.status).toBe(403);
-    expect(await none.json()).toMatchObject({ error: { code: 'edge.registration_boundary' } });
-    // The register scope reaches NOTHING else under the prefix.
-    const relayId = view.relay.id;
-    for (const [method, path, body] of [
-      ['GET', 'providers', undefined],
-      ['GET', 'config', undefined],
-      ['GET', 'summary', undefined],
-      ['GET', `relays/${relayId}/listeners`, undefined],
-      ['GET', `list?relayId=${relayId}`, undefined],
-      ['POST', `relays/${relayId}/rotate`, { edgeId: 'x' }],
-      ['POST', `relays/${relayId}/provision`, {}],
-      ['POST', 'providers', { provider: 'upcloud', name: 'x', settings: {}, credentials: {} }],
-      ['PATCH', `relays/${relayId}`, { enabled: false }],
-      ['PATCH', 'config', { render: { enabled: true } }],
-      ['DELETE', `relays/${relayId}?disposition=keep-dark`, undefined],
-    ] as const) {
-      const res = await bounded(method, path, body);
-      expect([401, 403], `${method} ${path}`).toContain(res.status);
+    for (const caller of [call, bounded]) {
+      const put = await caller('PUT', 'relays/by-slug/node-one', body);
+      expect(put.status).toBe(404);
     }
-    // A token with BOTH scopes is not confined (the full scope wins).
-    const full = bearerCall(
-      t,
-      await token(t, ['admin:edges:register', 'admin:servers:read', 'admin:servers:write'], {
-        backendServerIds: [],
-      }),
-    );
-    expect((await full('GET', 'relays/by-slug/node-b')).status).toBe(200);
-    // Inside its boundary the role decommissions its node: the default disposition restores direct delivery.
-    const del = await bounded('DELETE', 'relays/by-slug/node-one');
-    expect(del.status).toBe(200);
-    expect(await del.json()).toEqual({ ok: true, deleted: false });
+    expect(await t.query(internal.relays.getBySlug, { slug: 'node-one' })).toBeNull();
+    expect(await t.run((ctx) => ctx.db.query('relays').collect())).toEqual([]);
+    expect(await t.run((ctx) => ctx.db.query('relayListeners').collect())).toEqual([]);
     expect(
       await t.query(internal.relays.deliveryBinding, {
         backendServerId: serverId,
         nodeName: 'node-one',
       }),
     ).toBeNull();
-    expect((await t.query(internal.relays.getBySlug, { slug: 'node-one' }))!.deleting).toBe(true);
+    // An origin made in the CMS: its by-slug view reads; the other by-slug verbs are gone.
+    expect((await call('POST', 'relays', createBody(serverId))).status).toBe(200);
+    expect((await call('GET', 'relays/by-slug/node-one')).status).toBe(200);
+    expect((await call('GET', 'relays/by-slug/node-one/listeners/u')).status).toBe(404);
+    expect((await call('DELETE', 'relays/by-slug/node-one/listeners/u')).status).toBe(404);
+    expect((await call('DELETE', 'relays/by-slug/node-one')).status).toBe(404);
+    const row = (await t.query(internal.relays.getBySlug, { slug: 'node-one' }))!;
+    expect(row.deleting).toBeUndefined();
+    const listener = (await t.run((ctx) =>
+      ctx.db
+        .query('relayListeners')
+        .withIndex('by_relay', (q) => q.eq('relayId', row._id))
+        .unique(),
+    ))!;
+    expect(listener.retired).toBe(false);
+    // The register scope reaches NOTHING under the prefix, the by-slug view included.
+    for (const [method, path, payload] of [
+      ['GET', 'relays/by-slug/node-one', undefined],
+      ['GET', 'providers', undefined],
+      ['GET', 'config', undefined],
+      ['GET', 'summary', undefined],
+      ['GET', `relays/${row._id}/listeners`, undefined],
+      ['GET', `list?relayId=${row._id}`, undefined],
+      ['POST', `relays/${row._id}/rotate`, { edgeId: 'x' }],
+      ['POST', `relays/${row._id}/provision`, {}],
+      ['POST', 'providers', { provider: 'upcloud', name: 'x', settings: {}, credentials: {} }],
+      ['PATCH', `relays/${row._id}`, { enabled: false }],
+      ['PATCH', 'config', { render: { enabled: true } }],
+      ['DELETE', `relays/${row._id}?disposition=keep-dark`, undefined],
+    ] as const) {
+      const res = await bounded(method, path, payload);
+      expect([401, 403], `${method} ${path}`).toContain(res.status);
+    }
+    expect(
+      (await t.query(internal.relays.getBySlug, { slug: 'node-one' }))!.deleting,
+    ).toBeUndefined();
   });
 
   test('malformed percent escapes answer 400 validation on every verb (the unsealed DELETE included)', async () => {
@@ -671,8 +568,7 @@ describe('origin admin routes', () => {
       ['GET', 'relays/by-slug/%E0%A4%A'],
       ['POST', 'relays/%ZZ/probe'],
       ['PATCH', 'providers/%E0%A4%A'],
-      ['PUT', 'relays/by-slug/%E0%A4%A'],
-      ['DELETE', 'relays/by-slug/%E0%A4%A'],
+      ['DELETE', 'relays/%E0%A4%A'],
     ] as const) {
       const res = await call(
         method,
@@ -682,7 +578,7 @@ describe('origin admin routes', () => {
       expect(res.status, `${method} ${path}`).toBe(400);
       expect(await res.json()).toMatchObject({ error: { code: 'validation' } });
     }
-    const anon = await t.fetch('/api/v1/admin/edges/relays/by-slug/%E0%A4%A', { method: 'DELETE' });
+    const anon = await t.fetch('/api/v1/admin/edges/relays/%E0%A4%A', { method: 'DELETE' });
     expect(anon.status).toBe(400);
   });
 
@@ -779,12 +675,8 @@ describe('origin admin routes', () => {
     }
   });
 
-  test('IaC round trip: ONE by-slug body registers origin + listeners, adopt + publish, publishedEndpoints / connectionPlan for the role', async () => {
+  test('CMS round trip: create origin + listeners, adopt + publish, the by-slug view hands out publishedEndpoints / connectionPlan', async () => {
     const { t, call, serverId } = await seed();
-    const roleCall = bearerCall(
-      t,
-      await token(t, ['admin:edges:register'], { backendServerIds: [serverId] }),
-    );
     const acct = await call('POST', 'providers', {
       provider: 'upcloud',
       name: 'acct-u',
@@ -798,19 +690,14 @@ describe('origin admin routes', () => {
     expect(list.credentialFields.upcloud).toEqual(['token']);
     expect(JSON.stringify(list)).not.toContain('SECRET_TOKEN_VALUE');
 
-    // The role's registration (idempotent): origin + listeners in one body.
-    const put1 = await roleCall('PUT', 'relays/by-slug/node-one', REGISTER_BODY);
-    expect(put1.status).toBe(200);
-    const view1 = (await put1.json()) as BySlugView;
+    // Origin + listeners in one create.
+    const create = await call('POST', 'relays', createBody(serverId));
+    expect(create.status).toBe(200);
+    const view1 = (await (await call('GET', 'relays/by-slug/node-one')).json()) as BySlugView;
     expect(view1.relay).toMatchObject({
       slug: 'node-one',
       hostMode: 'fcp',
       originAddress: '203.0.113.10',
-    });
-    expect(view1.registration).toMatchObject({
-      created: true,
-      changed: true,
-      listeners: { created: ['u'], updated: [], unchanged: [], retired: [], blockedNames: [] },
     });
     expect(view1.listeners).toEqual([
       expect.objectContaining({
@@ -829,7 +716,7 @@ describe('origin admin routes', () => {
     expect(view1.publishedEndpoints).toEqual([]);
     expect(view1.connectionPlan).toEqual([]);
     expect(view1.hostsPlan).toEqual({ mode: 'fcp', hosts: [] });
-    // The role's view leaks no detector state, limits or pool-wide provider names.
+    // The minimal view leaks no detector state, limits or pool-wide provider names.
     expect(view1.relay).not.toHaveProperty('suspicion');
     expect(view1.relay).not.toHaveProperty('maxRotationsPerDay');
     expect(JSON.stringify(view1.listeners)).not.toContain('upcloud');
@@ -840,56 +727,6 @@ describe('origin admin routes', () => {
         nodeName: 'node-one',
       }),
     ).toMatchObject({ relaySlug: 'node-one', state: 'active' });
-    const put2 = (await (
-      await roleCall('PUT', 'relays/by-slug/node-one', REGISTER_BODY)
-    ).json()) as BySlugView;
-    expect(put2.registration).toMatchObject({
-      created: false,
-      changed: false,
-      listeners: { unchanged: ['u'] },
-    });
-    expect(put2.relay.publicationEpoch).toBe(view1.relay.publicationEpoch);
-    // A cookie admin's by-slug body is an ADMIN source: it adds its own listener
-    // and never prunes the role's (different owner), and the role's next body
-    // leaves the admin listener alone.
-    const adminPut = (await (
-      await call('PUT', 'relays/by-slug/node-one', {
-        ...REGISTER_BODY,
-        listeners: [
-          {
-            ...LISTENER_U,
-            listenerKey: 'x',
-            originPort: 8443,
-            panelBinding: {
-              ...LISTENER_U.panelBinding,
-              inboundTag: 'VLESS_RELAY_X',
-              configProfileInboundUuid: '55555555-5555-4555-8555-555555555555',
-            },
-          },
-        ],
-      })
-    ).json()) as BySlugView;
-    expect(adminPut.registration).toMatchObject({ listeners: { created: ['x'], retired: [] } });
-    expect(adminPut.listeners.map((l) => l.listenerKey)).toEqual(['u', 'x']);
-    const rolePut = (await (
-      await roleCall('PUT', 'relays/by-slug/node-one', REGISTER_BODY)
-    ).json()) as BySlugView;
-    expect(rolePut.registration).toMatchObject({ changed: false });
-    expect(rolePut.listeners.map((l) => l.listenerKey)).toEqual(['u', 'x']);
-    const owned = await roleCall('PUT', 'relays/by-slug/node-one', {
-      ...REGISTER_BODY,
-      listeners: [LISTENER_U, { ...LISTENER_U, listenerKey: 'x', originPort: 9443 }],
-    });
-    expect(owned.status).toBe(409);
-    expect(await owned.json()).toMatchObject({ error: { code: 'edge.listener_key_owned' } });
-    expect((await call('DELETE', 'relays/by-slug/node-one/listeners/x')).status).toBe(200);
-    const one = await call('GET', 'relays/by-slug/node-one/listeners/u');
-    expect(one.status).toBe(200);
-    expect(await one.json()).toMatchObject({
-      listenerKey: 'u',
-      security: 'reality',
-      templateHostRemark: 'node-one-relay-u',
-    });
 
     // Adopt the hand-made edge and publish it at index 0.
     const relayId = view1.relay.id;
@@ -901,7 +738,7 @@ describe('origin admin routes', () => {
     };
     expect(listeners.listeners[0]).toMatchObject({
       listenerKey: 'u',
-      source: 'role',
+      source: 'admin',
       providerScope: { provider: 'upcloud', accountId: null },
     });
     const listenerId = listeners.listeners[0].id;
@@ -949,8 +786,8 @@ describe('origin admin routes', () => {
       poolIndex: 0,
       listenerId,
     });
-    // The role bootstraps its Host from publishedEndpoints[0]: an index-0 edge that
-    // is not usable (here: no address) must keep it waiting rather than hand it a dud.
+    // An index-0 edge that is not usable (here: no address) is not handed out as
+    // publishedEndpoints[0]: the view keeps waiting rather than hand out a dud.
     await t.run((ctx) => ctx.db.patch(edges[0].id as Id<'edges'>, { addresses: {} }));
     const viewDud = (await (await call('GET', 'relays/by-slug/node-one')).json()) as BySlugView;
     expect(viewDud.publishedEndpoints).toEqual([]);
@@ -1035,8 +872,8 @@ describe('origin admin routes', () => {
       expect(res.status, `${method} ${path}`).toBe(404);
     }
 
-    // Delete by slug (the role decommissions the node): restore-direct by default.
-    const del = await call('DELETE', 'relays/by-slug/node-one');
+    // Delete in the CMS with restore-direct: raw delivery of the node returns.
+    const del = await call('DELETE', `relays/${relayId}?disposition=restore-direct`);
     expect(del.status).toBe(200);
     expect(await del.json()).toMatchObject({ ok: true });
     expect(
@@ -1047,80 +884,10 @@ describe('origin admin routes', () => {
     ).toBeNull();
     const gone = await call('GET', 'relays/by-slug/missing');
     expect(gone.status).toBe(404);
-
-    // Legacy adoption (`operation_mode=adopt_relay`): the running proxy is the
-    // operator's statement that the address already serves, so the import is
-    // published at index 0 with a `named_connection` verification (not refused
-    // as an untested endpoint) and the legacy Host is recorded on its listener.
-    const legacy = await roleCall('PUT', 'relays/by-slug/node-legacy', {
-      origin: { ...ORIGIN_NODE_ONE, nodeName: 'node-legacy' },
-      originAddress: '203.0.113.11',
-      listeners: [LISTENER_U],
-      hostModeRequest: 'operator',
-      adoption: {
-        edge: { address: '198.51.100.8', port: 443 },
-        hosts: [
-          {
-            uuid: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-            remark: 'legacy-u',
-            inboundUuid: LISTENER_U.panelBinding.configProfileInboundUuid,
-            sni: 'a.example',
-          },
-        ],
-      },
-    });
-    expect(legacy.status).toBe(200);
-    const legacyView = (await legacy.json()) as BySlugView & {
-      registration: { adopted: { edgeId: string; poolIndex: number | null } | null };
-    };
-    expect(legacyView.relay.hostMode).toBe('operator');
-    expect(legacyView.registration.adopted).toMatchObject({ poolIndex: 0 });
-    expect(legacyView.publishedEndpoints).toEqual([
-      expect.objectContaining({
-        listenerKey: 'u',
-        poolIndex: 0,
-        addresses: { v4: '198.51.100.8', v6: null, hostname: null },
-      }),
-    ]);
-    const legacyEdge = (await t.query(internal.edges.get, {
-      id: legacyView.registration.adopted!.edgeId as Id<'edges'>,
-    }))!;
-    expect(legacyEdge).toMatchObject({
-      managed: false,
-      publication: 'published',
-      verification: { rung: 'verified', by: 'admin', method: 'named_connection' },
-    });
-    const legacyListener = (await t.run((ctx) => ctx.db.get(legacyEdge.listenerId)))!;
-    expect(legacyListener.legacyHosts).toEqual([
-      expect.objectContaining({ remark: 'legacy-u', sni: 'a.example' }),
-    ]);
-    // Idempotent: the same body again adopts nothing new.
-    const legacyAgain = (await (
-      await roleCall('PUT', 'relays/by-slug/node-legacy', {
-        origin: { ...ORIGIN_NODE_ONE, nodeName: 'node-legacy' },
-        originAddress: '203.0.113.11',
-        listeners: [LISTENER_U],
-        hostModeRequest: 'operator',
-        adoption: {
-          edge: { address: '198.51.100.8', port: 443 },
-          hosts: [
-            {
-              uuid: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-              remark: 'legacy-u',
-              inboundUuid: LISTENER_U.panelBinding.configProfileInboundUuid,
-              sni: 'a.example',
-            },
-          ],
-        },
-      })
-    ).json()) as BySlugView & { registration: { adopted: { edgeId: string } | null } };
-    expect(legacyAgain.registration.adopted?.edgeId).toBe(legacyEdge._id);
-    expect(legacyAgain.publishedEndpoints).toHaveLength(1);
   });
 
-  test('listener routes: admin upsert, enable/disable, name retire/reactivate (per listener and fleet-wide), retire by key and by slug', async () => {
-    const { t, call, roleCall, relayId, listenerId, standbyEdgeId, publishedEdgeId } =
-      await fixture();
+  test('listener routes: admin upsert, enable/disable, name retire/reactivate (per listener and fleet-wide), retire by key', async () => {
+    const { t, call, relayId, listenerId, standbyEdgeId, publishedEdgeId } = await fixture();
     const WS = {
       listenerKey: 'w',
       protocol: 'vless',
@@ -1163,16 +930,10 @@ describe('origin admin routes', () => {
       }>;
     };
     expect(view.listeners.map((l) => [l.listenerKey, l.source])).toEqual([
-      ['u', 'role'],
+      ['u', 'admin'],
       ['w', 'admin'],
     ]);
     expect(view.listeners[1].layers).toEqual(['l4', 'l7']);
-    // A role re-registration leaves the admin listener alone.
-    const again = (await (
-      await roleCall('PUT', 'relays/by-slug/node-one', REGISTER_BODY)
-    ).json()) as BySlugView;
-    expect(again.registration).toMatchObject({ changed: false });
-    expect(again.listeners.map((l) => l.listenerKey)).toEqual(['u', 'w']);
     // Invalid combinations answer 400 with the code.
     const bad = await call('POST', `relays/${relayId}/listeners`, {
       ...WS,
@@ -1189,7 +950,7 @@ describe('origin admin routes', () => {
       ).enabled,
     ).toBe(false);
     expect((await call('POST', `listeners/${created.id}/enable`, {})).status).toBe(200);
-    // Name retire / reactivate on the role's listener (an admin edit of a role row's names is allowed).
+    // Name retire / reactivate on the first listener.
     const retire = await call('POST', `listeners/${listenerId}/retire-name`, {
       snis: ['a.example'],
     });
@@ -1209,7 +970,7 @@ describe('origin admin routes', () => {
     const everywhere = await call('POST', 'listeners/retire-name', { name: 'a.example' });
     expect(await everywhere.json()).toEqual({ ok: true, retired: 1, listeners: 1 });
     expect((await call('POST', 'listeners/retire-name', { name: '' })).status).toBe(400);
-    // Retire the listener with edges on it: refused; without them: gone (by key, then by slug).
+    // Retire the listener with edges on it: refused; without them: gone.
     const inUse = await call('DELETE', `relays/${relayId}/listeners/u`);
     expect(inUse.status).toBe(409);
     expect(await inUse.json()).toMatchObject({ error: { code: 'edge.listener_in_use' } });
@@ -1220,7 +981,7 @@ describe('origin admin routes', () => {
       });
     }
     await t.run((ctx) => ctx.db.patch(relayId as Id<'relays'>, { publishedEdgeIds: [] }));
-    expect(await (await call('DELETE', `relays/by-slug/node-one/listeners/u`)).json()).toEqual({
+    expect(await (await call('DELETE', `relays/${relayId}/listeners/u`)).json()).toEqual({
       ok: true,
     });
     expect(await (await call('DELETE', `relays/${relayId}/listeners/w`)).json()).toEqual({
@@ -1235,7 +996,7 @@ describe('origin admin routes', () => {
     ]);
   });
 
-  test('DELETE origins/{id} needs a disposition from the CMS; by-slug defaults to restore-direct', async () => {
+  test('DELETE origins/{id} needs a disposition from the CMS', async () => {
     const { t, call, relayId, serverId } = await fixture();
     const noDisposition = await call('DELETE', `relays/${relayId}`);
     expect(noDisposition.status).toBe(409);
@@ -1415,7 +1176,7 @@ describe('origin admin routes', () => {
     );
     expect(inv.inventory?.loadBalancers).toHaveLength(1);
     expect(inv.inventoryAt).toBeTruthy();
-    // Endpoints + by-slug: parsed with the shared contracts AND pinned structurally.
+    // Endpoints + the by-slug view: parsed with the shared contracts AND pinned structurally.
     const endpoints = RelayEndpointsResponse.parse(
       await (await call('GET', `relays/${relayId}/endpoints`)).json(),
     );
@@ -1471,17 +1232,18 @@ describe('origin admin routes', () => {
 
   test('validation errors come back as the JSON envelope, not 500s', async () => {
     const { call } = await seed();
-    const bad = await call('PUT', 'relays/by-slug/node-two', {
-      origin: { kind: 'panel-node', backendSlug: 'missing', nodeName: 'node-two' },
-      originAddress: 'x',
-      listeners: [],
+    const bad = await call('POST', 'relays', {
+      slug: 'Not A Slug',
+      origin: { kind: 'manual' },
+      originAddress: '203.0.113.5',
     });
     expect(bad.status).toBe(400);
     expect(await bad.json()).toMatchObject({ error: { code: 'validation' } });
     // A body that fails the Convex validator (an unknown origin kind) is the redacted admin.error, never a 500.
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
-      const shape = await call('PUT', 'relays/by-slug/node-two', {
+      const shape = await call('POST', 'relays', {
+        slug: 'node-two',
         origin: { kind: 'weird' },
         originAddress: '203.0.113.5',
       });
@@ -1501,10 +1263,10 @@ describe('origin admin routes', () => {
     vi.stubEnv('FS_SERVER_HPKE_SK', bytesToB64Url(SERVER_SEED));
     const kp = await serverKeyPairFromSeed(SERVER_SEED);
     const kid = await kidFromPublicKey(await serializePublicKey(kp.publicKey));
-    const { t, call, cookie } = await seed();
-    const put = (await (
-      await call('PUT', 'relays/by-slug/node-one', REGISTER_BODY)
-    ).json()) as BySlugView;
+    const { t, call, cookie, serverId } = await seed();
+    const created = (await (await call('POST', 'relays', createBody(serverId))).json()) as {
+      id: string;
+    };
     const path = '/api/v1/admin/edges/render/preview';
     const prep = await clientPrepareRequest({
       serverPub: kp.publicKey,
@@ -1512,7 +1274,7 @@ describe('origin admin routes', () => {
       method: 'POST',
       path,
       policy: routePolicy(path, 'POST')!,
-      bodyObj: { relayId: put.relay.id, family: 'v2rayng' },
+      bodyObj: { relayId: created.id, family: 'v2rayng' },
     });
     expect(isSealedWire(prep.body)).toBe(true);
     const res = await t.fetch(path, {
@@ -1600,7 +1362,7 @@ describe('origin admin routes: importing an existing L7 front', () => {
    */
   async function l7Fixture() {
     const s = await seed();
-    const { call, t } = s;
+    const { call, t, serverId } = s;
     const acct = (await (
       await call('POST', 'providers', {
         provider: 'cloudflare',
@@ -1616,34 +1378,33 @@ describe('origin admin routes: importing an existing L7 front', () => {
         observedAt: Date.now(),
       }),
     );
-    const view = (await (
-      await call('PUT', 'relays/by-slug/node-one', {
-        origin: ORIGIN_NODE_ONE,
-        originAddress: ORIGIN,
-        listeners: [
-          {
-            listenerKey: 'w',
-            protocol: 'vless',
-            streamTransport: 'ws',
-            security: 'tls',
-            originPort: 8080,
-            tlsNames: [],
-            transportParams: { path: '/ws' },
-            originTransport: {
-              scheme: 'http',
-              certPublic: false,
-              certNames: [],
-              acceptsHostHeader: 'any',
-            },
-            panelBinding: {
-              inboundTag: 'VLESS_RELAY_W',
-              configProfileUuid: '11111111-1111-4111-8111-111111111111',
-              configProfileInboundUuid: '22222222-2222-4222-8222-222222222222',
-            },
+    const created = await call('POST', 'relays', {
+      ...createBody(serverId, [
+        {
+          listenerKey: 'w',
+          protocol: 'vless',
+          streamTransport: 'ws',
+          security: 'tls',
+          originPort: 8080,
+          tlsNames: [],
+          transportParams: { path: '/ws' },
+          originTransport: {
+            scheme: 'http',
+            certPublic: false,
+            certNames: [],
+            acceptsHostHeader: 'any',
           },
-        ],
-      })
-    ).json()) as BySlugView;
+          panelBinding: {
+            inboundTag: 'VLESS_RELAY_W',
+            configProfileUuid: '11111111-1111-4111-8111-111111111111',
+            configProfileInboundUuid: '22222222-2222-4222-8222-222222222222',
+          },
+        },
+      ]),
+      originAddress: ORIGIN,
+    });
+    expect(created.status).toBe(200);
+    const view = (await (await call('GET', 'relays/by-slug/node-one')).json()) as BySlugView;
     expect(view.listeners).toHaveLength(1);
     expect(view.listeners[0].layers).toEqual(['l7']);
     const listeners = (await (await call('GET', `relays/${view.relay.id}/listeners`)).json()) as {
@@ -1810,7 +1571,7 @@ describe('origin admin routes: importing an existing L7 front', () => {
     expect(
       await t.mutation(internal.relays.publishEdge, { relayId: relayId as Id<'relays'>, edgeId }),
     ).toMatchObject({ poolIndex: 0 });
-    // The role's view now hands out the fronted hostname as address, SNI and Host header.
+    // The by-slug view now hands out the fronted hostname as address, SNI and Host header.
     const view = (await (await call('GET', 'relays/by-slug/node-one')).json()) as BySlugView;
     expect(view.publishedEndpoints[0]).toMatchObject({
       listenerKey: 'w',

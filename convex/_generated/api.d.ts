@@ -123,6 +123,7 @@ import type * as memberPasskeys from "../memberPasskeys.js";
 import type * as memberWebauthn from "../memberWebauthn.js";
 import type * as membershipCodes from "../membershipCodes.js";
 import type * as mirrorProviders from "../mirrorProviders.js";
+import type * as mirrorUploads from "../mirrorUploads.js";
 import type * as nodeActivation from "../nodeActivation.js";
 import type * as nodeIntentOps from "../nodeIntentOps.js";
 import type * as nodeIntents from "../nodeIntents.js";
@@ -285,6 +286,7 @@ declare const fullApi: ApiFromModules<{
   memberWebauthn: typeof memberWebauthn;
   membershipCodes: typeof membershipCodes;
   mirrorProviders: typeof mirrorProviders;
+  mirrorUploads: typeof mirrorUploads;
   nodeActivation: typeof nodeActivation;
   nodeIntentOps: typeof nodeIntentOps;
   nodeIntents: typeof nodeIntents;

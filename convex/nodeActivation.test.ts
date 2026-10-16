@@ -22,6 +22,11 @@ import { claimKey, hostIdentity } from './lib/backend/ops';
 import { signValue } from './lib/cookies';
 import { sha256Hex } from './lib/crypto';
 import { ActivationReview, DirectTestLink } from '../src/shared/contracts/servers';
+import {
+  FAKE_BACKEND_USER_UUID as USER_UUID,
+  installFakeBackend,
+  type FakeBackend,
+} from './lib/edges/testing/fakeBackend';
 
 const modules = import.meta.glob('./**/*.*s');
 type T = TestConvex<typeof schema>;
@@ -38,192 +43,10 @@ afterEach(() => {
 });
 
 const UUID = (n: number) => `${String(n).padStart(8, '0')}-0000-4000-8000-000000000000`;
-const USER_UUID = 'aaaaaaaa-1111-4222-8333-444444444444';
 const TAG = 'PRIVACY_REALITY';
 
-interface Panel {
-  profiles: any[];
-  squads: any[];
-  hosts: any[];
-  nodes: any[];
-  users: any[];
-  writes: { call: string; body: any }[];
-  seq: number;
-  /** What the backend serves as the credential's subscription body per UA family. */
-  bodyFor: (ua: string) => string;
-}
-
-function installPanel(): Panel {
-  const panel: Panel = {
-    profiles: [],
-    squads: [],
-    hosts: [],
-    nodes: [],
-    users: [],
-    writes: [],
-    seq: 10,
-    bodyFor: () => '',
-  };
-  const json = (o: unknown, status = 200) =>
-    new Response(JSON.stringify({ response: o }), {
-      status,
-      headers: { 'content-type': 'application/json' },
-    });
-  const enabledHosts = () => panel.hosts.filter((h) => !h.isDisabled);
-  // The backend's own body: one vless link per enabled address on the REALITY transport.
-  panel.bodyFor = (ua: string) => {
-    const pk = panel.profiles[0]?.publicKeyByTag?.[TAG] ?? 'pk';
-    const entries = enabledHosts().map((h) => ({
-      remark: h.remark,
-      address: h.address,
-      port: h.port,
-      sni: h.sni,
-      pk,
-    }));
-    if (/sing-box/i.test(ua))
-      return JSON.stringify({
-        outbounds: entries.map((e) => ({
-          type: 'vless',
-          tag: e.remark,
-          server: e.address,
-          server_port: e.port,
-          tls: {
-            enabled: true,
-            server_name: e.sni,
-            reality: { enabled: true, public_key: e.pk },
-          },
-        })),
-      });
-    if (/clash|mihomo/i.test(ua))
-      return `proxies:\n${entries
-        .map(
-          (e) =>
-            `  - name: ${e.remark}\n    type: vless\n    server: ${e.address}\n    port: ${e.port}\n    servername: ${e.sni}\n    reality-opts:\n      public-key: ${e.pk}\n`,
-        )
-        .join('')}`;
-    return entries
-      .map(
-        (e) =>
-          `vless://${USER_UUID}@${e.address}:${e.port}?encryption=none&security=reality&type=tcp&sni=${e.sni}&fp=chrome&pbk=${e.pk}&sid=#${e.remark}`,
-      )
-      .join('\n');
-  };
-  vi.stubGlobal(
-    'fetch',
-    vi.fn(async (input: string | URL, init: RequestInit = {}) => {
-      const url = new URL(typeof input === 'string' ? input : input.toString());
-      const path = url.pathname;
-      const method = (init.method ?? 'GET').toUpperCase();
-      const body = init.body ? JSON.parse(init.body as string) : {};
-      const headers = new Headers(init.headers as HeadersInit | undefined);
-      if (method === 'GET') {
-        if (path === '/api/nodes')
-          return json(panel.nodes.map((n) => ({ ...n, isConnected: true })));
-        if (path === '/api/hosts') return json(panel.hosts);
-        if (path === '/api/internal-squads') return json({ internalSquads: panel.squads });
-        if (path === '/api/config-profiles') return json({ configProfiles: panel.profiles });
-        if (path === '/api/keygen') return json({ pubKey: 'panel-node-secret-placeholder' });
-        if (path === '/api/subscription-templates') return json([]);
-        const p = panel.profiles.find((x) => path === `/api/config-profiles/${x.uuid}`);
-        if (p) return json(p);
-        const u = panel.users.find((x) => path === `/api/users/${x.uuid}`);
-        if (u) return json(u);
-        if (path.startsWith('/api/hwid/devices/')) return json({ devices: [] });
-        if (path.startsWith('/api/sub/'))
-          return new Response(panel.bodyFor(headers.get('user-agent') ?? ''), {
-            status: 200,
-            headers: { 'content-type': 'text/plain' },
-          });
-        return json({});
-      }
-      panel.writes.push({ call: `${method} ${path}`, body });
-      if (path === '/api/config-profiles' && method === 'POST') {
-        const uuid = UUID(++panel.seq);
-        const inbounds = (body.config.inbounds as { tag: string }[]).map((i) => ({
-          uuid: UUID(++panel.seq),
-          tag: i.tag,
-        }));
-        const publicKeyByTag: Record<string, string> = {};
-        for (const i of body.config.inbounds as any[])
-          if (i.streamSettings?.realitySettings?.privateKey)
-            publicKeyByTag[i.tag] = i.streamSettings.realitySettings.privateKey;
-        panel.profiles.push({
-          uuid,
-          name: body.name,
-          config: body.config,
-          inbounds,
-          publicKeyByTag,
-        });
-        return json({ uuid }, 201);
-      }
-      if (path === '/api/internal-squads' && method === 'POST') {
-        const made = {
-          uuid: UUID(++panel.seq),
-          name: body.name,
-          inbounds: (body.inbounds as string[]).map((uuid) => ({ uuid, tag: uuid })),
-        };
-        panel.squads.push(made);
-        return json({ uuid: made.uuid }, 201);
-      }
-      if (path === '/api/internal-squads' && method === 'PATCH') {
-        const s = panel.squads.find((x) => x.uuid === body.uuid)!;
-        if (typeof body.name === 'string') s.name = body.name;
-        if (Array.isArray(body.inbounds))
-          s.inbounds = (body.inbounds as string[]).map((uuid) => ({ uuid, tag: uuid }));
-        return json(s);
-      }
-      if (path === '/api/hosts' && method === 'POST') {
-        const made = { uuid: UUID(++panel.seq), ...body, isDisabled: body.isDisabled === true };
-        panel.hosts.push(made);
-        return json({ uuid: made.uuid }, 201);
-      }
-      if (path === '/api/hosts' && method === 'PATCH') {
-        const h = panel.hosts.find((x) => x.uuid === body.uuid)!;
-        Object.assign(h, body);
-        return json(h);
-      }
-      if (path === '/api/nodes' && method === 'POST') {
-        const made = {
-          uuid: UUID(++panel.seq),
-          name: body.name,
-          address: body.address,
-          port: body.port ?? 2222,
-          countryCode: body.countryCode ?? 'XX',
-          isDisabled: false,
-          lastStatusChange: 't0',
-          configProfile: {
-            activeConfigProfileUuid: body.configProfile.activeConfigProfileUuid,
-            activeInbounds: (body.configProfile.activeInbounds as string[]).map((uuid) => ({
-              uuid,
-              tag: uuid,
-            })),
-          },
-        };
-        panel.nodes.push(made);
-        return json(made, 201);
-      }
-      if (path === '/api/users' && method === 'POST') {
-        const made = {
-          uuid: UUID(++panel.seq),
-          shortUuid: `short-${panel.seq}`,
-          vlessUuid: USER_UUID,
-          username: body.username,
-          status: 'ACTIVE',
-          subscriptionUrl: `https://panel.example/api/sub/short-${panel.seq}`,
-          trafficLimitBytes: 0,
-          usedTrafficBytes: 0,
-          hwidDeviceLimit: null,
-          expireAt: body.expireAt ?? new Date(Date.now() + 86_400_000).toISOString(),
-          activeInternalSquads: [],
-        };
-        panel.users.push(made);
-        return json(made, 201);
-      }
-      return json({});
-    }),
-  );
-  return panel;
-}
+type Panel = FakeBackend;
+const installPanel = (): Panel => installFakeBackend();
 
 const setupInput = {
   profileName: 'FreeSocks-Config',
@@ -644,6 +467,7 @@ describe('activating a direct node', () => {
       /^vless:\/\/aaaaaaaa-1111-4222-8333-444444444444@203\.0\.113\.10:443\?/,
     );
     expect(built.link).toContain('security=reality');
+    expect(built.link).toContain('flow=xtls-rprx-vision');
     expect(built.binding).toMatchObject({
       endpoint: '203.0.113.10:443',
       machineRevision: 1,
@@ -1074,10 +898,10 @@ describe('activating a direct node', () => {
     expect(intent.addressUuids).toHaveLength(2);
   });
 
-  // One entry says nothing about the others: the rehearsal reads every
-  // candidate address, with the name it is there to serve.
-  test('the rehearsal refuses a body that carries only one of two addresses', async () => {
-    const { t, serverId, panel, intentId, review: committed } = await liveAndCommitted();
+  // A direct body passes to members as the backend serves it: an address
+  // enabled while the gate is open would reach them before any commit.
+  test('a live node cannot enable a new address with its gate open: approval asks for maintenance first', async () => {
+    const { t, serverId, panel, intentId } = await liveAndCommitted();
     await addFamilyName(t, serverId, panel);
     await t.mutation(internal.nodeIntents.enroll, {
       backendServerId: serverId,
@@ -1091,6 +915,46 @@ describe('activating a direct node', () => {
       },
     });
     await settled(() => t.run((c) => c.db.get(intentId)));
+    const built = await t.action(internal.nodeActivation.buildDirectTestLink, { intentId });
+    const { intentId: _i, issuedAt: _t, ...binding } = built.binding;
+    await t.mutation(internal.nodeActivation.confirmDirect, { intentId, binding });
+    const review = await t.query(internal.nodeActivation.review, { intentId });
+    expect(review.shape.addressTuples).toHaveLength(2);
+    expect(review.blockers).toEqual(['servers.maintenance_required']);
+    await expect(
+      t.mutation(internal.nodeActivation.approve, { intentId, reviewHash: review.reviewHash }),
+    ).rejects.toThrow(/maintenance_required/);
+    // Members keep the committed address; the new one was never enabled.
+    expect((await gateOf(t, serverId)).state).toBe('open');
+    expect(panel.hosts.find((h) => h.sni === 'www.decoy-a.example').isDisabled).toBe(true);
+  });
+
+  // One entry says nothing about the others: the rehearsal reads every
+  // candidate address, with the name it is there to serve.
+  test('the rehearsal refuses a body that carries only one of two addresses', async () => {
+    const { t, serverId, panel, intentId } = await liveAndCommitted();
+    await addFamilyName(t, serverId, panel);
+    await t.mutation(internal.nodeIntents.enroll, {
+      backendServerId: serverId,
+      name: 'node-a',
+      mode: 'privacy-reality',
+      contractVersion: 2,
+      observed: {
+        management: { address: '192.0.2.10', port: 2222 },
+        publicIps: { v4: '203.0.113.10' },
+        capabilities: { caddy: false, ipv6: false },
+      },
+    });
+    await settled(() => t.run((c) => c.db.get(intentId)));
+    // Maintenance closes the gate; finishing it starts a fresh activation that
+    // runs with the gate closed, as a first activation does.
+    const call = await adminCall(t);
+    expect(
+      (await call('POST', `nodes/intents/${intentId}/maintenance`, { start: true })).status,
+    ).toBe(200);
+    expect((await gateOf(t, serverId)).state).toBe('blocked');
+    await t.mutation(internal.nodeIntents.finishMaintenance, { intentId });
+    await settled(() => t.run((c) => c.db.get(intentId)));
     // The backend leaves the second name out of every body it serves.
     const whole = panel.bodyFor;
     panel.bodyFor = (ua: string) =>
@@ -1103,6 +967,7 @@ describe('activating a direct node', () => {
     await t.mutation(internal.nodeActivation.confirmDirect, { intentId, binding });
     const review = await t.query(internal.nodeActivation.review, { intentId });
     expect(review.shape.addressTuples).toHaveLength(2);
+    expect(review.blockers).toEqual([]);
     const { runId } = await t.mutation(internal.nodeActivation.approve, {
       intentId,
       reviewHash: review.reviewHash,
@@ -1114,11 +979,8 @@ describe('activating a direct node', () => {
     expect(run.state).toBe('blocked');
     expect(run.code).toBe('servers.rehearsal_failed');
     expect(run.rehearsal?.detail).toContain('www.decoy-a.example');
-    // Nothing of the candidate set stays enabled, and what members were
-    // approved for is still the one address of the earlier commit.
+    // Nothing of the candidate set stays enabled, and nobody was served meanwhile.
     expect(panel.hosts.every((h) => h.isDisabled)).toBe(true);
-    const intent = (await t.run((c) => c.db.get(intentId)))!;
-    expect(intent.approved?.reviewHash).toBe(committed.reviewHash);
-    expect(intent.approved?.committed.hostUuids).toHaveLength(1);
+    expect((await gateOf(t, serverId)).state).toBe('blocked');
   });
 });

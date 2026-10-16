@@ -805,6 +805,7 @@ export async function remnawaveUpdateHost(
   };
   if (patch.sni !== undefined) body.sni = patch.sni ?? '';
   if (patch.host !== undefined) body.host = patch.host ?? '';
+  if (patch.securityLayer !== undefined) body.securityLayer = patch.securityLayer;
   await call(cfg, { method: 'PATCH', path: '/api/hosts', body, schema: z.unknown() });
 }
 
@@ -832,6 +833,9 @@ export async function remnawaveCreateHost(
   };
   if (h.sni !== undefined) body.sni = h.sni ?? '';
   if (h.host !== undefined) body.host = h.host ?? '';
+  // A loopback transport behind its ingress is plaintext on the node and TLS
+  // to the member: the Host says so, or the backend renders `security=none`.
+  if (h.securityLayer !== undefined) body.securityLayer = h.securityLayer;
   const res = await call(cfg, {
     method: 'POST',
     path: '/api/hosts',

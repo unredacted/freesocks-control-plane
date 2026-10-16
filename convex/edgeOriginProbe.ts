@@ -20,6 +20,7 @@ import { listenerLayers, type OriginTransport } from './lib/edges/layers';
 import type { OriginProbeOutcome } from './lib/edges/originProbe';
 import { protocolIsHttpTransport } from './lib/edges/protocols';
 import { listenersOf } from './relayListeners';
+import { enrolledOriginOf, withVerifiedIngress } from './nodeIntents';
 
 export interface ProbedInboundCandidate extends TransportCandidate {
   originTransport: OriginTransport | null;
@@ -66,7 +67,10 @@ export const nodeContext = internalQuery({
     const existingKeys = relay
       ? (await listenersOf(ctx, relay._id)).filter((l) => !l.retired).map((l) => l.listenerKey)
       : [];
-    const originAddress = relay?.originAddress ?? node.address ?? null;
+    // An enrolled node's origin and ingress come from its intent (the
+    // backend's node row holds the management address).
+    const enrolled = await enrolledOriginOf(ctx, backendServerId, node.name);
+    const originAddress = relay?.originAddress ?? enrolled?.originAddress ?? node.address ?? null;
     if (!originAddress)
       throw new ConvexError({
         code: 'edge.node_address_unknown',
@@ -77,6 +81,8 @@ export const nodeContext = internalQuery({
       originAddress,
       existingKeys,
       relaySlug: relay?.slug ?? null,
+      ingress: enrolled?.ingress ?? null,
+      enrolled: enrolled ? { acceptsAnyHost: enrolled.acceptsAnyHost } : null,
     };
   },
 });
@@ -143,11 +149,15 @@ export const inboundCandidates = internalAction({
     const mapped = await mapTransportsToListeners(inbounds, {
       existingKeys: c.existingKeys,
       origin: { kind: 'panel-node', backendServerId, nodeName: c.node.name, nodeUuid },
+      ingress: c.ingress,
     });
     const targets = originProbeTargets(mapped.candidates, c.originAddress);
     const outcomes: OriginProbeOutcome[] =
       targets.length > 0 ? await ctx.runAction(internal.edgeOriginProbeOps.probe, { targets }) : [];
-    const candidates = applyOriginProbes(mapped.candidates, outcomes);
+    const candidates = applyOriginProbes(
+      mapped.candidates,
+      withVerifiedIngress(outcomes, c.enrolled),
+    );
     return {
       node: c.node,
       originAddress: c.originAddress,

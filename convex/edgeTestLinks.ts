@@ -26,12 +26,16 @@
 import { ConvexError, v } from 'convex/values';
 import type { FunctionReturnType } from 'convex/server';
 import { internalAction, internalQuery } from './_generated/server';
+import type { ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { capabilitiesOf } from './lib/backends/capabilities';
+import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
+import { panelDigestKey } from './lib/backend/key';
 import type { BackendHost } from './lib/backends/types';
 import { resolveEdgeConfig } from './lib/edgeConfig';
 import { sameAddress } from './lib/edges/hosts';
+import { hostPort } from './lib/edges/ip';
 import { effectiveRule, type DeliveryStyle, type EffectiveRule } from './lib/edges/render';
 import { decodeLinkList, linkAddresses } from './lib/edges/render/links';
 import { fragmentText, parseProxyUri, uriAgrees, uriSupported } from './lib/edges/render/uri';
@@ -43,6 +47,8 @@ import { listenerRemark } from './relayListeners';
 
 /** A link-list client the backend serves plain share links to (the test link is always `links`). */
 export const TEST_LINK_USER_AGENT = 'v2rayNG/1.8.29';
+/** The flow a VLESS REALITY account over raw TCP holds on the backend (Xray refuses any other). */
+export const REALITY_RAW_FLOW = 'xtls-rprx-vision';
 const TEST_RENDER_KEY = 'fcp-test-link';
 
 export interface TestLinkBinding {
@@ -106,8 +112,37 @@ export const context = internalQuery({
       streamTransport: listener.streamTransport,
       security: listener.security,
     };
+    // An ENROLLED node's transport has no Host before its first publication
+    // (FCP creates a fronted node's Host only when it publishes), so the
+    // credential's body carries no entry to template from. For a REALITY
+    // listener the entry is built from the transport's live parameters, as
+    // the direct test link is (nodeActivation.buildDirectTestLink).
+    const origin = relay.origin;
+    const enrolled =
+      origin.kind === 'panel-node' &&
+      !!(await ctx.db
+        .query('panelNodeIntents')
+        .withIndex('by_server_name', (q) =>
+          q.eq('backendServerId', relay.backendServerId!).eq('name', origin.nodeName),
+        )
+        .unique());
+    const synth =
+      enrolled &&
+      listener.panelBinding &&
+      listener.protocol === 'vless' &&
+      listener.security === 'reality' &&
+      listener.streamTransport === 'raw'
+        ? {
+            backend: server.backend,
+            config: server.config,
+            profileUuid: listener.panelBinding.configProfileUuid,
+            tag: listener.panelBinding.inboundTag,
+            remark: listenerRemark(listener) ?? listener.listenerKey,
+          }
+        : null;
     return {
       relayId: relay._id,
+      synth,
       originAddress: relay.originAddress,
       hostManagement: caps.hostManagement,
       deliveryStyle: (caps.accessKeyDelivery ? 'single-key' : 'subscription') as DeliveryStyle,
@@ -185,6 +220,57 @@ export function selectTestEntry(
   return { code: ownEntries.length === 0 ? 'no_match' : 'ambiguous_match' };
 }
 
+/**
+ * The source entry of an enrolled node's REALITY transport before its first
+ * Host exists: the origin's own qualification credential (the one whose body
+ * was fetched) at the origin address, with the transport's live REALITY
+ * parameters. Rendered like any matched entry; null when either is missing.
+ */
+async function synthesizedEntry(
+  ctx: ActionCtx,
+  relayId: Id<'relays'>,
+  synth: NonNullable<Ctx['synth']>,
+  c: Pick<Ctx, 'originAddress' | 'originPort'>,
+): Promise<string | null> {
+  const relay = await ctx.runQuery(internal.relays.get, { id: relayId });
+  const uuid = relay?.qualificationUserId;
+  const writes = PROVIDERS[synth.backend].backendWrites;
+  if (!uuid || !writes) return null;
+  const params = await writes.readInboundForTest(
+    synth.config as BackendConfig,
+    synth.profileUuid,
+    synth.tag,
+    (await panelDigestKey()).key,
+  );
+  if (!params) return null;
+  return realityEntryLine(uuid, c.originAddress, c.originPort, params, synth.remark);
+}
+
+/**
+ * One VLESS REALITY-over-raw-TCP share link (pure): the backend gives its
+ * accounts XTLS Vision there, and Xray refuses a session asking for another
+ * flow; an IPv6 origin is bracketed in the authority.
+ */
+export function realityEntryLine(
+  uuid: string,
+  address: string,
+  port: number,
+  params: { serverNames: string[]; publicKey: string; shortId: string },
+  remark: string,
+): string {
+  const q = new URLSearchParams({
+    encryption: 'none',
+    flow: REALITY_RAW_FLOW,
+    security: 'reality',
+    type: 'tcp',
+    sni: params.serverNames[0] ?? '',
+    fp: 'chrome',
+    pbk: params.publicKey,
+    sid: params.shortId,
+  });
+  return `vless://${uuid}@${hostPort(address, port)}?${q.toString()}#${encodeURIComponent(remark)}`;
+}
+
 export const build = internalAction({
   args: {
     edgeId: v.id('edges'),
@@ -230,7 +316,11 @@ export const build = internalAction({
           backendServerId: cred.fetchRef.backendServerId,
         })
       : null;
-    const picked = selectTestEntry(fetched.content, c, hosts);
+    let picked = selectTestEntry(fetched.content, c, hosts);
+    if ('code' in picked && picked.code === 'no_match' && c.synth) {
+      const line = await synthesizedEntry(ctx, c.relayId as Id<'relays'>, c.synth, c);
+      if (line) picked = { line };
+    }
     if ('code' in picked)
       throw new ConvexError({
         code: 'edge.test_link_no_match',

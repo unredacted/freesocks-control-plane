@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { pickInstance, resolveServersRoute, serversPaths } from './routes';
-import { setupWords, stageWords } from './words';
+import { blockerWords, protectionWords, setupWords, stageWords, standbyWords } from './words';
 import {
   WORDED_CODES,
   ago,
@@ -378,6 +378,76 @@ describe('enrolled nodes', () => {
       }).dot,
     ).toBe('red');
   });
+  test('a fronted node goes live through its protection in Edges', () => {
+    const fronted = { ...base, mode: { shape: { fronting: 'edge-l4' } } };
+    expect(stageWords({ ...fronted, stage: 'machine_ready' }).sentence).toBe(
+      'The machine is ready. Protect it from Edges to go live.',
+    );
+    expect(
+      stageWords({
+        ...fronted,
+        stage: 'machine_ready',
+        protection: { state: 'running', need: null },
+      }).sentence,
+    ).toBe('Being protected in Edges.');
+    expect(
+      stageWords({
+        ...fronted,
+        stage: 'machine_ready',
+        protection: { state: 'needs_you', need: 'node_not_approved' },
+      }),
+    ).toEqual({ dot: 'amber', sentence: 'Tested. Waiting for you to approve go-live.' });
+    expect(
+      stageWords({
+        ...fronted,
+        stage: 'live',
+        disposition: 'live',
+        protection: { state: 'needs_you', need: 'node_not_approved' },
+      }).sentence,
+    ).toMatch(/^Live\. .*approve go-live/);
+    expect(stageWords({ ...fronted, stage: 'awaiting_approval' }).sentence).toMatch(
+      /approve go-live in its protection progress/,
+    );
+    // A direct node ignores a protection it cannot have.
+    expect(
+      stageWords({
+        ...base,
+        mode: { shape: { fronting: 'direct' } },
+        stage: 'machine_ready',
+        protection: { state: 'needs_you', need: 'node_not_approved' },
+      }).sentence,
+    ).toBe('The machine is ready. Test the connection, then approve.');
+    expect(protectionWords({ state: 'needs_you', need: 'node_not_approved' })).toMatch(
+      /Approve go-live below/,
+    );
+    expect(protectionWords({ state: 'running', need: null })).toMatch(/carries on by itself/);
+    // Approved: the run's parked need is stale until it wakes, so the stage speaks.
+    const approved = { state: 'needs_you', need: 'node_not_approved' };
+    expect(protectionWords(approved, 'activating')).toMatch(/^Approved\./);
+    expect(stageWords({ ...fronted, stage: 'activating', protection: approved }).sentence).toMatch(
+      /^Releasing to members/,
+    );
+  });
+  test('the approval card in words', () => {
+    expect(
+      standbyWords({
+        listenerKey: 'main',
+        layer: 'l4',
+        endpoint: '203.0.113.7:443',
+        accountName: 'Main account',
+      }),
+    ).toBe('main: members get 203.0.113.7:443, an address in Main account.');
+    expect(
+      standbyWords({ listenerKey: 'ws', layer: 'l7', endpoint: null, accountName: null }),
+    ).toBe('ws: members get a new address.');
+    expect(blockerWords('servers.stage')).toMatch(/approved/);
+    expect(blockerWords('servers.maintenance_required')).toMatch(/^Put the node in maintenance/);
+    expect(blockerWords('servers.template_drifted')).toBe(
+      serverErrorWords('servers.template_drifted'),
+    );
+    for (const code of ['servers.stage', 'servers.maintenance_required'])
+      expect(blockerWords(code)).not.toMatch(/—|servers\./);
+  });
   test('the setup row', () => {
     expect(setupWords({ exists: false, state: null, code: null, running: false })).toMatch(
       /not set up/,
@@ -402,7 +472,11 @@ describe('enrolled nodes', () => {
       'awaiting_approval',
       'activating',
       'live',
-    ])
+    ]) {
       expect(stageWords({ ...base, stage }).sentence).not.toMatch(/—/);
+      expect(
+        stageWords({ ...base, stage, mode: { shape: { fronting: 'edge-l4' } } }).sentence,
+      ).not.toMatch(/—/);
+    }
   });
 });

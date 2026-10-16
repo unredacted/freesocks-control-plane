@@ -107,7 +107,10 @@ export function nodeStatus(
       return {
         kind: 'needs-you',
         dot: 'amber',
-        sentence: `Setting up, step ${step} of 4. It needs you.`,
+        sentence:
+          run.need?.code === 'node_not_approved'
+            ? 'Every address works. Waiting for you to approve go-live.'
+            : `Setting up, step ${step} of 4. It needs you.`,
         step,
       };
     }

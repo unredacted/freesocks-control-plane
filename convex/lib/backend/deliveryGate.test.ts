@@ -20,7 +20,7 @@ describe('nodeGateOf', () => {
       live,
       [
         { state: 'running', resources: { hostUuids: ['h-cand'], edgeIds: ['e-cand'] } },
-        { state: 'superseded', resources: { hostUuids: ['h-old'], edgeIds: [] } },
+        { state: 'committed', resources: { hostUuids: ['h-live'], edgeIds: ['e-live'] } },
       ],
       7,
       false,
@@ -32,7 +32,48 @@ describe('nodeGateOf', () => {
     expect(isCandidateHost(g, 'h-live')).toBe(false);
     expect(isCandidateHost(g, null)).toBe(false);
     expect(isCandidateEdge(g, 'e-cand')).toBe(true);
-    expect(isCandidateEdge(g, 'e-old')).toBe(false);
-    expect(gateToken(g)).toBe('7:1:1');
+    expect(isCandidateEdge(g, 'e-live')).toBe(false);
+  });
+  test('a superseded, blocked or failed run keeps its candidates isolated until a commit takes them over', () => {
+    const runs = [
+      { state: 'superseded', resources: { hostUuids: ['h-old'], edgeIds: ['e-old'] } },
+      { state: 'blocked', resources: { hostUuids: [], edgeIds: ['e-blocked'] } },
+      { state: 'failed', resources: { hostUuids: [], edgeIds: ['e-failed'] } },
+      // A resource of an uncommitted run that a later commit took over is not a candidate.
+      { state: 'superseded', resources: { hostUuids: ['h-live'], edgeIds: ['e-live'] } },
+    ];
+    const g = nodeGateOf(live, runs, 7, false);
+    expect(g.candidates).toEqual({
+      hostUuids: ['h-old'],
+      edgeIds: ['e-blocked', 'e-failed', 'e-old'],
+    });
+    expect(isCandidateEdge(g, 'e-old')).toBe(true);
+    expect(isCandidateEdge(g, 'e-live')).toBe(false);
+  });
+  test('the token names the candidate set: a new candidate moves it', () => {
+    const none = nodeGateOf(live, [], 7, false);
+    expect(gateToken(none)).toBe('7:1:1:0');
+    const one = nodeGateOf(
+      live,
+      [{ state: 'running', resources: { hostUuids: [], edgeIds: ['e-cand'] } }],
+      7,
+      false,
+    );
+    const two = nodeGateOf(
+      live,
+      [{ state: 'running', resources: { hostUuids: [], edgeIds: ['e-cand', 'e-cand-2'] } }],
+      7,
+      false,
+    );
+    expect(gateToken(one)).not.toBe(gateToken(none));
+    expect(gateToken(two)).not.toBe(gateToken(one));
+    // Same set, same version: same token (order does not matter).
+    const same = nodeGateOf(
+      live,
+      [{ state: 'running', resources: { hostUuids: [], edgeIds: ['e-cand-2', 'e-cand'] } }],
+      7,
+      false,
+    );
+    expect(gateToken(same)).toBe(gateToken(two));
   });
 });

@@ -85,7 +85,7 @@
           disabled={disabled || keyLocked}
         />
         <p class="text-muted-foreground text-xs">
-          1 to 16 lowercase letters or digits. The node role uses the same key.
+          1 to 16 lowercase letters or digits. It cannot change later.
         </p>
       </div>
     {/if}
@@ -106,7 +106,8 @@
       </Select.Root>
       {#if combo.transport === 'udp'}
         <p class="text-xs text-amber-700 dark:text-amber-300">
-          This listener registers, but no provider forwards UDP today, so no edge can front it yet.
+          This listener can be saved, but no provider forwards UDP today, so no edge can front it
+          yet.
         </p>
       {:else if combo.l7Proof === 'vless'}
         <p class="text-muted-foreground text-xs">
@@ -334,8 +335,8 @@
               <div>
                 <Label for={`${uid}-bind`}>Bind the backend transport</Label>
                 <p class="text-muted-foreground text-xs">
-                  Needed for FCP to create and flip the backend Host itself. The node role normally
-                  fills this in when it registers.
+                  Needed for FCP to create and flip the backend Host itself. Protecting the node
+                  from Edges fills this in.
                 </p>
               </div>
               <Switch id={`${uid}-bind`} bind:checked={form.bindPanel} {disabled} />

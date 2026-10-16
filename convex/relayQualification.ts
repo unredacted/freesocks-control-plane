@@ -25,6 +25,7 @@
  */
 import { ConvexError, v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
+import type { QueryCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { backendIdValidator, type BackendId } from './lib/backendIds';
@@ -86,6 +87,19 @@ export function __setEnsureFailpointForTests(f: typeof failpoint): void {
 
 const purposeValidator = v.union(v.literal('qualification'), v.literal('rehearsal'));
 
+/** The mode an enrolled node serves (its credential belongs in that mode's group); null otherwise. */
+async function enrolledModeOf(db: QueryCtx['db'], relay: Doc<'relays'>): Promise<string | null> {
+  if (relay.origin.kind !== 'panel-node' || !relay.backendServerId) return null;
+  const nodeName = relay.origin.nodeName;
+  const intent = await db
+    .query('panelNodeIntents')
+    .withIndex('by_server_name', (q) =>
+      q.eq('backendServerId', relay.backendServerId!).eq('name', nodeName),
+    )
+    .unique();
+  return intent?.mode ?? null;
+}
+
 /**
  * What ensuring needs, read in one transaction: the origin, its backend, the
  * binding the request resolves to (an explicit placement, else the mode's
@@ -107,8 +121,11 @@ export const ensureContext = internalQuery({
     const caps = capabilitiesOf(server.backend);
     // The mode decides the placement (absent = the resolver's default pool for
     // this backend); an explicit placement wins. A backend without a placement
-    // concept binds to null.
-    const slug: string | null = modeSlug ?? relay.qualificationModeSlug ?? null;
+    // concept binds to null. An ENROLLED node's credential lives in the node's
+    // own mode: a member-shaped credential of another mode's group never sees
+    // this node's transport (its body carries no entry to prove or rehearse).
+    const slug: string | null =
+      modeSlug ?? relay.qualificationModeSlug ?? (await enrolledModeOf(ctx.db, relay)) ?? null;
     let resolved: string | null = null;
     if (placement !== undefined) resolved = placement;
     else if (caps.placement) {
@@ -141,7 +158,8 @@ export const mintContext = internalQuery({
     if (!relay.backendServerId) return null;
     const server = await ctx.db.get(relay.backendServerId);
     if (!server) return null;
-    const modeId: string | null = relay.qualificationModeSlug ?? null;
+    const modeId: string | null =
+      relay.qualificationModeSlug ?? (await enrolledModeOf(ctx.db, relay)) ?? null;
     const { placement } = await resolvePlacementTarget(ctx.db, modeId, {
       onlyServerId: server._id as string,
     });

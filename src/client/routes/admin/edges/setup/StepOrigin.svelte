@@ -125,7 +125,7 @@
       {:else}
         <p class="text-muted-foreground rounded-lg border border-dashed p-4 text-center text-sm">
           No intended listener yet. Add one so the account step can check compatibility, or skip
-          this when the node role will register the listeners.
+          this and add the listeners when you create the origin.
         </p>
       {/each}
     </section>

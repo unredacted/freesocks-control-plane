@@ -210,7 +210,7 @@
             <AdminListState error={listeners.error} onRetry={() => void listeners.refetch()} />
           {:else if !listeners.isPending && usableListeners.length === 0}
             <AdminListState
-              emptyText="This relay has no deployed, enabled listener. Add one (or let the node role register it) first."
+              emptyText="This origin has no deployed, enabled listener. Add one on its Listeners tab first."
             />
           {:else}
             <Select.Root type="single" bind:value={listenerKey}>

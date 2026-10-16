@@ -26,6 +26,7 @@ import type {
 } from '../../../src/shared/contracts/edgeProtocolIds';
 import { isPublicIpLiteral, addressFamily } from './ip';
 import type { OriginTransport } from './layers';
+import { isValidHostname } from './hostname';
 
 export interface OriginProbeDeps {
   lookup: (name: string) => Promise<string[]>;
@@ -149,6 +150,19 @@ export async function probeOriginTransport(
 }
 
 /** Parse Node's `subjectaltname` ("DNS:a.example, DNS:*.b.example, IP Address:...") into DNS names. */
+/**
+ * The DNS names a leaf certificate presents: its SAN names; the subject CN
+ * only when there is no SAN, and only when it IS a hostname (RFC 6125). An
+ * origin certificate's CN is often an organisation or a label: not a name an
+ * edge can present, and never a reason to fail a plan.
+ */
+export function leafNames(san: string | undefined | null, cn: string | undefined | null): string[] {
+  const names = dnsNamesOfSan(san);
+  if (names.length > 0) return names;
+  const c = cn?.trim().toLowerCase();
+  return c && isValidHostname(c) ? [c] : [];
+}
+
 export function dnsNamesOfSan(san: string | undefined | null): string[] {
   if (!san) return [];
   return san

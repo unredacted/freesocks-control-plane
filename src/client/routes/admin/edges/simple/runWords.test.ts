@@ -19,6 +19,10 @@ describe('needButtons', () => {
     expect(needButtons('address_unreachable').secondary?.action).toBe('accept_partial');
     expect(needButtons('hide_failed').hint).toMatch(/backend yourself/);
     expect(needButtons('whatever').primary.action).toBe('retry');
+    // Approving go-live is the one way on: no retry that would only park the run again.
+    const approve = needButtons('node_not_approved');
+    expect(approve.primary).toEqual({ label: 'Approve go-live', action: 'approve' });
+    expect(approve.secondary).toBeUndefined();
   });
 });
 
@@ -46,7 +50,12 @@ describe('runTestItems', () => {
           link: 'vless://x',
           format: 'links',
           method: 'test_link',
-          binding: { endpoint: '1.2.3.4:443', listenerRevision: 3, configHash: 'h', issuedAt: 'x' },
+          binding: {
+            endpoint: '192.0.2.4:443',
+            listenerRevision: 3,
+            configHash: 'h',
+            issuedAt: 'x',
+          },
         },
       ],
     });
@@ -56,7 +65,7 @@ describe('runTestItems', () => {
         listenerKey: 'main',
         link: 'vless://x',
         method: 'test_link',
-        endpoint: '1.2.3.4:443',
+        endpoint: '192.0.2.4:443',
         listenerRevision: 3,
         configHash: 'h',
       },

@@ -170,6 +170,13 @@ export const confirmWiped = (slug: string, id: string) =>
   apiClient.post(`${intentPath(slug, id)}/wiped`, {}, z.object({ stage: z.string() }));
 export const finishMaintenance = (slug: string, id: string) =>
   apiClient.post(`${intentPath(slug, id)}/maintenance`, {}, z.object({ ok: z.literal(true) }));
+/** Close the node for maintenance: members get the unavailable answer until it is approved again. */
+export const startMaintenance = (slug: string, id: string) =>
+  apiClient.post(
+    `${intentPath(slug, id)}/maintenance`,
+    { start: true },
+    z.object({ ok: z.literal(true) }),
+  );
 export const patchNodeSettings = (
   slug: string,
   id: string,
@@ -215,12 +222,14 @@ export const intentsQuery = (slug: () => string | null) =>
         : 60_000,
   }));
 
+/** The approval card's review: re-read every 10 s so its blockers follow the node. */
 export const reviewQuery = (slug: () => string | null, id: () => string | null) =>
   createQuery(() => ({
     queryKey: serverKeys.review(slug() ?? '', id() ?? ''),
     queryFn: () => fetchReview(slug()!, id()!),
     enabled: !!slug() && !!id(),
     staleTime: 5_000,
+    refetchInterval: 10_000,
   }));
 
 export const serverSummaryQuery = () =>

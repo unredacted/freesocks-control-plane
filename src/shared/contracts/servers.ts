@@ -490,6 +490,19 @@ export const NodeIntentView = z.object({
   run: z
     .object({ id: z.string(), state: z.string(), stage: z.string(), code: z.string().nullable() })
     .nullable(),
+  /**
+   * The open guided setup run protecting a fronted node (Edges), if any: the
+   * Servers page links to its progress and mirrors its approval card.
+   */
+  protection: z
+    .object({
+      runId: z.string(),
+      stage: z.string(),
+      state: z.string(),
+      need: z.string().nullable(),
+    })
+    .nullable()
+    .default(null),
   retirement: z.object({ stage: z.string(), code: z.string().nullable() }).nullable(),
   registeredAt: z.string(),
   updatedAt: z.string(),
@@ -519,8 +532,14 @@ export const ActivationReview = z.object({
     ingress: z.unknown().nullable(),
     configRevision: z.string(),
     authRevision: z.string().nullable(),
-    listenerKeys: z.array(z.string()),
-    provider: z.object({ accountId: z.string().nullable(), templateHash: z.string().nullable() }),
+    /** A fronted node's required listeners, each with the account and template it is fronted by. */
+    listeners: z.array(
+      z.object({
+        listenerKey: z.string(),
+        accountId: z.string().nullable(),
+        templateHash: z.string().nullable(),
+      }),
+    ),
     subscriptionTemplates: z.record(z.string(), z.string()),
     /** A direct node's addresses: one tuple per family name. */
     addressTuples: z.array(
@@ -528,8 +547,26 @@ export const ActivationReview = z.object({
     ),
   }),
   reviewHash: z.string(),
+  /** What keeps the node from approval now (`servers.*` codes); empty = Approve is enabled. */
   blockers: z.array(z.string()),
   stage: NodeStage,
+  /**
+   * Shown, never hashed: the standby addresses a fronted node's approval
+   * releases (the run's candidates, one per required listener).
+   */
+  display: z
+    .object({
+      standbys: z.array(
+        z.object({
+          listenerKey: z.string(),
+          layer: z.enum(['l4', 'l7']),
+          endpoint: z.string().nullable(),
+          accountName: z.string().nullable(),
+          provider: z.string().nullable(),
+        }),
+      ),
+    })
+    .default({ standbys: [] }),
 });
 export type ActivationReview = z.infer<typeof ActivationReview>;
 

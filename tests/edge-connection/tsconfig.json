@@ -1,0 +1,12 @@
+{
+  "//": "These files import Convex functions and the generated API, so they are checked under the Convex compiler options (convex/tsconfig.json), not the stricter root ones.",
+  "extends": "../../convex/tsconfig.json",
+  "compilerOptions": { "types": ["node", "vite/client"] },
+  "include": [
+    "./**/*.ts",
+    "../compat/manifest.ts",
+    "../../convex/**/*.d.ts",
+    "../../vitest.edge-connection.config.ts"
+  ],
+  "exclude": []
+}

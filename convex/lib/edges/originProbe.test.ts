@@ -5,6 +5,7 @@
 import { describe, expect, test, vi } from 'vitest';
 import {
   dnsNamesOfSan,
+  leafNames,
   FOREIGN_HOST_HEADER,
   probeOriginTransport,
   type OriginProbeDeps,
@@ -161,5 +162,17 @@ describe('probeOriginTransport', () => {
       '*.b.example',
     ]);
     expect(dnsNamesOfSan(undefined)).toEqual([]);
+  });
+});
+
+describe('leafNames', () => {
+  test('the SAN names; a CN only without SANs and only when it is a hostname', () => {
+    expect(leafNames('DNS:origin.example, DNS:www.origin.example', 'Some Org')).toEqual([
+      'origin.example',
+      'www.origin.example',
+    ]);
+    expect(leafNames(undefined, 'origin.example')).toEqual(['origin.example']);
+    expect(leafNames('', 'Origin Certificate')).toEqual([]);
+    expect(leafNames(null, 'origin')).toEqual([]);
   });
 });

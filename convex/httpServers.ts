@@ -94,10 +94,16 @@ export function scopeFor(parts: string[], method: string): string | string[] {
   // route and takes that route's own scope, never the settings one.
   if (parts.length === 1 && parts[0] === 'config')
     return method === 'GET' ? 'admin:settings:read' : 'admin:settings:write';
-  // The role's routes: its fleet token, or a register token confined to its boundary.
+  // The role's routes: its fleet token (which holds `write`, maybe not `read`, so
+  // a GET takes either), or a register token confined to its boundary.
   if (isByNameRoute(parts))
     return method === 'GET'
-      ? ['admin:servers:read', 'admin:edges:register', 'admin:servers:manage']
+      ? [
+          'admin:servers:read',
+          'admin:servers:write',
+          'admin:edges:register',
+          'admin:servers:manage',
+        ]
       : ['admin:servers:write', 'admin:edges:register', 'admin:servers:manage'];
   if (method === 'GET' || (method === 'POST' && isReadOnlyPost(parts))) return 'admin:servers:read';
   return 'admin:servers:manage';
@@ -169,10 +175,11 @@ async function byNameHandler(
   const [slug, , , name, verb, extra] = parts;
   if (!slug || !name || extra) return notFound();
   const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug });
+  // Unbounded: the fleet token's scope for this verb (a GET takes read or write), or manage.
   const boundary = await registrationBoundaryOf(
     ctx,
     admin,
-    method === 'GET' ? 'admin:servers:read' : 'admin:servers:write',
+    method === 'GET' ? ['admin:servers:read', 'admin:servers:write'] : 'admin:servers:write',
   );
   if (!nodeWithinBoundary(boundary, instance.id, name))
     return errorJson('servers.registration_boundary', 'This token may not act for that node', 403);
@@ -482,12 +489,18 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
           byAdminId: admin.adminUserId ?? undefined,
         }),
       );
+    // `{start: true}` closes the node for maintenance; without it, Finish maintenance.
     if (verb === 'maintenance')
       return json(
-        await ctx.runMutation(internal.nodeIntents.finishMaintenance, {
-          intentId,
-          ...actorOf(admin),
-        }),
+        body.start === true
+          ? await ctx.runMutation(internal.nodeIntents.startMaintenance, {
+              intentId,
+              ...actorOf(admin),
+            })
+          : await ctx.runMutation(internal.nodeIntents.finishMaintenance, {
+              intentId,
+              ...actorOf(admin),
+            }),
       );
     if (verb === 'settings')
       return json(

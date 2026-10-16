@@ -67,6 +67,11 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
   },
   { name: 'mirror-refresh', everyMs: 6 * HOUR, description: 'Refresh the S3 subscription mirrors' },
   {
+    name: 'mirror-barrier-repair',
+    everyMs: 5 * MIN,
+    description: 'Repair or withdraw mirror uploads a policy move overtook',
+  },
+  {
     name: 'deactivate-idle-free',
     everyMs: DAY,
     description: 'Deactivate + retain idle free users (reclaim key, keep row)',

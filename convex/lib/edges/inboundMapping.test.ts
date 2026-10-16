@@ -1,6 +1,6 @@
 /**
  * Golden tests for transport discovery: every supported combination maps to the
- * by-slug listener shape, every unsupported reason is named, the listener key
+ * listener spec shape, every unsupported reason is named, the listener key
  * algorithm is deterministic and collision-resistant, and nothing secret can
  * cross the mapper (its input is already the allowlisted projection; the
  * output is checked once more for the words that must never appear).

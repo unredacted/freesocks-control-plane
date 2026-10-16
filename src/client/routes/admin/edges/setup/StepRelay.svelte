@@ -1,9 +1,9 @@
 <script lang="ts">
   /**
-   * Step 4, origin and listener. Two paths side by side: register here, or let
-   * the node role register (copyable role variables, a link to mint its token).
+   * Step 4, origin and listener: create the origin here, then add or review its
+   * listeners.
    *
-   * Props: StepBodyProps + draft (StoredDraft | null) + onRelayCreated(slug) + onWatchSlug(slug)
+   * Props: StepBodyProps + draft (StoredDraft | null) + onRelayCreated(slug)
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import {
@@ -14,8 +14,6 @@
     CardTitle,
   } from '@client/components/ui/card';
   import { Button, buttonVariants } from '@client/components/ui/button';
-  import { Input } from '@client/components/ui/input';
-  import { Label } from '@client/components/ui/label';
   import Link from '@client/components/Link.svelte';
   import { invalidateRelay, relayListenersQuery } from '@client/lib/edgesApi';
   import AdminListState from '../../AdminListState.svelte';
@@ -25,21 +23,17 @@
   import StatusBadge from '../components/StatusBadge.svelte';
   import NewRelayDialog from '../forms/NewRelayDialog.svelte';
   import AddListenerDialog from '../forms/AddListenerDialog.svelte';
-  import { relaySlugIssue } from '../forms/prefill';
   import { edgesPaths } from '../lib/routes';
   import StepIssues from './StepIssues.svelte';
-  import RoleVarsCard from './RoleVarsCard.svelte';
   import type { StoredDraft } from './draft';
   import type { StepBodyProps } from './types';
 
   interface Props extends StepBodyProps {
     draft: StoredDraft | null;
     onRelayCreated: (slug: string) => void;
-    onWatchSlug: (slug: string) => void;
   }
-  let { step, status, relay, linkCtx, draft, onRelayCreated, onWatchSlug }: Props = $props();
+  let { step, relay, linkCtx, draft, onRelayCreated }: Props = $props();
 
-  const uid = $props.id();
   const qc = useQueryClient();
   const listeners = relayListenersQuery({
     slug: () => relay?.slug ?? null,
@@ -50,9 +44,6 @@
 
   let newRelayOpen = $state(false);
   let addListenerOpen = $state(false);
-  let watchSlug = $state('');
-  let watchTried = $state(false);
-  const watchProblem = $derived(relaySlugIssue(watchSlug));
 </script>
 
 <div class="space-y-4">
@@ -71,13 +62,13 @@
   {/if}
   <StepIssues {step} ctx={linkCtx} hide={['members_dark', 'no_relay', 'relay_without_listener']} />
 
-  <div class="grid gap-4 xl:grid-cols-2">
+  <div class="max-w-3xl">
     <Card>
       <CardHeader>
-        <CardTitle class="text-base">Register here</CardTitle>
+        <CardTitle class="text-base">The origin and its listeners</CardTitle>
         <CardDescription>
-          Describe the origin and its listeners in this console. Good for a manual origin or a
-          backend server, and for a node the role does not manage.
+          Describe the origin and the listeners it answers on. Each listener is one port of the
+          origin that an edge can carry.
         </CardDescription>
       </CardHeader>
       <CardContent class="space-y-3">
@@ -92,9 +83,7 @@
           {#if listeners.isError}
             <AdminListState error={listeners.error} onRetry={() => void listeners.refetch()} />
           {:else if !listeners.isPending && live.length === 0}
-            <AdminListState
-              emptyText="This relay has no listener yet. Add one here, or let the node role register it."
-            />
+            <AdminListState emptyText="This relay has no listener yet. Add one here." />
           {:else}
             <ul class="divide-y rounded-md border text-sm">
               {#each live as l (l.id)}
@@ -130,54 +119,6 @@
               Manage listeners
             </Link>
           </div>
-        {/if}
-      </CardContent>
-    </Card>
-
-    <Card>
-      <CardHeader>
-        <CardTitle class="text-base">Waiting for the node role</CardTitle>
-        <CardDescription>
-          The node role registers the origin and its listeners itself, with one idempotent call,
-          every time it runs. Nothing to type here.
-        </CardDescription>
-      </CardHeader>
-      <CardContent class="space-y-3">
-        {#if relay}
-          <RoleVarsCard
-            roleVars={status.roleVars}
-            lastRegisteredAt={relay.lastRegisteredAt}
-            backendServerId={status.context.backendServerId ?? null}
-            nodeName={relay.origin.kind === 'panel-node' ? relay.origin.nodeName : null}
-          />
-        {:else}
-          <p class="text-sm">
-            Pick the slug the role will register under, give the role a token, run it, then watch
-            for the origin here.
-          </p>
-          <RoleVarsCard roleVars={null} backendServerId={status.context.backendServerId ?? null} />
-          <form
-            class="space-y-1.5"
-            onsubmit={(e) => {
-              e.preventDefault();
-              watchTried = true;
-              if (watchProblem === null) onWatchSlug(watchSlug.trim());
-            }}
-          >
-            <Label for={`${uid}-watch`}>Slug the role registers under</Label>
-            <div class="flex gap-2">
-              <Input
-                id={`${uid}-watch`}
-                class="font-mono"
-                placeholder="node1"
-                bind:value={watchSlug}
-              />
-              <Button type="submit" variant="outline">Watch for it</Button>
-            </div>
-            {#if watchTried && watchProblem}
-              <p class="text-destructive text-xs" role="alert">{watchProblem}</p>
-            {/if}
-          </form>
         {/if}
       </CardContent>
     </Card>

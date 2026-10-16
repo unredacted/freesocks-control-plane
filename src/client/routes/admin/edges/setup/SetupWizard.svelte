@@ -10,7 +10,7 @@
    *   relaySlug: string | null
    *   draft: StoredDraft (bindable)
    *   draftMode: boolean
-   *   onRelayCreated(slug), onWatchSlug(slug), onLeave()
+   *   onRelayCreated(slug), onLeave()
    */
   import type { CreateQueryResult } from '@tanstack/svelte-query';
   import CircleCheck from '@lucide/svelte/icons/circle-check';
@@ -46,7 +46,6 @@
     draft: StoredDraft;
     draftMode: boolean;
     onRelayCreated: (slug: string) => void;
-    onWatchSlug: (slug: string) => void;
     onLeave: () => void;
   }
   let {
@@ -56,7 +55,6 @@
     draft = $bindable(),
     draftMode,
     onRelayCreated,
-    onWatchSlug,
     onLeave,
   }: Props = $props();
 
@@ -173,7 +171,7 @@
           {:else if shown.id === 'template'}
             <StepTemplate {...base} />
           {:else if shown.id === 'relay'}
-            <StepRelay {...base} draft={draftMode ? draft : null} {onRelayCreated} {onWatchSlug} />
+            <StepRelay {...base} draft={draftMode ? draft : null} {onRelayCreated} />
           {:else if shown.id === 'edge'}
             <StepEdge {...base} onRotation={(id) => (rotationParam.value = id)} />
           {:else if shown.id === 'qualification'}

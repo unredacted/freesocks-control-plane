@@ -433,7 +433,7 @@ export const ListenerSpec = z.object({
 });
 export type ListenerSpec = z.infer<typeof ListenerSpec>;
 
-/** The wire origin of a registration body: the backend by SLUG (the role never knows ids). */
+/** An origin named by backend SLUG (the setup draft), not by id. */
 export const RelayWireOrigin = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('panel-node'),
@@ -444,18 +444,6 @@ export const RelayWireOrigin = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('backend-server'), backendSlug: z.string() }),
   z.object({ kind: z.literal('manual') }),
 ]);
-/** `PUT /api/v1/admin/edges/relays/by-slug/{slug}`: one idempotent body (docs/edges.md). */
-export const RelayRegisterBody = z.object({
-  origin: RelayWireOrigin,
-  originAddress: z.string(),
-  locationCode: z.string().nullish(),
-  label: z.string().nullish(),
-  listeners: z.array(ListenerSpec),
-  pruneListeners: z.boolean().optional(),
-  hostModeRequest: z.literal('operator').optional(),
-});
-export type RelayRegisterBody = z.infer<typeof RelayRegisterBody>;
-
 /** Edge addresses: IP literals for an L4 edge, the fronted hostname for an L7 edge. */
 export const EdgeAddresses = z.object({
   v4: z.string().nullable(),
@@ -1048,9 +1036,10 @@ export const InboundCandidatesResponse = z.object({
 export type InboundCandidatesResponse = z.infer<typeof InboundCandidatesResponse>;
 
 /**
- * The node role's view of `GET/PUT …/relays/by-slug/{slug}` (docs/edges.md § "Node
- * role contract"): the MINIMAL projection. No detector state, no rotation
- * limits, no pool-wide provider names, so a leaked register token learns none.
+ * `GET …/relays/by-slug/{slug}`: an origin's MINIMAL projection (the setup's
+ * Host plan reads it). No detector state, no rotation limits, no pool-wide
+ * provider names. `lastRegisteredAt` is the stamp the retired node-role
+ * registration left on older origins (null otherwise).
  */
 export const RelayBySlugResponse = z.object({
   relay: z.object({
@@ -1092,31 +1081,8 @@ export const RelayBySlugResponse = z.object({
   ),
   connectionPlan: z.array(RelayConnectionPlanEntry),
   hostsPlan: RelayHostsPlan,
-  /** Present on a PUT: what the registration changed. */
-  registration: z
-    .object({
-      id: z.string(),
-      created: z.boolean(),
-      changed: z.boolean(),
-      listeners: z.object({
-        created: z.array(z.string()),
-        updated: z.array(z.string()),
-        unchanged: z.array(z.string()),
-        retired: z.array(z.string()),
-        owned: z.array(z.string()),
-        blockedNames: z.array(z.string()),
-        changed: z.boolean(),
-      }),
-      /** Notices (`edge.<code>`), e.g. `edge.pool_raised` when the pool grew to cover every listener. */
-      warnings: z.array(z.string()).default([]),
-    })
-    .passthrough()
-    .optional(),
 });
 export type RelayBySlugResponse = z.infer<typeof RelayBySlugResponse>;
-/** @deprecated alias: the by-slug response IS the minimal projection now. */
-export const RelayBySlugMinimalResponse = RelayBySlugResponse;
-export type RelayBySlugMinimalResponse = RelayBySlugResponse;
 
 export const RENDER_CLIENT_FAMILY_IDS = [
   'singbox',
@@ -1328,8 +1294,6 @@ export const SetupStatusResponse = z.object({
   currentStep: SetupStepId.nullable(),
   complete: z.boolean(),
   context: SetupContext,
-  /** Public values the node role needs (slug, listener keys, the by-slug URL path); never a token or an address. */
-  roleVars: z.record(z.string(), z.string()).nullable().default(null),
   resume: z.array(SetupResumeEntry).default([]),
   generatedAt: iso,
 });
@@ -1628,6 +1592,8 @@ export const SetupPlanResponse = z.object({
     .object({ id: z.string(), slug: z.string(), setupStage: z.string().nullable() })
     .nullable(),
   activeRunId: z.string().nullable(),
+  /** An enrolled node: goes live through its approval; keep-direct does not exist for it. */
+  enrolled: z.boolean().default(false),
   planHash: z.string(),
   generatedAt: iso,
 });
@@ -1679,6 +1645,17 @@ export const SetupRunAdmin = z.object({
   generation: z.number(),
   planRevision: z.number(),
   keepDirect: z.boolean(),
+  /**
+   * The enrolled node this run protects (docs/servers.md "Node lifecycle"):
+   * its backend slug and intent, for the approval card at `node_not_approved`.
+   * Null for a node FCP does not manage.
+   */
+  enrolled: z
+    .object({ slug: z.string(), intentId: z.string(), stage: z.string() })
+    .nullable()
+    .default(null),
+  /** The activation run this setup run is bound to once the node was approved. */
+  activationRunId: z.string().nullable().default(null),
   listeners: z.array(
     z.object({
       listenerKey: z.string(),

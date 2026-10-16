@@ -54,6 +54,21 @@ describe('nodeStatus', () => {
     expect(
       nodeStatus(row(), { attention: [], runs: [run({ state: 'needs_you', stage: 'try_it' })] }),
     ).toMatchObject({ kind: 'needs-you', dot: 'amber', step: 3 });
+    expect(
+      nodeStatus(row(), {
+        attention: [],
+        runs: [
+          run({
+            state: 'needs_you',
+            stage: 'publish',
+            need: { code: 'node_not_approved', detail: null },
+          }),
+        ],
+      }),
+    ).toMatchObject({
+      kind: 'needs-you',
+      sentence: 'Every address works. Waiting for you to approve go-live.',
+    });
     expect(nodeStatus(row(), { attention: [], runs: [run({ state: 'failed' })] }).kind).toBe(
       'protected',
     );
