@@ -136,3 +136,163 @@ export function sniConfigWrites(patch: Record<string, unknown>): {
   }
   return { writes, changedKeys };
 }
+
+// --- checks from inside a country (`edge.sni.vantage.*`) ----------------------------------------
+
+/**
+ * Checks of server names from vantages inside curated countries (docs/edges.md
+ * "Checks from inside a country"). Dormant by default: with `enabled` off, or
+ * with no country opted in, nothing is measured, suggested or applied. Read
+ * separately from `SniConfig` so the render path never pays for these rows.
+ */
+export interface SniVantageConfig {
+  enabled: boolean;
+  /** Opted-in countries (a subset of the curated ones; others are ignored at use). */
+  countries: string[];
+  sources: { globalping: boolean; ripeatlas: boolean };
+  /** A name is checked from a country again after this long. */
+  intervalHours: number;
+  /** Measurements an hour (one name, one source, one country each). */
+  hourlyBudget: number;
+  /** Vantages asked per measurement. */
+  perCountryLimit: number;
+  /** Names per batch (one address, one country), the control included. */
+  batchNames: number;
+  /** The scoring window, and how long measurement rows are kept. */
+  windowDays: number;
+  minVantages: number;
+  minNetworks: number;
+  /** Apply suggestions by themselves (never over an operator's mark). */
+  autoApply: boolean;
+}
+
+export const SNI_VANTAGE_DEFAULTS: SniVantageConfig = {
+  enabled: false,
+  countries: [],
+  sources: { globalping: true, ripeatlas: false },
+  intervalHours: 72,
+  hourlyBudget: 12,
+  perCountryLimit: 3,
+  batchNames: 3,
+  windowDays: 14,
+  minVantages: 3,
+  minNetworks: 2,
+  autoApply: false,
+};
+
+export const SNI_VANTAGE_BOUNDS = {
+  intervalHours: { min: 6, max: 24 * 30 },
+  hourlyBudget: { min: 0, max: 120 },
+  perCountryLimit: { min: 1, max: 5 },
+  batchNames: { min: 2, max: 6 },
+  windowDays: { min: 1, max: 60 },
+  minVantages: { min: 1, max: 20 },
+  minNetworks: { min: 1, max: 10 },
+} as const;
+type VantageIntPath = keyof typeof SNI_VANTAGE_BOUNDS;
+
+export const SNI_VANTAGE_KEYS = {
+  enabled: 'edge.sni.vantage.enabled',
+  countries: 'edge.sni.vantage.countries',
+  'sources.globalping': 'edge.sni.vantage.sources.globalping',
+  'sources.ripeatlas': 'edge.sni.vantage.sources.ripeatlas',
+  intervalHours: 'edge.sni.vantage.intervalHours',
+  hourlyBudget: 'edge.sni.vantage.hourlyBudget',
+  perCountryLimit: 'edge.sni.vantage.perCountryLimit',
+  batchNames: 'edge.sni.vantage.batchNames',
+  windowDays: 'edge.sni.vantage.windowDays',
+  minVantages: 'edge.sni.vantage.minVantages',
+  minNetworks: 'edge.sni.vantage.minNetworks',
+  autoApply: 'edge.sni.vantage.autoApply',
+} as const;
+type VantagePath = keyof typeof SNI_VANTAGE_KEYS;
+const VANTAGE_BOOLS: readonly VantagePath[] = [
+  'enabled',
+  'sources.globalping',
+  'sources.ripeatlas',
+  'autoApply',
+];
+
+export async function resolveSniVantageConfig(db: DatabaseReader): Promise<SniVantageConfig> {
+  const paths = Object.keys(SNI_VANTAGE_KEYS) as VantagePath[];
+  const raw = Object.fromEntries(
+    await Promise.all(
+      paths.map(async (p) => [p, await readSetting(db, SNI_VANTAGE_KEYS[p])] as const),
+    ),
+  ) as Record<VantagePath, unknown>;
+  const D = SNI_VANTAGE_DEFAULTS;
+  const int = (p: VantageIntPath) =>
+    sanitizeInt(raw[p], SNI_VANTAGE_BOUNDS[p].min, SNI_VANTAGE_BOUNDS[p].max, D[p]);
+  return {
+    enabled: sanitizeBool(raw.enabled, D.enabled),
+    countries: sanitizeCountries(raw.countries, D.countries),
+    sources: {
+      globalping: sanitizeBool(raw['sources.globalping'], D.sources.globalping),
+      ripeatlas: sanitizeBool(raw['sources.ripeatlas'], D.sources.ripeatlas),
+    },
+    intervalHours: int('intervalHours'),
+    hourlyBudget: int('hourlyBudget'),
+    perCountryLimit: int('perCountryLimit'),
+    batchNames: int('batchNames'),
+    windowDays: int('windowDays'),
+    minVantages: int('minVantages'),
+    minNetworks: int('minNetworks'),
+    autoApply: sanitizeBool(raw.autoApply, D.autoApply),
+  };
+}
+
+/** The opted-in countries that are also curated: the only ones ever checked. */
+export function vantageCountries(v: SniVantageConfig, curated: readonly string[]): string[] {
+  return v.countries.filter((c) => curated.includes(c));
+}
+
+/**
+ * The appSettings writes for a `vantage` patch (`{enabled, countries, sources:
+ * {globalping, ripeatlas}, intervalHours, ...}`); unknown keys and wrong types
+ * are ignored. `changedKeys` are `vantage.<path>`.
+ */
+export function sniVantageConfigWrites(patch: Record<string, unknown>): {
+  writes: { key: string; value: string }[];
+  changedKeys: string[];
+} {
+  const writes: { key: string; value: string }[] = [];
+  const changedKeys: string[] = [];
+  const sources =
+    patch.sources && typeof patch.sources === 'object'
+      ? (patch.sources as Record<string, unknown>)
+      : {};
+  for (const p of Object.keys(SNI_VANTAGE_KEYS) as VantagePath[]) {
+    const v = p.startsWith('sources.') ? sources[p.slice('sources.'.length)] : patch[p];
+    let value: unknown;
+    if (VANTAGE_BOOLS.includes(p)) {
+      if (typeof v !== 'boolean') continue;
+      value = v;
+    } else if (p === 'countries') {
+      if (!Array.isArray(v)) continue;
+      value = sanitizeCountries(v, []);
+    } else {
+      if (typeof v !== 'number' || !Number.isFinite(v)) continue;
+      const q = p as VantageIntPath;
+      value = sanitizeInt(
+        v,
+        SNI_VANTAGE_BOUNDS[q].min,
+        SNI_VANTAGE_BOUNDS[q].max,
+        SNI_VANTAGE_DEFAULTS[q],
+      );
+    }
+    writes.push({ key: SNI_VANTAGE_KEYS[p], value: JSON.stringify(value) });
+    changedKeys.push(`vantage.${p}`);
+  }
+  return { writes, changedKeys };
+}
+
+/** Sources the config enables that can run (Atlas needs its key). */
+export function usableSources(
+  v: SniVantageConfig,
+  secrets: { ripeAtlasKey: string },
+): Array<'globalping' | 'ripeatlas'> {
+  const out: Array<'globalping' | 'ripeatlas'> = [];
+  if (v.sources.globalping) out.push('globalping');
+  if (v.sources.ripeatlas && secrets.ripeAtlasKey.length > 0) out.push('ripeatlas');
+  return out;
+}

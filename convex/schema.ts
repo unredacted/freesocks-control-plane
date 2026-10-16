@@ -2547,7 +2547,105 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_name_country_day', ['name', 'country', 'day'])
-    .index('by_day', ['day']),
+    .index('by_day', ['day'])
+    // One country's counts, bounded per country (checks from inside a country).
+    .index('by_country_day', ['country', 'day']),
+
+  // Checks of server names from vantages inside curated countries
+  // (docs/edges.md "Checks from inside a country"). One row per MEASUREMENT:
+  // one name presented to one of FCP's own member-facing addresses, from one
+  // source, in one country. A BATCH is the names of one address measured from
+  // the same vantages (the controls of each other). No member data anywhere:
+  // the address is an operator-owned edge or opted-in origin, the vantages are
+  // third-party probes. Deleted after `edge.sni.vantage.windowDays`.
+  sniVantageProbes: defineTable({
+    name: v.string(),
+    familyId: v.id('sniFamilies'),
+    country: v.string(),
+    source: v.union(v.literal('globalping'), v.literal('ripeatlas')),
+    batch: v.string(),
+    targetKind: v.union(v.literal('edge'), v.literal('relay')),
+    targetRef: v.string(),
+    // What was dialled, so a run whose target moved under it is not misread.
+    address: v.string(),
+    port: v.number(),
+    trigger: v.union(v.literal('cron'), v.literal('manual')),
+    status: v.union(
+      v.literal('requested'),
+      v.literal('running'),
+      v.literal('finished'),
+      v.literal('failed'),
+      v.literal('timeout'),
+    ),
+    externalId: v.optional(v.string()),
+    // A short code when the measurement could not run (never service text).
+    error: v.optional(v.string()),
+    requestedAt: v.number(),
+    scheduledAt: v.number(),
+    startedAt: v.optional(v.number()),
+    finishedAt: v.optional(v.number()),
+    results: v.array(
+      v.object({
+        asn: v.optional(v.string()),
+        network: v.optional(v.string()),
+        vantageClass: v.union(v.literal('eyeball'), v.literal('datacenter'), v.literal('unknown')),
+        outcome: v.union(
+          v.literal('ok'),
+          v.literal('answered'),
+          v.literal('cert_mismatch'),
+          v.literal('reset'),
+          v.literal('timeout'),
+          v.literal('refused'),
+          v.literal('error'),
+        ),
+        rttMs: v.optional(v.number()),
+        error: v.optional(v.string()),
+      }),
+    ),
+  })
+    .index('by_batch_source', ['batch', 'source'])
+    .index('by_name_country_requested', ['name', 'country', 'requestedAt'])
+    .index('by_requested', ['requestedAt'])
+    .index('by_status_requested', ['status', 'requestedAt']),
+
+  // What the checks say about one name in one country (lib/edges/sni/vantage.ts
+  // `aggregateEvidence`), refreshed whenever one of its batches settles. The
+  // suggestion itself is derived at read time (it also depends on member
+  // reports and on the thresholds, which move independently).
+  sniVantageEvidence: defineTable({
+    familyId: v.id('sniFamilies'),
+    name: v.string(),
+    country: v.string(),
+    // When this pair was last put into a batch (the planner's "due" clock).
+    lastRequestedAt: v.number(),
+    measurements: v.number(),
+    okVantages: v.number(),
+    okNetworks: v.number(),
+    lastOkAt: v.optional(v.number()),
+    // The newest working check EVER (kept past the window: the transition marker).
+    everOkAt: v.optional(v.number()),
+    lastFailAt: v.optional(v.number()),
+    lastAt: v.optional(v.number()),
+    // The oldest measurement the aggregate rests on (requestedAt): once it leaves
+    // the window the sweep aggregates again. Absent = nothing in the window.
+    oldestAt: v.optional(v.number()),
+    latest: v.union(v.literal('ok'), v.literal('failing'), v.literal('mixed'), v.literal('none')),
+    streak: v.optional(
+      v.object({
+        nameFailures: v.number(),
+        networks: v.number(),
+        singled: v.number(),
+        pathFailures: v.number(),
+        batches: v.number(),
+        startedAt: v.number(),
+        transition: v.boolean(),
+      }),
+    ),
+    updatedAt: v.number(),
+  })
+    .index('by_name_country', ['name', 'country'])
+    .index('by_family', ['familyId'])
+    .index('by_oldest', ['oldestAt']),
 
   // TRANSITIONAL: the v1 role's handoff declaration. Contract v1 is gone and
   // nothing reads this; the table stays declared only so a deployment that has

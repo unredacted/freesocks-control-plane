@@ -158,6 +158,8 @@ import type * as sniFamilies from "../sniFamilies.js";
 import type * as sniQualifyOps from "../sniQualifyOps.js";
 import type * as sniReports from "../sniReports.js";
 import type * as sniRollouts from "../sniRollouts.js";
+import type * as sniVantage from "../sniVantage.js";
+import type * as sniVantageOps from "../sniVantageOps.js";
 import type * as statusPage from "../statusPage.js";
 import type * as storage from "../storage.js";
 import type * as subscriptions from "../subscriptions.js";
@@ -325,6 +327,8 @@ declare const fullApi: ApiFromModules<{
   sniQualifyOps: typeof sniQualifyOps;
   sniReports: typeof sniReports;
   sniRollouts: typeof sniRollouts;
+  sniVantage: typeof sniVantage;
+  sniVantageOps: typeof sniVantageOps;
   statusPage: typeof statusPage;
   storage: typeof storage;
   subscriptions: typeof subscriptions;

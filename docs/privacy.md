@@ -320,6 +320,14 @@ member reports. Neither adds member data anywhere.
   the deployment. Results (vantage country/ASN, reachable or not) are stored per
   edge. Probes are off by default (`edge.probe.enabled`); tokens for the
   services are write-only settings.
+- **Checks from inside a country** (off by default, opted in per country) ask Globalping or
+  RIPE Atlas to present one server name (a public site's) to one of **FCP's own** member-facing
+  addresses from vantages in that country. The request carries the address, the name and the
+  country, nothing else; no member identifier, subscription, IP or traffic is involved. Stored per
+  measurement: the name, the country, the source, the address dialled and, per vantage, its
+  network and an outcome word, deleted after `edge.sni.vantage.windowDays` (default 14). The
+  vantages are third parties' machines: whoever runs one sees the address and the name
+  (docs/edges.md, "Residual risk").
 - **Report attribution** labels a member's issue report with the origin
   behind their key (the node they were pinned to) and, only when they said which
   connection failed and that maps to exactly one edge, the edge. These are

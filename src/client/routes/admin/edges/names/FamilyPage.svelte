@@ -18,7 +18,9 @@
   import { fetchServerSummary, fetchServerTree } from '@client/lib/serversApi';
   import {
     actOnNames,
+    applyVantage,
     bindFamily,
+    checkNamesFrom,
     familyQuery,
     importNames,
     invalidateSni,
@@ -40,6 +42,10 @@
     nameWords,
     sniErrorWords,
     suspectWords,
+    vantageAppliedWords,
+    vantageLine,
+    vantageRequestedWords,
+    vantageSuggestionWords,
     type Dot,
     type NameFilter,
   } from './lib/words';
@@ -92,6 +98,21 @@
     if (!country) return;
     const names = [...picked];
     if ((await run(() => judgeNames(slug, names, country, state))) !== null) picked = [];
+  }
+
+  // --- checks from inside a country ------------------------------------------------------------
+  let canCheck = $derived(
+    !!family.data?.vantage.enabled && (family.data?.vantage.countries ?? []).includes(country),
+  );
+  async function checkNow() {
+    if (!country) return;
+    const names = [...picked];
+    const r = await run(() => checkNamesFrom(slug, names, country));
+    if (r) toast.success(vantageRequestedWords(r));
+  }
+  async function applyChecks(names: string[], where: string) {
+    const r = await run(() => applyVantage(slug, names, where));
+    if (r) toast.success(vantageAppliedWords(r));
   }
 
   let importText = $state('');
@@ -308,6 +329,25 @@
             >
               Not known
             </Button>
+            {#if family.data.vantage.enabled}
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={busy || !canCheck || picked.length > 6}
+                title={canCheck ? undefined : 'Pick a country turned on for checks'}
+                onclick={checkNow}
+              >
+                Check from there now
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={busy || !country}
+                onclick={() => applyChecks([...picked], country)}
+              >
+                Apply what the checks suggest
+              </Button>
+            {/if}
           </span>
         </div>
       {/if}
@@ -351,8 +391,40 @@
                     {#if n.blockedIn.length > 0}
                       <span class="text-destructive">Blocked in {n.blockedIn.join(', ')}.</span>
                     {/if}
+                    {#if n.probeMarkedIn.length > 0}
+                      <span class="text-muted-foreground">
+                        Set by the checks in {n.probeMarkedIn.join(', ')}.
+                      </span>
+                    {/if}
                   </span>
                 {/if}
+                {#each n.vantage as r (r.country)}
+                  {@const said = vantageSuggestionWords(r)}
+                  <span class="text-muted-foreground mt-1 block">
+                    {vantageLine(r)}
+                    {#if said}
+                      <span
+                        class={r.decision === 'conflict' ||
+                        (r.decision === 'suggest' && r.suggestion === 'blocked')
+                          ? 'text-amber-700 dark:text-amber-400'
+                          : ''}
+                      >
+                        {said}
+                      </span>
+                    {/if}
+                    {#if r.decision === 'suggest' || r.decision === 'conflict'}
+                      <Button
+                        variant="link"
+                        size="sm"
+                        class="h-auto p-0 align-baseline"
+                        disabled={busy}
+                        onclick={() => applyChecks([n.name], r.country)}
+                      >
+                        {r.decision === 'conflict' ? 'Use the checks instead' : 'Apply'}
+                      </Button>
+                    {/if}
+                  </span>
+                {/each}
               </span>
             </li>
           {/each}

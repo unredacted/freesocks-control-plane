@@ -1142,8 +1142,9 @@ list, up to 1000 lines, answered with a verdict per line: `added`, `duplicate`, 
 `POST families/{slug}/names/country`,
 `POST families/{slug}/bind`, `DELETE bindings/{id}`, `POST qualify`,
 `POST bindings/{id}/plan`, `POST bindings/{id}/rollout`, `GET rollouts/{id}`,
-`POST rollouts/{id}/test-link`, `POST receipts/{id}/confirm`. Audit rows
-(`edge.sni.*`) carry slugs and **counts only, never a hostname**.
+`POST rollouts/{id}/test-link`, `POST receipts/{id}/confirm`,
+`POST families/{slug}/vantage` and `POST families/{slug}/vantage/apply` (§ Checks from inside a
+country). Audit rows (`edge.sni.*`) carry slugs and **counts only, never a hostname**.
 
 ### What members' reports say about a name
 
@@ -1168,9 +1169,152 @@ until the operator records it as blocked there. It never retires a name, never p
 works, and never changes what anyone is given. Cron `sni-report-sweep` deletes counts older
 than the window.
 
-Not built: probing each name from inside a country through the outside probe sources. The
-internal probe cannot stand in for it (it is not in the country), and qualification already
-checks every name against its target.
+Reports also feed the checks from inside a country (next section): a name reported there at
+least as much as the suspect floor (3) is checked from there before other names, and a suspect
+is the corroboration a single failing check needs.
+
+### Checks from inside a country (vantage evidence)
+
+Ships dormant: `edge.sni.vantage.enabled` is off and no country is opted in. Off, nothing is
+measured, nothing is suggested and nothing is applied.
+
+**The question.** From inside a curated country, does a TLS handshake that presents name N to
+one of FCP's own member-facing addresses complete, while the same vantages complete it for the
+listener's other names? That isolates the one fact `blockedIn` / `provenIn` record (the censor
+there treats this name differently) from the two it must not be confused with: the address is
+blocked (the block detector's business, § Probes and the block detector) and the target stopped
+serving the name (qualification's). Everything else here follows from keeping those apart.
+
+**Sources** (checked 2026-10-16 against each service's API and probe code):
+
+| Source         | A chosen name against a chosen address, from a country                                                                                                                                                                                                                                                                                                                                                                                                                      | What a vantage reports                                                                                         | Cost and limits                                                                                                                                                                                     |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Globalping     | **Yes.** An `http` measurement, protocol HTTPS, `target` = the address, `request.host` = the name, `HEAD /`. The probe sends the name as SNI and as Host (`servername: request.host`), never rejects a certificate, and reports `tls.authorized` with the reason (`ERR_TLS_CERT_ALTNAME_INVALID`, ...), or a failed test with the connection error. A later measurement can name an earlier one as `locations`, so every name of a batch is tried **from the same probes**. | handshake completed with a certificate valid for the name, completed with a wrong one, reset, timeout, refused | One test per probe result, against the account's hourly limit (`GET /v1/limits`; a token raises the per-address anonymous limit). Only GET / HEAD are allowed; the targets are FCP's own addresses. |
+| RIPE Atlas     | **Yes.** `sslcert` with `target` = the address and `hostname` = the name (SNI), on probes pinned by id (`type: probes`), so a batch uses the same probes. Results carry the presented chain (`cert`, PEM; FCP checks the leaf against the name), a TLS `alert`, or `err`. The probe code does not speak TLS 1.3 (RIPE NCC, 2023): a TLS 1.3-only target answers it with a `protocol_version` alert, which counts as "answered", never as working.                           | chain valid / wrong for the name, alert, connection error                                                      | 10 credits per result, doubled for a one-off (20). A probe host earns 15 credits a minute. API key required (`EDGE_PROBE_RIPEATLAS_KEY`). Created `is_public: false` and one-off.                   |
+| check-host.net | **No.** `check-http` takes one URL, so the address dialled and the name presented cannot differ; `check-tcp` is a bare connect. It stays an address-level source.                                                                                                                                                                                                                                                                                                           |                                                                                                                |                                                                                                                                                                                                     |
+| internal       | **No.** FCP's own host is in no country. Qualification already checks every name against its target from here.                                                                                                                                                                                                                                                                                                                                                              |                                                                                                                |                                                                                                                                                                                                     |
+
+**Vantage-host safety.** The checks run on machines inside censored countries, many of them
+volunteers' home connections. These rules are built in, not settings:
+
+- **Ordinary traffic only.** One TLS handshake (Globalping adds `HEAD /`) presenting a name a
+  large public site really serves (every name qualified against its target first) to an address
+  that country's members already connect to. Nothing names FreeSocks: no FreeSocks hostname,
+  header, path, query or description (Atlas gets a generic description, Globalping sends its own
+  probe user agent). It is the same handshake every member makes.
+- **Only addresses that are already out there.** A published, active L4 edge in front of a
+  REALITY listener, or an origin node whose operator opted it into probing (`probeNode`). Never a
+  standby or candidate edge, never a fronted origin that did not opt in, never an L7 front (its
+  name is the CDN's, not the family's). An address the address-level probes find unreachable
+  from that country is skipped: hammering a blocked address from inside teaches nothing about
+  names.
+- **Low frequency.** A name is checked from a country at most once per
+  `edge.sni.vantage.intervalHours` (default 72), **as a control too**: a control is a check like
+  any other, so a lone due name waits until another name of its address is due (unless the
+  address carries no other name), and the names that waited longest go first. Each 10-minute
+  tick starts at most **one** batch (one address, one country, `batchNames` names, default 3),
+  within `edge.sni.vantage.hourlyBudget` measurements an hour (default 12; one measurement = one
+  name, one source, at most `perCountryLimit` vantages, default 3). Calls to one service inside a
+  batch are spaced by `edge.probe.sourceSpacingMs`.
+- **Opt-in per country.** Nothing runs until the switch is on **and** a curated country is
+  ticked under `edge.sni.vantage.countries`. Unticking a country stops new measurements at once.
+- **Each source's rules.** Globalping: own addresses, HEAD, within the rate limit. Atlas:
+  non-public one-offs within credits. check-host.net is not used. A maintenance freeze stops new
+  measurements like any probe.
+- **Gates are checked again when the measurement runs**, not only when it is planned: a switch
+  turned off, a country or a source taken out, or a freeze in between settles the queued rows
+  (`gate_off`, `gate_country`, `gate_source`, `gate_maintenance`) without dialling anything.
+
+**Residual risk** (accepted by turning a country on; the page says so next to the switch):
+
+- Whoever runs a vantage, which can be the censor, sees the address **and the name**. Globalping
+  probes run the measurement on their host's machine; RIPE Atlas shows a non-public measurement
+  to the hosts of the probes involved, and non-public measurements may not survive (their removal
+  was proposed in 2016 and 2022; a public one can never be made private again). The address
+  is already given to every member and to the address-level probes; the pairing with a popular
+  name is a stronger hint that the address is a REALITY node than a bare connect.
+- The vantage's own network sees a connection shaped like a member's. Where reaching a
+  circumvention address carries risk, the host carries a share of it, once per name every few
+  days.
+- The target site sees one `HEAD /` (Globalping) arriving from the node's address.
+- Evidence is about the **name**, not about a member's client: vantages do not use a member's
+  TLS fingerprint, so a censor blocking by fingerprint and name together is not seen, and Atlas
+  cannot speak TLS 1.3.
+- Evidence is pooled per name and country across addresses. A name on several addresses is
+  checked on each in turn (the one it was checked on longest ago next), and an address that moved
+  is another address; a block that depends on the address as well as the name shows as "mixed"
+  and suggests nothing.
+
+**Evidence.** `sniVantageProbes` holds one row per measurement: name, country, source, the
+batch it belongs to, the target (edge or origin, address and port) and, per vantage, its network
+(ASN) and an **outcome** (`lib/edges/probes/nameCheck.ts`, pure):
+
+| Outcome            | Meaning                                                            | Counts as                      |
+| ------------------ | ------------------------------------------------------------------ | ------------------------------ |
+| `ok`               | the handshake completed with a certificate valid for the name      | works                          |
+| `answered`         | the far end answered (a TLS alert, a response without TLS details) | the path is open; nothing more |
+| `cert_mismatch`    | completed, but with a certificate not valid for the name           | interference                   |
+| `reset`, `timeout` | the handshake did not complete                                     | interference                   |
+| `refused`, `error` | refused before any name was sent, or the probe failed              | nothing                        |
+
+A **batch** is one address, one country and two or more names of that address's listener
+(the due names; a lone due name takes another due name of the address as its **control**),
+measured from the same vantages. The sources of a batch are **one look**: controls pair within a
+source (its vantages), but the newest look is judged with every source together, never by
+whichever finished last. For each failing vantage the scorer asks whether that vantage completed a
+handshake for another name of the batch: from the **same network** = a `singled` failure (the
+path works, this name does not), from another network of the batch = `unpaired` (weaker), no
+control got through at all = a `path` failure (the address is the problem, not the name).
+
+`sniVantageEvidence` keeps one row per (name, country): the aggregates over
+`edge.sni.vantage.windowDays` (default 14; also the rows' retention) of the measurements taken
+while the name was in its **current** family, the newest working check ever (`everOkAt`, kept
+past the window as the transition marker) and the current failing streak. When its oldest
+measurement leaves the window (`oldestAt`) the sweep aggregates it again, so a suggestion never
+outlives what it rests on. Cron `sni-vantage` (10 min) plans, from a starting listener that
+rotates every tick (the scan is bounded and must not always stop on the same prefix), and
+schedules the sweep (timeouts, retention, re-aggregation). Auto-apply runs only once every source
+of a batch has settled.
+
+**Scoring** (`lib/edges/sni/vantage.ts`, pure; `minVantages` 3, `minNetworks` 2):
+
+- **Blocked** is suggested when the newest checks of the name from that country all fail and,
+  over that failing streak: name-specific (`singled` + `unpaired`) failures come from at least
+  `minVantages` vantages on at least `minNetworks` networks; at least one is `singled`; and it is
+  either a **transition** (the name worked from there before), **repeated** (two batches at
+  least an hour apart), or **corroborated by member reports** (`suspectNames` has it in that
+  country). One check of a name that never worked there, with nothing else, waits for the next.
+- **Proven** is suggested when, over the window, `ok` came from at least `minVantages` vantages on
+  at least `minNetworks` networks, the newest checks do not fail, and member reports do not single
+  the name out there (reports and probes disagreeing suggest nothing).
+- Otherwise nothing, with a reason the page words: `no_data`, `not_enough_vantages`,
+  `not_enough_networks`, `not_paired`, `needs_repeat`, `no_control` (every name failed: look at
+  the address), `mixed`, `reports_disagree`.
+
+**What a suggestion may change.** A suggestion never overrides an operator's mark:
+
+| The mark today                          | Suggestion agrees | Suggestion differs                                               |
+| --------------------------------------- | ----------------- | ---------------------------------------------------------------- |
+| none                                    | -                 | shown with **Apply**; applied by itself only with `autoApply` on |
+| set by an operator (`source: operator`) | "agrees"          | shown as a **conflict**; only the operator changes it            |
+| set by checks (`source: probe`)         | "agrees"          | shown with **Apply**; flipped by itself only with `autoApply` on |
+
+**Apply** (`POST sni/families/{slug}/vantage/apply {snis, country}`) records each name's current
+suggestion as the operator's own mark (`source: operator`), through the same path as "Works
+there" / "Blocked there". `edge.sni.vantage.autoApply` (off) writes `source: probe` marks by
+itself, never over an operator's mark, and never a `blocked` that would leave a listener carrying
+the name with no name usable from that country (that one stays a suggestion, counted as `held`).
+`POST sni/families/{slug}/vantage {snis, country}` checks up to six names now (the same gates and
+budget; a name checked from there within the last hour is skipped; a spent budget answers 429).
+Audit rows: `edge.sni.vantage.request`, `edge.sni.vantage.batch`, `edge.sni.vantage.apply`,
+`edge.sni.vantage.auto_apply`, with slugs, the country, the source and counts, never a hostname
+or an address.
+
+**How it meets the report hint.** Member reports and checks are separate evidence and stay
+separate on the page: the report line ("members in IR report this name more than the others")
+and the checks line ("From IR: failed from 3 vantages on 2 networks while other names got
+through"). Reports pick which names are checked first, corroborate a single failing check, and
+veto "proven"; checks never create a report suspect.
 
 ### The page
 
@@ -1183,6 +1327,13 @@ Admin -> Edges -> Advanced -> Server names (`/admin/edges/names`, `/admin/edges/
   add names (the answer says what happened to every kind of line), filter and pick names, then
   check again, retire, bring back, burn (typed), or record for a curated country that they work
   or are blocked there.
+- Checks from inside countries (the list page): the switch for `edge.sni.vantage.enabled`, a
+  box per curated country, the services, "Apply suggestions by themselves", the budget in one
+  line, and the residual risk next to the switch. On a family, every name shows one line per
+  country it was checked from (what the checks saw, then what they suggest against the mark
+  standing today) with **Apply** (or "Use the checks instead" on a conflict); picked names can be
+  checked from an opted-in country now, or have the checks' suggestions applied. A block
+  suggestion or a conflict also puts the name under "Problems".
 - A bound transport: "See what would be written" shows the plan in words, including whether one
   test per node will prove the whole list (a witness) or each name needs its own; "Write to the
   backend" starts the rollout; once the backend has it, each node lists how many names it has proven
@@ -1191,7 +1342,8 @@ Admin -> Edges -> Advanced -> Server names (`/admin/edges/names`, `/admin/edges/
   stand in for that test.
 
 The three facts stay separate in the copy: the target serves a name (checked), a node accepts
-it (tested), it works from a country (judged). Wording is in
+it (tested), it works from a country (judged; the checks from inside a country only ever
+suggest). Wording is in
 `src/client/routes/admin/edges/names/lib/words.ts`; tests pin that every `edge.sni.*` refusal
 and every check code the server can record has its own sentence.
 
@@ -1245,6 +1397,28 @@ defaults to false (§ Operations safety). The one-call
 `POST automation {on}` (§ Operator endpoints) flips the four automation switches together and
 sets `standbyPerListener` to 1 when turning on; `render.enabled` and `l7.autoSelect` stay
 manual.
+
+Server-name settings are `edge.sni.*` (`GET/PATCH /api/v1/admin/edges/sni/config`, defaults and
+bounds in `convex/lib/sniConfig.ts`). The checks from inside a country are a nested `vantage`
+block in that body, read by their own resolver so the render path never reads them:
+
+| Key (`edge.sni.vantage.*`)                | Default         | Bounds       | Meaning                                                                                   |
+| ----------------------------------------- | --------------- | ------------ | ----------------------------------------------------------------------------------------- |
+| `enabled`                                 | `false`         |              | the switch (needs `edge.sni.enabled` too)                                                 |
+| `countries`                               | `[]`            | curated      | the opt-in per country; a country that is not curated is ignored                          |
+| `sources.globalping`, `sources.ripeatlas` | `true`, `false` |              | services; Atlas also needs `edge.secret.probe.ripeatlas.key` / `EDGE_PROBE_RIPEATLAS_KEY` |
+| `intervalHours`                           | 72              | 6..720       | a name is checked from a country again after this long                                    |
+| `hourlyBudget`                            | 12              | 0..120       | measurements an hour (one name, one source, one country)                                  |
+| `perCountryLimit`                         | 3               | 1..5         | vantages per measurement                                                                  |
+| `batchNames`                              | 3               | 2..6         | names per batch, the control included                                                     |
+| `windowDays`                              | 14              | 1..60        | the scoring window, and the measurement rows' retention                                   |
+| `minVantages`, `minNetworks`              | 3, 2            | 1..20, 1..10 | what a suggestion needs                                                                   |
+| `autoApply`                               | `false`         |              | apply suggestions by themselves (never over an operator's mark)                           |
+
+At the defaults one source spends at most 12 measurements an hour (36 vantage results); a
+family of 40 names in four countries is covered in about 14 hours and then every 72 (a name on several addresses takes one of them per interval); a family
+of 500 is covered about once a week unless the budget is raised. Globalping tests count against
+the same account limit as the address-level probes.
 
 ## Sealing
 
@@ -1552,6 +1726,16 @@ lifecycle runs in that test and its rows appear here.
 | fastly     | GET    | `^/current_customer$`                                                             | credential test: the pricing plan (informational)                                                                 | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
 
 ## Deploy notes
+
+**Checks from inside a country** (vantage evidence) add two tables (`sniVantageProbes`,
+`sniVantageEvidence`), an index on the existing `sniReportCounts` (`by_country_day`, built by
+the backend on push; the family page now reads reports per country with it), cron
+`sni-vantage` (10 min) and `edge.sni.vantage.*` settings. Everything
+is additive and dormant: with `edge.sni.vantage.enabled` off and no country ticked the cron only
+sweeps (nothing to sweep). No migration, no env change (the probe credentials are the existing
+`EDGE_PROBE_GLOBALPING_TOKEN` / `EDGE_PROBE_RIPEATLAS_KEY`), and `sniNameCountry.source:
+'probe'` was already in the schema. Turning it on is an operator decision per country (§ Checks
+from inside a country, "Residual risk").
 
 The `"use node"` actions (provider SDKs, probes, the front qualification) run on the Node
 version baked into the self-hosted Convex backend image. The L7 adapters add `cloudflare` (the
