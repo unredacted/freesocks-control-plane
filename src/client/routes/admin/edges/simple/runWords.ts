@@ -113,7 +113,7 @@ export function needButtons(code: string): NeedButtons {
       return { primary: B('Resume new work', 'thaw') };
     case 'too_many_inbounds':
     case 'use_manual_setup':
-      return { primary: B('Use manual setup', 'manual_setup') };
+      return { primary: B('Open its origin', 'manual_setup') };
     case 'choose_mode':
       return { primary: B('Choose connection mode', 'choose_mode') };
     case 'provider_failed':

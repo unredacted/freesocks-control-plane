@@ -171,8 +171,12 @@ describe('attention', () => {
   });
   it('links an enrolled node to the protect sheet or to its Servers page', () => {
     const facts = { serverSlug: 'panel-a', nodeUuid: 'uuid-1', node: 'node-one' };
-    expect(attentionTarget(item({ action: 'protect_node', facts }))).toBe(
+    expect(attentionTarget(item({ action: 'protect_node', relaySlug: null, facts }))).toBe(
       '/admin/edges?protect=1&server=panel-a&node=uuid-1',
+    );
+    // An origin already covers it: Protect again lives on its node page.
+    expect(attentionTarget(item({ action: 'protect_node', facts }))).toBe(
+      '/admin/edges/nodes/relay-a',
     );
     expect(attentionTarget(item({ action: 'open_node', facts }))).toBe(
       '/admin/servers/nodes/uuid-1?instance=panel-a',
@@ -180,9 +184,7 @@ describe('attention', () => {
     expect(attentionTarget(item({ action: 'open_node', facts: {} }))).toBe('/admin/servers');
   });
   it('routes the navigation actions as documented', () => {
-    expect(attentionTarget(item({ action: 'open_setup' }))).toBe(
-      '/admin/edges/setup?relay=relay-a',
-    );
+    expect(attentionTarget(item({ action: 'open_setup' }))).toBe('/admin/edges/relays/relay-a');
     expect(attentionTarget(item({ action: 'resolve_quarantine', rotationId: 'rot1' }))).toBe(
       '/admin/edges/relays/relay-a?tab=rotations&rotation=rot1',
     );

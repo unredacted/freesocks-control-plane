@@ -1,8 +1,10 @@
 <script lang="ts">
   /**
-   * The guided setup as a checklist: each step with its status, its blockers and
-   * warnings in words, and a link into the wizard at that step. In fleet scope it
-   * also lists the origins whose setup can be resumed.
+   * The readiness of an origin (or the fleet) as a checklist: each step with
+   * its status, its blockers and warnings in words, and a link to where that
+   * step is done (`setupStepTarget`: the origin's own page, Providers,
+   * Templates or Settings). In fleet scope it also lists the origins that are
+   * not ready yet.
    *
    * Props:
    *   status: SetupStatusResponse           from setupStatusQuery (origin or fleet scope)
@@ -17,7 +19,7 @@
   import { SETUP_STEP_HINTS, SETUP_STEP_TITLES } from '@client/lib/edgeCodes';
   import StatusBadge from './StatusBadge.svelte';
   import CodeNote from './CodeNote.svelte';
-  import { edgesPaths } from '../lib/routes';
+  import { setupStepTarget } from '../lib/routes';
 
   interface Props {
     status: SetupStatusResponse;
@@ -49,10 +51,8 @@
         {/if}
       {/if}
     </p>
-    {#if !status.complete}
-      <Link href={edgesPaths.setup({ relay: slug, step: status.currentStep })} class={LINK}>
-        {slug ? 'Resume setup' : 'Start setup'}
-      </Link>
+    {#if !status.complete && status.currentStep}
+      <Link href={setupStepTarget(status.currentStep, slug)} class={LINK}>Do the next step</Link>
     {/if}
   </div>
 
@@ -79,7 +79,7 @@
           <StatusBadge kind="setup" value={step.status} />
           {#if open}
             <Link
-              href={edgesPaths.setup({ relay: slug, step: step.id })}
+              href={setupStepTarget(step.id, slug)}
               class={LINK}
               aria-label={`${step.status === 'ready' ? 'Continue' : 'Open'} step ${i + 1}, ${SETUP_STEP_TITLES[step.id]}`}
             >
@@ -103,7 +103,7 @@
 
   {#if showResume && status.scope === 'fleet' && resumable.length > 0}
     <div>
-      <h3 class="mb-1.5 text-sm font-semibold">Origins with unfinished setup</h3>
+      <h3 class="mb-1.5 text-sm font-semibold">Origins not ready yet</h3>
       <ul class="space-y-1">
         {#each resumable as r (r.relayId)}
           <li class="flex flex-wrap items-center justify-between gap-2 text-sm">
@@ -116,11 +116,11 @@
               {/if}
             </span>
             <Link
-              href={edgesPaths.setup({ relay: r.relaySlug, step: r.currentStep })}
+              href={setupStepTarget(r.currentStep ?? 'origin', r.relaySlug)}
               class={LINK}
-              aria-label={`Resume setup of relay ${r.relaySlug}`}
+              aria-label={`Open origin ${r.relaySlug}`}
             >
-              Resume setup
+              Open
             </Link>
           </li>
         {/each}

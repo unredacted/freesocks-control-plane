@@ -36,7 +36,6 @@
   import ShieldCheck from '@lucide/svelte/icons/shield-check';
   import Cloud from '@lucide/svelte/icons/cloud';
   import Smartphone from '@lucide/svelte/icons/smartphone';
-  import Waypoints from '@lucide/svelte/icons/waypoints';
   import GitBranch from '@lucide/svelte/icons/git-branch';
   import HeartPulse from '@lucide/svelte/icons/heart-pulse';
   import LogOut from '@lucide/svelte/icons/log-out';
@@ -68,9 +67,9 @@
 
   // Nav items are either a leaf link ({ to, label, icon }) or a collapsible group
   // ({ group, icon, children: [...] }). Everything that configures the fleet
-  // (backend servers, connection modes, Remnawave, Edges, storage mirrors, the
-  // status page) lives under one "Servers" group; the router is unaffected
-  // (children keep their flat paths).
+  // lives under one "Servers" group of five leaves: Servers (its own tabs:
+  // Backends, Nodes, Mode pools), Connection modes, Edges, Storage mirrors and
+  // the status page; the router is unaffected (children keep their flat paths).
   // A leaf is active on its own path and on any sub-path (`/admin/edges/providers/<id>`
   // keeps Edges lit); `exact` opts out for a leaf whose path is a prefix of a sibling.
   type NavLeaf = { to: string; label: string; icon: LucideIcon; exact?: boolean };
@@ -85,11 +84,11 @@
       group: 'Servers',
       icon: Server,
       children: [
-        { to: '/admin/backend-servers', label: 'Backend servers', icon: Server },
-        // What is on a backend right now (read-only): nodes, transports, Hosts, mode groups.
-        { to: '/admin/servers', label: 'Nodes and transports', icon: ListTree },
+        // One leaf for backends, their nodes (each node's own page: machine,
+        // activation, edges) and the mode pools: tabs inside the section, so
+        // every `/admin/servers/*` path keeps this leaf lit.
+        { to: '/admin/servers', label: 'Servers', icon: ListTree },
         { to: '/admin/connection-modes', label: 'Connection modes', icon: GitBranch },
-        { to: '/admin/remnawave', label: 'Remnawave', icon: Waypoints },
         // One leaf for the whole Edges section: its own pages (providers,
         // templates, probes, settings, setup, origin and node pages) are reached
         // from the section's in-page header, so every `/admin/edges/*` path

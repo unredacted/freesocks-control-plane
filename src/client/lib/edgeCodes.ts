@@ -1026,9 +1026,9 @@ const REFUSAL_COPY = {
     fix: 'Check the listener names and the address, then fetch the test link again.',
   },
   use_manual_setup: {
-    label: 'Use manual setup',
+    label: 'Set up by hand',
     explain: 'Outline servers with no members have no test credential path.',
-    fix: 'Use the manual setup for this server, or rehearse once it has members.',
+    fix: 'Give its origin a first edge on its Origin details page, or protect it once it has members.',
   },
   choose_mode: {
     label: 'Choose a connection mode',
@@ -1431,9 +1431,9 @@ export const SETUP_RUN_NEED_COPY: Record<SetupRunNeed, CodeCopy> = {
     fix: 'Pick the ones to protect.',
   },
   use_manual_setup: {
-    label: 'Manual setup needed',
+    label: 'Set up by hand',
     explain: 'Outline servers with no members are outside the guided setup.',
-    fix: 'Use manual setup.',
+    fix: 'Open its origin and give it a first edge there.',
   },
   choose_mode: {
     label: 'Connection mode needed',

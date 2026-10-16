@@ -1,10 +1,14 @@
 <script lang="ts">
   /**
    * Import an existing front (a load balancer or a CDN hostname that already
-   * forwards to this origin) as an edge. From a provider account's inventory the
-   * edge is managed; entered by address it is observe-only (never destroyed).
+   * forwards to this origin) as an edge: the ONE import form (the guided
+   * wizard's own copy of it is gone). From a provider account's inventory the
+   * edge is managed (the inventory can be refreshed in place; a resource that
+   * is already an edge cannot be picked); entered by address it is
+   * observe-only (never destroyed). What is missing is said in words on submit.
    *
-   * Props: open (bindable); origin; listeners; accounts; onImported(edgeId)
+   * Props: open (bindable); relay; listeners; accounts; listenerKey? (preselect);
+   *        onImported(edgeId)
    */
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -22,23 +26,36 @@
   import InlineError from '@client/components/InlineError.svelte';
   import {
     adoptRelayEdge,
+    edgeKeys,
     invalidateProviders,
     invalidateRelay,
     providerInventoryQuery,
+    refreshProviderInventory,
     type AdoptEdgeBody,
   } from '@client/lib/edgesApi';
   import { codeFix, codeLabel } from '@client/lib/edgeCodes';
+  import { addressLine } from '@client/lib/edgeProviderMeta';
   import { protocolLine, providerLabel } from '../lib/format';
   import { edgeErrorMessage } from '../lib/edgeErrors';
+  import { relativeTime } from '../lib/time';
+  import { addressIssue } from '../forms/origin';
 
   interface Props {
     open: boolean;
     relay: OriginAdmin;
     listeners: RelayListenerAdmin[];
     accounts: EdgeProviderAccountAdmin[];
+    listenerKey?: string | null;
     onImported: (edgeId: string) => void;
   }
-  let { open = $bindable(false), relay, listeners, accounts, onImported }: Props = $props();
+  let {
+    open = $bindable(false),
+    relay,
+    listeners,
+    accounts,
+    listenerKey = null,
+    onImported,
+  }: Props = $props();
 
   const qc = useQueryClient();
   const usable = $derived(listeners.filter((l) => !l.retired));
@@ -51,12 +68,16 @@
   let ipv4 = $state('');
   let port = $state('');
   let publish = $state(false);
+  let tried = $state(false);
 
   let seeded = false;
   $effect(() => {
     if (open && !seeded) {
       seeded = true;
-      listenerId = usable.length === 1 ? usable[0]!.id : '';
+      listenerId =
+        usable.find((l) => l.listenerKey === listenerKey)?.id ??
+        (usable.length === 1 ? usable[0]!.id : '');
+      tried = false;
       source = accounts.length > 0 ? 'account' : 'address';
       accountId = '';
       resourceId = '';
@@ -92,13 +113,34 @@
     portNumber === undefined ||
       (Number.isInteger(portNumber) && portNumber >= 1 && portNumber <= 65535),
   );
-  const valid = $derived(
-    !!listener &&
-      portOk &&
-      (source === 'account'
-        ? !!accountId && !!resourceId
-        : hostname.trim() !== '' || ipv4.trim() !== ''),
-  );
+  // What keeps the import from being sent, in words (shown once Import was pressed).
+  const issues = $derived.by(() => {
+    const out: string[] = [];
+    if (!listener) out.push('Choose the listener this front forwards to.');
+    if (source === 'account') {
+      if (!accountId) out.push('Choose the account the resource lives in.');
+      else if (!resourceId) out.push('Choose the resource.');
+    } else if (hostname.trim() === '' && ipv4.trim() === '') {
+      out.push('Give the hostname of a CDN front or the IPv4 address of a load balancer.');
+    }
+    if (ipv4.trim() !== '') {
+      const problem = addressIssue(ipv4);
+      if (problem) out.push(problem);
+    }
+    if (!portOk) out.push('The port is a number between 1 and 65535.');
+    return out;
+  });
+  const valid = $derived(issues.length === 0);
+
+  const refresh = createMutation(() => ({
+    mutationFn: () => refreshProviderInventory(accountId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: edgeKeys.providerInventory(accountId) });
+      toast.success('Inventory refreshed');
+    },
+    onError: (err: unknown) =>
+      toast.error('Could not refresh the inventory', { description: edgeErrorMessage(err) }),
+  }));
 
   const save = createMutation(() => ({
     mutationFn: () => {
@@ -144,8 +186,10 @@
     </Dialog.Header>
     <form
       class="space-y-4"
+      novalidate
       onsubmit={(e) => {
         e.preventDefault();
+        tried = true;
         if (valid) save.mutate();
       }}
     >
@@ -237,7 +281,19 @@
             </Select.Root>
           </div>
           <div class="space-y-1.5">
-            <Label>Resource</Label>
+            <div class="flex items-end justify-between gap-2">
+              <Label>Resource</Label>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                class="min-h-11 sm:min-h-0"
+                disabled={!accountId || refresh.isPending}
+                onclick={() => refresh.mutate()}
+              >
+                {refresh.isPending ? 'Refreshing' : 'Refresh'}
+              </Button>
+            </div>
             <Select.Root
               type="single"
               value={resourceId}
@@ -257,16 +313,25 @@
               </Select.Trigger>
               <Select.Content>
                 {#each resources as r (r.id)}
-                  <Select.Item value={r.id}>
-                    {r.name}{r.unowned ? ' (not used by any edge)' : ' (already an edge)'}
+                  <Select.Item value={r.id} disabled={r.unowned === false}>
+                    {r.name}
+                    <span class="text-muted-foreground font-mono text-xs">
+                      {addressLine(r.addresses)}
+                    </span>
+                    {#if r.unowned === false}
+                      <span class="text-muted-foreground text-xs">already an edge</span>
+                    {/if}
                   </Select.Item>
                 {/each}
               </Select.Content>
             </Select.Root>
             {#if accountId && !inventoryQ.isPending && resources.length === 0}
               <p class="text-xs text-muted-foreground">
-                The last inventory of this account is empty. Refresh it on the account's page under
-                Providers, then come back.
+                The last inventory of this account is empty. Refresh it to read the account again.
+              </p>
+            {:else if inventoryQ.data?.inventoryAt}
+              <p class="text-xs text-muted-foreground">
+                Listed {relativeTime(inventoryQ.data.inventoryAt)}.
               </p>
             {/if}
           </div>
@@ -322,12 +387,17 @@
         </div>
       </div>
 
+      {#if tried && issues.length > 0}
+        <ul class="text-destructive list-disc space-y-0.5 ps-5 text-sm" role="alert">
+          {#each issues as i (i)}<li>{i}</li>{/each}
+        </ul>
+      {/if}
       {#if save.error}
         <InlineError message={edgeErrorMessage(save.error)} />
       {/if}
       <Dialog.Footer>
         <Button type="button" variant="outline" onclick={() => (open = false)}>Cancel</Button>
-        <Button type="submit" disabled={!valid || save.isPending}>
+        <Button type="submit" disabled={save.isPending}>
           {save.isPending ? 'Importing…' : 'Import'}
         </Button>
       </Dialog.Footer>

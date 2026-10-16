@@ -236,6 +236,7 @@ export const serverKeys = {
   ops: (slug: string) => [...ROOT, 'ops', slug] as const,
   setup: (slug: string) => [...ROOT, 'setup', slug] as const,
   intents: (slug: string) => [...ROOT, 'intents', slug] as const,
+  placements: (slug: string) => [...ROOT, 'placements', slug] as const,
   review: (slug: string, id: string) => [...ROOT, 'review', slug, id] as const,
   portChanges: (slug: string) => [...ROOT, 'portChanges', slug] as const,
 };
@@ -282,6 +283,15 @@ export const reviewQuery = (slug: () => string | null, id: () => string | null) 
     enabled: !!slug() && !!id(),
     staleTime: 5_000,
     refetchInterval: 10_000,
+  }));
+
+/** The mode pools checked against this backend's mode groups (counts and names only); read when `enabled`. */
+export const placementCheckQuery = (slug: () => string | null, enabled: () => boolean) =>
+  createQuery(() => ({
+    queryKey: serverKeys.placements(slug() ?? ''),
+    queryFn: () => validatePlacements(slug()!),
+    enabled: !!slug() && enabled(),
+    staleTime: 30_000,
   }));
 
 export const serverSummaryQuery = () =>

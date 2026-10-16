@@ -199,7 +199,8 @@
           await retrySetupRun(runId, {});
         });
       case 'manual_setup':
-        router.navigate(edgesPaths.setup({ relay: run?.relaySlug ?? null }));
+        // Its origin's page: the first-edge card does it by hand.
+        router.navigate(run?.relaySlug ? edgesPaths.relay(run.relaySlug) : edgesPaths.overview());
         return;
       case 'choose_mode':
         choosingMode = true;

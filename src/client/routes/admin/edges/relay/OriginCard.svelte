@@ -6,6 +6,7 @@
    *
    * Props: origin; listeners; connectionPlan
    */
+  import { serversPaths } from '../../servers/lib/routes';
   import type { z } from 'zod';
   import type {
     OriginAdmin,
@@ -128,11 +129,8 @@
     >
     {#if backendServerId}
       <Card.Action>
-        <Link
-          href="/admin/backend-servers"
-          class="text-sm font-medium text-primary hover:underline"
-        >
-          Backend servers
+        <Link href={serversPaths.backends()} class="text-sm font-medium text-primary hover:underline">
+          Backends
         </Link>
       </Card.Action>
     {/if}

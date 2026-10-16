@@ -1,12 +1,16 @@
 <script lang="ts">
   /**
-   * One origin (`/admin/edges/origins/:slug`). URL state: `?tab`
-   * overview|edges|listeners|rotations|probes, `?edge` (edge drawer), `?rotation`
-   * (rotation drawer), `?listener` (the listener card to scroll to / edit).
+   * Origin details (`/admin/edges/relays/:slug`, under Advanced): one origin's
+   * technical page. URL state: `?tab` overview|edges|listeners|rotations|probes,
+   * `?edge` (edge drawer), `?rotation` (rotation drawer), `?listener` (the
+   * listener card to scroll to / edit). A backend node's day-to-day page is
+   * its Servers node page; this is where every knob is.
    *
    * The page resolves the slug to the origin (id) once and hands the origin, its
-   * listeners, its edges and the provider accounts to the tabs in `origin/`.
-   * Both drawers live here so every tab can open them through the URL.
+   * listeners, its edges and the provider accounts to the tabs in `relay/`.
+   * Both drawers live here so every tab can open them through the URL. An
+   * origin that is not a backend node and has no edge yet shows the
+   * first-edge card (FirstEdgeCard) above the tabs.
    */
   import { ApiCallError } from '@client/lib/api';
   import { Badge } from '@client/components/ui/badge';
@@ -37,9 +41,10 @@
   import RotationsTab from './relay/RotationsTab.svelte';
   import ProbesTab from './relay/ProbesTab.svelte';
   import EdgeActionsMenu from './relay/EdgeActionsMenu.svelte';
+  import FirstEdgeCard from './relay/FirstEdgeCard.svelte';
 
   interface Props {
-    /** The origin slug from the route (`/admin/edges/origins/:slug`). */
+    /** The origin slug from the route (`/admin/edges/relays/:slug`). */
     slug: string;
   }
   let { slug }: Props = $props();
@@ -90,6 +95,14 @@
   );
   const chip = $derived(suspicionChip(relay?.suspicion));
 
+  // A manual or whole-server origin with no edge yet: its first edge is given here.
+  const needsFirstEdge = $derived(
+    !!relay &&
+      relay.origin.kind !== 'panel-node' &&
+      !relay.deleting &&
+      !edgesQ.isPending &&
+      edges.every((e) => e.status === 'destroyed'),
+  );
   const openEdge = (edgeId: string): void => setSearchParams({ edge: edgeId, rotation: null });
   const openRotation = (rotationId: string): void =>
     setSearchParams({ rotation: rotationId, edge: null });
@@ -97,37 +110,31 @@
 
 {#if notFound}
   <SectionHeader
-    title="Relay not found"
-    back={{ href: edgesPaths.overview(), label: 'All relays' }}
+    title="Origin not found"
+    back={{ href: edgesPaths.overview(), label: 'All origins' }}
   />
   <Card.Root>
     <Card.Header>
-      <Card.Title>There is no relay called "{slug}"</Card.Title>
+      <Card.Title>There is no origin called "{slug}"</Card.Title>
       <Card.Description>
-        It may have been deleted, or the address was mistyped. The overview lists every origin, and
-        the guided setup registers a new one.
+        It may have been deleted, or the address was mistyped. All origins lists every origin, and
+        New origin there adds one.
       </Card.Description>
     </Card.Header>
     <Card.Content class="flex flex-wrap gap-4 text-sm">
       <Link href={edgesPaths.overview()} class="font-medium text-primary hover:underline">
         Go to all origins
       </Link>
-      <Link href={edgesPaths.setup()} class="font-medium text-primary hover:underline">
-        Start the guided setup
+      <Link href={edgesPaths.overview({ new: '1' })} class="font-medium text-primary hover:underline">
+        New origin
       </Link>
     </Card.Content>
   </Card.Root>
 {:else if relayQ.error && !relay}
-  <SectionHeader
-    title={`Relay ${slug}`}
-    back={{ href: edgesPaths.overview(), label: 'All relays' }}
-  />
+  <SectionHeader title={`Origin ${slug}`} back={{ href: edgesPaths.overview(), label: 'All origins' }} />
   <AdminListState error={relayQ.error} onRetry={() => void relayQ.refetch()} />
 {:else if !relay}
-  <SectionHeader
-    title={`Relay ${slug}`}
-    back={{ href: edgesPaths.overview(), label: 'All relays' }}
-  />
+  <SectionHeader title={`Origin ${slug}`} back={{ href: edgesPaths.overview(), label: 'All origins' }} />
   <div class="space-y-3">
     <Skeleton class="h-9 w-80" />
     <Skeleton class="h-40 w-full" />
@@ -136,8 +143,8 @@
 {:else}
   <SectionHeader
     title={relay.label ? `${relay.label} (${relay.slug})` : `Origin ${relay.slug}`}
-    description="One origin behind edges: its pool, its listeners, its rotations and how reachable it is."
-    back={{ href: edgesPaths.overview(), label: 'All relays' }}
+    description="Origin details: its pool, its listeners, its rotations and how reachable it is."
+    back={{ href: edgesPaths.overview(), label: 'All origins' }}
   >
     {#snippet badges()}
       <StatusBadge
@@ -167,6 +174,18 @@
       />
     {/snippet}
   </SectionHeader>
+
+  {#if needsFirstEdge}
+    <div class="mb-6">
+      <FirstEdgeCard
+        {relay}
+        {listeners}
+        {accounts}
+        onStarted={openRotation}
+        onImported={openEdge}
+      />
+    </div>
+  {/if}
 
   <Tabs.Root value={tab} onValueChange={(v) => (tabParam.value = v)}>
     <Tabs.List>

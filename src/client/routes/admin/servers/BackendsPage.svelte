@@ -1,21 +1,29 @@
 <script lang="ts">
+  /**
+   * Servers -> Backends (`/admin/servers/backends`): the backend servers FCP
+   * issues keys on (add, edit, remove), each with a link to its nodes, and the
+   * node logging privacy check for every Remnawave config profile.
+   */
   import type { z } from 'zod';
-  import AdminLayout from './AdminLayout.svelte';
-  import BackendServerEditor from './BackendServerEditor.svelte';
+  import BackendServerEditor from '../BackendServerEditor.svelte';
   import { Card, CardHeader, CardTitle, CardContent } from '@client/components/ui/card';
   import { Skeleton } from '@client/components/ui/skeleton';
   import { Button } from '@client/components/ui/button';
   import * as AlertDialog from '@client/components/ui/alert-dialog';
-  import { apiClient } from '../../lib/api';
-  import { apiErrorMessage } from '../../lib/errors';
-  import { ADMIN_BACKEND_LABELS } from '../../lib/backendLabels';
-  import AdminListState from './AdminListState.svelte';
-  import { adminBackendServersQuery, queryKeys } from '../../lib/queries';
+  import Link from '@client/components/Link.svelte';
+  import { apiClient } from '@client/lib/api';
+  import { apiErrorMessage } from '@client/lib/errors';
+  import { ADMIN_BACKEND_LABELS } from '@client/lib/backendLabels';
+  import AdminListState from '../AdminListState.svelte';
+  import { adminBackendServersQuery, queryKeys } from '@client/lib/queries';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
-  import { BackendServerAdmin } from '../../../shared/contracts/admin';
+  import { BackendServerAdmin } from '@shared/contracts/admin';
   import { toast } from 'svelte-sonner';
   import Plus from '@lucide/svelte/icons/plus';
   import { z as zod } from 'zod';
+  import SectionHeader from '../edges/components/SectionHeader.svelte';
+  import LoggingPrivacyCard from './components/LoggingPrivacyCard.svelte';
+  import { serversPaths } from './lib/routes';
 
   type Server = z.infer<typeof BackendServerAdmin>;
   const servers = adminBackendServersQuery();
@@ -57,20 +65,19 @@
   }
 </script>
 
-<AdminLayout>
-  <div class="flex items-center justify-between mb-6">
-    <div>
-      <h1 class="text-2xl font-bold">Backend servers</h1>
-      <p class="text-sm text-muted-foreground mt-1">
-        Proxy backend instances used to issue keys. Each tier issues against its backend type; the
-        pool picks the best-scored active instance of that type.
-      </p>
-    </div>
+<SectionHeader
+  title="Backends"
+  description="The backend servers keys are issued on. Each tier issues on its backend type, and the best-scored active server of that type is picked."
+>
+  {#snippet actions()}
     <Button onclick={() => (creating = true)}>
-      <Plus class="size-4" />
-      Add instance
+      <Plus class="size-4" aria-hidden="true" />
+      Add a backend
     </Button>
-  </div>
+  {/snippet}
+</SectionHeader>
+
+<div class="space-y-8">
 
   {#if servers.isPending}
     <div class="space-y-3">
@@ -155,11 +162,19 @@
                 >
               {/if}
             </div>
-            <div class="flex flex-wrap gap-2 pt-2">
+            <div class="flex flex-wrap items-center gap-2 pt-2">
               <Button size="sm" variant="outline" onclick={() => (editing = s)}>Edit</Button>
               <Button size="sm" variant="destructive" onclick={() => (pendingDelete = s)}>
                 Remove
               </Button>
+              {#if s.config.type === 'remnawave'}
+                <Link
+                  href={serversPaths.home({ instance: s.slug })}
+                  class="text-primary inline-flex min-h-11 items-center px-2 text-sm underline underline-offset-4 sm:min-h-0"
+                >
+                  Its nodes
+                </Link>
+              {/if}
             </div>
           </CardContent>
         </Card>
@@ -167,47 +182,49 @@
     </div>
   {/if}
 
-  {#if creating}
-    <BackendServerEditor
-      onClose={() => (creating = false)}
-      onSaved={() => {
-        creating = false;
-        void qc.invalidateQueries({ queryKey: queryKeys.adminBackendServers });
-      }}
-    />
-  {/if}
-  {#if editing}
-    <BackendServerEditor
-      server={editing}
-      onClose={() => (editing = null)}
-      onSaved={() => {
-        editing = null;
-        void qc.invalidateQueries({ queryKey: queryKeys.adminBackendServers });
-      }}
-    />
-  {/if}
+  <LoggingPrivacyCard />
+</div>
 
-  <AlertDialog.Root
-    open={!!pendingDelete}
-    onOpenChange={(o) => (o ? null : (pendingDelete = null))}
-  >
-    <AlertDialog.Content>
-      <AlertDialog.Header>
-        <AlertDialog.Title>Remove "{pendingDelete?.name}"?</AlertDialog.Title>
-        <AlertDialog.Description>
-          De-registers the instance from the pool. Existing keys on it keep working server-side but
-          will fail on next regenerate. Migrate users off first for a clean shutdown.
-        </AlertDialog.Description>
-      </AlertDialog.Header>
-      <AlertDialog.Footer>
-        <AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
-        <AlertDialog.Action
-          onclick={() => pendingDelete && remove.mutate(pendingDelete.id)}
-          disabled={remove.isPending}
-        >
-          {remove.isPending ? 'Removing…' : 'Remove'}
-        </AlertDialog.Action>
-      </AlertDialog.Footer>
-    </AlertDialog.Content>
-  </AlertDialog.Root>
-</AdminLayout>
+{#if creating}
+  <BackendServerEditor
+    onClose={() => (creating = false)}
+    onSaved={() => {
+      creating = false;
+      void qc.invalidateQueries({ queryKey: queryKeys.adminBackendServers });
+    }}
+  />
+{/if}
+{#if editing}
+  <BackendServerEditor
+    server={editing}
+    onClose={() => (editing = null)}
+    onSaved={() => {
+      editing = null;
+      void qc.invalidateQueries({ queryKey: queryKeys.adminBackendServers });
+    }}
+  />
+{/if}
+
+<AlertDialog.Root
+  open={!!pendingDelete}
+  onOpenChange={(o) => (o ? null : (pendingDelete = null))}
+>
+  <AlertDialog.Content>
+    <AlertDialog.Header>
+      <AlertDialog.Title>Remove "{pendingDelete?.name}"?</AlertDialog.Title>
+      <AlertDialog.Description>
+        De-registers the instance from the pool. Existing keys on it keep working server-side but
+        will fail on next regenerate. Migrate users off first for a clean shutdown.
+      </AlertDialog.Description>
+    </AlertDialog.Header>
+    <AlertDialog.Footer>
+      <AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
+      <AlertDialog.Action
+        onclick={() => pendingDelete && remove.mutate(pendingDelete.id)}
+        disabled={remove.isPending}
+      >
+        {remove.isPending ? 'Removing…' : 'Remove'}
+      </AlertDialog.Action>
+    </AlertDialog.Footer>
+  </AlertDialog.Content>
+</AlertDialog.Root>

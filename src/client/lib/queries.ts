@@ -584,7 +584,7 @@ export const appSettingsQuery = () =>
 
 /**
  * Registered backend instances (Remnawave, Outline, ...). Used by
- * AdminBackendServers.svelte for CRUD.
+ * Servers -> Backends (routes/admin/servers/BackendsPage.svelte) for CRUD.
  */
 const BackendServersListResponse = z.object({ servers: z.array(BackendServerAdmin) });
 export const adminBackendServersQuery = () =>
