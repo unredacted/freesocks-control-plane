@@ -2463,16 +2463,23 @@ export const resume = internalMutation({
  * Cancel: before stage 5 nothing was published, so the origin is deleted
  * `restore-direct` (which cancels the live rotation, drains the standbys for
  * the reconcile destroy and lets the origin delete remove the credential);
- * stages 5-7 keep the published edges and run the restore workflow
- * (`edgeRestore.start`, purpose `cancel_setup`); after go-live there is no
- * cancel.
+ * stages 5-7 (and a go-live waiting for a fresh approval) keep the published
+ * edges and run the restore workflow (`edgeRestore.start`, purpose
+ * `cancel_setup`); after go-live there is no cancel.
  */
 export const cancel = internalAction({
   args: { runId: v.id('edgeSetupRuns'), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, { runId, actorAdminId }) => {
     const r = await ctx.runQuery(internal.edgeSetupRuns.get, { id: runId });
     if (!r) throw new ConvexError({ code: 'not_found', message: 'Run not found' });
-    if (isTerminalRunState(r.state) || r.stage === 'go_live' || r.stage === 'done')
+    // A run waiting at go-live for a fresh approval (its candidate went stale)
+    // has bound nothing yet: it cancels like stages 5-7.
+    const parkedAtGoLive = r.stage === 'go_live' && r.state === 'needs_you';
+    if (
+      isTerminalRunState(r.state) ||
+      (r.stage === 'go_live' && !parkedAtGoLive) ||
+      r.stage === 'done'
+    )
       throw new ConvexError({
         code: 'edge.setup_run_finished',
         message: 'The run is past the point of cancellation',
@@ -2485,7 +2492,7 @@ export const cancel = internalAction({
         actorAdminId,
       });
       disposition = 'deleted';
-    } else if (r.relayId && cancelRestores(r.stage)) {
+    } else if (r.relayId && (cancelRestores(r.stage) || parkedAtGoLive)) {
       await ops.restoreStart(ctx, {
         relayId: r.relayId,
         purpose: 'cancel_setup',

@@ -984,6 +984,35 @@ describe('ownership links and attempt fencing', () => {
     expect((await gateOf(t, serverId)).state).toBe('blocked');
   });
 
+  test('a go-live waiting for a fresh approval can be cancelled; nothing was bound', async () => {
+    const w = await world();
+    const { t, serverId } = w;
+    installSeams(w);
+    const { l4 } = await accounts(t);
+    const intentId = await enrollReady(w, { name: NODE, mode: 'freedom-reality', v4: ORIGIN_V4 });
+    const cookie = await adminCookie(t);
+    const runId = await protectToPark(w, { nodeName: NODE, accountId: l4 });
+    // The candidate goes stale between the rehearsal and go-live.
+    w.hooks.afterRehearsal = () =>
+      t.run((c) => c.db.patch(intentId, { deliveryRevision: 'moved' })).then(() => {});
+    const { runId: actId } = await approveOverHttp(t, cookie, intentId);
+    const waiting = await drive(
+      t,
+      () => setupRun(t, runId),
+      (r) => r.stage === 'go_live' && r.state === 'needs_you',
+      'run to the stale candidate',
+    );
+    expect(waiting.need?.code).toBe('node_not_approved');
+    expect((await activationRun(t, actId)).state).toBe('blocked');
+    const res = await t.action(internal.edgeSetupRuns.cancel, { runId });
+    expect(res.disposition).toBe('restore');
+    expect((await setupRun(t, runId)).state).toBe('cancelled');
+    expect(
+      await t.query(internal.relays.deliveryBinding, { backendServerId: serverId, nodeName: NODE }),
+    ).toBeNull();
+    expect((await gateOf(t, serverId)).state).toBe('blocked');
+  });
+
   test('approve during try_it is refused; an approval that lands before the publish check never parks', async () => {
     const w = await world();
     const { t } = w;
