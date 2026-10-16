@@ -358,6 +358,13 @@ describe('origin block detector', () => {
     expect(w.window.reports).toBe(5);
     expect(w.window.distinctReporters).toBe(1);
     expect(w.window.byEdge[s.edgeA]).toEqual({ count: 1, countries: { IR: 1 } });
+    // Every page reads the same window: a report created after the evaluation
+    // time (here: evaluated a minute earlier) is the next window's, not this one's.
+    const earlier = (await s.t.action(internal.edgeDetector.relayWindow, {
+      relayId: s.relayId,
+      now: NOW - 60_000,
+    }))!;
+    expect(earlier.window.reports).toBe(0);
   });
 
   /**

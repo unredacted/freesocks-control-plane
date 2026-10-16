@@ -35,8 +35,6 @@ import {
 } from './lib/alertsConfig';
 
 const STATE_KEY = 'alerts:state';
-/** At most this many ids are remembered (the attention list is operator-scale). */
-const MAX_SENT = 2000;
 const POST_TIMEOUT_MS = 10_000;
 
 /** The prompts that alert though they are not critical: FCP never acts on them alone. */
@@ -184,6 +182,13 @@ export const setConfig = internalMutation({
         code: 'validation',
         message: 'An enabled alert needs a webhook URL',
       });
+    // Nothing is dispatched (or reconciled) while alerts are off, so what was
+    // sent before says nothing about what is open now: turning them on starts
+    // afresh and sends everything alert-worthy once.
+    if (!cur.enabled && next.enabled) {
+      const st = parseState(await readStateJson<Partial<AlertState>>(ctx.db, STATE_KEY));
+      await writeStateJson(ctx.db, STATE_KEY, { ...st, sent: {} });
+    }
     await upsertSettingRow(ctx, ALERTS_KEYS.enabled, JSON.stringify(next.enabled), a.actorAdminId);
     if (url !== undefined)
       await upsertSettingRow(ctx, ALERTS_KEYS.url, JSON.stringify(next.url), a.actorAdminId);
@@ -229,14 +234,12 @@ export const recordDispatch = internalMutation({
   handler: async (ctx, a) => {
     const st = parseState(await readStateJson<Partial<AlertState>>(ctx.db, STATE_KEY));
     const now = Date.now();
+    // Only ids still on the attention list are kept, and every one of them is:
+    // the set is bounded by the list (operator-scale), never evicted while open.
     const current = new Set(a.currentIds);
     const sent: Record<string, number> = {};
     for (const [id, at] of Object.entries(st.sent)) if (current.has(id)) sent[id] = at;
     for (const id of a.sentIds) if (current.has(id)) sent[id] = now;
-    const ids = Object.keys(sent);
-    if (ids.length > MAX_SENT)
-      for (const id of ids.sort((x, y) => sent[x] - sent[y]).slice(0, ids.length - MAX_SENT))
-        delete sent[id];
     const next: AlertState = {
       sent,
       lastSentAt: a.attempted && !a.error ? now : st.lastSentAt,

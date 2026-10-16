@@ -160,6 +160,24 @@ export function apiFailureCode(err: unknown): string | null {
 /** What `loadAdapter` saw of the account's API health (so a healthy success writes nothing). */
 interface ApiSeen {
   failures: number;
+  /** The call resolved but reported a provider failure itself (a failed credential test). */
+  failed?: boolean;
+}
+
+/**
+ * A credential test that came back refused: the adapter caught the provider's
+ * answer and returned it, so it is counted here (the account cannot be used,
+ * whatever the reason) and the resolved call does not reset the run. The
+ * recorded code is FCP's own (`test_failed`): the provider's code stays in
+ * `lastTestError`, never in what an alert may carry.
+ */
+async function noteTestFailure(
+  ctx: ActionCtx,
+  accountId: Id<'edgeProviderAccounts'>,
+  seen: ApiSeen,
+): Promise<void> {
+  seen.failed = true;
+  await noteApiOutcome(ctx, accountId, 'test_failed');
 }
 
 /**
@@ -182,7 +200,7 @@ async function tracked<R>(
     if (failure !== null) await noteApiOutcome(ctx, accountId, failure);
     throw toOpsFailure(err);
   }
-  if (seen.failures > 0) await noteApiOutcome(ctx, accountId, null);
+  if (seen.failures > 0 && !seen.failed) await noteApiOutcome(ctx, accountId, null);
   return result;
 }
 
@@ -541,9 +559,10 @@ export const effectiveTemplate = internalAction({
 export const testCredentials = internalAction({
   args: { accountId: v.id('edgeProviderAccounts') },
   handler: (ctx, { accountId }): Promise<{ ok: boolean; code?: string; detail?: string }> =>
-    run(async () => {
-      const { provider, cfg } = await loadAdapter(ctx, accountId);
+    tracked(ctx, accountId, async (seen) => {
+      const { provider, cfg } = await loadAdapter(ctx, accountId, undefined, seen);
       const res = await provider.testCredentials(cfg);
+      if (!res.ok) await noteTestFailure(ctx, accountId, seen);
       // A passing test's `detail` is adapter prose about the zone, not a refusal.
       const detail = res.ok ? undefined : res.detail;
       await ctx.runMutation(internal.edgeProviderAccounts.recordTest, {
@@ -707,6 +726,7 @@ export const inventory = internalAction({
       // which is the thing that was asked for.
       try {
         const res = await provider.testCredentials(cfg);
+        if (!res.ok) await noteTestFailure(ctx, accountId, seen);
         await ctx.runMutation(internal.edgeProviderAccounts.recordTest, {
           id: accountId,
           ok: res.ok,

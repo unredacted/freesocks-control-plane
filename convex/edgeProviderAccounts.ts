@@ -474,6 +474,16 @@ export const update = internalMutation({
     const row = await ctx.db.get(a.id);
     if (!row) throw new ConvexError({ code: 'not_found', message: 'Account not found' });
     checkLimits(a);
+    // An account stored with no daily limit (0, allowed before) keeps it only
+    // until its next edit: any edit must set a budget too. Switching it off is
+    // the one exception, so an operator can always stop it at once.
+    const onlySwitchingOff =
+      a.enabled === false &&
+      [a.name, a.settings, a.credentials, a.priority, a.maxLiveEdges, a.defaultTemplateId].every(
+        (x) => x === undefined,
+      );
+    if (a.dailyAllocationBudget === undefined && !onlySwitchingOff)
+      checkLimits({ dailyAllocationBudget: row.dailyAllocationBudget });
     await assertAdmission(ctx.db, 'provider.write');
     const patch: Partial<Doc<'edgeProviderAccounts'>> = { updatedAt: Date.now() };
     let credentialsChanged = false;

@@ -62,13 +62,22 @@ export const reportPage = internalQuery({
   args: {
     relaySlug: v.string(),
     since: v.number(),
+    /** The evaluation time: every page reads the same window, whatever lands meanwhile. */
+    until: v.number(),
     cursor: v.union(v.string(), v.null()),
     numItems: v.number(),
   },
-  handler: async (ctx, { relaySlug, since, cursor, numItems }): Promise<WindowPage> => {
+  handler: async (ctx, { relaySlug, since, until, cursor, numItems }): Promise<WindowPage> => {
     const page = await ctx.db
       .query('issueReports')
-      .withIndex('by_relay', (q) => q.eq('relaySlug', relaySlug).gte('_creationTime', since))
+      // Up to the END of the evaluation's millisecond (`_creationTime` is finer
+      // than `now`): a report created during the drain is the next window's.
+      .withIndex('by_relay', (q) =>
+        q
+          .eq('relaySlug', relaySlug)
+          .gte('_creationTime', since)
+          .lt('_creationTime', until + 1),
+      )
       .paginate({ cursor, numItems: Math.max(1, Math.min(REPORT_PAGE_SIZE, numItems)) });
     const out: WindowPage = {
       reports: 0,
@@ -113,6 +122,7 @@ async function drainReportWindow(
   ctx: ActionCtx,
   relaySlug: string,
   since: number,
+  until: number,
   cap: number,
 ): Promise<WindowReports> {
   const window: WindowReports = { reports: 0, distinctReporters: 0, countries: {}, byEdge: {} };
@@ -127,6 +137,7 @@ async function drainReportWindow(
     const page: WindowPage = await ctx.runQuery(internal.edgeDetector.reportPage, {
       relaySlug,
       since,
+      until,
       cursor,
       numItems: Math.min(REPORT_PAGE_SIZE, remaining),
     });
@@ -255,7 +266,7 @@ export const relayWindow = internalAction({
     const c = await ctx.runQuery(internal.edgeDetector.relayContext, { relayId, now });
     if (!c) return null;
     const cap = Math.max(1, c.cfg.detect.maxReportRowsPerEval);
-    const window = await drainReportWindow(ctx, c.origin.slug, c.since, cap);
+    const window = await drainReportWindow(ctx, c.origin.slug, c.since, now, cap);
     return { ...c, window };
   },
 });

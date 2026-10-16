@@ -1244,7 +1244,9 @@ export const attention = internalQuery({
     }
     const accounts = await ctx.db.query('edgeProviderAccounts').collect();
     for (const a of accounts) {
-      if (!a.enabled) continue;
+      // A disabled account still holds live edges that need provider calls
+      // (health, destroy): its API health stays visible; the setup-oriented
+      // items below are for enabled accounts only.
       // The provider's API keeps failing (timeouts, 5xx, refused credentials):
       // every rotation, health refresh and destroy on this account stalls.
       if ((a.apiFailures ?? 0) >= API_FAILING_AFTER) {
@@ -1266,7 +1268,7 @@ export const attention = internalQuery({
       }
       // A daily budget of 0 means no limit on billable allocations; new rows
       // refuse it outside development, older ones are pointed out here.
-      if (a.dailyAllocationBudget === 0 && process.env.ENVIRONMENT !== 'development') {
+      if (a.enabled && a.dailyAllocationBudget === 0 && process.env.ENVIRONMENT !== 'development') {
         items.push({
           id: `account_budget_unlimited:${a._id}`,
           kind: 'account_budget_unlimited',
@@ -1301,6 +1303,7 @@ export const attention = internalQuery({
           since: null,
         });
       }
+      if (!a.enabled) continue;
       if (!accountTested(a)) {
         items.push({
           id: `account_untested:${a._id}`,

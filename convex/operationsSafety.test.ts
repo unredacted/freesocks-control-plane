@@ -241,6 +241,16 @@ describe('provider failures are visible', () => {
     const acct = (await t.run((ctx) => ctx.db.get(fx.accountId)))!;
     expect(acct.apiFailures).toBe(0);
     expect((await attentionOf(t)).some((i) => i.kind === 'account_api_failing')).toBe(false);
+    // A disabled account's failing API stays visible (its live edges still need it).
+    failing = true;
+    for (let i = 0; i < 3; i++)
+      await expect(
+        t.action(internal.edgeProviderOps.describe, { accountId: fx.accountId, ledger }),
+      ).rejects.toThrow();
+    await t.run((ctx) => ctx.db.patch(fx.accountId, { enabled: false }));
+    expect((await attentionOf(t)).some((i) => i.kind === 'account_api_failing')).toBe(true);
+    failing = false;
+    await t.run((ctx) => ctx.db.patch(fx.accountId, { enabled: true }));
   });
 
   test('a live edge whose health has not been refreshed for long is health_stale on its account', async () => {
@@ -278,6 +288,18 @@ describe('provider failures are visible', () => {
         action: 'open_account',
       },
     );
+    // It keeps no limit only until its next edit, which must set one;
+    // switching it off alone always works.
+    await expect(
+      t.mutation(internal.edgeProviderAccounts.update, { id, priority: 3 }),
+    ).rejects.toThrow(/only in development/);
+    await t.mutation(internal.edgeProviderAccounts.update, { id, enabled: false });
+    await t.mutation(internal.edgeProviderAccounts.update, {
+      id,
+      priority: 3,
+      dailyAllocationBudget: 5,
+    });
+    expect((await t.run((ctx) => ctx.db.get(id)))!.dailyAllocationBudget).toBe(5);
   });
 
   test('a quarantined origin keeps paying for its edges: billable_idle', async () => {
@@ -494,6 +516,30 @@ describe('operator alerts', () => {
     r.answer(200);
     expect(await t.action(internal.alerts.dispatch, {})).toMatchObject({ sent: 1, error: null });
     expect(r.posts).toHaveLength(4);
+  });
+
+  test('turning alerts back on sends what is open once more: nothing was reconciled while off', async () => {
+    const t = convexTest(schema, modules);
+    const fx = await seedEdgeFixture(t);
+    await t.mutation(internal.alerts.setConfig, {
+      enabled: true,
+      url: 'https://alerts.example.org',
+    });
+    const r = receiver();
+    await quarantine(t, fx.relayId);
+    await t.action(internal.alerts.dispatch, {});
+    const sentBefore = r.posts.length;
+    // Off: the quarantine clears and comes back meanwhile, unseen.
+    await t.mutation(internal.alerts.setConfig, { enabled: false });
+    await t.run((ctx) => ctx.db.patch(fx.relayId, { quarantine: undefined }));
+    await quarantine(t, fx.relayId);
+    await t.action(internal.alerts.dispatch, {});
+    expect(r.posts).toHaveLength(sentBefore);
+    // On again: it is reported.
+    await t.mutation(internal.alerts.setConfig, { enabled: true });
+    await t.action(internal.alerts.dispatch, {});
+    expect(r.posts).toHaveLength(sentBefore + 1);
+    expect(String(r.posts.at(-1)!.body.message)).toContain('quarantine');
   });
 
   test('disabled: nothing is read or sent', async () => {
