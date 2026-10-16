@@ -465,6 +465,11 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'edge.sni.inbound.unbind': ['slug', 'backendSlug', 'inboundTag'],
   'edge.sni.names.country': ['slug', 'country', 'state', 'count'],
   'edge.sni.names.accepted': ['relaySlug', 'listenerKey', 'generation', 'count', 'witness'],
+  // Checks from inside a country: slugs, the country, the source and counts, never a name or an address.
+  'edge.sni.vantage.batch': ['country', 'source', 'targetKind', 'count', 'trigger'],
+  'edge.sni.vantage.request': ['slug', 'country', 'count', 'batches'],
+  'edge.sni.vantage.apply': ['slug', 'country', 'proven', 'blocked'],
+  'edge.sni.vantage.auto_apply': ['slug', 'country', 'state', 'count', 'held'],
   'relay.host.created': ['relaySlug', 'listenerKey', 'discovered'],
   'relay.host.deleted': ['relaySlug', 'listenerKey'],
   // A Host the ledger called present was gone from the backend on re-observation.

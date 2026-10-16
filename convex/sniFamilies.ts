@@ -32,7 +32,16 @@ import {
   type Qualification,
 } from './lib/edges/sni/family';
 import { parseRealityTarget } from './lib/edges/inboundMapping';
-import { resolveSniConfig, sniConfigWrites } from './lib/sniConfig';
+import {
+  resolveSniConfig,
+  resolveSniVantageConfig,
+  sniConfigWrites,
+  sniVantageConfigWrites,
+  usableSources,
+  vantageCountries,
+} from './lib/sniConfig';
+import { resolveEdgeSecrets } from './lib/edgeConfig';
+import { decide, suggest, type Mark } from './lib/edges/sni/vantage';
 
 const refuse = (code: string, message: string): never => {
   throw new ConvexError({ code, message });
@@ -84,15 +93,33 @@ function checkTarget(address: string, port: number) {
 
 export const configView = internalQuery({
   args: {},
-  handler: async (ctx) => ({ config: await resolveSniConfig(ctx.db) }),
+  handler: async (ctx) => {
+    const vantage = await resolveSniVantageConfig(ctx.db);
+    const usable = usableSources(vantage, await resolveEdgeSecrets(ctx.db));
+    return {
+      config: await resolveSniConfig(ctx.db),
+      vantage,
+      // Which sources can run now (RIPE Atlas needs its key, set under Edges, Settings).
+      vantageSources: {
+        globalping: usable.includes('globalping'),
+        ripeatlas: usable.includes('ripeatlas'),
+      },
+    };
+  },
 });
 
 export const patchConfig = internalMutation({
   args: { patch: v.any(), ...actor },
   handler: async (ctx, { patch, actorAdminId }) => {
-    const { writes, changedKeys } = sniConfigWrites(
-      (patch && typeof patch === 'object' ? patch : {}) as Record<string, unknown>,
+    const body = (patch && typeof patch === 'object' ? patch : {}) as Record<string, unknown>;
+    const base = sniConfigWrites(body);
+    const vantage = sniVantageConfigWrites(
+      body.vantage && typeof body.vantage === 'object'
+        ? (body.vantage as Record<string, unknown>)
+        : {},
     );
+    const writes = [...base.writes, ...vantage.writes];
+    const changedKeys: string[] = [...base.changedKeys, ...vantage.changedKeys];
     for (const w of writes) await upsertSettingRow(ctx, w.key, w.value, actorAdminId);
     if (changedKeys.length > 0)
       await audit(ctx, 'edge.sni.config.update', actorAdminId, { changedKeys });
@@ -140,6 +167,43 @@ export const list = internalQuery({
   },
 });
 
+/** One (name, country) evidence row as the family page shows it. */
+function vantageView(
+  ev: Doc<'sniVantageEvidence'>,
+  o: { reportSuspect: boolean; mark: Mark | null; minVantages: number; minNetworks: number },
+) {
+  const s = suggest(
+    {
+      measurements: ev.measurements,
+      okVantages: ev.okVantages,
+      okNetworks: ev.okNetworks,
+      lastOkAt: ev.lastOkAt ?? null,
+      lastFailAt: ev.lastFailAt ?? null,
+      lastAt: ev.lastAt ?? null,
+      latest: ev.latest,
+      streak: ev.streak ?? null,
+    },
+    o,
+  );
+  const iso = (t: number | undefined) => (t ? new Date(t).toISOString() : null);
+  return {
+    country: ev.country,
+    latest: ev.latest,
+    suggestion: s.suggestion,
+    reason: s.reason,
+    decision: decide(s.suggestion, o.mark),
+    okVantages: ev.okVantages,
+    okNetworks: ev.okNetworks,
+    failVantages: ev.streak?.nameFailures ?? 0,
+    failNetworks: ev.streak?.networks ?? 0,
+    pathFailures: ev.streak?.pathFailures ?? 0,
+    reportsAgree: o.reportSuspect,
+    lastAt: iso(ev.lastAt),
+    lastOkAt: iso(ev.lastOkAt),
+    lastRequestedAt: iso(ev.lastRequestedAt),
+  };
+}
+
 export const detail = internalQuery({
   args: { slug: v.string() },
   handler: async (ctx, { slug }) => {
@@ -155,12 +219,22 @@ export const detail = internalQuery({
       servers.set(b.backendServerId as string, s?.slug ?? '');
     }
     // One read for the whole judgement table (small: names x curated countries).
-    const judged = new Map<string, { blockedIn: string[]; provenIn: string[] }>();
+    const judged = new Map<
+      string,
+      { blockedIn: string[]; provenIn: string[]; byProbe: string[]; marks: Map<string, Mark> }
+    >();
     const mine = new Set(names.map((n) => n.name));
     for (const row of await ctx.db.query('sniNameCountry').collect()) {
       if (!mine.has(row.name)) continue;
-      const at = judged.get(row.name) ?? { blockedIn: [], provenIn: [] };
+      const at = judged.get(row.name) ?? {
+        blockedIn: [],
+        provenIn: [],
+        byProbe: [],
+        marks: new Map<string, Mark>(),
+      };
       (row.state === 'blocked' ? at.blockedIn : at.provenIn).push(row.country);
+      if (row.source === 'probe') at.byProbe.push(row.country);
+      at.marks.set(row.country, { state: row.state, source: row.source });
       judged.set(row.name, at);
     }
     // The newest rollout of each binding: what the page follows.
@@ -188,10 +262,36 @@ export const detail = internalQuery({
       if (mine.has(row.name) && sniCfg.curatedCountries.includes(row.country))
         counts.push({ name: row.name, country: row.country, weight: row.weight });
     const suspects = suspectNames(counts);
+    // What the checks from inside a country say (docs/edges.md "Checks from
+    // inside a country"): the stored aggregates, judged NOW, because member
+    // reports and the thresholds move independently of the measurements.
+    const vCfg = await resolveSniVantageConfig(ctx.db);
+    const vantage = new Map<string, ReturnType<typeof vantageView>[]>();
+    for (const ev of await ctx.db
+      .query('sniVantageEvidence')
+      .withIndex('by_family', (q) => q.eq('familyId', f._id))
+      .take(8000)) {
+      if (!mine.has(ev.name) || !sniCfg.curatedCountries.includes(ev.country)) continue;
+      const view = vantageView(ev, {
+        reportSuspect: (suspects.get(ev.name) ?? []).includes(ev.country),
+        mark: judged.get(ev.name)?.marks.get(ev.country) ?? null,
+        minVantages: vCfg.minVantages,
+        minNetworks: vCfg.minNetworks,
+      });
+      vantage.set(ev.name, [...(vantage.get(ev.name) ?? []), view]);
+    }
     return {
       family: summarize(f, names, bindings.length),
       curatedCountries: sniCfg.curatedCountries,
+      vantage: {
+        enabled: sniCfg.enabled && vCfg.enabled,
+        countries: vantageCountries(vCfg, sniCfg.curatedCountries),
+        autoApply: vCfg.autoApply,
+        sources: usableSources(vCfg, await resolveEdgeSecrets(ctx.db)),
+      },
       names: names.map((n) => ({
+        probeMarkedIn: (judged.get(n.name)?.byProbe ?? []).sort(),
+        vantage: (vantage.get(n.name) ?? []).sort((a, b) => a.country.localeCompare(b.country)),
         blockedIn: (judged.get(n.name)?.blockedIn ?? []).sort(),
         provenIn: (judged.get(n.name)?.provenIn ?? []).sort(),
         // Not where it is already judged blocked: that hint has been acted on.
@@ -298,6 +398,13 @@ export const remove = internalMutation({
     const names = await namesOf(ctx, f._id);
     // A burned name stays known (it must never be offered again, by any family).
     for (const n of names) if (n.status !== 'burned') await ctx.db.delete(n._id);
+    // What the checks from inside a country said about them goes with them
+    // (the measurement rows themselves age out with their window).
+    for (const ev of await ctx.db
+      .query('sniVantageEvidence')
+      .withIndex('by_family', (q) => q.eq('familyId', f._id))
+      .collect())
+      await ctx.db.delete(ev._id);
     if (names.some((n) => n.status === 'burned'))
       await ctx.db.patch(f._id, { enabled: false, updatedAt: Date.now() });
     else await ctx.db.delete(f._id);
@@ -425,11 +532,78 @@ export async function countryMarks(ctx: { db: QueryCtx['db'] }, name: string) {
 }
 
 /**
+ * Write per-country marks for names (already normalized, already known to be
+ * family names) and copy them onto every origin listener entry that carries
+ * them, so a render reads them with no extra reads; those origins' renders move
+ * on at once, and an FCP-owned Host follows its name. `source` says who judged:
+ * an operator (`setCountry`, or applying a suggestion) or the checks from
+ * inside a country by themselves (`autoApply`). The one writer of
+ * `sniNameCountry`.
+ */
+export async function writeCountryMarks(
+  ctx: MutationCtx,
+  names: readonly string[],
+  country: string,
+  state: 'proven' | 'blocked' | 'unknown',
+  source: 'operator' | 'probe',
+): Promise<{ count: number; relays: number }> {
+  const wanted = [...new Set(names)];
+  const now = Date.now();
+  for (const name of wanted) {
+    const row = await ctx.db
+      .query('sniNameCountry')
+      .withIndex('by_name_country', (q) => q.eq('name', name).eq('country', country))
+      .unique();
+    if (state === 'unknown') {
+      if (row) await ctx.db.delete(row._id);
+    } else if (row) await ctx.db.patch(row._id, { state, source, updatedAt: now });
+    else await ctx.db.insert('sniNameCountry', { name, country, state, source, updatedAt: now });
+  }
+  // Copy the marks onto every listener entry for these names.
+  const touched = new Set(wanted);
+  const listeners = await ctx.db.query('relayListeners').collect();
+  const relays = new Set<Id<'relays'>>();
+  // Listeners whose backend Host name (`hostSniOf`) moves with the marks.
+  const hostMoved = new Map<Id<'relayListeners'>, Id<'relays'>>();
+  for (const l of listeners) {
+    if (l.retired || !(l.tlsNames ?? []).some((n) => touched.has(n.name))) continue;
+    const next = [];
+    for (const n of l.tlsNames ?? []) {
+      if (!touched.has(n.name)) {
+        next.push(n);
+        continue;
+      }
+      const { blockedIn: _b, provenIn: _p, ...rest } = n;
+      next.push({ ...rest, ...(await countryMarks(ctx, n.name)) });
+    }
+    await ctx.db.patch(l._id, {
+      tlsNames: next,
+      namesRevision: (l.namesRevision ?? 0) + 1,
+      updatedAt: now,
+    });
+    relays.add(l.relayId);
+    if (l.host?.uuid && hostSniOf(l) !== hostSniOf({ tlsNames: next }))
+      hostMoved.set(l._id, l.relayId);
+  }
+  for (const relayId of relays) {
+    const relay = await ctx.db.get(relayId);
+    if (!relay) continue;
+    await bumpEpochAndRefresh(ctx, relay);
+    // The Host follows its name (as it does on a retire): a name just judged
+    // blocked must not stay on the backend Host, which is what a member who
+    // copies the raw config gets.
+    if (relay.hostMode !== 'fcp') continue;
+    for (const [listenerId, rid] of hostMoved)
+      if (rid === relayId)
+        await ctx.scheduler.runAfter(0, internal.hostOps.resyncSni, { listenerId });
+  }
+  return { count: wanted.length, relays: relays.size };
+}
+
+/**
  * An operator's judgement: these names work / are blocked / are unjudged in one
  * curated country. A name that is fine elsewhere can be blocked in one place, so
- * "usable" is per country. The marks are copied onto every origin listener that
- * carries the name (a render reads them from there, with no extra reads), and
- * those origins' renders move on at once.
+ * "usable" is per country.
  */
 export const setCountry = internalMutation({
   args: {
@@ -449,70 +623,14 @@ export const setCountry = internalMutation({
     const wanted = [
       ...new Set(a.names.map((n) => normalizeName(n)).filter((n): n is string => !!n)),
     ].filter((n) => mine.has(n));
-    const now = Date.now();
-    for (const name of wanted) {
-      const row = await ctx.db
-        .query('sniNameCountry')
-        .withIndex('by_name_country', (q) => q.eq('name', name).eq('country', country))
-        .unique();
-      if (a.state === 'unknown') {
-        if (row) await ctx.db.delete(row._id);
-      } else if (row)
-        await ctx.db.patch(row._id, { state: a.state, source: 'operator', updatedAt: now });
-      else
-        await ctx.db.insert('sniNameCountry', {
-          name,
-          country,
-          state: a.state,
-          source: 'operator',
-          updatedAt: now,
-        });
-    }
-    // Copy the marks onto every listener entry for these names.
-    const touched = new Set(wanted);
-    const listeners = await ctx.db.query('relayListeners').collect();
-    const relays = new Set<Id<'relays'>>();
-    // Listeners whose backend Host name (`hostSniOf`) moves with the marks.
-    const hostMoved = new Map<Id<'relayListeners'>, Id<'relays'>>();
-    for (const l of listeners) {
-      if (l.retired || !(l.tlsNames ?? []).some((n) => touched.has(n.name))) continue;
-      const next = [];
-      for (const n of l.tlsNames ?? []) {
-        if (!touched.has(n.name)) {
-          next.push(n);
-          continue;
-        }
-        const { blockedIn: _b, provenIn: _p, ...rest } = n;
-        next.push({ ...rest, ...(await countryMarks(ctx, n.name)) });
-      }
-      await ctx.db.patch(l._id, {
-        tlsNames: next,
-        namesRevision: (l.namesRevision ?? 0) + 1,
-        updatedAt: now,
-      });
-      relays.add(l.relayId);
-      if (l.host?.uuid && hostSniOf(l) !== hostSniOf({ tlsNames: next }))
-        hostMoved.set(l._id, l.relayId);
-    }
-    for (const relayId of relays) {
-      const relay = await ctx.db.get(relayId);
-      if (!relay) continue;
-      await bumpEpochAndRefresh(ctx, relay);
-      // The Host follows its name (as it does on a retire): a name just judged
-      // blocked must not stay on the backend Host, which is what a member who
-      // copies the raw config gets.
-      if (relay.hostMode !== 'fcp') continue;
-      for (const [listenerId, rid] of hostMoved)
-        if (rid === relayId)
-          await ctx.scheduler.runAfter(0, internal.hostOps.resyncSni, { listenerId });
-    }
+    const { relays } = await writeCountryMarks(ctx, wanted, country, a.state, 'operator');
     await audit(ctx, 'edge.sni.names.country', a.actorAdminId, {
       slug: f.slug,
       country,
       state: a.state,
       count: wanted.length,
     });
-    return { count: wanted.length, relays: relays.size };
+    return { count: wanted.length, relays };
   },
 });
 

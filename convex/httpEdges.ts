@@ -38,6 +38,8 @@ function statusFromCode(code: string): number {
   if (code === 'not_found') return 404;
   // The backend (or a step that depends on it) failed: an upstream fault, not a refusal.
   if (code === 'backend.panel_read_failed' || code === 'edge.plan_step_failed') return 502;
+  // The hourly budget of checks from inside a country is a quota, like the probes'.
+  if (code === 'edge.sni.vantage_budget') return 429;
   if (code === 'conflict' || code.startsWith('edge.')) return 409;
   // The hourly probe budget is a quota: answer like a rate limit.
   if (code === 'probe.budget_exhausted') return 429;
@@ -133,6 +135,9 @@ export function throttlePolicyFor(parts: string[]): RateLimitPolicyKey | null {
   const [a, b, c, d] = parts;
   // Qualifying server names opens sockets from the control plane.
   if (a === 'sni' && b === 'qualify' && !c) return 'admin.edges.provider-call';
+  // Checking names from inside a country spends third-party measurements.
+  if (a === 'sni' && b === 'families' && c && d === 'vantage' && !parts[4])
+    return 'admin.edges.probe';
   // A rollout writes a backend profile; a test link fetches a credential body.
   if (
     a === 'sni' &&
@@ -511,6 +516,25 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           country: String(body.country ?? ''),
           state:
             body.state === 'proven' || body.state === 'blocked' ? body.state : ('unknown' as const),
+          ...act,
+        }),
+      );
+    // Checks from inside a country: "check now", and applying what they suggest.
+    if (b === 'families' && c && d === 'vantage' && !e)
+      return json(
+        await ctx.runMutation(internal.sniVantage.requestNow, {
+          slug: c,
+          names: snis(body),
+          country: String(body.country ?? ''),
+          ...act,
+        }),
+      );
+    if (b === 'families' && c && d === 'vantage' && e === 'apply')
+      return json(
+        await ctx.runMutation(internal.sniVantage.applySuggestions, {
+          slug: c,
+          names: snis(body),
+          country: String(body.country ?? ''),
           ...act,
         }),
       );

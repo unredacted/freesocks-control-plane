@@ -140,6 +140,11 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
     description: 'Server-name families: delete attributed report counts older than the window',
   },
   {
+    name: 'sni-vantage',
+    everyMs: 10 * MIN,
+    description: 'Server-name families: check names from inside opted-in countries',
+  },
+  {
     name: 'backend-reconcile',
     everyMs: 5 * MIN,
     description: 'Server management: settle open backend changes by looking at the backend',
