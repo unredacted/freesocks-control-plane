@@ -21,6 +21,8 @@ import {
   OpView,
   BackendSetupView,
   PlacementValidation,
+  PortChangeList,
+  PortChangeView,
   ProfilePatchPreview,
   ServerSummary,
   ServerTree,
@@ -120,6 +122,43 @@ export const applyProfilePatch = (
     OpView,
   );
 
+/**
+ * Stage a previewed port change: nothing is sent until every node that will
+ * listen on the port has confirmed its firewall (docs/servers.md).
+ */
+export const stagePortChange = (
+  slug: string,
+  profileUuid: string,
+  preview: ProfilePatchPreview,
+  unmanaged?: 'hold' | 'acknowledge',
+) =>
+  apiClient.post(
+    `${slugPath(slug)}/profiles/${encodeURIComponent(profileUuid)}/port-change`,
+    {
+      ops: preview.ops,
+      baseToken: preview.baseToken,
+      expectedToken: preview.expectedToken,
+      transportUuids: preview.transportUuids,
+      ...(unmanaged ? { unmanaged } : {}),
+    } satisfies ProfilePatchApply,
+    PortChangeView,
+  );
+export const fetchPortChanges = (slug: string) =>
+  apiClient.get(`${slugPath(slug)}/port-changes`, PortChangeList);
+/** An admin confirms the firewall of nodes no role reports for. */
+export const acknowledgePortChange = (slug: string, id: string, nodeNames: string[]) =>
+  apiClient.post(
+    `${slugPath(slug)}/port-changes/${encodeURIComponent(id)}/acknowledge`,
+    { nodeNames },
+    PortChangeView,
+  );
+export const cancelPortChange = (slug: string, id: string) =>
+  apiClient.post(
+    `${slugPath(slug)}/port-changes/${encodeURIComponent(id)}/cancel`,
+    {},
+    PortChangeView,
+  );
+
 /** Adopt a node that already serves members, as it is (live at once). */
 export const adoptNode = (
   slug: string,
@@ -198,7 +237,20 @@ export const serverKeys = {
   setup: (slug: string) => [...ROOT, 'setup', slug] as const,
   intents: (slug: string) => [...ROOT, 'intents', slug] as const,
   review: (slug: string, id: string) => [...ROOT, 'review', slug, id] as const,
+  portChanges: (slug: string) => [...ROOT, 'portChanges', slug] as const,
 };
+
+/** Polled faster while a change waits: the role's report confirms it whenever the role runs. */
+export const portChangesQuery = (slug: () => string | null) =>
+  createQuery(() => ({
+    queryKey: serverKeys.portChanges(slug() ?? ''),
+    queryFn: () => fetchPortChanges(slug()!),
+    enabled: !!slug(),
+    refetchInterval: (q: { state: { data?: { changes: { state: string }[] } } }) =>
+      q.state.data?.changes.some((c) => c.state === 'waiting' || c.state === 'applying')
+        ? 5_000
+        : 60_000,
+  }));
 
 /** Polled faster while a setup run holds its lease. */
 export const setupQuery = (slug: () => string | null) =>

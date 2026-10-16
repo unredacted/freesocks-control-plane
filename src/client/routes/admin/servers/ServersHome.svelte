@@ -37,6 +37,7 @@
   import OpsList from './components/OpsList.svelte';
   import SetupSheet from './components/SetupSheet.svelte';
   import ModeGroupsCard from './components/ModeGroupsCard.svelte';
+  import PortChangesCard from './components/PortChangesCard.svelte';
   import { codeOf } from './lib/run';
   import { pickInstance, serversPaths } from './lib/routes';
   import {
@@ -268,6 +269,10 @@
           {/each}
         </ul>
       </section>
+    {/if}
+
+    {#if slug}
+      <PortChangesCard {slug} {canWrite} />
     {/if}
 
     <section aria-label="Nodes">
