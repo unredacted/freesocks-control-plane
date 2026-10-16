@@ -350,6 +350,10 @@ export const WORKFLOW_CODES = [
   'account_switch_late',
   // "Serve this node directly again" on a node whose members already get its direct address
   'not_edge_required',
+  // "Protect again" (a re-protect run) on a node that is not live behind edges yet, or
+  // that is not an enrolled node
+  'reprotect_not_bound',
+  'reprotect_not_enrolled',
 ] as const;
 export type WorkflowCode = (typeof WORKFLOW_CODES)[number];
 

@@ -1282,6 +1282,22 @@ export const SetupResumeEntry = z.object({
 });
 
 /**
+ * What members of one origin get right now, judged by the server
+ * (`convex/lib/edges/originStatus.ts`): `manual` (a manual origin serves no
+ * subscription), `direct` (no delivery binding yet: members get the node's own
+ * address), `serving` (edges only), `degraded` (serving, but a sample
+ * subscription did not render cleanly; only the per-origin setup status can
+ * tell), `dark` (bound, and nothing can be served). `code` names the reason
+ * (`empty_pool`, `relay_disabled`, `render_disabled`, a render reason).
+ */
+export const ORIGIN_DELIVERY_KINDS = ['manual', 'direct', 'serving', 'degraded', 'dark'] as const;
+export const OriginDelivery = z.object({
+  kind: z.enum(ORIGIN_DELIVERY_KINDS),
+  code: z.string().nullable(),
+});
+export type OriginDelivery = z.infer<typeof OriginDelivery>;
+
+/**
  * `GET setup-status[?relay=<slug>]` / `POST setup-status { draft }`: the guided
  * setup judged for ONE relay (or a draft before the relay exists). Without a
  * relay it is the fleet aggregation: the overview checklist plus relays with an
@@ -1295,6 +1311,12 @@ export const SetupStatusResponse = z.object({
   complete: z.boolean(),
   context: SetupContext,
   resume: z.array(SetupResumeEntry).default([]),
+  /**
+   * Relay scope: what members get (the same judgement as the attention
+   * response's `origins[].status.delivery`, plus `degraded` from the sample
+   * render this view computes). Null for draft and fleet scope.
+   */
+  delivery: OriginDelivery.nullable().default(null),
   generatedAt: iso,
 });
 export type SetupStatusResponse = z.infer<typeof SetupStatusResponse>;
@@ -1408,8 +1430,89 @@ export const AttentionItem = z.object({
   since: isoN.default(null),
 });
 export type AttentionItem = z.infer<typeof AttentionItem>;
+
+/** The kinds of one origin's status, most urgent judged first (the CMS words each). */
+export const ORIGIN_STATUS_KINDS = [
+  'protected',
+  'setting-up',
+  'needs-you',
+  'not-live',
+  'removing',
+  'paused',
+  'off',
+  'unprotected',
+] as const;
+export const STATUS_DOTS = ['green', 'amber', 'red', 'blue', 'grey'] as const;
+export type StatusDot = (typeof STATUS_DOTS)[number];
+
+/**
+ * One origin's status: the ONE judgement every page reads (the Edges home, the
+ * node page, All origins, the Servers node page). Codes and counts only; the
+ * CMS turns them into a sentence.
+ */
+export const OriginStatus = z.object({
+  kind: z.enum(ORIGIN_STATUS_KINDS),
+  dot: z.enum(STATUS_DOTS),
+  /**
+   * Why, when it is not plain `protected`: a setup run's need code
+   * (`node_not_approved`, `try_it`, ...) for a run that waits on the operator,
+   * the attention kind behind `needs-you`, `offline` for offline addresses,
+   * `restore` / `deleting` for `removing`.
+   */
+  code: z.string().nullable(),
+  /** The live guided setup run of the origin, if any. */
+  runId: z.string().nullable(),
+  runKind: z.enum(['protect', 'reprotect']).nullable(),
+  /** The plain step (1..4) of that run. */
+  step: z.number().nullable(),
+  published: z.number(),
+  /** Active unpublished edges (spares). */
+  standbys: z.number(),
+  /** Published edges whose provider health is `offline`. */
+  offline: z.number(),
+  /** The worst health of the published edges (null when nothing is published). */
+  worstHealth: z.string().nullable(),
+  /** The layers of the published pool, L4 first. */
+  layers: z.array(EdgeLayer),
+  /** At least one attention item names this origin. */
+  attention: z.boolean(),
+  delivery: OriginDelivery,
+});
+export type OriginStatus = z.infer<typeof OriginStatus>;
+
+export const OriginStatusRow = z.object({
+  relayId: z.string(),
+  relaySlug: z.string(),
+  status: OriginStatus,
+});
+export type OriginStatusRow = z.infer<typeof OriginStatusRow>;
+
+/**
+ * The fleet in one judgement: what matters most, then the count of origins
+ * in that state (`count`), of all origins (`total`) and of protected ones.
+ */
+export const FLEET_STATUS_KINDS = [
+  'empty',
+  'needs-you',
+  'setting-up',
+  'not-live',
+  'protected',
+  'partial',
+] as const;
+export const FleetStatus = z.object({
+  kind: z.enum(FLEET_STATUS_KINDS),
+  dot: z.enum(STATUS_DOTS),
+  count: z.number(),
+  total: z.number(),
+  protected: z.number(),
+});
+export type FleetStatus = z.infer<typeof FleetStatus>;
+
 export const AttentionResponse = z.object({
   items: z.array(AttentionItem),
+  /** One status per origin (deleting origins included), in slug order. */
+  origins: z.array(OriginStatusRow).default([]),
+  fleet: FleetStatus.nullable().default(null),
   generatedAt: iso,
 });
 export type AttentionResponse = z.infer<typeof AttentionResponse>;
@@ -1650,6 +1753,13 @@ export const SetupRunAdmin = z.object({
   planRevision: z.number(),
   keepDirect: z.boolean(),
   /**
+   * `protect`: a node that is not live behind edges yet. `reprotect`: a live,
+   * bound node protected again (`POST relays/{id}/reprotect`): members keep
+   * the committed delivery throughout, a cancel drops only the run's own
+   * candidates, and a failure leaves the node live.
+   */
+  kind: z.enum(['protect', 'reprotect']).default('protect'),
+  /**
    * The enrolled node this run protects (docs/servers.md "Node lifecycle"):
    * its backend slug and intent, for the approval card at `node_not_approved`.
    * Null for a node FCP does not manage.
@@ -1755,10 +1865,13 @@ export const SetupRunContinueResponse = z.object({
   accountTrusted: z.boolean(),
 });
 
-/** `POST setup-runs/{id}/cancel`. */
+/**
+ * `POST setup-runs/{id}/cancel`. `candidates`: a re-protect run dropped its own
+ * candidate addresses; the node keeps serving what members already have.
+ */
 export const SetupRunCancelResponse = z.object({
   ok: z.literal(true),
-  disposition: z.enum(['deleted', 'restore', 'none']),
+  disposition: z.enum(['deleted', 'restore', 'candidates', 'none']),
 });
 
 /** `POST relays/{id}/require-edges`: pending endpoints instead of a binding when an L4 edge is untested. */

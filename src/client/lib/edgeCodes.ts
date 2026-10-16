@@ -1061,6 +1061,16 @@ const REFUSAL_COPY = {
     label: 'Already direct',
     explain: 'Members of this node already receive its own address.',
   },
+  reprotect_not_bound: {
+    label: 'Not live behind addresses yet',
+    explain: 'Protect again is for a node whose members already connect through its addresses.',
+    fix: 'Use Protect a node, or Go live if its addresses are ready.',
+  },
+  reprotect_not_enrolled: {
+    label: 'Not an enrolled node',
+    explain: 'Only a node the node role enrolled is protected again from here.',
+    fix: 'Use Replace address on its addresses instead.',
+  },
 } as const satisfies Record<string, CodeCopy>;
 
 export const EDGE_REFUSAL_COPY: Record<string, CodeCopy> = REFUSAL_COPY;
