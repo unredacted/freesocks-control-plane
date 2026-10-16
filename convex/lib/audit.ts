@@ -295,6 +295,11 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'servers.port_change.confirmed': ['backendSlug', 'label', 'by', 'nodes', 'port'],
   'servers.port_change.cancelled': ['backendSlug', 'label'],
   'servers.port_change.admitted': ['backendSlug', 'label', 'outcome', 'code'],
+  // A node rename (docs/servers.md "Renaming a node"): the two names only.
+  'servers.node.rename_started': ['backendSlug', 'from', 'to'],
+  'servers.node.renamed': ['backendSlug', 'from', 'to'],
+  'servers.node.rename_failed': ['backendSlug', 'from', 'to', 'code'],
+  'servers.node.rename_retried': ['backendSlug', 'from', 'to'],
   // The one-shot migration off contract v1 (counts only).
   'servers.contract.migrated': ['handoffs', 'reservations', 'setups', 'intents'],
   // Operator-run 2.x→3.x key-id remap on one upgraded backend (counts only).

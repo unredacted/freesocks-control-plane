@@ -74,7 +74,9 @@ export const ensureOriginDns = internalAction({
       zoneName: zone.zoneName,
       accountId: zone.accountId,
     });
-    const marker = originMarker(c.server.slug, c.intent.name);
+    // The marker names the node as it was enrolled: a rename never makes FCP's
+    // own record read as somebody else's.
+    const marker = originMarker(c.server.slug, c.intent.formerNames?.[0] ?? c.intent.name);
     const desired: DesiredRecord[] = [];
     if (c.intent.observed.publicIps.v4)
       desired.push({ type: 'A', name: c.hostname, content: c.intent.observed.publicIps.v4 });

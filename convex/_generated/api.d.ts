@@ -18,6 +18,7 @@ import type * as apiTokens from "../apiTokens.js";
 import type * as appSettings from "../appSettings.js";
 import type * as audit from "../audit.js";
 import type * as auth from "../auth.js";
+import type * as backendNodeRenames from "../backendNodeRenames.js";
 import type * as backendNodes from "../backendNodes.js";
 import type * as backendServers from "../backendServers.js";
 import type * as backends from "../backends.js";
@@ -187,6 +188,7 @@ declare const fullApi: ApiFromModules<{
   appSettings: typeof appSettings;
   audit: typeof audit;
   auth: typeof auth;
+  backendNodeRenames: typeof backendNodeRenames;
   backendNodes: typeof backendNodes;
   backendServers: typeof backendServers;
   backends: typeof backends;

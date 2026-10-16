@@ -205,12 +205,16 @@ async function seed() {
 const claims = (t: T) => t.run((ctx) => ctx.db.query('panelClaims').collect());
 
 describe('node changes', () => {
-  test('a rename and a country change queue no node work', async () => {
+  test('a country change queues no node work; a name changes only through a rename', async () => {
     const { t, panel, call } = await seed();
-    const op = await call('PATCH', 'nodes/n-2', { name: 'node-two-b', countryCode: 'fr' });
+    // A rename moves every reference to the name (backendNodeRenames.test.ts).
+    expect((await call('PATCH', 'nodes/n-2', { name: 'node-two-b' })).error.code).toBe(
+      'servers.node_rename_separate',
+    );
+    const op = await call('PATCH', 'nodes/n-2', { countryCode: 'fr' });
     expect(op).toMatchObject({ kind: 'node', verb: 'update', state: 'done', asyncEffect: 'none' });
     expect(panel.nodes[1]).toMatchObject({
-      name: 'node-two-b',
+      name: 'node-two',
       countryCode: 'FR',
       address: '192.0.2.20',
     });
@@ -335,16 +339,16 @@ describe('a node something depends on', () => {
       await call('DELETE', 'nodes/n-1?removeOnly=1'),
     ])
       expect(res.error.code).toBe('servers.node_relay_origin');
-    // Its name is an identifier: origins, delivery requirements and pinned keys refer to it.
+    // Its name is an identifier: a rename runs as its own workflow (backendNodeRenames.test.ts).
     expect((await call('PATCH', 'nodes/n-1', { name: 'renamed' })).error.code).toBe(
-      'servers.node_rename_referenced',
+      'servers.node_rename_separate',
     );
     // A restart is allowed: it changes nothing the origin depends on.
     expect((await call('POST', 'nodes/n-1/restart')).verb).toBe('restart');
     expect(panel.writes.map((w) => w.call)).toEqual(['POST /api/nodes/n-1/actions/restart']);
   });
 
-  test('a node members are pinned to is not renamed', async () => {
+  test('a node members are pinned to is not renamed by an edit (a rename moves the pins)', async () => {
     const { t, serverId, call } = await seed();
     await t.run(async (ctx) => {
       const tierId = await ctx.db.insert('tiers', {
@@ -382,7 +386,7 @@ describe('a node something depends on', () => {
       });
     });
     expect((await call('PATCH', 'nodes/n-2', { name: 'other' })).error.code).toBe(
-      'servers.node_rename_referenced',
+      'servers.node_rename_separate',
     );
   });
 });

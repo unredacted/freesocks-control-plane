@@ -21,6 +21,8 @@ import {
   OpView,
   BackendSetupView,
   PlacementValidation,
+  NodeRenameList,
+  NodeRenameView,
   PortChangeList,
   PortChangeView,
   ProfilePatchPreview,
@@ -159,6 +161,22 @@ export const cancelPortChange = (slug: string, id: string) =>
     PortChangeView,
   );
 
+/**
+ * Rename a node: the backend row, every reference FCP keeps, the Host remarks
+ * FCP wrote and members' pins, one step at a time (docs/servers.md).
+ */
+export const renameNode = (slug: string, uuid: string, name: string) =>
+  apiClient.post(
+    `${slugPath(slug)}/nodes/${encodeURIComponent(uuid)}/rename`,
+    { name },
+    NodeRenameView,
+  );
+/** Try again the Host remarks a rename holds on, once whatever refused them is fixed. */
+export const retryRename = (slug: string, id: string) =>
+  apiClient.post(`${slugPath(slug)}/renames/${encodeURIComponent(id)}/retry`, {}, NodeRenameView);
+export const fetchRenames = (slug: string) =>
+  apiClient.get(`${slugPath(slug)}/renames`, NodeRenameList);
+
 /** Adopt a node that already serves members, as it is (live at once). */
 export const adoptNode = (
   slug: string,
@@ -239,7 +257,18 @@ export const serverKeys = {
   placements: (slug: string) => [...ROOT, 'placements', slug] as const,
   review: (slug: string, id: string) => [...ROOT, 'review', slug, id] as const,
   portChanges: (slug: string) => [...ROOT, 'portChanges', slug] as const,
+  renames: (slug: string) => [...ROOT, 'renames', slug] as const,
 };
+
+/** Polled faster while a rename runs. */
+export const renamesQuery = (slug: () => string | null) =>
+  createQuery(() => ({
+    queryKey: serverKeys.renames(slug() ?? ''),
+    queryFn: () => fetchRenames(slug()!),
+    enabled: !!slug(),
+    refetchInterval: (q: { state: { data?: { renames: { state: string }[] } } }) =>
+      q.state.data?.renames.some((r) => r.state === 'running') ? 3_000 : 60_000,
+  }));
 
 /** Polled faster while a change waits: the role's report confirms it whenever the role runs. */
 export const portChangesQuery = (slug: () => string | null) =>

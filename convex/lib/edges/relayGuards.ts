@@ -50,6 +50,12 @@ export function assertNotQuarantined(origin: Doc<'relays'>) {
  */
 export async function assertNoRelayPanelClaim(db: DatabaseReader, origin: Doc<'relays'>) {
   if (!origin.backendServerId) return;
+  // A node rename moves this origin's node name and Host remarks step by step.
+  if (origin.renaming)
+    throw new ConvexError({
+      code: 'edge.panel_op_running',
+      message: 'This node is being renamed; wait for it to finish',
+    });
   const claim = await db
     .query('panelClaims')
     .withIndex('by_server_key', (q) =>

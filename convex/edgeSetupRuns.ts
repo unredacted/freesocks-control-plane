@@ -102,6 +102,7 @@ import {
 } from './nodeActivation';
 import { isDirect, modeEntry, modeSlug, nodeGateFor } from './nodeIntents';
 import { setupReady } from './backendSetup';
+import { runningRenameOf } from './lib/backend/nodeAliases';
 
 type Run = Doc<'edgeSetupRuns'>;
 type Relay = Doc<'relays'>;
@@ -704,6 +705,18 @@ export const insert = internalMutation({
       throw new ConvexError({
         code: 'edge.setup_run_active',
         message: 'A setup run already owns this node',
+      });
+    // A rename moves every reference to the node's name: nothing new is keyed
+    // to it until it is done.
+    if (
+      await runningRenameOf(ctx.db, backendServerId, {
+        nodeUuid: plan.nodeUuid,
+        name: plan.nodeName,
+      })
+    )
+      throw new ConvexError({
+        code: 'edge.panel_op_running',
+        message: 'This node is being renamed; wait for it to finish',
       });
     const account = await ctx.db.get(a.accountId);
     if (!account) throw new ConvexError({ code: 'not_found', message: 'Account not found' });
