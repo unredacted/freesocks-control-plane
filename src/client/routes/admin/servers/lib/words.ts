@@ -258,6 +258,27 @@ const ERROR_WORDS: Record<string, string> = {
     'A server name family manages the names of this transport. Change them under Edges.',
   'servers.not_reality': 'That transport does not use REALITY.',
   'servers.too_many_names': 'That is more server names than one transport may carry.',
+  'servers.not_admitted': 'The change was not sent. Nothing on the backend changed.',
+  // Ports and new transports.
+  'servers.port_loopback':
+    "This transport listens only inside the node, behind the node's own proxy. Its port is not changed here.",
+  'servers.port_not_single':
+    'This transport listens on more than one port. Only a single port is changed here.',
+  'servers.port_edge_bound':
+    'An origin in Edges forwards to this transport at its port. Remove that protection before moving it.',
+  'servers.port_taken': 'A node on this transport already uses that port. Pick another one.',
+  'servers.port_change_staged':
+    "A port change waits until every node's firewall lets the new port in. Use Change port.",
+  'servers.port_change_waiting':
+    'A port change of this profile is still waiting. Finish or cancel it first.',
+  'servers.port_change_not_waiting': 'That port change is not waiting any more.',
+  'servers.firewall_unconfirmed':
+    'Not every node has confirmed that its firewall lets the new port in.',
+  'servers.firewall_role_confirms':
+    'The node role confirms this node itself, once it has opened the port. Run the role on it.',
+  'servers.tag_taken':
+    'A transport with that tag already exists on this backend. Pick another tag.',
+  'servers.template_invalid': 'The transport template does not fit. Check the fields.',
   'servers.profile_malformed': 'The profile on the backend is not in a shape this can edit safely.',
   'servers.inbound_uuid_changed':
     'The backend replaced a transport while this was applied. Look at the backend before anything else.',
@@ -627,4 +648,91 @@ export function namesDelta(before: readonly string[], after: readonly string[]):
   if (added) parts.push(`${added} added`);
   if (removed) parts.push(`${removed} removed`);
   return parts.join(', ');
+}
+
+// --- port changes and new transports ----------------------------------------------------------------
+
+export interface PortChangeLike {
+  transportTag: string;
+  fromPort: number | null;
+  toPort: number;
+  state: 'waiting' | 'applying' | 'applied' | 'refused' | 'cancelled';
+  code: string | null;
+  nodes: { name: string; confirmedBy: 'role' | 'operator'; state: string }[];
+}
+
+/** "Move PRIVACY_REALITY from port 443 to 8443". */
+export function portChangeTitle(c: Pick<PortChangeLike, 'transportTag' | 'fromPort' | 'toPort'>) {
+  return c.fromPort === null
+    ? `Move ${c.transportTag} to port ${c.toPort}`
+    : `Move ${c.transportTag} from port ${c.fromPort} to ${c.toPort}`;
+}
+
+/** Where a port change stands, and what (if anything) the operator should do. */
+export function portChangeWords(c: PortChangeLike): { dot: Dot; sentence: string } {
+  const waiting = c.nodes.filter((n) => n.state === 'waiting');
+  switch (c.state) {
+    case 'waiting': {
+      if (waiting.length === 0)
+        return c.code === 'servers.op_running' || c.code === 'servers.op_uncertain'
+          ? {
+              dot: 'amber',
+              sentence: `Every node lets port ${c.toPort} in. Waiting for another change to this profile to finish.`,
+            }
+          : { dot: 'amber', sentence: `Every node lets port ${c.toPort} in. Sending it now.` };
+      const n = waiting.length === 1 ? '1 node' : `${waiting.length} nodes`;
+      return {
+        dot: 'amber',
+        sentence: `Nothing is sent until every node lets port ${c.toPort} in. Waiting for ${n}.`,
+      };
+    }
+    case 'applying':
+      return {
+        dot: 'amber',
+        sentence:
+          'Sent. The nodes on it are closed until they are verified and approved on the new port.',
+      };
+    case 'applied':
+      return {
+        dot: 'green',
+        sentence: `Done. The nodes listen on port ${c.toPort}, and come back once verified and approved.`,
+      };
+    case 'refused':
+      return { dot: 'grey', sentence: `Not sent: ${serverErrorWords(c.code)}` };
+    case 'cancelled':
+      return { dot: 'grey', sentence: 'Cancelled. Nothing was sent.' };
+  }
+}
+
+/** One node a port change waits for, in words. */
+export function firewallNodeWords(
+  n: { confirmedBy: 'role' | 'operator'; state: string },
+  port: number,
+): string {
+  if (n.state === 'confirmed') return `Lets port ${port} in.`;
+  if (n.state === 'cancelled') return 'Not needed any more.';
+  return n.confirmedBy === 'role'
+    ? `Waiting for the node role to open port ${port} and report it. Run the role on this node.`
+    : `No role reports for this node. Open port ${port} in its firewall, then confirm it here.`;
+}
+
+const TEMPLATE_WORDS: Record<string, string> = {
+  reality: 'VLESS over TCP with REALITY',
+  'xhttp-reality': 'VLESS over XHTTP with REALITY',
+  ws: 'VLESS over WebSocket, on loopback behind the node proxy',
+};
+export const templateWords = (kind: string): string => TEMPLATE_WORDS[kind] ?? kind;
+
+/**
+ * Whether a transport's port is changed from here: one plain port, not
+ * loopback (a loopback transport sits behind the node's own proxy, whose
+ * route to it is a node setting). The server is what decides.
+ */
+export function portChangeable(i: Pick<TransportView, 'port' | 'listen'>): boolean {
+  if (i.port === null) return false;
+  const l = (i.listen ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, '');
+  return !(l === 'localhost' || l === '::1' || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(l));
 }

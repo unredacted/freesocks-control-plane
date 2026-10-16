@@ -325,7 +325,7 @@ export interface NodeInventoryRow {
   countryCode?: string;
 }
 
-import type { PatchChange, PatchOp } from '../backend/patchOps';
+import type { PatchChange, PatchMaterial, PatchOp } from '../backend/patchOps';
 
 // --- Backend observation (server management) -----------------------------------
 //
@@ -413,12 +413,25 @@ export interface PanelObservation {
 export interface ProfilePatchPreview {
   profileName: string;
   baseToken: string;
-  expectedToken: string;
+  /** Null when the edit makes a REALITY key in the attempt: the token is known only then. */
+  expectedToken: string | null;
   changed: boolean;
   changes: PatchChange[];
   touchedTags: string[];
   /** tag -> inbound uuid as read: a settled edit must leave every one of them as it was. */
   inboundUuids: Record<string, string>;
+}
+
+/** How the one attempt of a profile edit is made (the ledger's `run`). */
+export interface ProfilePatchSendOptions {
+  /** Key material for the transports the edit creates, made for this attempt only. */
+  material?: PatchMaterial;
+  /**
+   * Called once the edit is computed and checked against `baseToken`, with the
+   * token the profile will have, immediately before the write: the attempt is
+   * recorded there. `false` = do not send (the attempt was not admitted).
+   */
+  beforeSend?: (expectedToken: string) => Promise<boolean>;
 }
 
 /** Every Host field an operator may set. Absent = leave; `null` = clear (sent as ''). */
@@ -585,7 +598,11 @@ export interface PanelWrites<C> {
     ops: readonly PatchOp[],
     baseToken: string,
     digestKey: string,
-  ): Promise<{ sent: true } | { sent: false; reason: 'profile_changed' | 'nothing_to_change' }>;
+    opts?: ProfilePatchSendOptions,
+  ): Promise<
+    | { sent: true }
+    | { sent: false; reason: 'profile_changed' | 'nothing_to_change' | 'not_admitted' }
+  >;
   readProfile(config: C, profileUuid: string, digestKey: string): Promise<ObservedProfile>;
   /** Targeted read-backs: the ledger settles an op by LOOKING, never by trusting a response. */
   readHosts(config: C): Promise<ObservedAddress[]>;

@@ -1,6 +1,17 @@
 import { describe, expect, test } from 'vitest';
 import { pickInstance, resolveServersRoute, serversPaths } from './routes';
-import { blockerWords, protectionWords, setupWords, stageWords, standbyWords } from './words';
+import {
+  blockerWords,
+  firewallNodeWords,
+  portChangeTitle,
+  portChangeWords,
+  portChangeable,
+  protectionWords,
+  setupWords,
+  stageWords,
+  standbyWords,
+  templateWords,
+} from './words';
 import {
   WORDED_CODES,
   ago,
@@ -479,4 +490,61 @@ describe('enrolled nodes', () => {
       ).not.toMatch(/—/);
     }
   });
+});
+
+describe('port changes in words', () => {
+  const change = {
+    transportTag: 'PRIVACY_REALITY',
+    fromPort: 443,
+    toPort: 8443,
+    code: null,
+    nodes: [
+      { name: 'node-a', confirmedBy: 'role' as const, state: 'waiting' },
+      { name: 'stranger', confirmedBy: 'operator' as const, state: 'confirmed' },
+    ],
+  };
+
+  test('says what waits, and that nothing is sent until then', () => {
+    expect(portChangeTitle(change)).toBe('Move PRIVACY_REALITY from port 443 to 8443');
+    expect(portChangeWords({ ...change, state: 'waiting' })).toEqual({
+      dot: 'amber',
+      sentence: 'Nothing is sent until every node lets port 8443 in. Waiting for 1 node.',
+    });
+    const all = change.nodes.map((n) => ({ ...n, state: 'confirmed' }));
+    expect(
+      portChangeWords({ ...change, nodes: all, state: 'waiting', code: 'servers.op_running' })
+        .sentence,
+    ).toMatch(/another change to this profile/);
+    expect(portChangeWords({ ...change, state: 'applied' }).dot).toBe('green');
+    expect(
+      portChangeWords({ ...change, state: 'refused', code: 'servers.profile_changed' }).sentence,
+    ).toMatch(/^Not sent: The profile changed/);
+  });
+
+  test('tells the operator who confirms each node, and how', () => {
+    expect(firewallNodeWords({ confirmedBy: 'role', state: 'waiting' }, 8443)).toMatch(
+      /Run the role on this node/,
+    );
+    expect(firewallNodeWords({ confirmedBy: 'operator', state: 'waiting' }, 8443)).toMatch(
+      /confirm it here/,
+    );
+    expect(firewallNodeWords({ confirmedBy: 'role', state: 'confirmed' }, 8443)).toBe(
+      'Lets port 8443 in.',
+    );
+  });
+
+  test('no em-dashes in any of it', () => {
+    const states = ['waiting', 'applying', 'applied', 'refused', 'cancelled'] as const;
+    for (const state of states)
+      expect(portChangeWords({ ...change, state }).sentence).not.toMatch(/—/);
+    for (const k of ['reality', 'xhttp-reality', 'ws']) expect(templateWords(k)).not.toMatch(/—/);
+  });
+});
+
+test('a port is changed here only on a public, single-port transport', () => {
+  expect(portChangeable({ port: 443, listen: '::' })).toBe(true);
+  expect(portChangeable({ port: 443, listen: null })).toBe(true);
+  expect(portChangeable({ port: 8443, listen: '127.0.0.1' })).toBe(false);
+  expect(portChangeable({ port: 8443, listen: '[::1]' })).toBe(false);
+  expect(portChangeable({ port: null, listen: '0.0.0.0' })).toBe(false);
 });

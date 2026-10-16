@@ -385,6 +385,9 @@ on them. Measured on the pinned backend (`remnawave/backend:3.4.4`), no node con
 | Repeat `actions/disable` on a disabled node                              | **200** again                                    | Not an error, and not a guaranteed no-op: read the state first and skip the call                                       |
 | `actions/restart` with `{forceRestart: true}`                            | **202** (2.x: **200**)                           | The answer means "queued", not "restarted", on either version                                                          |
 | `xrayUptime` on a node that never connected                              | **`0`**                                          | A zero or missing uptime says nothing about when Xray started                                                          |
+| A transport's `port` changed, tag and protocol unchanged                 | **uuid stable**; nodes on it re-apply            | A port change keeps bindings, Hosts and groups; the node listens on the new port seconds later                         |
+| Two transports of one profile on the same port; a port of 70000          | **accepted** (200), stored as sent               | The backend validates neither: FCP checks the range, and collisions per node                                           |
+| A transport added to a profile                                           | nodes re-apply; their `activeInbounds` unchanged | No node serves a new transport until it is assigned to it: adding one opens no port                                    |
 
 What the backend **normalises** on a config write: it trims whitespace around each
 `serverNames` entry, and it clears `settings.clients`. It does **not** lowercase or

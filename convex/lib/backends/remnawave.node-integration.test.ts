@@ -24,6 +24,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { generateKeyPairSync, randomUUID } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { afterAll, describe, expect, test } from 'vitest';
+import { PROVIDERS } from './registry';
 
 const BASE_URL = process.env.REMNAWAVE_TEST_URL;
 const API_TOKEN = process.env.REMNAWAVE_TEST_TOKEN;
@@ -121,7 +122,7 @@ const profileConfig = (serverNames: string[]) => ({
  * fetch of port 18100+i is a VLESS+REALITY session to the node presenting
  * `sni[i]`, asking for the target's plain page.
  */
-function startClient(vlessUuid: string, snis: string[]) {
+function startClient(vlessUuid: string, snis: string[], nodePort = 443) {
   writeFileSync(
     '.cache/remnawave-node-test/client.json',
     JSON.stringify({
@@ -140,7 +141,7 @@ function startClient(vlessUuid: string, snis: string[]) {
           vnext: [
             {
               address: 'rw-test-node',
-              port: 443,
+              port: nodePort,
               users: [
                 {
                   id: vlessUuid,
@@ -211,6 +212,26 @@ function tlsHandshakeCompletes(sni: string): boolean {
     { encoding: 'utf8', timeout: 60_000, stdio: ['ignore', 'pipe', 'pipe'] },
   );
   return /Protocol version: TLSv1\.3/.test(`${r.stdout ?? ''}${r.stderr ?? ''}`);
+}
+
+/**
+ * A firewall in the NODE's network namespace (the node image ships none): a
+ * throwaway container joins it with NET_ADMIN and changes its INPUT chain.
+ * This stands in for the node role opening, or not yet opening, a port.
+ */
+function nodeFirewall(rule: '-I' | '-D', port: number) {
+  docker(
+    'run',
+    '--rm',
+    '--network',
+    'container:rw-test-node',
+    '--cap-add',
+    'NET_ADMIN',
+    'alpine:3.20',
+    'sh',
+    '-c',
+    `apk add -q iptables >/dev/null 2>&1; iptables ${rule} INPUT -p tcp --dport ${port} -j DROP`,
+  );
 }
 
 describe.skipIf(!ENABLED)('remnawave managed node (integration)', () => {
@@ -378,4 +399,95 @@ describe.skipIf(!ENABLED)('remnawave managed node (integration)', () => {
       observed[`row${count}`] = pickStatus(await nodeRow());
     });
   }
+
+  // --- a port change (FCP's typed edit, through the provider) -----------------------------------
+  const cfg = () => ({
+    type: 'remnawave' as const,
+    baseUrl: BASE_URL!,
+    apiToken: API_TOKEN!,
+    timeoutMs: 20_000,
+  });
+  const KEY = 'node-integration-digest-key';
+
+  test('a port the node firewall drops serves nobody; once it is let in, the moved transport works', async () => {
+    const w = PROVIDERS.remnawave.backendWrites!;
+    const PORT = 9443;
+    // The firewall drops the new port: the node role has not opened it yet.
+    nodeFirewall('-I', PORT);
+    const ops = [{ op: 'setInboundPort' as const, inboundTag: TAG, port: PORT }];
+    const preview = await w.previewProfilePatch(cfg(), profileUuid, ops, KEY);
+    expect(preview.changes).toEqual([{ inboundTag: TAG, field: 'port', before: 443, after: PORT }]);
+    const before = (await nodeRow())?.lastStatusChange;
+    let recorded: string | null = null;
+    const sent = await w.applyProfilePatch(cfg(), profileUuid, ops, preview.baseToken, KEY, {
+      beforeSend: async (token) => {
+        recorded = token;
+        return true;
+      },
+    });
+    expect(sent).toEqual({ sent: true });
+    // The attempt recorded exactly the token the preview predicted, and it landed.
+    expect(recorded).toBe(preview.expectedToken);
+    const after = await w.readProfile(cfg(), profileUuid, KEY);
+    expect(after.changeToken).toBe(preview.expectedToken);
+    // Tag and protocol held: the transport keeps its uuid, and so do Hosts and groups on it.
+    expect(after.inbounds.find((i) => i.tag === TAG)?.configProfileInboundUuid).toBe(inboundUuid);
+    const moved = await until(
+      async () => {
+        const n = await nodeRow();
+        return n?.lastStatusChange && n.lastStatusChange !== before ? n : null;
+      },
+      120_000,
+      1000,
+    );
+    observed.portMoveRow = pickStatus(moved);
+    // Members dialing the new port get nothing while the firewall drops it.
+    const sni = names(1024)[0]!;
+    startClient(vlessUuid, [sni], PORT);
+    await sleep(8000);
+    expect(await connects(0)).toBe(false);
+    // The role opens the port: the same client connects with nothing else changed.
+    const t0 = Date.now();
+    nodeFirewall('-D', PORT);
+    const works = await until(async () => ((await connects(0)) ? true : null), 60_000, 1500);
+    observed.portOpenToWorkingMs = works ? Date.now() - t0 : null;
+    expect(works, 'the moved transport never served on its new port').toBe(true);
+    // The old port is gone.
+    startClient(vlessUuid, [sni], 443);
+    await sleep(5000);
+    expect(await connects(0)).toBe(false);
+  });
+
+  test('a transport added from a template is served by no node until one is assigned to it', async () => {
+    const w = PROVIDERS.remnawave.backendWrites!;
+    const tag = `${TAG}-ws`;
+    const ops = [
+      {
+        op: 'addInboundFromTemplate' as const,
+        inboundTag: tag,
+        template: { kind: 'ws' as const, port: 10443, path: '/feed' },
+      },
+    ];
+    const preview = await w.previewProfilePatch(cfg(), profileUuid, ops, KEY);
+    const before = await nodeRow();
+    const sent = await w.applyProfilePatch(cfg(), profileUuid, ops, preview.baseToken, KEY);
+    expect(sent).toEqual({ sent: true });
+    const after = await w.readProfile(cfg(), profileUuid, KEY);
+    expect(after.changeToken).toBe(preview.expectedToken);
+    const added = after.inbounds.find((i) => i.tag === tag);
+    expect(added).toMatchObject({ port: 10443, listen: '127.0.0.1', network: 'ws' });
+    // The backend re-applies the profile to the node, which keeps exactly its own transport.
+    const row = await until(
+      async () => {
+        const n = await nodeRow();
+        return n?.lastStatusChange && n.lastStatusChange !== before?.lastStatusChange ? n : null;
+      },
+      120_000,
+      1000,
+    );
+    expect((row?.configProfile?.activeInbounds ?? []).map((i: { uuid: string }) => i.uuid)).toEqual(
+      [inboundUuid],
+    );
+    observed.addTransportActiveInbounds = (row?.configProfile?.activeInbounds ?? []).length;
+  });
 });
