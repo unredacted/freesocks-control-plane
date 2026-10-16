@@ -1607,6 +1607,8 @@ export const SetupRunCreateRequest = z.object({
   planHash: z.string(),
   approvedHideUuids: z.array(z.string()).default([]),
   keepDirect: z.boolean().optional(),
+  /** The transports to protect, when the plan had `tooManyInbounds` (the same keys the plan was shown with). */
+  listenerKeys: z.array(z.string()).optional(),
 });
 export type SetupRunCreateRequest = z.infer<typeof SetupRunCreateRequest>;
 export const SetupRunCreatedResponse = z.object({ runId: z.string(), stage: SetupRunStage });
@@ -1717,6 +1719,8 @@ export type SetupRunsResponse = z.infer<typeof SetupRunsResponse>;
 /** `POST setup-runs/{id}/retry`: the card's secondary buttons. */
 export const SetupRunRetryRequest = z.object({
   tryAnotherAddress: z.boolean().optional(),
+  /** With `tryAnotherAddress` at `try_it`: the one line that does not work (only it is replaced). */
+  edgeId: z.string().optional(),
   acceptPartial: z.boolean().optional(),
   accountId: z.string().optional(),
 });

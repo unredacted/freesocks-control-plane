@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { buildImportLink, SCHEME_IDS } from './appLinks';
+import { buildImportLink, SCHEME_IDS, SHARE_LINK_SCHEMES, shareLinkApps } from './appLinks';
 
 const URL_ = 'https://beta.freesocks.org/api/v1/sub/abc123';
 const NAME = 'FreeSocks';
@@ -52,5 +52,39 @@ describe('appLinks import deep-links (buildImportLink)', () => {
       expect(link).toMatch(/^[a-z0-9-]+:\/\//);
       expect(link.startsWith('https://')).toBe(false);
     }
+  });
+});
+
+describe('shareLinkApps (the admin test card)', () => {
+  const catalog = [
+    { name: 'Hiddify', schemeId: 'hiddify', backends: ['remnawave'] },
+    { name: 'sing-box', schemeId: 'sing-box', backends: ['remnawave'] },
+    { name: 'Clash', schemeId: 'clash', backends: ['remnawave'] },
+    { name: 'v2rayN', schemeId: null, backends: ['remnawave'] },
+    { name: 'Shadowrocket', schemeId: 'shadowrocket', backends: ['remnawave'] },
+    { name: 'Outline', schemeId: null, backends: ['outline'] },
+  ];
+
+  test('a vless link: the share-link apps in catalog order, never a profile-only core', () => {
+    expect(shareLinkApps(catalog, 'vless://u@203.0.113.1:443?security=reality#t')).toEqual([
+      'Hiddify',
+      'Shadowrocket',
+    ]);
+  });
+
+  test('an ss key also opens in the Outline apps', () => {
+    expect(shareLinkApps(catalog, 'ss://Y2hhY2hhMjA@203.0.113.1:8388#t')).toEqual([
+      'Hiddify',
+      'Shadowrocket',
+      'Outline',
+    ]);
+  });
+
+  test('no link (a named-connection retest) names no app', () => {
+    expect(shareLinkApps(catalog, '')).toEqual([]);
+  });
+
+  test('every share-link scheme has an import builder', () => {
+    for (const id of SHARE_LINK_SCHEMES) expect(SCHEME_IDS).toContain(id);
   });
 });

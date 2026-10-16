@@ -1,10 +1,12 @@
 <script lang="ts">
   /**
    * Icon button that copies `value` to the clipboard (toast on success / failure).
+   * With `text` it is an outlined button showing the icon and that word ("Copy link").
    *
    * Props:
    *   value: string
    *   label?: string          what is being copied, for the accessible name ("Copy address")
+   *   text?: string           a visible label instead of the bare icon
    *   class?: string
    */
   import { toast } from 'svelte-sonner';
@@ -15,9 +17,10 @@
   interface Props {
     value: string;
     label?: string;
+    text?: string;
     class?: string;
   }
-  let { value, label = 'Copy', class: className }: Props = $props();
+  let { value, label = 'Copy', text, class: className }: Props = $props();
 
   let copied = $state(false);
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -37,12 +40,13 @@
 
 <Button
   type="button"
-  variant="ghost"
-  size="icon-xs"
+  variant={text ? 'outline' : 'ghost'}
+  size={text ? 'default' : 'icon-xs'}
   class={className}
-  aria-label={label}
+  aria-label={text ? undefined : label}
   title={label}
   onclick={copy}
 >
   {#if copied}<Check aria-hidden="true" />{:else}<Copy aria-hidden="true" />{/if}
+  {#if text}{copied ? 'Copied' : text}{/if}
 </Button>

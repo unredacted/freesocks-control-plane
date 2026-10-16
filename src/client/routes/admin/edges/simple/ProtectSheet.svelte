@@ -1,12 +1,23 @@
 <script lang="ts">
   /**
    * "Protect a node": a sheet with three questions and then the progress.
-   *   1. Which node?     a backend, then one of its nodes (already protected ones greyed);
-   *                      picking one fetches the plan and shows the transports in words
-   *   2. Which account?  the plan's compatible accounts as radio cards; "Add account"
-   *                      renders the provider stepper inline (compact)
+   *   1. Which node?     always first: a backend, then one of its nodes (already
+   *                      protected ones greyed); picking one fetches the plan and
+   *                      shows the transports in words. A node with more transports
+   *                      than one run protects asks which ones (up to
+   *                      SETUP_RUN_MAX_LISTENERS) and plans those.
+   *   2. Which account?  the plan's accounts as radio cards, compatible first; an
+   *                      account that cannot carry the node says why, with a link
+   *                      to where that is fixed. "Add account" renders the provider
+   *                      stepper inline (compact), offering only providers whose
+   *                      layer carries every chosen transport, and hinting the
+   *                      node's country for the region. With no account at all the
+   *                      stepper opens by itself.
    *   3. Review          one sentence, the consent for unsupported addresses, one button
    * A created run hands over to ProtectProgress (`runId`), which the URL keeps.
+   *
+   * An account picked or created stays picked when the node changes, as long as
+   * the new plan still offers it as compatible.
    *
    * The node list can be re-read from the backend (Refresh). A link from the
    * Servers page names the node (`server` = the backend's slug or id, `node` =
@@ -17,7 +28,6 @@
    * Props:
    *   open: boolean
    *   runId: string | null              show a run's progress instead of the questions
-   *   startAtAccount?: boolean          no provider account exists yet: open on the account step
    *   server?: string | null            preselect this backend (slug or id; read once)
    *   node?: string | null              preselect this node uuid on it (read once)
    *   onRunCreated: (runId: string) => void
@@ -33,6 +43,7 @@
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import { Skeleton } from '@client/components/ui/skeleton';
+  import Link from '@client/components/Link.svelte';
   import { adminBackendServersQuery } from '@client/lib/queries';
   import {
     createSetupRun,
@@ -43,10 +54,11 @@
   } from '@client/lib/edgesApi';
   import { countryName } from '@client/lib/countries';
   import { SETUP_ACCOUNT_REASON_COPY, inboundUnsupportedCopy } from '@client/lib/edgeCodes';
-  import type { SetupPlanResponse } from '@shared/contracts/edges';
+  import type { EdgeLayer, SetupPlanResponse } from '@shared/contracts/edges';
   import { ListenerSpec } from '@shared/contracts/edges';
-  import type { SetupAccountReason } from '@shared/contracts/edgeCodes';
+  import { SETUP_RUN_MAX_LISTENERS, type SetupAccountReason } from '@shared/contracts/edgeCodes';
   import AdminListState from '../../AdminListState.svelte';
+  import { serversPaths } from '../../servers/lib/routes';
   import CodeNote from '../components/CodeNote.svelte';
   import ProviderAccountStepper from '../forms/ProviderAccountStepper.svelte';
   import { edgeErrorIssue, edgeErrorMessage } from '../lib/edgeErrors';
@@ -59,28 +71,17 @@
   interface Props {
     open: boolean;
     runId: string | null;
-    startAtAccount?: boolean;
     server?: string | null;
     node?: string | null;
     onRunCreated: (runId: string) => void;
     onClose: () => void;
   }
-  let {
-    open,
-    runId,
-    startAtAccount = false,
-    server = null,
-    node = null,
-    onRunCreated,
-    onClose,
-  }: Props = $props();
+  let { open, runId, server = null, node = null, onRunCreated, onClose }: Props = $props();
   const qc = useQueryClient();
 
   type Step = 'node' | 'account' | 'review';
-  // With no provider account at all the flow opens on the account step (adding one).
-  const noAccountYet = untrack(() => startAtAccount);
-  let step = $state<Step>(noAccountYet ? 'account' : 'node');
-  let addingAccount = $state(noAccountYet);
+  let step = $state<Step>('node');
+  let addingAccount = $state(false);
 
   // 1. Which node?
   const servers = adminBackendServersQuery();
@@ -96,12 +97,14 @@
     if (named) serverId = named.id;
     else if (panels.length === 1) serverId = panels[0]!.id;
   });
+  const serverSlug = $derived(panels.find((p) => p.id === serverId)?.slug ?? '');
   const candidates = nodeCandidatesQuery(() => serverId || null);
   const nodes = $derived(
     [...(candidates.data?.nodes ?? [])].sort((a, b) => a.name.localeCompare(b.name)),
   );
   let nodeUuid = $state('');
   let plan = $state<SetupPlanResponse | null>(null);
+  const pickedNode = $derived(nodes.find((n) => n.nodeUuid === nodeUuid) ?? null);
 
   // The inventory is a cache: Refresh re-reads the backend (throttled server-side).
   const refresh = createMutation(() => ({
@@ -138,52 +141,118 @@
     presetTaken = null;
     presetMissing = false;
   }
+
+  // The transports the operator chose on a node with more than one run takes
+  // (null: the plan's own set). The create sends the same choice.
+  let chosenKeys = $state<string[] | null>(null);
   const planM = createMutation(() => ({
-    mutationFn: (uuid: string) => planSetupRun(serverId, uuid),
-    onSuccess: (p) => {
-      // A slower answer for a node the operator has since moved away from is
-      // dropped: the review and the run must never use another node's plan.
-      if (p.nodeUuid !== nodeUuid || p.backendServerId !== serverId) return;
+    mutationFn: (v: { uuid: string; keys: string[] | null }) =>
+      planSetupRun(serverId, v.uuid, v.keys ?? undefined),
+    onSuccess: (p, v) => {
+      // A slower answer for a node (or a choice) the operator has since moved away
+      // from is dropped: the review and the run must never use another plan.
+      if (p.nodeUuid !== nodeUuid || p.backendServerId !== serverId || v.keys !== chosenKeys)
+        return;
       plan = p;
+      // The account stays picked while the new plan still offers it.
+      if (accountId && !p.accounts.some((a) => a.id === accountId && a.compatible)) accountId = '';
       if (p.activeRunId) onRunCreated(p.activeRunId);
     },
   }));
+  const replan = () => planM.mutate({ uuid: nodeUuid, keys: chosenKeys });
   function pickNode(uuid: string) {
     nodeUuid = uuid;
     plan = null;
-    accountId = '';
-    planM.mutate(uuid);
+    chosenKeys = null;
+    choosingTransports = false;
+    planM.mutate({ uuid, keys: null });
   }
   const planIssue = $derived(planM.error ? edgeErrorIssue(planM.error) : null);
   const inboundLine = (i: SetupPlanResponse['inbounds'][number]): string => {
     const parsed = ListenerSpec.safeParse(i.listenerSpec);
     return parsed.success ? protocolLine(parsed.data) : i.sourceTag;
   };
-  const supported = $derived(plan?.inbounds.filter((i) => i.frontable) ?? []);
+  const required = $derived(
+    plan ? plan.inbounds.filter((i) => plan!.requiredListeners.includes(i.listenerKey)) : [],
+  );
+  const frontable = $derived(plan?.inbounds.filter((i) => i.frontable) ?? []);
+  const notChosen = $derived(
+    chosenKeys ? frontable.filter((i) => !plan!.requiredListeners.includes(i.listenerKey)) : [],
+  );
   const unsupported = $derived(plan?.inbounds.filter((i) => !i.frontable) ?? []);
+
+  // Too many transports: the operator picks up to the run's limit, then re-plans.
+  let picking = $state<string[]>([]);
+  let choosingTransports = $state(false);
+  $effect(() => {
+    if (plan?.tooManyInbounds && chosenKeys === null && !choosingTransports) {
+      picking = untrack(() =>
+        frontable.slice(0, SETUP_RUN_MAX_LISTENERS).map((i) => i.listenerKey),
+      );
+      choosingTransports = true;
+    }
+  });
+  function togglePick(key: string, on: boolean) {
+    picking = on ? [...picking, key] : picking.filter((k) => k !== key);
+  }
+  function useChoice() {
+    // Plan order, so the run's lines follow the backend's.
+    chosenKeys = frontable.map((i) => i.listenerKey).filter((k) => picking.includes(k));
+    choosingTransports = false;
+    plan = null;
+    replan();
+  }
+  function changeChoice() {
+    picking = [...(chosenKeys ?? [])];
+    choosingTransports = true;
+  }
 
   // 2. Which account?
   let accountId = $state('');
-  const accounts = $derived(plan?.accounts ?? []);
+  const accounts = $derived(
+    [...(plan?.accounts ?? [])].sort((a, b) => Number(b.compatible) - Number(a.compatible)),
+  );
   const compatible = $derived(accounts.filter((a) => a.compatible));
   // Exactly one account can carry the node: it is the answer, picked for you.
   $effect(() => {
     if (accountId === '' && compatible.length === 1) accountId = compatible[0]!.id;
   });
-  const reasonWords = (reasons: string[]): string =>
-    reasons
-      .map(
-        (r) =>
-          (SETUP_ACCOUNT_REASON_COPY as Record<string, { label: string }>)[r as SetupAccountReason]
-            ?.label ?? r,
-      )
-      .join(', ');
+  // No account at all: adding one is the only way on.
+  $effect(() => {
+    if (step === 'account' && plan && plan.accounts.length === 0) addingAccount = true;
+  });
+  // The layers every chosen transport can be carried at (an account of another one cannot).
+  const neededLayers = $derived.by((): EdgeLayer[] | undefined => {
+    if (required.length === 0) return undefined;
+    return (['l4', 'l7'] as const).filter((l) => required.every((i) => i.layers.includes(l)));
+  });
+  const nodeCountry = $derived(
+    pickedNode?.countryCode ? countryName(pickedNode.countryCode, 'en') : null,
+  );
+  /** Where an account's reason is fixed: its provider page, or nowhere (the transport). */
+  function reasonLink(reason: string, id: string): string | null {
+    switch (reason as SetupAccountReason) {
+      case 'account_untested':
+      case 'account_disabled':
+      case 'account_capacity_reached':
+      case 'account_budget_exhausted':
+      case 'dns_zone_missing':
+        return edgesPaths.provider(id);
+      case 'provider_mismatch':
+        return plan?.existingRelay
+          ? edgesPaths.relay(plan.existingRelay.slug, { tab: 'listeners' })
+          : null;
+      default:
+        return null;
+    }
+  }
+  const reasonLabel = (r: string): string =>
+    (SETUP_ACCOUNT_REASON_COPY as Record<string, { label: string }>)[r]?.label ?? r;
   function onAccountCreated(id: string) {
     addingAccount = false;
     accountId = id;
     // The plan judges accounts: re-read it so the new one appears with its verdict.
-    if (nodeUuid) planM.mutate(nodeUuid);
-    else step = 'node';
+    replan();
   }
 
   // 3. Review
@@ -198,6 +267,7 @@
         planHash: plan!.planHash,
         approvedHideUuids: keepDirect ? [] : (words?.uncovered?.uuids ?? []),
         ...(keepDirect ? { keepDirect: true } : {}),
+        ...(chosenKeys ? { listenerKeys: chosenKeys } : {}),
       }),
     onSuccess: (r) => {
       toast.success('Protecting the node.');
@@ -208,9 +278,12 @@
 
   const canContinue = $derived(
     step === 'node'
-      ? plan !== null && !plan.tooManyInbounds && plan.requiredListeners.length > 0
+      ? plan !== null &&
+          !plan.tooManyInbounds &&
+          !choosingTransports &&
+          plan.requiredListeners.length > 0
       : step === 'account'
-        ? !!account
+        ? !!account?.compatible
         : false,
   );
   function next() {
@@ -218,6 +291,7 @@
     else if (step === 'account') step = 'review';
   }
   function back() {
+    addingAccount = false;
     if (step === 'review') step = 'account';
     else if (step === 'account') step = 'node';
   }
@@ -227,7 +301,8 @@
     review: 'Review',
   };
   const CARD =
-    'has-[:checked]:border-primary has-[:checked]:bg-primary/5 flex cursor-pointer items-start gap-3 rounded-md border p-3 has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-60';
+    'has-[:checked]:border-primary has-[:checked]:bg-primary/5 flex cursor-pointer items-start gap-3 rounded-md border p-3 has-[:disabled]:cursor-not-allowed';
+  const LINK = 'text-primary underline underline-offset-4';
 </script>
 
 <Sheet.Root
@@ -245,8 +320,8 @@
         {:else if step === 'node'}
           Pick the node members should reach through a provider address instead of its own.
         {:else if step === 'account'}
-          The provider account the address is created in. Only accounts that can carry every inbound
-          are offered.
+          The provider account the address is created in. Only accounts that can carry every
+          transport can be picked.
         {:else}
           One last look before anything is created.
         {/if}
@@ -262,9 +337,10 @@
         {:else if servers.isError}
           <AdminListState error={servers.error} onRetry={() => void servers.refetch()} />
         {:else if panels.length === 0}
-          <AdminListState
-            emptyText="No panel is registered yet. Add a Remnawave backend server first, under Servers."
-          />
+          <div class="text-muted-foreground space-y-2 rounded-md border border-dashed p-4 text-sm">
+            <p>No panel is registered yet. Add a Remnawave backend server first.</p>
+            <Link href={serversPaths.home()} class={LINK}>Open Servers</Link>
+          </div>
         {:else}
           {#if panels.length > 1}
             <div class="space-y-1.5">
@@ -277,6 +353,8 @@
                   serverId = v;
                   nodeUuid = '';
                   plan = null;
+                  chosenKeys = null;
+                  choosingTransports = false;
                 }}
               >
                 <Select.Trigger class="w-full">
@@ -296,6 +374,7 @@
               <Button
                 variant="ghost"
                 size="sm"
+                class="h-11 sm:h-7"
                 disabled={refresh.isPending}
                 onclick={() => refresh.mutate({ id: serverId, manual: true })}
               >
@@ -321,6 +400,10 @@
               <p class="text-muted-foreground text-sm" role="status">
                 The node from Servers is not in this list yet. Refresh once it is online on the
                 backend, or pick another node.
+                <Link
+                  href={serversPaths.node(preset.node, { instance: serverSlug || undefined })}
+                  class={LINK}>Open it on Servers</Link
+                >
               </p>
             {/if}
             {#if candidates.isPending || (presetPending && refresh.isPending)}
@@ -328,13 +411,20 @@
             {:else if candidates.isError}
               <AdminListState error={candidates.error} onRetry={() => void candidates.refetch()} />
             {:else if nodes.length === 0}
-              <AdminListState emptyText="This panel has no nodes yet." />
+              <div
+                class="text-muted-foreground space-y-2 rounded-md border border-dashed p-4 text-sm"
+              >
+                <p>This panel has no nodes yet.</p>
+                <Link href={serversPaths.home({ instance: serverSlug || undefined })} class={LINK}
+                  >Add one under Servers</Link
+                >
+              </div>
             {:else}
               <fieldset class="space-y-2">
                 <legend class="sr-only">Node</legend>
                 {#each nodes as n (n.nodeUuid)}
                   {@const taken = n.relaySlug !== null}
-                  <label class={CARD}>
+                  <label class={[CARD, taken && 'opacity-60']}>
                     <input
                       type="radio"
                       name="protect-node"
@@ -368,23 +458,58 @@
           {:else if planIssue}
             <CodeNote issue={planIssue} />
           {:else if planM.isError}
-            <AdminListState error={planM.error} onRetry={() => planM.mutate(nodeUuid)} />
+            <AdminListState error={planM.error} onRetry={replan} />
+          {:else if plan && choosingTransports}
+            <fieldset class="space-y-3 rounded-md border p-3 text-sm">
+              <legend class="px-1 font-medium">Which transports?</legend>
+              <p>
+                This node has {frontable.length} transports a provider address can carry. One run protects
+                up to {SETUP_RUN_MAX_LISTENERS}: pick the ones members need most. The others keep
+                the direct address, or are hidden if you consent on the review.
+              </p>
+              <ul class="space-y-1">
+                {#each frontable as i (i.listenerKey)}
+                  {@const on = picking.includes(i.listenerKey)}
+                  <li>
+                    <label class="flex min-h-11 cursor-pointer items-center gap-3 sm:min-h-8">
+                      <input
+                        type="checkbox"
+                        class="accent-primary size-4"
+                        checked={on}
+                        disabled={!on && picking.length >= SETUP_RUN_MAX_LISTENERS}
+                        onchange={(e) => togglePick(i.listenerKey, e.currentTarget.checked)}
+                      />
+                      <span class="min-w-0">
+                        <span class="font-medium">{i.listenerKey}</span>
+                        <span class="text-muted-foreground">{inboundLine(i)}</span>
+                      </span>
+                    </label>
+                  </li>
+                {/each}
+              </ul>
+              <div class="flex flex-wrap items-center gap-3">
+                <Button class="h-11 sm:h-8" disabled={picking.length === 0} onclick={useChoice}>
+                  Use these {picking.length}
+                </Button>
+                <span class="text-muted-foreground text-xs" aria-live="polite">
+                  {picking.length} of {SETUP_RUN_MAX_LISTENERS} chosen
+                </span>
+              </div>
+            </fieldset>
           {:else if plan}
             <div class="space-y-3 rounded-md border p-3 text-sm">
-              {#if plan.tooManyInbounds}
-                <CodeNote issue={{ code: 'too_many_inbounds' }} />
-              {:else if supported.length === 0}
+              {#if required.length === 0}
                 <p>
                   No transport on this node can be carried by a provider address yet. It cannot be
                   protected this way.
                 </p>
               {:else}
                 <p class="font-medium">
-                  {supported.length === 1 ? 'This inbound gets' : 'These transports get'} a protected
+                  {required.length === 1 ? 'This transport gets' : 'These transports get'} a protected
                   address
                 </p>
                 <ul class="space-y-1">
-                  {#each supported as i (i.listenerKey)}
+                  {#each required as i (i.listenerKey)}
                     <li>
                       <span class="font-medium">{i.listenerKey}</span>
                       <span class="text-muted-foreground">{inboundLine(i)}</span>
@@ -395,10 +520,24 @@
                   {planWords(plan, '').formats}
                 </p>
               {/if}
+              {#if chosenKeys}
+                <p class="text-muted-foreground text-xs">
+                  {notChosen.length === 1
+                    ? '1 more transport was not chosen.'
+                    : `${notChosen.length} more transports were not chosen.`}
+                  <button
+                    type="button"
+                    class={[LINK, 'min-h-11 sm:min-h-0']}
+                    onclick={changeChoice}
+                  >
+                    Change the transports
+                  </button>
+                </p>
+              {/if}
               {#if unsupported.length > 0}
                 <Collapsible.Root>
                   <Collapsible.Trigger
-                    class="group text-muted-foreground hover:text-foreground flex items-center gap-1 text-sm"
+                    class="group text-muted-foreground hover:text-foreground flex min-h-11 items-center gap-1 text-sm sm:min-h-0"
                   >
                     <ChevronRight
                       class="size-4 transition-transform group-data-[state=open]:rotate-90"
@@ -424,6 +563,13 @@
                         {/if}
                       </p>
                     {/each}
+                    <p class="text-muted-foreground text-xs">
+                      A node's transports are set on its panel.
+                      <Link
+                        href={serversPaths.node(nodeUuid, { instance: serverSlug || undefined })}
+                        class={LINK}>Open the node on Servers</Link
+                      >
+                    </p>
                   </Collapsible.Content>
                 </Collapsible.Root>
               {/if}
@@ -434,6 +580,8 @@
         {#if addingAccount}
           <ProviderAccountStepper
             compact
+            layers={neededLayers}
+            {nodeCountry}
             onCreated={onAccountCreated}
             onCancel={accounts.length > 0 ? () => (addingAccount = false) : undefined}
           />
@@ -446,35 +594,67 @@
             <fieldset class="space-y-2">
               <legend class="sr-only">Provider account</legend>
               {#each accounts as a (a.id)}
-                <label class={CARD}>
-                  <input
-                    type="radio"
-                    name="protect-account"
-                    class="accent-primary mt-1"
-                    value={a.id}
-                    checked={accountId === a.id}
-                    disabled={!a.compatible}
-                    onchange={() => (accountId = a.id)}
-                  />
-                  <span class="min-w-0 flex-1">
-                    <span class="block font-medium">{a.name}</span>
-                    <span class="text-muted-foreground block text-xs">
-                      {providerLabel(a.provider)}
-                      {#if !a.compatible}
-                        <span class="mx-1" aria-hidden="true">·</span>{reasonWords(a.reasons)}
-                      {/if}
+                <div class={['rounded-md', !a.compatible && 'border']}>
+                  <label class={[CARD, !a.compatible && 'border-0 pb-1']}>
+                    <input
+                      type="radio"
+                      name="protect-account"
+                      class="accent-primary mt-1"
+                      value={a.id}
+                      checked={accountId === a.id}
+                      disabled={!a.compatible}
+                      onchange={() => (accountId = a.id)}
+                    />
+                    <span class="min-w-0 flex-1">
+                      <span class={['block font-medium', !a.compatible && 'opacity-60']}
+                        >{a.name}</span
+                      >
+                      <span class="text-muted-foreground block text-xs">
+                        {providerLabel(a.provider)}
+                        <span class="mx-1" aria-hidden="true">·</span>{a.layer === 'l7'
+                          ? 'CDN front'
+                          : 'load balancer'}
+                      </span>
                     </span>
-                  </span>
-                </label>
+                  </label>
+                  {#if !a.compatible}
+                    <ul class="space-y-0.5 px-3 pb-3 ps-10 text-xs">
+                      {#each a.reasons as r (r)}
+                        {@const href = reasonLink(r, a.id)}
+                        <li>
+                          {#if href}
+                            <Link
+                              {href}
+                              class={`${LINK} inline-flex min-h-11 items-center sm:min-h-0`}
+                              >{reasonLabel(r)}</Link
+                            >
+                          {:else}
+                            <span class="text-muted-foreground"
+                              >{r === 'layer_mismatch'
+                                ? 'Cannot carry every chosen transport'
+                                : reasonLabel(r)}</span
+                            >
+                          {/if}
+                        </li>
+                      {/each}
+                    </ul>
+                  {/if}
+                </div>
               {/each}
             </fieldset>
             {#if compatible.length === 0}
               <p class="text-muted-foreground text-xs">
-                No account can carry this node's transports as it is. Fix one above or add another.
+                No account can carry this node's transports as it is. Follow a link above to fix
+                one, or add another.
               </p>
             {/if}
           {/if}
-          <Button variant="outline" size="sm" onclick={() => (addingAccount = true)}>
+          <Button
+            variant="outline"
+            size="sm"
+            class="h-11 sm:h-7"
+            onclick={() => (addingAccount = true)}
+          >
             Add account
           </Button>
         {/if}
@@ -506,25 +686,29 @@
     {#if !runId}
       <Sheet.Footer class="flex-row flex-wrap items-center gap-2 border-t">
         {#if step === 'review' && words}
-          <Button disabled={create.isPending} onclick={() => create.mutate(false)}>
+          <Button
+            class="h-11 sm:h-8"
+            disabled={create.isPending}
+            onclick={() => create.mutate(false)}
+          >
             {create.isPending ? 'Starting' : words.button}
           </Button>
           <!-- An enrolled node goes live through its approval only: it has no direct address to keep. -->
           {#if words.uncovered && !plan?.enrolled}
-            <Button variant="ghost" disabled={create.isPending} onclick={() => create.mutate(true)}>
+            <Button
+              variant="ghost"
+              class="h-11 sm:h-8"
+              disabled={create.isPending}
+              onclick={() => create.mutate(true)}
+            >
               Keep those members on the direct address
             </Button>
           {/if}
         {:else if !(step === 'account' && addingAccount)}
-          <Button disabled={!canContinue} onclick={next}>Continue</Button>
+          <Button class="h-11 sm:h-8" disabled={!canContinue} onclick={next}>Continue</Button>
         {/if}
-        {#if step !== 'node' && !(step === 'account' && addingAccount)}
-          <Button variant="ghost" onclick={back}>Back</Button>
-        {/if}
-        {#if plan?.tooManyInbounds}
-          <Button variant="outline" onclick={() => router.navigate(edgesPaths.setup())}>
-            Use manual setup
-          </Button>
+        {#if step !== 'node'}
+          <Button variant="ghost" class="h-11 sm:h-8" onclick={back}>Back</Button>
         {/if}
       </Sheet.Footer>
     {/if}

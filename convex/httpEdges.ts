@@ -591,11 +591,16 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
   // Guided setup runs: plan (read-only over the backend), create, and the three
   // operator verbs on a run (cancel / retry / continue).
   if (a === 'setup-runs') {
+    // The transports the operator chose on a node with more than one run takes.
+    const listenerKeys = Array.isArray(body.listenerKeys)
+      ? { listenerKeys: body.listenerKeys.filter((x): x is string => typeof x === 'string') }
+      : {};
     if (b === 'plan' && !c) {
       return json(
         await ctx.runAction(internal.edgeSetupPlan.plan, {
           backendServerId: id<'backendServers'>(String(body.backendServerId ?? '')),
           nodeUuid: String(body.nodeUuid ?? ''),
+          ...listenerKeys,
         }),
       );
     }
@@ -607,6 +612,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
         await ctx.runAction(internal.edgeSetupPlan.create, {
           backendServerId: id<'backendServers'>(String(body.backendServerId ?? '')),
           nodeUuid: String(body.nodeUuid ?? ''),
+          ...listenerKeys,
           accountId: id<'edgeProviderAccounts'>(String(body.accountId ?? '')),
           planHash: String(body.planHash ?? ''),
           approvedHideUuids: uuids,
@@ -624,6 +630,9 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           runId,
           ...(body.tryAnotherAddress === true ? { tryAnotherAddress: true } : {}),
           ...(body.acceptPartial === true ? { acceptPartial: true } : {}),
+          ...(typeof body.edgeId === 'string' && body.edgeId
+            ? { edgeId: id<'edges'>(body.edgeId) }
+            : {}),
           ...(typeof body.accountId === 'string' && body.accountId
             ? { accountId: id<'edgeProviderAccounts'>(body.accountId) }
             : {}),

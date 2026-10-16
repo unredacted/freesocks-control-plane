@@ -1,13 +1,21 @@
 <script lang="ts">
   /**
-   * The test card for addresses OUTSIDE a guided run (a spare, a retest, the
-   * go-live check): fetches each address's isolated test link, and a tick calls
-   * `verifyEdge` with the binding that link carried. `onAllDone` fires once every
-   * address is confirmed.
+   * The test card for addresses OUTSIDE a guided run's sheet (a spare, a retest,
+   * the go-live check): fetches each address's isolated test link, and each tick
+   * calls `verifyEdge` with the binding that link carried (saved on its own).
+   * `onAllDone` fires once every address is confirmed.
+   *
+   * "Doesn't work" replaces that one address: with `runId` (the activation run
+   * a go-live check opened) the run provisions a new address for that line
+   * only, then `onRetried` hands the run to its progress view; otherwise the
+   * page decides (`onDoesNotWork`: replace a blocked address, renew a spare).
    *
    * Props:
    *   edgeIds: string[]
+   *   runId?: string | null
    *   onAllDone?: () => void
+   *   onRetried?: (runId: string) => void
+   *   onDoesNotWork?: (edgeId: string) => void
    *   onClose?: () => void
    */
   import { useQueryClient } from '@tanstack/svelte-query';
@@ -17,6 +25,7 @@
   import {
     invalidateOverview,
     releaseTestLink,
+    retrySetupRun,
     testLinksQuery,
     verifyEdge,
   } from '@client/lib/edgesApi';
@@ -27,10 +36,13 @@
 
   interface Props {
     edgeIds: string[];
+    runId?: string | null;
     onAllDone?: () => void;
+    onRetried?: (runId: string) => void;
+    onDoesNotWork?: (edgeId: string) => void;
     onClose?: () => void;
   }
-  let { edgeIds, onAllDone, onClose }: Props = $props();
+  let { edgeIds, runId = null, onAllDone, onRetried, onDoesNotWork, onClose }: Props = $props();
 
   const qc = useQueryClient();
   const links = testLinksQuery(() => edgeIds);
@@ -90,6 +102,26 @@
       busyId = null;
     }
   }
+
+  async function fails(item: TestItem): Promise<void> {
+    if (!runId) {
+      onDoesNotWork?.(item.edgeId);
+      return;
+    }
+    busyId = item.edgeId;
+    try {
+      await retrySetupRun(runId, { tryAnotherAddress: true, edgeId: item.edgeId });
+      void release();
+      toast.message('Replacing that address. The new one comes back here to test.');
+      invalidateOverview(qc);
+      onRetried?.(runId);
+    } catch (e) {
+      toast.error(edgeErrorMessage(e));
+    } finally {
+      busyId = null;
+    }
+  }
+  const canFail = $derived(runId !== null || onDoesNotWork !== undefined);
 </script>
 
 <div class="rounded-lg border border-sky-500/40 bg-sky-500/10 p-4">
@@ -104,6 +136,6 @@
   {:else if links.isError}
     <AdminListState error={links.error} onRetry={() => void links.refetch()} />
   {:else}
-    <TestCard {items} {done} {busyId} onWorks={works} />
+    <TestCard {items} {done} {busyId} onWorks={works} onFails={canFail ? fails : undefined} />
   {/if}
 </div>
