@@ -238,7 +238,9 @@
           ? 'Cancelled. Nothing was changed for members.'
           : r.disposition === 'restore'
             ? 'Cancelled. The direct address is being put back.'
-            : 'Cancelled.',
+            : r.disposition === 'candidates'
+              ? 'Cancelled. The new addresses are dropped; members keep what they have.'
+              : 'Cancelled.',
       );
     });
 </script>
@@ -273,6 +275,13 @@
       </li>
     {/each}
   </ol>
+
+  {#if run.kind === 'reprotect' && live}
+    <p class="text-sm">
+      Protecting {run.nodeName} again with new addresses. Members keep the addresses they have until the
+      new ones go live.
+    </p>
+  {/if}
 
   <p class="text-muted-foreground text-sm" aria-live="polite">
     {#if run.state === 'done'}
@@ -478,7 +487,7 @@
     {#if live}
       <Button variant="outline" size="sm" onclick={onClose}>Close</Button>
       <Button variant="ghost" size="sm" disabled={act.isPending} onclick={cancel}>
-        Cancel protection
+        {run.kind === 'reprotect' ? 'Cancel, drop the new addresses' : 'Cancel protection'}
       </Button>
     {:else}
       <Button size="sm" onclick={() => router.navigate(edgesPaths.node(run.relaySlug))}>

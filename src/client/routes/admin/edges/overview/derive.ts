@@ -213,9 +213,9 @@ export function fleetTiles(
   return [
     {
       id: 'relays',
-      label: 'Relays',
+      label: 'Origins',
       value: String(c.relays),
-      hint: 'Origins registered with the control plane.',
+      hint: 'Every origin the control plane puts edges in front of.',
       tone: 'neutral',
       filter: null,
     },

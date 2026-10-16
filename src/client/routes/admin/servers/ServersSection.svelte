@@ -28,27 +28,33 @@
 
 <AdminLayout>
   <ServersNav current={serversTabOf(route)} {instance} />
-  {#if route.page === 'node'}
-    <NodePage uuid={route.uuid} />
-  {:else if route.page === 'backends'}
-    <BackendsPage />
-  {:else if route.page === 'pools'}
-    <PoolsPage />
-  {:else if route.page === 'home'}
-    <ServersHome />
-  {:else}
-    <Card.Root class="mx-auto mt-10 max-w-md">
-      <Card.Header>
-        <Card.Title>Page not found</Card.Title>
-        <Card.Description>
-          There is no Servers page at this address. It may have moved, or the link is incomplete.
-        </Card.Description>
-      </Card.Header>
-      <Card.Content>
-        <Link href={serversPaths.home()} class="text-primary text-sm underline underline-offset-4">
-          Back to the nodes
-        </Link>
-      </Card.Content>
-    </Card.Root>
-  {/if}
+  <!-- Every control 44px tall on a phone (globals.css `.touch-44`). -->
+  <div class="touch-44">
+    {#if route.page === 'node'}
+      <NodePage uuid={route.uuid} />
+    {:else if route.page === 'backends'}
+      <BackendsPage />
+    {:else if route.page === 'pools'}
+      <PoolsPage />
+    {:else if route.page === 'home'}
+      <ServersHome />
+    {:else}
+      <Card.Root class="mx-auto mt-10 max-w-md">
+        <Card.Header>
+          <Card.Title>Page not found</Card.Title>
+          <Card.Description>
+            There is no Servers page at this address. It may have moved, or the link is incomplete.
+          </Card.Description>
+        </Card.Header>
+        <Card.Content>
+          <Link
+            href={serversPaths.home()}
+            class="text-primary text-sm underline underline-offset-4"
+          >
+            Back to the nodes
+          </Link>
+        </Card.Content>
+      </Card.Root>
+    {/if}
+  </div>
 </AdminLayout>

@@ -188,7 +188,7 @@
   }
 </script>
 
-<section aria-labelledby={`${uid}-edges`} class="space-y-6">
+<section aria-labelledby={`${uid}-edges`} class="touch-44 space-y-6">
   <div class="flex flex-wrap items-start justify-between gap-3">
     <div class="min-w-0">
       <h2 id={`${uid}-edges`} class="text-base font-semibold">Edges</h2>
@@ -226,7 +226,9 @@
         <DropdownMenu.Root>
           <DropdownMenu.Trigger>
             {#snippet child({ props })}
-              <Button {...props} variant="outline">More <ChevronDown aria-hidden="true" /></Button>
+              <Button {...props} variant="outline" aria-label="More edge actions">
+                More <ChevronDown aria-hidden="true" />
+              </Button>
             {/snippet}
           </DropdownMenu.Trigger>
           <DropdownMenu.Content align="end" class="w-64">
