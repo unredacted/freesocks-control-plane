@@ -70,7 +70,6 @@ const NODE_W = 'node-w';
 const ORIGIN_V4 = '203.0.113.20';
 const ORIGIN_W_V4 = '203.0.113.30';
 const ORIGIN_W_NAME = 'origin-w.example';
-const QUALIFY_UUID = '99999999-9999-4999-8999-999999999999';
 const SINGBOX_UA = 'SFA/1.10.0 (sing-box 1.10.0)';
 const LINKS_UA = 'v2rayNG/1.8.29';
 
@@ -374,37 +373,17 @@ async function landPartialEvidence(t: T, edgeId: Id<'edges'>) {
 }
 
 /**
- * The seams this file uses, and only these: outside probe evidence, the test
- * link the card shows, the L7 qualification credential and the WS origin
- * probe. Everything else (Host hides, the rehearsal over the backend's real
- * bodies, the rotations, go-live) is the production code.
+ * The seams this file uses, and only these: outside probe evidence, the WS
+ * origin probe, the external-hop ingress check and the L7 proof's session (no
+ * sockets here). Everything else (the qualification credential, the test link
+ * the card shows, Host hides, the rehearsal over the backend's real bodies,
+ * the rotations, go-live) is the production code.
  */
 function installSeams(w: World) {
   const { t } = w;
   const ops: Partial<StageOps> = {
-    ensureCredential: async (_ctx, a) => {
-      await t.run((c) => c.db.patch(a.relayId, { qualificationUserId: QUALIFY_UUID }));
-      return { ok: true, reused: false };
-    },
     requestVerificationProbes: async (_ctx, edgeId) => {
       await landPartialEvidence(t, edgeId);
-    },
-    buildTestLink: async (ctx, edgeId) => {
-      const b = await ctx.runQuery(internal.edgeVerification.binding, { edgeId });
-      if (!b) throw new Error('no binding');
-      return {
-        link: `vless://test@${b.endpoint}?security=reality#test`,
-        format: 'links',
-        binding: {
-          edgeId: edgeId as string,
-          endpoint: b.endpoint,
-          listenerRevision: b.listenerRevision,
-          configHash: b.configHash,
-          listenerKey: b.listenerKey,
-          issuedAt: new Date().toISOString(),
-        },
-        credentialId: null,
-      };
     },
     rehearse: async (ctx, a) => {
       const before = w.hooks.beforeRehearsal;
@@ -440,7 +419,9 @@ function installSeams(w: World) {
           scheme: 'https' as const,
           certPublic: true,
           certNames: [tg.originAddress],
-          acceptsHostHeader: 'any' as const,
+          // The probe's strict reading (a decoy answering 404 at `/`): the
+          // node's own verified ingress decides for an enrolled node.
+          acceptsHostHeader: 'names' as const,
         },
       })),
   });
@@ -544,6 +525,13 @@ async function protectToPark(
   const runId = res.runId as Id<'edgeSetupRuns'>;
   let r = await drive(t, () => setupRun(t, runId), parked, 'setup run');
   if (r.need?.code === 'try_it') {
+    // The card's links are real: built from the node's own transport (no Host
+    // exists before publication), pointing at the candidate edge, never the origin.
+    for (const l of r.testLinks ?? []) {
+      expect(l.method).toBe('test_link');
+      expect(l.link).toMatch(/^vless:\/\/[0-9a-f-]+@198\.51\.100\.\d+:\d+\?.*security=reality/);
+      expect(l.link).not.toContain('203.0.113.');
+    }
     await tickAll(t, runId);
     r = await drive(t, () => setupRun(t, runId), parked, 'setup run after the ticks');
   }
@@ -674,6 +662,12 @@ describe('a fronted node goes from enrollment to members', () => {
     expect(rotations).toEqual([]);
     const held = await setupRun(t, runId);
     expect(held.events.some((e) => e.code === 'publish_held')).toBe(true);
+    // The origin's credential is minted in the node's OWN mode, so its body
+    // can ever carry this node's transport.
+    const binding = await t.query(internal.relayQualification.ensureContext, {
+      relayId: relay._id,
+    });
+    expect(binding?.modeSlug).toBe('freedom-reality');
     expect(held.need?.detail).toBe('machine_ready');
     // The progress view names the enrolled node the approval card calls.
     const view = SetupRunAdmin.parse(
@@ -1158,6 +1152,50 @@ describe('ownership links and attempt fencing', () => {
 });
 
 // --- refusals ---------------------------------------------------------------------------------------
+
+describe('enrollment', () => {
+  test('a settings change while the enrollment reconcile runs hands the claim over to the new generation', async () => {
+    const w = await world();
+    const { t, serverId } = w;
+    installSeams(w);
+    const { intentId } = await t.mutation(internal.nodeIntents.enroll, {
+      backendServerId: serverId,
+      name: NODE_W,
+      mode: 'freedom-ws',
+      contractVersion: 2,
+      observed: {
+        management: { address: '192.0.2.20', port: 2222 },
+        publicIps: { v4: ORIGIN_W_V4 },
+        capabilities: { caddy: true, ipv6: false },
+      },
+    });
+    // The operator's origin name lands while the enrollment's reconcile holds the claim.
+    expect((await intentOf(t, intentId)).claim).toBeTruthy();
+    const { machineRevision } = await t.mutation(internal.nodeIntents.patchSettings, {
+      intentId,
+      patch: { explicitHostname: ORIGIN_W_NAME },
+    });
+    const settled = await drive(
+      t,
+      () => intentOf(t, intentId),
+      (i) => !i.claim,
+      'the claim',
+    );
+    expect(settled.machineRevision).toBe(machineRevision);
+    await t.mutation(internal.nodeIntents.applied, {
+      intentId,
+      appliedRevision: machineRevision,
+      nodeStarted: true,
+    });
+    const ready = await drive(
+      t,
+      () => intentOf(t, intentId),
+      (i) => !i.claim && i.activation.stage === 'machine_ready',
+      'machine_ready',
+    );
+    expect(ready.activation.evidence.some((e) => e.kind === 'ingress_verified')).toBe(true);
+  });
+});
 
 describe('refusals', () => {
   test('keepDirect is refused for an enrolled fronted node at create and at resume', async () => {

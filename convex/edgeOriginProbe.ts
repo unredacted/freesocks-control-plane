@@ -20,7 +20,7 @@ import { listenerLayers, type OriginTransport } from './lib/edges/layers';
 import type { OriginProbeOutcome } from './lib/edges/originProbe';
 import { protocolIsHttpTransport } from './lib/edges/protocols';
 import { listenersOf } from './relayListeners';
-import { enrolledOriginOf } from './nodeIntents';
+import { enrolledOriginOf, withVerifiedIngress } from './nodeIntents';
 
 export interface ProbedInboundCandidate extends TransportCandidate {
   originTransport: OriginTransport | null;
@@ -82,6 +82,7 @@ export const nodeContext = internalQuery({
       existingKeys,
       relaySlug: relay?.slug ?? null,
       ingress: enrolled?.ingress ?? null,
+      enrolled: enrolled ? { acceptsAnyHost: enrolled.acceptsAnyHost } : null,
     };
   },
 });
@@ -153,7 +154,10 @@ export const inboundCandidates = internalAction({
     const targets = originProbeTargets(mapped.candidates, c.originAddress);
     const outcomes: OriginProbeOutcome[] =
       targets.length > 0 ? await ctx.runAction(internal.edgeOriginProbeOps.probe, { targets }) : [];
-    const candidates = applyOriginProbes(mapped.candidates, outcomes);
+    const candidates = applyOriginProbes(
+      mapped.candidates,
+      withVerifiedIngress(outcomes, c.enrolled),
+    );
     return {
       node: c.node,
       originAddress: c.originAddress,

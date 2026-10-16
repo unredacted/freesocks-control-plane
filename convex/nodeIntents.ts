@@ -192,6 +192,12 @@ export async function enrolledOriginOf(
   originAddress: string;
   ingress: IngressMapping | null;
   directAddresses: string[];
+  /**
+   * The ingress answers a foreign Host header, as `machine_ready` verified for
+   * this machine revision (`ingress_verified`). The origin probe's own,
+   * stricter reading (a 2xx at `/`) must not overrule what the node proved.
+   */
+  acceptsAnyHost: boolean;
 } | null> {
   const intent = await intentByName(ctx, sid, nodeName);
   if (!intent) return null;
@@ -201,11 +207,27 @@ export async function enrolledOriginOf(
   const ips = [intent.observed.publicIps.v4, intent.observed.publicIps.v6].filter(
     (x): x is string => !!x && x !== originAddress,
   );
+  const ingressVerified = intent.activation.evidence.some(
+    (e) => e.kind === 'ingress_verified' && e.machineRevision === intent.machineRevision,
+  );
   return {
     originAddress,
     ingress: ingressOf(intent, hostname),
     directAddresses: IPV4.test(originAddress) || originAddress.includes(':') ? [] : ips,
+    acceptsAnyHost: ingressVerified && intent.settings.ingress?.hostHeader === 'any',
   };
+}
+
+/** The probe outcomes with what an enrolled node's verified ingress already proved. */
+export function withVerifiedIngress<
+  O extends { originTransport: { acceptsHostHeader: 'any' | 'names' } | null },
+>(outcomes: readonly O[], enrolled: { acceptsAnyHost: boolean } | null): O[] {
+  if (!enrolled?.acceptsAnyHost) return [...outcomes];
+  return outcomes.map((o) =>
+    o.originTransport
+      ? { ...o, originTransport: { ...o.originTransport, acceptsHostHeader: 'any' } }
+      : o,
+  );
 }
 
 function revisionsOf(intent: Intent): Revisions {
@@ -1252,14 +1274,33 @@ export const reconcile = internalAction({
       await stop('ready', null);
       return null;
     } catch (err) {
-      if (err instanceof Fenced) return null;
-      // A write still in flight on the same item (an earlier attempt's create
-      // the backend has not shown yet) settles by itself: park, never block.
-      // An outcome nobody knows (`servers.op_uncertain`) needs an operator.
-      const code = codeOf(err);
-      await stop(code === 'servers.op_running' ? 'pending' : 'blocked', code);
+      if (!(err instanceof Fenced)) {
+        // A write still in flight on the same item (an earlier attempt's create
+        // the backend has not shown yet) settles by itself: park, never block.
+        // An outcome nobody knows (`servers.op_uncertain`) needs an operator.
+        const code = codeOf(err);
+        await stop(code === 'servers.op_running' ? 'pending' : 'blocked', code);
+      }
       return null;
+    } finally {
+      // A newer generation overtook this attempt (a settings change while it
+      // ran): its records were fenced off, so its claim is handed over here
+      // and the current generation reconciled, never left to expire.
+      await ctx.runMutation(internal.nodeIntents.releaseOvertaken, f);
     }
+  },
+});
+
+/** Release the claim of an attempt a newer generation overtook, and reconcile the current one. */
+export const releaseOvertaken = internalMutation({
+  args: fence,
+  handler: async (ctx, f) => {
+    const intent = await ctx.db.get(f.intentId);
+    if (!intent || intent.claim?.attemptId !== f.attemptId || intent.generation === f.generation)
+      return { released: false };
+    await ctx.db.patch(intent._id, { claim: undefined, updatedAt: Date.now() });
+    await scheduleReconcile(ctx, (await ctx.db.get(intent._id))!);
+    return { released: true };
   },
 });
 

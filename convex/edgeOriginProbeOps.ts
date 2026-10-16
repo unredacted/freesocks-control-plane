@@ -8,7 +8,7 @@
 import { v } from 'convex/values';
 import { internalAction } from './_generated/server';
 import {
-  dnsNamesOfSan,
+  leafNames,
   probeOriginTransport,
   type OriginProbeDeps,
   type OriginProbeOutcome,
@@ -55,7 +55,7 @@ const defaultDeps: OriginProbeDeps = {
         () => {
           const cert = socket.getPeerCertificate();
           const cn = (cert?.subject as { CN?: string } | undefined)?.CN;
-          const names = [...dnsNamesOfSan(cert?.subjectaltname), ...(cn ? [cn] : [])];
+          const names = leafNames(cert?.subjectaltname, cn);
           done({ ok: true, authorized: socket.authorized, names });
         },
       );

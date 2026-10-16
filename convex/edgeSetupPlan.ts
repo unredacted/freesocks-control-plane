@@ -37,7 +37,7 @@ import { EDGE_PROVIDER_CAPABILITIES, edgeLayerOf } from './lib/edges/providers/c
 import { todayKey, liveEdgesOfAccount, relayForBackendNode } from './relays';
 import { accountTested } from './edgeProviderAccounts';
 import { listenersOf } from './relayListeners';
-import { enrolledOriginOf } from './nodeIntents';
+import { enrolledOriginOf, withVerifiedIngress } from './nodeIntents';
 import { isTerminalRunState, planHashOf, slugForNode } from './lib/edges/setupRuns';
 import type { SetupPlanAccount, SetupPlanInbound, SetupPlanSnapshot } from './lib/edges/setupRuns';
 import type { ListenerSpecInput } from './lib/edges/registration';
@@ -289,7 +289,10 @@ export async function buildPlan(
           planOps.probeOrigins(ctx, { targets }),
         )
       : [];
-  const candidates = applyOriginProbes(mapped.candidates, outcomes);
+  const candidates = applyOriginProbes(
+    mapped.candidates,
+    withVerifiedIngress(outcomes, c.enrolled),
+  );
   const planInbounds: SetupPlanInbound[] = [];
   for (const cand of candidates) {
     const frontable = cand.layers.layers.length > 0 && !cand.needsName;
