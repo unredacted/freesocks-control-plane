@@ -459,9 +459,15 @@ mirror). FCP never starts a run by itself.
 - **Planned from the intent.** An enrolled node's plan and transport discovery read the node from
   its intent (`nodeIntents.enrolledOriginOf`): the origin FCP gives the role (the origin name of a
   WebSocket node, else its public address; never the management address) and the declared ingress,
-  so a loopback WebSocket behind Caddy is frontable at L7. A Host dialling the node's public address
-  counts as direct when the origin is a name. Enrollment refreshes the backend node list as soon
-  as it creates the node, so the node can be protected at once.
+  so a loopback WebSocket behind Caddy is frontable at L7. Whether the ingress answers a foreign
+  Host header is taken from what `machine_ready` verified (`ingress_verified`), not re-derived by
+  the origin probe. A Host dialling the node's public address counts as direct when the origin is
+  a name. Enrollment refreshes the backend node list as soon as it creates the node, so the node
+  can be protected at once.
+- **Try it on an enrolled node.** No Host exists on a fronted node's transport before its first
+  publication, so the L4 test link is built from the transport's live REALITY parameters and the
+  origin's own credential (as the direct test link is), then rendered for the candidate edge. The
+  origin's credential is minted in the node's own mode, so its body carries this node's transport.
 - **Parked at publish, never failed.** The run's publish step checks the node's approval in the
   same transaction as the publish start (`edgeRotations.publicationApproval`). Without one the run
   waits (`needs_you`, `node_not_approved`, the detail is the node's stage, event `publish_held`)
