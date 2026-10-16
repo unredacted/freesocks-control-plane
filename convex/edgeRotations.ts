@@ -103,6 +103,7 @@ import type {
   ResourceStep,
 } from './lib/edges/providers/types';
 import { admitted, assertAdmission } from './lib/edges/maintenance';
+import { hostSecurityLayer } from './hostOps';
 import {
   publicationAdmission,
   recordCandidateEdge,
@@ -3777,6 +3778,8 @@ async function phaseHostFlip(ctx: ActionCtx, c: Ctx) {
       // Undefined stays undefined (leave the field); null clears it.
       ...(target.sni !== undefined ? { sni: target.sni } : {}),
       ...(target.host !== undefined ? { host: target.host } : {}),
+      // A Host created before it carried its security layer is brought in line.
+      ...hostSecurityLayer(slot),
     });
     await ctx.runMutation(internal.edgeRotations.settleHostOp, {
       rotationId: r._id,

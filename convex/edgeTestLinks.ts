@@ -46,6 +46,8 @@ import { listenerRemark } from './relayListeners';
 
 /** A link-list client the backend serves plain share links to (the test link is always `links`). */
 export const TEST_LINK_USER_AGENT = 'v2rayNG/1.8.29';
+/** The flow a VLESS REALITY account over raw TCP holds on the backend (Xray refuses any other). */
+export const REALITY_RAW_FLOW = 'xtls-rprx-vision';
 const TEST_RENDER_KEY = 'fcp-test-link';
 
 export interface TestLinkBinding {
@@ -240,8 +242,11 @@ async function synthesizedEntry(
     (await panelDigestKey()).key,
   );
   if (!params) return null;
+  // The backend gives its users XTLS Vision on a REALITY transport over raw
+  // TCP, and Xray refuses a session that asks for another flow.
   const q = new URLSearchParams({
     encryption: 'none',
+    flow: REALITY_RAW_FLOW,
     security: 'reality',
     type: 'tcp',
     sni: params.serverNames[0] ?? '',

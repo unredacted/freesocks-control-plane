@@ -44,6 +44,7 @@ import {
 } from './lib/backend/rehearsal';
 import { QUALIFICATION_TRAFFIC_LIMIT_BYTES } from './relayQualification';
 import { TEST_CREDENTIAL_TAG, testCredentialUsername } from './edgeTestCredentials';
+import { REALITY_RAW_FLOW } from './edgeTestLinks';
 import {
   isDirect,
   modeEntry,
@@ -548,6 +549,7 @@ export const buildDirectTestLink = internalAction({
     const endpoint = `${c.originAddress}:${params.port ?? reality.port}`;
     const q = new URLSearchParams({
       encryption: 'none',
+      flow: REALITY_RAW_FLOW,
       security: 'reality',
       type: 'tcp',
       sni,

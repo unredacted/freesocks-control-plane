@@ -432,6 +432,7 @@ export const createAddress = internalAction({
     port: v.number(),
     sni: v.optional(v.union(v.string(), v.null())),
     host: v.optional(v.union(v.string(), v.null())),
+    securityLayer: v.optional(v.string()),
     inbound: v.object({ configProfileUuid: v.string(), configProfileInboundUuid: v.string() }),
   },
   handler: async (ctx, { backendServerId, ...h }): Promise<{ uuid: string }> => {
@@ -464,8 +465,12 @@ export const updateAddress = internalAction({
     /** Three-valued: absent = leave the field, a string = set it, null = clear it. */
     sni: v.optional(v.union(v.string(), v.null())),
     host: v.optional(v.union(v.string(), v.null())),
+    securityLayer: v.optional(v.string()),
   },
-  handler: async (ctx, { backendServerId, uuid, address, port, sni, host }): Promise<null> => {
+  handler: async (
+    ctx,
+    { backendServerId, uuid, address, port, sni, host, securityLayer },
+  ): Promise<null> => {
     const server = await ctx.runQuery(internal.backendServers.getById, { id: backendServerId });
     if (!server) throw new ConvexError({ code: 'backend.not_found' });
     const provider = PROVIDERS[server.backend];
@@ -478,6 +483,7 @@ export const updateAddress = internalAction({
       // sent is absent here, and only an explicit null means "clear".
       ...(sni !== undefined ? { sni } : {}),
       ...(host !== undefined ? { host } : {}),
+      ...(securityLayer !== undefined ? { securityLayer } : {}),
     });
     return null;
   },

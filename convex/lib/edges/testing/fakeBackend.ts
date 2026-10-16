@@ -38,6 +38,8 @@ interface Entry {
   address: string;
   port: number;
   kind: 'reality' | 'ws';
+  /** A WS entry's security: the inbound's own unless the Host's `securityLayer` overrides it. */
+  tls: boolean;
   sni: string;
   pk: string;
   path: string;
@@ -56,6 +58,11 @@ function entryOf(panel: FakeBackend, h: any): Entry {
     address: h.address,
     port: h.port,
     kind: ws ? 'ws' : 'reality',
+    // As the real backend renders it: a Host without `securityLayer` speaks the
+    // inbound's own security (a loopback WebSocket's is none).
+    tls:
+      h.securityLayer === 'TLS' ||
+      ((h.securityLayer ?? 'DEFAULT') === 'DEFAULT' && cfg?.streamSettings?.security === 'tls'),
     sni: h.sni ?? h.host ?? '',
     // The profile's REALITY public key (a test may replace it to force a mismatch).
     pk: (tag && profile?.publicKeyByTag?.[tag]) ?? 'pk',
@@ -66,8 +73,11 @@ function entryOf(panel: FakeBackend, h: any): Entry {
 
 function linkOf(e: Entry): string {
   if (e.kind === 'ws')
-    return `vless://${FAKE_BACKEND_USER_UUID}@${e.address}:${e.port}?encryption=none&security=tls&type=ws&path=${encodeURIComponent(e.path)}&host=${e.host}&sni=${e.sni}&fp=chrome#${e.remark}`;
-  return `vless://${FAKE_BACKEND_USER_UUID}@${e.address}:${e.port}?encryption=none&security=reality&type=tcp&sni=${e.sni}&fp=chrome&pbk=${e.pk}&sid=#${e.remark}`;
+    return e.tls
+      ? `vless://${FAKE_BACKEND_USER_UUID}@${e.address}:${e.port}?encryption=none&security=tls&type=ws&path=${encodeURIComponent(e.path)}&host=${e.host}&sni=${e.sni}&fp=chrome#${e.remark}`
+      : `vless://${FAKE_BACKEND_USER_UUID}@${e.address}:${e.port}?encryption=none&security=none&type=ws&path=${encodeURIComponent(e.path)}&host=${e.host}#${e.remark}`;
+  // The backend gives a REALITY account over raw TCP XTLS Vision, in every format.
+  return `vless://${FAKE_BACKEND_USER_UUID}@${e.address}:${e.port}?encryption=none&flow=xtls-rprx-vision&security=reality&type=tcp&sni=${e.sni}&fp=chrome&pbk=${e.pk}&sid=#${e.remark}`;
 }
 
 function singboxOf(entries: Entry[]): string {
@@ -80,7 +90,7 @@ function singboxOf(entries: Entry[]): string {
             server: e.address,
             server_port: e.port,
             uuid: FAKE_BACKEND_USER_UUID,
-            tls: { enabled: true, server_name: e.sni },
+            ...(e.tls ? { tls: { enabled: true, server_name: e.sni } } : {}),
             transport: { type: 'ws', path: e.path, headers: { Host: e.host } },
           }
         : {
@@ -89,6 +99,7 @@ function singboxOf(entries: Entry[]): string {
             server: e.address,
             server_port: e.port,
             uuid: FAKE_BACKEND_USER_UUID,
+            flow: 'xtls-rprx-vision',
             tls: {
               enabled: true,
               server_name: e.sni,
@@ -103,8 +114,8 @@ function clashOf(entries: Entry[]): string {
   return `proxies:\n${entries
     .map((e) =>
       e.kind === 'ws'
-        ? `  - name: ${e.remark}\n    type: vless\n    server: ${e.address}\n    port: ${e.port}\n    uuid: ${FAKE_BACKEND_USER_UUID}\n    tls: true\n    servername: ${e.sni}\n    network: ws\n    ws-opts:\n      path: ${e.path}\n      headers:\n        Host: ${e.host}\n`
-        : `  - name: ${e.remark}\n    type: vless\n    server: ${e.address}\n    port: ${e.port}\n    uuid: ${FAKE_BACKEND_USER_UUID}\n    servername: ${e.sni}\n    reality-opts:\n      public-key: ${e.pk}\n`,
+        ? `  - name: ${e.remark}\n    type: vless\n    server: ${e.address}\n    port: ${e.port}\n    uuid: ${FAKE_BACKEND_USER_UUID}\n    tls: ${e.tls}\n${e.tls ? `    servername: ${e.sni}\n` : ''}    network: ws\n    ws-opts:\n      path: ${e.path}\n      headers:\n        Host: ${e.host}\n`
+        : `  - name: ${e.remark}\n    type: vless\n    server: ${e.address}\n    port: ${e.port}\n    uuid: ${FAKE_BACKEND_USER_UUID}\n    flow: xtls-rprx-vision\n    servername: ${e.sni}\n    reality-opts:\n      public-key: ${e.pk}\n`,
     )
     .join('')}`;
 }

@@ -454,6 +454,17 @@ export interface EnsureResult {
 }
 
 /**
+ * The client-facing security a listener's Host must state over its inbound's
+ * own: a TLS listener whose transport is plaintext on the node (a loopback
+ * WebSocket behind its ingress) is `TLS` to the member, which the backend
+ * only renders when the Host says so. Spread into a Host write; empty when
+ * the inbound's own security already is the member's.
+ */
+export function hostSecurityLayer(listener: { security: string }): { securityLayer?: string } {
+  return listener.security === 'tls' ? { securityLayer: 'TLS' } : {};
+}
+
+/**
  * Make sure the listener's Host exists at `target`: returns `present` (+uuid)
  * when it does, runs a create when the state allows one, discovers after an
  * uncertain outcome. Never creates while an op is unsettled.
@@ -512,6 +523,7 @@ export const ensureListenerHost = internalAction({
         port: claim.intended.port,
         sni: claim.intended.sni,
         host: claim.intended.host,
+        ...hostSecurityLayer(c.listener),
         inbound: {
           configProfileUuid: c.listener.panelBinding!.configProfileUuid,
           configProfileInboundUuid: c.listener.panelBinding!.configProfileInboundUuid,

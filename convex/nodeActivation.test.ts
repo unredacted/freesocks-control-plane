@@ -467,6 +467,7 @@ describe('activating a direct node', () => {
       /^vless:\/\/aaaaaaaa-1111-4222-8333-444444444444@203\.0\.113\.10:443\?/,
     );
     expect(built.link).toContain('security=reality');
+    expect(built.link).toContain('flow=xtls-rprx-vision');
     expect(built.binding).toMatchObject({
       endpoint: '203.0.113.10:443',
       machineRevision: 1,

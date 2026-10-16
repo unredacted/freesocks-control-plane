@@ -530,6 +530,8 @@ async function protectToPark(
     for (const l of r.testLinks ?? []) {
       expect(l.method).toBe('test_link');
       expect(l.link).toMatch(/^vless:\/\/[0-9a-f-]+@198\.51\.100\.\d+:\d+\?.*security=reality/);
+      // The flow the backend gives a REALITY account over raw TCP (Xray refuses any other).
+      expect(l.link).toContain('flow=xtls-rprx-vision');
       expect(l.link).not.toContain('203.0.113.');
     }
     await tickAll(t, runId);
@@ -770,6 +772,10 @@ describe('a fronted node goes from enrollment to members', () => {
         t,
         (await activationRun(t, actId)).resources.edgeIds[0] as Id<'edges'>,
       );
+      // The listener's Host says TLS over the loopback transport's plaintext:
+      // without it the backend renders `security=none` and nothing resolves.
+      const host = w.backend.hosts.find((h) => String(h.remark).startsWith(`${NODE_W}-`));
+      expect(host?.securityLayer).toBe('TLS');
       const res = await fetchSub(t, SINGBOX_UA);
       expect(res.status).toBe(200);
       const body = await res.text();
