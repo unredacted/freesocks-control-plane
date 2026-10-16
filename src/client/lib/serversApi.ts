@@ -171,6 +171,9 @@ export const renameNode = (slug: string, uuid: string, name: string) =>
     { name },
     NodeRenameView,
   );
+/** Try again the Host remarks a rename holds on, once whatever refused them is fixed. */
+export const retryRename = (slug: string, id: string) =>
+  apiClient.post(`${slugPath(slug)}/renames/${encodeURIComponent(id)}/retry`, {}, NodeRenameView);
 export const fetchRenames = (slug: string) =>
   apiClient.get(`${slugPath(slug)}/renames`, NodeRenameList);
 

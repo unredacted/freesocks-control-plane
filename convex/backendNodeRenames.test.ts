@@ -18,12 +18,18 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
-import { insertPanelServer, realityListener, registerRelay } from './lib/edges/testing/fixtures';
+import {
+  createAccount,
+  insertPanelServer,
+  realityListener,
+  registerRelay,
+} from './lib/edges/testing/fixtures';
 import { installFakeBackend, type FakeBackend } from './lib/edges/testing/fakeBackend';
 import { jsonRes, routeFetch, type Captured } from './lib/edges/testing/mockFetch';
 import { signValue } from './lib/cookies';
 import { NodeRenameView } from '../src/shared/contracts/servers';
 import { renamedRemark } from './lib/backend/nodeRename';
+import { currentNodeName } from './lib/backend/nodeAliases';
 import { matcherOf } from './edgeRender';
 import { assertNoRelayPanelClaim } from './lib/edges/relayGuards';
 
@@ -418,6 +424,12 @@ describe('a rename moves every reference', () => {
     expect(viaFirst?.nodeName).toBe('node-c');
     const intent = await s.t.run((ctx) => ctx.db.get(s.intentId));
     expect(intent).toMatchObject({ name: 'node-c', formerNames: ['node-a', 'node-b'] });
+    // Every former name points straight at the current one (flattened).
+    const aliases = await s.t.run((ctx) => ctx.db.query('panelNodeAliases').collect());
+    expect(aliases.map((a) => [a.formerName, a.name]).sort()).toEqual([
+      ['node-a', 'node-c'],
+      ['node-b', 'node-c'],
+    ]);
     // A former name is never handed to another node (a pin or the role may still use it).
     expect(await errCode(await rename(s, 'node-a'))).toBe('servers.node_name_taken');
   });
@@ -555,5 +567,202 @@ describe('remark forms', () => {
     expect(renamedRemark('node-a-west | x.example', 'x.example', 'node-a', 'node-b')).toBeNull();
     expect(renamedRemark('node-a-west-relay-k', null, 'node-a', 'node-b')).toBeNull();
     expect(renamedRemark('node-a-ws', null, 'node-a', 'node-b')).toBeNull();
+  });
+});
+
+describe('review follow-ups', () => {
+  /** A rename whose backend write has an unknown outcome: it holds, running, at `backend`. */
+  async function parkedRename(s: Seeded, to: string) {
+    s.panel.stub.route(
+      routeFetch(
+        (c: Captured) =>
+          c.method === 'PATCH' && c.path === '/api/nodes'
+            ? jsonRes({ message: 'bad gateway' }, 502)
+            : null,
+        s.panel.handle,
+      ),
+    );
+    const view = NodeRenameView.parse(await (await rename(s, to)).json());
+    expect((await settledRename(s, view.id))!.state).toBe('running');
+    return view;
+  }
+
+  test('a Host remark the backend refuses is not sent again until an operator retries', async () => {
+    const s = await seed();
+    let refuse = true;
+    s.panel.stub.route(
+      routeFetch((c: Captured) => {
+        const body = c.body as { uuid?: string } | undefined;
+        if (
+          refuse &&
+          c.method === 'PATCH' &&
+          c.path === '/api/hosts' &&
+          body?.uuid === s.relayHostUuid
+        )
+          return jsonRes({ message: 'forbidden' }, 403);
+        return null;
+      }, s.panel.handle),
+    );
+    const view = NodeRenameView.parse(await (await rename(s, 'node-b')).json());
+    const held = await until(
+      () => renameRow(s, view.id),
+      (r) => !!r && !r.claim && r.code === 'servers.rename_host_refused',
+    );
+    expect(held).toMatchObject({ state: 'running', step: 'hosts' });
+    expect(held!.refusedHosts).toEqual([
+      { hostUuid: s.relayHostUuid, remark: 'node-a-relay-a', code: 'servers.panel_refused' },
+    ]);
+    const relayHostPatches = () =>
+      s.panel.writes.filter(
+        (w) =>
+          w.call === 'PATCH /api/hosts' && (w.body as { uuid?: string }).uuid === s.relayHostUuid,
+      ).length;
+    // The refused write went out once; the clock does not send it again.
+    expect(relayHostPatches()).toBe(0);
+    await s.t.action(internal.backendWrites.reconcile, {});
+    await drained(s.t);
+    expect((await renameRow(s, view.id))!.code).toBe('servers.rename_host_refused');
+    // Fixed on the backend side: an operator retries, and the rename finishes.
+    refuse = false;
+    const res = await s.call('POST', `renames/${view.id}/retry`);
+    expect(res.status).toBe(200);
+    const done = await settledRename(s, view.id);
+    expect(done!.state).toBe('done');
+    expect(s.panel.hosts.find((h) => h.uuid === s.relayHostUuid)!.remark).toBe('node-b-relay-a');
+  });
+
+  test('a name another running rename is about to give is taken', async () => {
+    const s = await seed();
+    s.panel.nodes.push({
+      uuid: '00000902-0000-4000-8000-000000000000',
+      name: 'other',
+      address: '192.0.2.31',
+      port: 2222,
+      countryCode: 'XX',
+      isDisabled: false,
+      lastStatusChange: 't0',
+      configProfile: { activeConfigProfileUuid: s.panel.profiles[0].uuid, activeInbounds: [] },
+    });
+    await s.t.action(internal.backendObserve.refresh, { backendServerId: s.serverId });
+    await parkedRename(s, 'node-b');
+    const res = await rename(s, 'node-b', '00000902-0000-4000-8000-000000000000');
+    expect(await errCode(res)).toBe('servers.node_name_taken');
+  });
+
+  test('a chain of renames resolves to its end, however long', async () => {
+    const s = await seed();
+    const renameId = (await s.t.run((ctx) =>
+      ctx.db.insert('panelNodeRenames', {
+        backendServerId: s.serverId,
+        nodeUuid: s.nodeUuid,
+        from: 'n0',
+        to: 'n12',
+        relayIds: [],
+        state: 'done',
+        step: 'done',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    )) as Id<'panelNodeRenames'>;
+    await s.t.run(async (ctx) => {
+      for (let i = 0; i < 12; i++)
+        await ctx.db.insert('panelNodeAliases', {
+          backendServerId: s.serverId,
+          formerName: `n${i}`,
+          name: `n${i + 1}`,
+          nodeUuid: s.nodeUuid,
+          renameId,
+          at: Date.now(),
+        });
+    });
+    expect(await s.t.run((ctx) => currentNodeName(ctx.db, s.serverId, 'n0'))).toBe('n12');
+    expect(await s.t.run((ctx) => currentNodeName(ctx.db, s.serverId, 'n12'))).toBeNull();
+  });
+
+  test('while a rename runs, no origin or setup run is keyed to the node, and it is not retired', async () => {
+    const s = await seed();
+    await parkedRename(s, 'node-b');
+    // A new origin keyed to the name it is getting (its old one is bound already).
+    for (const nodeName of ['node-b'])
+      await expect(
+        s.t.mutation(internal.relays.create, {
+          slug: `x-${nodeName}`,
+          origin: { kind: 'panel-node', backendServerId: s.serverId, nodeName },
+          originAddress: '203.0.113.40',
+          listeners: [],
+        } as never),
+      ).rejects.toThrow(/edge.panel_op_running/);
+    // A guided setup run for it.
+    const accountId = await createAccount(s.t);
+    await expect(
+      s.t.mutation(internal.edgeSetupRuns.insert, {
+        plan: JSON.stringify({
+          backendServerId: s.serverId,
+          nodeUuid: s.nodeUuid,
+          nodeName: 'node-a',
+          accounts: [],
+        }),
+        planHash: 'h',
+        accountId,
+        approvedHideUuids: [],
+      }),
+    ).rejects.toThrow(/edge.panel_op_running/);
+    // Its retirement, by the role or by an admin.
+    await expect(
+      s.t.mutation(internal.nodeIntents.requestRetirement, {
+        intentId: s.intentId,
+        requestedBy: 'role',
+      }),
+    ).rejects.toThrow(/servers.node_rename_running/);
+    await expect(
+      s.t.mutation(internal.nodeRetirement.decide, {
+        intentId: s.intentId,
+        disposition: 'keep-dark',
+      }),
+    ).rejects.toThrow(/servers.node_rename_running/);
+  });
+
+  test('a token spanning several backends does not gain the new name; one bounded to this backend does', async () => {
+    const s = await seed();
+    const otherServer = await insertPanelServer(s.t, { slug: 'panel-b' });
+    const ids = await s.t.run(async (ctx) => {
+      const admin = (await ctx.db.query('adminUsers').first())!;
+      const wide = await ctx.db.insert('apiTokens', {
+        name: 'wide',
+        tokenHash: 'h2',
+        tokenPrefix: 'p2',
+        createdByAdminId: admin._id,
+        scopes: ['admin:edges:register'],
+        subjectType: 'service',
+        edgeRegistration: { backendServerIds: [otherServer, s.serverId], nodeNames: ['node-a'] },
+        updatedAt: Date.now(),
+      });
+      const elsewhere = await ctx.db.insert('apiTokens', {
+        name: 'elsewhere',
+        tokenHash: 'h3',
+        tokenPrefix: 'p3',
+        createdByAdminId: admin._id,
+        scopes: ['admin:edges:register'],
+        subjectType: 'service',
+        edgeRegistration: { backendServerIds: [otherServer], nodeNames: ['node-a'] },
+        updatedAt: Date.now(),
+      });
+      return { wide, elsewhere };
+    });
+    const view = NodeRenameView.parse(await (await rename(s, 'node-b')).json());
+    expect((await settledRename(s, view.id))!.state).toBe('done');
+    const tokens = await s.t.run((ctx) => ctx.db.query('apiTokens').collect());
+    const names = (id: Id<'apiTokens'>) =>
+      tokens.find((t) => t._id === id)!.edgeRegistration!.nodeNames;
+    // The seed's token is bounded to this backend alone: it gains the name.
+    expect(tokens.find((t) => t.name === 'role')!.edgeRegistration!.nodeNames).toEqual([
+      'node-a',
+      'node-b',
+    ]);
+    // A token for other backends too would reach their `node-b` as well: unchanged.
+    expect(names(ids.wide)).toEqual(['node-a']);
+    expect(names(ids.elsewhere)).toEqual(['node-a']);
+    // The role keeps acting for the node under the name it was given.
+    expect((await s.call('GET', 'nodes/by-name/node-a')).status).toBe(200);
   });
 });

@@ -503,6 +503,17 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
     });
     return json(await ctx.runQuery(internal.backendPortChanges.view, { changeId }));
   }
+  // A rename that holds on Host remarks the backend refused: try them again.
+  if (a && b === 'renames' && c && d === 'retry' && !parts[4]) {
+    const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
+    const renameId = await ctx.runQuery(internal.backendNodeRenames.onServer, {
+      backendServerId: instance.id,
+      renameId: c,
+    });
+    if (!renameId) return notFound();
+    await ctx.runMutation(internal.backendNodeRenames.retry, { renameId, ...actorOf(admin) });
+    return json(await ctx.runQuery(internal.backendNodeRenames.view, { renameId }));
+  }
   if (a && b === 'port-changes' && c && (d === 'acknowledge' || d === 'cancel') && !parts[4]) {
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
     const changeId = await ctx.runQuery(internal.backendPortChanges.onServer, {

@@ -151,10 +151,14 @@ export async function bridgeNodeRename(
     .collect())
     await ctx.db.patch(req._id, { nodeName: to, updatedAt: now });
 
-  // The node role's token keeps acting for the node under either name.
+  // The node role keeps acting under the old name (the alias resolves it). A
+  // token bounded to THIS backend alone also gains the new name; one that spans
+  // several backends does not, since a boundary pairs every backend with every
+  // name and the new name could belong to another backend's node there.
   for (const t of await ctx.db.query('apiTokens').collect()) {
     const reg = t.edgeRegistration;
     if (!reg?.nodeNames?.includes(from) || reg.nodeNames.includes(to)) continue;
+    if (reg.backendServerIds.length !== 1 || reg.backendServerIds[0] !== sid) continue;
     await ctx.db.patch(t._id, { edgeRegistration: { ...reg, nodeNames: [...reg.nodeNames, to] } });
   }
 
@@ -178,6 +182,14 @@ export async function bridgeNodeRename(
     .collect())
     if (inv.nodeUuid === r.nodeUuid && inv.name !== to) await ctx.db.patch(inv._id, { name: to });
 
+  // Every earlier name of the node now points straight at the new one, so a
+  // lookup by any of them resolves in one step however often it was renamed.
+  for (const alias of await ctx.db
+    .query('panelNodeAliases')
+    .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+    .collect())
+    if (alias.name === from || alias.name === fromOrigin)
+      await ctx.db.patch(alias._id, { name: alias.name === from ? to : toOrigin });
   await ctx.db.insert('panelNodeAliases', {
     backendServerId: sid,
     formerName: from,

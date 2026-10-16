@@ -565,6 +565,18 @@ test('a rename in words: where it stands, and that members keep connecting', () 
   ).toMatch(/Waiting for a change on the backend to settle/);
   expect(renameWords({ ...r, state: 'done', step: 'done' }).sentence).toBe('Renamed from node-a.');
   expect(
+    renameWords({
+      ...r,
+      state: 'running',
+      step: 'hosts',
+      code: 'servers.rename_host_refused',
+      refusedHosts: [{ remark: 'node-a | x.example', code: 'servers.panel_refused' }],
+    }),
+  ).toMatchObject({
+    dot: 'red',
+    sentence: expect.stringMatching(/refused to rename node-a \| x\.example.*retry/),
+  });
+  expect(
     renameWords({ ...r, state: 'failed', step: 'backend', code: 'servers.panel_refused' }).sentence,
   ).toMatch(/^Not renamed to node-b: /);
   for (const step of ['backend', 'hosts', 'subscriptions', 'done'] as const)

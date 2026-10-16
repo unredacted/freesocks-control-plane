@@ -92,7 +92,7 @@ import {
   listenersOf,
 } from './relayListeners';
 import type { ListenerSpecInput } from './lib/edges/registration';
-import { currentNodeName } from './lib/backend/nodeAliases';
+import { currentNodeName, runningRenameOf } from './lib/backend/nodeAliases';
 
 export {
   assertNoRotationOrQuarantine,
@@ -779,6 +779,15 @@ async function insertRelay(
   const cfg = await resolveEdgeConfig(ctx.db);
   const p = patchFrom(a);
   await assertOriginUnbound(ctx.db, origin, null);
+  // A node being renamed gets no new origin keyed to either of its names.
+  if (
+    origin.kind === 'panel-node' &&
+    (await runningRenameOf(ctx.db, origin.backendServerId, { name: origin.nodeName }))
+  )
+    throw new ConvexError({
+      code: 'edge.panel_op_running',
+      message: 'This node is being renamed; wait for it to finish',
+    });
   await assertOriginIsNotAnEdge(ctx.db, p.originAddress!, null);
   const caps = await backendCapsOf(ctx.db, origin);
   const derived = deriveHostMode(origin, caps);

@@ -71,7 +71,18 @@
     if (country.trim().toUpperCase() !== (node.countryCode ?? ''))
       fields.countryCode = country.trim().toUpperCase();
     editOpen = false;
-    if (Object.keys(fields).length > 0) await act(() => updateNode(slug, node.nodeUuid, fields));
+    // One Save: a rename starts only when the rest of the edit went through
+    // (or there was none), never after a refused one.
+    if (Object.keys(fields).length > 0) {
+      busy = true;
+      let op: Awaited<ReturnType<typeof runWrite>> = null;
+      try {
+        op = await runWrite(qc, () => updateNode(slug, node.nodeUuid, fields));
+      } finally {
+        busy = false;
+      }
+      if (!op || op.state === 'refused' || op.state === 'outcome_unknown') return;
+    }
     if (newName !== node.name) await rename(newName);
   }
 

@@ -319,19 +319,28 @@ every backend write through the ledger:
    the old remark kept in `formerRemarks`, which the renderer still matches), the delivery
    binding (its `policyVersion` moves, so nothing rendered under the old name is served under the
    new one), guided setup runs, holds, port requirements, ownership (`lookup` gains the new name),
-   the read caches, and the node role's token boundary (gains the new name, keeps the old). The old
-   name becomes an alias (`panelNodeAliases`).
+   the read caches, and the node role's token boundary (gains the new name, keeps the old, but only
+   for a token bounded to this backend alone: a boundary pairs every backend with every name, so a
+   token spanning several backends would also reach another backend's node of the new name; such
+   a token keeps acting for the node under its old name, through the alias). The old name becomes
+   an alias (`panelNodeAliases`), and every earlier alias of the node is pointed straight at the
+   new name, so any former name resolves in one step however often the node was renamed.
 2. **The Host remarks.** The backend's Host listing is READ, and every Host whose remark is one of
    FCP's forms for the old name (a direct node's `<node> | <name>`, rebuilt from the Host's own
    server name; an origin listener's `<node>-relay[-<key>]`) is re-remarked in place, one op at a
    time. Nothing else about a Host changes and none is created or deleted, so nothing a member
-   holds stops working, and a remark FCP's records missed is still found.
+   holds stops working, and a remark FCP's records missed is still found. A remark write the
+   backend refuses before any change is not sent again on its own: the rename holds at this step
+   (`servers.rename_host_refused`, the node page names the address, its old remark still matched)
+   until an operator fixes what refused it and retries (`POST {slug}/renames/{id}/retry`).
 3. **Members' pins.** The backend's subscriptions are walked a page at a time and a pin (or the
    node a key is kept off) under the old name moves to the new one.
 
 While it runs, the node's origins are fenced (`relays.renaming`: rotations, restores,
-registrations, setup runs and listener writes answer `edge.panel_op_running`) and the node's own
-reconcile waits; it is reconciled under the new name when the rename finishes. A step whose write
+registrations, setup runs and listener writes answer `edge.panel_op_running`), no new origin or
+guided setup run is admitted for the node under either name (`edge.panel_op_running`), its
+retirement is refused (`servers.node_rename_running`, by the role and by an admin), and the node's
+own reconcile waits; it is reconciled under the new name when the rename finishes. A step whose write
 has an unknown outcome parks, and `backend-reconcile` resumes it once a look settled the write
 (or a recorded recovery and a fresh read decided it). A write refused before any change ends the
 rename with nothing moved.
@@ -344,15 +353,16 @@ still carry the old remark). A former name stays reserved: no node may take it. 
 record's marker keeps the name the node was enrolled with, so FCP's own record never reads as
 somebody else's.
 
-Refused before anything is sent: a name a node has or had (`servers.node_name_taken`) or one
+Refused before anything is sent: a name a node has or had, or that another running rename is
+giving its node (`servers.node_name_taken`, checked again right before the backend write), or one
 removed on purpose (`servers.tombstoned`); a node retiring, with its own work in flight, or
 already being renamed (`servers.node_rename_running`); an origin in front of it that is rotating,
 restoring, quarantined or mid-setup, whose Hosts the operator writes or adopted
 (`servers.node_rename_foreign_hosts`: those remarks are theirs), for which the name is not a DNS
 label (`servers.node_name_origin`: origins keep it as one) or would make a Host remark longer
 than the backend allows (`servers.node_name_too_long`). Audited as
-`servers.node.rename_started`, `servers.node.renamed`, `servers.node.rename_failed` (the two names
-only).
+`servers.node.rename_started`, `servers.node.renamed`, `servers.node.rename_failed`,
+`servers.node.rename_retried` (the two names only).
 
 On a body that carries several nodes, the pin is a rendezvous hash over node names, so members of
 a renamed node may be pinned anew there; each lands on a node that serves. With one node per mode

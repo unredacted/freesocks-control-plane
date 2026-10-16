@@ -355,6 +355,8 @@ export const NodeRenameView = z.object({
   state: z.enum(['running', 'done', 'failed']),
   step: z.enum(['backend', 'hosts', 'subscriptions', 'done']),
   code: z.string().nullable(),
+  /** Host remarks the backend refused to change: the rename holds until an operator retries. */
+  refusedHosts: z.array(z.object({ remark: z.string(), code: z.string() })).default([]),
   createdAt: z.string(),
   updatedAt: z.string(),
 });

@@ -27,6 +27,7 @@ import { writeAuditLog } from './lib/audit';
 import { addressesOf } from './nodeIntents';
 import { bumpGateVersion } from './backendSetup';
 import { scheduleMirrorRefresh } from './relays';
+import { runningRenameOf } from './lib/backend/nodeAliases';
 
 const refuse = (code: string, message: string): never => {
   throw new ConvexError({ code, message });
@@ -59,6 +60,17 @@ export const decide = internalMutation({
   handler: async (ctx, a) => {
     const intent = await ctx.db.get(a.intentId);
     if (!intent) return refuse('not_found', 'No such node');
+    // A rename assumes the node, its origin and its addresses stay put until it is done.
+    if (
+      await runningRenameOf(ctx.db, intent.backendServerId, {
+        nodeUuid: intent.nodeUuid,
+        name: intent.name,
+      })
+    )
+      refuse(
+        'servers.node_rename_running',
+        'This node is being renamed. Retire it once that is done',
+      );
     let r = intent.retirementId ? await ctx.db.get(intent.retirementId) : null;
     if (!r) {
       const now = Date.now();

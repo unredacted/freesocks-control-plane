@@ -39,7 +39,7 @@ import { observeInstance } from './backendObserve';
 import { scheduleMirrorRefresh } from './lib/edges/relayGuards';
 import { bumpGateVersion, modeOf, setupReady, type Setup, type SetupMode } from './backendSetup';
 import { confirmFromRole, firewallPortsFor } from './lib/backend/portRequirements';
-import { currentNodeName, formerNamesByName } from './lib/backend/nodeAliases';
+import { currentNodeName, formerNamesByName, runningRenameOf } from './lib/backend/nodeAliases';
 
 const refuse = (code: string, message: string): never => {
   throw new ConvexError({ code, message });
@@ -1606,6 +1606,17 @@ export const requestRetirement = internalMutation({
     if (!intent) return refuse('not_found', 'No such node');
     const existing = intent.retirementId ? await ctx.db.get(intent.retirementId) : null;
     if (existing) return { retirementId: existing._id, stage: existing.stage };
+    // A rename assumes the node, its origin and its addresses stay put until it is done.
+    if (
+      await runningRenameOf(ctx.db, intent.backendServerId, {
+        nodeUuid: intent.nodeUuid,
+        name: intent.name,
+      })
+    )
+      refuse(
+        'servers.node_rename_running',
+        'This node is being renamed. Retire it once that is done',
+      );
     const ex = intent.delivery.exposure;
     const outstanding =
       ex.everLive ||

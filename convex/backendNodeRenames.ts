@@ -156,6 +156,9 @@ export const request = internalMutation({
       refuse('servers.tombstoned', 'A node of that name was removed on purpose. Pick another one');
     if (renames.some((r) => r.state === 'running' && r.nodeUuid === a.nodeUuid))
       refuse('servers.node_rename_running', 'This node is already being renamed');
+    // A name another running rename is about to give its node is taken already.
+    if (renames.some((r) => r.state === 'running' && r.to.toLowerCase() === lower))
+      refuse('servers.node_name_taken', 'Another node is being renamed to that name');
     // Nothing else may be changing the node's backend row.
     await assertNoPanelClaim(ctx.db, sid, [claimKey.node(a.nodeUuid)]);
     const now = Date.now();
@@ -291,6 +294,25 @@ export const claimBackend = internalMutation({
   handler: async (ctx, f): Promise<{ opId: Id<'panelOps'> } | { code: string }> => {
     const r = await held(ctx, f);
     if (!r || r.step !== 'backend' || r.opId) return { code: 'servers.claim_not_held' };
+    // Checked again right before the write: the name may have been taken since
+    // the request (a create, an adoption, an enrollment), and a backend that
+    // takes duplicate names would then hold two nodes of one name.
+    const lower = r.to.toLowerCase();
+    const sid = r.backendServerId;
+    const taken =
+      (
+        await ctx.db
+          .query('panelNodes')
+          .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+          .collect()
+      ).some((n) => n.nodeUuid !== r.nodeUuid && n.name.toLowerCase() === lower) ||
+      (
+        await ctx.db
+          .query('panelNodeIntents')
+          .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+          .collect()
+      ).some((i) => i._id !== r.intentId && i.name.toLowerCase() === lower);
+    if (taken) return { code: 'servers.node_name_taken' };
     try {
       const opId = await claimOp(ctx, {
         backendServerId: r.backendServerId,
@@ -391,7 +413,21 @@ export const hostSettled = internalMutation({
     const r = await held(ctx, f);
     if (!r || r.step !== 'hosts' || !r.opId) return null;
     const op = await ctx.db.get(r.opId);
-    if (op && !op.open) await ctx.db.patch(r._id, { opId: undefined, updatedAt: Date.now() });
+    if (!op || op.open) return null;
+    // Refused before any change (a permission, a validation): sending the same
+    // write again would be refused again. It waits for an operator's retry.
+    const refused =
+      op.request === 'rejected_pre_mutation' && op.objectUuid
+        ? [
+            ...(r.refusedHosts ?? []),
+            {
+              hostUuid: op.objectUuid,
+              remark: op.label,
+              code: op.errorCode ?? 'servers.panel_refused',
+            },
+          ]
+        : r.refusedHosts;
+    await ctx.db.patch(r._id, { opId: undefined, refusedHosts: refused, updatedAt: Date.now() });
     return null;
   },
 });
@@ -533,10 +569,18 @@ export const run = internalAction({
         // hosts: what still carries an old remark, read from the backend itself.
         const { writes, config } = await writesOf(ctx, r.backendServerId);
         const hosts = await writes.readHosts(config);
-        const next = hosts
+        const refused = new Set((r.refusedHosts ?? []).map((x) => x.hostUuid));
+        const pending = hosts
           .map((h) => ({ h, remark: renamedRemark(h.remark, h.sni, r.from, r.to) }))
-          .find((x) => x.remark !== null && x.remark !== x.h.remark);
+          .filter((x) => x.remark !== null && x.remark !== x.h.remark);
+        const next = pending.find((x) => !refused.has(x.h.hostUuid));
         if (!next) {
+          // Only Hosts the backend refused are left: the rename holds here,
+          // its old remarks still matched, until an operator retries.
+          if (pending.length > 0) {
+            await park('servers.rename_host_refused');
+            return null;
+          }
           await ctx.runMutation(internal.backendNodeRenames.hostsDone, f);
           continue;
         }
@@ -576,10 +620,29 @@ export const stale = internalQuery({
       await ctx.db
         .query('panelNodeRenames')
         .withIndex('by_state', (q) => q.eq('state', 'running'))
-        .take(50)
+        .collect()
     )
-      .filter((r) => leaseFree(r, now))
+      // One waiting on an operator (a refused Host remark) is not resumed by the clock.
+      .filter((r) => leaseFree(r, now) && (r.refusedHosts ?? []).length === 0)
       .map((r) => r._id),
+});
+
+/**
+ * An operator retries a rename that holds on Host remarks the backend refused
+ * (once whatever refused them is fixed): those Hosts are tried again, once.
+ */
+export const retry = internalMutation({
+  args: { renameId: v.id('panelNodeRenames'), actorAdminId: v.optional(v.id('adminUsers')) },
+  handler: async (ctx, { renameId, actorAdminId }) => {
+    const r = await ctx.db.get(renameId);
+    if (!r) return refuse('not_found', 'No such rename');
+    if (r.state !== 'running')
+      refuse('servers.node_rename_not_running', 'This rename is not running any more');
+    await ctx.db.patch(r._id, { refusedHosts: undefined, code: undefined, updatedAt: Date.now() });
+    await audit(ctx, r, 'servers.node.rename_retried', {}, actorAdminId);
+    await lease(ctx, (await ctx.db.get(r._id))!);
+    return { ok: true as const };
+  },
 });
 
 /** On `backend-reconcile`: resume what an interrupted or parked attempt left running. */
@@ -604,6 +667,7 @@ export function mapRename(r: Rename) {
     state: r.state,
     step: r.step,
     code: r.code ?? null,
+    refusedHosts: (r.refusedHosts ?? []).map((h) => ({ remark: h.remark, code: h.code })),
     createdAt: new Date(r.createdAt).toISOString(),
     updatedAt: new Date(r.updatedAt).toISOString(),
   };
@@ -627,5 +691,15 @@ export const view = internalQuery({
     const r = await ctx.db.get(renameId);
     if (!r) return refuse('not_found', 'No such rename');
     return mapRename(r);
+  },
+});
+
+/** The rename must belong to the backend the path names. */
+export const onServer = internalQuery({
+  args: { backendServerId: v.id('backendServers'), renameId: v.string() },
+  handler: async (ctx, { backendServerId, renameId }) => {
+    const id = ctx.db.normalizeId('panelNodeRenames', renameId);
+    const r = id ? await ctx.db.get(id) : null;
+    return r && r.backendServerId === backendServerId ? r._id : null;
   },
 });

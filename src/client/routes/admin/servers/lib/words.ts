@@ -245,6 +245,9 @@ const ERROR_WORDS: Record<string, string> = {
     'An origin in Edges covers this node. Its address, port and transports are changed there, and it is not turned off or removed here.',
   'servers.node_rename_separate': 'A node is renamed on its own. Use Rename.',
   'servers.node_rename_running': 'This node is being renamed. Wait for that to finish.',
+  'servers.node_rename_not_running': 'That rename is not running any more.',
+  'servers.rename_host_refused':
+    'The backend refused to rename one of its addresses. Fix what it refused, then press Retry.',
   'servers.node_rename_foreign_hosts':
     'An origin in front of this node uses Hosts the operator writes. Their remarks name the node, and they are not changed from here.',
   'servers.node_name_origin':
@@ -758,6 +761,7 @@ export interface RenameLike {
   state: 'running' | 'done' | 'failed';
   step: 'backend' | 'hosts' | 'subscriptions' | 'done';
   code: string | null;
+  refusedHosts?: { remark: string; code: string }[];
 }
 
 const RENAME_STEP: Record<RenameLike['step'], string> = {
@@ -772,6 +776,11 @@ export function renameWords(r: RenameLike): { dot: Dot; sentence: string } {
   if (r.state === 'done') return { dot: 'green', sentence: `Renamed from ${r.from}.` };
   if (r.state === 'failed')
     return { dot: 'grey', sentence: `Not renamed to ${r.to}: ${serverErrorWords(r.code)}` };
+  if (r.code === 'servers.rename_host_refused')
+    return {
+      dot: 'red',
+      sentence: `Renaming to ${r.to} holds: the backend refused to rename ${r.refusedHosts?.map((h) => h.remark).join(', ') || 'an address'}. Members keep connecting. Fix what it refused, then retry.`,
+    };
   const waiting =
     r.code === 'servers.op_running' || r.code === 'servers.op_uncertain'
       ? ' Waiting for a change on the backend to settle.'

@@ -2989,6 +2989,11 @@ export default defineSchema({
     opId: v.optional(v.id('panelOps')),
     // The subscriptions drain's page cursor.
     cursor: v.optional(v.string()),
+    // Hosts whose remark write the backend refused before any change: never
+    // sent again on their own; the rename waits for an operator's retry.
+    refusedHosts: v.optional(
+      v.array(v.object({ hostUuid: v.string(), remark: v.string(), code: v.string() })),
+    ),
     code: v.optional(v.string()),
     claim: v.optional(v.object({ attemptId: v.string(), expiresAt: v.number() })),
     actorAdminId: v.optional(v.id('adminUsers')),
