@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { SETUP_RUN_NEEDS } from '../../../../../shared/contracts/edgeCodes';
-import { automationOn, needButtons, planWords, runTestItems } from './runWords';
+import {
+  automationOn,
+  hideButton,
+  moreDirectWords,
+  needButtons,
+  planWords,
+  runTestItems,
+  runTestLines,
+} from './runWords';
 
 describe('needButtons', () => {
   it('gives every need one button, at most one secondary, no em-dash', () => {
@@ -73,6 +81,52 @@ describe('runTestItems', () => {
   });
 });
 
+describe('runTestLines', () => {
+  const link = (edgeId: string, listenerKey: string, issuedAt: string) => ({
+    edgeId,
+    listenerKey,
+    link: `vless://${edgeId}`,
+    format: 'links',
+    method: 'test_link' as const,
+    binding: { endpoint: `${edgeId}:443`, listenerRevision: 1, configHash: 'h', issuedAt },
+  });
+  const listener = (listenerKey: string, edgeId: string | null) => ({
+    listenerKey,
+    layer: 'l4' as const,
+    edgeId,
+    verify: 'pending' as const,
+    published: false,
+  });
+  it('keeps a ticked line on the card as done, in listener order, and drops a replaced edge', () => {
+    const { items, done } = runTestLines({
+      listeners: [listener('a', 'e1'), listener('b', 'e2'), listener('c', 'e3')],
+      // e1 was ticked after its link (saved, card not rebuilt yet); e2 is pending;
+      // e3 was ticked and its card line is gone; e0 is an edge the run replaced.
+      testLinks: [
+        link('e2', 'b', '2026-10-16T10:00:00.000Z'),
+        link('e1', 'a', '2026-10-16T10:00:00.000Z'),
+      ],
+      testedEndpoints: [
+        { edgeId: 'e1', listenerKey: 'a', endpoint: 'e1:443', at: '2026-10-16T10:01:00.000Z' },
+        { edgeId: 'e3', listenerKey: 'c', endpoint: 'e3:443', at: '2026-10-16T09:00:00.000Z' },
+        { edgeId: 'e0', listenerKey: 'b', endpoint: 'e0:443', at: '2026-10-16T09:00:00.000Z' },
+      ],
+    });
+    expect(items.map((i) => i.edgeId)).toEqual(['e1', 'e2', 'e3']);
+    expect([...done].sort()).toEqual(['e1', 'e3']);
+  });
+  it('a link issued after the tick is a retest: pending again', () => {
+    const { done } = runTestLines({
+      listeners: [listener('a', 'e1')],
+      testLinks: [link('e1', 'a', '2026-10-16T11:00:00.000Z')],
+      testedEndpoints: [
+        { edgeId: 'e1', listenerKey: 'a', endpoint: 'e1:443', at: '2026-10-16T10:00:00.000Z' },
+      ],
+    });
+    expect(done.size).toBe(0);
+  });
+});
+
 describe('planWords', () => {
   const inbound = (over: Record<string, unknown>) => ({
     listenerKey: 'main',
@@ -105,11 +159,35 @@ describe('planWords', () => {
       'FCP creates 2 addresses in Main account, checks each one from outside and with you, then moves node-a behind them.',
     );
     expect(w.uncovered).toMatchObject({ count: 1, uuids: ['u2'], remarks: ['B'] });
-    expect(w.button).toBe('Protect and hide 1 unsupported host');
+    expect(w.button).toBe('Protect and hide 1 direct address');
+    expect(w.uncovered?.statement).toMatch(/^1 direct address on the backend uses/);
+    expect(hideButton(2)).toBe('Protect and hide 2 direct addresses');
+    expect(moreDirectWords(1)).toMatch(/^One more direct address on the backend uses/);
+    expect(moreDirectWords(3)).toMatch(/^3 more direct addresses on the backend use/);
     expect(w.renderGlobal).toMatch(/1 other node/);
     expect(w.formats).toBe(
       'Works for link and Clash subscriptions; other formats keep the direct address.',
     );
+  });
+  it('judges the formats by the protected transports only (a choice on a busy node)', () => {
+    const w = planWords(
+      {
+        nodeName: 'n',
+        inbounds: [
+          inbound({}),
+          inbound({
+            listenerKey: 'other',
+            sourceTag: 'other',
+            formats: { links: true, singbox: false, clash: false },
+          }),
+        ],
+        requiredListeners: ['main'],
+        directHosts: [],
+        renderGlobal: { willEnable: false, affectedRelays: [] },
+      },
+      'Acc',
+    );
+    expect(w.formats).toBe('Works for every subscription format.');
   });
   it('is quiet when nothing needs consent', () => {
     const w = planWords(

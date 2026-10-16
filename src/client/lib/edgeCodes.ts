@@ -1288,6 +1288,30 @@ export function setupStatusTone(s: SetupStepStatus): Tone {
 
 // --- attention -----------------------------------------------------------------------------
 
+/**
+ * The button labels the simple screens show (AttentionList `plain`): plain verbs,
+ * never the Advanced terms (Thaw, Qualify front, Publish).
+ */
+export const PLAIN_ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
+  resolve_quarantine: 'Review the pause',
+  resolve_operator: 'Look at the address',
+  look_at_host: 'Look at the backend',
+  open_setup: 'Resume protection',
+  open_relay: 'Open the node',
+  open_edge: 'Open the address',
+  open_account: 'Open the account',
+  open_settings: 'Open settings',
+  publish: 'Put it in use',
+  provision: 'Create an address',
+  qualify_front: 'Check the address',
+  rotate: 'Replace the address',
+  test_credentials: 'Test the account',
+  verify_endpoint: 'Test the address',
+  thaw: 'Resume new work',
+  rebalance: 'Make room',
+  require_edges: 'Go live',
+};
+
 export const ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
   resolve_quarantine: 'Resolve quarantine',
   resolve_operator: 'Resolve edge',
@@ -1319,19 +1343,40 @@ export const attentionSeverityTone = severityTone;
 
 // --- guided setup runs (Autopilot) -------------------------------------------------------------
 
-/** The four plain stages the progress view shows, mapped from the machine's ten. */
-export const SETUP_RUN_STAGE_LABELS: Record<SetupRunStage, string> = {
-  prepare: 'Creating the address',
-  credential: 'Creating the address',
-  provision: 'Creating the address',
-  verify: 'Checking from outside',
-  try_it: 'Checking it works',
-  publish: 'Going live',
-  hide_direct_hosts: 'Going live',
-  rehearse: 'Going live',
-  go_live: 'Going live',
-  done: 'Live',
+/** The four plain stages a guided run shows, in order. */
+export const SETUP_RUN_PLAIN_STAGES = [
+  'Creating the address',
+  'Checking from outside',
+  'Checking it works',
+  'Going live',
+] as const;
+
+/**
+ * The machine's ten stages folded onto the four plain ones (`done` = 5, past
+ * the last). The one table both the stage labels and the progress steps read,
+ * so a stage never has two names: `publish` is where an enrolled node waits
+ * for its go-live approval, so it belongs to "Going live".
+ */
+export const SETUP_RUN_STAGE_STEP: Record<SetupRunStage, 1 | 2 | 3 | 4 | 5> = {
+  prepare: 1,
+  credential: 1,
+  provision: 1,
+  verify: 2,
+  try_it: 3,
+  publish: 4,
+  hide_direct_hosts: 4,
+  rehearse: 4,
+  go_live: 4,
+  done: 5,
 };
+
+/** The plain stage label of each machine stage (`done` = Live). */
+export const SETUP_RUN_STAGE_LABELS = Object.fromEntries(
+  Object.entries(SETUP_RUN_STAGE_STEP).map(([stage, step]) => [
+    stage,
+    step === 5 ? 'Live' : SETUP_RUN_PLAIN_STAGES[step - 1],
+  ]),
+) as Record<SetupRunStage, string>;
 
 export const SETUP_RUN_STATE_LABELS: Record<SetupRunState, string> = {
   running: 'Working',
@@ -1370,8 +1415,8 @@ export const SETUP_RUN_NEED_COPY: Record<SetupRunNeed, CodeCopy> = {
   },
   too_many_inbounds: {
     label: 'Too many transports',
-    explain: 'The node serves more frontable transports than a guided run protects.',
-    fix: 'Use manual setup.',
+    explain: 'The node serves more transports than one run protects.',
+    fix: 'Pick the ones to protect.',
   },
   use_manual_setup: {
     label: 'Manual setup needed',
@@ -1401,8 +1446,8 @@ export const SETUP_RUN_NEED_COPY: Record<SetupRunNeed, CodeCopy> = {
   try_it: {
     label: 'Try each address',
     explain:
-      'Import each test link into a client (it uses a test account of its own), connect, load a page, then tick Works.',
-    fix: 'Continue (One of them does not work).',
+      'Import each test link into a client (it uses a test account of its own), connect, load a page, then answer Works or Doesn’t work.',
+    fix: 'Works (Doesn’t work).',
   },
   review_changed: {
     label: 'Hosts changed',
@@ -1431,8 +1476,8 @@ export const SETUP_RUN_NEED_COPY: Record<SetupRunNeed, CodeCopy> = {
   },
   quarantined: {
     label: 'Paused for safety',
-    explain: 'A rotation could not converge and paused the origin.',
-    fix: 'Review.',
+    explain: 'Replacing an address could not finish and paused this node.',
+    fix: 'Check the backend, then keep the old or the new addresses.',
   },
 };
 
@@ -1594,8 +1639,23 @@ export const PLAIN_WORDS: Record<string, string> = {
   quarantine: 'paused for safety',
   quarantined: 'paused for safety',
   'host flip': 'update the backend',
-  listener: 'inbound',
+  listener: 'transport',
   listeners: 'transports',
+  inbound: 'transport',
+  inbounds: 'transports',
+  rotations: 'address replacements',
+  endpoint: 'address',
+  endpoints: 'addresses',
+  thaw: 'resume new work',
+  // Whole fix phrases whose verb has no plain one-word swap (longest match wins).
+  'run qualify front on the edge': 'check the address',
+  'qualify the front again': 'check the address again',
+  'publish an edge': 'put an address in use',
+  'provision or import an edge': 'create or import an address',
+  'provision or publish an edge': 'create an address or put one in use',
+  'provision a new edge': 'create a new address',
+  'raise the published edges wanted': 'raise the number of addresses in use',
+  'edge work': 'new work',
 };
 
 /** Rewrite a technical sentence in plain words (whole-word, longest match first). */
@@ -1642,6 +1702,7 @@ const PLAIN_AUDIT_LABELS: Record<string, string> = {
   'edge.setup_run.finished': 'Protection finished',
   'edge.setup_run.cancelled': 'Protection cancelled',
   'admin.edge.provision': 'Address requested',
+  'admin.edge.test_provision': 'Test address requested',
   'admin.edge.rotate': 'Replacement requested',
   'admin.edge.burn': 'Replacement requested (blocked)',
   'probe.verdict': 'Reachability changed',

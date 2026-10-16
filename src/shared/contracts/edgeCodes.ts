@@ -373,6 +373,13 @@ export const SETUP_RUN_STAGES = [
 export type SetupRunStage = (typeof SETUP_RUN_STAGES)[number];
 
 /**
+ * The most transports one guided run protects. A node with more frontable
+ * transports is planned with `tooManyInbounds`; the operator then names up to
+ * this many (`listenerKeys` on the plan and on the create).
+ */
+export const SETUP_RUN_MAX_LISTENERS = 8;
+
+/**
  * running = a step is scheduled; waiting = a rotation / Host settle / probe
  * round is in flight; needs_you = an interruption (see `need`); done = live;
  * done_unbound = finished without the binding (the operator kept members on the

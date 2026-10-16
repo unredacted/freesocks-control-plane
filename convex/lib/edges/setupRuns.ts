@@ -134,7 +134,7 @@ export async function planHashOf(input: {
   );
 }
 
-/** One discovered transport in the plan snapshot (the required set is the frontable ones). */
+/** One discovered transport in the plan snapshot (the required set is the frontable ones, or the operator's choice of them). */
 export interface SetupPlanInbound {
   listenerKey: string;
   sourceTag: string;
@@ -174,7 +174,7 @@ export interface SetupPlanSnapshot {
   originAddress: string;
   relaySlug: string;
   inbounds: SetupPlanInbound[];
-  /** Listener keys of the frontable transports (cap 8). */
+  /** Listener keys of the frontable transports (cap 8), or of the ones the operator chose. */
   requiredListeners: string[];
   tooManyInbounds: boolean;
   directHosts: SetupPlanDirectHost[];

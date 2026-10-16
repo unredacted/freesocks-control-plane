@@ -19,7 +19,7 @@ import type {
   SetupRunAdmin,
 } from '../../../../../shared/contracts/edges';
 import type { SetupRunStage } from '../../../../../shared/contracts/edgeCodes';
-import { codeLabel } from '../../../../lib/edgeCodes';
+import { SETUP_RUN_PLAIN_STAGES, SETUP_RUN_STAGE_STEP, codeLabel } from '../../../../lib/edgeCodes';
 
 export type OriginRow = z.infer<typeof EdgeSummary>['relays'][number];
 export type Dot = 'green' | 'amber' | 'red' | 'blue' | 'grey';
@@ -44,33 +44,10 @@ export interface NodeStatus {
 const TERMINAL = new Set<SetupRunAdmin['state']>(['done', 'done_unbound', 'failed', 'cancelled']);
 export const runIsLive = (run: Pick<SetupRunAdmin, 'state'>): boolean => !TERMINAL.has(run.state);
 
-export const PLAIN_STAGES = [
-  'Creating the address',
-  'Checking from outside',
-  'Checking it works',
-  'Going live',
-] as const;
+export const PLAIN_STAGES = SETUP_RUN_PLAIN_STAGES;
 
 /** The machine's ten stages folded onto the four the operator sees (`done` = 5, past the last). */
-export function plainStage(stage: SetupRunStage): number {
-  switch (stage) {
-    case 'prepare':
-    case 'credential':
-    case 'provision':
-      return 1;
-    case 'verify':
-      return 2;
-    case 'try_it':
-    case 'publish':
-      return 3;
-    case 'hide_direct_hosts':
-    case 'rehearse':
-    case 'go_live':
-      return 4;
-    case 'done':
-      return 5;
-  }
-}
+export const plainStage = (stage: SetupRunStage): number => SETUP_RUN_STAGE_STEP[stage];
 
 export function liveRunFor(runs: readonly SetupRunAdmin[], slug: string): SetupRunAdmin | null {
   return runs.find((r) => r.relaySlug === slug && runIsLive(r)) ?? null;

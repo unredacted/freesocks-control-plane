@@ -29,7 +29,8 @@
    *   max?: number                          show at most this many, with a "Show all" button
    *   emptyText?: string
    *   plain?: boolean                       the simple screens: words through PLAIN_WORDS
-   *                                         (origin -> protected node, edge -> address, ...)
+   *                                         (origin -> protected node, edge -> address, ...),
+   *                                         buttons from PLAIN_ATTENTION_ACTION_LABELS
    *   class?: string
    */
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
@@ -38,6 +39,7 @@
   import { router } from '@client/stores/router.svelte';
   import {
     ATTENTION_ACTION_LABELS,
+    PLAIN_ATTENTION_ACTION_LABELS,
     codeExplain,
     codeFix,
     codeLabel,
@@ -134,7 +136,9 @@
       {@const plan = ATTENTION_ACTION_PLAN[item.action]}
       {@const facts = w(attentionFactsLine(item))}
       {@const subject = w(attentionSubject(item))}
-      {@const actionLabel = w(ATTENTION_ACTION_LABELS[item.action])}
+      {@const actionLabel = plain
+        ? PLAIN_ATTENTION_ACTION_LABELS[item.action]
+        : ATTENTION_ACTION_LABELS[item.action]}
       <li
         class={cn(
           'bg-card flex flex-wrap items-start gap-x-4 gap-y-2 rounded-lg border border-s-4 px-3 py-2.5',
@@ -193,15 +197,15 @@
   {@const item = confirming}
   <ConfirmDialog
     bind:open={confirmOpen}
-    title={confirmCopy.title}
-    body={confirmCopy.body}
-    confirmLabel={confirmCopy.confirmLabel}
+    title={w(confirmCopy.title) ?? confirmCopy.title}
+    body={w(confirmCopy.body)}
+    confirmLabel={plain ? PLAIN_ATTENTION_ACTION_LABELS[item.action] : confirmCopy.confirmLabel}
     danger={confirmCopy.danger}
     onConfirm={() => run(item)}
     onCancel={() => (confirming = null)}
   >
     {#if attentionSubject(item)}
-      <p class="text-muted-foreground">{attentionSubject(item)}</p>
+      <p class="text-muted-foreground">{w(attentionSubject(item))}</p>
     {/if}
   </ConfirmDialog>
 {/if}

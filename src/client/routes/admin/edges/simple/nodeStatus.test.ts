@@ -32,7 +32,8 @@ describe('plainStage', () => {
     expect(plainStage('provision')).toBe(1);
     expect(plainStage('verify')).toBe(2);
     expect(plainStage('try_it')).toBe(3);
-    expect(plainStage('publish')).toBe(3);
+    // An enrolled node waits for its go-live approval at publish: "Going live".
+    expect(plainStage('publish')).toBe(4);
     expect(plainStage('go_live')).toBe(4);
     expect(plainStage('done')).toBe(5);
     expect(PLAIN_STAGES.length).toBe(4);

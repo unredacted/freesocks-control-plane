@@ -2239,13 +2239,16 @@ export const wakeForApproval = internalMutation({
  * Re-enter the CURRENT stage under a new generation (the old rotation's hook
  * becomes a no-op), reusing everything that exists. Options answer the card's
  * secondary buttons: `tryAnotherAddress` destroys the unreachable standby and
- * re-provisions that listener only; `acceptPartial` goes on with the rung as
- * it is; `accountId` names another compatible account.
+ * re-provisions that listener only (at `try_it`, `edgeId` names the one line
+ * that does not work; without it every unconfirmed line is replaced);
+ * `acceptPartial` goes on with the rung as it is; `accountId` names another
+ * compatible account.
  */
 export const retry = internalMutation({
   args: {
     runId: v.id('edgeSetupRuns'),
     tryAnotherAddress: v.optional(v.boolean()),
+    edgeId: v.optional(v.id('edges')),
     acceptPartial: v.optional(v.boolean()),
     accountId: v.optional(v.id('edgeProviderAccounts')),
     actorAdminId: v.optional(v.id('adminUsers')),
@@ -2300,14 +2303,29 @@ export const retry = internalMutation({
       listeners = listeners.map((l) => ({ ...l, layer }));
     }
     const failedKey = r.need?.detail?.split(':')[0] ?? null;
+    if (a.edgeId && !(a.tryAnotherAddress && r.need?.code === 'try_it'))
+      throw new ConvexError({
+        code: 'validation',
+        message: 'edgeId names a line of the try-it card only',
+      });
+    if (a.edgeId && !listeners.some((l) => l.layer === 'l4' && l.edgeId === a.edgeId))
+      throw new ConvexError({ code: 'validation', message: 'Not an address this run is testing' });
     if (a.tryAnotherAddress && r.need?.code === 'try_it') {
-      // "One of them does not work": every L4 candidate the operator has NOT
-      // confirmed is destroyed and provisioned again (the card does not say
-      // which line failed; a confirmed one is kept, its tick stands).
+      // "Doesn't work": the named line's candidate (or, without a name, every
+      // L4 candidate the operator has NOT confirmed) is destroyed and
+      // provisioned again; a confirmed one is kept, its tick stands.
       for (const entry of listeners) {
         if (entry.layer !== 'l4' || !entry.edgeId) continue;
+        if (a.edgeId && entry.edgeId !== a.edgeId) continue;
         const e = await ctx.db.get(entry.edgeId);
-        if (e?.verification?.rung === 'verified') continue;
+        if (e?.verification?.rung === 'verified') {
+          if (a.edgeId)
+            throw new ConvexError({
+              code: 'validation',
+              message: 'That address was already confirmed to work',
+            });
+          continue;
+        }
         if (e && e.publication === 'unpublished' && LIVE_CANDIDATE.has(e.status))
           await ctx.db.patch(e._id, { status: 'cancelled', statusChangedAt: now, updatedAt: now });
         entry.edgeId = undefined;

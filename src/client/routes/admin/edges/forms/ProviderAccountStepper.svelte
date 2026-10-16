@@ -1,12 +1,14 @@
 <script lang="ts">
   /**
-   * Add a provider account in three steps:
+   * Add a provider account in two steps:
    *   1. Credentials        provider, a name, the write-only secrets and the public identifiers
-   *                         the provider needs on every request
-   *   2. Connect            lists what the credentials can see (projects, regions or zones,
-   *                         networks); nothing is stored yet, the lists stay in form state
-   *   3. Placement, limits  where edges are created (picked from those lists, or the DNS
-   *                         account for a provider that needs one) and the spending limits
+   *                         the provider needs on every request. Connect asks the provider
+   *                         what the credentials can see (projects, regions or zones,
+   *                         networks); nothing is stored yet, the lists stay in form state.
+   *                         A refused connection stays on this step with the reason.
+   *   2. Placement, limits  what the provider answered, where edges are created (picked from
+   *                         those lists, or the DNS account for a provider that needs one)
+   *                         and the spending limits
    * Creating the account runs the credential test right away, so the caller gets
    * a tested account (or the reason the test failed).
    *
@@ -17,6 +19,10 @@
    *   compact?: boolean                         the protect flow: limits and priority keep their
    *                                             defaults and are not shown; placement comes from
    *                                             the discovered lists as usual
+   *   layers?: EdgeLayer[]                      the layers the caller's transports can be carried
+   *                                             at: providers of another layer are offered
+   *                                             disabled, with the reason
+   *   nodeCountry?: string | null               the node's country, for the region hint
    */
   import { untrack } from 'svelte';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
@@ -30,6 +36,7 @@
   import {
     EDGE_PROVIDER_IDS,
     type EdgeDiscoverResponse,
+    type EdgeLayer,
     type EdgeProviderId,
   } from '@shared/contracts/edges';
   import {
@@ -66,16 +73,30 @@
     onCancel?: () => void;
     provider?: EdgeProviderId;
     compact?: boolean;
+    layers?: EdgeLayer[];
+    nodeCountry?: string | null;
   }
-  let { onCreated, onCancel, provider: presetProvider, compact = false }: Props = $props();
+  let {
+    onCreated,
+    onCancel,
+    provider: presetProvider,
+    compact = false,
+    layers,
+    nodeCountry = null,
+  }: Props = $props();
 
   const uid = $props.id();
   const qc = useQueryClient();
   const providers = providersQuery();
 
-  type StepId = 'credentials' | 'connect' | 'placement';
+  type StepId = 'credentials' | 'placement';
   let step = $state<StepId>('credentials');
-  const initialProvider = untrack(() => presetProvider ?? 'gcore');
+  /** A provider whose layer cannot carry the caller's transports (offered disabled). */
+  const unfit = (p: EdgeProviderId): boolean =>
+    layers !== undefined && !layers.includes(EDGE_PROVIDER_META[p].layer);
+  const initialProvider = untrack(
+    () => presetProvider ?? EDGE_PROVIDER_IDS.find((p) => !unfit(p)) ?? 'gcore',
+  );
   let provider = $state<EdgeProviderId>(initialProvider);
   let name = $state('');
   let credentials = $state<Record<string, string>>({});
@@ -126,16 +147,38 @@
         .filter(([, v]) => v !== ''),
     );
 
+  /** What a discovery is asked with; an answer counts only while the form still says this. */
+  const snapshot = () => ({
+    provider,
+    credentials: cleanCredentials(),
+    settings: settingsBody(provider, values),
+  });
+  type Snapshot = ReturnType<typeof snapshot>;
+  const sameSnapshot = (a: Snapshot, b: Snapshot) => JSON.stringify(a) === JSON.stringify(b);
+
+  // Set by Connect: its successful answer opens the placement (a re-list from a
+  // project or region pick does not move the step).
+  let connecting = false;
   const discover = createMutation(() => ({
-    mutationFn: () =>
-      discoverProviderOptions({
-        provider,
-        credentials: cleanCredentials(),
-        settings: settingsBody(provider, values),
-      }),
-    onSuccess: (r) => {
+    mutationFn: (s: Snapshot) => discoverProviderOptions(s),
+    onSuccess: (r, asked) => {
+      // The provider, a credential or a setting changed while it was asked:
+      // the answer belongs to another form, so it is dropped (ask again).
+      if (!sameSnapshot(asked, snapshot())) {
+        connecting = false;
+        return;
+      }
       discovered = r;
       values = applyDiscovery(provider, values, { discovered: r, accounts });
+      // Connected: on to the placement (Connect has nothing else to decide).
+      if (connecting) {
+        connecting = false;
+        step = 'placement';
+        triedNext = false;
+      }
+    },
+    onError: () => {
+      connecting = false;
     },
   }));
 
@@ -166,7 +209,7 @@
     if (f.from === 'networks') next['subnetId'] = '';
     values = next;
     // Lists below a project or a region depend on it.
-    if (f.from === 'projects' || f.from === 'regions') discover.mutate();
+    if (f.from === 'projects' || f.from === 'regions') discover.mutate(snapshot());
   }
 
   let testOutcome = $state<{ ok: boolean; code: string | null; detail?: string | null } | null>(
@@ -221,7 +264,7 @@
 
   const limitsBad = $derived(limitsInvalid.max || limitsInvalid.budget || limitsInvalid.priority);
 
-  const ORDER: StepId[] = ['credentials', 'connect', 'placement'];
+  const ORDER: StepId[] = ['credentials', 'placement'];
   const steps = $derived.by((): StepperStep[] => {
     const at = ORDER.indexOf(step);
     const status = (id: StepId): StepperStep['status'] => {
@@ -232,15 +275,9 @@
       {
         id: 'credentials',
         title: 'Credentials',
-        description: 'Which provider, and the secrets FCP uses to call it.',
+        description:
+          'Which provider, and the secrets FCP uses to call it. Connect checks them; nothing is saved yet.',
         status: status('credentials'),
-      },
-      {
-        id: 'connect',
-        title: 'Connect',
-        description: 'List what these credentials can see. Nothing is saved yet.',
-        status: status('connect'),
-        ...(step === 'credentials' ? { note: 'after the credentials' } : {}),
       },
       {
         id: 'placement',
@@ -254,24 +291,28 @@
     ];
   });
 
-  function next() {
+  /** Credentials -> Connect: the provider lists what they can see, then the placement opens. */
+  function connect() {
     triedNext = true;
-    if (step === 'credentials') {
-      if (credentialIssues.length > 0) return;
-      step = 'connect';
-      triedNext = false;
-      if (!discovered) discover.mutate();
-    } else if (step === 'connect') {
-      step = 'placement';
-      triedNext = false;
-    }
+    if (credentialIssues.length > 0 || unfit(provider)) return;
+    // Always asks again: the credentials may have changed since the last answer.
+    connecting = true;
+    discover.mutate(snapshot());
   }
+  /** The region hint: an L4 address near the node keeps the extra hop short. */
+  const regionHint = $derived(
+    nodeCountry
+      ? `The node is in ${nodeCountry}. Pick a region close to it: members reach the address, which forwards to the node.`
+      : 'Pick a region close to the node: members reach the address, which forwards to the node.',
+  );
   const locked = $derived(create.isPending || createdId !== null);
 </script>
 
 {#snippet settingField(f: ProviderField)}
   {@const opts = optionsFor(f, ctx)}
   {@const current = values[f.key] ?? ''}
+  <!-- Credential-step settings are part of what Connect asks with: held while it runs. -->
+  {@const held = locked || (f.step === 'credentials' && discover.isPending)}
   <div class="space-y-1.5">
     <Label for={`${uid}-${f.key}`}>{f.label}{f.required ? '' : ' (optional)'}</Label>
     {#if f.kind === 'select' && opts.length > 0}
@@ -279,7 +320,7 @@
         type="single"
         value={current}
         onValueChange={(v: string) => onFieldChange(f, v === '__none' ? '' : v)}
-        disabled={locked}
+        disabled={held}
       >
         <Select.Trigger id={`${uid}-${f.key}`} class="w-full">
           {opts.find((o) => o.id === current)?.label ?? (current || 'Choose one')}
@@ -304,7 +345,7 @@
         value={current}
         placeholder={f.placeholder}
         readonly={f.readOnly === true && (discovered?.zones?.length ?? 0) > 0}
-        disabled={locked}
+        disabled={held}
         oninput={(e) => onFieldChange(f, e.currentTarget.value)}
       />
       {#if f.kind === 'select' && f.from !== 'subnets'}
@@ -314,6 +355,9 @@
       {/if}
     {/if}
     {#if f.help}<p class="text-muted-foreground text-xs">{f.help}</p>{/if}
+    {#if f.from === 'regions' && meta.layer === 'l4'}
+      <p class="text-muted-foreground text-xs">{regionHint}</p>
+    {/if}
   </div>
 {/snippet}
 
@@ -331,18 +375,21 @@
               type="single"
               value={provider}
               onValueChange={(v: string) => setProvider(v as EdgeProviderId)}
+              disabled={discover.isPending}
             >
               <Select.Trigger id={`${uid}-provider`} class="w-full">
                 {providerLabel(provider)}
               </Select.Trigger>
               <Select.Content>
                 {#each EDGE_PROVIDER_IDS as p (p)}
-                  <Select.Item value={p} label={providerLabel(p)}>
+                  <Select.Item value={p} label={providerLabel(p)} disabled={unfit(p)}>
                     {providerLabel(p)}
                     <span class="text-muted-foreground text-xs">
-                      {EDGE_PROVIDER_META[p].layer === 'l7'
-                        ? 'CDN front (L7)'
-                        : 'load balancer (L4)'}
+                      {unfit(p)
+                        ? 'cannot carry these transports'
+                        : EDGE_PROVIDER_META[p].layer === 'l7'
+                          ? 'CDN front (L7)'
+                          : 'load balancer (L4)'}
                     </span>
                   </Select.Item>
                 {/each}
@@ -357,7 +404,12 @@
           </div>
           <div class="space-y-1.5">
             <Label for={`${uid}-name`}>Account name</Label>
-            <Input id={`${uid}-name`} bind:value={name} placeholder="Main account" />
+            <Input
+              id={`${uid}-name`}
+              bind:value={name}
+              placeholder="Main account"
+              disabled={discover.isPending}
+            />
             <p class="text-muted-foreground text-xs">Only shown to admins.</p>
           </div>
         </div>
@@ -376,6 +428,7 @@
                 autocomplete="off"
                 class="font-mono"
                 value={credentials[c] ?? ''}
+                disabled={discover.isPending}
                 oninput={(e) => (credentials = { ...credentials, [c]: e.currentTarget.value })}
               />
               <p class="text-muted-foreground text-xs">Write only: it is never shown again.</p>
@@ -385,31 +438,47 @@
             {@render settingField(f)}
           {/each}
         </div>
+        {#if unfit(provider)}
+          <p class="text-destructive text-sm" role="alert">
+            {providerLabel(provider)} cannot carry this node's transports. Pick another provider.
+          </p>
+        {/if}
         {#if triedNext && credentialIssues.length > 0}
           <ul class="text-destructive list-disc space-y-0.5 ps-5 text-sm" role="alert">
             {#each credentialIssues as i (i)}<li>{i}</li>{/each}
           </ul>
         {/if}
+        <div aria-live="polite">
+          {#if discover.isPending}
+            <p class="text-muted-foreground text-sm" role="status">
+              Asking {providerLabel(provider)} what these credentials can see.
+            </p>
+          {:else if discover.isError}
+            {@const issue = edgeErrorIssue(discover.error)}
+            {#if issue}<CodeNote {issue} />{:else}<InlineError
+                message={edgeErrorMessage(discover.error)}
+              />{/if}
+            <p class="text-muted-foreground mt-1 text-sm">
+              Nothing was saved. Check the credentials and connect again.
+            </p>
+          {/if}
+        </div>
         <div class="flex gap-2">
-          <Button onclick={next} disabled={providers.isPending}>Continue</Button>
-          {#if onCancel}<Button variant="outline" onclick={onCancel}>Cancel</Button>{/if}
+          <Button
+            class="h-11 sm:h-8"
+            onclick={connect}
+            disabled={providers.isPending || discover.isPending}
+          >
+            {discover.isPending ? 'Connecting' : 'Connect'}
+          </Button>
+          {#if onCancel}<Button variant="outline" class="h-11 sm:h-8" onclick={onCancel}
+              >Cancel</Button
+            >{/if}
         </div>
       </div>
-    {:else if s.id === 'connect'}
-      <div class="space-y-3" aria-live="polite">
-        {#if discover.isPending}
-          <p class="text-muted-foreground text-sm" role="status">
-            Asking {providerLabel(provider)} what these credentials can see.
-          </p>
-        {:else if discover.isError}
-          {@const issue = edgeErrorIssue(discover.error)}
-          {#if issue}<CodeNote {issue} />{:else}<InlineError
-              message={edgeErrorMessage(discover.error)}
-            />{/if}
-          <p class="text-muted-foreground text-sm">
-            Nothing was saved. Check the credentials and try again.
-          </p>
-        {:else if discovered}
+    {:else}
+      <div class="space-y-4">
+        <div class="space-y-2" aria-live="polite">
           {#if connected}
             <p class="flex items-center gap-2 text-sm font-medium">
               <CircleCheck
@@ -435,33 +504,29 @@
               issue={{
                 code,
                 subject: list,
-                detail:
-                  'This list could not be read. You can type the id on the next step instead.',
+                detail: 'This list could not be read. Type the id below instead.',
               }}
             />
             <ProviderAnswer detail={discovered?.errorDetails?.[list]} />
           {/each}
-          {#if discoveredLists.length === 0 && discoverErrors.length === 0}
-            <p class="text-muted-foreground text-sm">
-              This provider has nothing to list at this point. Continue to the placement.
-            </p>
+          {#if discover.isError}
+            {@const issue = edgeErrorIssue(discover.error)}
+            {#if issue}<CodeNote {issue} />{:else}<InlineError
+                message={edgeErrorMessage(discover.error)}
+              />{/if}
           {/if}
-        {/if}
-        <div class="flex flex-wrap gap-2">
-          <Button
-            onclick={next}
-            disabled={discover.isPending || (!discovered && !discover.isError)}
-          >
-            Continue
-          </Button>
-          <Button variant="outline" disabled={discover.isPending} onclick={() => discover.mutate()}>
-            {discover.isPending ? 'Connecting' : 'Connect again'}
-          </Button>
-          <Button variant="ghost" onclick={() => (step = 'credentials')}>Back</Button>
+          {#if !locked}
+            <Button
+              variant="ghost"
+              size="sm"
+              class="h-11 sm:h-7"
+              disabled={discover.isPending}
+              onclick={() => discover.mutate(snapshot())}
+            >
+              {discover.isPending ? 'Connecting' : 'Connect again'}
+            </Button>
+          {/if}
         </div>
-      </div>
-    {:else}
-      <div class="space-y-4">
         {#if needsDnsFirst}
           <CodeNote
             issue={{
@@ -557,7 +622,11 @@
             >
               {create.isPending ? 'Adding and testing' : 'Add account and test it'}
             </Button>
-            <Button variant="ghost" disabled={create.isPending} onclick={() => (step = 'connect')}>
+            <Button
+              variant="ghost"
+              disabled={create.isPending}
+              onclick={() => (step = 'credentials')}
+            >
               Back
             </Button>
           </div>
