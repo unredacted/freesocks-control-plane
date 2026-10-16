@@ -965,16 +965,21 @@ volunteers' home connections. These rules are built in, not settings:
   from that country is skipped: hammering a blocked address from inside teaches nothing about
   names.
 - **Low frequency.** A name is checked from a country at most once per
-  `edge.sni.vantage.intervalHours` (default 72). Each 10-minute tick starts at most **one** batch
-  (one address, one country, `batchNames` names, default 3), within
-  `edge.sni.vantage.hourlyBudget` measurements an hour (default 12; one measurement = one name,
-  one source, at most `perCountryLimit` vantages, default 3). Calls to one service inside a batch
-  are spaced by `edge.probe.sourceSpacingMs`.
+  `edge.sni.vantage.intervalHours` (default 72), **as a control too**: a control is a check like
+  any other, so a lone due name waits until another name of its address is due (unless the
+  address carries no other name), and the names that waited longest go first. Each 10-minute
+  tick starts at most **one** batch (one address, one country, `batchNames` names, default 3),
+  within `edge.sni.vantage.hourlyBudget` measurements an hour (default 12; one measurement = one
+  name, one source, at most `perCountryLimit` vantages, default 3). Calls to one service inside a
+  batch are spaced by `edge.probe.sourceSpacingMs`.
 - **Opt-in per country.** Nothing runs until the switch is on **and** a curated country is
   ticked under `edge.sni.vantage.countries`. Unticking a country stops new measurements at once.
 - **Each source's rules.** Globalping: own addresses, HEAD, within the rate limit. Atlas:
   non-public one-offs within credits. check-host.net is not used. A maintenance freeze stops new
   measurements like any probe.
+- **Gates are checked again when the measurement runs**, not only when it is planned: a switch
+  turned off, a country or a source taken out, or a freeze in between settles the queued rows
+  (`gate_off`, `gate_country`, `gate_source`, `gate_maintenance`) without dialling anything.
 
 **Residual risk** (accepted by turning a country on; the page says so next to the switch):
 
@@ -991,8 +996,10 @@ volunteers' home connections. These rules are built in, not settings:
 - Evidence is about the **name**, not about a member's client: vantages do not use a member's
   TLS fingerprint, so a censor blocking by fingerprint and name together is not seen, and Atlas
   cannot speak TLS 1.3.
-- Evidence is pooled per name and country across addresses. A block that depends on the address
-  as well as the name shows as "mixed" and suggests nothing.
+- Evidence is pooled per name and country across addresses. A name on several addresses is
+  checked on each in turn (the one it was checked on longest ago next), and an address that moved
+  is another address; a block that depends on the address as well as the name shows as "mixed"
+  and suggests nothing.
 
 **Evidence.** `sniVantageProbes` holds one row per measurement: name, country, source, the
 batch it belongs to, the target (edge or origin, address and port) and, per vantage, its network
@@ -1007,16 +1014,23 @@ batch it belongs to, the target (edge or origin, address and port) and, per vant
 | `refused`, `error` | refused before any name was sent, or the probe failed              | nothing                        |
 
 A **batch** is one address, one country and two or more names of that address's listener
-(the due names, plus another of its names as a **control** when only one is due), measured from
-the same vantages. For each failing vantage the scorer asks whether that vantage completed a
+(the due names; a lone due name takes another due name of the address as its **control**),
+measured from the same vantages. The sources of a batch are **one look**: controls pair within a
+source (its vantages), but the newest look is judged with every source together, never by
+whichever finished last. For each failing vantage the scorer asks whether that vantage completed a
 handshake for another name of the batch: from the **same network** = a `singled` failure (the
 path works, this name does not), from another network of the batch = `unpaired` (weaker), no
 control got through at all = a `path` failure (the address is the problem, not the name).
 
 `sniVantageEvidence` keeps one row per (name, country): the aggregates over
-`edge.sni.vantage.windowDays` (default 14; also the rows' retention), the newest working check
-ever (`everOkAt`, kept past the window as the transition marker) and the current failing streak.
-Retention, timeouts and planning run in cron `sni-vantage` (10 min).
+`edge.sni.vantage.windowDays` (default 14; also the rows' retention) of the measurements taken
+while the name was in its **current** family, the newest working check ever (`everOkAt`, kept
+past the window as the transition marker) and the current failing streak. When its oldest
+measurement leaves the window (`oldestAt`) the sweep aggregates it again, so a suggestion never
+outlives what it rests on. Cron `sni-vantage` (10 min) plans, from a starting listener that
+rotates every tick (the scan is bounded and must not always stop on the same prefix), and
+schedules the sweep (timeouts, retention, re-aggregation). Auto-apply runs only once every source
+of a batch has settled.
 
 **Scoring** (`lib/edges/sni/vantage.ts`, pure; `minVantages` 3, `minNetworks` 2):
 
@@ -1156,7 +1170,7 @@ block in that body, read by their own resolver so the render path never reads th
 | `autoApply`                               | `false`         |              | apply suggestions by themselves (never over an operator's mark)                           |
 
 At the defaults one source spends at most 12 measurements an hour (36 vantage results); a
-family of 40 names in four countries is covered in about 14 hours and then every 72; a family
+family of 40 names in four countries is covered in about 14 hours and then every 72 (a name on several addresses takes one of them per interval); a family
 of 500 is covered about once a week unless the budget is raised. Globalping tests count against
 the same account limit as the address-level probes.
 
@@ -1468,7 +1482,9 @@ lifecycle runs in that test and its rows appear here.
 ## Deploy notes
 
 **Checks from inside a country** (vantage evidence) add two tables (`sniVantageProbes`,
-`sniVantageEvidence`), cron `sni-vantage` (10 min) and `edge.sni.vantage.*` settings. Everything
+`sniVantageEvidence`), an index on the existing `sniReportCounts` (`by_country_day`, built by
+the backend on push; the family page now reads reports per country with it), cron
+`sni-vantage` (10 min) and `edge.sni.vantage.*` settings. Everything
 is additive and dormant: with `edge.sni.vantage.enabled` off and no country ticked the cron only
 sweeps (nothing to sweep). No migration, no env change (the probe credentials are the existing
 `EDGE_PROBE_GLOBALPING_TOKEN` / `EDGE_PROBE_RIPEATLAS_KEY`), and `sniNameCountry.source:

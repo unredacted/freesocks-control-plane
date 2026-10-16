@@ -253,14 +253,18 @@ export const detail = internalQuery({
     const counts: NameCount[] = [];
     // Rows exist only for names that were reported, so this is bounded by report
     // volume (rate-limited and deduplicated per member), not by the family's
-    // size. Still capped, newest days first: a read limit is a 500 (docs).
-    for (const row of await ctx.db
-      .query('sniReportCounts')
-      .withIndex('by_day', (q) => q.gte('day', since))
-      .order('desc')
-      .take(8000))
-      if (mine.has(row.name) && sniCfg.curatedCountries.includes(row.country))
-        counts.push({ name: row.name, country: row.country, weight: row.weight });
+    // size. Still capped, newest days first: a read limit is a 500 (docs). The
+    // cap is per curated country, so a busy country cannot crowd out another
+    // (the checks from inside a country read the same rows the same way).
+    const perCountry = Math.floor(8000 / Math.max(1, sniCfg.curatedCountries.length));
+    for (const country of sniCfg.curatedCountries)
+      for (const row of await ctx.db
+        .query('sniReportCounts')
+        .withIndex('by_country_day', (q) => q.eq('country', country).gte('day', since))
+        .order('desc')
+        .take(perCountry))
+        if (mine.has(row.name))
+          counts.push({ name: row.name, country: row.country, weight: row.weight });
     const suspects = suspectNames(counts);
     // What the checks from inside a country say (docs/edges.md "Checks from
     // inside a country"): the stored aggregates, judged NOW, because member

@@ -207,6 +207,16 @@ export const executeBatch = internalAction({
   handler: async (ctx: ActionCtx, { batch, source }): Promise<null> => {
     const c = await ctx.runQuery(internal.sniVantage.batchContext, { batch, source });
     if (!c) return null;
+    // A gate closed after the plan (switched off, country or source taken out,
+    // edges frozen): settle the rows, dial nothing.
+    if (c.gate) {
+      await ctx.runMutation(internal.sniVantage.finishBatch, {
+        batch,
+        done: [],
+        failed: c.rows.map((r) => ({ id: r.id, error: c.gate! })),
+      });
+      return null;
+    }
     const valid = c.rows.filter((r) => r.valid);
     const moved = c.rows.filter((r) => !r.valid).map((r) => ({ id: r.id, error: 'target_moved' }));
     if (valid.length === 0) {

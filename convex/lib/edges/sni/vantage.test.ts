@@ -22,6 +22,8 @@ import {
   decide,
   pickBatchNames,
   pickTargetIndex,
+  preferredTarget,
+  rotateForTick,
   suggest,
   type Measurement,
   type VantageReading,
@@ -163,6 +165,32 @@ describe('aggregateEvidence', () => {
       null,
     );
     expect(soon.streak?.batches).toBe(1);
+  });
+
+  test('the sources of one batch are one look, whichever finished last', () => {
+    // Globalping got through for x, RIPE Atlas saw x singled out: the newest look disagrees.
+    const gp = batch('b1', T0, { 'x.example': allOk, 'y.example': allOk });
+    const atlas = batch(
+      'b1',
+      T0 + 5000,
+      { 'x.example': ['AS7', 'AS8', 'AS9'].map(rst), 'y.example': ['AS7', 'AS8', 'AS9'].map(ok) },
+      { source: 'ripeatlas' },
+    );
+    for (const order of [
+      [...gp, ...atlas],
+      [...atlas, ...gp],
+    ]) {
+      const e = aggregateEvidence('x.example', order, null);
+      expect(e.latest).toBe('mixed');
+      expect(suggest(e, OPTS).reason).toBe('mixed');
+    }
+    // Atlas finishing FIRST must not decide it either.
+    const early = aggregateEvidence(
+      'x.example',
+      [...gp.map((m) => ({ ...m, at: T0 + 9000 })), ...atlas],
+      null,
+    );
+    expect(early.latest).toBe('mixed');
   });
 
   test('a transition: it worked from there before the failing streak began', () => {
@@ -324,7 +352,9 @@ describe('planning', () => {
     name,
     seq,
     due: true,
+    spare: true,
     priority: false,
+    lastRequestedAt: null,
     lastOkAt: null,
     ...over,
   });
@@ -338,7 +368,21 @@ describe('planning', () => {
     ).toEqual(['c.example', 'a.example']);
   });
 
-  test('a lone due name gets a control: the one that last worked from there', () => {
+  test('the longest waiting go first, never checked before anything else, so none starves', () => {
+    expect(
+      pickBatchNames(
+        [
+          c('a.example', 1, { lastRequestedAt: 5 }),
+          c('b.example', 2, { lastRequestedAt: 9 }),
+          c('c.example', 3, { lastRequestedAt: 1 }),
+          c('d.example', 4),
+        ],
+        3,
+      ),
+    ).toEqual(['d.example', 'c.example', 'a.example']);
+  });
+
+  test('a lone due name gets a spare control: the one that last worked from there', () => {
     expect(
       pickBatchNames(
         [
@@ -354,16 +398,46 @@ describe('planning', () => {
     expect(pickBatchNames([c('a.example', 1, { due: false })], 3)).toEqual([]);
   });
 
+  test('a control is a check too: with no spare within the interval, the batch waits', () => {
+    expect(
+      pickBatchNames(
+        [
+          c('a.example', 1),
+          c('b.example', 2, { due: false, spare: false, lastOkAt: 9 }),
+          c('c.example', 3, { due: false, spare: false }),
+        ],
+        3,
+      ),
+    ).toEqual([]);
+  });
+
+  test('a name on several addresses takes them in turn, never checked first', () => {
+    const keys = ['edge:a:198.51.100.1:443', 'edge:b:198.51.100.2:443'];
+    expect(preferredTarget(keys, new Map())).toBe(keys[0]);
+    expect(preferredTarget(keys, new Map([[keys[0]!, 10]]))).toBe(keys[1]);
+    expect(
+      preferredTarget(
+        keys,
+        new Map([
+          [keys[0]!, 10],
+          [keys[1]!, 20],
+        ]),
+      ),
+    ).toBe(keys[0]);
+    expect(preferredTarget([], new Map())).toBeNull();
+  });
+
   test('never an address the address-level probes find unreachable; reachable ones first', () => {
     expect(pickTargetIndex(['unreachable', 'unknown', 'reachable'])).toBe(2);
     expect(pickTargetIndex(['unreachable', null])).toBe(1);
     expect(pickTargetIndex(['unreachable'])).toBe(-1);
   });
 
-  test('each opted-in country gets its turn', () => {
+  test('each opted-in country gets its turn, and a bounded scan starts elsewhere each tick', () => {
     const tick = 600_000;
     expect(countriesForTick(['IR', 'RU', 'CN'], 0, tick)).toEqual(['IR', 'RU', 'CN']);
     expect(countriesForTick(['IR', 'RU', 'CN'], tick, tick)).toEqual(['RU', 'CN', 'IR']);
     expect(countriesForTick([], 0, tick)).toEqual([]);
+    expect(rotateForTick([1, 2, 3, 4], 2 * tick, tick)).toEqual([3, 4, 1, 2]);
   });
 });

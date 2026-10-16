@@ -103,8 +103,10 @@ async function seed(
     settings?: Record<string, unknown>;
     edge?: boolean;
     probeNode?: boolean;
+    names?: string[];
   } = {},
 ) {
+  const names = opts.names ?? NAMES;
   const t = convexTest(schema, modules);
   await insertPanelServer(t);
   await t.run(async (ctx) => {
@@ -124,7 +126,7 @@ async function seed(
     targetAddress: 'target.example',
     targetPort: 443,
   });
-  await t.mutation(internal.sniFamilies.importNames, { slug: 'fam-a', lines: NAMES });
+  await t.mutation(internal.sniFamilies.importNames, { slug: 'fam-a', lines: names });
   // Every name serves from the target (what qualification would record).
   await t.run(async (ctx) => {
     for (const n of await ctx.db.query('sniNames').collect())
@@ -134,7 +136,7 @@ async function seed(
       });
   });
   const { relayId, listenerId } = await registerRelay(t, {
-    listeners: [realityListener({ tlsNames: NAMES })],
+    listeners: [realityListener({ tlsNames: names })],
   });
   if (opts.probeNode) await t.run((ctx) => ctx.db.patch(relayId, { probeNode: true }));
   if (opts.edge === false)
@@ -609,12 +611,206 @@ describe('retention', () => {
     await t.mutation(internal.sniVantage.tick, {});
     // The executor never ran (scheduled functions not drained): 20 minutes later it is late.
     vi.setSystemTime(T0 + 20 * 60_000);
-    const late = await t.mutation(internal.sniVantage.tick, {});
+    const late = await t.mutation(internal.sniVantage.sweep, {});
     expect(late.timedOut).toBe(3);
     vi.setSystemTime(T0 + 15 * 24 * H);
-    const swept = await t.mutation(internal.sniVantage.tick, {});
+    const swept = await t.mutation(internal.sniVantage.sweep, {});
     expect(swept.deleted).toBe(3);
     // The evidence row stays (its transition marker outlives the window).
     expect(await evidence(t, 'x.example')).not.toBeNull();
   });
+});
+
+/** RIPE Atlas, stubbed: `outcome(name, probeIndex)` per pinned probe (three probes, three networks). */
+function stubAtlas(outcome: (name: string, i: number) => Outcome, names = NAMES) {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes('/probes/'))
+        return Response.json({
+          results: [7, 8, 9].map((k) => ({ id: 100 + k, asn_v4: 64510 + k })),
+        });
+      if (url.endsWith('/measurements/') && init?.method === 'POST') {
+        const body = JSON.parse(String(init.body)) as { definitions: unknown[] };
+        return Response.json({ measurements: body.definitions.map((_, i) => 901 + i) });
+      }
+      const m = /measurements\/(\d+)\/results/.exec(url);
+      if (m) {
+        const name = names[Number(m[1]) - 901]!;
+        return Response.json(
+          [7, 8, 9].map((k, i) =>
+            outcome(name, i) === 'ok'
+              ? { prb_id: 100 + k, cert: [`CERT:${name}`], rt: 50 }
+              : { prb_id: 100 + k, err: 'connect: Connection reset by peer' },
+          ),
+        );
+      }
+      return new Response('not found', { status: 404 });
+    }),
+  );
+  __setVantageCertCovers((pem, name) => pem === `CERT:${name}`);
+}
+
+describe('review fixes', () => {
+  test('two sources are one look: nothing is applied until both settled, and they disagree', async () => {
+    // Globalping gets through for every name; RIPE Atlas sees x singled out.
+    __setVantageGlobalpingFactory(() => fakeGlobalping(() => 'ok').client);
+    stubAtlas((name) => (name === 'x.example' ? 'reset' : 'ok'));
+    const { t } = await seed({
+      settings: {
+        'edge.sni.vantage.autoApply': true,
+        'edge.sni.vantage.sources.ripeatlas': true,
+        'edge.secret.probe.ripeatlas.key': 'atlas-key',
+      },
+    });
+    await tickAndDrain(t);
+    const x = await detailRow(t, 'x.example');
+    expect(x.vantage[0]).toMatchObject({ latest: 'mixed', suggestion: null, reason: 'mixed' });
+    // Globalping finished first, but x was never marked proven on its word alone.
+    expect(x.provenIn).toEqual([]);
+    expect((await detailRow(t, 'y.example')).provenIn).toEqual(['IR']);
+  });
+
+  test('a gate that closes between the plan and the run stops the dial', async () => {
+    const gp = fakeGlobalping(() => 'ok');
+    __setVantageGlobalpingFactory(() => gp.client);
+    const { t } = await seed();
+    expect((await t.mutation(internal.sniVantage.tick, {})).started).toBe(1);
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.sni.vantage.countries', '[]'));
+    await drain(t);
+    expect(gp.requests).toHaveLength(0);
+    expect((await rows(t)).map((r) => [r.status, r.error])).toEqual([
+      ['failed', 'gate_country'],
+      ['failed', 'gate_country'],
+      ['failed', 'gate_country'],
+    ]);
+  });
+
+  test('a control is never checked more often than the interval; the waiting name goes first next time', async () => {
+    const gp = fakeGlobalping(() => 'ok');
+    __setVantageGlobalpingFactory(() => gp.client);
+    const four = ['a.example', 'b.example', 'c.example', 'd.example'];
+    const { t } = await seed({ names: four });
+    await tickAndDrain(t);
+    expect(new Set((await rows(t)).map((r) => r.name))).toEqual(new Set(four.slice(0, 3)));
+    // Ten minutes later only d is due, and no spare control exists: it waits.
+    vi.setSystemTime(T0 + 10 * 60_000);
+    expect((await t.mutation(internal.sniVantage.tick, {})).reason).toBe('nothing_due');
+    // Once the others are due again, d (never checked) leads the batch.
+    vi.setSystemTime(T0 + 73 * H);
+    await tickAndDrain(t);
+    const second = (await rows(t)).filter((r) => r.requestedAt === T0 + 73 * H);
+    expect(second.map((r) => r.name)).toContain('d.example');
+  });
+
+  test('a name removed and imported into another family starts its evidence over', async () => {
+    __setVantageGlobalpingFactory(() => fakeGlobalping(() => 'ok').client);
+    const { t } = await seed();
+    await tickAndDrain(t);
+    expect((await evidence(t, 'x.example'))!.measurements).toBe(1);
+    await t.mutation(internal.sniFamilies.remove, { slug: 'fam-a' });
+    await t.mutation(internal.sniFamilies.create, {
+      slug: 'fam-b',
+      label: 'Family B',
+      targetAddress: 'target.example',
+      targetPort: 443,
+    });
+    await t.mutation(internal.sniFamilies.importNames, { slug: 'fam-b', lines: NAMES });
+    await t.run(async (ctx) => {
+      for (const n of await ctx.db.query('sniNames').collect())
+        await ctx.db.patch(n._id, {
+          qualification: { state: 'ok', consecutiveFails: 0, tlsVersion: 'TLSv1.3' },
+          checkedAt: Date.now(),
+        });
+    });
+    vi.setSystemTime(T0 + 73 * H);
+    await tickAndDrain(t);
+    // The old family's measurement is still stored, but it is not this family's evidence.
+    expect((await rows(t)).filter((r) => r.name === 'x.example')).toHaveLength(2);
+    expect((await evidence(t, 'x.example'))!.measurements).toBe(1);
+  });
+
+  test('an origin that moved address is another address: old successes do not make a transition', async () => {
+    let block = false;
+    __setVantageGlobalpingFactory(
+      () => fakeGlobalping((name) => (block && name === 'x.example' ? 'reset' : 'ok')).client,
+    );
+    const { t, relayId } = await seed({ edge: false, probeNode: true });
+    await tickAndDrain(t);
+    await t.run((ctx) => ctx.db.patch(relayId, { originAddress: '203.0.113.20' }));
+    block = true;
+    vi.setSystemTime(T0 + 73 * H);
+    await tickAndDrain(t);
+    expect((await detailRow(t, 'x.example')).vantage[0]).toMatchObject({
+      latest: 'mixed',
+      suggestion: null,
+    });
+  });
+
+  test('a name on two addresses is checked on each in turn', async () => {
+    __setVantageGlobalpingFactory(() => fakeGlobalping(() => 'ok').client);
+    const { t, relayId } = await seed();
+    // A second origin carries the same names behind its own published edge.
+    const two = await registerRelay(t, {
+      slug: 'node-two',
+      nodeName: 'node-two',
+      originAddress: '203.0.113.30',
+      listeners: [realityListener({ tlsNames: NAMES })],
+    });
+    await adoptL4Edge(t, two.relayId, two.listenerId, { ipv4: '198.51.100.30', publish: true });
+    await tickAndDrain(t);
+    vi.setSystemTime(T0 + 73 * H);
+    await tickAndDrain(t);
+    const x = (await rows(t)).filter((r) => r.name === 'x.example');
+    expect(new Set(x.map((r) => r.address))).toEqual(new Set([EDGE, '198.51.100.30']));
+    expect(relayId).toBeTruthy();
+  });
+
+  test('evidence is aggregated again when its measurements leave the window', async () => {
+    __setVantageGlobalpingFactory(() => fakeGlobalping(() => 'ok').client);
+    const { t } = await seed();
+    await tickAndDrain(t);
+    expect((await detailRow(t, 'y.example')).vantage[0]).toMatchObject({ suggestion: 'proven' });
+    // Fifteen days on, nothing new was measured: the suggestion goes with its measurements.
+    vi.setSystemTime(T0 + 15 * 24 * H);
+    const swept = await t.mutation(internal.sniVantage.sweep, {});
+    expect(swept.aged).toBe(3);
+    const y = (await detailRow(t, 'y.example')).vantage[0]!;
+    expect(y).toMatchObject({ latest: 'none', suggestion: null, reason: 'no_data', okVantages: 0 });
+    // The transition marker outlives the window.
+    const everOkAt = (await evidence(t, 'y.example'))!.everOkAt!;
+    expect(everOkAt >= T0 && everOkAt < T0 + H).toBe(true);
+    // ...and nothing is re-aggregated twice.
+    expect((await t.mutation(internal.sniVantage.sweep, {})).aged).toBe(0);
+  });
+
+  test("another country's reports cannot crowd out this country's", async () => {
+    __setVantageGlobalpingFactory(
+      () => fakeGlobalping((name) => (name === 'x.example' ? 'reset' : 'ok')).client,
+    );
+    const { t } = await seed();
+    const day = new Date(T0).toISOString().slice(0, 10);
+    await t.run(async (ctx) => {
+      await ctx.db.insert('sniReportCounts', {
+        name: 'x.example',
+        country: 'IR',
+        day,
+        weight: 5,
+        updatedAt: T0,
+      });
+      // Newer rows of the same day for another country, more than the cap.
+      for (let i = 0; i < 8001; i++)
+        await ctx.db.insert('sniReportCounts', {
+          name: `r${i}.example`,
+          country: 'RU',
+          day,
+          weight: 1,
+          updatedAt: T0,
+        });
+    });
+    await tickAndDrain(t);
+    const x = await detailRow(t, 'x.example');
+    expect(x.suspectIn).toEqual(['IR']);
+    expect(x.vantage[0]).toMatchObject({ suggestion: 'blocked', reportsAgree: true });
+  }, 60_000);
 });

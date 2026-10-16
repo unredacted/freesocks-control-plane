@@ -2524,7 +2524,9 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_name_country_day', ['name', 'country', 'day'])
-    .index('by_day', ['day']),
+    .index('by_day', ['day'])
+    // One country's counts, bounded per country (checks from inside a country).
+    .index('by_country_day', ['country', 'day']),
 
   // Checks of server names from vantages inside curated countries
   // (docs/edges.md "Checks from inside a country"). One row per MEASUREMENT:
@@ -2601,6 +2603,9 @@ export default defineSchema({
     everOkAt: v.optional(v.number()),
     lastFailAt: v.optional(v.number()),
     lastAt: v.optional(v.number()),
+    // The oldest measurement the aggregate rests on (requestedAt): once it leaves
+    // the window the sweep aggregates again. Absent = nothing in the window.
+    oldestAt: v.optional(v.number()),
     latest: v.union(v.literal('ok'), v.literal('failing'), v.literal('mixed'), v.literal('none')),
     streak: v.optional(
       v.object({
@@ -2616,7 +2621,8 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_name_country', ['name', 'country'])
-    .index('by_family', ['familyId']),
+    .index('by_family', ['familyId'])
+    .index('by_oldest', ['oldestAt']),
 
   // TRANSITIONAL: the v1 role's handoff declaration. Contract v1 is gone and
   // nothing reads this; the table stays declared only so a deployment that has

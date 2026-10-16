@@ -148,8 +148,32 @@ export function aggregateEvidence(
     }
     groups.push(g);
   }
-  groups.sort((a, b) => b.at - a.at);
-  const withEvidence = groups.filter(evidenceIn);
+  // One LOOK = one batch, every source of it together. Controls pair within a
+  // source (its vantages), but the sources measured the same names at the same
+  // time: the newest look is judged as a whole, never by whichever source
+  // happened to finish last.
+  const byBatch = new Map<string, Group>();
+  for (const g of groups) {
+    const l = byBatch.get(g.batch);
+    if (!l) {
+      byBatch.set(g.batch, {
+        ...g,
+        key: g.batch,
+        okNetworks: new Set(g.okNetworks),
+        failNetworks: new Set(g.failNetworks),
+      });
+      continue;
+    }
+    l.at = Math.max(l.at, g.at);
+    l.ok += g.ok;
+    l.singled += g.singled;
+    l.unpaired += g.unpaired;
+    l.path += g.path;
+    for (const n of g.okNetworks) l.okNetworks.add(n);
+    for (const n of g.failNetworks) l.failNetworks.add(n);
+  }
+  const looks = [...byBatch.values()].sort((a, b) => b.at - a.at);
+  const withEvidence = looks.filter(evidenceIn);
 
   const okNetworks = new Set(withEvidence.flatMap((g) => [...g.okNetworks]));
   const okGroups = withEvidence.filter((g) => g.ok > 0);
@@ -185,14 +209,15 @@ export function aggregateEvidence(
   let streak: Streak | null = null;
   if (latest === 'failing' && streakGroups.length > 0) {
     const startedAt = Math.min(...streakGroups.map((g) => g.at));
-    // Distinct looks: batches at least REPEAT_GAP_MS apart (two sources of one
-    // batch, or two requests a minute apart, are one look).
-    const looks = [...new Set(streakGroups.filter((g) => nameFailing(g) > 0).map((g) => g.batch))]
-      .map((b) => Math.max(...streakGroups.filter((g) => g.batch === b).map((g) => g.at)))
+    // Repeats: looks at least REPEAT_GAP_MS apart (two requests a minute apart
+    // are one look; two sources of one batch already are).
+    const times = streakGroups
+      .filter((g) => nameFailing(g) > 0)
+      .map((g) => g.at)
       .sort((a, b) => a - b);
     let batches = 0;
     let last = -Infinity;
-    for (const at of looks) {
+    for (const at of times) {
       if (at - last >= REPEAT_GAP_MS) {
         batches++;
         last = at;
@@ -215,7 +240,7 @@ export function aggregateEvidence(
     okNetworks: okNetworks.size,
     lastOkAt: okGroups[0]?.at ?? null,
     lastFailAt: failGroups[0]?.at ?? null,
-    lastAt: withEvidence[0]?.at ?? groups[0]?.at ?? null,
+    lastAt: withEvidence[0]?.at ?? looks[0]?.at ?? null,
     latest,
     streak,
   };
@@ -315,30 +340,79 @@ export function decide(suggestion: MarkState | null, mark: Mark | null): Decisio
 export interface PlanName {
   name: string;
   seq: number;
-  /** Not checked from this country within the interval. */
+  /** Due from this country AND this is the address it is due on (`preferredTarget`). */
   due: boolean;
+  /**
+   * May serve as this batch's control: not checked from this country within
+   * the interval either (a control is a check like any other; it must never
+   * make a name be checked more often than the interval allows).
+   */
+  spare: boolean;
   /** Member reports point at it there: checked first. */
   priority: boolean;
+  /** When it was last put into a batch for this country (null = never). */
+  lastRequestedAt: number | null;
   /** The newest working check from this country, for choosing a control. */
   lastOkAt: number | null;
 }
 
 /**
- * The names of one batch: the due ones (reported first, then by `seq`), up to
- * `size`; a lone due name gets a control (the name that most recently worked
- * from there, else the lowest `seq`), because a failure means nothing about a
- * name unless another name of the same address got through.
+ * The names of one batch: the due ones, reported first, then the longest
+ * waiting (never checked first), up to `size`, so no name starves behind
+ * lower `seq`s. A lone due name needs a control, because a failure means
+ * nothing about a name unless another name of the same address got through:
+ * the spare that most recently worked from there. With no spare the batch
+ * WAITS (an empty answer) until another name is due, unless the address
+ * carries no other name at all, in which case the name goes alone.
  */
 export function pickBatchNames(candidates: readonly PlanName[], size: number): string[] {
+  const waited = (c: PlanName) => c.lastRequestedAt ?? -Infinity;
   const due = candidates
     .filter((c) => c.due)
-    .sort((a, b) => Number(b.priority) - Number(a.priority) || a.seq - b.seq)
+    .sort(
+      (a, b) => Number(b.priority) - Number(a.priority) || waited(a) - waited(b) || a.seq - b.seq,
+    )
     .slice(0, Math.max(1, size));
   if (due.length !== 1) return due.map((c) => c.name);
-  const control = candidates
-    .filter((c) => c.name !== due[0]!.name)
-    .sort((a, b) => (b.lastOkAt ?? -1) - (a.lastOkAt ?? -1) || a.seq - b.seq)[0];
-  return control ? [due[0]!.name, control.name] : [due[0]!.name];
+  const lone = due[0]!;
+  const others = candidates.filter((c) => c.name !== lone.name);
+  if (others.length === 0) return [lone.name];
+  const control = others
+    .filter((c) => c.due || c.spare)
+    .sort(
+      (a, b) => (b.lastOkAt ?? -1) - (a.lastOkAt ?? -1) || waited(a) - waited(b) || a.seq - b.seq,
+    )[0];
+  return control ? [lone.name, control.name] : [];
+}
+
+/**
+ * Which of a name's addresses it is checked on next: the one it was checked on
+ * longest ago (never = first), ties in the given stable order. A name on
+ * several addresses therefore takes them in turn, one look per interval, so a
+ * block that depends on the address shows up as `mixed` instead of one
+ * address speaking for all of them.
+ */
+export function preferredTarget(
+  keys: readonly string[],
+  lastByKey: ReadonlyMap<string, number>,
+): string | null {
+  let best: string | null = null;
+  let bestAt = Infinity;
+  for (const k of keys) {
+    const at = lastByKey.get(k) ?? -Infinity;
+    if (at < bestAt) {
+      best = k;
+      bestAt = at;
+    }
+  }
+  return best;
+}
+
+/** A list rotated by tick, so a bounded scan starts somewhere else each time. */
+export function rotateForTick<T>(items: readonly T[], now: number, tickMs: number): T[] {
+  if (items.length === 0) return [];
+  const start = Math.floor(now / tickMs) % items.length;
+  return [...items.slice(start), ...items.slice(0, start)];
 }
 
 export type AddressVerdict = 'reachable' | 'unreachable' | 'mixed' | 'unknown' | null;
@@ -366,7 +440,5 @@ export function countriesForTick(
   now: number,
   tickMs: number,
 ): string[] {
-  if (countries.length === 0) return [];
-  const start = Math.floor(now / tickMs) % countries.length;
-  return [...countries.slice(start), ...countries.slice(0, start)];
+  return rotateForTick(countries, now, tickMs);
 }
