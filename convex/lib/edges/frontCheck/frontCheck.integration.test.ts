@@ -30,6 +30,9 @@ function basePort(): number {
 
 type Transport = 'ws' | 'httpupgrade' | 'grpc' | 'xhttp';
 const OFFSET: Record<Transport, number> = { ws: 0, httpupgrade: 1, grpc: 2, xhttp: 3 };
+/** Fixed in docker/compat/frontcheck-xray.json (Trojan over ws, the port after the four). */
+const TROJAN_PASSWORD = 'fcp-frontcheck-trojan-test';
+const TROJAN_OFFSET = 4;
 
 /** The harness publishes ws, httpupgrade, grpc and xhttp on four consecutive ports. */
 function portFor(protocol: Transport): number {
@@ -61,7 +64,7 @@ describe.skipIf(!BASE)('front qualification against pinned Xray-core', () => {
         hostname: HOSTNAME,
         proto: { protocol: 'vless', streamTransport: protocol, security: 'tls' },
         params,
-        uuid,
+        credential: { kind: 'vless', uuid },
         stepTimeoutMs: 10_000,
         // The container's outbound is pinned to the test origin, so the name
         // here is only what a member's client would really ask for.
@@ -105,6 +108,32 @@ describe.skipIf(!BASE)('front qualification against pinned Xray-core', () => {
 
   test('real Xray refuses an unknown client id: auth_failed, not a false pass', async () => {
     const result = await run('ws', { path: '/relay-ws' }, 'ffffffff-ffff-ffff-ffff-ffffffffffff');
+    expect(result.ok).toBe(false);
+    expect(result.code).toMatch(/^(auth_failed|timeout_vless)$/);
+  });
+
+  const trojan = (password: string): Promise<FrontCheckResult> =>
+    qualifyFront(
+      {
+        hostname: HOSTNAME,
+        proto: { protocol: 'trojan', streamTransport: 'ws', security: 'tls' },
+        params: { path: '/relay-tw' },
+        credential: { kind: 'trojan', password },
+        stepTimeoutMs: 10_000,
+        target: { host: 'www.gstatic.com', port: 80, path: '/generate_204' },
+      },
+      { dial: { host: '127.0.0.1', port: basePort() + TROJAN_OFFSET, ca } },
+    );
+
+  test('trojan over websocket accepts our Trojan request and returns the target', async () => {
+    const result = await trojan(TROJAN_PASSWORD);
+    expect(result.code).toBeUndefined();
+    expect(result.ok).toBe(true);
+    expect(result.steps.map((s) => s.step)).toEqual(['tls', 'transport', 'vless', 'close']);
+  });
+
+  test('real Xray refuses an unknown Trojan password: auth_failed, not a false pass', async () => {
+    const result = await trojan('not-the-password');
     expect(result.ok).toBe(false);
     expect(result.code).toMatch(/^(auth_failed|timeout_vless)$/);
   });

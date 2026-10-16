@@ -1,13 +1,21 @@
 # The fake L7 edge of the edge connection test: a CDN front. It terminates TLS
 # for the edge hostnames of the fake provider's zone (a wildcard from the
-# per-run test CA) and proxies the WebSocket to the node's ORIGIN hostname over
-# TLS, verifying the origin's certificate like a CDN does. The Host header the
-# origin sees is the FRONT's hostname, as a CDN forwards it (Caddy would
-# otherwise send the upstream's name to an HTTPS upstream).
+# per-run test CA) and proxies each hostname to its origin, the way a proxied
+# DNS record does: the fake Cloudflare API (tests/edge-connection/providers.ts)
+# adds one route per record through the admin endpoint below, dialling the
+# record's content on the zone's origin port (443, or what the record's Origin
+# Rule says) over TLS, verifying the origin certificate, and passing the
+# front's hostname as the Host as a CDN forwards it. A name with no record
+# answers 421, as a CDN does for a host it does not serve.
 #
-# The access log is the proof that a member's session crossed THIS front.
+# The admin endpoint is on the edge network only (the test runner's); members
+# never reach it. The access log is the proof that a member's session crossed
+# THIS front.
 {
-	admin off
+	# Caddy answers a non-loopback admin listener only for the Host it names.
+	admin 0.0.0.0:2019 {
+		origins 198.51.100.22:2019
+	}
 	auto_https off
 	default_sni front.{$EC_L7_ZONE}
 }
@@ -18,11 +26,5 @@
 		output file /logs/front-access.log
 		format json
 	}
-	reverse_proxy https://{$EC_ORIGIN_HOSTNAME}:443 {
-		header_up Host {host}
-		transport http {
-			tls_server_name {$EC_ORIGIN_HOSTNAME}
-			tls_trust_pool file /pki/ca.pem
-		}
-	}
+	respond 421
 }

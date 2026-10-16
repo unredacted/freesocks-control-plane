@@ -191,7 +191,8 @@ async function accountFacts(
         tlsNames: (l.draft?.tlsNames ?? []).map((name) => ({ name, status: 'active' as const })),
       };
       const layers = listenerLayers(like, { udpProviderAvailable: udp }).layers;
-      if (accountsForSlot([a], { layers, proto: l.proto, allowL7: true }).length > 0)
+      const originPort = l.row?.originPort ?? l.draft?.originPort;
+      if (accountsForSlot([a], { layers, proto: l.proto, originPort, allowL7: true }).length > 0)
         fronts.push(l.key);
     }
     const settings = a.settings as { dnsAccountId?: string };

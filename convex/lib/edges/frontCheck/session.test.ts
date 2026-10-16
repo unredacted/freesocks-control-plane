@@ -403,7 +403,7 @@ function run(
         upgradeToken: 'websocket',
         ...(overrides.mode ? { mode: overrides.mode } : {}),
       },
-      uuid: overrides.uuid ?? UUID,
+      credential: { kind: 'vless', uuid: overrides.uuid ?? UUID },
       stepTimeoutMs: overrides.stepTimeoutMs ?? 2_000,
     },
     {
@@ -548,7 +548,7 @@ describe('the transport is broken even though the status says 101', () => {
         hostname: HOSTNAME,
         proto: VLESS('grpc'),
         params: {},
-        uuid: UUID,
+        credential: { kind: 'vless', uuid: UUID },
         stepTimeoutMs: 2_000,
       },
       { dial: { host: '127.0.0.1', port: s.port, ca: CERT } },
@@ -606,11 +606,11 @@ describe('the connection itself', () => {
   });
 
   test('a listener without an authenticated proof is refused before any socket is opened', async () => {
-    // Raw TCP (REALITY) is not HTTP-carried; trojan over ws has no VLESS proof;
-    // a plaintext ws listener terminates no TLS the front could carry.
+    // Raw TCP (REALITY, Trojan over TLS) and Shadowsocks are not HTTP-carried;
+    // UDP is not either.
     const refused: ListenerProto[] = [
       { protocol: 'vless', streamTransport: 'raw', security: 'reality' },
-      { protocol: 'trojan', streamTransport: 'ws', security: 'tls' },
+      { protocol: 'trojan', streamTransport: 'raw', security: 'tls' },
       { protocol: 'shadowsocks', streamTransport: 'raw', security: 'none' },
       { protocol: 'hysteria2', streamTransport: 'udp', security: 'tls' },
     ];
@@ -619,10 +619,28 @@ describe('the connection itself', () => {
         hostname: HOSTNAME,
         proto,
         params: {},
-        uuid: UUID,
+        credential: { kind: 'vless', uuid: UUID },
         stepTimeoutMs: 1_000,
       });
       expect(result).toMatchObject({ ok: false, code: 'unsupported_protocol' });
+      expect(result.steps).toEqual([]);
+    }
+  });
+
+  test("a credential of another protocol than the listener's proof is refused unsent", async () => {
+    const trojanWs: ListenerProto = { protocol: 'trojan', streamTransport: 'ws', security: 'tls' };
+    for (const [proto, credential] of [
+      [trojanWs, { kind: 'vless', uuid: UUID }],
+      [VLESS('ws'), { kind: 'trojan', password: 'pw' }],
+    ] as const) {
+      const result = await qualifyFront({
+        hostname: HOSTNAME,
+        proto,
+        params: {},
+        credential,
+        stepTimeoutMs: 1_000,
+      });
+      expect(result).toMatchObject({ ok: false, code: 'no_qualification_credential' });
       expect(result.steps).toEqual([]);
     }
   });

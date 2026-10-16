@@ -423,6 +423,7 @@ export const SETUP_ACCOUNT_REASONS = [
   'account_untested',
   'account_disabled',
   'layer_mismatch',
+  'origin_port_not_carried',
   'account_capacity_reached',
   'account_budget_exhausted',
   'provider_mismatch',

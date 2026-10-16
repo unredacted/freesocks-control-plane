@@ -5,12 +5,17 @@
 #
 #   bun run test:integration:edge-connection
 #
-# Boots the ephemeral Remnawave panel, two panel-managed relay nodes (REALITY
-# and WebSocket-behind-ingress), a fake L4 edge (TCP forwarder), a fake L7 edge
-# (CDN-style WebSocket proxy), a web page only the nodes reach and a sing-box
-# client that reaches only the edges. Then runs the test inside the runner
-# container, where FCP (convex-test) binds each node to its edge through the
-# real lifecycle and the client connects with what /api/v1/sub serves.
+# Boots the ephemeral Remnawave panel, three enrolled relay nodes (REALITY,
+# XHTTP under REALITY, WebSocket behind its ingress), two operator nodes (the L4 and L7 protocol
+# matrix), a fake L4 edge (TCP forwarder, one address per load balancer), a
+# fake L7 edge (CDN-style proxy, one route per proxied record), a web page only
+# the nodes reach and a client container (pinned sing-box and Mihomo) that
+# reaches only the edges. Then runs the test inside the runner container, where
+# FCP (convex-test) binds each node to its edges through the real lifecycle
+# and the clients connect with what /api/v1/sub serves.
+#
+# EC_ONLY=<file filter> runs one test file (wiring, member, ...); EC_KEEP=1
+# leaves the stack up afterwards.
 #
 # Requires Docker. Always tears down, even on failure. Nothing that carries a
 # credential (node logs, client configs, subscription bodies) is printed or
@@ -41,6 +46,13 @@ export EC_REALITY_TARGET=decoy.example
 export EC_L7_ZONE=edges.example
 export EC_WS_PATH=/ws
 export EC_WS_PORT=8443
+# The server name of the operator nodes' TLS transports (their certificate
+# also covers the fake CDN zone, as an origin certificate for a zone does).
+export EC_TLS_NAME=tls-origin.relay.example
+# The Outline server's Shadowsocks password (every key the fake Outline API
+# hands out carries it, as one Outline server's keys reach one server).
+export EC_OUTLINE_PASSWORD="ec-$(openssl rand -hex 16)"
+if [ -n "${GITHUB_ACTIONS:-}" ]; then echo "::add-mask::$EC_OUTLINE_PASSWORD"; fi
 export EC_NODE_SECRET=pending
 export REMNAWAVE_TEST_TOKEN=pending
 
@@ -64,7 +76,7 @@ trap cleanup EXIT
 
 "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
 rm -rf "$WORK"
-mkdir -p "$WORK/pki" "$WORK/logs" "$WORK/client"
+mkdir -p "$WORK/pki" "$WORK/logs" "$WORK/client" "$WORK/outline"
 
 step "minting the per-run test CA and certificates"
 # A throwaway CA, valid two days: the node's ingress, the fake front and the
@@ -86,10 +98,17 @@ leaf() { # file name, common name, SANs
 # origin certificates: FCP must name the certificate by its SANs.
 leaf origin "FCP edge connection test origin" "DNS:$EC_ORIGIN_HOSTNAME"
 leaf front "*.$EC_L7_ZONE" "DNS:*.$EC_L7_ZONE,DNS:$EC_L7_ZONE"
+leaf matrix "FCP edge connection test operator node" "DNS:$EC_TLS_NAME,DNS:*.$EC_L7_ZONE"
 rm -f "$pki"/*.csr "$pki"/*.ext "$pki"/*.srl "$pki/ca-key.pem"
 # The containers run unprivileged where they can and only read these.
 chmod 0644 "$pki"/*.pem
-chmod 0777 "$WORK/logs" "$WORK/client"
+mkdir -p "$WORK/client/mihomo"
+chmod 0777 "$WORK/logs" "$WORK/client" "$WORK/client/mihomo"
+
+# The Outline server's data plane (docker-compose.edge-connection-test.yml ec-outline).
+printf '{"log":{"level":"warn"},"inbounds":[{"type":"shadowsocks","listen":"::","listen_port":8388,"method":"chacha20-ietf-poly1305","password":"%s"}],"outbounds":[{"type":"direct"}]}\n' \
+  "$EC_OUTLINE_PASSWORD" > "$WORK/outline/server.json"
+chmod 0644 "$WORK/outline/server.json"
 
 step "building the client engine (pinned sing-box) and the runner images"
 bun --no-env-file scripts/compat/download.ts >/dev/null
@@ -119,10 +138,11 @@ if [ -n "${GITHUB_ACTIONS:-}" ]; then echo "::add-mask::$EC_NODE_SECRET"; fi
 export EC_NODE_SECRET
 
 step "starting the nodes, the edges, the page and the client"
-"${COMPOSE[@]}" up -d ec-node-reality ec-node-ws ec-node-ws-ingress ec-reality-target \
-  ec-l4-forwarder ec-l7-front ec-dns ec-origin-page ec-client
+"${COMPOSE[@]}" up -d ec-node-reality ec-node-xr ec-node-ws ec-node-ws-ingress ec-node-l4m ec-node-l7m ec-outline \
+  ec-reality-target ec-l4-forwarder ec-l7-front ec-dns ec-origin-page ec-client
+"${COMPOSE[@]}" run --rm --no-deps ec-l4-addresses >/dev/null
 
 step "running the test in the runner container"
 "${COMPOSE[@]}" run --rm --no-deps ec-runner bash -c \
-  'bun install --frozen-lockfile >/dev/null && bunx vitest run --config vitest.edge-connection.config.ts'
+  'bun install --frozen-lockfile >/dev/null && bunx vitest run --config vitest.edge-connection.config.ts ${EC_ONLY:-}'
 step "done"

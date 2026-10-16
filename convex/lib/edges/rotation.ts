@@ -166,6 +166,8 @@ export function accountsForSlot<T extends { provider: string }>(
   opts: {
     layers: readonly EdgeLayer[];
     proto: ListenerProto;
+    /** The listener's origin port: an L7 provider may dial a transport on fixed ports only. */
+    originPort?: number;
     /** false = automatic selection with the L7 gate off: L7 accounts are excluded. */
     allowL7: boolean;
   },
@@ -174,7 +176,7 @@ export function accountsForSlot<T extends { provider: string }>(
     const layer = edgeLayerOf(a.provider);
     if (!opts.layers.includes(layer)) return false;
     if (layer === 'l7' && !opts.allowL7) return false;
-    return protocolCarriedBy(a.provider as EdgeProviderId, opts.proto);
+    return protocolCarriedBy(a.provider as EdgeProviderId, opts.proto, opts.originPort);
   });
 }
 

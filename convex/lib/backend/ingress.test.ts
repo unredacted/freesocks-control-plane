@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import type { BackendTransport } from '../backends/types';
 import { mapTransportsToListeners } from '../edges/inboundMapping';
-import { applyIngress, type IngressMapping } from './ingress';
+import { applyIngress, ingressMachineFacts, type IngressMapping } from './ingress';
 
 const PROFILE = '11111111-1111-4111-8111-111111111111';
 const INBOUND = '22222222-2222-4222-8222-222222222222';
@@ -48,6 +48,61 @@ describe('applyIngress', () => {
         internal: [{ ...ingress.internal[0]!, path: '/other' }],
       })[0],
     ).toBe(cdn);
+  });
+
+  test('a gRPC transport is mapped by its service name as the path, over an h2c route only', async () => {
+    const grpc: BackendTransport = {
+      ...cdn,
+      tag: 'VLESS_GRPC_CDN',
+      port: 8444,
+      network: 'grpc',
+      ws: undefined,
+      grpc: { serviceName: 'relay-svc' },
+    };
+    const route = {
+      inboundTag: 'VLESS_GRPC_CDN',
+      listen: '127.0.0.1',
+      port: 8444,
+      path: '/relay-svc',
+      upstream: 'h2c' as const,
+    };
+    const mapping: IngressMapping = { ...ingress, internal: [route] };
+    expect(applyIngress([grpc], mapping)[0]).toMatchObject({
+      listen: null,
+      port: 443,
+      security: 'tls',
+      tls: { serverName: 'node-a.origin.example' },
+      grpc: { serviceName: 'relay-svc' },
+    });
+    // The role is told to proxy that route over HTTP/2 cleartext.
+    expect(ingressMachineFacts(mapping).routes).toEqual([
+      { path: '/relay-svc', port: 8444, upstream: 'h2c' },
+    ]);
+    // A route the terminator would proxy over HTTP/1.1 carries no gRPC stream:
+    // the transport stays loopback (never offered an L7 account).
+    const { upstream: _h2c, ...h1 } = route;
+    expect(applyIngress([grpc], { ...mapping, internal: [h1] })[0]).toBe(grpc);
+    // A route for another service, or no service at all, is not this transport.
+    expect(
+      applyIngress([grpc], { ...mapping, internal: [{ ...route, path: '/other-svc' }] })[0],
+    ).toBe(grpc);
+    const unnamed = { ...grpc, grpc: { serviceName: null } };
+    expect(applyIngress([unnamed], mapping)[0]).toBe(unnamed);
+    const { candidates } = await mapTransportsToListeners([grpc], {
+      existingKeys: [],
+      origin,
+      ingress: mapping,
+    });
+    expect(candidates[0]!.listenerSpec).toMatchObject({
+      streamTransport: 'grpc',
+      security: 'tls',
+      originPort: 443,
+      transportParams: { serviceName: 'relay-svc' },
+    });
+  });
+
+  test('a WebSocket route carries no upstream marker', () => {
+    expect(ingressMachineFacts(ingress).routes).toEqual([{ path: '/ws', port: 8443 }]);
   });
 
   test('discovery refuses the loopback transport without an ingress and maps it with one', async () => {

@@ -143,7 +143,7 @@ describe('transport candidates with the origin probe', () => {
     expect(reality.layers.layers).toEqual(['l4']);
     // Only the HTTP-transport transport was dialled, at the node's address and the transport's port.
     expect(probed).toEqual([
-      { host: ORIGIN, port: 443, servername: 'ws.example', timeoutMs: 6000 },
+      { host: ORIGIN, port: 443, servername: 'ws.example', alpn: ['http/1.1'], timeoutMs: 6000 },
     ]);
     // Nothing was registered or persisted.
     expect(await t.run((ctx) => ctx.db.query('relays').collect())).toEqual([]);

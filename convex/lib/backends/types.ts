@@ -134,6 +134,11 @@ export interface IssuedUser {
    * its test session with it; absent = this backend cannot back that check.
    */
   protocolUuid?: string;
+  /**
+   * The same user's Trojan password, when the backend mints one: the L7 proof
+   * of a Trojan transport authenticates with it (`frontCheck/trojan.ts`).
+   */
+  trojanPassword?: string;
 }
 
 export interface BackendDevice {

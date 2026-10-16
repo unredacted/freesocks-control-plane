@@ -1349,6 +1349,9 @@ export default defineSchema({
     // by FCP through the backend provider on the origin's placement; a member-
     // shaped credential so the proof travels a member's path).
     qualificationUserId: v.optional(v.string()),
+    // The same credential's Trojan password (a Trojan transport's L7 proof
+    // authenticates with it). Never returned by any admin read, like the id.
+    qualificationTrojanPassword: v.optional(v.string()),
     // The backend user behind that credential (the stored backendUserId form), so
     // it can be deactivated when the origin goes or the credential is re-minted.
     qualificationBackendUserId: v.optional(v.string()),
@@ -2716,6 +2719,7 @@ export default defineSchema({
               listen: v.string(),
               port: v.number(),
               path: v.string(),
+              upstream: v.optional(v.literal('h2c')),
             }),
           ),
         }),

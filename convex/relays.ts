@@ -1645,7 +1645,7 @@ export async function checkPublishable(
     (intent?.templateParams as { overrideHost?: unknown } | undefined)?.overrideHost,
   );
   if (edge.provider) {
-    if (!protocolCarriedBy(edge.provider, listener))
+    if (!protocolCarriedBy(edge.provider, listener, listener.originPort))
       return { ok: false, code: 'protocol_not_carried' };
     if (
       !listenerAllowsLayer(listener, edgeLayerOf(edge.provider), {
