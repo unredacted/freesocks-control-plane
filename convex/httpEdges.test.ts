@@ -322,6 +322,7 @@ describe('origin admin routes', () => {
       'setup-runs/run1/retry',
       'setup-runs/run1/continue',
       'relays/r1/require-edges',
+      'relays/r1/reprotect',
     ]) {
       expect(routePolicy(P + p, 'POST')).toEqual(BOTH);
     }
@@ -363,6 +364,7 @@ describe('origin admin routes', () => {
     expect(scopeFor(['setup-runs'], 'POST')).toBe('admin:servers:write');
     expect(scopeFor(['setup-runs', 'run1', 'continue'], 'POST')).toBe('admin:servers:write');
     expect(scopeFor(['relays', 'r1', 'require-edges'], 'POST')).toBe('admin:servers:write');
+    expect(scopeFor(['relays', 'r1', 'reprotect'], 'POST')).toBe('admin:servers:write');
     // The by-slug view is a plain read: the register scope is accepted nowhere under the prefix.
     expect(scopeFor(['relays', 'by-slug', 'n'], 'GET')).toBe('admin:servers:read');
     for (const [parts, method] of [
@@ -399,6 +401,7 @@ describe('origin admin routes', () => {
       ['setup-runs'],
       ['setup-runs', 'run1', 'continue'],
       ['relays', 'r1', 'require-edges'],
+      ['relays', 'r1', 'reprotect'],
       ['providers'],
       ['providers', 'a1', 'qualify'],
       ['templates'],

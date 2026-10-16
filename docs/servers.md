@@ -620,6 +620,15 @@ mirror). FCP never starts a run by itself.
   The review lists every required listener with its account and template (`shape.listeners`),
   never one representative edge. A re-protect of a live node within its approved shape reaches
   go-live and binds without a new approval; outside it, it parks for the review.
+- **Protect again from the node page.** A live node is protected again by its own run kind
+  (`POST /api/v1/admin/edges/relays/{id}/reprotect`, a `reprotect` setup run, docs/edges.md
+  "Guided setup runs"): new candidate addresses on the listeners members are served through, a
+  test link for each, then the admission above (no new approval within the approved shape; the
+  review card otherwise). Members keep what they have the whole time: the committed edges, the
+  binding and the open gate, and a candidate reaches them only when go-live commits it. Cancel
+  drops only the run's candidates (an unpublished one is destroyed, a published one drains; the
+  bound activation is blocked as for any cancel). A failure leaves the node live and hands the
+  origin back to upkeep and the detector; retry claims it again.
 - **Candidate Hosts on a live node.** A direct node's body reaches members as the backend serves
   it, so an address a candidate would enable cannot be kept out of it; a fronted listener without
   a committed template edge would get a new Host or a moved Host pointer. Either needs the gate

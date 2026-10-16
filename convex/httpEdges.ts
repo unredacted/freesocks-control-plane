@@ -919,6 +919,11 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
             ...act,
           }),
         );
+      case 'reprotect':
+        // "Protect again" on a live, bound enrolled node: a re-protect run
+        // (fresh candidates, Try it, the approval when one is needed). Members
+        // keep the committed delivery; a cancel drops only its candidates.
+        return json(await ctx.runMutation(internal.edgeSetupRuns.reprotect, { relayId, ...act }));
       case 'serve-direct':
         // "Serve this node directly again": the restore workflow with purpose
         // `release_requirement` (binding released BEFORE any direct Host is

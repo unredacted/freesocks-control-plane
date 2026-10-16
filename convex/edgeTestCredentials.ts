@@ -20,7 +20,7 @@
  */
 import { ConvexError, v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
-import type { ActionCtx } from './_generated/server';
+import type { ActionCtx, MutationCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { capabilitiesOf } from './lib/backends/capabilities';
@@ -265,21 +265,27 @@ export const releaseForIntent = internalMutation({
 /** Every pending credential of an origin expires now (a cancelled run, a deleted origin). */
 export const releaseForRelay = internalMutation({
   args: { relayId: v.id('relays') },
-  handler: async (ctx, { relayId }) => {
-    const now = Date.now();
-    const rows = await ctx.db
-      .query('edgeTestCredentials')
-      .withIndex('by_relay', (q) => q.eq('relayId', relayId))
-      .collect();
-    let released = 0;
-    for (const r of rows) {
-      if (r.removal !== 'pending' || r.expiresAt <= now) continue;
-      await ctx.db.patch(r._id, { expiresAt: now, updatedAt: now });
-      released++;
-    }
-    return { released };
-  },
+  handler: (ctx, { relayId }) => releaseTestCredentialsOf(ctx, relayId),
 });
+
+/** `releaseForRelay` inside a caller's own mutation (a re-protect cancel does it in one write). */
+export async function releaseTestCredentialsOf(
+  ctx: MutationCtx,
+  relayId: Id<'relays'>,
+): Promise<{ released: number }> {
+  const now = Date.now();
+  const rows = await ctx.db
+    .query('edgeTestCredentials')
+    .withIndex('by_relay', (q) => q.eq('relayId', relayId))
+    .collect();
+  let released = 0;
+  for (const r of rows) {
+    if (r.removal !== 'pending' || r.expiresAt <= now) continue;
+    await ctx.db.patch(r._id, { expiresAt: now, updatedAt: now });
+    released++;
+  }
+  return { released };
+}
 
 /**
  * Ensure a credential whose body the caller can fetch. Remnawave reuses the

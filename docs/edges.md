@@ -635,6 +635,28 @@ failed, cancelled or unbound run leaves the origin owned. Cancel before stage 5 
 `restore-direct` (nothing was published; the delete cancels the live rotation, drains the
 standbys for the reconcile destroy and removes the credential); at stages 5-7 the published edges
 stay and `edgeRestore.start` runs with purpose `cancel_setup`; after go-live there is no cancel.
+A **re-protect** run (`kind: 'reprotect'`, `POST relays/{id}/reprotect`, "Protect again" on the
+node page) is its own kind for a LIVE node: an enrolled node whose members are already served
+through this origin (refused otherwise: `edge.reprotect_not_bound` for an origin not bound yet,
+`edge.reprotect_not_enrolled` for a node the role did not enroll; plus the usual
+`edge.setup_run_active`, `edge.busy`, `edge.maintenance`, quarantine, restore and a disabled
+origin). Its plan is read from the origin's own rows like `require-edges`: the listeners members
+are served through (deployed, enabled, with a published template edge; none is
+`edge.coverage_incomplete`) and the account of their template edges (missing, disabled or
+untested is `edge.account_incompatible`). It starts at stage 1 on the existing origin, owns it
+(`setupOwned`) while it runs, and never reuses an edge at stage 3: every candidate is a fresh
+address with a fresh test link, so a REALITY key change is proven through a new address, not a
+named-connection retest of a committed one. Publication follows the node's admission rules
+(docs/servers.md "A fronted node's activation"). Members keep the committed delivery throughout:
+the binding, the committed edges and the open gate are never touched. Any ending other than
+`done` hands the origin back (`onSetupRunEnded` clears `setupOwned`, so upkeep and the detector
+protect the node again); `retry` of a failed one claims it again while the origin still binds the
+node and nothing else owns it. Its cancel (`cancelReprotect`, one mutation, disposition
+`candidates`) drops only the run's own candidates: an unpublished one is cancelled for the
+reconcile destroy, a published candidate (one the node's gate keeps from members) drains out of
+the pool, an edge published under the committed approval stays; never a delete, a restore or a
+binding change. It is refused with `edge.busy` while a rotation runs on the origin (nothing
+changes; cancel again in a moment).
 An ENROLLED node (docs/servers.md "A fronted node's activation"): the run parks at publish
 until the node is approved; the approval binds the run (`activationRunId`) and its activation
 (`setupRunId`) for good and wakes the run through `wakeForApproval`, fenced by the generation the
