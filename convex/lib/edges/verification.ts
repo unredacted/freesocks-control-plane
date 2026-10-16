@@ -11,7 +11,14 @@
  * `configHash` covers the listener's own idempotency hash, the edge's template
  * hash and its addresses / forwarding listeners, so a re-addressed edge or a
  * materially changed listener returns the endpoint to "needs a test" without
- * anybody clearing a record. The record's EXISTENCE proves nothing:
+ * anybody clearing a record. On an ENROLLED node it also covers the node's
+ * REALITY authentication revision (`panelNodeIntents.authRevision`, the keyed
+ * digest of the transport's key, short ids and clock bounds): a key change
+ * means no real client has proven the new key through this edge, so the tick
+ * no longer counts. The digest is folded into the hash, never sent on its own,
+ * so the binding a confirmation echoes keeps its shape. Callers resolve it
+ * with `lib/edges/verificationContext.ts` (null for every other origin, which
+ * leaves the hash exactly as before). The record's EXISTENCE proves nothing:
  * `verificationCurrent` is what the publication gate reads.
  *
  * Pure: no db, no clock. The hash is the repo's canonical-JSON FNV-1a token
@@ -19,6 +26,7 @@
  * equality token, not a security primitive.
  */
 import { fnv1a64Hex } from './registration';
+import type { VerificationStaleReason } from '../../../src/shared/contracts/edgeCodes';
 
 export interface VerificationEdgeLike {
   layer?: 'l4' | 'l7' | null;
@@ -37,6 +45,12 @@ export interface VerificationListenerLike {
   listenerKey: string;
   revision: number;
   configHash: string;
+  /**
+   * The enrolled node's REALITY auth revision, or null (not an enrolled node,
+   * or none derived yet). Required so no caller can forget it: resolve it
+   * with `verificationListenerOf` (lib/edges/verificationContext.ts).
+   */
+  authRevision: string | null;
 }
 
 export interface VerificationRecord {
@@ -49,6 +63,8 @@ export interface VerificationRecord {
   configHash: string;
   /** `probe` = the system's `partial` rung from probe evidence (lib/edges/verifyRung.ts). */
   method: 'test_link' | 'named_connection' | 'l7_proof' | 'probe';
+  /** The enrolled node's auth revision it was taken under (database only; says why it went stale). */
+  authRevision?: string;
 }
 
 /** What a confirmation must echo back: the binding the operator was shown. */
@@ -118,9 +134,13 @@ export function verificationConfigHash(input: {
   templateHash: string | null | undefined;
   addresses: VerificationEdgeLike['addresses'];
   listeners: VerificationEdgeLike['listeners'];
+  /** An enrolled node's auth revision; absent / null leaves the hash as it always was. */
+  authRevision?: string | null;
 }): string {
   return fnv1a64Hex(
     canonicalJson({
+      // Present only for an enrolled node (canonicalJson drops `undefined`).
+      authRevision: input.authRevision ?? undefined,
       listenerConfigHash: input.listenerConfigHash,
       templateHash: input.templateHash ?? null,
       addresses: {
@@ -154,6 +174,7 @@ export function verificationBinding(
       templateHash: edge.templateHash,
       addresses: edge.addresses,
       listeners: edge.listeners,
+      authRevision: listener.authRevision,
     }),
   };
 }
@@ -209,6 +230,27 @@ export function verificationStale(
   const rec = edge.verification;
   if (!rec || rec.rung !== 'verified') return false;
   return !verificationCurrent(edge, listener);
+}
+
+/**
+ * Why a `verified` record no longer counts, or null while it does (or there
+ * is none): `reality_key_changed` when the only thing that moved is the
+ * enrolled node's REALITY authentication (its key, short ids or clock bounds:
+ * no client has proven the new key through this endpoint), else
+ * `verification_stale` (the address, the listener or its configuration).
+ */
+export function verificationStaleReason(
+  edge: VerificationEdgeLike,
+  listener: VerificationListenerLike,
+): VerificationStaleReason | null {
+  if (!verificationStale(edge, listener)) return null;
+  const rec = edge.verification!;
+  const recorded = rec.authRevision ?? null;
+  if (recorded !== listener.authRevision) {
+    const underRecordedKey = verificationBinding(edge, { ...listener, authRevision: recorded });
+    if (recordMatchesBinding(rec, underRecordedKey)) return 'reality_key_changed';
+  }
+  return 'verification_stale';
 }
 
 /** L4 edges need the human tick; L7 edges are verified by their authenticated proof. */

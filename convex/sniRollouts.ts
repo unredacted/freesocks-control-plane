@@ -24,6 +24,7 @@
  * the operator's endpoint confirmation still describes the path (C7 of the
  * design: lib/edges/verification.ts).
  */
+import { verificationListenerOf } from './lib/edges/verificationContext';
 import { ConvexError, v } from 'convex/values';
 import {
   internalAction,
@@ -349,8 +350,10 @@ export const receiptContext = internalQuery({
     if (!b || b.generation !== r.generation)
       return refuse('edge.sni.superseded', 'A newer rollout replaced this one');
     const edge = await ctx.db.get(edgeId);
-    const listener = edge ? await ctx.db.get(edge.listenerId) : null;
-    if (!edge || !listener) return refuse('not_found', 'Edge not found');
+    const raw = edge ? await ctx.db.get(edge.listenerId) : null;
+    if (!edge || !raw) return refuse('not_found', 'Edge not found');
+    // With the enrolled node's auth revision: the endpoint tick binds to it.
+    const listener = await verificationListenerOf(ctx.db, raw);
     if (listener.panelBinding?.configProfileInboundUuid !== b.inboundUuid)
       refuse('validation', 'That edge does not front this transport');
     // The proof rides on an endpoint an operator already confirmed: an
@@ -484,10 +487,11 @@ export const confirmReceipt = internalMutation({
         'The profile changed since this rollout. Roll out again',
       );
     const edge = await ctx.db.get(rc.edgeId);
-    const listener = await ctx.db.get(rc.listenerId);
+    const raw = await ctx.db.get(rc.listenerId);
     const relay = await ctx.db.get(rc.relayId);
-    if (!edge || !listener || !relay || listener.retired)
+    if (!edge || !raw || !relay || raw.retired)
       return voidAs('superseded', 'edge.sni.binding_changed', 'The edge or its listener changed');
+    const listener = await verificationListenerOf(ctx.db, raw);
     const live = verificationBinding(edge, listener);
     if (
       !live ||

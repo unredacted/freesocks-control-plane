@@ -895,6 +895,11 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
             ...act,
           }),
         );
+      case 'serve-direct':
+        // "Serve this node directly again": the restore workflow with purpose
+        // `release_requirement` (binding released BEFORE any direct Host is
+        // restored; edges and listeners kept).
+        return json(await ctx.runMutation(internal.edgeRestore.serveDirect, { relayId, ...act }));
       case 'qualification-credential':
         // Mint (or re-mint) the backend account the L7 front qualification
         // authenticates with; the credential never leaves the server.

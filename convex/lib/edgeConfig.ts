@@ -129,6 +129,14 @@ export interface EdgeConfig {
     allowProbeOnlyAutoRotate: boolean;
     /** Report rows read per origin per evaluation; past it the window is `incomplete` (no rotation). */
     maxReportRowsPerEval: number;
+    /**
+     * The fleet brake: when more than this share (percent) of the evaluated
+     * origins is suspected in one detector pass, every automatic rotation is
+     * held (a mass block, not one burned address). 100 = never.
+     */
+    fleetBreakerPct: number;
+    /** Automatic (detector) rotations across the whole fleet per UTC day; 0 = none. */
+    fleetRotationsPerDay: number;
   };
   /** L7 (CDN front) edges. */
   l7: {
@@ -230,8 +238,10 @@ export const EDGE_DEFAULTS: EdgeConfig = {
     clearAfterEvals: 3,
     minBaselineSamples: 72,
     probeWeight: 0.5,
-    allowProbeOnlyAutoRotate: true,
+    allowProbeOnlyAutoRotate: false,
     maxReportRowsPerEval: 2000,
+    fleetBreakerPct: 30,
+    fleetRotationsPerDay: 12,
   },
   l7: {
     autoSelect: false,
@@ -385,6 +395,8 @@ export const EDGE_KEYS = {
   'detect.probeWeight': 'edge.detect.probeWeight',
   'detect.allowProbeOnlyAutoRotate': 'edge.detect.allowProbeOnlyAutoRotate',
   'detect.maxReportRowsPerEval': 'edge.detect.maxReportRowsPerEval',
+  'detect.fleetBreakerPct': 'edge.detect.fleetBreakerPct',
+  'detect.fleetRotationsPerDay': 'edge.detect.fleetRotationsPerDay',
   'l7.autoSelect': 'edge.l7.autoSelect',
   'l7.maxSameProviderReplacementsPerDay': 'edge.l7.maxSameProviderReplacementsPerDay',
   'l7.qualifyTimeoutMinutes': 'edge.l7.qualifyTimeoutMinutes',
@@ -548,6 +560,13 @@ export function sanitizeRelayConfig(
         100,
         20_000,
         D.detect.maxReportRowsPerEval,
+      ),
+      fleetBreakerPct: sanitizeInt(raw['detect.fleetBreakerPct'], 1, 100, D.detect.fleetBreakerPct),
+      fleetRotationsPerDay: sanitizeInt(
+        raw['detect.fleetRotationsPerDay'],
+        0,
+        500,
+        D.detect.fleetRotationsPerDay,
       ),
     },
     l7: {
@@ -844,6 +863,8 @@ export const EDGE_CONFIG_BOUNDS: Readonly<Record<string, { min: number; max: num
   'detect.minBaselineSamples': { min: 12, max: 1008 },
   'detect.probeWeight': { min: 0, max: 1 },
   'detect.maxReportRowsPerEval': { min: 100, max: 20_000 },
+  'detect.fleetBreakerPct': { min: 1, max: 100 },
+  'detect.fleetRotationsPerDay': { min: 0, max: 500 },
   'l7.maxSameProviderReplacementsPerDay': { min: 0, max: 50 },
   'l7.qualifyTimeoutMinutes': { min: 1, max: 120 },
   'l7.qualifyStepTimeoutMs': { min: 1_000, max: 60_000 },

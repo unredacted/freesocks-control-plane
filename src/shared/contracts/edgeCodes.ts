@@ -164,6 +164,11 @@ export const PREFLIGHT_BLOCKER_CODES = [
   'dns_zone_missing',
   'origin_transport_missing',
   'zone_mode_unknown',
+  // the fleet guards on an automatic rotation (lib/edges/fleet.ts)
+  'fleet_brake',
+  'fleet_daily_cap',
+  // selection on an enrolled node: nothing fits the shape it was approved for
+  'outside_approved_shape',
 ] as const;
 export type PreflightBlockerCode = (typeof PREFLIGHT_BLOCKER_CODES)[number];
 
@@ -180,7 +185,11 @@ export const PREFLIGHT_WARNING_CODES = [
 ] as const;
 export type PreflightWarningCode = (typeof PREFLIGHT_WARNING_CODES)[number];
 
-/** Attention items, in the order the server ranks them (most urgent first). */
+/**
+ * Attention items. The server ranks them by its own list (`edgeOperator`
+ * ATTENTION_RANK, pinned by a test to hold exactly these kinds); new kinds are
+ * appended here.
+ */
 export const ATTENTION_KINDS = [
   'quarantine',
   'needs_operator',
@@ -203,6 +212,18 @@ export const ATTENTION_KINDS = [
   'drift',
   'restore_in_progress',
   'maintenance_frozen',
+  // Operations safety (docs/edges.md § "Operations safety").
+  'fleet_brake',
+  'fleet_rotation_cap',
+  'rotation_stuck',
+  'account_api_failing',
+  'health_stale',
+  'billable_idle',
+  'delivery_refusals',
+  'family_rule_disabled',
+  'node_ready_to_protect',
+  'node_awaiting_approval',
+  'account_budget_unlimited',
 ] as const;
 export type AttentionKind = (typeof ATTENTION_KINDS)[number];
 
@@ -228,6 +249,9 @@ export const ATTENTION_ACTIONS = [
   'thaw',
   'rebalance',
   'require_edges',
+  // An enrolled node: start protecting it (the protect sheet), or open its page under Servers.
+  'protect_node',
+  'open_node',
 ] as const;
 export type AttentionAction = (typeof ATTENTION_ACTIONS)[number];
 
@@ -256,6 +280,10 @@ export const DELIVERY_UNAVAILABLE_CODES = [
   'ambiguous_match',
   'entry_mismatch',
   'leak_detected',
+  // the node is not live; the policy moved during the render; the client's app family is off
+  'node_gated',
+  'policy_moved',
+  'family_disabled',
 ] as const;
 export type DeliveryUnavailableCode = (typeof DELIVERY_UNAVAILABLE_CODES)[number];
 
@@ -320,6 +348,8 @@ export const WORKFLOW_CODES = [
   'plan_changed',
   'consent_withdrawn_hidden',
   'account_switch_late',
+  // "Serve this node directly again" on a node whose members already get its direct address
+  'not_edge_required',
 ] as const;
 export type WorkflowCode = (typeof WORKFLOW_CODES)[number];
 
@@ -417,3 +447,12 @@ export const INBOUND_UNSUPPORTED_CODES = [
   'invalid',
 ] as const;
 export type InboundUnsupportedCode = (typeof INBOUND_UNSUPPORTED_CODES)[number];
+
+/**
+ * Why an L4 endpoint's tick no longer counts (lib/edges/verification.ts
+ * `verificationStaleReason`): the address, the listener or its configuration
+ * moved, or (an enrolled node) only its REALITY key, short ids or clock bounds
+ * did, so no client has proven the new key through that address.
+ */
+export const VERIFICATION_STALE_REASONS = ['verification_stale', 'reality_key_changed'] as const;
+export type VerificationStaleReason = (typeof VERIFICATION_STALE_REASONS)[number];

@@ -19,7 +19,8 @@ import {
 } from './relays';
 import { destroyedPatch } from './edges';
 import { allocatePoolIndex, withEdgeAt } from './lib/edges/pool';
-import { startRotation } from './edgeRotations';
+import { publicationApproval, startRotation } from './edgeRotations';
+import { recordCandidateEdge } from './nodeActivation';
 
 export const markDestroyed = internalMutation({
   args: { edgeId: v.id('edges') },
@@ -252,6 +253,11 @@ export const publishStandby = internalMutation({
         if (check.code === 'unverified_endpoint') awaitingVerification = true;
         continue;
       }
+      // The node's approval (docs/servers.md "Node lifecycle"), as every other
+      // publication: a spare outside what an enrolled node was approved for
+      // stays a spare; one of the node's running activation is its candidate.
+      const approval = await publicationApproval(ctx, origin, edge);
+      if (approval.kind === 'refused') continue;
       const listener = await ctx.db.get(edge.listenerId);
       const becomesTemplate =
         origin.hostMode === 'fcp' &&
@@ -273,6 +279,7 @@ export const publishStandby = internalMutation({
           throw err;
         }
       }
+      if (approval.kind === 'candidate') await recordCandidateEdge(ctx, approval.run, edgeId);
       const now = Date.now();
       const epoch = origin.publicationEpoch + 1;
       await ctx.db.patch(edgeId, {

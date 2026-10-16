@@ -20,6 +20,7 @@
  */
 import { ConvexError, v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
+import type { ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { capabilitiesOf } from './lib/backends/capabilities';
@@ -389,36 +390,55 @@ export const ensure = internalAction({
 
 // --- the sweep ------------------------------------------------------------------------------
 
-export const due = internalQuery({
-  args: { now: v.number() },
-  handler: async (ctx, { now }) => {
-    // Rows in backoff sit at the head of the index (they expired first), so one
-    // `take` could return the same not-yet-due rows forever and starve every
-    // later expired key. Walk pages until a batch of DUE rows is collected
-    // (bounded: SWEEP_PAGES pages per tick).
-    const pending: Doc<'edgeTestCredentials'>[] = [];
-    let cursor: string | null = null;
-    for (let page = 0; page < SWEEP_PAGES && pending.length < SWEEP_BATCH; page++) {
-      const res = await ctx.db
-        .query('edgeTestCredentials')
-        .withIndex('by_removal_expires', (q) => q.eq('removal', 'pending').lte('expiresAt', now))
-        .paginate({ cursor, numItems: SWEEP_BATCH });
-      for (const r of res.page) {
-        if ((r.retryAfter ?? 0) <= now) pending.push(r);
-        if (pending.length >= SWEEP_BATCH) break;
-      }
-      if (res.isDone) break;
-      cursor = res.continueCursor;
-    }
-    const done = await ctx.db
+/**
+ * ONE page of expired `pending` rows, with the ones due now (one `paginate`
+ * per query). Rows in backoff sit at the head of the index (they expired
+ * first), so a single `take` could return the same not-yet-due rows forever
+ * and starve every later expired key: the sweep walks pages from an action
+ * until a batch of DUE rows is collected (bounded: SWEEP_PAGES per tick).
+ */
+export const duePage = internalQuery({
+  args: { now: v.number(), cursor: v.union(v.string(), v.null()) },
+  handler: async (ctx, { now, cursor }) => {
+    const res = await ctx.db
       .query('edgeTestCredentials')
-      .withIndex('by_removal_expires', (q) =>
-        q.eq('removal', 'done').lte('expiresAt', now - DONE_RETENTION_MS),
-      )
-      .take(SWEEP_BATCH);
-    return { pending, doneIds: done.map((r) => r._id) };
+      .withIndex('by_removal_expires', (q) => q.eq('removal', 'pending').lte('expiresAt', now))
+      .paginate({ cursor, numItems: SWEEP_BATCH });
+    return {
+      due: res.page.filter((r) => (r.retryAfter ?? 0) <= now),
+      isDone: res.isDone,
+      continueCursor: res.continueCursor,
+    };
   },
 });
+
+/** `done` rows past their retention (one bounded read). */
+export const doneRows = internalQuery({
+  args: { now: v.number() },
+  handler: async (ctx, { now }) =>
+    (
+      await ctx.db
+        .query('edgeTestCredentials')
+        .withIndex('by_removal_expires', (q) =>
+          q.eq('removal', 'done').lte('expiresAt', now - DONE_RETENTION_MS),
+        )
+        .take(SWEEP_BATCH)
+    ).map((r) => r._id),
+});
+
+/** The due rows of this tick, walked page by page (one query per page). */
+async function dueRows(ctx: ActionCtx, now: number): Promise<Doc<'edgeTestCredentials'>[]> {
+  const pending: Doc<'edgeTestCredentials'>[] = [];
+  let cursor: string | null = null;
+  for (let page = 0; page < SWEEP_PAGES && pending.length < SWEEP_BATCH; page++) {
+    const res: { due: Doc<'edgeTestCredentials'>[]; isDone: boolean; continueCursor: string } =
+      await ctx.runQuery(internal.edgeTestCredentials.duePage, { now, cursor });
+    pending.push(...res.due.slice(0, SWEEP_BATCH - pending.length));
+    if (res.isDone) break;
+    cursor = res.continueCursor;
+  }
+  return pending;
+}
 
 function backoffMs(attempts: number): number {
   return Math.min(5 * 60_000 * 2 ** Math.max(0, attempts - 1), 6 * 60 * 60_000);
@@ -519,7 +539,8 @@ export const sweep = internalAction({
   handler: async (ctx): Promise<SweepReport> => {
     const report: SweepReport = { removed: 0, retried: 0, failed: 0, dropped: 0 };
     const now = Date.now();
-    const { pending, doneIds } = await ctx.runQuery(internal.edgeTestCredentials.due, { now });
+    const pending = await dueRows(ctx, now);
+    const doneIds = await ctx.runQuery(internal.edgeTestCredentials.doneRows, { now });
     for (const row of pending) {
       let removed = false;
       if (row.backendUserId) {

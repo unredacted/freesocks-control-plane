@@ -13,6 +13,7 @@ import { parseBounded } from './number';
 import { poolSlots, poolSummary } from './pool';
 import { ROTATION_KIND_LABELS, ROTATION_TRIGGER_LABELS, stepStateTone } from './rotation';
 import { EDGES_ROUTES, edgesPaths, resolveEdgesRoute, sectionTabOf } from './routes';
+import { resolveServersRoute } from '../../servers/lib/routes';
 import { addTags, normalizeCountry, normalizeHostname, splitTags } from './tags';
 import { actorLabel, subjectOf } from './timeline';
 import type { TimelineRow } from './types';
@@ -155,14 +156,28 @@ describe('attention', () => {
   it('plans every action literal', () => {
     for (const a of ATTENTION_ACTIONS) expect(ATTENTION_ACTION_PLAN[a]).toBeDefined();
   });
-  it('gives every action a target inside the section', () => {
+  it('gives every action a target inside the section (a node page lives under Servers)', () => {
     for (const action of ATTENTION_ACTIONS) {
       const href = attentionTarget(
         item({ action, edgeId: 'e1', rotationId: 'rot1', listenerKey: 'main', accountId: 'acc1' }),
       );
+      if (action === 'open_node') {
+        expect(resolveServersRoute(href.split('?')[0]!).page).not.toBe('not-found');
+        continue;
+      }
       expect(href.startsWith('/admin/edges')).toBe(true);
       expect(resolveEdgesRoute(href.split('?')[0]!).page).not.toBe('not-found');
     }
+  });
+  it('links an enrolled node to the protect sheet or to its Servers page', () => {
+    const facts = { serverSlug: 'panel-a', nodeUuid: 'uuid-1', node: 'node-one' };
+    expect(attentionTarget(item({ action: 'protect_node', facts }))).toBe(
+      '/admin/edges?protect=1&server=panel-a&node=uuid-1',
+    );
+    expect(attentionTarget(item({ action: 'open_node', facts }))).toBe(
+      '/admin/servers/nodes/uuid-1?instance=panel-a',
+    );
+    expect(attentionTarget(item({ action: 'open_node', facts: {} }))).toBe('/admin/servers');
   });
   it('routes the navigation actions as documented', () => {
     expect(attentionTarget(item({ action: 'open_setup' }))).toBe(

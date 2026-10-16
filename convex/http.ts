@@ -1062,6 +1062,17 @@ http.route({
     }
 
     const now = Date.now();
+    // Every edge-required refusal is counted per reason (deliveryRefusals.ts,
+    // attention `delivery_refusals`): dark members must be visible to the
+    // operator, not only to the member. Counting never changes the answer.
+    const refuse = async (reason: string): Promise<Response> => {
+      try {
+        await ctx.runMutation(internal.deliveryRefusals.record, { reason });
+      } catch {
+        /* the counter is best effort */
+      }
+      return unavailableResponse(reason);
+    };
     // Truncate the UA: it's the cache key, so an unbounded UA is an unbounded
     // cache-bypass amplification vector (each distinct UA = a live backend
     // fetch). 256 chars covers every real proxy-app UA. (Review B-F1.)
@@ -1156,6 +1167,11 @@ http.route({
       // is the real topology (one mode group per node) — so the fallback to the
       // stored pin only covers unknown shapes.
       const node = fetched.pinnedNode ?? sub.pinnedNode;
+      // A body that names no node while the key has no pin either (the
+      // backend's placeholder before its node serves anything) is answered but
+      // never cached: its token carries no node, so the node going live would
+      // not re-key it and the placeholder would outlive the go-live.
+      const placeholder = fetched.nodeless === true && !node;
       if (fetched.pinnedNode && fetched.pinnedNode !== sub.pinnedNode) {
         await ctx.runMutation(internal.subscriptions.recordPinnedNode, {
           subscriptionId: sub._id,
@@ -1197,7 +1213,7 @@ http.route({
             nodeName: node ?? undefined,
           });
           if (decision.kind === 'unavailable') {
-            return unavailableResponse(decision.reason);
+            return refuse(decision.reason);
           }
           let body = fetched.content;
           let epoch: number | null = null;
@@ -1215,9 +1231,9 @@ http.route({
               (await ctx.runMutation(internal.subscriptions.ensureRenderKey, {
                 subscriptionId: sub._id,
               }));
-            if (!renderKey) return unavailableResponse('no_render_key');
+            if (!renderKey) return refuse('no_render_key');
             const out = applyEdgeRender(rctx, body, renderKey, { now, where: located.where });
-            if (out.delivery.kind !== 'serve') return unavailableResponse(out.delivery.reason);
+            if (out.delivery.kind !== 'serve') return refuse(out.delivery.reason);
             body = out.body;
             epoch = rctx.epoch;
             snapshot = {
@@ -1246,7 +1262,7 @@ http.route({
             nodeName: node ?? undefined,
           })) !== null
         )
-          return unavailableResponse('policy_moved');
+          return refuse('policy_moved');
         relay = renderedUnder;
       }
       const entry: SubCacheEntry = {
@@ -1262,7 +1278,7 @@ http.route({
       };
       // Don't cache an hwid'd response — the next device (different hwid, same
       // UA) must reach the backend too, for its own registration + enforcement.
-      const cacheable = bodyIsCacheable(located.source, countryPolicy.sensitive);
+      const cacheable = bodyIsCacheable(located.source, countryPolicy.sensitive) && !placeholder;
       if (!hasHwid && cacheable) {
         await ctx.runMutation(internal.subscriptions.writeContentCache, {
           subscriptionId: sub._id,
@@ -3189,6 +3205,53 @@ http.route({
     } catch (err) {
       return adminError(err);
     }
+  }),
+});
+
+// --- admin: operator alerts (opt-in webhook, ntfy-compatible) -----------------
+// The GET carries no secret: booleans for the topic and the token, and only the
+// webhook's origin. The PATCH is sealed (it can carry the token); a field it
+// leaves out keeps its stored value. The test POST sends one notification.
+
+http.route({
+  path: '/api/v1/admin/alerts',
+  method: 'GET',
+  handler: httpAction(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:settings:read'))) return ADMIN_UNAUTH();
+    return json(await ctx.runQuery(internal.alerts.view, {}));
+  }),
+});
+
+http.route({
+  path: '/api/v1/admin/alerts',
+  method: 'PATCH',
+  handler: sealed(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
+    if (!admin) return ADMIN_UNAUTH();
+    const body = await readJson<Record<string, unknown>>(req);
+    const str = (k: string) => (typeof body[k] === 'string' ? (body[k] as string) : undefined);
+    try {
+      await ctx.runMutation(internal.alerts.setConfig, {
+        ...(typeof body.enabled === 'boolean' ? { enabled: body.enabled } : {}),
+        ...(str('url') !== undefined ? { url: str('url') } : {}),
+        ...(str('topic') !== undefined ? { topic: str('topic') } : {}),
+        ...(str('token') !== undefined ? { token: str('token') } : {}),
+        actorAdminId: admin.adminUserId,
+      });
+      return json(await ctx.runQuery(internal.alerts.view, {}));
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
+http.route({
+  path: '/api/v1/admin/alerts/test',
+  method: 'POST',
+  handler: guard(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
+    if (!admin) return ADMIN_UNAUTH();
+    return json(await ctx.runAction(internal.alerts.sendTest, {}));
   }),
 });
 

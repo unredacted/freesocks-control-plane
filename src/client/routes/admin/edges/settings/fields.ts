@@ -528,6 +528,21 @@ export const DETECTOR_FIELDS: Field[] = [
     unit: 'rows',
     helper: 'Past this the window is treated as incomplete and nothing is rotated.',
   },
+  {
+    kind: 'number',
+    path: 'detect.fleetBreakerPct',
+    label: 'Fleet brake',
+    unit: '%',
+    helper:
+      'When more than this share of the nodes looks blocked at once (and at least three do), every automatic replacement is held. 100 turns the brake off.',
+  },
+  {
+    kind: 'number',
+    path: 'detect.fleetRotationsPerDay',
+    label: 'Automatic replacements per day, all nodes',
+    unit: 'per day',
+    helper: 'A cap across the whole fleet, on top of the cap per node. 0 = none at all.',
+  },
 ];
 
 export const PROBE_SOURCE_FIELDS: Field[] = [

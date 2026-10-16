@@ -335,6 +335,9 @@
       {/if}
 
       {#if need.code === 'try_it'}
+        {#if need.detail === 'reality_key_changed'}
+          <CodeNote compact tone="warning" issue={{ code: 'reality_key_changed' }} />
+        {/if}
         <TestCard
           items={lines.items}
           done={lines.done}

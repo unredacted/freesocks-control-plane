@@ -370,6 +370,10 @@ const relayEdgeVerification = v.object({
     v.literal('l7_proof'),
     v.literal('probe'),
   ),
+  // An enrolled node's REALITY auth revision the record was taken under (it is
+  // folded into `configHash` too): only read to SAY why a record went stale
+  // (the key moved). Database only; never in a binding a client sees.
+  authRevision: v.optional(v.string()),
 });
 // Provider-account trust evidence (lib/edges/autoQualify.ts): who trusted the
 // account and, when it came from an endpoint, the exact configuration that was
@@ -730,12 +734,20 @@ export default defineSchema({
     // Instance→subs reference check before a backend-server delete (refuse
     // while keys still point at it).
     .index('by_backend_server', ['backendServerId'])
-    // Bounded "any live key on this backend?" probe for the instance-delete guard.
-    .index('by_backend_server_state', ['backendServerId', 'state'])
-    // (backendServerId, pinnedNode, state): the origin layer's COHORTS (one
-    // representative per placement among the keys pinned to a node), walked
-    // page by page (convex/lib/edges/cohorts.ts), never collected.
-    .index('by_backend_server_pinned', ['backendServerId', 'pinnedNode', 'state'])
+    // Bounded "any live key on this backend?" probe for the instance-delete guard;
+    // with the placement, the whole-server origin's COHORT walk (below).
+    .index('by_backend_server_state', ['backendServerId', 'state', 'backendPlacement'])
+    // (backendServerId, pinnedNode, state, backendPlacement): the origin layer's
+    // COHORTS (one representative per placement among the keys pinned to a
+    // node), found by an indexed walk over the DISTINCT placements (one read per
+    // placement, driven from an action; convex/lib/edges/cohorts.ts), never by
+    // reading every key.
+    .index('by_backend_server_pinned', [
+      'backendServerId',
+      'pinnedNode',
+      'state',
+      'backendPlacement',
+    ])
     // The FCP-fronted subscription route resolves the sub by its opaque token.
     .index('by_sub_token', ['subToken']),
 
@@ -1160,6 +1172,14 @@ export default defineSchema({
     // Last provider inventory pull (LBs / IPs / flavors), JSON, admin-only.
     inventorySnapshot: v.optional(v.string()),
     inventoryAt: v.optional(v.number()),
+    // Provider API health (edgeProviderOps `tracked`): consecutive calls that
+    // failed for a reason on the provider's side (timeout, network, 5xx,
+    // 401/403/429, an answer the adapter cannot read), reset by the first
+    // call that succeeds. Attention `account_api_failing` past a few in a row.
+    // `lastApiError` is a short code, never a body.
+    apiFailures: v.optional(v.number()),
+    apiFailingSince: v.optional(v.number()),
+    lastApiError: v.optional(v.string()),
     updatedAt: v.number(),
   })
     .index('by_name', ['name'])

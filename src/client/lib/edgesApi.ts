@@ -311,6 +311,13 @@ export const retrySetupRun = (runId: string, body: SetupRunRetryBody = {}) =>
   apiClient.post(`${BASE}/setup-runs/${enc(runId)}/retry`, body, SetupRunRetryResponse);
 export const continueSetupRun = (runId: string, body: SetupRunContinueBody = {}) =>
   apiClient.post(`${BASE}/setup-runs/${enc(runId)}/continue`, body, SetupRunContinueResponse);
+/**
+ * "Serve this node directly again": the restore workflow that releases
+ * edge-required delivery first, then puts the node's direct Hosts back
+ * (edges and listeners stay; the node can be protected again later).
+ */
+export const serveRelayDirect = (relayId: string) =>
+  apiClient.post(`${BASE}/relays/${enc(relayId)}/serve-direct`, {}, EdgeOkResponse);
 /** The activation policy on a deferred origin: pending untested L4 endpoints come back instead of a binding. */
 export const requireRelayEdges = (relayId: string, accountId?: string) =>
   apiClient.post(

@@ -38,6 +38,7 @@ import { qualifyFront } from '../../convex/lib/edges/frontCheck';
 import { createAccount } from '../../convex/lib/edges/testing/fixtures';
 import { signValue } from '../../convex/lib/cookies';
 import { outgoingAddresses } from '../../convex/lib/edges/render';
+import type { Cohort, CohortCursor, CohortPage } from '../../convex/lib/edges/cohorts';
 import { detectBodyFormat } from '../../convex/lib/edges/clientFamilies';
 import { ActivationReview } from '../../src/shared/contracts/servers';
 import { clients } from '../compat/manifest';
@@ -507,6 +508,18 @@ async function diagnose(r: Run): Promise<string> {
         verified: !!e.verification,
       })),
   );
+  // The context takes the origin's cohorts, walked a page per query (edgeCohorts.ts).
+  const cohorts: Cohort[] = [];
+  if (r.relayId) {
+    const origin = await t.query(internal.edgeCohorts.originOfRelay, { relayId: r.relayId });
+    let cursor: CohortCursor | null = null;
+    while (origin) {
+      const page: CohortPage = await t.query(internal.edgeCohorts.page, { ...origin, cursor });
+      cohorts.push(...page.cohorts);
+      if (!page.next) break;
+      cursor = page.next;
+    }
+  }
   const ctx = r.relayId
     ? await t.query(internal.edgeRehearsal.context, {
         relayId: r.relayId,
@@ -514,6 +527,7 @@ async function diagnose(r: Run): Promise<string> {
         ...(r.activationRunId
           ? { activationRunId: r.activationRunId as Id<'panelActivationRuns'> }
           : {}),
+        cohorts,
       })
     : null;
   const rendered = (ctx?.published ?? []).map((p) =>

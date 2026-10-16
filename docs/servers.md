@@ -479,7 +479,12 @@ mirror). FCP never starts a run by itself.
   node supersedes the old activation run and rebinds the open setup run.
 - **The approval wakes exactly that run.** `approve` (fronted) is allowed from `machine_ready`,
   `candidates_verified`, `awaiting_approval` and, for a re-approval, `live`, when every listener
-  of the open setup run has a verified standby; it records `standbys_verified`, seeds the new run's
+  of the open setup run has a verified standby whose L4 tick is still current: an L4 tick binds to
+  the node's REALITY authentication revision too (docs/edges.md "Publication"), so a key, short-id
+  or clock-bound change since the ticks refuses `servers.standbys_unverified` (the review card
+  says the key moved) until each address is tried again with the new key. On a live node the same
+  change is drift and closes it under maintenance first, as before. It records
+  `standbys_verified`, seeds the new run's
   candidates with those standbys (minus anything already committed) and schedules
   `edgeSetupRuns.wakeForApproval {setupRunId, activationRunId, generation}`. The wake acts only
   while the setup run is still at that generation, waiting for this approval, bound to this

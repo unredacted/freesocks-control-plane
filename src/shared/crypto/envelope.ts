@@ -298,6 +298,8 @@ export const SEALED_ROUTES: Record<string, RoutePolicy> = {
   'POST /api/v1/admin/mirror-providers': SEAL_REQ,
   'POST /api/v1/admin/mirror-providers/test-connection': SEAL_REQ,
   'PATCH /api/v1/admin/billing/config': SEAL_REQ,
+  // Operator alerts: the webhook URL, topic and token (both capabilities).
+  'PATCH /api/v1/admin/alerts': SEAL_REQ,
 };
 
 /**

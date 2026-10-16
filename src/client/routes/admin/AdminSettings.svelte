@@ -17,6 +17,7 @@
   import { apiErrorMessage } from '../../lib/errors';
   import { ADMIN_BACKEND_LABELS } from '../../lib/backendLabels';
   import AdminListState from './AdminListState.svelte';
+  import AlertsCard from './AlertsCard.svelte';
   import { adminAnalyticsQuery, appSettingsQuery, configQuery, queryKeys } from '../../lib/queries';
   import Link from '../../components/Link.svelte';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
@@ -1050,6 +1051,8 @@
           </div>
         </CardContent>
       </Card>
+
+      <AlertsCard />
 
       <Card>
         <CardHeader>

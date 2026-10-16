@@ -207,6 +207,9 @@ crons.daily(
 // The block detector: per-origin scoring of attributed reports, node load and
 // probe verdicts; automatic rotation only with edge-level evidence + opt-in.
 crons.interval('edge-block-detector', { minutes: 5 }, internal.edgeDetector.run, {});
+// Operator alerts (opt-in, `alerts.*`): new alert-worthy attention items go to
+// the operator's webhook once, as kinds, codes and counts (convex/alerts.ts).
+crons.interval('alerts-dispatch', { minutes: 5 }, internal.alerts.dispatch, {});
 // Destroyed edge rows (ledgers of what existed) and terminal rotation rows are
 // history: bounded daily deletes past their windows (30 / 90 days).
 crons.daily(

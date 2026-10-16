@@ -187,6 +187,12 @@ export interface SubscriptionContent {
   // serve paths persist it on the subscription row so the NEXT issuance can
   // exclude it (regenerate → a different node).
   pinnedNode?: string;
+  // Node pinning ran on a body it understands that names no node: the
+  // backend's placeholder for a key whose node serves nothing yet
+  // (lib/nodePinning.ts `nodelessBody`). The fronted route never caches such a
+  // body: its cache token carries no node, so a node going live could not
+  // re-key it.
+  nodeless?: boolean;
 }
 
 /**

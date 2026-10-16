@@ -24,8 +24,16 @@ import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
+import { walkRelayCohorts } from './edgeCohorts';
+import { selectionContext } from './edgeRotations';
+import { resolveEdgeConfig } from './lib/edgeConfig';
 import type { Id } from './_generated/dataModel';
-import { FIXTURE_PANEL_SLUG, createAccount, insertPanelServer } from './lib/edges/testing/fixtures';
+import {
+  FIXTURE_PANEL_SLUG,
+  createAccount,
+  insertPanelServer,
+  verifyL4Edge,
+} from './lib/edges/testing/fixtures';
 import { createFakeBackend, type FakeBackend } from './lib/edges/testing/fakeBackend';
 import { createFakeUpcloud } from './lib/edges/testing/fakeEdgeWorld';
 import { z } from 'zod';
@@ -394,6 +402,7 @@ function installSeams(w: World) {
         relayId: a.relayId,
         darkCohortKeys: a.darkCohortKeys,
         ...(a.activationRunId ? { activationRunId: a.activationRunId } : {}),
+        cohorts: await walkRelayCohorts(ctx, a.relayId),
       });
       w.calls.rehearsedEdges.push((c?.published ?? []).map((p) => p.edgeId as string).sort());
       const res = await ctx.runAction(internal.edgeRehearsal.run, a);
@@ -1264,6 +1273,337 @@ describe('refusals', () => {
     // Revisions moved since the commit: no publication rides the old approval.
     await t.run((c) => c.db.patch(live.intentId, { deliveryRevision: 'moved' }));
     expect((await admission(String(live.l4))).kind).toBe('refused');
+  });
+});
+
+describe("an L4 endpoint tick binds to the enrolled node's REALITY key", () => {
+  /** The node's REALITY key (or a short id, or a clock bound) moves: its auth digest changes. */
+  const rekey = (t: T, intentId: Id<'panelNodeIntents'>) =>
+    t.run((c) => c.db.patch(intentId, { authRevision: 'auth-moved' }));
+
+  test('a key move before approval: approval refuses until each address is tried again, then succeeds', async () => {
+    const w = await world();
+    const { t } = w;
+    installSeams(w);
+    const accts = await accounts(t);
+    const intentId = await enrollReady(w, { name: NODE, mode: 'freedom-reality', v4: ORIGIN_V4 });
+    await seedMember(w, NODE);
+    const cookie = await adminCookie(t);
+    const runId = await protectToPark(w, { nodeName: NODE, accountId: accts.l4 });
+    const l4 = (await setupRun(t, runId)).listeners
+      .filter((l) => l.layer === 'l4')
+      .map((l) => l.edgeId as Id<'edges'>);
+    expect(l4.length).toBeGreaterThan(0);
+    // Ticked and approvable before the key moves.
+    expect((await t.query(internal.nodeActivation.review, { intentId })).blockers).toEqual([]);
+
+    await rekey(t, intentId);
+    const review = await t.query(internal.nodeActivation.review, { intentId });
+    // The review card says why; the refusal keeps its code.
+    expect(review.blockers).toContain('servers.standbys_unverified:key_changed');
+    await expect(
+      t.mutation(internal.nodeActivation.approve, { intentId, reviewHash: review.reviewHash }),
+    ).rejects.toThrow(/servers\.standbys_unverified/);
+    const stale = (await t.query(internal.edgeOperator.attention, {})).items.filter(
+      (i) => i.kind === 'retest_needed',
+    );
+    expect(stale.map((i) => i.code)).toEqual(l4.map(() => 'reality_key_changed'));
+    // The binding a client echoes keeps its shape: the digest is folded in, never shown.
+    const binding = (await t.query(internal.edgeVerification.binding, { edgeId: l4[0]! }))!;
+    expect(JSON.stringify(binding)).not.toContain('auth-moved');
+
+    // Try it again with the new key: the tick binds to it, and the approval follows.
+    for (const e of l4) await verifyL4Edge(t, e);
+    const rec = (await t.run((c) => c.db.get(l4[0]!)))!.verification!;
+    expect(rec.authRevision).toBe('auth-moved');
+    await approveOverHttp(t, cookie, intentId);
+    const done = await drive(t, () => setupRun(t, runId), movedOn, 'setup run after approval');
+    expect([done.stage, done.state]).toEqual(['done', 'done']);
+  });
+
+  test('an L7 front (proven by its own session) is not held by a key move', async () => {
+    const w = await world();
+    const { t } = w;
+    installSeams(w);
+    const l7Fake = installFakeL7();
+    try {
+      const { l7 } = await accounts(t);
+      const intentId = await enrollReady(w, {
+        name: NODE_W,
+        mode: 'freedom-ws',
+        v4: ORIGIN_W_V4,
+        hostname: ORIGIN_W_NAME,
+      });
+      await seedMember(w, NODE_W);
+      await protectToPark(w, { nodeName: NODE_W, accountId: l7 });
+      await rekey(t, intentId);
+      const review = await t.query(internal.nodeActivation.review, { intentId });
+      expect(review.blockers.filter((b) => b.startsWith('servers.standbys'))).toEqual([]);
+    } finally {
+      l7Fake.uninstall();
+    }
+  });
+
+  test('a key move on a LIVE node is drift: it closes exactly as before, and its addresses need the tick again', async () => {
+    const w = await world();
+    const { t, serverId } = w;
+    const live = await liveL4(w);
+    expect((await fetchSub(t)).status).toBe(200);
+    const intent = (await t.run((c) => c.db.get(live.intentId)))!;
+    await t.run((c) =>
+      c.db.patch(live.intentId, { claim: { attemptId: 'a-1', expiresAt: Date.now() + 60_000 } }),
+    );
+    const r = await t.mutation(internal.nodeIntents.observeRevisions, {
+      intentId: live.intentId,
+      generation: intent.generation,
+      attemptId: 'a-1',
+      configRevision: intent.configRevision!,
+      authRevision: 'auth-moved',
+      hostMoved: false,
+      ownChange: true,
+    });
+    expect(r).toEqual({ ok: true, drift: true });
+    const after = (await t.run((c) => c.db.get(live.intentId)))!;
+    expect(after.delivery.disposition).toBe('unavailable');
+    expect(after.maintenance?.reason).toBe('drift');
+    expect((await gateOf(t, serverId)).state).toBe('blocked');
+    // Members were held off by the drift, as before: the gate, not the tick, answers.
+    const res = await fetchSub(t);
+    expect(res.status).toBe(503);
+    expect(res.headers.get('x-fcp-delivery')).toBe('node_gated');
+    // The served address's tick no longer counts under the new key.
+    const view = await t.query(internal.edgeVerification.binding, { edgeId: live.e1 });
+    expect(view?.verification.current).toBe(false);
+  });
+});
+
+describe('the operator hears about a node that waits on them', () => {
+  test('ready to protect, then waiting for approval, then nothing once live', async () => {
+    const w = await world();
+    const { t } = w;
+    installSeams(w);
+    const accts = await accounts(t);
+    const intentId = await enrollReady(w, { name: NODE, mode: 'freedom-reality', v4: ORIGIN_V4 });
+    const nodeItems = async () =>
+      (await t.query(internal.edgeOperator.attention, {})).items.filter((i) =>
+        i.kind.startsWith('node_'),
+      );
+    const ready = await nodeItems();
+    expect(ready).toEqual([
+      expect.objectContaining({
+        id: `node_ready_to_protect:${intentId}`,
+        kind: 'node_ready_to_protect',
+        action: 'protect_node',
+        facts: expect.objectContaining({ serverSlug: FIXTURE_PANEL_SLUG, node: NODE }),
+      }),
+    ]);
+    await seedMember(w, NODE);
+    const cookie = await adminCookie(t);
+    const runId = await protectToPark(w, { nodeName: NODE, accountId: accts.l4 });
+    expect(await nodeItems()).toEqual([
+      expect.objectContaining({
+        kind: 'node_awaiting_approval',
+        code: 'node_not_approved',
+        action: 'open_node',
+        facts: expect.objectContaining({ runId }),
+      }),
+    ]);
+    await approveOverHttp(t, cookie, intentId);
+    await drive(t, () => setupRun(t, runId), movedOn, 'setup run after approval');
+    expect(await nodeItems()).toEqual([]);
+  });
+});
+
+describe('automatic work on a live node stays in its approved shape', () => {
+  test('a replace or a pool fill picks only an account (or a spare) the node was approved for, else it is refused', async () => {
+    const w = await world();
+    const { t } = w;
+    const live = await liveL4(w);
+    // A second L4 account, trusted and preferred: outside the committed shape.
+    const other = await createAccount(t, { provider: 'upcloud', name: 'acct-l4-b' });
+    await t.mutation(internal.edgeProviderAccounts.recordTest, { id: other, ok: true });
+    for (const id of [live.l4, other])
+      await t.mutation(internal.edgeProviderAccounts.setQualified, { id, qualified: true });
+    // (A lower priority number is picked first.)
+    await t.run((c) => c.db.patch(other, { priority: -100 }));
+    const e1 = (await t.run((c) => c.db.get(live.e1)))!;
+    const select = (kind: 'replace' | 'provision') =>
+      t.run(async (ctx) => {
+        const origin = (await ctx.db.get(live.relayId))!;
+        return selectionContext(
+          ctx,
+          kind === 'replace'
+            ? { kind, trigger: 'manual', listenerId: e1.listenerId }
+            : { kind, trigger: 'reconcile', listenerId: e1.listenerId, publishOnDone: true },
+          origin,
+          kind === 'replace' ? e1 : null,
+          await resolveEdgeConfig(ctx.db),
+        );
+      });
+    // The preferred account is passed over: only the approved one fits.
+    expect((await select('replace')).account?.id).toBe(live.l4);
+    expect((await select('provision')).account?.id).toBe(live.l4);
+    // A standby provision (not published by the run) is not held to the shape.
+    const standby = await t.run(async (ctx) =>
+      selectionContext(
+        ctx,
+        { kind: 'provision', trigger: 'reconcile', listenerId: e1.listenerId },
+        (await ctx.db.get(live.relayId))!,
+        null,
+        await resolveEdgeConfig(ctx.db),
+      ),
+    );
+    expect(standby.account?.id).toBe(other);
+    // The approved account gone: nothing fits, and a new review is the way forward.
+    await t.run((c) => c.db.patch(live.l4, { enabled: false }));
+    expect(await select('replace')).toMatchObject({
+      account: null,
+      accountFailure: 'outside_approved_shape',
+    });
+    // An automatic pool fill is refused at the start (no failed rotation every tick).
+    await expect(
+      t.mutation(internal.edgeRotations.start, {
+        relayId: live.relayId,
+        kind: 'provision',
+        trigger: 'reconcile',
+        publishOnDone: true,
+        listenerId: e1.listenerId,
+      }),
+    ).rejects.toThrow(/approved for/);
+    const rotations = await t.run((c) =>
+      c.db
+        .query('edgeRotations')
+        .withIndex('by_relay', (q) => q.eq('relayId', live.relayId))
+        .collect(),
+    );
+    expect(rotations.every((r) => r.trigger !== 'reconcile')).toBe(true);
+    // Where the result is published the approval is checked again: an edge
+    // outside the shape (here an import from the other account) stays a
+    // standby and the pool is untouched.
+    const spare = await t.mutation(internal.relays.adoptEdge, {
+      relayId: live.relayId,
+      listenerId: e1.listenerId,
+      ipv4: '198.51.100.88',
+      verified: true,
+      accountId: other,
+    });
+    const before = (await t.run((c) => c.db.get(live.relayId)))!;
+    const rotationId = await t.run((ctx) =>
+      ctx.db.insert('edgeRotations', {
+        relayId: live.relayId,
+        kind: 'provision',
+        trigger: 'reconcile',
+        publishOnDone: true,
+        burn: false,
+        force: false,
+        toEdgeId: spare.edgeId as Id<'edges'>,
+        listenerId: e1.listenerId,
+        phase: 'publishing',
+        stepVersion: 1,
+        cancelRequested: false,
+        hostPlan: [],
+        flipAttempts: 0,
+        rollbackAttempts: 0,
+        pollAttempts: 0,
+        events: [],
+        startedAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+    await t.run((c) => c.db.patch(live.relayId, { activeRotationId: rotationId }));
+    const res = await t.mutation(internal.edgeRotations.applyPublish, {
+      rotationId,
+      stepVersion: 1,
+    });
+    expect(res).toMatchObject({ ok: true, poolIndex: null });
+    const after = (await t.run((c) => c.db.get(live.relayId)))!;
+    expect(after.publishedEdgeIds).toEqual(before.publishedEdgeIds);
+    expect(after.standbyEdgeIds).toContain(spare.edgeId);
+    const rot = (await t.run((c) => c.db.get(rotationId)))!;
+    expect(rot.events.map((e) => e.code)).toContain('outside_approved_shape');
+    await t.run((c) => c.db.patch(live.relayId, { activeRotationId: undefined }));
+
+    // A REPLACE whose new edge lands outside the shape keeps its target served:
+    // nothing was swapped, so the finalize drains nothing and records no rotation.
+    const replaceId = await t.run((ctx) =>
+      ctx.db.insert('edgeRotations', {
+        relayId: live.relayId,
+        kind: 'replace',
+        trigger: 'detector',
+        burn: true,
+        force: false,
+        targetEdgeId: live.e1,
+        toEdgeId: spare.edgeId as Id<'edges'>,
+        listenerId: e1.listenerId,
+        phase: 'publishing',
+        stepVersion: 1,
+        cancelRequested: false,
+        hostPlan: [],
+        flipAttempts: 0,
+        rollbackAttempts: 0,
+        pollAttempts: 0,
+        events: [],
+        startedAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+    await t.run((c) => c.db.patch(live.relayId, { activeRotationId: replaceId }));
+    expect(
+      await t.mutation(internal.edgeRotations.applyPublish, {
+        rotationId: replaceId,
+        stepVersion: 1,
+      }),
+    ).toMatchObject({ ok: true, poolIndex: null });
+    expect(
+      await t.mutation(internal.edgeRotations.finalize, { rotationId: replaceId, stepVersion: 2 }),
+    ).toEqual({ ok: true });
+    const target = (await t.run((c) => c.db.get(live.e1)))!;
+    expect([target.publication, target.status, target.burnedAt]).toEqual([
+      'published',
+      'active',
+      undefined,
+    ]);
+    expect((await t.run((c) => c.db.get(live.relayId)))!.publishedEdgeIds).toEqual(
+      before.publishedEdgeIds,
+    );
+    const rotated = await t.run((ctx) =>
+      ctx.db
+        .query('auditLog')
+        .filter((q) => q.eq(q.field('action'), 'edge.rotated'))
+        .collect(),
+    );
+    expect(
+      rotated.some((a) => (a.payload as { rotationId?: string }).rotationId === replaceId),
+    ).toBe(false);
+
+    // Pool upkeep's direct standby publish holds the spare to the shape too:
+    // with a free slot, the out-of-shape spare stays a spare...
+    await t.run((c) => c.db.patch(live.relayId, { desiredPublished: 2 }));
+    expect(
+      await t.mutation(internal.edgeReconcileMutations.publishStandby, {
+        relayId: live.relayId,
+        candidates: [spare.edgeId as Id<'edges'>],
+      }),
+    ).toEqual({ published: false, rotationId: null, awaitingVerification: false });
+    expect((await t.run((c) => c.db.get(spare.edgeId as Id<'edges'>)))!.publication).toBe(
+      'unpublished',
+    );
+    // ...and the same spare in the approved shape is published.
+    await t.run((c) =>
+      c.db.patch(spare.edgeId as Id<'edges'>, {
+        accountId: live.l4,
+        templateHash: e1.templateHash,
+      }),
+    );
+    await t.run((c) => c.db.patch(live.l4, { enabled: true }));
+    // (The account change moved the endpoint's configuration: confirm it again.)
+    await verifyL4Edge(t, spare.edgeId as Id<'edges'>);
+    expect(
+      await t.mutation(internal.edgeReconcileMutations.publishStandby, {
+        relayId: live.relayId,
+        candidates: [spare.edgeId as Id<'edges'>],
+      }),
+    ).toMatchObject({ published: true });
   });
 });
 

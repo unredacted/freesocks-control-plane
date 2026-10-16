@@ -45,7 +45,7 @@ import type {
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
 import { backendIdValidator } from './lib/backendIds';
 import { capabilitiesOf } from './lib/backends/capabilities';
-import { pinSubscriptionToNode } from './lib/nodePinning';
+import { nodelessBody, pinSubscriptionToNode } from './lib/nodePinning';
 import {
   mockBackendEnabled,
   mockFetchContent,
@@ -625,7 +625,12 @@ export const fetchSubscriptionContent = internalAction({
           ...(excludeNode ? [excludeNode] : []),
           ...gated,
         ]);
-        return { ...fetched, content: pinned.content, pinnedNode: pinned.node ?? undefined };
+        return {
+          ...fetched,
+          content: pinned.content,
+          pinnedNode: pinned.node ?? undefined,
+          ...(!pinned.node && nodelessBody(fetched.content) ? { nodeless: true } : {}),
+        };
       }
       return fetched;
     } catch (err) {

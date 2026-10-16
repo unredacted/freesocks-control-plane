@@ -43,8 +43,13 @@ import { isTerminalPhase } from './lib/edges/rotation';
 import { relayRemarkRegex, sameAddress } from './lib/edges/hosts';
 import { decodeLinkList, remarkOf } from './lib/edges/render/links';
 import { parseProxyUri } from './lib/edges/render/uri';
-import { cohortReportForRelay } from './lib/edges/cohorts';
-import { startRestoreWorkflow, type RestorePhase, type RestorePurpose } from './lib/edges/restore';
+import { cohortValidator, walkRelayCohorts } from './edgeCohorts';
+import {
+  hasHideRows,
+  startRestoreWorkflow,
+  type RestorePhase,
+  type RestorePurpose,
+} from './lib/edges/restore';
 import { applyDeleteBody, deliveryBindingFor } from './relays';
 import { assertNoRelayPanelClaim, scheduleMirrorRefresh } from './lib/edges/relayGuards';
 import { listenerRemark, listenersOf } from './relayListeners';
@@ -125,22 +130,56 @@ export const start = internalMutation({
   },
 });
 
+/**
+ * "Serve this node directly again" (the `release_requirement` purpose): the
+ * operator ends edge-required delivery for a node and puts its direct Hosts
+ * back, through the same checked workflow (settle the hides, check the raw
+ * bodies, release the binding, THEN restore: a direct Host is never enabled
+ * while the node is bound). Everything else stays (edges, listeners), and the
+ * origin can be protected again later. Refused while a quarantine is open
+ * (resolve it first), while a guided setup owns the origin (cancel the run
+ * instead) and when the node is not edge-required at all.
+ */
+export const serveDirect = internalMutation({
+  args: { relayId: v.id('relays'), actorAdminId: v.optional(v.id('adminUsers')) },
+  handler: async (ctx, { relayId, actorAdminId }) => {
+    const relay = await ctx.db.get(relayId);
+    if (!relay) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
+    if (relay.setupOwned)
+      throw new ConvexError({
+        code: 'edge.setup_owned',
+        message: 'A guided setup owns this origin; cancel the run instead',
+      });
+    let bound = false;
+    if (relay.backendServerId) {
+      const b = await deliveryBindingFor(
+        ctx.db,
+        relay.backendServerId,
+        relay.nodeName ?? undefined,
+      );
+      bound = !!b && b.relaySlug === relay.slug;
+    }
+    if (!bound && !(await hasHideRows(ctx.db, relayId)))
+      throw new ConvexError({
+        code: 'edge.not_edge_required',
+        message: 'Members of this node already receive its direct address',
+      });
+    await assertNoRelayPanelClaim(ctx.db, relay);
+    // Refuses a second workflow, a quarantine and a deleting origin.
+    await startRestoreWorkflow(ctx, relay, {
+      purpose: 'release_requirement',
+      ...(actorAdminId ? { actorAdminId } : {}),
+    });
+    return { ok: true as const, phase: 'freeze' as const };
+  },
+});
+
 export interface RestoreContext {
   relay: Doc<'relays'>;
   restore: NonNullable<Doc<'relays'>['restore']>;
   bound: boolean;
   rotationRunning: boolean;
   raw: RawBodyContext;
-  cohorts: Array<{
-    key: string;
-    subscriptionId: Id<'subscriptions'>;
-    backend: Doc<'subscriptions'>['backend'];
-    backendServerId: Id<'backendServers'> | null;
-    backendShortId: string;
-    subscriptionUrl: string;
-    excludeNode: string | null;
-  }>;
-  cohortTotal: number;
   /** Confirmed disable rows still to restore, and unsettled rows of either intent. */
   confirmedDisables: HideRow[];
   unsettled: number;
@@ -178,21 +217,6 @@ export const context = internalQuery({
       const rot = await ctx.db.get(relay.activeRotationId);
       rotationRunning = !!rot && !isTerminalPhase(rot.phase);
     }
-    const report = await cohortReportForRelay(ctx, relay);
-    const cohorts: RestoreContext['cohorts'] = [];
-    for (const c of report.cohorts) {
-      const sub = await ctx.db.get(c.subscriptionId);
-      if (!sub) continue;
-      cohorts.push({
-        key: c.key,
-        subscriptionId: sub._id,
-        backend: sub.backend,
-        backendServerId: sub.backendServerId ?? null,
-        backendShortId: sub.backendShortId,
-        subscriptionUrl: sub.subscriptionUrl,
-        excludeNode: sub.excludeNode ?? null,
-      });
-    }
     const rows = await ctx.db
       .query('edgeHostHides')
       .withIndex('by_relay', (q) => q.eq('relayId', relayId))
@@ -208,13 +232,51 @@ export const context = internalQuery({
         nodeName: relay.nodeName ?? null,
         edgeAddresses,
       },
-      cohorts,
-      cohortTotal: report.total,
       confirmedDisables: rows.filter((r) => r.intent === 'disable' && r.state === 'confirmed'),
       unsettled: rows.filter((r) => ['intended', 'written', 'unresolved'].includes(r.state)).length,
     };
   },
 });
+
+/** How a raw check fetches one cohort's body (its representative key). */
+export interface CohortRef {
+  key: string;
+  subscriptionId: Id<'subscriptions'>;
+  backend: Doc<'subscriptions'>['backend'];
+  backendServerId: Id<'backendServers'> | null;
+  backendShortId: string;
+  subscriptionUrl: string;
+  excludeNode: string | null;
+}
+
+/** The fetch references of a walked cohort list (one read per cohort). */
+export const cohortRefs = internalQuery({
+  args: { cohorts: v.array(cohortValidator) },
+  handler: async (ctx, { cohorts }): Promise<CohortRef[]> => {
+    const out: CohortRef[] = [];
+    for (const c of cohorts) {
+      const sub = await ctx.db.get(c.subscriptionId);
+      if (!sub) continue;
+      out.push({
+        key: c.key,
+        subscriptionId: sub._id,
+        backend: sub.backend,
+        backendServerId: sub.backendServerId ?? null,
+        backendShortId: sub.backendShortId,
+        subscriptionUrl: sub.subscriptionUrl,
+        excludeNode: sub.excludeNode ?? null,
+      });
+    }
+    return out;
+  },
+});
+
+/** The relay's cohorts, walked page by page (edgeCohorts.ts), as fetch references. */
+async function restoreCohorts(ctx: ActionCtx, relayId: Id<'relays'>): Promise<CohortRef[]> {
+  const cohorts = await walkRelayCohorts(ctx, relayId);
+  if (cohorts.length === 0) return [];
+  return ctx.runQuery(internal.edgeRestore.cohortRefs, { cohorts });
+}
 
 /** Move the workflow from `from` to `to` (fenced: a stale step changes nothing). */
 export const advance = internalMutation({
@@ -359,7 +421,7 @@ export const inProgress = internalQuery({
 // --- Node half: the driver ---------------------------------------------------------------------
 
 /** Fetch the RAW backend body of one cohort's representative (the sub route's fetch path, no render). */
-async function rawBodyOf(ctx: ActionCtx, c: RestoreContext['cohorts'][number]): Promise<string> {
+async function rawBodyOf(ctx: ActionCtx, c: CohortRef): Promise<string> {
   const fetched = await ctx.runAction(internal.backends.fetchSubscriptionContent, {
     backend: c.backend,
     ...(c.backendServerId ? { backendServerId: c.backendServerId } : {}),
@@ -381,7 +443,7 @@ async function checkCohorts(
   want: 'fcp' | 'direct',
 ): Promise<string | null> {
   const dark = new Set(c.restore.darkCohortKeys);
-  for (const cohort of c.cohorts) {
+  for (const cohort of await restoreCohorts(ctx, c.relay._id)) {
     if (dark.has(cohort.key)) continue;
     let body: string;
     try {
