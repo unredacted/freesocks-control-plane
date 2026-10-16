@@ -586,7 +586,8 @@ export const deleteListenerHost = internalAction({
  *  - `write`: the listener has a next name; it goes onto the Host, address and
  *    port unchanged.
  *  - `withdraw`: the listener has NO active name left (a burn took the last
- *    one) and the Host still hands out the burned one. A name known blocked is
+ *    one) and the Host still hands out the burned one (one of the listener's
+ *    own names; an L7 Host's edge hostname never counts). A name known blocked is
  *    worse than no Host: an FCP-owned Host is deleted through the Host state
  *    machine (read-back confirmed). The listener serves nobody until it gets a
  *    name again, and its next rotation creates the Host afresh. An adopted
@@ -603,6 +604,10 @@ export const resyncSniContext = internalQuery({
     const host = l.host;
     if (!host || host.state !== 'present' || host.op || !host.uuid || !host.intended) return null;
     if (host.intended.sni === null) return null;
+    // Only a Host that carries one of the listener's OWN names follows them.
+    // An L7 Host carries its edge's hostname (`hostTargetFor`), which is no
+    // listener name: it is never rewritten or withdrawn here.
+    if (!carriesOwnName(l, host.intended.sni)) return null;
     const sni = hostSniOf(l);
     if (!sni) {
       if (host.ownership !== 'fcp') return null;
@@ -620,6 +625,12 @@ export const resyncSniContext = internalQuery({
     };
   },
 });
+
+/** Whether `sni` is one of the listener's own server names (active or retired). */
+function carriesOwnName(l: Pick<Doc<'relayListeners'>, 'tlsNames'>, sni: string): boolean {
+  const want = sni.trim().toLowerCase();
+  return (l.tlsNames ?? []).some((n) => n.name.trim().toLowerCase() === want);
+}
 
 export const recordResyncedSni = internalMutation({
   args: { listenerId: v.id('relayListeners'), uuid: v.string(), sni: v.string() },
@@ -761,6 +772,7 @@ export const pendingListeners = internalQuery({
           st.ownership === 'fcp' &&
           !st.op &&
           !!st.intended?.sni &&
+          carriesOwnName(l, st.intended.sni) &&
           hostSniOf(l) === null &&
           !relay.activeRotationId &&
           !relay.restore &&

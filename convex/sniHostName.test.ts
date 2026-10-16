@@ -366,4 +366,22 @@ describe('the Host follows its server name', () => {
     expect(await t.query(internal.hostOps.pendingListeners, {})).toEqual([]);
     expect(calls).toEqual([]);
   });
+
+  test("an L7 Host (its edge's hostname, not a listener name) is never rewritten or withdrawn", async () => {
+    const { t, relayId, listenerId } = await seed(['only.example']);
+    // The L7 Host carries the front's hostname; the listener's own names are separate.
+    await withHost(t, relayId, listenerId, 'front-1.example');
+    const calls = deletablePanel('front-1.example');
+    await t.mutation(internal.sniFamilies.setNames, {
+      slug: 'fam',
+      names: ['only.example'],
+      action: 'burn',
+    });
+    expect(await t.action(internal.hostOps.resyncSni, { listenerId })).toEqual({ written: false });
+    expect(await t.query(internal.hostOps.pendingListeners, {})).toEqual([]);
+    // A listener that never had a name at all is left alone too.
+    await t.run((ctx) => ctx.db.patch(listenerId, { tlsNames: [] }));
+    expect(await t.query(internal.hostOps.pendingListeners, {})).toEqual([]);
+    expect(calls).toEqual([]);
+  });
 });
