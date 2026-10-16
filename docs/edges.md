@@ -399,8 +399,10 @@ to, else its backend server) is covered by an active delivery binding is served 
 body ONLY when the render produced ≥1 endpoint and passed the leak check. Otherwise the route
 answers **HTTP 503 with `Retry-After`** and a reason (`unsupported_format`, `no_match`,
 `ambiguous_match`, `entry_mismatch`, `empty_pool`, `leak_detected`, `render_disabled`,
-`relay_disabled`, `relay_missing`, `no_render_key`); a 503 keeps the client's last
-configuration, an empty 200 would wipe it. The policy is judged AFTER the fetch against the
+`family_disabled` (the client's app family has its render rule off), `relay_disabled`,
+`relay_missing`, `no_render_key`, `node_gated`, `policy_moved`); a 503 keeps the client's last
+configuration, an empty 200 would wipe it. Each one is counted per reason (§ Operations
+safety, attention `delivery_refusals`). The policy is judged AFTER the fetch against the
 node the body actually belongs to, so a first fetch without a stored pin and a pin that moved
 onto an origin node are both classified correctly. Only bodies that passed are cached (the cache
 token is `<bindingPolicyVersion>:<epoch>`). A place no origin covers passes the body through.
