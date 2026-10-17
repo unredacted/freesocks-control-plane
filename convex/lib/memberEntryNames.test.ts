@@ -694,19 +694,24 @@ describe('relabelling again, and values that are not names', () => {
   });
 
   test('a group named like the template’s cache id renames the group, never the cache id or a path', () => {
-    const out = relabelMemberEntries(
-      singboxBody('remnawave', [vless('FreeSocks', NAMES[0])]),
-      NAMING,
-    );
+    // A backend the template re-sync has not reached yet still names its cache
+    // after the product: the same word as the group.
+    const body = JSON.parse(singboxBody('remnawave', [vless('FreeSocks', NAMES[0])])) as {
+      experimental: { cache_file: Obj };
+    };
+    const oldCache = {
+      ...body.experimental.cache_file,
+      path: 'remnawave.db',
+      cache_id: 'remnawave',
+    };
+    body.experimental.cache_file = oldCache;
+    const out = relabelMemberEntries(JSON.stringify(body), NAMING);
     expect(out.renamed).toBe(1);
     const cfg = JSON.parse(out.content) as {
       outbounds: Obj[];
-      experimental: { cache_file: { cache_id: string; path: string } };
+      experimental: { cache_file: Obj };
     };
     expect(cfg.outbounds[0].tag).toBe('FreeSocks Select');
-    expect(cfg.experimental.cache_file).toEqual(
-      (SINGBOX_JSON as { experimental: { cache_file: unknown } }).experimental.cache_file,
-    );
-    expect(cfg.experimental.cache_file.cache_id).toBe('remnawave');
+    expect(cfg.experimental.cache_file).toEqual(oldCache);
   });
 });
