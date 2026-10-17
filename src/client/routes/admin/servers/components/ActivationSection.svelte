@@ -8,9 +8,11 @@
    * A fronted node goes live through its protection in Edges (Start, try each
    * address, approve go-live, all in the protect sheet): this page links there
    * ("Protect this node" / "Open progress") and mirrors the approval card while
-   * the protection waits for it.
+   * the protection waits for it. A node an Edges origin already protects has
+   * its edges panel on the same page: protecting it again starts there
+   * ("Protect again"), never in the protect sheet.
    *
-   * Props: slug, intent (NodeIntentView)
+   * Props: slug, intent (NodeIntentView), origin (an Edges origin protects it)
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -34,7 +36,11 @@
   import { protectionWords, serverErrorWords, stageWords } from '../lib/words';
   import NodeApprovalCard from './NodeApprovalCard.svelte';
 
-  let { slug, intent }: { slug: string; intent: NodeIntentView } = $props();
+  let {
+    slug,
+    intent,
+    origin = false,
+  }: { slug: string; intent: NodeIntentView; origin?: boolean } = $props();
   const qc = useQueryClient();
 
   let busy = $state(false);
@@ -84,7 +90,7 @@
   // and says so when it is already protected (re-protecting after a removal starts there).
   let unprotected = $derived(!direct && !intent.protection && !intent.retirement);
   let canProtect = $derived(unprotected && (intent.stage === 'machine_ready' || reviewable));
-  let canReprotect = $derived(unprotected && intent.stage === 'live');
+  let canReprotect = $derived(unprotected && intent.stage === 'live' && !origin);
   // The fronted mirror of the approval card, while the protection waits for it.
   let mirrorShown = $derived(
     !direct &&
@@ -186,6 +192,11 @@
         />
       </div>
     {/if}
+  {:else if canProtect && origin}
+    <p class="bg-card mt-3 rounded-md border p-3 text-sm">
+      It goes live again through its edges below: Protect again makes new addresses, you try each
+      one, then you approve go-live.
+    </p>
   {:else if canProtect}
     <div class="bg-card mt-3 space-y-3 rounded-md border p-3 text-sm">
       <p>

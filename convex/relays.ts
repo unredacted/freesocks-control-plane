@@ -81,6 +81,7 @@ import {
 import {
   assertNoRotationOrQuarantine,
   assertNotQuarantined,
+  assertNoRunningSetup,
   bumpEpochAndRefresh,
   liveEdgesOfRelay,
   scheduleMirrorRefresh,
@@ -1566,6 +1567,8 @@ export const adoptEdge = internalMutation({
         code: 'validation',
         message: 'listener does not belong to the origin',
       });
+    // An import that publishes is a pool write: not while a setup run is working on the origin.
+    if (a.publish) await assertNoRunningSetup(ctx.db, origin);
     let accountRow: Doc<'edgeProviderAccounts'> | null = null;
     if (a.accountId) {
       accountRow = await ctx.db.get(a.accountId);
@@ -1741,6 +1744,7 @@ export const publishEdge = internalMutation({
     const edge = await ctx.db.get(edgeId);
     if (!origin || !edge || edge.relayId !== relayId)
       throw new ConvexError({ code: 'not_found', message: 'Origin/edge not found' });
+    await assertNoRunningSetup(ctx.db, origin);
     await assertNoRotationOrQuarantine(ctx.db, origin);
     const cfg = await resolveEdgeConfig(ctx.db);
     const check = await checkPublishable(ctx, edge, cfg.requireProviderHealth);
@@ -1827,49 +1831,74 @@ export const unpublishEdge = internalMutation({
     const edge = await ctx.db.get(edgeId);
     if (!origin || !edge || edge.relayId !== relayId)
       throw new ConvexError({ code: 'not_found', message: 'Origin/edge not found' });
+    await assertNoRunningSetup(ctx.db, origin);
     await assertNoRotationOrQuarantine(ctx.db, origin);
     if (edge.publication !== 'published')
       return { ok: true as const, epoch: origin.publicationEpoch };
-    const now = Date.now();
-    const poolIndex = edge.poolIndex ?? null;
-    if (keepActive) {
-      await ctx.db.patch(edgeId, {
-        publication: 'unpublished',
-        poolIndex: undefined,
-        updatedAt: now,
-      });
-    } else {
-      await ctx.db.patch(edgeId, {
-        publication: 'draining',
-        status: 'draining',
-        drainUntil: now + (drainMs ?? origin.drainMs),
-        poolIndex: undefined,
-        statusChangedAt: now,
-        updatedAt: now,
-      });
-    }
-    const epoch = origin.publicationEpoch + 1;
-    await ctx.db.patch(relayId, {
-      publishedEdgeIds: withoutEdge(origin.publishedEdgeIds, edgeId),
-      standbyEdgeIds: keepActive
-        ? [...origin.standbyEdgeIds.filter((e) => e !== edgeId), edgeId]
-        : origin.standbyEdgeIds.filter((e) => e !== edgeId),
-      publicationEpoch: epoch,
-      updatedAt: now,
+    const { epoch } = await unpublishFromPool(ctx, origin, edge, {
+      drainMs,
+      keepActive,
+      actorAdminId,
     });
-    await refreshTemplateEdges(ctx, origin);
-    await writeAuditLog(ctx, {
-      actorType: actorAdminId ? 'admin' : 'system',
-      actorId: actorAdminId ?? undefined,
-      action: 'edge.unpublished',
-      targetType: 'edge',
-      targetId: edgeId,
-      payload: { relaySlug: origin.slug, edgeId, poolIndex, epoch },
-    });
-    await scheduleMirrorRefresh(ctx);
     return { ok: true as const, epoch };
   },
 });
+
+/**
+ * The body of `unpublishEdge` once its guards passed (the caller checked the
+ * rotation / quarantine / restore guard and that the edge is published): out
+ * of the pool (draining, or back to standby with `keepActive`), epoch bump,
+ * template edges refreshed, audited, mirrors refreshed. Re-reads the origin,
+ * so one mutation may call it for several edges. A re-protect cancel drops its
+ * published candidates through it.
+ */
+export async function unpublishFromPool(
+  ctx: MutationCtx,
+  originRow: Doc<'relays'>,
+  edge: Doc<'edges'>,
+  opts: { drainMs?: number; keepActive?: boolean; actorAdminId?: Id<'adminUsers'> } = {},
+): Promise<{ epoch: number }> {
+  const origin = (await ctx.db.get(originRow._id)) ?? originRow;
+  const edgeId = edge._id;
+  const now = Date.now();
+  const poolIndex = edge.poolIndex ?? null;
+  if (opts.keepActive) {
+    await ctx.db.patch(edgeId, {
+      publication: 'unpublished',
+      poolIndex: undefined,
+      updatedAt: now,
+    });
+  } else {
+    await ctx.db.patch(edgeId, {
+      publication: 'draining',
+      status: 'draining',
+      drainUntil: now + (opts.drainMs ?? origin.drainMs),
+      poolIndex: undefined,
+      statusChangedAt: now,
+      updatedAt: now,
+    });
+  }
+  const epoch = origin.publicationEpoch + 1;
+  await ctx.db.patch(origin._id, {
+    publishedEdgeIds: withoutEdge(origin.publishedEdgeIds, edgeId),
+    standbyEdgeIds: opts.keepActive
+      ? [...origin.standbyEdgeIds.filter((e) => e !== edgeId), edgeId]
+      : origin.standbyEdgeIds.filter((e) => e !== edgeId),
+    publicationEpoch: epoch,
+    updatedAt: now,
+  });
+  await refreshTemplateEdges(ctx, origin);
+  await writeAuditLog(ctx, {
+    actorType: opts.actorAdminId ? 'admin' : 'system',
+    actorId: opts.actorAdminId ?? undefined,
+    action: 'edge.unpublished',
+    targetType: 'edge',
+    targetId: edgeId,
+    payload: { relaySlug: origin.slug, edgeId, poolIndex, epoch },
+  });
+  await scheduleMirrorRefresh(ctx);
+  return { epoch };
+}
 
 /**
  * A published edge that vanished at the provider or was destroyed by an
@@ -1935,6 +1964,7 @@ export const rebalance = internalMutation({
   handler: async (ctx, { relayId, actorAdminId }) => {
     const origin = await ctx.db.get(relayId);
     if (!origin) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
+    await assertNoRunningSetup(ctx.db, origin);
     await assertNoRotationOrQuarantine(ctx.db, origin);
     const listeners = await listenersOf(ctx, relayId);
     const templates = new Set(

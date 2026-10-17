@@ -56,10 +56,7 @@ import {
   type SetupInput,
   type SetupStep,
 } from './lib/edges/setupStatus';
-import type {
-  AttentionKind as AttentionKindCode,
-  SetupStepId,
-} from '../src/shared/contracts/edgeCodes';
+import type { SetupStepId } from '../src/shared/contracts/edgeCodes';
 import {
   checkPublishable,
   deliveryBindingFor,
@@ -84,6 +81,16 @@ import { requiredPoolSize } from './lib/edges/poolCapacity';
 import { uncoveredListeners } from './lib/edges/pool';
 import { renderPreviewFor } from './edgeAdmin';
 import type { RelayOrigin } from './lib/edges/origin';
+import {
+  ATTENTION_RANK,
+  deliveryOf,
+  fleetStatusOf,
+  membersDarkCode,
+  originStatusOf,
+  type OriginStatusFacts,
+  type StatusRunFacts,
+} from './lib/edges/originStatus';
+import { isTerminalRunState } from './lib/edges/setupRuns';
 
 type Db = QueryCtx['db'];
 type Relay = Doc<'relays'>;
@@ -322,9 +329,7 @@ async function relayFacts(
   const active = relay.activeRotationId ? await ctx.db.get(relay.activeRotationId) : null;
   const lastTerminal = rotations.find((r) => isTerminalPhase(r.phase)) ?? null;
   const server = relay.backendServerId ? await ctx.db.get(relay.backendServerId) : null;
-  const binding = relay.backendServerId
-    ? await deliveryBindingFor(ctx.db, relay.backendServerId, relay.nodeName ?? undefined)
-    : null;
+  const bindingState = await bindingStateOf(ctx.db, relay);
   const endpoints = await connectionPlanCount(ctx, relay);
   let preview: SetupInput['render']['preview'] = null;
   if (
@@ -382,7 +387,8 @@ async function relayFacts(
           }
         : null,
       edges: await edgeFacts(ctx, relay, cfg),
-      deliveryRequired: !!binding,
+      deliveryRequired: bindingState.bound,
+      foreignBinding: bindingState.foreign,
       bindingDeferred: relay.bindingDeferred === true,
       connectionPlanCount: endpoints,
       // Mirror validation is driven by the mirror refresh cron over every
@@ -482,6 +488,18 @@ export const setupStatus = internalQuery({
         config: configFacts(cfg),
       };
       const r = computeSetupStatus(input);
+      // What members get: the attention status's delivery plus `degraded` from
+      // the sample render the rendering step just judged.
+      const rendering = r.steps.find((s) => s.id === 'rendering');
+      const delivery = deliveryOf({
+        originKind: relay.origin.kind,
+        bound: f.relay.deliveryRequired,
+        foreignBinding: f.relay.foreignBinding === true,
+        published: f.relay.publishedCount,
+        enabled: relay.enabled,
+        renderEnabled: input.render.enabled,
+        renderBlockers: rendering?.blockers ?? [],
+      });
       return {
         scope: 'relay' as const,
         steps: stepsView(r.steps),
@@ -495,6 +513,7 @@ export const setupStatus = internalQuery({
           ...r.context,
         },
         resume: [],
+        delivery,
         generatedAt: now,
       };
     }
@@ -573,6 +592,7 @@ export const setupStatus = internalQuery({
           ...r.context,
         },
         resume: [],
+        delivery: null,
         generatedAt: now,
       };
     }
@@ -648,6 +668,7 @@ export const setupStatus = internalQuery({
           currentStep: p.result.currentStep,
           complete: p.result.complete,
         })),
+      delivery: null,
       generatedAt: now,
     };
   },
@@ -655,45 +676,9 @@ export const setupStatus = internalQuery({
 
 // --- attention ------------------------------------------------------------------------------------
 
-/**
- * The server's ranking of every attention kind, most urgent first. The shared
- * vocabulary (`ATTENTION_KINDS`) only appends; a test pins that this list holds
- * exactly the same kinds.
- */
-export const ATTENTION_RANK = [
-  'quarantine',
-  'fleet_brake',
-  'needs_operator',
-  'account_api_failing',
-  'rotation_stuck',
-  'host_unresolved',
-  'members_dark',
-  'delivery_refusals',
-  'direct_host_reappeared',
-  'node_awaiting_approval',
-  'go_live_pending',
-  'needs_test',
-  'rotation_failed',
-  'node_ready_to_protect',
-  'qualification_lapsed',
-  'retest_needed',
-  'block_suspected',
-  'edge_unreachable',
-  'fleet_rotation_cap',
-  'family_rule_disabled',
-  'billable_idle',
-  'health_stale',
-  'pool_rebalance',
-  'spare_untested',
-  'pool_below_desired',
-  'account_budget_unlimited',
-  'account_unqualified',
-  'account_untested',
-  'test_key_cleanup',
-  'drift',
-  'restore_in_progress',
-  'maintenance_frozen',
-] as const satisfies readonly AttentionKindCode[];
+// The server's ranking of every attention kind, most urgent first, lives in
+// lib/edges/originStatus.ts (the origin status ranks by it too); re-exported here.
+export { ATTENTION_RANK };
 type AttentionKind = (typeof ATTENTION_RANK)[number];
 
 interface AttentionItem {
@@ -825,7 +810,100 @@ async function nodeAttention(ctx: QueryCtx, relays: Relay[]): Promise<AttentionI
   return out;
 }
 
-/** Server-ranked list of what needs the operator, one action per item. */
+/** The delivery binding that covers an origin's node (a manual origin has none). */
+async function bindingOf(db: Db, relay: Relay) {
+  return relay.origin.kind !== 'manual' && relay.backendServerId
+    ? deliveryBindingFor(db, relay.backendServerId, relay.nodeName ?? undefined)
+    : null;
+}
+
+/**
+ * Whose binding covers the origin's node. `bound`: it names this origin (its
+ * members are served through it). `foreign`: it names an origin that no longer
+ * exists (deleted `keep-dark`), so members get `relay_missing` whatever this
+ * origin publishes. A binding naming another live origin is neither.
+ */
+async function bindingStateOf(
+  db: Db,
+  relay: Relay,
+): Promise<{ binding: Doc<'edgeDeliveryBindings'> | null; bound: boolean; foreign: boolean }> {
+  const binding = await bindingOf(db, relay);
+  if (!binding) return { binding, bound: false, foreign: false };
+  if (binding.relaySlug === relay.slug) return { binding, bound: true, foreign: false };
+  const named = await db
+    .query('relays')
+    .withIndex('by_slug', (q) => q.eq('slug', binding.relaySlug))
+    .unique();
+  return { binding, bound: false, foreign: !named || named.deleting === true };
+}
+
+/**
+ * The live (non-terminal) guided setup run of an origin, through the run's
+ * node (`by_origin`): a node has at most one live run, always its newest. A
+ * manual origin, or a backend server without a node name, has none.
+ */
+async function liveSetupRunOf(db: Db, relay: Relay): Promise<Doc<'edgeSetupRuns'> | null> {
+  const serverId = relay.origin.kind === 'manual' ? undefined : relay.origin.backendServerId;
+  const nodeName = relay.origin.kind === 'panel-node' ? relay.origin.nodeName : relay.nodeName;
+  if (!serverId || !nodeName) return null;
+  const rows = await db
+    .query('edgeSetupRuns')
+    .withIndex('by_origin', (q) => q.eq('backendServerId', serverId).eq('nodeName', nodeName))
+    .order('desc')
+    .take(5);
+  return (
+    rows.find(
+      (r) => !isTerminalRunState(r.state) && (r.relayId === undefined || r.relayId === relay._id),
+    ) ?? null
+  );
+}
+
+/** The facts one origin's status is judged on (lib/edges/originStatus.ts), but its attention items. */
+async function statusFactsOf(
+  db: Db,
+  relay: Relay,
+  edges: Edge[],
+  bindingState: { bound: boolean; foreign: boolean },
+  renderEnabled: boolean,
+): Promise<Omit<OriginStatusFacts, 'attention'>> {
+  const pool: OriginStatusFacts['pool'][number][] = [];
+  for (const id of relay.publishedEdgeIds) {
+    const e = id ? edges.find((x) => x._id === id) : undefined;
+    if (e) pool.push({ health: e.health, layer: e.layer ?? 'l4' });
+  }
+  const run = await liveSetupRunOf(db, relay);
+  const runFacts: StatusRunFacts | null = run
+    ? {
+        id: run._id as string,
+        kind: run.kind ?? null,
+        stage: run.stage,
+        state: run.state,
+        need: run.need ?? null,
+      }
+    : null;
+  return {
+    originKind: relay.origin.kind,
+    enabled: relay.enabled,
+    quarantined: !!relay.quarantine,
+    restore: !!relay.restore,
+    deleting: relay.deleting ?? false,
+    bindingDeferred: relay.bindingDeferred === true,
+    setupOwned: relay.setupOwned === true,
+    published: publishedCount(relay.publishedEdgeIds),
+    pool,
+    standbys: edges.filter((e) => e.status === 'active' && e.publication === 'unpublished').length,
+    bound: bindingState.bound,
+    foreignBinding: bindingState.foreign,
+    renderEnabled,
+    run: runFacts,
+  };
+}
+
+/**
+ * Server-ranked list of what needs the operator, one action per item, plus the
+ * one status of every origin (`origins`, deleting ones included, slug order)
+ * and the fleet headline (`fleet`), judged in lib/edges/originStatus.ts.
+ */
 export const attention = internalQuery({
   args: {},
   handler: async (ctx) => {
@@ -849,8 +927,18 @@ export const attention = internalQuery({
     // refresh keeps failing (or never runs) for its account.
     const healthStaleMs = Math.max(HEALTH_STALE_MIN_MS, edgeMs.poll(cfg) * 30);
     const staleByAccount = new Map<string, number>();
+    // Per origin, the facts its status is judged on (after every item exists).
+    const statusFacts = new Map<string, Omit<OriginStatusFacts, 'attention'>>();
     for (const relay of relays) {
-      if (relay.deleting) continue;
+      if (relay.deleting) {
+        const state = await bindingStateOf(ctx.db, relay);
+        const edges = await liveEdgesOfRelay(ctx.db, relay._id);
+        statusFacts.set(
+          relay._id as string,
+          await statusFactsOf(ctx.db, relay, edges, state, cfg.render.enabled),
+        );
+        continue;
+      }
       const edges = await liveEdgesOfRelay(ctx.db, relay._id);
       // (A quarantined origin is skipped by the refresh on purpose.)
       if (!relay.quarantine)
@@ -915,31 +1003,32 @@ export const attention = internalQuery({
         }
       }
       const published = publishedCount(relay.publishedEdgeIds);
-      if (relay.origin.kind !== 'manual' && relay.backendServerId) {
-        const binding = await deliveryBindingFor(
-          ctx.db,
-          relay.backendServerId,
-          relay.nodeName ?? undefined,
-        );
-        const dark = !!binding && (published === 0 || !relay.enabled || !cfg.render.enabled);
-        if (dark) {
-          items.push({
-            ...base(relay),
-            id: `members_dark:${relay._id}`,
-            kind: 'members_dark',
-            severity: 'critical',
-            code:
-              published === 0
-                ? 'empty_pool'
-                : !relay.enabled
-                  ? 'relay_disabled'
-                  : 'render_disabled',
-            facts: { published },
-            action: 'open_setup',
-            since: isoN(binding?.updatedAt),
-          });
-        }
+      const bindingState = await bindingStateOf(ctx.db, relay);
+      const binding = bindingState.binding;
+      // The one `members_dark` rule (the origin status's `dark` delivery too).
+      const darkCode = membersDarkCode({
+        bound: bindingState.bound,
+        foreignBinding: bindingState.foreign,
+        published,
+        enabled: relay.enabled,
+        renderEnabled: cfg.render.enabled,
+      });
+      if (darkCode) {
+        items.push({
+          ...base(relay),
+          id: `members_dark:${relay._id}`,
+          kind: 'members_dark',
+          severity: 'critical',
+          code: darkCode,
+          facts: { published },
+          action: 'open_setup',
+          since: isoN(binding?.updatedAt),
+        });
       }
+      statusFacts.set(
+        relay._id as string,
+        await statusFactsOf(ctx.db, relay, edges, bindingState, cfg.render.enabled),
+      );
       // A direct Host reappeared on a bound guided node and could not be
       // re-hidden: delivery is fail-closed (`leak_detected`) until it is hidden.
       if (relay.directHostAlert && relay.directHostAlert.hosts.length > 0) {
@@ -1476,7 +1565,34 @@ export const attention = internalQuery({
         (x.since ?? '').localeCompare(y.since ?? '') ||
         x.id.localeCompare(y.id),
     );
-    return { items, generatedAt: iso(now) };
+    // The one status of every origin, judged on its facts and the items naming it.
+    const named = new Map<string, AttentionItem[]>();
+    for (const i of items) {
+      if (!i.relayId) continue;
+      const list = named.get(i.relayId) ?? [];
+      list.push(i);
+      named.set(i.relayId, list);
+    }
+    const origins = [];
+    for (const relay of [...relays].sort((a, b) => a.slug.localeCompare(b.slug))) {
+      const facts = statusFacts.get(relay._id as string);
+      if (!facts) continue;
+      const status = originStatusOf({
+        ...facts,
+        attention: (named.get(relay._id as string) ?? []).map((i) => ({
+          kind: i.kind,
+          severity: i.severity,
+          code: i.code,
+        })),
+      });
+      origins.push({ relayId: relay._id as string, relaySlug: relay.slug, status });
+    }
+    return {
+      items,
+      origins,
+      fleet: fleetStatusOf(origins.map((o) => o.status)),
+      generatedAt: iso(now),
+    };
   },
 });
 
@@ -1597,12 +1713,8 @@ export const preflight = internalQuery({
     if (!cfg.probe.enabled) warnings.push({ code: 'probe_disabled', detail: null });
     if (!process.env.EDGE_MARK_PEPPER) warnings.push({ code: 'mark_pepper_missing', detail: null });
     if (relay.backendServerId && relay.origin.kind !== 'manual') {
-      const binding = await deliveryBindingFor(
-        ctx.db,
-        relay.backendServerId,
-        relay.nodeName ?? undefined,
-      );
-      if (binding && publishedCount(relay.publishedEdgeIds) === 0)
+      const { bound } = await bindingStateOf(ctx.db, relay);
+      if (bound && publishedCount(relay.publishedEdgeIds) === 0)
         warnings.push({ code: 'members_dark', detail: relay.slug });
     }
     const seen = new Set<string>();

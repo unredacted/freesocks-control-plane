@@ -129,8 +129,9 @@ export function attentionTarget(item: AttentionItem): string {
       return relay({ tab: 'edges' });
     case 'open_relay':
       return relay(item.rotationId ? { tab: 'rotations', rotation: item.rotationId } : undefined);
+    // Members dark: the origin's Delivery card says why and what fixes it.
     case 'open_setup':
-      return edgesPaths.setup({ relay: slug });
+      return relay(undefined);
     case 'open_account':
     case 'test_credentials':
       return item.accountId ? edgesPaths.provider(item.accountId) : edgesPaths.providers();
@@ -140,7 +141,10 @@ export function attentionTarget(item: AttentionItem): string {
       return edgesPaths.settings({ section: 'maintenance' });
     case 'rebalance':
       return relay({ tab: 'edges' });
+    // A node an origin already covers is protected again from its own page
+    // (the protect sheet only starts a node no origin covers).
     case 'protect_node':
+      if (slug) return edgesPaths.node(slug);
       return edgesPaths.home({
         protect: '1',
         server: factString(item, 'serverSlug'),

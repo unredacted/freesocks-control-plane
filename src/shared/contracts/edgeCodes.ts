@@ -350,6 +350,13 @@ export const WORKFLOW_CODES = [
   'account_switch_late',
   // "Serve this node directly again" on a node whose members already get its direct address
   'not_edge_required',
+  // "Protect again" (a re-protect run) on a node that is not live behind edges yet, or
+  // that is not an enrolled node
+  'reprotect_not_bound',
+  'reprotect_not_enrolled',
+  // ... served through more than one provider account, or with no room for the new addresses
+  'reprotect_mixed_accounts',
+  'reprotect_no_room',
 ] as const;
 export type WorkflowCode = (typeof WORKFLOW_CODES)[number];
 
@@ -371,6 +378,26 @@ export const SETUP_RUN_STAGES = [
   'done',
 ] as const;
 export type SetupRunStage = (typeof SETUP_RUN_STAGES)[number];
+
+/**
+ * The machine's ten stages folded onto the four plain ones the operator sees
+ * (`done` = 5, past the last). The one table both the CMS stage labels and the
+ * server's origin status (`convex/lib/edges/originStatus.ts`) read, so a stage
+ * never has two names: `publish` is where an enrolled node waits for its
+ * go-live approval, so it belongs to "Going live" (4).
+ */
+export const SETUP_RUN_STAGE_STEP: Record<SetupRunStage, 1 | 2 | 3 | 4 | 5> = {
+  prepare: 1,
+  credential: 1,
+  provision: 1,
+  verify: 2,
+  try_it: 3,
+  publish: 4,
+  hide_direct_hosts: 4,
+  rehearse: 4,
+  go_live: 4,
+  done: 5,
+};
 
 /**
  * The most transports one guided run protects. A node with more frontable

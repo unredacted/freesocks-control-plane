@@ -688,6 +688,17 @@ mirror). FCP never starts a run by itself.
   The review lists every required listener with its account and template (`shape.listeners`),
   never one representative edge. A re-protect of a live node within its approved shape reaches
   go-live and binds without a new approval; outside it, it parks for the review.
+- **Protect again from the node page.** A live node is protected again by its own run kind
+  (`POST /api/v1/admin/edges/relays/{id}/reprotect`, a `reprotect` setup run, docs/edges.md
+  "Guided setup runs"): new candidate addresses on the listeners members are served through, a
+  test link for each, then the admission above (no new approval within the approved shape; the
+  review card otherwise). Members keep what they have until go-live: the committed edges, the
+  binding and the open gate, and a candidate reaches them only when go-live commits it. At
+  go-live the new addresses take the old ones' places (the old ones drain, as after a Replace).
+  Cancel drops only the run's new addresses (an unpublished one is destroyed, a published one
+  drains; the bound activation is blocked as for any cancel). A failure leaves the node live and
+  hands the origin back to upkeep and the detector; retry claims it again. One run has one
+  provider account: a node served through several is refused (`edge.reprotect_mixed_accounts`).
 - **Candidate Hosts on a live node.** A direct node's body reaches members as the backend serves
   it, so an address a candidate would enable cannot be kept out of it; a fronted listener without
   a committed template edge would get a new Host or a moved Host pointer. Either needs the gate
@@ -815,22 +826,53 @@ can share a backend type, and a uuid missing on this backend may live on another
 
 ### The page
 
-Admin -> Servers -> Nodes and transports, built like the simple Edges screens: one status
-sentence, a "Needs you" list only when something is broken, one row per node, and the
-leftovers as quiet one-line notes (a transport nobody uses on three nodes is one line, not six).
-The two switches (regular reading, changes from here) sit in the footer.
+Admin -> **Servers** is ONE sidebar leaf (the Servers group has five: Servers, Connection
+modes, Edges, Storage mirrors, Status page) with three tabs, its paths spelled only in
+`src/client/routes/admin/servers/lib/routes.ts`:
 
-`/admin/servers/nodes/{uuid}` is one node: its sentence, the profile it runs, its own notes,
-and its transports with the addresses members get for each. With changes allowed and the backend set up
-the header carries Edit, Restart or Turn on, and a More menu with Turn off,
-**Stop and remove** (offered only once the node is off) and **Remove from the backend only**
-(says the process may keep running); both removes are typed. On a transport: add, change or
-remove an address; edit a REALITY transport's names and target as write -> preview -> apply,
-typed when more than one node restarts; **Change port** (write -> preview -> stage: the nodes and
-who confirms each, then "Port changes" lists what waits on whom) and, under the profile, **Add a
-transport** from a template. The home lists mode groups (add, rename, change transports,
-remove) and Recent changes ("Look again" on an open one, "Settle by hand" on an unknown
-outcome, asking for each recovery condition by name).
+| Tab        | Path                      | What                                                                                                                                    |
+| ---------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Backends   | `/admin/servers/backends` | The backend servers keys are issued on (add, edit, remove; a link to each Remnawave server's nodes) and the node logging privacy check. |
+| Nodes      | `/admin/servers`          | The default tab, below.                                                                                                                 |
+| Mode pools | `/admin/servers/pools`    | Which mode groups each connection mode issues new keys into (write-only uuids), and the node load per placement.                        |
+
+The old addresses redirect (`legacyServersRedirect`, pinned by a test): `/admin/backend-servers`
+to Backends and `/admin/remnawave` to Mode pools.
+
+**Nodes** is built like the simple Edges screens: one status sentence, a "Needs you" list only
+when something is broken, one row per node, and the leftovers as quiet one-line notes (a
+transport nobody uses on three nodes is one line, not six). The two switches (regular reading,
+changes from here) sit in the footer.
+
+**Add a node** (with changes allowed and the backend set up) writes one node row by hand: name,
+where the backend reaches it, country, the profile it runs and the transports it serves. The
+dialog says first that the node role is the normal way a node arrives (it enrolls the machine;
+FCP writes the row, the addresses and the approval) and that this is for a machine the role does
+not run. Before anything is sent it shows the placement check: the mode groups that list each
+chosen transport, and what `placements/validate` says about every mode's pool (an empty pool, a
+mode group this backend does not have, a mode group with no transport). The create is the
+ledger's node create (`POST {slug}/nodes`, sent once).
+
+`/admin/servers/nodes/{uuid}` is the node's ONE page: its sentence, the profile it runs, its own
+notes, its activation (an enrolled node), its **edges** when an origin protects it, and its
+transports with the addresses members get for each. The edges panel is the Edges section's
+(`edges/simple/NodeEdgesPanel.svelte`, loaded lazily): the origin's status from the server's one
+projection (docs/edges.md "Admin section"), Go live or Replace address, More (a spare address,
+**Protect again**, Origin details, Remove protection), the test card (`?test=<edgeId>`), the
+addresses in use, the per-node automatic switch and recent activity. `/admin/edges/nodes/<slug>`
+redirects here for a backend node. **Protect again** (an enrolled node live behind edges) starts
+a re-protect run ("A fronted node's activation") and opens its progress in the protect sheet; it
+is the primary action while the node waits to be protected again.
+
+With changes allowed and the backend set up the node header carries Edit, Restart or Turn on,
+and a More menu with Turn off, **Stop and remove** (offered only once the node is off) and
+**Remove from the backend only** (says the process may keep running); both removes are typed.
+On a transport: add, change or remove an address; edit a REALITY transport's names and target as
+write -> preview -> apply, typed when more than one node restarts; **Change port** (write ->
+preview -> stage: the nodes and who confirms each, then "Port changes" lists what waits on whom)
+and, under the profile, **Add a transport** from a template. The Nodes tab lists mode groups
+(add, rename, change transports, remove) and Recent changes ("Look again" on an open one,
+"Settle by hand" on an unknown outcome, asking for each recovery condition by name).
 
 The page hides what the server would refuse anyway; the server is what decides. All wording is
 in `src/client/routes/admin/servers/lib/words.ts`, and tests pin the sentences and that every

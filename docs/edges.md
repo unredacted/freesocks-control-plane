@@ -635,6 +635,41 @@ failed, cancelled or unbound run leaves the origin owned. Cancel before stage 5 
 `restore-direct` (nothing was published; the delete cancels the live rotation, drains the
 standbys for the reconcile destroy and removes the credential); at stages 5-7 the published edges
 stay and `edgeRestore.start` runs with purpose `cancel_setup`; after go-live there is no cancel.
+A **re-protect** run (`kind: 'reprotect'`, `POST relays/{id}/reprotect`, "Protect again" on the
+node page) is its own kind for a LIVE node: an enrolled node whose members are already served
+through this origin (refused otherwise: `edge.reprotect_not_bound` for an origin not bound yet,
+`edge.reprotect_not_enrolled` for a node the role did not enroll; plus the usual
+`edge.setup_run_active`, `edge.busy`, `edge.maintenance`, quarantine, restore and a disabled
+origin). Its plan is read from the origin's own rows like `require-edges`: the listeners members
+are served through (deployed, enabled, with a published template edge; none is
+`edge.coverage_incomplete`) and the ONE account of their template edges (missing, disabled or
+untested is `edge.account_incompatible`; an origin served through several accounts is
+`edge.reprotect_mixed_accounts`). Each new address is published beside what members hold, so
+the run first makes room: `desiredPublished` is widened to the published addresses plus one per
+transport plus the slots reserved for uncovered listeners, at most `MAX_DESIRED_PUBLISHED`
+(beyond it `edge.reprotect_no_room`); the size it found is kept in the plan snapshot
+(`reprotect.desiredBefore`). It starts at stage 1 on the existing origin, owns it
+(`setupOwned`) while it runs, and never reuses an edge at stage 3: every candidate is a fresh
+address with a fresh test link, so a REALITY key change is proven through a new address, not a
+named-connection retest of a committed one. Publication follows the node's admission rules
+(docs/servers.md "A fronted node's activation"). Members keep the committed delivery until
+go-live: the binding, the committed edges and the open gate are never touched before it. At
+go-live the new addresses take the old ones' places: every other published edge on a run
+transport whose new address is published drains (members move at their next refresh, as after
+a Replace) and the pool size goes back to `desiredBefore`. The surviving edges are compacted first
+(indexes 0..n-1), so no hole below the restored size admits a publication past it. While any
+setup run is working on an origin, the operator's direct pool writes (publish or unpublish by
+hand, an import that publishes, a rebalance) are refused with `edge.setup_owned`; an origin a
+finished run left owned stays open to them (the `require-edges` recovery). Any ending other than `done` hands
+the origin back (`onSetupRunEnded` clears `setupOwned` and gives the room back, so upkeep and
+the detector protect the node again); `retry` of a failed one claims it again (and makes room
+again) while the origin still binds the node and nothing else owns it. Its cancel
+(`cancelReprotect`, one mutation, disposition `candidates`) drops only the run's own new
+addresses: an unpublished one is cancelled for the reconcile destroy, a published one (a
+candidate the gate keeps from members, or one a committed admission already published) drains
+out of the pool unless it is its transport's last served address; never a delete, a restore or
+a binding change. It is refused with `edge.busy` while a rotation runs on the origin (nothing
+changes; cancel again in a moment).
 An ENROLLED node (docs/servers.md "A fronted node's activation"): the run parks at publish
 until the node is approved; the approval binds the run (`activationRunId`) and its activation
 (`setupRunId`) for good and wakes the run through `wakeForApproval`, fenced by the generation the
@@ -667,7 +702,7 @@ qualified -> trusted, quarantine -> paused for safety; `PLAIN_WORDS` in
   `attention` (the endpoint test opens the test card in place; go-live calls `require-edges`
   and renders the same card for whatever comes back pending), one row per protected node
   (name, country, one sentence, dot; a live run shows "Setting up, step N of 4" and opens its
-  progress), the primary **Protect a node**, and the automatic-protection switch (`POST
+  progress; a backend node's row opens its Servers node page), the primary **Protect a node**, and the automatic-protection switch (`POST
 automation`; a first-run card carries the cost and limitation sentences while it is off).
   `?protect=1` opens the protect sheet, `?run=<id>` a run's progress.
 - **Protect a node** (`ProtectSheet` + `ProtectProgress`): three questions and then the
@@ -685,13 +720,18 @@ setup-runs/plan` lists the transports in words, a closed "Not supported yet" dis
   renders the test card whose ticks echo `{edgeId, endpoint, listenerRevision, configHash}`;
   `review_changed` re-opens the review with the delta; `family_disabled` turns the family's
   render rule on through the config PATCH, then continues.
-- **Node page** (`/admin/edges/nodes/<slug>`, `NodePage`, no tabs): the status sentence,
-  "Addresses in use" per transport (a reduced pool strip + one plain line per address), the
-  primary **Replace address** (`ReplaceDialog`; "Replace now, address is blocked" under More),
-  the per-node "Replace addresses automatically" switch (origin `autoRotate`, captioned when the
-  global switch is off), "Recent activity" (the timeline through `plainAuditActionLabel`), and
-  More: add a spare address, remove protection (`restore-direct`; the restore workflow's phase
-  is shown while it runs), advanced details. `?test=<edgeId>` opens the test card.
+- **A node's edges** (`NodeEdgesPanel`, no tabs), part of the node's ONE page: a backend node's
+  Servers node page embeds it (docs/servers.md "The page") and `/admin/edges/nodes/<slug>`
+  redirects there (`nodeHomeOf`, keeping `?test=`); an origin that is not a backend node (manual,
+  a whole Outline server) keeps it at that address. The status sentence, "Addresses in use" per
+  transport (a reduced pool strip + one plain line per address), the primary **Replace
+  address** (`ReplaceDialog`; "Replace now, address is blocked" under More), the per-node
+  "Replace addresses automatically" switch (origin `autoRotate`, captioned when the global
+  switch is off), "Recent activity" (the timeline through `plainAuditActionLabel`), and More: add
+  a spare address, **Protect again** (an enrolled node live behind edges: a re-protect run, see
+  "Guided setup runs"; the primary action while the node waits to be protected again), Origin
+  details, remove protection (`restore-direct`; the restore workflow's phase is shown while it
+  runs). `?test=<edgeId>` opens the test card.
 - **Providers** (`/admin/edges/providers`): cards (Connected / Problem / Not tested, "3 of 6
   addresses used" from `providers/usage`, and the trust line: "Trusted automatically, checked
   with a real session on <date>" / "Tried with a real session by you on <date>" / "Reached from
@@ -699,16 +739,36 @@ setup-runs/plan` lists the transports in words, a closed "Not supported yet" dis
   dialog is the **Trust override**.
 - **Advanced** (`/admin/edges/advanced`): a plain list of links to the technical pages.
 
-**The technical pages**, unchanged and at their old addresses: **All origins**
-(`/admin/edges/advanced/relays`, the former dashboard: fleet tiles, attention list, readiness
-with resume links, origin table, probe chart), **Manual setup** (`/admin/edges/setup?relay=<slug>`,
-driven entirely by `setup-status`), the **per-origin page** (`/admin/edges/relays/<slug>`:
-overview, edges, listeners, rotations, probes; the quarantine resolver), the per-account page
+**The technical pages**: **All origins** (`/admin/edges/advanced/origins`, the former
+dashboard: fleet tiles, attention list, readiness whose steps link to where each is done
+(`setupStepTarget`), origin table, probe chart; **New origin** opens `NewRelayDialog` for a
+manual address or a whole Outline server), **Origin details** (`/admin/edges/relays/<slug>`:
+overview, edges, listeners, rotations, probes; the quarantine resolver; an origin that is not a
+backend node and has no edge yet shows the first-edge card: provision one, where a named, tested
+account is allowed before it is trusted and the edge waits unpublished, or import a front), the
+per-account page
 (`/admin/edges/providers/<id>`), **Templates**, **Probes** (the old `/admin/telemetry/probes`
 redirects) and **Settings** (Basics, Advanced sections, maintenance, delivery places). Codes
 are never shown bare: `src/shared/contracts/edgeCodes.ts` holds the vocabularies and
 `src/client/lib/edgeCodes.ts` the words. Section paths are spelled only in
 `src/client/routes/admin/edges/lib/routes.ts`; API paths only in `src/client/lib/edgesApi.ts`.
+
+A backend node is set up only with Autopilot (the protect sheet); the old step-by-step wizard
+is gone. Its addresses redirect (`legacyEdgesRedirect`, pinned by a test):
+`/admin/edges/setup?relay=<slug>` to that origin's details, `/admin/edges/setup` and
+`/admin/edges/advanced/relays` to All origins. One provision dialog (`ProvisionDialog`) covers
+both the ordinary provision (FCP picks a trusted account) and the bootstrap provision
+(`test-provision`, chosen automatically when the operator names an account), and one import
+dialog (`ImportFrontDialog`, with the inventory refresh) imports an existing front.
+
+**One status source.** Every page reads an origin's status from the `attention` response:
+`origins[]` (one row per origin, deleting ones included, in slug order: kind, dot, code, the
+live setup run and its plain step, published / spare / offline counts, worst health, layers,
+whether any item names it, and what members get) and `fleet` (the headline: what matters most,
+its count, the total and the protected count). The per-origin Delivery card reads
+`setup-status`'s `delivery` (relay scope only), the same judgement plus `degraded` from the
+sample render. The judgement lives in `convex/lib/edges/originStatus.ts` (one pure function,
+ranked by the server's own attention order); the CMS only words its codes and counts.
 
 Member side: when the key sits behind edges the report dialog also asks which connection the
 member was using (optional; the labels the pass shows), and an edge-required single-key

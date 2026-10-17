@@ -116,6 +116,10 @@ describe('EDGE_REFUSAL_COPY', () => {
     'node_unknown',
     'node_address_unknown',
     'keep_direct_enrolled',
+    'reprotect_not_bound',
+    'reprotect_not_enrolled',
+    'reprotect_mixed_accounts',
+    'reprotect_no_room',
   ];
 
   test('every refusal the pages meet is worded, and is part of the shared table', () => {

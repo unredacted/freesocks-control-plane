@@ -1,9 +1,13 @@
 <script lang="ts">
   /**
-   * One node (`/admin/servers/nodes/:uuid?instance=<slug>`): its status in a
-   * sentence, the transports it serves with the addresses members get for each,
-   * and every action on the node in the header. Nothing on this page changes a
-   * backend unless changes are allowed and the node role has handed it over.
+   * One node (`/admin/servers/nodes/:uuid?instance=<slug>`), the node's ONE
+   * page: its status in a sentence, its activation (enrolled nodes), its
+   * edges when an origin protects it (the Edges panel, loaded lazily; the old
+   * `/admin/edges/nodes/<slug>` address redirects here, `?test=<edgeId>` opens
+   * its test card), the transports it serves with the addresses members get
+   * for each, and every action on the node in the header. Nothing on this page
+   * changes a backend unless changes are allowed and the node role has handed
+   * it over.
    *
    * Wording lives in ./lib/words.ts (pure, unit-tested).
    */
@@ -23,6 +27,7 @@
   import { router } from '@client/stores/router.svelte';
   import type { AddressView, TransportView } from '../../../../shared/contracts/servers';
   import SectionHeader from '../edges/components/SectionHeader.svelte';
+  import { edgeSummaryQuery } from '@client/lib/edgesApi';
   import StatusDot from '../edges/simple/StatusDot.svelte';
   import ActivationSection from './components/ActivationSection.svelte';
   import HostDialog from './components/HostDialog.svelte';
@@ -69,6 +74,17 @@
   );
   let manageOn = $derived(summary.data?.config['manage.enabled'] ?? false);
   let canWrite = $derived(manageOn && !!instance?.writable && !!instance?.setUp);
+  // The Edges origin in front of this node, if any: its panel is part of this page.
+  const edgeSummary = edgeSummaryQuery();
+  let relaySlug = $derived(
+    (edgeSummary.data?.relays ?? []).find(
+      (r) =>
+        r.relay.origin.kind === 'panel-node' &&
+        r.relay.origin.backendServerId === instance?.id &&
+        (r.relay.origin.nodeUuid === uuid || (!!node && r.relay.origin.nodeName === node.name)),
+    )?.relay.slug ?? null,
+  );
+  const EdgesPanel = () => import('../edges/simple/NodeEdgesPanel.svelte');
   let back = $derived({
     href: serversPaths.home({ instance: slug ?? undefined }),
     label: 'Servers',
@@ -165,7 +181,20 @@
     </div>
 
     {#if intent && slug}
-      <ActivationSection {slug} {intent} />
+      <ActivationSection {slug} {intent} origin={!!relaySlug} />
+    {/if}
+
+    {#if relaySlug}
+      {#await EdgesPanel()}
+        <Skeleton class="h-32 w-full" />
+      {:then mod}
+        {@const Panel = mod.default}
+        <Panel slug={relaySlug} enrolled={intent ? { stage: intent.stage } : null} />
+      {:catch}
+        <p class="text-muted-foreground text-sm">
+          The edges of this node did not load. Reload the page to try again.
+        </p>
+      {/await}
     {/if}
 
     {#if node.profile}

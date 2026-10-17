@@ -37,6 +37,7 @@ import type {
   SetupStepId,
   SetupStepStatus,
 } from '../../shared/contracts/edgeCodes';
+import { SETUP_RUN_STAGE_STEP } from '../../shared/contracts/edgeCodes';
 
 export type Tone = 'neutral' | 'muted' | 'info' | 'success' | 'warning' | 'danger';
 
@@ -1026,9 +1027,9 @@ const REFUSAL_COPY = {
     fix: 'Check the listener names and the address, then fetch the test link again.',
   },
   use_manual_setup: {
-    label: 'Use manual setup',
+    label: 'Set up by hand',
     explain: 'Outline servers with no members have no test credential path.',
-    fix: 'Use the manual setup for this server, or rehearse once it has members.',
+    fix: 'Give its origin a first edge on its Origin details page, or protect it once it has members.',
   },
   choose_mode: {
     label: 'Choose a connection mode',
@@ -1060,6 +1061,26 @@ const REFUSAL_COPY = {
   not_edge_required: {
     label: 'Already direct',
     explain: 'Members of this node already receive its own address.',
+  },
+  reprotect_not_bound: {
+    label: 'Not live behind addresses yet',
+    explain: 'Protect again is for a node whose members already connect through its addresses.',
+    fix: 'Use Protect a node, or Go live if its addresses are ready.',
+  },
+  reprotect_not_enrolled: {
+    label: 'Not an enrolled node',
+    explain: 'Only a node the node role enrolled is protected again from here.',
+    fix: 'Use Replace address on its addresses instead.',
+  },
+  reprotect_mixed_accounts: {
+    label: 'More than one account',
+    explain: 'This node is served through addresses from more than one provider account.',
+    fix: 'Replace its addresses one at a time from Origin details instead.',
+  },
+  reprotect_no_room: {
+    label: 'No room for new addresses',
+    explain: 'The node already uses as many addresses as one origin may.',
+    fix: 'Remove an address from Origin details first, then protect it again.',
   },
 } as const satisfies Record<string, CodeCopy>;
 
@@ -1355,22 +1376,10 @@ export const SETUP_RUN_PLAIN_STAGES = [
 
 /**
  * The machine's ten stages folded onto the four plain ones (`done` = 5, past
- * the last). The one table both the stage labels and the progress steps read,
- * so a stage never has two names: `publish` is where an enrolled node waits
- * for its go-live approval, so it belongs to "Going live".
+ * the last). Defined next to SETUP_RUN_STAGES in the shared contract (the
+ * server's origin status reads the same table) and re-exported here.
  */
-export const SETUP_RUN_STAGE_STEP: Record<SetupRunStage, 1 | 2 | 3 | 4 | 5> = {
-  prepare: 1,
-  credential: 1,
-  provision: 1,
-  verify: 2,
-  try_it: 3,
-  publish: 4,
-  hide_direct_hosts: 4,
-  rehearse: 4,
-  go_live: 4,
-  done: 5,
-};
+export { SETUP_RUN_STAGE_STEP };
 
 /** The plain stage label of each machine stage (`done` = Live). */
 export const SETUP_RUN_STAGE_LABELS = Object.fromEntries(
@@ -1421,9 +1430,9 @@ export const SETUP_RUN_NEED_COPY: Record<SetupRunNeed, CodeCopy> = {
     fix: 'Pick the ones to protect.',
   },
   use_manual_setup: {
-    label: 'Manual setup needed',
+    label: 'Set up by hand',
     explain: 'Outline servers with no members are outside the guided setup.',
-    fix: 'Use manual setup.',
+    fix: 'Open its origin and give it a first edge there.',
   },
   choose_mode: {
     label: 'Connection mode needed',

@@ -1799,6 +1799,10 @@ export default defineSchema({
     approvedHideUuids: v.array(v.string()),
     // "Keep those members on the direct address": finish unbound after publish.
     keepDirect: v.optional(v.boolean()),
+    // Absent = a first protection. `reprotect`: a live, bound node protected
+    // again; members keep the committed delivery, a cancel drops only the
+    // run's own candidates, a failure leaves the node live (docs/edges.md).
+    kind: v.optional(v.literal('reprotect')),
     stage: setupRunStage,
     state: setupRunState,
     need: v.optional(v.object({ code: v.string(), detail: v.optional(v.string()) })),

@@ -6,7 +6,7 @@
    * Props: dot: Dot; class?: string
    */
   import { cn } from '@client/lib/utils';
-  import type { Dot } from './nodeStatus';
+  import type { Dot } from './runStages';
 
   interface Props {
     dot: Dot;

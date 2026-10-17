@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { AttentionItem, EdgeAdmin, SetupStatusResponse } from '@shared/contracts/edges';
+import type { EdgeAdmin } from '@shared/contracts/edges';
 import {
   REASON_MAX,
-  deriveDelivery,
   highlightedColumn,
   justificationText,
   recommendKeep,
@@ -15,63 +14,6 @@ import {
   tuplesEqual,
   type QuarantineListener,
 } from './relayLogic';
-
-const relay = (over: Partial<Parameters<typeof deriveDelivery>[0]['relay']> = {}) => ({
-  id: 'r1',
-  origin: { kind: 'panel-node' as const, backendServerId: 'b1', nodeName: 'n1', nodeUuid: null },
-  enabled: true,
-  publishedCount: 1,
-  ...over,
-});
-const renderingStep = (
-  blockers: Array<{ code: string; detail?: string | null }>,
-  renderEnabled = true,
-): Pick<SetupStatusResponse, 'steps'> => ({
-  steps: [
-    {
-      id: 'rendering',
-      status: blockers.length === 0 ? 'done' : 'blocked',
-      blockers: blockers.map((b) => ({ code: b.code, subject: null, detail: b.detail ?? null })),
-      warnings: [],
-      facts: { renderEnabled },
-    },
-  ],
-});
-
-describe('deriveDelivery', () => {
-  it('serves when published, enabled and rendering is clean', () => {
-    expect(deriveDelivery({ relay: relay(), setup: renderingStep([]) }).kind).toBe('serving');
-  });
-  it('a manual origin has nothing to deliver', () => {
-    expect(deriveDelivery({ relay: relay({ origin: { kind: 'manual' } }) }).kind).toBe('manual');
-  });
-  it('is dark with an empty pool, a disabled origin or rendering off', () => {
-    expect(deriveDelivery({ relay: relay({ publishedCount: 0 }) })).toMatchObject({
-      kind: 'dark',
-      code: 'empty_pool',
-    });
-    expect(deriveDelivery({ relay: relay({ enabled: false }) }).code).toBe('relay_disabled');
-    expect(deriveDelivery({ relay: relay(), setup: renderingStep([], false) }).code).toBe(
-      'render_disabled',
-    );
-  });
-  it('prefers the server attention item for this origin and ignores other origins', () => {
-    const item = (relayId: string): AttentionItem =>
-      ({ kind: 'members_dark', relayId, code: 'render_disabled' }) as AttentionItem;
-    expect(deriveDelivery({ relay: relay(), attention: [item('r1')] }).code).toBe(
-      'render_disabled',
-    );
-    expect(deriveDelivery({ relay: relay(), attention: [item('other')] }).kind).toBe('serving');
-  });
-  it('is degraded when the sample render did not apply, using the delivery reason', () => {
-    const d = deriveDelivery({
-      relay: relay(),
-      setup: renderingStep([{ code: 'preview_not_applied', detail: 'no_match' }]),
-    });
-    expect(d).toMatchObject({ kind: 'degraded', code: 'no_match' });
-    expect(d.reason).not.toContain('no_match');
-  });
-});
 
 describe('suspicionChip', () => {
   const base = {

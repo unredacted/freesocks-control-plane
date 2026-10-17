@@ -17,7 +17,11 @@
  *    generation. Duplicates and stale generations are no-ops;
  *  - `origins.setupOwned` is set at stage 1 and cleared ONLY by go-live (or by
  *    removal): a failed / cancelled / unbound run leaves the origin owned, so
- *    reconcile upkeep and the detector keep their hands off it;
+ *    reconcile upkeep and the detector keep their hands off it. A re-protect
+ *    run (`kind: 'reprotect'`, a live bound node protected again) is the
+ *    exception: its node keeps serving members throughout, so any ending
+ *    hands the origin back (`onSetupRunEnded`), and its cancel drops only its
+ *    own candidates (`cancelReprotect`);
  *  - members keep receiving the raw origin body through stage 5; from stage 6
  *    (hides) they depend on the edge; stage 8 binds in ONE mutation after
  *    re-checking everything stage 7 rehearsed.
@@ -45,10 +49,16 @@ import {
 import { publicationApproval, startRotation } from './edgeRotations';
 import {
   claimDeliveryBinding,
+  deliveryBindingFor,
   liveEdgesOfRelay,
+  refreshTemplateEdges,
   relayForBackendNode,
   scheduleMirrorRefresh,
+  unpublishFromPool,
 } from './relays';
+import { releaseTestCredentialsOf } from './edgeTestCredentials';
+import { isCandidateEdge } from './lib/backend/deliveryGate';
+import { assertNoRelayPanelClaim, assertNoRotationOrQuarantine } from './lib/edges/relayGuards';
 import { confirmEndpoint } from './edgeVerification';
 import { listenersOf } from './relayListeners';
 import { accountTested } from './edgeProviderAccounts';
@@ -67,6 +77,7 @@ import { parseIntent } from './lib/edges/intent';
 import { fnv1a64Hex, listenerConfigHash, validateListenerSpec } from './lib/edges/registration';
 import type { ListenerSpecInput } from './lib/edges/registration';
 import { MAX_DESIRED_PUBLISHED } from './lib/edgeConfig';
+import { publishedCount } from './lib/edges/pool';
 import {
   MAX_OBSERVATION_AGE_MS,
   MAX_REHEARSAL_ATTEMPTS,
@@ -90,7 +101,7 @@ import {
   blockActivation,
   promoteCandidate,
 } from './nodeActivation';
-import { isDirect, modeEntry, modeSlug } from './nodeIntents';
+import { isDirect, modeEntry, modeSlug, nodeGateFor } from './nodeIntents';
 import { setupReady } from './backendSetup';
 import { runningRenameOf } from './lib/backend/nodeAliases';
 
@@ -330,6 +341,7 @@ export function mapRunAdmin(r: Run, enrolled: RunEnrolled | null = null) {
     generation: r.generation,
     planRevision: r.planRevision,
     keepDirect: r.keepDirect === true,
+    kind: r.kind ?? ('protect' as const),
     listeners: r.listeners.map((l) => ({
       listenerKey: l.listenerKey,
       layer: l.layer,
@@ -883,6 +895,11 @@ export const transition = internalMutation({
  * approved again. Only the activation this run is bound to (both links agree,
  * it is still the node's current run) and only for the run's CURRENT
  * generation: a late hook of an older attempt or an older run is a no-op.
+ *
+ * A re-protect run (`kind: 'reprotect'`) also hands the live origin back here:
+ * its node never stopped serving the committed delivery, so a run that ends
+ * without going live clears `setupOwned` (upkeep and the detector protect the
+ * node again). A first protection keeps its origin owned, as before.
  */
 export async function onSetupRunEnded(
   ctx: MutationCtx,
@@ -894,12 +911,129 @@ export async function onSetupRunEnded(
   // the generation calls this BEFORE its write): a hook for an attempt that
   // was already replaced does nothing.
   const current = await ctx.db.get(setupRun._id);
-  if (!current?.activationRunId || endingGeneration !== current.generation) return;
+  if (!current || endingGeneration !== current.generation) return;
+  if (current.kind === 'reprotect') await releaseReprotectOrigin(ctx, current);
+  if (!current.activationRunId) return;
   const act = await ctx.db.get(current.activationRunId);
   if (!act || act.setupRunId !== current._id || act.state !== 'running') return;
   const intent = await ctx.db.get(act.intentId);
   if (!intent || intent.activation.currentRunId !== act._id) return;
   await blockActivation(ctx, act, code);
+}
+
+/**
+ * A re-protect run that ended without going live gives the live origin back,
+ * and the room it made for its new addresses (`restoreReprotectPool`).
+ */
+async function releaseReprotectOrigin(ctx: MutationCtx, run: Run): Promise<void> {
+  if (!run.relayId) return;
+  const relay = await ctx.db.get(run.relayId);
+  if (!relay) return;
+  await restoreReprotectPool(ctx, run, relay);
+  if (!relay.setupOwned && relay.setupStage === undefined) return;
+  await ctx.db.patch(relay._id, {
+    setupOwned: undefined,
+    setupStage: undefined,
+    updatedAt: Date.now(),
+  });
+}
+
+/**
+ * Room for a re-protect's new addresses. Each one is published BESIDE what
+ * members already hold, so a full pool would keep every candidate a standby
+ * (`pool_full_standby`) and the run could never go live. The pool is widened
+ * to what is published, plus one slot per transport of the run that has no
+ * published address of the run yet, plus the slots reserved for uncovered
+ * listeners (`allocatePoolIndex`), bounded by MAX_DESIRED_PUBLISHED: past that
+ * `edge.reprotect_no_room`. Go-live retires the replaced addresses and gives
+ * the room back (`retireReplacedEdges`), and so does a run that ends without
+ * going live.
+ */
+async function ensureReprotectRoom(
+  ctx: MutationCtx,
+  relay: Relay,
+  newAddresses: number,
+): Promise<void> {
+  // Coverage listeners with no template edge hold their reserved slots.
+  const uncovered = (await listenersOf(ctx, relay._id)).filter(
+    (l) => l.deployed && l.enabled && !l.retired && !l.templateEdgeId,
+  ).length;
+  const needed = publishedCount(relay.publishedEdgeIds) + newAddresses + uncovered;
+  if (needed <= relay.desiredPublished) return;
+  if (needed > MAX_DESIRED_PUBLISHED)
+    throw new ConvexError({
+      code: 'edge.reprotect_no_room',
+      message: `This origin has no room for a new address per transport (at most ${MAX_DESIRED_PUBLISHED} in use); remove an address first`,
+    });
+  await ctx.db.patch(relay._id, { desiredPublished: needed, updatedAt: Date.now() });
+}
+
+/**
+ * The pool size a re-protect found, back (never below what is published now).
+ * The surviving edges are compacted first: a new address published into the
+ * widened slot would otherwise sit above the restored size with a hole below
+ * it, and that hole would admit a publication past the size (two published in
+ * a pool of one).
+ */
+async function restoreReprotectPool(ctx: MutationCtx, run: Run, relay: Relay): Promise<void> {
+  const before = parsePlan(run).reprotect?.desiredBefore;
+  if (before === undefined) return;
+  await compactPool(ctx, relay._id);
+  const fresh = (await ctx.db.get(relay._id)) ?? relay;
+  const desired = Math.max(before, publishedCount(fresh.publishedEdgeIds));
+  if (fresh.desiredPublished !== desired)
+    await ctx.db.patch(relay._id, { desiredPublished: desired, updatedAt: Date.now() });
+}
+
+/**
+ * Close the holes of a published pool: the published edges move down to
+ * indexes 0..n-1 in their order (each edge's `poolIndex` with them), the epoch
+ * is bumped so no render keyed to the old layout is reused, and the template
+ * edges follow. A pool without holes is left alone.
+ */
+async function compactPool(ctx: MutationCtx, relayId: Id<'relays'>): Promise<void> {
+  const relay = await ctx.db.get(relayId);
+  if (!relay) return;
+  const ids = relay.publishedEdgeIds.filter((e): e is Id<'edges'> => !!e);
+  if (ids.length === relay.publishedEdgeIds.length) return;
+  const now = Date.now();
+  for (let i = 0; i < ids.length; i++) {
+    const e = await ctx.db.get(ids[i]!);
+    if (e && e.poolIndex !== i) await ctx.db.patch(e._id, { poolIndex: i, updatedAt: now });
+  }
+  await ctx.db.patch(relayId, {
+    publishedEdgeIds: ids,
+    publicationEpoch: relay.publicationEpoch + 1,
+    updatedAt: now,
+  });
+  await refreshTemplateEdges(ctx, relay);
+  await scheduleMirrorRefresh(ctx);
+}
+
+/**
+ * Go-live of a re-protect: the new addresses take the places of the ones they
+ * replace. Every other published edge on a run transport is drained (members
+ * move at their next refresh, as after a Replace) once that transport's new
+ * address is published; a transport whose new address is not published keeps
+ * what it has. Then the pool size is given back.
+ */
+async function retireReplacedEdges(ctx: MutationCtx, run: Run, relay: Relay): Promise<number> {
+  const keep = new Set(run.listeners.map((l) => l.edgeId).filter((e): e is Id<'edges'> => !!e));
+  const listeners = await listenersOf(ctx, relay._id);
+  const retire: Edge[] = [];
+  for (const entry of run.listeners) {
+    const l = listeners.find((x) => x.listenerKey === entry.listenerKey && !x.retired);
+    const fresh = entry.edgeId ? await ctx.db.get(entry.edgeId) : null;
+    if (!l || !fresh || fresh.publication !== 'published') continue;
+    for (const id of relay.publishedEdgeIds) {
+      if (!id || keep.has(id)) continue;
+      const e = await ctx.db.get(id);
+      if (e && e.listenerId === l._id && e.publication === 'published') retire.push(e);
+    }
+  }
+  for (const e of retire) await unpublishFromPool(ctx, relay, e, {});
+  await restoreReprotectPool(ctx, run, relay);
+  return retire.length;
 }
 
 function verdictsOf(run: Run): string {
@@ -1474,19 +1608,25 @@ async function stageProvision(ctx: ActionCtx, run: Run): Promise<null> {
   }
   // Reuse what exists: a live unpublished edge on the listener (an earlier
   // generation's standby, a spare) counts; a failed / destroyed one does not.
+  // A re-protect reuses only its OWN candidate: the committed edges members
+  // hold and any spare stay what they are, and every candidate is a fresh
+  // address with a fresh test link (after a REALITY key change, a retest of a
+  // committed address could not be proven by a named connection).
+  const reprotect = run.kind === 'reprotect';
   const listeners = run.listeners.map((l) => {
     const row = c.listeners.find((x) => x.listenerKey === l.listenerKey);
     const own = l.edgeId ? c.edges.find((e) => e._id === l.edgeId) : undefined;
     if (own && LIVE_CANDIDATE.has(own.status)) return { ...l };
-    const reuse = row
-      ? c.edges.find(
-          (e) =>
-            e.listenerId === row._id &&
-            LIVE_CANDIDATE.has(e.status) &&
-            (e.publication === 'unpublished' || e.publication === 'published') &&
-            e.accountId === run.accountId,
-        )
-      : undefined;
+    const reuse =
+      row && !reprotect
+        ? c.edges.find(
+            (e) =>
+              e.listenerId === row._id &&
+              LIVE_CANDIDATE.has(e.status) &&
+              (e.publication === 'unpublished' || e.publication === 'published') &&
+              e.accountId === run.accountId,
+          )
+        : undefined;
     return { ...l, edgeId: reuse?._id, verify: 'pending' as const };
   });
   const missing = listeners.find((l) => !l.edgeId);
@@ -2123,6 +2263,8 @@ export const goLive = internalMutation({
       }
     }
     await claimDeliveryBinding(ctx, relay);
+    // A re-protect's new addresses take the places of the ones they replace.
+    const retired = r.kind === 'reprotect' ? await retireReplacedEdges(ctx, r, relay) : 0;
     await ctx.db.patch(relay._id, {
       setupOwned: undefined,
       setupStage: undefined,
@@ -2151,7 +2293,12 @@ export const goLive = internalMutation({
       stepVersion: next,
       nextStepAt: undefined,
       finishedAt: now,
-      events: appendRunEvent(r.events, { at: now, level: 'info', code: 'live' }),
+      events: appendRunEvent(r.events, {
+        at: now,
+        level: 'info',
+        code: 'live',
+        ...(retired > 0 ? { detail: `${retired} replaced address(es) draining` } : {}),
+      }),
       updatedAt: now,
     });
     const after = (await ctx.db.get(runId))!;
@@ -2273,6 +2420,10 @@ export const retry = internalMutation({
       throw new ConvexError({ code: 'edge.setup_run_finished', message: 'The run is finished' });
     if (r.state === 'running' || r.state === 'waiting')
       throw new ConvexError({ code: 'edge.setup_run_busy', message: 'The run is still working' });
+    // A failed re-protect gave its live origin back: the retry claims it again,
+    // only while the node is still live behind it and nothing else owns it.
+    const reclaim = r.kind === 'reprotect' && r.state === 'failed';
+    if (reclaim) await assertReprotectReclaimable(ctx, r);
     const now = Date.now();
     let stage = r.stage;
     let listeners = r.listeners.map((l) => ({ ...l }));
@@ -2385,10 +2536,64 @@ export const retry = internalMutation({
       }),
       updatedAt: now,
     });
+    if (reclaim && r.relayId) {
+      const relay = await ctx.db.get(r.relayId);
+      if (relay) {
+        let missing = 0;
+        for (const l of listeners) {
+          const e = l.edgeId ? await ctx.db.get(l.edgeId) : null;
+          if (!e || e.publication !== 'published') missing++;
+        }
+        await ensureReprotectRoom(ctx, relay, missing);
+      }
+      await ctx.db.patch(r.relayId, { setupOwned: true, setupStage: stage, updatedAt: now });
+    }
     await scheduleStep(ctx, r._id, 0);
     return { ok: true as const, generation: r.generation + 1, stage };
   },
 });
+
+/**
+ * A failed re-protect may claim its origin again only while the origin still
+ * exists, still binds the node (members are served through it), is not being
+ * deleted, quarantined or restored, and no other run or setup owns it.
+ */
+async function assertReprotectReclaimable(ctx: MutationCtx, r: Run): Promise<void> {
+  const relay = r.relayId ? await ctx.db.get(r.relayId) : null;
+  if (!relay || relay.deleting)
+    throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
+  const active = await activeRunForOrigin(ctx.db, r.backendServerId, r.nodeName);
+  if (relay.setupOwned || (active && active._id !== r._id))
+    throw new ConvexError({
+      code: 'edge.setup_run_active',
+      message: 'A setup run already owns this node',
+    });
+  if (!relay.enabled)
+    throw new ConvexError({ code: 'edge.relay_disabled', message: 'Enable the origin first' });
+  if (relay.quarantine)
+    throw new ConvexError({ code: 'edge.quarantined', message: 'Resolve the quarantine first' });
+  if (relay.restore)
+    throw new ConvexError({
+      code: 'edge.restore_in_progress',
+      message: 'A restore workflow is running on this origin',
+    });
+  if (!(await admitted(ctx.db)))
+    throw new ConvexError({ code: 'edge.maintenance', message: 'Edges are in maintenance' });
+  // A rename or a server change moving the listeners under the run: wait.
+  await assertNoRelayPanelClaim(ctx.db, relay);
+  if (!(await boundToRelay(ctx, relay)))
+    throw new ConvexError({
+      code: 'edge.reprotect_not_bound',
+      message: 'The node is no longer live behind this origin',
+    });
+}
+
+/** Whether the node's members are served through THIS origin (its delivery binding is active). */
+async function boundToRelay(ctx: { db: QueryCtx['db'] }, relay: Relay): Promise<boolean> {
+  if (relay.bindingDeferred || !relay.backendServerId) return false;
+  const binding = await deliveryBindingFor(ctx.db, relay.backendServerId, relay.nodeName);
+  return !!binding && binding.relaySlug === relay.slug;
+}
 
 /**
  * Resume an interruption with what the operator answered:
@@ -2566,25 +2771,22 @@ export const resume = internalMutation({
  * the reconcile destroy and lets the origin delete remove the credential);
  * stages 5-7 (and a go-live waiting for a fresh approval) keep the published
  * edges and run the restore workflow (`edgeRestore.start`, purpose
- * `cancel_setup`); after go-live there is no cancel.
+ * `cancel_setup`); after go-live there is no cancel. A re-protect run
+ * (`kind: 'reprotect'`) drops only its own candidates instead, in one
+ * mutation (`cancelReprotect`): the live node keeps what members have.
  */
 export const cancel = internalAction({
   args: { runId: v.id('edgeSetupRuns'), actorAdminId: v.optional(v.id('adminUsers')) },
-  handler: async (ctx, { runId, actorAdminId }) => {
+  handler: async (
+    ctx,
+    { runId, actorAdminId },
+  ): Promise<{ ok: true; disposition: CancelDisposition }> => {
     const r = await ctx.runQuery(internal.edgeSetupRuns.get, { id: runId });
     if (!r) throw new ConvexError({ code: 'not_found', message: 'Run not found' });
-    // A run waiting at go-live for a fresh approval (its candidate went stale)
-    // has bound nothing yet: it cancels like stages 5-7.
+    if (r.kind === 'reprotect')
+      return ctx.runMutation(internal.edgeSetupRuns.cancelReprotect, { runId, actorAdminId });
+    assertCancellable(r);
     const parkedAtGoLive = r.stage === 'go_live' && r.state === 'needs_you';
-    if (
-      isTerminalRunState(r.state) ||
-      (r.stage === 'go_live' && !parkedAtGoLive) ||
-      r.stage === 'done'
-    )
-      throw new ConvexError({
-        code: 'edge.setup_run_finished',
-        message: 'The run is past the point of cancellation',
-      });
     let disposition: 'deleted' | 'restore' | 'none' = 'none';
     if (r.relayId && cancelDeletesRelay(r.stage)) {
       await ctx.runMutation(internal.relays.requestDelete, {
@@ -2615,6 +2817,26 @@ export const cancel = internalAction({
   },
 });
 
+export type CancelDisposition = 'deleted' | 'restore' | 'candidates' | 'none';
+
+/**
+ * Cancel is refused once the run is finished or binding: after go-live there
+ * is no cancel. A run waiting at go-live for a fresh approval (its candidate
+ * went stale) has bound nothing yet: it cancels like stages 5-7.
+ */
+function assertCancellable(r: Run): void {
+  const parkedAtGoLive = r.stage === 'go_live' && r.state === 'needs_you';
+  if (
+    isTerminalRunState(r.state) ||
+    (r.stage === 'go_live' && !parkedAtGoLive) ||
+    r.stage === 'done'
+  )
+    throw new ConvexError({
+      code: 'edge.setup_run_finished',
+      message: 'The run is past the point of cancellation',
+    });
+}
+
 export const markCancelled = internalMutation({
   args: {
     runId: v.id('edgeSetupRuns'),
@@ -2624,35 +2846,138 @@ export const markCancelled = internalMutation({
   handler: async (ctx, { runId, disposition, actorAdminId }) => {
     const r = await ctx.db.get(runId);
     if (!r || isTerminalRunState(r.state)) return null;
-    const now = Date.now();
-    // Read before the generation moves: the hook ends THIS attempt.
-    await onSetupRunEnded(ctx, r, r.generation, 'servers.setup_run_cancelled');
-    await ctx.db.patch(runId, {
-      state: 'cancelled',
-      expect: undefined,
-      testLinks: undefined,
-      finishedAt: now,
-      nextStepAt: undefined,
-      stepVersion: r.stepVersion + 1,
-      generation: r.generation + 1,
-      events: appendRunEvent(r.events, {
-        at: now,
-        level: 'warn',
-        code: 'cancelled',
-        detail: disposition,
-      }),
-      updatedAt: now,
-    });
-    await auditRun(
-      ctx,
-      (await ctx.db.get(runId))!,
-      'edge.setup_run.cancelled',
-      { stage: r.stage, disposition },
-      actorAdminId,
-    );
+    await markRunCancelled(ctx, r, disposition, actorAdminId);
     return null;
   },
 });
+
+/** The end of every cancel: the end hook (THIS attempt), the terminal write, the audit. */
+async function markRunCancelled(
+  ctx: MutationCtx,
+  r: Run,
+  disposition: CancelDisposition,
+  actorAdminId: Id<'adminUsers'> | undefined,
+): Promise<void> {
+  const now = Date.now();
+  // Read before the generation moves: the hook ends THIS attempt.
+  await onSetupRunEnded(ctx, r, r.generation, 'servers.setup_run_cancelled');
+  await ctx.db.patch(r._id, {
+    state: 'cancelled',
+    expect: undefined,
+    testLinks: undefined,
+    finishedAt: now,
+    nextStepAt: undefined,
+    stepVersion: r.stepVersion + 1,
+    generation: r.generation + 1,
+    events: appendRunEvent(r.events, {
+      at: now,
+      level: 'warn',
+      code: 'cancelled',
+      detail: disposition,
+    }),
+    updatedAt: now,
+  });
+  await auditRun(
+    ctx,
+    (await ctx.db.get(r._id))!,
+    'edge.setup_run.cancelled',
+    { stage: r.stage, disposition },
+    actorAdminId,
+  );
+}
+
+/**
+ * Cancel a re-protect run: drop ONLY its own candidates, in one mutation. The
+ * live node keeps its committed delivery (the binding, the committed edges,
+ * the open gate); nothing is deleted or restored. Refused while a rotation
+ * runs on the origin (`edge.busy`: nothing changed, cancel again in a moment).
+ *  - an unpublished candidate is cancelled (the reconcile destroys it, like
+ *    retry's "try another address");
+ *  - a published CANDIDATE (one the node's gate keeps from members) leaves the
+ *    pool to drain;
+ *  - an edge published under the committed approval is live delivery already
+ *    and stays.
+ * Then the common end: the bound activation is blocked, the origin is given
+ * back (`setupOwned` cleared), the test credential expires now.
+ */
+export const cancelReprotect = internalMutation({
+  args: { runId: v.id('edgeSetupRuns'), actorAdminId: v.optional(v.id('adminUsers')) },
+  handler: async (ctx, { runId, actorAdminId }) => {
+    const r = await ctx.db.get(runId);
+    if (!r) throw new ConvexError({ code: 'not_found', message: 'Run not found' });
+    if (r.kind !== 'reprotect')
+      throw new ConvexError({ code: 'validation', message: 'Not a re-protect run' });
+    assertCancellable(r);
+    const relay = r.relayId ? await ctx.db.get(r.relayId) : null;
+    if (relay) {
+      if (relay.activeRotationId) {
+        const rot = await ctx.db.get(relay.activeRotationId);
+        if (rot && !isTerminalPhase(rot.phase))
+          throw new ConvexError({
+            code: 'edge.busy',
+            message: 'A rotation is running on this origin; cancel again in a moment',
+          });
+      }
+      // The run's candidates: every listener's edge, plus what a provision it
+      // was still waiting on produced (its hook may not have landed yet).
+      const ids = new Set<Id<'edges'>>();
+      for (const l of r.listeners) if (l.edgeId) ids.add(l.edgeId);
+      if (r.expect) {
+        const rot = await ctx.db.get(r.expect.rotationId);
+        if (rot?.kind === 'provision' && rot.toEdgeId) ids.add(rot.toEdgeId);
+      }
+      const gate =
+        relay.origin.kind === 'panel-node' && relay.backendServerId
+          ? await nodeGateFor(ctx, relay.backendServerId, relay.origin.nodeName)
+          : null;
+      const drop: Edge[] = [];
+      const unpublish: Edge[] = [];
+      for (const id of ids) {
+        const e = await ctx.db.get(id);
+        if (!e || e.relayId !== relay._id) continue;
+        if (e.publication === 'unpublished' && LIVE_CANDIDATE.has(e.status)) drop.push(e);
+        else if (e.publication !== 'published') continue;
+        // A candidate members never got goes; so does an address of this run
+        // a committed admission published beside the transport's existing
+        // ones (every edge here is the run's own: a re-protect reuses none).
+        // Only an address that is the transport's last served one stays.
+        else if (gate && isCandidateEdge(gate, e._id as string)) unpublish.push(e);
+        else if (await servedBesides(ctx, relay, e, ids)) unpublish.push(e);
+      }
+      // The pool guard of every unpublish (quarantine, restore, a backend
+      // claim), checked before anything is written.
+      if (unpublish.length > 0) await assertNoRotationOrQuarantine(ctx.db, relay);
+      const now = Date.now();
+      for (const e of drop)
+        await ctx.db.patch(e._id, { status: 'cancelled', statusChangedAt: now, updatedAt: now });
+      for (const e of unpublish)
+        await unpublishFromPool(ctx, relay, e, actorAdminId ? { actorAdminId } : {});
+      // A temporary test credential minted for this run expires now.
+      await releaseTestCredentialsOf(ctx, relay._id);
+    }
+    await markRunCancelled(ctx, r, 'candidates', actorAdminId);
+    return { ok: true as const, disposition: 'candidates' as const };
+  },
+});
+
+/**
+ * Whether the edge's transport keeps another published address that is not
+ * the run's own (`runEdges`): only then does dropping it leave members served.
+ */
+async function servedBesides(
+  ctx: { db: QueryCtx['db'] },
+  relay: Relay,
+  edge: Edge,
+  runEdges: ReadonlySet<Id<'edges'>>,
+): Promise<boolean> {
+  for (const id of relay.publishedEdgeIds) {
+    if (!id || id === edge._id || runEdges.has(id)) continue;
+    const other = await ctx.db.get(id);
+    if (other && other.listenerId === edge.listenerId && other.publication === 'published')
+      return true;
+  }
+  return false;
+}
 
 // --- require-edges (the only other path to the binding) --------------------------------------------
 
@@ -2841,6 +3166,195 @@ export const requireEdges = internalMutation({
     );
     if (pending.length === 0) await scheduleStep(ctx, id, 0);
     return { runId: id, stage, state: run.state, pending };
+  },
+});
+
+// --- re-protect a live node (its own run kind) ----------------------------------------------------
+
+/**
+ * `POST relays/{id}/reprotect`: protect a LIVE, bound enrolled node again from
+ * its node page. A run of kind `reprotect` on the origin as it stands (the
+ * synthetic plan reads the relay's own rows, like `requireEdges`): the
+ * committed delivery stays (binding, committed edges, open gate) while the run
+ * provisions FRESH candidates on every listener members are served through,
+ * shows their test links, and publishes them under the node's admission rules
+ * (`committed` within the approved shape binds without a new approval;
+ * otherwise the run parks at `node_not_approved` and the approval makes them
+ * isolated candidates until go-live promotes them). The origin is owned while
+ * the run lasts (upkeep and the detector keep off); a cancel drops only the
+ * candidates (`cancelReprotect`) and a failure hands the live origin back
+ * (`onSetupRunEnded`).
+ */
+export const reprotect = internalMutation({
+  args: { relayId: v.id('relays'), actorAdminId: v.optional(v.id('adminUsers')) },
+  handler: async (ctx, { relayId, actorAdminId }) => {
+    const relay = await ctx.db.get(relayId);
+    if (!relay || relay.deleting)
+      throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
+    if (!(await boundToRelay(ctx, relay)))
+      throw new ConvexError({
+        code: 'edge.reprotect_not_bound',
+        message: 'The node is not live behind this origin yet; protect it or take it live first',
+      });
+    const backendServerId = relay.backendServerId;
+    const nodeName = relay.origin.kind === 'panel-node' ? relay.origin.nodeName : null;
+    const intent =
+      backendServerId && nodeName
+        ? await ctx.db
+            .query('panelNodeIntents')
+            .withIndex('by_server_name', (q) =>
+              q.eq('backendServerId', backendServerId).eq('name', nodeName),
+            )
+            .unique()
+        : null;
+    if (!backendServerId || !nodeName || !intent)
+      throw new ConvexError({
+        code: 'edge.reprotect_not_enrolled',
+        message: 'Only an enrolled node is protected again from here',
+      });
+    if (relay.setupOwned || (await activeRunForOrigin(ctx.db, backendServerId, nodeName)))
+      throw new ConvexError({
+        code: 'edge.setup_run_active',
+        message: 'A setup run already owns this node',
+      });
+    if (!relay.enabled)
+      throw new ConvexError({ code: 'edge.relay_disabled', message: 'Enable the origin first' });
+    if (relay.quarantine)
+      throw new ConvexError({ code: 'edge.quarantined', message: 'Resolve the quarantine first' });
+    if (relay.restore)
+      throw new ConvexError({
+        code: 'edge.restore_in_progress',
+        message: 'A restore workflow is running on this origin',
+      });
+    if (relay.activeRotationId) {
+      const rot = await ctx.db.get(relay.activeRotationId);
+      if (rot && !isTerminalPhase(rot.phase))
+        throw new ConvexError({ code: 'edge.busy', message: 'A rotation is running' });
+    }
+    if (!(await admitted(ctx.db)))
+      throw new ConvexError({ code: 'edge.maintenance', message: 'Edges are in maintenance' });
+    // A node rename or a server change moving this origin's listeners: its
+    // rotations would be refused mid-run (`edge.panel_op_running`), so wait.
+    await assertNoRelayPanelClaim(ctx.db, relay);
+    // What the committed delivery serves: every deployed, enabled listener with
+    // a published template edge.
+    const served: Array<{ listener: Listener; template: Edge }> = [];
+    for (const l of await listenersOf(ctx, relayId)) {
+      if (l.retired || !l.deployed || !l.enabled || !l.templateEdgeId) continue;
+      const e = await ctx.db.get(l.templateEdgeId);
+      if (e && e.relayId === relayId && e.publication === 'published')
+        served.push({ listener: l, template: e });
+    }
+    if (served.length === 0)
+      throw new ConvexError({
+        code: 'edge.coverage_incomplete',
+        message: 'No listener of this origin is served by a published edge',
+      });
+    // The account members are served through now. One run has one account,
+    // so an origin served through several (one transport moved to another
+    // provider) is refused rather than forced onto the first one's.
+    const accountIds = new Set(
+      served.map((s) => s.template.accountId).filter((a): a is Id<'edgeProviderAccounts'> => !!a),
+    );
+    if (accountIds.size > 1)
+      throw new ConvexError({
+        code: 'edge.reprotect_mixed_accounts',
+        message:
+          'This origin is served through more than one provider account; protect it again one account at a time from Origin details',
+      });
+    const accountId = [...accountIds][0];
+    const account = accountId ? await ctx.db.get(accountId) : null;
+    if (!account || !account.enabled || !accountTested(account))
+      throw new ConvexError({
+        code: 'edge.account_incompatible',
+        message: 'The account this node is served through is missing, disabled or untested',
+      });
+    const layer = edgeLayerOf(account.provider);
+    const requiredListeners = served.map((s) => s.listener.listenerKey);
+    const nodeUuid = relay.origin.kind === 'panel-node' ? (relay.origin.nodeUuid ?? '') : '';
+    // Room for one new address per transport, beside what members hold.
+    const desiredBefore = relay.desiredPublished;
+    await ensureReprotectRoom(ctx, relay, requiredListeners.length);
+    const plan: SetupPlanSnapshot = {
+      backendServerId: backendServerId as string,
+      backend: '',
+      nodeUuid,
+      nodeName,
+      originAddress: relay.originAddress,
+      relaySlug: relay.slug,
+      inbounds: [],
+      requiredListeners,
+      tooManyInbounds: false,
+      directHosts: [],
+      accounts: [
+        {
+          id: account._id as string,
+          name: account.name,
+          provider: account.provider,
+          layer,
+          compatible: true,
+          reasons: [],
+        },
+      ],
+      renderGlobal: { willEnable: false, affectedRelays: [] },
+      familiesDisabled: [],
+      emptyNode: false,
+      existingRelay: { id: relay._id as string, slug: relay.slug, setupStage: null },
+      activeRunId: null,
+      enrolled: true,
+      reprotect: { desiredBefore },
+    };
+    const stage: SetupRunStage = 'prepare';
+    const now = Date.now();
+    const id = await ctx.db.insert('edgeSetupRuns', {
+      relayId,
+      relaySlug: relay.slug,
+      backendServerId,
+      nodeName,
+      nodeUuid,
+      accountId: account._id,
+      plan: JSON.stringify(plan),
+      planHash: '',
+      planRevision: 1,
+      approvedHideUuids: [],
+      kind: 'reprotect',
+      stage,
+      state: 'running',
+      generation: 1,
+      stepVersion: 1,
+      // No edge yet: every candidate is provisioned fresh.
+      listeners: requiredListeners.map((listenerKey) => ({
+        listenerKey,
+        layer,
+        verify: 'pending' as const,
+        published: false,
+      })),
+      stageEnteredAt: now,
+      events: [{ at: now, level: 'info', code: 'reprotect', detail: `stage ${stage}` }],
+      actorAdminId,
+      startedAt: now,
+      updatedAt: now,
+    });
+    // The fence: only this run's own rotations touch the pool while it runs.
+    await ctx.db.patch(relayId, { setupOwned: true, setupStage: stage, updatedAt: now });
+    const run = (await ctx.db.get(id))!;
+    await auditRun(
+      ctx,
+      run,
+      'edge.setup_run.started',
+      {
+        stage,
+        kind: 'reprotect',
+        listeners: requiredListeners.length,
+        accountName: account.name,
+        provider: account.provider,
+        approvedHides: 0,
+        keepDirect: false,
+      },
+      actorAdminId,
+    );
+    await scheduleStep(ctx, id, 0);
+    return { runId: id, stage };
   },
 });
 

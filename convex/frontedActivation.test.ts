@@ -13,6 +13,9 @@
  *  - a live node's replacement stays a candidate (never in a member body, a
  *    cache or a mirror) through publication, a failed promotion and a
  *    re-approval, and its rehearsal renders the candidates;
+ *  - "Protect again" over HTTP (a `reprotect` run): fresh candidates, members
+ *    keep the committed delivery throughout, a cancel drops only the
+ *    candidates and a failure hands the live origin back;
  *  - ownership vs attempt fencing: wakes and end hooks of an older attempt or
  *    an older run are no-ops;
  *  - the mirror barrier, and the refusals.
@@ -39,7 +42,7 @@ import { createFakeUpcloud } from './lib/edges/testing/fakeEdgeWorld';
 import { z } from 'zod';
 import { __setEdgeProviderForTests } from './lib/edges/providers/registry';
 import type { EdgeProvider, EdgeSpec, Ledger, LedgerResource } from './lib/edges/providers/types';
-import { mockFetch, routeFetch, type PartialHandler } from './lib/edges/testing/mockFetch';
+import { jsonRes, mockFetch, routeFetch, type PartialHandler } from './lib/edges/testing/mockFetch';
 import { __setStageOpsForTests, type StageOps } from './edgeSetupRuns';
 import { __setPlanOpsForTests } from './edgeSetupPlan';
 import { __setFrontIngressCheckForTests } from './nodeIntentOps';
@@ -50,7 +53,11 @@ import { onSetupRunEnded } from './edgeSetupRuns';
 import { publicationAdmission } from './nodeActivation';
 import { signValue } from './lib/cookies';
 import { ActivationReview } from '../src/shared/contracts/servers';
-import { SetupRunAdmin } from '../src/shared/contracts/edges';
+import {
+  SetupRunAdmin,
+  SetupRunCancelResponse,
+  SetupRunCreatedResponse,
+} from '../src/shared/contracts/edges';
 
 const modules = import.meta.glob('./**/*.*s');
 type T = TestConvex<typeof schema>;
@@ -213,7 +220,12 @@ interface World {
   t: T;
   serverId: Id<'backendServers'>;
   backend: FakeBackend;
-  calls: { rehearsedEdges: string[][]; s3: Array<{ op: S3Op; provider: string }> };
+  calls: {
+    rehearsedEdges: string[][];
+    s3: Array<{ op: S3Op; provider: string }>;
+    /** Every restore workflow a setup run started (by purpose). */
+    restores: string[];
+  };
   hooks: {
     /** Runs once before the next rehearsal reads anything (a move while the run is at 7). */
     beforeRehearsal: (() => Promise<void>) | null;
@@ -223,6 +235,8 @@ interface World {
     holdRehearsal: boolean;
     /** Runs once during the next S3 put (a policy move while an upload is in flight). */
     duringPut: (() => Promise<void>) | null;
+    /** While set, the provider refuses every load-balancer create (a provider error). */
+    failProviderCreate: boolean;
   };
 }
 
@@ -248,10 +262,10 @@ async function seedFamily(t: T) {
     });
 }
 
-/** The fake backend + UpCloud (+ any extra fake) as the one global fetch. */
-function installFetch(backend: FakeBackend, extra: PartialHandler[] = []) {
+/** The fake backend + UpCloud (after any handler that answers first) as the one global fetch. */
+function installFetch(backend: FakeBackend, first: PartialHandler[] = []) {
   const upcloud = createFakeUpcloud();
-  mockFetch(routeFetch(backend.handle, upcloud.handle, ...extra));
+  mockFetch(routeFetch(...first, backend.handle, upcloud.handle));
   return upcloud;
 }
 
@@ -260,7 +274,22 @@ async function world(): Promise<World> {
   const t = convexTest(schema, modules);
   const serverId = await insertPanelServer(t);
   const backend = createFakeBackend();
-  installFetch(backend);
+  const hooks: World['hooks'] = {
+    beforeRehearsal: null,
+    afterRehearsal: null,
+    holdRehearsal: false,
+    duringPut: null,
+    failProviderCreate: false,
+  };
+  installFetch(backend, [
+    (c) =>
+      hooks.failProviderCreate &&
+      new URL(c.url).hostname === 'api.upcloud.com' &&
+      c.path === '/1.3/load-balancer' &&
+      c.method === 'POST'
+        ? jsonRes({ error: { error_code: 'INTERNAL' } }, 500)
+        : null,
+  ]);
   await t.mutation(internal.seed.seedConnectionModes, {});
   await t.mutation(internal.serverAdmin.patchConfig, { patch: { 'manage.enabled': true } });
   await seedFamily(t);
@@ -275,13 +304,7 @@ async function world(): Promise<World> {
     'backend setup',
   );
   expect((await t.run((c) => c.db.get(started.setupId)))!.state).toBe('ready');
-  const calls: World['calls'] = { rehearsedEdges: [], s3: [] };
-  const hooks: World['hooks'] = {
-    beforeRehearsal: null,
-    afterRehearsal: null,
-    holdRehearsal: false,
-    duringPut: null,
-  };
+  const calls: World['calls'] = { rehearsedEdges: [], s3: [], restores: [] };
   return { t, serverId, backend, calls, hooks };
 }
 
@@ -417,7 +440,9 @@ function installSeams(w: World) {
         };
       return res;
     },
-    restoreStart: async () => {},
+    restoreStart: async (_ctx, a) => {
+      w.calls.restores.push(a.purpose);
+    },
   };
   __setStageOpsForTests(ops);
   __setPlanOpsForTests({
@@ -949,6 +974,457 @@ describe("a live node's replacement stays a candidate until its commit", () => {
     expect(r.activationRunId).toBeUndefined();
     const runs = await t.run((c) => c.db.query('panelActivationRuns').collect());
     expect(runs.filter((x) => x.state === 'committed')).toHaveLength(1);
+  });
+});
+
+// --- re-protect: its own run kind -------------------------------------------------------------------
+
+/** POST an Edges admin route exactly as the node page does (admin cookie, JSON body). */
+async function edgesPost(t: T, cookie: string, path: string, body: unknown = {}) {
+  return t.fetch(`/api/v1/admin/edges/${path}`, {
+    method: 'POST',
+    headers: { cookie, 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+/** "Protect again" on the node page: the run it started. */
+async function reprotectOverHttp(t: T, cookie: string, relayId: Id<'relays'>) {
+  const res = await edgesPost(t, cookie, `relays/${relayId}/reprotect`);
+  expect(res.status).toBe(200);
+  const created = SetupRunCreatedResponse.parse(await res.json());
+  expect(created.stage).toBe('prepare');
+  return created.runId as Id<'edgeSetupRuns'>;
+}
+
+/** The refusal code of an Edges admin response. */
+const errorCode = async (res: Response) =>
+  ((await res.json()) as { error: { code: string } }).error.code;
+
+/** What a pinned member's links body holds now: the committed address, never the origin. */
+async function memberBody(t: T, committed: string, absent: string[] = []) {
+  const res = await fetchSub(t);
+  expect(res.status).toBe(200);
+  const body = await res.text();
+  expect(body).toContain(committed);
+  expect(body).not.toContain(ORIGIN_V4);
+  for (const a of absent) expect(body).not.toContain(a);
+  return body;
+}
+
+const relayRow = (t: T, id: Id<'relays'>) => t.run((c) => c.db.get(id)).then((r) => r!);
+const bindingOf = (t: T, serverId: Id<'backendServers'>) =>
+  t.query(internal.relays.deliveryBinding, { backendServerId: serverId, nodeName: NODE });
+
+/** A re-protect run driven to its first card, with the fresh candidate it provisioned. */
+async function reprotectToTryIt(w: World, live: Awaited<ReturnType<typeof liveL4>>) {
+  const { t } = w;
+  const runId = await reprotectOverHttp(t, live.cookie, live.relayId);
+  const r = await drive(t, () => setupRun(t, runId), parked, 're-protect to the card');
+  expect([r.stage, r.state, r.need?.code]).toEqual(['try_it', 'needs_you', 'try_it']);
+  const e2 = r.listeners[0]!.edgeId!;
+  return { runId, run: r, e2, e2Address: await edgeAddress(t, e2) };
+}
+
+describe('re-protect a live node (its own run kind)', () => {
+  test('within the approved shape, over HTTP: a fresh candidate with a real test link, members keep the committed edge at every step, done without a new approval', async () => {
+    const w = await world();
+    const { t, serverId } = w;
+    const live = await liveL4(w);
+    const e1Address = await edgeAddress(t, live.e1);
+    await memberBody(t, e1Address);
+
+    const desiredBefore = (await relayRow(t, live.relayId)).desiredPublished;
+    const { runId, run, e2, e2Address } = await reprotectToTryIt(w, live);
+    const view = SetupRunAdmin.parse(
+      await t.query(internal.edgeSetupRuns.getForAdmin, { id: runId }),
+    );
+    expect(view.kind).toBe('reprotect');
+    expect(view.relayId).toBe(live.relayId);
+    // A NEW address, never the committed one (no reuse of what members hold).
+    expect(e2).not.toBe(live.e1);
+    expect(e2Address).not.toBe(e1Address);
+    // A real test link for it (a fresh address, so no named-connection retest).
+    expect(run.testLinks).toHaveLength(1);
+    const link = run.testLinks![0]!;
+    expect(link.method).toBe('test_link');
+    expect(link.edgeId).toBe(e2);
+    expect(link.link).toMatch(/^vless:\/\/[0-9a-f-]+@198\.51\.100\.\d+:\d+\?.*security=reality/);
+    expect(link.link).toContain(e2Address);
+    expect(link.link).not.toContain(ORIGIN_V4);
+    // The origin is owned while the run lasts; members keep exactly what they had.
+    expect((await relayRow(t, live.relayId)).setupOwned).toBe(true);
+    expect((await gateOf(t, serverId)).state).toBe('open');
+    await memberBody(t, e1Address, [e2Address]);
+
+    // After the publish (the committed approval admits a replacement address
+    // in its shape), checked as the rehearsal starts.
+    let atRehearsal: { body: string; published: Array<Id<'edges'> | null> } | null = null;
+    w.hooks.beforeRehearsal = async () => {
+      atRehearsal = {
+        body: await (await fetchSub(t)).text(),
+        published: (await relayRow(t, live.relayId)).publishedEdgeIds,
+      };
+    };
+    await tickAll(t, runId);
+    const done = await drive(t, () => setupRun(t, runId), movedOn, 're-protect after the ticks');
+    expect([done.stage, done.state]).toEqual(['done', 'done']);
+    expect(done.activationRunId).toBeUndefined();
+    const seen = atRehearsal as { body: string; published: Array<Id<'edges'> | null> } | null;
+    expect(seen?.published).toContain(e2);
+    expect(seen?.body).toContain(e1Address);
+    expect(seen?.body).not.toContain(ORIGIN_V4);
+
+    // Done: the new address took the old one's place (it drains, as after a
+    // Replace), the pool is its old size again, the node is handed back.
+    const relay = await relayRow(t, live.relayId);
+    expect(relay.publishedEdgeIds.filter(Boolean)).toEqual([e2]);
+    expect((await t.run((c) => c.db.get(live.e1)))!.publication).toBe('draining');
+    expect(relay.desiredPublished).toBe(desiredBefore);
+    expect(relay.setupOwned).toBeUndefined();
+    expect(relay.setupStage).toBeUndefined();
+    expect(await bindingOf(t, serverId)).toBeTruthy();
+    expect((await gateOf(t, serverId)).state).toBe('open');
+    await memberBody(t, e2Address, [e1Address]);
+    // No new approval was needed: the one committed activation is the original.
+    const acts = await t.run((c) => c.db.query('panelActivationRuns').collect());
+    expect(acts.map((a) => a.state)).toEqual(['committed']);
+    const started = await t.run((c) =>
+      c.db
+        .query('auditLog')
+        .filter((q) => q.eq(q.field('action'), 'edge.setup_run.started'))
+        .collect(),
+    );
+    expect(started.at(-1)?.payload).toMatchObject({ kind: 'reprotect', stage: 'prepare' });
+  });
+
+  test('outside the approved shape: parks for the approval, the candidate stays isolated until go-live promotes it', async () => {
+    const w = await world();
+    const { t, serverId } = w;
+    const live = await liveL4(w);
+    const e1Address = await edgeAddress(t, live.e1);
+    // The node's delivery moved since its commit: the committed approval no
+    // longer admits a new address, so the candidate needs a review.
+    await t.run((c) => c.db.patch(live.intentId, { deliveryRevision: 'moved' }));
+
+    const { runId, e2, e2Address } = await reprotectToTryIt(w, live);
+    await tickAll(t, runId);
+    const held = await drive(t, () => setupRun(t, runId), parked, 're-protect to the approval');
+    expect([held.stage, held.state, held.need?.code]).toEqual([
+      'publish',
+      'needs_you',
+      'node_not_approved',
+    ]);
+    expect((await relayRow(t, live.relayId)).publishedEdgeIds).not.toContain(e2);
+    await memberBody(t, e1Address, [e2Address]);
+
+    // Approved over HTTP: the candidate publishes, isolated from members.
+    let atRehearsal: { body: string; published: Array<Id<'edges'> | null> } | null = null;
+    w.hooks.beforeRehearsal = async () => {
+      atRehearsal = {
+        body: await (await fetchSub(t)).text(),
+        published: (await relayRow(t, live.relayId)).publishedEdgeIds,
+      };
+    };
+    const { review, runId: actId } = await approveOverHttp(t, live.cookie, live.intentId);
+    expect(review.display.standbys[0]).toMatchObject({ layer: 'l4', accountName: 'acct-l4' });
+    expect((await activationRun(t, actId)).resources.edgeIds).toEqual([e2]);
+    const done = await drive(t, () => setupRun(t, runId), movedOn, 're-protect after approval');
+    expect([done.stage, done.state]).toEqual(['done', 'done']);
+    const seen = atRehearsal as { body: string; published: Array<Id<'edges'> | null> } | null;
+    expect(seen?.published).toContain(e2);
+    expect(seen?.body).toContain(e1Address);
+    expect(seen?.body).not.toContain(e2Address);
+    expect(seen?.body).not.toContain(ORIGIN_V4);
+    expect(w.calls.rehearsedEdges.at(-1)).toEqual([e2 as string]);
+
+    // Promoted at go-live: members get the replacement, which took the old
+    // address's place (the old one drains, as after a Replace).
+    expect((await activationRun(t, actId)).state).toBe('committed');
+    expect((await gateOf(t, serverId)).candidates.edgeIds).toEqual([]);
+    await memberBody(t, e2Address, [e1Address]);
+    expect((await t.run((c) => c.db.get(live.e1)))!.publication).toBe('draining');
+    expect((await relayRow(t, live.relayId)).setupOwned).toBeUndefined();
+  });
+
+  test('cancel at the card drops only the candidate: binding, committed edge, gate and members untouched, nothing deleted or restored', async () => {
+    const w = await world();
+    const { t, serverId } = w;
+    const live = await liveL4(w);
+    const e1Address = await edgeAddress(t, live.e1);
+    const bindingBefore = await bindingOf(t, serverId);
+    const { runId, e2, e2Address } = await reprotectToTryIt(w, live);
+    // While the run owns the origin, the pool takes no write by hand: the
+    // committed address and the run's slot stay where they are.
+    for (const path of [`${live.e1}/unpublish`, `relays/${live.relayId}/rebalance`]) {
+      const refused = await edgesPost(t, live.cookie, path);
+      expect(refused.status).toBe(409);
+      expect(await errorCode(refused)).toBe('edge.setup_owned');
+    }
+    expect((await relayRow(t, live.relayId)).publishedEdgeIds).toContain(live.e1);
+
+    const res = await edgesPost(t, live.cookie, `setup-runs/${runId}/cancel`);
+    expect(res.status).toBe(200);
+    expect(SetupRunCancelResponse.parse(await res.json())).toEqual({
+      ok: true,
+      disposition: 'candidates',
+    });
+    expect((await setupRun(t, runId)).state).toBe('cancelled');
+    // The candidate is cancelled for the reconcile destroy; the committed edge stays.
+    expect((await t.run((c) => c.db.get(e2)))!.status).toBe('cancelled');
+    const e1 = (await t.run((c) => c.db.get(live.e1)))!;
+    expect([e1.publication, e1.status]).toEqual(['published', 'active']);
+    const relay = await relayRow(t, live.relayId);
+    expect(relay.publishedEdgeIds).toContain(live.e1);
+    expect(relay.deleting).toBeFalsy();
+    expect(relay.restore).toBeUndefined();
+    expect(relay.setupOwned).toBeUndefined();
+    expect(w.calls.restores).toEqual([]);
+    const binding = await bindingOf(t, serverId);
+    expect(binding?.state).toBe('active');
+    expect(binding?.policyVersion).toBe(bindingBefore?.policyVersion);
+    expect((await gateOf(t, serverId)).state).toBe('open');
+    expect((await intentOf(t, live.intentId)).delivery.disposition).toBe('live');
+    await memberBody(t, e1Address, [e2Address]);
+    const cancelled = await t.run((c) =>
+      c.db
+        .query('auditLog')
+        .filter((q) => q.eq(q.field('action'), 'edge.setup_run.cancelled'))
+        .collect(),
+    );
+    expect(cancelled.at(-1)?.payload).toMatchObject({ disposition: 'candidates' });
+    // The node is handed back: it can be protected again at once.
+    expect((await edgesPost(t, live.cookie, `relays/${live.relayId}/reprotect`)).status).toBe(200);
+  });
+
+  test('cancel after the approval drains the published candidate and blocks the activation; the committed delivery stays', async () => {
+    const w = await world();
+    const { t, serverId } = w;
+    const live = await liveL4(w);
+    const e1Address = await edgeAddress(t, live.e1);
+    await t.run((c) => c.db.patch(live.intentId, { deliveryRevision: 'moved' }));
+    const { runId, e2, e2Address } = await reprotectToTryIt(w, live);
+    await tickAll(t, runId);
+    await drive(t, () => setupRun(t, runId), parked, 're-protect to the approval');
+    // The run publishes the approved candidate and then waits at its rehearsal.
+    w.hooks.holdRehearsal = true;
+    const { runId: actId } = await approveOverHttp(t, live.cookie, live.intentId);
+    const held = await drive(t, () => setupRun(t, runId), movedOn, 'run to the held rehearsal');
+    expect([held.stage, held.need?.code]).toEqual(['rehearse', 'rehearsal_failed']);
+    expect((await relayRow(t, live.relayId)).publishedEdgeIds).toContain(e2);
+    expect((await gateOf(t, serverId)).candidates.edgeIds).toEqual([e2 as string]);
+    await memberBody(t, e1Address, [e2Address]);
+
+    const res = await edgesPost(t, live.cookie, `setup-runs/${runId}/cancel`);
+    expect(res.status).toBe(200);
+    expect(SetupRunCancelResponse.parse(await res.json()).disposition).toBe('candidates');
+    // The candidate left the pool to drain; the committed edge is untouched.
+    const cand = (await t.run((c) => c.db.get(e2)))!;
+    expect([cand.publication, cand.status]).toEqual(['draining', 'draining']);
+    const relay = await relayRow(t, live.relayId);
+    expect(relay.publishedEdgeIds).not.toContain(e2);
+    expect(relay.publishedEdgeIds).toContain(live.e1);
+    expect(relay.setupOwned).toBeUndefined();
+    expect(relay.restore).toBeUndefined();
+    expect(w.calls.restores).toEqual([]);
+    // The activation it was bound to is blocked; the live node keeps serving.
+    const act = await activationRun(t, actId);
+    expect([act.state, act.code]).toEqual(['blocked', 'servers.setup_run_cancelled']);
+    expect((await intentOf(t, live.intentId)).delivery.disposition).toBe('live');
+    expect((await gateOf(t, serverId)).state).toBe('open');
+    expect((await bindingOf(t, serverId))?.state).toBe('active');
+    await memberBody(t, e1Address, [e2Address]);
+  });
+
+  test('a failure leaves the live node live and hands the origin back; retry claims it again', async () => {
+    const w = await world();
+    const { t, serverId } = w;
+    const live = await liveL4(w);
+    const e1Address = await edgeAddress(t, live.e1);
+    w.hooks.failProviderCreate = true;
+    const runId = await reprotectOverHttp(t, live.cookie, live.relayId);
+    const failed = await drive(t, () => setupRun(t, runId), parked, 're-protect to the failure');
+    expect([failed.stage, failed.state, failed.need?.code]).toEqual([
+      'provision',
+      'failed',
+      'provider_failed',
+    ]);
+    const relay = await relayRow(t, live.relayId);
+    expect(relay.setupOwned).toBeUndefined();
+    expect(relay.setupStage).toBeUndefined();
+    expect(relay.publishedEdgeIds).toContain(live.e1);
+    expect((await bindingOf(t, serverId))?.state).toBe('active');
+    expect((await gateOf(t, serverId)).state).toBe('open');
+    await memberBody(t, e1Address);
+
+    // Switched off since the failure: the retry does not claim it again.
+    await t.run((c) => c.db.patch(live.relayId, { enabled: false }));
+    const off = await edgesPost(t, live.cookie, `setup-runs/${runId}/retry`);
+    expect(off.status).toBe(409);
+    expect(await errorCode(off)).toBe('edge.relay_disabled');
+    expect((await relayRow(t, live.relayId)).setupOwned).toBeUndefined();
+    await t.run((c) => c.db.patch(live.relayId, { enabled: true }));
+
+    // The provider recovers: retry claims the origin again and carries on.
+    w.hooks.failProviderCreate = false;
+    const retried = await edgesPost(t, live.cookie, `setup-runs/${runId}/retry`);
+    expect(retried.status).toBe(200);
+    const owned = await relayRow(t, live.relayId);
+    expect([owned.setupOwned, owned.setupStage]).toEqual([true, 'provision']);
+    const again = await drive(t, () => setupRun(t, runId), parked, 're-protect after the retry');
+    expect([again.stage, again.need?.code]).toEqual(['try_it', 'try_it']);
+    expect(again.listeners[0]!.edgeId).not.toBe(live.e1);
+    await memberBody(t, e1Address);
+  });
+
+  test('refusals: a second run, an unmanaged node and a deleting origin, as HTTP codes', async () => {
+    const w = await world();
+    const { t } = w;
+    const live = await liveL4(w);
+    const runId = await reprotectOverHttp(t, live.cookie, live.relayId);
+    const second = await edgesPost(t, live.cookie, `relays/${live.relayId}/reprotect`);
+    expect(second.status).toBe(409);
+    expect(await errorCode(second)).toBe('edge.setup_run_active');
+    expect((await edgesPost(t, live.cookie, `setup-runs/${runId}/cancel`)).status).toBe(200);
+    // A failed run's retry claims the origin again only while nothing else owns it.
+    await t.run((c) => c.db.patch(live.relayId, { setupOwned: true }));
+    await t.run((c) => c.db.patch(runId, { state: 'failed' }));
+    await expect(t.mutation(internal.edgeSetupRuns.retry, { runId })).rejects.toThrow(
+      /setup_run_active/,
+    );
+    await t.run((c) => c.db.patch(live.relayId, { setupOwned: undefined }));
+    // Not while the node is being renamed (its rotations would be refused mid-run).
+    const renameId = await t.run((c) =>
+      c.db.insert('panelNodeRenames', {
+        backendServerId: w.serverId,
+        nodeUuid: '00000000-0000-4000-8000-000000000001',
+        from: NODE,
+        to: 'node-renamed',
+        relayIds: [live.relayId],
+        state: 'running',
+        step: 'backend',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+    await t.run((c) => c.db.patch(live.relayId, { renaming: { renameId, since: Date.now() } }));
+    const renaming = await edgesPost(t, live.cookie, `relays/${live.relayId}/reprotect`);
+    expect(renaming.status).toBe(409);
+    expect(await errorCode(renaming)).toBe('edge.panel_op_running');
+    await t.run((c) => c.db.patch(live.relayId, { renaming: undefined }));
+    // A node the role never enrolled is not protected again from here.
+    await t.run((c) => c.db.delete(live.intentId));
+    const unmanaged = await edgesPost(t, live.cookie, `relays/${live.relayId}/reprotect`);
+    expect(unmanaged.status).toBe(409);
+    expect(await errorCode(unmanaged)).toBe('edge.reprotect_not_enrolled');
+    // An origin being deleted is gone.
+    await t.run((c) => c.db.patch(live.relayId, { deleting: true }));
+    const gone = await edgesPost(t, live.cookie, `relays/${live.relayId}/reprotect`);
+    expect(gone.status).toBe(404);
+    expect(await errorCode(gone)).toBe('not_found');
+  });
+
+  test('cancel drops every new address of the run, also one a committed admission already published', async () => {
+    const w = await world();
+    const { t, serverId } = w;
+    const live = await liveL4(w);
+    const e1Address = await edgeAddress(t, live.e1);
+    const desiredBefore = (await relayRow(t, live.relayId)).desiredPublished;
+    const { runId, e2, e2Address } = await reprotectToTryIt(w, live);
+    // Within the approved shape the new address is published under the
+    // committed admission (no candidate), then the run waits at its rehearsal.
+    w.hooks.holdRehearsal = true;
+    await tickAll(t, runId);
+    const held = await drive(t, () => setupRun(t, runId), parked, 'run to the held rehearsal');
+    expect([held.stage, held.need?.code]).toEqual(['rehearse', 'rehearsal_failed']);
+    expect((await relayRow(t, live.relayId)).publishedEdgeIds).toContain(e2);
+    expect((await gateOf(t, serverId)).candidates.edgeIds).toEqual([]);
+
+    const res = await edgesPost(t, live.cookie, `setup-runs/${runId}/cancel`);
+    expect(res.status).toBe(200);
+    expect(SetupRunCancelResponse.parse(await res.json()).disposition).toBe('candidates');
+    // The run's own address leaves the pool to drain; the committed one stays.
+    const dropped = (await t.run((c) => c.db.get(e2)))!;
+    expect([dropped.publication, dropped.status]).toEqual(['draining', 'draining']);
+    const relay = await relayRow(t, live.relayId);
+    expect(relay.publishedEdgeIds.filter(Boolean)).toEqual([live.e1]);
+    expect(relay.desiredPublished).toBe(desiredBefore);
+    expect(relay.setupOwned).toBeUndefined();
+    expect((await bindingOf(t, serverId))?.state).toBe('active');
+    await memberBody(t, e1Address, [e2Address]);
+  });
+
+  test('a full pool gets room for the new address, and Protect again twice in a row goes live both times', async () => {
+    const w = await world();
+    const { t, serverId } = w;
+    const live = await liveL4(w);
+    // Nothing free in the pool: each new address must be given room.
+    await t.run((c) => c.db.patch(live.relayId, { desiredPublished: 1 }));
+    let current = live.e1;
+    for (const round of [1, 2]) {
+      const { runId, e2, e2Address } = await reprotectToTryIt(w, live);
+      expect((await relayRow(t, live.relayId)).desiredPublished).toBe(2);
+      await tickAll(t, runId);
+      const done = await drive(t, () => setupRun(t, runId), movedOn, `re-protect ${round}`);
+      expect([done.stage, done.state]).toEqual(['done', 'done']);
+      // The new address took the old one's place; the room is given back,
+      // with no hole left below it (a hole would admit a second publication).
+      const relay = await relayRow(t, live.relayId);
+      expect(relay.publishedEdgeIds).toEqual([e2]);
+      expect((await t.run((c) => c.db.get(e2)))!.poolIndex).toBe(0);
+      expect(relay.desiredPublished).toBe(1);
+      expect((await t.run((c) => c.db.get(current)))!.publication).toBe('draining');
+      expect((await bindingOf(t, serverId))?.state).toBe('active');
+      await memberBody(t, e2Address);
+      current = e2;
+    }
+  });
+
+  test('refused with no room left, and for an origin served through more than one account', async () => {
+    const w = await world();
+    const { t } = w;
+    const live = await liveL4(w);
+    // Already at the most addresses one origin may use.
+    const full = Array.from({ length: 8 }, () => live.e1);
+    await t.run((c) => c.db.patch(live.relayId, { publishedEdgeIds: full, desiredPublished: 8 }));
+    const noRoom = await edgesPost(t, live.cookie, `relays/${live.relayId}/reprotect`);
+    expect(noRoom.status).toBe(409);
+    expect(await errorCode(noRoom)).toBe('edge.reprotect_no_room');
+    expect((await relayRow(t, live.relayId)).setupOwned).toBeFalsy();
+    await t.run((c) =>
+      c.db.patch(live.relayId, { publishedEdgeIds: [live.e1], desiredPublished: 2 }),
+    );
+    // A second transport served through another account.
+    await t.run(async (c) => {
+      const e1 = (await c.db.get(live.e1))!;
+      const l1 = (await c.db.get(e1.listenerId))!;
+      const { _id: _l, _creationTime: _lc, ...listener } = l1;
+      const l2 = await c.db.insert('relayListeners', { ...listener, listenerKey: 'second' });
+      const { _id: _e, _creationTime: _ec, ...edge } = e1;
+      const e2 = await c.db.insert('edges', { ...edge, listenerId: l2, accountId: live.l7 });
+      await c.db.patch(l2, { templateEdgeId: e2 });
+      await c.db.patch(live.relayId, { publishedEdgeIds: [live.e1, e2], desiredPublished: 3 });
+    });
+    const mixed = await edgesPost(t, live.cookie, `relays/${live.relayId}/reprotect`);
+    expect(mixed.status).toBe(409);
+    expect(await errorCode(mixed)).toBe('edge.reprotect_mixed_accounts');
+  });
+
+  test('a node not live behind its origin yet is refused: protect it first', async () => {
+    const w = await world();
+    const { t } = w;
+    installSeams(w);
+    const { l4 } = await accounts(t);
+    await enrollReady(w, { name: NODE, mode: 'freedom-reality', v4: ORIGIN_V4 });
+    const cookie = await adminCookie(t);
+    const runId = await protectToPark(w, { nodeName: NODE, accountId: l4 });
+    const relay = await relayOfRun(t, runId);
+    expect(relay.bindingDeferred).toBe(true);
+    const res = await edgesPost(t, cookie, `relays/${relay._id}/reprotect`);
+    expect(res.status).toBe(409);
+    expect(await errorCode(res)).toBe('edge.reprotect_not_bound');
+    // The first protection is untouched by the refusal.
+    expect((await setupRun(t, runId)).state).toBe('needs_you');
   });
 });
 

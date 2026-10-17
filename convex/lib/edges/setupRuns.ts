@@ -193,6 +193,13 @@ export interface SetupPlanSnapshot {
    * members on (`keepDirect` is refused). Absent on runs from before.
    */
   enrolled?: boolean;
+  /**
+   * A re-protect run (`kind: 'reprotect'`): the origin's `desiredPublished`
+   * before the run made room for its new addresses. Restored when the run
+   * ends without going live, and once go-live retired the addresses the new
+   * ones replace.
+   */
+  reprotect?: { desiredBefore: number };
 }
 
 const SLUG_MAX = 40;

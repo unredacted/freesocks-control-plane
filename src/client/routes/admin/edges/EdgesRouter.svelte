@@ -6,18 +6,18 @@
    * in the query string through `searchParam` (lib/urlState.svelte.ts).
    *
    * Every page sits under the in-page header (Nodes | Providers | Advanced).
-   * Routes: see EDGES_ROUTES in ./lib/routes.ts (the single list of patterns).
+   * Routes: see EDGES_ROUTES in ./lib/routes.ts (the single list of patterns);
+   * a moved address (`legacyEdgesRedirect`) is replaced by its new one.
    */
   import { router } from '../../../stores/router.svelte';
   import Link from '../../../components/Link.svelte';
   import * as Card from '@client/components/ui/card';
-  import { resolveEdgesRoute, edgesPaths, sectionTabOf } from './lib/routes';
+  import { resolveEdgesRoute, edgesPaths, legacyEdgesRedirect, sectionTabOf } from './lib/routes';
   import SectionNav from './components/SectionNav.svelte';
   import EdgesHome from './simple/EdgesHome.svelte';
   import NodePage from './simple/NodePage.svelte';
   import EdgesAdvanced from './simple/EdgesAdvanced.svelte';
   import EdgesOverview from './EdgesOverview.svelte';
-  import EdgesSetup from './EdgesSetup.svelte';
   import RelayPage from './RelayPage.svelte';
   import EdgesProviders from './EdgesProviders.svelte';
   import ProviderAccountPage from './ProviderAccountPage.svelte';
@@ -28,11 +28,18 @@
   import FamilyPage from './names/FamilyPage.svelte';
 
   const route = $derived(resolveEdgesRoute(router.pathname));
+  const movedTo = $derived(legacyEdgesRedirect(router.pathname, router.search));
+  $effect(() => {
+    if (movedTo) router.navigate(movedTo, { replace: true });
+  });
 </script>
 
 <SectionNav current={sectionTabOf(route)} />
 
-{#if route.page === 'home'}
+{#if movedTo}
+  <!-- Moved: the $effect above is replacing the URL with the new address. -->
+  <div class="text-muted-foreground mx-auto max-w-md py-12 text-center">Loading…</div>
+{:else if route.page === 'home'}
   <EdgesHome />
 {:else if route.page === 'node'}
   <NodePage slug={route.slug} />
@@ -40,8 +47,6 @@
   <EdgesAdvanced />
 {:else if route.page === 'overview'}
   <EdgesOverview />
-{:else if route.page === 'setup'}
-  <EdgesSetup />
 {:else if route.page === 'relay'}
   <RelayPage slug={route.slug} />
 {:else if route.page === 'providers'}

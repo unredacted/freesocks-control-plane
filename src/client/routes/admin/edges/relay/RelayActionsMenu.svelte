@@ -9,9 +9,6 @@
   import { Button } from '@client/components/ui/button';
   import * as DropdownMenu from '@client/components/ui/dropdown-menu';
   import { invalidateProbes, probeRelay, updateRelay } from '@client/lib/edgesApi';
-  import { router } from '@client/stores/router.svelte';
-  import TestProvisionDialog from '../forms/TestProvisionDialog.svelte';
-  import { edgesPaths } from '../lib/routes';
   import ActionConfirm from './ActionConfirm.svelte';
   import DeleteRelayDialog from './DeleteRelayDialog.svelte';
   import EditRelayDialog from './EditRelayDialog.svelte';
@@ -34,7 +31,6 @@
   let deleteOpen = $state(false);
   let hostModeOpen = $state(false);
   let provisionOpen = $state(false);
-  let testProvisionOpen = $state(false);
   let disableOpen = $state(false);
   let autoRotateOpen = $state(false);
 
@@ -65,15 +61,8 @@
     {/snippet}
   </DropdownMenu.Trigger>
   <DropdownMenu.Content align="end" class="w-60">
-    <DropdownMenu.Item onSelect={() => router.navigate(edgesPaths.setup({ relay: relay.slug }))}>
-      Open setup
-    </DropdownMenu.Item>
-    <DropdownMenu.Separator />
     <DropdownMenu.Item disabled={busy} onSelect={() => (provisionOpen = true)}>
       Provision an edge
-    </DropdownMenu.Item>
-    <DropdownMenu.Item disabled={busy} onSelect={() => (testProvisionOpen = true)}>
-      Test provision (new account)
     </DropdownMenu.Item>
     <DropdownMenu.Item disabled={act.isPending} onSelect={probeNow}>Probe now</DropdownMenu.Item>
     <DropdownMenu.Separator />
@@ -108,14 +97,6 @@
 <DeleteRelayDialog bind:open={deleteOpen} {relay} {edgeCount} />
 <HostModeDialog bind:open={hostModeOpen} {relay} {listeners} />
 <ProvisionDialog bind:open={provisionOpen} {relay} {listeners} onStarted={onRotationStarted} />
-{#if testProvisionOpen}
-  <TestProvisionDialog
-    bind:open={testProvisionOpen}
-    relayId={relay.id}
-    relaySlug={relay.slug}
-    onStarted={onRotationStarted}
-  />
-{/if}
 
 <ActionConfirm
   bind:open={disableOpen}

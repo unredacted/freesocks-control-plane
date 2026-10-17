@@ -1,12 +1,12 @@
 <script lang="ts">
   /**
-   * The origin table of the overview. Rows come from `EdgeSummary.origins`
-   * (already filtered by the page); every derived cell is computed in
-   * overview/derive.ts.
+   * The origin table of All origins. Rows come from `EdgeSummary.relays`
+   * (already filtered by the page); layers, health and delivery are the
+   * server's status of each origin (`statuses`), worded in overview/derive.ts.
    *
    * Props:
    *   rows: OriginRow[]
-   *   dark: ReadonlySet<string>               slugs the server reports as members dark
+   *   statuses: ReadonlyMap<string, OriginStatus>   slug -> the server's status
    *   busySlug?: string | null                a row whose action is in flight
    *   onProvision: (row: OriginRow) => void    the page confirms (billable) and calls
    *   onProbe: (row: OriginRow) => void
@@ -24,25 +24,23 @@
   import StatusBadge from '../components/StatusBadge.svelte';
   import { edgesPaths } from '../lib/routes';
   import { phaseLabel } from '@client/lib/edgeCodes';
+  import type { OriginStatus } from '@shared/contracts/edges';
   import {
     DELIVERY_LABELS,
     DELIVERY_TONES,
     ORIGIN_KIND_LABELS,
-    deliveryState,
-    relayLayers,
     suspicionChip,
-    worstHealth,
     type OriginRow,
   } from './derive';
 
   interface Props {
     rows: OriginRow[];
-    dark: ReadonlySet<string>;
+    statuses: ReadonlyMap<string, OriginStatus>;
     busySlug?: string | null;
     onProvision: (row: OriginRow) => void;
     onProbe: (row: OriginRow) => void;
   }
-  let { rows, dark, busySlug = null, onProvision, onProbe }: Props = $props();
+  let { rows, statuses, busySlug = null, onProvision, onProbe }: Props = $props();
 
   function originLine(row: OriginRow): string {
     const o = row.relay.origin;
@@ -56,7 +54,7 @@
   <Table.Header>
     <Table.Row>
       <Table.Head>Origin</Table.Head>
-      <Table.Head>Origin</Table.Head>
+      <Table.Head>Where</Table.Head>
       <Table.Head>Layers</Table.Head>
       <Table.Head>Pool</Table.Head>
       <Table.Head>Health</Table.Head>
@@ -69,9 +67,10 @@
   <Table.Body>
     {#each rows as row (row.relay.id)}
       {@const relay = row.relay}
-      {@const layers = relayLayers(row)}
-      {@const health = worstHealth(row)}
-      {@const delivery = deliveryState(row, dark)}
+      {@const status = statuses.get(relay.slug)}
+      {@const layers = status?.layers ?? []}
+      {@const health = status?.worstHealth ?? null}
+      {@const delivery = status?.delivery.kind ?? null}
       {@const chip = suspicionChip(row)}
       <Table.Row>
         <Table.Cell>
@@ -134,7 +133,9 @@
           {/if}
         </Table.Cell>
         <Table.Cell>
-          <Badge variant={DELIVERY_TONES[delivery]}>{DELIVERY_LABELS[delivery]}</Badge>
+          {#if delivery}
+            <Badge variant={DELIVERY_TONES[delivery]}>{DELIVERY_LABELS[delivery]}</Badge>
+          {/if}
           {#if row.needsOperator > 0}
             <div class="text-muted-foreground mt-1 text-xs">
               {row.needsOperator}
@@ -170,11 +171,6 @@
             <DropdownMenu.Content align="end">
               <DropdownMenu.Item onSelect={() => router.navigate(edgesPaths.relay(relay.slug))}>
                 Open
-              </DropdownMenu.Item>
-              <DropdownMenu.Item
-                onSelect={() => router.navigate(edgesPaths.setup({ relay: relay.slug }))}
-              >
-                Setup
               </DropdownMenu.Item>
               <DropdownMenu.Separator />
               <DropdownMenu.Item

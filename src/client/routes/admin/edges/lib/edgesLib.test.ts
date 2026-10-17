@@ -12,7 +12,15 @@ import { auditDetailLine, displayValue, formatBytes, protocolLine } from './form
 import { parseBounded } from './number';
 import { poolSlots, poolSummary } from './pool';
 import { ROTATION_KIND_LABELS, ROTATION_TRIGGER_LABELS, stepStateTone } from './rotation';
-import { EDGES_ROUTES, edgesPaths, resolveEdgesRoute, sectionTabOf } from './routes';
+import {
+  EDGES_ROUTES,
+  edgesPaths,
+  legacyEdgesRedirect,
+  resolveEdgesRoute,
+  sectionTabOf,
+  setupStepTarget,
+} from './routes';
+import { SETUP_STEP_IDS } from '../../../../../shared/contracts/edgeCodes';
 import { resolveServersRoute } from '../../servers/lib/routes';
 import { addTags, normalizeCountry, normalizeHostname, splitTags } from './tags';
 import { actorLabel, subjectOf } from './timeline';
@@ -44,8 +52,7 @@ describe('resolveEdgesRoute / edgesPaths', () => {
       slug: 'node-a',
     });
     expect(resolveEdgesRoute('/admin/edges/advanced')).toEqual({ page: 'advanced' });
-    expect(resolveEdgesRoute('/admin/edges/advanced/relays')).toEqual({ page: 'overview' });
-    expect(resolveEdgesRoute('/admin/edges/setup')).toEqual({ page: 'setup' });
+    expect(resolveEdgesRoute('/admin/edges/advanced/origins')).toEqual({ page: 'overview' });
     expect(resolveEdgesRoute('/admin/edges/relays/relay-a')).toEqual({
       page: 'relay',
       slug: 'relay-a',
@@ -64,6 +71,9 @@ describe('resolveEdgesRoute / edgesPaths', () => {
     expect(resolveEdgesRoute('/admin/edges/relays')).toEqual({ page: 'not-found' });
     expect(resolveEdgesRoute('/admin/edges/relays/a/b')).toEqual({ page: 'not-found' });
     expect(resolveEdgesRoute('/admin/edges/nodes')).toEqual({ page: 'not-found' });
+    // Moved: they resolve to nothing here, and legacyEdgesRedirect sends them on.
+    expect(resolveEdgesRoute('/admin/edges/setup')).toEqual({ page: 'not-found' });
+    expect(resolveEdgesRoute('/admin/edges/advanced/relays')).toEqual({ page: 'not-found' });
   });
   it('lights the header link of each page', () => {
     expect(sectionTabOf({ page: 'home' })).toBe('nodes');
@@ -73,7 +83,6 @@ describe('resolveEdgesRoute / edgesPaths', () => {
     for (const page of [
       'advanced',
       'overview',
-      'setup',
       'templates',
       'probes',
       'settings',
@@ -89,7 +98,8 @@ describe('resolveEdgesRoute / edgesPaths', () => {
     expect(sectionTabOf({ page: 'relay', slug: 'a' })).toBe('advanced');
   });
   it('keeps every old address and builds the new ones', () => {
-    expect(edgesPaths.overview()).toBe('/admin/edges/advanced/relays');
+    expect(edgesPaths.overview()).toBe('/admin/edges/advanced/origins');
+    expect(edgesPaths.overview({ new: '1' })).toBe('/admin/edges/advanced/origins?new=1');
     expect(edgesPaths.home()).toBe('/admin/edges');
     expect(edgesPaths.home({ protect: '1' })).toBe('/admin/edges?protect=1');
     expect(edgesPaths.home({ protect: '1', server: 'main', node: 'n 1', run: null })).toBe(
@@ -102,10 +112,34 @@ describe('resolveEdgesRoute / edgesPaths', () => {
     const href = edgesPaths.relay('a b/c', { tab: 'edges', edge: 'e1', rotation: null });
     expect(href).toBe('/admin/edges/relays/a%20b%2Fc?tab=edges&edge=e1');
     expect(resolveEdgesRoute(href.split('?')[0]!)).toEqual({ page: 'relay', slug: 'a b/c' });
-    expect(edgesPaths.setup({ relay: null })).toBe('/admin/edges/setup');
-    expect(edgesPaths.setup({ relay: 'relay-a', step: 'edge' })).toBe(
-      '/admin/edges/setup?relay=relay-a&step=edge',
+  });
+  it('redirects the moved pages: All origins and the old step-by-step wizard', () => {
+    expect(legacyEdgesRedirect('/admin/edges/advanced/relays')).toBe(
+      '/admin/edges/advanced/origins',
     );
+    expect(legacyEdgesRedirect('/admin/edges/advanced/relays', '?filter=dark')).toBe(
+      '/admin/edges/advanced/origins?filter=dark',
+    );
+    expect(legacyEdgesRedirect('/admin/edges/setup')).toBe('/admin/edges/advanced/origins');
+    expect(legacyEdgesRedirect('/admin/edges/setup/', '?relay=relay-a&step=edge')).toBe(
+      '/admin/edges/relays/relay-a',
+    );
+    for (const p of ['/admin/edges/advanced/relays', '/admin/edges/setup'])
+      expect(resolveEdgesRoute(legacyEdgesRedirect(p)!.split('?')[0]!).page).not.toBe('not-found');
+    for (const p of ['/admin/edges', '/admin/edges/advanced', '/admin/edges/relays/x'])
+      expect(legacyEdgesRedirect(p)).toBeNull();
+  });
+  it('sends every readiness step to a page that does it', () => {
+    for (const step of SETUP_STEP_IDS) {
+      for (const slug of ['relay-a', null]) {
+        const href = setupStepTarget(step, slug);
+        expect(resolveEdgesRoute(href.split('?')[0]!).page).not.toBe('not-found');
+      }
+    }
+    expect(setupStepTarget('edge', 'relay-a')).toBe('/admin/edges/relays/relay-a?tab=edges');
+    expect(setupStepTarget('origin', null)).toBe('/admin/edges/advanced/origins?new=1');
+    expect(setupStepTarget('account', 'relay-a')).toBe('/admin/edges/providers');
+    expect(setupStepTarget('rendering', null)).toBe('/admin/edges/settings?section=rendering');
   });
   it('lists each pattern once', () => {
     const patterns = EDGES_ROUTES.map(([p]) => p);
@@ -171,8 +205,12 @@ describe('attention', () => {
   });
   it('links an enrolled node to the protect sheet or to its Servers page', () => {
     const facts = { serverSlug: 'panel-a', nodeUuid: 'uuid-1', node: 'node-one' };
-    expect(attentionTarget(item({ action: 'protect_node', facts }))).toBe(
+    expect(attentionTarget(item({ action: 'protect_node', relaySlug: null, facts }))).toBe(
       '/admin/edges?protect=1&server=panel-a&node=uuid-1',
+    );
+    // An origin already covers it: Protect again lives on its node page.
+    expect(attentionTarget(item({ action: 'protect_node', facts }))).toBe(
+      '/admin/edges/nodes/relay-a',
     );
     expect(attentionTarget(item({ action: 'open_node', facts }))).toBe(
       '/admin/servers/nodes/uuid-1?instance=panel-a',
@@ -180,9 +218,7 @@ describe('attention', () => {
     expect(attentionTarget(item({ action: 'open_node', facts: {} }))).toBe('/admin/servers');
   });
   it('routes the navigation actions as documented', () => {
-    expect(attentionTarget(item({ action: 'open_setup' }))).toBe(
-      '/admin/edges/setup?relay=relay-a',
-    );
+    expect(attentionTarget(item({ action: 'open_setup' }))).toBe('/admin/edges/relays/relay-a');
     expect(attentionTarget(item({ action: 'resolve_quarantine', rotationId: 'rot1' }))).toBe(
       '/admin/edges/relays/relay-a?tab=rotations&rotation=rot1',
     );
