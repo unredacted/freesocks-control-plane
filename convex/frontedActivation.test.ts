@@ -1154,6 +1154,14 @@ describe('re-protect a live node (its own run kind)', () => {
     const e1Address = await edgeAddress(t, live.e1);
     const bindingBefore = await bindingOf(t, serverId);
     const { runId, e2, e2Address } = await reprotectToTryIt(w, live);
+    // While the run owns the origin, the pool takes no write by hand: the
+    // committed address and the run's slot stay where they are.
+    for (const path of [`${live.e1}/unpublish`, `relays/${live.relayId}/rebalance`]) {
+      const refused = await edgesPost(t, live.cookie, path);
+      expect(refused.status).toBe(409);
+      expect(await errorCode(refused)).toBe('edge.setup_owned');
+    }
+    expect((await relayRow(t, live.relayId)).publishedEdgeIds).toContain(live.e1);
 
     const res = await edgesPost(t, live.cookie, `setup-runs/${runId}/cancel`);
     expect(res.status).toBe(200);
@@ -1248,6 +1256,14 @@ describe('re-protect a live node (its own run kind)', () => {
     expect((await bindingOf(t, serverId))?.state).toBe('active');
     expect((await gateOf(t, serverId)).state).toBe('open');
     await memberBody(t, e1Address);
+
+    // Switched off since the failure: the retry does not claim it again.
+    await t.run((c) => c.db.patch(live.relayId, { enabled: false }));
+    const off = await edgesPost(t, live.cookie, `setup-runs/${runId}/retry`);
+    expect(off.status).toBe(409);
+    expect(await errorCode(off)).toBe('edge.relay_disabled');
+    expect((await relayRow(t, live.relayId)).setupOwned).toBeUndefined();
+    await t.run((c) => c.db.patch(live.relayId, { enabled: true }));
 
     // The provider recovers: retry claims the origin again and carries on.
     w.hooks.failProviderCreate = false;
@@ -1351,9 +1367,11 @@ describe('re-protect a live node (its own run kind)', () => {
       await tickAll(t, runId);
       const done = await drive(t, () => setupRun(t, runId), movedOn, `re-protect ${round}`);
       expect([done.stage, done.state]).toEqual(['done', 'done']);
-      // The new address took the old one's place; the room is given back.
+      // The new address took the old one's place; the room is given back,
+      // with no hole left below it (a hole would admit a second publication).
       const relay = await relayRow(t, live.relayId);
-      expect(relay.publishedEdgeIds.filter(Boolean)).toEqual([e2]);
+      expect(relay.publishedEdgeIds).toEqual([e2]);
+      expect((await t.run((c) => c.db.get(e2)))!.poolIndex).toBe(0);
       expect(relay.desiredPublished).toBe(1);
       expect((await t.run((c) => c.db.get(current)))!.publication).toBe('draining');
       expect((await bindingOf(t, serverId))?.state).toBe('active');

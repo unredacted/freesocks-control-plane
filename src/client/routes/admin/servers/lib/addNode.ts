@@ -37,7 +37,8 @@ export function nodeFormProblems(f: NodeForm, takenNames: readonly string[] = []
     out.push('Use 3 to 30 letters, digits, spaces, dots, dashes or underscores in the name.');
   else if (takenNames.some((n) => n.toLowerCase() === name.toLowerCase()))
     out.push('Another node already has this name.');
-  if (!f.address.trim()) out.push('Say where the backend reaches the node.');
+  // The server's rule too: an address of at least two characters.
+  if (f.address.trim().length < 2) out.push('Say where the backend reaches the node.');
   if (f.port.trim() !== '') {
     const port = Number(f.port);
     if (!Number.isInteger(port) || port < 1 || port > 65535)

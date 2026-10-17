@@ -30,6 +30,11 @@ describe('nodeFormProblems', () => {
     expect(nodeFormProblems(form({ address: '' }))).toEqual([
       'Say where the backend reaches the node.',
     ]);
+    // The server refuses an address shorter than two characters.
+    expect(nodeFormProblems(form({ address: ' a ' }))).toEqual([
+      'Say where the backend reaches the node.',
+    ]);
+    expect(nodeFormProblems(form({ address: 'ab' }))).toEqual([]);
     expect(nodeFormProblems(form({ port: '70000' }))).toEqual([
       'The port is a whole number from 1 to 65535.',
     ]);

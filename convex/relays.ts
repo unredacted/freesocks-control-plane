@@ -81,6 +81,7 @@ import {
 import {
   assertNoRotationOrQuarantine,
   assertNotQuarantined,
+  assertNoRunningSetup,
   bumpEpochAndRefresh,
   liveEdgesOfRelay,
   scheduleMirrorRefresh,
@@ -1566,6 +1567,8 @@ export const adoptEdge = internalMutation({
         code: 'validation',
         message: 'listener does not belong to the origin',
       });
+    // An import that publishes is a pool write: not while a setup run is working on the origin.
+    if (a.publish) await assertNoRunningSetup(ctx.db, origin);
     let accountRow: Doc<'edgeProviderAccounts'> | null = null;
     if (a.accountId) {
       accountRow = await ctx.db.get(a.accountId);
@@ -1741,6 +1744,7 @@ export const publishEdge = internalMutation({
     const edge = await ctx.db.get(edgeId);
     if (!origin || !edge || edge.relayId !== relayId)
       throw new ConvexError({ code: 'not_found', message: 'Origin/edge not found' });
+    await assertNoRunningSetup(ctx.db, origin);
     await assertNoRotationOrQuarantine(ctx.db, origin);
     const cfg = await resolveEdgeConfig(ctx.db);
     const check = await checkPublishable(ctx, edge, cfg.requireProviderHealth);
@@ -1827,6 +1831,7 @@ export const unpublishEdge = internalMutation({
     const edge = await ctx.db.get(edgeId);
     if (!origin || !edge || edge.relayId !== relayId)
       throw new ConvexError({ code: 'not_found', message: 'Origin/edge not found' });
+    await assertNoRunningSetup(ctx.db, origin);
     await assertNoRotationOrQuarantine(ctx.db, origin);
     if (edge.publication !== 'published')
       return { ok: true as const, epoch: origin.publicationEpoch };
@@ -1959,6 +1964,7 @@ export const rebalance = internalMutation({
   handler: async (ctx, { relayId, actorAdminId }) => {
     const origin = await ctx.db.get(relayId);
     if (!origin) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
+    await assertNoRunningSetup(ctx.db, origin);
     await assertNoRotationOrQuarantine(ctx.db, origin);
     const listeners = await listenersOf(ctx, relayId);
     const templates = new Set(

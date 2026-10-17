@@ -9,6 +9,7 @@ import type { DatabaseReader, MutationCtx } from '../../_generated/server';
 import type { Doc, Id } from '../../_generated/dataModel';
 import { internal } from '../../_generated/api';
 import { isTerminalPhase } from './rotation';
+import { isTerminalRunState } from './setupRuns';
 import { EDGE_LIVE_STATUSES, LIVE_EDGE_SCAN_LIMIT } from './pool';
 
 /**
@@ -28,6 +29,31 @@ export async function liveEdgesOfRelay(
     out.push(...rows);
   }
   return out;
+}
+
+/**
+ * While a guided setup run (first protection or re-protect) is still running
+ * on an origin, only its own rotations touch the pool (`startRotation` refuses
+ * every other start). The operator's direct pool writes (publish / unpublish
+ * by hand, an import that publishes, a rebalance) are refused the same way, so
+ * a run never loses the committed address members are served through, or the
+ * slot it made for its new one, under its feet. An origin a FINISHED run left
+ * owned (a failed or cancelled first protection) stays open to them: publishing
+ * by hand there is the recovery `require-edges` documents.
+ */
+export async function assertNoRunningSetup(db: DatabaseReader, origin: Doc<'relays'>) {
+  if (!origin.setupOwned || !origin.backendServerId || !origin.nodeName) return;
+  const runs = await db
+    .query('edgeSetupRuns')
+    .withIndex('by_origin', (q) =>
+      q.eq('backendServerId', origin.backendServerId!).eq('nodeName', origin.nodeName!),
+    )
+    .collect(); // a node's runs: operator-scale
+  if (runs.some((r) => !isTerminalRunState(r.state)))
+    throw new ConvexError({
+      code: 'edge.setup_owned',
+      message: 'A guided setup run is working on this origin; let it finish or cancel it',
+    });
 }
 
 /** Nothing bypasses a quarantine (docs/edges.md): the operator resolves it first. */

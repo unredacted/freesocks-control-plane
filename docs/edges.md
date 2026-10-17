@@ -656,7 +656,11 @@ named-connection retest of a committed one. Publication follows the node's admis
 go-live: the binding, the committed edges and the open gate are never touched before it. At
 go-live the new addresses take the old ones' places: every other published edge on a run
 transport whose new address is published drains (members move at their next refresh, as after
-a Replace) and the pool size goes back to `desiredBefore`. Any ending other than `done` hands
+a Replace) and the pool size goes back to `desiredBefore`. The surviving edges are compacted first
+(indexes 0..n-1), so no hole below the restored size admits a publication past it. While any
+setup run is working on an origin, the operator's direct pool writes (publish or unpublish by
+hand, an import that publishes, a rebalance) are refused with `edge.setup_owned`; an origin a
+finished run left owned stays open to them (the `require-edges` recovery). Any ending other than `done` hands
 the origin back (`onSetupRunEnded` clears `setupOwned` and gives the room back, so upkeep and
 the detector protect the node again); `retry` of a failed one claims it again (and makes room
 again) while the origin still binds the node and nothing else owns it. Its cancel

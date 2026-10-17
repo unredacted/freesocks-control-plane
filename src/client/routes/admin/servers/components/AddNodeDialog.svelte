@@ -66,7 +66,13 @@
       address = '';
       port = '';
       countryCode = '';
-      profileUuid = tree.profiles.length === 1 ? tree.profiles[0]!.profileUuid : '';
+      // The transports start again from the profile (every one of it), even
+      // when the profile is the same one as last time: setting the same
+      // profile would not re-run the pick below.
+      const preset = tree.profiles.length === 1 ? tree.profiles[0]! : null;
+      profileUuid = preset?.profileUuid ?? '';
+      pickedFor = profileUuid;
+      transportUuids = preset ? preset.transports.map((t) => t.transportUuid) : [];
       tried = false;
     }
     wasOpen = open;

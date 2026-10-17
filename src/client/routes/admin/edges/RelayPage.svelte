@@ -100,7 +100,8 @@
     !!relay &&
       relay.origin.kind !== 'panel-node' &&
       !relay.deleting &&
-      !edgesQ.isPending &&
+      // Only a SUCCESSFUL read that lists nothing: a failed one says nothing about the edges.
+      edgesQ.isSuccess &&
       edges.every((e) => e.status === 'destroyed'),
   );
   const openEdge = (edgeId: string): void => setSearchParams({ edge: edgeId, rotation: null });

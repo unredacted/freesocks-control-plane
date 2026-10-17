@@ -51,6 +51,7 @@ import {
   claimDeliveryBinding,
   deliveryBindingFor,
   liveEdgesOfRelay,
+  refreshTemplateEdges,
   relayForBackendNode,
   scheduleMirrorRefresh,
   unpublishFromPool,
@@ -967,14 +968,46 @@ async function ensureReprotectRoom(
   await ctx.db.patch(relay._id, { desiredPublished: needed, updatedAt: Date.now() });
 }
 
-/** The pool size a re-protect found, back (never below what is published now). */
+/**
+ * The pool size a re-protect found, back (never below what is published now).
+ * The surviving edges are compacted first: a new address published into the
+ * widened slot would otherwise sit above the restored size with a hole below
+ * it, and that hole would admit a publication past the size (two published in
+ * a pool of one).
+ */
 async function restoreReprotectPool(ctx: MutationCtx, run: Run, relay: Relay): Promise<void> {
   const before = parsePlan(run).reprotect?.desiredBefore;
   if (before === undefined) return;
+  await compactPool(ctx, relay._id);
   const fresh = (await ctx.db.get(relay._id)) ?? relay;
   const desired = Math.max(before, publishedCount(fresh.publishedEdgeIds));
   if (fresh.desiredPublished !== desired)
     await ctx.db.patch(relay._id, { desiredPublished: desired, updatedAt: Date.now() });
+}
+
+/**
+ * Close the holes of a published pool: the published edges move down to
+ * indexes 0..n-1 in their order (each edge's `poolIndex` with them), the epoch
+ * is bumped so no render keyed to the old layout is reused, and the template
+ * edges follow. A pool without holes is left alone.
+ */
+async function compactPool(ctx: MutationCtx, relayId: Id<'relays'>): Promise<void> {
+  const relay = await ctx.db.get(relayId);
+  if (!relay) return;
+  const ids = relay.publishedEdgeIds.filter((e): e is Id<'edges'> => !!e);
+  if (ids.length === relay.publishedEdgeIds.length) return;
+  const now = Date.now();
+  for (let i = 0; i < ids.length; i++) {
+    const e = await ctx.db.get(ids[i]!);
+    if (e && e.poolIndex !== i) await ctx.db.patch(e._id, { poolIndex: i, updatedAt: now });
+  }
+  await ctx.db.patch(relayId, {
+    publishedEdgeIds: ids,
+    publicationEpoch: relay.publicationEpoch + 1,
+    updatedAt: now,
+  });
+  await refreshTemplateEdges(ctx, relay);
+  await scheduleMirrorRefresh(ctx);
 }
 
 /**
@@ -2535,6 +2568,8 @@ async function assertReprotectReclaimable(ctx: MutationCtx, r: Run): Promise<voi
       code: 'edge.setup_run_active',
       message: 'A setup run already owns this node',
     });
+  if (!relay.enabled)
+    throw new ConvexError({ code: 'edge.relay_disabled', message: 'Enable the origin first' });
   if (relay.quarantine)
     throw new ConvexError({ code: 'edge.quarantined', message: 'Resolve the quarantine first' });
   if (relay.restore)
@@ -2542,6 +2577,10 @@ async function assertReprotectReclaimable(ctx: MutationCtx, r: Run): Promise<voi
       code: 'edge.restore_in_progress',
       message: 'A restore workflow is running on this origin',
     });
+  if (!(await admitted(ctx.db)))
+    throw new ConvexError({ code: 'edge.maintenance', message: 'Edges are in maintenance' });
+  // A rename or a server change moving the listeners under the run: wait.
+  await assertNoRelayPanelClaim(ctx.db, relay);
   if (!(await boundToRelay(ctx, relay)))
     throw new ConvexError({
       code: 'edge.reprotect_not_bound',
