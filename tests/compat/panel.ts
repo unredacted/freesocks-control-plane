@@ -8,6 +8,8 @@ import { compose } from './compose';
 /** The seeded node's name: it must never reach a member body. */
 export const COMPAT_NODE = 'compat-node';
 export const COMPAT_REMARK = addressRemark(COMPAT_NODE, 'compat-origin');
+/** The selector group's name in the backend's own subscription templates. */
+export const COMPAT_TEMPLATE_GROUP = '→ Remnawave';
 
 export function docker(...args: string[]) {
   return execFileSync('docker', [...compose, ...args], {
@@ -89,6 +91,9 @@ export async function seedPanel() {
     fingerprint: 'chrome',
   });
   const templates = await api('subscription-templates');
+  // Minimal templates, with the group named as the backend's own templates name
+  // it (convex/lib/backend/subscriptionTemplates): members receive it renamed
+  // (convex/lib/memberEntryNames.ts), and the real clients must accept that.
   for (const template of templates.subscriptionTemplates ?? templates.templates ?? templates) {
     if (template.templateType === 'SINGBOX') {
       await api('subscription-templates', 'PATCH', {
@@ -96,13 +101,12 @@ export async function seedPanel() {
         templateJson: {
           log: { level: 'error' },
           inbounds: [{ type: 'mixed', tag: 'in', listen: '127.0.0.1', listen_port: 1080 }],
-          outbounds: [{ type: 'selector', tag: 'proxy', outbounds: [] }],
-          route: { final: 'proxy' },
+          outbounds: [{ type: 'selector', tag: COMPAT_TEMPLATE_GROUP, outbounds: [] }],
+          route: { final: COMPAT_TEMPLATE_GROUP },
         },
       });
     } else if (['MIHOMO', 'CLASH'].includes(template.templateType)) {
-      const yaml =
-        'mixed-port: 1080\nallow-lan: false\nmode: rule\nlog-level: error\nproxies: []\nproxy-groups:\n  - name: proxy\n    type: select\n    proxies: []\nrules:\n  - MATCH,proxy\n';
+      const yaml = `mixed-port: 1080\nallow-lan: false\nmode: rule\nlog-level: error\nproxies: []\nproxy-groups:\n  - name: '${COMPAT_TEMPLATE_GROUP}'\n    type: select\n    proxies: []\nrules:\n  - MATCH,${COMPAT_TEMPLATE_GROUP}\n`;
       await api('subscription-templates', 'PATCH', {
         uuid: template.uuid,
         encodedTemplateYaml: Buffer.from(yaml).toString('base64'),

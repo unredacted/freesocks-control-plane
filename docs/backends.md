@@ -111,9 +111,15 @@ Higher-level code never calls `fetch` directly; it runs the dispatch actions:
   capability), with a short server-side TTL cache on `subscriptions.subCache` keyed by User-Agent
   (Remnawave formats config by UA). It forwards the caller's UA (with one sing-box normalization
   exception — see "Subscription formats" below) and re-emits the allowlisted
-  `subscription-userinfo` / `profile-update-interval` / `profile-web-page-url` headers
-  `fetchContent` returns (`SubscriptionContent.headers`), so the fronted URL is a faithful
-  stand-in. Not the backend's `profile-title`: FCP sets it itself on EVERY subscription
+  `subscription-userinfo` / `profile-update-interval` headers `fetchContent` returns
+  (`SubscriptionContent.headers`, list `SUBSCRIPTION_PASSTHROUGH_HEADERS` in
+  `convex/lib/backends/types.ts`), so the fronted URL is a faithful stand-in. Never the
+  backend's `profile-web-page-url`: that is the key's own backend subscription URL (the
+  backend's public address plus the key's capability), publicly fetchable, and its body
+  carries the backend's entry names, which FCP renames only on its own routes
+  (`docs/privacy.md` §5c). The response re-checks the stored headers against the same list,
+  so a body cached (or served stale) from before a header left it does not carry it either.
+  Not the backend's `profile-title`: FCP sets it itself on EVERY subscription
   response (fresh, cached, stale fallback, rendered edge body, Outline key) from the service
   name members see (`subscription.siteName`, the name their connections are labelled with;
   unset = `FreeSocks`), in the `base64:<utf-8 base64>` form the backend used, so apps show the

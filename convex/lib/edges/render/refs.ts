@@ -90,9 +90,15 @@ export function pruneRefs(
  * Deep-copy `value` with every reference to a renamed name rewritten to its new
  * name: the same structural walk as `pruneRefs` (a string value equal to a name,
  * a membership-list item, a comma-joined rule segment), but nothing is dropped.
- * The new names must not contain a comma (a Clash rule would split on it).
+ * The new names must not contain a comma (a Clash rule would split on it). A
+ * key in `skipKeys` holds no reference (a cache id, a file path): its value is
+ * kept as it is, at any depth.
  */
-export function renameRefs(value: Json, renamed: ReadonlyMap<string, string>): Json {
+export function renameRefs(
+  value: Json,
+  renamed: ReadonlyMap<string, string>,
+  skipKeys?: ReadonlySet<string>,
+): Json {
   if (typeof value === 'string') {
     const direct = renamed.get(value);
     if (direct !== undefined) return direct;
@@ -107,23 +113,34 @@ export function renameRefs(value: Json, renamed: ReadonlyMap<string, string>): J
     });
     return hit ? next.join(',') : value;
   }
-  if (Array.isArray(value)) return value.map((v) => renameRefs(v, renamed));
+  if (Array.isArray(value)) return value.map((v) => renameRefs(v, renamed, skipKeys));
   if (isObj(value)) {
     const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value)) out[k] = renameRefs(v, renamed);
+    for (const [k, v] of Object.entries(value))
+      out[k] = skipKeys?.has(k) ? v : renameRefs(v, renamed, skipKeys);
     return out;
   }
   return value;
 }
 
-/** Whether any string in the tree references one of the names (structural, token-exact). */
-export function mentionsAny(value: Json, names: ReadonlySet<string>): boolean {
+/**
+ * Whether any string in the tree references one of the names (structural,
+ * token-exact). Values under a key in `skipKeys` are not references.
+ */
+export function mentionsAny(
+  value: Json,
+  names: ReadonlySet<string>,
+  skipKeys?: ReadonlySet<string>,
+): boolean {
   if (typeof value === 'string') {
     if (names.has(value)) return true;
     return value.includes(',') && value.split(',').some((p) => names.has(p.trim()));
   }
-  if (Array.isArray(value)) return value.some((v) => mentionsAny(v, names));
-  if (isObj(value)) return Object.values(value).some((v) => mentionsAny(v, names));
+  if (Array.isArray(value)) return value.some((v) => mentionsAny(v, names, skipKeys));
+  if (isObj(value))
+    return Object.entries(value).some(
+      ([k, v]) => !skipKeys?.has(k) && mentionsAny(v, names, skipKeys),
+    );
   return false;
 }
 
