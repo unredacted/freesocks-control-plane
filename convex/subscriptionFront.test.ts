@@ -8,6 +8,7 @@
  */
 import { convexTest } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import YAML from 'yaml';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
@@ -565,6 +566,196 @@ describe('profile-title is the service name on every subscription response', () 
     expect(res.status).toBe(200);
     expect(await res.text()).toBe('ss://key@192.0.2.9:443\n');
     expect(res.headers.get('profile-title')).toBe(b64('FreeSocks'));
+  });
+});
+
+/**
+ * The backend's page URL (`profile-web-page-url`) is the key's own backend
+ * subscription URL: the backend's public address plus the key's capability,
+ * whose body names the backend's nodes. It never reaches the app, whichever
+ * path the body took, including a body cached before the header stopped
+ * passing.
+ */
+describe('the backend’s page URL never reaches the app', () => {
+  const PAGE_URL = 'https://panel.example.org/api/sub/short-1';
+  const USERINFO = 'upload=0; download=10; total=100; expire=0';
+  beforeEach(() => {
+    vi.stubEnv('IP_HASH_SALT', 'test-salt');
+    mockBody = 'RAW-CONFIG-1';
+    mockStatus = 200;
+    mockHeaders = {
+      'content-type': 'text/yaml',
+      'subscription-userinfo': USERINFO,
+      'profile-update-interval': '12',
+      'profile-web-page-url': PAGE_URL,
+    };
+    stubFrontFetch();
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+  const get = (t: ReturnType<typeof convexTest>) =>
+    t.fetch('/api/v1/sub/tok_abc', { headers: { 'user-agent': 'Clash/1' } });
+  const expectNoPageUrl = (res: Response) => {
+    expect(res.status).toBe(200);
+    expect(res.headers.get('profile-web-page-url')).toBeNull();
+    expect(res.headers.get('subscription-userinfo')).toBe(USERINFO);
+    expect(res.headers.get('profile-update-interval')).toBe('12');
+  };
+
+  test('fresh, then from a body cached with the header, then stale', async () => {
+    const t = convexTest(schema, modules);
+    const { subId } = await seedSub(t);
+    expectNoPageUrl(await get(t));
+    expect(fetchCalls).toBe(1);
+    // A body cached while the header still passed (before this change).
+    const patchCache = (edit: (e: { at: number; headers?: Record<string, string> }) => void) =>
+      t.run(async (ctx) => {
+        const sub = (await ctx.db.get(subId))!;
+        const entries = JSON.parse(sub.subCache!) as Array<{
+          at: number;
+          headers?: Record<string, string>;
+        }>;
+        for (const e of entries) edit(e);
+        await ctx.db.patch(subId, { subCache: JSON.stringify(entries) });
+      });
+    await patchCache((e) => {
+      e.headers = { ...e.headers, 'profile-web-page-url': PAGE_URL };
+    });
+    expectNoPageUrl(await get(t));
+    expect(fetchCalls).toBe(1); // a cache hit
+    // The same body, aged past its TTL, served while the backend is down.
+    await patchCache((e) => {
+      e.at -= 24 * 3600_000;
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('backend down');
+      }),
+    );
+    const stale = await get(t);
+    expectNoPageUrl(stale);
+    expect(await stale.text()).toBe('RAW-CONFIG-1');
+  });
+});
+
+/**
+ * The backend's subscription templates name their selector group after the
+ * backend product; apps show it like a connection. Members get the service's
+ * own name for it instead, unless the operator turned member names off.
+ */
+describe('GET /api/v1/sub/<token>: the backend’s group', () => {
+  const NODE = 'quiet-amber-falcon';
+  const SERVER_NAMES = ['www.decoy-a.example', 'cdn.decoy-b.example'];
+  const PROXIES = SERVER_NAMES.map((sni) => ({
+    name: addressRemark(NODE, sni),
+    type: 'vless',
+    server: '192.0.2.10',
+    port: 443,
+    uuid: '11111111-2222-3333-4444-555555555555',
+    servername: sni,
+    'reality-opts': { 'public-key': 'PUBKEY', 'short-id': 'ab' },
+  }));
+  // What the backend makes of its Clash template for this key.
+  const BODY = YAML.stringify({
+    'mixed-port': 7890,
+    mode: 'global',
+    proxies: PROXIES,
+    'proxy-groups': [{ name: '→ Remnawave', type: 'select', proxies: PROXIES.map((p) => p.name) }],
+    rules: ['MATCH,→ Remnawave'],
+  });
+
+  beforeEach(() => {
+    vi.stubEnv('IP_HASH_SALT', 'test-salt');
+    mockBody = BODY;
+    mockStatus = 200;
+    mockHeaders = { 'content-type': 'text/yaml' };
+    stubFrontFetch();
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  async function served(t: ReturnType<typeof convexTest>) {
+    const res = await t.fetch('/api/v1/sub/tok_abc', { headers: { 'user-agent': 'mihomo/1.19' } });
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    const doc = YAML.parse(text) as {
+      proxies: Array<{ name: string }>;
+      'proxy-groups': Array<{ name: string; proxies: string[] }>;
+      rules: string[];
+    };
+    return { text, doc };
+  }
+
+  test('the group is "<site> Select" and every reference follows; off, it is the backend’s', async () => {
+    const t = convexTest(schema, modules);
+    const { subId } = await seedSub(t);
+    const { text, doc } = await served(t);
+    expect(text).not.toMatch(/remnawave/i);
+    expect(text).not.toContain(NODE);
+    expect(doc['proxy-groups'].map((g) => g.name)).toEqual(['FreeSocks Select']);
+    expect(doc['proxy-groups'][0].proxies).toEqual(doc.proxies.map((p) => p.name));
+    expect(doc.rules).toEqual(['MATCH,FreeSocks Select']);
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert('appSettings', {
+        key: 'subscription.siteName',
+        value: JSON.stringify('Example VPN'),
+        updatedAt: Date.now(),
+      });
+      await ctx.db.patch(subId, { subCache: undefined });
+    });
+    expect((await served(t)).doc.rules).toEqual(['MATCH,Example VPN Select']);
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert('appSettings', {
+        key: 'subscription.entryNames',
+        value: 'false',
+        updatedAt: Date.now(),
+      });
+      await ctx.db.patch(subId, { subCache: undefined });
+    });
+    const off = await served(t);
+    expect(off.doc['proxy-groups'].map((g) => g.name)).toEqual(['→ Remnawave']);
+    expect(off.doc.rules).toEqual(['MATCH,→ Remnawave']);
+  });
+
+  test('a body cached before the rename is renamed on a cache hit and when served stale', async () => {
+    const t = convexTest(schema, modules);
+    const { subId } = await seedSub(t);
+    await served(t);
+    // What a body cached before this change holds: the backend's group name.
+    const patchCache = (edit: (e: { at: number; content: string }) => void) =>
+      t.run(async (ctx) => {
+        const sub = (await ctx.db.get(subId))!;
+        const entries = JSON.parse(sub.subCache!) as Array<{ at: number; content: string }>;
+        for (const e of entries) edit(e);
+        await ctx.db.patch(subId, { subCache: JSON.stringify(entries) });
+      });
+    await patchCache((e) => {
+      e.content = e.content.replaceAll('FreeSocks Select', '→ Remnawave');
+    });
+    const hit = await served(t);
+    expect(fetchCalls).toBe(1); // a cache hit
+    expect(hit.text).not.toMatch(/remnawave/i);
+    expect(hit.doc.rules).toEqual(['MATCH,FreeSocks Select']);
+    // The same body, aged past its TTL, served while the backend is down.
+    await patchCache((e) => {
+      e.at -= 24 * 3600_000;
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('backend down');
+      }),
+    );
+    const stale = await served(t);
+    expect(stale.text).not.toMatch(/remnawave/i);
+    expect(stale.doc['proxy-groups'].map((g) => g.name)).toEqual(['FreeSocks Select']);
   });
 });
 

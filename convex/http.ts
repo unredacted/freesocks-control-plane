@@ -20,6 +20,7 @@ import { sanitizeConnectionChoice } from './edgeAttribution';
 import { classifyClient } from './lib/edges/clientFamilies';
 import { applyEdgeRender } from './lib/edges/renderPipeline';
 import { relabelMemberEntries } from './lib/memberEntryNames';
+import { SUBSCRIPTION_PASSTHROUGH_HEADERS } from './lib/backends/types';
 import type { Id } from './_generated/dataModel';
 import { ConvexError } from 'convex/values';
 import { SETTINGS_DEFAULTS } from './appSettings';
@@ -276,7 +277,10 @@ interface SubCacheEntry {
  *  (traffic/expiry counters, update cadence). `profile-title` is FCP's own (the
  *  service name, `subscription.siteName`), set last so a backend's title (or one cached with an older body)
  *  never reaches the app, whatever path the body took: rendered, cached, stale,
- *  or a backend with no headers at all (Outline).
+ *  or a backend with no headers at all (Outline). The stored headers are
+ *  re-checked against `SUBSCRIPTION_PASSTHROUGH_HEADERS` for the same reason: a
+ *  body cached while the backend's `profile-web-page-url` (the key's raw backend
+ *  URL) still passed must not hand it out when served from the cache or stale.
  *
  *  Caching (this route can sit behind a shared cache/CDN): the body is formatted
  *  per User-Agent, so the public path MUST send `Vary: User-Agent` or a shared
@@ -289,7 +293,11 @@ function subscriptionResponse(
 ): Response {
   const headers: Record<string, string> = {
     'content-type': entry.contentType || 'text/plain',
-    ...(entry.headers ?? {}),
+    ...Object.fromEntries(
+      Object.entries(entry.headers ?? {}).filter(([name]) =>
+        SUBSCRIPTION_PASSTHROUGH_HEADERS.includes(name.toLowerCase()),
+      ),
+    ),
     'profile-title': opts.title,
     // The backend legitimately returns an HTML landing page for browser UAs, and
     // this route serves it SAME-ORIGIN with the SPA + admin CMS. Sandbox it so
@@ -1078,6 +1086,18 @@ http.route({
 
     const now = Date.now();
     const title = await ctx.runQuery(internal.subscriptions.profileTitle, {});
+    // Member-facing names (docs/privacy.md) under the current settings. A
+    // fetched body is relabelled before it is cached; a cached or stale one is
+    // relabelled again when served, since it may predate a rename (a relabelled
+    // body relabels to itself, so this is a no-op otherwise).
+    const naming = () =>
+      ctx.runQuery(internal.subscriptions.entryNamingFor, {
+        backendServerId: sub.backendServerId ?? undefined,
+      });
+    const memberNamed = async <T extends { content: string }>(entry: T): Promise<T> => ({
+      ...entry,
+      content: relabelMemberEntries(entry.content, await naming()).content,
+    });
     // Every edge-required refusal is counted per reason (deliveryRefusals.ts,
     // attention `delivery_refusals`): dark members must be visible to the
     // operator, not only to the member. Counting never changes the answer.
@@ -1149,7 +1169,7 @@ http.route({
         contentAt: fresh.at,
         renderedEpoch: fresh.renderedEpoch ?? null,
       });
-      return subscriptionResponse(fresh, { title }); // fresh + same format → cache hit
+      return subscriptionResponse(await memberNamed(fresh), { title }); // fresh + same format → cache hit
     }
     // Last-resort fallback MUST match this UA — never serve another client's
     // format (the same invariant the fresh path enforces). (Review #11.)
@@ -1284,12 +1304,7 @@ http.route({
       // Member-facing names (docs/privacy.md): an entry the backend named after
       // its node and server name gets a neutral label. Last, because pinning
       // and the edge render both read those names.
-      content = relabelMemberEntries(
-        content,
-        await ctx.runQuery(internal.subscriptions.entryNamingFor, {
-          backendServerId: sub.backendServerId ?? undefined,
-        }),
-      ).content;
+      content = relabelMemberEntries(content, await naming()).content;
       const entry: SubCacheEntry = {
         content,
         contentType: fetched.contentType ?? 'text/plain',
@@ -1345,7 +1360,7 @@ http.route({
           contentAt: stale.at,
           renderedEpoch: stale.renderedEpoch ?? null,
         });
-        return subscriptionResponse(stale, { title });
+        return subscriptionResponse(await memberNamed(stale), { title });
       }
       console.error(
         `[subscription] fronted fetch failed: ${err instanceof Error ? err.message : String(err)}`,

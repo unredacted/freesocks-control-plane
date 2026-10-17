@@ -554,7 +554,7 @@
             anyone with a free account) would see those names in their app. When this is on, FCP
             renames them to "service name · location" (the backend's location label up to its first
             comma), with a short code when there are several. Edge connections keep their own
-            labels.
+            labels. The group the backend names after itself becomes "service name Select".
           </CardDescription>
         </CardHeader>
         <CardContent class="space-y-3 text-sm">

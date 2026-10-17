@@ -197,16 +197,31 @@ included, so what it names is part of the posture.
   member nothing the entry itself does not. Edge entries already carry neutral labels
   (`edge.render.*`). The machine's own host name never reaches a member at all: it is
   operator-only (`docs/servers.md` § "Node registration (contract v2)").
+- **No backend product name.** The backend's subscription templates
+  (`convex/lib/backend/subscriptionTemplates/`) hold a selector group named after the
+  backend product, which apps list beside the connections. Every sing-box and Clash body a
+  member receives renames it to `<site name> Select`, and any other group whose name
+  carries the backend product's name likewise (` (2)` onwards); group members, rule
+  targets and `route.final` follow. "Select" keeps it apart from the edge renderer's
+  url-test group (`edge.render.autoGroupName`, `FreeSocks Auto` by default) and from the
+  default edge entry label (the bare site name). An operator's own groups keep their
+  names. The subscription title is the site name too (`profile-title`, `docs/backends.md`).
+  The fronted route relabels a cached or stale body again when it serves it, so a body cached
+  before a rename never brings back the old names (a relabelled body relabels to itself).
 - **Only the fronted URL is handed out.** The backend's own subscription URL serves the
   backend's names; members are given FCP's `/api/v1/sub/<token>` URL instead (issuance mints
-  the token for every key), so the rename covers every key's normal path.
+  the token for every key), so the rename covers every key's normal path. The fronted route
+  never passes on the backend's `profile-web-page-url` header either: it is that same raw
+  backend URL. Of the backend's headers only the traffic counters
+  (`subscription-userinfo`) and the update interval reach the app.
 - **What a member still sees** is what a client needs to connect: the entry's address,
   port, server name and transport parameters, and their own credential.
 - **Off switch.** `subscription.entryNames` (Admin → Settings → "Names in members'
-  apps", default on) serves the backend's own names; only do that on a deployment whose
-  node names are meant to be public. VMess links carry their name inside the link's
-  base64 payload and are not renamed (FCP's modes do not use VMess). Response headers
-  the backend sends (such as the subscription title) are outside this step.
+  apps", default on) serves the backend's own entry and group names; only do that on a
+  deployment whose node names are meant to be public. VMess links carry their name inside
+  the link's base64 payload and are not renamed (FCP's modes do not use VMess). The
+  response headers are not part of the switch: the title is always the site name and the
+  page URL never passes.
 
 ## 6. Analytics (optional self-hosted Umami origin)
 

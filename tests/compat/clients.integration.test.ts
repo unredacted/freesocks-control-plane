@@ -83,16 +83,21 @@ function readable(body: string): string {
     : Buffer.from(t, 'base64').toString('utf8');
 }
 
-/** The panel's remark names the node; the member gets the neutral name instead. */
-function expectMemberNames(body: string): void {
+/** The panel's remark names the node and its template group the backend product; the member gets neutral names instead. */
+function expectMemberNames(body: string, format: string): void {
   expect(readable(body)).not.toContain(COMPAT_NODE);
   expect(readable(body)).toContain('FreeSocks');
+  expect(readable(body)).not.toMatch(/remnawave/i);
+  if (format === 'singbox' || format === 'mihomo')
+    expect(readable(body)).toContain('FreeSocks Select');
 }
 
 async function subscription(ua: string) {
   const response = await t.fetch(`/api/v1/sub/${token}`, { headers: { 'user-agent': ua } });
   expect(response.status).toBe(200);
   expect(response.headers.get('vary')?.toLowerCase()).toBe('user-agent');
+  // The panel's page URL is the key's raw panel subscription URL.
+  expect(response.headers.get('profile-web-page-url')).toBeNull();
   return await response.text();
 }
 
@@ -102,7 +107,7 @@ describe('real panel → FCP HTTP handler → client format (Convex test runtime
       test(`${client.name}: ${ua}`, async () => {
         const body = await subscription(ua);
         assertSubscription(body, client.format);
-        expectMemberNames(body);
+        expectMemberNames(body, client.format);
         // An immediate repeat is a fresh-cache hit for this UA and must be byte-identical.
         expect(await subscription(ua)).toBe(body);
       });
@@ -286,7 +291,7 @@ describe('reference engines: real panel-generated REALITY connections', () => {
     test(`${engine}: native config validation, REALITY, remote DNS, HTTPS and UDP DNS`, async () => {
       try {
         const body = await subscription(ua);
-        expectMemberNames(body);
+        expectMemberNames(body, engine);
         await startEngine(engine, body);
         await httpsProbe();
         expect(
