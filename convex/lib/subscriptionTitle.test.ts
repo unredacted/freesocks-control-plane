@@ -16,6 +16,12 @@ describe('the subscription title', () => {
     expect(subscriptionSiteName('a,b|c\u0007d')).toBe('a b c d');
     expect(subscriptionSiteName('x'.repeat(80))).toHaveLength(32);
     expect(subscriptionSiteName('   ')).toBe('FreeSocks');
+    // A lone surrogate half is dropped; a cut never splits a character.
+    expect(subscriptionSiteName('VPN \uD83D')).toBe('VPN');
+    expect(subscriptionSiteName('\uDE00ok')).toBe('ok');
+    const emoji = '😀'.repeat(40);
+    expect(Array.from(subscriptionSiteName(emoji))).toHaveLength(32);
+    expect(() => encodeURIComponent(subscriptionSiteName(`${'a'.repeat(31)}😀`))).not.toThrow();
     expect(subscriptionSiteName(7)).toBe('FreeSocks');
   });
 
