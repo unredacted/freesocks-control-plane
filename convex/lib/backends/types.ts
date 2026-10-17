@@ -180,13 +180,27 @@ export interface UpdateUserPatch {
   // (Remnawave's /actions/{enable|disable}), not this field-update patch.
 }
 
+/**
+ * The backend's subscription headers a member's app receives (lower case): the
+ * traffic/expiry counters and the update cadence, nothing else. Never the
+ * backend's `profile-title` (FCP names the subscription, `subscription.siteName`)
+ * and never its `profile-web-page-url`: that is the key's own backend
+ * subscription URL (the backend's public address plus the key's capability),
+ * whose body names the backend's nodes. The fronted route re-checks a stored
+ * body's headers against this list, so a body cached before a name left it
+ * stops carrying it too.
+ */
+export const SUBSCRIPTION_PASSTHROUGH_HEADERS: readonly string[] = [
+  'subscription-userinfo',
+  'profile-update-interval',
+];
+
 export interface SubscriptionContent {
   content: string;
   contentType: string;
-  // A small allowlist of subscription metadata headers to re-emit when FCP fronts
-  // the subscription URL — traffic/expiry counters (`subscription-userinfo`) and
-  // client update hints the proxy app displays. Undefined for backends that don't
-  // emit them (Outline). Never carries a secret.
+  // The backend's `SUBSCRIPTION_PASSTHROUGH_HEADERS` to re-emit when FCP fronts
+  // the subscription URL. Undefined for backends that don't emit them (Outline).
+  // Never carries a secret.
   headers?: Record<string, string>;
   // The node this content was pinned to (Remnawave node pinning only) — the
   // serve paths persist it on the subscription row so the NEXT issuance can

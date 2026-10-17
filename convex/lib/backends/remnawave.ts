@@ -48,7 +48,7 @@ import type {
   ProfilePatchPreview,
   ProfilePatchSendOptions,
 } from './types';
-import { farFutureExpiryIso, isFarFutureExpiry } from './types';
+import { farFutureExpiryIso, isFarFutureExpiry, SUBSCRIPTION_PASSTHROUGH_HEADERS } from './types';
 import { changeToken, realityAuthDigest, shapeHash } from '../backend/digest';
 import { applyPatchOps, type PatchOp } from '../backend/patchOps';
 import { PRIVACY_XRAY_LOG } from './xrayPrivacy';
@@ -1424,10 +1424,10 @@ export async function remnawaveFetchSubscription(
     // Pass through the well-known subscription metadata headers (never a secret)
     // so the FCP-fronted URL is a faithful stand-in for the backend URL — the proxy
     // app still sees its traffic/expiry counters + update cadence. Not the
-    // backend's `profile-title`: FCP names the subscription itself
-    // (subscription.siteName).
+    // backend's `profile-title` (FCP names the subscription itself) nor its
+    // `profile-web-page-url` (the key's raw backend URL): see the list.
     const passthrough: Record<string, string> = {};
-    for (const h of ['subscription-userinfo', 'profile-update-interval', 'profile-web-page-url']) {
+    for (const h of SUBSCRIPTION_PASSTHROUGH_HEADERS) {
       const val = res.headers.get(h);
       if (val) passthrough[h] = val;
     }
