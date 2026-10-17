@@ -6,6 +6,7 @@
  * subscription body per user agent, list node transports. Every value is RFC
  * 5737 / `*.example`. Not a test file itself.
  */
+import { BACKEND_USERNAME_RE } from '../../backends/username';
 import { jsonRes, mockFetch, type Captured, type FetchStub } from './mockFetch';
 
 export interface FakePanelUser {
@@ -102,6 +103,10 @@ export function fakePanel(opts: FakePanelOptions = {}): FakePanel {
         return jsonRes({ message: 'create failed' }, status);
       }
       const body = call.body as { username: string };
+      // The real create-user contract (3-36 of [A-Za-z0-9_-]), so a name FCP
+      // builds too long fails here as it does on a real backend.
+      if (!BACKEND_USERNAME_RE.test(body.username))
+        return jsonRes({ statusCode: 400, message: 'Validation failed' }, 400);
       seq++;
       const u: FakePanelUser = {
         uuid: uuidLike(seq),

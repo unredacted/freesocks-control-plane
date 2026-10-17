@@ -10,6 +10,7 @@
  * Not a test file itself. Every value is RFC 5737 / `*.example`.
  */
 import { realityPublicKey } from '../../backend/digest';
+import { BACKEND_USERNAME_RE } from '../../backends/username';
 import { jsonRes, mockFetch, routeFetch, type Captured, type FetchStub } from './mockFetch';
 
 export const FAKE_BACKEND_HOST = 'panel.example';
@@ -279,6 +280,10 @@ export function createFakeBackend(opts: { host?: string } = {}): FakeBackend {
       return json(n ?? null);
     }
     if (path === '/api/users' && method === 'POST') {
+      // The real create-user contract (3-36 of [A-Za-z0-9_-]), so a name FCP
+      // builds too long fails here as it does on a real backend.
+      if (!BACKEND_USERNAME_RE.test(String(body.username)))
+        return jsonRes({ statusCode: 400, message: 'Validation failed' }, 400);
       const made = {
         uuid: UUID(++panel.seq),
         shortUuid: `short-${panel.seq}`,

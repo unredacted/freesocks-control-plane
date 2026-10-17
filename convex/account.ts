@@ -16,6 +16,7 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { ConvexError, v } from 'convex/values';
 import { randomHex } from './lib/crypto';
+import { boundedUsername } from './lib/backends/username';
 import { issueNewSubscription } from './lib/issuance';
 import {
   applyUsageCarryover,
@@ -710,7 +711,7 @@ export const regenerate = internalAction({
       userId,
       backend: tier.backend,
       spec: {
-        username: `freesocks-${tier.slug}-${randomHex(8)}`,
+        username: boundedUsername('freesocks-', tier.slug, randomHex(8)),
         trafficLimitBytes: await carriedTrafficLimit(
           ctx,
           oldSub,
@@ -847,7 +848,7 @@ export const switchBackend = internalAction({
       userId,
       backend: peerTier.backend,
       spec: {
-        username: `freesocks-${peerTier.slug}-${randomHex(8)}`,
+        username: boundedUsername('freesocks-', peerTier.slug, randomHex(8)),
         trafficLimitBytes: await carriedTrafficLimit(
           ctx,
           oldSub,
@@ -1042,7 +1043,7 @@ export const switchMode = internalAction({
         userId,
         backend: tier.backend,
         spec: {
-          username: `freesocks-${tier.slug}-${randomHex(8)}`,
+          username: boundedUsername('freesocks-', tier.slug, randomHex(8)),
           trafficLimitBytes: await carriedTrafficLimit(
             ctx,
             oldSub,
@@ -1379,7 +1380,7 @@ export const switchServer = internalAction({
         userId,
         backend: tier.backend,
         spec: {
-          username: `freesocks-${tier.slug}-${randomHex(8)}`,
+          username: boundedUsername('freesocks-', tier.slug, randomHex(8)),
           trafficLimitBytes: await carriedTrafficLimit(
             ctx,
             oldSub,

@@ -18,6 +18,7 @@ import { FIXTURE_PANEL_SLUG, insertPanelServer } from './lib/edges/testing/fixtu
 import { generateRealityKey } from './lib/backend/realityKeys';
 import { addressRemark, closeForSharedChange } from './nodeIntents';
 import { remarkTag } from './lib/backend/hostRemark';
+import { BACKEND_USERNAME_RE } from './lib/backends/username';
 import { claimKey, hostIdentity } from './lib/backend/ops';
 import { signValue } from './lib/cookies';
 import { sha256Hex } from './lib/crypto';
@@ -362,6 +363,19 @@ describe('a direct node with long names', () => {
     );
     expect(mine.map((h) => h.sni).sort()).toEqual([...names].sort());
     for (const h of mine) expect(String(h.remark).length).toBeLessThanOrEqual(40);
+  });
+
+  test('the test link of a node with a 30-character name: its backend user fits the 36-character cap', async () => {
+    // The fake backend refuses a name over the cap with a 400, as the real one does.
+    const nodeName = 'a-thirty-character-node-name-x';
+    expect(nodeName).toHaveLength(30);
+    const { t, intentId } = await seedLiveDirect({ nodeName });
+    const built = await t.action(internal.nodeActivation.buildDirectTestLink, { intentId });
+    expect(built.link).toMatch(/^vless:\/\//);
+    const creds = await t.run((ctx) => ctx.db.query('edgeTestCredentials').collect());
+    expect(creds).toHaveLength(1);
+    expect(creds[0]!.username).toMatch(BACKEND_USERNAME_RE);
+    expect(creds[0]!.username.startsWith('fcp-test-link-a-thirty')).toBe(true);
   });
 });
 
