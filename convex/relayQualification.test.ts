@@ -36,9 +36,9 @@ afterEach(() => {
 describe('origin qualification credential', () => {
   test('username is slug-derived, bounded and tagged', () => {
     const u = qualificationUsername('Node.One/Very-Long-Relay-Slug-Name', 'abcd1234');
-    expect(u.startsWith('fcp-qualify-node-one-very-long-r')).toBe(true);
-    expect(u.endsWith('-abcd1234')).toBe(true);
-    expect(u).toMatch(/^[a-z0-9-]+$/);
+    // Within the backend's 36-character username cap: the slug is cut, the nonce kept.
+    expect(u).toBe('fcp-qualify-node-one-very-l-abcd1234');
+    expect(u).toMatch(/^[a-z0-9-]{3,36}$/);
   });
 
   test('mintContext: the origin’s backend + the placement of its qualificationModeSlug; a manual origin has nothing to mint on', async () => {

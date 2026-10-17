@@ -31,6 +31,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { backendIdValidator, type BackendId } from './lib/backendIds';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import type { IssuedUser } from './lib/backends/types';
+import { boundedUsername } from './lib/backends/username';
 import { writeAuditLog } from './lib/audit';
 import { randomHex } from './lib/crypto';
 import { resolvePlacementTarget } from './lib/remnawavePlacement';
@@ -49,12 +50,9 @@ export const QUALIFICATION_TAG = 'fcp-qualify';
 export const MINT_SETTLE_MS = 2 * 60_000;
 export const MINT_SETTLE_LOOKS = 2;
 
+/** Within the backend's username cap: the origin name is cut first, never the nonce. */
 export function qualificationUsername(relaySlug: string, nonceHex8: string): string {
-  const slug = relaySlug
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, '-')
-    .slice(0, 20);
-  return `fcp-qualify-${slug}-${nonceHex8}`;
+  return boundedUsername('fcp-qualify-', relaySlug, nonceHex8);
 }
 
 export type MintOp = NonNullable<Doc<'relays'>['qualificationMint']>;

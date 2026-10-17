@@ -24,6 +24,7 @@ import type { ActionCtx, MutationCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { capabilitiesOf } from './lib/backends/capabilities';
+import { boundedUsername } from './lib/backends/username';
 import type { BackendId } from './lib/backendIds';
 import { writeAuditLog } from './lib/audit';
 import { randomHex } from './lib/crypto';
@@ -43,12 +44,13 @@ export const TEST_CREDENTIAL_TAG = 'fcp-test';
 const purposeValidator = v.union(v.literal('rehearsal'), v.literal('test_link'));
 type Purpose = 'rehearsal' | 'test_link';
 
+/** Within the backend's username cap: the node or origin name is cut first, never the nonce. */
 export function testCredentialUsername(relaySlug: string, purpose: Purpose, nonce: string): string {
-  const slug = relaySlug
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, '-')
-    .slice(0, 20);
-  return `fcp-test-${purpose === 'test_link' ? 'link' : 'rehearse'}-${slug}-${nonce}`;
+  return boundedUsername(
+    `fcp-test-${purpose === 'test_link' ? 'link' : 'rehearse'}-`,
+    relaySlug,
+    nonce,
+  );
 }
 
 /** Where the credential's body is fetched from (the sub route's fetch arguments). */
