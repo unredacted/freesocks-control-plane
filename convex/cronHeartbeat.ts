@@ -67,6 +67,11 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
   },
   { name: 'mirror-refresh', everyMs: 6 * HOUR, description: 'Refresh the S3 subscription mirrors' },
   {
+    name: 'mirror-barrier-repair',
+    everyMs: 5 * MIN,
+    description: 'Repair or withdraw mirror uploads a policy move overtook',
+  },
+  {
     name: 'deactivate-idle-free',
     everyMs: DAY,
     description: 'Deactivate + retain idle free users (reclaim key, keep row)',
@@ -135,6 +140,11 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
     description: 'Server-name families: delete attributed report counts older than the window',
   },
   {
+    name: 'sni-vantage',
+    everyMs: 10 * MIN,
+    description: 'Server-name families: check names from inside opted-in countries',
+  },
+  {
     name: 'backend-reconcile',
     everyMs: 5 * MIN,
     description: 'Server management: settle open backend changes by looking at the backend',
@@ -162,6 +172,11 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
     description: 'Origin edges: score reports + load + probes per origin; opt-in auto-rotate',
   },
   {
+    name: 'alerts-dispatch',
+    everyMs: 5 * MIN,
+    description: 'Operator alerts: post new alert-worthy attention items to the webhook (opt-in)',
+  },
+  {
     name: 'retention-edge-probes',
     everyMs: DAY,
     description: 'Prune settled origin probe runs past the retention window',
@@ -175,6 +190,36 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
     name: 'retention-edge-rotations',
     everyMs: DAY,
     description: 'Prune terminal origin rotations past the retention window',
+  },
+  {
+    name: 'retention-panel-ops',
+    everyMs: DAY,
+    description: 'Prune settled backend ledger ops past the retention window',
+  },
+  {
+    name: 'retention-sni-rollouts',
+    everyMs: DAY,
+    description: 'Prune finished server-name rollouts past the retention window',
+  },
+  {
+    name: 'retention-edge-setup-runs',
+    everyMs: DAY,
+    description: 'Prune finished guided setup runs past the retention window',
+  },
+  {
+    name: 'retention-activation-runs',
+    everyMs: DAY,
+    description: 'Prune finished node activation runs whose candidates are gone',
+  },
+  {
+    name: 'retention-edge-host-hides',
+    everyMs: DAY,
+    description: 'Prune released direct-Host hide rows past the retention window',
+  },
+  {
+    name: 'retention-port-changes',
+    everyMs: DAY,
+    description: 'Prune finished port changes past the retention window',
   },
 ];
 

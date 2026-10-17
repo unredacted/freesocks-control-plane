@@ -8,6 +8,7 @@
  * against what our encoder happens to produce. A decoder that only agrees with
  * our encoder proves nothing.
  */
+import { createHash } from 'node:crypto';
 import { describe, expect, test } from 'vitest';
 import {
   buildWsHandshake,
@@ -32,7 +33,8 @@ import {
   grpcPath,
 } from './grpc';
 import { buildVlessRequest, isUuid, parseVlessResponse, uuidToBytes } from './vless';
-import { headerHasToken, looksFrontGenerated, parseHttpHead, tunnelProbeRequest } from './http1';
+import { buildTrojanRequest, trojanKey } from './trojan';
+import { headerHasToken, parseHttpHead, tunnelProbeRequest } from './http1';
 
 const enc = (s: string) => new TextEncoder().encode(s);
 const hex = (b: Uint8Array) => Buffer.from(b).toString('hex');
@@ -67,17 +69,6 @@ describe('http/1.1 head parsing', () => {
     expect(headerHasToken('keep-alive, Upgrade', 'upgrade')).toBe(true);
     expect(headerHasToken('keep-alive', 'upgrade')).toBe(false);
     expect(headerHasToken(undefined, 'upgrade')).toBe(false);
-  });
-
-  test('recognises a front-generated answer by its own headers', () => {
-    const head = parseHttpHead(
-      enc('HTTP/1.1 403 Forbidden\r\nServer: cloudflare\r\ncf-ray: 1\r\n\r\n'),
-    )!;
-    expect(looksFrontGenerated(head)).toBe(true);
-    const node = parseHttpHead(
-      enc('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n'),
-    )!;
-    expect(looksFrontGenerated(node)).toBe(false);
   });
 
   test('the tunnel probe asks for the target by name and closes after it', () => {
@@ -245,6 +236,35 @@ describe('grpc framing and Hunk', () => {
   test('the path is the service name plus Tun', () => {
     expect(grpcPath('relay-svc')).toBe('/relay-svc/Tun');
     expect(grpcPath('/relay-svc/')).toBe('/relay-svc/Tun');
+  });
+});
+
+describe('trojan', () => {
+  test('the request is hex(SHA-224(password)), CRLF, CONNECT to a domain, CRLF, then the payload', () => {
+    const req = buildTrojanRequest({
+      password: 'pw',
+      host: 'www.gstatic.com',
+      port: 80,
+      payload: enc('GET'),
+    });
+    // SHA-224("pw"), as every Trojan server keys an account.
+    const key = createHash('sha224').update('pw').digest('hex');
+    expect(Buffer.from(trojanKey('pw')).toString()).toBe(key);
+    expect(Buffer.from(req.subarray(0, 56)).toString()).toBe(key);
+    expect(hex(req.subarray(56, 58))).toBe('0d0a');
+    // CONNECT, domain, length, name, port 80 big-endian, CRLF.
+    expect(req[58]).toBe(0x01);
+    expect(req[59]).toBe(0x03);
+    expect(req[60]).toBe('www.gstatic.com'.length);
+    expect(Buffer.from(req.subarray(61, 61 + 15)).toString()).toBe('www.gstatic.com');
+    expect(hex(req.subarray(76, 78))).toBe('0050');
+    expect(hex(req.subarray(78, 80))).toBe('0d0a');
+    expect(Buffer.from(req.subarray(80)).toString()).toBe('GET');
+  });
+
+  test('an empty password or an oversized name is refused before anything is sent', () => {
+    expect(() => buildTrojanRequest({ password: '', host: 'a.example', port: 80 })).toThrow();
+    expect(() => buildTrojanRequest({ password: 'pw', host: 'a'.repeat(256), port: 80 })).toThrow();
   });
 });
 

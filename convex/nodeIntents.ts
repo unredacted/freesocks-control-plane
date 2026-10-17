@@ -30,13 +30,16 @@ import {
 } from './lib/backend/activation';
 import { nodeGateOf, type NodeGate } from './lib/backend/deliveryGate';
 import { CLAIM_LEASE_MS, claimAvailable, desiredHashOf, fenceHolds } from './lib/backend/fencing';
-import type { IngressMapping } from './lib/backend/ingress';
+import { ingressRoute, type IngressMapping, type IngressRoute } from './lib/backend/ingress';
 import { LABEL_RE, originHostname, originLabel } from './lib/backend/originDns';
 import { ADDRESS_SEP, addressRemark, ownsAddress } from './lib/backend/hostRemark';
 import { type ModeShape } from './lib/backend/profileTemplate';
 import { resolveServerConfig } from './lib/serverConfig';
 import { observeInstance } from './backendObserve';
+import { scheduleMirrorRefresh } from './lib/edges/relayGuards';
 import { bumpGateVersion, modeOf, setupReady, type Setup, type SetupMode } from './backendSetup';
+import { confirmFromRole, firewallPortsFor } from './lib/backend/portRequirements';
+import { currentNodeName, formerNamesByName, runningRenameOf } from './lib/backend/nodeAliases';
 
 const refuse = (code: string, message: string): never => {
   throw new ConvexError({ code, message });
@@ -70,10 +73,20 @@ async function intentByName(
   sid: Id<'backendServers'>,
   name: string,
 ): Promise<Intent | null> {
-  return ctx.db
+  const exact = await ctx.db
     .query('panelNodeIntents')
     .withIndex('by_server_name', (q) => q.eq('backendServerId', sid).eq('name', name))
     .unique();
+  if (exact) return exact;
+  // A name the node had before a rename (the role's inventory, a pin not
+  // drained yet) is the same node.
+  const current = await currentNodeName(ctx.db, sid, name);
+  return current
+    ? ctx.db
+        .query('panelNodeIntents')
+        .withIndex('by_server_name', (q) => q.eq('backendServerId', sid).eq('name', current))
+        .unique()
+    : null;
 }
 
 async function readySetup(ctx: { db: QueryCtx['db'] }, sid: Id<'backendServers'>) {
@@ -96,10 +109,6 @@ export function modeEntry(setup: Setup, slug: string): SetupMode {
 export function transportFor(setup: Setup, slug: string) {
   const m = modeEntry(setup, slug);
   return { ...m.transport!, tag: m.tag };
-}
-
-export function shapeOf(setup: Setup, slug: string): ModeShape {
-  return modeEntry(setup, slug).shape;
 }
 
 /** Whether a node of this mode runs Caddy in front of a loopback WebSocket transport. */
@@ -174,6 +183,60 @@ export function ingressOf(intent: Intent, hostname: string | undefined): Ingress
     external: { port: i.externalPort, tls: 'caddy', hostHeader: i.hostHeader },
     internal: i.internal,
   };
+}
+
+/**
+ * What an enrolled node's edges dial and how its loopback transports are
+ * reached (docs/servers.md "Node lifecycle"): the origin address FCP gives
+ * the role (never the management address), the declared ingress, and, when
+ * that origin is a hostname, the public addresses a direct Host could still
+ * dial the node at. The setup plan and transport discovery read the node from
+ * here, not from the backend's node row. Null for a node FCP does not manage.
+ */
+export async function enrolledOriginOf(
+  ctx: { db: QueryCtx['db'] },
+  sid: Id<'backendServers'>,
+  nodeName: string,
+): Promise<{
+  originAddress: string;
+  ingress: IngressMapping | null;
+  directAddresses: string[];
+  /**
+   * The ingress answers a foreign Host header, as `machine_ready` verified for
+   * this machine revision (`ingress_verified`). The origin probe's own,
+   * stricter reading (a 2xx at `/`) must not overrule what the node proved.
+   */
+  acceptsAnyHost: boolean;
+} | null> {
+  const intent = await intentByName(ctx, sid, nodeName);
+  if (!intent) return null;
+  const setup = await readySetup(ctx, sid);
+  const hostname = originHostnameOf(intent, setup);
+  const originAddress = originAddressOf(intent, hostname);
+  const ips = [intent.observed.publicIps.v4, intent.observed.publicIps.v6].filter(
+    (x): x is string => !!x && x !== originAddress,
+  );
+  const ingressVerified = intent.activation.evidence.some(
+    (e) => e.kind === 'ingress_verified' && e.machineRevision === intent.machineRevision,
+  );
+  return {
+    originAddress,
+    ingress: ingressOf(intent, hostname),
+    directAddresses: IPV4.test(originAddress) || originAddress.includes(':') ? [] : ips,
+    acceptsAnyHost: ingressVerified && intent.settings.ingress?.hostHeader === 'any',
+  };
+}
+
+/** The probe outcomes with what an enrolled node's verified ingress already proved. */
+export function withVerifiedIngress<
+  O extends { originTransport: { acceptsHostHeader: 'any' | 'names' } | null },
+>(outcomes: readonly O[], enrolled: { acceptsAnyHost: boolean } | null): O[] {
+  if (!enrolled?.acceptsAnyHost) return [...outcomes];
+  return outcomes.map((o) =>
+    o.originTransport
+      ? { ...o, originTransport: { ...o.originTransport, acceptsHostHeader: 'any' } }
+      : o,
+  );
 }
 
 function revisionsOf(intent: Intent): Revisions {
@@ -457,6 +520,33 @@ export const adoptNode = internalMutation({
   },
 });
 
+/**
+ * Reconcile a node now, whatever its state (a moved transport re-addresses its
+ * addresses): the same lease rule, so an attempt already running keeps it.
+ */
+export const reconcileNow = internalMutation({
+  args: { intentId: v.id('panelNodeIntents'), retries: v.optional(v.number()) },
+  handler: async (ctx, { intentId, retries }) => {
+    const intent = await ctx.db.get(intentId);
+    if (!intent || intent.state === 'retiring' || intent.state === 'retired') return false;
+    if (await scheduleReconcile(ctx, intent)) return true;
+    // An attempt holds the lease and may have read the profile before the
+    // change: a new generation fences what it records, and its handover
+    // (`releaseOvertaken`) reconciles the node again with what is there now.
+    // A lease whose attempt died is not handed over: try again once it ran out.
+    await ctx.db.patch(intent._id, { generation: intent.generation + 1, updatedAt: Date.now() });
+    if ((retries ?? 0) < RECONCILE_NOW_RETRIES)
+      await ctx.scheduler.runAfter(CLAIM_LEASE_MS + 1_000, internal.nodeIntents.reconcileNow, {
+        intentId,
+        retries: (retries ?? 0) + 1,
+      });
+    return false;
+  },
+});
+
+/** How often `reconcileNow` comes back for a lease that stays held (each a lease apart). */
+const RECONCILE_NOW_RETRIES = 3;
+
 /** Take the lease and schedule the reconcile, unless an attempt already holds it. */
 async function scheduleReconcile(ctx: MutationCtx, intent: Intent) {
   const now = Date.now();
@@ -487,6 +577,7 @@ const settingsPatch = v.object({
           listen: v.string(),
           port: v.number(),
           path: v.string(),
+          upstream: v.optional(v.literal('h2c')),
         }),
       ),
     }),
@@ -592,6 +683,8 @@ export const patchSettings = internalMutation({
           byAdminId: a.actorAdminId,
         };
         await bumpGateVersion(ctx, intent.backendServerId);
+        // Mirror objects are static: they follow a closed gate only when rewritten.
+        await scheduleMirrorRefresh(ctx);
       }
       patch.desiredHash = await desiredHashOf({ observed: intent.observed, settings: next });
       patch.generation = intent.generation + 1;
@@ -628,6 +721,11 @@ export const applied = internalMutation({
     appliedRevision: v.number(),
     certificateReady: v.optional(v.boolean()),
     nodeStarted: v.boolean(),
+    /**
+     * The ports the node's firewall lets in after this run: confirms this
+     * node's pending port changes (backendPortChanges.ts). Absent = no claim.
+     */
+    firewallPorts: v.optional(v.array(v.number())),
   },
   handler: async (ctx, a) => {
     const intent = await ctx.db.get(a.intentId);
@@ -642,6 +740,9 @@ export const applied = internalMutation({
     if (a.appliedRevision > intent.machineRevision)
       refuse('servers.revision_unknown', 'That machine revision was never served for this node');
     const now = Date.now();
+    // The firewall report holds whatever the revision: a run that only opened
+    // a port reports the same machine revision again.
+    if (a.firewallPorts) await confirmFromRole(ctx, intent, a.firewallPorts);
     // Idempotent: the same revision reported again changes nothing but the report.
     if (intent.appliedRevision === a.appliedRevision) {
       await ctx.db.patch(intent._id, {
@@ -716,8 +817,17 @@ async function loadContext(ctx: QueryCtx, intent: Intent) {
   const mode = modeEntry(setup, modeSlug(intent));
   const t = transportFor(setup, modeSlug(intent));
   const inbound = profile?.inbounds.find((i) => i.inboundUuid === t.uuid) ?? null;
+  // A rename in flight moves the node's name and its addresses' remarks; the
+  // run waits for it (the rename reconciles the node when it is done).
+  const renaming = (
+    await ctx.db
+      .query('panelNodeRenames')
+      .withIndex('by_state', (q) => q.eq('state', 'running'))
+      .collect()
+  ).some((r) => r.backendServerId === sid && r.intentId === intent._id);
   return {
     intent,
+    renaming,
     server: { _id: server._id, backend: server.backend, config: server.config, slug: server.slug },
     setup,
     mode: { slug: mode.slug, name: mode.name, shape: mode.shape },
@@ -899,6 +1009,7 @@ export const observeRevisions = internalMutation({
         };
       } else if (d === 'activating') patch.delivery = { ...intent.delivery, disposition: 'staged' };
       await bumpGateVersion(ctx, intent.backendServerId);
+      if (d === 'live') await scheduleMirrorRefresh(ctx);
       const server = await ctx.db.get(intent.backendServerId);
       await writeAuditLog(ctx, {
         actorType: 'system',
@@ -1010,6 +1121,10 @@ export const reconcile = internalAction({
         await stop('pending', 'servers.manage_disabled');
         return null;
       }
+      if (c.renaming) {
+        await stop('pending', 'servers.node_rename_running');
+        return null;
+      }
       // The observation the row is compared against must be fresh.
       if (!(await observeInstance(ctx, c.server))) {
         await stop('pending', 'servers.observe_failed');
@@ -1037,6 +1152,13 @@ export const reconcile = internalAction({
           return null;
         }
         await observeInstance(ctx, c.server);
+        // The node list Edges plans from learns the new node now, not at the
+        // next healthcheck (a protect run started meanwhile would not find it).
+        try {
+          await ctx.runAction(internal.backendNodes.refreshNodeInventory, { backendServerId: sid });
+        } catch {
+          // Best effort: the healthcheck refreshes the inventory too.
+        }
         c = await load();
         if (!c.node) {
           await stop('pending', 'servers.observe_lag');
@@ -1213,14 +1335,33 @@ export const reconcile = internalAction({
       await stop('ready', null);
       return null;
     } catch (err) {
-      if (err instanceof Fenced) return null;
-      // A write still in flight on the same item (an earlier attempt's create
-      // the backend has not shown yet) settles by itself: park, never block.
-      // An outcome nobody knows (`servers.op_uncertain`) needs an operator.
-      const code = codeOf(err);
-      await stop(code === 'servers.op_running' ? 'pending' : 'blocked', code);
+      if (!(err instanceof Fenced)) {
+        // A write still in flight on the same item (an earlier attempt's create
+        // the backend has not shown yet) settles by itself: park, never block.
+        // An outcome nobody knows (`servers.op_uncertain`) needs an operator.
+        const code = codeOf(err);
+        await stop(code === 'servers.op_running' ? 'pending' : 'blocked', code);
+      }
       return null;
+    } finally {
+      // A newer generation overtook this attempt (a settings change while it
+      // ran): its records were fenced off, so its claim is handed over here
+      // and the current generation reconciled, never left to expire.
+      await ctx.runMutation(internal.nodeIntents.releaseOvertaken, f);
     }
+  },
+});
+
+/** Release the claim of an attempt a newer generation overtook, and reconcile the current one. */
+export const releaseOvertaken = internalMutation({
+  args: fence,
+  handler: async (ctx, f) => {
+    const intent = await ctx.db.get(f.intentId);
+    if (!intent || intent.claim?.attemptId !== f.attemptId || intent.generation === f.generation)
+      return { released: false };
+    await ctx.db.patch(intent._id, { claim: undefined, updatedAt: Date.now() });
+    await scheduleReconcile(ctx, (await ctx.db.get(intent._id))!);
+    return { released: true };
   },
 });
 
@@ -1321,10 +1462,14 @@ export interface BootstrapAnswer {
   ingress: {
     hostname: string;
     externalPort: number;
-    routes: { path: string; port: number }[];
+    routes: IngressRoute[];
   } | null;
   origin: { hostname: string | null; dns: Intent['origin']['dns'] };
+  /** Every port the node's firewall must let in (docs/servers.md "Firewall acknowledgement"). */
+  firewall: { ports: FirewallPortRow[] };
 }
+
+type FirewallPortRow = { port: number; protocol: 'tcp'; reason: 'serving' | 'pending' };
 
 /**
  * What the role needs to configure the machine, plus the backend's node secret
@@ -1348,6 +1493,10 @@ export const bootstrap = internalAction({
       throw new ConvexError({ code: 'servers.unsupported_backend', message: 'Unsupported' });
     const secretKey = await writes.nodeSecret(c.server.config as BackendConfig);
     await ctx.runMutation(internal.nodeIntents.markBootstrapServed, { intentId });
+    const ports: FirewallPortRow[] = await ctx.runQuery(
+      internal.backendPortChanges.firewallForIntent,
+      { intentId },
+    );
     const ingress = c.ingress;
     return {
       machineRevision: c.intent.machineRevision,
@@ -1357,10 +1506,11 @@ export const bootstrap = internalAction({
         ? {
             hostname: ingress.hostname,
             externalPort: ingress.external.port,
-            routes: ingress.internal.map((i) => ({ path: i.path, port: i.port })),
+            routes: ingress.internal.map(ingressRoute),
           }
         : null,
       origin: { hostname: c.hostname ?? null, dns: c.intent.origin.dns },
+      firewall: { ports },
     };
   },
 });
@@ -1385,8 +1535,14 @@ export async function nodeGateFor(
         .withIndex('by_intent', (q) => q.eq('intentId', intent._id))
         .collect()
     : [];
-  // An unmanaged node is closed only by an open maintenance hold that names it.
-  const held = !intent && !!nodeName && (await heldNodeNames(ctx, sid)).has(nodeName);
+  // An unmanaged node is closed only by an open maintenance hold that names it
+  // (under its current name, when this is one it had before a rename).
+  const heldNames = !intent && nodeName ? await heldNodeNames(ctx, sid) : null;
+  const held =
+    !!heldNames &&
+    !!nodeName &&
+    (heldNames.has(nodeName) ||
+      heldNames.has((await currentNodeName(ctx.db, sid, nodeName)) ?? nodeName));
   return nodeGateOf(intent, runs, gateVersion, held);
 }
 
@@ -1411,18 +1567,17 @@ export const blockedNodeNames = internalQuery({
       .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
       .collect();
     const held = await heldNodeNames(ctx, backendServerId);
-    return [
+    const blocked = [
       ...intents
         .filter((i) => i.delivery.disposition !== 'live' || !!i.maintenance)
         .map((i) => i.name),
       ...held,
     ];
+    // A body whose Hosts still carry a renamed node's old remark names it by
+    // its old name: excluded under that name too.
+    const formers = await formerNamesByName(ctx.db, backendServerId);
+    return [...blocked, ...blocked.flatMap((n) => formers.get(n) ?? [])];
   },
-});
-
-export const nodeGate = internalQuery({
-  args: { backendServerId: v.id('backendServers'), nodeName: v.optional(v.string()) },
-  handler: (ctx, { backendServerId, nodeName }) => nodeGateFor(ctx, backendServerId, nodeName),
 });
 
 // --- retirement request (the role) ---------------------------------------------------------------------
@@ -1442,6 +1597,17 @@ export const requestRetirement = internalMutation({
     if (!intent) return refuse('not_found', 'No such node');
     const existing = intent.retirementId ? await ctx.db.get(intent.retirementId) : null;
     if (existing) return { retirementId: existing._id, stage: existing.stage };
+    // A rename assumes the node, its origin and its addresses stay put until it is done.
+    if (
+      await runningRenameOf(ctx.db, intent.backendServerId, {
+        nodeUuid: intent.nodeUuid,
+        name: intent.name,
+      })
+    )
+      refuse(
+        'servers.node_rename_running',
+        'This node is being renamed. Retire it once that is done',
+      );
     const ex = intent.delivery.exposure;
     const outstanding =
       ex.everLive ||
@@ -1487,6 +1653,67 @@ export const requestRetirement = internalMutation({
  * Finish a maintenance transition: the node is re-verified from the earliest
  * affected stage and approved again before it is served; nothing reopens here.
  */
+/**
+ * An admin closes one node for maintenance (docs/servers.md "Node lifecycle"):
+ * the gate closes (a live node's members get the unavailable answer), every
+ * open activation run is superseded, and the node returns to members only
+ * through Finish maintenance and a fresh activation. The way to add what a
+ * live node's open gate cannot isolate (a direct node's new address, a new
+ * fronted listener).
+ */
+export const startMaintenance = internalMutation({
+  args: {
+    intentId: v.id('panelNodeIntents'),
+    reason: v.optional(v.string()),
+    actorAdminId: v.optional(v.id('adminUsers')),
+  },
+  handler: async (ctx, { intentId, reason, actorAdminId }) => {
+    const intent = await ctx.db.get(intentId);
+    if (!intent) return refuse('not_found', 'No such node');
+    if (intent.state === 'retiring' || intent.state === 'retired')
+      refuse('servers.node_retiring', 'This node is being retired');
+    if (intent.maintenance) return { ok: true as const, stage: intent.activation.stage };
+    const now = Date.now();
+    for (const r of await ctx.db
+      .query('panelActivationRuns')
+      .withIndex('by_intent', (q) => q.eq('intentId', intent._id))
+      .collect())
+      if (r.state === 'running' || r.state === 'blocked' || r.state === 'review')
+        await ctx.db.patch(r._id, { state: 'superseded', updatedAt: now });
+    const stage =
+      intent.activation.stage === 'activating' || intent.activation.stage === 'live'
+        ? 'awaiting_approval'
+        : intent.activation.stage;
+    await ctx.db.patch(intentId, {
+      delivery: {
+        ...intent.delivery,
+        disposition: intent.delivery.disposition === 'live' ? 'unavailable' : 'staged',
+      },
+      maintenance: {
+        id: crypto.randomUUID(),
+        reason: (reason ?? 'operator').slice(0, 60),
+        since: now,
+        byAdminId: actorAdminId,
+      },
+      activation: { ...intent.activation, stage, reviewHash: undefined, currentRunId: undefined },
+      updatedAt: now,
+    });
+    await bumpGateVersion(ctx, intent.backendServerId);
+    // A live node's mirrors still hold its working body: rewritten under the closed gate.
+    if (intent.delivery.disposition === 'live') await scheduleMirrorRefresh(ctx);
+    const server = await ctx.db.get(intent.backendServerId);
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: actorAdminId ?? undefined,
+      action: 'servers.node.maintenance_started',
+      targetType: 'panel_node_intent',
+      targetId: intentId,
+      payload: { backendSlug: server?.slug ?? '', name: intent.name },
+    });
+    return { ok: true as const, stage };
+  },
+});
+
 export const finishMaintenance = internalMutation({
   args: { intentId: v.id('panelNodeIntents'), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, { intentId, actorAdminId }) => {
@@ -1548,7 +1775,16 @@ export async function closeForSharedChange(
     .query('panelNodeIntents')
     .withIndex('by_server', (q) => q.eq('backendServerId', sid))
     .collect();
-  const byName = new Map(intents.map((i) => [i.name, i]));
+  // Joined on the backend uuid first: a node in the middle of a rename has one
+  // name on the backend and the other here for the length of a look.
+  const intentOf = (n: { nodeUuid: string; name: string }) =>
+    intents.find((i) => i.nodeUuid === n.nodeUuid) ?? intents.find((i) => i.name === n.name);
+  const byName = new Map(
+    nodes.flatMap((n) => {
+      const i = intentOf(n);
+      return i ? [[n.name, i] as const] : [];
+    }),
+  );
   const unmanaged = nodes.filter((n) => !byName.has(n.name)).map((n) => n.name);
   if (unmanaged.length > 0 && !a.unmanaged)
     refuse(
@@ -1558,6 +1794,7 @@ export async function closeForSharedChange(
   const now = Date.now();
   const transitionId = crypto.randomUUID();
   const closed: string[] = [];
+  const closedIds: Id<'panelNodeIntents'>[] = [];
   for (const n of nodes) {
     const intent = byName.get(n.name);
     if (!intent || intent.state === 'retiring' || intent.state === 'retired') continue;
@@ -1590,6 +1827,7 @@ export async function closeForSharedChange(
       updatedAt: now,
     });
     closed.push(intent.name);
+    closedIds.push(intent._id);
   }
   const held = a.unmanaged === 'hold' ? unmanaged : [];
   const acknowledged = a.unmanaged === 'acknowledge' ? unmanaged : [];
@@ -1599,13 +1837,17 @@ export async function closeForSharedChange(
       transitionId,
       reason: a.reason,
       heldNodeNames: held,
-      closedIntentIds: closed.map((n) => byName.get(n)!._id),
+      closedIntentIds: closedIds,
       released: held.length === 0,
       since: now,
       byAdminId: a.actorAdminId,
       updatedAt: now,
     });
-  if (closed.length > 0 || held.length > 0) await bumpGateVersion(ctx, sid);
+  if (closed.length > 0 || held.length > 0) {
+    await bumpGateVersion(ctx, sid);
+    // Mirror objects are static: they follow the closed gates only when rewritten.
+    await scheduleMirrorRefresh(ctx);
+  }
   const server = await ctx.db.get(sid);
   await writeAuditLog(ctx, {
     actorType: a.actorAdminId ? 'admin' : 'system',
@@ -1667,7 +1909,7 @@ export const holdsView = internalQuery({
 });
 
 /**
- * The machine is cleaned up: `ready_to_wipe` -> `wiped` -> `retired`. The role
+ * The machine is cleaned up: `ready_to_wipe` -> `retired` (events `wiped`, `retired`). The role
  * reports it for a node FCP bootstrapped; for an ADOPTED node the role is never
  * run, so an admin confirms it instead (`byAdminId`) and the same step closes
  * the ladder. Without either, the retirement would sit at `ready_to_wipe`.
@@ -1679,7 +1921,7 @@ export const markWiped = internalMutation({
     if (!intent) return refuse('not_found', 'No such node');
     const r = intent.retirementId ? await ctx.db.get(intent.retirementId) : null;
     if (!r) refuse('servers.not_retiring', 'This node is not being retired');
-    if (r!.stage === 'wiped' || r!.stage === 'retired') return { stage: r!.stage };
+    if (r!.stage === 'retired') return { stage: r!.stage };
     if (r!.stage !== 'ready_to_wipe')
       refuse('servers.retirement_stage', `The node is not ready to wipe yet (${r!.stage})`);
     const byAdmin = byAdminId !== undefined;
@@ -1718,20 +1960,12 @@ export const byName = internalQuery({
   handler: (ctx, { backendServerId, name }) => intentByName(ctx, backendServerId, name),
 });
 
-export const listForServer = internalQuery({
-  args: { backendServerId: v.id('backendServers') },
-  handler: (ctx, { backendServerId }) =>
-    ctx.db
-      .query('panelNodeIntents')
-      .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
-      .collect(),
-});
-
 /** The role-facing view: what the role may know (never a secret, never another node). */
 export function roleView(
   intent: Intent,
   retirement: Doc<'panelRetirements'> | null,
   mode: { slug: string; name: string; shape: ModeShape },
+  firewall: FirewallPortRow[] = [],
 ) {
   return {
     name: intent.name,
@@ -1744,6 +1978,7 @@ export function roleView(
     node: { uuid: intent.nodeUuid ?? null, port: intent.settings.nodePort },
     origin: { hostname: intent.origin.hostname ?? null, dns: intent.origin.dns },
     retirement: retirement ? { stage: retirement.stage, code: retirement.code ?? null } : null,
+    firewall: { ports: firewall },
     updatedAt: new Date(intent.updatedAt).toISOString(),
   };
 }
@@ -1754,7 +1989,12 @@ export const roleViewByName = internalQuery({
     const intent = await intentByName(ctx, backendServerId, name);
     if (!intent) return null;
     const retirement = intent.retirementId ? await ctx.db.get(intent.retirementId) : null;
-    return roleView(intent, retirement, await modeRefOf(ctx, intent));
+    return roleView(
+      intent,
+      retirement,
+      await modeRefOf(ctx, intent),
+      await firewallPortsFor(ctx, intent),
+    );
   },
 });
 

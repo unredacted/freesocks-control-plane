@@ -3,9 +3,11 @@
  *
  * Exports:
  *   TestItem, runTestItems(run)      the test card's lines from a run's `testLinks`
+ *   runTestLines(run)                every line of the card, the ones already ticked included
  *   needButtons(code)                the one button (and at most one secondary) of an interruption
  *   automationOn(config)             the four switches `POST automation` sets, read back as one
  *   planWords(plan)                  the review sentence pieces of a plan
+ *   hideButton(n), moreDirectWords(n)  the "hide the unsupported direct addresses" words
  */
 import type { SetupRunAdmin, SetupPlanResponse } from '../../../../../shared/contracts/edges';
 
@@ -32,6 +34,43 @@ export function runTestItems(run: Pick<SetupRunAdmin, 'testLinks'>): TestItem[] 
   }));
 }
 
+/**
+ * The whole test card of a run: the lines still to test (`testLinks`) and the
+ * ones already ticked (`testedEndpoints`), in the run's listener order. Each
+ * tick is saved on its own, so between a tick and the rebuilt card the ticked
+ * line is still among the links: a line counts as done when its tick is newer
+ * than its link. A link issued after the tick (a retest) is pending again.
+ */
+export function runTestLines(
+  run: Pick<SetupRunAdmin, 'testLinks' | 'testedEndpoints' | 'listeners'>,
+): { items: TestItem[]; done: Set<string> } {
+  const current = run.listeners.filter((l) => l.layer === 'l4' && l.edgeId !== null);
+  const linkOf = new Map(run.testLinks.map((l) => [l.edgeId, l]));
+  const tickOf = new Map(run.testedEndpoints.map((t) => [t.edgeId, t]));
+  const items: TestItem[] = [];
+  const done = new Set<string>();
+  for (const l of current) {
+    const edgeId = l.edgeId!;
+    const link = linkOf.get(edgeId);
+    const tick = tickOf.get(edgeId);
+    const ticked =
+      tick !== undefined && (!link || Date.parse(tick.at) >= Date.parse(link.binding.issuedAt));
+    if (link) items.push(runTestItems({ testLinks: [link] })[0]!);
+    else if (ticked)
+      items.push({
+        edgeId,
+        listenerKey: tick.listenerKey,
+        link: '',
+        method: 'test_link',
+        endpoint: tick.endpoint,
+        listenerRevision: 0,
+        configHash: '',
+      });
+    if (ticked) done.add(edgeId);
+  }
+  return { items, done };
+}
+
 export type NeedAction =
   | 'retry'
   | 'retry_another_address'
@@ -44,7 +83,8 @@ export type NeedAction =
   | 'continue'
   | 'review'
   | 'family'
-  | 'quarantine';
+  | 'quarantine'
+  | 'approve';
 
 export interface NeedButton {
   label: string;
@@ -73,7 +113,7 @@ export function needButtons(code: string): NeedButtons {
       return { primary: B('Resume new work', 'thaw') };
     case 'too_many_inbounds':
     case 'use_manual_setup':
-      return { primary: B('Use manual setup', 'manual_setup') };
+      return { primary: B('Open its origin', 'manual_setup') };
     case 'choose_mode':
       return { primary: B('Choose connection mode', 'choose_mode') };
     case 'provider_failed':
@@ -87,9 +127,12 @@ export function needButtons(code: string): NeedButtons {
         secondary: B('Go live anyway', 'accept_partial'),
       };
     case 'try_it':
+      // Per line on the test card: each tick is saved on its own, "Doesn't work"
+      // replaces that one address; the run carries on once every line works.
       return {
-        primary: B('Continue', 'continue'),
-        secondary: B('One of them does not work', 'retry_another_address'),
+        primary: B('Works', 'continue'),
+        secondary: B('Doesn’t work', 'retry_another_address'),
+        hint: 'Each tick is saved right away. The run carries on by itself once every address works.',
       };
     case 'review_changed':
       return { primary: B('Review the change', 'review') };
@@ -103,7 +146,12 @@ export function needButtons(code: string): NeedButtons {
     case 'quarantined':
       return { primary: B('Review', 'quarantine') };
     case 'node_not_approved':
-      return { primary: B('Check again', 'retry'), hint: 'Approve the node in Servers first.' };
+      // The approval card below carries this button. No retry: the run would only
+      // park here again, and it carries on by itself once the node is approved.
+      return {
+        primary: B('Approve go-live', 'approve'),
+        hint: 'The run carries on by itself once you approve.',
+      };
     case 'coverage_incomplete':
     case 'rehearsal_failed':
     default:
@@ -124,6 +172,15 @@ export function automationOn(config: {
 }
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+const direct = (n: number) => plural(n, 'direct address', 'direct addresses');
+
+/** The button that consents to hiding `n` unsupported direct addresses (Hosts). */
+export const hideButton = (n: number): string => `Protect and hide ${direct(n)}`;
+
+/** "N more direct addresses ... cannot carry:", for Hosts found after the review. */
+export function moreDirectWords(n: number): string {
+  return `${n === 1 ? 'One more direct address' : `${n} more direct addresses`} on the backend ${n === 1 ? 'uses' : 'use'} a transport the new address cannot carry:`;
+}
 
 export interface PlanWords {
   /** The one review sentence. */
@@ -155,17 +212,19 @@ export function planWords(
           count: unc.length,
           remarks: unc.map((h) => h.remark),
           uuids: unc.map((h) => h.uuid),
-          statement: `${plural(unc.length, 'host', 'addresses')} on the backend ${unc.length === 1 ? 'uses' : 'use'} a transport the address cannot carry. Protecting the node hides ${unc.length === 1 ? 'it' : 'them'}, so members who rely on ${unc.length === 1 ? 'it' : 'them'} must switch to a supported one.`,
+          statement: `${direct(unc.length)} on the backend ${unc.length === 1 ? 'uses' : 'use'} a transport the new address cannot carry. Protecting the node hides ${unc.length === 1 ? 'it' : 'them'}, so members who rely on ${unc.length === 1 ? 'it' : 'them'} must switch to a supported one.`,
         };
   const renderGlobal = plan.renderGlobal.willEnable
     ? `Going live also turns on protected delivery for ${plural(plan.renderGlobal.affectedRelays.length, 'other node', 'other nodes')} that ${plan.renderGlobal.affectedRelays.length === 1 ? 'is' : 'are'} ready for it${plan.renderGlobal.affectedRelays.length > 0 ? ` (${plan.renderGlobal.affectedRelays.join(', ')})` : ''}.`
     : null;
-  const button = uncovered
-    ? `Protect and hide ${plural(uncovered.count, 'unsupported host', 'unsupported addresses')}`
-    : 'Protect this node';
-  const frontable = plan.inbounds.filter((i) => i.frontable);
+  const button = uncovered ? hideButton(uncovered.count) : 'Protect this node';
+  // The protected transports only: on a node with more than one run takes, the
+  // plan lists every frontable one but the run carries the chosen ones.
+  const protectedOnes = plan.inbounds.filter(
+    (i) => i.frontable && plan.requiredListeners.includes(i.listenerKey),
+  );
   const all = (k: 'links' | 'singbox' | 'clash') =>
-    frontable.length > 0 && frontable.every((i) => i.formats[k]);
+    protectedOnes.length > 0 && protectedOnes.every((i) => i.formats[k]);
   const names = [
     all('links') ? 'link' : null,
     all('singbox') ? 'sing-box' : null,

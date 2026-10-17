@@ -8,7 +8,7 @@ frontable proxy. Today an edge is one of two **layers**:
 - **L4**: a provider-managed cloud load balancer that forwards a TCP port to the origin. The
   origin terminates its own protocol (REALITY, TLS, plain); the edge is an address.
 - **L7**: a CDN front that terminates TLS and HTTP and forwards an HTTP-carried transport
-  (WebSocket, HTTP Upgrade, gRPC) to the origin. The edge is a **hostname** under an
+  (WebSocket, HTTP Upgrade, gRPC, XHTTP) to the origin. The edge is a **hostname** under an
   operator-owned zone; the CDN's own certificate and anycast addresses serve it.
 
 Censors block the edge's public address or hostname, not the origin, so the edge is the unit
@@ -22,8 +22,118 @@ purpose: nothing here says which providers, regions, zones, targets or names a g
 uses.
 
 Admin surface: **Admin → Edges** (`/admin/edges`) and `/api/v1/admin/edges/*`; probe
-telemetry lives under **Admin → Telemetry → Probes** (`/admin/telemetry/probes`). Every request
-under the API prefix is HPKE-sealed by verb class (see [Sealing](#sealing)).
+telemetry lives under **Admin → Edges → Advanced → Probes** (`/admin/edges/probes`; the former
+`/admin/telemetry/probes` redirects there). A backend node's own page is on Servers
+(`/admin/servers/...`, see `docs/servers.md`), with its edges embedded. Every request under the
+API prefix is HPKE-sealed by verb class (see [Sealing](#sealing)).
+How to take one node from the role run to a member connection is the runbook
+"Deploy a fronted node" in `docs/servers.md`.
+
+## Supported matrix
+
+What a member's client can reach through an edge, per protocol, stream transport, security,
+layer and client format. A **yes** is a claim only because a real connection test proves it:
+the release gate `bun run test:integration:edge-connection` (job **Member connects through an
+edge**, `docs/client-compatibility.md` "Edge connection") takes a real node through the real
+lifecycle, fetches the member's real `/api/v1/sub` body in that format, and the pinned
+reference engine (sing-box, or Mihomo for the Clash format) fetches a page through the edge
+with it. Everything else says why it is not offered. The table is rendered from
+`tests/compat/manifest.ts` (`edgeMatrix`; print it with `bun tests/compat/edgeMatrixTable.ts`)
+and pinned to it by `convex/edgeMatrix.test.ts`; the gate refuses a claimed cell it has no case
+for.
+
+<!-- edge-matrix:start -->
+
+| Protocol    | Transport    | Security | Layer | sing-box | Mihomo | Outline key | Notes                                                                                              |
+| ----------- | ------------ | -------- | ----- | -------- | ------ | ----------- | -------------------------------------------------------------------------------------------------- |
+| VLESS       | raw TCP      | REALITY  | L4    | yes      | yes    | n/a         | mode `freedom-reality`                                                                             |
+| VLESS       | XHTTP        | REALITY  | L4    | no       | yes    | n/a         | mode `freedom-xhttp`; sing-box has no XHTTP transport (the panel leaves the entry out of its body) |
+| VLESS       | raw TCP      | TLS      | L4    | yes      | yes    | n/a         | operator's profile                                                                                 |
+| VLESS       | WebSocket    | TLS      | L4    | yes      | yes    | n/a         | operator's profile                                                                                 |
+| VLESS       | HTTP Upgrade | TLS      | L4    | yes      | yes    | n/a         | operator's profile                                                                                 |
+| VLESS       | gRPC         | TLS      | L4    | yes      | yes    | n/a         | operator's profile                                                                                 |
+| VLESS       | XHTTP        | TLS      | L4    | no       | yes    | n/a         | operator's profile; sing-box has no XHTTP transport (the panel leaves the entry out of its body)   |
+| Trojan      | raw TCP      | TLS      | L4    | yes      | yes    | n/a         | operator's profile                                                                                 |
+| Trojan      | WebSocket    | TLS      | L4    | yes      | yes    | n/a         | operator's profile                                                                                 |
+| Shadowsocks | raw TCP      | none     | L4    | yes      | yes    | yes         | operator's profile; Outline key: an Outline server                                                 |
+| Hysteria 2  | UDP (QUIC)   | TLS      | L4    | no       | no     | n/a         | UDP: no edge adapter forwards UDP yet (docs/edges.md "UDP"); served direct, never fronted          |
+| TUIC        | UDP (QUIC)   | TLS      | L4    | no       | no     | n/a         | UDP: no edge adapter forwards UDP yet (docs/edges.md "UDP"); served direct, never fronted          |
+| VLESS       | WebSocket    | TLS      | L7    | yes      | yes    | n/a         | mode `freedom-ws`                                                                                  |
+| VLESS       | HTTP Upgrade | TLS      | L7    | yes      | yes    | n/a         | operator's profile                                                                                 |
+| VLESS       | gRPC         | TLS      | L7    | yes      | yes    | n/a         | operator's profile                                                                                 |
+| VLESS       | XHTTP        | TLS      | L7    | no       | yes    | n/a         | operator's profile; sing-box has no XHTTP transport (the panel leaves the entry out of its body)   |
+| Trojan      | WebSocket    | TLS      | L7    | yes      | yes    | n/a         | operator's profile                                                                                 |
+| VLESS       | raw TCP      | REALITY  | L7    | no       | no     | n/a         | REALITY terminates on the node: a CDN front would have to terminate it                             |
+| VLESS       | XHTTP        | REALITY  | L7    | no       | no     | n/a         | REALITY terminates on the node: a CDN front would have to terminate it                             |
+| VLESS       | raw TCP      | TLS      | L7    | no       | no     | n/a         | not an HTTP transport: a CDN front carries HTTP only                                               |
+| Trojan      | raw TCP      | TLS      | L7    | no       | no     | n/a         | not an HTTP transport: a CDN front carries HTTP only                                               |
+| Shadowsocks | raw TCP      | none     | L7    | no       | no     | no          | not an HTTP transport: a CDN front carries HTTP only                                               |
+| Hysteria 2  | UDP (QUIC)   | TLS      | L7    | no       | no     | n/a         | UDP: no edge adapter forwards UDP yet (docs/edges.md "UDP"); served direct, never fronted          |
+| TUIC        | UDP (QUIC)   | TLS      | L7    | no       | no     | n/a         | UDP: no edge adapter forwards UDP yet (docs/edges.md "UDP"); served direct, never fronted          |
+
+<!-- edge-matrix:end -->
+
+How the cells are proven:
+
+- **Source.** A _mode_ cell is a transport FCP builds the profile for (a connection mode of
+  Servers; the node role enrolls the node). An _operator's profile_ cell is a transport an
+  operator wrote into the node's Xray profile; FCP discovers it on the panel node and the
+  guided setup fronts it, one edge per transport. The **Outline key** column is an Outline
+  server origin (a whole backend server, set up by hand: Outline has no node inventory for
+  the guided setup): its member's `ss://` key, rewritten to the edge, connected with the
+  reference engine's Shadowsocks, which is what an Outline client speaks.
+- **L4** is proven with the UpCloud adapter behind a fake API wiring a real TCP forwarder (one
+  address per load balancer); **L7** with the Cloudflare adapter behind a fake API routing a
+  real CDN-style front (a proxied record per edge, its Origin Rule's port honoured). The other
+  adapters speak the same layer; their wire contracts are pinned by `wireContract.test.ts`.
+- **Share links** (v2rayN, v2rayNG, Hiddify, Shadowrocket and the like) are rendered for every
+  cell the catalogue lists, and the L4 isolated test link (Try it) is one, imported into the
+  engine that speaks it before every tick; no link-list application runs in the gate.
+- **gRPC behind a CDN** needs the origin on port 443 (Cloudflare proxies gRPC to 443 only; the
+  plan refuses another port as `origin_port_not_carried`) and the zone's gRPC switch on, a
+  dashboard-only setting FCP cannot read or flip: with it off the CDN answers 403 and the front
+  proof reports `grpc_disabled`.
+
+Outside the matrix altogether:
+
+- **VMess**: no renderer codec; not in the listener catalogue.
+- **Xray JSON subscriptions**: the renderer rewrites share links, sing-box JSON and
+  Clash/Mihomo YAML; an Xray JSON body is refused (`unsupported_format`), never served with the
+  origin in it.
+- **Outline keys over WebSocket (WSS dynamic keys)**: an Outline origin is a plain Shadowsocks
+  key rewritten by address; there is no WebSocket form to front.
+- **sing-box over XHTTP**: sing-box has no XHTTP transport, so the panel leaves an XHTTP entry
+  out of a sing-box body and FCP has nothing to render.
+
+A gRPC transport on loopback behind the node's ingress (`lib/backend/ingress.ts`) is reached by
+its service name as the route path (`/<serviceName>`, the calls are `/<serviceName>/Tun`), and
+only through a route that declares `upstream: "h2c"`: the role must proxy it over HTTP/2
+cleartext (Caddy `reverse_proxy h2c://127.0.0.1:<port>`), and a route without the marker is
+HTTP/1.1, which no gRPC stream crosses, so the transport stays loopback. No connection mode
+declares such a route yet; the bootstrap answer carries the marker for when one does.
+
+### UDP
+
+No edge is offered for a UDP listener (Hysteria 2, TUIC): `udp` is false for every provider in
+`EDGE_PROVIDER_CAPABILITIES`, and stays false until an adapter forwards UDP AND a Hysteria 2
+connection through a UDP forwarder passes in the gate. Discovery maps both protocols
+(`hysteria2/udp/tls`, `tuic/udp/tls`) so the plan says why (`no_udp_provider`), and their
+direct Hosts are left alone: they keep serving members direct. On a node whose other
+transports are fronted, a direct UDP Host at the origin address would hand members the
+origin, so the plan lists it as uncovered and the run hides it only with the operator's
+approval (otherwise rehearsal refuses the leak).
+
+What the L4 adapters' providers offer (2026-10-16):
+
+| Adapter  | UDP listener in the provider's API                                      | FCP adapter |
+| -------- | ----------------------------------------------------------------------- | ----------- |
+| UpCloud  | no: frontends are `tcp` or `http` mode                                  | TCP only    |
+| Scaleway | no: its load balancer does not support UDP                              | TCP only    |
+| Gcore    | yes: listener protocol `UDP` (with a UDP health monitor, Octavia-style) | TCP only    |
+| OVHcloud | yes: Octavia-based, `UDP` listener protocol with a `UDP` pool           | TCP only    |
+
+Gcore and OVHcloud are where UDP fronting would start: a UDP listener and pool plus a UDP
+health check in the adapter, then the proof above.
 
 ## Model
 
@@ -58,7 +168,8 @@ health flags) and the adapter's template schema.
 
 `hostMode` says who writes the client-facing Hosts: `fcp` (FCP creates, flips and deletes
 them through a persisted state machine, see **Host ownership**), `operator` (FCP never writes;
-the by-slug response carries a `hostsPlan` to apply) or `none` (there is no Host). The
+the origin's `hostsPlan`, shown by the guided setup and the Listeners tab, says what to create)
+or `none` (there is no Host). The
 handoff is explicit: `fcp → operator` keeps every Host and marks it `adopted`; `operator →
 fcp` needs every listener's Host validated and adopted first (`edge.host_adopt_required`).
 One origin per node, one per whole server (`edge.node_already_bound` /
@@ -70,19 +181,20 @@ an address that is a published edge is refused as an origin (`edge.origin_is_edg
 
 A listener speaks one valid combination of three fields (`src/shared/contracts/edgeProtocolIds.ts`):
 
-| protocol             | streamTransport               | security  | notes                                                             |
-| -------------------- | ----------------------------- | --------- | ----------------------------------------------------------------- |
-| `vless`              | `raw`                         | `reality` | REALITY: `realityTarget` + server names required                  |
-| `vless`              | `raw`                         | `tls`     | server names = the certificate's                                  |
-| `vless`              | `ws` / `httpupgrade` / `grpc` | `tls`     | L7-frontable (the only authenticated L7 proof)                    |
-| `vless`              | `xhttp`                       | `tls`     | L7-frontable where the provider carries it; no sing-box (below)   |
-| `vless`              | `xhttp`                       | `reality` | L4 only (the node terminates); no sing-box (below)                |
-| `trojan`             | `raw` / `ws`                  | `tls`     | L4 only (no L7 proof)                                             |
-| `shadowsocks`        | `raw`                         | `none`    | address/port rewrite only; Outline keys are `ss://`               |
-| `hysteria2` / `tuic` | `udp`                         | `tls`     | registers, but no provider forwards UDP today (`no_udp_provider`) |
+| protocol             | streamTransport               | security  | notes                                                           |
+| -------------------- | ----------------------------- | --------- | --------------------------------------------------------------- |
+| `vless`              | `raw`                         | `reality` | REALITY: `realityTarget` + server names required                |
+| `vless`              | `raw`                         | `tls`     | server names = the certificate's                                |
+| `vless`              | `ws` / `httpupgrade` / `grpc` | `tls`     | L7-frontable (a VLESS proof)                                    |
+| `vless`              | `xhttp`                       | `tls`     | L7-frontable where the provider carries it; no sing-box (below) |
+| `vless`              | `xhttp`                       | `reality` | L4 only (the node terminates); no sing-box (below)              |
+| `trojan`             | `raw` / `ws`                  | `tls`     | `ws` L7-frontable (a Trojan proof); `raw` L4 only               |
+| `shadowsocks`        | `raw`                         | `none`    | address/port rewrite only; Outline keys are `ss://`             |
+| `hysteria2` / `tuic` | `udp`                         | `tls`     | discovered; no provider forwards UDP (`no_udp_provider`, "UDP") |
 
 Anything else is `invalid_combination`. The catalogue derives `usesSni`, `needsTarget`,
-`isHttpTransport`, `usesHostHeader`, `transport` and `l7Proof`; `convex/lib/edges/protocols.ts`
+`isHttpTransport`, `usesHostHeader`, `transport` and `l7Proof` (`vless` or `trojan`: which
+authenticated request the front proof sends); `convex/lib/edges/protocols.ts`
 adds the CODEC table (which subscription formats the renderer can rewrite per combination,
 pinned by a test: a combination without a codec for every format it claims never ships).
 `vmess` has no codec and is not in the catalogue.
@@ -129,12 +241,14 @@ terminating TLS itself (the front-qualification harness).
 **Discovery.** A backend-node origin's listeners can be derived from the node instead of typed:
 `backends.listNodeInbounds` (capability `inboundDiscovery`; Remnawave: the node's active config
 profile joined with the profile's Xray `inbounds[]` by tag, allowlisted fields only, never
-clients, private keys, short ids or certificates; `docs/backends.md`) yields `PanelInbound[]`,
-and the pure `mapInboundsToListeners` (`convex/lib/edges/inboundMapping.ts`) turns each into a
+clients, private keys, short ids or certificates; `docs/backends.md`) yields `BackendTransport[]`,
+and the pure `mapTransportsToListeners` (`convex/lib/edges/inboundMapping.ts`) turns each into a
 registration-shaped listener candidate or an `unsupported` row with a reason from
 `INBOUND_UNSUPPORTED_CODES` (`inactive`, `tag`, `protocol`, `transport`, `security`,
-`invalid`; worded in `src/client/lib/edgeCodes.ts`). vless / trojan / shadowsocks map; tcp or raw
-→ `raw`, ws / httpupgrade / grpc / xhttp (`splithttp`) → themselves (kcp, quic are `transport`); REALITY
+`invalid`; worded in `src/client/lib/edgeCodes.ts`). vless / trojan / shadowsocks map, and so do
+Hysteria 2 (Xray's `hysteria` inbound) and TUIC, as `udp` + `tls` whatever the stream says (QUIC
+is both); tcp or raw → `raw`, ws / httpupgrade / grpc / xhttp (`splithttp`) → themselves (kcp,
+quic are `transport`); REALITY
 `dest`/`target` + `serverNames` → `realityTarget` + `tlsNames`; TLS `serverName` → `tlsNames`
 (none = `needsName`: the operator supplies one before registering); ws / httpupgrade / xhttp
 path + host, the xhttp mode and gRPC serviceName → `transportParams`; the transport tag + profile uuids → `panelBinding`
@@ -143,30 +257,37 @@ with the default `remark` match rule. Every candidate passes `validateListenerSp
 lowercase alphanumerics of the tag plus six hash digits; at most 16 chars, deterministic, unique
 against the origin's existing keys). `originTransport` is never set by the mapper: only the
 **origin probe** can say how an L7 front may dial the node. `GET
-origins/transport-candidates?backendServerId=&nodeUuid=` (throttled; `convex/edgeOriginProbe.ts`
+relays/inbound-candidates?backendServerId=&nodeUuid=` (throttled; the action
+`edgeOriginProbe.inboundCandidates` in `convex/edgeOriginProbe.ts`
 with the `"use node"` sockets in `edgeOriginProbeOps.ts`, pure rules in
 `lib/edges/originProbe.ts`) returns the mapper output with `originTransport` filled where the
 probe succeeded and `layers` recomputed: security `none` -> a TCP answer on the port gives
-`{scheme: http}` (L7-only); `tls` -> a handshake with SNI = the first name, `certPublic` = the
-chain verifies against the system store, `certNames` = the leaf's names, `acceptsHostHeader:
-names` unless a request with a foreign Host header still answers 2xx (`any`). Like the internal
+`{scheme: http}` (L7-only); `tls` -> a handshake with SNI = the first name, offering the ALPN a
+front would (`h2` alone for gRPC, which an h2-only origin requires; `h2` and `http/1.1` for
+XHTTP; `http/1.1` otherwise), `certPublic` = the chain verifies against the system store,
+`certNames` = the leaf's names, `acceptsHostHeader: names` unless an HTTP/1.1 request with a
+foreign Host header still answers 2xx (`any`; never sent to a gRPC origin). Like the internal
 reachability probe it dials public literals only (a name is resolved first, every answer must be
 public, the literal is dialled). Without a successful probe the candidate stays L4-only and
-carries the probe's reason.
+carries the probe's reason. For an **enrolled** node the plan reads the node from its intent
+(`nodeIntents.enrolledOriginOf`: the origin name plus the ingress), and the Host-header answer
+comes from the node's verified ingress, not the probe: the `ingress_verified` evidence recorded at
+`machine_ready` with `settings.ingress.hostHeader: 'any'` gives `acceptsHostHeader: any`
+(`withVerifiedIngress`).
 
 ### Layers
 
 `listenerLayers(listener)` (`convex/lib/edges/layers.ts`) decides which layers can carry a
 listener from the **complete** member-to-origin chain, never from the protocol name alone:
 
-| Listener                                                                                                                                                                          | L4                                   | L7  |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ | --- |
-| No origin transport declared: raw TCP to the transport                                                                                                                            | yes                                  |     |
-| Origin speaks plaintext HTTP behind the CDN (`originTransport.scheme = http`), HTTP transport                                                                                     |                                      | yes |
-| Origin speaks HTTPS, `vless` HTTP transport, certificate publicly trusted AND every active name covered by a certificate name (RFC 6125) AND the node accepts those names as Host | yes                                  | yes |
-| Origin speaks HTTPS, non-vless HTTP transport (no authenticated proof: `l7_proof_unsupported`)                                                                                    | yes                                  |     |
-| Origin speaks HTTPS, `reality` / raw `tls` / `none`                                                                                                                               | yes                                  |     |
-| UDP listener                                                                                                                                                                      | only with a provider declaring `udp` |     |
+| Listener                                                                                                                                                                                      | L4                                   | L7  |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ | --- |
+| No origin transport declared: raw TCP to the transport                                                                                                                                        | yes                                  |     |
+| Origin speaks plaintext HTTP behind the CDN (`originTransport.scheme = http`), HTTP transport                                                                                                 |                                      | yes |
+| Origin speaks HTTPS, `vless` or `trojan` HTTP transport, certificate publicly trusted AND every active name covered by a certificate name (RFC 6125) AND the node accepts those names as Host | yes                                  | yes |
+| Origin speaks HTTPS, HTTP transport without an authenticated proof (`l7_proof_unsupported`)                                                                                                   | yes                                  |     |
+| Origin speaks HTTPS, `reality` / raw `tls` / `none`                                                                                                                                           | yes                                  |     |
+| UDP listener                                                                                                                                                                                  | only with a provider declaring `udp` |     |
 
 `hostTargetFor(edge, proto, selectedSni)` is the single source of the Host tuple the backend
 Host and the renderer share: L7 → `{ hostname, 443, sni: hostname, host: hostname }`; L4 HTTP
@@ -182,19 +303,26 @@ has three dimensions: `dns`, `certificate` and `front` (the end-to-end qualifica
 
 **Front qualification.** Before an L7 edge is published or selected as a standby, FCP opens a
 short **authenticated test session** through it (TLS to `hostname:443`, the listener's
-transport exactly as deployed, then a VLESS request for the origin's qualification credential
-fetching a neutral `204` target). Only a `vless` HTTP-transport `tls` listener has such a proof
-(`l7Proof: 'vless'`); every other combination is `unsupported_protocol` and never L7-fronted.
+transport exactly as deployed, then a VLESS or Trojan request for the origin's qualification
+credential fetching a neutral `204` target). A `vless` HTTP-transport `tls` listener is proved
+with its VLESS id (`l7Proof: 'vless'`), Trojan over WebSocket with the same account's Trojan
+password (`l7Proof: 'trojan'`, stored next to the id as `qualificationTrojanPassword`, never
+returned by any read); a credential of the wrong kind is `no_qualification_credential`, every
+other combination is `unsupported_protocol` and never L7-fronted.
 The result is stored with its **binding** (hostname, listener id + revision, the three
 protocol fields, transport parameters, intent hash) and an expiry
-(`edge.l7.qualificationTtlMinutes`); publication re-derives the binding inside the mutation
+(60 minutes, a constant: `EDGE_PLUMBING.l7QualificationTtlMs`); publication re-derives the binding inside the mutation
 and refuses `front_unqualified` / `front_qualification_stale`. The reconcile cron re-qualifies
 published L7 edges before their qualification expires.
 
-**Affected-country evidence**, **observed zone facts**, **renewal**, **failed requalification**
-and **importing a front** work as before (per listener instead of per slot/profile).
+A detector-triggered L7 replacement waits up to 15 minutes for **affected-country evidence**
+for the new front (`EDGE_PLUMBING.l7QualifyTimeoutMs`); the reconcile cron renews a proof a
+quarter of its lifetime before it lapses (at most six re-proofs a pass); a failed renewal is
+retried, and once the proof lapses the front leaves rendering until a proof succeeds. **Importing a front**
+(`ImportFrontDialog`, `POST relays/{id}/adopt`) records an existing CDN front against a
+listener and publishes it only with a current proof (`front_unqualified` otherwise).
 `edge.l7.autoSelect` (default off) governs automatic selection of L7 accounts; manual
-provisioning and publishing work regardless.
+provisioning, a guided setup run's chosen account and publishing work regardless.
 
 ### Publication
 
@@ -216,13 +344,13 @@ flip.
 **Coverage.** The pool exists to give every deployed, enabled, non-retired listener ("coverage
 listener") a published edge, so capacity follows the listeners (`convex/lib/edges/poolCapacity.ts`):
 `ensurePoolCapacity` raises `desiredPublished` to the coverage-listener count (bound 1..8,
-`MAX_DESIRED_PUBLISHED`; the node role's PUT and the admin create answer `warnings:
-['edge.pool_raised']` when it did) on every registration, admin listener add and listener
+`MAX_DESIRED_PUBLISHED`; the admin create and the listener upsert answer `warnings:
+['edge.pool_raised']` when it did) on every origin create, admin listener add and listener
 re-enable, and the reconcile cron applies it each tick. A pool that is already FULL while a
 listener is uncovered is **expanded** within the cap (`desiredPublished = min(8, published +
 uncovered)`, audited `edge.pool_expanded`); it is never shrunk. The cap is enforced where the
-operator can act on it rather than clamped silently: a listener body (the role's PUT or the
-CMS upsert) that would leave more than eight deployed, enabled listeners is refused
+operator can act on it rather than clamped silently: a listener body (the create or the CMS
+upsert) that would leave more than eight deployed, enabled listeners is refused
 (`edge.listener_cap`; a pre-existing excess is not made worse), and `relays.update` refuses
 lowering `desiredPublished` below the coverage-listener count (`edge.pool_below_coverage`).
 **Reserved allocation**
@@ -240,9 +368,12 @@ unpublishing changes what members receive.
 `bindingDeferred: true` + `setupOwned: true` (internal arguments of `relays.create`; a request
 body never sets them): no delivery binding is written, so the origin keeps serving its raw body,
 and there is NO shortcut that binds it when an edge publishes. Only `claimDeliveryBinding`
-(the go-live step; not routed yet) upserts the binding, bumps its policy version, refreshes the
-mirrors and clears the flag. A by-slug registration always binds at once; a re-registration of a
-deferred origin keeps it deferred. While `setupOwned`, reconcile upkeep and the detector's
+upserts the binding, bumps its policy version, refreshes the mirrors and clears the flag. Its one
+caller is the guided setup run's stage-8 `goLive` mutation, after the activation promotion: a
+first protection, `require-edges` (which only starts a run) and a re-protect run all bind
+there. A re-protect claims again (a new policy version) and then retires the addresses its new
+ones replace. A manual origin never gets a binding. A plain create binds at once; a listener change on a deferred
+origin keeps it deferred. While `setupOwned`, reconcile upkeep and the detector's
 automatic replacement (veto `setup_owned`) leave the origin alone, whatever the run's state. A rotation start of any kind on an owned origin that does not come from the run itself (`setupRun`) is refused (`edge.setup_owned`): a manual publish, replace or burn would change the endpoint under the run's hides and rehearsal.
 `setup-status` warns `binding_deferred` on the publish step (never `members_dark`, which needs
 a binding); attention raises `go_live_pending` once an edge is published.
@@ -256,7 +387,16 @@ configuration it holds now**: an L7 front needs a current authenticated proof
 operator's own confirmation** (`edges.verification`, `lib/edges/verification.ts`), taken per
 endpoint against `{endpoint, listenerKey, listenerRevision, configHash}` where `configHash`
 covers the listener's idempotency hash, the edge's template hash and its addresses / forwarding
-ports. Refusal code `edge.unverified_endpoint`. The record proves nothing by itself:
+ports and, when the origin is an **enrolled** node, the node's REALITY authentication revision
+(`panelNodeIntents.authRevision`: the keyed digest of its key pair, short ids and clock bounds).
+The digest is folded into the hash, never shown or echoed on its own, so the binding a
+confirmation echoes keeps its shape; every builder and checker resolves it the same way
+(`lib/edges/verificationContext.ts`). A key, short-id or clock-bound change therefore returns an
+enrolled node's L4 endpoints to "needs a test" (no client has proven the new key through them;
+attention `retest_needed` with code `reality_key_changed`, the Try it card and the approval card
+say so). Unmanaged nodes, whole-server, manual and Outline origins carry no auth component and
+behave as before; L7 proofs and the probe `partial` rung are not bound to it. Refusal code
+`edge.unverified_endpoint`. The record proves nothing by itself:
 `verificationCurrent` compares revision and hash, so a listener revision bump or a
 re-addressing returns the endpoint to "needs a test" (attention `retest_needed`) without
 anybody clearing anything. One name change is deliberately **not** a revision bump:
@@ -393,18 +533,34 @@ mirror refresh) fetches a body, it pins the node as before, then, in this order:
    Attribution names an edge ONLY from that snapshot (current epoch) and covers unpinned
    whole-server subscriptions (Outline); no snapshot leaves the report at origin level.
 
-**Edge-required delivery.** A subscription whose resolved place (the node the body was pinned
-to, else its backend server) is covered by an active delivery binding is served the rendered
-body ONLY when the render produced ≥1 endpoint and passed the leak check. Otherwise the route
-answers **HTTP 503 with `Retry-After`** and a reason (`unsupported_format`, `no_match`,
-`ambiguous_match`, `entry_mismatch`, `empty_pool`, `leak_detected`, `render_disabled`,
-`relay_disabled`, `relay_missing`, `no_render_key`); a 503 keeps the client's last
-configuration, an empty 200 would wipe it. The policy is judged AFTER the fetch against the
-node the body actually belongs to, so a first fetch without a stored pin and a pin that moved
-onto an origin node are both classified correctly. Only bodies that passed are cached (the cache
-token is `<bindingPolicyVersion>:<epoch>`). A place no origin covers passes the body through.
-Registering an origin therefore takes members on that origin dark until an edge is published and
-rendering is on; the setup flow and the node role say so.
+**Edge-required delivery.** First the node's **delivery gate**, whatever the binding says: a
+body that resolves to an enrolled node that is not live (or an unmanaged node under an open
+maintenance hold) is answered `node_gated` even where no origin covers it. Then, a subscription
+whose resolved place (the node the body was pinned to, else its backend server) is covered by an
+active delivery binding is served the rendered body ONLY when the render produced ≥1 endpoint
+and passed the leak check. Otherwise the route answers **HTTP 503 with `Retry-After`** and a
+reason, one of `DELIVERY_UNAVAILABLE_CODES` (`src/shared/contracts/edgeCodes.ts`):
+`relay_missing`, `relay_disabled`, `render_disabled`, `no_render_key`, `empty_pool`,
+`unsupported_format`, `no_match`, `ambiguous_match`, `entry_mismatch`, `leak_detected`,
+`node_gated`, `policy_moved` (the place's token moved twice during one request),
+`family_disabled` (the client's app family has its render rule off) or `render_failed` (the
+format's renderer could not rewrite the body for any other reason). A 503 keeps the client's
+last configuration; an empty 200 would wipe it. Each one is counted per reason (§ Operations
+safety, attention `delivery_refusals`). The policy is judged AFTER the fetch against the node
+the body actually belongs to, so a first fetch without a stored pin and a pin that moved onto an
+origin node are both classified correctly. A place no origin covers and whose gate is open passes
+the body through.
+
+**The cache token** (`epochTokenFor`, `convex/edgeRender.ts`): on a bound place
+`<binding policyVersion>[:g<gateToken>]:<publicationEpoch>` (the epoch is -1 when the origin is
+missing or disabled or rendering is off); on an unbound place with a managed node
+`g<gateToken>`; no node, no token. `gateToken` is
+`<gateVersion>:<committed Host count>:<committed edge count>:<hash of the candidate Hosts and
+edges, or 0>` (`lib/backend/deliveryGate.ts`), so publishing or releasing a candidate re-keys
+every cached body. The route reads the token before deciding and again after rendering,
+re-renders once on a move, and answers `policy_moved` on a second move. Only bodies that passed
+are cached. Creating an origin therefore takes members on that origin dark until an edge is
+published and rendering is on; the setup flow says so.
 
 **Delivery rehearsal** (`convex/edgeRehearsal.ts`, the guided setup's stage before go-live).
 Before the binding is claimed, delivery is proven with the real renderer over **cohorts** derived
@@ -419,14 +575,16 @@ credential (the qualification user on the node's placement; no usable placement 
 `choose_mode`); an Outline server with members from its real single-key subscriptions. The
 result lists `familiesDisabled` (render rules off) and `proofsExpired` (published L7 fronts
 whose proof lapsed), the **vector** the go-live mutation compares with `vectorNow`
-(`listenerRevisions`, `renderConfigHash`, `publicationEpoch`, `qualificationEvidenceIds`), and
+(`listenerRevisions`, `renderConfigHash`, `publicationEpoch`, `qualificationEvidenceIds`, and for
+an enrolled node `activation`: the run id with its machine, config, auth and delivery revisions,
+so an old rehearsal never satisfies a new candidate), and
 the **observation boundary**: the backend Hosts are listed before and after
 (`edgeHostHides.observe`), the run is accepted only when both listings agree (else repeated, 3
 attempts, then `listingChanged`), and the FINAL listing is the observation the go-live clock
 starts from.
 
 Mirrors follow the same policy: each mirror row records what its object holds (`validated`:
-policy version, epoch, edges); registering an origin revalidates the origin's mirrors, replacing
+policy version, epoch, edges); creating an origin revalidates the origin's mirrors, replacing
 a raw object with a fresh render or, when nothing can render, with an **unavailable stub**
 (the URL is already distributed, so the object itself must stop serving the origin). The
 account view and the issuance responses hand out ONLY the fronted token URL for a covered key
@@ -438,7 +596,7 @@ edge is **TCP-only** today (no adapter forwards UDP).
 
 | Operation                                 | Precondition                                                                                                                                                                                                                                                                                         | Spends budget                      | Writes Hosts                                                                  | Result                                                                                                                                    |
 | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| Register origin (role PUT / admin)        | origin + listeners in one body                                                                                                                                                                                                                                                                       | no                                 | no                                                                            | origin + listeners upserted; an identical body changes nothing; the origin's subscriptions become edge-required                           |
+| Create origin (admin)                     | origin + listeners in one body                                                                                                                                                                                                                                                                       | no                                 | no                                                                            | origin + listeners created (a slug in use is a `conflict`); the origin's subscriptions become edge-required                               |
 | Import edge                               | origin + listener; optionally a provider account + the load balancer picked from its inventory                                                                                                                                                                                                       | no                                 | no                                                                            | edge `active`; managed when imported from an account, observe-only when entered by address (`managed:false`, never destroyed)             |
 | Provision edge                            | qualified account (the listener's provider scope when set; any otherwise), template, capacity                                                                                                                                                                                                        | yes                                | no                                                                            | edge `active` + `unpublished` (or published when requested)                                                                               |
 | Publish edge                              | active, has an address of its layer, listener deployed + enabled (+ an active name for a name-presenting listener behind L4), and verified for its CURRENT configuration: the operator's per-endpoint confirmation behind L4 (`edge.unverified_endpoint` otherwise), a current front proof behind L7 | no                                 | listener Host only when the edge becomes the listener's template edge (`fcp`) | `published` at the lowest free index; epoch++                                                                                             |
@@ -454,29 +612,31 @@ replacing a template edge is refused (`edge.hosts_operator_managed`) unless forc
 All under `/api/v1/admin/edges/`, sealed by verb like every other route; the read-only POSTs
 (`setup-status` with a draft, `preflight`) are admitted by the read scope, like `render/preview`.
 
-| Route                                                            | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET setup-status?relay=<slug>` / `POST setup-status {draft}`    | **Origin-scoped** readiness: nine steps (origin, account, template, origin, edge, qualification, publish, rendering, automation), each `done / ready / blocked / skipped` with blockers and warnings as codes, the selected context, `currentStep` and `roleVars` (public values only: never a token or an address). A draft (origin + listener triples) is judged before the origin exists. Without either, the fleet aggregate plus the origins whose setup can be resumed. Manual origins skip `rendering`.                                                                                                                                                                              |
-| `POST relays/{id}/test-provision`                                | The bootstrap path: ordinary selection excludes unqualified accounts, so a fresh account could never get its first edge. Explicit `{accountId, templateId?, listenerKey}`; the account must be enabled and **tested** but may be unqualified; budgets, capacity and layer compatibility apply; the result is always unpublished. Audited `admin.edge.test_provision`.                                                                                                                                                                                                                                                                                                                       |
-| `POST relays/{id}/preflight`                                     | Dry run of `provision / publish / replace / test-provision`: every guard a real start applies (the FIRST blocker is the code the start would throw), the selection the machine would make, plan-phase refusals that need no adapter, and delivery warnings (`render_disabled`, `members_dark`, ...). Writes nothing.                                                                                                                                                                                                                                                                                                                                                                        |
-| `GET edges/{id}/verification-binding` + `POST edges/{id}/verify` | The L4 endpoint test. The GET returns `{endpoint, listenerKey, listenerRevision, configHash}` (plus whether the gate would pass once confirmed) exactly as the confirmation must echo it; the POST (origin-write scope) recomputes the binding from the live rows and refuses a mismatch (`edge.verification_stale`) rather than stamping a configuration the operator did not see. Records `edges.verification` (`method: test_link` from the isolated test link, `named_connection` for retesting a published address by its `<node>-relay-<key>` connection) and audits `edge.verified` (ids and the listener key only). L7 edges refuse: their authenticated proof is the verification. |
-| `GET attention`                                                  | Server-ranked list, one action per item: quarantine, needs operator, unsettled Host op, **members dark** (edge-required place with nothing to serve), failed or rolled-back rotation, lapsed front qualification, block suspected, unreachable edge, pool below desired, account untested or unqualified, drift, maintenance frozen; plus the three endpoint-verification cards: **needs_test** (critical: the origin is suspected and its automatic replacement has no tested spare), **retest_needed** (a confirmation went stale after a listener or address change) and **spare_untested** (an active unpublished L4 edge never confirmed), each with the one action `verify_endpoint`. |
-| `GET relays/{id}/quarantine` + `POST .../quarantine/inspect`     | The resolver view: per listener the previous and the current binding as Host tuples; `inspect` (throttled) fills the live column from the backend and says which one it matches. `resolve-quarantine` records a `reason`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `GET relays/{id}/timeline`                                       | Merged audit rows of the origin, its listeners, its non-destroyed edges and its rotations, newest first, capped.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `GET providers/usage`                                            | Per account: live / max edges, allocations against the daily budget, published / standby / draining; per origin desired against published; totals including what auto-provision would add.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `GET relays/lookup?slug=`                                        | The full admin view of one origin by slug (the per-origin page is addressed by slug).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `POST relays/{id}/listeners/{key}/adopt-host`                    | The `operator` to `fcp` handoff: the named Host must exist, carry the listener's transport and dial a published edge of that listener (`edge.host_adopt_mismatch` otherwise). `hostMode: fcp` is refused until every listener Host is adopted (`edge.host_adopt_required`).                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `GET maintenance`, `POST maintenance/freeze`, `.../thaw`         | The maintenance switch (see below).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `GET delivery-bindings`, `POST delivery-bindings/{id}/release`   | The edge-required places, including ones whose origin was deleted with `keep-dark`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `GET config`                                                     | Also carries `bounds` and `defaults` per flat key, so the settings forms validate against the server's own limits.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `POST relays/{id}/rebalance`                                     | Coverage at the cap: unpublish ONE duplicate (a published edge that is not its listener's template edge, highest pool index first) back to standby, bump the epoch, refresh mirrors; upkeep then publishes the uncovered listener. Refuses `edge.no_duplicate`, and the usual rotation / quarantine guard. Audited `edge.relay.rebalanced`.                                                                                                                                                                                                                                                                                                                                                 |
-| `POST automation {on}`                                           | The one automation switch (settings scope): in ONE mutation sets `edge.enabled`, `edge.autoRotate`, `edge.probe.enabled` and `edge.autoProvisionToDesired` to `on`, and `edge.standbyPerListener = 1` when turning on (left as-is when off). Never `render.enabled` or `l7.autoSelect`; touches no origin row (an origin's own `autoRotate` keeps its meaning under the global gate: `cfg.enabled && cfg.autoRotate && relay.autoRotate`). Audited `edge.automation.set` (the boolean only).                                                                                                                                                                                                |
-| `POST setup-runs/plan {backendServerId, nodeUuid}`               | The guided setup's read-only plan for one backend node (throttled: it lists the node's transports and Hosts): frontable transports, direct Hosts tagged covered / uncovered, compatible accounts with reasons, the fleet-wide rendering consequence, disabled client families, and the `planHash` a run creation must echo. See § "Guided setup runs".                                                                                                                                                                                                                                                                                                                                      |
-| `POST setup-runs`, `GET setup-runs[/{id}]`                       | Create a run (`{backendServerId, nodeUuid, accountId, planHash, approvedHideUuids[], keepDirect?}`; `edge.plan_stale`, `edge.account_incompatible`, `edge.too_many_inbounds`, `edge.setup_run_active`), list runs, poll one (stage, state, the interruption, per-listener verdicts, the `try_it` test links).                                                                                                                                                                                                                                                                                                                                                                               |
-| `POST setup-runs/{id}/{cancel\|retry\|continue}`                 | The three operator verbs on a run: cancel (before publish deletes the origin `restore-direct`; between publish and go-live starts the restore workflow with purpose `cancel_setup`; after go-live refused), retry (re-enters the current stage under a new generation; `{tryAnotherAddress}`, `{acceptPartial}`, `{accountId}` answer the card's secondary buttons), continue (`{confirmations[]}` forwards each `try_it` tick to `POST edges/{id}/verify`; `{approvedHideUuids[]}` replaces the consent after `review_changed`; `{keepDirect}` finishes unbound).                                                                                                                          |
-| `POST relays/{id}/require-edges`                                 | The only path besides a run's go-live to a deferred origin's binding: the SAME activation policy. Every published L4 edge without a current confirmation comes back as `pending[]` (the node page renders the `try_it` card) instead of a binding; with nothing pending the run starts at the rehearsal and goes live through stage 8. Refuses `edge.not_deferred`, `edge.coverage_incomplete`, `edge.setup_run_active`, `edge.busy`, `edge.quarantined`.                                                                                                                                                                                                                                   |
-| `POST edges/{id}/test-link`                                      | The isolated test link for an L4 candidate (throttled: fetches the test credential's body and the backend Hosts): the candidate connection only, plus the binding the confirmation must echo. See § "Publication".                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `GET relays/inbound-candidates?backendServerId=&nodeUuid=`       | Discovery with the origin probe applied (throttled): the node's transports as listener candidates, `originTransport` filled where probed, `unsupported` with reasons. Registers nothing. See § "Listener catalogue".                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Route                                                            | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET setup-status?relay=<slug>` / `POST setup-status {draft}`    | **Origin-scoped** readiness: nine steps (`origin`, `account`, `template`, `relay`, `edge`, `qualification`, `publish`, `rendering`, `automation`), each `done / ready / blocked / skipped` with blockers and warnings as codes, the selected context and `currentStep` (never a token or an address). A draft (origin + listener triples) is judged before the origin exists. Without either, the fleet aggregate plus the origins whose setup can be resumed. Manual origins skip `rendering`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `POST relays/{id}/test-provision`                                | The bootstrap path: ordinary selection excludes unqualified accounts, so a fresh account could never get its first edge. Explicit `{accountId, templateId?, listenerKey}`; the account must be enabled and **tested** but may be unqualified; budgets, capacity and layer compatibility apply; the result is always unpublished. Audited `admin.edge.test_provision`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `POST relays/{id}/preflight`                                     | Dry run of `provision / publish / replace / test-provision`: every guard a real start applies (the FIRST blocker is the code the start would throw), the selection the machine would make, plan-phase refusals that need no adapter, and delivery warnings (`render_disabled`, `members_dark`, ...). Writes nothing.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `GET edges/{id}/verification-binding` + `POST edges/{id}/verify` | The L4 endpoint test. The GET returns `{endpoint, listenerKey, listenerRevision, configHash}` (plus whether the gate would pass once confirmed) exactly as the confirmation must echo it; the POST (origin-write scope) recomputes the binding from the live rows and refuses a mismatch (`edge.verification_stale`) rather than stamping a configuration the operator did not see. Records `edges.verification` (`method: test_link` from the isolated test link, `named_connection` for retesting a published address by its `<node>-relay-<key>` connection) and audits `edge.verified` (ids and the listener key only). L7 edges refuse: their authenticated proof is the verification.                                                                                                                                                                                                                                                                                                                                                                  |
+| `GET attention`                                                  | Server-ranked list, one action per item: quarantine, needs operator, unsettled Host op, **members dark** (edge-required place with nothing to serve), failed or rolled-back rotation, lapsed front qualification, block suspected, unreachable edge, pool below desired, pool rebalance, account untested or unqualified, account with no daily limit, test key cleanup, direct Host reappeared, go-live pending, restore in progress, maintenance frozen; the operations-safety items (§ Operations safety: fleet brake and cap, stuck rotation, provider API failing, health stale, billable idle, delivery refusals, an app family switched off, a node ready to protect or waiting for approval); plus the three endpoint-verification cards: **needs_test** (critical: the origin is suspected and its automatic replacement has no tested spare), **retest_needed** (a confirmation went stale after a listener or address change) and **spare_untested** (an active unpublished L4 edge never confirmed), each with the one action `verify_endpoint`. |
+| `GET relays/{id}/quarantine` + `POST .../quarantine/inspect`     | The resolver view: per listener the previous and the current binding as Host tuples; `inspect` (throttled) fills the live column from the backend and says which one it matches. `resolve-quarantine` records a `reason`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `GET relays/{id}/timeline`                                       | Merged audit rows of the origin, its listeners, its non-destroyed edges and its rotations, newest first, capped.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `GET providers/usage`                                            | Per account: live / max edges, allocations against the daily budget, published / standby / draining; per origin desired against published; totals including what auto-provision would add.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `GET relays/lookup?slug=`                                        | The full admin view of one origin by slug (the per-origin page is addressed by slug).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `POST relays/{id}/listeners/{key}/adopt-host`                    | The `operator` to `fcp` handoff: the named Host must exist, carry the listener's transport and dial a published edge of that listener (`edge.host_adopt_mismatch` otherwise). `hostMode: fcp` is refused until every listener Host is adopted (`edge.host_adopt_required`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `GET maintenance`, `POST maintenance/freeze`, `.../thaw`         | The maintenance switch (see below).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `GET delivery-bindings`, `POST delivery-bindings/{id}/release`   | The edge-required places, including ones whose origin was deleted with `keep-dark`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `GET config`                                                     | Also carries `bounds` and `defaults` per flat key, so the settings forms validate against the server's own limits.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `POST relays/{id}/rebalance`                                     | Coverage at the cap: unpublish ONE duplicate (a published edge that is not its listener's template edge, highest pool index first) back to standby, bump the epoch, refresh mirrors; upkeep then publishes the uncovered listener. Refuses `edge.no_duplicate`, and the usual rotation / quarantine guard. Audited `edge.relay.rebalanced`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `POST automation {on}`                                           | The one automation switch (settings scope): in ONE mutation sets `edge.enabled`, `edge.autoRotate`, `edge.probe.enabled` and `edge.autoProvisionToDesired` to `on`, and `edge.standbyPerListener = 1` when turning on (left as-is when off). Never `render.enabled` or `l7.autoSelect`; touches no origin row (an origin's own `autoRotate` keeps its meaning under the global gate: `cfg.enabled && cfg.autoRotate && relay.autoRotate`). Audited `edge.automation.set` (the boolean only).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `POST setup-runs/plan {backendServerId, nodeUuid}`               | The guided setup's read-only plan for one backend node (`listenerKeys?` as on create; throttled: it lists the node's transports and Hosts): frontable transports, direct Hosts tagged covered / uncovered, compatible accounts with reasons, the fleet-wide rendering consequence, disabled client families, and the `planHash` a run creation must echo. See § "Guided setup runs".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `POST setup-runs`, `GET setup-runs[/{id}]`                       | Create a run (`{backendServerId, nodeUuid, accountId, planHash, approvedHideUuids[], keepDirect?, listenerKeys?}`: `listenerKeys` is the operator's choice of 1 to 8 frontable transports when the node has more, covered by the plan hash; `edge.plan_stale`, `edge.account_incompatible`, `edge.too_many_inbounds`, `edge.setup_run_active`), list runs, poll one (stage, state, the interruption, per-listener verdicts, the `try_it` test links).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `POST setup-runs/{id}/{cancel\|retry\|continue}`                 | The three operator verbs on a run: cancel (before publish deletes the origin `restore-direct`; between publish and go-live, a run parked at `go_live` included, starts the restore workflow with purpose `cancel_setup`; a re-protect run instead drops only its own candidates, disposition `candidates`; after go-live refused), retry (re-enters the current stage under a new generation; `{tryAnotherAddress, edgeId?}` at `try_it` replaces only that line, `{acceptPartial}`, `{accountId}` answer the card's secondary buttons), continue (`{confirmations[]}` forwards each `try_it` tick to `POST edges/{id}/verify`; `{approvedHideUuids[]}` replaces the consent after `review_changed`; `{keepDirect}` finishes unbound).                                                                                                                                                                                                                                                                                                                       |
+| `POST relays/{id}/require-edges`                                 | Starts a guided run for a deferred origin (it never binds by itself): the SAME activation policy. Every published L4 edge without a current confirmation comes back as `pending[]` (the node page renders the `try_it` card) instead of a binding; with nothing pending the run starts at the rehearsal and goes live through stage 8. Refuses `edge.not_deferred`, `edge.coverage_incomplete`, `edge.setup_run_active`, `edge.busy`, `edge.quarantined`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `POST relays/{id}/serve-direct`                                  | "Serve this node directly again": the restore workflow with purpose `release_requirement` (binding released before any direct Host is re-enabled; edges and listeners kept). Refuses `edge.quarantined`, `edge.setup_owned`, `edge.restore_in_progress` and `edge.not_edge_required`. See § "Operations safety".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `POST relays/{id}/reprotect`                                     | "Protect again" for a live, bound, enrolled node: a re-protect run (`kind: 'reprotect'`) that keeps the committed delivery until go-live and drops only its candidates on cancel. Refuses `edge.reprotect_not_bound`, `edge.reprotect_not_enrolled`, `edge.reprotect_mixed_accounts`, `edge.reprotect_no_room` and the usual run refusals. See § "Guided setup runs".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `POST edges/{id}/test-link`                                      | The isolated test link for an L4 candidate (throttled: fetches the test credential's body and the backend Hosts): the candidate connection only, plus the binding the confirmation must echo. See § "Publication".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `GET relays/inbound-candidates?backendServerId=&nodeUuid=`       | Discovery with the origin probe applied (throttled): the node's transports as listener candidates, `originTransport` filled where probed, `unsupported` with reasons. Registers nothing. See § "Listener catalogue".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 ### Guided setup runs (Autopilot)
 
@@ -485,17 +645,17 @@ protects a backend node by answering two questions (which node, which account), 
 new L4 address once from a real client, and pressing Go live; FCP does everything else. ONE
 authoritative stage machine, every stage idempotent and re-enterable:
 
-| #   | Stage               | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Members download    |
-| --- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
-| 1   | `prepare`           | registration admitted; account tested, enabled and offered by the plan; `relays.create` with every frontable listener, `deferBinding` + `setupOwned`, `autoRotate: true`, `desiredPublished = max(default, required)` (bound 8). An origin a previous run left owned is reused at its recorded `setupStage` only while its listeners still match what the new plan discovered (same keys, same canonical hash, no extra deployed listener); otherwise `edge.plan_changed` and the operator removes protection first. Switching the account (`retry {accountId}`) is allowed only before anything is published (`edge.account_switch_late`); candidates of the old account are cancelled, never re-labelled. | raw origin body     |
-| 2   | `credential`        | `relayQualification.ensure` for an L7 listener (`qualification`) or an EMPTY backend node (`rehearsal`); an empty Outline server is `use_manual_setup`; a placement problem is `choose_mode`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | unchanged           |
-| 3   | `provision`         | per required listener without a live candidate: ONE mutation starts `provision` (`publishOnDone: false`, `requestedAccountId`, `allowUnqualified`) AND records `expect`; a live unpublished edge on the listener is reused. `edge.busy` / `edge.concurrency` wait and poll; `edge.maintenance` asks the operator                                                                                                                                                                                                                                                                                                                                                                                            | unchanged           |
-| 4   | `verify`            | per standby: outside probes (`trigger: 'qualification'`) + the internal shape run, judged by `partialRungFor` (`partial` is the L4 ceiling); L7 runs the front proof. `unreachable` (or a timeout) asks the operator (`address_unreachable`: try another address, or accept partial)                                                                                                                                                                                                                                                                                                                                                                                                                        | unchanged           |
-| 4b  | `try_it`            | one isolated **test link** per L4 endpoint lacking a current confirmation (`edgeTestLinks.build`; a published address gets a named-connection retest instead); the card's ticks echo `{edgeId, endpoint, listenerRevision, configHash}` into `edgeVerification.confirm` (`edge.verification_stale` rebuilds the card). Skipped when every listener is L7                                                                                                                                                                                                                                                                                                                                                    | unchanged           |
-| 5   | `publish`           | per required listener: `publish` rotation (`admission: 'setup.complete'`, so a freeze declared meanwhile does not strand admitted work) through the UNCHANGED gate; `pool_full_standby` = `coverage_incomplete`; quarantine = `quarantined`. `keepDirect` finishes `done_unbound` here                                                                                                                                                                                                                                                                                                                                                                                                                      | direct AND FCP Host |
-| 6   | `hide_direct_hosts` | every L4 confirmation re-checked (stale = back to the card); `edgeHostHides.hide` with the EXACT approved uuids; an uncovered Host the consent did not name = `review_changed` (a new consent bumps `planRevision`); `hide_failed`; pending rows are polled                                                                                                                                                                                                                                                                                                                                                                                                                                                 | FCP Hosts only      |
-| 7   | `rehearse`          | every client family's render rule on (`family_disabled`); `edgeRehearsal.run` (fresh cohort bodies through the real renderer, listing before and after); expired proofs re-run and the rehearsal repeats (bounded); the version vector + the FINAL Host observation are persisted                                                                                                                                                                                                                                                                                                                                                                                                                           | unchanged           |
-| 8   | `go_live`           | ONE mutation: no active rotation, no quarantine, origin enabled; the local vector equals the rehearsal's; the observation younger than 60 s; every L7 proof `expiresAt` ahead; every hide row settled and none outstanding; no FCP Host op claimed; every required listener published by its own edge, L4 with a current confirmation; `render.enabled` turned on if off (`edge.render.enabled_by_setup`); then `claimDeliveryBinding` and `setupOwned` cleared. A failed check sends the run BACK (7, 6 or the card)                                                                                                                                                                                       | rendered body       |
+| #   | Stage               | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Members download    |
+| --- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
+| 1   | `prepare`           | registration admitted; account tested, enabled and offered by the plan; `relays.create` with every frontable listener (or the operator's `listenerKeys` choice when the node has more than 8), `deferBinding` + `setupOwned`, `autoRotate: true`, `desiredPublished = max(default, required)` (bound 8). An origin a previous run left owned is reused at its recorded `setupStage` only while its listeners still match what the new plan discovered (same keys, same canonical hash, no extra deployed listener); otherwise `edge.plan_changed` and the operator removes protection first. Switching the account (`retry {accountId}`) is allowed only before anything is published (`edge.account_switch_late`); candidates of the old account are cancelled, never re-labelled.         | raw origin body     |
+| 2   | `credential`        | `relayQualification.ensure` for an L7 listener (`qualification`) or an EMPTY backend node (`rehearsal`); an empty Outline server is `use_manual_setup`; a placement problem is `choose_mode`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | unchanged           |
+| 3   | `provision`         | per required listener without a live candidate: ONE mutation starts `provision` (`publishOnDone: false`, `requestedAccountId`, `allowUnqualified`) AND records `expect`; a live unpublished edge on the listener is reused. `edge.busy` / `edge.concurrency` wait and poll; `edge.maintenance` asks the operator                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | unchanged           |
+| 4   | `verify`            | per standby: outside probes (`trigger: 'qualification'`) + the internal shape run, judged by `partialRungFor` (`partial` is the L4 ceiling); L7 runs the front proof. `unreachable` (or a timeout) asks the operator (`address_unreachable`: try another address, or accept partial)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | unchanged           |
+| 4b  | `try_it`            | one isolated **test link** per L4 endpoint lacking a current confirmation (`edgeTestLinks.build`; a published address gets a named-connection retest instead); the card's ticks echo `{edgeId, endpoint, listenerRevision, configHash}` into `edgeVerification.confirm` (`edge.verification_stale` rebuilds the card). Skipped when every listener is L7                                                                                                                                                                                                                                                                                                                                                                                                                                    | unchanged           |
+| 5   | `publish`           | per required listener: the node's approval is checked in the same mutation as the start (an enrolled node without one PARKS: `needs_you` `node_not_approved`, nothing published, docs/servers.md "A fronted node's activation"); then a `publish` rotation (`admission: 'setup.complete'`, so a freeze declared meanwhile does not strand admitted work) through the UNCHANGED gate; `pool_full_standby` = `coverage_incomplete`; quarantine = `quarantined`. `keepDirect` finishes `done_unbound` here (never for an enrolled fronted node)                                                                                                                                                                                                                                                | direct AND FCP Host |
+| 6   | `hide_direct_hosts` | every L4 confirmation re-checked (stale = back to the card); `edgeHostHides.hide` with the EXACT approved uuids; an uncovered Host the consent did not name = `review_changed` (a new consent bumps `planRevision`); `hide_failed`; pending rows are polled                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | FCP Hosts only      |
+| 7   | `rehearse`          | every client family's render rule on (`family_disabled`); `edgeRehearsal.run` (fresh cohort bodies through the real renderer, listing before and after; an enrolled node renders exactly its activation's candidates); expired proofs re-run and the rehearsal repeats (bounded); the version vector (with the activation candidate) + the FINAL Host observation are persisted                                                                                                                                                                                                                                                                                                                                                                                                             | unchanged           |
+| 8   | `go_live`           | ONE mutation: no active rotation, no quarantine, origin enabled; the local vector equals the rehearsal's; the observation younger than 60 s; every L7 proof `expiresAt` ahead; every hide row settled and none outstanding; no FCP Host op claimed; every required listener's edge published (in the pool, on a listener whose FCP Host exists), L4 with a current confirmation; `render.enabled` turned on if off (`edge.render.enabled_by_setup`); an enrolled node's candidate promoted in the same mutation (a live node with no activation binds only when every edge fits its committed approval); then `claimDeliveryBinding` and `setupOwned` cleared. A failed check sends the run BACK (7, 6 or the card); a stale candidate blocks the activation and waits for a fresh approval | rendered body       |
 
 Fencing: a rotation the run starts stores `setupRun: {runId, generation}`; `releaseOrigin`
 (every terminal transition) schedules `edgeSetupRuns.onRotationTerminal` with THAT stored
@@ -508,6 +668,49 @@ failed, cancelled or unbound run leaves the origin owned. Cancel before stage 5 
 `restore-direct` (nothing was published; the delete cancels the live rotation, drains the
 standbys for the reconcile destroy and removes the credential); at stages 5-7 the published edges
 stay and `edgeRestore.start` runs with purpose `cancel_setup`; after go-live there is no cancel.
+A **re-protect** run (`kind: 'reprotect'`, `POST relays/{id}/reprotect`, "Protect again" on the
+node page) is its own kind for a LIVE node: an enrolled node whose members are already served
+through this origin (refused otherwise: `edge.reprotect_not_bound` for an origin not bound yet,
+`edge.reprotect_not_enrolled` for a node the role did not enroll; plus the usual
+`edge.setup_run_active`, `edge.busy`, `edge.maintenance`, quarantine, restore and a disabled
+origin). Its plan is read from the origin's own rows like `require-edges`: the listeners members
+are served through (deployed, enabled, with a published template edge; none is
+`edge.coverage_incomplete`) and the ONE account of their template edges (missing, disabled or
+untested is `edge.account_incompatible`; an origin served through several accounts is
+`edge.reprotect_mixed_accounts`). Each new address is published beside what members hold, so
+the run first makes room: `desiredPublished` is widened to the published addresses plus one per
+transport plus the slots reserved for uncovered listeners, at most `MAX_DESIRED_PUBLISHED`
+(beyond it `edge.reprotect_no_room`); the size it found is kept in the plan snapshot
+(`reprotect.desiredBefore`). It starts at stage 1 on the existing origin, owns it
+(`setupOwned`) while it runs, and never reuses an edge at stage 3: every candidate is a fresh
+address with a fresh test link, so a REALITY key change is proven through a new address, not a
+named-connection retest of a committed one. Publication follows the node's admission rules
+(docs/servers.md "A fronted node's activation"). Members keep the committed delivery until
+go-live: the binding, the committed edges and the open gate are never touched before it. At
+go-live the new addresses take the old ones' places: every other published edge on a run
+transport whose new address is published drains (members move at their next refresh, as after
+a Replace) and the pool size goes back to `desiredBefore`. The surviving edges are compacted first
+(indexes 0..n-1), so no hole below the restored size admits a publication past it. While any
+setup run is working on an origin, the operator's direct pool writes (publish or unpublish by
+hand, an import that publishes, a rebalance) are refused with `edge.setup_owned`; an origin a
+finished run left owned stays open to them (the `require-edges` recovery). Any ending other than `done` hands
+the origin back (`onSetupRunEnded` clears `setupOwned` and gives the room back, so upkeep and
+the detector protect the node again); `retry` of a failed one claims it again (and makes room
+again) while the origin still binds the node and nothing else owns it. Its cancel
+(`cancelReprotect`, one mutation, disposition `candidates`) drops only the run's own new
+addresses: an unpublished one is cancelled for the reconcile destroy, a published one (a
+candidate the gate keeps from members, or one a committed admission already published) drains
+out of the pool unless it is its transport's last served address; never a delete, a restore or
+a binding change. It is refused with `edge.busy` while a rotation runs on the origin (nothing
+changes; cancel again in a moment).
+An ENROLLED node (docs/servers.md "A fronted node's activation"): the run parks at publish
+until the node is approved; the approval binds the run (`activationRunId`) and its activation
+(`setupRunId`) for good and wakes the run through `wakeForApproval`, fenced by the generation the
+approval read (a run past publish returns to the rehearsal); every terminal writer calls
+`onSetupRunEnded` with the generation it ends, which blocks the bound activation (a cancel after
+the approval parks the node for a fresh one). The provision rotation of a setup run may pick an
+L7 account whatever `edge.l7.autoSelect` says: the operator chose it, and its front is proven
+before anything publishes.
 Vocabularies: `SETUP_RUN_STAGES` / `SETUP_RUN_STATES` / `SETUP_RUN_NEEDS` /
 `SETUP_ACCOUNT_REASONS` in `src/shared/contracts/edgeCodes.ts`. Audit:
 `edge.setup_run.{started,needs_operator,go_live,finished,cancelled}` and
@@ -532,8 +735,9 @@ qualified -> trusted, quarantine -> paused for safety; `PLAIN_WORDS` in
   `attention` (the endpoint test opens the test card in place; go-live calls `require-edges`
   and renders the same card for whatever comes back pending), one row per protected node
   (name, country, one sentence, dot; a live run shows "Setting up, step N of 4" and opens its
-  progress), the primary **Protect a node**, and the automatic-protection switch (`POST
-automation`; a first-run card carries the cost and limitation sentences while it is off).
+  progress; a backend node's row opens its Servers node page), the primary **Protect a node**, and the automatic-protection switch (`POST
+automation`; while it is off, a card with the cost and limitation sentences shows once a node is
+  live, and the same offer sits on a run's Live card).
   `?protect=1` opens the protect sheet, `?run=<id>` a run's progress.
 - **Protect a node** (`ProtectSheet` + `ProtectProgress`): three questions and then the
   progress. Which node (a backend's nodes; already protected ones greyed; the plan from `POST
@@ -550,13 +754,18 @@ setup-runs/plan` lists the transports in words, a closed "Not supported yet" dis
   renders the test card whose ticks echo `{edgeId, endpoint, listenerRevision, configHash}`;
   `review_changed` re-opens the review with the delta; `family_disabled` turns the family's
   render rule on through the config PATCH, then continues.
-- **Node page** (`/admin/edges/nodes/<slug>`, `NodePage`, no tabs): the status sentence,
-  "Addresses in use" per transport (a reduced pool strip + one plain line per address), the
-  primary **Replace address** (`ReplaceDialog`; "Replace now, address is blocked" under More),
-  the per-node "Replace addresses automatically" switch (origin `autoRotate`, captioned when the
-  global switch is off), "Recent activity" (the timeline through `plainAuditActionLabel`), and
-  More: add a spare address, remove protection (`restore-direct`; the restore workflow's phase
-  is shown while it runs), advanced details. `?test=<edgeId>` opens the test card.
+- **A node's edges** (`NodeEdgesPanel`, no tabs), part of the node's ONE page: a backend node's
+  Servers node page embeds it (docs/servers.md "The page") and `/admin/edges/nodes/<slug>`
+  redirects there (`nodeHomeOf`, keeping `?test=`); an origin that is not a backend node (manual,
+  a whole Outline server) keeps it at that address. The status sentence, "Addresses in use" per
+  transport (a reduced pool strip + one plain line per address), the primary **Replace
+  address** (`ReplaceDialog`; "Replace now, address is blocked" under More), the per-node
+  "Replace addresses automatically" switch (origin `autoRotate`, captioned when the global
+  switch is off), "Recent activity" (the timeline through `plainAuditActionLabel`), and More: add
+  a spare address, **Protect again** (an enrolled node live behind edges: a re-protect run, see
+  "Guided setup runs"; the primary action while the node waits to be protected again), Origin
+  details, remove protection (`restore-direct`; the restore workflow's phase is shown while it
+  runs). `?test=<edgeId>` opens the test card.
 - **Providers** (`/admin/edges/providers`): cards (Connected / Problem / Not tested, "3 of 6
   addresses used" from `providers/usage`, and the trust line: "Trusted automatically, checked
   with a real session on <date>" / "Tried with a real session by you on <date>" / "Reached from
@@ -564,16 +773,36 @@ setup-runs/plan` lists the transports in words, a closed "Not supported yet" dis
   dialog is the **Trust override**.
 - **Advanced** (`/admin/edges/advanced`): a plain list of links to the technical pages.
 
-**The technical pages**, unchanged and at their old addresses: **All origins**
-(`/admin/edges/advanced/relays`, the former dashboard: fleet tiles, attention list, readiness
-with resume links, origin table, probe chart), **Manual setup** (`/admin/edges/setup?relay=<slug>`,
-driven entirely by `setup-status`), the **per-origin page** (`/admin/edges/relays/<slug>`:
-overview, edges, listeners, rotations, probes; the quarantine resolver), the per-account page
+**The technical pages**: **All origins** (`/admin/edges/advanced/origins`, the former
+dashboard: fleet tiles, attention list, readiness whose steps link to where each is done
+(`setupStepTarget`), origin table, probe chart; **New origin** opens `NewRelayDialog` for a
+manual address or a whole Outline server), **Origin details** (`/admin/edges/relays/<slug>`:
+overview, edges, listeners, rotations, probes; the quarantine resolver; an origin that is not a
+backend node and has no edge yet shows the first-edge card: provision one, where a named, tested
+account is allowed before it is trusted and the edge waits unpublished, or import a front), the
+per-account page
 (`/admin/edges/providers/<id>`), **Templates**, **Probes** (the old `/admin/telemetry/probes`
 redirects) and **Settings** (Basics, Advanced sections, maintenance, delivery places). Codes
 are never shown bare: `src/shared/contracts/edgeCodes.ts` holds the vocabularies and
 `src/client/lib/edgeCodes.ts` the words. Section paths are spelled only in
 `src/client/routes/admin/edges/lib/routes.ts`; API paths only in `src/client/lib/edgesApi.ts`.
+
+A backend node is set up only with Autopilot (the protect sheet); the old step-by-step wizard
+is gone. Its addresses redirect (`legacyEdgesRedirect`, pinned by a test):
+`/admin/edges/setup?relay=<slug>` to that origin's details, `/admin/edges/setup` and
+`/admin/edges/advanced/relays` to All origins. One provision dialog (`ProvisionDialog`) covers
+both the ordinary provision (FCP picks a trusted account) and the bootstrap provision
+(`test-provision`, chosen automatically when the operator names an account), and one import
+dialog (`ImportFrontDialog`, with the inventory refresh) imports an existing front.
+
+**One status source.** Every page reads an origin's status from the `attention` response:
+`origins[]` (one row per origin, deleting ones included, in slug order: kind, dot, code, the
+live setup run and its plain step, published / spare / offline counts, worst health, layers,
+whether any item names it, and what members get) and `fleet` (the headline: what matters most,
+its count, the total and the protected count). The per-origin Delivery card reads
+`setup-status`'s `delivery` (relay scope only), the same judgement plus `degraded` from the
+sample render. The judgement lives in `convex/lib/edges/originStatus.ts` (one pure function,
+ranked by the server's own attention order); the CMS only words its codes and counts.
 
 Member side: when the key sits behind edges the report dialog also asks which connection the
 member was using (optional; the labels the pass shows), and an edge-required single-key
@@ -649,12 +878,14 @@ none). Both are suppressed while a restore workflow runs.
 **The restore workflow** (`relays.restore {purpose, phase, ...}`, `convex/edgeRestore.ts`;
 one phase per `edge-reconcile` tick, `edgeRestore.step`) is the only way a guided origin stops
 depending on its edges, with an explicit purpose: `cancel_setup` (a run cancelled after
-publication), `release_requirement` (edge-required delivery switched off, everything kept) or
+publication), `release_requirement` (edge-required delivery switched off, everything kept:
+"Serve this node directly again", `POST relays/{id}/serve-direct`) or
 `delete_relay` (a `restore-direct` deletion). Phases: (1) `freeze`: no new disable writes; waits
 for a running rotation; (2) `settle`: every outstanding hide row confirmed or released by
 observation; (3) `verify_fcp_raw` (bound origins only): the RAW backend body of each non-dark
-cohort (one representative key per placement pinned to the node, `convex/lib/edges/cohorts.ts`,
-walked page by page over `subscriptions.by_backend_server_pinned`) carries an FCP entry and no
+cohort (one representative key per placement pinned to the node, `convex/lib/edges/cohorts.ts`:
+the first key of each distinct placement over `subscriptions.by_backend_server_pinned`, a page
+of placements per query, driven from the action) carries an FCP entry and no
 origin entry, fetched through the same path the sub route uses; (4) `release_binding`: the
 delivery binding is released WHILE the origin stays enabled and its edges published, so members
 keep the protected entry in raw delivery. **A direct Host is never re-enabled while the origin
@@ -674,8 +905,8 @@ and last error. Audited `edge.relay.restore_started` / `edge.relay.restore_finis
 `relays.requestDelete` is re-sequenced accordingly: a `restore-direct` delete of an origin that
 hid direct Hosts (or that a setup run bound) enters the workflow with purpose `delete_relay`
 (response `restore: true`) instead of tearing down at once; `keep-dark` keeps the binding,
-never restores a hidden Host and tears down at once, as before; a role-registered origin that
-never hid a Host is unchanged.
+never restores a hidden Host and tears down at once, as before; an origin that never hid a Host
+and was not bound by a setup run is unchanged.
 
 ### The rotation machine
 
@@ -687,12 +918,57 @@ select → provisioning → verifying → publishing → host_flipping → confi
 (failed / cancelled from the early phases)
 ```
 
-The recovery contract is unchanged (step version fencing, resource-step ledger, operation
-claims, four-outcome discovery, observe-then-write Hosts, shared external locks, leak guard,
-quarantine, audit trail; see the sections of the previous release in git history for the
-long form). Two things changed: the Host plan is captured, flipped and rolled back **per
-listener**, and when FCP owns the Hosts and no Host exists for the listener yet, the flip
-CREATES it through the Host state machine instead of waiting for the role.
+**The recovery contract.** A rotation survives a crash, a lost answer or a killed action at
+any point, and never writes twice what it cannot prove:
+
+- **Fencing.** Every DB change is a mutation guarded by the run's `stepVersion`. The `step`
+  action does one bounded unit of work and never schedules itself: the recording mutation
+  schedules the next step and stamps `nextStepAt`, the action stamps `stepStartedAt`. A step
+  scheduled more than 30 s ago that never started, or started more than 10 minutes ago with no
+  outcome, is stale: each `edge-reconcile` pass re-kicks it (`rekick` bumps `stepVersion`, so a
+  zombie actor's writes are ignored, and schedules a fresh step).
+- **Wall clock and errors.** A run past `EDGE_PLUMBING.maxRotationMs` (2 hours), or after 30
+  unexpected throws, ends by phase: `select`, `provisioning`, `verifying` fail with nothing to
+  undo; `publishing`, `host_flipping` fail into `rolling_back`; `confirming`, `finalizing` and
+  a `rolling_back` that cannot converge quarantine. `rolling_back` itself is exempt from the
+  wall clock. An unexpected throw is counted and retried after a poll interval (20 s).
+- **Cancel.** In `select`, `provisioning` or `verifying` a run is cancelled; in `publishing` or
+  `host_flipping` it rolls back; from `confirming` on it is `edge.too_late`; a request during
+  `rolling_back` is recorded and never aborts the rollback.
+- **Provider steps.** Each create or delete holds an operation claim (60 s lease). A live claim
+  answers `edge.op_busy`; an expired claim on a provision or destroy step is never re-run: the
+  step goes `unresolved` and to **discovery**, which answers one of four outcomes. `found`: the
+  step is done. `confirmed_absent` (two or more quiet looks plus the adapter's settle time):
+  the step runs again, at most 3 attempts, then the edge needs an operator and the run fails
+  `step_retries_exhausted`. `ambiguous`: the edge needs an operator, the run fails
+  `ambiguous_resource`. `unresolved`: keep looking for 30 minutes after the step started, then
+  `discovery_timeout`. A provision has its own 20-minute cap (`provision_timeout`). Shared
+  external locks use the same lease and are held on a thrown or partial write until discovery
+  answers.
+- **Hosts.** The Host plan is captured **per listener** from the live listing; when FCP owns the
+  Hosts and none exists for the listener yet, the flip CREATES it through the Host state
+  machine. The forward write is claimed before it is sent (`forwardWriteAttempted`), so a write
+  whose answer was lost is re-observed, never assumed absent. Six failed writes roll back
+  (`panel_unreachable`); a planned Host that vanished or was rebound is `hosts_changed` and
+  rolls back; an unconverged confirm writes again.
+- **Rollback.** The DB half (`applyRollbackBinding`) is idempotent: the new edge back to an
+  unpublished standby, the previous edge republished at its pool index, the epoch bumped,
+  template edges and mirrors refreshed. The Host half writes back the previous tuple, judged by
+  the same diff. With no forward write ever claimed the run is `rolled_back` at once. Six
+  failed rollback writes, a vanished or rebound Host, or a backend unreachable past the cap
+  **quarantine** the origin.
+- **Quarantine** records the rotation, the new edge and `relays.quarantine`, audits
+  `edge.quarantined`, refuses every start (`edge.quarantined`) and makes the reconcile leave the
+  origin alone (no describe, drop, destroy, requalify or upkeep); attention raises `quarantine`
+  (critical) and `billable_idle` lists its edges. Only the operator ends it
+  (`resolveQuarantine {keep: current | previous, reason}`, after the inspect view).
+- **After a terminal phase.** Every terminal transition releases the origin (`activeRotationId`
+  cleared) and calls the setup run's terminal hook with the generation it stored. A failed run
+  marks its new edge `failed`; outside a running rotation the reconcile settles unresolved steps
+  by discovery and turns failed or cancelled edges into destroy runs (at most 48 attempts, then
+  `needs_operator`). Attention `rotation_stuck` (critical) fires after an hour, before the wall
+  clock ends the run. A maintenance freeze blocks starts only; steps, re-kicks, rollbacks and
+  cancels keep running.
 
 ### Reconcile cron (`edge-reconcile`, 5 min)
 
@@ -713,10 +989,140 @@ tick: every deployed, enabled listener without a template edge gets its OWN stan
 (`publishStandby` candidates filtered by `edge.listenerId`; a standby of A never counts for B)
 or a provision FOR THAT LISTENER (`listenerId` in the start), then the origin-wide fill to
 `desiredPublished` once every listener is covered, then spares: the origin-wide
-`standbyPerRelay` reserve (unchanged) plus `standbyPerListener` verified standbys per coverage
-listener (origin field, default from `edge.standbyPerListener`; the automation switch sets the
-config key to 1). Finishes origin deletes. Daily sweeps prune `destroyed` edges after 30 days
-and terminal rotations after 90.
+`standbyPerRelay` reserve plus `standbyPerListener` verified standbys per coverage listener
+(each the origin's own value, else the fleet's: § Configuration; the automation switch sets
+`edge.standbyPerListener` to 1). Finishes origin deletes. At most one automatic start per pass
+(`EDGE_PLUMBING.maxReconcileStartsPerTick`; `edge.enabled` is the switch).
+
+**Retention** (separate daily crons, `convex/retention.ts`): `retention-edges` prunes
+`destroyed` edges after 30 days, `retention-edge-rotations` terminal rotations after 90, and the
+workflow sweeps (`retention-panel-ops`, `-sni-rollouts`, `-edge-setup-runs`,
+`-activation-runs`, `-edge-host-hides`, `-port-changes`) terminal rows past 90 days each
+(`*_RETENTION_DAYS`, `docs/convex-self-hosting.md`). They never delete a row something still
+reads: an op a claim, rollout, port change or rename names; a binding's newest rollout; a node's
+newest setup run and one an open activation points at; a node's current activation run, the
+committed run of its current approval, and an uncommitted run while any of its candidates (an
+edge not destroyed, a Host still on the backend) remains, since it isolates them only while it
+exists; the newest hide row of each Host of a live origin, and every row while its restore runs;
+a port change whose op is open. Node renames and their aliases are kept (a former name stays
+reserved), mirror upload records are deleted when they settle, and the vantage tables keep
+their own window.
+
+### Operations safety
+
+What keeps the automatic machinery safe to leave running: the operator hears about problems, a
+mass block cannot rotate the whole fleet, provider failures and dark members are visible, and no
+read grows with the member count.
+
+**Fleet brake and the fleet's daily cap** (`convex/lib/edges/fleet.ts`). The detector evaluates
+every origin first and judges the pass as a whole before any rotation starts. When more than
+`edge.detect.fleetBreakerPct` percent (default 30, 100 = never) of the evaluated origins are
+suspected, and at least three of them, the brake engages (`appState` `edge:fleetBrake`, audited
+`edge.fleet_brake` on each transition): no detector rotation starts anywhere (`fleet_brake`
+veto, `edge.fleet_brake` refusal read inside the start mutation), and attention `fleet_brake`
+(critical) says so. It releases on the first pass back under the threshold. Detector rotations
+across the whole fleet are also capped per UTC day (`edge.detect.fleetRotationsPerDay`, default
+12, 0 = none; `edge:fleetRotations`, counted in the mutation that starts one; refusal
+`edge.fleet_daily_cap`, attention `fleet_rotation_cap`). Manual rotations are never held.
+`edge.detect.allowProbeOnlyAutoRotate` now defaults to **false**: probe evidence alone weighs
+in the score but neither suspects nor rotates without member reports, until an operator opts in.
+
+**Provider failures.** Every account-scoped provider call (`edgeProviderOps`: steps, polls,
+discovery, describe, inspect, destroy, inventory) counts toward the account's API health
+(`edgeProviderAccounts.apiFailures`, `apiFailingSince`, `lastApiError`): a timeout, a network
+error, a 5xx, a refused credential (401 / 403), throttling (429) or an answer the adapter cannot
+read adds one; a 404 or a 409 the caller handles does not; the first success resets the run.
+Three in a row raise attention `account_api_failing` (critical). A live managed edge whose
+health was not refreshed for an hour (or 30 polls) shows as `health_stale` on its account. A
+`dailyAllocationBudget` of 0 (no daily limit) is refused outside a development deployment
+(`ENVIRONMENT=development`); existing rows keep their value until the next edit and show as
+`account_budget_unlimited`.
+`billable_idle` lists edges that cost money while serving nobody: a quarantined origin's managed
+edges, or an edge parked at `needs_operator` whose resources are still present.
+
+**Dark members.** Every refusal the subscription route answers under edge-required delivery
+(the 503 with `x-fcp-delivery: <reason>`) is counted per reason in a sharded `appState` counter
+(`edge:refusals:<0..7>`, ten-minute buckets, `convex/deliveryRefusals.ts`): codes and counts
+only. Attention `delivery_refusals` sums the last hour (`facts.byReason`), critical from 25. A
+client family whose render rule is off now answers `family_disabled` (no longer
+`render_disabled`), and attention `family_rule_disabled` lists the families while any node is
+edge-required. A `rotation_stuck` item (critical) appears for a rotation running over an hour.
+
+**Serve this node directly again** (`POST relays/{id}/serve-direct`, `edgeRestore.serveDirect`):
+the restore workflow with purpose `release_requirement`, offered on the origin's Delivery card.
+Refused while a quarantine is open (resolve it first), while a guided setup owns the origin
+(cancel the run instead) and for a node whose members already get its direct address
+(`edge.not_edge_required`). The workflow releases the binding BEFORE any direct Host is
+re-enabled; edges and listeners stay, and the node can be protected again later.
+
+**Enrolled nodes that wait on the operator.** FCP never starts a protect run or approves on its
+own; it asks. `node_ready_to_protect`: a fronted node at `machine_ready` with no open protect
+run (action `protect_node`, the protect sheet with the node preselected).
+`node_awaiting_approval`: a node tested and not approved yet, parked after a block, or a protect
+run parked at `node_not_approved` (action `open_node`, its Servers page).
+
+**Approval shape in automatic work.** A replace, or a provision that publishes when done,
+outside a guided setup run, picks only a spare or an account whose shape (listener, account,
+template) fits the enrolled node's approval; nothing fitting fails the selection with
+`outside_approved_shape`, and an automatic start (detector, reconcile) is refused with
+`edge.outside_approved_shape` instead of failing every tick. Where the run publishes, the
+approval is checked again: out of shape, the paid-for edge stays a standby and a replace leaves
+its target served (the finalize drains a target only after a real swap); as a candidate of the
+node's running activation it is recorded as one, except for a replace, whose replacement must be
+servable at once. Pool upkeep's direct standby publish applies the same approval.
+
+**A burned last name.** When a burn takes a listener's last active name, its FCP-owned Host would
+keep handing out the burned one. `hostOps.resyncSni` withdraws it instead: the Host is deleted
+through the Host state machine (read-back confirmed, the condition judged again inside the
+claim), and the reconcile pass does the same for a Host left on a burned name. Only a Host that
+carries one of the listener's own names follows them: an L7 Host carries its edge's hostname and
+is never rewritten or withdrawn here. The listener serves nobody until it has a name again; its next
+rotation creates the Host afresh. An adopted Host (the operator's) is never deleted.
+
+**A placeholder body is never cached.** A body the node pinner understands that names no node
+(the backend's answer for a key whose node serves nothing yet) carries a cache token without a
+node, so a node going live could not re-key it; the route answers it `private, no-store` and
+never caches it. Unknown body shapes keep caching as before.
+
+**Read limits.** No transaction reads an origin's keys or a whole report window: the cohort walk
+(`lib/edges/cohorts.ts`) reads the first key of each DISTINCT placement over the
+`subscriptions` indexes that end in `backendPlacement`, one page of placements per query, driven
+from the action that needs it (`edgeCohorts.walk*`: the restore workflow, the rehearsal, the
+setup plan), and refuses (`edge.cohorts_unbounded`) rather than judge a partial membership; the
+detector's report window and the test-key sweep page through their indexes
+from the action (one `paginate` per query, as Convex requires).
+
+### Operator alerts
+
+Opt-in (`alerts.*` in `appSettings`, Admin -> Settings -> Operator alerts; `GET /api/v1/admin/alerts`
+with the settings read scope, `PATCH` sealed with the write scope, `POST /api/v1/admin/alerts/test`
+sends one test). Every five minutes the `alerts-dispatch` cron reads the attention list and
+posts the NEW alert-worthy items once, in one notification, to the webhook as ntfy-compatible
+JSON:
+
+```json
+{
+  "topic": "<if set>",
+  "title": "Edges: 2 new alerts",
+  "message": "quarantine (flip_unconfirmed): 1\nnode_ready_to_protect: 1\n\nOpen Admin, Edges for the details.",
+  "priority": 5,
+  "tags": ["rotating_light"]
+}
+```
+
+Alert-worthy: every critical item (quarantine, fleet brake, a provider whose API keeps failing,
+a stuck rotation, dark members, a reappeared direct Host, a blocked node with no tested spare, an
+ambiguous Host) plus `node_ready_to_protect` and `node_awaiting_approval`. An item is sent once
+while it stays on the list at any severity (`appState` `alerts:state` holds the sent ids); one
+that clears and comes back alerts again; a failed post records a short code (`network`, `timeout`, the status)
+and is retried next tick. **Alerts carry kinds, short codes and counts only**: never a member,
+a token, an address, a node or origin name, a provider or a region. The webhook URL must be
+https and pass the infra SSRF check (`ALLOW_INTERNAL_BACKENDS=true` admits http in
+development); redirects are not followed. The topic and the access token (sent as `Bearer`) are
+write-only: the admin view shows whether each is set and the webhook's origin, nothing more.
+
+To poll instead (or as well), read `GET /api/v1/admin/edges/attention` with a read-only API
+token (`admin:servers:read`); every item carries `kind`, `severity`, `code` and `action`.
 
 ## Server-name families (REALITY)
 
@@ -889,8 +1295,9 @@ list, up to 1000 lines, answered with a verdict per line: `added`, `duplicate`, 
 `POST families/{slug}/names/country`,
 `POST families/{slug}/bind`, `DELETE bindings/{id}`, `POST qualify`,
 `POST bindings/{id}/plan`, `POST bindings/{id}/rollout`, `GET rollouts/{id}`,
-`POST rollouts/{id}/test-link`, `POST receipts/{id}/confirm`. Audit rows
-(`edge.sni.*`) carry slugs and **counts only, never a hostname**.
+`POST rollouts/{id}/test-link`, `POST receipts/{id}/confirm`,
+`POST families/{slug}/vantage` and `POST families/{slug}/vantage/apply` (§ Checks from inside a
+country). Audit rows (`edge.sni.*`) carry slugs and **counts only, never a hostname**.
 
 ### What members' reports say about a name
 
@@ -915,9 +1322,152 @@ until the operator records it as blocked there. It never retires a name, never p
 works, and never changes what anyone is given. Cron `sni-report-sweep` deletes counts older
 than the window.
 
-Not built: probing each name from inside a country through the outside probe sources. The
-internal probe cannot stand in for it (it is not in the country), and qualification already
-checks every name against its target.
+Reports also feed the checks from inside a country (next section): a name reported there at
+least as much as the suspect floor (3) is checked from there before other names, and a suspect
+is the corroboration a single failing check needs.
+
+### Checks from inside a country (vantage evidence)
+
+Ships dormant: `edge.sni.vantage.enabled` is off and no country is opted in. Off, nothing is
+measured, nothing is suggested and nothing is applied.
+
+**The question.** From inside a curated country, does a TLS handshake that presents name N to
+one of FCP's own member-facing addresses complete, while the same vantages complete it for the
+listener's other names? That isolates the one fact `blockedIn` / `provenIn` record (the censor
+there treats this name differently) from the two it must not be confused with: the address is
+blocked (the block detector's business, § Probes and the block detector) and the target stopped
+serving the name (qualification's). Everything else here follows from keeping those apart.
+
+**Sources** (checked 2026-10-16 against each service's API and probe code):
+
+| Source         | A chosen name against a chosen address, from a country                                                                                                                                                                                                                                                                                                                                                                                                                      | What a vantage reports                                                                                         | Cost and limits                                                                                                                                                                                     |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Globalping     | **Yes.** An `http` measurement, protocol HTTPS, `target` = the address, `request.host` = the name, `HEAD /`. The probe sends the name as SNI and as Host (`servername: request.host`), never rejects a certificate, and reports `tls.authorized` with the reason (`ERR_TLS_CERT_ALTNAME_INVALID`, ...), or a failed test with the connection error. A later measurement can name an earlier one as `locations`, so every name of a batch is tried **from the same probes**. | handshake completed with a certificate valid for the name, completed with a wrong one, reset, timeout, refused | One test per probe result, against the account's hourly limit (`GET /v1/limits`; a token raises the per-address anonymous limit). Only GET / HEAD are allowed; the targets are FCP's own addresses. |
+| RIPE Atlas     | **Yes.** `sslcert` with `target` = the address and `hostname` = the name (SNI), on probes pinned by id (`type: probes`), so a batch uses the same probes. Results carry the presented chain (`cert`, PEM; FCP checks the leaf against the name), a TLS `alert`, or `err`. The probe code does not speak TLS 1.3 (RIPE NCC, 2023): a TLS 1.3-only target answers it with a `protocol_version` alert, which counts as "answered", never as working.                           | chain valid / wrong for the name, alert, connection error                                                      | 10 credits per result, doubled for a one-off (20). A probe host earns 15 credits a minute. API key required (`EDGE_PROBE_RIPEATLAS_KEY`). Created `is_public: false` and one-off.                   |
+| check-host.net | **No.** `check-http` takes one URL, so the address dialled and the name presented cannot differ; `check-tcp` is a bare connect. It stays an address-level source.                                                                                                                                                                                                                                                                                                           |                                                                                                                |                                                                                                                                                                                                     |
+| internal       | **No.** FCP's own host is in no country. Qualification already checks every name against its target from here.                                                                                                                                                                                                                                                                                                                                                              |                                                                                                                |                                                                                                                                                                                                     |
+
+**Vantage-host safety.** The checks run on machines inside censored countries, many of them
+volunteers' home connections. These rules are built in, not settings:
+
+- **Ordinary traffic only.** One TLS handshake (Globalping adds `HEAD /`) presenting a name a
+  large public site really serves (every name qualified against its target first) to an address
+  that country's members already connect to. Nothing names FreeSocks: no FreeSocks hostname,
+  header, path, query or description (Atlas gets a generic description, Globalping sends its own
+  probe user agent). It is the same handshake every member makes.
+- **Only addresses that are already out there.** A published, active L4 edge in front of a
+  REALITY listener, or an origin node whose operator opted it into probing (`probeNode`). Never a
+  standby or candidate edge, never a fronted origin that did not opt in, never an L7 front (its
+  name is the CDN's, not the family's). An address the address-level probes find unreachable
+  from that country is skipped: hammering a blocked address from inside teaches nothing about
+  names.
+- **Low frequency.** A name is checked from a country at most once per
+  `edge.sni.vantage.intervalHours` (default 72), **as a control too**: a control is a check like
+  any other, so a lone due name waits until another name of its address is due (unless the
+  address carries no other name), and the names that waited longest go first. Each 10-minute
+  tick starts at most **one** batch (one address, one country, `batchNames` names, default 3),
+  within `edge.sni.vantage.hourlyBudget` measurements an hour (default 12; one measurement = one
+  name, one source, at most `perCountryLimit` vantages, default 3). Calls to one service inside a
+  batch are spaced like the address-level probes (1.5 s apart, `EDGE_PLUMBING.probeSourceSpacingMs`).
+- **Opt-in per country.** Nothing runs until the switch is on **and** a curated country is
+  ticked under `edge.sni.vantage.countries`. Unticking a country stops new measurements at once.
+- **Each source's rules.** Globalping: own addresses, HEAD, within the rate limit. Atlas:
+  non-public one-offs within credits. check-host.net is not used. A maintenance freeze stops new
+  measurements like any probe.
+- **Gates are checked again when the measurement runs**, not only when it is planned: a switch
+  turned off, a country or a source taken out, or a freeze in between settles the queued rows
+  (`gate_off`, `gate_country`, `gate_source`, `gate_maintenance`) without dialling anything.
+
+**Residual risk** (accepted by turning a country on; the page says so next to the switch):
+
+- Whoever runs a vantage, which can be the censor, sees the address **and the name**. Globalping
+  probes run the measurement on their host's machine; RIPE Atlas shows a non-public measurement
+  to the hosts of the probes involved, and non-public measurements may not survive (their removal
+  was proposed in 2016 and 2022; a public one can never be made private again). The address
+  is already given to every member and to the address-level probes; the pairing with a popular
+  name is a stronger hint that the address is a REALITY node than a bare connect.
+- The vantage's own network sees a connection shaped like a member's. Where reaching a
+  circumvention address carries risk, the host carries a share of it, once per name every few
+  days.
+- The target site sees one `HEAD /` (Globalping) arriving from the node's address.
+- Evidence is about the **name**, not about a member's client: vantages do not use a member's
+  TLS fingerprint, so a censor blocking by fingerprint and name together is not seen, and Atlas
+  cannot speak TLS 1.3.
+- Evidence is pooled per name and country across addresses. A name on several addresses is
+  checked on each in turn (the one it was checked on longest ago next), and an address that moved
+  is another address; a block that depends on the address as well as the name shows as "mixed"
+  and suggests nothing.
+
+**Evidence.** `sniVantageProbes` holds one row per measurement: name, country, source, the
+batch it belongs to, the target (edge or origin, address and port) and, per vantage, its network
+(ASN) and an **outcome** (`lib/edges/probes/nameCheck.ts`, pure):
+
+| Outcome            | Meaning                                                            | Counts as                      |
+| ------------------ | ------------------------------------------------------------------ | ------------------------------ |
+| `ok`               | the handshake completed with a certificate valid for the name      | works                          |
+| `answered`         | the far end answered (a TLS alert, a response without TLS details) | the path is open; nothing more |
+| `cert_mismatch`    | completed, but with a certificate not valid for the name           | interference                   |
+| `reset`, `timeout` | the handshake did not complete                                     | interference                   |
+| `refused`, `error` | refused before any name was sent, or the probe failed              | nothing                        |
+
+A **batch** is one address, one country and two or more names of that address's listener
+(the due names; a lone due name takes another due name of the address as its **control**),
+measured from the same vantages. The sources of a batch are **one look**: controls pair within a
+source (its vantages), but the newest look is judged with every source together, never by
+whichever finished last. For each failing vantage the scorer asks whether that vantage completed a
+handshake for another name of the batch: from the **same network** = a `singled` failure (the
+path works, this name does not), from another network of the batch = `unpaired` (weaker), no
+control got through at all = a `path` failure (the address is the problem, not the name).
+
+`sniVantageEvidence` keeps one row per (name, country): the aggregates over
+`edge.sni.vantage.windowDays` (default 14; also the rows' retention) of the measurements taken
+while the name was in its **current** family, the newest working check ever (`everOkAt`, kept
+past the window as the transition marker) and the current failing streak. When its oldest
+measurement leaves the window (`oldestAt`) the sweep aggregates it again, so a suggestion never
+outlives what it rests on. Cron `sni-vantage` (10 min) plans, from a starting listener that
+rotates every tick (the scan is bounded and must not always stop on the same prefix), and
+schedules the sweep (timeouts, retention, re-aggregation). Auto-apply runs only once every source
+of a batch has settled.
+
+**Scoring** (`lib/edges/sni/vantage.ts`, pure; `minVantages` 3, `minNetworks` 2):
+
+- **Blocked** is suggested when the newest checks of the name from that country all fail and,
+  over that failing streak: name-specific (`singled` + `unpaired`) failures come from at least
+  `minVantages` vantages on at least `minNetworks` networks; at least one is `singled`; and it is
+  either a **transition** (the name worked from there before), **repeated** (two batches at
+  least an hour apart), or **corroborated by member reports** (`suspectNames` has it in that
+  country). One check of a name that never worked there, with nothing else, waits for the next.
+- **Proven** is suggested when, over the window, `ok` came from at least `minVantages` vantages on
+  at least `minNetworks` networks, the newest checks do not fail, and member reports do not single
+  the name out there (reports and probes disagreeing suggest nothing).
+- Otherwise nothing, with a reason the page words: `no_data`, `not_enough_vantages`,
+  `not_enough_networks`, `not_paired`, `needs_repeat`, `no_control` (every name failed: look at
+  the address), `mixed`, `reports_disagree`.
+
+**What a suggestion may change.** A suggestion never overrides an operator's mark:
+
+| The mark today                          | Suggestion agrees | Suggestion differs                                               |
+| --------------------------------------- | ----------------- | ---------------------------------------------------------------- |
+| none                                    | -                 | shown with **Apply**; applied by itself only with `autoApply` on |
+| set by an operator (`source: operator`) | "agrees"          | shown as a **conflict**; only the operator changes it            |
+| set by checks (`source: probe`)         | "agrees"          | shown with **Apply**; flipped by itself only with `autoApply` on |
+
+**Apply** (`POST sni/families/{slug}/vantage/apply {snis, country}`) records each name's current
+suggestion as the operator's own mark (`source: operator`), through the same path as "Works
+there" / "Blocked there". `edge.sni.vantage.autoApply` (off) writes `source: probe` marks by
+itself, never over an operator's mark, and never a `blocked` that would leave a listener carrying
+the name with no name usable from that country (that one stays a suggestion, counted as `held`).
+`POST sni/families/{slug}/vantage {snis, country}` checks up to six names now (the same gates and
+budget; a name checked from there within the last hour is skipped; a spent budget answers 429).
+Audit rows: `edge.sni.vantage.request`, `edge.sni.vantage.batch`, `edge.sni.vantage.apply`,
+`edge.sni.vantage.auto_apply`, with slugs, the country, the source and counts, never a hostname
+or an address.
+
+**How it meets the report hint.** Member reports and checks are separate evidence and stay
+separate on the page: the report line ("members in IR report this name more than the others")
+and the checks line ("From IR: failed from 3 vantages on 2 networks while other names got
+through"). Reports pick which names are checked first, corroborate a single failing check, and
+veto "proven"; checks never create a report suspect.
 
 ### The page
 
@@ -930,6 +1480,13 @@ Admin -> Edges -> Advanced -> Server names (`/admin/edges/names`, `/admin/edges/
   add names (the answer says what happened to every kind of line), filter and pick names, then
   check again, retire, bring back, burn (typed), or record for a curated country that they work
   or are blocked there.
+- Checks from inside countries (the list page): the switch for `edge.sni.vantage.enabled`, a
+  box per curated country, the services, "Apply suggestions by themselves", the budget in one
+  line, and the residual risk next to the switch. On a family, every name shows one line per
+  country it was checked from (what the checks saw, then what they suggest against the mark
+  standing today) with **Apply** (or "Use the checks instead" on a conflict); picked names can be
+  checked from an opted-in country now, or have the checks' suggestions applied. A block
+  suggestion or a conflict also puts the name under "Problems".
 - A bound transport: "See what would be written" shows the plan in words, including whether one
   test per node will prove the whole list (a witness) or each name needs its own; "Write to the
   backend" starts the rollout; once the backend has it, each node lists how many names it has proven
@@ -938,13 +1495,14 @@ Admin -> Edges -> Advanced -> Server names (`/admin/edges/names`, `/admin/edges/
   stand in for that test.
 
 The three facts stay separate in the copy: the target serves a name (checked), a node accepts
-it (tested), it works from a country (judged). Wording is in
+it (tested), it works from a country (judged; the checks from inside a country only ever
+suggest). Wording is in
 `src/client/routes/admin/edges/names/lib/words.ts`; tests pin that every `edge.sni.*` refusal
 and every check code the server can record has its own sentence.
 
 ## Probes and the block detector
 
-Unchanged in substance from the previous release: probe targets are the published edges of
+Probe targets are the published edges of
 every origin (the only kind the detector reads), origin targets that opted in (`probeNode`) and
 operator-entered custom targets; UDP listeners are not probeable (`probe.udp_unsupported`).
 The detector's load and node-online signals exist only for a `panel-node` origin; for other
@@ -977,99 +1535,141 @@ edges keep `tls` / `https` by name.
 
 ## Configuration
 
-`edge.*` in `appSettings` (Admin → Edges → Settings, probe settings included;
-`GET/PATCH /api/v1/admin/edges/config`). Ships fully dormant: `enabled=false`,
-`autoRotate=false`, `render.enabled=false`, `probe.enabled=false`, `l7.autoSelect=false`.
-Probe credentials are write-only (`edge.secret.probe.*`). Defaults and bounds:
-`convex/lib/edgeConfig.ts`. `providerAffinity` was removed (never read).
-`desiredPublishedDefault` and an origin's `desiredPublished` are bounded 1..8
-(`MAX_DESIRED_PUBLISHED`, the coverage cap); `standbyPerListener` (0..2, default 0) is the
-per-listener spare count the reconcile keeps on top of `standbyPerRelay` (an origin's own
-`standbyPerListener` is an override, stored only when set, so a change of the global applies
-to every origin that never set one). The one-call
-`POST automation {on}` (§ Operator endpoints) flips the four automation switches together and
-sets `standbyPerListener` to 1 when turning on; `render.enabled` and `l7.autoSelect` stay
-manual.
+`edge.*` in `appSettings` (Admin → Edges → Advanced → Settings, `/admin/edges/settings`, probe
+settings included; `GET/PATCH /api/v1/admin/edges/config`). Ships fully dormant:
+`enabled=false`, `autoRotate=false`, `render.enabled=false`, `probe.enabled=false`,
+`l7.autoSelect=false`. Probe credentials are write-only (`edge.secret.probe.*`). Defaults and
+bounds: `convex/lib/edgeConfig.ts`. Every stored key has a control on the Settings page and
+every control a key (pinned by `settings.test.ts`).
+
+**Settings are operator decisions; the machinery is constants.** Timeouts, attempt caps, poll
+and claim intervals and per-pass caps are `EDGE_PLUMBING` in `convex/lib/edgeConfig.ts`, not
+settings: provision timeout 20 min, discovery timeout 30 min, a rotation's wall clock 2 h, poll
+20 s, operation claim 60 s, 8 verification attempts, 6 publish and 6 rollback attempts, 48
+destroy attempts, one automatic reconcile start per pass, 2,000 report rows per detector
+evaluation, the L7 proof's step timeout 10 s, lifetime 60 min and six re-proofs per pass, the
+L7 evidence wait 15 min, and 1.5 s between probe runs on one source. Tests and the
+edge-connection gate shorten them through `__setEdgePlumbingForTests`.
+
+**One inheritance rule for the per-origin knobs.** `standbyPerRelay`, `standbyPerListener`,
+`cooldownMinutes`, `maxRotationsPerDay` and `drainMinutes` are each the origin's own value when
+it set one, else the fleet's (`edge.standbyPerRelay`, `edge.standbyPerListener`,
+`edge.cooldownMinutes`, `edge.maxRotationsPerRelayPerDay`, `edge.drainMinutes`), resolved by
+`originPolicy` everywhere: the rotation machine (a replaced edge drains for the ORIGIN's drain
+time), the reconcile, the detector and the admin view. An origin stores only the values it set,
+so a fleet change applies to every origin that did not; the admin view returns the effective
+values plus `overrides` (the ones the origin set), and a PATCH with `null` returns a field to
+the fleet value (the edit dialog sends that when a value is changed to the fleet's).
+`desiredPublishedDefault` seeds an origin's `desiredPublished`, which is pool state (setup and
+re-protect runs widen it), bounded 1..8 (`MAX_DESIRED_PUBLISHED`, the coverage cap).
+
+The fleet guards: `detect.fleetBreakerPct` (1..100, default 30) and
+`detect.fleetRotationsPerDay` (0..500, default 12); `detect.allowProbeOnlyAutoRotate` defaults
+to false (§ Operations safety). The one-call `POST automation {on}` (§ Operator endpoints)
+flips the four automation switches together and sets `standbyPerListener` to 1 when turning on;
+`render.enabled` and `l7.autoSelect` stay manual.
+
+Server-name settings are `edge.sni.*` (`GET/PATCH /api/v1/admin/edges/sni/config`, defaults and
+bounds in `convex/lib/sniConfig.ts`). The checks from inside a country are a nested `vantage`
+block in that body, read by their own resolver so the render path never reads them:
+
+| Key (`edge.sni.vantage.*`)                | Default         | Bounds       | Meaning                                                                                   |
+| ----------------------------------------- | --------------- | ------------ | ----------------------------------------------------------------------------------------- |
+| `enabled`                                 | `false`         |              | the switch (needs `edge.sni.enabled` too)                                                 |
+| `countries`                               | `[]`            | curated      | the opt-in per country; a country that is not curated is ignored                          |
+| `sources.globalping`, `sources.ripeatlas` | `true`, `false` |              | services; Atlas also needs `edge.secret.probe.ripeatlas.key` / `EDGE_PROBE_RIPEATLAS_KEY` |
+| `intervalHours`                           | 72              | 6..720       | a name is checked from a country again after this long                                    |
+| `hourlyBudget`                            | 12              | 0..120       | measurements an hour (one name, one source, one country)                                  |
+| `perCountryLimit`                         | 3               | 1..5         | vantages per measurement                                                                  |
+| `batchNames`                              | 3               | 2..6         | names per batch, the control included                                                     |
+| `windowDays`                              | 14              | 1..60        | the scoring window, and the measurement rows' retention                                   |
+| `minVantages`, `minNetworks`              | 3, 2            | 1..20, 1..10 | what a suggestion needs                                                                   |
+| `autoApply`                               | `false`         |              | apply suggestions by themselves (never over an operator's mark)                           |
+
+At the defaults one source spends at most 12 measurements an hour (36 vantage results); a
+family of 40 names in four countries is covered in about 14 hours and then every 72 (a name on several addresses takes one of them per interval); a family
+of 500 is covered about once a week unless the budget is raised. Globalping tests count against
+the same account limit as the address-level probes.
 
 ## Sealing
 
 Every route under `/api/v1/admin/edges/` is sealed by verb (GET reveals, POST seals both legs,
-PATCH/PUT seal the request, DELETE carries nothing). Dual-mode plaintext stays for `fsv1_`
-callers; `FS_HPKE_ADMIN_REQUIRED=true` refuses plaintext from cookie-session callers. Config
-routes need `admin:settings:*`, everything else `admin:servers:*`, and the registration
-routes additionally accept **`admin:edges:register`** (see the node role contract).
+PATCH seals the request, DELETE carries nothing; there is no PUT). Dual-mode plaintext stays
+for `fsv1_` callers; `FS_HPKE_ADMIN_REQUIRED=true` refuses plaintext from cookie-session
+callers. Config routes need `admin:settings:*`, everything else `admin:servers:*`. No route
+here accepts `admin:edges:register`: that scope is the node role's, on the Servers by-name
+routes only (see the node role contract).
 
 ## Node role contract (Ansible)
 
-**Contract v2 (bootstrap-only role).** A node enrolled through `docs/servers.md` "Node
-registration" registers nothing here: Autopilot discovers its listeners from the backend and the
-node's declared ingress, and publication is admitted only under the node's approval
-(`servers.node_not_approved`; setup need `node_not_approved`). Three pieces belong to it:
+**Contract v2: the role bootstraps the machine, FCP does the rest.** The role
+(`ansible-role-freesocks`) installs Docker, the node container and, for a front node, Caddy with
+its decoy site; FCP owns the backend (the node row, its Host, the profile), the origin name, the
+edges and the release to members. The role registers nothing under `/api/v1/admin/edges/`: it
+talks only to the Servers routes `/api/v1/admin/servers/{slug}/nodes/by-name/{name}` (`GET`,
+`PUT`, `DELETE`, `POST …/bootstrap|applied|wiped`), whose request and answer fields, scopes and
+refusals are in `docs/servers.md` "Node registration (contract v2)". One run, in order:
 
-- **Loopback ingress.** A front node's WebSocket transport listens on loopback behind Caddy.
-  `mapInboundsToListeners` takes `opts.ingress` (`convex/lib/backend/ingress.ts`): a mapped loopback
-  transport is discovered as the external TLS listener Caddy exposes (port 443, the origin hostname
-  as its certificate name); the origin probe then verifies that hop exactly as any HTTPS origin.
+1. Learn the machine's public addresses and the node's management address.
+2. `PUT` (enroll the first time with `roleContractVersion: 2`, `mode`, `label?`; afterwards
+   report the observations) and read the view (`GET`).
+3. `POST …/bootstrap`: the machine configuration (node port and name, the Caddy routes of a
+   front node, the origin hostname), `firewall.ports`, and the node secret, which FCP reads from
+   the backend per call and never stores.
+4. Let every `firewall.ports` port in (TCP), and, for a front node, wait for the origin name to
+   resolve, then start Caddy and the node.
+5. `POST …/applied {appliedRevision, caddy.certificateReady, nodeStarted, firewall}`: the
+   revision must be the current one; the ports confirm this node's waiting port changes
+   (`docs/servers.md` "Firewall acknowledgement").
+6. Gate on the node's own view (stage, registration code, revisions, retirement), not only on the
+   backend row.
+
+`DELETE` asks for a retirement and `POST …/wiped` reports the machine cleaned up. After enrollment
+nothing more is the role's job: Autopilot discovers the node's listeners from the backend and its
+declared ingress, and publication is admitted only under the node's approval
+(`servers.node_not_approved`; setup need `node_not_approved`). Three pieces of the edges side
+depend on it:
+
+- **Loopback ingress.** A front node's WebSocket (or gRPC) transport listens on loopback behind
+  Caddy. `mapTransportsToListeners` takes `opts.ingress` (`convex/lib/backend/ingress.ts`): a
+  mapped loopback transport is discovered as the external TLS listener Caddy exposes (port 443,
+  the origin hostname as its certificate name). The Host-header answer comes from the node's
+  verified ingress (`ingress_verified` evidence at `machine_ready`), not from the origin probe.
   Without a mapping, loopback stays `loopback`.
 - **Go-live.** For an enrolled node, `edgeSetupRuns.goLive` promotes the node's activation run
   inside its own mutation (`nodeActivation.promoteCandidate`): the edges it published are the
   run's candidate resources, filtered from members until then.
 - **The origin TLS contract.** Recorded per combination: Fastly with `overrideHost: 'origin'`
   (SNI = Host = the origin name, a public certificate naming it) is supported; Fastly with
-  `'hostname'` only when the probe reports `acceptsHostHeader: any`; Cloudflare `full` (SNI and
-  Host = the edge hostname, served by Caddy's `fallback_sni` plus a catch-all site) is supported;
-  Cloudflare `strict` validates the hostname the node's single-name certificate does not carry and
-  is unsupported in this version.
+  `'hostname'` only when the node's verified ingress accepts any Host header; Cloudflare `full`
+  (SNI and Host = the edge hostname, served by Caddy's `fallback_sni` plus a catch-all site) is
+  supported. Cloudflare `strict` is admitted only for an origin whose certificate is publicly
+  trusted (`certPublic`), and it validates the EDGE hostname, which an enrolled node's
+  certificate (the origin name only) does not carry: use `full` for enrolled nodes.
 
-**Contract v1** (the origin-registering role) follows.
+**Contract v1 is retired.** The origin-registering role (`PUT …/relays/by-slug/{slug}`, its
+`DELETE` and listener companions, and the `operation_mode=adopt_relay` legacy adoption) is gone:
+the PUT answers 404 and registers nothing. Origins the v1 role registered keep their rows
+(role-owned listeners, `lastRegisteredAt`) and are managed in the CMS; their role-owned
+listeners can be enabled, disabled, have names retired and be retired there, but not edited
+(`edge.listener_key_owned`): a change is a new listener under another key.
+`GET …/relays/by-slug/{slug}` stays as an admin read of an origin's minimal projection
+(`publishedEndpoints`, `connectionPlan`, `hostsPlan`).
 
-The role registers an origin with ONE idempotent body and reads back what to configure. Token:
-an `fsv1_` token with `admin:edges:register`, minted with a **registration boundary**
-(`apiTokens.edgeRegistration`: the backend servers and, optionally, the node names it may
-register for). Such a token may call only the by-slug routes below, and only for origins
-inside its boundary (`edge.registration_boundary` otherwise); a boundary-less register token
-may register nothing. Credential rotation = mint a new token with the same boundary and revoke
-the old one; nothing on the origin row references a token. The boundary is set at mint: in
-the CMS (Admin → API tokens; ticking the scope reveals the backend-server and node-name
-inputs, and the guided setup's "Mint role token" link presets them) or from the control plane
-with `adminApi:mintAutomationToken '{"scopes":["admin:edges:register"],
+**The role's token.** An `fsv1_` token with `admin:edges:register`, minted with a
+**registration boundary** (`apiTokens.edgeRegistration`: the backend servers and, optionally,
+the node names it may act for), accepted only on the by-name routes
+(`servers.registration_boundary` outside the boundary); a boundary-less register token may act
+for nothing. `admin:servers:manage` is bounded the same way (backend-write automation never
+reaches a node secret on its own); only `admin:servers:write` (the fleet token, and
+`admin:servers:read` on a `GET`) is unbounded. Credential rotation = mint a new token with the
+same boundary and revoke the old one. The boundary is set at mint: in the CMS (Admin → API
+tokens; ticking the scope reveals the backend-server and node-name inputs) or from the control
+plane with `adminApi:mintAutomationToken '{"scopes":["admin:edges:register"],
 "registerBackendSlugs":["<slug>"],"registerNodeNames":["<node>"]}'`. The mint refuses the
 scope without a boundary and a boundary without the scope (`validation`); the audit row
-carries counts only.
-
-1. `PUT /api/v1/admin/edges/relays/by-slug/{slug}` with
-   `{ origin, originAddress, locationCode?, label?, listeners[], pruneListeners? }` where
-   `origin` is `{ kind:'panel-node', backendSlug, nodeName, nodeUuid? }`,
-   `{ kind:'backend-server', backendSlug }` or `{ kind:'manual' }`, and each listener is
-   `{ listenerKey, protocol, streamTransport, security, originPort, tlsNames?, realityTarget?,
-transportParams?, originTransport?, panelBinding?, matchRule?, deployed? }`. **Idempotent**:
-   an identical body changes nothing but `lastRegisteredAt` (no listener revision bump, no
-   epoch bump, no mirror refresh, no qualification invalidation). Listeners the body omits are
-   retired (`pruneListeners`, default true) ONLY when the role registered them; admin-created
-   listeners are never touched (`edge.listener_key_owned` if the body names one). The role can
-   add names and retire its own; it can never reactivate an admin-retired name or shorten a
-   drain. A rebind or prune under a non-destroyed edge is refused (`edge.listener_in_use`).
-   The response is the minimal projection: `origin { slug, hostMode, delivery, enabled,
-deleting, publicationEpoch, originAddress, lastRegisteredAt }`, `listeners[]` (with
-   `layers` and `excluded` reasons), `publishedEndpoints[]` (role-usable only), `connectionPlan[]`
-   (what a client must dial per listener) and `hostsPlan { mode, hosts[] }` (non-empty only
-   for `operator`), plus `registration` (what changed).
-2. `GET` the same path to poll; `hostsPlan.mode === 'fcp'` means FCP creates and flips the
-   backend Hosts itself: the role writes nothing. With `mode === 'operator'` the role applies
-   `hostsPlan.hosts[]` verbatim (remark, address, port, sni, host, transport) with GET-first
-   drift replacement. With `mode === 'none'` there is no Host.
-3. Teardown: `DELETE …/by-slug/{slug}?disposition=restore-direct|keep-dark` (default
-   `restore-direct`: the node is decommissioned, raw delivery of its subscriptions returns);
-   `DELETE …/by-slug/{slug}/listeners/{key}` retires one listener.
-4. **Legacy adoption** (`operation_mode=adopt_relay` in the role): a node that already sits
-   behind a manually run proxy with operator-created Hosts registers with
-   `hostModeRequest:'operator'` and `adoption: { edge: { address, port }, hosts: [{ uuid,
-remark, inboundUuid, sni? }] }`. FCP records the legacy Hosts on their listeners (never
-   deleted; the renderer keeps matching their remarks), imports the proxy as an observe-only
-   edge carrying the operator's statement that it already serves (a `named_connection`
-   verification: the adoption payload IS that statement) and publishes it at index 0 without
-   a flip. The operator then validates and adopts each Host in the CMS and switches
-   `hostMode` to `fcp`.
+carries counts only. A rename keeps the old name answering and adds the new one to the
+boundary (`docs/servers.md` "Renaming a node").
 
 Node pinning understands the origin remark (`convex/lib/nodePinning.ts`).
 
@@ -1087,20 +1687,24 @@ Node pinning understands the origin remark (`convex/lib/nodePinning.ts`).
   last change (`accountTrustReason` in the response says why not); every NEW endpoint of that
   account still needs its own tick before it can be published or used by an automatic
   replacement, and a listener or address change after the tick puts the endpoint back under
-  `retest_needed` and out of every rendered body until retested. The Providers "Mark
-  qualified" override trusts the account only; it verifies no endpoint.
+  `retest_needed` and out of every rendered body until retested. The provider page's "Trust this
+  account" override trusts the account only; it verifies no endpoint.
 - **L7 (a CDN front): automatic on the proof.** Once an active edge of the account carries a
   current authenticated end-to-end proof for the account's effective template (and the account
   was tested after its last credential change), the account is trusted by the auto-trust rule
   (evaluated after every passing proof and by the reconcile sweep; audited
   `edge.provider_account.auto_qualified`). No manual step.
 
-A manual "Mark unqualified" holds automatic trust off until an operator trusts again or the
+A manual "Remove trust" holds automatic trust off until an operator trusts again or the
 credentials change. Editing credentials or settings, or a template change that moves the
 account's effective template, clears the qualification (and its evidence).
 
-**Bootstrap an origin.** Register it (role or CMS) with its listeners, add a provider account,
-provision or import an edge on a listener, publish it, enable rendering, preview each client
+**Protect a backend node.** Autopilot only: the runbook "Deploy a fronted node" in
+`docs/servers.md`, from the role run to a member connection.
+
+**Bootstrap a manual or whole-Outline origin.** All origins → New origin (`?new=1`: a manual
+address or a whole Outline server only), then the first-edge card on its Origin details page:
+provision an edge or import an existing front, publish it, enable rendering, preview each client
 family. Until the first publish with rendering on, members on that origin receive 503.
 
 **Resolve a quarantine / `needs_operator` / an `ambiguous` Host.** Compare the backend's Host with
@@ -1108,7 +1712,9 @@ the recorded bindings, fix by hand if needed, then resolve keeping the binding t
 what the backend serves; for a Host the backend shows twice for one listener, delete the extra
 and resolve.
 
-**Add an L7 account / qualify an L7 front.** As in the previous release, per listener.
+**Add an L7 account / qualify an L7 front.** Add the account (with its zone), provision a front
+on an HTTP-carried listener; FCP proves it end to end (§ L7 edges) and the first passing proof
+trusts the account. Each front is proven for its own listener (§ L7 edges).
 
 ## Maintenance switch and reset drain
 
@@ -1151,7 +1757,7 @@ fake in place of one real adapter per layer (`convex/lib/edges/providers/fake.ts
 keeps the real adapter's template schema so the forms behave as they would in production,
 answers with RFC 5737 / RFC 3849 addresses and `*.example` hostnames, records its calls, and
 finishes every create instantly (`DEV_FAKE_EDGE_SLOW_MS` delays creates to exercise the async
-paths). `seed:seedDevEdges` (same double gate) creates a mock backend server and one tested
+paths). `seed:seedDevEdges` (the same double gate plus `DEV_MOCK_BACKEND=true`) creates a mock backend server and one tested
 but unqualified account per layer, so the first edge goes through the explicit test-provision
 path rather than ordinary selection. Nothing about the fake is reachable when either variable
 is missing, and it never appears in the provider id lists or the wire contracts.
@@ -1324,6 +1930,30 @@ lifecycle runs in that test and its rows appear here.
 | fastly     | GET    | `^/current_customer$`                                                             | credential test: the pricing plan (informational)                                                                 | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
 
 ## Deploy notes
+
+**The cleanup release** tightens the schema (removes values no row holds: the `standby` edge
+status, the restore workflow's copy of `darkCohortKeys`, the `wiped` retirement stage and the
+`migrate` disposition with `panelMigrations`, the contract-v1 `panelHandoff` table and the
+TRANSITIONAL fields of `panelSetups`, `panelNodeIntents` and `panelOwnership`), makes four
+origin fields optional overrides, and adds indexes (`panelOps.by_server_kind` and
+`by_open_updated`, `sniRollouts.by_phase_updated`, `edgeHostHides.by_state_updated`,
+`panelPortChanges.by_state_updated` and `by_op`, `panelNodeRenames.by_op`,
+`panelActivationRuns.by_state_updated`) and six daily retention crons. ONE deploy: Convex
+validates every stored document on push, so a row still holding a removed value would make the
+push fail before anything changes; none did on any deployment when this was written (a
+read-only `convex data` count per value). The removed `edge.*` keys (`providerAffinity`,
+`settleGraceSeconds` and the plumbing now in `EDGE_PLUMBING`) are no longer read; a stored row of
+one is ignored. `backendSetup:migrateContractV2` is gone (`docs/servers.md` "Moving to modes").
+
+**Checks from inside a country** (vantage evidence) add two tables (`sniVantageProbes`,
+`sniVantageEvidence`), an index on the existing `sniReportCounts` (`by_country_day`, built by
+the backend on push; the family page now reads reports per country with it), cron
+`sni-vantage` (10 min) and `edge.sni.vantage.*` settings. Everything
+is additive and dormant: with `edge.sni.vantage.enabled` off and no country ticked the cron only
+sweeps (nothing to sweep). No migration, no env change (the probe credentials are the existing
+`EDGE_PROBE_GLOBALPING_TOKEN` / `EDGE_PROBE_RIPEATLAS_KEY`), and `sniNameCountry.source:
+'probe'` was already in the schema. Turning it on is an operator decision per country (§ Checks
+from inside a country, "Residual risk").
 
 The `"use node"` actions (provider SDKs, probes, the front qualification) run on the Node
 version baked into the self-hosted Convex backend image. The L7 adapters add `cloudflare` (the

@@ -13,7 +13,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
-import { jsonRes, mockFetch } from './lib/edges/testing/mockFetch';
+import { fakeEdgeWorld, type BackendAddress } from './lib/edges/testing/fakeEdgeWorld';
 import {
   FIXTURE_CONFIG_PROFILE,
   FIXTURE_INBOUND,
@@ -26,12 +26,20 @@ import { __setStageOpsForTests, approvedDarkCohorts, type StageOps } from './edg
 import { __setPlanOpsForTests } from './edgeSetupPlan';
 import type { BackendTransport } from './lib/backends/types';
 import { MAX_OBSERVATION_AGE_MS, slugForNode, vectorsEqual } from './lib/edges/setupRuns';
+import { signValue } from './lib/cookies';
+import {
+  SetupPlanResponse,
+  type SetupRunCreateRequest,
+  type SetupRunRetryRequest,
+} from '../src/shared/contracts/edges';
+import { deliveryBindingOf } from './lib/edges/testing/reads';
 
 const modules = import.meta.glob('./**/*.*s');
 type T = TestConvex<typeof schema>;
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   vi.useRealTimers();
   __setStageOpsForTests(null);
   __setPlanOpsForTests(null);
@@ -44,17 +52,6 @@ const VMESS_INBOUND = '55555555-5555-4555-8555-555555555555';
 const HOST_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
 const HOST_S = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2';
 const HOST_V = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3';
-
-interface BackendAddress {
-  uuid: string;
-  remark: string;
-  address: string;
-  port: number;
-  sni?: string;
-  host?: string;
-  isDisabled?: boolean;
-  inbound: { configProfileUuid: string; configProfileInboundUuid: string };
-}
 
 const inboundA: BackendTransport = {
   tag: 'VLESS_RELAY_A',
@@ -110,75 +107,8 @@ const directHostV = (): BackendAddress => ({
   inbound: { configProfileUuid: FIXTURE_CONFIG_PROFILE, configProfileInboundUuid: VMESS_INBOUND },
 });
 
-/**
- * A fake UpCloud (every create mints a fresh RFC 5737 address) + a fake backend
- * whose Hosts are observable (the publish rotation creates the FCP Host).
- */
 function fakeWorld(opts: { hosts?: BackendAddress[]; failCreateAt?: number } = {}) {
-  const panelHosts: BackendAddress[] = opts.hosts ?? [directHostA()];
-  const lbs = new Map<string, { uuid: string; name: string; operational_state: string }>();
-  let creates = 0;
-  let lbCreates = 0;
-  const stub = mockFetch((c) => {
-    if (new URL(c.url).hostname === 'panel.example') {
-      if (c.path === '/api/hosts' && c.method === 'GET') return jsonRes({ response: panelHosts });
-      if (c.path === '/api/hosts' && c.method === 'PATCH') {
-        const body = c.body as {
-          uuid: string;
-          address?: string;
-          port?: number;
-          sni?: string;
-          host?: string;
-          isDisabled?: boolean;
-        };
-        const h = panelHosts.find((x) => x.uuid === body.uuid);
-        if (h) {
-          if (body.address !== undefined) h.address = body.address;
-          if (body.port !== undefined) h.port = body.port;
-          if (body.sni !== undefined) h.sni = body.sni;
-          if (body.host !== undefined) h.host = body.host;
-          if (body.isDisabled !== undefined) h.isDisabled = body.isDisabled;
-        }
-        return jsonRes({ response: h ?? null });
-      }
-      if (c.path === '/api/hosts' && c.method === 'POST') {
-        creates++;
-        const body = c.body as BackendAddress;
-        const uuid = `cccccccc-cccc-4ccc-8ccc-${String(creates).padStart(12, '0')}`;
-        panelHosts.push({ ...body, uuid });
-        return jsonRes({ response: { uuid } });
-      }
-      return jsonRes({ message: 'not found' }, 404);
-    }
-    if (c.path === '/1.3/load-balancer' && c.method === 'POST') {
-      lbCreates++;
-      // Fail exactly the Nth load-balancer create (a transient provider error).
-      if (opts.failCreateAt !== undefined && lbCreates === opts.failCreateAt)
-        return jsonRes({ error: { error_code: 'INTERNAL' } }, 500);
-      const uuid = `lb-${lbs.size + 1}`;
-      lbs.set(uuid, {
-        uuid,
-        name: (c.body as { name: string }).name,
-        operational_state: 'running',
-      });
-      return jsonRes(lbs.get(uuid));
-    }
-    if (c.path === '/1.3/ip_address' && c.method === 'POST')
-      return jsonRes({ ip_address: { address: `198.51.100.${10 + lbs.size}`, floating: 'yes' } });
-    if (/^\/1\.3\/load-balancer\/[^/]+\/ip-addresses$/.test(c.path) && c.method === 'POST')
-      return jsonRes({});
-    const get = c.path.match(/^\/1\.3\/load-balancer\/([^/]+)$/);
-    if (get && c.method === 'GET') {
-      const lb = lbs.get(get[1]);
-      return lb ? jsonRes(lb) : jsonRes({ error: { error_code: 'LB_NOT_FOUND' } }, 404);
-    }
-    if (get && c.method === 'DELETE') {
-      lbs.delete(get[1]);
-      return jsonRes({});
-    }
-    throw new Error(`unexpected ${c.method} ${c.url}`);
-  });
-  return { stub, panelHosts, lbs, creates: () => creates, lbCreates: () => lbCreates };
+  return fakeEdgeWorld({ hosts: opts.hosts ?? [directHostA()], failCreateAt: opts.failCreateAt });
 }
 
 /** Backend + a TESTED but unqualified UpCloud account + the node in the inventory. */
@@ -423,7 +353,7 @@ async function tickAll(t: T, runId: Id<'edgeSetupRuns'>) {
 }
 
 async function bindingFor(t: T, serverId: Id<'backendServers'>) {
-  return t.query(internal.relays.deliveryBinding, {
+  return deliveryBindingOf(t, {
     backendServerId: serverId,
     nodeName: 'node-one',
   });
@@ -432,6 +362,32 @@ async function bindingFor(t: T, serverId: Id<'backendServers'>) {
 async function relayOf(t: T, runId: Id<'edgeSetupRuns'>) {
   const r = await run(t, runId);
   return (await t.run((ctx) => ctx.db.get(r.relayId!)))!;
+}
+
+/** A JSON POST to the edges admin routes as a signed-in admin (cookie, unsealed). */
+async function adminPost(t: T) {
+  vi.stubEnv('SESSION_SIGNING_KEY', 'test-sign');
+  vi.stubEnv('ADMIN_SESSION_SIGNING_KEY', 'test-admin-sign');
+  vi.stubEnv('IP_HASH_SALT', 'test-salt');
+  const adminUserId = await t.run((ctx) =>
+    ctx.db.insert('adminUsers', {
+      username: 'op',
+      displayName: 'Op',
+      isActive: true,
+      updatedAt: Date.now(),
+    }),
+  );
+  const sid = `asid-${Math.random().toString(36).slice(2)}`;
+  await t.mutation(internal.sessions.create, { sid, kind: 'admin', adminUserId, ttlMs: 3_600_000 });
+  const cookie = `fs_admin_session=${await signValue(sid, 'test-admin-sign')}`;
+  return async (path: string, body: unknown) => {
+    const res = await t.fetch(`/api/v1/admin/edges/${path}`, {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    return { status: res.status, json: (await res.json()) as Record<string, unknown> };
+  };
 }
 
 async function audits(t: T, action: string) {
@@ -538,6 +494,69 @@ describe('edgeSetupPlan', () => {
         approvedHideUuids: [HOST_A],
       }),
     ).rejects.toThrow(/validation/);
+  });
+
+  test('a node with more transports than a run takes: the plan lists them all, the run protects the ones the operator names', async () => {
+    // Nine Shadowsocks transports: one more than a run protects.
+    const many: BackendTransport[] = Array.from({ length: 9 }, (_, i) => ({
+      ...inboundS,
+      tag: `SS_${i + 1}`,
+      configProfileInboundUuid: `44444444-4444-4444-8444-44444444440${i + 1}`,
+      port: 8001 + i,
+    }));
+    const { t, serverId, accountId } = await seed({ inbounds: many, hosts: [] });
+    const all = await planFor(t, serverId);
+    expect(all.tooManyInbounds).toBe(true);
+    expect(all.inbounds.filter((i) => i.frontable)).toHaveLength(9);
+    const create = (planHash: string, listenerKeys?: string[]) =>
+      t.action(internal.edgeSetupPlan.create, {
+        backendServerId: serverId,
+        nodeUuid: NODE_UUID,
+        accountId,
+        planHash,
+        approvedHideUuids: [],
+        ...(listenerKeys ? { listenerKeys } : {}),
+      });
+    await expect(create(all.planHash)).rejects.toThrow(/too_many_inbounds/);
+    // The operator names two: the plan is for exactly those, under its own hash.
+    const keys = all.inbounds.filter((i) => i.frontable).map((i) => i.listenerKey);
+    const two = [keys[3]!, keys[7]!];
+    const post = await adminPost(t);
+    const planned = await post('setup-runs/plan', {
+      backendServerId: serverId,
+      nodeUuid: NODE_UUID,
+      listenerKeys: two,
+    });
+    expect(planned.status).toBe(200);
+    const chosen = SetupPlanResponse.parse(planned.json);
+    expect(chosen.tooManyInbounds).toBe(false);
+    expect(chosen.requiredListeners).toEqual(two);
+    expect(chosen.planHash).not.toBe(all.planHash);
+    // The create re-plans with the same choice; another choice is a stale hash.
+    await expect(create(chosen.planHash, [keys[0]!, keys[1]!])).rejects.toThrow(/plan_stale/);
+    const created = await post('setup-runs', {
+      backendServerId: serverId,
+      nodeUuid: NODE_UUID,
+      accountId,
+      planHash: chosen.planHash,
+      approvedHideUuids: [],
+      listenerKeys: two,
+    } satisfies SetupRunCreateRequest);
+    expect(created.status).toBe(200);
+    const runId = created.json.runId as string;
+    const r = await run(t, runId as Id<'edgeSetupRuns'>);
+    expect(r.listeners.map((l) => l.listenerKey)).toEqual(two);
+    // A choice is 1..8 distinct frontable transports.
+    const plan = (listenerKeys: string[]) =>
+      t.action(internal.edgeSetupPlan.plan, {
+        backendServerId: serverId,
+        nodeUuid: NODE_UUID,
+        listenerKeys,
+      });
+    await expect(plan([])).rejects.toThrow(/validation/);
+    await expect(plan(keys)).rejects.toThrow(/validation/);
+    await expect(plan([keys[0]!, keys[0]!])).rejects.toThrow(/validation/);
+    await expect(plan([keys[0]!, 'not-a-transport'])).rejects.toThrow(/validation/);
   });
 });
 
@@ -698,6 +717,69 @@ describe('edgeSetupRuns: two listeners (cases 2, 20)', () => {
       const entry = r.listeners.find((x) => x.listenerKey === l.listenerKey)!;
       expect(l.templateEdgeId).toBe(entry.edgeId);
     }
+  });
+});
+
+describe('edgeSetupRuns: one line does not work', () => {
+  test("Doesn't work on one line replaces only that address; the other line and its tick stand", async () => {
+    const { t, serverId, accountId } = await seed({
+      inbounds: [inboundA, inboundS],
+      hosts: [directHostA(), directHostS()],
+    });
+    const { runId } = await startRun(t, serverId, accountId);
+    let r = await pump(t, runId, settled);
+    expect(r.need?.code).toBe('try_it');
+    const [first, second] = r.testLinks!;
+    // A tick saved on its own keeps the card for the other line.
+    await t.mutation(internal.edgeSetupRuns.resume, {
+      runId,
+      confirmations: [
+        {
+          edgeId: first!.edgeId,
+          endpoint: first!.binding.endpoint,
+          listenerRevision: first!.binding.listenerRevision,
+          configHash: first!.binding.configHash,
+        },
+      ],
+    });
+    r = await pump(t, runId, settled);
+    expect(r.testLinks!.map((l) => l.edgeId)).toEqual([second!.edgeId]);
+    // The ticked line cannot be called broken; an edgeId belongs to try_it's
+    // "Doesn't work" only, and to a line of this run.
+    await expect(
+      t.mutation(internal.edgeSetupRuns.retry, {
+        runId,
+        tryAnotherAddress: true,
+        edgeId: first!.edgeId as Id<'edges'>,
+      }),
+    ).rejects.toThrow(/already confirmed/);
+    await expect(
+      t.mutation(internal.edgeSetupRuns.retry, { runId, edgeId: second!.edgeId as Id<'edges'> }),
+    ).rejects.toThrow(/validation/);
+    // "Doesn't work" on the other line (over HTTP, as the card sends it): only
+    // its candidate is cancelled and replaced.
+    const post = await adminPost(t);
+    const res = await post(`setup-runs/${runId}/retry`, {
+      tryAnotherAddress: true,
+      edgeId: second!.edgeId,
+    } satisfies SetupRunRetryRequest);
+    expect(res.status).toBe(200);
+    r = await pump(t, runId, settled);
+    expect(r.need?.code).toBe('try_it');
+    expect(r.testLinks).toHaveLength(1);
+    expect(r.testLinks![0]!.listenerKey).toBe(second!.listenerKey);
+    expect(r.testLinks![0]!.edgeId).not.toBe(second!.edgeId);
+    const entry = (key: string) => r.listeners.find((l) => l.listenerKey === key)!;
+    expect(entry(first!.listenerKey).edgeId).toBe(first!.edgeId);
+    const [kept, dropped] = await t.run(async (ctx) => [
+      await ctx.db.get(first!.edgeId as Id<'edges'>),
+      await ctx.db.get(second!.edgeId as Id<'edges'>),
+    ]);
+    expect(kept?.verification?.rung).toBe('verified');
+    expect(dropped?.status).toBe('cancelled');
+    await tickAll(t, runId);
+    r = await pump(t, runId, settled);
+    expect(r.state).toBe('done');
   });
 });
 

@@ -12,7 +12,16 @@ import {
   rolloutWords,
   sniErrorWords,
   suspectWords,
+  VANTAGE_REASON_WORDS,
+  ago,
+  vantageAppliedWords,
+  vantageLine,
+  vantageRequestedWords,
+  vantageState,
+  vantageSuggestionWords,
+  vantageWantsLook,
 } from './words';
+import { SNI_VANTAGE_REASONS, type SniVantageRow } from '../../../../../../shared/contracts/sni';
 
 const family = (over: Record<string, unknown> = {}, counts: Record<string, number> = {}) => ({
   id: 'f1',
@@ -46,6 +55,8 @@ const name = (over: Record<string, unknown> = {}) => ({
   blockedIn: [],
   provenIn: [],
   suspectIn: [] as string[],
+  probeMarkedIn: [] as string[],
+  vantage: [] as SniVantageRow[],
   ...over,
 });
 const status = (over: Record<string, unknown> = {}) => ({
@@ -134,6 +145,90 @@ describe('names', () => {
     });
     expect(words).toHaveLength(5);
     expect(words[0]).toMatch(/^2 names added/);
+  });
+});
+
+describe('checks from inside a country', () => {
+  const NOW = Date.parse('2026-10-16T12:00:00Z');
+  const row = (over: Partial<SniVantageRow> = {}): SniVantageRow => ({
+    country: 'IR',
+    latest: 'ok',
+    suggestion: null,
+    reason: null,
+    decision: 'none',
+    okVantages: 4,
+    okNetworks: 3,
+    failVantages: 0,
+    failNetworks: 0,
+    pathFailures: 0,
+    reportsAgree: false,
+    lastAt: '2026-10-14T09:00:00Z',
+    lastOkAt: '2026-10-14T09:00:00Z',
+    lastRequestedAt: '2026-10-14T08:59:00Z',
+    ...over,
+  });
+
+  test('what was seen, separately from what it suggests', () => {
+    expect(ago(null, NOW)).toBe('never');
+    expect(ago('2026-10-16T01:00:00Z', NOW)).toBe('today');
+    expect(ago('2026-10-15T01:00:00Z', NOW)).toBe('yesterday');
+    expect(vantageLine(row(), NOW)).toBe(
+      'From IR: the handshake completed from 4 vantages on 3 networks (last checked 2 days ago).',
+    );
+    expect(vantageLine(row({ latest: 'failing', failVantages: 3, failNetworks: 2 }), NOW)).toMatch(
+      /^From IR: failed from 3 vantages on 2 networks while other names got through/,
+    );
+    // Every name of the address failed: that is the address, said as such.
+    expect(vantageLine(row({ latest: 'failing', failVantages: 0 }), NOW)).toMatch(
+      /no name of that address got through/,
+    );
+    expect(vantageLine(row({ latest: 'none', lastAt: null }), NOW)).toMatch(/first check/);
+  });
+
+  test('a suggestion never reads as a verdict, and a conflict names the operator', () => {
+    expect(vantageSuggestionWords(row({ suggestion: 'proven', decision: 'suggest' }))).toBe(
+      'The checks suggest it works in IR.',
+    );
+    expect(vantageSuggestionWords(row({ suggestion: 'blocked', decision: 'suggest' }))).toBe(
+      'The checks suggest it is blocked in IR.',
+    );
+    expect(vantageSuggestionWords(row({ suggestion: 'blocked', decision: 'conflict' }))).toMatch(
+      /disagree with the mark an operator set/,
+    );
+    expect(vantageSuggestionWords(row({ suggestion: 'proven', decision: 'agrees' }))).toBeNull();
+    expect(vantageSuggestionWords(row({ reason: 'needs_repeat' }))).toMatch(/checked again/);
+  });
+
+  test('every reason the scoring can give has words', () => {
+    for (const r of SNI_VANTAGE_REASONS) expect(VANTAGE_REASON_WORDS[r]).toBeTruthy();
+    for (const w of Object.values(VANTAGE_REASON_WORDS)) expect(w).not.toMatch(/—|_/);
+  });
+
+  test('a block suggestion or a conflict puts the name under Problems', () => {
+    const blocked = name({ vantage: [row({ suggestion: 'blocked', decision: 'suggest' })] });
+    const conflict = name({ vantage: [row({ suggestion: 'proven', decision: 'conflict' })] });
+    const fine = name({ vantage: [row({ suggestion: 'proven', decision: 'suggest' })] });
+    expect(vantageWantsLook(blocked)).toBe(true);
+    expect(matchesFilter(blocked, 'problems')).toBe(true);
+    expect(matchesFilter(conflict, 'problems')).toBe(true);
+    expect(matchesFilter(fine, 'problems')).toBe(false);
+  });
+
+  test('the switch says what runs right now', () => {
+    expect(vantageState(false, true, ['IR'])).toMatch(/families are off/);
+    expect(vantageState(true, true, [])).toMatch(/until at least one country/);
+    expect(vantageState(true, false, ['IR', 'RU'])).toBe('Off. Turned on, it checks from IR, RU.');
+    expect(vantageState(true, true, ['IR'])).toBe('Checking from IR.');
+  });
+
+  test('what a button did', () => {
+    expect(vantageRequestedWords({ batches: 1, measurements: 3, skipped: 0 })).toBe(
+      '3 checks started. Results arrive in a few minutes.',
+    );
+    expect(vantageAppliedWords({ proven: 2, blocked: 1, skipped: 1 })).toBe(
+      '2 names marked as working, 1 name marked as blocked. 1 name left unchanged.',
+    );
+    expect(vantageAppliedWords({ proven: 0, blocked: 0, skipped: 2 })).toMatch(/^Nothing to apply/);
   });
 });
 

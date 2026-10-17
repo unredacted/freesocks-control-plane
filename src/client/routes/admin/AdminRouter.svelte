@@ -15,8 +15,6 @@
   import AdminTokens from './AdminTokens.svelte';
   import AdminAudit from './AdminAudit.svelte';
   import AdminSettings from './AdminSettings.svelte';
-  import AdminBackendServers from './AdminBackendServers.svelte';
-  import AdminRemnawave from './AdminRemnawave.svelte';
   import AdminConnectionModes from './AdminConnectionModes.svelte';
   import AdminStatus from './AdminStatus.svelte';
   import AdminStorage from './AdminStorage.svelte';
@@ -28,6 +26,7 @@
   import AdminTheme from './AdminTheme.svelte';
   import Link from '../../components/Link.svelte';
   import { adminAuthStatusQuery, adminStatusQuery } from '../../lib/queries';
+  import { legacyServersRedirect } from './servers/lib/routes';
 
   // Routes that don't require an admin session: /admin (the smart entry point,
   // which shows login/bootstrap itself) and /admin/register (the invite landing,
@@ -71,6 +70,12 @@
       router.navigate(`/admin/edges/probes${router.search}`, { replace: true });
     }
   });
+  // Backend servers and Remnawave became tabs of the one Servers leaf
+  // (servers/lib/routes.ts `legacyServersRedirect`); old links keep working.
+  let movedTo = $derived(legacyServersRedirect(router.pathname, router.search));
+  $effect(() => {
+    if (movedTo) router.navigate(movedTo, { replace: true });
+  });
 
   // Bounce signed-out deep-links to /admin (which renders the login/bootstrap
   // flow). `replace: true` so the back button doesn't re-enter the guarded path.
@@ -105,10 +110,9 @@
   <AdminUsers />
 {:else if router.pathname === '/admin/tokens'}
   <AdminTokens />
-{:else if router.pathname === '/admin/backend-servers'}
-  <AdminBackendServers />
-{:else if router.pathname === '/admin/remnawave'}
-  <AdminRemnawave />
+{:else if movedTo}
+  <!-- Moved: the $effect above is replacing the URL with its Servers tab. -->
+  <div class="max-w-md mx-auto py-12 text-muted-foreground text-center">Loading…</div>
 {:else if router.pathname === '/admin/connection-modes'}
   <AdminConnectionModes />
 {:else if onServersRoute}

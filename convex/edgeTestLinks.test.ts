@@ -24,8 +24,9 @@ import {
   seedEdgeFixture,
   shadowsocksListener,
 } from './lib/edges/testing/fixtures';
-import { selectTestEntry, TEST_LINK_USER_AGENT } from './edgeTestLinks';
+import { realityEntryLine, selectTestEntry, TEST_LINK_USER_AGENT } from './edgeTestLinks';
 import { parseProxyUri } from './lib/edges/render/uri';
+import { expireTestCredential } from './lib/edges/testing/reads';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -316,7 +317,7 @@ describe('the isolated test link', () => {
       configHash: r.binding.configHash,
       method: 'test_link',
     });
-    await t.mutation(internal.edgeTestCredentials.release, { id: row._id });
+    await expireTestCredential(t, { id: row._id });
     expect(await t.action(internal.edgeTestCredentials.sweep, {})).toMatchObject({ removed: 1 });
     expect(outline.deleted).toHaveLength(1);
   });
@@ -346,5 +347,51 @@ describe('the isolated test link', () => {
     await expect(t.action(internal.edgeTestLinks.build, { edgeId })).rejects.toThrow(
       /l7_proof_required/,
     );
+  });
+});
+
+describe('realityEntryLine', () => {
+  const params = { serverNames: ['a.example'], publicKey: 'PUBKEY', shortId: 'abcd' };
+  test('an IPv6 origin is bracketed, so the link parses; Vision is the flow', () => {
+    const v6 = realityEntryLine(
+      '11111111-2222-4333-8444-555555555555',
+      '2001:db8::20',
+      443,
+      params,
+      'r',
+    );
+    expect(v6).toMatch(/^vless:\/\/[0-9a-f-]+@\[2001:db8::20\]:443\?/);
+    expect(parseProxyUri(v6)?.host).toBe('2001:db8::20');
+    expect(v6).toContain('flow=xtls-rprx-vision');
+    const v4 = realityEntryLine(
+      '11111111-2222-4333-8444-555555555555',
+      '203.0.113.20',
+      443,
+      params,
+      'r',
+    );
+    expect(v4).toMatch(/@203\.0\.113\.20:443\?/);
+  });
+
+  test('XHTTP under REALITY carries its path and mode and no flow', () => {
+    const link = realityEntryLine(
+      '11111111-2222-4333-8444-555555555555',
+      '203.0.113.20',
+      443,
+      params,
+      'r',
+      { kind: 'xhttp', path: '/', mode: 'auto' },
+    );
+    const q = new URL(link).searchParams;
+    expect(Object.fromEntries(q)).toMatchObject({
+      type: 'xhttp',
+      path: '/',
+      mode: 'auto',
+      security: 'reality',
+      sni: 'a.example',
+      pbk: 'PUBKEY',
+      sid: 'abcd',
+    });
+    expect(q.has('flow')).toBe(false);
   });
 });

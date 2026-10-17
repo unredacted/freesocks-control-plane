@@ -2,7 +2,7 @@
 
 How to register an Outline server with the control plane and offer it as a backend
 option to users. Outline servers are managed entirely through the **admin CMS** (the
-**Backend servers** page); their data lives in the generic `backendServers` Convex table, and the
+**Servers -> Backends** tab); their data lives in the generic `backendServers` Convex table, and the
 backend itself is a set of Convex actions (`convex/backends.ts` +
 `convex/lib/backends/outline.ts`). See [`docs/backends.md`](backends.md) for the dispatch
 shape.
@@ -41,7 +41,7 @@ requires retyping the URL) and surfaces the TLS or auth error. Use it before sav
 
 ## Registering a server
 
-1. Log in to the admin CMS and visit **Backend servers** in the sidebar (pick the Outline type).
+1. Log in to the admin CMS and open **Servers** in the sidebar, then its **Backends** tab (pick the Outline type).
 2. Click **Add instance**.
 3. Fill in:
    - **Name**: human-readable, e.g. `EU North`.
@@ -137,7 +137,7 @@ To offer a free Outline tier alongside the Remnawave free tier:
 
 ## Operational notes
 
-- **Health**: the **Backend servers** page reflects each server's `lastHealthOkAt` (refreshed
+- **Health**: the **Servers -> Backends** tab reflects each server's `lastHealthOkAt` (refreshed
   by the healthcheck cron). A failing server is **not** auto-deactivated; it ages out of the
   30-min "fresh" set in `pickCandidatesForIssue` and is deprioritized, with all-servers
   fallback preserved.

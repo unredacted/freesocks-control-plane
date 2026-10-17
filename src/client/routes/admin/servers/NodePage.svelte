@@ -1,24 +1,41 @@
 <script lang="ts">
   /**
-   * One node (`/admin/servers/nodes/:uuid?instance=<slug>`): its status in a
-   * sentence, the transports it serves with the addresses members get for each,
-   * and every action on the node in the header. Nothing on this page changes a
-   * backend unless changes are allowed and the node role has handed it over.
+   * One node (`/admin/servers/nodes/:uuid?instance=<slug>`), the node's ONE
+   * page: its status in a sentence, its activation (enrolled nodes), its
+   * edges when an origin protects it (the Edges panel, loaded lazily; the old
+   * `/admin/edges/nodes/<slug>` address redirects here, `?test=<edgeId>` opens
+   * its test card), the transports it serves with the addresses members get
+   * for each, and every action on the node in the header. Nothing on this page
+   * changes a backend unless changes are allowed and the node role has handed
+   * it over.
    *
    * Wording lives in ./lib/words.ts (pure, unit-tested).
    */
   import { Button } from '@client/components/ui/button';
   import { Skeleton } from '@client/components/ui/skeleton';
   import Link from '@client/components/Link.svelte';
-  import { intentsQuery, serverSummaryQuery, serverTreeQuery } from '@client/lib/serversApi';
+  import { useQueryClient } from '@tanstack/svelte-query';
+  import { toast } from 'svelte-sonner';
+  import {
+    intentsQuery,
+    invalidateServers,
+    renamesQuery,
+    retryRename,
+    serverSummaryQuery,
+    serverTreeQuery,
+  } from '@client/lib/serversApi';
   import { router } from '@client/stores/router.svelte';
   import type { AddressView, TransportView } from '../../../../shared/contracts/servers';
   import SectionHeader from '../edges/components/SectionHeader.svelte';
+  import { edgeSummaryQuery } from '@client/lib/edgesApi';
   import StatusDot from '../edges/simple/StatusDot.svelte';
   import ActivationSection from './components/ActivationSection.svelte';
   import HostDialog from './components/HostDialog.svelte';
   import NamesDialog from './components/NamesDialog.svelte';
   import NodeActions from './components/NodeActions.svelte';
+  import AddTransportDialog from './components/AddTransportDialog.svelte';
+  import PortChangesCard from './components/PortChangesCard.svelte';
+  import PortDialog from './components/PortDialog.svelte';
   import { codeOf } from './lib/run';
   import { pickInstance, serversPaths } from './lib/routes';
   import {
@@ -26,6 +43,8 @@
     inboundSummary,
     nodeNotes,
     nodeWords,
+    portChangeable,
+    renameWords,
     serverErrorWords,
     serverNamesLabel,
   } from './lib/words';
@@ -35,6 +54,17 @@
   let slug = $derived(pickInstance(router.search, summary.data?.instances ?? []));
   const tree = serverTreeQuery(() => slug);
   const intents = intentsQuery(() => slug);
+  const qc = useQueryClient();
+  const renames = renamesQuery(() => slug);
+  // A rename of this node still running, or one that stopped, shown until it is old news.
+  let renaming = $derived(
+    (renames.data?.renames ?? []).find(
+      (r) =>
+        r.nodeUuid === uuid &&
+        (r.state === 'running' ||
+          (r.state === 'failed' && Date.now() - Date.parse(r.updatedAt) < 24 * 3600_000)),
+    ) ?? null,
+  );
   let instance = $derived(summary.data?.instances.find((i) => i.slug === slug) ?? null);
   let node = $derived(tree.data?.nodes.find((n) => n.nodeUuid === uuid) ?? null);
   // The enrolled node behind this backend row, when the node role enrolled it.
@@ -44,6 +74,17 @@
   );
   let manageOn = $derived(summary.data?.config['manage.enabled'] ?? false);
   let canWrite = $derived(manageOn && !!instance?.writable && !!instance?.setUp);
+  // The Edges origin in front of this node, if any: its panel is part of this page.
+  const edgeSummary = edgeSummaryQuery();
+  let relaySlug = $derived(
+    (edgeSummary.data?.relays ?? []).find(
+      (r) =>
+        r.relay.origin.kind === 'panel-node' &&
+        r.relay.origin.backendServerId === instance?.id &&
+        (r.relay.origin.nodeUuid === uuid || (!!node && r.relay.origin.nodeName === node.name)),
+    )?.relay.slug ?? null,
+  );
+  const EdgesPanel = () => import('../edges/simple/NodeEdgesPanel.svelte');
   let back = $derived({
     href: serversPaths.home({ instance: slug ?? undefined }),
     label: 'Servers',
@@ -53,6 +94,9 @@
   let hostFor = $state<{ inbound: TransportView; host: AddressView | null } | null>(null);
   let namesOpen = $state(false);
   let namesFor = $state<{ profileUuid: string; inbound: TransportView } | null>(null);
+  let portOpen = $state(false);
+  let portFor = $state<{ profileUuid: string; inbound: TransportView } | null>(null);
+  let addOpen = $state(false);
   const editHost = (inbound: TransportView, host: AddressView | null) => {
     hostFor = { inbound, host };
     hostOpen = true;
@@ -93,7 +137,39 @@
         {w.sentence}
       </p>
       {#if node.profile}
-        <p class="text-muted-foreground mt-1 text-sm">Runs the profile {node.profile.name}.</p>
+        <p class="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-2 text-sm">
+          Runs the profile {node.profile.name}.
+          {#if canWrite}
+            <Button variant="ghost" size="sm" class="-my-1" onclick={() => (addOpen = true)}>
+              Add a transport
+            </Button>
+          {/if}
+        </p>
+      {/if}
+      {#if renaming}
+        {@const rw = renameWords(renaming)}
+        <p class="mt-1 flex flex-wrap items-center gap-2 text-sm" role="status">
+          <StatusDot dot={rw.dot} />
+          {rw.sentence}
+          {#if canWrite && renaming.code === 'servers.rename_host_refused' && slug}
+            <Button
+              variant="outline"
+              size="sm"
+              onclick={async () => {
+                try {
+                  await retryRename(slug!, renaming!.id);
+                  toast.success('Trying again.');
+                } catch (e) {
+                  toast.error(serverErrorWords(codeOf(e)));
+                } finally {
+                  invalidateServers(qc);
+                }
+              }}
+            >
+              Retry
+            </Button>
+          {/if}
+        </p>
       {/if}
       {#if notes.length > 0}
         <ul class="text-muted-foreground mt-1 space-y-1 text-sm" aria-label="Notes">
@@ -105,7 +181,24 @@
     </div>
 
     {#if intent && slug}
-      <ActivationSection {slug} {intent} />
+      <ActivationSection {slug} {intent} origin={!!relaySlug} />
+    {/if}
+
+    {#if relaySlug}
+      {#await EdgesPanel()}
+        <Skeleton class="h-32 w-full" />
+      {:then mod}
+        {@const Panel = mod.default}
+        <Panel slug={relaySlug} enrolled={intent ? { stage: intent.stage } : null} />
+      {:catch}
+        <p class="text-muted-foreground text-sm">
+          The edges of this node did not load. Reload the page to try again.
+        </p>
+      {/await}
+    {/if}
+
+    {#if node.profile}
+      <PortChangesCard {slug} profileUuid={node.profile.profileUuid} {canWrite} />
     {/if}
 
     <section aria-labelledby="transports">
@@ -117,10 +210,25 @@
           {#each node.transports as inbound (inbound.transportUuid)}
             {@const names = serverNamesLabel(inbound)}
             <li class="rounded-lg border p-3 text-sm">
-              <p class="font-medium break-all">
-                {inbound.tag}
-                <span class="text-muted-foreground font-normal">{inboundSummary(inbound)}</span>
-              </p>
+              <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <p class="font-medium break-all">
+                  {inbound.tag}
+                  <span class="text-muted-foreground font-normal">{inboundSummary(inbound)}</span>
+                </p>
+                {#if canWrite && node.profile && portChangeable(inbound)}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    class="-my-1"
+                    onclick={() => {
+                      portFor = { profileUuid: node.profile!.profileUuid, inbound };
+                      portOpen = true;
+                    }}
+                  >
+                    Change port
+                  </Button>
+                {/if}
+              </div>
 
               {#if names}
                 <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -222,6 +330,22 @@
       transportUuid={hostFor.inbound.transportUuid}
       transportTag={hostFor.inbound.tag}
       host={hostFor.host}
+    />
+  {/if}
+  {#if portFor}
+    <PortDialog
+      bind:open={portOpen}
+      {slug}
+      profileUuid={portFor.profileUuid}
+      inbound={portFor.inbound}
+    />
+  {/if}
+  {#if node.profile}
+    <AddTransportDialog
+      bind:open={addOpen}
+      {slug}
+      profileUuid={node.profile.profileUuid}
+      profileName={node.profile.name}
     />
   {/if}
   {#if namesFor}

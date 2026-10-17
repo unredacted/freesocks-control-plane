@@ -16,9 +16,13 @@
  *  - `realityAuthDigest`: a keyed digest over exactly the settings that decide
  *    whether a REALITY client that connected yesterday still connects today:
  *    the key pair (derived from the PRIVATE key, never trusted from a stored
- *    public one), the short ids and the client version / clock bounds. It
- *    joins an endpoint confirmation's binding, so changing any of them
- *    correctly returns the endpoint to "needs a test".
+ *    public one), the short ids and the client version / clock bounds. On an
+ *    ENROLLED node it is the intent's `authRevision`: a change is drift (a
+ *    live node closes under maintenance), it binds the direct test link and
+ *    the rehearsal vector, and it is folded into each L4 endpoint
+ *    confirmation's binding (lib/edges/verification.ts), so changing any of
+ *    them returns the node's endpoints to "needs a test". An unmanaged node's
+ *    confirmations do not carry it.
  *
  * The backend NORMALISES a config on write (measured, docs/backends.md
  * "Management contract"): it trims each `serverNames` entry and clears

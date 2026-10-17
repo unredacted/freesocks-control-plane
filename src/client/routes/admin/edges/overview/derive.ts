@@ -1,27 +1,31 @@
 /**
- * Overview derivations (pure; unit-tested). Everything the dashboard shows that
- * the `EdgeSummary` contract does not carry as a figure is derived HERE from the
- * summary's origin rows and the attention list, never invented.
+ * All origins' derivations (pure; unit-tested). The JUDGEMENTS (delivery,
+ * worst health, layers, whether an origin needs attention) are the server's
+ * one status projection (the attention response's `origins[]`,
+ * convex/lib/edges/originStatus.ts); this module only filters by them, counts
+ * them into tiles and words them. Figures the `EdgeSummary` contract does not
+ * carry (published per layer, standbys, probe budget) are counted from the
+ * summary rows.
  *
  * Exports:
  *   OVERVIEW_FILTERS / OVERVIEW_LAYERS, parseFilter, parseLayer
- *   relayLayers(row), worstHealth(row), deliveryState(row, darkSlugs)
- *   darkRelaySlugs(items), attentionRelaySlugs(items)
- *   matchesFilter(row, filter, ctx), matchesLayer(row, layer), filterRelays(rows, ...)
- *   fleetTiles(summary, items, probe) -> FleetTile[]
+ *   statusIndex(origins)           slug -> the server's OriginStatus
+ *   matchesFilter(row, filter, status), matchesLayer(status, layer), filterRelays(rows, ...)
+ *   fleetTiles(summary, statuses, probe) -> FleetTile[]
+ *   DELIVERY_LABELS / DELIVERY_TONES     the server's delivery kinds in words
  *   ORIGIN_KIND_LABELS, suspicionChip(row)
  */
 import type { z } from 'zod';
 import type {
-  AttentionItem as AttentionItemSchema,
-  EdgeLayer,
   EdgeSummary,
+  OriginDelivery,
+  OriginStatus,
+  OriginStatusRow,
   RelayPoolSummary,
 } from '../../../../../shared/contracts/edges';
 import { codeLabel, type Tone } from '../../../../lib/edgeCodes';
 
 export type OriginRow = z.infer<typeof RelayPoolSummary>;
-export type AttentionItem = z.infer<typeof AttentionItemSchema>;
 
 export const OVERVIEW_FILTERS = ['all', 'attention', 'dark', 'quarantined', 'unpublished'] as const;
 export type OverviewFilter = (typeof OVERVIEW_FILTERS)[number];
@@ -46,91 +50,66 @@ export const parseFilter = (raw: string | null | undefined): OverviewFilter =>
 export const parseLayer = (raw: string | null | undefined): OverviewLayer =>
   (OVERVIEW_LAYERS as readonly string[]).includes(raw ?? '') ? (raw as OverviewLayer) : 'all';
 
+/** The server's status of each origin, by slug. */
+export function statusIndex(
+  origins: readonly OriginStatusRow[] | undefined,
+): ReadonlyMap<string, OriginStatus> {
+  return new Map((origins ?? []).map((o) => [o.relaySlug, o.status]));
+}
+
 export const ORIGIN_KIND_LABELS: Record<OriginRow['relay']['origin']['kind'], string> = {
   'panel-node': 'Backend node',
   'backend-server': 'Backend server',
   manual: 'Manual origin',
 };
 
-/** The layers of the origin's PUBLISHED pool, L4 first. */
-export function relayLayers(row: OriginRow): EdgeLayer[] {
-  const seen = new Set<EdgeLayer>(row.pool.map((p) => p.layer));
-  return (['l4', 'l7'] as const).filter((l) => seen.has(l));
-}
-
-const HEALTH_RANK: Record<string, number> = { offline: 3, degraded: 2, unknown: 1, online: 0 };
-/** The worst health among the published edges; null when nothing is published. */
-export function worstHealth(row: OriginRow): string | null {
-  if (row.pool.length === 0) return null;
-  let worst = row.pool[0]!.health;
-  for (const p of row.pool) {
-    if ((HEALTH_RANK[p.health] ?? 1) > (HEALTH_RANK[worst] ?? 1)) worst = p.health;
-  }
-  return worst;
-}
-
-/** Origins the server reports as leaving members without a usable subscription. */
-export function darkRelaySlugs(items: readonly AttentionItem[]): Set<string> {
-  const out = new Set<string>();
-  for (const i of items) if (i.kind === 'members_dark' && i.relaySlug) out.add(i.relaySlug);
-  return out;
-}
-/** Origins with at least one attention item of any kind. */
-export function attentionRelaySlugs(items: readonly AttentionItem[]): Set<string> {
-  const out = new Set<string>();
-  for (const i of items) if (i.relaySlug) out.add(i.relaySlug);
-  return out;
-}
-
-export type DeliveryState = 'dark' | 'serving' | 'idle';
-/**
- * dark = the server says members of this origin get no subscription body;
- * serving = at least one edge is published; idle = nothing published and no
- * member depends on it yet.
- */
-export function deliveryState(row: OriginRow, dark: ReadonlySet<string>): DeliveryState {
-  if (dark.has(row.relay.slug)) return 'dark';
-  return row.relay.publishedCount > 0 ? 'serving' : 'idle';
-}
-export const DELIVERY_LABELS: Record<DeliveryState, string> = {
-  dark: 'Members dark',
+export const DELIVERY_LABELS: Record<OriginDelivery['kind'], string> = {
+  manual: 'Nothing to deliver',
+  direct: 'Direct address',
   serving: 'Serving',
-  idle: 'Nothing published',
+  degraded: 'Serving, with a problem',
+  dark: 'Members dark',
 };
-export const DELIVERY_TONES: Record<DeliveryState, Tone> = {
-  dark: 'danger',
+export const DELIVERY_TONES: Record<OriginDelivery['kind'], Tone> = {
+  manual: 'muted',
+  direct: 'muted',
   serving: 'success',
-  idle: 'muted',
+  degraded: 'warning',
+  dark: 'danger',
 };
 
-export interface FilterContext {
-  dark: ReadonlySet<string>;
-  attention: ReadonlySet<string>;
-}
-export function matchesFilter(row: OriginRow, filter: OverviewFilter, ctx: FilterContext): boolean {
+/** A row the server has no status for yet (the attention response is loading) matches only `all`. */
+export function matchesFilter(
+  row: OriginRow,
+  filter: OverviewFilter,
+  status: OriginStatus | undefined,
+): boolean {
   switch (filter) {
     case 'all':
       return true;
     case 'attention':
-      return ctx.attention.has(row.relay.slug) || row.needsOperator > 0;
+      return (status?.attention ?? false) || row.needsOperator > 0;
     case 'dark':
-      return ctx.dark.has(row.relay.slug);
+      return status?.delivery.kind === 'dark';
     case 'quarantined':
       return row.relay.quarantine !== null;
     case 'unpublished':
-      return row.relay.publishedCount === 0;
+      return (status?.published ?? row.relay.publishedCount) === 0;
   }
 }
-export function matchesLayer(row: OriginRow, layer: OverviewLayer): boolean {
-  return layer === 'all' || row.pool.some((p) => p.layer === layer);
+export function matchesLayer(status: OriginStatus | undefined, layer: OverviewLayer): boolean {
+  return layer === 'all' || (status?.layers ?? []).includes(layer);
 }
 export function filterRelays(
   rows: readonly OriginRow[],
   filter: OverviewFilter,
   layer: OverviewLayer,
-  ctx: FilterContext,
+  statuses: ReadonlyMap<string, OriginStatus>,
 ): OriginRow[] {
-  return rows.filter((r) => matchesFilter(r, filter, ctx) && matchesLayer(r, layer));
+  return rows.filter((r) => {
+    const status = statuses.get(r.relay.slug);
+    return matchesFilter(r, filter, status) && matchesLayer(status, layer);
+  });
 }
 
 /** The detector chip of a row: a veto wins over a suspicion; null = nothing to say. */
@@ -197,7 +176,7 @@ export interface ProbeBudget {
 
 export function fleetTiles(
   summary: EdgeSummary,
-  items: readonly AttentionItem[],
+  statuses: ReadonlyMap<string, OriginStatus>,
   probe: ProbeBudget,
 ): FleetTile[] {
   let l4 = 0;
@@ -210,7 +189,7 @@ export function fleetTiles(
       else l4++;
     }
   }
-  const dark = darkRelaySlugs(items).size;
+  const dark = [...statuses.values()].filter((st) => st.delivery.kind === 'dark').length;
   const c = summary.counts;
   const problem = (n: number, tone: Tone): Tone => (n > 0 ? tone : 'neutral');
 
@@ -234,9 +213,9 @@ export function fleetTiles(
   return [
     {
       id: 'relays',
-      label: 'Relays',
+      label: 'Origins',
       value: String(c.relays),
-      hint: 'Origins registered with the control plane.',
+      hint: 'Every origin the control plane puts edges in front of.',
       tone: 'neutral',
       filter: null,
     },

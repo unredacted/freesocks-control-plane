@@ -8,10 +8,13 @@
  *  - `none`: the transport speaks plaintext HTTP; a TCP answer on the port is
  *    enough -> `{ scheme: 'http' }` (L7-only: a forwarder cannot add the TLS
  *    the CDN terminated).
- *  - `tls`: a handshake with SNI = the first server name. `certPublic` = the
- *    chain verifies against the system store; `certNames` = the leaf's names;
- *    `acceptsHostHeader` = `'names'` (conservative) unless one request with a
- *    FOREIGN Host header still answers 2xx (`'any'`).
+ *  - `tls`: a handshake with SNI = the first server name, offering the ALPN a
+ *    front would (`probeAlpn`: h2 for gRPC, which an origin serving only h2
+ *    refuses any other way). `certPublic` = the chain verifies against the
+ *    system store; `certNames` = the leaf's names; `acceptsHostHeader` =
+ *    `'names'` (conservative) unless one HTTP/1.1 request with a FOREIGN Host
+ *    header still answers 2xx (`'any'`; never tried on a gRPC origin, which
+ *    speaks no HTTP/1.1).
  *  - anything else (REALITY has no HTTP origin): not probed.
  *
  * Without a successful probe the listener stays L4-only and the plan says so.
@@ -26,6 +29,7 @@ import type {
 } from '../../../src/shared/contracts/edgeProtocolIds';
 import { isPublicIpLiteral, addressFamily } from './ip';
 import type { OriginTransport } from './layers';
+import { isValidHostname } from './hostname';
 
 export interface OriginProbeDeps {
   lookup: (name: string) => Promise<string[]>;
@@ -38,6 +42,8 @@ export interface OriginProbeDeps {
     host: string;
     port: number;
     servername: string;
+    /** The ALPN protocols to offer (`probeAlpn`). */
+    alpn: string[];
     timeoutMs: number;
   }) => Promise<{
     ok: boolean;
@@ -69,6 +75,17 @@ export interface OriginProbeOutcome {
   originTransport: OriginTransport | null;
   /** Why no transport could be established (a short code, never an address). */
   reason?: string;
+}
+
+/**
+ * The ALPN a front offers the origin for a transport: gRPC rides HTTP/2 only
+ * (an h2-only origin rejects a handshake offering anything else), XHTTP either,
+ * WebSocket and HTTP Upgrade HTTP/1.1.
+ */
+export function probeAlpn(streamTransport: ListenerStreamTransport): string[] {
+  if (streamTransport === 'grpc') return ['h2'];
+  if (streamTransport === 'xhttp') return ['h2', 'http/1.1'];
+  return ['http/1.1'];
 }
 
 /** A Host header no origin serves for on purpose: does the node answer for ANY name? */
@@ -128,11 +145,14 @@ export async function probeOriginTransport(
     host: dial.host,
     port: req.originPort,
     servername,
+    alpn: probeAlpn(req.streamTransport),
     timeoutMs,
   });
   if (!hs.ok) return out(null, shortReason(hs.error, 'handshake_failed'));
   const certNames = [...new Set(hs.names.map((n) => n.trim().toLowerCase()).filter(Boolean))];
   let acceptsHostHeader: OriginTransport['acceptsHostHeader'] = 'names';
+  if (req.streamTransport === 'grpc')
+    return out({ scheme: 'https', certPublic: hs.authorized, certNames, acceptsHostHeader });
   try {
     const st = await deps.httpsStatus({
       host: dial.host,
@@ -149,6 +169,19 @@ export async function probeOriginTransport(
 }
 
 /** Parse Node's `subjectaltname` ("DNS:a.example, DNS:*.b.example, IP Address:...") into DNS names. */
+/**
+ * The DNS names a leaf certificate presents: its SAN names; the subject CN
+ * only when there is no SAN, and only when it IS a hostname (RFC 6125). An
+ * origin certificate's CN is often an organisation or a label: not a name an
+ * edge can present, and never a reason to fail a plan.
+ */
+export function leafNames(san: string | undefined | null, cn: string | undefined | null): string[] {
+  const names = dnsNamesOfSan(san);
+  if (names.length > 0) return names;
+  const c = cn?.trim().toLowerCase();
+  return c && isValidHostname(c) ? [c] : [];
+}
+
 export function dnsNamesOfSan(san: string | undefined | null): string[] {
   if (!san) return [];
   return san

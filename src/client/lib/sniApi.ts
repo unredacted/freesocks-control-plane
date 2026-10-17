@@ -16,8 +16,10 @@ import {
   SniRolloutStarted,
   SniRolloutStatus,
   SniTestLink,
+  SniVantageApplied,
+  SniVantageRequested,
   type SniBindRequest,
-  type SniConfig,
+  type SniConfigPatch,
 } from '../../shared/contracts/sni';
 
 const BASE = '/api/v1/admin/edges/sni';
@@ -25,7 +27,7 @@ const enc = encodeURIComponent;
 const Loose = z.object({}).passthrough();
 
 export const fetchSniConfig = () => apiClient.get(`${BASE}/config`, SniConfigView);
-export const patchSniConfig = (patch: Partial<SniConfig>) =>
+export const patchSniConfig = (patch: SniConfigPatch) =>
   apiClient.patch(`${BASE}/config`, patch, z.object({ changedKeys: z.array(z.string()) }));
 
 export const fetchFamilies = () => apiClient.get(`${BASE}/families`, SniFamilyList);
@@ -56,6 +58,17 @@ export const judgeNames = (
   country: string,
   state: 'proven' | 'blocked' | 'unknown',
 ) => apiClient.post(`${BASE}/families/${enc(slug)}/names/country`, { snis, country, state }, Loose);
+
+/** Check names from one opted-in country now (same gates and budget as the cron). */
+export const checkNamesFrom = (slug: string, snis: string[], country: string) =>
+  apiClient.post(`${BASE}/families/${enc(slug)}/vantage`, { snis, country }, SniVantageRequested);
+/** Record the checks' current suggestions from one country as the operator's marks. */
+export const applyVantage = (slug: string, snis: string[], country: string) =>
+  apiClient.post(
+    `${BASE}/families/${enc(slug)}/vantage/apply`,
+    { snis, country },
+    SniVantageApplied,
+  );
 
 export const bindFamily = (slug: string, backendSlug: string, transportTag: string) =>
   apiClient.post(

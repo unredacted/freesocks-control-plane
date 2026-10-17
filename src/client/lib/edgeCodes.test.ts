@@ -12,10 +12,10 @@ import {
   SETUP_BLOCKER_CODES,
   SETUP_RUN_NEEDS,
   SETUP_RUN_STAGES,
-  SETUP_RUN_STATES,
   SETUP_STEP_IDS,
   SETUP_STEP_STATUSES,
   WORKFLOW_CODES,
+  VERIFICATION_STALE_REASONS,
 } from '../../shared/contracts/edgeCodes';
 import {
   ATTENTION_ACTION_LABELS,
@@ -27,8 +27,8 @@ import {
   ROTATION_PHASE_LABELS,
   SETUP_ACCOUNT_REASON_COPY,
   SETUP_RUN_NEED_COPY,
-  SETUP_RUN_STAGE_LABELS,
-  SETUP_RUN_STATE_LABELS,
+  SETUP_RUN_PLAIN_STAGES,
+  SETUP_RUN_STAGE_STEP,
   setupRunNeedCopy,
   SETUP_STATUS_LABELS,
   SETUP_STEP_TITLES,
@@ -38,8 +38,8 @@ import {
   codeLabel,
   edgeStatusLabel,
   humanizeCode,
-  isTerminalPhase,
   phaseLabel,
+  PLAIN_ATTENTION_ACTION_LABELS,
   PLAIN_WORDS,
   plainAuditActionLabel,
   plainWords,
@@ -56,6 +56,7 @@ const EVERY_CODE = [
   ...DELIVERY_UNAVAILABLE_CODES,
   ...POOL_CODES,
   ...WORKFLOW_CODES,
+  ...VERIFICATION_STALE_REASONS,
 ];
 
 const EM_DASH = '—';
@@ -110,6 +111,11 @@ describe('EDGE_REFUSAL_COPY', () => {
     'credential_unresolved',
     'node_unknown',
     'node_address_unknown',
+    'keep_direct_enrolled',
+    'reprotect_not_bound',
+    'reprotect_not_enrolled',
+    'reprotect_mixed_accounts',
+    'reprotect_no_room',
   ];
 
   test('every refusal the pages meet is worded, and is part of the shared table', () => {
@@ -160,8 +166,12 @@ describe('INBOUND_UNSUPPORTED_COPY', () => {
 
 describe('guided setup run vocabularies', () => {
   test('every stage, state, need and account reason is worded, in sentences, without an em-dash or an API path', () => {
-    for (const s of SETUP_RUN_STAGES) expect(SETUP_RUN_STAGE_LABELS[s].trim()).toBeTruthy();
-    for (const s of SETUP_RUN_STATES) expect(SETUP_RUN_STATE_LABELS[s].trim()).toBeTruthy();
+    // One table: every stage maps to a plain step (`publish` is "Going live").
+    for (const s of SETUP_RUN_STAGES) {
+      const step = SETUP_RUN_STAGE_STEP[s];
+      expect(step === 5 || !!SETUP_RUN_PLAIN_STAGES[step - 1]).toBe(true);
+    }
+    expect(SETUP_RUN_PLAIN_STAGES[SETUP_RUN_STAGE_STEP.publish - 1]).toBe('Going live');
     const offenders: string[] = [];
     const check = (code: string, e: { label: string; explain: string; fix?: string }) => {
       expect(e.label.trim()).toBeTruthy();
@@ -180,6 +190,8 @@ describe('guided setup run vocabularies', () => {
   test('every need has exactly one button and an unknown need is humanised', () => {
     for (const code of SETUP_RUN_NEEDS) expect(SETUP_RUN_NEED_COPY[code].fix).toBeTruthy();
     expect(setupRunNeedCopy('try_it').label).toBe('Try each address');
+    expect(setupRunNeedCopy('node_not_approved').label).toBe('Approve go-live');
+    expect(codeLabel('publish_held')).toBe('Waiting for go-live approval');
     expect(setupRunNeedCopy('brand_new_need').label).toBe('Brand new need');
     expect(setupRunNeedCopy(null).explain.endsWith('.')).toBe(true);
     for (const a of [
@@ -234,13 +246,6 @@ describe('phase, status and step maps', () => {
       'cancelled',
     ];
     for (const p of phases) expect(ROTATION_PHASE_LABELS[p]).toBeTruthy();
-    expect(phases.filter(isTerminalPhase)).toEqual([
-      'done',
-      'failed',
-      'rolled_back',
-      'quarantined',
-      'cancelled',
-    ]);
     expect(phaseLabel('host_flipping')).toBe('Flipping Hosts');
     expect(phaseLabel('brand_new_phase')).toBe('Brand new phase');
   });
@@ -250,7 +255,6 @@ describe('phase, status and step maps', () => {
       'planning',
       'provisioning',
       'verifying',
-      'standby',
       'active',
       'draining',
       'destroying',
@@ -287,6 +291,27 @@ describe('plain words (the simple screens)', () => {
     expect(PLAIN_WORDS.qualified).toBe('trusted');
     expect(PLAIN_WORDS.quarantine).toBe('paused for safety');
     expect(PLAIN_WORDS['host flip']).toBe('update the backend');
+    // Singular and plural say the same thing.
+    for (const [one, many] of [
+      ['origin', 'origins'],
+      ['edge', 'edges'],
+      ['standby', 'standbys'],
+      ['listener', 'listeners'],
+      ['inbound', 'inbounds'],
+      ['endpoint', 'endpoints'],
+      ['rotation', 'rotations'],
+    ] as const) {
+      expect(PLAIN_WORDS[many]!.startsWith(PLAIN_WORDS[one]!.split(' ')[0]!)).toBe(true);
+    }
+    expect(plainWords('Run Qualify front on the edge.')).toBe('Check the address.');
+    expect(plainWords('Thaw when the maintenance is over.')).toBe(
+      'Resume new work when the maintenance is over.',
+    );
+    expect(plainWords('Publish an edge.')).toBe('Put an address in use.');
+    expect(plainAuditActionLabel('admin.edge.test_provision')).toBe('Test address requested');
+    for (const label of Object.values(PLAIN_ATTENTION_ACTION_LABELS)) {
+      expect(label).not.toMatch(/\b(Thaw|Qualify|Publish|Provision|edge|origin)\b/);
+    }
     for (const text of [
       ...Object.values(PLAIN_WORDS),
       ...Object.values(RESTORE_PHASE_WORDS),

@@ -111,6 +111,8 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // `ipHeader` is a non-secret header NAME (cf-connecting-ip etc.) — auditing
   // it makes an IP-trust widening visible in the trail. `geoMode` records the
   // full-IP vs coarse-location choice (a privacy-posture change worth a trail).
+  // Operator alerts (convex/alerts.ts): booleans only; never the URL, topic or token.
+  'admin.alerts.change': ['enabled', 'urlChanged', 'topicSet', 'tokenSet'],
   'admin.analytics.change': [
     'enabled',
     'forwardIp',
@@ -281,12 +283,23 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'servers.node.approved': ['backendSlug', 'name', 'mode'],
   'servers.node.live': ['backendSlug', 'name', 'mode'],
   'servers.node.drift': ['backendSlug', 'name', 'kind', 'wasLive'],
+  'servers.node.maintenance_started': ['backendSlug', 'name'],
   'servers.node.maintenance_finished': ['backendSlug', 'name'],
   'servers.node.retire_requested': ['backendSlug', 'name', 'stage'],
   'servers.node.retire_decided': ['backendSlug', 'name', 'disposition'],
   'servers.node.retired': ['backendSlug', 'name', 'confirmedBy'],
-  // The one-shot migration off contract v1 (counts only).
-  'servers.contract.migrated': ['handoffs', 'reservations', 'setups', 'intents'],
+  // A port change staged until every node's firewall lets the port in
+  // (docs/servers.md "Firewall acknowledgement"): the profile name, the port and
+  // counts; `by` is who confirmed (the node role, or an admin).
+  'servers.port_change.staged': ['backendSlug', 'label', 'port', 'nodes'],
+  'servers.port_change.confirmed': ['backendSlug', 'label', 'by', 'nodes', 'port'],
+  'servers.port_change.cancelled': ['backendSlug', 'label'],
+  'servers.port_change.admitted': ['backendSlug', 'label', 'outcome', 'code'],
+  // A node rename (docs/servers.md "Renaming a node"): the two names only.
+  'servers.node.rename_started': ['backendSlug', 'from', 'to'],
+  'servers.node.renamed': ['backendSlug', 'from', 'to'],
+  'servers.node.rename_failed': ['backendSlug', 'from', 'to', 'code'],
+  'servers.node.rename_retried': ['backendSlug', 'from', 'to'],
   // Operator-run 2.x→3.x key-id remap on one upgraded backend (counts only).
   'admin.remnawave.user_ids_migrated': [
     'panelVersion',
@@ -376,6 +389,8 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
     'relaySlug',
     'runId',
     'stage',
+    // `reprotect` for a live node protected again (absent on a first protection).
+    'kind',
     'listeners',
     'accountName',
     'provider',
@@ -430,6 +445,8 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
     'autoRotate',
   ],
   'edge.block_cleared': ['relaySlug', 'reason'],
+  // The fleet brake (lib/edges/fleet.ts): counts and the threshold only.
+  'edge.fleet_brake': ['engaged', 'suspected', 'evaluated', 'threshold'],
   'probe.run': ['targetKey', 'source', 'trigger'],
   'probe.verdict': ['targetKey', 'source', 'country', 'ipVersion', 'verdict'],
   'probe.requested': ['targets', 'runs', 'sources'],
@@ -444,16 +461,6 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // An operator-created backend Host taken over for a listener (hostMode handoff).
   'relay.host.adopt_requested': ['relaySlug', 'listenerKey'],
   'edge.delivery.binding_released': ['relaySlug', 'backendServerId'],
-  'relay.registered': [
-    'slug',
-    'created',
-    'changed',
-    'listenersCreated',
-    'listenersUpdated',
-    'listenersRetired',
-    'adopted',
-    'poolRaised',
-  ],
   'relay.listener.upsert': ['relaySlug', 'listenerKey', 'created'],
   'relay.listener.retire': ['relaySlug', 'listenerKey'],
   'relay.listener.update': ['relaySlug', 'listenerKey', 'enabled'],
@@ -474,6 +481,11 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'edge.sni.inbound.unbind': ['slug', 'backendSlug', 'inboundTag'],
   'edge.sni.names.country': ['slug', 'country', 'state', 'count'],
   'edge.sni.names.accepted': ['relaySlug', 'listenerKey', 'generation', 'count', 'witness'],
+  // Checks from inside a country: slugs, the country, the source and counts, never a name or an address.
+  'edge.sni.vantage.batch': ['country', 'source', 'targetKind', 'count', 'trigger'],
+  'edge.sni.vantage.request': ['slug', 'country', 'count', 'batches'],
+  'edge.sni.vantage.apply': ['slug', 'country', 'proven', 'blocked'],
+  'edge.sni.vantage.auto_apply': ['slug', 'country', 'state', 'count', 'held'],
   'relay.host.created': ['relaySlug', 'listenerKey', 'discovered'],
   'relay.host.deleted': ['relaySlug', 'listenerKey'],
   // A Host the ledger called present was gone from the backend on re-observation.

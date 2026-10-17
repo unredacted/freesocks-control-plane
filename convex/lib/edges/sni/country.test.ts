@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import type { PublishedEdge } from '../assignment';
-import { bodyIsCacheable, cacheIsServable, isCountrySensitive, resolveWhere } from './country';
+import { bodyIsCacheable, cacheIsServable, resolveWhere } from './country';
 
 const CURATED = ['CN', 'RU', 'IR', 'MM'];
 
@@ -29,18 +28,6 @@ describe('resolveWhere', () => {
 });
 
 describe('caching', () => {
-  const edge = (names: PublishedEdge['serverNames'], sniPick?: 'hrw1'): PublishedEdge =>
-    ({ edgeId: 'e', serverNames: names, sniPick }) as PublishedEdge;
-  const marked = [{ sni: 'a.example', status: 'active' as const, blockedIn: ['CN'] }];
-  const plain = [{ sni: 'a.example', status: 'active' as const }];
-
-  test('a body is country-sensitive only when an hrw1 listener has judged names', () => {
-    expect(isCountrySensitive([edge(marked, 'hrw1')])).toBe(true);
-    expect(isCountrySensitive([edge(plain, 'hrw1')])).toBe(false);
-    expect(isCountrySensitive([edge(marked)])).toBe(false);
-    expect(isCountrySensitive([])).toBe(false);
-  });
-
   test('an inferred country is never stored and never shared', () => {
     expect(bodyIsCacheable('inferred', true)).toBe(false);
     expect(cacheIsServable('inferred', true)).toBe(false);

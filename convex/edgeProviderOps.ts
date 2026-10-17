@@ -38,7 +38,7 @@ import {
 } from './lib/edges/providers/capabilities';
 import { renderTemplateValue } from './lib/edges/providers/template';
 import { isRelayProviderId, type EdgeProviderId } from './lib/edgeProviderIds';
-import { parseIntent, type ProvisionIntent } from './lib/edges/intent';
+import type { ProvisionIntent } from './lib/edges/intent';
 import type { ListenerProto } from './lib/edges/protocols';
 import { listenerProtoFields } from './lib/edgeProtocolIds';
 import {
@@ -136,6 +136,86 @@ async function run<R>(fn: () => Promise<R>): Promise<R> {
     return await fn();
   } catch (err) {
     throw toOpsFailure(err);
+  }
+}
+
+/**
+ * Whether a throw says the PROVIDER's API is failing (the code to count), as
+ * opposed to FCP refusing a request or the provider refusing it for a reason
+ * the caller handles (a 404 in discovery, a 409 on create): a timeout or a
+ * network error, a 5xx, a refused credential (401 / 403), rate limiting (429),
+ * or an answer the adapter could not read. Null = not a provider fault.
+ */
+export function apiFailureCode(err: unknown): string | null {
+  if (!(err instanceof EdgeProviderError)) return null;
+  const m = err.meta;
+  if (m.timedOut) return 'timeout';
+  if (m.code === 'schema_mismatch' || m.code === 'redirect_refused') return m.code;
+  if (m.status === undefined) return m.code ? null : 'network';
+  if (m.status >= 500 || m.status === 401 || m.status === 403 || m.status === 429)
+    return String(m.status);
+  return null;
+}
+
+/** What `loadAdapter` saw of the account's API health (so a healthy success writes nothing). */
+interface ApiSeen {
+  failures: number;
+  /** The call resolved but reported a provider failure itself (a failed credential test). */
+  failed?: boolean;
+}
+
+/**
+ * A credential test that came back refused: the adapter caught the provider's
+ * answer and returned it, so it is counted here (the account cannot be used,
+ * whatever the reason) and the resolved call does not reset the run. The
+ * recorded code is FCP's own (`test_failed`): the provider's code stays in
+ * `lastTestError`, never in what an alert may carry.
+ */
+async function noteTestFailure(
+  ctx: ActionCtx,
+  accountId: Id<'edgeProviderAccounts'>,
+  seen: ApiSeen,
+): Promise<void> {
+  seen.failed = true;
+  await noteApiOutcome(ctx, accountId, 'test_failed');
+}
+
+/**
+ * `run` for an account-scoped provider call that counts toward the account's
+ * API health (`edgeProviderAccounts.recordApiOutcome`): a provider-side failure
+ * adds one, the first success after failures resets the run. Recording never
+ * changes what the caller sees.
+ */
+async function tracked<R>(
+  ctx: ActionCtx,
+  accountId: Id<'edgeProviderAccounts'>,
+  fn: (seen: ApiSeen) => Promise<R>,
+): Promise<R> {
+  const seen: ApiSeen = { failures: 0 };
+  let result: R;
+  try {
+    result = await fn(seen);
+  } catch (err) {
+    const failure = apiFailureCode(err);
+    if (failure !== null) await noteApiOutcome(ctx, accountId, failure);
+    throw toOpsFailure(err);
+  }
+  if (seen.failures > 0 && !seen.failed) await noteApiOutcome(ctx, accountId, null);
+  return result;
+}
+
+async function noteApiOutcome(
+  ctx: ActionCtx,
+  accountId: Id<'edgeProviderAccounts'>,
+  failure: string | null,
+): Promise<void> {
+  try {
+    await ctx.runMutation(internal.edgeProviderAccounts.recordApiOutcome, {
+      id: accountId,
+      failure,
+    });
+  } catch {
+    // Health bookkeeping is best effort: never turn a provider answer into a failure.
   }
 }
 
@@ -239,6 +319,7 @@ async function loadAdapter(
   ctx: ActionCtx,
   accountId: Id<'edgeProviderAccounts'>,
   edgeId?: Id<'edges'>,
+  seen?: ApiSeen,
 ): Promise<{
   provider: EdgeProvider;
   cfg: EdgeProviderConfig;
@@ -255,6 +336,7 @@ async function loadAdapter(
       timedOut: false,
     });
   }
+  if (seen) seen.failures = acct.apiFailures;
   const cfg = edgeProviderConfigFrom(
     acct.credentials as Record<string, unknown> & { type: typeof acct.provider },
     acct.settings as Record<string, unknown> & { type: typeof acct.provider },
@@ -452,6 +534,7 @@ function checkSpec(
   zoneSslMode?: string,
 ): void {
   checkTransport(providerId, spec);
+  // The port rule has its own refusal below (`grpc_requires_443`).
   checkProtocolCarried(providerId, proto);
   checkOriginTransport(providerId, spec, tpl, zoneSslMode);
   checkOriginPort(providerId, spec, proto);
@@ -477,9 +560,10 @@ export const effectiveTemplate = internalAction({
 export const testCredentials = internalAction({
   args: { accountId: v.id('edgeProviderAccounts') },
   handler: (ctx, { accountId }): Promise<{ ok: boolean; code?: string; detail?: string }> =>
-    run(async () => {
-      const { provider, cfg } = await loadAdapter(ctx, accountId);
+    tracked(ctx, accountId, async (seen) => {
+      const { provider, cfg } = await loadAdapter(ctx, accountId, undefined, seen);
       const res = await provider.testCredentials(cfg);
+      if (!res.ok) await noteTestFailure(ctx, accountId, seen);
       // A passing test's `detail` is adapter prose about the zone, not a refusal.
       const detail = res.ok ? undefined : res.detail;
       await ctx.runMutation(internal.edgeProviderAccounts.recordTest, {
@@ -621,8 +705,8 @@ export const discoverOptions = internalAction({
 export const listRegions = internalAction({
   args: { accountId: v.id('edgeProviderAccounts') },
   handler: (ctx, { accountId }): Promise<Array<{ id: string; label: string }>> =>
-    run(async () => {
-      const { provider, cfg } = await loadAdapter(ctx, accountId);
+    tracked(ctx, accountId, async (seen) => {
+      const { provider, cfg } = await loadAdapter(ctx, accountId, undefined, seen);
       return provider.listRegions ? provider.listRegions(cfg) : [];
     }),
 });
@@ -630,8 +714,8 @@ export const listRegions = internalAction({
 export const inventory = internalAction({
   args: { accountId: v.id('edgeProviderAccounts') },
   handler: (ctx, { accountId }): Promise<Inventory> =>
-    run(async () => {
-      const { provider, cfg } = await loadAdapter(ctx, accountId);
+    tracked(ctx, accountId, async (seen) => {
+      const { provider, cfg } = await loadAdapter(ctx, accountId, undefined, seen);
       const inv = await provider.inventory(cfg);
       await ctx.runMutation(internal.edgeProviderAccounts.recordInventory, {
         id: accountId,
@@ -643,6 +727,7 @@ export const inventory = internalAction({
       // which is the thing that was asked for.
       try {
         const res = await provider.testCredentials(cfg);
+        if (!res.ok) await noteTestFailure(ctx, accountId, seen);
         await ctx.runMutation(internal.edgeProviderAccounts.recordTest, {
           id: accountId,
           ok: res.ok,
@@ -689,8 +774,13 @@ export const runStep = internalAction({
     proto: v.optional(v.object(listenerProtoFields)),
   },
   handler: (ctx, a): Promise<StepOutcome> =>
-    run(async () => {
-      const { provider, cfg, providerId, intent } = await loadAdapter(ctx, a.accountId, a.edgeId);
+    tracked(ctx, a.accountId, async (seen) => {
+      const { provider, cfg, providerId, intent } = await loadAdapter(
+        ctx,
+        a.accountId,
+        a.edgeId,
+        seen,
+      );
       const tpl = renderedTemplate(provider, a.templateParams, a.spec, intent?.zoneSslMode);
       checkSpec(providerId, a.spec, a.proto, tpl, intent?.zoneSslMode);
       return provider.runStep(cfg, a.step as ResourceStep, a.spec, tpl, a.ledger as Ledger);
@@ -706,8 +796,8 @@ export const pollStep = internalAction({
     edgeId: v.optional(v.id('edges')),
   },
   handler: (ctx, a): Promise<StepOutcome> =>
-    run(async () => {
-      const { provider, cfg, providerId } = await loadAdapter(ctx, a.accountId, a.edgeId);
+    tracked(ctx, a.accountId, async (seen) => {
+      const { provider, cfg, providerId } = await loadAdapter(ctx, a.accountId, a.edgeId, seen);
       // A `requested` step exists only because the adapter asked to be polled.
       // Fabricating `done` here would mark an allocating step complete with an
       // EMPTY ledger: the resource it created would never be recorded, never be
@@ -745,8 +835,8 @@ export const discover = internalAction({
     stepStartedAt: v.optional(v.number()),
   },
   handler: (ctx, a): Promise<Discovery> =>
-    run(async () => {
-      const { provider, cfg } = await loadAdapter(ctx, a.accountId, a.edgeId);
+    tracked(ctx, a.accountId, async (seen) => {
+      const { provider, cfg } = await loadAdapter(ctx, a.accountId, a.edgeId, seen);
       const ledgerWithReference =
         a.stepStartedAt === undefined
           ? (a.ledger as Ledger)
@@ -765,8 +855,8 @@ export const discover = internalAction({
 export const describe = internalAction({
   args: { accountId: v.id('edgeProviderAccounts'), ledger, edgeId: v.optional(v.id('edges')) },
   handler: (ctx, a): Promise<EdgeDescription> =>
-    run(async () => {
-      const { provider, cfg } = await loadAdapter(ctx, a.accountId, a.edgeId);
+    tracked(ctx, a.accountId, async (seen) => {
+      const { provider, cfg } = await loadAdapter(ctx, a.accountId, a.edgeId, seen);
       return provider.describe(cfg, a.ledger as Ledger);
     }),
 });
@@ -774,8 +864,8 @@ export const describe = internalAction({
 export const inspect = internalAction({
   args: { accountId: v.id('edgeProviderAccounts'), ledger, edgeId: v.optional(v.id('edges')) },
   handler: (ctx, a): Promise<InspectResult> =>
-    run(async () => {
-      const { provider, cfg } = await loadAdapter(ctx, a.accountId, a.edgeId);
+    tracked(ctx, a.accountId, async (seen) => {
+      const { provider, cfg } = await loadAdapter(ctx, a.accountId, a.edgeId, seen);
       return provider.inspect(cfg, a.ledger as Ledger);
     }),
 });
@@ -892,8 +982,8 @@ export const sharedTeardownStep = internalAction({
     state: sharedTeardownState,
   },
   handler: (ctx, a): Promise<SharedStateWire> =>
-    run(async () => {
-      const { provider, cfg, providerId } = await loadAdapter(ctx, a.accountId, a.edgeId);
+    tracked(ctx, a.accountId, async (seen) => {
+      const { provider, cfg, providerId } = await loadAdapter(ctx, a.accountId, a.edgeId, seen);
       if (!provider.sharedTeardown)
         refuse(
           'shared_teardown_unsupported',
@@ -921,8 +1011,8 @@ export const runDestroy = internalAction({
     edgeId: v.optional(v.id('edges')),
   },
   handler: (ctx, a): Promise<DestroyOutcome> =>
-    run(async () => {
-      const { provider, cfg } = await loadAdapter(ctx, a.accountId, a.edgeId);
+    tracked(ctx, a.accountId, async (seen) => {
+      const { provider, cfg } = await loadAdapter(ctx, a.accountId, a.edgeId, seen);
       return provider.runDestroy(cfg, a.resource, a.ledger as Ledger);
     }),
 });
@@ -935,8 +1025,8 @@ export const confirmDestroyed = internalAction({
     edgeId: v.optional(v.id('edges')),
   },
   handler: (ctx, a): Promise<DestroyOutcome> =>
-    run(async () => {
-      const { provider, cfg } = await loadAdapter(ctx, a.accountId, a.edgeId);
+    tracked(ctx, a.accountId, async (seen) => {
+      const { provider, cfg } = await loadAdapter(ctx, a.accountId, a.edgeId, seen);
       // A provider without an async-delete confirmation deletes synchronously, so
       // the delete is idempotent: re-issue it. 404 → gone; still present → deleted
       // now; a throw stays `delete_requested` for the next pass. Never assume gone.

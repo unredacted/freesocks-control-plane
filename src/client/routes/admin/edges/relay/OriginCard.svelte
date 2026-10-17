@@ -6,6 +6,7 @@
    *
    * Props: origin; listeners; connectionPlan
    */
+  import { serversPaths } from '../../servers/lib/routes';
   import type { z } from 'zod';
   import type {
     OriginAdmin,
@@ -108,10 +109,10 @@
         hint: 'The connection mode whose placement the test user is created on. Change it under Edit.',
       });
     out.push({
-      label: 'Registered by the node role',
+      label: 'Last registered by the node role',
       value: relay.lastRegisteredAt
         ? relativeTime(relay.lastRegisteredAt)
-        : 'Never (created by hand)',
+        : 'Never (created in FCP)',
     });
     return out;
   });
@@ -129,10 +130,10 @@
     {#if backendServerId}
       <Card.Action>
         <Link
-          href="/admin/backend-servers"
+          href={serversPaths.backends()}
           class="text-sm font-medium text-primary hover:underline"
         >
-          Backend servers
+          Backends
         </Link>
       </Card.Action>
     {/if}

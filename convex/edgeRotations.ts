@@ -29,7 +29,13 @@ import type { Doc, Id } from './_generated/dataModel';
 import { sanitizeAuditPayload, writeAuditLog, type AuditEntry } from './lib/audit';
 import { randomHex } from './lib/crypto';
 import { assertNoRelayPanelClaim } from './lib/edges/relayGuards';
-import { resolveEdgeConfig, edgeMs, type EdgeConfig } from './lib/edgeConfig';
+import {
+  EDGE_PLUMBING,
+  originPolicy,
+  resolveEdgeConfig,
+  edgeMs,
+  type EdgeConfig,
+} from './lib/edgeConfig';
 import {
   checkPublishable,
   liveEdgesOfAccount,
@@ -103,8 +109,14 @@ import type {
   ResourceStep,
 } from './lib/edges/providers/types';
 import { admitted, assertAdmission } from './lib/edges/maintenance';
-import { publicationAdmitted } from './lib/backend/activation';
-import { activatingRunFor, recordCandidateEdge } from './nodeActivation';
+import { verificationListenersOf, type VerifiableListener } from './lib/edges/verificationContext';
+import { countFleetRotation, fleetRotationsToday, readFleetBrake } from './lib/edges/fleet';
+import { hostSecurityLayer } from './hostOps';
+import {
+  publicationAdmission,
+  recordCandidateEdge,
+  type PublicationAdmission,
+} from './nodeActivation';
 
 type Rotation = Doc<'edgeRotations'>;
 type Edge = Doc<'edges'>;
@@ -453,26 +465,27 @@ export interface StartBlocker {
  * failed is skipped rather than reported twice.
  */
 /**
- * The node approval a publication needs (docs/servers.md "Node lifecycle"):
- * `unmanaged` for an origin that is not an enrolled node; `committed` for a
- * live node with no run open; `candidate` for a node whose one activating run
- * this publication belongs to; `refused` otherwise (unapproved, maintenance,
- * retiring).
+ * The node approval one edge publication needs (docs/servers.md "Node
+ * lifecycle"), compared with what is being published: `unmanaged` for an
+ * origin that is not an enrolled node; `committed` for a live node with no
+ * activation running whose committed review this edge fits (a replacement
+ * address in the approved shape); `candidate` for an edge of the node's one
+ * running activation, in the shape it approved; `refused` with the reason
+ * otherwise. A guided setup run checks the same function before it starts
+ * its publish, and parks instead of failing.
  */
-async function publicationApproval(
+export async function publicationApproval(
   ctx: { db: QueryCtx['db'] },
   origin: Origin,
-): Promise<'unmanaged' | 'committed' | 'candidate' | 'refused'> {
-  if (origin.origin.kind !== 'panel-node' || !origin.backendServerId) return 'unmanaged';
-  const act = await activatingRunFor(ctx, origin.backendServerId, origin.origin.nodeName);
-  if (!act) return 'unmanaged';
-  const admitted = publicationAdmitted({
-    disposition: act.intent.delivery.disposition,
-    underMaintenance: !!act.intent.maintenance,
-    matchesCommitted: !act.run,
-    matchesApprovedCandidate: !!act.run,
+  to: Edge,
+): Promise<PublicationAdmission> {
+  if (origin.origin.kind !== 'panel-node' || !origin.backendServerId) return { kind: 'unmanaged' };
+  const listener = await ctx.db.get(to.listenerId);
+  return publicationAdmission(ctx, origin.backendServerId, origin.origin.nodeName, {
+    listenerKey: listener?.listenerKey ?? '',
+    accountId: to.accountId ? String(to.accountId) : null,
+    templateHash: to.templateHash ?? null,
   });
-  return admitted ?? 'refused';
 }
 
 export async function collectStartBlockers(
@@ -485,13 +498,23 @@ export async function collectStartBlockers(
   cfg: EdgeConfig | null;
   targetEdge: Edge | null;
   listenerId: Id<'relayListeners'> | undefined;
+  /** A publish's node approval (null for any other kind). */
+  approval: PublicationAdmission | null;
 }> {
   const blockers: StartBlocker[] = [];
   const push = (code: string, message: string) => blockers.push({ code, message });
+  let approval: PublicationAdmission | null = null;
   const origin = await ctx.db.get(a.relayId);
   if (!origin) {
     push('not_found', 'Origin not found');
-    return { blockers, origin: null, cfg: null, targetEdge: null, listenerId: a.listenerId };
+    return {
+      blockers,
+      origin: null,
+      cfg: null,
+      targetEdge: null,
+      listenerId: a.listenerId,
+      approval,
+    };
   }
   const cfg = await resolveEdgeConfig(ctx.db);
   const now = opts.now ?? Date.now();
@@ -517,6 +540,15 @@ export async function collectStartBlockers(
   }
   if (a.trigger === 'detector' && !(cfg.enabled && cfg.autoRotate && origin.autoRotate)) {
     push('edge.auto_rotate_disabled', 'Automatic rotation is not enabled for this origin');
+  }
+  // The fleet guards (lib/edges/fleet.ts), read in the same transaction that
+  // would start the rotation: a mass block holds every automatic rotation, and
+  // the fleet's daily cap bounds them together. Never applied to a manual start.
+  if (a.trigger === 'detector') {
+    if ((await readFleetBrake(ctx.db)).engaged)
+      push('edge.fleet_brake', 'Automatic rotation is held fleet-wide: many origins look blocked');
+    if ((await fleetRotationsToday(ctx.db, now)) >= cfg.detect.fleetRotationsPerDay)
+      push('edge.fleet_daily_cap', 'The fleet-wide daily cap on automatic rotations is reached');
   }
   if ((await countActiveRotations(ctx)) >= cfg.maxConcurrentRotations) {
     push('edge.concurrency', 'Too many rotations in flight');
@@ -549,7 +581,8 @@ export async function collectStartBlockers(
         push('edge.cooldown', 'Origin is cooling down');
       const today = todayKey(now);
       const used = origin.rotationsDayKey === today ? origin.rotationsToday : 0;
-      if (used >= origin.maxRotationsPerDay) push('edge.daily_cap', 'Daily rotation cap reached');
+      if (used >= originPolicy(origin, cfg).maxRotationsPerDay)
+        push('edge.daily_cap', 'Daily rotation cap reached');
     }
     if (targetEdge) listenerId = targetEdge.listenerId;
     // Replacing an L4 edge switches ONLY to an already-tested spare: a freshly
@@ -588,13 +621,15 @@ export async function collectStartBlockers(
         // The node's approval (docs/servers.md "Node lifecycle"): an enrolled
         // node's edge is published under its committed approval, or as a
         // candidate of its one activating run; never while it is unapproved,
-        // under maintenance or retiring. Manual, reconcile and setup publishes
-        // all pass through here.
-        const approval = await publicationApproval(ctx, origin);
-        if (approval === 'refused')
+        // under maintenance or retiring, nor in a shape nobody approved.
+        // Manual, reconcile and setup publishes all pass through here.
+        approval = await publicationApproval(ctx, origin, to);
+        if (approval.kind === 'refused')
           push(
-            'servers.node_not_approved',
-            'The node behind this origin is not approved for delivery',
+            approval.code,
+            approval.code === 'servers.node_not_approved'
+              ? 'The node behind this origin is not approved for delivery'
+              : `The node behind this origin cannot take this edge now (${approval.code})`,
           );
       }
     }
@@ -651,7 +686,23 @@ export async function collectStartBlockers(
       }
     }
   }
-  return { blockers, origin, cfg, targetEdge, listenerId };
+  // An automatic run that would publish on an enrolled node and can only pick
+  // outside the node's approved shape is refused at the start, not left to
+  // fail at selection every tick (a new review is what it needs).
+  if (
+    blockers.length === 0 &&
+    (a.trigger === 'reconcile' || a.trigger === 'detector') &&
+    publishesUnderApproval(a) &&
+    origin.origin.kind === 'panel-node'
+  ) {
+    const sel = await selectionContext(ctx, { ...a, listenerId }, origin, targetEdge, cfg);
+    if (sel.accountFailure === 'outside_approved_shape')
+      push(
+        'edge.outside_approved_shape',
+        'Nothing fits what the node was approved for; review and approve it again',
+      );
+  }
+  return { blockers, origin, cfg, targetEdge, listenerId, approval };
 }
 
 export const start = internalMutation({
@@ -690,7 +741,7 @@ async function verifiedSpareFor(
  * only with a CURRENT operator confirmation (an untested spare is never picked
  * over provisioning, and never published by a rotation).
  */
-function standbyEligible(edge: Edge, listener: Doc<'relayListeners'> | undefined): boolean {
+function standbyEligible(edge: Edge, listener: VerifiableListener | undefined): boolean {
   if ((edge.layer ?? edgeLayerOf(edge.provider)) === 'l7') return true;
   return !!listener && verificationCurrent(edge, listener);
 }
@@ -755,15 +806,8 @@ export async function startRotation(
   await assertNoRelayPanelClaim(ctx.db, origin);
   // An edge published for an activating node is one of that run's candidate
   // resources: members never see it before the delivery commit.
-  if (
-    a.kind === 'publish' &&
-    a.toEdgeId &&
-    origin.origin.kind === 'panel-node' &&
-    origin.backendServerId
-  ) {
-    const act = await activatingRunFor(ctx, origin.backendServerId, origin.origin.nodeName);
-    if (act?.run) await recordCandidateEdge(ctx, act.run, a.toEdgeId);
-  }
+  if (a.kind === 'publish' && a.toEdgeId && g.approval?.kind === 'candidate')
+    await recordCandidateEdge(ctx, g.approval.run, a.toEdgeId);
   const listenerId = g.listenerId;
   const id = await ctx.db.insert('edgeRotations', {
     relayId: a.relayId,
@@ -798,6 +842,7 @@ export async function startRotation(
     startedAt: now,
     updatedAt: now,
   });
+  if (a.trigger === 'detector') await countFleetRotation(ctx.db, now);
   const today = todayKey(now);
   await ctx.db.patch(a.relayId, {
     activeRotationId: id,
@@ -1114,12 +1159,11 @@ export const advance = internalMutation({
   handler: async (ctx, { rotationId, stepVersion, event }) => {
     const r = await guard(ctx, rotationId, stepVersion);
     if (!r) return { ok: false as const };
-    const cfg = await resolveEdgeConfig(ctx.db);
     const now = Date.now();
     const next = stepVersion + 1;
     const ev = (level: RotationEvent['level'], code: string, detail?: string) =>
       appendEvent(r.events, { at: now, level, code, detail });
-    const poll = edgeMs.poll(cfg);
+    const poll = EDGE_PLUMBING.pollMs;
     switch (event.type) {
       case 'selected': {
         await ctx.db.patch(rotationId, {
@@ -1529,6 +1573,38 @@ export const applyPublish = internalMutation({
       return { ok: true as const, poolIndex: null, needsHostFlip: false };
     }
     if (!check.ok) return { ok: false as const, code: check.code ?? 'not_publishable' };
+    // The node's approval, checked again where the result is published: the
+    // selection picked within the approved shape, but the node may have moved
+    // since (a new review, maintenance, retirement). Out of shape, the paid-for
+    // edge stays a standby and a replace leaves its target published; as a
+    // candidate of the node's running activation it is recorded as one, so
+    // members never see it before the commit.
+    if (publishesUnderApproval(r)) {
+      const approval = await publicationApproval(ctx, origin, to);
+      // A replace needs a replacement members can be served at once: a
+      // candidate (hidden until its activation commits) would leave the
+      // swapped-out slot dark, so it stays a standby like a refused one.
+      if (approval.kind === 'refused' || (r.kind === 'replace' && approval.kind === 'candidate')) {
+        await ctx.db.patch(rotationId, {
+          phase: 'finalizing',
+          stepVersion: next,
+          events: appendEvent(r.events, {
+            at: now,
+            level: 'warn',
+            code: 'outside_approved_shape',
+            detail: approval.kind === 'refused' ? approval.code : 'activation_running',
+          }),
+          updatedAt: now,
+        });
+        await ctx.db.patch(r.relayId, {
+          standbyEdgeIds: [...origin.standbyEdgeIds.filter((e) => e !== to._id), to._id],
+          updatedAt: now,
+        });
+        await scheduleStep(ctx, rotationId, 0);
+        return { ok: true as const, poolIndex: null, needsHostFlip: false };
+      }
+      if (approval.kind === 'candidate') await recordCandidateEdge(ctx, approval.run, to._id);
+    }
     if (r.kind === 'replace') {
       const target = r.targetEdgeId ? await ctx.db.get(r.targetEdgeId) : null;
       if (!target || target.publication !== 'published' || target.poolIndex === undefined)
@@ -1543,7 +1619,7 @@ export const applyPublish = internalMutation({
         publication: 'draining',
         status: 'draining',
         poolIndex: undefined,
-        drainUntil: now + edgeMs.drain(cfg),
+        drainUntil: now + originPolicy(origin, cfg).drainMs,
         statusChangedAt: now,
         updatedAt: now,
       });
@@ -1712,12 +1788,12 @@ export const claimHostOp = internalMutation({
   handler: async (ctx, a) => {
     const r = await guard(ctx, a.rotationId, a.stepVersion);
     if (!r) return { ok: false as const, code: 'stale' as const };
-    const cfg = await resolveEdgeConfig(ctx.db);
     const now = Date.now();
     if (r.currentOp && r.currentOp.expiresAt > now)
       return { ok: false as const, code: 'op_busy' as const };
     const attempts = a.direction === 'forward' ? r.flipAttempts + 1 : r.rollbackAttempts + 1;
-    const cap = a.direction === 'forward' ? cfg.maxFlipAttempts : cfg.maxRollbackAttempts;
+    const cap =
+      a.direction === 'forward' ? EDGE_PLUMBING.maxFlipAttempts : EDGE_PLUMBING.maxRollbackAttempts;
     if (attempts > cap) return { ok: false as const, code: 'max_attempts' as const };
     const op = {
       opId: randomHex(8),
@@ -1726,7 +1802,7 @@ export const claimHostOp = internalMutation({
       direction: a.direction,
       attempt: attempts,
       claimedAt: now,
-      expiresAt: now + edgeMs.opClaim(cfg),
+      expiresAt: now + EDGE_PLUMBING.opClaimMs,
     };
     await ctx.db.patch(a.rotationId, {
       currentOp: op,
@@ -1864,13 +1940,18 @@ export const finalize = internalMutation({
     const now = Date.now();
     const to = r.toEdgeId ? await ctx.db.get(r.toEdgeId) : null;
     let from: Edge | null = null;
-    if (r.kind === 'replace' && r.targetEdgeId) {
+    // A replace drains its target only when the publish actually SWAPPED it out
+    // (`previousBinding`). One that ended with its new edge as a standby (not
+    // tested yet, or outside the node's approved shape) left the target in
+    // the pool: draining it now would darken that slot while it stays counted.
+    const swapped = r.kind === 'replace' && !!r.previousBinding;
+    if (swapped && r.targetEdgeId) {
       from = await ctx.db.get(r.targetEdgeId);
       if (from && from.status !== 'destroyed') {
         await ctx.db.patch(from._id, {
           publication: 'draining',
           status: 'draining',
-          drainUntil: now + (r.burn ? edgeMs.burnedDrain(cfg) : edgeMs.drain(cfg)),
+          drainUntil: now + (r.burn ? edgeMs.burnedDrain(cfg) : originPolicy(origin, cfg).drainMs),
           ...(r.burn ? { burnedAt: now } : {}),
           statusChangedAt: from.status === 'draining' ? from.statusChangedAt : now,
           updatedAt: now,
@@ -1909,7 +1990,7 @@ export const finalize = internalMutation({
         ? { l7ReplacementsDayKey: today, l7ReplacementsToday: usedToday + 1 }
         : {}),
       ...(r.kind === 'replace'
-        ? { lastRotatedAt: now, cooldownUntil: now + origin.cooldownMs }
+        ? { lastRotatedAt: now, cooldownUntil: now + originPolicy(origin, cfg).cooldownMs }
         : {}),
       // Standby bookkeeping for a provision that did not publish. Only an edge
       // that could actually be published later belongs on the list: a destroyed
@@ -1918,13 +1999,13 @@ export const finalize = internalMutation({
       ...(to && !published
         ? {
             standbyEdgeIds:
-              to.status === 'active' || to.status === 'standby'
+              to.status === 'active'
                 ? [...origin.standbyEdgeIds.filter((e) => e !== to._id), to._id]
                 : origin.standbyEdgeIds.filter((e) => e !== to._id),
           }
         : {}),
     });
-    if (r.kind === 'replace') {
+    if (swapped) {
       await auditRotation(ctx, r._id, {
         actorType: 'system',
         action: 'edge.rotated',
@@ -2070,7 +2151,8 @@ export const resolveQuarantine = internalMutation({
               publication: 'draining',
               status: 'draining',
               poolIndex: undefined,
-              drainUntil: now + (rotation.burn ? edgeMs.burnedDrain(cfg) : edgeMs.drain(cfg)),
+              drainUntil:
+                now + (rotation.burn ? edgeMs.burnedDrain(cfg) : originPolicy(origin, cfg).drainMs),
               ...(rotation.burn ? { burnedAt: now } : {}),
               statusChangedAt: now,
               updatedAt: now,
@@ -2268,6 +2350,8 @@ export interface SelectionRequest {
   requestedAccountId?: Id<'edgeProviderAccounts'>;
   requestedTemplateId?: Id<'edgeTemplates'>;
   allowUnqualified?: boolean;
+  /** Started by a guided setup run (the operator chose its account). */
+  setupRun?: { runId: Id<'edgeSetupRuns'>; generation: number };
 }
 
 export interface SelectionContext {
@@ -2290,6 +2374,38 @@ export interface SelectionContext {
   } | null;
 }
 
+/**
+ * Whether a run publishes its own result under the NODE's approval: a replace
+ * or a provision that publishes when done, outside a guided setup run (whose
+ * own publish is admitted by its activation, `startStageRotation`).
+ */
+export function publishesUnderApproval(r: {
+  kind: SelectionRequest['kind'];
+  publishOnDone?: boolean;
+  setupRun?: SelectionRequest['setupRun'];
+}): boolean {
+  return !r.setupRun && (r.kind === 'replace' || (r.kind === 'provision' && !!r.publishOnDone));
+}
+
+/**
+ * Whether an edge of this shape (listener, account, template) could be
+ * published on the origin's node now (`publicationAdmission`): always for an
+ * origin that is not an enrolled node.
+ */
+async function shapeAdmitted(
+  ctx: { db: QueryCtx['db'] },
+  origin: Origin,
+  pub: { listenerKey: string; accountId: string | null; templateHash: string | null },
+  opts: { replace: boolean },
+): Promise<boolean> {
+  if (origin.origin.kind !== 'panel-node' || !origin.backendServerId) return true;
+  const a = await publicationAdmission(ctx, origin.backendServerId, origin.origin.nodeName, pub);
+  // A replace swaps a served edge out: its replacement must be servable at
+  // once, so a CANDIDATE of a running activation (hidden until the commit)
+  // would darken the slot. Only a committed fit (or no enrolled node) will do.
+  return opts.replace ? a.kind === 'committed' || a.kind === 'unmanaged' : a.kind !== 'refused';
+}
+
 export async function selectionContext(
   ctx: { db: QueryCtx['db'] },
   rotation: SelectionRequest,
@@ -2297,11 +2413,20 @@ export async function selectionContext(
   targetEdge: Edge | null,
   cfg: EdgeConfig,
 ): Promise<SelectionContext> {
+  // A result this run publishes by itself must fit what the node was approved
+  // for (docs/servers.md "Node lifecycle"): a standby or an account outside
+  // that shape is never picked, rather than paid for and then refused.
+  const underApproval = publishesUnderApproval(rotation);
   const edges = await liveEdgesOfRelay(ctx.db, origin._id);
   const publishedProviders = edges
     .filter((e) => e.publication === 'published' && e.provider)
     .map((e) => e.provider as string);
-  const slotRows = await listenersOf(ctx, origin._id);
+  // With the enrolled node's auth revision: a standby's tick binds to it.
+  const slotRows = await verificationListenersOf(
+    ctx.db,
+    origin,
+    await listenersOf(ctx, origin._id),
+  );
   let slot: Doc<'relayListeners'> | null = null;
   // A requested slot (the row field; `reason` carried it before the field
   // existed) is binding: a retired or vanished one FAILS the run instead of
@@ -2349,8 +2474,18 @@ export async function selectionContext(
       template: null,
     };
   const listener = slot;
-  const standby = pickStandby(
-    edges.map((e) => ({
+  const fitsApproval = async (accountId: string | null, templateHash: string | null) =>
+    !underApproval ||
+    (await shapeAdmitted(
+      ctx,
+      origin,
+      { listenerKey: listener.listenerKey, accountId, templateHash },
+      { replace: rotation.kind === 'replace' },
+    ));
+  const standbyCandidates = [];
+  for (const e of edges) {
+    const slotOfEdge = slotRows.find((s) => s._id === e.listenerId);
+    standbyCandidates.push({
       id: e._id,
       slotId: e.listenerId,
       provider: e.provider ?? null,
@@ -2358,14 +2493,19 @@ export async function selectionContext(
       status: e.status,
       publication: e.publication,
       health: e.health,
-      // An untested L4 spare is not a candidate (lib/edges/verification.ts).
+      // An untested L4 spare is not a candidate (lib/edges/verification.ts),
+      // nor one outside the node's approved shape.
       hasAddress:
         hasPublishableAddress(e) &&
-        standbyEligible(
-          e,
-          slotRows.find((s) => s._id === e.listenerId),
-        ),
-    })),
+        standbyEligible(e, slotOfEdge) &&
+        (e.listenerId !== slot._id ||
+          e.status !== 'active' ||
+          e.publication !== 'unpublished' ||
+          (await fitsApproval(e.accountId ? String(e.accountId) : null, e.templateHash ?? null))),
+    });
+  }
+  const standby = pickStandby(
+    standbyCandidates,
     slot._id,
     publishedProviders,
     targetEdge?._id ?? null,
@@ -2389,11 +2529,12 @@ export async function selectionContext(
   const layers = listenerLayers(listener).layers;
   // Every trigger except an operator's own request is "automatic" for the L7
   // gate: an unproven front must not reach members because a cron or the
-  // detector chose it.
-  const allowL7 = rotation.trigger === 'manual' || l7SelectionAllowed(cfg);
+  // detector chose it. A guided setup run's account IS the operator's own
+  // choice, and its front is proven (stage verify) before anything publishes.
+  const allowL7 = rotation.trigger === 'manual' || !!rotation.setupRun || l7SelectionAllowed(cfg);
   const eligibleAccounts = accountsForSlot(
     (await ctx.db.query('edgeProviderAccounts').collect()).filter((a) => a.enabled),
-    { layers, proto: protoOf(listener), allowL7 },
+    { layers, proto: protoOf(listener), originPort: listener.originPort, allowL7 },
   );
   const accounts = eligibleAccounts;
   const failure = (code: string): SelectionContext => ({
@@ -2429,15 +2570,31 @@ export async function selectionContext(
     );
     if (rotation.requestedTemplateId && template.id !== rotation.requestedTemplateId)
       return failure('template_not_found');
+    if (!(await fitsApproval(a._id as string, template.hash)))
+      return failure('outside_approved_shape');
     return { listener, standbyId: null, ...(await describeAccount(ctx, a)), template };
   }
   if (accounts.length === 0) {
     return failure(layers.length === 0 ? 'no_compatible_layer' : 'no_account_for_layer');
   }
   const candidates = [];
+  let outsideShape = 0;
   for (const a of accounts) {
     // An account-scoped profile provisions from that account only.
     if (listener.providerScope?.accountId && a._id !== listener.providerScope.accountId) continue;
+    if (underApproval) {
+      const tpl = await resolveTemplateFor(
+        ctx,
+        a.provider,
+        null,
+        a.defaultTemplateId ?? null,
+        a._id,
+      );
+      if (!(await fitsApproval(a._id as string, tpl.hash))) {
+        outsideShape++;
+        continue;
+      }
+    }
     // Same rule as the insert-time capacity check: observe-only edges were not
     // provisioned by FCP and never consume its allocation.
     const live = (await liveEdgesOfAccount(ctx.db, a._id)).filter((e) => e.managed).length;
@@ -2467,7 +2624,10 @@ export async function selectionContext(
       listener,
       standbyId: null,
       account: null,
-      accountFailure: picked.code,
+      // Every account that could front the listener is outside what the node
+      // was approved for: a new review is the way forward, not another account.
+      accountFailure:
+        candidates.length === 0 && outsideShape > 0 ? 'outside_approved_shape' : picked.code,
       template: null,
     };
   const account = accounts.find((a) => (a._id as string) === picked.account.id)!;
@@ -2624,7 +2784,7 @@ export const step = internalAction({
   handler: async (ctx, { rotationId }): Promise<null> => {
     const c = await stepContextHandler(ctx, rotationId);
     if (!c || isTerminalPhase(c.rotation.phase)) return null;
-    const { rotation: r, cfg } = c;
+    const { rotation: r } = c;
     const sv = r.stepVersion;
     await ctx.runMutation(internal.edgeRotations.markStepStarted, { rotationId, stepVersion: sv });
     const adv = (event: Parameters<typeof advanceCall>[3]) =>
@@ -2648,7 +2808,7 @@ export const step = internalAction({
     // `rolling_back` only the error budget + the Host attempt caps apply.)
     const now = Date.now();
     const cap =
-      r.phase !== 'rolling_back' && now - r.startedAt > edgeMs.maxRotation(cfg)
+      r.phase !== 'rolling_back' && now - r.startedAt > EDGE_PLUMBING.maxRotationMs
         ? 'rotation_timeout'
         : (r.stepErrors ?? 0) >= MAX_STEP_ERRORS
           ? 'step_errors_exhausted'
@@ -2711,7 +2871,7 @@ export const step = internalAction({
       const { code, detail } = errCode(err);
       await adv({
         type: 'progress',
-        delayMs: edgeMs.poll(cfg),
+        delayMs: EDGE_PLUMBING.pollMs,
         detail: `step error: ${code} ${detail}`.trim(),
         countPoll: true,
         countError: true,
@@ -2886,15 +3046,15 @@ async function phaseSelect(ctx: ActionCtx, c: Ctx) {
 }
 
 async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
-  const { rotation: r, cfg, toEdge: edge } = c;
+  const { rotation: r, toEdge: edge } = c;
   const sv = r.stepVersion;
-  const poll = edgeMs.poll(cfg);
+  const poll = EDGE_PLUMBING.pollMs;
   if (!edge || !edge.accountId) {
     await advanceCall(ctx, r._id, sv, { type: 'fail', code: 'edge_missing', rollback: false });
     return;
   }
   const now = Date.now();
-  if (edge._creationTime + edgeMs.provisionTimeout(cfg) < now) {
+  if (edge._creationTime + EDGE_PLUMBING.provisionTimeoutMs < now) {
     await advanceCall(ctx, r._id, sv, { type: 'fail', code: 'provision_timeout', rollback: false });
     return;
   }
@@ -2970,7 +3130,7 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
       edgeId: edge._id,
       kind,
       target: pending.stepId,
-      claimMs: edgeMs.opClaim(cfg),
+      claimMs: EDGE_PLUMBING.opClaimMs,
     });
 
   const applyOutcome = async (opId: string, out: StepOutcome) => {
@@ -3043,7 +3203,7 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
           key: lockKey,
           edgeId: edge._id,
           opId: cl.opId,
-          ttlMs: edgeMs.opClaim(cfg),
+          ttlMs: EDGE_PLUMBING.opClaimMs,
         });
         if (!lk.ok) {
           await settle(cl.opId, {});
@@ -3242,7 +3402,7 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
           discoverAttempts: discoverAttempt,
         },
       });
-      if ((pending.startedAt ?? edge._creationTime) + edgeMs.discoveryTimeout(cfg) < now) {
+      if ((pending.startedAt ?? edge._creationTime) + EDGE_PLUMBING.discoveryTimeoutMs < now) {
         await ctx.runMutation(internal.edges.patchEdge, {
           edgeId: edge._id,
           status: 'needs_operator',
@@ -3321,7 +3481,7 @@ async function phaseVerifying(ctx: ActionCtx, c: Ctx) {
       });
     } catch (err) {
       const { code, detail } = errCode(err);
-      if (r.pollAttempts + 1 >= cfg.verifyAttempts) {
+      if (r.pollAttempts + 1 >= EDGE_PLUMBING.verifyAttempts) {
         await advanceCall(ctx, r._id, sv, {
           type: 'fail',
           code: 'verify_timeout',
@@ -3332,7 +3492,7 @@ async function phaseVerifying(ctx: ActionCtx, c: Ctx) {
       }
       await advanceCall(ctx, r._id, sv, {
         type: 'progress',
-        delayMs: edgeMs.poll(cfg),
+        delayMs: EDGE_PLUMBING.pollMs,
         detail: `describe failed: ${code}`,
         countPoll: true,
       });
@@ -3366,7 +3526,7 @@ async function phaseVerifying(ctx: ActionCtx, c: Ctx) {
     // A provider without member health never answers `online`: `unknown` is enough from it.
     const healthy = providerHealthSatisfies(edge.provider, desc.health, cfg.requireProviderHealth);
     if (!(desc.state === 'active' && publishAddress && healthy)) {
-      if (r.pollAttempts + 1 >= cfg.verifyAttempts) {
+      if (r.pollAttempts + 1 >= EDGE_PLUMBING.verifyAttempts) {
         await advanceCall(ctx, r._id, sv, {
           type: 'fail',
           code: 'verify_timeout',
@@ -3377,7 +3537,7 @@ async function phaseVerifying(ctx: ActionCtx, c: Ctx) {
       }
       await advanceCall(ctx, r._id, sv, {
         type: 'progress',
-        delayMs: edgeMs.poll(cfg),
+        delayMs: EDGE_PLUMBING.pollMs,
         detail: `waiting: state=${desc.state} health=${desc.health}`,
         countPoll: true,
       });
@@ -3408,7 +3568,7 @@ async function phaseVerifying(ctx: ActionCtx, c: Ctx) {
       if (gate.kind === 'wait') {
         await advanceCall(ctx, r._id, sv, {
           type: 'progress',
-          delayMs: edgeMs.poll(cfg),
+          delayMs: EDGE_PLUMBING.pollMs,
           detail: gate.detail,
           countPoll: true,
         });
@@ -3444,14 +3604,14 @@ type VerifyGate =
  * A manual publish may waive ONLY step 2 with an audited `forceGeoEvidence`.
  */
 async function l7VerifyGate(ctx: ActionCtx, c: Ctx, edge: Edge): Promise<VerifyGate> {
-  const { rotation: r, cfg } = c;
+  const { rotation: r } = c;
   try {
     await ctx.runAction(internal.frontQualifyOps.run, { edgeId: edge._id });
   } catch (err) {
     // The session could not be RUN (the action threw): that is a poll failure,
     // never a verdict about the front.
     const { code, detail } = errCode(err);
-    if (r.pollAttempts + 1 >= cfg.verifyAttempts)
+    if (r.pollAttempts + 1 >= EDGE_PLUMBING.verifyAttempts)
       return {
         kind: 'fail',
         code: 'front_qualification_failed',
@@ -3465,7 +3625,7 @@ async function l7VerifyGate(ctx: ActionCtx, c: Ctx, edge: Edge): Promise<VerifyG
   });
   if (!state) return { kind: 'fail', code: 'edge_missing' };
   if (!state.qualified) {
-    if (r.pollAttempts + 1 >= cfg.verifyAttempts)
+    if (r.pollAttempts + 1 >= EDGE_PLUMBING.verifyAttempts)
       return {
         kind: 'fail',
         code: 'front_unqualified',
@@ -3484,7 +3644,7 @@ async function geoEvidenceGate(
   edge: Edge,
   countries: readonly string[],
 ): Promise<VerifyGate> {
-  const { rotation: r, cfg } = c;
+  const { rotation: r } = c;
   if (countries.length === 0)
     // The detector named no country: there is nothing to prove reachable, and
     // an empty proof is not a proof.
@@ -3507,7 +3667,7 @@ async function geoEvidenceGate(
   if (verdicts.every((v) => v.verdict === 'reachable')) return { kind: 'ok' };
   // Still waiting: request the round once, then poll until the timeout.
   const waitedMs = Date.now() - (r.provisionedAt ?? r.startedAt);
-  if (waitedMs > cfg.l7.qualifyTimeoutMinutes * 60_000)
+  if (waitedMs > EDGE_PLUMBING.l7QualifyTimeoutMs)
     return {
       kind: 'fail',
       code: 'qualification_inconclusive',
@@ -3568,9 +3728,9 @@ function panelServerId(origin: Origin): Id<'backendServers'> {
 }
 
 async function phaseHostFlip(ctx: ActionCtx, c: Ctx) {
-  const { rotation: r, cfg, toEdge: edge, origin, listener: slot } = c;
+  const { rotation: r, toEdge: edge, origin, listener: slot } = c;
   const sv = r.stepVersion;
-  const poll = edgeMs.poll(cfg);
+  const poll = EDGE_PLUMBING.pollMs;
   if (!edge || !hasPublishableAddress(edge) || !slot) {
     await advanceCall(ctx, r._id, sv, {
       type: 'fail',
@@ -3608,7 +3768,7 @@ async function phaseHostFlip(ctx: ActionCtx, c: Ctx) {
     hosts = await listHosts(ctx, origin);
   } catch (err) {
     const { code, detail } = errCode(err);
-    if (r.flipAttempts + 1 > cfg.maxFlipAttempts) {
+    if (r.flipAttempts + 1 > EDGE_PLUMBING.maxFlipAttempts) {
       await advanceCall(ctx, r._id, sv, {
         type: 'fail',
         code: 'panel_unreachable',
@@ -3765,6 +3925,8 @@ async function phaseHostFlip(ctx: ActionCtx, c: Ctx) {
       // Undefined stays undefined (leave the field); null clears it.
       ...(target.sni !== undefined ? { sni: target.sni } : {}),
       ...(target.host !== undefined ? { host: target.host } : {}),
+      // A Host created before it carried its security layer is brought in line.
+      ...hostSecurityLayer(slot),
     });
     await ctx.runMutation(internal.edgeRotations.settleHostOp, {
       rotationId: r._id,
@@ -3790,7 +3952,6 @@ export const bumpFlipAttempts = internalMutation({
   handler: async (ctx, { rotationId, stepVersion, detail }) => {
     const r = await guard(ctx, rotationId, stepVersion);
     if (!r) return null;
-    const cfg = await resolveEdgeConfig(ctx.db);
     const now = Date.now();
     const field =
       r.phase === 'rolling_back'
@@ -3802,13 +3963,13 @@ export const bumpFlipAttempts = internalMutation({
       events: appendEvent(r.events, { at: now, level: 'warn', code: 'panel_unreachable', detail }),
       updatedAt: now,
     });
-    await scheduleStep(ctx, rotationId, edgeMs.poll(cfg));
+    await scheduleStep(ctx, rotationId, EDGE_PLUMBING.pollMs);
     return null;
   },
 });
 
 async function phaseConfirming(ctx: ActionCtx, c: Ctx) {
-  const { rotation: r, cfg, toEdge: edge, origin, listener } = c;
+  const { rotation: r, toEdge: edge, origin, listener } = c;
   const sv = r.stepVersion;
   // The affected countries are asked ONCE MORE after the flip: the front is now
   // the one members actually receive, so a block that only shows up under real
@@ -3849,7 +4010,7 @@ async function phaseConfirming(ctx: ActionCtx, c: Ctx) {
     // The backend is down after the Host write: bounded like the flip itself.
     // Past the cap the rotation rolls back (itself bounded → quarantine).
     const { code, detail } = errCode(err);
-    if (r.flipAttempts + 1 > cfg.maxFlipAttempts) {
+    if (r.flipAttempts + 1 > EDGE_PLUMBING.maxFlipAttempts) {
       await advanceCall(ctx, r._id, sv, {
         type: 'fail',
         code: 'panel_unreachable',
@@ -3878,9 +4039,9 @@ async function phaseConfirming(ctx: ActionCtx, c: Ctx) {
 }
 
 async function phaseRollingBack(ctx: ActionCtx, c: Ctx) {
-  const { rotation: r, cfg, origin } = c;
+  const { rotation: r, origin } = c;
   const sv = r.stepVersion;
-  const poll = edgeMs.poll(cfg);
+  const poll = EDGE_PLUMBING.pollMs;
   await ctx.runMutation(internal.edgeRotations.applyRollbackBinding, { rotationId: r._id });
   if (r.hostPlan.length === 0 || !forwardWriteAttempted(r)) {
     // No forward Host write was ever claimed: the DB restore is the whole
@@ -3894,7 +4055,7 @@ async function phaseRollingBack(ctx: ActionCtx, c: Ctx) {
     hosts = await listHosts(ctx, origin);
   } catch (err) {
     const { code, detail } = errCode(err);
-    if (r.rollbackAttempts + 1 > cfg.maxRollbackAttempts) {
+    if (r.rollbackAttempts + 1 > EDGE_PLUMBING.maxRollbackAttempts) {
       await advanceCall(ctx, r._id, sv, {
         type: 'quarantine',
         reason: `panel unreachable during rollback: ${code} ${detail}`.trim(),

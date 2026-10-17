@@ -12,6 +12,7 @@
  */
 import { convexTest } from 'convex-test';
 import { afterEach, describe, expect, test, vi } from 'vitest';
+import { __setEdgePlumbingForTests } from './lib/edgeConfig';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
@@ -40,6 +41,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
   __setEdgeProviderForTests('cloudflare', null);
+  __setEdgePlumbingForTests(null);
   __setFrontChecker(null);
 });
 
@@ -258,7 +260,7 @@ describe('edgeRotations: an L7 edge end to end', () => {
       // triple + transport parameters, never a guess.
       expect(args.proto).toEqual({ protocol: 'vless', streamTransport: 'ws', security: 'tls' });
       expect(args.params.path).toBe('/ws');
-      expect(args.uuid).toBe(QUALIFY_UUID);
+      expect(args.credential).toEqual({ kind: 'vless', uuid: QUALIFY_UUID });
       return { ok: true, steps: [], checkedAt: Date.now() };
     });
     const { t, relayId, listenerId } = await seed();
@@ -679,14 +681,13 @@ describe('edgeRotations: affected-country evidence must be FRESH', () => {
       fakeL7();
       fakePanel();
       __setFrontChecker(async () => ({ ok: true, steps: [], checkedAt: Date.now() }));
+      // Short enough that the gate's wait is observable step by step.
+      __setEdgePlumbingForTests({ pollMs: 5_000, l7QualifyTimeoutMs: 2 * 60_000 });
       const { t, relayId, listenerId } = await seed({ autoSelect: true });
       await t.run(async (ctx) => {
         for (const [key, value] of [
           ['edge.autoRotate', 'true'],
           ['edge.probe.enabled', 'true'],
-          // Short enough that the gate's wait is observable step by step.
-          ['edge.pollSeconds', '5'],
-          ['edge.l7.qualifyTimeoutMinutes', '2'],
         ] as const) {
           await ctx.db.insert('appSettings', { key, value, updatedAt: Date.now() });
         }

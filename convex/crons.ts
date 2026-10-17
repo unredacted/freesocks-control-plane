@@ -157,6 +157,9 @@ crons.interval(
 // content and re-upload it (skip-if-unchanged). No-op unless S3 mirroring is
 // configured. The censorship-fallback URL is only useful if it isn't stale.
 crons.interval('mirror-refresh', { hours: 6 }, internal.storage.refreshActiveMirrors, {});
+// The mirror barrier: an upload whose delivery policy moved while it was in
+// flight is re-rendered under the current one, or the object withdrawn.
+crons.interval('mirror-barrier-repair', { minutes: 5 }, internal.storage.repairMirrorUploads, {});
 
 // Self-heal the maintained user-status counter (statusCounters.ts) that feeds the
 // /status health-gate — recomputes it exactly, correcting any missed transition bump.
@@ -185,6 +188,9 @@ crons.daily(
 crons.interval('sni-qualify', { minutes: 5 }, internal.sniQualifyOps.run, {});
 // Attributed report counts are a short-lived hint: delete what left the window.
 crons.interval('sni-report-sweep', { hours: 24 }, internal.sniReports.sweep, {});
+// Checks of names from inside opted-in countries: sweep, then at most one batch
+// per tick within the hourly budget (dormant until switched on per country).
+crons.interval('sni-vantage', { minutes: 10 }, internal.sniVantage.tick, {});
 
 crons.interval('backend-reconcile', { minutes: 5 }, internal.backendWrites.reconcile, {});
 // Resume bootstrap workflows an interrupted attempt left pending (docs/servers.md "Node lifecycle").
@@ -204,6 +210,9 @@ crons.daily(
 // The block detector: per-origin scoring of attributed reports, node load and
 // probe verdicts; automatic rotation only with edge-level evidence + opt-in.
 crons.interval('edge-block-detector', { minutes: 5 }, internal.edgeDetector.run, {});
+// Operator alerts (opt-in, `alerts.*`): new alert-worthy attention items go to
+// the operator's webhook once, as kinds, codes and counts (convex/alerts.ts).
+crons.interval('alerts-dispatch', { minutes: 5 }, internal.alerts.dispatch, {});
 // Destroyed edge rows (ledgers of what existed) and terminal rotation rows are
 // history: bounded daily deletes past their windows (30 / 90 days).
 crons.daily(
@@ -216,6 +225,45 @@ crons.daily(
   'retention-edge-rotations',
   { hourUTC: 5, minuteUTC: 0 },
   internal.retention.sweepEdgeRotations,
+  {},
+);
+// The servers and edges workflow rows (ledger ops, name rollouts, setup and
+// activation runs, Host hides, port changes): terminal rows past their window,
+// never one something still reads (convex/retention.ts).
+crons.daily(
+  'retention-panel-ops',
+  { hourUTC: 5, minuteUTC: 5 },
+  internal.retention.sweepPanelOps,
+  {},
+);
+crons.daily(
+  'retention-sni-rollouts',
+  { hourUTC: 5, minuteUTC: 10 },
+  internal.retention.sweepSniRollouts,
+  {},
+);
+crons.daily(
+  'retention-edge-setup-runs',
+  { hourUTC: 5, minuteUTC: 15 },
+  internal.retention.sweepEdgeSetupRuns,
+  {},
+);
+crons.daily(
+  'retention-activation-runs',
+  { hourUTC: 5, minuteUTC: 20 },
+  internal.retention.sweepActivationRuns,
+  {},
+);
+crons.daily(
+  'retention-edge-host-hides',
+  { hourUTC: 5, minuteUTC: 25 },
+  internal.retention.sweepHostHides,
+  {},
+);
+crons.daily(
+  'retention-port-changes',
+  { hourUTC: 5, minuteUTC: 30 },
+  internal.retention.sweepPortChanges,
   {},
 );
 

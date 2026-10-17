@@ -27,7 +27,8 @@
   import { router } from '@client/stores/router.svelte';
   import SectionHeader from '../components/SectionHeader.svelte';
   import { edgesPaths } from '../lib/routes';
-  import { familyDot, familyLine, sniErrorWords, type Dot } from './lib/words';
+  import { familyDot, familyLine, sniErrorWords, vantageState, type Dot } from './lib/words';
+  import type { SniConfigPatch } from '../../../../../shared/contracts/sni';
 
   const qc = useQueryClient();
   const uid = $props.id();
@@ -55,6 +56,27 @@
       saving = false;
       invalidateSni(qc);
     }
+  }
+
+  // --- checks from inside a country (opt-in per country) ----------------------------------------
+  let vantage = $derived(config.data?.vantage);
+  let curated = $derived(config.data?.config.curatedCountries ?? []);
+  let checkedIn = $derived((vantage?.countries ?? []).filter((c) => curated.includes(c)));
+  async function patchVantage(patch: NonNullable<SniConfigPatch['vantage']>, done?: string) {
+    saving = true;
+    try {
+      await patchSniConfig({ vantage: patch });
+      if (done) toast.success(done);
+    } catch (e) {
+      toast.error(sniErrorWords(codeOf(e)));
+    } finally {
+      saving = false;
+      invalidateSni(qc);
+    }
+  }
+  function toggleCountry(c: string, on: boolean) {
+    const now = vantage?.countries ?? [];
+    void patchVantage({ countries: on ? [...now, c] : now.filter((x) => x !== c) });
   }
 
   let open = $state(false);
@@ -131,6 +153,107 @@
       </li>
     {/each}
   </ul>
+{/if}
+
+{#if vantage}
+  <Card class="mt-8">
+    <CardContent class="space-y-4 py-5 text-sm">
+      <div>
+        <h2 class="text-base font-medium">Checks from inside countries</h2>
+        <p class="text-muted-foreground mt-1">
+          Measurement services try each name against one of your published addresses from inside the
+          countries you turn on, alongside the address's other names. The family pages then suggest
+          where a name works or is blocked. You decide what is applied.
+        </p>
+      </div>
+      <p class="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2">
+        These checks run on other people's machines inside those countries, often home connections.
+        Each one is a single handshake, shaped like a member's, with a name a large site really
+        serves, at most once every few days per name. Nothing in it names FreeSocks, but whoever
+        runs a vantage sees the address and the name. Turn a country on only if that is acceptable
+        there.
+      </p>
+      <div class="flex items-start gap-3">
+        <Switch
+          id={`${uid}-vantage`}
+          class="mt-0.5"
+          checked={vantage.enabled}
+          disabled={saving}
+          onCheckedChange={(v) =>
+            void patchVantage({ enabled: v }, v ? 'Checks are on.' : 'Checks are off.')}
+        />
+        <div>
+          <Label for={`${uid}-vantage`}>Run checks</Label>
+          <p class="text-muted-foreground">
+            {vantageState(on, vantage.enabled, checkedIn)}
+          </p>
+        </div>
+      </div>
+      <fieldset class="space-y-2">
+        <legend class="font-medium">Countries</legend>
+        {#if curated.length === 0}
+          <p class="text-muted-foreground">No country is on the curated list.</p>
+        {/if}
+        <div class="flex flex-wrap gap-4">
+          {#each curated as c (c)}
+            <div class="flex items-center gap-2">
+              <Checkbox
+                id={`${uid}-vc-${c}`}
+                checked={vantage.countries.includes(c)}
+                disabled={saving}
+                onCheckedChange={(v) => toggleCountry(c, v === true)}
+              />
+              <Label for={`${uid}-vc-${c}`} class="font-normal">{c}</Label>
+            </div>
+          {/each}
+        </div>
+      </fieldset>
+      <fieldset class="space-y-2">
+        <legend class="font-medium">Services</legend>
+        <div class="flex items-center gap-2">
+          <Checkbox
+            id={`${uid}-gp`}
+            checked={vantage.sources.globalping}
+            disabled={saving}
+            onCheckedChange={(v) => void patchVantage({ sources: { globalping: v === true } })}
+          />
+          <Label for={`${uid}-gp`} class="font-normal">Globalping</Label>
+        </div>
+        <div class="flex items-center gap-2">
+          <Checkbox
+            id={`${uid}-ra`}
+            checked={vantage.sources.ripeatlas}
+            disabled={saving}
+            onCheckedChange={(v) => void patchVantage({ sources: { ripeatlas: v === true } })}
+          />
+          <Label for={`${uid}-ra`} class="font-normal">RIPE Atlas</Label>
+          {#if vantage.sources.ripeatlas && !config.data?.vantageSources.ripeatlas}
+            <span class="text-muted-foreground">Needs its key under Edges, Settings.</span>
+          {/if}
+        </div>
+      </fieldset>
+      <div class="flex items-start gap-3">
+        <Switch
+          id={`${uid}-auto`}
+          class="mt-0.5"
+          checked={vantage.autoApply}
+          disabled={saving}
+          onCheckedChange={(v) => void patchVantage({ autoApply: v })}
+        />
+        <div>
+          <Label for={`${uid}-auto`}>Apply suggestions by themselves</Label>
+          <p class="text-muted-foreground">
+            Only where nobody has judged the name in that country, never over a mark an operator
+            set, and never a block that would leave a node with no usable name there.
+          </p>
+        </div>
+      </div>
+      <p class="text-muted-foreground">
+        At most {vantage.hourlyBudget} checks an hour, each name again after
+        {vantage.intervalHours} hours, from up to {vantage.perCountryLimit} vantages.
+      </p>
+    </CardContent>
+  </Card>
 {/if}
 
 <footer class="text-muted-foreground mt-8 flex items-center gap-3 border-t pt-4 text-sm">

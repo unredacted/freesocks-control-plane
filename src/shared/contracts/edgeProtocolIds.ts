@@ -63,8 +63,12 @@ export interface ListenerCombo extends ListenerProto {
   isHttpTransport: boolean;
   /** The renderer writes an HTTP Host header (ws / httpupgrade / xhttp; gRPC follows the SNI). */
   usesHostHeader: boolean;
-  /** Which authenticated end-to-end proof exists for an L7 front of this listener. */
-  l7Proof: 'vless' | 'unsupported';
+  /**
+   * Which authenticated end-to-end proof exists for an L7 front of this
+   * listener: a VLESS or a Trojan request for the qualification account,
+   * through the front and the node, answered by the target.
+   */
+  l7Proof: 'vless' | 'trojan' | 'unsupported';
   /** Legacy single-word protocol id the renderer codecs and Host logic used (kept for fixtures). */
   legacy: 'reality' | 'tls' | 'plain' | 'ws' | 'httpupgrade' | 'grpc' | 'xhttp' | 'udp';
 }
@@ -104,7 +108,9 @@ function combo(
     usesHostHeader:
       streamTransport === 'ws' || streamTransport === 'httpupgrade' || streamTransport === 'xhttp',
     l7Proof:
-      protocol === 'vless' && isHttpTransport && security === 'tls' ? 'vless' : 'unsupported',
+      isHttpTransport && security === 'tls' && (protocol === 'vless' || protocol === 'trojan')
+        ? protocol
+        : 'unsupported',
     legacy,
   };
 }
@@ -143,16 +149,6 @@ export function listenerCombo(p: ListenerProto): ListenerCombo | null {
 
 export function isValidListenerCombo(p: ListenerProto): boolean {
   return BY_KEY.has(comboKey(p));
-}
-
-export function isListenerProtocolId(v: unknown): v is ListenerProtocolId {
-  return typeof v === 'string' && (LISTENER_PROTOCOL_IDS as readonly string[]).includes(v);
-}
-export function isListenerStreamTransport(v: unknown): v is ListenerStreamTransport {
-  return typeof v === 'string' && (LISTENER_STREAM_TRANSPORT_IDS as readonly string[]).includes(v);
-}
-export function isListenerSecurity(v: unknown): v is ListenerSecurity {
-  return typeof v === 'string' && (LISTENER_SECURITY_IDS as readonly string[]).includes(v);
 }
 
 /** Why an edge layer cannot carry a listener; surfaced to the operator in words. */

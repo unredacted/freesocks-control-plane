@@ -15,7 +15,6 @@ export const EDGE_LIVE_STATUSES = [
   'planning',
   'provisioning',
   'verifying',
-  'standby',
   'active',
   'draining',
   'destroying',
@@ -115,9 +114,4 @@ export function withoutEdge<T extends string>(
 
 export function publishedCount(published: readonly (string | null)[]): number {
   return published.filter((e) => e !== null).length;
-}
-
-export function poolIndexOf(published: readonly (string | null)[], edgeId: string): number | null {
-  const i = published.indexOf(edgeId);
-  return i >= 0 ? i : null;
 }

@@ -1,6 +1,5 @@
 /**
- * What the new-origin dialog can be opened with: the guided setup's draft fits
- * (`StoredDraft` in setup/draft.ts is this shape).
+ * What the new-origin dialog can be opened with (an origin draft and listener forms).
  *
  * Exports:
  *   RelayPrefill

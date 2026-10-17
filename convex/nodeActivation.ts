@@ -15,6 +15,12 @@
  *  - A FRONTED node's run stops at `publish`: Autopilot publishes under the
  *    publication guard and its go-live delegates to `promoteCandidate`.
  */
+import {
+  needsEndpointVerification,
+  verificationCurrent,
+  verificationStaleReason,
+} from './lib/edges/verification';
+import { verificationListenersOf } from './lib/edges/verificationContext';
 import { ConvexError, v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import type { ActionCtx, MutationCtx, QueryCtx } from './_generated/server';
@@ -25,11 +31,17 @@ import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
 import { randomHex } from './lib/crypto';
 import {
   evidenceHolds,
+  publicationAdmitted,
+  publicationFits,
   reviewHashOf,
   type Evidence,
+  type PublicationShape,
+  type ReviewListener,
   type ReviewShape,
   type Revisions,
+  type Stage,
 } from './lib/backend/activation';
+import type { VectorActivation } from './lib/edges/setupRuns';
 import { panelDigestKey } from './lib/backend/key';
 import {
   REHEARSAL_USER_AGENTS,
@@ -38,16 +50,19 @@ import {
 } from './lib/backend/rehearsal';
 import { QUALIFICATION_TRAFFIC_LIMIT_BYTES } from './relayQualification';
 import { TEST_CREDENTIAL_TAG, testCredentialUsername } from './edgeTestCredentials';
+import { REALITY_RAW_FLOW } from './edgeTestLinks';
 import {
   isDirect,
   modeEntry,
+  nodeGateFor,
   modeSlug,
   originAddressOf,
   originHostnameOf,
   transportFor,
 } from './nodeIntents';
 import { bumpGateVersion, setupReady, type Setup } from './backendSetup';
-import { scheduleMirrorRefresh } from './relays';
+import { relayForBackendNode, scheduleMirrorRefresh } from './relays';
+import { isCandidateEdge, type NodeGate } from './lib/backend/deliveryGate';
 
 const refuse = (code: string, message: string): never => {
   throw new ConvexError({ code, message });
@@ -87,35 +102,13 @@ async function reviewShapeOf(
   const mode = modeEntry(setup, modeSlug(intent));
   const transport = transportFor(setup, modeSlug(intent));
   const direct = isDirect(mode.shape);
-  let listenerKeys: string[] = [];
-  let provider: ReviewShape['provider'] = { accountId: null, templateHash: null };
-  if (!direct) {
-    const relay = (
-      await ctx.db
-        .query('relays')
-        .withIndex('by_backend_server', (q) => q.eq('backendServerId', intent.backendServerId))
-        .collect()
-    ).find((r) => r.origin.kind === 'panel-node' && r.origin.nodeName === intent.name);
-    if (relay) {
-      const listeners = await ctx.db
-        .query('relayListeners')
-        .withIndex('by_relay', (q) => q.eq('relayId', relay._id))
-        .collect();
-      listenerKeys = listeners
-        .filter((l) => !l.retired)
-        .map((l) => l.listenerKey)
-        .sort();
-      const edges = await ctx.db
-        .query('edges')
-        .withIndex('by_relay_status', (q) => q.eq('relayId', relay._id).eq('status', 'active'))
-        .collect();
-      const live = edges.find((e) => !!e.accountId);
-      provider = {
-        accountId: live?.accountId ? String(live.accountId) : null,
-        templateHash: live?.templateHash ?? null,
-      };
-    }
-  }
+  const listeners: ReviewListener[] = direct
+    ? []
+    : (await frontedListenersOf(ctx, intent)).map((l) => ({
+        listenerKey: l.listenerKey,
+        accountId: l.accountId,
+        templateHash: l.templateHash,
+      }));
   // A direct node's addresses follow the names its transport lists today.
   const names = direct ? await liveNamesOf(ctx, intent, transport.uuid) : [];
   return {
@@ -124,11 +117,58 @@ async function reviewShapeOf(
     ingress: intent.settings.ingress ?? null,
     configRevision: intent.configRevision ?? '',
     authRevision: intent.authRevision ?? null,
-    listenerKeys,
-    provider,
+    listeners,
     subscriptionTemplates: Object.fromEntries(setup.templates.map((t) => [t.family, t.hash])),
     addressTuples: names.map((sni) => ({ address: originAddress, port: transport.port, sni })),
   };
+}
+
+/**
+ * Every required listener of a fronted node, sorted by key, with the edge
+ * that fronts it: the candidate the open setup run holds for it, else the
+ * listener's published template edge. The review lists each one (never one
+ * representative edge), so a change of account or template on ANY listener
+ * is a new review.
+ */
+async function frontedListenersOf(
+  ctx: { db: QueryCtx['db'] },
+  intent: Intent,
+): Promise<
+  Array<
+    ReviewListener & {
+      layer: 'l4' | 'l7';
+      edge: Doc<'edges'> | null;
+      templateEdgeId: Id<'edges'> | null;
+    }
+  >
+> {
+  const relay = await relayForBackendNode(ctx.db, intent.backendServerId, intent.name);
+  if (!relay || relay.origin.kind !== 'panel-node' || relay.origin.nodeName !== intent.name)
+    return [];
+  const run = await openSetupRunOf(ctx, intent);
+  const listeners = (
+    await ctx.db
+      .query('relayListeners')
+      .withIndex('by_relay', (q) => q.eq('relayId', relay._id))
+      .collect()
+  )
+    .filter((l) => !l.retired)
+    .sort((a, b) => a.listenerKey.localeCompare(b.listenerKey));
+  const out = [];
+  for (const l of listeners) {
+    const entry = run?.listeners.find((x) => x.listenerKey === l.listenerKey);
+    const edgeId = entry?.edgeId ?? l.templateEdgeId;
+    const edge = edgeId ? await ctx.db.get(edgeId) : null;
+    out.push({
+      listenerKey: l.listenerKey,
+      accountId: edge?.accountId ? String(edge.accountId) : null,
+      templateHash: edge?.templateHash ?? null,
+      layer: entry?.layer ?? edge?.layer ?? ('l4' as const),
+      edge,
+      templateEdgeId: l.templateEdgeId ?? null,
+    });
+  }
+  return out;
 }
 
 /** The names a REALITY transport lists on the backend right now (its family's rollouts move them). */
@@ -158,14 +198,68 @@ export const review = internalQuery({
     const reviewHash = await reviewHashOf(shape);
     const direct = isDirect(modeEntry(setup, modeSlug(intent)).shape);
     const standbys = direct ? null : await standbysOf(ctx, intent);
-    const blockers = activationBlockers(intent, setup, direct, standbys);
-    return { shape, reviewHash, blockers, stage: intent.activation.stage };
+    const blockers = await activationBlockers(ctx, intent, setup, direct, standbys);
+    return {
+      shape,
+      reviewHash,
+      blockers,
+      stage: intent.activation.stage,
+      // Shown, never hashed: the addresses a fronted approval releases.
+      display: { standbys: direct ? [] : await standbyDisplayOf(ctx, intent) },
+    };
   },
 });
+
+/** What the review card shows of a fronted node's candidates: one line per required listener. */
+async function standbyDisplayOf(ctx: { db: QueryCtx['db'] }, intent: Intent) {
+  const out = [];
+  for (const l of await frontedListenersOf(ctx, intent)) {
+    const e = l.edge;
+    const host = e ? (e.addresses.v4 ?? e.addresses.hostname ?? e.addresses.v6 ?? null) : null;
+    const port = e?.listeners[0]?.edgePort ?? null;
+    const account = e?.accountId ? await ctx.db.get(e.accountId) : null;
+    out.push({
+      listenerKey: l.listenerKey,
+      layer: l.layer,
+      endpoint: host ? (port ? `${host}:${port}` : host) : null,
+      accountName: account?.name ?? null,
+      provider: e?.provider ?? null,
+    });
+  }
+  return out;
+}
 
 // --- a fronted node's candidates: the standbys of its Autopilot run ---------------------------------
 
 const OPEN_SETUP_RUN = new Set(['running', 'waiting', 'needs_you']);
+
+/** The guided setup run protecting this node right now (one per node by construction). */
+async function openSetupRunOf(
+  ctx: { db: QueryCtx['db'] },
+  intent: Intent,
+): Promise<Doc<'edgeSetupRuns'> | null> {
+  return (
+    (
+      await ctx.db
+        .query('edgeSetupRuns')
+        .withIndex('by_origin', (q) =>
+          q.eq('backendServerId', intent.backendServerId).eq('nodeName', intent.name),
+        )
+        .collect()
+    ).find((r) => OPEN_SETUP_RUN.has(r.state)) ?? null
+  );
+}
+
+interface Standbys {
+  /** null = verified now. */
+  code: string | null;
+  /** Unverified only because the node's REALITY key moved since the ticks. */
+  keyChanged?: boolean;
+  listenerKeys: string[];
+  /** The open setup run whose standbys these are (absent = none). */
+  runId?: Id<'edgeSetupRuns'>;
+  edgeIds: Id<'edges'>[];
+}
 
 /**
  * A front or origin node's candidates are the listeners of the Autopilot run
@@ -173,32 +267,107 @@ const OPEN_SETUP_RUN = new Set(['running', 'waiting', 'needs_you']);
  * revision-bound confirmation) before that run reaches publish and waits for
  * this approval. `code` null = verified now.
  */
-async function standbysOf(
-  ctx: { db: QueryCtx['db'] },
-  intent: Intent,
-): Promise<{ code: string | null; listenerKeys: string[] }> {
-  const run = (
-    await ctx.db
-      .query('edgeSetupRuns')
-      .withIndex('by_origin', (q) =>
-        q.eq('backendServerId', intent.backendServerId).eq('nodeName', intent.name),
-      )
-      .collect()
-  ).find((r) => OPEN_SETUP_RUN.has(r.state));
-  if (!run) return { code: 'servers.standbys_missing', listenerKeys: [] };
+async function standbysOf(ctx: { db: QueryCtx['db'] }, intent: Intent): Promise<Standbys> {
+  const run = await openSetupRunOf(ctx, intent);
+  if (!run) return { code: 'servers.standbys_missing', listenerKeys: [], edgeIds: [] };
   const listenerKeys = run.listeners.map((l) => l.listenerKey).sort();
+  const edgeIds = run.listeners.map((l) => l.edgeId).filter((e): e is Id<'edges'> => !!e);
   if (run.listeners.length === 0 || run.listeners.some((l) => !l.edgeId || l.verify !== 'verified'))
-    return { code: 'servers.standbys_unverified', listenerKeys };
-  return { code: null, listenerKeys };
+    return { code: 'servers.standbys_unverified', listenerKeys, runId: run._id, edgeIds };
+  // The run's own verdict was taken when the operator ticked: an L4 tick
+  // binds to the node's REALITY auth revision too, so a key, short id or
+  // clock bound that moved since needs the addresses tried again (no client
+  // has proven the new key through them).
+  const relay = run.relayId ? await ctx.db.get(run.relayId) : null;
+  if (relay) {
+    const listeners = await verificationListenersOf(
+      ctx.db,
+      relay,
+      await ctx.db
+        .query('relayListeners')
+        .withIndex('by_relay', (q) => q.eq('relayId', relay._id))
+        .collect(),
+    );
+    let stale = false;
+    let keyChanged = true;
+    for (const rl of run.listeners) {
+      if (rl.layer === 'l7' || !rl.edgeId) continue;
+      const e = await ctx.db.get(rl.edgeId);
+      const l = listeners.find((x) => x.listenerKey === rl.listenerKey && !x.retired);
+      if (!e || !l || !needsEndpointVerification(e) || verificationCurrent(e, l)) continue;
+      stale = true;
+      if (verificationStaleReason(e, l) !== 'reality_key_changed') keyChanged = false;
+    }
+    if (stale)
+      return {
+        code: 'servers.standbys_unverified',
+        ...(keyChanged ? { keyChanged: true } : {}),
+        listenerKeys,
+        runId: run._id,
+        edgeIds,
+      };
+  }
+  return { code: null, listenerKeys, runId: run._id, edgeIds };
 }
 
-/** What keeps a node from being approved, as code words. */
-function activationBlockers(
+/**
+ * The stage an approval starts from, or null when the node's stage cannot be
+ * approved. A fronted node whose standbys hold NOW is approvable from
+ * `machine_ready` (its first approval) and from `live` (a re-approval of a
+ * live node, members keep the committed delivery meanwhile).
+ */
+function approvalStageOf(intent: Intent, direct: boolean, standbys: Standbys | null): Stage | null {
+  const stage = intent.activation.stage;
+  if (stage === 'candidates_verified' || stage === 'awaiting_approval') return stage;
+  if (!direct && standbys && !standbys.code && (stage === 'machine_ready' || stage === 'live'))
+    return 'candidates_verified';
+  return null;
+}
+
+/**
+ * Candidate Hosts on a LIVE node (docs/servers.md "Node lifecycle"). A
+ * direct node's body passes to members as the backend serves it, so an
+ * address enabled for a candidate cannot be kept out of it; a fronted node's
+ * listener without a committed template edge gets a new Host or a new Host
+ * pointer. Either needs the gate closed first: maintenance, then a fresh
+ * activation. Null when the approval keeps to what members already have.
+ */
+async function liveIsolationBlocker(
+  ctx: { db: QueryCtx['db'] },
+  intent: Intent,
+  direct: boolean,
+): Promise<string | null> {
+  if (intent.delivery.disposition !== 'live' || !intent.approved) return null;
+  const committed = intent.approved.committed;
+  if (direct) {
+    const extra = (intent.addressUuids ?? []).some((u) => !committed.hostUuids.includes(u));
+    return extra ? 'servers.maintenance_required' : null;
+  }
+  const gate = await nodeGateFor(ctx, intent.backendServerId, intent.name);
+  for (const l of await frontedListenersOf(ctx, intent)) {
+    if (pointerMoves(gate, l.templateEdgeId)) return 'servers.maintenance_required';
+  }
+  return null;
+}
+
+/**
+ * Whether a candidate on this listener of a LIVE node would need a new Host
+ * or a moved Host pointer: the listener has no template edge, or its template
+ * is itself a candidate (members are not served through it yet). A template
+ * an automatic replacement moved stays fine: what members get is what counts.
+ */
+function pointerMoves(gate: NodeGate, templateEdgeId: Id<'edges'> | null): boolean {
+  return !templateEdgeId || isCandidateEdge(gate, templateEdgeId as string);
+}
+
+/** What keeps a node from being approved, as code words (the first is what `approve` refuses with). */
+async function activationBlockers(
+  ctx: { db: QueryCtx['db'] },
   intent: Intent,
   setup: Setup,
   direct: boolean,
-  standbys: { code: string | null } | null,
-): string[] {
+  standbys: Standbys | null,
+): Promise<string[]> {
   const out: string[] = [];
   const revs = revisionsOf(intent);
   const has = (k: string) =>
@@ -206,8 +375,10 @@ function activationBlockers(
   if (!has('machine_ready')) out.push('servers.machine_not_ready');
   if (direct && !has('direct_confirmed')) out.push('servers.direct_unconfirmed');
   // An adopted node whose edge FCP does not run yet has no standbys to show.
-  if (!direct && !intent.adopted?.externallyFronted && !has('standbys_verified') && standbys?.code)
-    out.push(standbys.code);
+  // Every other fronted approval is driven by its open setup run: without
+  // one, nothing would publish the candidate.
+  if (!direct && !intent.adopted?.externallyFronted && standbys?.code)
+    out.push(standbys.keyChanged ? `${standbys.code}:key_changed` : standbys.code);
   const mode = modeEntry(setup, modeSlug(intent));
   if (mode.placement !== 'bound') out.push('servers.placement_skipped');
   if (mode.family === 'unbound' || mode.family === 'target_mismatch')
@@ -216,6 +387,9 @@ function activationBlockers(
   if (setup.privacy === 'drifted') out.push('servers.privacy_drifted');
   if (intent.maintenance) out.push('servers.maintenance_open');
   if (intent.state === 'retiring' || intent.state === 'retired') out.push('servers.node_retiring');
+  const isolation = await liveIsolationBlocker(ctx, intent, direct);
+  if (isolation) out.push(isolation);
+  if (!approvalStageOf(intent, direct, standbys)) out.push('servers.stage');
   return out;
 }
 
@@ -417,6 +591,7 @@ export const buildDirectTestLink = internalAction({
     const endpoint = `${c.originAddress}:${params.port ?? reality.port}`;
     const q = new URLSearchParams({
       encryption: 'none',
+      flow: REALITY_RAW_FLOW,
       security: 'reality',
       type: 'tcp',
       sni,
@@ -540,12 +715,13 @@ export const approve = internalMutation({
     const setup = await setupOf(ctx, intent.backendServerId);
     const direct = isDirect(modeEntry(setup, modeSlug(intent)).shape);
     const standbys = direct ? null : await standbysOf(ctx, intent);
-    const blockers = activationBlockers(intent, setup, direct, standbys);
-    if (blockers.length > 0) refuse(blockers[0]!, 'The node is not ready for approval');
+    const blockers = await activationBlockers(ctx, intent, setup, direct, standbys);
+    // A blocker's `:detail` is for the review card; the refusal is its code.
+    if (blockers.length > 0)
+      refuse(blockers[0]!.split(':')[0]!, 'The node is not ready for approval');
     const now = Date.now();
-    let stage = intent.activation.stage;
     let evidence = intent.activation.evidence;
-    if (!direct && stage === 'machine_ready' && standbys && !standbys.code) {
+    if (!direct && standbys && !standbys.code) {
       // The standbys hold now: recorded as evidence bound to the revisions
       // (the commit re-checks it), and the ladder reaches candidates_verified.
       evidence = [
@@ -557,24 +733,29 @@ export const approve = internalMutation({
           detail: standbys.listenerKeys.join(','),
         },
       ];
-      stage = 'candidates_verified';
     }
-    if (stage !== 'candidates_verified' && stage !== 'awaiting_approval')
-      refuse('servers.stage', `The node is at ${stage}, not ready for approval`);
     const shape = await reviewShapeOf(ctx, intent, setup);
     const reviewHash = await reviewHashOf(shape);
     if (reviewHash !== a.reviewHash)
       refuse('servers.review_stale', 'The review changed since you read it. Read it again');
-    // Any older run of this node is superseded: it never commits.
+    // Any older run of this node is superseded: it never commits. Its
+    // candidates stay isolated from members (the gate counts every
+    // uncommitted run's resources) until this run commits or they are released.
     for (const r of await ctx.db
       .query('panelActivationRuns')
       .withIndex('by_intent', (q) => q.eq('intentId', intent._id))
       .collect())
       if (r.state === 'running' || r.state === 'blocked' || r.state === 'review')
         await ctx.db.patch(r._id, { state: 'superseded', updatedAt: now });
+    // A fronted approval names the standbys of the open setup run: they are
+    // this run's candidates from now on (members never see one before the
+    // commit), except an edge members already hold under the committed approval.
+    const committedEdges = new Set(intent.approved?.committed.edgeIds ?? []);
+    const setupRunId = standbys?.runId;
     const runId = await ctx.db.insert('panelActivationRuns', {
       backendServerId: intent.backendServerId,
       intentId: intent._id,
+      ...(setupRunId ? { setupRunId } : {}),
       generation: intent.generation,
       stepVersion: 1,
       state: 'running',
@@ -590,7 +771,9 @@ export const approve = internalMutation({
       },
       resources: {
         hostUuids: direct ? [...(intent.addressUuids ?? [])] : [],
-        edgeIds: [],
+        edgeIds: direct
+          ? []
+          : (standbys?.edgeIds ?? []).filter((e) => !committedEdges.has(e as string)),
       },
       events: [{ at: now, code: 'approved' }],
       createdAt: now,
@@ -625,20 +808,21 @@ export const approve = internalMutation({
         runId,
         stepVersion: 1,
       });
+    else if (setupRunId) {
+      // The setup run waiting at publish is woken for THIS approval: the link
+      // is ownership (stable across retries), the generation read here fences
+      // the wake against an attempt that moved on meanwhile.
+      const setupRun = (await ctx.db.get(setupRunId))!;
+      await ctx.db.patch(setupRunId, { activationRunId: runId, updatedAt: now });
+      await ctx.scheduler.runAfter(0, internal.edgeSetupRuns.wakeForApproval, {
+        setupRunId,
+        activationRunId: runId,
+        generation: setupRun.generation,
+      });
+    }
     return { runId };
   },
 });
-
-/** A revision change under a node supersedes its running activation (called by the settings patch). */
-export async function supersedeRuns(ctx: MutationCtx, intentId: Id<'panelNodeIntents'>) {
-  const now = Date.now();
-  for (const r of await ctx.db
-    .query('panelActivationRuns')
-    .withIndex('by_intent', (q) => q.eq('intentId', intentId))
-    .collect())
-    if (r.state === 'running' || r.state === 'blocked' || r.state === 'review')
-      await ctx.db.patch(r._id, { state: 'superseded', updatedAt: now });
-}
 
 // --- the direct run: enable the Host, rehearse, commit ----------------------------------------------
 
@@ -765,8 +949,16 @@ export const runDirect = internalAction({
       });
     try {
       if (c.run.stage === 'hosts') {
-        // The candidate addresses: enabled now, filtered from members by the gate until the commit.
+        // The candidate addresses: enabled now, kept from members by the
+        // closed gate until the commit. A LIVE node's gate is open, and a
+        // direct body cannot be filtered, so a new address waits for maintenance.
         if (c.addresses.length === 0) return block('servers.host_missing').then(() => null);
+        const committed = c.intent.approved?.committed.hostUuids ?? [];
+        if (
+          c.intent.delivery.disposition === 'live' &&
+          c.addresses.some((h) => !committed.includes(h.hostUuid))
+        )
+          return block('servers.maintenance_required').then(() => null);
         for (const h of c.addresses) {
           if (!h.isDisabled) continue;
           const { opId } = await ctx.runMutation(internal.backendWrites.requestAddressUpdate, {
@@ -898,7 +1090,8 @@ export async function promoteCandidate(
   if (
     now.machineRevision !== revs.machineRevision ||
     now.configRevision !== revs.configRevision ||
-    (now.authRevision ?? null) !== (revs.authRevision ?? null)
+    (now.authRevision ?? null) !== (revs.authRevision ?? null) ||
+    now.deliveryRevision !== revs.deliveryRevision
   )
     return { ok: false, code: 'servers.revision_moved' };
   const shape = await reviewShapeOf(ctx, intent, setup);
@@ -920,9 +1113,18 @@ export async function promoteCandidate(
   ).some((o) => o.state === 'pending' || o.state === 'sent' || o.state === 'unresolved');
   if (open) return { ok: false, code: 'servers.obligation_unresolved' };
   const at = Date.now();
+  // What members are served from now on: this run's set, plus every edge of
+  // the previous commit still published (a replacement joins the pool beside
+  // the committed edges; the replace or unpublish that retires them is its own
+  // decision), so a later approval never mistakes a served edge for a candidate.
+  const kept: string[] = [];
+  for (const id of intent.approved?.committed.edgeIds ?? []) {
+    const e = await ctx.db.get(id as Id<'edges'>);
+    if (e && e.publication === 'published' && e.status === 'active') kept.push(id);
+  }
   const committed = {
     hostUuids: run.resources.hostUuids,
-    edgeIds: [...new Set([...run.resources.edgeIds, ...(extra.edgeIds ?? [])])],
+    edgeIds: [...new Set([...kept, ...run.resources.edgeIds, ...(extra.edgeIds ?? [])])],
   };
   await ctx.db.patch(run._id, {
     state: 'committed',
@@ -973,20 +1175,30 @@ export const commit = internalMutation({
     const run = await ctx.db.get(runId);
     if (!run || run.stepVersion !== stepVersion) return { ok: false as const, code: 'stale' };
     const r = await promoteCandidate(ctx, run);
-    if (!r.ok) {
-      const now = Date.now();
-      await ctx.db.patch(runId, {
-        state: 'blocked',
-        code: r.code,
-        stepVersion: run.stepVersion + 1,
-        events: [...run.events, { at: now, code: r.code }],
-        updatedAt: now,
-      });
-      await parkAfterBlock(ctx, run);
-    }
+    if (!r.ok) await blockActivation(ctx, run, r.code);
     return r;
   },
 });
+
+/**
+ * Block a running activation and park the node where it can be approved
+ * again (`awaiting_approval`; a live node keeps its committed delivery). The
+ * run keeps its record and its candidates stay isolated; the next approval
+ * supersedes it. A run that is no longer running is left as it is.
+ */
+export async function blockActivation(ctx: MutationCtx, run: Run, code: string): Promise<void> {
+  const fresh = await ctx.db.get(run._id);
+  if (!fresh || fresh.state !== 'running') return;
+  const now = Date.now();
+  await ctx.db.patch(run._id, {
+    state: 'blocked',
+    code,
+    stepVersion: fresh.stepVersion + 1,
+    events: [...fresh.events, { at: now, code }],
+    updatedAt: now,
+  });
+  await parkAfterBlock(ctx, fresh);
+}
 
 /** The activating run of an enrolled node, for Autopilot's publish and go-live (null = none). */
 export async function activatingRunFor(
@@ -1009,11 +1221,175 @@ export async function activatingRunFor(
 
 /** Record an edge an activating run published as one of its candidate resources. */
 export async function recordCandidateEdge(ctx: MutationCtx, run: Run, edgeId: Id<'edges'>) {
-  if (run.resources.edgeIds.includes(edgeId)) return;
+  const fresh = (await ctx.db.get(run._id)) ?? run;
+  if (fresh.resources.edgeIds.includes(edgeId)) return;
   await ctx.db.patch(run._id, {
-    resources: { ...run.resources, edgeIds: [...run.resources.edgeIds, edgeId] },
+    resources: { ...fresh.resources, edgeIds: [...fresh.resources.edgeIds, edgeId] },
     updatedAt: Date.now(),
   });
+}
+
+/** The review a node's committed delivery was approved under (null: none on record, e.g. adopted). */
+async function committedReviewOf(
+  ctx: { db: QueryCtx['db'] },
+  intent: Intent,
+): Promise<ReviewShape | null> {
+  if (!intent.approved) return null;
+  const runs = (
+    await ctx.db
+      .query('panelActivationRuns')
+      .withIndex('by_intent', (q) => q.eq('intentId', intent._id))
+      .collect()
+  )
+    .filter(
+      (r) => r.state === 'committed' && r.candidate.reviewHash === intent.approved!.reviewHash,
+    )
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+  if (!runs[0]) return null;
+  try {
+    return JSON.parse(runs[0].candidate.review) as ReviewShape;
+  } catch {
+    return null;
+  }
+}
+
+export type PublicationAdmission =
+  | { kind: 'unmanaged' }
+  | { kind: 'committed' }
+  | { kind: 'candidate'; run: Run }
+  | { kind: 'refused'; code: string };
+
+/**
+ * The approval one edge publication needs (docs/servers.md "Node lifecycle"),
+ * compared with the publication itself: `unmanaged` for a node FCP does not
+ * manage; `candidate` when the node's one running activation approved this
+ * shape (listener, account, template) and the node's gate keeps it from
+ * members until the commit; `committed` when the node is live with no
+ * activation running, nothing moved since the commit (revisions: machine,
+ * ingress, transport, auth) and the publication fits the committed review: a
+ * replacement address within the approved shape reuses that approval. Any
+ * other account, template, listener or revision needs a new review:
+ * `refused`. The publish pre-check of a setup run and the rotation start gate
+ * both call this.
+ */
+export async function publicationAdmission(
+  ctx: { db: QueryCtx['db'] },
+  backendServerId: Id<'backendServers'>,
+  nodeName: string,
+  pub: PublicationShape,
+): Promise<PublicationAdmission> {
+  const intent = await ctx.db
+    .query('panelNodeIntents')
+    .withIndex('by_server_name', (q) =>
+      q.eq('backendServerId', backendServerId).eq('name', nodeName),
+    )
+    .unique();
+  if (!intent) return { kind: 'unmanaged' };
+  if (intent.maintenance) return { kind: 'refused', code: 'servers.maintenance_open' };
+  if (intent.state === 'retiring' || intent.state === 'retired')
+    return { kind: 'refused', code: 'servers.node_retiring' };
+  const disposition = intent.delivery.disposition;
+  const run = intent.activation.currentRunId
+    ? await ctx.db.get(intent.activation.currentRunId)
+    : null;
+  if (run && run.state === 'running') {
+    const admitted = publicationAdmitted({
+      disposition,
+      underMaintenance: false,
+      matchesCommitted: false,
+      matchesApprovedCandidate: true,
+    });
+    if (admitted !== 'candidate') return { kind: 'refused', code: 'servers.node_not_approved' };
+    let approved: ReviewShape | null = null;
+    try {
+      approved = JSON.parse(run.candidate.review) as ReviewShape;
+    } catch {
+      approved = null;
+    }
+    if (!publicationFits(approved, pub)) return { kind: 'refused', code: 'servers.review_stale' };
+    // On a LIVE node a candidate must not need a new Host or Host pointer.
+    if (disposition === 'live' && (await isolationBreaks(ctx, intent, pub.listenerKey)))
+      return { kind: 'refused', code: 'servers.maintenance_required' };
+    return { kind: 'candidate', run };
+  }
+  if (
+    publicationAdmitted({
+      disposition,
+      underMaintenance: false,
+      matchesCommitted: true,
+      matchesApprovedCandidate: false,
+    }) !== 'committed' ||
+    !intent.approved
+  )
+    return { kind: 'refused', code: 'servers.node_not_approved' };
+  const a = intent.approved;
+  const now = revisionsOf(intent);
+  if (
+    now.machineRevision !== a.machineRevision ||
+    now.configRevision !== a.configRevision ||
+    (now.authRevision ?? null) !== (a.authRevision ?? null) ||
+    now.deliveryRevision !== a.deliveryRevision
+  )
+    return { kind: 'refused', code: 'servers.node_not_approved' };
+  // The committed approval's shape; a review stored before the per-listener
+  // shape (or an adopted node's, which has none) is read as the shape members
+  // are served through now: each listener's template edge.
+  const committedShape = await committedReviewOf(ctx, intent);
+  const shape = committedShape?.listeners
+    ? committedShape
+    : { listeners: await servedListenersOf(ctx, intent) };
+  if (!publicationFits(shape, pub)) return { kind: 'refused', code: 'servers.node_not_approved' };
+  return { kind: 'committed' };
+}
+
+/** Each listener of a fronted node with the account and template of its template edge (what is served). */
+async function servedListenersOf(
+  ctx: { db: QueryCtx['db'] },
+  intent: Intent,
+): Promise<ReviewListener[]> {
+  const out: ReviewListener[] = [];
+  for (const l of await frontedListenersOf(ctx, intent)) {
+    const e = l.templateEdgeId ? await ctx.db.get(l.templateEdgeId) : null;
+    out.push({
+      listenerKey: l.listenerKey,
+      accountId: e?.accountId ? String(e.accountId) : null,
+      templateHash: e?.templateHash ?? null,
+    });
+  }
+  return out;
+}
+
+/** Whether publishing on this listener of a live node would add or move a committed Host pointer. */
+async function isolationBreaks(
+  ctx: { db: QueryCtx['db'] },
+  intent: Intent,
+  listenerKey: string,
+): Promise<boolean> {
+  const gate = await nodeGateFor(ctx, intent.backendServerId, intent.name);
+  const l = (await frontedListenersOf(ctx, intent)).find((x) => x.listenerKey === listenerKey);
+  return pointerMoves(gate, l?.templateEdgeId ?? null);
+}
+
+/**
+ * The activation candidate an origin's rehearsal renders for (the setup
+ * vector carries it): the node's running activation run and the revisions it
+ * approved; null for an origin that is not an enrolled node with one.
+ */
+export async function activationVectorFor(
+  ctx: { db: QueryCtx['db'] },
+  relay: Doc<'relays'>,
+): Promise<VectorActivation | null> {
+  if (relay.origin.kind !== 'panel-node' || !relay.backendServerId) return null;
+  const act = await activatingRunFor(ctx, relay.backendServerId, relay.origin.nodeName);
+  if (!act?.run) return null;
+  const c = act.run.candidate;
+  return {
+    runId: act.run._id as string,
+    machineRevision: c.machineRevision,
+    configRevision: c.configRevision,
+    authRevision: c.authRevision ?? null,
+    deliveryRevision: c.deliveryRevision,
+  };
 }
 
 export { transportFor };

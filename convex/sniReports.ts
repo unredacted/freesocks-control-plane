@@ -49,7 +49,12 @@ export async function attributeReport(
 
   // Exactly the snapshot's edges, as the account page rebuilds its labels: a
   // recomputation over the whole pool could name an edge the member never got.
-  const { published } = await publishedEdgesOf(ctx, origin, { includeIneligible: true });
+  const { published } = await publishedEdgesOf(
+    ctx,
+    origin,
+    { kind: 'member' },
+    { includeIneligible: true },
+  );
   const byId = new Map(published.map((p) => [p.edgeId, p]));
   const primary = snap.primaryEdgeId ? byId.get(snap.primaryEdgeId) : undefined;
   const backup = snap.backupEdgeId ? byId.get(snap.backupEdgeId) : undefined;

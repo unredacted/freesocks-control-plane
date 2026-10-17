@@ -44,6 +44,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 interface Panel {
@@ -442,5 +443,33 @@ describe('acceptance', () => {
     const rc = await receipt(t, rolloutId!, edgeId);
     await t.mutation(internal.sniRollouts.confirmReceipt, { receiptId: rc.receiptId });
     expect(await activeNames(t, listenerId)).toEqual(['a.example', 'b.example', 'fresh-1.example']);
+  });
+});
+
+describe('retention', () => {
+  test("a finished rollout past the window goes with its receipts; the binding's newest stays", async () => {
+    const { t, panel, bindingId, edgeId } = await seed();
+    const first = await t.action(internal.sniRollouts.start, { bindingId });
+    const rc = await receipt(t, first.rolloutId!, edgeId);
+    panel.node.lastStatusChange = 't1';
+    await t.action(internal.backendWrites.reconcile, {});
+    await t.mutation(internal.sniFamilies.importNames, { slug: 'fam', lines: ['fresh-3.example'] });
+    for (const n of (await t.query(internal.sniFamilies.dueForQualification, {})).names)
+      await t.mutation(internal.sniFamilies.recordQualification, { id: n.id, ok: true });
+    const second = await t.action(internal.sniRollouts.start, { bindingId });
+    const old = Date.now() - 100 * 86_400_000;
+    await t.run(async (ctx) => {
+      for (const r of await ctx.db.query('sniRollouts').collect())
+        await ctx.db.patch(r._id, { updatedAt: old });
+    });
+    vi.useFakeTimers();
+    await t.mutation(internal.retention.sweepSniRollouts, {});
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const left = await t.run(async (ctx) => ({
+      rollouts: (await ctx.db.query('sniRollouts').collect()).map((r) => r._id),
+      receipt: await ctx.db.get(rc.receiptId),
+    }));
+    expect(left.rollouts).toEqual([second.rolloutId]);
+    expect(left.receipt).toBeNull();
   });
 });

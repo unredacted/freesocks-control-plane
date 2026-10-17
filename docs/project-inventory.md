@@ -277,7 +277,7 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   `backendServers` row of any type) and calls that type's provider from the registry
   (`convex/lib/backends/registry.ts`). The DB half (pool selection, key→instance resolution, the
   `backend-healthcheck` cron) is generic in `convex/backendServers.ts`; instances are admin-managed
-  ("Backend servers" CMS screen). See `backends.md`.
+  (the CMS Servers -> Backends tab). See `backends.md`.
 - **Remnawave** (surfaced to users as **"Xray"**): pure HTTP provider. **Live, default.** Instances
   are DB rows; the primary is seeded from `REMNAWAVE_*` env at cutover, then managed in the CMS.
 - **Outline**: pure HTTP provider + DB instances. **Dormant** (`outline.enabled=false`). See
@@ -294,12 +294,13 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   status/tier filters; disable / **re-enable** / reset-traffic / resync / **grant-or-extend
   membership**; backend shown; **paginated**); **Admins** (invite links + deactivate/reactivate
   - per-passkey revoke, §1.1); **API tokens** (create / reveal-once / revoke; scope **group**
-    toggles); **Backend servers** (CRUD + test-connection; secret `config`/`apiUrl` stored
-    server-side, only ever returned masked); **Remnawave** (per-mode node-placement mode group pools —
+    toggles); **Servers** (one leaf, three tabs: **Backends**, CRUD + test-connection, secret
+    `config`/`apiUrl` stored server-side, only ever returned masked, + the Xray no-log hardening
+    card; **Nodes**, each node's one page with its activation and edges; **Mode pools**, per-mode
+    node-placement mode group pools —
     write-only UUIDs, with per-mode bound counts — + a read-only per-placement node-load
-    table + the **Xray no-log hardening card**: dry-run `logging-status` / apply
-    `harden-logging` against every backend config profile; §"Xray logging privacy harden"
-    in `docs/backends.md`); **Billing** (per-rail config + a **readiness** check
+    table; the hardening card is a dry-run `logging-status` / apply `harden-logging` against
+    every backend config profile, §"Xray logging privacy harden" in `docs/backends.md`); **Billing** (per-rail config + a **readiness** check
     that flags enabled-but-misconfigured rails; §1.7); **Storage mirrors** (provider pool, §1.7);
     **Client apps** (the DB-driven recommended-client catalog — `convex/clients.ts`, `AdminClients.svelte`,
     `/admin/clients`; per-client `easeOfUse` (easy/moderate/advanced) + `openSource`/`license`/
@@ -325,8 +326,8 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   is per connection mode.)
 
 - **Edges** (`/admin/edges`, `docs/edges.md`; scopes `admin:servers:*` for
-  infrastructure, `admin:settings:*` for the `edge.*` config, `admin:edges:register` for the
-  node role's by-slug registration, confined to the token's registration boundary): origins are
+  infrastructure, `admin:settings:*` for the `edge.*` config; no edges route takes the node
+  role's `admin:edges:register`, which is for the Servers by-name routes): origins are
   ANY origin (a backend node, a whole backend server such as Outline, or a manual address) with
   **listeners** (protocol / stream transport / security from a catalogue, names with
   retire/drain, REALITY target, origin transport, a match rule for the renderer, the backend
@@ -340,10 +341,10 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   **Edges → Probes** (`/admin/edges/probes`; the old `/admin/telemetry/probes` redirects) holds
   the reachability matrix over every probe target, run history, "probe now" and a probe audit
   feed; probe settings live under Edges → Settings. **Every
-  route under `/api/v1/admin/edges/` is HPKE-sealed by verb.** IaC: ONE idempotent
-  `PUT …/edges/relays/by-slug/{slug}` carrying origin + listeners (+ `GET`, `DELETE
-?disposition=`), the response carrying `publishedEndpoints`, `connectionPlan` and `hostsPlan`
-  for the node role. **The admin CMS section** (own lazy chunk,
+  route under `/api/v1/admin/edges/` is HPKE-sealed by verb.** The node role's by-slug
+  registration (`PUT …/edges/relays/by-slug/{slug}`, contract v1) is retired; `GET
+…/relays/by-slug/{slug}` stays as an admin read of `publishedEndpoints`, `connectionPlan` and
+  `hostsPlan`. **The admin CMS section** (own lazy chunk,
   `src/client/routes/admin/edges/`, one sidebar leaf under Servers with an in-page header
   `Nodes | Providers | Advanced`) has a **simple face** in plain words (the nodes home with
   "Protect a node" = the guided setup runs, a per-node page, provider cards; `simple/`) and,
@@ -590,7 +591,10 @@ Convex runs these natively (no Workers triggers, no node-cron):
   opted-in origin nodes, enabled custom targets) from the configured countries (no-op unless
   `edge.probe.enabled`). `retention-edge-probes` (daily) prunes settled runs after two weeks.
 - `edge-block-detector` (5 min): per-origin scoring of attributed reports, node load and probe
-  verdicts; automatic rotation only with edge-level evidence and every gate open.
+  verdicts; automatic rotation only with edge-level evidence and every gate open, held fleet-wide
+  by the fleet brake (a mass block) and the fleet's daily cap.
+- `alerts-dispatch` (5 min): opt-in operator alerts (`alerts.*`): new alert-worthy edge attention
+  items posted once to the operator's webhook as ntfy-compatible JSON, kinds and counts only.
 
 Every sweep stamps a per-cron heartbeat (`convex/cronHeartbeat.ts`, `cronHeartbeats` table,
 stamped at start) surfaced as a freshness backend on the admin dashboard.
@@ -617,7 +621,7 @@ stamped at start) surfaced as a freshness backend on the admin dashboard.
   oversight — don't file it as an i18n gap, and don't route admin strings through `t()`
   without revisiting the decision here.
 - Admin (lazy-loaded behind `AdminRouter`): `AdminEntry`/`AdminLogin`/`AdminBootstrap`/`AdminLayout`
-  - **Dashboard** / Tiers / Users / **Admins** / Tokens / BackendServers / **Remnawave** /
+  - **Dashboard** / Tiers / Users / **Admins** / Tokens / **Servers** (Backends, Nodes, Mode pools) /
     **Clients** / **Billing** / **Storage** mirrors / **RateLimits** / **MembershipCodes** /
     **Theme** / Settings / Audit pages + editors/modals. Custom History-API router; all data via TanStack Query + the
     zod-validating `apiClient` (`lib/api.ts`, `lib/queries.ts`); errors localized via `lib/errors.ts`.

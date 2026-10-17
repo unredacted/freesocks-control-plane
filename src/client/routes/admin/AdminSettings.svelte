@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { serversPaths } from './servers/lib/routes';
   import { z } from 'zod';
   import AdminLayout from './AdminLayout.svelte';
   import {
@@ -17,6 +18,7 @@
   import { apiErrorMessage } from '../../lib/errors';
   import { ADMIN_BACKEND_LABELS } from '../../lib/backendLabels';
   import AdminListState from './AdminListState.svelte';
+  import AlertsCard from './AlertsCard.svelte';
   import { adminAnalyticsQuery, appSettingsQuery, configQuery, queryKeys } from '../../lib/queries';
   import Link from '../../components/Link.svelte';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
@@ -1051,6 +1053,8 @@
         </CardContent>
       </Card>
 
+      <AlertsCard />
+
       <Card>
         <CardHeader>
           <CardTitle class="text-base">Connection modes</CardTitle>
@@ -1058,9 +1062,9 @@
             The member transport catalog (families, modes, copy, defaults, per-backend
             applicability) moved to its own manager with full create/edit/delete:
             <Link href="/admin/connection-modes" class="underline">Connection modes</Link>.
-            Placement pools stay on the <Link href="/admin/remnawave" class="underline"
-              >Remnawave</Link
-            > page.
+            Placement pools are under <Link href={serversPaths.pools()} class="underline"
+              >Servers, Mode pools</Link
+            >.
           </CardDescription>
         </CardHeader>
       </Card>

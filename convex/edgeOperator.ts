@@ -15,7 +15,13 @@ import { internalAction, internalQuery } from './_generated/server';
 import type { ActionCtx, QueryCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
-import { RENDER_CLIENT_FAMILIES, resolveEdgeConfig, type EdgeConfig } from './lib/edgeConfig';
+import {
+  RENDER_CLIENT_FAMILIES,
+  EDGE_PLUMBING,
+  originPolicy,
+  resolveEdgeConfig,
+  type EdgeConfig,
+} from './lib/edgeConfig';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import { readMaintenance } from './lib/edges/maintenance';
 import { isTerminalPhase } from './lib/edges/rotation';
@@ -39,7 +45,9 @@ import {
   needsEndpointVerification,
   verificationCurrent,
   verificationStale,
+  verificationStaleReason,
 } from './lib/edges/verification';
+import { verificationListenersOf } from './lib/edges/verificationContext';
 import { publishedCount } from './lib/edges/pool';
 import { EDGE_TEMPLATES, validateTemplateParams } from './lib/edges/providers/templates';
 import { fakeShadowedIds } from './lib/edges/providers/fake';
@@ -66,11 +74,24 @@ import {
   rotationListenerKey,
   selectionContext,
 } from './edgeRotations';
-import { accountTested } from './edgeProviderAccounts';
+import { accountTested, API_FAILING_AFTER } from './edgeProviderAccounts';
+import { readRefusals, REFUSAL_WINDOW_MS, REFUSALS_CRITICAL_AT } from './deliveryRefusals';
+import { fleetRotationsToday, readFleetBrake } from './lib/edges/fleet';
+import { modeRefOf } from './nodeIntents';
 import { requiredPoolSize } from './lib/edges/poolCapacity';
 import { uncoveredListeners } from './lib/edges/pool';
 import { renderPreviewFor } from './edgeAdmin';
 import type { RelayOrigin } from './lib/edges/origin';
+import {
+  ATTENTION_RANK,
+  deliveryOf,
+  fleetStatusOf,
+  membersDarkCode,
+  originStatusOf,
+  type OriginStatusFacts,
+  type StatusRunFacts,
+} from './lib/edges/originStatus';
+import { isTerminalRunState } from './lib/edges/setupRuns';
 
 type Db = QueryCtx['db'];
 type Relay = Doc<'relays'>;
@@ -178,7 +199,8 @@ async function accountFacts(
         tlsNames: (l.draft?.tlsNames ?? []).map((name) => ({ name, status: 'active' as const })),
       };
       const layers = listenerLayers(like, { udpProviderAvailable: udp }).layers;
-      if (accountsForSlot([a], { layers, proto: l.proto, allowL7: true }).length > 0)
+      const originPort = l.row?.originPort ?? l.draft?.originPort;
+      if (accountsForSlot([a], { layers, proto: l.proto, originPort, allowL7: true }).length > 0)
         fronts.push(l.key);
     }
     const settings = a.settings as { dnsAccountId?: string };
@@ -308,9 +330,7 @@ async function relayFacts(
   const active = relay.activeRotationId ? await ctx.db.get(relay.activeRotationId) : null;
   const lastTerminal = rotations.find((r) => isTerminalPhase(r.phase)) ?? null;
   const server = relay.backendServerId ? await ctx.db.get(relay.backendServerId) : null;
-  const binding = relay.backendServerId
-    ? await deliveryBindingFor(ctx.db, relay.backendServerId, relay.nodeName ?? undefined)
-    : null;
+  const bindingState = await bindingStateOf(ctx.db, relay);
   const endpoints = await connectionPlanCount(ctx, relay);
   let preview: SetupInput['render']['preview'] = null;
   if (
@@ -368,7 +388,8 @@ async function relayFacts(
           }
         : null,
       edges: await edgeFacts(ctx, relay, cfg),
-      deliveryRequired: !!binding,
+      deliveryRequired: bindingState.bound,
+      foreignBinding: bindingState.foreign,
       bindingDeferred: relay.bindingDeferred === true,
       connectionPlanCount: endpoints,
       // Mirror validation is driven by the mirror refresh cron over every
@@ -401,22 +422,6 @@ function configFacts(cfg: EdgeConfig): SetupInput['config'] {
     probeEnabled: cfg.probe.enabled,
     probeSourcesOn: Object.values(cfg.probe.sources).filter(Boolean).length,
     probeCountries: cfg.probe.countries.length,
-  };
-}
-
-const ROLE_PATH = '/api/v1/admin/edges/relays/by-slug/';
-
-/** Public values the node role needs; never a token, never an address. */
-function roleVars(relay: Relay, listeners: Listener[]): Record<string, string> {
-  return {
-    fcp_relay_slug: relay.slug,
-    fcp_relay_listeners: listeners
-      .filter((l) => !l.retired)
-      .map((l) => l.listenerKey)
-      .join(','),
-    fcp_relay_register_path: `${ROLE_PATH}${encodeURIComponent(relay.slug)}`,
-    fcp_relay_register_scope: 'admin:edges:register',
-    fcp_relay_host_mode: relay.hostMode,
   };
 }
 
@@ -484,7 +489,18 @@ export const setupStatus = internalQuery({
         config: configFacts(cfg),
       };
       const r = computeSetupStatus(input);
-      const listenerRows = await listenersOf(ctx, relay._id);
+      // What members get: the attention status's delivery plus `degraded` from
+      // the sample render the rendering step just judged.
+      const rendering = r.steps.find((s) => s.id === 'rendering');
+      const delivery = deliveryOf({
+        originKind: relay.origin.kind,
+        bound: f.relay.deliveryRequired,
+        foreignBinding: f.relay.foreignBinding === true,
+        published: f.relay.publishedCount,
+        enabled: relay.enabled,
+        renderEnabled: input.render.enabled,
+        renderBlockers: rendering?.blockers ?? [],
+      });
       return {
         scope: 'relay' as const,
         steps: stepsView(r.steps),
@@ -497,8 +513,8 @@ export const setupStatus = internalQuery({
           backendServerId: (relay.backendServerId as string | undefined) ?? null,
           ...r.context,
         },
-        roleVars: roleVars(relay, listenerRows),
         resume: [],
+        delivery,
         generatedAt: now,
       };
     }
@@ -576,8 +592,8 @@ export const setupStatus = internalQuery({
           backendServerId,
           ...r.context,
         },
-        roleVars: null,
         resume: [],
+        delivery: null,
         generatedAt: now,
       };
     }
@@ -645,7 +661,6 @@ export const setupStatus = internalQuery({
         listenerKey: null,
         edgeId: null,
       },
-      roleVars: null,
       resume: perRelay
         .filter((p) => !p.result.complete)
         .map((p) => ({
@@ -654,6 +669,7 @@ export const setupStatus = internalQuery({
           currentStep: p.result.currentStep,
           complete: p.result.complete,
         })),
+      delivery: null,
       generatedAt: now,
     };
   },
@@ -661,29 +677,9 @@ export const setupStatus = internalQuery({
 
 // --- attention ------------------------------------------------------------------------------------
 
-const ATTENTION_RANK = [
-  'quarantine',
-  'needs_operator',
-  'host_unresolved',
-  'members_dark',
-  'direct_host_reappeared',
-  'go_live_pending',
-  'needs_test',
-  'rotation_failed',
-  'qualification_lapsed',
-  'retest_needed',
-  'block_suspected',
-  'edge_unreachable',
-  'pool_rebalance',
-  'spare_untested',
-  'pool_below_desired',
-  'account_unqualified',
-  'account_untested',
-  'test_key_cleanup',
-  'drift',
-  'restore_in_progress',
-  'maintenance_frozen',
-] as const;
+// The server's ranking of every attention kind, most urgent first, lives in
+// lib/edges/originStatus.ts (the origin status ranks by it too); re-exported here.
+export { ATTENTION_RANK };
 type AttentionKind = (typeof ATTENTION_RANK)[number];
 
 interface AttentionItem {
@@ -715,13 +711,200 @@ interface AttentionItem {
     | 'verify_endpoint'
     | 'thaw'
     | 'rebalance'
-    | 'require_edges';
+    | 'require_edges'
+    | 'protect_node'
+    | 'open_node';
   since: string | null;
 }
 
 const RECENT_FAILURE_MS = 24 * 60 * 60_000;
+/** A rotation still running after this long is stuck (its wall clock fails it later). */
+export const STUCK_ROTATION_MS = 60 * 60_000;
+/** A live managed edge whose provider health was not refreshed for this long (at least). */
+const HEALTH_STALE_MIN_MS = 60 * 60_000;
 
-/** Server-ranked list of what needs the operator, one action per item. */
+/**
+ * The enrolled nodes that wait on the operator: a FRONTED node whose machine
+ * is ready and that nobody has started protecting (`node_ready_to_protect`),
+ * and a node whose go-live waits for an approval (`node_awaiting_approval`:
+ * tested and not approved yet, parked after a block, or a protect run parked
+ * at `node_not_approved`). Facts name the server and the node so the row can
+ * link to them; never an address.
+ */
+async function nodeAttention(ctx: QueryCtx, relays: Relay[]): Promise<AttentionItem[]> {
+  const out: AttentionItem[] = [];
+  // Operator-scale: one row per enrolled node.
+  const intents = await ctx.db.query('panelNodeIntents').collect();
+  const slugs = new Map<string, string | null>();
+  for (const i of intents) {
+    if (i.state === 'retiring' || i.state === 'retired') continue;
+    const sid = i.backendServerId as string;
+    if (!slugs.has(sid)) slugs.set(sid, (await ctx.db.get(i.backendServerId))?.slug ?? null);
+    const mode = await modeRefOf(ctx, i);
+    const fronted = mode.shape.fronting !== 'direct';
+    const open =
+      (
+        await ctx.db
+          .query('edgeSetupRuns')
+          .withIndex('by_origin', (q) =>
+            q.eq('backendServerId', i.backendServerId).eq('nodeName', i.name),
+          )
+          .collect()
+      ).find((r) => r.state === 'running' || r.state === 'waiting' || r.state === 'needs_you') ??
+      null;
+    const relay =
+      relays.find(
+        (r) =>
+          r.backendServerId === i.backendServerId &&
+          r.origin.kind === 'panel-node' &&
+          r.origin.nodeName === i.name,
+      ) ?? null;
+    const stage = i.activation.stage;
+    const common = {
+      relaySlug: relay?.slug ?? null,
+      relayId: relay ? (relay._id as string) : null,
+      edgeId: null,
+      listenerKey: null,
+      accountId: null,
+      rotationId: null,
+      facts: {
+        serverSlug: slugs.get(sid) ?? null,
+        nodeUuid: i.nodeUuid ?? null,
+        node: i.name,
+        stage,
+        ...(open ? { runId: open._id as string } : {}),
+      },
+    };
+    const waitingApproval =
+      stage === 'candidates_verified' ||
+      stage === 'awaiting_approval' ||
+      (open?.state === 'needs_you' && open.need?.code === 'node_not_approved');
+    if (waitingApproval) {
+      out.push({
+        ...common,
+        id: `node_awaiting_approval:${i._id}`,
+        kind: 'node_awaiting_approval',
+        severity: 'warning',
+        code: open?.need?.code ?? stage,
+        action: 'open_node',
+        since: iso(i.updatedAt),
+      });
+    } else if (
+      fronted &&
+      stage === 'machine_ready' &&
+      i.state === 'ready' &&
+      !i.adopted &&
+      !open &&
+      !relay?.setupOwned
+    ) {
+      out.push({
+        ...common,
+        id: `node_ready_to_protect:${i._id}`,
+        kind: 'node_ready_to_protect',
+        severity: 'warning',
+        code: null,
+        action: 'protect_node',
+        since: iso(i.updatedAt),
+      });
+    }
+  }
+  return out;
+}
+
+/** The delivery binding that covers an origin's node (a manual origin has none). */
+async function bindingOf(db: Db, relay: Relay) {
+  return relay.origin.kind !== 'manual' && relay.backendServerId
+    ? deliveryBindingFor(db, relay.backendServerId, relay.nodeName ?? undefined)
+    : null;
+}
+
+/**
+ * Whose binding covers the origin's node. `bound`: it names this origin (its
+ * members are served through it). `foreign`: it names an origin that no longer
+ * exists (deleted `keep-dark`), so members get `relay_missing` whatever this
+ * origin publishes. A binding naming another live origin is neither.
+ */
+async function bindingStateOf(
+  db: Db,
+  relay: Relay,
+): Promise<{ binding: Doc<'edgeDeliveryBindings'> | null; bound: boolean; foreign: boolean }> {
+  const binding = await bindingOf(db, relay);
+  if (!binding) return { binding, bound: false, foreign: false };
+  if (binding.relaySlug === relay.slug) return { binding, bound: true, foreign: false };
+  const named = await db
+    .query('relays')
+    .withIndex('by_slug', (q) => q.eq('slug', binding.relaySlug))
+    .unique();
+  return { binding, bound: false, foreign: !named || named.deleting === true };
+}
+
+/**
+ * The live (non-terminal) guided setup run of an origin, through the run's
+ * node (`by_origin`): a node has at most one live run, always its newest. A
+ * manual origin, or a backend server without a node name, has none.
+ */
+async function liveSetupRunOf(db: Db, relay: Relay): Promise<Doc<'edgeSetupRuns'> | null> {
+  const serverId = relay.origin.kind === 'manual' ? undefined : relay.origin.backendServerId;
+  const nodeName = relay.origin.kind === 'panel-node' ? relay.origin.nodeName : relay.nodeName;
+  if (!serverId || !nodeName) return null;
+  const rows = await db
+    .query('edgeSetupRuns')
+    .withIndex('by_origin', (q) => q.eq('backendServerId', serverId).eq('nodeName', nodeName))
+    .order('desc')
+    .take(5);
+  return (
+    rows.find(
+      (r) => !isTerminalRunState(r.state) && (r.relayId === undefined || r.relayId === relay._id),
+    ) ?? null
+  );
+}
+
+/** The facts one origin's status is judged on (lib/edges/originStatus.ts), but its attention items. */
+async function statusFactsOf(
+  db: Db,
+  relay: Relay,
+  edges: Edge[],
+  bindingState: { bound: boolean; foreign: boolean },
+  renderEnabled: boolean,
+): Promise<Omit<OriginStatusFacts, 'attention'>> {
+  const pool: OriginStatusFacts['pool'][number][] = [];
+  for (const id of relay.publishedEdgeIds) {
+    const e = id ? edges.find((x) => x._id === id) : undefined;
+    if (e) pool.push({ health: e.health, layer: e.layer ?? 'l4' });
+  }
+  const run = await liveSetupRunOf(db, relay);
+  const runFacts: StatusRunFacts | null = run
+    ? {
+        id: run._id as string,
+        kind: run.kind ?? null,
+        stage: run.stage,
+        state: run.state,
+        need: run.need ?? null,
+      }
+    : null;
+  return {
+    originKind: relay.origin.kind,
+    enabled: relay.enabled,
+    quarantined: !!relay.quarantine,
+    restore: !!relay.restore,
+    deleting: relay.deleting ?? false,
+    bindingDeferred: relay.bindingDeferred === true,
+    setupOwned: relay.setupOwned === true,
+    published: publishedCount(relay.publishedEdgeIds),
+    pool,
+    standbys: edges.filter((e) => e.status === 'active' && e.publication === 'unpublished').length,
+    bound: bindingState.bound,
+    foreignBinding: bindingState.foreign,
+    renderEnabled,
+    run: runFacts,
+  };
+}
+
+/**
+ * Server-ranked list of what needs the operator, one action per item, plus the
+ * one status of every origin (`origins`, deleting ones included, slug order)
+ * and the fleet headline (`fleet`), judged in lib/edges/originStatus.ts.
+ */
 export const attention = internalQuery({
   args: {},
   handler: async (ctx) => {
@@ -740,10 +923,38 @@ export const attention = internalQuery({
       since: null,
     });
     const relays = await ctx.db.query('relays').collect();
+    // Provider health refresh: a live managed edge is described every few
+    // polls; one whose health has not been refreshed for this long means the
+    // refresh keeps failing (or never runs) for its account.
+    const healthStaleMs = Math.max(HEALTH_STALE_MIN_MS, EDGE_PLUMBING.pollMs * 30);
+    const staleByAccount = new Map<string, number>();
+    // Per origin, the facts its status is judged on (after every item exists).
+    const statusFacts = new Map<string, Omit<OriginStatusFacts, 'attention'>>();
     for (const relay of relays) {
-      if (relay.deleting) continue;
+      if (relay.deleting) {
+        const state = await bindingStateOf(ctx.db, relay);
+        const edges = await liveEdgesOfRelay(ctx.db, relay._id);
+        statusFacts.set(
+          relay._id as string,
+          await statusFactsOf(ctx.db, relay, edges, state, cfg.render.enabled),
+        );
+        continue;
+      }
       const edges = await liveEdgesOfRelay(ctx.db, relay._id);
-      const listeners = await listenersOf(ctx, relay._id);
+      // (A quarantined origin is skipped by the refresh on purpose.)
+      if (!relay.quarantine)
+        for (const e of edges) {
+          if (!e.managed || !e.accountId || e.status !== 'active') continue;
+          if (now - (e.lastHealthAt ?? e.statusChangedAt) <= healthStaleMs) continue;
+          const k = e.accountId as string;
+          staleByAccount.set(k, (staleByAccount.get(k) ?? 0) + 1);
+        }
+      // With the enrolled node's auth revision: the endpoint ticks bind to it.
+      const listeners = await verificationListenersOf(
+        ctx.db,
+        relay,
+        await listenersOf(ctx, relay._id),
+      );
       if (relay.quarantine) {
         items.push({
           ...base(relay),
@@ -793,31 +1004,32 @@ export const attention = internalQuery({
         }
       }
       const published = publishedCount(relay.publishedEdgeIds);
-      if (relay.origin.kind !== 'manual' && relay.backendServerId) {
-        const binding = await deliveryBindingFor(
-          ctx.db,
-          relay.backendServerId,
-          relay.nodeName ?? undefined,
-        );
-        const dark = !!binding && (published === 0 || !relay.enabled || !cfg.render.enabled);
-        if (dark) {
-          items.push({
-            ...base(relay),
-            id: `members_dark:${relay._id}`,
-            kind: 'members_dark',
-            severity: 'critical',
-            code:
-              published === 0
-                ? 'empty_pool'
-                : !relay.enabled
-                  ? 'relay_disabled'
-                  : 'render_disabled',
-            facts: { published },
-            action: 'open_setup',
-            since: isoN(binding?.updatedAt),
-          });
-        }
+      const bindingState = await bindingStateOf(ctx.db, relay);
+      const binding = bindingState.binding;
+      // The one `members_dark` rule (the origin status's `dark` delivery too).
+      const darkCode = membersDarkCode({
+        bound: bindingState.bound,
+        foreignBinding: bindingState.foreign,
+        published,
+        enabled: relay.enabled,
+        renderEnabled: cfg.render.enabled,
+      });
+      if (darkCode) {
+        items.push({
+          ...base(relay),
+          id: `members_dark:${relay._id}`,
+          kind: 'members_dark',
+          severity: 'critical',
+          code: darkCode,
+          facts: { published },
+          action: 'open_setup',
+          since: isoN(binding?.updatedAt),
+        });
       }
+      statusFacts.set(
+        relay._id as string,
+        await statusFactsOf(ctx.db, relay, edges, bindingState, cfg.render.enabled),
+      );
       // A direct Host reappeared on a bound guided node and could not be
       // re-hidden: delivery is fail-closed (`leak_detected`) until it is hidden.
       if (relay.directHostAlert && relay.directHostAlert.hosts.length > 0) {
@@ -864,6 +1076,56 @@ export const attention = internalQuery({
           facts: { published },
           action: 'require_edges',
           since: isoN(relay.updatedAt),
+        });
+      }
+      // A rotation running far longer than any of its steps needs: the reconcile
+      // re-kicks it, and its wall clock ends it later, but the operator should
+      // look now (a provider that never answers, a Host that never settles).
+      if (relay.activeRotationId) {
+        const rot = await ctx.db.get(relay.activeRotationId);
+        if (rot && !isTerminalPhase(rot.phase) && now - rot.startedAt > STUCK_ROTATION_MS) {
+          items.push({
+            ...base(relay),
+            id: `rotation_stuck:${rot._id}`,
+            kind: 'rotation_stuck',
+            severity: 'critical',
+            rotationId: rot._id as string,
+            code: rot.phase,
+            facts: {
+              kind: rot.kind,
+              phase: rot.phase,
+              minutes: Math.round((now - rot.startedAt) / 60_000),
+            },
+            action: 'open_relay',
+            since: iso(rot.startedAt),
+          });
+        }
+      }
+      // Billable but idle: provider resources FCP pays for that serve nobody
+      // until the operator acts (a frozen origin's edges; an edge parked for
+      // an operator whose resources are still present).
+      const held = relay.quarantine
+        ? edges.filter((e) => e.managed && !!e.accountId)
+        : edges.filter(
+            (e) =>
+              e.managed &&
+              e.status === 'needs_operator' &&
+              e.resources.some((r) => r.deleteState !== 'confirmed_gone'),
+          );
+      if (held.length > 0) {
+        items.push({
+          ...base(relay),
+          id: `billable_idle:${relay._id}`,
+          kind: 'billable_idle',
+          severity: 'warning',
+          edgeId: held.length === 1 ? (held[0]._id as string) : null,
+          rotationId: relay.quarantine ? (relay.quarantine.rotationId as string) : null,
+          code: relay.quarantine ? 'quarantine' : 'needs_operator',
+          facts: { edges: held.length },
+          action: relay.quarantine ? 'resolve_quarantine' : 'resolve_operator',
+          since: relay.quarantine
+            ? iso(relay.quarantine.since)
+            : iso(Math.min(...held.map((e) => e.statusChangedAt))),
         });
       }
       const [last] = await lastRotations(ctx.db, relay._id);
@@ -985,7 +1247,8 @@ export const attention = internalQuery({
             severity: 'warning',
             edgeId: e._id as string,
             listenerKey: l.listenerKey,
-            code: 'verification_stale',
+            // `reality_key_changed` when only the node's REALITY key moved.
+            code: verificationStaleReason(e, l) ?? 'verification_stale',
             facts: {
               publication: e.publication,
               verifiedRevision: e.verification?.listenerRevision ?? null,
@@ -1080,6 +1343,65 @@ export const attention = internalQuery({
     }
     const accounts = await ctx.db.query('edgeProviderAccounts').collect();
     for (const a of accounts) {
+      // A disabled account still holds live edges that need provider calls
+      // (health, destroy): its API health stays visible; the setup-oriented
+      // items below are for enabled accounts only.
+      // The provider's API keeps failing (timeouts, 5xx, refused credentials):
+      // every rotation, health refresh and destroy on this account stalls.
+      if ((a.apiFailures ?? 0) >= API_FAILING_AFTER) {
+        items.push({
+          id: `account_api_failing:${a._id}`,
+          kind: 'account_api_failing',
+          severity: 'critical',
+          relaySlug: null,
+          relayId: null,
+          edgeId: null,
+          listenerKey: null,
+          accountId: a._id as string,
+          rotationId: null,
+          code: a.lastApiError ?? null,
+          facts: { name: a.name, provider: a.provider, failures: a.apiFailures ?? 0 },
+          action: 'open_account',
+          since: isoN(a.apiFailingSince),
+        });
+      }
+      // A daily budget of 0 means no limit on billable allocations; new rows
+      // refuse it outside development, older ones are pointed out here.
+      if (a.enabled && a.dailyAllocationBudget === 0 && process.env.ENVIRONMENT !== 'development') {
+        items.push({
+          id: `account_budget_unlimited:${a._id}`,
+          kind: 'account_budget_unlimited',
+          severity: 'warning',
+          relaySlug: null,
+          relayId: null,
+          edgeId: null,
+          listenerKey: null,
+          accountId: a._id as string,
+          rotationId: null,
+          code: null,
+          facts: { name: a.name, provider: a.provider },
+          action: 'open_account',
+          since: null,
+        });
+      }
+      const stale = staleByAccount.get(a._id as string) ?? 0;
+      if (stale > 0) {
+        items.push({
+          id: `health_stale:${a._id}`,
+          kind: 'health_stale',
+          severity: 'warning',
+          relaySlug: null,
+          relayId: null,
+          edgeId: null,
+          listenerKey: null,
+          accountId: a._id as string,
+          rotationId: null,
+          code: null,
+          facts: { name: a.name, provider: a.provider, edges: stale },
+          action: 'open_account',
+          since: null,
+        });
+      }
       if (!a.enabled) continue;
       if (!accountTested(a)) {
         items.push({
@@ -1116,6 +1438,15 @@ export const attention = internalQuery({
       }
     }
     // Temporary test keys whose backend delete kept failing (edgeTestCredentials.ts).
+    const fleetBase = {
+      relaySlug: null,
+      relayId: null,
+      edgeId: null,
+      listenerKey: null,
+      accountId: null,
+      rotationId: null,
+      code: null,
+    };
     const failedKeys = await ctx.db
       .query('edgeTestCredentials')
       .withIndex('by_removal_expires', (q) => q.eq('removal', 'failed'))
@@ -1138,6 +1469,79 @@ export const attention = internalQuery({
         since: iso(row.updatedAt),
       });
     }
+    // The fleet guards on automatic rotation (lib/edges/fleet.ts).
+    const brake = await readFleetBrake(ctx.db);
+    if (brake.engaged) {
+      items.push({
+        ...fleetBase,
+        id: 'fleet_brake',
+        kind: 'fleet_brake',
+        severity: 'critical',
+        facts: {
+          suspected: brake.suspected,
+          evaluated: brake.evaluated,
+          threshold: brake.threshold,
+        },
+        action: 'open_settings',
+        since: isoN(brake.since),
+      });
+    }
+    const fleetUsed = await fleetRotationsToday(ctx.db, now);
+    // (A cap of 0 means no automatic replacement at all: nothing was "reached".)
+    const fleetCap = cfg.detect.fleetRotationsPerDay;
+    if (cfg.enabled && cfg.autoRotate && fleetCap > 0 && fleetUsed >= fleetCap) {
+      items.push({
+        ...fleetBase,
+        id: 'fleet_rotation_cap',
+        kind: 'fleet_rotation_cap',
+        severity: 'warning',
+        facts: { used: fleetUsed, cap: cfg.detect.fleetRotationsPerDay },
+        action: 'open_settings',
+        since: null,
+      });
+    }
+    // Dark members, counted at the subscription route (deliveryRefusals.ts).
+    const refusals = await readRefusals(ctx.db, now);
+    if (refusals.total > 0) {
+      const top = Object.entries(refusals.byReason).sort((x, y) => y[1] - x[1])[0];
+      items.push({
+        ...fleetBase,
+        id: 'delivery_refusals',
+        kind: 'delivery_refusals',
+        severity: refusals.total >= REFUSALS_CRITICAL_AT ? 'critical' : 'warning',
+        code: top?.[0] ?? null,
+        facts: {
+          total: refusals.total,
+          byReason: refusals.byReason,
+          windowMinutes: Math.round(REFUSAL_WINDOW_MS / 60_000),
+        },
+        action: 'open_settings',
+        since: isoN(refusals.since),
+      });
+    }
+    // A client family whose render rule is off gets nothing at all on an
+    // edge-required node (there is no passthrough): its members are dark.
+    const familiesOff = RENDER_CLIENT_FAMILIES.filter((f) => !cfg.render.clients[f].enabled);
+    if (familiesOff.length > 0 && cfg.render.enabled) {
+      const anyBound = await ctx.db
+        .query('edgeDeliveryBindings')
+        .filter((q) => q.eq(q.field('state'), 'active'))
+        .first();
+      if (anyBound) {
+        items.push({
+          ...fleetBase,
+          id: 'family_rule_disabled',
+          kind: 'family_rule_disabled',
+          severity: 'warning',
+          facts: { families: familiesOff },
+          action: 'open_settings',
+          since: null,
+        });
+      }
+    }
+    // Enrolled nodes waiting on the operator (docs/servers.md "Node lifecycle"):
+    // FCP never starts a protect run or approves on its own, it asks.
+    items.push(...(await nodeAttention(ctx, relays)));
     const maintenance = await readMaintenance(ctx.db);
     if (maintenance.frozen) {
       items.push({
@@ -1162,7 +1566,34 @@ export const attention = internalQuery({
         (x.since ?? '').localeCompare(y.since ?? '') ||
         x.id.localeCompare(y.id),
     );
-    return { items, generatedAt: iso(now) };
+    // The one status of every origin, judged on its facts and the items naming it.
+    const named = new Map<string, AttentionItem[]>();
+    for (const i of items) {
+      if (!i.relayId) continue;
+      const list = named.get(i.relayId) ?? [];
+      list.push(i);
+      named.set(i.relayId, list);
+    }
+    const origins = [];
+    for (const relay of [...relays].sort((a, b) => a.slug.localeCompare(b.slug))) {
+      const facts = statusFacts.get(relay._id as string);
+      if (!facts) continue;
+      const status = originStatusOf({
+        ...facts,
+        attention: (named.get(relay._id as string) ?? []).map((i) => ({
+          kind: i.kind,
+          severity: i.severity,
+          code: i.code,
+        })),
+      });
+      origins.push({ relayId: relay._id as string, relaySlug: relay.slug, status });
+    }
+    return {
+      items,
+      origins,
+      fleet: fleetStatusOf(origins.map((o) => o.status)),
+      generatedAt: iso(now),
+    };
   },
 });
 
@@ -1180,6 +1611,8 @@ const preflightArgs = {
   listenerKey: v.optional(v.string()),
   accountId: v.optional(v.id('edgeProviderAccounts')),
   templateId: v.optional(v.id('edgeTemplates')),
+  /** `provision` only: false = the edge stays an unpublished spare (no standby is published instead). */
+  publish: v.optional(v.boolean()),
   trigger: v.optional(
     v.union(v.literal('manual'), v.literal('detector'), v.literal('api'), v.literal('reconcile')),
   ),
@@ -1212,7 +1645,9 @@ export const preflight = internalQuery({
       targetEdgeId: a.kind === 'replace' ? a.edgeId : undefined,
       toEdgeId: a.kind === 'publish' ? a.edgeId : undefined,
       listenerId: listener?._id,
-      publishOnDone: a.kind === 'provision',
+      // The same mode the provision route starts: `publish: false` keeps the
+      // result a spare, so no existing standby is picked to be published.
+      publishOnDone: a.kind === 'provision' && a.publish !== false,
       requestedAccountId: isTest || a.accountId ? a.accountId : undefined,
       requestedTemplateId: a.templateId,
       allowUnqualified: isTest,
@@ -1279,12 +1714,8 @@ export const preflight = internalQuery({
     if (!cfg.probe.enabled) warnings.push({ code: 'probe_disabled', detail: null });
     if (!process.env.EDGE_MARK_PEPPER) warnings.push({ code: 'mark_pepper_missing', detail: null });
     if (relay.backendServerId && relay.origin.kind !== 'manual') {
-      const binding = await deliveryBindingFor(
-        ctx.db,
-        relay.backendServerId,
-        relay.nodeName ?? undefined,
-      );
-      if (binding && publishedCount(relay.publishedEdgeIds) === 0)
+      const { bound } = await bindingStateOf(ctx.db, relay);
+      if (bound && publishedCount(relay.publishedEdgeIds) === 0)
         warnings.push({ code: 'members_dark', detail: relay.slug });
     }
     const seen = new Set<string>();
@@ -1596,6 +2027,7 @@ export const quarantineInspect = internalAction({
 export const providersUsage = internalQuery({
   args: {},
   handler: async (ctx) => {
+    const cfg = await resolveEdgeConfig(ctx.db);
     const fake = fakeShadowedIds();
     const accounts = (await ctx.db.query('edgeProviderAccounts').collect()).sort(
       (a, b) => a.priority - b.priority || a.name.localeCompare(b.name),
@@ -1637,7 +2069,9 @@ export const providersUsage = internalQuery({
       const fillFromStandby = Math.min(standby, Math.max(0, r.desiredPublished - published));
       const provisionForPool = Math.max(0, r.desiredPublished - published - fillFromStandby);
       const standbyLeft = standby - fillFromStandby;
-      const provisionForStandby = r.enabled ? Math.max(0, r.standbyPerRelay - standbyLeft) : 0;
+      const provisionForStandby = r.enabled
+        ? Math.max(0, originPolicy(r, cfg).standbyPerRelay - standbyLeft)
+        : 0;
       const planned = r.enabled && !r.deleting ? provisionForPool + provisionForStandby : 0;
       relayRows.push({
         id: r._id as string,
@@ -1689,7 +2123,7 @@ export const relayLookup = internalQuery({
       .query('relays')
       .withIndex('by_slug', (q) => q.eq('slug', slug))
       .unique();
-    return relay ? mapRelayAdmin(relay) : null;
+    return relay ? mapRelayAdmin(relay, await resolveEdgeConfig(ctx.db)) : null;
   },
 });
 

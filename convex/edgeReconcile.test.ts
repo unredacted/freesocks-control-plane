@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 import { convexTest } from 'convex-test';
 import { afterEach, describe, expect, test, vi } from 'vitest';
+import { __setEdgePlumbingForTests } from './lib/edgeConfig';
 import schema from './schema';
 import { internal } from './_generated/api';
 
@@ -25,12 +26,14 @@ import {
   wsListener,
   type ListenerSpecFixture,
 } from './lib/edges/testing/fixtures';
+import { insertPlanned } from './lib/edges/testing/reads';
 
 const modules = import.meta.glob('./**/*.*s');
 
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
+  __setEdgePlumbingForTests(null);
 });
 
 const ORIGIN = '203.0.113.10';
@@ -165,7 +168,7 @@ async function managedEdge(
   listenerId: Id<'relayListeners'> = s.listenerId,
   opts: { verified?: boolean } = {},
 ) {
-  const { id } = await s.t.mutation(internal.edges.insertPlanned, {
+  const { id } = await insertPlanned(s.t, {
     relayId: s.relayId,
     listenerId,
     accountId: s.accountId,
@@ -206,7 +209,7 @@ async function gcoreDestroyingEdge(
   opts: { kind?: string; destroyAttempts?: number } = {},
 ) {
   const { accountId, listenerId } = await gcoreListener(s);
-  const { id: edgeId } = await s.t.mutation(internal.edges.insertPlanned, {
+  const { id: edgeId } = await insertPlanned(s.t, {
     relayId: s.relayId,
     listenerId,
     accountId,
@@ -381,7 +384,7 @@ describe('edgeReconcile', () => {
   test('failed edge with an unresolved step is DISCOVERED (never re-run): absent → settled → destroyed', async () => {
     const world = fakeUpcloud([]);
     const s = await seed();
-    const { id: edgeId } = await s.t.mutation(internal.edges.insertPlanned, {
+    const { id: edgeId } = await insertPlanned(s.t, {
       relayId: s.relayId,
       listenerId: s.listenerId,
       accountId: s.accountId,
@@ -424,7 +427,7 @@ describe('edgeReconcile', () => {
   test('failed edge whose step actually created the LB: discovery FINDS it and the destroy then deletes it', async () => {
     const world = fakeUpcloud([]);
     const s = await seed();
-    const { id: edgeId, name } = await s.t.mutation(internal.edges.insertPlanned, {
+    const { id: edgeId, name } = await insertPlanned(s.t, {
       relayId: s.relayId,
       listenerId: s.listenerId,
       accountId: s.accountId,
@@ -644,7 +647,7 @@ describe('edgeReconcile', () => {
     expect((await s.t.run((ctx) => ctx.db.get(s.listenerId)))!.templateEdgeId).toBe(standby);
   });
 
-  test('pool upkeep: autoProvisionToDesired starts at most maxReconcileStartsPerTick provisions', async () => {
+  test('pool upkeep: autoProvisionToDesired starts at most one provision per pass', async () => {
     fakeUpcloud([]);
     const s = await seed();
     await s.t.run((ctx) => upsertSettingRow(ctx, 'edge.enabled', 'true'));
@@ -758,7 +761,7 @@ describe('edgeReconcile', () => {
     });
     const s = await seed();
     const { accountId, listenerId } = await gcoreListener(s, { qualified: true });
-    const { id: edgeId } = await s.t.mutation(internal.edges.insertPlanned, {
+    const { id: edgeId } = await insertPlanned(s.t, {
       relayId: s.relayId,
       listenerId,
       accountId,
@@ -1538,7 +1541,12 @@ describe('edgeReconcile: renewing a front qualification before it lapses', () =>
   async function renderable(t: ReturnType<typeof convexTest>, relayId: Id<'relays'>) {
     return await t.run(async (ctx) => {
       const origin = (await ctx.db.get(relayId))!;
-      const { published } = await publishedEdgesOf(ctx, origin, { includeIneligible: true });
+      const { published } = await publishedEdgesOf(
+        ctx,
+        origin,
+        { kind: 'member' },
+        { includeIneligible: true },
+      );
       return published.map((p) => ({ edgeId: p.edgeId, eligible: p.eligible !== false }));
     });
   }
@@ -1583,7 +1591,7 @@ describe('edgeReconcile: renewing a front qualification before it lapses', () =>
       return { ok: true, steps: [], checkedAt: Date.now() };
     });
     const { t } = await frontedRelay([9 * 60_000, 2 * 60_000, 5 * 60_000]);
-    await t.run((ctx) => upsertSettingRow(ctx, 'edge.l7.maxRequalifyPerTick', '2'));
+    __setEdgePlumbingForTests({ l7MaxRequalifyPerTick: 2 });
     await run(t);
     // Two proofs this tick, the two closest to expiring, soonest first.
     expect(checked).toEqual([`1${HOSTNAME}`, `2${HOSTNAME}`]);

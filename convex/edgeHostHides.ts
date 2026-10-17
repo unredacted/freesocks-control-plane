@@ -45,6 +45,7 @@ import {
 import { relayRemarkRegex, sameAddress } from './lib/edges/hosts';
 import { deliveryBindingFor } from './relays';
 import { listenerRemark, listenersOf } from './relayListeners';
+import { enrolledOriginOf } from './nodeIntents';
 import { HOST_OP_TTL_MS, HOST_SETTLE_LOOKS, HOST_SETTLE_MS } from './hostOps';
 
 /** Disable retries the reconcile pass issues for one Host before it counts as failed. */
@@ -165,6 +166,8 @@ export interface HideContext {
   fcpRemarks: string[];
   legacyHostUuids: string[];
   bound: boolean;
+  /** An enrolled node reached by hostname: its public addresses are the node too. */
+  alsoAddresses: string[];
 }
 
 async function hideContext(
@@ -181,6 +184,10 @@ async function hideContext(
     relay.backendServerId,
     relay.nodeName ?? undefined,
   );
+  const enrolled =
+    relay.origin.kind === 'panel-node'
+      ? await enrolledOriginOf(ctx, relay.backendServerId, relay.origin.nodeName)
+      : null;
   return {
     relay,
     backendServerId: relay.backendServerId,
@@ -189,6 +196,7 @@ async function hideContext(
     fcpRemarks,
     legacyHostUuids,
     bound: !!binding && binding.relaySlug === relay.slug,
+    alsoAddresses: enrolled?.directAddresses ?? [],
   };
 }
 
@@ -574,7 +582,11 @@ function nodeInbounds(
   if (known) for (const u of known) set.add(u.toLowerCase());
   for (const h of hosts) {
     const inbound = h.inbound?.configProfileInboundUuid;
-    if (inbound && sameAddress(h.address, c.relay.originAddress)) set.add(inbound.toLowerCase());
+    if (
+      inbound &&
+      [c.relay.originAddress, ...c.alsoAddresses].some((a) => sameAddress(h.address, a))
+    )
+      set.add(inbound.toLowerCase());
   }
   return [...set];
 }
@@ -586,6 +598,7 @@ export function directContextOf(
 ): DirectHostContext {
   return {
     originAddress: c.relay.originAddress,
+    alsoAddresses: c.alsoAddresses,
     nodeInboundUuids,
     fcpRemarks: [...c.fcpRemarks, ...extraFcpRemarks],
     legacyHostUuids: c.legacyHostUuids,

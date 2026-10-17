@@ -27,13 +27,18 @@
  * Every provider call runs under an edge op claim; every DB change is a
  * mutation in edges / origins / edgeRotations / edgeReconcileMutations.
  */
-import { ConvexError, v } from 'convex/values';
+import { ConvexError } from 'convex/values';
 import { internalAction } from './_generated/server';
 import type { ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { runWithCronOutcome } from './cronHeartbeat';
-import { edgeMs, type EdgeConfig } from './lib/edgeConfig';
+import {
+  EDGE_PLUMBING,
+  originPolicy,
+  qualificationRenewLeadMs,
+  type EdgeConfig,
+} from './lib/edgeConfig';
 import { isDiscoverable } from './edges';
 import {
   coverageListeners,
@@ -228,7 +233,7 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
   // would flap a healthy front out of every new body until the next tick. The
   // ones closest to expiry go first, and the tick's budget is config-driven
   // because each proof is an outbound session.
-  const renewLead = edgeMs.renewLead(cfg);
+  const renewLead = qualificationRenewLeadMs();
   const expiryOf = (e: Edge) => e.frontQualification?.expiresAt ?? 0;
   const requalifyDue = new Set(
     edges
@@ -238,13 +243,13 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
           e.publication === 'published' &&
           e.managed &&
           !!e.accountId &&
-          ['active', 'standby', 'draining'].includes(e.status) &&
+          ['active', 'draining'].includes(e.status) &&
           !quarantinedOrigins.has(e.relayId as string) &&
           !rotatingOrigins.has(e.relayId as string) &&
           expiryOf(e) - now <= renewLead,
       )
       .sort((a, b) => expiryOf(a) - expiryOf(b))
-      .slice(0, cfg.l7.maxRequalifyPerTick)
+      .slice(0, EDGE_PLUMBING.l7MaxRequalifyPerTick)
       .map((e) => e._id as string),
   );
 
@@ -305,8 +310,8 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
         continue;
       }
       // 3. Health refresh for live edges (non-destructive).
-      if (['active', 'standby', 'draining'].includes(edge.status) && !inRotation) {
-        const staleHealth = (edge.lastHealthAt ?? 0) + edgeMs.poll(cfg) * 10 <= now;
+      if (['active', 'draining'].includes(edge.status) && !inRotation) {
+        const staleHealth = (edge.lastHealthAt ?? 0) + EDGE_PLUMBING.pollMs * 10 <= now;
         // The proof has its own clock: a front whose health was refreshed a
         // minute ago still has to be re-proven before its qualification lapses.
         if (!staleHealth && !requalifyDue.has(edge._id as string)) continue;
@@ -390,7 +395,7 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
       // Automatic pool actions need the master switch; a manual start does not.
       if (!cfg.enabled) continue;
       if (maintenance.frozen) continue;
-      if (starts >= cfg.maxReconcileStartsPerTick) continue;
+      if (starts >= EDGE_PLUMBING.maxReconcileStartsPerTick) continue;
       const originEdges = edges.filter((e) => e.relayId === origin._id);
       const standbys = originEdges.filter(
         (e) => e.status === 'active' && e.publication === 'unpublished' && hasPublishableAddress(e),
@@ -476,13 +481,14 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
           continue;
         }
       } else if (publishedNow >= desired && cfg.autoProvisionToDesired) {
-        // 5c. Spares: the origin-wide reserve (`standbyPerRelay`, unchanged) plus
+        // 5c. Spares: the origin-wide reserve (`standbyPerRelay`) plus
         // `standbyPerListener` verified standbys per coverage listener.
-        if (standbys.length < origin.standbyPerRelay) {
+        const policy = originPolicy(origin, cfg);
+        if (standbys.length < policy.standbyPerRelay) {
           await provision(null, false);
           continue;
         }
-        const perListener = origin.standbyPerListener ?? cfg.standbyPerListener;
+        const perListener = policy.standbyPerListener;
         const short = coverageListeners(listeners).find(
           (l) => standbysOf(l.id).length < perListener,
         );
@@ -507,7 +513,7 @@ async function settleEdge(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: R
       edgeId: edge._id,
       kind: 'discover',
       target: edge.currentOp.target,
-      claimMs: edgeMs.opClaim(cfg),
+      claimMs: EDGE_PLUMBING.opClaimMs,
     });
     if (!cl.ok) return;
     if (!target) {
@@ -545,7 +551,7 @@ async function settleEdge(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: R
         edgeId: edge._id,
         kind: 'discover',
         target: edge.currentOp.target,
-        claimMs: edgeMs.opClaim(cfg),
+        claimMs: EDGE_PLUMBING.opClaimMs,
       });
       if (cl.ok)
         await ctx.runMutation(internal.edges.settleOp, { edgeId: edge._id, opId: cl.opId });
@@ -556,7 +562,7 @@ async function settleEdge(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: R
     edgeId: edge._id,
     kind: 'discover',
     target: pending.stepId,
-    claimMs: edgeMs.opClaim(cfg),
+    claimMs: EDGE_PLUMBING.opClaimMs,
   });
   if (!cl.ok) return;
   // Discovery attempts live on the step, not the claim: every pass settles and
@@ -641,7 +647,7 @@ async function settleEdge(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: R
         discoverAttempts: discoverAttempt,
       },
     });
-    if ((pending.startedAt ?? edge._creationTime) + edgeMs.discoveryTimeout(cfg) < now) {
+    if ((pending.startedAt ?? edge._creationTime) + EDGE_PLUMBING.discoveryTimeoutMs < now) {
       await ctx.runMutation(internal.edges.patchEdge, {
         edgeId: edge._id,
         status: 'needs_operator',
@@ -733,7 +739,7 @@ async function sharedTeardownPass(
     edgeId: edge._id,
     kind: 'destroy_step',
     target: state.serviceId,
-    claimMs: edgeMs.opClaim(cfg),
+    claimMs: EDGE_PLUMBING.opClaimMs,
   });
   if (!cl.ok) return true;
   const lockKey = `fastly-service:${state.serviceId}`;
@@ -741,7 +747,7 @@ async function sharedTeardownPass(
     key: lockKey,
     edgeId: edge._id,
     opId: cl.opId,
-    ttlMs: edgeMs.opClaim(cfg),
+    ttlMs: EDGE_PLUMBING.opClaimMs,
   });
   if (!lk.ok) {
     await ctx.runMutation(internal.edges.settleOp, { edgeId: edge._id, opId: cl.opId });
@@ -786,7 +792,7 @@ async function sharedTeardownPass(
  */
 async function destroyStep(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: ReconcileReport) {
   const accountId = edge.accountId!;
-  if (edge.destroyAttempts >= cfg.maxDestroyAttempts) {
+  if (edge.destroyAttempts >= EDGE_PLUMBING.maxDestroyAttempts) {
     await ctx.runMutation(internal.edgeReconcileMutations.destroyExhausted, { edgeId: edge._id });
     return;
   }
@@ -816,7 +822,7 @@ async function destroyStep(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: 
     edgeId: edge._id,
     kind: 'destroy_step',
     target: target.resourceId,
-    claimMs: edgeMs.opClaim(cfg),
+    claimMs: EDGE_PLUMBING.opClaimMs,
   });
   if (!cl.ok) return;
   // A SHARED-service teardown (an adopted domain on a service FCP does not own)
@@ -830,7 +836,7 @@ async function destroyStep(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: 
       key: sharedLockKey,
       edgeId: edge._id,
       opId: cl.opId,
-      ttlMs: edgeMs.opClaim(cfg),
+      ttlMs: EDGE_PLUMBING.opClaimMs,
     });
     if (!lk.ok) {
       await ctx.runMutation(internal.edges.settleOp, { edgeId: edge._id, opId: cl.opId });

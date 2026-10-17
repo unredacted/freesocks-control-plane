@@ -63,15 +63,31 @@ export function cancelRestores(stage: SetupRunStage): boolean {
   return i >= stageIndex('publish') && i < stageIndex('go_live');
 }
 
+/**
+ * The activation candidate a rehearsal rendered for an enrolled node: the
+ * activation run and the revisions it approved. A later approval (a new run,
+ * or the same node at new revisions) is a different candidate.
+ */
+export interface VectorActivation {
+  runId: string;
+  machineRevision: number;
+  configRevision: string;
+  authRevision: string | null;
+  deliveryRevision: string;
+}
+
 /** The version vector stage 7 records and stage 8 re-derives. */
 export interface SetupVector {
   listenerRevisions: Record<string, number>;
   renderConfigHash: string;
   publicationEpoch: number;
   qualificationEvidenceIds: string[];
+  /** Null / absent for an origin that is not an enrolled node with a running activation. */
+  activation?: VectorActivation | null;
 }
 
 export function vectorsEqual(a: SetupVector, b: SetupVector): boolean {
+  if (canonicalJson(a.activation ?? null) !== canonicalJson(b.activation ?? null)) return false;
   if (a.renderConfigHash !== b.renderConfigHash) return false;
   if (a.publicationEpoch !== b.publicationEpoch) return false;
   const ak = Object.keys(a.listenerRevisions).sort();
@@ -118,7 +134,7 @@ export async function planHashOf(input: {
   );
 }
 
-/** One discovered transport in the plan snapshot (the required set is the frontable ones). */
+/** One discovered transport in the plan snapshot (the required set is the frontable ones, or the operator's choice of them). */
 export interface SetupPlanInbound {
   listenerKey: string;
   sourceTag: string;
@@ -158,7 +174,7 @@ export interface SetupPlanSnapshot {
   originAddress: string;
   relaySlug: string;
   inbounds: SetupPlanInbound[];
-  /** Listener keys of the frontable transports (cap 8). */
+  /** Listener keys of the frontable transports (cap 8), or of the ones the operator chose. */
   requiredListeners: string[];
   tooManyInbounds: boolean;
   directHosts: SetupPlanDirectHost[];
@@ -171,6 +187,19 @@ export interface SetupPlanSnapshot {
   existingRelay: { id: string; slug: string; setupStage: string | null } | null;
   /** A non-terminal run already owns this origin. */
   activeRunId: string | null;
+  /**
+   * The node is ENROLLED (FCP manages it, docs/servers.md "Node lifecycle"):
+   * it goes live through its approval, and has no direct address to keep
+   * members on (`keepDirect` is refused). Absent on runs from before.
+   */
+  enrolled?: boolean;
+  /**
+   * A re-protect run (`kind: 'reprotect'`): the origin's `desiredPublished`
+   * before the run made room for its new addresses. Restored when the run
+   * ends without going live, and once go-live retired the addresses the new
+   * ones replace.
+   */
+  reprotect?: { desiredBefore: number };
 }
 
 const SLUG_MAX = 40;

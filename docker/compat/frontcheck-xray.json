@@ -4,7 +4,7 @@
     "(convex/lib/edges/frontCheck/frontCheck.integration.test.ts).",
     "",
     "One inbound per HTTP transport an L7 edge can front (ws, httpupgrade, grpc,",
-    "xhttp packet-up), each on its own port",
+    "xhttp packet-up, and Trojan over ws), each on its own port",
     "because a listener speaks exactly one of them. Xray terminates TLS itself:",
     "the compat stack has no separate TLS terminator, and what the test has to",
     "prove is that the real software accepts our transport handshake, our VLESS",
@@ -15,7 +15,7 @@
     "off the public internet and out of the container's resolver (the image is",
     "distroless), while the client still sends the real request it would send.",
     "",
-    "The client id is a fixed, public test value: it authenticates nothing but",
+    "The client id and the Trojan password are fixed, public test values: they authenticate nothing but",
     "this throwaway container."
   ],
   "log": { "loglevel": "warning" },
@@ -102,6 +102,26 @@
           ]
         },
         "xhttpSettings": { "path": "/relay-xh", "mode": "packet-up" }
+      }
+    },
+    {
+      "tag": "trojan-ws-tls",
+      "listen": "0.0.0.0",
+      "port": 18447,
+      "protocol": "trojan",
+      "settings": {
+        "clients": [{ "password": "fcp-frontcheck-trojan-test" }]
+      },
+      "streamSettings": {
+        "network": "ws",
+        "security": "tls",
+        "tlsSettings": {
+          "alpn": ["http/1.1"],
+          "certificates": [
+            { "certificateFile": "/etc/xray/tls/cert.pem", "keyFile": "/etc/xray/tls/key.pem" }
+          ]
+        },
+        "wsSettings": { "path": "/relay-tw" }
       }
     }
   ],

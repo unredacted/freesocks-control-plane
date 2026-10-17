@@ -38,13 +38,17 @@ import {
   ModeGroupWrite,
   NodeAppliedReport,
   NodeRegistration,
+  NodeRenameRequest,
+  PortChangeAcknowledge,
   ProfilePatchApply,
   ProfilePatchPreviewRequest,
   type ProfilePatchOp,
   type ProfilePatchPreview,
+  type TransportTemplateOp,
 } from '../src/shared/contracts/servers';
 import { findLegacyField, LEGACY, type LegacySpec } from './lib/legacyFields';
-import type { PatchOp } from './lib/backend/patchOps';
+import type { PatchOp, TransportTemplate } from './lib/backend/patchOps';
+import { ConvexError } from 'convex/values';
 import type { ProfilePatchPreviewView } from './backendWrites';
 
 const PREFIX = '/api/v1/admin/servers/';
@@ -94,10 +98,16 @@ export function scopeFor(parts: string[], method: string): string | string[] {
   // route and takes that route's own scope, never the settings one.
   if (parts.length === 1 && parts[0] === 'config')
     return method === 'GET' ? 'admin:settings:read' : 'admin:settings:write';
-  // The role's routes: its fleet token, or a register token confined to its boundary.
+  // The role's routes: its fleet token (which holds `write`, maybe not `read`, so
+  // a GET takes either), or a register token confined to its boundary.
   if (isByNameRoute(parts))
     return method === 'GET'
-      ? ['admin:servers:read', 'admin:edges:register', 'admin:servers:manage']
+      ? [
+          'admin:servers:read',
+          'admin:servers:write',
+          'admin:edges:register',
+          'admin:servers:manage',
+        ]
       : ['admin:servers:write', 'admin:edges:register', 'admin:servers:manage'];
   if (method === 'GET' || (method === 'POST' && isReadOnlyPost(parts))) return 'admin:servers:read';
   return 'admin:servers:manage';
@@ -169,10 +179,11 @@ async function byNameHandler(
   const [slug, , , name, verb, extra] = parts;
   if (!slug || !name || extra) return notFound();
   const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug });
+  // Unbounded: the fleet token's scope for this verb (a GET takes read or write), or manage.
   const boundary = await registrationBoundaryOf(
     ctx,
     admin,
-    method === 'GET' ? 'admin:servers:read' : 'admin:servers:write',
+    method === 'GET' ? ['admin:servers:read', 'admin:servers:write'] : 'admin:servers:write',
   );
   if (!nodeWithinBoundary(boundary, instance.id, name))
     return errorJson('servers.registration_boundary', 'This token may not act for that node', 403);
@@ -228,6 +239,7 @@ async function byNameHandler(
       appliedRevision: parsed.data.appliedRevision,
       certificateReady: parsed.data.caddy?.certificateReady,
       nodeStarted: parsed.data.nodeStarted,
+      firewallPorts: parsed.data.firewall?.ports.map((p) => p.port),
     });
     return view();
   }
@@ -272,25 +284,89 @@ function parseWrite<T>(
   return { ok: true, data: parsed.data };
 }
 
-const toPatchOps = (ops: readonly ProfilePatchOp[]): PatchOp[] =>
-  ops.map((o) =>
-    o.op === 'setRealityServerNames'
-      ? { op: o.op, inboundTag: o.transportTag, names: o.names }
-      : { op: o.op, inboundTag: o.transportTag, target: o.target },
-  );
+/**
+ * Contract ops as the typed edits take them (`transportTag` -> `inboundTag`).
+ * A REALITY template that names only its family is resolved here to the
+ * family's target and the names usable today: what the preview answers, and
+ * the apply then takes back verbatim.
+ */
+async function toPatchOps(ctx: ActionCtx, ops: readonly ProfilePatchOp[]): Promise<PatchOp[]> {
+  const out: PatchOp[] = [];
+  for (const o of ops) {
+    if (o.op === 'setRealityServerNames')
+      out.push({ op: o.op, inboundTag: o.transportTag, names: o.names });
+    else if (o.op === 'setRealityTarget')
+      out.push({ op: o.op, inboundTag: o.transportTag, target: o.target });
+    else if (o.op === 'setInboundPort')
+      out.push({ op: o.op, inboundTag: o.transportTag, port: o.port });
+    else
+      out.push({
+        op: o.op,
+        inboundTag: o.transportTag,
+        template: await toTemplate(ctx, o.template),
+      });
+  }
+  return out;
+}
+
+async function toTemplate(ctx: ActionCtx, t: TransportTemplateOp): Promise<TransportTemplate> {
+  if (t.kind === 'ws') return { kind: 'ws', port: t.port, path: t.path };
+  let target = t.target;
+  let serverNames = t.serverNames;
+  if (target === undefined || serverNames === undefined) {
+    if (!t.familySlug)
+      throw new ConvexError({
+        code: 'servers.template_invalid',
+        message: 'A REALITY transport takes its target and names from a server-name family',
+      });
+    const family = await ctx.runQuery(internal.backendWrites.familyForTemplate, {
+      slug: t.familySlug,
+    });
+    if (!family)
+      throw new ConvexError({ code: 'servers.family_missing', message: 'No such family' });
+    if (family.names.length === 0)
+      throw new ConvexError({
+        code: 'servers.family_empty',
+        message: 'That family has no usable name today',
+      });
+    target ??= family.target;
+    serverNames ??= family.names;
+  }
+  return {
+    kind: t.kind,
+    port: t.port,
+    target,
+    serverNames,
+    acceptProxyProtocol: t.acceptProxyProtocol === true,
+  };
+}
+
+/** One typed edit in the contract's words. */
+function opToContract(o: PatchOp): ProfilePatchOp {
+  if (o.op === 'setRealityServerNames')
+    return { op: o.op, transportTag: o.inboundTag, names: o.names };
+  if (o.op === 'setRealityTarget')
+    return { op: o.op, transportTag: o.inboundTag, target: o.target };
+  if (o.op === 'setInboundPort') return { op: o.op, transportTag: o.inboundTag, port: o.port };
+  return { op: o.op, transportTag: o.inboundTag, template: o.template };
+}
 
 /** The preview in the contract's words (`transport*`, never the backend's `inbound*`). */
 function previewToContract(p: ProfilePatchPreviewView): ProfilePatchPreview {
-  const { inboundUuids, changes, ops, ...rest } = p;
+  const {
+    inboundUuids,
+    changes,
+    ops,
+    needsMaterial: _n,
+    ...rest
+  } = p as ProfilePatchPreviewView & {
+    needsMaterial?: boolean;
+  };
   return {
     ...rest,
     transportUuids: inboundUuids,
     changes: changes.map(({ inboundTag, ...c }) => ({ ...c, transportTag: inboundTag })),
-    ops: ops.map((o) =>
-      o.op === 'setRealityServerNames'
-        ? { op: o.op, transportTag: o.inboundTag, names: o.names }
-        : { op: o.op, transportTag: o.inboundTag, target: o.target },
-    ),
+    ops: ops.map(opToContract),
   };
 }
 
@@ -326,6 +402,22 @@ const getHandler: Handler = async (ctx, parts) => {
   if (a && b === 'setup' && !c) {
     const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
     return json(await ctx.runQuery(internal.backendSetup.view, { backendServerId: instance.id }));
+  }
+  if (a && b === 'renames' && !c) {
+    const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
+    return json({
+      renames: await ctx.runQuery(internal.backendNodeRenames.listForServer, {
+        backendServerId: instance.id,
+      }),
+    });
+  }
+  if (a && b === 'port-changes' && !c) {
+    const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
+    return json({
+      changes: await ctx.runQuery(internal.backendPortChanges.listForServer, {
+        backendServerId: instance.id,
+      }),
+    });
   }
   // The enrolled nodes of an instance, and one node's review card.
   if (a && b === 'nodes' && c === 'intents' && !parts[4]) {
@@ -370,18 +462,19 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
       const view = await ctx.runAction(internal.backendWrites.previewProfilePatch, {
         backendServerId: instance.id,
         profileUuid: c,
-        ops: toPatchOps(w.data.ops),
+        ops: await toPatchOps(ctx, w.data.ops),
       });
       return json(previewToContract(view));
     }
     // Apply takes what the preview answered, verbatim: the write is conditioned
-    // on the profile still having THAT token.
+    // on the profile still having THAT token. A port change is staged instead
+    // (`port-change`), and the claim refuses one that arrives here.
     const w = parseWrite(ProfilePatchApply, body, LEGACY.profileApply);
     if (!w.ok) return w.res;
     const { opId } = await ctx.runMutation(internal.backendWrites.requestProfilePatch, {
       backendServerId: instance.id,
       profileUuid: c,
-      ops: toPatchOps(w.data.ops),
+      ops: await toPatchOps(ctx, w.data.ops),
       baseToken: w.data.baseToken,
       expectedToken: w.data.expectedToken,
       inboundUuids: w.data.transportUuids,
@@ -389,6 +482,57 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
       ...actorOf(admin),
     });
     return runOp(ctx, opId);
+  }
+  // A port change (docs/servers.md "Firewall acknowledgement"): staged until
+  // every node that will listen on the port has confirmed its firewall.
+  if (a && b === 'profiles' && c && d === 'port-change' && !parts[4]) {
+    const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
+    const w = parseWrite(ProfilePatchApply, body, LEGACY.profileApply);
+    if (!w.ok) return w.res;
+    if (w.data.expectedToken === null)
+      return errorJson('validation', 'A port change always says what the profile becomes', 400);
+    const { changeId } = await ctx.runMutation(internal.backendPortChanges.stage, {
+      backendServerId: instance.id,
+      profileUuid: c,
+      ops: await toPatchOps(ctx, w.data.ops),
+      baseToken: w.data.baseToken,
+      expectedToken: w.data.expectedToken,
+      inboundUuids: w.data.transportUuids,
+      unmanaged: w.data.unmanaged,
+      ...actorOf(admin),
+    });
+    return json(await ctx.runQuery(internal.backendPortChanges.view, { changeId }));
+  }
+  // A rename that holds on Host remarks the backend refused: try them again.
+  if (a && b === 'renames' && c && d === 'retry' && !parts[4]) {
+    const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
+    const renameId = await ctx.runQuery(internal.backendNodeRenames.onServer, {
+      backendServerId: instance.id,
+      renameId: c,
+    });
+    if (!renameId) return notFound();
+    await ctx.runMutation(internal.backendNodeRenames.retry, { renameId, ...actorOf(admin) });
+    return json(await ctx.runQuery(internal.backendNodeRenames.view, { renameId }));
+  }
+  if (a && b === 'port-changes' && c && (d === 'acknowledge' || d === 'cancel') && !parts[4]) {
+    const instance = await ctx.runQuery(internal.serverAdmin.instanceBySlug, { slug: a });
+    const changeId = await ctx.runQuery(internal.backendPortChanges.onServer, {
+      backendServerId: instance.id,
+      changeId: c,
+    });
+    if (!changeId) return notFound();
+    if (d === 'cancel')
+      await ctx.runMutation(internal.backendPortChanges.cancel, { changeId, ...actorOf(admin) });
+    else {
+      const w = parseWrite(PortChangeAcknowledge, body, {});
+      if (!w.ok) return w.res;
+      await ctx.runMutation(internal.backendPortChanges.acknowledge, {
+        changeId,
+        nodeNames: w.data.nodeNames,
+        ...actorOf(admin),
+      });
+    }
+    return json(await ctx.runQuery(internal.backendPortChanges.view, { changeId }));
   }
   // Adopting a node that already serves members, as it is (docs/servers.md "Adopting a backend").
   if (a && b === 'nodes' && c === 'adopt' && !d) {
@@ -453,15 +597,17 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
     if (verb === 'retire') {
       // With a disposition this is the admin's decision; without, a request.
       const disposition = body.disposition;
-      if (disposition === 'keep-dark' || disposition === 'migrate')
+      // Moving a node's members to another node is not offered.
+      if (disposition === 'migrate')
+        throw new ConvexError({
+          code: 'servers.migration_not_built',
+          message: 'Migration is not available in this version; choose keep-dark',
+        });
+      if (disposition === 'keep-dark')
         return json(
           await ctx.runMutation(internal.nodeRetirement.decide, {
             intentId,
             disposition,
-            targetIntentId:
-              typeof body.targetIntentId === 'string'
-                ? (body.targetIntentId as Id<'panelNodeIntents'>)
-                : undefined,
             ...actorOf(admin),
           }),
         );
@@ -482,12 +628,18 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
           byAdminId: admin.adminUserId ?? undefined,
         }),
       );
+    // `{start: true}` closes the node for maintenance; without it, Finish maintenance.
     if (verb === 'maintenance')
       return json(
-        await ctx.runMutation(internal.nodeIntents.finishMaintenance, {
-          intentId,
-          ...actorOf(admin),
-        }),
+        body.start === true
+          ? await ctx.runMutation(internal.nodeIntents.startMaintenance, {
+              intentId,
+              ...actorOf(admin),
+            })
+          : await ctx.runMutation(internal.nodeIntents.finishMaintenance, {
+              intentId,
+              ...actorOf(admin),
+            }),
       );
     if (verb === 'settings')
       return json(
@@ -517,6 +669,18 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
         ...actorOf(admin),
       });
       return runOp(ctx, opId);
+    }
+    // A rename moves every reference to the name (docs/servers.md "Renaming a node").
+    if (d === 'rename' && !parts[4]) {
+      const w = parseWrite(NodeRenameRequest, body, {});
+      if (!w.ok) return w.res;
+      const { renameId } = await ctx.runMutation(internal.backendNodeRenames.request, {
+        backendServerId: instance.id,
+        nodeUuid: c,
+        name: w.data.name,
+        ...actorOf(admin),
+      });
+      return json(await ctx.runQuery(internal.backendNodeRenames.view, { renameId }));
     }
     if (d === 'enable' || d === 'disable' || d === 'restart') {
       const { opId } = await ctx.runMutation(internal.backendWrites.requestNodeAction, {

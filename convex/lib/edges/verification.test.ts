@@ -7,11 +7,17 @@ import {
   verificationCurrent,
   verificationEndpoint,
   verificationStale,
+  verificationStaleReason,
   type VerificationEdgeLike,
   type VerificationListenerLike,
 } from './verification';
 
-const listener: VerificationListenerLike = { listenerKey: 'a', revision: 3, configHash: 'lh1' };
+const listener: VerificationListenerLike = {
+  listenerKey: 'a',
+  revision: 3,
+  configHash: 'lh1',
+  authRevision: null,
+};
 
 function edge(over: Partial<VerificationEdgeLike> = {}): VerificationEdgeLike {
   return {
@@ -117,5 +123,54 @@ describe('verificationCurrent', () => {
     expect(needsEndpointVerification({ layer: 'l4' })).toBe(true);
     expect(needsEndpointVerification({})).toBe(true);
     expect(needsEndpointVerification({ layer: 'l7' })).toBe(false);
+  });
+});
+
+describe("an enrolled node's REALITY auth revision", () => {
+  const enrolled = (authRevision: string | null) => ({ ...listener, authRevision });
+  const tickedUnder = (l: VerificationListenerLike) => {
+    const b = verificationBinding(edge(), l)!;
+    return edge({
+      verification: {
+        rung: 'verified',
+        by: 'admin',
+        at: 1,
+        method: 'test_link',
+        ...b,
+        ...(l.authRevision ? { authRevision: l.authRevision } : {}),
+      },
+    });
+  };
+
+  test('none (any other origin): the binding is exactly what it always was', () => {
+    expect(verificationBinding(edge(), enrolled(null))).toEqual(
+      verificationBinding(edge(), listener),
+    );
+  });
+
+  test('it is folded into the hash, never shown on its own: the echoed binding keeps its shape', () => {
+    const b = verificationBinding(edge(), enrolled('auth-1'))!;
+    expect(Object.keys(b).sort()).toEqual([
+      'configHash',
+      'endpoint',
+      'listenerKey',
+      'listenerRevision',
+    ]);
+    expect(b.configHash).not.toBe(verificationBinding(edge(), enrolled(null))!.configHash);
+    expect(JSON.stringify(b)).not.toContain('auth-1');
+  });
+
+  test('a key move makes the tick stale and says why; another change says the generic reason', () => {
+    const e = tickedUnder(enrolled('auth-1'));
+    expect(verificationCurrent(e, enrolled('auth-1'))).toBe(true);
+    expect(verificationCurrent(e, enrolled('auth-2'))).toBe(false);
+    expect(verificationStaleReason(e, enrolled('auth-2'))).toBe('reality_key_changed');
+    expect(verificationStaleReason(e, { ...enrolled('auth-1'), revision: 4 })).toBe(
+      'verification_stale',
+    );
+    expect(verificationStaleReason(e, enrolled('auth-1'))).toBeNull();
+    // A tick taken before the key was bound in (no stored revision) reads as a key move too.
+    const legacy = tickedUnder(enrolled(null));
+    expect(verificationStaleReason(legacy, enrolled('auth-1'))).toBe('reality_key_changed');
   });
 });

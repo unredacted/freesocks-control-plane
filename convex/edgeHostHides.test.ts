@@ -15,7 +15,7 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { upsertSettingRow } from './appSettings';
 import { classifyDirectHosts, listingHash } from './lib/edges/directHosts';
-import { cohortReportForOrigin } from './lib/edges/cohorts';
+import { cohortPage, type Cohort, type CohortCursor, type CohortPage } from './lib/edges/cohorts';
 import { HIDE_MAX_ATTEMPTS, judgeLook } from './edgeHostHides';
 import { HOST_OP_TTL_MS, HOST_SETTLE_MS } from './hostOps';
 import { fakeHostPanel, type AddressRow } from './lib/edges/testing/fakeHostPanel';
@@ -654,7 +654,7 @@ describe('acceptance 17: a direct Host reappears on a bound guided origin', () =
 });
 
 describe('cohorts', () => {
-  test('one representative per placement among the active keys pinned to the node, every page walked, total reported', async () => {
+  test('one representative per placement among the active keys pinned to the node, a bounded page at a time, never every key', async () => {
     const { t, serverId, subId } = await world({ deferred: true });
     await t.run(async (ctx) => {
       const sub = (await ctx.db.get(subId))!;
@@ -674,18 +674,29 @@ describe('cohorts', () => {
         });
       }
     });
-    const report = await t.run((ctx) =>
-      cohortReportForOrigin(ctx, { backendServerId: serverId, nodeName: FIXTURE_NODE }),
-    );
-    expect(report.cohorts.map((c) => c.key).sort()).toEqual(['default', 'squad-1', 'squad-2']);
-    expect(report.cohorts.find((c) => c.key === 'squad-1')?.subscriptionId).toBe(subId);
-    // 1 seeded + the inserted rows that are active AND pinned to node-one.
-    let expected = 1;
-    for (let i = 0; i < 450; i++) if (i % 7 !== 0 && i % 5 !== 0) expected++;
-    expect(report.total).toBe(expected);
+    // The walk reads one key per placement and pages them: with a page of one
+    // placement it takes three pages, whatever the number of keys.
+    const origin = { backendServerId: serverId, nodeName: FIXTURE_NODE };
+    const walked: Cohort[] = [];
+    let cursor: CohortCursor | null = null;
+    let pages = 0;
+    for (;;) {
+      const page: CohortPage = await t.run((ctx) => cohortPage(ctx, origin, cursor, 1));
+      pages++;
+      walked.push(...page.cohorts);
+      if (!page.next) break;
+      cursor = page.next;
+    }
+    expect(walked.map((c) => c.key).sort()).toEqual(['default', 'squad-1', 'squad-2']);
+    expect(walked.find((c) => c.key === 'squad-1')?.subscriptionId).toBe(subId);
+    expect(pages).toBeLessThanOrEqual(4);
+    // The action-driven walk (one query per page) finds the same cohorts.
+    const viaQuery = await t.query(internal.edgeCohorts.page, { ...origin, cursor: null });
+    expect(viaQuery.cohorts.map((c) => c.key).sort()).toEqual(['default', 'squad-1', 'squad-2']);
+    expect(viaQuery.next).toBeNull();
     const other = await t.run((ctx) =>
-      cohortReportForOrigin(ctx, { backendServerId: serverId, nodeName: 'node-nine' }),
+      cohortPage(ctx, { backendServerId: serverId, nodeName: 'node-nine' }, null),
     );
-    expect(other).toEqual({ cohorts: [], total: 0 });
+    expect(other).toEqual({ cohorts: [], next: null });
   });
 });

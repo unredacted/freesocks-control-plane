@@ -23,6 +23,7 @@ import {
   wsListener,
   type ListenerSpecFixture,
 } from './lib/edges/testing/fixtures';
+import { bumpEpoch } from './lib/edges/testing/reads';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -360,7 +361,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     );
     const v2 = await get(t, 'v2rayNG/1.9.0');
     expect(v2.status).toBe(503);
-    expect(v2.headers.get('x-fcp-delivery')).toBe('render_disabled');
+    expect(v2.headers.get('x-fcp-delivery')).toBe('family_disabled');
     const other = await get(t, 'curl/8.0');
     expect(other.status).toBe(200);
     expect(await other.text()).toContain('FreeSocks%20Primary');
@@ -395,6 +396,47 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
         nodeName: 'node-nine',
       }),
     ).toMatchObject({ required: false, bindingVersion: null, relayId: null, relaySlug: null });
+  });
+
+  test("the backend's placeholder (no node entry, no pin) is answered but never cached: the node going live is seen at once", async () => {
+    // What the backend serves a key whose node serves nothing yet: no Host
+    // remark names a node, so the pin resolves nothing.
+    const placeholder = `vless://${UUID}@0.0.0.0:1?${REALITY_QS}#No%20hosts`;
+    stubPanel(placeholder);
+    const { t, subId } = await seed({ pinned: false });
+    const first = await get(t);
+    expect(first.status).toBe(200);
+    expect(await first.text()).toBe(placeholder);
+    expect(first.headers.get('cache-control')).toBe('private, no-store');
+    const sub = (await t.run((ctx) => ctx.db.get(subId)))!;
+    expect(sub.pinnedNode).toBeUndefined();
+    expect(sub.subCache).toBeUndefined();
+    // The node goes live: its body is what the very next request gets (no 30 s placeholder).
+    stubPanel();
+    const next = await get(t);
+    expect(next.status).toBe(200);
+    expect(await next.text()).toContain('FreeSocks%20Primary');
+    expect(fetchCalls).toBe(1);
+  });
+
+  test('every edge-required refusal is counted per reason, never the member or the node', async () => {
+    stubPanel();
+    const { t } = await seed({ renderEnabled: false });
+    expect((await get(t)).status).toBe(503);
+    expect((await get(t, 'curl/8.0')).status).toBe(503);
+    const a = await t.query(internal.edgeOperator.attention, {});
+    const item = a.items.find((i) => i.kind === 'delivery_refusals')!;
+    expect(item).toMatchObject({
+      severity: 'warning',
+      code: 'render_disabled',
+      relaySlug: null,
+      facts: { total: 2, byReason: { render_disabled: 2 }, windowMinutes: 60 },
+    });
+    // The rows hold reason codes and counts only.
+    const rows = await t.run((ctx) => ctx.db.query('appState').collect());
+    const shards = rows.filter((r) => r.key.startsWith('edge:refusals:'));
+    expect(shards.length).toBeGreaterThan(0);
+    for (const r of shards) expect(r.value).not.toMatch(/tok_|short-1|node-|198\.51/);
   });
 
   test('the cache token follows the delivery binding policy version', async () => {
@@ -433,7 +475,11 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     stubPanel();
     const { t, relayId, listenerId } = await seed();
     const pool = async () =>
-      (await t.run(async (ctx) => publishedEdgesOf(ctx, (await ctx.db.get(relayId))!))).published;
+      (
+        await t.run(async (ctx) =>
+          publishedEdgesOf(ctx, (await ctx.db.get(relayId))!, { kind: 'member' }),
+        )
+      ).published;
     expect((await pool())[0].sniPick).toBeUndefined();
     await t.mutation(internal.relayListeners.setSniPick, { id: listenerId, version: 'hrw1' });
     expect((await pool())[0].sniPick).toBe('hrw1');
@@ -442,7 +488,9 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
   test('publishedEdgesOf returns the pool with listener matchers; decideForSubscription hands the route a render context', async () => {
     stubPanel();
     const { t, subId, relayId, listenerId, edgeA } = await seed();
-    const view = await t.run(async (ctx) => publishedEdgesOf(ctx, (await ctx.db.get(relayId))!));
+    const view = await t.run(async (ctx) =>
+      publishedEdgesOf(ctx, (await ctx.db.get(relayId))!, { kind: 'member' }),
+    );
     expect(view.matchers).toEqual([
       {
         listenerKey: 'a',
@@ -491,8 +539,12 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     // A disabled listener keeps its pool index but is ineligible (default view drops it).
     await t.run((ctx) => ctx.db.patch(listenerId, { enabled: false }));
     const relay = (await t.run((ctx) => ctx.db.get(relayId)))!;
-    expect((await t.run((ctx) => publishedEdgesOf(ctx, relay))).published).toEqual([]);
-    const all = await t.run((ctx) => publishedEdgesOf(ctx, relay, { includeIneligible: true }));
+    expect(
+      (await t.run((ctx) => publishedEdgesOf(ctx, relay, { kind: 'member' }))).published,
+    ).toEqual([]);
+    const all = await t.run((ctx) =>
+      publishedEdgesOf(ctx, relay, { kind: 'member' }, { includeIneligible: true }),
+    );
     expect(all.published[0]).toMatchObject({ edgeId: edgeA, poolIndex: 0, eligible: false });
     expect(all.matchers).toEqual([]);
   });
@@ -524,7 +576,12 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     await t.run((ctx) => ctx.db.patch(edgeA, { layer: 'l7', addresses: { hostname: HOSTNAME } }));
     await proveFront(t, edgeA, HOSTNAME);
     const view = await t.run(async (ctx) =>
-      publishedEdgesOf(ctx, (await ctx.db.get(relayId))!, { includeIneligible: true }),
+      publishedEdgesOf(
+        ctx,
+        (await ctx.db.get(relayId))!,
+        { kind: 'member' },
+        { includeIneligible: true },
+      ),
     );
     expect(view.published).toHaveLength(1);
     expect(view.published[0]).toMatchObject({ layer: 'l7', addresses: { hostname: HOSTNAME } });
@@ -568,7 +625,12 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     });
     expect(rec).toEqual({ ok: false, code: 'front_error' });
     const failed = await t.run(async (ctx) =>
-      publishedEdgesOf(ctx, (await ctx.db.get(relayId))!, { includeIneligible: true }),
+      publishedEdgesOf(
+        ctx,
+        (await ctx.db.get(relayId))!,
+        { kind: 'member' },
+        { includeIneligible: true },
+      ),
     );
     expect(failed.published[0].eligible).toBe(false);
     expect((await t.run((ctx) => ctx.db.get(relayId)))!.publicationEpoch).toBe(epochBefore + 1);
@@ -597,7 +659,12 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     // for an active edge): the record no longer describes the live endpoint.
     await t.run((ctx) => ctx.db.patch(edgeB, { addresses: { v4: '198.51.100.9' } }));
     const view = await t.run(async (ctx) =>
-      publishedEdgesOf(ctx, (await ctx.db.get(relayId))!, { includeIneligible: true }),
+      publishedEdgesOf(
+        ctx,
+        (await ctx.db.get(relayId))!,
+        { kind: 'member' },
+        { includeIneligible: true },
+      ),
     );
     expect(view.published.map((p) => [p.edgeId, p.eligible ?? true])).toEqual([
       [edgeA, true],
@@ -682,7 +749,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     expect(view?.refreshSuggested).toBe(false);
     // Any epoch bump after this key's last render → nudge, and the stale
     // snapshot's labels are no longer trusted.
-    await t.mutation(internal.relays.bumpEpoch, { relayId });
+    await bumpEpoch(t, { relayId });
     view = await t.query(internal.edgeRender.memberView, { subscriptionId: subId });
     expect(view).toEqual({ refreshSuggested: true, known: false, connections: [] });
     // …until the next delivery renders against the new epoch.

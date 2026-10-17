@@ -72,14 +72,6 @@ export const list = internalQuery({
   },
 });
 
-export const get = internalQuery({
-  args: { id: v.id('edgeTemplates') },
-  handler: async (ctx, { id }) => {
-    const r = await ctx.db.get(id);
-    return r ? mapTemplateAdmin(r) : null;
-  },
-});
-
 /** The schema descriptors the CMS renders forms from (pure data). */
 export const describeSchemas = internalQuery({
   args: {},

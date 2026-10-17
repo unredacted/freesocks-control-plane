@@ -15,7 +15,7 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { upsertSettingRow } from './appSettings';
 import { clientRuleKey, defaultClientRule } from './lib/edgeConfig';
-import { cohortsForRelay } from './lib/edges/cohorts';
+import type { Cohort, CohortCursor, CohortPage } from './lib/edges/cohorts';
 import { fakeOutline, fakePanel, type FakePanelUser } from './lib/edges/testing/fakePanel';
 import {
   adoptL4Edge,
@@ -32,7 +32,6 @@ import {
   __setHostObserverForTests,
   REHEARSAL_MAX_ATTEMPTS,
   REHEARSAL_USER_AGENTS,
-  sameVector,
 } from './edgeRehearsal';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -228,11 +227,11 @@ describe('the delivery rehearsal', () => {
     expect(r.hostsObservation.listingHash).toBeTruthy();
     expect(r.hostsObservation.version).toBe(r.hostsObservation.observedAt);
     const now = (await t.query(internal.edgeRehearsal.vectorNow, { relayId: fx.relayId }))!;
-    expect(sameVector(r.vector, now)).toBe(true);
+    expect(r.vector).toEqual(now);
     // A listener revision bump changes the vector (the go-live compare catches it).
     await t.mutation(internal.relayListeners.setEnabled, { id: fx.listenerIds.b, enabled: false });
     const later = (await t.query(internal.edgeRehearsal.vectorNow, { relayId: fx.relayId }))!;
-    expect(sameVector(r.vector, later)).toBe(false);
+    expect(r.vector).not.toEqual(later);
   });
 
   test('an approved dark cohort is excluded from the serve requirement; a cohort whose body cannot render is a failure per format', async () => {
@@ -267,9 +266,16 @@ describe('the delivery rehearsal', () => {
     await addMember('sq-b');
     // A subscription pinned elsewhere is not a cohort of this node.
     await addMember('sq-b', 'node-two');
-    const viaRelay = await t.run(async (ctx) =>
-      cohortsForRelay(ctx, (await ctx.db.get(fx.relayId))!),
-    );
+    // The walk an action drives: one bounded query per page of placements.
+    const origin = (await t.query(internal.edgeCohorts.originOfRelay, { relayId: fx.relayId }))!;
+    const viaRelay: Cohort[] = [];
+    let cursor: CohortCursor | null = null;
+    for (;;) {
+      const page: CohortPage = await t.query(internal.edgeCohorts.page, { ...origin, cursor });
+      viaRelay.push(...page.cohorts);
+      if (!page.next) break;
+      cursor = page.next;
+    }
     expect(viaRelay.map((c) => c.key)).toEqual(['sq-a', 'sq-b']);
     expect(viaRelay.every((c) => c.nodeName === NODE)).toBe(true);
   });

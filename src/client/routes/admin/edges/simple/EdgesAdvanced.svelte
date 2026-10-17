@@ -1,7 +1,8 @@
 <script lang="ts">
   /**
    * Advanced (`/admin/edges/advanced`): a plain list of links to the technical
-   * pages, which are unchanged and keep their addresses.
+   * pages (All origins and each origin's details, templates, probes, names,
+   * settings).
    */
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import Link from '@client/components/Link.svelte';
@@ -11,13 +12,13 @@
   const LINKS: Array<{ label: string; hint: string; href: string }> = [
     {
       label: 'All origins',
-      hint: 'The fleet dashboard: tiles, the attention list, readiness, every origin, reachability.',
+      hint: 'The fleet dashboard: tiles, the attention list, readiness, every origin and its details, reachability.',
       href: edgesPaths.overview(),
     },
     {
-      label: 'Manual setup',
-      hint: 'The step-by-step setup for any origin, including addresses described by hand.',
-      href: edgesPaths.setup(),
+      label: 'New origin',
+      hint: 'An address described by hand or a whole Outline server, then its first edge. A backend node is protected from Nodes instead.',
+      href: edgesPaths.overview({ new: '1' }),
     },
     {
       label: 'Templates',

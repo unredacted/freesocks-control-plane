@@ -132,6 +132,11 @@ export const EDGE_PROVIDER_CAPABILITIES: Record<EdgeProviderId, EdgeProviderCapa
     // XHTTP packet-up is plain GET + POST requests; the stream modes would need
     // the zone's gRPC switch, which the packet-up proof never depends on.
     l7Transports: ['ws', 'httpupgrade', 'grpc', 'xhttp'],
+    // gRPC is proxied only to an origin listening on 443 (`originPortCarriedBy`),
+    // and only while the zone's gRPC switch is on: dashboard only, there is no
+    // API to read or set it. With it off the CDN answers 403, which the front
+    // proof reports as `grpc_disabled`.
+    // Source: developers.cloudflare.com/network/grpc-connections/, 2026-10-16.
     needsDnsAccount: false,
     providesDns: true,
     originPortMode: 'default-or-override',
@@ -167,10 +172,6 @@ export const EDGE_PROVIDER_CAPABILITIES: Record<EdgeProviderId, EdgeProviderCapa
     discoverySettleMs: 0,
   },
 };
-
-export function edgeCapabilitiesOf(id: EdgeProviderId): EdgeProviderCapabilities {
-  return EDGE_PROVIDER_CAPABILITIES[id];
-}
 
 export function edgeLayerOf(id: EdgeProviderId | string | null | undefined): EdgeLayer {
   return id && id in EDGE_PROVIDER_CAPABILITIES
@@ -208,12 +209,34 @@ export function zoneModeGovernsOrigin(id: EdgeProviderId | string | null | undef
  * Whether the provider's edges can carry a slot speaking `protocol`. An L4
  * forwarder carries any TCP protocol (the chain constraint on TLS-terminating
  * origins is layers.ts's job); an L7 front carries only the HTTP transports it
- * declares.
+ * declares, and, given the listener's origin port, only on a port it dials for
+ * that transport (`l7OriginPorts`).
  */
-export function protocolCarriedBy(id: EdgeProviderId, proto: ListenerProto): boolean {
+export function protocolCarriedBy(
+  id: EdgeProviderId,
+  proto: ListenerProto,
+  originPort?: number,
+): boolean {
   const caps = EDGE_PROVIDER_CAPABILITIES[id];
   if (caps.layer === 'l4') return proto.streamTransport !== 'udp' || caps.udp;
-  return protocolIsHttpTransport(proto) && caps.l7Transports.includes(proto.streamTransport);
+  if (!protocolIsHttpTransport(proto) || !caps.l7Transports.includes(proto.streamTransport))
+    return false;
+  return originPortCarriedBy(id, proto, originPort);
+}
+
+/**
+ * Whether an L7 front dials the listener's origin port for its transport: gRPC
+ * is carried end to end over HTTP/2 on 443 only (a destination-port override
+ * breaks the h2 path; edgeProviderOps `checkOriginPort` refuses the same at
+ * provision time). Unknown port = no opinion.
+ */
+export function originPortCarriedBy(
+  id: EdgeProviderId,
+  proto: ListenerProto,
+  originPort?: number,
+): boolean {
+  if (EDGE_PROVIDER_CAPABILITIES[id].layer !== 'l7' || originPort === undefined) return true;
+  return proto.streamTransport !== 'grpc' || originPort === 443;
 }
 
 /**

@@ -36,7 +36,6 @@ import type {
   EdgeProvider,
   ResourceStep,
   StepOutcome,
-  TemplateFieldDescriptor,
 } from './types';
 import { firstResource, orderByKind, stepOf } from './types';
 import { discoveryMaySettle } from './capabilities';

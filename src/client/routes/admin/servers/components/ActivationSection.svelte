@@ -2,48 +2,50 @@
   /**
    * One enrolled node's way to members (docs/servers.md "Node lifecycle"):
    * its sentence, the isolated test link with its "Works" tick (direct nodes),
-   * the review card with Approve and activate, and the quiet actions: finish
-   * maintenance, retire. Nothing here reaches a member before the commit.
+   * the review card with Approve (NodeApprovalCard), and the quiet actions:
+   * finish maintenance, retire. Nothing here reaches a member before the commit.
    *
-   * Props: slug, intent (NodeIntentView)
+   * A fronted node goes live through its protection in Edges (Start, try each
+   * address, approve go-live, all in the protect sheet): this page links there
+   * ("Protect this node" / "Open progress") and mirrors the approval card while
+   * the protection waits for it. A node an Edges origin already protects has
+   * its edges panel on the same page: protecting it again starts there
+   * ("Protect again"), never in the protect sheet.
+   *
+   * Props: slug, intent (NodeIntentView), origin (an Edges origin protects it)
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
   import Check from '@lucide/svelte/icons/check';
   import { Button } from '@client/components/ui/button';
   import {
-    approveNode,
     buildDirectTestLink,
     confirmDirect,
     confirmWiped,
     finishMaintenance,
     invalidateServers,
     retireNode,
-    reviewQuery,
   } from '@client/lib/serversApi';
+  import { router } from '@client/stores/router.svelte';
   import type { DirectTestLink, NodeIntentView } from '../../../../../shared/contracts/servers';
   import ConfirmDialog from '../../edges/components/ConfirmDialog.svelte';
   import CopyButton from '../../edges/components/CopyButton.svelte';
+  import { edgesPaths } from '../../edges/lib/routes';
   import StatusDot from '../../edges/simple/StatusDot.svelte';
   import { codeOf } from '../lib/run';
-  import { serverErrorWords, stageWords } from '../lib/words';
+  import { protectionWords, serverErrorWords, stageWords } from '../lib/words';
+  import NodeApprovalCard from './NodeApprovalCard.svelte';
 
-  let { slug, intent }: { slug: string; intent: NodeIntentView } = $props();
+  let {
+    slug,
+    intent,
+    origin = false,
+  }: { slug: string; intent: NodeIntentView; origin?: boolean } = $props();
   const qc = useQueryClient();
-  const review = reviewQuery(
-    () => slug,
-    () =>
-      intent.stage === 'candidates_verified' ||
-      intent.stage === 'awaiting_approval' ||
-      intent.stage === 'machine_ready'
-        ? intent.id
-        : null,
-  );
 
   let busy = $state(false);
   let link = $state<DirectTestLink | null>(null);
   let ticked = $state(false);
-  let approveOpen = $state(false);
   let retireOpen = $state(false);
   let wipedOpen = $state(false);
   let words = $derived(stageWords(intent));
@@ -70,11 +72,6 @@
       await confirmDirect(slug, intent.id, link.binding);
       ticked = true;
     });
-  const approve = () =>
-    run(async () => {
-      approveOpen = false;
-      if (review.data) await approveNode(slug, intent.id, review.data.reviewHash);
-    });
   const retire = (disposition?: 'keep-dark') =>
     run(async () => {
       retireOpen = false;
@@ -85,11 +82,29 @@
   let canTest = $derived(
     direct && (intent.stage === 'machine_ready' || intent.stage === 'candidates_verified'),
   );
-  let canApprove = $derived(
-    (intent.stage === 'candidates_verified' || intent.stage === 'awaiting_approval') &&
-      !!review.data &&
-      review.data.blockers.length === 0,
+  let reviewable = $derived(
+    intent.stage === 'candidates_verified' || intent.stage === 'awaiting_approval',
   );
+  // A fronted node with no protection open, at a point where protecting it is the next
+  // step. A live one gets a quiet "Open in Edges" instead: the protect sheet opens on it
+  // and says so when it is already protected (re-protecting after a removal starts there).
+  let unprotected = $derived(!direct && !intent.protection && !intent.retirement);
+  let canProtect = $derived(unprotected && (intent.stage === 'machine_ready' || reviewable));
+  let canReprotect = $derived(unprotected && intent.stage === 'live' && !origin);
+  // The fronted mirror of the approval card, while the protection waits for it.
+  let mirrorShown = $derived(
+    !direct &&
+      !intent.retirement &&
+      intent.protection?.state === 'needs_you' &&
+      intent.protection.need === 'node_not_approved' &&
+      intent.stage !== 'activating',
+  );
+  // The approval card carries Finish maintenance itself: the row below leaves it out.
+  let cardShown = $derived((direct && reviewable) || mirrorShown);
+  const protect = () =>
+    router.navigate(
+      edgesPaths.home({ protect: '1', server: slug, node: intent.nodeUuid ?? undefined }),
+    );
   let needsDecision = $derived(intent.retirement?.stage === 'needs_admin');
   // The role never runs an adopted machine, so nothing reports its wipe: the
   // retirement waits for whoever cleaned it up to say so.
@@ -142,34 +157,58 @@
     </div>
   {/if}
 
-  {#if review.data && (intent.stage === 'candidates_verified' || intent.stage === 'awaiting_approval')}
-    {@const s = review.data.shape}
-    <div class="bg-card mt-3 space-y-2 rounded-md border p-3 text-sm">
-      <p class="font-medium">What you approve</p>
-      <ul class="text-muted-foreground space-y-1">
-        {#each s.addressTuples as a (a.sni ?? a.address)}
-          <li>Members get {a.address}:{a.port}{a.sni ? ` as ${a.sni}` : ''}.</li>
-        {/each}
-        {#if s.listenerKeys.length > 0}<li>Listeners: {s.listenerKeys.join(', ')}.</li>{/if}
-        <li>
-          Profile revision {s.configRevision.slice(0, 8)}, templates {Object.keys(
-            s.subscriptionTemplates,
-          ).length} matched.
-        </li>
-      </ul>
-      {#if review.data.blockers.length > 0}
-        <ul class="space-y-1 text-amber-700 dark:text-amber-300">
-          {#each review.data.blockers as b (b)}<li>{serverErrorWords(b)}</li>{/each}
-        </ul>
-      {/if}
-      <Button disabled={busy || !canApprove} onclick={() => (approveOpen = true)}
-        >Approve and activate</Button
+  {#if direct && reviewable}
+    <div class="mt-3">
+      <NodeApprovalCard
+        {slug}
+        intentId={intent.id}
+        nodeName={intent.name}
+        fronted={false}
+        maintenance={intent.maintenance}
+      />
+    </div>
+  {:else if !direct && intent.protection && !intent.retirement}
+    {@const p = intent.protection}
+    <div
+      class="bg-card mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border p-3 text-sm"
+    >
+      <span>{protectionWords(p, intent.stage)}</span>
+      <Button
+        size="sm"
+        variant="outline"
+        onclick={() => router.navigate(edgesPaths.home({ run: p.runId }))}
       >
+        Open progress
+      </Button>
+    </div>
+    {#if mirrorShown}
+      <div class="mt-3">
+        <NodeApprovalCard
+          {slug}
+          intentId={intent.id}
+          nodeName={intent.name}
+          fronted
+          maintenance={intent.maintenance}
+        />
+      </div>
+    {/if}
+  {:else if canProtect && origin}
+    <p class="bg-card mt-3 rounded-md border p-3 text-sm">
+      It goes live again through its edges below: Protect again makes new addresses, you try each
+      one, then you approve go-live.
+    </p>
+  {:else if canProtect}
+    <div class="bg-card mt-3 space-y-3 rounded-md border p-3 text-sm">
+      <p>
+        Members reach this node through provider addresses. Protect it from Edges: FCP creates them,
+        you try each one, then you approve go-live there.
+      </p>
+      <Button size="sm" onclick={protect}>Protect this node</Button>
     </div>
   {/if}
 
   <div class="mt-3 flex flex-wrap gap-2">
-    {#if intent.maintenance}
+    {#if intent.maintenance && !cardShown}
       <Button
         size="sm"
         variant="outline"
@@ -178,6 +217,9 @@
       >
         Finish maintenance
       </Button>
+    {/if}
+    {#if canReprotect}
+      <Button size="sm" variant="outline" onclick={protect}>Open in Edges</Button>
     {/if}
     {#if needsWipeConfirmation}
       <Button size="sm" variant="outline" disabled={busy} onclick={() => (wipedOpen = true)}>
@@ -200,14 +242,6 @@
   </div>
 </section>
 
-<ConfirmDialog
-  bind:open={approveOpen}
-  title={`Release ${intent.name} to members?`}
-  body="The node is enabled for members only once its real subscription bodies rehearse correctly. Until then nobody sees it."
-  typed={direct ? undefined : intent.name}
-  confirmLabel="Approve and activate"
-  onConfirm={approve}
-/>
 <ConfirmDialog
   bind:open={wipedOpen}
   title={`Is ${intent.name} gone?`}

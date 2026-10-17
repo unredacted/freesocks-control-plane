@@ -95,9 +95,9 @@ const REGISTER_SCOPE = 'admin:edges:register';
 
 /**
  * The boundary a register-scoped token is minted with. A token holding the
- * scope WITHOUT a boundary could register nothing (httpEdges treats it as an
- * empty boundary), so the mint refuses instead of handing out an inert token;
- * a boundary on a token without the scope is refused as a mistake.
+ * scope WITHOUT a boundary could act for nothing (the Servers by-name routes
+ * treat it as an empty boundary), so the mint refuses instead of handing out an
+ * inert token; a boundary on a token without the scope is refused as a mistake.
  */
 async function resolveRegistrationBoundary(
   ctx: MutationCtx,
@@ -144,7 +144,7 @@ export const createToken = internalAction({
     subjectUserId: v.optional(v.id('users')),
     expiresInDays: v.optional(v.number()),
     createdByAdminId: v.id('adminUsers'),
-    // Registration boundary for an `admin:edges:register` token (docs/edges.md):
+    // Registration boundary for an `admin:edges:register` token (docs/servers.md):
     // backend servers by id and/or slug, optionally confined to node names.
     edgeRegistration: v.optional(
       v.object({
@@ -195,7 +195,7 @@ export const insertToken = internalMutation({
     subjectType: v.union(v.literal('service'), v.literal('user')),
     subjectUserId: v.optional(v.id('users')),
     expiresAt: v.optional(v.number()),
-    // Registration boundary for an `admin:edges:register` token (docs/edges.md):
+    // Registration boundary for an `admin:edges:register` token (docs/servers.md):
     // backend servers by id and/or slug, optionally confined to node names.
     edgeRegistration: v.optional(
       v.object({

@@ -2,7 +2,7 @@
  * Admin HTTP surface for edges (the L4 load balancers in front of origins): `/api/v1/admin/edges/*`. One prefix
  * route per verb feeds a small dispatcher, so the HPKE policy is a clean
  * per-verb prefix rule (envelope.ts): GET reveals, POST seals both legs,
- * PATCH/PUT seal the body, DELETE carries nothing. Scopes: `admin:settings:*`
+ * PATCH seals the body, DELETE carries nothing. Scopes: `admin:settings:*`
  * for the config namespace, `admin:servers:*` for everything else; the two
  * POSTs that only compute (`render/preview`, `templates/validate`) need the
  * READ scope. The POSTs that reach a cloud provider / spend probe credits are
@@ -20,7 +20,6 @@ import { errorJson, json, readJson, resolveAdmin, type AdminAuth } from './lib/h
 import type { RateLimitPolicyKey } from './lib/rateLimitPolicy';
 import type { InspectResult, Inventory } from './lib/edges/providers/types';
 import { parseTargetKey } from './probes';
-import { assertWithinBoundary, type RegistrationBoundary } from './relays';
 import { findLegacyField, LEGACY } from './lib/legacyFields';
 import { SniBindRequest } from '../src/shared/contracts/sni';
 
@@ -30,17 +29,17 @@ type Handler = (
   ctx: ActionCtx,
   req: Request,
   parts: string[],
-  admin: EdgeAdminAuth,
+  admin: AdminAuth,
   body: Record<string, unknown>,
   query: URLSearchParams,
 ) => Promise<Response>;
 
 function statusFromCode(code: string): number {
   if (code === 'not_found') return 404;
-  // A register-scoped token reaching outside its boundary is a permission refusal.
-  if (code === 'edge.registration_boundary') return 403;
   // The backend (or a step that depends on it) failed: an upstream fault, not a refusal.
   if (code === 'backend.panel_read_failed' || code === 'edge.plan_step_failed') return 502;
+  // The hourly budget of checks from inside a country is a quota, like the probes'.
+  if (code === 'edge.sni.vantage_budget') return 429;
   if (code === 'conflict' || code.startsWith('edge.')) return 409;
   // The hourly probe budget is a quota: answer like a rate limit.
   if (code === 'probe.budget_exhausted') return 429;
@@ -110,17 +109,12 @@ function isReadOnlyPost(parts: string[]): boolean {
   );
 }
 
-/** The node role's registration routes: `origins/by-slug/{slug}[/listeners/{key}]`. */
-export function isRegistrationRoute(parts: string[]): boolean {
-  return parts[0] === 'relays' && parts[1] === 'by-slug' && !!parts[2];
-}
-
 /**
  * Config routes need the settings scope; everything else the servers scope.
- * The registration routes ALSO accept `admin:edges:register` (any-of), whose
- * callers are additionally confined to their token's registration boundary.
+ * No route here takes `admin:edges:register`: the node role registers nothing
+ * under this prefix (contract v2, docs/servers.md "Node registration").
  */
-export function scopeFor(parts: string[], method: string): string | string[] {
+export function scopeFor(parts: string[], method: string): string {
   // The automation switch writes `edge.*` config: the settings scope, like `config`.
   const ns =
     parts[0] === 'config' ||
@@ -129,10 +123,7 @@ export function scopeFor(parts: string[], method: string): string | string[] {
       ? 'settings'
       : 'servers';
   const write = method !== 'GET' && !(method === 'POST' && isReadOnlyPost(parts));
-  const full = `admin:${ns}:${write ? 'write' : 'read'}`;
-  if (isRegistrationRoute(parts) && method !== 'POST' && method !== 'PATCH')
-    return ['admin:edges:register', full];
-  return full;
+  return `admin:${ns}:${write ? 'write' : 'read'}`;
 }
 
 /**
@@ -144,6 +135,9 @@ export function throttlePolicyFor(parts: string[]): RateLimitPolicyKey | null {
   const [a, b, c, d] = parts;
   // Qualifying server names opens sockets from the control plane.
   if (a === 'sni' && b === 'qualify' && !c) return 'admin.edges.provider-call';
+  // Checking names from inside a country spends third-party measurements.
+  if (a === 'sni' && b === 'families' && c && d === 'vantage' && !parts[4])
+    return 'admin.edges.probe';
   // A rollout writes a backend profile; a test link fetches a credential body.
   if (
     a === 'sni' &&
@@ -192,7 +186,7 @@ export function throttlePolicyFor(parts: string[]): RateLimitPolicyKey | null {
  * listing): throttled under the same policy as the provider-calling POSTs.
  */
 export function throttlePolicyForGet(parts: string[]): RateLimitPolicyKey | null {
-  const [a, b, c, d] = parts;
+  const [a, b, c] = parts;
   if (a === 'relays' && b === 'inbound-candidates' && !c) return 'admin.edges.provider-call';
   return null;
 }
@@ -203,21 +197,8 @@ function wrap(handler: Handler, sealedRoute: boolean) {
     if (!seg) return errorJson('validation', 'Malformed path encoding', 400);
     const { parts, query } = seg;
     const method = req.method.toUpperCase();
-    const required = scopeFor(parts, method);
-    const admin: EdgeAdminAuth | null = await resolveAdmin(ctx, req, required);
+    const admin = await resolveAdmin(ctx, req, scopeFor(parts, method));
     if (!admin) return unauth();
-    // A bearer caller admitted ONLY by the register scope is confined to its
-    // token's registration boundary on every registration verb.
-    if (isRegistrationRoute(parts) && admin.tokenId && admin.tokenScopes) {
-      const fullScope = Array.isArray(required) ? required[1] : required;
-      if (!admin.tokenScopes.includes(fullScope)) {
-        const boundary = await ctx.runQuery(internal.apiTokens.registrationBoundary, {
-          tokenId: admin.tokenId,
-        });
-        // A register token without a boundary may register nothing.
-        admin.boundary = boundary ?? { backendServerIds: [] };
-      }
-    }
     if (method === 'POST' || method === 'GET') {
       const policyKey = method === 'POST' ? throttlePolicyFor(parts) : throttlePolicyForGet(parts);
       if (policyKey) {
@@ -241,20 +222,10 @@ function wrap(handler: Handler, sealedRoute: boolean) {
 const id = <T extends TableNames>(s: string | undefined) => (s ?? '') as Id<T>;
 const actor = (admin: AdminAuth) => ({ actorAdminId: admin.adminUserId ?? undefined });
 
-/** AdminAuth plus the registration boundary of a register-scoped token (undefined = unbounded). */
-type EdgeAdminAuth = AdminAuth & { boundary?: RegistrationBoundary };
-
-/** Refuse a bounded caller outside its boundary for an EXISTING origin (GET / DELETE / PUT update). */
-async function assertRelayWithinBoundary(ctx: ActionCtx, slug: string, admin: EdgeAdminAuth) {
-  if (!admin.boundary) return;
-  const relay = await ctx.runQuery(internal.relays.getBySlug, { slug });
-  if (relay) assertWithinBoundary(relay.origin, admin.boundary);
-}
-
 // --- GET ----------------------------------------------------------------------------------------
 
 const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
-  const [a, b, c, d, e] = parts;
+  const [a, b, c, d] = parts;
   if (!a || a === 'summary') return json(await ctx.runQuery(internal.edgeAdmin.summary, {}));
   // Server-name families (docs/edges.md "Server-name families").
   if (a === 'sni') {
@@ -356,16 +327,10 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
         }),
       );
     }
-    if (b === 'by-slug' && c) {
-      await assertRelayWithinBoundary(ctx, c, _admin);
+    if (b === 'by-slug' && c && !d) {
+      // The origin's projection by slug (the setup's Host plan reads it).
       const view = await ctx.runQuery(internal.edgeAdmin.relayBySlugView, { slug: c });
-      if (!view) return notFound();
-      if (d === 'listeners' && e) {
-        const l = view.listeners.find((x) => x.listenerKey === e);
-        return l ? json(l) : notFound();
-      }
-      if (!d) return json(view);
-      return notFound();
+      return view ? json(view) : notFound();
     }
     if (c === 'endpoints') {
       const r = await ctx.runQuery(internal.edgeAdmin.endpoints, {
@@ -460,7 +425,7 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
       const fromMs = Number(query.get('from') ?? '');
       const toMs = Number(query.get('to') ?? '');
       return json(
-        await ctx.runQuery(internal.probes.summary, {
+        await ctx.runAction(internal.probes.summary, {
           ...(Number.isFinite(fromMs) && fromMs > 0
             ? { sinceMs: fromMs, ...(Number.isFinite(toMs) && toMs > 0 ? { untilMs: toMs } : {}) }
             : { windowMs: Number.isFinite(windowMs) && windowMs > 0 ? windowMs : 7 * 86_400_000 }),
@@ -554,6 +519,25 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           ...act,
         }),
       );
+    // Checks from inside a country: "check now", and applying what they suggest.
+    if (b === 'families' && c && d === 'vantage' && !e)
+      return json(
+        await ctx.runMutation(internal.sniVantage.requestNow, {
+          slug: c,
+          names: snis(body),
+          country: String(body.country ?? ''),
+          ...act,
+        }),
+      );
+    if (b === 'families' && c && d === 'vantage' && e === 'apply')
+      return json(
+        await ctx.runMutation(internal.sniVantage.applySuggestions, {
+          slug: c,
+          names: snis(body),
+          country: String(body.country ?? ''),
+          ...act,
+        }),
+      );
     if (b === 'families' && c && d === 'bind' && !e) {
       // Contract words in, stored words on: an old `inboundTag` is refused by name.
       const old = findLegacyField(body, LEGACY.sniBind);
@@ -631,11 +615,16 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
   // Guided setup runs: plan (read-only over the backend), create, and the three
   // operator verbs on a run (cancel / retry / continue).
   if (a === 'setup-runs') {
+    // The transports the operator chose on a node with more than one run takes.
+    const listenerKeys = Array.isArray(body.listenerKeys)
+      ? { listenerKeys: body.listenerKeys.filter((x): x is string => typeof x === 'string') }
+      : {};
     if (b === 'plan' && !c) {
       return json(
         await ctx.runAction(internal.edgeSetupPlan.plan, {
           backendServerId: id<'backendServers'>(String(body.backendServerId ?? '')),
           nodeUuid: String(body.nodeUuid ?? ''),
+          ...listenerKeys,
         }),
       );
     }
@@ -647,6 +636,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
         await ctx.runAction(internal.edgeSetupPlan.create, {
           backendServerId: id<'backendServers'>(String(body.backendServerId ?? '')),
           nodeUuid: String(body.nodeUuid ?? ''),
+          ...listenerKeys,
           accountId: id<'edgeProviderAccounts'>(String(body.accountId ?? '')),
           planHash: String(body.planHash ?? ''),
           approvedHideUuids: uuids,
@@ -664,6 +654,9 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           runId,
           ...(body.tryAnotherAddress === true ? { tryAnotherAddress: true } : {}),
           ...(body.acceptPartial === true ? { acceptPartial: true } : {}),
+          ...(typeof body.edgeId === 'string' && body.edgeId
+            ? { edgeId: id<'edges'>(body.edgeId) }
+            : {}),
           ...(typeof body.accountId === 'string' && body.accountId
             ? { accountId: id<'edgeProviderAccounts'>(body.accountId) }
             : {}),
@@ -877,6 +870,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
             typeof body.templateId === 'string' && body.templateId
               ? id<'edgeTemplates'>(body.templateId)
               : undefined,
+          ...(body.publish === false ? { publish: false } : {}),
           trigger: triggerOf(body.trigger),
         }),
       );
@@ -925,6 +919,16 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
             ...act,
           }),
         );
+      case 'reprotect':
+        // "Protect again" on a live, bound enrolled node: a re-protect run
+        // (fresh candidates, Try it, the approval when one is needed). Members
+        // keep the committed delivery; a cancel drops only its candidates.
+        return json(await ctx.runMutation(internal.edgeSetupRuns.reprotect, { relayId, ...act }));
+      case 'serve-direct':
+        // "Serve this node directly again": the restore workflow with purpose
+        // `release_requirement` (binding released BEFORE any direct Host is
+        // restored; edges and listeners kept).
+        return json(await ctx.runMutation(internal.edgeRestore.serveDirect, { relayId, ...act }));
       case 'qualification-credential':
         // Mint (or re-mint) the backend account the L7 front qualification
         // authenticates with; the credential never leaves the server.
@@ -978,7 +982,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
         );
       }
       case 'listeners':
-        // An admin-owned listener (never pruned by the role's registration).
+        // An admin-owned listener.
         return json(
           await ctx.runMutation(internal.relayListeners.upsert, {
             relayId,
@@ -1301,27 +1305,6 @@ const patchHandler: Handler = async (ctx, _req, parts, admin, body) => {
   return notFound();
 };
 
-// --- PUT (IaC upserts) -----------------------------------------------------------------------------
-
-const putHandler: Handler = async (ctx, _req, parts, admin, body) => {
-  const [a, b, c, d] = parts;
-  const act = actor(admin);
-  if (a !== 'relays' || b !== 'by-slug' || !c || d) return notFound();
-  // ONE idempotent body: origin + every listener the caller owns (docs/edges.md
-  // § "Node role contract"). A bounded token is confined to its boundary for
-  // the existing row AND the body's origin (the mutation checks both).
-  const result = await ctx.runMutation(internal.relays.registerBySlug, {
-    ...body,
-    slug: c,
-    listeners: Array.isArray(body.listeners) ? body.listeners : [],
-    source: admin.adminUserId ? 'admin' : 'role',
-    ...(admin.boundary ? { boundary: admin.boundary } : {}),
-    ...act,
-  } as never);
-  const view = await ctx.runQuery(internal.edgeAdmin.relayBySlugView, { slug: c });
-  return view ? json({ ...view, registration: result }) : notFound();
-};
-
 // --- DELETE --------------------------------------------------------------------------------------------
 
 const deleteHandler: Handler = async (ctx, _req, parts, admin, _body, query) => {
@@ -1362,29 +1345,6 @@ const deleteHandler: Handler = async (ctx, _req, parts, admin, _body, query) => 
       await ctx.runMutation(internal.probeTargets.remove, { id: id<'probeTargets'>(c), ...act }),
     );
   if (a === 'relays' && b) {
-    if (b === 'by-slug' && c) {
-      await assertRelayWithinBoundary(ctx, c, admin);
-      const origin = await ctx.runQuery(internal.relays.getBySlug, { slug: c });
-      if (!origin) return json({ ok: true, deleted: true });
-      if (d === 'listeners' && e)
-        return json(
-          await ctx.runMutation(internal.relayListeners.retire, {
-            relayId: origin._id,
-            listenerKey: e,
-            ...act,
-          }),
-        );
-      if (!d)
-        // The node role decommissions the node: raw delivery returns unless it says otherwise.
-        return json(
-          await ctx.runMutation(internal.relays.requestDelete, {
-            id: origin._id,
-            disposition: dispositionOf(query) ?? 'restore-direct',
-            ...act,
-          }),
-        );
-      return notFound();
-    }
     if (c === 'listeners' && d && !e)
       return json(
         await ctx.runMutation(internal.relayListeners.retire, {
@@ -1423,6 +1383,5 @@ export function registerEdgeRoutes(http: HttpRouter): void {
   http.route({ pathPrefix: PREFIX, method: 'GET', handler: wrap(getHandler, true) });
   http.route({ pathPrefix: PREFIX, method: 'POST', handler: wrap(postHandler, true) });
   http.route({ pathPrefix: PREFIX, method: 'PATCH', handler: wrap(patchHandler, true) });
-  http.route({ pathPrefix: PREFIX, method: 'PUT', handler: wrap(putHandler, true) });
   http.route({ pathPrefix: PREFIX, method: 'DELETE', handler: wrap(deleteHandler, false) });
 }

@@ -1,0 +1,30 @@
+# The WebSocket node's ingress, as the node role deploys it: Caddy terminates
+# TLS for the node's origin hostname on the public port and proxies the
+# transport's path to the LOOPBACK WebSocket inbound Xray listens on (the
+# container shares the node's network namespace). Every Host header is
+# answered (`hostHeader: any`): a CDN forwards the front's hostname, not the
+# origin's. Anything off the path is the decoy's 404, `/` included (FCP takes
+# the Host-header verdict from its own ingress check, not from a 2xx at `/`).
+#
+# The certificate is minted per run by scripts/edge-connection-integration.sh
+# from a throwaway test CA that the L7 front and FCP's ingress check trust.
+{
+	admin off
+	auto_https off
+	default_sni {$EC_ORIGIN_HOSTNAME}
+}
+
+:443 {
+	tls /pki/origin.pem /pki/origin-key.pem
+	log {
+		output file /logs/ingress-access.log
+		format json
+	}
+	@transport path {$EC_WS_PATH}
+	handle @transport {
+		reverse_proxy 127.0.0.1:{$EC_WS_PORT}
+	}
+	handle {
+		respond 404
+	}
+}

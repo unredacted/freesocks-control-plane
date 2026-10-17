@@ -28,6 +28,7 @@ import {
   verificationCurrent,
   verificationStale,
 } from './lib/edges/verification';
+import { verificationListenersOf, type VerifiableListener } from './lib/edges/verificationContext';
 
 /** Consecutive `gone` describes before the pool drop + status transition act. */
 export const GONE_OBSERVATIONS_REQUIRED = 2;
@@ -79,11 +80,6 @@ const addresses = v.object({
   hostname: v.optional(v.string()),
 });
 
-/** Ledger view for the provider actions (steps + resources only). */
-export function ledgerOf(edge: Edge): { steps: Edge['steps']; resources: Edge['resources'] } {
-  return { steps: edge.steps, resources: edge.resources };
-}
-
 /** True when the reconcile cron must settle this edge before anything else. */
 export function isDiscoverable(edge: Edge, now: number): boolean {
   if (edge.status === 'destroyed') return false;
@@ -102,7 +98,7 @@ export function edgeProgress(edge: Edge): { done: number; total: number; percent
  * lets the L4 verification view say whether the confirmation is CURRENT; a
  * caller without it gets `current: null` (unknown), never a guess.
  */
-export function mapEdgeAdmin(e: Edge, listener?: Doc<'relayListeners'> | null) {
+export function mapEdgeAdmin(e: Edge, listener?: VerifiableListener | null) {
   const required = needsEndpointVerification(e);
   const rec = e.verification;
   const verification = {
@@ -235,22 +231,15 @@ export const intentOf = internalQuery({
   },
 });
 
-export const listByRelay = internalQuery({
-  args: { relayId: v.id('relays') },
-  handler: (ctx, { relayId }) =>
-    ctx.db
-      .query('edges')
-      .withIndex('by_relay_status', (q) => q.eq('relayId', relayId))
-      .collect(),
-});
-
 export const listByRelayForAdmin = internalQuery({
   args: { relayId: v.id('relays') },
   handler: async (ctx, { relayId }) => {
-    const listeners = await ctx.db
+    const relay = await ctx.db.get(relayId);
+    const raw = await ctx.db
       .query('relayListeners')
       .withIndex('by_relay', (q) => q.eq('relayId', relayId))
       .collect();
+    const listeners = relay ? await verificationListenersOf(ctx.db, relay, raw) : [];
     return (
       await ctx.db
         .query('edges')
@@ -267,24 +256,6 @@ export const listByRelayForAdmin = internalQuery({
         ),
       );
   },
-});
-
-export const getForAdmin = internalQuery({
-  args: { id: v.id('edges') },
-  handler: async (ctx, { id }) => {
-    const e = await ctx.db.get(id);
-    return e ? mapEdgeAdmin(e) : null;
-  },
-});
-
-/** Edges in one status, oldest status change first (bounded). */
-export const listByStatus = internalQuery({
-  args: { status: v.string(), take: v.number() },
-  handler: (ctx, { status, take }) =>
-    ctx.db
-      .query('edges')
-      .withIndex('by_status', (q) => q.eq('status', status as Edge['status']))
-      .take(take),
 });
 
 /** All non-destroyed edges (small, admin-managed table) for the reconcile cron. */
@@ -400,42 +371,6 @@ export async function insertPlannedEdge(
   });
   return { id, name };
 }
-
-export const insertPlanned = internalMutation({
-  args: {
-    relayId: v.id('relays'),
-    listenerId: v.id('relayListeners'),
-    accountId: v.id('edgeProviderAccounts'),
-    templateId: v.optional(v.union(v.id('edgeTemplates'), v.null())),
-    templateHash: v.string(),
-    listeners: v.array(
-      v.object({
-        edgePort: v.number(),
-        originAddress: v.string(),
-        originPort: v.number(),
-        transport: v.optional(v.union(v.literal('tcp'), v.literal('udp'))),
-      }),
-    ),
-    steps: v.array(
-      v.object({
-        id: v.string(),
-        kind: v.string(),
-        resourceName: v.string(),
-        discoverability: v.optional(
-          v.union(v.literal('by_name'), v.literal('by_tag'), v.literal('none')),
-        ),
-      }),
-    ),
-    nameNonce: v.optional(v.string()),
-    layer: v.optional(v.union(v.literal('l4'), v.literal('l7'))),
-    provisionIntent: v.optional(v.any()),
-  },
-  handler: (ctx, a) =>
-    insertPlannedEdge(ctx, {
-      ...a,
-      provisionIntent: (a.provisionIntent as ProvisionIntent | undefined) ?? null,
-    }),
-});
 
 /**
  * Claim the single in-flight external operation on an edge. Refuses while an

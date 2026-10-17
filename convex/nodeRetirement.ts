@@ -1,10 +1,10 @@
 /**
- * Retiring a node (docs/servers.md "Retirement and migration"). The role's
+ * Retiring a node (docs/servers.md "Retirement"). The role's
  * DELETE only records the request; whenever the node was ever live or
  * anything of it is still out there (an origin, Hosts, DNS, credentials, a
  * mirror) an admin decides the disposition: `keep-dark` (its members get the
- * edge-required unavailable behaviour) or `migrate` (an explicitly named
- * target). Never `restore-direct`.
+ * edge-required unavailable behaviour; moving them to another node is not
+ * offered). Never `restore-direct`.
  *
  * The ladder, each step resumable by the sweep:
  *   requested / needs_admin -> draining      publication withdrawn, the origin
@@ -14,7 +14,7 @@
  *   draining -> panel_removed                the node row removed with
  *                                            removeOnly (the process may run)
  *   panel_removed -> ready_to_wipe           answered to the role
- *   ready_to_wipe -> wiped -> retired        the role's own ack, or an admin's
+ *   ready_to_wipe -> retired                 the role's own ack, or an admin's
  *                                            confirmation for an ADOPTED node,
  *                                            whose machine the role never runs
  *                                            (nodeIntents.markWiped)
@@ -27,6 +27,7 @@ import { writeAuditLog } from './lib/audit';
 import { addressesOf } from './nodeIntents';
 import { bumpGateVersion } from './backendSetup';
 import { scheduleMirrorRefresh } from './relays';
+import { runningRenameOf } from './lib/backend/nodeAliases';
 
 const refuse = (code: string, message: string): never => {
   throw new ConvexError({ code, message });
@@ -52,13 +53,23 @@ async function event(
 export const decide = internalMutation({
   args: {
     intentId: v.id('panelNodeIntents'),
-    disposition: v.union(v.literal('keep-dark'), v.literal('migrate')),
-    targetIntentId: v.optional(v.id('panelNodeIntents')),
+    disposition: v.literal('keep-dark'),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a) => {
     const intent = await ctx.db.get(a.intentId);
     if (!intent) return refuse('not_found', 'No such node');
+    // A rename assumes the node, its origin and its addresses stay put until it is done.
+    if (
+      await runningRenameOf(ctx.db, intent.backendServerId, {
+        nodeUuid: intent.nodeUuid,
+        name: intent.name,
+      })
+    )
+      refuse(
+        'servers.node_rename_running',
+        'This node is being renamed. Retire it once that is done',
+      );
     let r = intent.retirementId ? await ctx.db.get(intent.retirementId) : null;
     if (!r) {
       const now = Date.now();
@@ -82,16 +93,6 @@ export const decide = internalMutation({
     }
     if (r.stage !== 'requested' && r.stage !== 'needs_admin')
       refuse('servers.retirement_stage', `The retirement is already ${r.stage}`);
-    if (a.disposition === 'migrate') {
-      if (!a.targetIntentId) refuse('validation', 'A migration needs a target node');
-      const target = await ctx.db.get(a.targetIntentId!);
-      if (!target || target.delivery.disposition !== 'live')
-        refuse('servers.migration_target', 'The target node must be live');
-      refuse(
-        'servers.migration_not_built',
-        'Migration is not available in this version; choose keep-dark',
-      );
-    }
     await event(ctx, r, { disposition: a.disposition, stage: 'draining' }, 'decided');
     await scheduleMirrorRefresh(ctx);
     const server = await ctx.db.get(intent.backendServerId);
@@ -180,17 +181,20 @@ export const mark = internalMutation({
     if (a.tombstone) {
       const intent = await ctx.db.get(r.intentId);
       if (intent) {
+        // By any identity the node ever had: a renamed node keeps one row.
         const existing = (
           await ctx.db
             .query('panelOwnership')
             .withIndex('by_server_kind_identity', (q) =>
-              q
-                .eq('backendServerId', intent.backendServerId)
-                .eq('kind', 'node')
-                .eq('identity', intent.name),
+              q.eq('backendServerId', intent.backendServerId).eq('kind', 'node'),
             )
             .collect()
-        )[0];
+        ).find(
+          (o) =>
+            o.identity === intent.name ||
+            o.lookup.includes(intent.name) ||
+            (!!intent.nodeUuid && o.panelUuid === intent.nodeUuid),
+        );
         const now = Date.now();
         if (existing)
           await ctx.db.patch(existing._id, {

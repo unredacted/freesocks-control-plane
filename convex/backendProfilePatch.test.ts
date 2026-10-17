@@ -411,6 +411,37 @@ describe('an edit made somewhere else', () => {
     expect(await flagged(t)).toBeFalsy();
   });
 
+  test("FCP's own edit is never flagged behind a long history of other ops", async () => {
+    const { t, preview, apply, serverId } = await seed();
+    await apply(await preview(ADD));
+    // 250 newer Host ops: the profile op is no longer among the newest 200 of
+    // ALL kinds, but it is the newest PROFILE op.
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      for (let i = 0; i < 250; i++)
+        await ctx.db.insert('panelOps', {
+          backendServerId: serverId,
+          kind: 'host',
+          verb: 'update',
+          generation: 1,
+          claimKeys: [],
+          label: `host ${i}`,
+          intent: '{}',
+          postcondition: '{}',
+          request: 'acknowledged',
+          panelState: 'observed',
+          asyncEffect: 'none',
+          open: false,
+          quietLooks: 0,
+          settledAt: now,
+          createdAt: now,
+          updatedAt: now,
+        });
+    });
+    await t.action(internal.backendObserve.refresh, { backendServerId: serverId });
+    expect(await flagged(t)).toBeFalsy();
+  });
+
   test('a token that moved to something no FCP change expected is flagged until acknowledged', async () => {
     const { t, panel, serverId, call } = await seed();
     // Somebody edits the profile in the backend UI: a short id, which shows in no redacted view.

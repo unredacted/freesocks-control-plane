@@ -9,7 +9,6 @@
  * provider id fails to compile until it has an entry here too.
  */
 import {
-  EDGE_PROVIDER_IDS,
   type EdgeLayer,
   type EdgeProviderId,
   type ListenerStreamTransport,
@@ -61,19 +60,6 @@ export const EDGE_PROVIDER_META: Record<EdgeProviderId, EdgeProviderMeta> = {
   },
 };
 
-export const providerLabel = (id: EdgeProviderId | null | undefined): string =>
-  id ? (EDGE_PROVIDER_META[id]?.label ?? id) : 'adopted';
-
-export const providerLayer = (id: EdgeProviderId | null | undefined): EdgeLayer =>
-  id ? (EDGE_PROVIDER_META[id]?.layer ?? 'l4') : 'l4';
-
-export const providerAddressKind = (id: EdgeProviderId | null | undefined): EdgeAddressKind =>
-  id ? (EDGE_PROVIDER_META[id]?.addressKind ?? 'ip') : 'ip';
-
-/** Provider ids that can host DNS for another provider's edges (Fastly's DNS account). */
-export const dnsProviderIds = (): EdgeProviderId[] =>
-  EDGE_PROVIDER_IDS.filter((id) => EDGE_PROVIDER_META[id].providesDns);
-
 /**
  * One line for an edge's addresses: the fronted hostname when there is one,
  * otherwise the IP literals. `-` when the edge has no address yet.
@@ -86,6 +72,3 @@ export function addressLine(
   const parts = [addresses.v4, addresses.v6].filter((x): x is string => !!x);
   return parts.length > 0 ? parts.join(separator) : '-';
 }
-
-/** Short badge text for a layer, spelled the way the runbooks do. */
-export const layerLabel = (layer: EdgeLayer): string => (layer === 'l7' ? 'L7' : 'L4');

@@ -37,7 +37,9 @@ The site is available in English, Persian, Arabic, Russian and Chinese.
 Operators manage everything from an admin console that only accepts passkeys. From there they
 can:
 
-- add proxy servers and choose which ones new keys go to
+- add proxy servers and choose which ones new keys go to, and (once switched on) set up a
+  backend, its nodes, addresses and transports from the console
+- put a node behind replaceable edges and approve it before members get it
 - set up plans (free, member, and any others) and what each one allows
 - look up and help users by their support ID, which is safe to share
 - create membership codes, configure payments, and see revenue
@@ -46,8 +48,10 @@ can:
 - read user problem reports and a full audit log
 - create API tokens with limited permissions for automation
 
-Server setup can also be automated with the companion Ansible role,
-[ansible-role-freesocks](https://github.com/unredacted/ansible-role-freesocks).
+New nodes are bootstrapped by the companion Ansible role,
+[ansible-role-freesocks](https://github.com/unredacted/ansible-role-freesocks): it prepares the
+machine and reports to FCP, which does the rest. The steps from a role run to a member
+connecting through an edge are in [servers.md](docs/servers.md) ("Deploy a fronted node").
 
 ## How it protects people
 
@@ -63,8 +67,9 @@ Server setup can also be automated with the companion Ansible role,
   device. A CDN or proxy in between can't read the traffic or reuse a stolen cookie. See
   [threat-model-cdn-blinding.md](docs/threat-model-cdn-blinding.md).
 - **Replaceable entry points.** Servers can sit behind front addresses that FCP creates,
-  tests from the affected countries, and swaps out when one gets blocked. This is called
-  **Edges** and is off until an operator sets it up. See [edges.md](docs/edges.md).
+  tests from the affected countries, and swaps out when one gets blocked. Members are given
+  only the front address, never the server's own. This is called **Edges** and is off until an
+  operator sets it up. See [edges.md](docs/edges.md).
 - **Idle accounts are paused, not deleted.** A free key that hasn't been used for a while is
   taken back, but the account stays. Signing in again brings it back.
 
@@ -179,14 +184,17 @@ bun run lint                  # `bun run format` fixes formatting
 bun run build
 ```
 
-Two larger suites run in Docker against throwaway servers:
+Larger suites run in Docker against throwaway servers:
 
 ```bash
-bun run test:integration:remnawave   # FCP against a real Remnawave panel
-bun run test:compat                  # real proxy apps import and use FCP's keys
+bun run test:integration:remnawave        # FCP against a real Remnawave panel
+bun run test:integration:remnawave-node   # FCP against a real panel and a real node
+bun run test:compat                       # real proxy apps import and use FCP's keys
+bun run test:integration:edge-connection  # a member connects through an L4 and an L7 edge
 ```
 
-See [client-compatibility.md](docs/client-compatibility.md) for what the second one proves.
+See [client-compatibility.md](docs/client-compatibility.md) for what the compat suite proves;
+the edge-connection suite is the release gate for edges (`docs/edges.md` "Supported matrix").
 
 ## Where things are
 
@@ -204,23 +212,23 @@ See [client-compatibility.md](docs/client-compatibility.md) for what the second 
 
 ## Documentation
 
-| Read this                                                         | To learn about                                       |
-| ----------------------------------------------------------------- | ---------------------------------------------------- |
-| [project-inventory.md](docs/project-inventory.md)                 | Every feature, what's finished, and what's left      |
-| [beta-deploy.md](docs/beta-deploy.md)                             | Running the full stack on a server                   |
-| [convex-self-hosting.md](docs/convex-self-hosting.md)             | The backend, its settings, and the web server setup  |
-| [secrets.md](docs/secrets.md)                                     | Every secret: who creates it and how to change it    |
-| [backends.md](docs/backends.md)                                   | How FCP talks to proxy servers, and adding a new one |
-| [outline-setup.md](docs/outline-setup.md)                         | Adding an Outline server                             |
-| [servers.md](docs/servers.md)                                     | Viewing and managing what runs on a proxy server     |
-| [edges.md](docs/edges.md)                                         | Replaceable front addresses for proxy servers        |
-| [billing.md](docs/billing.md)                                     | Memberships, payments, donations and referrals       |
-| [btcpay-server-runbook.md](docs/btcpay-server-runbook.md)         | Running the BTCPay server for Bitcoin payments       |
-| [privacy.md](docs/privacy.md)                                     | What is never stored, and how to keep it that way    |
-| [account-number-design.md](docs/account-number-design.md)         | How account-number sign-in works                     |
-| [threat-model-cdn-blinding.md](docs/threat-model-cdn-blinding.md) | Encryption between the browser and the backend       |
-| [oob-verification.md](docs/oob-verification.md)                   | Checking the website you got is the one we built     |
-| [client-compatibility.md](docs/client-compatibility.md)           | Testing real proxy apps against FCP                  |
+| Read this                                                         | To learn about                                        |
+| ----------------------------------------------------------------- | ----------------------------------------------------- |
+| [project-inventory.md](docs/project-inventory.md)                 | Every feature, what's finished, and what's left       |
+| [beta-deploy.md](docs/beta-deploy.md)                             | Running the full stack on a server                    |
+| [convex-self-hosting.md](docs/convex-self-hosting.md)             | The backend, its settings, and the web server setup   |
+| [secrets.md](docs/secrets.md)                                     | Every secret: who creates it and how to change it     |
+| [backends.md](docs/backends.md)                                   | How FCP talks to proxy servers, and adding a new one  |
+| [outline-setup.md](docs/outline-setup.md)                         | Adding an Outline server                              |
+| [servers.md](docs/servers.md)                                     | Managing a proxy server, and deploying a fronted node |
+| [edges.md](docs/edges.md)                                         | Replaceable front addresses for proxy servers         |
+| [billing.md](docs/billing.md)                                     | Memberships, payments, donations and referrals        |
+| [btcpay-server-runbook.md](docs/btcpay-server-runbook.md)         | Running the BTCPay server for Bitcoin payments        |
+| [privacy.md](docs/privacy.md)                                     | What is never stored, and how to keep it that way     |
+| [account-number-design.md](docs/account-number-design.md)         | How account-number sign-in works                      |
+| [threat-model-cdn-blinding.md](docs/threat-model-cdn-blinding.md) | Encryption between the browser and the backend        |
+| [oob-verification.md](docs/oob-verification.md)                   | Checking the website you got is the one we built      |
+| [client-compatibility.md](docs/client-compatibility.md)           | Testing real proxy apps against FCP                   |
 
 ## Contributing
 

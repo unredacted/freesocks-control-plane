@@ -98,11 +98,47 @@ export interface ReviewShape {
   ingress: unknown;
   configRevision: string;
   authRevision: string | null;
-  listenerKeys: string[];
-  provider: { accountId: string | null; templateHash: string | null };
+  /**
+   * A fronted node's required listeners (sorted by key), each with the
+   * provider account and template it is fronted by: every listener, never one
+   * representative edge. Empty for a direct node.
+   */
+  listeners: ReviewListener[];
   subscriptionTemplates: Record<string, string>;
   /** A direct node's addresses, one per family name; empty for a fronted node. */
   addressTuples: { address: string; port: number; sni: string | null }[];
+}
+
+export interface ReviewListener {
+  listenerKey: string;
+  accountId: string | null;
+  templateHash: string | null;
+}
+
+/** What one edge publication is, in the review's terms (the admission compares it to an approval). */
+export interface PublicationShape {
+  listenerKey: string;
+  accountId: string | null;
+  templateHash: string | null;
+}
+
+/**
+ * Whether a publication fits an approved review: its listener is one the
+ * review names, fronted by the same account and template. A replacement
+ * ADDRESS within that shape reuses the approval; another account, template
+ * or listener needs a new review. An approval whose shape predates the
+ * per-listener review (no `listeners`) fits nothing.
+ */
+export function publicationFits(
+  approved: Pick<ReviewShape, 'listeners'> | null,
+  pub: PublicationShape,
+): boolean {
+  const l = approved?.listeners?.find((x) => x.listenerKey === pub.listenerKey);
+  if (!l) return false;
+  return (
+    (l.accountId ?? null) === (pub.accountId ?? null) &&
+    (l.templateHash ?? null) === (pub.templateHash ?? null)
+  );
 }
 
 /** The hash the review card is approved under. Stable across edge address changes. */

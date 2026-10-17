@@ -12,7 +12,7 @@ dispatch works, and what's required to add another backend.
   TS, the Convex validators) derives from it.
 - A **backend instance** is one deployed server of a given type, with its own connection config +
   secret. Instances are rows in the **`backendServers`** table and are managed in the admin CMS
-  ("Backend servers"). Remnawave and Outline both have instances; a type can have many.
+  (Servers -> Backends). Remnawave and Outline both have instances; a type can have many.
 
 This split is what makes the system multi-backend: instance _management_ (pool selection at
 issuance, key->instance resolution, health, load counters) is fully generic, and only the per-type
@@ -138,7 +138,7 @@ connection secret:
 - `outline`: `{ apiUrl, websocketEnabled, websocketDomain?, prometheusUrl? }` (the `apiUrl` embeds a
   secret path segment)
 
-Admins add/edit/remove instances + run a pre-save test-connection in the CMS ("Backend servers");
+Admins add/edit/remove instances + run a pre-save test-connection in the CMS (Servers -> Backends);
 the secret is **never returned** to the SPA (responses mask it: `apiUrlMasked` for Outline,
 `apiTokenSet: boolean` for Remnawave). On edit, the secret field is blank and only re-submitted to
 rotate it — **Test connection** still works with the field blank: the request carries the instance
@@ -297,7 +297,7 @@ are untouched (the migration skips any backend that reports a 2.x version).
    backend no longer knows (the member's next regenerate re-issues them); `conflicts` means the
    backend reported an id another row already holds — investigate before touching those.
 
-4. **Verify**: Admin → Backend servers shows the new backend version in fleet stats, the
+4. **Verify**: Admin → Servers → Backends shows the new backend version in fleet stats, the
    healthcheck cron stays green, and an affected member's account page loads live usage.
 
 The integration harness pins a 3.x backend (`docker-compose.remnawave-test.yml`); its env file
@@ -385,6 +385,9 @@ on them. Measured on the pinned backend (`remnawave/backend:3.4.4`), no node con
 | Repeat `actions/disable` on a disabled node                              | **200** again                                    | Not an error, and not a guaranteed no-op: read the state first and skip the call                                       |
 | `actions/restart` with `{forceRestart: true}`                            | **202** (2.x: **200**)                           | The answer means "queued", not "restarted", on either version                                                          |
 | `xrayUptime` on a node that never connected                              | **`0`**                                          | A zero or missing uptime says nothing about when Xray started                                                          |
+| A transport's `port` changed, tag and protocol unchanged                 | **uuid stable**; nodes on it re-apply            | A port change keeps bindings, Hosts and groups; the node listens on the new port seconds later                         |
+| Two transports of one profile on the same port; a port of 70000          | **accepted** (200), stored as sent               | The backend validates neither: FCP checks the range, and collisions per node                                           |
+| A transport added to a profile                                           | nodes re-apply; their `activeInbounds` unchanged | No node serves a new transport until it is assigned to it: adding one opens no port                                    |
 
 What the backend **normalises** on a config write: it trims whitespace around each
 `serverNames` entry, and it clears `settings.clients`. It does **not** lowercase or

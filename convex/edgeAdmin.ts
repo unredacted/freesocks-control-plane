@@ -6,6 +6,7 @@
  * plumbing is in httpEdges.ts.
  */
 import { ConvexError, v } from 'convex/values';
+import { verificationListenerOf } from './lib/edges/verificationContext';
 import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { upsertSettingRow } from './appSettings';
@@ -40,13 +41,7 @@ import {
   mapRelayAdmin,
   scheduleMirrorRefresh,
 } from './relays';
-import {
-  activeNames,
-  hostSniOf,
-  listenerRemark,
-  listenersOf,
-  mapListenerAdmin,
-} from './relayListeners';
+import { hostSniOf, listenerRemark, listenersOf, mapListenerAdmin } from './relayListeners';
 import { EDGE_PROVIDER_CAPABILITIES } from './lib/edges/providers/capabilities';
 import { protocolLabel } from './lib/edges/protocols';
 import { destroyedPatch, mapEdgeAdmin } from './edges';
@@ -60,6 +55,7 @@ const SAMPLE_RENDER_KEY = 'sample-subscriber-0000';
 export const summary = internalQuery({
   args: {},
   handler: async (ctx) => {
+    const cfg = await resolveEdgeConfig(ctx.db);
     const origins = (await ctx.db.query('relays').collect()).sort((a, b) =>
       a.slug.localeCompare(b.slug),
     );
@@ -133,7 +129,7 @@ export const summary = internalQuery({
         }
       }
       out.push({
-        relay: mapRelayAdmin(o),
+        relay: mapRelayAdmin(o, cfg),
         pool,
         standbys: edges.filter((e) => e.status === 'active' && e.publication === 'unpublished')
           .length,
@@ -143,28 +139,6 @@ export const summary = internalQuery({
       });
     }
     return { counts, relays: out, generatedAt: new Date().toISOString() };
-  },
-});
-
-/** The dashboard mini-card figures (cheap subset of `summary`). */
-export const dashboardCounts = internalQuery({
-  args: {},
-  handler: async (ctx) => {
-    const origins = await ctx.db.query('relays').collect();
-    let published = 0;
-    let suspected = 0;
-    let quarantined = 0;
-    let rotating = 0;
-    for (const o of origins) {
-      published += publishedCount(o.publishedEdgeIds);
-      if (o.suspicion?.state === 'suspected') suspected++;
-      if (o.quarantine) quarantined++;
-      if (o.activeRotationId) {
-        const r = await ctx.db.get(o.activeRotationId);
-        if (r && !isTerminalPhase(r.phase)) rotating++;
-      }
-    }
-    return { relays: origins.length, published, suspected, quarantined, rotating };
   },
 });
 
@@ -276,7 +250,7 @@ async function publishedEndpoints(
   // Role-usable endpoints ONLY: an edge that lost its address or listener must
   // make the role keep waiting, not configure a dud. (Assignment and preview
   // use the full, flagged pool elsewhere.)
-  const { published } = await publishedEdgesOf(ctx, origin);
+  const { published } = await publishedEdgesOf(ctx, origin, { kind: 'member' });
   const listeners = await listenersOf(ctx, origin._id);
   // An L7 front answers DNS long before it carries the transport: require a
   // current, passing end-to-end proof, re-derived from the live rows.
@@ -400,9 +374,9 @@ function udpProviderAvailable(): boolean {
 }
 
 /**
- * The node role's view of an origin (`GET/PUT …/origins/by-slug/{slug}`): the
- * minimal projection. No detector state, no rotation limits, no pool-wide
- * provider names: a leaked register token learns none of them.
+ * An origin's minimal projection (`GET …/relays/by-slug/{slug}`, an admin read
+ * since the v1 role's registration route is gone). No detector state, no
+ * rotation limits, no pool-wide provider names.
  */
 export const relayBySlugView = internalQuery({
   args: { slug: v.string() },
@@ -493,7 +467,12 @@ export const endpoints = internalQuery({
     const origin = await ctx.db.get(relayId);
     if (!origin) return null;
     const cfg = await resolveEdgeConfig(ctx.db);
-    const { published } = await publishedEdgesOf(ctx, origin, { includeIneligible: true });
+    const { published } = await publishedEdgesOf(
+      ctx,
+      origin,
+      { kind: 'member' },
+      { includeIneligible: true },
+    );
     // The sample must be assigned under the SAME family rule the renderer uses,
     // not under a default: with IPv6 emission off for a family, an edge that
     // only has a v6 address is not assignable, so a sample computed with v6
@@ -547,9 +526,12 @@ export async function renderPreviewFor(
 ) {
   {
     const cfg = await resolveEdgeConfig(ctx.db);
-    const { published, matchers } = await publishedEdgesOf(ctx, origin, {
-      includeIneligible: true,
-    });
+    const { published, matchers } = await publishedEdgesOf(
+      ctx,
+      origin,
+      { kind: 'member' },
+      { includeIneligible: true },
+    );
     const format = CLIENT_FAMILY_FORMATS[fam];
     // The preview body must speak what the listeners speak: one template entry
     // per listener (by its remark, or a synthetic one for an address-matched
@@ -618,7 +600,10 @@ export const edgeDetail = internalQuery({
       .order('desc')
       .take(10);
     return {
-      edge: mapEdgeAdmin(e, await ctx.db.get(e.listenerId)),
+      edge: await (async () => {
+        const l = await ctx.db.get(e.listenerId);
+        return mapEdgeAdmin(e, l ? await verificationListenerOf(ctx.db, l) : null);
+      })(),
       live: parseLive(e),
       probes: probes.map((r) => ({
         id: r._id as string,

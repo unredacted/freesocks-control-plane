@@ -1,12 +1,16 @@
 <script lang="ts">
   /**
-   * Admin -> Edges overview (`/admin/edges`).
+   * All origins (`/admin/edges/advanced/origins`, under Advanced): the
+   * technical fleet dashboard.
    * URL state: `?filter` = all | attention | dark | quarantined | unpublished,
-   *            `?layer`  = all | l4 | l7   (both filter the origin table client-side).
+   *            `?layer`  = all | l4 | l7   (both filter the origin table client-side),
+   *            `?new=1`  opens "New origin" (a manual address or a whole Outline
+   *                      server; a backend node is protected with Autopilot instead).
    *
-   * Figures the `EdgeSummary` contract does not carry (published per layer,
-   * standbys, members dark, probe budget) are derived in overview/derive.ts from
-   * the summary rows, the attention list, the probe summary and the config.
+   * Each origin's status (delivery, layers, health, attention) is the server's
+   * one projection (the attention response's `origins[]`); figures the
+   * `EdgeSummary` contract does not carry (published per layer, standbys,
+   * probe budget) are counted in overview/derive.ts.
    */
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -46,6 +50,7 @@
   import ProbeTimeChart from './components/ProbeTimeChart.svelte';
   import FleetTiles from './overview/FleetTiles.svelte';
   import RelayTable from './overview/RelayTable.svelte';
+  import NewRelayDialog from './forms/NewRelayDialog.svelte';
   import { edgesPaths } from './lib/routes';
   import { edgeErrorMessage } from './lib/edgeErrors';
   import { ATTENTION_ACTION_PLAN, attentionTarget } from './lib/attention';
@@ -55,16 +60,15 @@
     LAYER_FILTER_LABELS,
     OVERVIEW_FILTERS,
     OVERVIEW_LAYERS,
-    attentionRelaySlugs,
-    darkRelaySlugs,
     filterRelays,
     fleetTiles,
     parseFilter,
     parseLayer,
-    type AttentionItem,
+    statusIndex,
     type OverviewFilter,
     type OriginRow,
   } from './overview/derive';
+  import type { AttentionItem } from './lib/attention';
 
   const qc = useQueryClient();
   const summary = edgeSummaryQuery();
@@ -76,18 +80,25 @@
   const probeHour = probeSummaryQuery(() => HOUR);
 
   const filterParam = searchParam('filter', 'all');
+  const newParam = searchParam('new');
+  let newOpen = $state(false);
+  $effect(() => {
+    if (newParam.value === '1') newOpen = true;
+  });
+  $effect(() => {
+    if (!newOpen && newParam.value) newParam.value = null;
+  });
   const layerParam = searchParam('layer', 'all');
   const filter = $derived(parseFilter(filterParam.value));
   const layer = $derived(parseLayer(layerParam.value));
 
   const items = $derived(attention.data?.items ?? []);
-  const dark = $derived(darkRelaySlugs(items));
-  const flagged = $derived(attentionRelaySlugs(items));
+  const statuses = $derived(statusIndex(attention.data?.origins));
   const allRows = $derived(summary.data?.relays ?? []);
-  const rows = $derived(filterRelays(allRows, filter, layer, { dark, attention: flagged }));
+  const rows = $derived(filterRelays(allRows, filter, layer, statuses));
   const tiles = $derived(
     summary.data
-      ? fleetTiles(summary.data, items, {
+      ? fleetTiles(summary.data, statuses, {
           usedLastHour: probeHour.data?.totals.runs ?? null,
           hourlyBudget: config.data?.config.probe.hourlyBudget ?? null,
           enabled: config.data?.config.probe.enabled ?? null,
@@ -241,13 +252,14 @@
 </script>
 
 <SectionHeader
-  title="Edges"
-  description="Relays, the edges that front them, and what needs your attention."
+  title="All origins"
+  description="Every origin, the edges that front them, and what needs your attention."
+  back={{ href: edgesPaths.advanced(), label: 'Advanced' }}
 >
   {#snippet actions()}
-    <Button onclick={() => router.navigate(edgesPaths.setup())}>
+    <Button onclick={() => (newOpen = true)}>
       <Plus aria-hidden="true" />
-      Set up an origin
+      New origin
     </Button>
   {/snippet}
 </SectionHeader>
@@ -313,9 +325,9 @@
   </section>
 
   <section>
-    <SectionHeader level={2} title="Relays">
+    <SectionHeader level={2} title="Origins">
       {#snippet actions()}
-        <div class="flex flex-wrap items-center gap-1" role="group" aria-label="Filter relays">
+        <div class="flex flex-wrap items-center gap-1" role="group" aria-label="Filter origins">
           {#each OVERVIEW_FILTERS as f (f)}
             <button
               type="button"
@@ -356,11 +368,12 @@
         <p class="text-muted-foreground mx-auto mt-1 max-w-prose text-sm">
           An origin is a place members should never reach directly: a backend node, a backend server
           or an address you enter by hand. The control plane puts provider-managed edges in front of
-          it and replaces them when they stop working.
+          it and replaces them when they stop working. A backend node is protected from Edges with
+          Protect a node.
         </p>
-        <Button class="mt-4" onclick={() => router.navigate(edgesPaths.setup())}>
+        <Button class="mt-4" onclick={() => (newOpen = true)}>
           <Plus aria-hidden="true" />
-          Set up an origin
+          New origin
         </Button>
       </div>
     {:else if rows.length === 0}
@@ -377,7 +390,7 @@
     {:else}
       <RelayTable
         {rows}
-        {dark}
+        {statuses}
         {busySlug}
         onProvision={(row) => {
           provisionRow = row;
@@ -419,6 +432,12 @@
     <p class="text-muted-foreground">Relay {provisionRow.relay.slug}</p>
   {/if}
 </ConfirmDialog>
+
+<NewRelayDialog
+  bind:open={newOpen}
+  kinds={['manual', 'backend-server']}
+  onCreated={(slug) => router.navigate(edgesPaths.relay(slug))}
+/>
 
 <ConfirmDialog
   bind:open={thawOpen}

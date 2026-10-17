@@ -12,6 +12,7 @@
  * the binding's policy version while the subscription is edge-required, null
  * for a subscription no origin covers.
  */
+import { verificationListenersOf } from './lib/edges/verificationContext';
 import { v } from 'convex/values';
 import { internalQuery } from './_generated/server';
 import type { QueryCtx } from './_generated/server';
@@ -35,7 +36,7 @@ import { parseIntent } from './lib/edges/intent';
 import { qualificationBinding, qualificationVerdict } from './lib/edges/frontCheck/binding';
 import { needsEndpointVerification, verificationCurrent } from './lib/edges/verification';
 import type { EdgeRenderContext } from './lib/edges/renderPipeline';
-import { gateToken, type NodeGate } from './lib/backend/deliveryGate';
+import { gateToken, isCandidateEdge, type NodeGate } from './lib/backend/deliveryGate';
 import { nodeGateFor } from './nodeIntents';
 import { deliveryBindingFor, relayForBackendNode } from './relays';
 import { listenersOf } from './relayListeners';
@@ -88,7 +89,7 @@ export function matcherOf(l: Doc<'relayListeners'>, originAddress: string): Rend
   return {
     listenerKey: l.listenerKey,
     rule: l.matchRule,
-    legacyRemarks: (l.legacyHosts ?? []).map((h) => h.remark),
+    legacyRemarks: [...(l.legacyHosts ?? []).map((h) => h.remark), ...(l.formerRemarks ?? [])],
     proto: { protocol: l.protocol, streamTransport: l.streamTransport, security: l.security },
     originAddress,
     originPort: l.originPort,
@@ -96,12 +97,50 @@ export function matcherOf(l: Doc<'relayListeners'>, originAddress: string): Rend
 }
 
 /**
- * Published edges in pool order. By default only edges with an eligible
- * listener (and an address) are returned. With `includeIneligible` every
- * published, active edge is returned and the ineligible ones (listener
- * retired, undeployed or disabled, no address, lapsed L7 proof, L4
- * verification no longer current) carry `eligible:false`: they keep their
- * pool index in the assignment modulus.
+ * Which published edges a render may select (docs/servers.md "Node
+ * lifecycle"). Required, never defaulted:
+ *  - `member`: what members are served. Every candidate of an activation
+ *    (the node gate's candidate set) is dropped: a live node's replacement
+ *    never reaches a member body, a cached body or a mirror before its commit.
+ *    The only context the member paths (the /sub route, mirrors, previews)
+ *    can build.
+ *  - `activation`: INTERNAL, the rehearsal of one activation run: exactly that
+ *    run's candidate set (verified to be the node's current run), so a live
+ *    node's replacement rehearses the candidates, not the committed edges. A
+ *    render under it writes nothing (no binding, cache, mirror, pin or
+ *    snapshot).
+ */
+export type EdgeSelectionContext =
+  | { kind: 'member' }
+  | { kind: 'activation'; activationRunId: Id<'panelActivationRuns'> };
+
+/** The edges an activation run's rehearsal renders: null when the run is not the node's current, running one. */
+async function activationCandidatesOf(
+  ctx: { db: QueryCtx['db'] },
+  origin: Doc<'relays'>,
+  activationRunId: Id<'panelActivationRuns'>,
+): Promise<Set<string> | null> {
+  const run = await ctx.db.get(activationRunId);
+  if (!run || run.state !== 'running') return null;
+  const intent = await ctx.db.get(run.intentId);
+  if (
+    !intent ||
+    intent.activation.currentRunId !== run._id ||
+    origin.origin.kind !== 'panel-node' ||
+    intent.backendServerId !== origin.backendServerId ||
+    intent.name !== origin.origin.nodeName
+  )
+    return null;
+  return new Set(run.resources.edgeIds);
+}
+
+/**
+ * Published edges in pool order, as `context` may see them. By default only
+ * edges with an eligible listener (and an address) are returned. With
+ * `includeIneligible` every published, active edge the context selects is
+ * returned and the ineligible ones (listener retired, undeployed or disabled,
+ * no address, lapsed L7 proof, L4 verification no longer current) carry
+ * `eligible:false`: they keep their pool index in the assignment modulus.
  *
  * The verification condition is the publication gate's own
  * (`verificationCurrent`), applied again at render time: a listener revision
@@ -113,17 +152,35 @@ export function matcherOf(l: Doc<'relayListeners'>, originAddress: string): Rend
 export async function publishedEdgesOf(
   ctx: { db: QueryCtx['db'] },
   origin: Doc<'relays'>,
+  context: EdgeSelectionContext,
   opts: { includeIneligible?: boolean } = {},
 ): Promise<{ published: PublishedEdge[]; matchers: RenderMatcher[] }> {
-  const listeners = await listenersOf(ctx, origin._id);
+  // With the enrolled node's auth revision: an L4 tick binds to it.
+  const listeners = await verificationListenersOf(
+    ctx.db,
+    origin,
+    await listenersOf(ctx, origin._id),
+  );
   const matchers = listeners
     .filter((l) => !l.retired && l.deployed && l.enabled)
     .map((l) => matcherOf(l, origin.originAddress));
+  let selected: (edgeId: string) => boolean;
+  if (context.kind === 'activation') {
+    const set = await activationCandidatesOf(ctx, origin, context.activationRunId);
+    // A run that is not the node's current, running one renders nothing.
+    selected = (id) => !!set && set.has(id);
+  } else {
+    const gate =
+      origin.origin.kind === 'panel-node' && origin.backendServerId
+        ? await nodeGateFor(ctx, origin.backendServerId, origin.origin.nodeName)
+        : null;
+    selected = (id) => !gate || !isCandidateEdge(gate, id);
+  }
   const published: PublishedEdge[] = [];
   const now = Date.now();
   for (let i = 0; i < origin.publishedEdgeIds.length; i++) {
     const edgeId = origin.publishedEdgeIds[i];
-    if (!edgeId) continue;
+    if (!edgeId || !selected(edgeId as string)) continue;
     const edge = await ctx.db.get(edgeId);
     if (!edge || edge.publication !== 'published' || edge.status !== 'active') continue;
     const listener = listeners.find((l) => l._id === edge.listenerId) ?? null;
@@ -251,9 +308,10 @@ export const deliveryPolicy = internalQuery({
 });
 
 /**
- * Cache token for a subscription's place: `<policyVersion>:<epoch>` while the
- * place is edge-required (the epoch is the origin's, or -1 when the binding has
- * no live origin), null for a place no origin covers (raw delivery, no token).
+ * Cache token for a subscription's place: `<policyVersion>[:g<gate>]:<epoch>`
+ * while the place is edge-required (the epoch is the origin's, or -1 when the
+ * binding has no live origin or rendering is off), `g<gate>` for an unbound
+ * place with a managed node, null for a place with neither (raw delivery).
  */
 async function epochTokenFor(
   ctx: { db: QueryCtx['db'] },
@@ -334,7 +392,8 @@ export type SubscriptionRenderDecision =
         | 'relay_missing'
         | 'no_render_key'
         | 'node_gated'
-        | 'policy_moved';
+        | 'policy_moved'
+        | 'family_disabled';
       relaySlug: string | null;
     };
 
@@ -374,12 +433,18 @@ export const decideForSubscription = internalQuery({
     const family = a.family as RenderClientFamily;
     const rule = effectiveRule(cfg.render, cfg.render.clients[family]);
     // A family whose rule is off used to pass the backend body through; under
-    // edge-required delivery there is no passthrough, so it is unavailable.
+    // edge-required delivery there is no passthrough, so it is unavailable
+    // (its own reason, so the refusal counter tells it apart from a switch-off).
     if (!rule.enabled)
-      return { kind: 'unavailable', reason: 'render_disabled', relaySlug: relay.slug };
+      return { kind: 'unavailable', reason: 'family_disabled', relaySlug: relay.slug };
     // A key that has never been rendered has no render key yet: the caller
     // mints one (`subscriptions.ensureRenderKey`) and refuses only if that fails.
-    const { published, matchers } = await publishedEdgesOf(ctx, relay, { includeIneligible: true });
+    const { published, matchers } = await publishedEdgesOf(
+      ctx,
+      relay,
+      { kind: 'member' },
+      { includeIneligible: true },
+    );
     return {
       kind: 'render',
       context: {
@@ -438,7 +503,12 @@ export const memberView = internalQuery({
     if (!snap || snap.epoch !== origin.publicationEpoch)
       return { refreshSuggested, known: false, connections: [] };
     // Rebuild the labels from the snapshot's edges only (no body needed).
-    const { published } = await publishedEdgesOf(ctx, origin, { includeIneligible: true });
+    const { published } = await publishedEdgesOf(
+      ctx,
+      origin,
+      { kind: 'member' },
+      { includeIneligible: true },
+    );
     const byId = new Map(published.map((p) => [p.edgeId, p]));
     const primary = snap.primaryEdgeId ? byId.get(snap.primaryEdgeId) : undefined;
     const backup = snap.backupEdgeId ? byId.get(snap.backupEdgeId) : undefined;

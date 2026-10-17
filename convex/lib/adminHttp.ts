@@ -20,19 +20,23 @@ import type { RateLimitPolicyKey } from './rateLimitPolicy';
 export const notFound = () => errorJson('not_found', 'Not found', 404);
 
 /**
- * A bearer caller admitted ONLY by the register scope is confined to its
- * token's registration boundary (docs/edges.md "Node role contract"): the
- * backend servers and, optionally, the node names it may act for. A register
- * token without a boundary may act for nothing. Returns null for a caller
- * holding the full scope or a cookie session.
+ * A bearer caller not holding the route's full scope is confined to its
+ * token's registration boundary (docs/servers.md "Node registration"): the
+ * backend servers and, optionally, the node names it may act for. A token
+ * without a boundary may act for nothing. Returns null (unbounded) for a
+ * cookie session and for a token holding any of `fullScope` (one scope or an
+ * any-of list). `admin:servers:manage` is deliberately NOT unbounding: the
+ * role's routes hand out the backend's node secret (`bootstrap`), which
+ * backend-write automation must never be able to export on its own.
  */
 export async function registrationBoundaryOf(
   ctx: ActionCtx,
   admin: AdminAuth,
-  fullScope: string,
+  fullScope: string | readonly string[],
 ): Promise<{ backendServerIds: string[]; nodeNames?: string[] } | null> {
   if (!admin.tokenId || !admin.tokenScopes) return null;
-  if (admin.tokenScopes.includes(fullScope)) return null;
+  const unbounded = typeof fullScope === 'string' ? [fullScope] : fullScope;
+  if (unbounded.some((s) => admin.tokenScopes!.includes(s))) return null;
   const boundary = await ctx.runQuery(internal.apiTokens.registrationBoundary, {
     tokenId: admin.tokenId,
   });

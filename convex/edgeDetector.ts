@@ -8,13 +8,20 @@
  */
 import { ConvexError, v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
+import type { ActionCtx, QueryCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { runWithCronOutcome } from './cronHeartbeat';
-import { resolveEdgeConfig, edgeMs } from './lib/edgeConfig';
+import { EDGE_PLUMBING, originPolicy, resolveEdgeConfig, edgeMs } from './lib/edgeConfig';
 import { todayKey } from './relays';
 import { familyKeyOf } from './probes';
+import {
+  fleetBrakeEngages,
+  fleetRotationsToday,
+  readFleetBrake,
+  writeFleetBrake,
+} from './lib/edges/fleet';
 import {
   autoRotateDecision,
   evaluate,
@@ -34,146 +41,233 @@ const REPORT_PAGE_SIZE = 200;
 
 type Origin = Doc<'relays'>;
 
-/** Everything one evaluation needs, read in one query. */
-export const relayWindow = internalQuery({
-  args: { relayId: v.id('relays'), now: v.number() },
-  handler: async (ctx, { relayId, now }) => {
-    const origin = await ctx.db.get(relayId);
-    if (!origin) return null;
-    const cfg = await resolveEdgeConfig(ctx.db);
-    const since = now - edgeMs.detectWindow(cfg);
-    const window: WindowReports = { reports: 0, distinctReporters: 0, countries: {}, byEdge: {} };
-    // The window is aggregated PAGE BY PAGE up to `detect.maxReportRowsPerEval`
-    // instead of collecting it: a busy origin (or a flood) can hold far more
-    // rows than one transaction may read. A plain `.take(N)` is not enough:
-    // zero-weight duplicates can fill N before the first distinct reporter
-    // appears, so the pages are walked with a cursor, and when the cap is
-    // reached the window is marked INCOMPLETE rather than scored truncated.
-    const cap = Math.max(1, cfg.detect.maxReportRowsPerEval);
-    let cursor: string | null = null;
-    let scanned = 0;
-    for (;;) {
-      // Never read past the cap, so the cap really is the transaction's read
-      // budget. A window that ends exactly ON it counts as truncated (the
-      // paginator cannot tell "exactly the last row" from "one more page"),
-      // which is the safe direction.
-      const remaining = cap - scanned;
-      if (remaining <= 0) {
-        window.incomplete = true;
-        break;
-      }
-      const page = await ctx.db
-        .query('issueReports')
-        .withIndex('by_relay', (q) => q.eq('relaySlug', origin.slug).gte('_creationTime', since))
-        .paginate({ cursor, numItems: Math.min(REPORT_PAGE_SIZE, remaining) });
-      for (const r of page.page) {
-        if (r.kind !== 'report') continue;
-        window.reports += 1;
-        // detectorWeight 0 = a repeat by the same member inside the window (the
-        // peppered dedupe mark), or a report recorded while no mark pepper was
-        // configured (fail closed); it never adds a reporter, at origin OR edge
-        // level. A missing weight is treated the same way.
-        const weight = r.detectorWeight ?? 0;
-        window.distinctReporters += weight;
-        const c = r.country ?? r.detectedCountry;
-        if (c) window.countries[c] = (window.countries[c] ?? 0) + 1;
-        if (r.relayEdgeId && weight > 0) {
-          const e = (window.byEdge[r.relayEdgeId] ??= { count: 0, countries: {} });
-          e.count += weight;
-          if (c) e.countries[c] = (e.countries[c] ?? 0) + weight;
-        }
-      }
-      scanned += page.page.length;
-      if (page.isDone) break;
-      cursor = page.continueCursor;
-    }
-    const samples = await ctx.db
-      .query('relaySamples')
-      .withIndex('by_relay_at', (q) =>
-        q.eq('relayId', relayId).gte('at', now - SAMPLE_RETENTION_MS),
+/** One page of an origin's detector window, aggregated (the drain merges pages). */
+export interface WindowPage {
+  reports: number;
+  distinctReporters: number;
+  countries: Record<string, number>;
+  byEdge: Record<string, { count: number; countries: Record<string, number> }>;
+  scanned: number;
+  isDone: boolean;
+  continueCursor: string;
+}
+
+/**
+ * ONE page of the report window (one `paginate` per query: Convex runs a single
+ * paginated query per function). The action-driven drain (`relayWindow`) walks
+ * the pages up to `detect.maxReportRowsPerEval`, so no transaction reads more
+ * than a page however busy the origin is.
+ */
+export const reportPage = internalQuery({
+  args: {
+    relaySlug: v.string(),
+    since: v.number(),
+    /** The evaluation time: every page reads the same window, whatever lands meanwhile. */
+    until: v.number(),
+    cursor: v.union(v.string(), v.null()),
+    numItems: v.number(),
+  },
+  handler: async (ctx, { relaySlug, since, until, cursor, numItems }): Promise<WindowPage> => {
+    const page = await ctx.db
+      .query('issueReports')
+      // Up to the END of the evaluation's millisecond (`_creationTime` is finer
+      // than `now`): a report created during the drain is the next window's.
+      .withIndex('by_relay', (q) =>
+        q
+          .eq('relaySlug', relaySlug)
+          .gte('_creationTime', since)
+          .lt('_creationTime', until + 1),
       )
-      .collect();
-    const baseline: BaselineSample[] = samples.map((s) => ({
-      at: s.at,
-      reports: s.reports,
-      distinctReporters: s.distinctReporters,
-      usersOnline: s.usersOnline,
-    }));
-    // Only a backend node has a load / online signal (backend node inventory).
-    const panelNode = origin.origin.kind === 'panel-node' ? origin.origin : null;
-    const inv = panelNode
-      ? await ctx.db
-          .query('backendNodeInventory')
-          .withIndex('by_server_name', (q) =>
-            q.eq('backendServerId', panelNode.backendServerId).eq('name', panelNode.nodeName),
-          )
-          .unique()
-      : null;
-    const usersOnline = inv ? inv.usersOnline : null;
-    const loadStale = inv ? now - inv.lastStatsAt > LOAD_STALE_MS : true;
-    const nodeOnline = inv ? inv.online : null;
-    const edges: EdgeProbeState[] = [];
-    const published: Array<{ edgeId: string; poolIndex: number }> = [];
-    for (let i = 0; i < origin.publishedEdgeIds.length; i++) {
-      const id = origin.publishedEdgeIds[i];
-      if (!id) continue;
-      const e = await ctx.db.get(id);
-      if (!e) continue;
-      published.push({ edgeId: e._id, poolIndex: e.poolIndex ?? i });
-      // Reachability history per country (bounded: countries × sources ×
-      // families): a country is block evidence only once the edge has been
-      // reachable from it before (the IPv4 path, what members receive).
-      const history = await ctx.db
-        .query('probeReachability')
-        .withIndex('by_target_country', (q) => q.eq('targetKind', 'edge').eq('targetRef', e._id))
-        .collect();
-      // The member-facing path: IPv4 for an L4 edge, the NAME for an L7 one
-      // (`familyKeyOf`). `lastOkAt` is the signal, so a country that only ever
-      // saw a degraded verdict still counts as having reached the edge.
-      const wasReachable = (country: string) =>
-        history.some(
-          (r) =>
-            r.country === country &&
-            familyKeyOf(r) !== 6 &&
-            (r.lastOkAt !== undefined || r.lastReachableAt !== undefined),
-        );
-      const entries = e.reachability?.byCountry ?? [];
-      const external = entries.filter((c) => c.country !== 'XX');
-      edges.push({
-        edgeId: e._id,
-        byCountry: external.map((c) => ({
-          country: c.country,
-          verdict: c.verdict as Verdict,
-          // The summary judges the transition PER PORT (a port blocked since it
-          // appeared is not evidence even if another port was reached); the
-          // country-wide history is only the fallback for summaries written
-          // before the marker existed.
-          wasReachable: c.wasReachable ?? wasReachable(c.country),
-          // Each country's own freshness: a summary refreshed by one source
-          // must not make another country's old verdict look current.
-          ageMs: now - c.lastAt,
-        })),
-        internalVerdict: entries.find((c) => c.country === 'XX')?.verdict ?? 'unknown',
-        providerHealth: e.health,
-        probeAgeMs: external.length ? now - Math.max(...external.map((c) => c.lastAt)) : null,
-      });
-    }
-    const rotation = origin.activeRotationId ? await ctx.db.get(origin.activeRotationId) : null;
-    const rotationActive =
-      !!rotation &&
-      !['done', 'failed', 'rolled_back', 'quarantined', 'cancelled'].includes(rotation.phase);
-    return {
-      origin,
-      cfg,
-      window,
-      baseline,
-      usersOnline,
-      loadStale,
-      nodeOnline,
-      edges,
-      published,
-      rotationActive,
+      .paginate({ cursor, numItems: Math.max(1, Math.min(REPORT_PAGE_SIZE, numItems)) });
+    const out: WindowPage = {
+      reports: 0,
+      distinctReporters: 0,
+      countries: {},
+      byEdge: {},
+      scanned: page.page.length,
+      isDone: page.isDone,
+      continueCursor: page.continueCursor,
     };
+    for (const r of page.page) {
+      if (r.kind !== 'report') continue;
+      out.reports += 1;
+      // detectorWeight 0 = a repeat by the same member inside the window (the
+      // peppered dedupe mark), or a report recorded while no mark pepper was
+      // configured (fail closed); it never adds a reporter, at origin OR edge
+      // level. A missing weight is treated the same way.
+      const weight = r.detectorWeight ?? 0;
+      out.distinctReporters += weight;
+      const c = r.country ?? r.detectedCountry;
+      if (c) out.countries[c] = (out.countries[c] ?? 0) + 1;
+      if (r.relayEdgeId && weight > 0) {
+        const e = (out.byEdge[r.relayEdgeId] ??= { count: 0, countries: {} });
+        e.count += weight;
+        if (c) e.countries[c] = (e.countries[c] ?? 0) + weight;
+      }
+    }
+    return out;
+  },
+});
+
+/**
+ * Walk the report window page by page up to the cap. A plain `.take(N)` is not
+ * enough: zero-weight duplicates can fill N before the first distinct reporter
+ * appears, so the pages are walked with a cursor, and when the cap is reached
+ * the window is marked INCOMPLETE rather than scored truncated. Never reads
+ * past the cap, so the cap really is the evaluation's read budget; a window
+ * that ends exactly ON it counts as truncated (the paginator cannot tell
+ * "exactly the last row" from "one more page"), which is the safe direction.
+ */
+async function drainReportWindow(
+  ctx: ActionCtx,
+  relaySlug: string,
+  since: number,
+  until: number,
+  cap: number,
+): Promise<WindowReports> {
+  const window: WindowReports = { reports: 0, distinctReporters: 0, countries: {}, byEdge: {} };
+  let cursor: string | null = null;
+  let scanned = 0;
+  for (;;) {
+    const remaining = cap - scanned;
+    if (remaining <= 0) {
+      window.incomplete = true;
+      break;
+    }
+    const page: WindowPage = await ctx.runQuery(internal.edgeDetector.reportPage, {
+      relaySlug,
+      since,
+      until,
+      cursor,
+      numItems: Math.min(REPORT_PAGE_SIZE, remaining),
+    });
+    window.reports += page.reports;
+    window.distinctReporters += page.distinctReporters;
+    for (const [c, n] of Object.entries(page.countries))
+      window.countries[c] = (window.countries[c] ?? 0) + n;
+    for (const [edgeId, e] of Object.entries(page.byEdge)) {
+      const into = (window.byEdge[edgeId] ??= { count: 0, countries: {} });
+      into.count += e.count;
+      for (const [c, n] of Object.entries(e.countries))
+        into.countries[c] = (into.countries[c] ?? 0) + n;
+    }
+    scanned += page.scanned;
+    if (page.isDone) break;
+    cursor = page.continueCursor;
+  }
+  return window;
+}
+
+/** Everything one evaluation needs besides the report window, read in one query. */
+async function loadRelayContext(ctx: QueryCtx, relayId: Id<'relays'>, now: number) {
+  const origin = await ctx.db.get(relayId);
+  if (!origin) return null;
+  const cfg = await resolveEdgeConfig(ctx.db);
+  const samples = await ctx.db
+    .query('relaySamples')
+    .withIndex('by_relay_at', (q) => q.eq('relayId', relayId).gte('at', now - SAMPLE_RETENTION_MS))
+    .collect();
+  const baseline: BaselineSample[] = samples.map((s) => ({
+    at: s.at,
+    reports: s.reports,
+    distinctReporters: s.distinctReporters,
+    usersOnline: s.usersOnline,
+  }));
+  // Only a backend node has a load / online signal (backend node inventory).
+  const panelNode = origin.origin.kind === 'panel-node' ? origin.origin : null;
+  const inv = panelNode
+    ? await ctx.db
+        .query('backendNodeInventory')
+        .withIndex('by_server_name', (q) =>
+          q.eq('backendServerId', panelNode.backendServerId).eq('name', panelNode.nodeName),
+        )
+        .unique()
+    : null;
+  const usersOnline = inv ? inv.usersOnline : null;
+  const loadStale = inv ? now - inv.lastStatsAt > LOAD_STALE_MS : true;
+  const nodeOnline = inv ? inv.online : null;
+  const edges: EdgeProbeState[] = [];
+  const published: Array<{ edgeId: string; poolIndex: number }> = [];
+  for (let i = 0; i < origin.publishedEdgeIds.length; i++) {
+    const id = origin.publishedEdgeIds[i];
+    if (!id) continue;
+    const e = await ctx.db.get(id);
+    if (!e) continue;
+    published.push({ edgeId: e._id, poolIndex: e.poolIndex ?? i });
+    // Reachability history per country (bounded: countries × sources ×
+    // families): a country is block evidence only once the edge has been
+    // reachable from it before (the IPv4 path, what members receive).
+    const history = await ctx.db
+      .query('probeReachability')
+      .withIndex('by_target_country', (q) => q.eq('targetKind', 'edge').eq('targetRef', e._id))
+      .collect();
+    // The member-facing path: IPv4 for an L4 edge, the NAME for an L7 one
+    // (`familyKeyOf`). `lastOkAt` is the signal, so a country that only ever
+    // saw a degraded verdict still counts as having reached the edge.
+    const wasReachable = (country: string) =>
+      history.some(
+        (r) =>
+          r.country === country &&
+          familyKeyOf(r) !== 6 &&
+          (r.lastOkAt !== undefined || r.lastReachableAt !== undefined),
+      );
+    const entries = e.reachability?.byCountry ?? [];
+    const external = entries.filter((c) => c.country !== 'XX');
+    edges.push({
+      edgeId: e._id,
+      byCountry: external.map((c) => ({
+        country: c.country,
+        verdict: c.verdict as Verdict,
+        // The summary judges the transition PER PORT (a port blocked since it
+        // appeared is not evidence even if another port was reached); the
+        // country-wide history is only the fallback for summaries written
+        // before the marker existed.
+        wasReachable: c.wasReachable ?? wasReachable(c.country),
+        // Each country's own freshness: a summary refreshed by one source
+        // must not make another country's old verdict look current.
+        ageMs: now - c.lastAt,
+      })),
+      internalVerdict: entries.find((c) => c.country === 'XX')?.verdict ?? 'unknown',
+      providerHealth: e.health,
+      probeAgeMs: external.length ? now - Math.max(...external.map((c) => c.lastAt)) : null,
+    });
+  }
+  const rotation = origin.activeRotationId ? await ctx.db.get(origin.activeRotationId) : null;
+  const rotationActive =
+    !!rotation &&
+    !['done', 'failed', 'rolled_back', 'quarantined', 'cancelled'].includes(rotation.phase);
+  return {
+    origin,
+    cfg,
+    since: now - edgeMs.detectWindow(cfg),
+    baseline,
+    usersOnline,
+    loadStale,
+    nodeOnline,
+    edges,
+    published,
+    rotationActive,
+  };
+}
+
+export const relayContext = internalQuery({
+  args: { relayId: v.id('relays'), now: v.number() },
+  handler: (ctx, { relayId, now }) => loadRelayContext(ctx, relayId, now),
+});
+
+export type RelayWindow = NonNullable<Awaited<ReturnType<typeof loadRelayContext>>> & {
+  window: WindowReports;
+};
+
+/** Everything one evaluation needs: the context query plus the drained report window. */
+export const relayWindow = internalAction({
+  args: { relayId: v.id('relays'), now: v.number() },
+  handler: async (ctx, { relayId, now }): Promise<RelayWindow | null> => {
+    const c = await ctx.runQuery(internal.edgeDetector.relayContext, { relayId, now });
+    if (!c) return null;
+    const cap = Math.max(1, EDGE_PLUMBING.maxReportRowsPerEval);
+    const window = await drainReportWindow(ctx, c.origin.slug, c.since, now, cap);
+    return { ...c, window };
   },
 });
 
@@ -332,6 +426,46 @@ export interface DetectorReport {
   rotated: number;
   probesRequested: number;
   errors: number;
+  /** The fleet brake held every automatic rotation this pass. */
+  braked: boolean;
+}
+
+/**
+ * The fleet brake's verdict for one detector pass (lib/edges/fleet.ts):
+ * engaged while more than `detect.fleetBreakerPct` percent of the evaluated
+ * origins are suspected; released on the first pass back under it. Audited
+ * on each transition, never per pass.
+ */
+export const recordFleetBrake = internalMutation({
+  args: { suspected: v.number(), evaluated: v.number(), now: v.number() },
+  handler: async (ctx, { suspected, evaluated, now }) => {
+    const cfg = await resolveEdgeConfig(ctx.db);
+    const threshold = cfg.detect.fleetBreakerPct;
+    const engaged = fleetBrakeEngages({ suspected, evaluated, thresholdPct: threshold });
+    const prev = await readFleetBrake(ctx.db);
+    await writeFleetBrake(ctx.db, {
+      engaged,
+      since: engaged ? (prev.engaged ? prev.since : now) : null,
+      suspected,
+      evaluated,
+      threshold,
+      updatedAt: now,
+    });
+    if (engaged !== prev.engaged)
+      await writeAuditLog(ctx, {
+        actorType: 'system',
+        action: 'edge.fleet_brake',
+        targetType: 'edge_fleet',
+        payload: { engaged, suspected, evaluated, threshold },
+      });
+    return { engaged, rotationsToday: await fleetRotationsToday(ctx.db, now) };
+  },
+});
+
+interface Evaluated {
+  origin: Origin;
+  w: RelayWindow;
+  ev: Evaluation;
 }
 
 export const run = internalAction({
@@ -344,16 +478,21 @@ export const run = internalAction({
         rotated: 0,
         probesRequested: 0,
         errors: 0,
+        braked: false,
       };
       const now = Date.now();
       await ctx.runMutation(internal.edgeDetector.sweepMarks, { now });
       const origins: Origin[] = await ctx.runQuery(internal.relays.listEnabled, {});
       // Maintenance: detection is new work (it can start a rotation); skip the tick.
       if ((await ctx.runQuery(internal.edgeMaintenance.state, {})).frozen) return report;
+      // Pass 1: evaluate every origin. The fleet brake is judged over the whole
+      // pass BEFORE any rotation starts, so a mass block never replaces the
+      // first origins of the list and only then notices the rest.
+      const evaluated: Evaluated[] = [];
       for (const o of origins) {
         if (o.deleting) continue;
         try {
-          const w = await ctx.runQuery(internal.edgeDetector.relayWindow, {
+          const w = await ctx.runAction(internal.edgeDetector.relayWindow, {
             relayId: o._id,
             now,
           });
@@ -377,6 +516,25 @@ export const run = internalAction({
           });
           report.evaluated++;
           if (ev.state === 'suspected') report.suspected++;
+          evaluated.push({ origin: o, w, ev });
+        } catch (err) {
+          report.errors++;
+          console.warn(
+            `[relay-detector] ${o.slug}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+      const fleet = await ctx.runMutation(internal.edgeDetector.recordFleetBrake, {
+        suspected: report.suspected,
+        evaluated: report.evaluated,
+        now,
+      });
+      report.braked = fleet.engaged;
+      // Started this pass; the start mutation counts each one against the cap too.
+      let rotationsToday = fleet.rotationsToday;
+      // Pass 2: per origin, the automatic decision, the record and the probes.
+      for (const { origin: o, w, ev } of evaluated) {
+        try {
           const decision = autoRotateDecision({
             evaluation: ev,
             cfg: w.cfg,
@@ -388,12 +546,17 @@ export const run = internalAction({
               cooldownUntil: w.origin.cooldownUntil ?? null,
               rotationsToday:
                 w.origin.rotationsDayKey === todayKey(now) ? w.origin.rotationsToday : 0,
-              maxRotationsPerDay: w.origin.maxRotationsPerDay,
+              maxRotationsPerDay: originPolicy(w.origin, w.cfg).maxRotationsPerDay,
               // Only an operator-managed Host blocks a rotation at index 0.
               hostManaged: w.origin.hostMode !== 'operator',
             },
             published: w.published,
             now,
+            fleet: {
+              brakeEngaged: fleet.engaged,
+              rotationsToday,
+              rotationsPerDay: w.cfg.detect.fleetRotationsPerDay,
+            },
           });
           const veto = 'veto' in decision ? decision.veto : null;
           let lastRotateError: string | null | undefined = undefined;
@@ -408,6 +571,7 @@ export const run = internalAction({
                 reason: `detector:${decision.source}`,
               });
               report.rotated++;
+              rotationsToday++;
               lastRotateError = null;
             } catch (err) {
               lastRotateError =

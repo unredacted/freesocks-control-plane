@@ -38,8 +38,8 @@
   let scopes = $state<Set<ApiScope>>(new Set(initialScopes));
   let expiry = $state<string>('none');
 
-  // An origin-registration token is confined to a boundary: the backend servers
-  // (and optionally the node names) the node role may register origins for.
+  // The node role's token is confined to a boundary: the backend servers (and
+  // optionally the node names) it may enroll and report nodes for.
   // The server refuses the scope without one, so the dialog asks for it.
   const REGISTER_SCOPE: ApiScope = 'admin:edges:register';
   const needsBoundary = $derived(scopes.has(REGISTER_SCOPE));
@@ -188,10 +188,10 @@
       {#if needsBoundary}
         <div class="space-y-2 rounded border p-3">
           <div>
-            <span class="text-sm font-medium block">Origin registration boundary</span>
+            <span class="text-sm font-medium block">Node role boundary</span>
             <p class="text-xs text-muted-foreground">
-              An origin-registration token may only register origins on the backend servers ticked
-              here. Pick at least one.
+              A node role token may only act for nodes on the backend servers ticked here. Pick at
+              least one.
             </p>
           </div>
           {#if servers.isPending}

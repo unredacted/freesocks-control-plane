@@ -410,3 +410,350 @@ export const sweepEdgeRotations = internalMutation({
     return { removed };
   },
 });
+
+// --- the servers and edges workflow tables ---------------------------------------------------------
+//
+// Ledger ops, name rollouts, setup runs, activation runs, Host hides and port
+// changes all accrue a row per action and are read by index, never swept by
+// their own modules. Each sweep deletes TERMINAL rows past a window (90 days by
+// default) and keeps every row something still reads: the cursor steps past a
+// kept row, so a run of them never stalls the drain (a row left at a page
+// boundary is seen again the next day). Not swept, by design: node renames and
+// their aliases (a former name stays reserved and keeps resolving), mirror
+// upload records (one open row per object, deleted when settled) and the vantage
+// tables (`sniVantage.sweep` keeps its own window).
+
+const WORKFLOW_PAGE = 100;
+const cursorArg = v.optional(v.object({ i: v.number(), after: v.number() }));
+type SweepCursor = { i: number; after: number };
+
+/** Next round: the same state past the last row seen, else the next state, else done. */
+function nextCursor(
+  c: SweepCursor,
+  states: number,
+  full: boolean,
+  lastAt: number,
+): SweepCursor | null {
+  if (full) return { i: c.i, after: lastAt };
+  return c.i + 1 < states ? { i: c.i + 1, after: 0 } : null;
+}
+
+async function chain(
+  label: string,
+  rounds: number | undefined,
+  next: SweepCursor | null,
+  schedule: (args: { rounds: number; cursor: SweepCursor }) => Promise<unknown>,
+): Promise<void> {
+  if (!next) return;
+  const n = rounds ?? 0;
+  if (n >= MAX_DRAIN_ROUNDS) console.warn(`[${label}] drain cap hit; remainder next run`);
+  else await schedule({ rounds: n + 1, cursor: next });
+}
+
+/**
+ * Settled ledger ops (`panelOps`, closed) past PANEL_OP_RETENTION_DAYS (90).
+ * Kept while a claim, a name rollout, a port change or a node rename names the
+ * op: a port change and a rollout read their outcome from it.
+ */
+export const sweepPanelOps = internalMutation({
+  args: { limit: v.optional(v.number()), rounds: v.optional(v.number()), cursor: cursorArg },
+  handler: async (ctx, { limit, rounds, cursor }) => {
+    await recordHeartbeat(ctx, 'retention-panel-ops');
+    const cutoff = Date.now() - num('PANEL_OP_RETENTION_DAYS', 90) * DAY;
+    const page = limit ?? WORKFLOW_PAGE;
+    const c = cursor ?? { i: 0, after: 0 };
+    const rows = await ctx.db
+      .query('panelOps')
+      .withIndex('by_open_updated', (q) =>
+        q.eq('open', false).gt('updatedAt', c.after).lt('updatedAt', cutoff),
+      )
+      .take(page);
+    let removed = 0;
+    for (const op of rows) {
+      const named = await Promise.all([
+        ctx.db
+          .query('panelClaims')
+          .withIndex('by_op', (q) => q.eq('opId', op._id))
+          .first(),
+        ctx.db
+          .query('sniRollouts')
+          .withIndex('by_op', (q) => q.eq('opId', op._id))
+          .first(),
+        ctx.db
+          .query('panelPortChanges')
+          .withIndex('by_op', (q) => q.eq('opId', op._id))
+          .first(),
+        ctx.db
+          .query('panelNodeRenames')
+          .withIndex('by_op', (q) => q.eq('opId', op._id))
+          .first(),
+      ]);
+      if (named.some((x) => x !== null)) continue;
+      await ctx.db.delete(op._id);
+      removed++;
+    }
+    const next = nextCursor(c, 1, rows.length === page, rows.at(-1)?.updatedAt ?? 0);
+    await chain('retention-panel-ops', rounds, next, (args) =>
+      ctx.scheduler.runAfter(0, internal.retention.sweepPanelOps, args),
+    );
+    return { removed };
+  },
+});
+
+const ROLLOUT_DONE = ['panel_confirmed', 'failed', 'superseded'] as const;
+
+/**
+ * Finished server-name rollouts past SNI_ROLLOUT_RETENTION_DAYS (90), with
+ * their acceptance receipts (long expired by then). The newest rollout of each
+ * binding stays: it is what the binding last did.
+ */
+export const sweepSniRollouts = internalMutation({
+  args: { limit: v.optional(v.number()), rounds: v.optional(v.number()), cursor: cursorArg },
+  handler: async (ctx, { limit, rounds, cursor }) => {
+    await recordHeartbeat(ctx, 'retention-sni-rollouts');
+    const cutoff = Date.now() - num('SNI_ROLLOUT_RETENTION_DAYS', 90) * DAY;
+    const page = limit ?? WORKFLOW_PAGE;
+    const c = cursor ?? { i: 0, after: 0 };
+    const rows = await ctx.db
+      .query('sniRollouts')
+      .withIndex('by_phase_updated', (q) =>
+        q.eq('phase', ROLLOUT_DONE[c.i]).gt('updatedAt', c.after).lt('updatedAt', cutoff),
+      )
+      .take(page);
+    let removed = 0;
+    for (const r of rows) {
+      const newest = await ctx.db
+        .query('sniRollouts')
+        .withIndex('by_binding', (q) => q.eq('bindingId', r.bindingId))
+        .order('desc')
+        .first();
+      if (newest?._id === r._id) continue;
+      for (const receipt of await ctx.db
+        .query('sniAcceptanceReceipts')
+        .withIndex('by_rollout', (q) => q.eq('rolloutId', r._id))
+        .collect())
+        await ctx.db.delete(receipt._id);
+      await ctx.db.delete(r._id);
+      removed++;
+    }
+    const next = nextCursor(
+      c,
+      ROLLOUT_DONE.length,
+      rows.length === page,
+      rows.at(-1)?.updatedAt ?? 0,
+    );
+    await chain('retention-sni-rollouts', rounds, next, (args) =>
+      ctx.scheduler.runAfter(0, internal.retention.sweepSniRollouts, args),
+    );
+    return { removed };
+  },
+});
+
+const SETUP_RUN_DONE = ['done', 'done_unbound', 'failed', 'cancelled'] as const;
+const ACTIVATION_OPEN = new Set(['review', 'running', 'blocked']);
+
+/**
+ * Finished guided setup runs past EDGE_SETUP_RUN_RETENTION_DAYS (90). Kept: the
+ * newest run of each node (what its pages show last) and a run an open
+ * activation still points at.
+ */
+export const sweepEdgeSetupRuns = internalMutation({
+  args: { limit: v.optional(v.number()), rounds: v.optional(v.number()), cursor: cursorArg },
+  handler: async (ctx, { limit, rounds, cursor }) => {
+    await recordHeartbeat(ctx, 'retention-edge-setup-runs');
+    const cutoff = Date.now() - num('EDGE_SETUP_RUN_RETENTION_DAYS', 90) * DAY;
+    const page = limit ?? WORKFLOW_PAGE;
+    const c = cursor ?? { i: 0, after: 0 };
+    const rows = await ctx.db
+      .query('edgeSetupRuns')
+      .withIndex('by_state', (q) =>
+        q.eq('state', SETUP_RUN_DONE[c.i]).gt('updatedAt', c.after).lt('updatedAt', cutoff),
+      )
+      .take(page);
+    let removed = 0;
+    for (const r of rows) {
+      const newest = await ctx.db
+        .query('edgeSetupRuns')
+        .withIndex('by_origin', (q) =>
+          q.eq('backendServerId', r.backendServerId).eq('nodeName', r.nodeName),
+        )
+        .order('desc')
+        .first();
+      if (newest?._id === r._id) continue;
+      const act = r.activationRunId ? await ctx.db.get(r.activationRunId) : null;
+      if (act && ACTIVATION_OPEN.has(act.state)) continue;
+      await ctx.db.delete(r._id);
+      removed++;
+    }
+    const next = nextCursor(
+      c,
+      SETUP_RUN_DONE.length,
+      rows.length === page,
+      rows.at(-1)?.updatedAt ?? 0,
+    );
+    await chain('retention-edge-setup-runs', rounds, next, (args) =>
+      ctx.scheduler.runAfter(0, internal.retention.sweepEdgeSetupRuns, args),
+    );
+    return { removed };
+  },
+});
+
+const ACTIVATION_DONE = ['committed', 'superseded', 'failed'] as const;
+
+/**
+ * Finished activation runs past ACTIVATION_RUN_RETENTION_DAYS (90). Every
+ * render reads a node's runs (the delivery gate), so they must not pile up;
+ * but an uncommitted run's resources stay ISOLATED from members only while the
+ * row exists. Kept: the node's current run, a committed run of the node's
+ * current approval (admission reads its review), and an uncommitted run while
+ * any of its candidates (an edge not destroyed, a Host still on the backend)
+ * outside the committed set remains.
+ */
+export const sweepActivationRuns = internalMutation({
+  args: { limit: v.optional(v.number()), rounds: v.optional(v.number()), cursor: cursorArg },
+  handler: async (ctx, { limit, rounds, cursor }) => {
+    await recordHeartbeat(ctx, 'retention-activation-runs');
+    const cutoff = Date.now() - num('ACTIVATION_RUN_RETENTION_DAYS', 90) * DAY;
+    const page = limit ?? WORKFLOW_PAGE;
+    const c = cursor ?? { i: 0, after: 0 };
+    const rows = await ctx.db
+      .query('panelActivationRuns')
+      .withIndex('by_state_updated', (q) =>
+        q.eq('state', ACTIVATION_DONE[c.i]).gt('updatedAt', c.after).lt('updatedAt', cutoff),
+      )
+      .take(page);
+    let removed = 0;
+    for (const r of rows) {
+      const intent = await ctx.db.get(r.intentId);
+      if (intent) {
+        if (intent.activation.currentRunId === r._id) continue;
+        if (r.state === 'committed') {
+          if (r.candidate.reviewHash === intent.approved?.reviewHash) continue;
+        } else {
+          const committed = intent.approved?.committed ?? { hostUuids: [], edgeIds: [] };
+          let live = false;
+          for (const e of r.resources.edgeIds) {
+            if (committed.edgeIds.includes(e)) continue;
+            const id = ctx.db.normalizeId('edges', e);
+            const edge = id ? await ctx.db.get(id) : null;
+            if (edge && edge.status !== 'destroyed') live = true;
+          }
+          for (const h of r.resources.hostUuids) {
+            if (committed.hostUuids.includes(h)) continue;
+            const host = await ctx.db
+              .query('panelHosts')
+              .withIndex('by_server_uuid', (q) =>
+                q.eq('backendServerId', r.backendServerId).eq('hostUuid', h),
+              )
+              .first();
+            if (host) live = true;
+          }
+          if (live) continue;
+        }
+      }
+      await ctx.db.delete(r._id);
+      removed++;
+    }
+    const next = nextCursor(
+      c,
+      ACTIVATION_DONE.length,
+      rows.length === page,
+      rows.at(-1)?.updatedAt ?? 0,
+    );
+    await chain('retention-activation-runs', rounds, next, (args) =>
+      ctx.scheduler.runAfter(0, internal.retention.sweepActivationRuns, args),
+    );
+    return { removed };
+  },
+});
+
+/**
+ * Released direct-Host hide rows past EDGE_HOST_HIDE_RETENTION_DAYS (90). An
+ * origin that ever hid a Host keeps the newest row of that Host (whether a
+ * restore workflow is needed is decided from those rows), and nothing is
+ * deleted while its restore runs. Rows of a deleted origin all go.
+ */
+export const sweepHostHides = internalMutation({
+  args: { limit: v.optional(v.number()), rounds: v.optional(v.number()), cursor: cursorArg },
+  handler: async (ctx, { limit, rounds, cursor }) => {
+    await recordHeartbeat(ctx, 'retention-edge-host-hides');
+    const cutoff = Date.now() - num('EDGE_HOST_HIDE_RETENTION_DAYS', 90) * DAY;
+    const page = limit ?? WORKFLOW_PAGE;
+    const c = cursor ?? { i: 0, after: 0 };
+    const rows = await ctx.db
+      .query('edgeHostHides')
+      .withIndex('by_state_updated', (q) =>
+        q.eq('state', 'released').gt('updatedAt', c.after).lt('updatedAt', cutoff),
+      )
+      .take(page);
+    let removed = 0;
+    for (const r of rows) {
+      const relay = await ctx.db.get(r.relayId);
+      if (relay) {
+        if (relay.restore) continue;
+        const newest = (
+          await ctx.db
+            .query('edgeHostHides')
+            .withIndex('by_host', (q) => q.eq('hostUuid', r.hostUuid))
+            .order('desc')
+            .take(50)
+        ).find((x) => x.relayId === r.relayId);
+        if (!newest || newest._id === r._id) continue;
+      }
+      await ctx.db.delete(r._id);
+      removed++;
+    }
+    const next = nextCursor(c, 1, rows.length === page, rows.at(-1)?.updatedAt ?? 0);
+    await chain('retention-edge-host-hides', rounds, next, (args) =>
+      ctx.scheduler.runAfter(0, internal.retention.sweepHostHides, args),
+    );
+    return { removed };
+  },
+});
+
+const PORT_CHANGE_DONE = ['refused', 'cancelled', 'applying'] as const;
+
+/**
+ * Finished port changes past PORT_CHANGE_RETENTION_DAYS (90), with their
+ * per-node requirements. A claimed (`applying`) change is finished once its op
+ * closed; its op becomes sweepable after the change is gone.
+ */
+export const sweepPortChanges = internalMutation({
+  args: { limit: v.optional(v.number()), rounds: v.optional(v.number()), cursor: cursorArg },
+  handler: async (ctx, { limit, rounds, cursor }) => {
+    await recordHeartbeat(ctx, 'retention-port-changes');
+    const cutoff = Date.now() - num('PORT_CHANGE_RETENTION_DAYS', 90) * DAY;
+    const page = limit ?? WORKFLOW_PAGE;
+    const c = cursor ?? { i: 0, after: 0 };
+    const rows = await ctx.db
+      .query('panelPortChanges')
+      .withIndex('by_state_updated', (q) =>
+        q.eq('state', PORT_CHANGE_DONE[c.i]).gt('updatedAt', c.after).lt('updatedAt', cutoff),
+      )
+      .take(page);
+    let removed = 0;
+    for (const r of rows) {
+      if (r.state === 'applying') {
+        const op = r.opId ? await ctx.db.get(r.opId) : null;
+        if (op?.open) continue;
+      }
+      for (const req of await ctx.db
+        .query('panelPortRequirements')
+        .withIndex('by_change', (q) => q.eq('changeId', r._id))
+        .collect())
+        await ctx.db.delete(req._id);
+      await ctx.db.delete(r._id);
+      removed++;
+    }
+    const next = nextCursor(
+      c,
+      PORT_CHANGE_DONE.length,
+      rows.length === page,
+      rows.at(-1)?.updatedAt ?? 0,
+    );
+    await chain('retention-port-changes', rounds, next, (args) =>
+      ctx.scheduler.runAfter(0, internal.retention.sweepPortChanges, args),
+    );
+    return { removed };
+  },
+});

@@ -125,13 +125,6 @@ export const AUTO_PROVISION: Field = {
     'On: the control plane creates edges on its own until every origin reaches its pool size. This spends provider budget without asking. Off: you provision each edge yourself.',
 };
 
-/**
- * Server config keys deliberately NOT offered: `providerAffinity` is sanitized and
- * stored but no selection path reads it (docs/edges.md), so a control for it
- * would be a switch that changes nothing.
- */
-export const UNEXPOSED_PATHS: readonly string[] = ['providerAffinity'];
-
 export const ROTATION_FIELDS: Field[] = [
   {
     kind: 'switch',
@@ -174,83 +167,6 @@ export const ROTATION_FIELDS: Field[] = [
     label: 'Rotations running at once',
     unit: 'runs',
     helper: 'Fleet-wide limit. Further rotations are refused until one finishes.',
-  },
-  {
-    kind: 'number',
-    path: 'maxReconcileStartsPerTick',
-    label: 'Automatic starts per reconcile pass',
-    unit: 'runs',
-    helper: 'How many runs the reconcile job may start each pass. 0 stops it from starting any.',
-  },
-  {
-    kind: 'number',
-    path: 'provisionTimeoutMinutes',
-    label: 'Provisioning timeout',
-    unit: 'min',
-    helper: 'How long to wait for the provider to build an edge before the run fails.',
-  },
-  {
-    kind: 'number',
-    path: 'discoveryTimeoutMinutes',
-    label: 'Discovery timeout',
-    unit: 'min',
-    helper: 'How long to look for a resource whose create call was cut off before giving up on it.',
-  },
-  {
-    kind: 'number',
-    path: 'maxRotationMinutes',
-    label: 'Longest rotation run',
-    unit: 'min',
-    helper: 'Past this a run rolls back, or quarantines the origin if it cannot.',
-  },
-  {
-    kind: 'number',
-    path: 'pollSeconds',
-    label: 'Poll interval',
-    unit: 's',
-    helper: 'How often a running rotation checks the provider.',
-  },
-  {
-    kind: 'number',
-    path: 'settleGraceSeconds',
-    label: 'Settle time',
-    unit: 's',
-    helper: 'Pause after the provider reports ready, before the first verification.',
-  },
-  {
-    kind: 'number',
-    path: 'opClaimSeconds',
-    label: 'Operation claim',
-    unit: 's',
-    helper: 'How long one step holds its claim before another worker may retry it.',
-  },
-  {
-    kind: 'number',
-    path: 'verifyAttempts',
-    label: 'Verification attempts',
-    unit: 'tries',
-    helper: 'Connect checks against a new edge before the run gives up on it.',
-  },
-  {
-    kind: 'number',
-    path: 'maxFlipAttempts',
-    label: 'Publish attempts',
-    unit: 'tries',
-    helper: 'Tries to write the new address to the backend before rolling back.',
-  },
-  {
-    kind: 'number',
-    path: 'maxRollbackAttempts',
-    label: 'Rollback attempts',
-    unit: 'tries',
-    helper: 'Tries to restore the previous state before the origin is quarantined.',
-  },
-  {
-    kind: 'number',
-    path: 'maxDestroyAttempts',
-    label: 'Destroy attempts',
-    unit: 'tries',
-    helper: 'Tries to delete a provider resource before the edge is left for you to decide.',
   },
 ];
 
@@ -523,10 +439,18 @@ export const DETECTOR_FIELDS: Field[] = [
   },
   {
     kind: 'number',
-    path: 'detect.maxReportRowsPerEval',
-    label: 'Reports read per evaluation',
-    unit: 'rows',
-    helper: 'Past this the window is treated as incomplete and nothing is rotated.',
+    path: 'detect.fleetBreakerPct',
+    label: 'Fleet brake',
+    unit: '%',
+    helper:
+      'When more than this share of the nodes looks blocked at once (and at least three do), every automatic replacement is held. 100 turns the brake off.',
+  },
+  {
+    kind: 'number',
+    path: 'detect.fleetRotationsPerDay',
+    label: 'Automatic replacements per day, all nodes',
+    unit: 'per day',
+    helper: 'A cap across the whole fleet, on top of the cap per node. 0 = none at all.',
   },
 ];
 
@@ -595,13 +519,6 @@ export const PROBE_FIELDS: Field[] = [
     helper: 'External probe runs allowed per hour. 0 stops external probing.',
   },
   {
-    kind: 'number',
-    path: 'probe.sourceSpacingMs',
-    label: 'Spacing between runs on one source',
-    unit: 'ms',
-    helper: 'Keeps a batch from hitting the rate limit of a probe network.',
-  },
-  {
     kind: 'switch',
     path: 'probe.preferEyeball',
     label: 'Prefer residential networks',
@@ -625,35 +542,6 @@ export const L7_FIELDS: Field[] = [
     unit: 'per day',
     helper:
       'A new hostname on the same CDN shares its addresses, so repeating it rarely helps. 0 forbids it.',
-  },
-  {
-    kind: 'number',
-    path: 'l7.qualifyTimeoutMinutes',
-    label: 'Evidence wait for an automatic replacement',
-    unit: 'min',
-    helper: 'How long to wait for proof from the affected country before the run gives up.',
-  },
-  {
-    kind: 'number',
-    path: 'l7.qualifyStepTimeoutMs',
-    label: 'Qualification step timeout',
-    unit: 'ms',
-    helper: 'Each step of the authenticated session through the front must finish within this.',
-  },
-  {
-    kind: 'number',
-    path: 'l7.qualificationTtlMinutes',
-    label: 'Qualification lifetime',
-    unit: 'min',
-    helper:
-      'A front is proven again before this runs out. An expired proof removes it from rendering.',
-  },
-  {
-    kind: 'number',
-    path: 'l7.maxRequalifyPerTick',
-    label: 'Re-proofs per reconcile pass',
-    unit: 'fronts',
-    helper: 'Each proof is an outbound session, so the pass is capped.',
   },
 ];
 

@@ -79,15 +79,6 @@ export interface FakeState {
 
 const STATE: FakeState = { calls: [], resources: new Map() };
 
-/** Test/dev seam: inspect or reset the fake's in-memory state. */
-export function __fakeEdgeState(): FakeState {
-  return STATE;
-}
-export function __resetFakeEdgeState(): void {
-  STATE.calls.length = 0;
-  STATE.resources.clear();
-}
-
 function record(op: string, name?: string) {
   STATE.calls.push({ at: Date.now(), op, name });
   if (STATE.calls.length > 200) STATE.calls.splice(0, STATE.calls.length - 200);

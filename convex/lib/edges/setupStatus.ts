@@ -112,8 +112,10 @@ export interface SetupRelayFacts {
   /** The newest terminal rotation's outcome, for `provision_failed` after a failed bootstrap. */
   lastRotation: { kind: string; phase: string; outcome: string | null } | null;
   edges: SetupEdgeFacts[];
-  /** A delivery binding covers members on this origin (edge-required). */
+  /** A delivery binding that names this origin covers its members (edge-required). */
   deliveryRequired: boolean;
+  /** The node's binding names an origin that no longer exists (members get `relay_missing`). */
+  foreignBinding?: boolean;
   /** The binding is deferred to go-live (a guided origin): members still get the raw body. */
   bindingDeferred?: boolean;
   connectionPlanCount: number;

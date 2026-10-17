@@ -170,14 +170,9 @@ export function listenerLayers(
     // an empty set is vacuously true rather than a pass.
     if (active.length === 0) excluded.l4 = 'no_server_names';
     else if (!ot.certPublic) excluded.l4 = 'cert_not_public';
+    // Every name covered also means a `names` node accepts each as Host: the
+    // Host an L4 member sends IS the selected name (hostTargetFor).
     else if (active.some((n) => !certCovers(n, ot.certNames))) excluded.l4 = 'cert_name_uncovered';
-    else if (
-      http &&
-      protocolUsesHostHeader(listener) &&
-      ot.acceptsHostHeader === 'names' &&
-      active.some((n) => !certCovers(n, ot.certNames))
-    )
-      excluded.l4 = 'host_header_rejected';
     else layers.push('l4');
   } else layers.push('l4');
   // Keep a stable order: l4 first.

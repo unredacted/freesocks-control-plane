@@ -25,6 +25,7 @@
  */
 import { ConvexError, v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
+import type { QueryCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { backendIdValidator, type BackendId } from './lib/backendIds';
@@ -33,6 +34,7 @@ import type { IssuedUser } from './lib/backends/types';
 import { writeAuditLog } from './lib/audit';
 import { randomHex } from './lib/crypto';
 import { resolvePlacementTarget } from './lib/remnawavePlacement';
+import { protocolL7Proof } from './lib/edges/protocols';
 
 /** Enough for many qualification sessions (each moves a few kilobytes), never for real use. */
 export const QUALIFICATION_TRAFFIC_LIMIT_BYTES = 50 * 1024 * 1024;
@@ -86,6 +88,19 @@ export function __setEnsureFailpointForTests(f: typeof failpoint): void {
 
 const purposeValidator = v.union(v.literal('qualification'), v.literal('rehearsal'));
 
+/** The mode an enrolled node serves (its credential belongs in that mode's group); null otherwise. */
+async function enrolledModeOf(db: QueryCtx['db'], relay: Doc<'relays'>): Promise<string | null> {
+  if (relay.origin.kind !== 'panel-node' || !relay.backendServerId) return null;
+  const nodeName = relay.origin.nodeName;
+  const intent = await db
+    .query('panelNodeIntents')
+    .withIndex('by_server_name', (q) =>
+      q.eq('backendServerId', relay.backendServerId!).eq('name', nodeName),
+    )
+    .unique();
+  return intent?.mode ?? null;
+}
+
 /**
  * What ensuring needs, read in one transaction: the origin, its backend, the
  * binding the request resolves to (an explicit placement, else the mode's
@@ -107,8 +122,11 @@ export const ensureContext = internalQuery({
     const caps = capabilitiesOf(server.backend);
     // The mode decides the placement (absent = the resolver's default pool for
     // this backend); an explicit placement wins. A backend without a placement
-    // concept binds to null.
-    const slug: string | null = modeSlug ?? relay.qualificationModeSlug ?? null;
+    // concept binds to null. An ENROLLED node's credential lives in the node's
+    // own mode: a member-shaped credential of another mode's group never sees
+    // this node's transport (its body carries no entry to prove or rehearse).
+    const slug: string | null =
+      modeSlug ?? relay.qualificationModeSlug ?? (await enrolledModeOf(ctx.db, relay)) ?? null;
     let resolved: string | null = null;
     if (placement !== undefined) resolved = placement;
     else if (caps.placement) {
@@ -116,6 +134,13 @@ export const ensureContext = internalQuery({
         await resolvePlacementTarget(ctx.db, slug, { onlyServerId: server._id as string })
       ).placement;
     }
+    // A Trojan transport's L7 proof authenticates with the account's Trojan
+    // password, which a credential minted before Trojan proofs never stored.
+    const listeners = await ctx.db
+      .query('relayListeners')
+      .withIndex('by_relay', (q) => q.eq('relayId', relay._id))
+      .collect();
+    const trojanProofNeeded = listeners.some((l) => !l.retired && protocolL7Proof(l) === 'trojan');
     return {
       slug: relay.slug,
       backend: server.backend,
@@ -126,6 +151,7 @@ export const ensureContext = internalQuery({
       lookupSupported: caps.userLookupByUsername,
       op: relay.qualificationMint ?? null,
       stored: !!relay.qualificationUserId,
+      trojanMissing: trojanProofNeeded && !relay.qualificationTrojanPassword,
       previousBackendUserId: relay.qualificationBackendUserId ?? null,
       pendingRemovals: relay.qualificationRemovalPending ?? [],
     };
@@ -141,7 +167,8 @@ export const mintContext = internalQuery({
     if (!relay.backendServerId) return null;
     const server = await ctx.db.get(relay.backendServerId);
     if (!server) return null;
-    const modeId: string | null = relay.qualificationModeSlug ?? null;
+    const modeId: string | null =
+      relay.qualificationModeSlug ?? (await enrolledModeOf(ctx.db, relay)) ?? null;
     const { placement } = await resolvePlacementTarget(ctx.db, modeId, {
       onlyServerId: server._id as string,
     });
@@ -217,6 +244,7 @@ export const store = internalMutation({
   args: {
     relayId: v.id('relays'),
     protocolUuid: v.string(),
+    trojanPassword: v.optional(v.string()),
     backendUserId: v.string(),
     backendShortId: v.optional(v.string()),
     subscriptionUrl: v.optional(v.string()),
@@ -231,6 +259,7 @@ export const store = internalMutation({
     if (!relay) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     await ctx.db.patch(a.relayId, {
       qualificationUserId: a.protocolUuid,
+      qualificationTrojanPassword: a.trojanPassword,
       qualificationBackendUserId: a.backendUserId,
       qualificationSubscription:
         a.backendShortId && a.subscriptionUrl
@@ -251,6 +280,26 @@ export const store = internalMutation({
   },
 });
 
+/**
+ * Keep the Trojan password of the STORED credential (re-read from the backend
+ * by its username): only for the current operation, and only when none is
+ * stored, so a concurrent re-mint is never overwritten with an old secret.
+ */
+export const backfillTrojanPassword = internalMutation({
+  args: { relayId: v.id('relays'), opId: v.string(), trojanPassword: v.string() },
+  handler: async (ctx, { relayId, opId, trojanPassword }) => {
+    const relay = await ctx.db.get(relayId);
+    if (!relay?.qualificationMint || relay.qualificationMint.opId !== opId) return null;
+    if (relay.qualificationMint.state !== 'stored' || relay.qualificationTrojanPassword)
+      return null;
+    await ctx.db.patch(relayId, {
+      qualificationTrojanPassword: trojanPassword,
+      updatedAt: Date.now(),
+    });
+    return null;
+  },
+});
+
 export const clear = internalMutation({
   args: { relayId: v.id('relays'), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, a) => {
@@ -258,6 +307,7 @@ export const clear = internalMutation({
     if (!relay) return { ok: true as const };
     await ctx.db.patch(a.relayId, {
       qualificationUserId: undefined,
+      qualificationTrojanPassword: undefined,
       qualificationBackendUserId: undefined,
       qualificationSubscription: undefined,
       qualificationMint: undefined,
@@ -457,8 +507,24 @@ export const ensure = internalAction({
     };
     const now = Date.now();
 
-    // 1. Reuse.
+    // 1. Reuse. A credential minted before Trojan proofs carries no Trojan
+    // password: re-read the same account once (by its username) and keep it,
+    // rather than replacing an account that is otherwise fine.
     if (!a.force && c.op?.state === 'stored' && c.stored && sameMintBinding(c.op, wanted)) {
+      if (c.trojanMissing) {
+        const found = await ctx
+          .runAction(internal.backends.findUserByUsername, {
+            backendServerId: c.op.backendServerId,
+            username: c.op.username,
+          })
+          .catch(() => null);
+        if (found?.trojanPassword && found.backendUserId === c.previousBackendUserId)
+          await ctx.runMutation(internal.relayQualification.backfillTrojanPassword, {
+            relayId: a.relayId,
+            opId: c.op.opId,
+            trojanPassword: found.trojanPassword,
+          });
+      }
       return { ok: true, reused: true, pendingRemovals: c.pendingRemovals.length };
     }
 
@@ -492,6 +558,7 @@ export const ensure = internalAction({
         await ctx.runMutation(internal.relayQualification.store, {
           relayId: a.relayId,
           protocolUuid: found.protocolUuid,
+          trojanPassword: found.trojanPassword,
           backendUserId: found.backendUserId,
           backendShortId: found.backendShortId,
           subscriptionUrl: found.subscriptionUrl,
@@ -610,6 +677,7 @@ export const ensure = internalAction({
     await ctx.runMutation(internal.relayQualification.store, {
       relayId: a.relayId,
       protocolUuid: issued.protocolUuid,
+      trojanPassword: issued.trojanPassword,
       backendUserId: issued.backendUserId,
       backendShortId: issued.backendShortId,
       subscriptionUrl: issued.subscriptionUrl,

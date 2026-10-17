@@ -21,6 +21,10 @@ import {
   OpView,
   BackendSetupView,
   PlacementValidation,
+  NodeRenameList,
+  NodeRenameView,
+  PortChangeList,
+  PortChangeView,
   ProfilePatchPreview,
   ServerSummary,
   ServerTree,
@@ -120,6 +124,59 @@ export const applyProfilePatch = (
     OpView,
   );
 
+/**
+ * Stage a previewed port change: nothing is sent until every node that will
+ * listen on the port has confirmed its firewall (docs/servers.md).
+ */
+export const stagePortChange = (
+  slug: string,
+  profileUuid: string,
+  preview: ProfilePatchPreview,
+  unmanaged?: 'hold' | 'acknowledge',
+) =>
+  apiClient.post(
+    `${slugPath(slug)}/profiles/${encodeURIComponent(profileUuid)}/port-change`,
+    {
+      ops: preview.ops,
+      baseToken: preview.baseToken,
+      expectedToken: preview.expectedToken,
+      transportUuids: preview.transportUuids,
+      ...(unmanaged ? { unmanaged } : {}),
+    } satisfies ProfilePatchApply,
+    PortChangeView,
+  );
+export const fetchPortChanges = (slug: string) =>
+  apiClient.get(`${slugPath(slug)}/port-changes`, PortChangeList);
+/** An admin confirms the firewall of nodes no role reports for. */
+export const acknowledgePortChange = (slug: string, id: string, nodeNames: string[]) =>
+  apiClient.post(
+    `${slugPath(slug)}/port-changes/${encodeURIComponent(id)}/acknowledge`,
+    { nodeNames },
+    PortChangeView,
+  );
+export const cancelPortChange = (slug: string, id: string) =>
+  apiClient.post(
+    `${slugPath(slug)}/port-changes/${encodeURIComponent(id)}/cancel`,
+    {},
+    PortChangeView,
+  );
+
+/**
+ * Rename a node: the backend row, every reference FCP keeps, the Host remarks
+ * FCP wrote and members' pins, one step at a time (docs/servers.md).
+ */
+export const renameNode = (slug: string, uuid: string, name: string) =>
+  apiClient.post(
+    `${slugPath(slug)}/nodes/${encodeURIComponent(uuid)}/rename`,
+    { name },
+    NodeRenameView,
+  );
+/** Try again the Host remarks a rename holds on, once whatever refused them is fixed. */
+export const retryRename = (slug: string, id: string) =>
+  apiClient.post(`${slugPath(slug)}/renames/${encodeURIComponent(id)}/retry`, {}, NodeRenameView);
+export const fetchRenames = (slug: string) =>
+  apiClient.get(`${slugPath(slug)}/renames`, NodeRenameList);
+
 /** Adopt a node that already serves members, as it is (live at once). */
 export const adoptNode = (
   slug: string,
@@ -159,27 +216,19 @@ export const approveNode = (slug: string, id: string, reviewHash: string) =>
     { reviewHash },
     z.object({ runId: z.string() }),
   );
-export const retireNode = (
-  slug: string,
-  id: string,
-  decision?: { disposition: 'keep-dark' | 'migrate'; targetIntentId?: string },
-) =>
+export const retireNode = (slug: string, id: string, decision?: { disposition: 'keep-dark' }) =>
   apiClient.post(`${intentPath(slug, id)}/retire`, decision ?? {}, z.object({ stage: z.string() }));
 /** An adopted node's machine is never run by the role: an admin confirms it is gone. */
 export const confirmWiped = (slug: string, id: string) =>
   apiClient.post(`${intentPath(slug, id)}/wiped`, {}, z.object({ stage: z.string() }));
 export const finishMaintenance = (slug: string, id: string) =>
   apiClient.post(`${intentPath(slug, id)}/maintenance`, {}, z.object({ ok: z.literal(true) }));
-export const patchNodeSettings = (
-  slug: string,
-  id: string,
-  patch: Record<string, unknown>,
-  maintenance = false,
-) =>
+/** Close the node for maintenance: members get the unavailable answer until it is approved again. */
+export const startMaintenance = (slug: string, id: string) =>
   apiClient.post(
-    `${intentPath(slug, id)}/settings`,
-    { patch, maintenance },
-    z.object({ change: z.string(), machineRevision: z.number() }),
+    `${intentPath(slug, id)}/maintenance`,
+    { start: true },
+    z.object({ ok: z.literal(true) }),
   );
 
 const ROOT = ['admin', 'servers'] as const;
@@ -190,8 +239,33 @@ export const serverKeys = {
   ops: (slug: string) => [...ROOT, 'ops', slug] as const,
   setup: (slug: string) => [...ROOT, 'setup', slug] as const,
   intents: (slug: string) => [...ROOT, 'intents', slug] as const,
+  placements: (slug: string) => [...ROOT, 'placements', slug] as const,
   review: (slug: string, id: string) => [...ROOT, 'review', slug, id] as const,
+  portChanges: (slug: string) => [...ROOT, 'portChanges', slug] as const,
+  renames: (slug: string) => [...ROOT, 'renames', slug] as const,
 };
+
+/** Polled faster while a rename runs. */
+export const renamesQuery = (slug: () => string | null) =>
+  createQuery(() => ({
+    queryKey: serverKeys.renames(slug() ?? ''),
+    queryFn: () => fetchRenames(slug()!),
+    enabled: !!slug(),
+    refetchInterval: (q: { state: { data?: { renames: { state: string }[] } } }) =>
+      q.state.data?.renames.some((r) => r.state === 'running') ? 3_000 : 60_000,
+  }));
+
+/** Polled faster while a change waits: the role's report confirms it whenever the role runs. */
+export const portChangesQuery = (slug: () => string | null) =>
+  createQuery(() => ({
+    queryKey: serverKeys.portChanges(slug() ?? ''),
+    queryFn: () => fetchPortChanges(slug()!),
+    enabled: !!slug(),
+    refetchInterval: (q: { state: { data?: { changes: { state: string }[] } } }) =>
+      q.state.data?.changes.some((c) => c.state === 'waiting' || c.state === 'applying')
+        ? 5_000
+        : 60_000,
+  }));
 
 /** Polled faster while a setup run holds its lease. */
 export const setupQuery = (slug: () => string | null) =>
@@ -215,12 +289,23 @@ export const intentsQuery = (slug: () => string | null) =>
         : 60_000,
   }));
 
+/** The approval card's review: re-read every 10 s so its blockers follow the node. */
 export const reviewQuery = (slug: () => string | null, id: () => string | null) =>
   createQuery(() => ({
     queryKey: serverKeys.review(slug() ?? '', id() ?? ''),
     queryFn: () => fetchReview(slug()!, id()!),
     enabled: !!slug() && !!id(),
     staleTime: 5_000,
+    refetchInterval: 10_000,
+  }));
+
+/** The mode pools checked against this backend's mode groups (counts and names only); read when `enabled`. */
+export const placementCheckQuery = (slug: () => string | null, enabled: () => boolean) =>
+  createQuery(() => ({
+    queryKey: serverKeys.placements(slug() ?? ''),
+    queryFn: () => validatePlacements(slug()!),
+    enabled: !!slug() && enabled(),
+    staleTime: 30_000,
   }));
 
 export const serverSummaryQuery = () =>

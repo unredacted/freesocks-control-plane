@@ -1,11 +1,11 @@
 /**
  * Pure display logic of the per-origin page (no Svelte, unit-tested in
- * relayLogic.test.ts).
+ * relayLogic.test.ts). What members get (delivery) is the server's judgement,
+ * worded by ../lib/statusWords.ts.
  *
  * Exports:
- *   deriveDelivery(input)            edge-required delivery state of one origin, in words
  *   suspicionChip(suspicion)         the detector chip of the header (null = nothing to say)
- *   tupleLine / tuplesEqual          Host tuples of the quarantine resolver
+ *   tupleLine                        Host tuples of the quarantine resolver
  *   highlightedColumn(match)         which recorded binding the live Host matches
  *   MATCH_WORDS                      the match verdict in words
  *   recommendKeep(listeners)         the binding every inspected listener agrees on, or null
@@ -18,7 +18,6 @@
  */
 import type { z } from 'zod';
 import type {
-  AttentionItem,
   EdgeAdmin,
   EdgeRotationAdmin,
   HostMode,
@@ -28,93 +27,9 @@ import type {
   QuarantineView,
   OriginAdmin,
   RelaySuspicion,
-  SetupStatusResponse,
 } from '@shared/contracts/edges';
-import { codeExplain, codeFix, codeLabel, humanizeCode, type Tone } from '@client/lib/edgeCodes';
+import { codeExplain, codeLabel, humanizeCode, type Tone } from '@client/lib/edgeCodes';
 import type { KeyValueRow } from '../lib/types';
-
-// --- delivery --------------------------------------------------------------------------------
-
-export type DeliveryKind = 'manual' | 'serving' | 'degraded' | 'dark';
-export interface DeliveryState {
-  kind: DeliveryKind;
-  tone: Tone;
-  headline: string;
-  /** What members on this origin get right now. */
-  detail: string;
-  /** The code behind the state (already worded in `reason` / `fix`). */
-  code: string | null;
-  reason: string | null;
-  fix: string | null;
-}
-
-export interface DeliveryInput {
-  relay: Pick<OriginAdmin, 'id' | 'origin' | 'enabled' | 'publishedCount'>;
-  setup?: Pick<SetupStatusResponse, 'steps'> | null;
-  attention?: AttentionItem[] | null;
-}
-
-const dark = (code: string): DeliveryState => ({
-  kind: 'dark',
-  tone: 'danger',
-  headline: 'Members are dark',
-  detail:
-    'Subscriptions on this origin are answered "temporarily unavailable" instead of the direct address. Clients keep their last configuration until something can be served.',
-  code,
-  reason: `${codeLabel(code)}. ${codeExplain(code)}`.trim(),
-  fix: codeFix(code) ?? null,
-});
-
-export function deriveDelivery(input: DeliveryInput): DeliveryState {
-  const { relay } = input;
-  if (relay.origin.kind === 'manual') {
-    return {
-      kind: 'manual',
-      tone: 'muted',
-      headline: 'Nothing to deliver',
-      detail:
-        'A manual origin has no subscriptions that FCP serves. Wire clients from the connection plan on this page.',
-      code: null,
-      reason: null,
-      fix: null,
-    };
-  }
-  const item = input.attention?.find((a) => a.kind === 'members_dark' && a.relayId === relay.id);
-  if (item) return dark(item.code ?? 'empty_pool');
-  if (relay.publishedCount === 0) return dark('empty_pool');
-  if (!relay.enabled) return dark('relay_disabled');
-  const rendering = input.setup?.steps.find((s) => s.id === 'rendering');
-  if (rendering) {
-    if (rendering.facts.renderEnabled === false) return dark('render_disabled');
-    const soft = rendering.blockers.find((b) =>
-      ['preview_not_applied', 'entry_mismatch', 'mirrors_unvalidated'].includes(b.code),
-    );
-    if (soft) {
-      // `preview_not_applied` carries the delivery reason of the sample render as its detail.
-      const code = soft.code === 'preview_not_applied' && soft.detail ? soft.detail : soft.code;
-      return {
-        kind: 'degraded',
-        tone: 'warning',
-        headline: 'Serving, with a problem',
-        detail:
-          'Edges are published, but a sample subscription did not render cleanly. Members whose subscription hits the same problem are answered "temporarily unavailable".',
-        code,
-        reason: `${codeLabel(code)}. ${codeExplain(code)}`.trim(),
-        fix: codeFix(code) ?? null,
-      };
-    }
-  }
-  return {
-    kind: 'serving',
-    tone: 'success',
-    headline: 'Serving through edges',
-    detail:
-      'Members on this origin receive edge addresses only. The origin address is never handed out.',
-    code: null,
-    reason: null,
-    fix: null,
-  };
-}
 
 // --- detector --------------------------------------------------------------------------------
 
@@ -167,10 +82,6 @@ export type QuarantineMatch = QuarantineListener['match'];
 export function tupleLine(t: Tuple | null | undefined): string {
   if (!t) return '';
   return `${t.address}:${t.port}`;
-}
-export function tuplesEqual(a: Tuple | null | undefined, b: Tuple | null | undefined): boolean {
-  if (!a || !b) return false;
-  return a.address === b.address && a.port === b.port && a.sni === b.sni && a.host === b.host;
 }
 export function highlightedColumn(match: QuarantineMatch): 'previous' | 'current' | null {
   return match === 'previous' || match === 'current' ? match : null;
@@ -303,7 +214,7 @@ export const HOST_MODE_WORDS: Record<HostMode, { label: string; explain: string 
   operator: {
     label: 'You write the Hosts',
     explain:
-      'FCP never writes to the backend. You apply the Hosts plan by hand or through the node role. Replacing the first edge of a listener is refused unless forced, because FCP cannot switch members over.',
+      'FCP never writes to the backend. You apply the Hosts plan in the backend yourself. Replacing the first edge of a listener is refused unless forced, because FCP cannot switch members over.',
   },
   none: {
     label: 'No Hosts',

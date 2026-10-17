@@ -1,0 +1,438 @@
+<script lang="ts">
+  /**
+   * A node's edges, as one panel (no tabs): the status sentence (the server's
+   * origin status, worded by lib/statusWords.ts), the actions (Go live or
+   * Replace address, and More: a spare, Protect again, Origin details, Remove
+   * protection), the paused card, the test card, the addresses in use per
+   * transport, the per-node automatic switch and recent activity in plain
+   * words. URL state: `?test=<edgeId>` opens the test card for that address.
+   *
+   * It lives on the node's own page: the Servers node page embeds it (lazily)
+   * for a backend node, and `/admin/edges/nodes/<slug>` shows it for an origin
+   * that is not a backend node (manual, a whole Outline server).
+   *
+   * "Protect again" (an enrolled node that is live behind edges): a re-protect
+   * run (new addresses, Try it, the approval when one is needed) in the protect
+   * sheet's progress. Members keep what they have until it goes live; a cancel
+   * drops only the new addresses. It is the primary action while the node waits
+   * to be protected again (its stage is not `live`).
+   *
+   * On the test card "Doesn't work" replaces that one address: an address in
+   * use opens "Replace now", a spare is renewed (SpareDialog), a go-live check
+   * retries its run for that line.
+   *
+   * Props:
+   *   slug: string                          the origin's slug
+   *   enrolled?: { stage: string } | null   the enrolled node behind it (Servers knows)
+   */
+  import { useQueryClient } from '@tanstack/svelte-query';
+  import { toast } from 'svelte-sonner';
+  import ChevronDown from '@lucide/svelte/icons/chevron-down';
+  import { Button } from '@client/components/ui/button';
+  import { Skeleton } from '@client/components/ui/skeleton';
+  import { Switch } from '@client/components/ui/switch';
+  import { Label } from '@client/components/ui/label';
+  import * as DropdownMenu from '@client/components/ui/dropdown-menu';
+  import Link from '@client/components/Link.svelte';
+  import { router } from '@client/stores/router.svelte';
+  import { searchParam } from '@client/lib/urlState.svelte';
+  import { plainAuditActionLabel, restorePhaseWords } from '@client/lib/edgeCodes';
+  import {
+    attentionQuery,
+    deleteRelay,
+    edgeConfigQuery,
+    invalidateRelay,
+    relayEdgesQuery,
+    relayListenersQuery,
+    relayLookupQuery,
+    relayTimelineQuery,
+    reprotectRelay,
+    requireRelayEdges,
+    retrySetupRun,
+    updateRelay,
+  } from '@client/lib/edgesApi';
+  import type { EdgeAdmin } from '@shared/contracts/edges';
+  import AdminListState from '../../AdminListState.svelte';
+  import Timeline from '../components/Timeline.svelte';
+  import ActionConfirm from '../relay/ActionConfirm.svelte';
+  import ReplaceDialog from '../relay/ReplaceDialog.svelte';
+  import { assertEdgeOk, edgeErrorMessage } from '../lib/edgeErrors';
+  import { protocolLine } from '../lib/format';
+  import { edgesPaths } from '../lib/routes';
+  import { originSentence, statusOf } from '../lib/statusWords';
+  import EndpointTestCard from './EndpointTestCard.svelte';
+  import ListenerAddresses from './ListenerAddresses.svelte';
+  import PausedCard from './PausedCard.svelte';
+  import SpareDialog from './SpareDialog.svelte';
+  import StatusDot from './StatusDot.svelte';
+  import { automationOn } from './runWords';
+
+  interface Props {
+    slug: string;
+    enrolled?: { stage: string } | null;
+  }
+  let { slug, enrolled = null }: Props = $props();
+  const uid = $props.id();
+
+  const qc = useQueryClient();
+  const relayQ = relayLookupQuery(() => slug);
+  const relay = $derived(relayQ.data ?? null);
+  const ref = {
+    slug: () => slug,
+    id: () => relay?.id ?? null,
+    rotating: () => !!relay?.activeRotationId,
+  };
+  const listenersQ = relayListenersQuery(ref);
+  const edgesQ = relayEdgesQuery(ref);
+  const timelineQ = relayTimelineQuery(ref);
+  const attention = attentionQuery();
+  const config = edgeConfigQuery();
+  const testParam = searchParam('test');
+
+  const listeners = $derived((listenersQ.data?.listeners ?? []).filter((l) => !l.retired));
+  const edges = $derived((edgesQ.data ?? []).filter((e) => e.status !== 'destroyed'));
+  const published = $derived(edges.filter((e) => e.publication === 'published'));
+  // The ONE status the server judged for this origin (the attention response).
+  const status = $derived(statusOf(attention.data?.origins, slug));
+  const runId = $derived(status?.runId ?? null);
+  const globalOn = $derived(config.data ? automationOn(config.data.config) : true);
+  const name = $derived(
+    relay
+      ? (relay.label ?? (relay.origin.kind === 'panel-node' ? relay.origin.nodeName : relay.slug))
+      : slug,
+  );
+  const busy = $derived(!!relay?.activeRotationId || !!runId);
+  // Protect again: an enrolled node that is live behind edges, nothing else running on it.
+  const canProtectAgain = $derived(
+    !!enrolled &&
+      !!relay &&
+      relay.origin.kind === 'panel-node' &&
+      !relay.bindingDeferred &&
+      !relay.setupOwned &&
+      !relay.restore &&
+      !relay.deleting &&
+      !relay.quarantine &&
+      !busy,
+  );
+  const protectAgainFirst = $derived(canProtectAgain && enrolled?.stage !== 'live');
+
+  // Replace: one published address, or a choice when several are in use.
+  let replacing = $state<{ kind: 'rotate' | 'burn'; edge: EdgeAdmin } | null>(null);
+  let choosing = $state<'rotate' | 'burn' | null>(null);
+  function replace(kind: 'rotate' | 'burn') {
+    if (published.length === 1) replacing = { kind, edge: published[0]! };
+    else choosing = kind;
+  }
+  let spareOpen = $state(false);
+  let renewing = $state<{ edgeId: string; listenerId: string; listenerKey: string } | null>(null);
+  let removeOpen = $state(false);
+  let againOpen = $state(false);
+  let testEdgeIds = $state<string[]>([]);
+  // The activation run the server opened when go-live found untested addresses.
+  let testRunId = $state<string | null>(null);
+  $effect(() => {
+    if (testParam.value) testEdgeIds = [testParam.value];
+  });
+
+  function closeTest() {
+    testEdgeIds = [];
+    testParam.value = null;
+    testRunId = null;
+  }
+  /** "Doesn't work" outside a run: replace the address in use, or renew the spare. */
+  function doesNotWork(edgeId: string) {
+    const edge = edges.find((e) => e.id === edgeId);
+    if (!edge) return;
+    closeTest();
+    if (edge.publication === 'published') {
+      replacing = { kind: 'burn', edge };
+      return;
+    }
+    const listenerKey = listeners.find((l) => l.id === edge.listenerId)?.listenerKey;
+    if (listenerKey) renewing = { edgeId, listenerId: edge.listenerId, listenerKey };
+  }
+
+  let autoBusy = $state(false);
+  async function setAuto(next: boolean) {
+    if (!relay) return;
+    autoBusy = true;
+    try {
+      assertEdgeOk(await updateRelay(relay.id, { autoRotate: next }));
+      invalidateRelay(qc, slug);
+    } catch (e) {
+      toast.error(edgeErrorMessage(e));
+    } finally {
+      autoBusy = false;
+    }
+  }
+  let goLiveBusy = $state(false);
+  async function goLive() {
+    if (!relay) return;
+    goLiveBusy = true;
+    try {
+      const res = await requireRelayEdges(relay.id);
+      if (res.pending.length > 0) {
+        testEdgeIds = res.pending.map((p) => p.edgeId);
+        testRunId = res.runId;
+        toast.message('Test each address first. Going live continues once every one works.');
+      } else {
+        toast.success('Going live.');
+        router.navigate(edgesPaths.home({ run: res.runId }));
+      }
+      invalidateRelay(qc, slug);
+    } catch (e) {
+      toast.error(edgeErrorMessage(e));
+    } finally {
+      goLiveBusy = false;
+    }
+  }
+</script>
+
+<section aria-labelledby={`${uid}-edges`} class="touch-44 space-y-6">
+  <div class="flex flex-wrap items-start justify-between gap-3">
+    <div class="min-w-0">
+      <h2 id={`${uid}-edges`} class="text-base font-semibold">Edges</h2>
+      {#if relay && status}
+        <p class="mt-1 flex flex-wrap items-center gap-x-2 text-sm font-medium" role="status">
+          <StatusDot dot={status.dot} />
+          {originSentence(status)}
+          {#if runId}
+            <Link
+              href={edgesPaths.home({ run: runId })}
+              class="text-primary inline-flex min-h-11 items-center text-sm font-normal underline underline-offset-4 sm:min-h-0"
+            >
+              Watch
+            </Link>
+          {/if}
+        </p>
+        {#if relay.restore}
+          <p class="text-muted-foreground mt-1 text-sm">
+            Removing protection: {restorePhaseWords(relay.restore.phase)}.
+          </p>
+        {/if}
+      {:else if !relayQ.error}
+        <Skeleton class="mt-2 h-5 w-64" />
+      {/if}
+    </div>
+    {#if relay}
+      <div class="flex shrink-0 flex-wrap items-center gap-2">
+        {#if protectAgainFirst}
+          <Button onclick={() => (againOpen = true)}>Protect again</Button>
+        {:else if relay.bindingDeferred && !runId && published.length > 0}
+          <Button disabled={goLiveBusy} onclick={goLive}>Go live</Button>
+        {:else if published.length > 0}
+          <Button disabled={busy} onclick={() => replace('rotate')}>Replace address</Button>
+        {/if}
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger>
+            {#snippet child({ props })}
+              <Button {...props} variant="outline" aria-label="More edge actions">
+                More <ChevronDown aria-hidden="true" />
+              </Button>
+            {/snippet}
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Content align="end" class="w-64">
+            {#if published.length > 0}
+              <DropdownMenu.Item disabled={busy} onSelect={() => replace('burn')}>
+                Replace now, address is blocked
+              </DropdownMenu.Item>
+            {/if}
+            <DropdownMenu.Item disabled={busy} onSelect={() => (spareOpen = true)}>
+              Add a spare address
+            </DropdownMenu.Item>
+            {#if canProtectAgain && !protectAgainFirst}
+              <DropdownMenu.Item onSelect={() => (againOpen = true)}
+                >Protect again</DropdownMenu.Item
+              >
+            {/if}
+            <DropdownMenu.Item onSelect={() => router.navigate(edgesPaths.relay(relay.slug))}>
+              Origin details
+            </DropdownMenu.Item>
+            <DropdownMenu.Separator />
+            <DropdownMenu.Item
+              variant="destructive"
+              disabled={relay.deleting || !!relay.restore}
+              onSelect={() => (removeOpen = true)}
+            >
+              Remove protection
+            </DropdownMenu.Item>
+          </DropdownMenu.Content>
+        </DropdownMenu.Root>
+      </div>
+    {/if}
+  </div>
+
+  {#if relayQ.error && !relay}
+    <AdminListState error={relayQ.error} onRetry={() => void relayQ.refetch()} />
+  {:else if relay}
+    {#if relay.quarantine}
+      <PausedCard {relay} />
+    {/if}
+
+    {#if testEdgeIds.length > 0}
+      <EndpointTestCard
+        edgeIds={testEdgeIds}
+        runId={testRunId}
+        onClose={closeTest}
+        onRetried={(id) => {
+          closeTest();
+          router.navigate(edgesPaths.home({ run: id }));
+        }}
+        onDoesNotWork={doesNotWork}
+        onAllDone={() => {
+          const runId = testRunId;
+          closeTest();
+          invalidateRelay(qc, slug);
+          // Every address ticked: resume the activation run the server opened
+          // rather than asking for go-live a second time.
+          if (runId)
+            void retrySetupRun(runId, {})
+              .then(() => {
+                toast.success('Going live.');
+                router.navigate(edgesPaths.home({ run: runId }));
+              })
+              .catch((e) => toast.error(edgeErrorMessage(e)));
+        }}
+      />
+    {/if}
+
+    <section aria-labelledby={`${uid}-addresses`}>
+      <h3 id={`${uid}-addresses`} class="mb-3 text-sm font-semibold">Addresses in use</h3>
+      {#if listenersQ.isPending || edgesQ.isPending}
+        <Skeleton class="h-20 w-full" />
+      {:else if listenersQ.isError}
+        <AdminListState error={listenersQ.error} onRetry={() => void listenersQ.refetch()} />
+      {:else if edgesQ.isError}
+        <AdminListState error={edgesQ.error} onRetry={() => void edgesQ.refetch()} />
+      {:else if listeners.length === 0}
+        <p class="text-muted-foreground text-sm">This node has no transport FCP can protect yet.</p>
+      {:else}
+        <ul class="space-y-3">
+          {#each listeners as l (l.id)}
+            <li class="rounded-lg border p-3">
+              <p class="text-sm font-medium">
+                {l.listenerKey}
+                <span class="text-muted-foreground font-normal">{protocolLine(l)}</span>
+              </p>
+              <ListenerAddresses
+                listener={l}
+                {edges}
+                onTest={(edgeId) => (testEdgeIds = [edgeId])}
+              />
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </section>
+
+    <section class="flex items-start justify-between gap-4 rounded-lg border p-3">
+      <div class="min-w-0">
+        <Label for={`${uid}-auto`}>Replace addresses automatically on this node</Label>
+        <p class="text-muted-foreground text-xs">
+          {#if !globalOn}
+            Global automatic protection is off. Turn it on from the Edges page for this to act.
+          {:else}
+            When an address looks blocked, FCP switches members to a tested spare on its own.
+          {/if}
+        </p>
+      </div>
+      <Switch
+        id={`${uid}-auto`}
+        checked={relay.autoRotate}
+        disabled={autoBusy}
+        onCheckedChange={(v) => void setAuto(v)}
+      />
+    </section>
+
+    <section aria-labelledby={`${uid}-activity`}>
+      <h3 id={`${uid}-activity`} class="mb-3 text-sm font-semibold">Recent activity</h3>
+      {#if timelineQ.isPending}
+        <Skeleton class="h-24 w-full" />
+      {:else if timelineQ.isError}
+        <AdminListState error={timelineQ.error} onRetry={() => void timelineQ.refetch()} />
+      {:else}
+        <Timeline
+          entries={timelineQ.data?.entries ?? []}
+          max={8}
+          labelFor={plainAuditActionLabel}
+          label="Recent activity"
+        />
+      {/if}
+    </section>
+  {:else}
+    <Skeleton class="h-32 w-full" />
+  {/if}
+</section>
+
+{#if relay}
+  {#if replacing}
+    <ReplaceDialog
+      open={true}
+      plain
+      kind={replacing.kind}
+      {relay}
+      edge={replacing.edge}
+      onClose={() => (replacing = null)}
+      onStarted={() => {
+        toast.success('Replacing the address. Members move over on their next refresh.');
+        replacing = null;
+      }}
+    />
+  {/if}
+  {#if choosing}
+    {@const kind = choosing}
+    <ActionConfirm
+      open={true}
+      title="Which address?"
+      body="Several addresses are in use on this node. Pick the one to replace."
+      confirmLabel="Choose"
+      disabled
+      run={async () => {}}
+      onClose={() => (choosing = null)}
+    >
+      <div class="flex flex-col gap-2">
+        {#each published as e (e.id)}
+          <Button
+            variant="outline"
+            size="sm"
+            onclick={() => {
+              choosing = null;
+              replacing = { kind, edge: e };
+            }}
+          >
+            {e.addresses.hostname ?? e.addresses.v4 ?? e.addresses.v6 ?? e.name}
+          </Button>
+        {/each}
+      </div>
+    </ActionConfirm>
+  {/if}
+  <SpareDialog bind:open={spareOpen} {relay} />
+  {#if renewing}
+    <SpareDialog open={true} {relay} renew={renewing} onClose={() => (renewing = null)} />
+  {/if}
+  <ActionConfirm
+    bind:open={againOpen}
+    title={`Protect ${name} again?`}
+    body="FCP makes a new address for each transport, you try each one from a real app, and you approve go-live if the node needs it. Members keep the addresses they have until the new ones go live, then the new ones take their places. Cancelling drops only the new addresses."
+    confirmLabel="Protect again"
+    run={async () => {
+      const res = await reprotectRelay(relay.id);
+      toast.success('Protecting again. The progress opens now.');
+      invalidateRelay(qc, slug);
+      router.navigate(edgesPaths.home({ run: res.runId }));
+    }}
+  />
+  <ActionConfirm
+    bind:open={removeOpen}
+    title={`Remove protection from ${name}?`}
+    body="Members get the node's own address back at their next refresh, the panel is restored one checked step at a time, and the provider addresses are destroyed afterwards. The node's own address becomes visible again."
+    typed={relay.slug}
+    confirmLabel="Remove protection"
+    danger
+    run={async () => {
+      assertEdgeOk(await deleteRelay(relay.id, 'restore-direct'));
+      toast.success('Removing protection. The node page shows each step.');
+      invalidateRelay(qc, slug);
+    }}
+  />
+{/if}

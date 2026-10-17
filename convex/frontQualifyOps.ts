@@ -35,6 +35,26 @@ function refusal(code: string, checkedAt: number): FrontCheckResult {
   return { ok: false, code, steps: [], checkedAt };
 }
 
+/**
+ * A provider's own refusal, named for what the operator must do: Cloudflare
+ * answers a gRPC call with 403 while the zone's gRPC switch is off (a
+ * dashboard-only setting FCP cannot read or flip).
+ */
+export function providerVerdict(
+  provider: string | null,
+  streamTransport: string,
+  result: FrontCheckResult,
+): FrontCheckResult {
+  if (
+    provider === 'cloudflare' &&
+    streamTransport === 'grpc' &&
+    result.code === 'front_error' &&
+    result.detail === '403'
+  )
+    return { ...result, code: 'grpc_disabled' };
+  return result;
+}
+
 export const run = internalAction({
   args: { edgeId: v.id('edges') },
   handler: async (ctx, { edgeId }): Promise<{ ok: boolean; code: string | null }> => {
@@ -54,13 +74,17 @@ export const run = internalAction({
         detail: c.credentialConfigured ? 'id_shape' : 'absent',
       };
     else
-      result = await checker({
-        hostname: c.hostname,
-        proto: c.proto,
-        params: c.params,
-        uuid: c.credential.uuid,
-        stepTimeoutMs: c.stepTimeoutMs,
-      });
+      result = providerVerdict(
+        c.provider,
+        c.proto.streamTransport,
+        await checker({
+          hostname: c.hostname,
+          proto: c.proto,
+          params: c.params,
+          credential: c.credential,
+          stepTimeoutMs: c.stepTimeoutMs,
+        }),
+      );
 
     return await ctx.runMutation(internal.frontQualify.record, {
       edgeId,

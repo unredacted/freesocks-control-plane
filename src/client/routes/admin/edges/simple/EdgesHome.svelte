@@ -2,9 +2,16 @@
   /**
    * Edges home (`/admin/edges`): one status sentence, what needs you, one row
    * per protected node, "Protect a node". URL state: `?protect=1` opens the
-   * protect sheet, `?run=<id>` opens a run's progress.
+   * protect sheet (`&server=<slug>&node=<uuid>` preselect a node, as the Servers
+   * page links to it), `?run=<id>` opens a run's progress.
    *
    * The technical dashboard this replaced lives on under Advanced (All origins).
+   * Every status (the headline, each row) is the server's ONE judgement: the
+   * attention response's `fleet` and `origins[]`, worded by lib/statusWords.ts.
+   * A backend node's row opens its Servers node page (its one page).
+   *
+   * The "Turn on automatic protection" offer appears once a node is live (and on
+   * the Live card of a run), never on the empty home.
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -23,14 +30,14 @@
     invalidateConfig,
     invalidateOverview,
     invalidateRelay,
-    providersQuery,
     rebalanceRelay,
     requireRelayEdges,
     retrySetupRun,
     setEdgeAutomation,
-    setupRunsQuery,
     thawMaintenance,
   } from '@client/lib/edgesApi';
+  import { serverSummaryQuery } from '@client/lib/serversApi';
+  import { nodeHomeOf } from '../../servers/lib/routes';
   import AdminListState from '../../AdminListState.svelte';
   import AttentionList from '../components/AttentionList.svelte';
   import SectionHeader from '../components/SectionHeader.svelte';
@@ -38,39 +45,48 @@
   import { attentionTarget } from '../lib/attention';
   import { edgeErrorMessage } from '../lib/edgeErrors';
   import { edgesPaths } from '../lib/routes';
+  import { fleetSentence, statusOf } from '../lib/statusWords';
   import EndpointTestCard from './EndpointTestCard.svelte';
   import NodeRow from './NodeRow.svelte';
   import ProtectSheet from './ProtectSheet.svelte';
   import StatusDot from './StatusDot.svelte';
-  import { fleetSentence, liveRunFor, nodeStatus } from './nodeStatus';
   import { automationOn } from './runWords';
 
   const qc = useQueryClient();
   const summary = edgeSummaryQuery();
   const attention = attentionQuery();
-  const runs = setupRunsQuery();
   const config = edgeConfigQuery();
-  const providers = providersQuery();
+  const servers = serverSummaryQuery();
 
   const protectParam = searchParam('protect');
   const runParam = searchParam('run');
+  const serverParam = searchParam('server');
+  const nodeParam = searchParam('node');
   const sheetOpen = $derived(protectParam.value === '1' || runParam.value !== '');
 
   const items = $derived(attention.data?.items ?? []);
-  const runList = $derived(runs.data?.runs ?? []);
   const rows = $derived(
     [...(summary.data?.relays ?? [])].sort((a, b) => a.relay.slug.localeCompare(b.relay.slug)),
   );
-  const ctx = $derived({ attention: items, runs: runList });
-  const statuses = $derived(rows.map((r) => nodeStatus(r, ctx)));
-  const headline = $derived(fleetSentence(statuses));
+  const statuses = $derived(rows.map((r) => statusOf(attention.data?.origins, r.relay.slug)));
+  const fleet = $derived(attention.data?.fleet ?? null);
   const automation = $derived(config.data ? automationOn(config.data.config) : null);
-  const hasAccount = $derived((providers.data?.accounts.length ?? 0) > 0);
+  const anyLive = $derived(statuses.some((s) => s?.kind === 'protected'));
+  /** A backend node's one page (Servers), else the edges page of the origin. */
+  const rowHref = (row: (typeof rows)[number]) =>
+    nodeHomeOf(row.relay.origin, servers.data?.instances) ?? edgesPaths.node(row.relay.slug);
 
   // The test card opened from a "Needs you" row (a spare, a retest, a go-live check).
   let testEdgeIds = $state<string[]>([]);
   let testRelayId = $state<string | null>(null);
+  let testRelaySlug = $state<string | null>(null);
   let testRunId = $state<string | null>(null);
+  function closeTest() {
+    testEdgeIds = [];
+    testRelayId = null;
+    testRelaySlug = null;
+    testRunId = null;
+  }
 
   async function goLive(relayId: string, slug: string | null): Promise<void> {
     const res = await requireRelayEdges(relayId);
@@ -79,13 +95,12 @@
       // ticks go to that run, never to a second require-edges call.
       testEdgeIds = res.pending.map((p) => p.edgeId);
       testRelayId = relayId;
+      testRelaySlug = slug;
       testRunId = res.runId;
       toast.message('Test each address first. Going live continues once every one works.');
       return;
     }
-    testEdgeIds = [];
-    testRelayId = null;
-    testRunId = null;
+    closeTest();
     toast.success('Going live.');
     if (slug) invalidateRelay(qc, slug);
     else invalidateOverview(qc);
@@ -100,6 +115,8 @@
           if (!item.edgeId) break;
           testEdgeIds = [item.edgeId];
           testRelayId = null;
+          testRelaySlug = item.relaySlug;
+          testRunId = null;
           return;
         case 'require_edges':
           if (!item.relayId) break;
@@ -141,11 +158,12 @@
     }
   }
 
+  // The preset node (`server`, `node`) belongs to one opening of the sheet only.
   function openProtect() {
-    setSearchParams({ protect: '1', run: null });
+    setSearchParams({ protect: '1', run: null, server: null, node: null });
   }
   function closeSheet() {
-    setSearchParams({ protect: null, run: null });
+    setSearchParams({ protect: null, run: null, server: null, node: null });
     invalidateOverview(qc);
   }
 </script>
@@ -162,14 +180,14 @@
 </SectionHeader>
 
 <div class="space-y-8">
-  {#if summary.isPending || runs.isPending}
+  {#if summary.isPending || attention.isPending}
     <Skeleton class="h-6 w-64" />
   {:else if summary.isError}
     <AdminListState error={summary.error} onRetry={() => void summary.refetch()} />
-  {:else}
+  {:else if fleet}
     <p class="flex items-center gap-2 text-lg font-medium" role="status">
-      <StatusDot dot={headline.dot} class="size-3" />
-      {headline.text}
+      <StatusDot dot={fleet.dot} class="size-3" />
+      {fleetSentence(fleet)}
     </p>
   {/if}
 
@@ -182,13 +200,24 @@
         {#if testEdgeIds.length > 0}
           <EndpointTestCard
             edgeIds={testEdgeIds}
-            onClose={() => (testEdgeIds = [])}
+            runId={testRunId}
+            onClose={closeTest}
+            onRetried={(id) => {
+              closeTest();
+              setSearchParams({ run: id, protect: null, server: null, node: null });
+            }}
+            onDoesNotWork={testRelaySlug
+              ? (edgeId) => {
+                  // The node page knows what the address is (in use or a spare) and how to replace it.
+                  const slug = testRelaySlug!;
+                  closeTest();
+                  router.navigate(edgesPaths.node(slug, { test: edgeId }));
+                }
+              : undefined}
             onAllDone={() => {
               const relayId = testRelayId;
               const runId = testRunId;
-              testEdgeIds = [];
-              testRelayId = null;
-              testRunId = null;
+              closeTest();
               // Every address ticked: resume the activation run the server opened
               // (it re-checks the confirmations and carries on to go-live).
               if (runId)
@@ -225,13 +254,13 @@
     <section aria-label="Protected nodes">
       <ul class="space-y-2">
         {#each rows as row, i (row.relay.id)}
-          {@const run = liveRunFor(runList, row.relay.slug)}
           <li>
             <NodeRow
               {row}
-              status={statuses[i]!}
-              runId={run?.id ?? null}
-              onOpenRun={(id) => setSearchParams({ run: id, protect: null })}
+              status={statuses[i] ?? null}
+              href={rowHref(row)}
+              onOpenRun={(id) =>
+                setSearchParams({ run: id, protect: null, server: null, node: null })}
             />
           </li>
         {/each}
@@ -239,7 +268,7 @@
     </section>
   {/if}
 
-  {#if automation === false}
+  {#if automation === false && anyLive}
     <section class="rounded-lg border p-4" aria-labelledby="auto-title">
       <h2 id="auto-title" class="font-semibold">Turn on automatic protection</h2>
       <p class="text-muted-foreground mt-1 max-w-prose text-sm">
@@ -280,13 +309,14 @@
   </footer>
 </div>
 
-<!-- Mounted once the accounts are known: the sheet decides its first step from them. -->
-{#if sheetOpen && (providers.isSuccess || providers.isError)}
+<!-- The node always comes first; the account step adds one when there is none. -->
+{#if sheetOpen}
   <ProtectSheet
     open={sheetOpen}
     runId={runParam.value || null}
-    startAtAccount={!hasAccount}
-    onRunCreated={(id) => setSearchParams({ run: id, protect: null })}
+    server={serverParam.value || null}
+    node={nodeParam.value || null}
+    onRunCreated={(id) => setSearchParams({ run: id, protect: null, server: null, node: null })}
     onClose={closeSheet}
   />
 {/if}

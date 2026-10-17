@@ -11,11 +11,11 @@
  *                                   plus `throttled`), shown as explain + fix in error lines
  *   codeLabel / codeExplain / codeFix(code)   with a humanised fallback for unknown codes
  *   humanizeCode(code)              'l7_auto_select_blocked' -> 'L7 auto select blocked'
- *   ROTATION_PHASE_LABELS, phaseLabel, isTerminalPhase
+ *   ROTATION_PHASE_LABELS, phaseLabel
  *   EDGE_STATUS_LABELS, edgeStatusLabel, edgeStatusTone
  *   EDGE_HEALTH_LABELS, healthTone, PUBLICATION_LABELS, publicationTone
  *   HOST_STATE_LABELS, SETUP_STEP_TITLES, SETUP_STATUS_LABELS
- *   ATTENTION_ACTION_LABELS, attentionSeverityTone, severityTone
+ *   ATTENTION_ACTION_LABELS, severityTone
  *   auditActionLabel(action)        audit `action` -> short sentence (small map + fallback)
  *   Tone                            the badge tone union the components share
  */
@@ -32,11 +32,10 @@ import type {
   SetupAccountReason,
   SetupBlockerCode,
   SetupRunNeed,
-  SetupRunStage,
-  SetupRunState,
   SetupStepId,
   SetupStepStatus,
 } from '../../shared/contracts/edgeCodes';
+import { SETUP_RUN_STAGE_STEP } from '../../shared/contracts/edgeCodes';
 
 export type Tone = 'neutral' | 'muted' | 'info' | 'success' | 'warning' | 'danger';
 
@@ -139,7 +138,7 @@ const COPY = {
   no_relay: {
     label: 'No origin yet',
     explain: 'The origin row does not exist: the origin has not been registered.',
-    fix: 'Finish the origin step, or let the node role register it.',
+    fix: 'Finish the origin step, or protect the node from Edges.',
   },
   relay_deleting: {
     label: 'Origin is deleting',
@@ -149,12 +148,12 @@ const COPY = {
     label: 'No listener',
     explain:
       'The origin has no listener, so nothing says which port and protocol edges should carry.',
-    fix: 'Add a listener, or register the node with the role.',
+    fix: 'Add a listener, or protect the node from Edges.',
   },
   listener_not_deployed: {
     label: 'Listener not deployed',
-    explain: 'The node has not confirmed this listener is live yet.',
-    fix: 'Run the node role, or mark the listener deployed once the transport is up.',
+    explain: 'This listener is not marked as live on the node yet.',
+    fix: 'Mark the listener deployed once the transport is up.',
   },
   listener_disabled: {
     label: 'Listener disabled',
@@ -527,7 +526,7 @@ const COPY = {
   origin_transport_missing: {
     label: 'Origin transport missing',
     explain: 'The listener does not declare how a CDN front should dial the origin.',
-    fix: 'Register the listener origin transport with the node role.',
+    fix: 'Edit the listener and turn on "A CDN front can reach this transport", or protect the node from Edges.',
   },
   // --- preflight warnings ---------------------------------------------------------------
   edge_disabled: {
@@ -627,11 +626,6 @@ const COPY = {
     explain: 'A temporary test key could not be removed from the server after several tries.',
     fix: 'Check the server, remove the key by hand if it is still there, then retry the cleanup.',
   },
-  drift: {
-    label: 'Drift',
-    explain: 'What the provider reports differs from what FCP recorded for an edge.',
-    fix: 'Open the edge and compare the live snapshot.',
-  },
   direct_host_reappeared: {
     label: 'Direct address back in the backend',
     explain:
@@ -716,6 +710,11 @@ const COPY = {
     label: 'Origin leak detected',
     explain: 'An outgoing entry still carried the origin address; the body was withheld.',
   },
+  render_failed: {
+    label: 'Could not rewrite',
+    explain:
+      'The body could not be rewritten in this format for a reason other than a missing or mismatched entry, so it was withheld.',
+  },
   // --- extra server codes the components may meet (vetoes, host states) ------------------
   node_offline: {
     label: 'Node offline',
@@ -770,6 +769,111 @@ const COPY = {
     explain: 'A guided setup owns this origin, so automatic replacement leaves it alone.',
     fix: 'Finish or cancel the setup run.',
   },
+  // A guided run's event: it parked at publish until the enrolled node is approved.
+  publish_held: {
+    label: 'Waiting for go-live approval',
+    explain: 'Every address is tested. Going live waits for your approval of the node.',
+    fix: 'Approve go-live.',
+  },
+  // --- operations safety: attention, the fleet guards, delivery refusals ------------------
+  fleet_brake: {
+    label: 'Automatic replacement held',
+    explain:
+      'Many nodes look blocked at once, which points at a block on a whole provider or protocol, so FCP holds every automatic replacement instead of burning addresses.',
+    fix: 'Check the probes and the reports. It releases by itself once fewer nodes look blocked.',
+  },
+  fleet_rotation_cap: {
+    label: 'Daily replacement cap reached',
+    explain:
+      'Automatic replacements across all nodes reached the cap for today, so more wait until tomorrow (UTC).',
+    fix: 'Raise the fleet cap under Settings if these replacements are expected.',
+  },
+  fleet_daily_cap: {
+    label: 'Fleet daily cap reached',
+    explain: 'The cap on automatic replacements across all nodes is used up for today.',
+    fix: 'Wait for tomorrow (UTC), or raise the cap under Settings.',
+  },
+  outside_approved_shape: {
+    label: 'Outside the approved setup',
+    explain:
+      'No account or spare fits what this node was approved for, so nothing is published without a new review.',
+    fix: 'Review the node and approve it again with the account it should use.',
+  },
+  rotation_stuck: {
+    label: 'Replacement stuck',
+    explain:
+      'A rotation has been running for over an hour: a provider or the backend may not be answering.',
+    fix: 'Open the node to see the step it is waiting on.',
+  },
+  account_api_failing: {
+    label: 'Provider not answering',
+    explain:
+      'Several calls in a row to this provider account failed (timeouts, errors on its side or refused credentials), so new edges, health checks and clean-ups stall.',
+    fix: 'Check the provider status and the account credentials, then test them.',
+  },
+  health_stale: {
+    label: 'Health not refreshed',
+    explain:
+      'FCP could not refresh the health of some live edges of this account for over an hour.',
+    fix: 'Open the account: the provider may be refusing the reads.',
+  },
+  billable_idle: {
+    label: 'Paid for, serving nobody',
+    explain:
+      'Edges that cost money serve no member until you act: the node is paused for safety, or an edge waits for an operator.',
+    fix: 'Resolve the pause or the edge, so the resources are used or removed.',
+  },
+  delivery_refusals: {
+    label: 'Members refused',
+    explain:
+      'Members asked for their subscription in the last hour and got nothing usable. The reasons are counted.',
+    fix: 'Look at the reasons: a switch that is off, an empty pool or a node that is not live.',
+  },
+  family_rule_disabled: {
+    label: 'App family switched off',
+    explain:
+      'A client app family has its render rule off, so members using those apps get nothing from a protected node.',
+    fix: 'Turn the family back on under Settings, unless that is intended.',
+  },
+  node_ready_to_protect: {
+    label: 'Node ready to protect',
+    explain:
+      'An enrolled node meant to sit behind an edge is ready, and nothing protects it until you start.',
+    fix: 'Start protecting it.',
+  },
+  node_awaiting_approval: {
+    label: 'Waiting for your approval',
+    explain: 'A node is tested and goes live only once you approve it.',
+    fix: 'Open the node and approve go-live.',
+  },
+  node_gated: {
+    label: 'Node not live',
+    explain:
+      'The member is on a node that is not live yet, or is closed for maintenance, so nothing is handed out for it.',
+  },
+  policy_moved: {
+    label: 'Changed while answering',
+    explain:
+      'The delivery policy changed while the answer was being built, so it was not sent. The next refresh gets the current one.',
+  },
+  account_budget_unlimited: {
+    label: 'No daily spending limit',
+    explain:
+      'This provider account has a daily allocation budget of 0, which means no limit: a runaway loop could create billable resources without bound.',
+    fix: 'Set a daily allocation budget on the account.',
+  },
+  reality_key_changed: {
+    label: 'Node key changed',
+    explain:
+      'The node’s REALITY key (or its short ids or clock settings) changed since this address was tried, so nothing has proven the new key through it.',
+    fix: 'Try the address again from a client with the new key.',
+  },
+  family_disabled: {
+    label: 'App family off',
+    explain:
+      'The render rule for this client app family is off, so its members get nothing from a protected node.',
+    fix: 'Turn the family on under Settings.',
+  },
 } as const satisfies Record<KnownCode, CodeCopy> & Record<string, CodeCopy>;
 
 // --- discovered transports that cannot become listeners --------------------------------------
@@ -786,7 +890,7 @@ export const INBOUND_UNSUPPORTED_COPY: Record<InboundUnsupportedCode, CodeCopy> 
     label: 'Reached only from inside the node',
     explain:
       'The transport listens on a loopback address, so a provider address cannot dial it directly. Something on the node (usually a TLS terminator) accepts outside connections and forwards to it.',
-    fix: 'Register the listener with the port and transport the terminator exposes (through the node role or the origin form), or make the transport listen publicly with TLS of its own.',
+    fix: 'Add the listener with the port and transport the terminator exposes (Add listener on the origin), or make the transport listen publicly with TLS of its own.',
   },
   tag: {
     label: 'Tag cannot be bound',
@@ -921,9 +1025,9 @@ const REFUSAL_COPY = {
     fix: 'Check the listener names and the address, then fetch the test link again.',
   },
   use_manual_setup: {
-    label: 'Use manual setup',
+    label: 'Set up by hand',
     explain: 'Outline servers with no members have no test credential path.',
-    fix: 'Use the manual setup for this server, or rehearse once it has members.',
+    fix: 'Give its origin a first edge on its Origin details page, or protect it once it has members.',
   },
   choose_mode: {
     label: 'Choose a connection mode',
@@ -945,6 +1049,36 @@ const REFUSAL_COPY = {
     label: 'Node address unknown',
     explain: 'The backend reports no address for this node, so its origin cannot be probed.',
     fix: 'Set the node address on the backend, then refresh the node list.',
+  },
+  keep_direct_enrolled: {
+    label: 'Direct address not kept',
+    explain:
+      'This node is enrolled in Servers, so it goes live behind its new addresses only. Members cannot stay on the direct one.',
+    fix: 'Protect it and hide the hosts the addresses cannot carry.',
+  },
+  not_edge_required: {
+    label: 'Already direct',
+    explain: 'Members of this node already receive its own address.',
+  },
+  reprotect_not_bound: {
+    label: 'Not live behind addresses yet',
+    explain: 'Protect again is for a node whose members already connect through its addresses.',
+    fix: 'Use Protect a node, or Go live if its addresses are ready.',
+  },
+  reprotect_not_enrolled: {
+    label: 'Not an enrolled node',
+    explain: 'Only a node the node role enrolled is protected again from here.',
+    fix: 'Use Replace address on its addresses instead.',
+  },
+  reprotect_mixed_accounts: {
+    label: 'More than one account',
+    explain: 'This node is served through addresses from more than one provider account.',
+    fix: 'Replace its addresses one at a time from Origin details instead.',
+  },
+  reprotect_no_room: {
+    label: 'No room for new addresses',
+    explain: 'The node already uses as many addresses as one origin may.',
+    fix: 'Remove an address from Origin details first, then protect it again.',
   },
 } as const satisfies Record<string, CodeCopy>;
 
@@ -1017,11 +1151,9 @@ export const ROTATION_PHASE_LABELS: Record<string, string> = {
   quarantined: 'Quarantined',
   cancelled: 'Cancelled',
 };
-const TERMINAL_PHASES = new Set(['done', 'failed', 'rolled_back', 'quarantined', 'cancelled']);
 
 export const phaseLabel = (phase: string): string =>
   ROTATION_PHASE_LABELS[phase] ?? humanizeCode(phase);
-export const isTerminalPhase = (phase: string): boolean => TERMINAL_PHASES.has(phase);
 export function phaseTone(phase: string): Tone {
   if (phase === 'done') return 'success';
   if (phase === 'failed' || phase === 'quarantined') return 'danger';
@@ -1036,7 +1168,6 @@ export const EDGE_STATUS_LABELS: Record<string, string> = {
   planning: 'Planning',
   provisioning: 'Provisioning',
   verifying: 'Verifying',
-  standby: 'Standby',
   active: 'Active',
   draining: 'Draining',
   destroying: 'Destroying',
@@ -1052,8 +1183,6 @@ export function edgeStatusTone(status: string): Tone {
   switch (status) {
     case 'active':
       return 'success';
-    case 'standby':
-      return 'info';
     case 'planning':
     case 'provisioning':
     case 'verifying':
@@ -1173,6 +1302,32 @@ export function setupStatusTone(s: SetupStepStatus): Tone {
 
 // --- attention -----------------------------------------------------------------------------
 
+/**
+ * The button labels the simple screens show (AttentionList `plain`): plain verbs,
+ * never the Advanced terms (Thaw, Qualify front, Publish).
+ */
+export const PLAIN_ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
+  resolve_quarantine: 'Review the pause',
+  resolve_operator: 'Look at the address',
+  look_at_host: 'Look at the backend',
+  open_setup: 'Resume protection',
+  open_relay: 'Open the node',
+  open_edge: 'Open the address',
+  open_account: 'Open the account',
+  open_settings: 'Open settings',
+  publish: 'Put it in use',
+  provision: 'Create an address',
+  qualify_front: 'Check the address',
+  rotate: 'Replace the address',
+  test_credentials: 'Test the account',
+  verify_endpoint: 'Test the address',
+  thaw: 'Resume new work',
+  rebalance: 'Make room',
+  require_edges: 'Go live',
+  protect_node: 'Protect the node',
+  open_node: 'Review go-live',
+};
+
 export const ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
   resolve_quarantine: 'Resolve quarantine',
   resolve_operator: 'Resolve edge',
@@ -1191,6 +1346,8 @@ export const ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
   thaw: 'Thaw',
   rebalance: 'Make room',
   require_edges: 'Go live',
+  protect_node: 'Protect node',
+  open_node: 'Open node',
 };
 
 export function severityTone(s: AttentionSeverity): Tone {
@@ -1198,41 +1355,23 @@ export function severityTone(s: AttentionSeverity): Tone {
   if (s === 'warning') return 'warning';
   return 'info';
 }
-export const attentionSeverityTone = severityTone;
 
 // --- guided setup runs (Autopilot) -------------------------------------------------------------
 
-/** The four plain stages the progress view shows, mapped from the machine's ten. */
-export const SETUP_RUN_STAGE_LABELS: Record<SetupRunStage, string> = {
-  prepare: 'Creating the address',
-  credential: 'Creating the address',
-  provision: 'Creating the address',
-  verify: 'Checking from outside',
-  try_it: 'Checking it works',
-  publish: 'Going live',
-  hide_direct_hosts: 'Going live',
-  rehearse: 'Going live',
-  go_live: 'Going live',
-  done: 'Live',
-};
+/** The four plain stages a guided run shows, in order. */
+export const SETUP_RUN_PLAIN_STAGES = [
+  'Creating the address',
+  'Checking from outside',
+  'Checking it works',
+  'Going live',
+] as const;
 
-export const SETUP_RUN_STATE_LABELS: Record<SetupRunState, string> = {
-  running: 'Working',
-  waiting: 'Waiting',
-  needs_you: 'Needs you',
-  done: 'Live',
-  done_unbound: 'Finished without going live',
-  failed: 'Stopped',
-  cancelled: 'Cancelled',
-};
-
-export function setupRunStateTone(s: SetupRunState): Tone {
-  if (s === 'done') return 'success';
-  if (s === 'needs_you') return 'warning';
-  if (s === 'failed') return 'danger';
-  if (s === 'cancelled' || s === 'done_unbound') return 'muted';
-  return 'info';
-}
+/**
+ * The machine's ten stages folded onto the four plain ones (`done` = 5, past
+ * the last). Defined next to SETUP_RUN_STAGES in the shared contract (the
+ * server's origin status reads the same table) and re-exported here.
+ */
+export { SETUP_RUN_STAGE_STEP };
 
 /** One card per interruption: `explain` is the sentence, `fix` the button (secondary in parentheses). */
 export const SETUP_RUN_NEED_COPY: Record<SetupRunNeed, CodeCopy> = {
@@ -1253,13 +1392,13 @@ export const SETUP_RUN_NEED_COPY: Record<SetupRunNeed, CodeCopy> = {
   },
   too_many_inbounds: {
     label: 'Too many transports',
-    explain: 'The node serves more frontable transports than a guided run protects.',
-    fix: 'Use manual setup.',
+    explain: 'The node serves more transports than one run protects.',
+    fix: 'Pick the ones to protect.',
   },
   use_manual_setup: {
-    label: 'Manual setup needed',
+    label: 'Set up by hand',
     explain: 'Outline servers with no members are outside the guided setup.',
-    fix: 'Use manual setup.',
+    fix: 'Open its origin and give it a first edge there.',
   },
   choose_mode: {
     label: 'Connection mode needed',
@@ -1284,8 +1423,8 @@ export const SETUP_RUN_NEED_COPY: Record<SetupRunNeed, CodeCopy> = {
   try_it: {
     label: 'Try each address',
     explain:
-      'Import each test link into a client (it uses a test account of its own), connect, load a page, then tick Works.',
-    fix: 'Continue (One of them does not work).',
+      'Import each test link into a client (it uses a test account of its own), connect, load a page, then answer Works or Doesn’t work.',
+    fix: 'Works (Doesn’t work).',
   },
   review_changed: {
     label: 'Hosts changed',
@@ -1308,14 +1447,14 @@ export const SETUP_RUN_NEED_COPY: Record<SetupRunNeed, CodeCopy> = {
     fix: 'Try again.',
   },
   node_not_approved: {
-    label: 'Node not approved',
-    explain: 'The node behind this origin is enrolled and its activation has not been approved.',
-    fix: 'Approve the node in Servers, then check again.',
+    label: 'Approve go-live',
+    explain: 'Every address works. The node goes live for members once you approve it.',
+    fix: 'Approve go-live.',
   },
   quarantined: {
     label: 'Paused for safety',
-    explain: 'A rotation could not converge and paused the origin.',
-    fix: 'Review.',
+    explain: 'Replacing an address could not finish and paused this node.',
+    fix: 'Check the backend, then keep the old or the new addresses.',
   },
 };
 
@@ -1329,6 +1468,11 @@ export const SETUP_ACCOUNT_REASON_COPY: Record<SetupAccountReason, CodeCopy> = {
   layer_mismatch: {
     label: 'Cannot carry every transport',
     explain: 'The account fronts at a layer one of the transports cannot use.',
+  },
+  origin_port_not_carried: {
+    label: 'Wrong port for gRPC',
+    explain: 'A CDN passes gRPC only to a node listening on port 443.',
+    fix: 'Move the gRPC transport to port 443.',
   },
   account_capacity_reached: {
     label: 'No room',
@@ -1477,8 +1621,23 @@ export const PLAIN_WORDS: Record<string, string> = {
   quarantine: 'paused for safety',
   quarantined: 'paused for safety',
   'host flip': 'update the backend',
-  listener: 'inbound',
+  listener: 'transport',
   listeners: 'transports',
+  inbound: 'transport',
+  inbounds: 'transports',
+  rotations: 'address replacements',
+  endpoint: 'address',
+  endpoints: 'addresses',
+  thaw: 'resume new work',
+  // Whole fix phrases whose verb has no plain one-word swap (longest match wins).
+  'run qualify front on the edge': 'check the address',
+  'qualify the front again': 'check the address again',
+  'publish an edge': 'put an address in use',
+  'provision or import an edge': 'create or import an address',
+  'provision or publish an edge': 'create an address or put one in use',
+  'provision a new edge': 'create a new address',
+  'raise the published edges wanted': 'raise the number of addresses in use',
+  'edge work': 'new work',
 };
 
 /** Rewrite a technical sentence in plain words (whole-word, longest match first). */
@@ -1525,6 +1684,7 @@ const PLAIN_AUDIT_LABELS: Record<string, string> = {
   'edge.setup_run.finished': 'Protection finished',
   'edge.setup_run.cancelled': 'Protection cancelled',
   'admin.edge.provision': 'Address requested',
+  'admin.edge.test_provision': 'Test address requested',
   'admin.edge.rotate': 'Replacement requested',
   'admin.edge.burn': 'Replacement requested (blocked)',
   'probe.verdict': 'Reachability changed',

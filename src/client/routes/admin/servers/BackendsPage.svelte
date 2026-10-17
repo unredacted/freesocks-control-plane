@@ -1,0 +1,226 @@
+<script lang="ts">
+  /**
+   * Servers -> Backends (`/admin/servers/backends`): the backend servers FCP
+   * issues keys on (add, edit, remove), each with a link to its nodes, and the
+   * node logging privacy check for every Remnawave config profile.
+   */
+  import type { z } from 'zod';
+  import BackendServerEditor from '../BackendServerEditor.svelte';
+  import { Card, CardHeader, CardTitle, CardContent } from '@client/components/ui/card';
+  import { Skeleton } from '@client/components/ui/skeleton';
+  import { Button } from '@client/components/ui/button';
+  import * as AlertDialog from '@client/components/ui/alert-dialog';
+  import Link from '@client/components/Link.svelte';
+  import { apiClient } from '@client/lib/api';
+  import { apiErrorMessage } from '@client/lib/errors';
+  import { ADMIN_BACKEND_LABELS } from '@client/lib/backendLabels';
+  import AdminListState from '../AdminListState.svelte';
+  import { adminBackendServersQuery, queryKeys } from '@client/lib/queries';
+  import { createMutation, useQueryClient } from '@tanstack/svelte-query';
+  import { BackendServerAdmin } from '@shared/contracts/admin';
+  import { toast } from 'svelte-sonner';
+  import Plus from '@lucide/svelte/icons/plus';
+  import { z as zod } from 'zod';
+  import SectionHeader from '../edges/components/SectionHeader.svelte';
+  import LoggingPrivacyCard from './components/LoggingPrivacyCard.svelte';
+  import { serversPaths } from './lib/routes';
+
+  type Server = z.infer<typeof BackendServerAdmin>;
+  const servers = adminBackendServersQuery();
+  const qc = useQueryClient();
+
+  let editing = $state<Server | null>(null);
+  let creating = $state(false);
+  let pendingDelete = $state<Server | null>(null);
+
+  const remove = createMutation(() => ({
+    mutationFn: async (id: string) => {
+      await apiClient.delete(
+        `/api/v1/admin/backend-servers/${id}`,
+        zod.object({ ok: zod.boolean() }),
+      );
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.adminBackendServers });
+      pendingDelete = null;
+      toast.success('Instance removed');
+    },
+    onError: (err) => {
+      toast.error('Could not delete instance', { description: apiErrorMessage(err) });
+    },
+  }));
+
+  // Reachability badge. The healthcheck cron runs every 10 min; fresh-within-15
+  // is green, longer-stale amber, never-seen red.
+  function healthBadge(lastHealthOkAt: string | null) {
+    if (!lastHealthOkAt) {
+      return { label: 'No check yet', tone: 'bg-destructive/15 text-destructive' };
+    }
+    const age = Date.now() - new Date(lastHealthOkAt).getTime();
+    if (age < 15 * 60_000)
+      return { label: 'Healthy', tone: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' };
+    if (age < 60 * 60_000)
+      return { label: 'Stale', tone: 'bg-amber-500/15 text-amber-600 dark:text-amber-400' };
+    return { label: 'Unreachable', tone: 'bg-destructive/15 text-destructive' };
+  }
+</script>
+
+<SectionHeader
+  title="Backends"
+  description="The backend servers keys are issued on. Each tier issues on its backend type, and the best-scored active server of that type is picked."
+>
+  {#snippet actions()}
+    <Button onclick={() => (creating = true)}>
+      <Plus class="size-4" aria-hidden="true" />
+      Add a backend
+    </Button>
+  {/snippet}
+</SectionHeader>
+
+<div class="space-y-8">
+  {#if servers.isPending}
+    <div class="space-y-3">
+      {#each Array(3) as _, i (i)}
+        <Card>
+          <CardHeader><Skeleton class="h-5 w-64" /></CardHeader>
+          <CardContent><Skeleton class="h-4 w-1/2" /></CardContent>
+        </Card>
+      {/each}
+    </div>
+  {:else if servers.isError}
+    <AdminListState error={servers.error} onRetry={() => void servers.refetch()} />
+  {:else if (servers.data?.length ?? 0) === 0}
+    <div
+      class="text-sm text-muted-foreground border border-dashed rounded-lg p-8 text-center space-y-2"
+    >
+      <p>No backend instances registered.</p>
+      <p class="text-xs">Add a Remnawave or Outline instance to start issuing keys.</p>
+    </div>
+  {:else}
+    <div class="space-y-3">
+      {#each servers.data ?? [] as s (s.id)}
+        {@const health = healthBadge(s.lastHealthOkAt)}
+        <Card>
+          <CardHeader>
+            <CardTitle class="text-lg flex items-center justify-between flex-wrap gap-2">
+              <span>
+                {s.name}
+                <code class="text-xs text-muted-foreground font-mono ml-2">{s.slug}</code>
+              </span>
+              <span class="flex items-center gap-2">
+                {#if s.location}
+                  <span
+                    class="text-xs px-2 py-1 rounded bg-secondary text-secondary-foreground"
+                    title={s.locationLabel ?? s.location}
+                  >
+                    {s.locationLabel ?? s.location}
+                  </span>
+                {/if}
+                <span class="text-xs px-2 py-1 rounded bg-primary/10 text-primary font-medium">
+                  {ADMIN_BACKEND_LABELS[s.backend]}
+                </span>
+                <span class="text-xs px-2 py-1 rounded {health.tone}">{health.label}</span>
+                {#if s.config.type === 'outline' && s.config.websocketEnabled}
+                  <span class="text-xs px-2 py-1 rounded bg-secondary text-secondary-foreground">
+                    WSS
+                  </span>
+                {/if}
+                {#if !s.isActive}
+                  <span class="text-xs px-2 py-1 rounded bg-muted text-muted-foreground">
+                    Disabled
+                  </span>
+                {/if}
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent class="text-sm space-y-1">
+            {#if s.config.type === 'remnawave'}
+              <div class="text-muted-foreground">
+                Base URL: <code class="font-mono">{s.config.baseUrl}</code> · Token:
+                <strong class="text-foreground">{s.config.apiTokenSet ? 'set' : 'not set'}</strong>
+              </div>
+            {:else}
+              <div class="text-muted-foreground">
+                API URL: <code class="font-mono">{s.config.apiUrlMasked}</code>
+                {#if s.config.websocketEnabled && s.config.websocketDomain}
+                  · WSS domain: <code class="font-mono">{s.config.websocketDomain}</code>
+                {/if}
+              </div>
+            {/if}
+            <div class="text-muted-foreground">
+              Priority: <strong class="text-foreground tabular-nums">{s.priority}</strong> · Keys:
+              <strong class="text-foreground tabular-nums"
+                >{s.keyCount}{s.maxKeys != null ? ` / ${s.maxKeys}` : ''}</strong
+              >
+              {#if s.maxKeys != null && s.keyCount >= s.maxKeys}
+                <span class="text-amber-600 dark:text-amber-400">· At capacity</span>
+              {/if}
+              {#if s.lastHealthRttMs != null}
+                · Last RTT: <strong class="text-foreground tabular-nums"
+                  >{s.lastHealthRttMs}ms</strong
+                >
+              {/if}
+            </div>
+            <div class="flex flex-wrap items-center gap-2 pt-2">
+              <Button size="sm" variant="outline" onclick={() => (editing = s)}>Edit</Button>
+              <Button size="sm" variant="destructive" onclick={() => (pendingDelete = s)}>
+                Remove
+              </Button>
+              {#if s.config.type === 'remnawave'}
+                <Link
+                  href={serversPaths.home({ instance: s.slug })}
+                  class="text-primary inline-flex min-h-11 items-center px-2 text-sm underline underline-offset-4 sm:min-h-0"
+                >
+                  Its nodes
+                </Link>
+              {/if}
+            </div>
+          </CardContent>
+        </Card>
+      {/each}
+    </div>
+  {/if}
+
+  <LoggingPrivacyCard />
+</div>
+
+{#if creating}
+  <BackendServerEditor
+    onClose={() => (creating = false)}
+    onSaved={() => {
+      creating = false;
+      void qc.invalidateQueries({ queryKey: queryKeys.adminBackendServers });
+    }}
+  />
+{/if}
+{#if editing}
+  <BackendServerEditor
+    server={editing}
+    onClose={() => (editing = null)}
+    onSaved={() => {
+      editing = null;
+      void qc.invalidateQueries({ queryKey: queryKeys.adminBackendServers });
+    }}
+  />
+{/if}
+
+<AlertDialog.Root open={!!pendingDelete} onOpenChange={(o) => (o ? null : (pendingDelete = null))}>
+  <AlertDialog.Content>
+    <AlertDialog.Header>
+      <AlertDialog.Title>Remove "{pendingDelete?.name}"?</AlertDialog.Title>
+      <AlertDialog.Description>
+        De-registers the instance from the pool. Existing keys on it keep working server-side but
+        will fail on next regenerate. Migrate users off first for a clean shutdown.
+      </AlertDialog.Description>
+    </AlertDialog.Header>
+    <AlertDialog.Footer>
+      <AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
+      <AlertDialog.Action
+        onclick={() => pendingDelete && remove.mutate(pendingDelete.id)}
+        disabled={remove.isPending}
+      >
+        {remove.isPending ? 'Removing…' : 'Remove'}
+      </AlertDialog.Action>
+    </AlertDialog.Footer>
+  </AlertDialog.Content>
+</AlertDialog.Root>

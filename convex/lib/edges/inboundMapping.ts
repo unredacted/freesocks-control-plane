@@ -1,14 +1,19 @@
 /**
  * Transport discovery (pure half): turn the transports a backend node serves
  * (`BackendTransport`, the provider's allowlisted projection) into origin listener
- * candidates in the by-slug registration shape, or say why one cannot be a
- * listener. The guided setup builds its "protect every frontable transport"
- * plan from this; nothing here touches the database or the backend.
+ * candidates in the listener spec shape (`relays.create`), or say why one
+ * cannot be a listener. The guided setup builds its "protect every frontable
+ * transport" plan from this; nothing here touches the database or the backend.
  *
  * Mapping:
- *   protocol   vless / trojan / shadowsocks; anything else (vmess, ...) -> `protocol`
- *   network    tcp | raw -> raw; ws, httpupgrade, grpc -> themselves; xhttp, kcp,
- *              quic, ... -> `transport`
+ *   protocol   vless / trojan / shadowsocks; hysteria2 (Xray's `hysteria` inbound
+ *              speaks Hysteria 2) / tuic; anything else (vmess, ...) -> `protocol`
+ *   network    tcp | raw -> raw; ws, httpupgrade, grpc, xhttp -> themselves; kcp,
+ *              quic, ... -> `transport`. A UDP protocol (hysteria2, tuic) is `udp`
+ *              whatever the stream says: QUIC is its transport and its TLS.
+ *              It maps so the plan can say WHY it is not fronted (no provider
+ *              forwards UDP: `no_udp_provider`) and leaves its direct Host alone:
+ *              it keeps delivering direct, exactly as before the node was protected.
  *   security   reality -> `realityTarget` (dest/target "host:port") + `tlsNames`
  *              (serverNames); tls -> `tlsNames` (serverName; none = `needsName`);
  *              none -> no names; anything else -> `security`
@@ -116,7 +121,14 @@ const PROTOCOLS: Readonly<Record<string, ListenerProtocolId>> = {
   vless: 'vless',
   trojan: 'trojan',
   shadowsocks: 'shadowsocks',
+  // Xray's inbound is `hysteria` (version 2 is the only one it serves).
+  hysteria: 'hysteria2',
+  hysteria2: 'hysteria2',
+  hy2: 'hysteria2',
+  tuic: 'tuic',
 };
+/** Protocols carried over QUIC: their stream is UDP and their security TLS by construction. */
+const UDP_PROTOCOLS: ReadonlySet<ListenerProtocolId> = new Set(['hysteria2', 'tuic']);
 const TRANSPORTS: Readonly<Record<string, ListenerStreamTransport>> = {
   tcp: 'raw',
   raw: 'raw',
@@ -201,12 +213,15 @@ export async function mapTransportsToListeners(
       unsupported.push(skip(tag, 'protocol', ib.protocol || 'unknown'));
       continue;
     }
-    const streamTransport = TRANSPORTS[ib.network];
+    const udp = UDP_PROTOCOLS.has(protocol);
+    const streamTransport: ListenerStreamTransport | undefined = udp
+      ? 'udp'
+      : TRANSPORTS[ib.network];
     if (!streamTransport) {
       unsupported.push(skip(tag, 'transport', ib.network || 'unknown'));
       continue;
     }
-    const security = SECURITIES[ib.security];
+    const security: ListenerSecurity | undefined = udp ? 'tls' : SECURITIES[ib.security];
     if (!security) {
       unsupported.push(skip(tag, 'security', ib.security || 'unknown'));
       continue;

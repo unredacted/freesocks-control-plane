@@ -1,6 +1,12 @@
 import { describe, expect, test } from 'vitest';
 import YAML from 'yaml';
-import { nodeNameFromLink, nodeNameFromTag, pickNode, pinSubscriptionToNode } from './nodePinning';
+import {
+  nodeNameFromLink,
+  nodeNameFromTag,
+  nodelessBody,
+  pickNode,
+  pinSubscriptionToNode,
+} from './nodePinning';
 
 const NODE_A = 'xray1-front-mci1-beta-fs-ce';
 const NODE_B = 'xray2-front-mci1-beta-fs-ce';
@@ -350,5 +356,45 @@ describe('pinSubscriptionToNode: Clash YAML', () => {
       `  - {name: b-only, type: select, proxies: [${TAG_B1}, ${TAG_B2}]}\nrules:`,
     );
     expect(pinSubscriptionToNode(emptyGroup, key)).toEqual({ content: emptyGroup, node: null });
+  });
+});
+
+describe('nodelessBody (the backend placeholder the fronted route never caches)', () => {
+  const link = (remark: string, host = '198.51.100.9', port = 443) =>
+    `vless://11111111-2222-4333-8444-555555555555@${host}:${port}?security=reality#${remark}`;
+  test('an empty body, or entries that all point nowhere and name no node, is the placeholder', () => {
+    expect(nodelessBody('')).toBe(true);
+    expect(nodelessBody('  \n ')).toBe(true);
+    expect(nodelessBody(link('No hosts', '0.0.0.0', 1))).toBe(true);
+    expect(nodelessBody(btoa(link('No hosts', '0.0.0.0', 1)))).toBe(true);
+    expect(nodelessBody(JSON.stringify({ outbounds: [{ tag: 'direct', type: 'direct' }] }))).toBe(
+      true,
+    );
+    expect(
+      nodelessBody(
+        JSON.stringify({
+          outbounds: [{ tag: 'No hosts', type: 'vless', server: '0.0.0.0', server_port: 1 }],
+        }),
+      ),
+    ).toBe(true);
+    expect(nodelessBody(YAML.stringify({ proxies: [] }))).toBe(true);
+  });
+  test('a real entry is never the placeholder, whatever its remark; nor is an unknown shape', () => {
+    // A Host whose remark carries no node suffix still serves members.
+    expect(nodelessBody(link('my-host'))).toBe(false);
+    expect(nodelessBody(link('node-one-reality'))).toBe(false);
+    expect(
+      nodelessBody(
+        JSON.stringify({ outbounds: [{ tag: 'x', type: 'vless', server: '198.51.100.9' }] }),
+      ),
+    ).toBe(false);
+    expect(
+      nodelessBody(
+        YAML.stringify({ proxies: [{ name: 'x', type: 'ss', server: '198.51.100.9' }] }),
+      ),
+    ).toBe(false);
+    expect(nodelessBody('RAW-CONFIG-1')).toBe(false);
+    expect(nodelessBody('<html></html>')).toBe(false);
+    expect(nodelessBody('{"error":"x"}')).toBe(false);
   });
 });

@@ -5,6 +5,7 @@
  */
 import { convexTest } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { __setEdgePlumbingForTests } from './lib/edgeConfig';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
@@ -35,6 +36,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   vi.useRealTimers();
+  __setEdgePlumbingForTests(null);
 });
 
 const ORIGIN = '203.0.113.10';
@@ -322,7 +324,7 @@ describe('origin attribution on member reports', () => {
     expect(rows[0].relayEdgeId).toBeUndefined();
     expect(await s.t.run((ctx) => ctx.db.query('relayReportMarks').collect())).toEqual([]);
     // The detector sees no reporter from it.
-    const w = (await s.t.query(internal.edgeDetector.relayWindow, {
+    const w = (await s.t.action(internal.edgeDetector.relayWindow, {
       relayId: s.relayId,
       now: Date.now(),
     }))!;
@@ -351,13 +353,20 @@ describe('origin block detector', () => {
         });
       }
     });
-    const w = (await s.t.query(internal.edgeDetector.relayWindow, {
+    const w = (await s.t.action(internal.edgeDetector.relayWindow, {
       relayId: s.relayId,
       now: NOW,
     }))!;
     expect(w.window.reports).toBe(5);
     expect(w.window.distinctReporters).toBe(1);
     expect(w.window.byEdge[s.edgeA]).toEqual({ count: 1, countries: { IR: 1 } });
+    // Every page reads the same window: a report created after the evaluation
+    // time (here: evaluated a minute earlier) is the next window's, not this one's.
+    const earlier = (await s.t.action(internal.edgeDetector.relayWindow, {
+      relayId: s.relayId,
+      now: NOW - 60_000,
+    }))!;
+    expect(earlier.window.reports).toBe(0);
   });
 
   /**
@@ -405,7 +414,7 @@ describe('origin block detector', () => {
     // 300 deduplicated repeats are written FIRST, so any `.take(N)` with N ≤ 300
     // would read nothing but zero-weight rows and see no reporter at all.
     await bulkReports(s.t, { zeroWeight: 300, weighted: 8 });
-    const w = (await s.t.query(internal.edgeDetector.relayWindow, {
+    const w = (await s.t.action(internal.edgeDetector.relayWindow, {
       relayId: s.relayId,
       now: NOW,
     }))!;
@@ -414,17 +423,17 @@ describe('origin block detector', () => {
     expect(w.window.incomplete ?? false).toBe(false);
   });
 
-  test('a window past detect.maxReportRowsPerEval is INCOMPLETE: suspicion still shows, but the veto is evidence_incomplete and nothing rotates', async () => {
+  test('a window past the report row cap is INCOMPLETE: suspicion still shows, but the veto is evidence_incomplete and nothing rotates', async () => {
     vi.useFakeTimers({ now: NOW });
     const s = await seed();
     await warmBaseline(s.t, s.relayId, 100);
     await nodeLoad(s.t, s.serverId, 0);
+    // A cap below the row count: the same evidence that rotates under the cap
+    // must not rotate over it.
+    __setEdgePlumbingForTests({ maxReportRowsPerEval: 100 });
     await s.t.run(async (ctx) => {
       await upsertSettingRow(ctx, 'edge.enabled', 'true');
       await upsertSettingRow(ctx, 'edge.autoRotate', 'true');
-      // A cap below the row count (100 is the configurable floor): the same
-      // evidence that rotates under the cap must not rotate over it.
-      await upsertSettingRow(ctx, 'edge.detect.maxReportRowsPerEval', '100');
       await ctx.db.patch(s.relayId, { autoRotate: true });
     });
     // Enough edge-attributed reporters to rotate, behind enough duplicates to
@@ -435,7 +444,7 @@ describe('origin block detector', () => {
       edgeId: s.edgeA,
       weightedFirst: true,
     });
-    const capped = (await s.t.query(internal.edgeDetector.relayWindow, {
+    const capped = (await s.t.action(internal.edgeDetector.relayWindow, {
       relayId: s.relayId,
       now: NOW,
     }))!;
@@ -450,8 +459,8 @@ describe('origin block detector', () => {
     const samples = await s.t.run((ctx) => ctx.db.query('relaySamples').collect());
     expect(samples.some((x) => x.at === NOW)).toBe(false);
     // Raise the cap over the row count and the very same rows rotate.
-    await s.t.run((ctx) => upsertSettingRow(ctx, 'edge.detect.maxReportRowsPerEval', '2000'));
-    const whole = (await s.t.query(internal.edgeDetector.relayWindow, {
+    __setEdgePlumbingForTests(null);
+    const whole = (await s.t.action(internal.edgeDetector.relayWindow, {
       relayId: s.relayId,
       now: NOW,
     }))!;
@@ -627,7 +636,6 @@ describe('origin block detector', () => {
     await s.t.run(async (ctx) => {
       await upsertSettingRow(ctx, 'edge.enabled', 'true');
       await upsertSettingRow(ctx, 'edge.probe.enabled', 'true');
-      await upsertSettingRow(ctx, 'edge.probe.sourceSpacingMs', '1500');
     });
     await bulkReports(s.t, { zeroWeight: 0, weighted: 10 });
     const r = await s.t.action(internal.edgeDetector.run, {});
@@ -711,7 +719,7 @@ describe('origin block detector', () => {
         lastStatsAt: NOW - 60_000,
       }),
     );
-    const w = (await t.query(internal.edgeDetector.relayWindow, { relayId, now: NOW }))!;
+    const w = (await t.action(internal.edgeDetector.relayWindow, { relayId, now: NOW }))!;
     expect(w.usersOnline).toBeNull();
     expect(w.nodeOnline).toBeNull();
     expect(w.loadStale).toBe(true);
@@ -746,6 +754,8 @@ describe('origin block detector', () => {
   test('edge evidence from probes + every gate open → a detector burn rotation of that edge; gates closed → veto recorded', async () => {
     vi.useFakeTimers({ now: NOW });
     const s = await seed();
+    // Probe-only automatic rotation is an opt-in (off by default).
+    await s.t.run((ctx) => upsertSettingRow(ctx, 'edge.detect.allowProbeOnlyAutoRotate', 'true'));
     await warmBaseline(s.t, s.relayId, 100);
     await nodeLoad(s.t, s.serverId, 5);
     const unreachable = (edgeId: Id<'edges'>) =>

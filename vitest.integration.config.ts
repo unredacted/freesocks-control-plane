@@ -14,9 +14,9 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['convex/**/*.integration.test.ts'],
-    // Only THIS checkout: `.claude/worktrees/*` are sibling checkouts of the repo
-    // living inside it, and a bare `**` glob would run their (older) copies too.
-    exclude: ['**/node_modules/**', '**/.claude/**', '**/dist/**'],
+    // `include` is anchored at this checkout's root, so sibling checkouts nested
+    // in ignored directories are never collected.
+    exclude: ['**/node_modules/**', '**/dist/**'],
     testTimeout: 60_000,
     hookTimeout: 60_000,
     // Real panel state is shared across the lifecycle assertions — run serially.

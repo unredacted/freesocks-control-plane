@@ -54,18 +54,3 @@ export function templateDrift(
 export async function templateHash(d: DesiredTemplate): Promise<string> {
   return sha256Hex(d.kind === 'json' ? canonicalJson(d.body) : d.body);
 }
-
-/** The hash of what the backend holds, in the same terms, or null when it holds nothing. */
-export async function liveTemplateHash(live: {
-  templateJson: unknown | null;
-  encodedTemplateYaml: string | null;
-}): Promise<string | null> {
-  if (live.templateJson !== null && live.templateJson !== undefined)
-    return sha256Hex(canonicalJson(live.templateJson));
-  if (live.encodedTemplateYaml) {
-    const bin = atob(live.encodedTemplateYaml);
-    const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
-    return sha256Hex(new TextDecoder().decode(bytes));
-  }
-  return null;
-}

@@ -26,6 +26,7 @@
  *    `qualificationEvidenceIds`) is what the go-live mutation compares against
  *    `vectorNow` before it binds.
  */
+import { verificationListenersOf } from './lib/edges/verificationContext';
 import { v } from 'convex/values';
 import type { FunctionReturnType } from 'convex/server';
 import { internalAction, internalQuery } from './_generated/server';
@@ -35,7 +36,8 @@ import type { Doc, Id } from './_generated/dataModel';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import { RENDER_CLIENT_FAMILIES, resolveEdgeConfig, type EdgeConfig } from './lib/edgeConfig';
 import { classifyClient } from './lib/edges/clientFamilies';
-import { cohortsForRelay, type Cohort } from './lib/edges/cohorts';
+import type { Cohort } from './lib/edges/cohorts';
+import { cohortValidator, walkRelayCohorts } from './edgeCohorts';
 import { formatSupported, type RenderFormat } from './lib/edges/protocols';
 import { fnv1a64Hex } from './lib/edges/registration';
 import { effectiveRule, type DeliveryStyle } from './lib/edges/render';
@@ -44,7 +46,9 @@ import { verificationCurrent } from './lib/edges/verification';
 import { deliveryStyleOf, l7QualificationCurrent, publishedEdgesOf } from './edgeRender';
 import type { HostObservation } from './edgeHostHides';
 import { liveEdgesOfRelay } from './lib/edges/relayGuards';
+import type { VectorActivation } from './lib/edges/setupRuns';
 import { listenersOf } from './relayListeners';
+import { activationVectorFor } from './nodeActivation';
 
 export const REHEARSAL_MAX_ATTEMPTS = 3;
 
@@ -64,6 +68,8 @@ export interface RehearsalVector {
   renderConfigHash: string;
   publicationEpoch: number;
   qualificationEvidenceIds: string[];
+  /** The activation candidate rendered (an enrolled node's running activation), else null. */
+  activation?: VectorActivation | null;
 }
 
 export interface RehearsalFailure {
@@ -112,7 +118,10 @@ async function vectorOf(
   cfg: EdgeConfig,
   now: number,
 ): Promise<{ vector: RehearsalVector; proofsExpired: Id<'edges'>[] }> {
-  const listeners = (await listenersOf(ctx, relay._id)).filter((l) => !l.retired);
+  // With the enrolled node's auth revision: an L4 tick binds to it.
+  const listeners = (
+    await verificationListenersOf(ctx.db, relay, await listenersOf(ctx, relay._id))
+  ).filter((l) => !l.retired);
   const edges = (await liveEdgesOfRelay(ctx.db, relay._id)).filter(
     (e) => e.publication === 'published' && e.status === 'active',
   );
@@ -131,6 +140,7 @@ async function vectorOf(
       renderConfigHash: renderConfigHashOf(cfg.render),
       publicationEpoch: relay.publicationEpoch,
       qualificationEvidenceIds: evidence.sort(),
+      activation: await activationVectorFor(ctx, relay),
     },
     proofsExpired,
   };
@@ -147,14 +157,22 @@ export const vectorNow = internalQuery({
   },
 });
 
-export function sameVector(a: RehearsalVector, b: RehearsalVector): boolean {
-  return canonicalJson(a) === canonicalJson(b);
-}
-
-/** Everything one rehearsal attempt reads, in one transaction. */
+/**
+ * Everything one rehearsal attempt reads, in one transaction. With
+ * `activationRunId` (an enrolled node's setup run) the bodies are rendered
+ * from exactly that activation's candidates (`publishedEdgesOf`'s internal
+ * activation context): a live node's replacement is proven on the edges the
+ * commit will promote, not on what members hold now.
+ */
 export const context = internalQuery({
-  args: { relayId: v.id('relays'), darkCohortKeys: v.array(v.string()) },
-  handler: async (ctx, { relayId, darkCohortKeys }) => {
+  args: {
+    relayId: v.id('relays'),
+    darkCohortKeys: v.array(v.string()),
+    activationRunId: v.optional(v.id('panelActivationRuns')),
+    /** Every cohort of the origin, walked by the action beforehand (edgeCohorts.ts). */
+    cohorts: v.array(cohortValidator),
+  },
+  handler: async (ctx, { relayId, darkCohortKeys, activationRunId, cohorts: all }) => {
     const relay = await ctx.db.get(relayId);
     if (!relay || !relay.backendServerId) return null;
     const server = await ctx.db.get(relay.backendServerId);
@@ -176,9 +194,17 @@ export const context = internalQuery({
         (deliveryStyle === 'subscription' || f === 'links') &&
         protos.some((p) => formatSupported(p, f)),
     );
-    const { published, matchers } = await publishedEdgesOf(ctx, relay, { includeIneligible: true });
+    const { published, matchers } = await publishedEdgesOf(
+      ctx,
+      relay,
+      activationRunId ? { kind: 'activation', activationRunId } : { kind: 'member' },
+      { includeIneligible: true },
+    );
+    // The activation the rehearsal was asked for must still be the node's
+    // current, running one, or there is nothing it could prove.
+    const activationCurrent =
+      !activationRunId || vector.activation?.runId === (activationRunId as string);
     const dark = new Set(darkCohortKeys);
-    const all = await cohortsForRelay(ctx, relay);
     const cohorts = all
       .filter((c) => !dark.has(c.key))
       .map((c) => ({ ...c, subscriptionId: c.subscriptionId as Id<'subscriptions'> }));
@@ -220,6 +246,7 @@ export const context = internalQuery({
       familiesDisabled: RENDER_CLIENT_FAMILIES.filter((f) => !cfg.render.clients[f].enabled),
       proofsExpired,
       vector,
+      activationCurrent,
       cohorts: cohorts as Cohort[],
       totalCohorts: all.length,
       subs,
@@ -282,18 +309,31 @@ async function rehearseBody(
 }
 
 export const run = internalAction({
-  args: { relayId: v.id('relays'), darkCohortKeys: v.array(v.string()) },
-  handler: async (ctx, { relayId, darkCohortKeys }): Promise<RehearsalResult> => {
+  args: {
+    relayId: v.id('relays'),
+    darkCohortKeys: v.array(v.string()),
+    activationRunId: v.optional(v.id('panelActivationRuns')),
+  },
+  handler: async (ctx, { relayId, darkCohortKeys, activationRunId }): Promise<RehearsalResult> => {
     let attempts = 0;
     let last: RehearsalResult | null = null;
     while (attempts < REHEARSAL_MAX_ATTEMPTS) {
       attempts++;
       const before = await observer(ctx, relayId);
-      const c = await ctx.runQuery(internal.edgeRehearsal.context, { relayId, darkCohortKeys });
+      const c = await ctx.runQuery(internal.edgeRehearsal.context, {
+        relayId,
+        darkCohortKeys,
+        ...(activationRunId ? { activationRunId } : {}),
+        cohorts: await walkRelayCohorts(ctx, relayId),
+      });
       if (!c) throw new Error('rehearsal: the origin has no backend origin');
       const failures: RehearsalFailure[] = [];
       let source: RehearsalResult['source'] = 'members';
-      if (c.cohorts.length > 0) {
+      if (!c.activationCurrent) {
+        // A newer approval (or none) owns the node now: this run proves nothing.
+        for (const f of c.formats.length ? c.formats : (['links'] as RenderFormat[]))
+          failures.push({ cohortKey: 'activation', format: f, reason: 'activation_superseded' });
+      } else if (c.cohorts.length > 0) {
         for (const cohort of c.cohorts) {
           const sub = c.subs[cohort.key];
           if (!sub) {

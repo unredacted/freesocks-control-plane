@@ -164,6 +164,11 @@ export const PREFLIGHT_BLOCKER_CODES = [
   'dns_zone_missing',
   'origin_transport_missing',
   'zone_mode_unknown',
+  // the fleet guards on an automatic rotation (lib/edges/fleet.ts)
+  'fleet_brake',
+  'fleet_daily_cap',
+  // selection on an enrolled node: nothing fits the shape it was approved for
+  'outside_approved_shape',
 ] as const;
 export type PreflightBlockerCode = (typeof PREFLIGHT_BLOCKER_CODES)[number];
 
@@ -180,7 +185,11 @@ export const PREFLIGHT_WARNING_CODES = [
 ] as const;
 export type PreflightWarningCode = (typeof PREFLIGHT_WARNING_CODES)[number];
 
-/** Attention items, in the order the server ranks them (most urgent first). */
+/**
+ * Attention items. The server ranks them by its own list (`edgeOperator`
+ * ATTENTION_RANK, pinned by a test to hold exactly these kinds); new kinds are
+ * appended here.
+ */
 export const ATTENTION_KINDS = [
   'quarantine',
   'needs_operator',
@@ -200,9 +209,20 @@ export const ATTENTION_KINDS = [
   'account_unqualified',
   'account_untested',
   'test_key_cleanup',
-  'drift',
   'restore_in_progress',
   'maintenance_frozen',
+  // Operations safety (docs/edges.md § "Operations safety").
+  'fleet_brake',
+  'fleet_rotation_cap',
+  'rotation_stuck',
+  'account_api_failing',
+  'health_stale',
+  'billable_idle',
+  'delivery_refusals',
+  'family_rule_disabled',
+  'node_ready_to_protect',
+  'node_awaiting_approval',
+  'account_budget_unlimited',
 ] as const;
 export type AttentionKind = (typeof ATTENTION_KINDS)[number];
 
@@ -228,6 +248,9 @@ export const ATTENTION_ACTIONS = [
   'thaw',
   'rebalance',
   'require_edges',
+  // An enrolled node: start protecting it (the protect sheet), or open its page under Servers.
+  'protect_node',
+  'open_node',
 ] as const;
 export type AttentionAction = (typeof ATTENTION_ACTIONS)[number];
 
@@ -256,6 +279,12 @@ export const DELIVERY_UNAVAILABLE_CODES = [
   'ambiguous_match',
   'entry_mismatch',
   'leak_detected',
+  // the node is not live; the policy moved during the render; the client's app family is off
+  'node_gated',
+  'policy_moved',
+  'family_disabled',
+  // the format's renderer could not rewrite the body for another reason
+  'render_failed',
 ] as const;
 export type DeliveryUnavailableCode = (typeof DELIVERY_UNAVAILABLE_CODES)[number];
 
@@ -320,6 +349,15 @@ export const WORKFLOW_CODES = [
   'plan_changed',
   'consent_withdrawn_hidden',
   'account_switch_late',
+  // "Serve this node directly again" on a node whose members already get its direct address
+  'not_edge_required',
+  // "Protect again" (a re-protect run) on a node that is not live behind edges yet, or
+  // that is not an enrolled node
+  'reprotect_not_bound',
+  'reprotect_not_enrolled',
+  // ... served through more than one provider account, or with no room for the new addresses
+  'reprotect_mixed_accounts',
+  'reprotect_no_room',
 ] as const;
 export type WorkflowCode = (typeof WORKFLOW_CODES)[number];
 
@@ -341,6 +379,33 @@ export const SETUP_RUN_STAGES = [
   'done',
 ] as const;
 export type SetupRunStage = (typeof SETUP_RUN_STAGES)[number];
+
+/**
+ * The machine's ten stages folded onto the four plain ones the operator sees
+ * (`done` = 5, past the last). The one table both the CMS stage labels and the
+ * server's origin status (`convex/lib/edges/originStatus.ts`) read, so a stage
+ * never has two names: `publish` is where an enrolled node waits for its
+ * go-live approval, so it belongs to "Going live" (4).
+ */
+export const SETUP_RUN_STAGE_STEP: Record<SetupRunStage, 1 | 2 | 3 | 4 | 5> = {
+  prepare: 1,
+  credential: 1,
+  provision: 1,
+  verify: 2,
+  try_it: 3,
+  publish: 4,
+  hide_direct_hosts: 4,
+  rehearse: 4,
+  go_live: 4,
+  done: 5,
+};
+
+/**
+ * The most transports one guided run protects. A node with more frontable
+ * transports is planned with `tooManyInbounds`; the operator then names up to
+ * this many (`listenerKeys` on the plan and on the create).
+ */
+export const SETUP_RUN_MAX_LISTENERS = 8;
 
 /**
  * running = a step is scheduled; waiting = a rotation / Host settle / probe
@@ -386,6 +451,7 @@ export const SETUP_ACCOUNT_REASONS = [
   'account_untested',
   'account_disabled',
   'layer_mismatch',
+  'origin_port_not_carried',
   'account_capacity_reached',
   'account_budget_exhausted',
   'provider_mismatch',
@@ -410,3 +476,12 @@ export const INBOUND_UNSUPPORTED_CODES = [
   'invalid',
 ] as const;
 export type InboundUnsupportedCode = (typeof INBOUND_UNSUPPORTED_CODES)[number];
+
+/**
+ * Why an L4 endpoint's tick no longer counts (lib/edges/verification.ts
+ * `verificationStaleReason`): the address, the listener or its configuration
+ * moved, or (an enrolled node) only its REALITY key, short ids or clock bounds
+ * did, so no client has proven the new key through that address.
+ */
+export const VERIFICATION_STALE_REASONS = ['verification_stale', 'reality_key_changed'] as const;
+export type VerificationStaleReason = (typeof VERIFICATION_STALE_REASONS)[number];

@@ -4,12 +4,7 @@
  * the things an operator should notice. No em-dashes, no API paths, no bare
  * code words: copy only.
  */
-import type {
-  TransportView,
-  NodeView,
-  ServerObserveState,
-  ServerTree,
-} from '../../../../../shared/contracts/servers';
+import type { TransportView, NodeView, ServerTree } from '../../../../../shared/contracts/servers';
 
 export type Dot = 'green' | 'amber' | 'red' | 'grey';
 
@@ -49,20 +44,6 @@ export function serverNamesLabel(i: Pick<TransportView, 'serverNames'>): string 
   const n = i.serverNames.length;
   if (n === 0) return 'No server names';
   return n === 1 ? '1 server name' : `${n} server names`;
-}
-
-/** How fresh the picture is, in the words of someone reading the page. */
-export function observedWords(s: ServerObserveState, observeOn: boolean, now: number): string {
-  if (s.ok === null)
-    return observeOn
-      ? 'Not read yet. It is read every ten minutes, or press Refresh.'
-      : 'Not read yet. Press Refresh to read it once, or turn on regular reading below.';
-  const when = s.observedAt ? ago(now - Date.parse(s.observedAt)) : null;
-  if (!s.ok)
-    return when
-      ? `The last read failed. Showing what was read ${when}.`
-      : 'The backend could not be read. Check the address and the API token of this server.';
-  return `Read ${when ?? 'just now'}.`;
 }
 
 export function ago(ms: number): string {
@@ -205,11 +186,6 @@ function list(names: readonly string[]): string {
   return `${names.slice(0, 3).join(', ')} and ${names.length - 3} more`;
 }
 
-/** A profile was edited on the backend by something other than this page. */
-export function foreignEditWords(name: string, agoWords: string): string {
-  return `${name} was changed on the backend ${agoWords}, not from here. What this page shows of it may be out of date.`;
-}
-
 /** One line for a toast when a server call failed, from its error code. */
 const ERROR_WORDS: Record<string, string> = {
   'backend.panel_read_failed':
@@ -240,11 +216,20 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.squad_has_members': 'This group still has members. Move them first.',
   'servers.squad_name_taken': 'A group with that name already exists.',
   // Nodes.
-  'servers.node_name_taken': 'A node with that name already exists.',
+  'servers.node_name_taken': 'A node has, or had, that name. Pick another one.',
   'servers.node_relay_origin':
     'An origin in Edges covers this node. Its address, port and transports are changed there, and it is not turned off or removed here.',
-  'servers.node_rename_referenced':
-    'Origins or pinned members refer to this node by name, so it cannot be renamed yet.',
+  'servers.node_rename_separate': 'A node is renamed on its own. Use Rename.',
+  'servers.node_rename_running': 'This node is being renamed. Wait for that to finish.',
+  'servers.node_rename_not_running': 'That rename is not running any more.',
+  'servers.rename_host_refused':
+    'The backend refused to rename one of its addresses. Fix what it refused, then press Retry.',
+  'servers.node_rename_foreign_hosts':
+    'An origin in front of this node uses Hosts the operator writes. Their remarks name the node, and they are not changed from here.',
+  'servers.node_name_origin':
+    'An origin in front of this node keeps its name as a DNS label: lower-case letters, digits and dashes only.',
+  'servers.node_name_too_long':
+    'With this name a Host remark would be longer than the backend allows. Pick a shorter name.',
   'servers.node_still_on': 'Turn the node off first, and wait for that to finish.',
   'servers.node_off': 'This node is turned off.',
   'servers.already': 'It is already in that state.',
@@ -258,6 +243,27 @@ const ERROR_WORDS: Record<string, string> = {
     'A server name family manages the names of this transport. Change them under Edges.',
   'servers.not_reality': 'That transport does not use REALITY.',
   'servers.too_many_names': 'That is more server names than one transport may carry.',
+  'servers.not_admitted': 'The change was not sent. Nothing on the backend changed.',
+  // Ports and new transports.
+  'servers.port_loopback':
+    "This transport listens only inside the node, behind the node's own proxy. Its port is not changed here.",
+  'servers.port_not_single':
+    'This transport listens on more than one port. Only a single port is changed here.',
+  'servers.port_edge_bound':
+    'An origin in Edges forwards to this transport at its port. Remove that protection before moving it.',
+  'servers.port_taken': 'A node on this transport already uses that port. Pick another one.',
+  'servers.port_change_staged':
+    "A port change waits until every node's firewall lets the new port in. Use Change port.",
+  'servers.port_change_waiting':
+    'A port change of this profile is still waiting. Finish or cancel it first.',
+  'servers.port_change_not_waiting': 'That port change is not waiting any more.',
+  'servers.firewall_unconfirmed':
+    'Not every node has confirmed that its firewall lets the new port in.',
+  'servers.firewall_role_confirms':
+    'The node role confirms this node itself, once it has opened the port. Run the role on it.',
+  'servers.tag_taken':
+    'A transport with that tag already exists on this backend. Pick another tag.',
+  'servers.template_invalid': 'The transport template does not fit. Check the fields.',
   'servers.profile_malformed': 'The profile on the backend is not in a shape this can edit safely.',
   'servers.inbound_uuid_changed':
     'The backend replaced a transport while this was applied. Look at the backend before anything else.',
@@ -351,10 +357,12 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.run_superseded': 'A newer approval replaced this one.',
   'servers.run_not_running': 'This activation is not running.',
   'servers.revision_moved': 'Something changed since the approval. Review and approve again.',
-  'servers.node_not_approved': 'The node behind this origin is not approved for delivery yet.',
-  'servers.standbys_missing': 'Protect this node in Edges first: its standbys come from there.',
+  'servers.node_not_approved':
+    'The node is waiting for your approval to go live. Approve it in its protection progress.',
+  'servers.standbys_missing':
+    'Protect this node in Edges first. Its new addresses come from there.',
   'servers.standbys_unverified':
-    'Not every standby of this node is verified yet. Finish the Edges setup up to publish.',
+    'Not every new address of this node is tested yet. Try each one in its protection progress.',
   'servers.credential_unresolved':
     'A test credential of this node has an unknown outcome on the backend. Look at its users.',
   'servers.delete_not_applied': 'An origin record was not removed. It is tried again.',
@@ -363,7 +371,6 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.relay_draining': 'Its edges are still being taken down.',
   'servers.credentials_pending': 'Its test credentials are still being removed from the backend.',
   'servers.retirement_failed': 'Retiring stopped on an error. It is tried again shortly.',
-  'servers.migration_target': 'The target node must be live.',
   'servers.migration_not_built':
     'Moving members to another node is not available yet. Choose to keep them dark.',
 };
@@ -382,7 +389,17 @@ export function shapeWords(s: { transport: string; fronting: string }): string {
   return `${transport}, ${fronting}`;
 }
 
-/** One sentence and a dot for where an enrolled node is on its way to members. */
+/** The open guided setup run protecting a fronted node, as `NodeIntentView.protection` carries it. */
+export interface ProtectionLike {
+  state: string;
+  need: string | null;
+}
+
+/**
+ * One sentence and a dot for where an enrolled node is on its way to members.
+ * A fronted node (`mode.shape.fronting` not direct) goes live through its
+ * protection in Edges: Start, try each address, approve go-live.
+ */
 export function stageWords(i: {
   stage: string;
   disposition: string;
@@ -390,6 +407,8 @@ export function stageWords(i: {
   code: string | null;
   maintenance: boolean;
   retirement: { stage: string } | null;
+  mode?: { shape: { fronting: string } };
+  protection?: ProtectionLike | null;
 }): { dot: Dot; sentence: string } {
   if (i.retirement) {
     const s = i.retirement.stage;
@@ -403,6 +422,27 @@ export function stageWords(i: {
     return { dot: 'amber', sentence: 'Closed for maintenance. Finish it, then approve again.' };
   if (i.state === 'blocked')
     return { dot: 'red', sentence: `Stopped: ${serverErrorWords(i.code)}` };
+  const fronted = !!i.mode && i.mode.shape.fronting !== 'direct';
+  // Once approved (activating) the run's parked need is stale for a moment: the stage speaks.
+  const p = fronted && i.stage !== 'activating' ? (i.protection ?? null) : null;
+  if (p?.state === 'needs_you') {
+    if (p.need === 'node_not_approved')
+      return {
+        dot: 'amber',
+        sentence:
+          i.stage === 'live'
+            ? 'Live. Its new addresses are tested and wait for you to approve go-live.'
+            : 'Tested. Waiting for you to approve go-live.',
+      };
+    return {
+      dot: 'amber',
+      sentence:
+        i.stage === 'live'
+          ? 'Live. Its protection in Edges needs you.'
+          : 'Being protected in Edges. It needs you there.',
+    };
+  }
+  if (p && i.stage !== 'live') return { dot: 'amber', sentence: 'Being protected in Edges.' };
   switch (i.stage) {
     case 'registered':
       return {
@@ -414,11 +454,23 @@ export function stageWords(i: {
     case 'machine_applied':
       return { dot: 'amber', sentence: 'The role applied it. Checking the machine.' };
     case 'machine_ready':
-      return { dot: 'amber', sentence: 'The machine is ready. Test the connection, then approve.' };
+      return fronted
+        ? { dot: 'amber', sentence: 'The machine is ready. Protect it from Edges to go live.' }
+        : { dot: 'amber', sentence: 'The machine is ready. Test the connection, then approve.' };
     case 'candidates_verified':
-      return { dot: 'amber', sentence: 'Tested. Review and approve to release it to members.' };
+      return fronted
+        ? {
+            dot: 'amber',
+            sentence: 'Its addresses are tested. Approve go-live in its protection progress.',
+          }
+        : { dot: 'amber', sentence: 'Tested. Review and approve to release it to members.' };
     case 'awaiting_approval':
-      return { dot: 'amber', sentence: 'Waiting for your approval.' };
+      return fronted
+        ? {
+            dot: 'amber',
+            sentence: 'Waiting for you to approve go-live in its protection progress.',
+          }
+        : { dot: 'amber', sentence: 'Waiting for your approval.' };
     case 'activating':
       return {
         dot: 'amber',
@@ -431,6 +483,31 @@ export function stageWords(i: {
     default:
       return { dot: 'grey', sentence: 'Enrolled.' };
   }
+}
+
+/** The line beside "Open progress" on a fronted node's page, while its protection is open. */
+export function protectionWords(p: ProtectionLike, stage?: string): string {
+  if (stage === 'activating') return 'Approved. Its protection carries on in a moment.';
+  if (p.state === 'needs_you')
+    return p.need === 'node_not_approved'
+      ? 'Its new addresses are tested. Approve go-live below, or in its protection progress.'
+      : 'Its protection in Edges needs you.';
+  return 'Being protected in Edges. It carries on by itself.';
+}
+
+/**
+ * One standby a fronted node's approval releases, in words:
+ * `main: members get 203.0.113.7:443, an address in Main account.`
+ */
+export function standbyWords(s: {
+  listenerKey: string;
+  layer: 'l4' | 'l7';
+  endpoint: string | null;
+  accountName: string | null;
+}): string {
+  const kind = s.layer === 'l7' ? 'a CDN name' : 'an address';
+  const where = s.accountName ? `, ${kind} in ${s.accountName}` : '';
+  return `${s.listenerKey}: members get ${s.endpoint ?? 'a new address'}${where}.`;
 }
 
 /** The setup row in Needs you, or null when there is nothing to do. */
@@ -454,6 +531,22 @@ export function serverErrorWords(code: string | null | undefined): string {
 }
 /** Every code with its own words (pinned by the tests against the server's vocabulary). */
 export const WORDED_CODES: readonly string[] = Object.keys(ERROR_WORDS);
+
+/**
+ * The review card's blockers: a few codes read differently there than as a
+ * refused write (a toast); the rest share `serverErrorWords`.
+ */
+const BLOCKER_WORDS: Record<string, string> = {
+  'servers.stage':
+    'The node is not at a step where it can be approved. Wait for the step it is on to finish.',
+  'servers.maintenance_required':
+    'Put the node in maintenance first: a live node gets a new address only while members are held off it.',
+  'servers.standbys_unverified:key_changed':
+    'The node’s REALITY key changed since its new addresses were tried. Try each one again with the new key (its protection progress, or the node in Edges), then approve.',
+};
+export function blockerWords(code: string): string {
+  return BLOCKER_WORDS[code] ?? BLOCKER_WORDS[code.split(':')[0] ?? ''] ?? serverErrorWords(code);
+}
 
 // --- one change to a backend, in words ------------------------------------------------------------
 
@@ -541,4 +634,134 @@ export function namesDelta(before: readonly string[], after: readonly string[]):
   if (added) parts.push(`${added} added`);
   if (removed) parts.push(`${removed} removed`);
   return parts.join(', ');
+}
+
+// --- port changes and new transports ----------------------------------------------------------------
+
+export interface PortChangeLike {
+  transportTag: string;
+  fromPort: number | null;
+  toPort: number;
+  state: 'waiting' | 'applying' | 'applied' | 'refused' | 'cancelled' | 'recovered';
+  code: string | null;
+  nodes: { name: string; confirmedBy: 'role' | 'operator'; state: string }[];
+}
+
+/** "Move PRIVACY_REALITY from port 443 to 8443". */
+export function portChangeTitle(c: Pick<PortChangeLike, 'transportTag' | 'fromPort' | 'toPort'>) {
+  return c.fromPort === null
+    ? `Move ${c.transportTag} to port ${c.toPort}`
+    : `Move ${c.transportTag} from port ${c.fromPort} to ${c.toPort}`;
+}
+
+/** Where a port change stands, and what (if anything) the operator should do. */
+export function portChangeWords(c: PortChangeLike): { dot: Dot; sentence: string } {
+  const waiting = c.nodes.filter((n) => n.state === 'waiting');
+  switch (c.state) {
+    case 'waiting': {
+      if (waiting.length === 0)
+        return c.code === 'servers.op_running' || c.code === 'servers.op_uncertain'
+          ? {
+              dot: 'amber',
+              sentence: `Every node lets port ${c.toPort} in. Waiting for another change to this profile to finish.`,
+            }
+          : { dot: 'amber', sentence: `Every node lets port ${c.toPort} in. Sending it now.` };
+      const n = waiting.length === 1 ? '1 node' : `${waiting.length} nodes`;
+      return {
+        dot: 'amber',
+        sentence: `Nothing is sent until every node lets port ${c.toPort} in. Waiting for ${n}.`,
+      };
+    }
+    case 'applying':
+      return {
+        dot: 'amber',
+        sentence:
+          'Sent. The nodes on it are closed until they are verified and approved on the new port.',
+      };
+    case 'applied':
+      return {
+        dot: 'green',
+        sentence: `Done. The nodes listen on port ${c.toPort}, and come back once verified and approved.`,
+      };
+    case 'refused':
+      return { dot: 'grey', sentence: `Not sent: ${serverErrorWords(c.code)}` };
+    case 'cancelled':
+      return { dot: 'grey', sentence: 'Cancelled. Nothing was sent.' };
+    case 'recovered':
+      return {
+        dot: 'red',
+        sentence: `Settled by hand. Whether the nodes listen on port ${c.toPort} is not known: look at the profile and the nodes.`,
+      };
+  }
+}
+
+/** One node a port change waits for, in words. */
+export function firewallNodeWords(
+  n: { confirmedBy: 'role' | 'operator'; state: string },
+  port: number,
+): string {
+  if (n.state === 'confirmed') return `Lets port ${port} in.`;
+  if (n.state === 'cancelled') return 'Not needed any more.';
+  return n.confirmedBy === 'role'
+    ? `Waiting for the node role to open port ${port} and report it. Run the role on this node.`
+    : `No role reports for this node. Open port ${port} in its firewall, then confirm it here.`;
+}
+
+const TEMPLATE_WORDS: Record<string, string> = {
+  reality: 'VLESS over TCP with REALITY',
+  'xhttp-reality': 'VLESS over XHTTP with REALITY',
+  ws: 'VLESS over WebSocket, on loopback behind the node proxy',
+};
+export const templateWords = (kind: string): string => TEMPLATE_WORDS[kind] ?? kind;
+
+/**
+ * Whether a transport's port is changed from here: one plain port, not
+ * loopback (a loopback transport sits behind the node's own proxy, whose
+ * route to it is a node setting). The server is what decides.
+ */
+export function portChangeable(i: Pick<TransportView, 'port' | 'listen'>): boolean {
+  if (i.port === null) return false;
+  const l = (i.listen ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, '');
+  return !(l === 'localhost' || l === '::1' || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(l));
+}
+
+// --- renaming a node ----------------------------------------------------------------------------
+
+export interface RenameLike {
+  from: string;
+  to: string;
+  state: 'running' | 'done' | 'failed';
+  step: 'backend' | 'hosts' | 'subscriptions' | 'done';
+  code: string | null;
+  refusedHosts?: { remark: string; code: string }[];
+}
+
+const RENAME_STEP: Record<RenameLike['step'], string> = {
+  backend: 'Renaming it on the backend.',
+  hosts: 'Renaming the addresses that carry its name.',
+  subscriptions: "Moving members' keys to the new name.",
+  done: 'Finishing.',
+};
+
+/** Where a rename stands. Members keep connecting throughout; the old name keeps working. */
+export function renameWords(r: RenameLike): { dot: Dot; sentence: string } {
+  if (r.state === 'done') return { dot: 'green', sentence: `Renamed from ${r.from}.` };
+  if (r.state === 'failed')
+    return { dot: 'grey', sentence: `Not renamed to ${r.to}: ${serverErrorWords(r.code)}` };
+  if (r.code === 'servers.rename_host_refused')
+    return {
+      dot: 'red',
+      sentence: `Renaming to ${r.to} holds: the backend refused to rename ${r.refusedHosts?.map((h) => h.remark).join(', ') || 'an address'}. Members keep connecting. Fix what it refused, then retry.`,
+    };
+  const waiting =
+    r.code === 'servers.op_running' || r.code === 'servers.op_uncertain'
+      ? ' Waiting for a change on the backend to settle.'
+      : '';
+  return {
+    dot: 'amber',
+    sentence: `Being renamed from ${r.from} to ${r.to}. ${RENAME_STEP[r.step]}${waiting} Members keep connecting.`,
+  };
 }

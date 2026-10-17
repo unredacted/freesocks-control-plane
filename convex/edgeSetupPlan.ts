@@ -29,20 +29,25 @@ import { mapTransportsToListeners } from './lib/edges/inboundMapping';
 import { applyOriginProbes, originProbeTargets } from './edgeOriginProbe';
 import type { OriginProbeOutcome } from './lib/edges/originProbe';
 import { classifyDirectHosts } from './lib/edges/directHosts';
-import { cohortReportForOrigin } from './lib/edges/cohorts';
-import { listenerLayers } from './lib/edges/layers';
 import { templateHostRemark } from './lib/edges/hosts';
 import { accountsForSlot } from './lib/edges/rotation';
-import { EDGE_PROVIDER_CAPABILITIES, edgeLayerOf } from './lib/edges/providers/capabilities';
+import {
+  EDGE_PROVIDER_CAPABILITIES,
+  edgeLayerOf,
+  originPortCarriedBy,
+} from './lib/edges/providers/capabilities';
+import type { EdgeProviderId } from './lib/edgeProviderIds';
 import { todayKey, liveEdgesOfAccount, relayForBackendNode } from './relays';
 import { accountTested } from './edgeProviderAccounts';
 import { listenersOf } from './relayListeners';
+import { enrolledOriginOf, withVerifiedIngress } from './nodeIntents';
 import { isTerminalRunState, planHashOf, slugForNode } from './lib/edges/setupRuns';
 import type { SetupPlanAccount, SetupPlanInbound, SetupPlanSnapshot } from './lib/edges/setupRuns';
 import type { ListenerSpecInput } from './lib/edges/registration';
 import type { EdgeLayer } from './lib/edges/providers/capabilities';
+import { SETUP_RUN_MAX_LISTENERS } from '../src/shared/contracts/edgeCodes';
 
-const MAX_REQUIRED_LISTENERS = 8;
+const MAX_REQUIRED_LISTENERS = SETUP_RUN_MAX_LISTENERS;
 
 export interface PlanOps {
   listNodeInbounds(
@@ -123,10 +128,11 @@ async function planContextOf(
     )
       .filter((r) => !relay || r._id !== relay._id)
       .map((r) => r.slug);
-    const { cohorts, total } = await cohortReportForOrigin(ctx, {
-      backendServerId,
-      nodeName: node.name,
-    });
+    // An enrolled node is planned from its intent (the origin FCP gives the
+    // role and its declared ingress), never from the backend's node row: that
+    // address is the MANAGEMENT one, and a loopback WebSocket behind Caddy is
+    // only frontable through the ingress.
+    const enrolled = await enrolledOriginOf(ctx, backendServerId, node.name);
     return {
       backend: server.backend as string,
       node: {
@@ -134,6 +140,7 @@ async function planContextOf(
         address: node.address ?? null,
         port: node.port ?? null,
       },
+      enrolled,
       relay: relay
         ? {
             id: relay._id,
@@ -169,7 +176,6 @@ async function planContextOf(
       familiesDisabled: RENDER_CLIENT_FAMILIES.filter((f) => !cfg.render.clients[f].enabled),
       otherEnabledRelays,
       activeRunId: activeRun ? (activeRun._id as string) : null,
-      members: { cohorts: cohorts.length, total },
     };
   }
 }
@@ -188,17 +194,24 @@ function accountCompatibility(
   // with the provider able to carry the protocol (accountsForSlot's rule).
   for (const inb of required) {
     const spec = inb.listenerSpec as ListenerSpecInput;
+    const proto = {
+      protocol: spec.protocol,
+      streamTransport: spec.streamTransport,
+      security: spec.security,
+    };
     const eligible = accountsForSlot([a], {
       layers: inb.layers,
-      proto: {
-        protocol: spec.protocol,
-        streamTransport: spec.streamTransport,
-        security: spec.security,
-      },
+      proto,
+      originPort: spec.originPort,
       allowL7: true,
     });
     if (eligible.length === 0) {
-      reasons.push('layer_mismatch');
+      // The layer and the transport fit, the port does not (gRPC behind a CDN
+      // is proxied to 443 only): say so, the operator moves the transport.
+      const portOnly =
+        accountsForSlot([a], { layers: inb.layers, proto, allowL7: true }).length > 0 &&
+        !originPortCarriedBy(a.provider as EdgeProviderId, proto, spec.originPort);
+      reasons.push(portOnly ? 'origin_port_not_carried' : 'layer_mismatch');
       break;
     }
   }
@@ -223,6 +236,29 @@ function accountCompatibility(
   };
 }
 
+/**
+ * The transports the operator named for a node with more than one run protects:
+ * each must be a frontable transport of the plan, named once, and there must be
+ * 1..MAX_REQUIRED_LISTENERS of them (`validation` otherwise). Plan order is kept.
+ */
+function chosenListeners(frontable: SetupPlanInbound[], keys: string[]): SetupPlanInbound[] {
+  const wanted = new Set(keys);
+  if (wanted.size !== keys.length)
+    throw new ConvexError({ code: 'validation', message: 'listenerKeys names a transport twice' });
+  if (wanted.size === 0 || wanted.size > MAX_REQUIRED_LISTENERS)
+    throw new ConvexError({
+      code: 'validation',
+      message: `Name between 1 and ${MAX_REQUIRED_LISTENERS} transports`,
+    });
+  const out = frontable.filter((i) => wanted.has(i.listenerKey));
+  if (out.length !== wanted.size)
+    throw new ConvexError({
+      code: 'validation',
+      message: 'listenerKeys names a transport the plan cannot protect',
+    });
+  return out;
+}
+
 /** Build the snapshot for one node. Throws `not_found` / `edge.node_not_found`. */
 /**
  * One step of the plan. A coded refusal passes through; anything else becomes
@@ -243,12 +279,18 @@ async function planStage<T>(doing: string, fn: () => Promise<T>): Promise<T> {
 
 export async function buildPlan(
   ctx: ActionCtx,
-  args: { backendServerId: Id<'backendServers'>; nodeUuid: string },
+  args: { backendServerId: Id<'backendServers'>; nodeUuid: string; listenerKeys?: string[] },
 ): Promise<{ plan: SetupPlanSnapshot; planHash: string }> {
   // Only the two keys: `create` hands its whole argument object here.
   const a = { backendServerId: args.backendServerId, nodeUuid: args.nodeUuid };
   const c = await ctx.runQuery(internal.edgeSetupPlan.planContext, a);
-  const originAddress = c.relay?.originAddress ?? c.node.address;
+  // Whether anyone is on the node: the first page of the cohort walk is enough.
+  const { cohorts } = await ctx.runQuery(internal.edgeCohorts.page, {
+    backendServerId: a.backendServerId,
+    nodeName: c.node.name,
+    cursor: null,
+  });
+  const originAddress = c.relay?.originAddress ?? c.enrolled?.originAddress ?? c.node.address;
   if (!originAddress)
     throw new ConvexError({
       code: 'edge.node_address_missing',
@@ -264,7 +306,11 @@ export async function buildPlan(
     planOps.listNodeInbounds(ctx, a),
   );
   const mapped = await planStage('mapping the transports to listeners', () =>
-    mapTransportsToListeners(inbounds, { existingKeys: [], origin }),
+    mapTransportsToListeners(inbounds, {
+      existingKeys: [],
+      origin,
+      ingress: c.enrolled?.ingress ?? null,
+    }),
   );
   // The mapper leaves HTTP-transport transports without `originTransport` (L4
   // only); the origin probe fills it in, exactly as the transport-candidates
@@ -278,7 +324,10 @@ export async function buildPlan(
           planOps.probeOrigins(ctx, { targets }),
         )
       : [];
-  const candidates = applyOriginProbes(mapped.candidates, outcomes);
+  const candidates = applyOriginProbes(
+    mapped.candidates,
+    withVerifiedIngress(outcomes, c.enrolled),
+  );
   const planInbounds: SetupPlanInbound[] = [];
   for (const cand of candidates) {
     const frontable = cand.layers.layers.length > 0 && !cand.needsName;
@@ -311,8 +360,11 @@ export async function buildPlan(
     });
   }
   const frontable = planInbounds.filter((i) => i.frontable);
-  const tooManyInbounds = frontable.length > MAX_REQUIRED_LISTENERS;
-  const required = frontable.slice(0, MAX_REQUIRED_LISTENERS);
+  const chosen = args.listenerKeys ? chosenListeners(frontable, args.listenerKeys) : null;
+  // A node with more transports than one run protects is planned as is (the
+  // operator sees them all); the run takes only the ones the operator names.
+  const tooManyInbounds = chosen === null && frontable.length > MAX_REQUIRED_LISTENERS;
+  const required = chosen ?? frontable.slice(0, MAX_REQUIRED_LISTENERS);
   // Direct Hosts: the node's own transports are the ACTIVE ones the backend listed.
   const nodeInboundUuids = inbounds.filter((i) => i.active).map((i) => i.configProfileInboundUuid);
   const coveredInboundUuids = required
@@ -323,6 +375,7 @@ export async function buildPlan(
   );
   const classified = classifyDirectHosts(hosts, {
     originAddress,
+    alsoAddresses: c.enrolled?.directAddresses ?? [],
     nodeInboundUuids,
     fcpRemarks: [
       ...(c.relay?.fcpRemarks ?? []),
@@ -363,12 +416,13 @@ export async function buildPlan(
       affectedRelays: c.renderEnabled ? [] : c.otherEnabledRelays,
     },
     familiesDisabled: c.familiesDisabled,
-    emptyNode: c.members.total === 0,
+    emptyNode: cohorts.length === 0,
     existingRelay:
       c.relay && c.relay.setupOwned && !c.relay.deleting
         ? { id: c.relay.id as string, slug: c.relay.slug, setupStage: c.relay.setupStage }
         : null,
     activeRunId: c.activeRunId,
+    enrolled: !!c.enrolled,
   };
   const planHash = await planHashOf({
     listenerSpecs: required.map((i) => i.listenerSpec),
@@ -378,9 +432,17 @@ export async function buildPlan(
   return { plan, planHash };
 }
 
-/** `POST setup-runs/plan {backendServerId, nodeUuid}` (throttled like `quarantine/inspect`). */
+/**
+ * `POST setup-runs/plan {backendServerId, nodeUuid, listenerKeys?}` (throttled like
+ * `quarantine/inspect`). `listenerKeys` names the transports to protect when the
+ * node has more than one run takes (`tooManyInbounds`).
+ */
 export const plan = internalAction({
-  args: { backendServerId: v.id('backendServers'), nodeUuid: v.string() },
+  args: {
+    backendServerId: v.id('backendServers'),
+    nodeUuid: v.string(),
+    listenerKeys: v.optional(v.array(v.string())),
+  },
   handler: async (ctx, a) => {
     const { plan, planHash } = await buildPlan(ctx, a);
     return { ...plan, planHash, generatedAt: new Date().toISOString() };
@@ -388,16 +450,17 @@ export const plan = internalAction({
 });
 
 /**
- * `POST setup-runs {backendServerId, nodeUuid, accountId, planHash, approvedHideUuids[], keepDirect?}`:
- * re-plans, refuses a stale hash (`edge.plan_stale`), an unoffered account
- * (`edge.account_incompatible`), too many transports (`edge.too_many_inbounds`),
- * an unknown approved uuid (`validation`), then persists the run and schedules
- * its first step.
+ * `POST setup-runs {backendServerId, nodeUuid, accountId, planHash, approvedHideUuids[], keepDirect?, listenerKeys?}`:
+ * re-plans (with the same `listenerKeys` the plan was shown with), refuses a
+ * stale hash (`edge.plan_stale`), an unoffered account (`edge.account_incompatible`),
+ * too many transports without a choice (`edge.too_many_inbounds`), an unknown
+ * approved uuid (`validation`), then persists the run and schedules its first step.
  */
 export const create = internalAction({
   args: {
     backendServerId: v.id('backendServers'),
     nodeUuid: v.string(),
+    listenerKeys: v.optional(v.array(v.string())),
     accountId: v.id('edgeProviderAccounts'),
     planHash: v.string(),
     approvedHideUuids: v.array(v.string()),

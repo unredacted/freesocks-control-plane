@@ -110,14 +110,14 @@ describe('listenerLayers', () => {
     expect(r.layers).toEqual(['l4']);
     expect(r.excluded.l7).toBe('protocol_not_http_transport');
   });
-  test('an HTTP transport without an authenticated proof (trojan/ws/tls) is never L7-frontable', () => {
+  test('Trojan over WebSocket has its own authenticated proof and is L7-frontable', () => {
     const r = listenerLayers({
       ...TROJAN_WS,
       originTransport: httpsOrigin(),
       tlsNames: names('a.example.org'),
     });
-    expect(r.layers).toEqual(['l4']);
-    expect(r.excluded.l7).toBe('l7_proof_unsupported');
+    expect(r.layers).toEqual(['l4', 'l7']);
+    expect(r.excluded.l7).toBeUndefined();
     // gRPC VLESS has the proof and is frontable.
     expect(
       listenerLayers({ ...GRPC, originTransport: httpsOrigin(), tlsNames: names('a.example.org') })

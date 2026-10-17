@@ -57,12 +57,6 @@ const targetValidator = v.object({
   host: v.union(v.string(), v.null()),
 });
 
-function sameOptional(a: string | null | undefined, b: string | null | undefined): boolean {
-  const n = (x: string | null | undefined) =>
-    x === undefined || x === null || x === '' ? null : x.trim().toLowerCase();
-  return n(a) === n(b);
-}
-
 /** A live Host is the intended one when remark, transport AND address:port agree. */
 export function matchesIntent(h: BackendHost, intent: HostIntent): boolean {
   return (
@@ -71,13 +65,6 @@ export function matchesIntent(h: BackendHost, intent: HostIntent): boolean {
       intent.inboundUuid.toLowerCase() &&
     sameAddress(h.address, intent.address) &&
     h.port === intent.port
-  );
-}
-
-/** Whether a present Host is at the intended tuple (sni/host too). */
-export function atIntent(h: BackendHost, intent: HostIntent): boolean {
-  return (
-    matchesIntent(h, intent) && sameOptional(h.sni, intent.sni) && sameOptional(h.host, intent.host)
   );
 }
 
@@ -383,13 +370,21 @@ export const applyDiscovery = internalMutation({
 
 /** Claim a delete of an FCP-owned present Host. */
 export const claimDelete = internalMutation({
-  args: { listenerId: v.id('relayListeners') },
-  handler: async (ctx, { listenerId }) => {
+  args: {
+    listenerId: v.id('relayListeners'),
+    /** `burned_name`: the withdraw of a Host left on a burned last name, re-judged here. */
+    reason: v.optional(v.literal('burned_name')),
+  },
+  handler: async (ctx, { listenerId, reason }) => {
     const l = await ctx.db.get(listenerId);
     if (!l?.host) return { claimed: false as const, state: 'absent' as const };
     const relay = await ctx.db.get(l.relayId);
     const st = l.host;
     if (st.state === 'absent') return { claimed: false as const, state: 'absent' as const };
+    // The withdraw was decided on an earlier read: a name added back, a
+    // rotation or restore started, or a quarantine since then cancels it.
+    if (reason === 'burned_name' && (!relay || !burnedNameHost(l, relay)))
+      return { claimed: false as const, state: st.state };
     if (st.ownership === 'adopted') {
       // The operator's Host: released, never deleted.
       await ctx.db.patch(listenerId, { host: { state: 'absent' }, updatedAt: Date.now() });
@@ -454,6 +449,17 @@ export interface EnsureResult {
 }
 
 /**
+ * The client-facing security a listener's Host must state over its inbound's
+ * own: a TLS listener whose transport is plaintext on the node (a loopback
+ * WebSocket behind its ingress) is `TLS` to the member, which the backend
+ * only renders when the Host says so. Spread into a Host write; empty when
+ * the inbound's own security already is the member's.
+ */
+export function hostSecurityLayer(listener: { security: string }): { securityLayer?: string } {
+  return listener.security === 'tls' ? { securityLayer: 'TLS' } : {};
+}
+
+/**
  * Make sure the listener's Host exists at `target`: returns `present` (+uuid)
  * when it does, runs a create when the state allows one, discovers after an
  * uncertain outcome. Never creates while an op is unsettled.
@@ -512,6 +518,7 @@ export const ensureListenerHost = internalAction({
         port: claim.intended.port,
         sni: claim.intended.sni,
         host: claim.intended.host,
+        ...hostSecurityLayer(c.listener),
         inbound: {
           configProfileUuid: c.listener.panelBinding!.configProfileUuid,
           configProfileInboundUuid: c.listener.panelBinding!.configProfileInboundUuid,
@@ -532,9 +539,12 @@ export const ensureListenerHost = internalAction({
  * the uuid is gone. Returns the resulting state.
  */
 export const deleteListenerHost = internalAction({
-  args: { listenerId: v.id('relayListeners') },
-  handler: async (ctx, { listenerId }): Promise<{ state: string }> => {
-    const claim = await ctx.runMutation(internal.hostOps.claimDelete, { listenerId });
+  args: { listenerId: v.id('relayListeners'), reason: v.optional(v.literal('burned_name')) },
+  handler: async (ctx, { listenerId, reason }): Promise<{ state: string }> => {
+    const claim = await ctx.runMutation(internal.hostOps.claimDelete, {
+      listenerId,
+      ...(reason ? { reason } : {}),
+    });
     if (!claim.claimed) return { state: claim.state };
     if (!claim.backendServerId) return { state: 'failed' };
     try {
@@ -566,10 +576,20 @@ export const deleteListenerHost = internalAction({
 // --- the Host follows its server name -------------------------------------------------------------
 
 /**
- * What a resync would write: only for an FCP-owned Host that is settled
- * (`present`, no op in flight) whose recorded server name is no longer the one
- * the listener would choose (`hostSniOf`). A Host mid-create or mid-delete is
- * left to its own machine; a rotation writes the new tuple by itself.
+ * What a resync would do: only for a Host that is settled (`present`, no op in
+ * flight) whose recorded server name is no longer the one the listener would
+ * choose (`hostSniOf`). A Host mid-create or mid-delete is left to its own
+ * machine; a rotation writes the new tuple by itself.
+ *
+ *  - `write`: the listener has a next name; it goes onto the Host, address and
+ *    port unchanged.
+ *  - `withdraw`: the listener has NO active name left (a burn took the last
+ *    one) and the Host still hands out the burned one (one of the listener's
+ *    own names; an L7 Host's edge hostname never counts). A name known blocked is
+ *    worse than no Host: an FCP-owned Host is deleted through the Host state
+ *    machine (read-back confirmed). The listener serves nobody until it gets a
+ *    name again, and its next rotation creates the Host afresh. An adopted
+ *    Host (the operator's) is never deleted by FCP and is left as it is.
  */
 export const resyncSniContext = internalQuery({
   args: { listenerId: v.id('relayListeners') },
@@ -581,9 +601,19 @@ export const resyncSniContext = internalQuery({
     if (relay.activeRotationId || relay.restore || relay.quarantine) return null;
     const host = l.host;
     if (!host || host.state !== 'present' || host.op || !host.uuid || !host.intended) return null;
+    if (host.intended.sni === null) return null;
+    // Only a Host that carries one of the listener's OWN names follows them.
+    // An L7 Host carries its edge's hostname (`hostTargetFor`), which is no
+    // listener name: it is never rewritten or withdrawn here.
+    if (!carriesOwnName(l, host.intended.sni)) return null;
     const sni = hostSniOf(l);
-    if (!sni || host.intended.sni === sni || host.intended.sni === null) return null;
+    if (!sni) {
+      if (host.ownership !== 'fcp') return null;
+      return { kind: 'withdraw' as const, uuid: host.uuid };
+    }
+    if (host.intended.sni === sni) return null;
     return {
+      kind: 'write' as const,
       backendServerId: relay.backendServerId,
       uuid: host.uuid,
       address: host.intended.address,
@@ -593,6 +623,35 @@ export const resyncSniContext = internalQuery({
     };
   },
 });
+
+/**
+ * Whether the listener's FCP-owned, settled Host still hands out one of the
+ * listener's own names while the listener has no active name left (a burn
+ * took the last one), on an origin that is not rotating, restoring or
+ * quarantined: the Host to withdraw.
+ */
+function burnedNameHost(l: Doc<'relayListeners'>, relay: Doc<'relays'>): boolean {
+  const st = l.host;
+  return (
+    !l.retired &&
+    !!st &&
+    st.state === 'present' &&
+    st.ownership === 'fcp' &&
+    !st.op &&
+    !!st.intended?.sni &&
+    carriesOwnName(l, st.intended.sni) &&
+    hostSniOf(l) === null &&
+    !relay.activeRotationId &&
+    !relay.restore &&
+    !relay.quarantine
+  );
+}
+
+/** Whether `sni` is one of the listener's own server names (active or retired). */
+function carriesOwnName(l: Pick<Doc<'relayListeners'>, 'tlsNames'>, sni: string): boolean {
+  const want = sni.trim().toLowerCase();
+  return (l.tlsNames ?? []).some((n) => n.name.trim().toLowerCase() === want);
+}
 
 export const recordResyncedSni = internalMutation({
   args: { listenerId: v.id('relayListeners'), uuid: v.string(), sni: v.string() },
@@ -618,9 +677,22 @@ export const recordResyncedSni = internalMutation({
  */
 export const resyncSni = internalAction({
   args: { listenerId: v.id('relayListeners') },
-  handler: async (ctx, { listenerId }): Promise<{ written: boolean }> => {
+  handler: async (ctx, { listenerId }): Promise<{ written: boolean; withdrawn?: boolean }> => {
     const c = await ctx.runQuery(internal.hostOps.resyncSniContext, { listenerId });
     if (!c) return { written: false };
+    if (c.kind === 'withdraw') {
+      // Never a burned name left live: delete it, confirmed only by read-back.
+      try {
+        const r = await ctx.runAction(internal.hostOps.deleteListenerHost, {
+          listenerId,
+          reason: 'burned_name',
+        });
+        return { written: false, withdrawn: r.state === 'absent' };
+      } catch {
+        // The claim, if taken, leaves an op the reconcile pass re-observes.
+        return { written: false, withdrawn: false };
+      }
+    }
     try {
       await ctx.runAction(internal.backends.updateAddress, {
         backendServerId: c.backendServerId,
@@ -659,6 +731,7 @@ export const reconcileHosts = internalAction({
       } else {
         const r = await ctx.runAction(internal.hostOps.deleteListenerHost, {
           listenerId: p.listenerId,
+          ...(p.reason ? { reason: p.reason } : {}),
         });
         if (r.state === 'absent') deleted++;
       }
@@ -689,7 +762,7 @@ export const pendingListeners = internalQuery({
           opId: string;
           backendServerId: Id<'backendServers'>;
         }
-      | { kind: 'delete'; listenerId: Id<'relayListeners'> }
+      | { kind: 'delete'; listenerId: Id<'relayListeners'>; reason?: 'burned_name' }
     > = [];
     const relays = await ctx.db.query('relays').collect(); // small operator table
     for (const relay of relays) {
@@ -711,8 +784,16 @@ export const pendingListeners = internalQuery({
           });
           continue;
         }
-        if (st.state === 'present' && st.ownership === 'fcp' && (l.retired || relay.deleting))
+        if (st.state === 'present' && st.ownership === 'fcp' && (l.retired || relay.deleting)) {
           out.push({ kind: 'delete', listenerId: l._id });
+          continue;
+        }
+        // The safety net under `resyncSni`'s withdraw: an FCP-owned Host still
+        // handing out a name the listener no longer has, with no name to move
+        // to (a burn took the last one). Left alone while the origin rotates,
+        // restores or is quarantined, like the resync itself.
+        if (burnedNameHost(l, relay))
+          out.push({ kind: 'delete', listenerId: l._id, reason: 'burned_name' });
       }
     }
     return out;

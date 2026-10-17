@@ -46,10 +46,12 @@ import type {
   PanelSubscriptionTemplate,
   PanelSubscriptionTemplateRef,
   ProfilePatchPreview,
+  ProfilePatchSendOptions,
 } from './types';
 import { farFutureExpiryIso, isFarFutureExpiry } from './types';
 import { changeToken, realityAuthDigest, shapeHash } from '../backend/digest';
 import { applyPatchOps, type PatchOp } from '../backend/patchOps';
+import { PRIVACY_XRAY_LOG } from './xrayPrivacy';
 
 export interface RemnawaveConfig {
   baseUrl: string;
@@ -76,6 +78,9 @@ const RemnawaveUser = z
     // The VLESS credential (present on create and get); the L7 front
     // qualification authenticates with it. Lenient: absent on exotic backends.
     vlessUuid: z.string().uuid().nullish(),
+    // The Trojan credential of the same user: the L7 proof of a Trojan
+    // transport authenticates with it. Lenient like the VLESS id.
+    trojanPassword: z.string().min(1).nullish(),
     username: z.string(),
     status: RemnawaveUserStatus,
     trafficLimitBytes: z.number().int().nonnegative().nullable(),
@@ -302,17 +307,8 @@ async function call<T>(
 
 // --- Config-profile logging privacy (no client-IP logging) ------------------
 
-/** The no-client-IP-logging Xray `log` block FCP enforces on every config profile
- *  (matches docs/privacy.md §5): no access log (the per-connection source-IP
- *  record), no error log, DNS logging off, and address masking as belt-and-
- *  suspenders if an operator later raises the level. */
-export const PRIVACY_XRAY_LOG = {
-  access: 'none',
-  error: 'none',
-  loglevel: 'none',
-  dnsLog: false,
-  maskAddress: 'full',
-} as const;
+// The no-client-IP-logging `log` block (lib/backends/xrayPrivacy.ts).
+export { PRIVACY_XRAY_LOG };
 
 export interface RemnawaveLoggingProfile {
   uuid: string;
@@ -581,6 +577,7 @@ export async function remnawaveIssueUser(
     subscriptionUrl: pinnedSubscriptionUrl(cfg, user.subscriptionUrl, user.shortUuid),
     raw: user,
     protocolUuid: user.vlessUuid ?? undefined,
+    trojanPassword: user.trojanPassword ?? undefined,
   };
 }
 
@@ -612,6 +609,7 @@ export async function remnawaveFindUserByUsername(
     subscriptionUrl: pinnedSubscriptionUrl(cfg, user.subscriptionUrl, user.shortUuid),
     raw: user,
     protocolUuid: user.vlessUuid ?? undefined,
+    trojanPassword: user.trojanPassword ?? undefined,
   };
 }
 
@@ -805,6 +803,7 @@ export async function remnawaveUpdateHost(
   };
   if (patch.sni !== undefined) body.sni = patch.sni ?? '';
   if (patch.host !== undefined) body.host = patch.host ?? '';
+  if (patch.securityLayer !== undefined) body.securityLayer = patch.securityLayer;
   await call(cfg, { method: 'PATCH', path: '/api/hosts', body, schema: z.unknown() });
 }
 
@@ -832,6 +831,9 @@ export async function remnawaveCreateHost(
   };
   if (h.sni !== undefined) body.sni = h.sni ?? '';
   if (h.host !== undefined) body.host = h.host ?? '';
+  // A loopback transport behind its ingress is plaintext on the node and TLS
+  // to the member: the Host says so, or the backend renders `security=none`.
+  if (h.securityLayer !== undefined) body.securityLayer = h.securityLayer;
   const res = await call(cfg, {
     method: 'POST',
     path: '/api/hosts',
@@ -1960,7 +1962,12 @@ export async function remnawavePreviewProfilePatch(
   return {
     profileName: full.name,
     baseToken,
-    expectedToken: out.changed ? await changeToken(out.config, digestKey) : baseToken,
+    // A new REALITY transport's key is made in the attempt: no token predicts it.
+    expectedToken: out.needsMaterial
+      ? null
+      : out.changed
+        ? await changeToken(out.config, digestKey)
+        : baseToken,
     changed: out.changed,
     changes: out.changes,
     touchedTags: out.touchedTags,
@@ -1974,14 +1981,21 @@ export async function remnawaveApplyProfilePatch(
   ops: readonly PatchOp[],
   baseToken: string,
   digestKey: string,
-): Promise<{ sent: true } | { sent: false; reason: 'profile_changed' | 'nothing_to_change' }> {
+  opts: ProfilePatchSendOptions = {},
+): Promise<
+  { sent: true } | { sent: false; reason: 'profile_changed' | 'nothing_to_change' | 'not_admitted' }
+> {
   // Read again, as late as possible: the window in which another writer can
   // slip in is this function, and nothing the backend offers can close it.
   const full = await readFullProfile(cfg, profileUuid);
   if ((await changeToken(full.config, digestKey)) !== baseToken)
     return { sent: false, reason: 'profile_changed' };
-  const out = applyPatchOps(full.config, ops);
+  const out = applyPatchOps(full.config, ops, opts.material);
   if (!out.changed) return { sent: false, reason: 'nothing_to_change' };
+  // A placeholder key never leaves: the material is the attempt's to make.
+  if (out.needsMaterial) return { sent: false, reason: 'not_admitted' };
+  if (opts.beforeSend && !(await opts.beforeSend(await changeToken(out.config, digestKey))))
+    return { sent: false, reason: 'not_admitted' };
   await call(cfg, {
     method: 'PATCH',
     path: '/api/config-profiles',

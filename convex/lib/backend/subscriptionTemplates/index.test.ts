@@ -4,7 +4,6 @@ import {
   TEMPLATE_FAMILIES,
   base64Utf8,
   desiredTemplateBody,
-  liveTemplateHash,
   templateDrift,
   templateHash,
 } from './index';
@@ -45,16 +44,5 @@ describe('subscription templates', () => {
       templateDrift({ templateJson: null, encodedTemplateYaml: base64Utf8('x') }, mihomo),
     ).toBe(true);
     expect(templateDrift({ templateJson: null, encodedTemplateYaml: null }, mihomo)).toBe(true);
-  });
-
-  test('the live hash equals the desired hash when the bodies match', async () => {
-    const stash = SUBSCRIPTION_TEMPLATES.STASH;
-    const live = desiredTemplateBody(stash) as { encodedTemplateYaml: string };
-    expect(await liveTemplateHash({ templateJson: null, ...live })).toBe(await templateHash(stash));
-    const singbox = SUBSCRIPTION_TEMPLATES.SINGBOX;
-    expect(await liveTemplateHash({ templateJson: singbox.body, encodedTemplateYaml: null })).toBe(
-      await templateHash(singbox),
-    );
-    expect(await liveTemplateHash({ templateJson: null, encodedTemplateYaml: null })).toBeNull();
   });
 });

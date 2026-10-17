@@ -1000,7 +1000,7 @@ const AUTOMATION_ALLOWED_SCOPES = [
   'admin:servers:read',
   'admin:servers:write',
   'admin:status:read',
-  // The node role's origin registration; needs `registerBackendSlugs` (its boundary).
+  // The node role's bounded token (Servers by-name routes); needs `registerBackendSlugs`.
   'admin:edges:register',
 ] as const;
 
@@ -1025,7 +1025,7 @@ export const mintAutomationToken = internalAction({
     name: v.optional(v.string()),
     expiresInDays: v.optional(v.number()),
     // The registration boundary of an `admin:edges:register` token: the backend
-    // servers (by slug) and optionally the node names the role may register for.
+    // servers (by slug) and optionally the node names the role may act for.
     registerBackendSlugs: v.optional(v.array(v.string())),
     registerNodeNames: v.optional(v.array(v.string())),
   },

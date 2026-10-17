@@ -106,8 +106,8 @@
     <form class="space-y-4" onsubmit={submit}>
       {#if existing?.source === 'role'}
         <p class="rounded-md border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-sm">
-          The node role registered this listener and writes it again on its next run. Change it in
-          the role variables to make the change stick.
+          The node role registered this listener earlier. It no longer changes listeners, so what
+          you set here stays.
         </p>
       {/if}
       <ListenerFields

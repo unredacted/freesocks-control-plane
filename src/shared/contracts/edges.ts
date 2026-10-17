@@ -277,9 +277,15 @@ export const OriginAdmin = z.object({
     .default(null),
   providerPreference: EdgeProviderId.nullable(),
   desiredPublished: z.number(),
+  /**
+   * The five per-origin knobs (`standbyPerRelay`, `standbyPerListener`,
+   * `cooldownMinutes`, `maxRotationsPerDay`, `drainMinutes`) are EFFECTIVE
+   * values: the origin's own override, else the fleet setting. `overrides`
+   * names the ones this origin sets itself; a PATCH with `null` clears one.
+   */
   standbyPerRelay: z.number(),
-  /** Verified standbys kept per coverage listener (null = the config default). */
-  standbyPerListener: z.number().nullable().default(null),
+  /** Verified standbys kept per coverage listener. */
+  standbyPerListener: z.number().default(0),
   /** The delivery binding is deferred to go-live (a guided relay): members still get the raw body. */
   bindingDeferred: z.boolean().default(false),
   /** A guided setup owns the relay: upkeep and automatic replacement skip it. */
@@ -287,6 +293,7 @@ export const OriginAdmin = z.object({
   cooldownMinutes: z.number(),
   maxRotationsPerDay: z.number(),
   drainMinutes: z.number(),
+  overrides: z.array(z.string()).default([]),
   publicationEpoch: z.number(),
   publishedEdgeIds: z.array(z.string().nullable()),
   publishedCount: z.number(),
@@ -433,7 +440,7 @@ export const ListenerSpec = z.object({
 });
 export type ListenerSpec = z.infer<typeof ListenerSpec>;
 
-/** The wire origin of a registration body: the backend by SLUG (the role never knows ids). */
+/** An origin named by backend SLUG (the setup draft), not by id. */
 export const RelayWireOrigin = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('panel-node'),
@@ -444,18 +451,6 @@ export const RelayWireOrigin = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('backend-server'), backendSlug: z.string() }),
   z.object({ kind: z.literal('manual') }),
 ]);
-/** `PUT /api/v1/admin/edges/relays/by-slug/{slug}`: one idempotent body (docs/edges.md). */
-export const RelayRegisterBody = z.object({
-  origin: RelayWireOrigin,
-  originAddress: z.string(),
-  locationCode: z.string().nullish(),
-  label: z.string().nullish(),
-  listeners: z.array(ListenerSpec),
-  pruneListeners: z.boolean().optional(),
-  hostModeRequest: z.literal('operator').optional(),
-});
-export type RelayRegisterBody = z.infer<typeof RelayRegisterBody>;
-
 /** Edge addresses: IP literals for an L4 edge, the fronted hostname for an L7 edge. */
 export const EdgeAddresses = z.object({
   v4: z.string().nullable(),
@@ -1048,9 +1043,10 @@ export const InboundCandidatesResponse = z.object({
 export type InboundCandidatesResponse = z.infer<typeof InboundCandidatesResponse>;
 
 /**
- * The node role's view of `GET/PUT …/relays/by-slug/{slug}` (docs/edges.md § "Node
- * role contract"): the MINIMAL projection. No detector state, no rotation
- * limits, no pool-wide provider names, so a leaked register token learns none.
+ * `GET …/relays/by-slug/{slug}`: an origin's MINIMAL projection (the setup's
+ * Host plan reads it). No detector state, no rotation limits, no pool-wide
+ * provider names. `lastRegisteredAt` is the stamp the retired node-role
+ * registration left on older origins (null otherwise).
  */
 export const RelayBySlugResponse = z.object({
   relay: z.object({
@@ -1092,31 +1088,8 @@ export const RelayBySlugResponse = z.object({
   ),
   connectionPlan: z.array(RelayConnectionPlanEntry),
   hostsPlan: RelayHostsPlan,
-  /** Present on a PUT: what the registration changed. */
-  registration: z
-    .object({
-      id: z.string(),
-      created: z.boolean(),
-      changed: z.boolean(),
-      listeners: z.object({
-        created: z.array(z.string()),
-        updated: z.array(z.string()),
-        unchanged: z.array(z.string()),
-        retired: z.array(z.string()),
-        owned: z.array(z.string()),
-        blockedNames: z.array(z.string()),
-        changed: z.boolean(),
-      }),
-      /** Notices (`edge.<code>`), e.g. `edge.pool_raised` when the pool grew to cover every listener. */
-      warnings: z.array(z.string()).default([]),
-    })
-    .passthrough()
-    .optional(),
 });
 export type RelayBySlugResponse = z.infer<typeof RelayBySlugResponse>;
-/** @deprecated alias: the by-slug response IS the minimal projection now. */
-export const RelayBySlugMinimalResponse = RelayBySlugResponse;
-export type RelayBySlugMinimalResponse = RelayBySlugResponse;
 
 export const RENDER_CLIENT_FAMILY_IDS = [
   'singbox',
@@ -1178,7 +1151,6 @@ export const EdgeConfigView = z.object({
     .object({
       enabled: z.boolean(),
       autoRotate: z.boolean(),
-      providerAffinity: z.enum(['rotate', 'sticky']),
       desiredPublishedDefault: z.number(),
       standbyPerRelay: z.number(),
       standbyPerListener: z.number().default(0),
@@ -1316,6 +1288,22 @@ export const SetupResumeEntry = z.object({
 });
 
 /**
+ * What members of one origin get right now, judged by the server
+ * (`convex/lib/edges/originStatus.ts`): `manual` (a manual origin serves no
+ * subscription), `direct` (no delivery binding yet: members get the node's own
+ * address), `serving` (edges only), `degraded` (serving, but a sample
+ * subscription did not render cleanly; only the per-origin setup status can
+ * tell), `dark` (bound, and nothing can be served). `code` names the reason
+ * (`empty_pool`, `relay_disabled`, `render_disabled`, a render reason).
+ */
+export const ORIGIN_DELIVERY_KINDS = ['manual', 'direct', 'serving', 'degraded', 'dark'] as const;
+export const OriginDelivery = z.object({
+  kind: z.enum(ORIGIN_DELIVERY_KINDS),
+  code: z.string().nullable(),
+});
+export type OriginDelivery = z.infer<typeof OriginDelivery>;
+
+/**
  * `GET setup-status[?relay=<slug>]` / `POST setup-status { draft }`: the guided
  * setup judged for ONE relay (or a draft before the relay exists). Without a
  * relay it is the fleet aggregation: the overview checklist plus relays with an
@@ -1328,9 +1316,13 @@ export const SetupStatusResponse = z.object({
   currentStep: SetupStepId.nullable(),
   complete: z.boolean(),
   context: SetupContext,
-  /** Public values the node role needs (slug, listener keys, the by-slug URL path); never a token or an address. */
-  roleVars: z.record(z.string(), z.string()).nullable().default(null),
   resume: z.array(SetupResumeEntry).default([]),
+  /**
+   * Relay scope: what members get (the same judgement as the attention
+   * response's `origins[].status.delivery`, plus `degraded` from the sample
+   * render this view computes). Null for draft and fleet scope.
+   */
+  delivery: OriginDelivery.nullable().default(null),
   generatedAt: iso,
 });
 export type SetupStatusResponse = z.infer<typeof SetupStatusResponse>;
@@ -1363,6 +1355,8 @@ export const PreflightRequest = z.object({
   listenerKey: z.string().optional(),
   accountId: z.string().optional(),
   templateId: z.string().optional(),
+  /** `provision` only: false checks an unpublished spare, as `provision {publish: false}` starts it. */
+  publish: z.boolean().optional(),
   trigger: z.enum(['manual', 'detector', 'api', 'reconcile']).optional(),
 });
 export type PreflightRequest = z.infer<typeof PreflightRequest>;
@@ -1442,8 +1436,89 @@ export const AttentionItem = z.object({
   since: isoN.default(null),
 });
 export type AttentionItem = z.infer<typeof AttentionItem>;
+
+/** The kinds of one origin's status, most urgent judged first (the CMS words each). */
+export const ORIGIN_STATUS_KINDS = [
+  'protected',
+  'setting-up',
+  'needs-you',
+  'not-live',
+  'removing',
+  'paused',
+  'off',
+  'unprotected',
+] as const;
+export const STATUS_DOTS = ['green', 'amber', 'red', 'blue', 'grey'] as const;
+export type StatusDot = (typeof STATUS_DOTS)[number];
+
+/**
+ * One origin's status: the ONE judgement every page reads (the Edges home, the
+ * node page, All origins, the Servers node page). Codes and counts only; the
+ * CMS turns them into a sentence.
+ */
+export const OriginStatus = z.object({
+  kind: z.enum(ORIGIN_STATUS_KINDS),
+  dot: z.enum(STATUS_DOTS),
+  /**
+   * Why, when it is not plain `protected`: a setup run's need code
+   * (`node_not_approved`, `try_it`, ...) for a run that waits on the operator,
+   * the attention kind behind `needs-you`, `offline` for offline addresses,
+   * `restore` / `deleting` for `removing`.
+   */
+  code: z.string().nullable(),
+  /** The live guided setup run of the origin, if any. */
+  runId: z.string().nullable(),
+  runKind: z.enum(['protect', 'reprotect']).nullable(),
+  /** The plain step (1..4) of that run. */
+  step: z.number().nullable(),
+  published: z.number(),
+  /** Active unpublished edges (spares). */
+  standbys: z.number(),
+  /** Published edges whose provider health is `offline`. */
+  offline: z.number(),
+  /** The worst health of the published edges (null when nothing is published). */
+  worstHealth: z.string().nullable(),
+  /** The layers of the published pool, L4 first. */
+  layers: z.array(EdgeLayer),
+  /** At least one attention item names this origin. */
+  attention: z.boolean(),
+  delivery: OriginDelivery,
+});
+export type OriginStatus = z.infer<typeof OriginStatus>;
+
+export const OriginStatusRow = z.object({
+  relayId: z.string(),
+  relaySlug: z.string(),
+  status: OriginStatus,
+});
+export type OriginStatusRow = z.infer<typeof OriginStatusRow>;
+
+/**
+ * The fleet in one judgement: what matters most, then the count of origins
+ * in that state (`count`), of all origins (`total`) and of protected ones.
+ */
+export const FLEET_STATUS_KINDS = [
+  'empty',
+  'needs-you',
+  'setting-up',
+  'not-live',
+  'protected',
+  'partial',
+] as const;
+export const FleetStatus = z.object({
+  kind: z.enum(FLEET_STATUS_KINDS),
+  dot: z.enum(STATUS_DOTS),
+  count: z.number(),
+  total: z.number(),
+  protected: z.number(),
+});
+export type FleetStatus = z.infer<typeof FleetStatus>;
+
 export const AttentionResponse = z.object({
   items: z.array(AttentionItem),
+  /** One status per origin (deleting origins included), in slug order. */
+  origins: z.array(OriginStatusRow).default([]),
+  fleet: FleetStatus.nullable().default(null),
   generatedAt: iso,
 });
 export type AttentionResponse = z.infer<typeof AttentionResponse>;
@@ -1628,6 +1703,8 @@ export const SetupPlanResponse = z.object({
     .object({ id: z.string(), slug: z.string(), setupStage: z.string().nullable() })
     .nullable(),
   activeRunId: z.string().nullable(),
+  /** An enrolled node: goes live through its approval; keep-direct does not exist for it. */
+  enrolled: z.boolean().default(false),
   planHash: z.string(),
   generatedAt: iso,
 });
@@ -1641,6 +1718,8 @@ export const SetupRunCreateRequest = z.object({
   planHash: z.string(),
   approvedHideUuids: z.array(z.string()).default([]),
   keepDirect: z.boolean().optional(),
+  /** The transports to protect, when the plan had `tooManyInbounds` (the same keys the plan was shown with). */
+  listenerKeys: z.array(z.string()).optional(),
 });
 export type SetupRunCreateRequest = z.infer<typeof SetupRunCreateRequest>;
 export const SetupRunCreatedResponse = z.object({ runId: z.string(), stage: SetupRunStage });
@@ -1679,6 +1758,24 @@ export const SetupRunAdmin = z.object({
   generation: z.number(),
   planRevision: z.number(),
   keepDirect: z.boolean(),
+  /**
+   * `protect`: a node that is not live behind edges yet. `reprotect`: a live,
+   * bound node protected again (`POST relays/{id}/reprotect`): members keep
+   * the committed delivery throughout, a cancel drops only the run's own
+   * candidates, and a failure leaves the node live.
+   */
+  kind: z.enum(['protect', 'reprotect']).default('protect'),
+  /**
+   * The enrolled node this run protects (docs/servers.md "Node lifecycle"):
+   * its backend slug and intent, for the approval card at `node_not_approved`.
+   * Null for a node FCP does not manage.
+   */
+  enrolled: z
+    .object({ slug: z.string(), intentId: z.string(), stage: z.string() })
+    .nullable()
+    .default(null),
+  /** The activation run this setup run is bound to once the node was approved. */
+  activationRunId: z.string().nullable().default(null),
   listeners: z.array(
     z.object({
       listenerKey: z.string(),
@@ -1740,6 +1837,8 @@ export type SetupRunsResponse = z.infer<typeof SetupRunsResponse>;
 /** `POST setup-runs/{id}/retry`: the card's secondary buttons. */
 export const SetupRunRetryRequest = z.object({
   tryAnotherAddress: z.boolean().optional(),
+  /** With `tryAnotherAddress` at `try_it`: the one line that does not work (only it is replaced). */
+  edgeId: z.string().optional(),
   acceptPartial: z.boolean().optional(),
   accountId: z.string().optional(),
 });
@@ -1772,10 +1871,13 @@ export const SetupRunContinueResponse = z.object({
   accountTrusted: z.boolean(),
 });
 
-/** `POST setup-runs/{id}/cancel`. */
+/**
+ * `POST setup-runs/{id}/cancel`. `candidates`: a re-protect run dropped its own
+ * candidate addresses; the node keeps serving what members already have.
+ */
 export const SetupRunCancelResponse = z.object({
   ok: z.literal(true),
-  disposition: z.enum(['deleted', 'restore', 'none']),
+  disposition: z.enum(['deleted', 'restore', 'candidates', 'none']),
 });
 
 /** `POST relays/{id}/require-edges`: pending endpoints instead of a binding when an L4 edge is untested. */

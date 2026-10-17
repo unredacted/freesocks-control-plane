@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { serversPaths } from './servers/lib/routes';
   import AdminLayout from './AdminLayout.svelte';
   import ConnectionModeEditor from './ConnectionModeEditor.svelte';
   import ConnectionModeFamilyEditor from './ConnectionModeFamilyEditor.svelte';
@@ -111,8 +112,9 @@
       <p class="text-sm text-muted-foreground mt-1">
         The member transport picker, fully data-driven: families are the parent cards, modes are the
         transports inside them. A new mode ships unselectable until it is enabled here AND its
-        placement pool is bound in <Link href="/admin/remnawave" class="underline">Remnawave</Link>.
-        While the catalog is empty the picker falls back to the built-in defaults.
+        placement pool is bound in <Link href={serversPaths.pools()} class="underline"
+          >Servers, Mode pools</Link
+        >. While the catalog is empty the picker falls back to the built-in defaults.
       </p>
     </div>
     <div class="flex gap-2">

@@ -1,15 +1,17 @@
 <script lang="ts">
   /**
-   * Servers home (`/admin/servers[?instance=<slug>]`): one status sentence,
-   * what needs you, one row per node, the quiet leftovers, mode groups, recent
-   * changes, and the two switches in the footer. A node's details and every
-   * action on it live on its own page (NodePage).
+   * Servers -> Nodes (`/admin/servers[?instance=<slug>]`, the leaf's default
+   * tab): one status sentence, what needs you, one row per node, the quiet
+   * leftovers, mode groups, recent changes, and the two switches in the
+   * footer. "Add a node" adds one by hand (the node role is the normal way). A
+   * node's details and every action on it live on its own page (NodePage).
    *
    * Everything shown is non-secret by construction (docs/servers.md). All
    * wording lives in ./lib/words.ts (pure, unit-tested).
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
+  import Plus from '@lucide/svelte/icons/plus';
   import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import { Button } from '@client/components/ui/button';
@@ -33,10 +35,12 @@
   import { router } from '@client/stores/router.svelte';
   import SectionHeader from '../edges/components/SectionHeader.svelte';
   import StatusDot from '../edges/simple/StatusDot.svelte';
+  import AddNodeDialog from './components/AddNodeDialog.svelte';
   import AdoptNodeDialog from './components/AdoptNodeDialog.svelte';
   import OpsList from './components/OpsList.svelte';
   import SetupSheet from './components/SetupSheet.svelte';
   import ModeGroupsCard from './components/ModeGroupsCard.svelte';
+  import PortChangesCard from './components/PortChangesCard.svelte';
   import { codeOf } from './lib/run';
   import { pickInstance, serversPaths } from './lib/routes';
   import {
@@ -104,6 +108,7 @@
   let canWrite = $derived(manageOn && !!instance?.writable && !!instance?.setUp);
   let refreshing = $state(false);
   let saving = $state(false);
+  let addOpen = $state(false);
 
   const ROW =
     'bg-card hover:bg-accent/40 focus-visible:ring-ring/50 flex min-h-14 w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-start outline-none focus-visible:ring-3';
@@ -145,8 +150,14 @@
   }
 </script>
 
-<SectionHeader title="Servers">
+<SectionHeader title="Nodes">
   {#snippet actions()}
+    {#if canWrite && tree.data}
+      <Button size="sm" onclick={() => (addOpen = true)}>
+        <Plus class="size-4" aria-hidden="true" />
+        Add a node
+      </Button>
+    {/if}
     <Button
       variant="outline"
       size="sm"
@@ -183,7 +194,7 @@
     <div class="rounded-lg border border-dashed p-8 text-center">
       <p class="text-muted-foreground text-sm">No backend server is set up yet.</p>
       <Link
-        href="/admin/backend-servers"
+        href={serversPaths.backends()}
         class="text-primary mt-2 inline-block text-sm underline underline-offset-4"
       >
         Add one
@@ -270,10 +281,15 @@
       </section>
     {/if}
 
+    {#if slug}
+      <PortChangesCard {slug} {canWrite} />
+    {/if}
+
     <section aria-label="Nodes">
       {#if t.nodes.length === 0}
         <p class="text-muted-foreground text-sm">
-          A node appears here once the node role has registered it with the backend.
+          A node appears here once the node role has enrolled it. A machine the role does not run
+          can be added by hand with Add a node.
         </p>
       {:else}
         <ul class="space-y-2">
@@ -332,6 +348,9 @@
 
     {#if slug}
       <ModeGroupsCard {slug} tree={t} {canWrite} />
+      {#if canWrite}
+        <AddNodeDialog bind:open={addOpen} {slug} tree={t} />
+      {/if}
       <AdoptNodeDialog
         bind:open={adoptOpen}
         {slug}

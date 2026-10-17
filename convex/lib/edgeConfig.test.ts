@@ -2,6 +2,11 @@ import { describe, expect, test } from 'vitest';
 import {
   EDGE_DEFAULTS,
   EDGE_KEYS,
+  EDGE_PLUMBING,
+  __setEdgePlumbingForTests,
+  originOverrideNames,
+  originPolicy,
+  qualificationRenewLeadMs,
   RENDER_CLIENT_FAMILIES,
   clientRuleKey,
   defaultClientRule,
@@ -27,16 +32,45 @@ describe('edgeConfig sanitizers', () => {
     expect(sanitizeInt(2.6, 1, 10, 3)).toBe(3);
   });
 
-  test('probe agreement needs at least two networks; source spacing is bounded', () => {
+  test('probe agreement needs at least two networks', () => {
     expect(sanitizeRelayConfig({ 'probe.agreementVantages': 1 }).probe.agreementVantages).toBe(2);
     expect(sanitizeRelayConfig({ 'probe.agreementVantages': 0 }).probe.agreementVantages).toBe(2);
     expect(sanitizeRelayConfig({ 'probe.agreementVantages': 4 }).probe.agreementVantages).toBe(4);
-    expect(EDGE_DEFAULTS.probe.sourceSpacingMs).toBe(1500);
-    expect(sanitizeRelayConfig({ 'probe.sourceSpacingMs': -5 }).probe.sourceSpacingMs).toBe(0);
-    expect(sanitizeRelayConfig({ 'probe.sourceSpacingMs': 1e9 }).probe.sourceSpacingMs).toBe(
-      60_000,
-    );
-    expect(EDGE_KEYS['probe.sourceSpacingMs']).toBe('edge.probe.sourceSpacingMs');
+  });
+
+  test('the machinery is constants, not settings: no key, no stored value read', () => {
+    const keys = Object.keys(EDGE_KEYS);
+    for (const gone of [
+      'providerAffinity',
+      'settleGraceSeconds',
+      'pollSeconds',
+      'opClaimSeconds',
+      'verifyAttempts',
+      'maxFlipAttempts',
+      'maxRollbackAttempts',
+      'maxDestroyAttempts',
+      'maxRotationMinutes',
+      'provisionTimeoutMinutes',
+      'discoveryTimeoutMinutes',
+      'maxReconcileStartsPerTick',
+      'detect.maxReportRowsPerEval',
+      'l7.qualifyTimeoutMinutes',
+      'l7.qualifyStepTimeoutMs',
+      'l7.qualificationTtlMinutes',
+      'l7.maxRequalifyPerTick',
+      'probe.sourceSpacingMs',
+    ])
+      expect(keys).not.toContain(gone);
+    expect(EDGE_PLUMBING.pollMs).toBe(20_000);
+    expect(EDGE_PLUMBING.probeSourceSpacingMs).toBe(1500);
+    // The renewal lead: a quarter of the TTL, at least 15 minutes, under half of it.
+    expect(qualificationRenewLeadMs()).toBe(15 * 60_000);
+    __setEdgePlumbingForTests({ pollMs: 5_000, l7QualificationTtlMs: 8 * 60 * 60_000 });
+    expect(EDGE_PLUMBING.pollMs).toBe(5_000);
+    expect(qualificationRenewLeadMs()).toBe(2 * 60 * 60_000);
+    __setEdgePlumbingForTests(null);
+    expect(EDGE_PLUMBING.pollMs).toBe(20_000);
+    expect(EDGE_PLUMBING.l7QualificationTtlMs).toBe(60 * 60_000);
   });
 
   test('clearBelow is forced under suspectAt (hysteresis)', () => {
@@ -124,5 +158,38 @@ describe('edgeSecretWrites', () => {
     expect(edgeSecretWrites({ globalpingToken: '  ', ripeAtlasKey: '' })).toEqual([]);
     const w = edgeSecretWrites({ globalpingToken: 'tok' });
     expect(w).toEqual([{ key: 'edge.secret.probe.globalping.token', value: '"tok"' }]);
+  });
+});
+
+describe('originPolicy: one inheritance rule', () => {
+  const cfg = sanitizeRelayConfig({
+    standbyPerRelay: 1,
+    standbyPerListener: 1,
+    cooldownMinutes: 30,
+    maxRotationsPerRelayPerDay: 5,
+    drainMinutes: 90,
+  });
+
+  test('an origin without its own values follows the fleet', () => {
+    expect(originPolicy({}, cfg)).toEqual({
+      standbyPerRelay: 1,
+      standbyPerListener: 1,
+      cooldownMs: 30 * 60_000,
+      maxRotationsPerDay: 5,
+      drainMs: 90 * 60_000,
+    });
+    expect(originOverrideNames({})).toEqual([]);
+  });
+
+  test("an origin's own value wins, field by field, including a zero", () => {
+    const own = { standbyPerRelay: 0, drainMs: 5 * 60_000 };
+    expect(originPolicy(own, cfg)).toEqual({
+      standbyPerRelay: 0,
+      standbyPerListener: 1,
+      cooldownMs: 30 * 60_000,
+      maxRotationsPerDay: 5,
+      drainMs: 5 * 60_000,
+    });
+    expect(originOverrideNames(own)).toEqual(['standbyPerRelay', 'drainMinutes']);
   });
 });
