@@ -19,6 +19,11 @@ import type { Id } from './_generated/dataModel';
 import { insertPanelServer } from './lib/edges/testing/fixtures';
 import { addressRemark, addressesOf, ownsAddress } from './nodeIntents';
 import { gateOfNode } from './lib/edges/testing/reads';
+import {
+  SUBSCRIPTION_TEMPLATES,
+  base64Utf8,
+  templateHash,
+} from './lib/backend/subscriptionTemplates';
 import { NodeIntentView } from '../src/shared/contracts/servers';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -47,12 +52,29 @@ interface Panel {
   squads: { uuid: string; name: string; inbounds: { uuid: string; tag: string }[] }[];
   hosts: any[];
   nodes: any[];
+  /** Subscription templates; a backend without any has nothing to reconcile. */
+  templates: {
+    uuid: string;
+    templateType: string;
+    templateJson: unknown;
+    encodedTemplateYaml: string | null;
+  }[];
+  /** Answer template writes with 403, as a backend whose token may not write them. */
+  refuseTemplates?: boolean;
   writes: { call: string; body: any }[];
   seq: number;
 }
 
 function installPanel(): Panel {
-  const panel: Panel = { profiles: [], squads: [], hosts: [], nodes: [], writes: [], seq: 10 };
+  const panel: Panel = {
+    profiles: [],
+    squads: [],
+    hosts: [],
+    nodes: [],
+    templates: [],
+    writes: [],
+    seq: 10,
+  };
   const json = (o: unknown, status = 200) =>
     new Response(JSON.stringify({ response: o }), {
       status,
@@ -71,12 +93,22 @@ function installPanel(): Panel {
         if (path === '/api/internal-squads') return json({ internalSquads: panel.squads });
         if (path === '/api/config-profiles') return json({ configProfiles: panel.profiles });
         if (path === '/api/keygen') return json({ pubKey: 'panel-node-secret-placeholder' });
-        if (path === '/api/subscription-templates') return json([]);
+        if (path === '/api/subscription-templates')
+          return json(panel.templates.map(({ uuid, templateType }) => ({ uuid, templateType })));
+        const tpl = panel.templates.find((x) => path === `/api/subscription-templates/${x.uuid}`);
+        if (tpl) return json(tpl);
         const p = panel.profiles.find((x) => path === `/api/config-profiles/${x.uuid}`);
         if (p) return json(p);
         return json({});
       }
       panel.writes.push({ call: `${method} ${path}`, body });
+      if (path === '/api/subscription-templates' && method === 'PATCH') {
+        if (panel.refuseTemplates) return json({ message: 'Forbidden' }, 403);
+        const tpl = panel.templates.find((x) => x.uuid === body.uuid)!;
+        if ('templateJson' in body) tpl.templateJson = body.templateJson;
+        if ('encodedTemplateYaml' in body) tpl.encodedTemplateYaml = body.encodedTemplateYaml;
+        return json(tpl);
+      }
       if (path === '/api/config-profiles' && method === 'POST') {
         const uuid = UUID(++panel.seq);
         const inbounds = (body.config.inbounds as { tag: string }[]).map((i) => ({
@@ -420,6 +452,136 @@ describe('setting up a fresh backend', () => {
     expect(again.state).toBe('failed');
     expect(again.code).toBe('servers.family_bound_elsewhere:fam-other');
     expect(again.modes!.find((m) => m.slug === 'privacy-reality')!.family).toBe('bound_elsewhere');
+  });
+});
+
+describe('subscription templates', () => {
+  /** The sing-box template as an earlier release shipped it (other cache names). */
+  const earlierSingbox = () => {
+    const body = structuredClone(SUBSCRIPTION_TEMPLATES.SINGBOX.body) as {
+      experimental: { cache_file: Record<string, unknown> };
+    };
+    body.experimental.cache_file = {
+      ...body.experimental.cache_file,
+      path: 'earlier.db',
+      cache_id: 'earlier',
+    };
+    return body;
+  };
+  function addTemplates(panel: Panel) {
+    panel.templates.push(
+      {
+        uuid: UUID(101),
+        templateType: 'SINGBOX',
+        templateJson: earlierSingbox(),
+        encodedTemplateYaml: null,
+      },
+      {
+        uuid: UUID(102),
+        templateType: 'MIHOMO',
+        templateJson: null,
+        encodedTemplateYaml: base64Utf8(SUBSCRIPTION_TEMPLATES.MIHOMO.body as string),
+      },
+    );
+  }
+  const templateWrites = (panel: Panel) =>
+    panel.writes.filter((w) => w.call === 'PATCH /api/subscription-templates');
+  /** The backend holds the sing-box template an earlier release installed, recorded under its hash. */
+  async function onEarlierRelease(
+    t: T,
+    panel: Panel,
+    row: { _id: Id<'panelSetups'>; templates: any[] },
+  ) {
+    panel.templates[0]!.templateJson = earlierSingbox();
+    await t.run((ctx) =>
+      ctx.db.patch(row._id, {
+        templates: [{ ...row.templates[0]!, hash: 'earlier' }, row.templates[1]!],
+      }),
+    );
+  }
+  async function readyOnEarlierRelease() {
+    const { t, serverId, panel } = await seed();
+    addTemplates(panel);
+    const row = await runSetup(t, serverId);
+    await onEarlierRelease(t, panel, row);
+    return { t, panel, row };
+  }
+  const resync = (t: T) => t.action(internal.backendSetup.resyncTemplates, {});
+  const installed = async (t: T) =>
+    (await t.run((ctx) => ctx.db.query('auditLog').collect()))
+      .filter((a) => a.action === 'servers.setup.templates_installed')
+      .map((a) => (a.payload as { templates: string }).templates);
+
+  test('setup installs only what differs; a changed template reaches a ready backend on the next sweep, once', async () => {
+    const { t, serverId, panel } = await seed();
+    addTemplates(panel);
+    const row = await runSetup(t, serverId);
+    expect(row.state).toBe('ready');
+    const singbox = await templateHash(SUBSCRIPTION_TEMPLATES.SINGBOX);
+    expect(row.templates).toEqual([
+      { family: 'SINGBOX', hash: singbox, state: 'matched' },
+      {
+        family: 'MIHOMO',
+        hash: await templateHash(SUBSCRIPTION_TEMPLATES.MIHOMO),
+        state: 'matched',
+      },
+    ]);
+    expect(templateWrites(panel).map((w) => w.body.uuid)).toEqual([UUID(101)]);
+    expect(await resync(t)).toBe(0);
+
+    // A release changed the sing-box template: the backend still has the earlier one.
+    await onEarlierRelease(t, panel, row);
+    const before = templateWrites(panel).length;
+    expect(await resync(t)).toBe(1);
+    // Only the template that differs is written; the setup row stays ready, its lease released.
+    expect(
+      templateWrites(panel)
+        .slice(before)
+        .map((w) => w.body.uuid),
+    ).toEqual([UUID(101)]);
+    expect(panel.templates[0]!.templateJson).toEqual(SUBSCRIPTION_TEMPLATES.SINGBOX.body);
+    const after = (await t.run((ctx) => ctx.db.get(row._id)))!;
+    expect(after).toMatchObject({ state: 'ready', generation: row.generation });
+    expect(after.claim).toBeUndefined();
+    expect(after.templates[0]).toEqual({ family: 'SINGBOX', hash: singbox, state: 'matched' });
+    expect(await installed(t)).toEqual(['SINGBOX:matched,MIHOMO:matched']);
+    // Once: the next sweep has nothing to do.
+    expect(await resync(t)).toBe(0);
+    expect(templateWrites(panel).length).toBe(before + 1);
+  });
+
+  test('a setup holding the lease, or server changes switched off, keep the sweep from writing', async () => {
+    const { t, panel, row } = await readyOnEarlierRelease();
+    const before = panel.writes.length;
+    await t.run((ctx) =>
+      ctx.db.patch(row._id, {
+        claim: { attemptId: 'a-setup-run', expiresAt: Date.now() + 60_000 },
+      }),
+    );
+    expect(await resync(t)).toBe(0);
+    await t.run((ctx) => ctx.db.patch(row._id, { claim: undefined }));
+    await t.mutation(internal.serverAdmin.patchConfig, { patch: { 'manage.enabled': false } });
+    expect(await resync(t)).toBe(0);
+    expect(panel.writes.length).toBe(before);
+  });
+
+  test('a refused write is recorded and tried again; audited only when the outcome moves', async () => {
+    const { t, panel, row } = await readyOnEarlierRelease();
+    panel.refuseTemplates = true;
+    expect(await resync(t)).toBe(1);
+    const refused = (await t.run((ctx) => ctx.db.get(row._id)))!;
+    expect(refused.state).toBe('ready');
+    expect(refused.templates[0]).toMatchObject({ family: 'SINGBOX', state: 'refused' });
+    expect(await resync(t)).toBe(1);
+    panel.refuseTemplates = false;
+    expect(await resync(t)).toBe(1);
+    expect((await t.run((ctx) => ctx.db.get(row._id)))!.templates[0]).toMatchObject({
+      state: 'matched',
+    });
+    expect(await installed(t)).toEqual([
+      'SINGBOX:refused,MIHOMO:matched',
+      'SINGBOX:matched,MIHOMO:matched',
+    ]);
   });
 });
 

@@ -590,10 +590,13 @@ forwards the caller's `User-Agent` upstream (`http.ts` →
 override, passes Remnawave's `Content-Type` + body straight back, and caches
 per-exact-UA. So a **Clash-family client** (Clash Verge Rev, FlClash, Mihomo Party,
 Clash Meta) that imports the fronted URL receives Clash YAML **iff the Remnawave
-backend is configured to emit Clash output for that UA** — a **backend / Ansible
-subscription-template** concern, _not_ an FCP code change. If Clash clients get
-base64 instead of YAML, fix the backend's subscription templates; the FCP front
-already does the right thing.
+backend is configured to emit Clash output for that UA** — a **backend** concern
+(which format it picks per UA), _not_ a change to the fronted route. If Clash clients
+get base64 instead of YAML, fix that on the backend; the FCP front already does the
+right thing. The template bodies themselves (what a sing-box or Clash body carries
+beside the entries) are FCP's: setup installs them and the bootstrap sweep keeps every
+set-up backend on what FCP ships (`convex/lib/backend/subscriptionTemplates/`,
+`docs/servers.md` § "Templates after setup", `docs/privacy.md` §5c).
 
 **The ONE exception to exact-UA forwarding** (`normalizeSubscriptionUserAgent`,
 `convex/lib/backends/remnawave.ts`): a UA that starts with `SFL/`, `SFW/`, the

@@ -2090,10 +2090,14 @@ export const resumeSetup = internalMutation({
   },
 });
 
-/** On `backend-reconcile`: resume what an interrupted attempt left pending. */
+/**
+ * On `backend-bootstrap-sweep`: resume what an interrupted attempt left
+ * pending, and install the subscription templates again where a ready
+ * backend's are not what FCP ships (`backendSetup.resyncTemplates`).
+ */
 export const sweep = internalAction({
   args: {},
-  handler: async (ctx): Promise<{ intents: number; setups: number }> =>
+  handler: async (ctx): Promise<{ intents: number; setups: number; templates: number }> =>
     runWithCronOutcome(ctx, 'backend-bootstrap-sweep', async () => {
       const { intents, setups } = await ctx.runQuery(internal.nodeIntents.stale, {
         now: Date.now(),
@@ -2104,7 +2108,8 @@ export const sweep = internalAction({
         if (await ctx.runMutation(internal.nodeIntents.resume, { intentId: id })) a++;
       for (const id of setups)
         if (await ctx.runMutation(internal.nodeIntents.resumeSetup, { setupId: id })) b++;
+      const templates: number = await ctx.runAction(internal.backendSetup.resyncTemplates, {});
       await ctx.runAction(internal.nodeRetirement.sweep, {});
-      return { intents: a, setups: b };
+      return { intents: a, setups: b, templates };
     }),
 });

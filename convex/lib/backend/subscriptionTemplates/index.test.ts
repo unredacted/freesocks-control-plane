@@ -4,9 +4,12 @@ import {
   TEMPLATE_FAMILIES,
   base64Utf8,
   desiredTemplateBody,
+  shippedTemplateHashes,
   templateDrift,
   templateHash,
+  templatesOutdated,
 } from './index';
+import { SINGBOX_JSON } from './SINGBOX';
 
 describe('subscription templates', () => {
   test('every family has a body and the YAML ones keep the splice anchors byte-exact', () => {
@@ -44,5 +47,37 @@ describe('subscription templates', () => {
       templateDrift({ templateJson: null, encodedTemplateYaml: base64Utf8('x') }, mihomo),
     ).toBe(true);
     expect(templateDrift({ templateJson: null, encodedTemplateYaml: null }, mihomo)).toBe(true);
+  });
+
+  test('apart from the selector group, no template names the backend product', () => {
+    // The group's name is renamed in what members receive; nothing else in a
+    // template is, and a member can read the raw body (docs/privacy.md §5c).
+    for (const f of TEMPLATE_FAMILIES) {
+      const d = SUBSCRIPTION_TEMPLATES[f];
+      const text = d.kind === 'yaml' ? d.body : JSON.stringify(d.body);
+      expect(text.replaceAll('→ Remnawave', ''), f).not.toMatch(/remnawave/i);
+    }
+    expect(SINGBOX_JSON.experimental.cache_file).toMatchObject({
+      path: 'cache.db',
+      cache_id: 'default',
+    });
+  });
+
+  test('outdated: anything not matched, or matched under a template FCP no longer ships', async () => {
+    const shipped = await shippedTemplateHashes();
+    expect(shipped.SINGBOX).toBe(await templateHash(SUBSCRIPTION_TEMPLATES.SINGBOX));
+    const matched = TEMPLATE_FAMILIES.map((family) => ({
+      family,
+      hash: shipped[family],
+      state: 'matched',
+    }));
+    expect(templatesOutdated(matched, shipped)).toBe(false);
+    expect(templatesOutdated([], shipped)).toBe(false);
+    expect(templatesOutdated([{ ...matched[0]!, hash: 'an-earlier-release' }], shipped)).toBe(true);
+    expect(templatesOutdated([{ ...matched[1]!, state: 'drifted' }], shipped)).toBe(true);
+    expect(templatesOutdated([{ ...matched[2]!, state: 'refused' }], shipped)).toBe(true);
+    expect(templatesOutdated([{ family: 'GONE', hash: 'x', state: 'matched' }], shipped)).toBe(
+      false,
+    );
   });
 });
