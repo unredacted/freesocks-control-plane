@@ -23,7 +23,7 @@ export function isIpv6Literal(s: string): boolean {
   if (parts.length > 2) return false;
   const groups = parts.flatMap((p) => (p === '' ? [] : p.split(':')));
   if (groups.some((g) => g.length === 0 || g.length > 4 || !/^[0-9a-fA-F]+$/.test(g))) {
-    // Allow an embedded IPv4 tail (::ffff:1.2.3.4).
+    // Allow an embedded IPv4 tail (::ffff:192.0.2.4).
     const last = groups[groups.length - 1];
     if (
       !(

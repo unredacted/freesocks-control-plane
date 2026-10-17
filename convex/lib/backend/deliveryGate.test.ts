@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { gateToken, isCandidateEdge, isCandidateHost, nodeGateOf } from './deliveryGate';
+import { gateToken, isCandidateEdge, nodeGateOf } from './deliveryGate';
 
 const committed = { hostUuids: ['h-live'], edgeIds: ['e-live'] };
 const live = { delivery: { disposition: 'live' as const }, approved: { committed } };
@@ -28,9 +28,6 @@ describe('nodeGateOf', () => {
     expect(g.state).toBe('open');
     expect(g.committed).toEqual(committed);
     expect(g.candidates).toEqual({ hostUuids: ['h-cand'], edgeIds: ['e-cand'] });
-    expect(isCandidateHost(g, 'h-cand')).toBe(true);
-    expect(isCandidateHost(g, 'h-live')).toBe(false);
-    expect(isCandidateHost(g, null)).toBe(false);
     expect(isCandidateEdge(g, 'e-cand')).toBe(true);
     expect(isCandidateEdge(g, 'e-live')).toBe(false);
   });

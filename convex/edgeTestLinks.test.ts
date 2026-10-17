@@ -26,6 +26,7 @@ import {
 } from './lib/edges/testing/fixtures';
 import { realityEntryLine, selectTestEntry, TEST_LINK_USER_AGENT } from './edgeTestLinks';
 import { parseProxyUri } from './lib/edges/render/uri';
+import { expireTestCredential } from './lib/edges/testing/reads';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -316,7 +317,7 @@ describe('the isolated test link', () => {
       configHash: r.binding.configHash,
       method: 'test_link',
     });
-    await t.mutation(internal.edgeTestCredentials.release, { id: row._id });
+    await expireTestCredential(t, { id: row._id });
     expect(await t.action(internal.edgeTestCredentials.sweep, {})).toMatchObject({ removed: 1 });
     expect(outline.deleted).toHaveLength(1);
   });

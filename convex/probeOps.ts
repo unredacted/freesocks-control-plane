@@ -57,7 +57,7 @@ export function __setInternalProbeDeps(deps: Omit<InternalProbeDeps, 'fetchFn'> 
 }
 
 /**
- * `<address>:<port>` as the run stored it: `1.2.3.4:443`, `[2001:db8::1]:443`
+ * `<address>:<port>` as the run stored it: `192.0.2.4:443`, `[2001:db8::1]:443`
  * or `front.example:443`. The address kind, protocol and requested family come
  * from the run's own fields; a row written before they existed is an IPv4
  * literal probed over bare TCP.

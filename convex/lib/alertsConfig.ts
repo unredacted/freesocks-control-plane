@@ -24,8 +24,6 @@ export interface AlertsConfig {
   token: string;
 }
 
-export const ALERTS_DEFAULTS: AlertsConfig = { enabled: false, url: '', topic: '', token: '' };
-
 export const ALERTS_KEYS = {
   enabled: 'alerts.enabled',
   url: 'alerts.url',

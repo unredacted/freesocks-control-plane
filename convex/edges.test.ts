@@ -9,6 +9,7 @@ import {
   realityListener,
   registerRelay,
 } from './lib/edges/testing/fixtures';
+import { edgeAdminView, edgesOfRelay, insertPlanned } from './lib/edges/testing/reads';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -53,7 +54,7 @@ describe('edges', () => {
       maxLiveEdges: 1,
       dailyAllocationBudget: 5,
     });
-    const a = await t.mutation(internal.edges.insertPlanned, {
+    const a = await insertPlanned(t, {
       relayId,
       listenerId,
       accountId,
@@ -63,12 +64,12 @@ describe('edges', () => {
     const row = (await t.query(internal.edges.get, { id: a.id }))!;
     expect(row.status).toBe('planning');
     expect(row.steps.map((s) => s.state)).toEqual(['pending', 'pending']);
-    await expect(
-      t.mutation(internal.edges.insertPlanned, { relayId, listenerId, accountId, ...plan }),
-    ).rejects.toThrow(/live-edge cap/);
+    await expect(insertPlanned(t, { relayId, listenerId, accountId, ...plan })).rejects.toThrow(
+      /live-edge cap/,
+    );
     // Destroyed edges free capacity; the budget still counts.
     await t.mutation(internal.edges.patchEdge, { edgeId: a.id, status: 'destroyed' });
-    await t.mutation(internal.edges.insertPlanned, { relayId, listenerId, accountId, ...plan });
+    await insertPlanned(t, { relayId, listenerId, accountId, ...plan });
     const acct = (await t.run((ctx) => ctx.db.get(accountId)))!;
     expect(acct.allocationsToday).toBe(2);
   });
@@ -78,17 +79,17 @@ describe('edges', () => {
       maxLiveEdges: 10,
       dailyAllocationBudget: 1,
     });
-    await t.mutation(internal.edges.insertPlanned, { relayId, listenerId, accountId, ...plan });
-    await expect(
-      t.mutation(internal.edges.insertPlanned, { relayId, listenerId, accountId, ...plan }),
-    ).rejects.toThrow(/budget/);
-    const rows = await t.query(internal.edges.listByRelay, { relayId });
+    await insertPlanned(t, { relayId, listenerId, accountId, ...plan });
+    await expect(insertPlanned(t, { relayId, listenerId, accountId, ...plan })).rejects.toThrow(
+      /budget/,
+    );
+    const rows = await edgesOfRelay(t, { relayId });
     expect(rows).toHaveLength(1);
   });
 
   test('claimOp: one op at a time; an expired allocating op can only be followed by an observing op', async () => {
     const { t, accountId, relayId, listenerId } = await seed();
-    const { id } = await t.mutation(internal.edges.insertPlanned, {
+    const { id } = await insertPlanned(t, {
       relayId,
       listenerId,
       accountId,
@@ -181,7 +182,7 @@ describe('edges', () => {
 
   test('isDiscoverable + progress + describe(gone) transitions', async () => {
     const { t, accountId, relayId, listenerId } = await seed();
-    const { id } = await t.mutation(internal.edges.insertPlanned, {
+    const { id } = await insertPlanned(t, {
       relayId,
       listenerId,
       accountId,
@@ -282,14 +283,14 @@ describe('edges', () => {
     // Destroyed rows carry no large blobs.
     expect(row.liveSnapshot).toBeUndefined();
     expect(row.liveAt).toBeUndefined();
-    const admin = (await t.query(internal.edges.getForAdmin, { id }))!;
+    const admin = (await edgeAdminView(t, { id }))!;
     expect(admin.progress).toEqual({ done: 1, total: 2, percent: 50 });
     expect(admin.resources[0]).not.toHaveProperty('meta');
   });
 
   test('patchEdge → destroyed clears the live snapshot', async () => {
     const { t, accountId, relayId, listenerId } = await seed();
-    const { id } = await t.mutation(internal.edges.insertPlanned, {
+    const { id } = await insertPlanned(t, {
       relayId,
       listenerId,
       accountId,
@@ -309,7 +310,7 @@ describe('edges', () => {
     const DAY = 86_400_000;
     const now = Date.now();
     const mk = async (statusChangedAt: number) => {
-      const { id } = await t.mutation(internal.edges.insertPlanned, {
+      const { id } = await insertPlanned(t, {
         relayId,
         listenerId,
         accountId,
@@ -322,7 +323,7 @@ describe('edges', () => {
     };
     const old = await mk(now - 40 * DAY);
     const recent = await mk(now - 2 * DAY);
-    const live = await t.mutation(internal.edges.insertPlanned, {
+    const live = await insertPlanned(t, {
       relayId,
       listenerId,
       accountId,
@@ -404,7 +405,7 @@ describe('edges', () => {
 describe('edges: the operation claim stamps the step', () => {
   test('a provision_step claim stamps startedAt, so a lost settle still leaves a reference time', async () => {
     const { t, accountId, relayId, listenerId } = await seed();
-    const { id } = await t.mutation(internal.edges.insertPlanned, {
+    const { id } = await insertPlanned(t, {
       relayId,
       listenerId,
       accountId,
@@ -431,7 +432,7 @@ describe('edges: the operation claim stamps the step', () => {
 
   test('an OBSERVING claim never stamps a step (it allocates nothing)', async () => {
     const { t, accountId, relayId, listenerId } = await seed();
-    const { id } = await t.mutation(internal.edges.insertPlanned, {
+    const { id } = await insertPlanned(t, {
       relayId,
       listenerId,
       accountId,
@@ -450,13 +451,13 @@ describe('edges: the operation claim stamps the step', () => {
 describe('edges: external locks', () => {
   async function twoEdges() {
     const s = await seed({ maxLiveEdges: 5 });
-    const a = await s.t.mutation(internal.edges.insertPlanned, {
+    const a = await insertPlanned(s.t, {
       relayId: s.relayId,
       listenerId: s.listenerId,
       accountId: s.accountId,
       ...plan,
     });
-    const b = await s.t.mutation(internal.edges.insertPlanned, {
+    const b = await insertPlanned(s.t, {
       relayId: s.relayId,
       listenerId: s.listenerId,
       accountId: s.accountId,
@@ -604,9 +605,9 @@ describe('edges: capacity counts only what FCP provisioned', () => {
       }),
     );
     // The cap of 1 is still free: FCP never pays for or destroys that edge.
-    await t.mutation(internal.edges.insertPlanned, { relayId, listenerId, accountId, ...plan });
-    await expect(
-      t.mutation(internal.edges.insertPlanned, { relayId, listenerId, accountId, ...plan }),
-    ).rejects.toThrow(/capacity/);
+    await insertPlanned(t, { relayId, listenerId, accountId, ...plan });
+    await expect(insertPlanned(t, { relayId, listenerId, accountId, ...plan })).rejects.toThrow(
+      /capacity/,
+    );
   });
 });

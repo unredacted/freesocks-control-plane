@@ -29,18 +29,8 @@ export type NameOutcome =
   | 'timeout'
   | 'refused'
   | 'error';
-export const NAME_OUTCOMES: readonly NameOutcome[] = [
-  'ok',
-  'answered',
-  'cert_mismatch',
-  'reset',
-  'timeout',
-  'refused',
-  'error',
-];
 
 export type VantageSource = 'globalping' | 'ripeatlas';
-export const VANTAGE_SOURCES: readonly VantageSource[] = ['globalping', 'ripeatlas'];
 
 export interface NameVantageResult {
   asn?: string;

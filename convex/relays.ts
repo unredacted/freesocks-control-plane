@@ -19,7 +19,13 @@ import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { isTerminalPhase } from './lib/edges/rotation';
 import { edgeProviderIdValidator } from './lib/edgeProviderIds';
-import { resolveEdgeConfig, edgeMs, MAX_DESIRED_PUBLISHED } from './lib/edgeConfig';
+import {
+  MAX_DESIRED_PUBLISHED,
+  originOverrideNames,
+  originPolicy,
+  resolveEdgeConfig,
+  type EdgeConfig,
+} from './lib/edgeConfig';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import {
   isPublicIpLiteral,
@@ -291,12 +297,6 @@ export async function deliveryBindingFor(
   return byServer && byServer.state === 'active' ? byServer : null;
 }
 
-export const deliveryBinding = internalQuery({
-  args: { backendServerId: v.id('backendServers'), nodeName: v.optional(v.string()) },
-  handler: (ctx, { backendServerId, nodeName }) =>
-    deliveryBindingFor(ctx.db, backendServerId, nodeName),
-});
-
 /** Operator release of a `keep-dark` binding left behind by a deleted origin. */
 export const releaseDeliveryBinding = internalMutation({
   args: { id: v.id('edgeDeliveryBindings'), actorAdminId: v.optional(v.id('adminUsers')) },
@@ -398,7 +398,8 @@ export async function dropEdgeFromPool(
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,62}$/;
 const NODE_NAME_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
-export function mapRelayAdmin(r: Doc<'relays'>) {
+export function mapRelayAdmin(r: Doc<'relays'>, cfg: EdgeConfig) {
+  const policy = originPolicy(r, cfg);
   return {
     id: r._id as string,
     slug: r.slug,
@@ -434,13 +435,16 @@ export function mapRelayAdmin(r: Doc<'relays'>) {
       : null,
     providerPreference: r.providerPreference ?? null,
     desiredPublished: r.desiredPublished,
-    standbyPerRelay: r.standbyPerRelay,
-    standbyPerListener: r.standbyPerListener ?? null,
+    // The five per-origin knobs: the EFFECTIVE value (the origin's override,
+    // else the fleet's) and which of them this origin overrides.
+    standbyPerRelay: policy.standbyPerRelay,
+    standbyPerListener: policy.standbyPerListener,
     bindingDeferred: r.bindingDeferred ?? false,
     setupOwned: r.setupOwned ?? false,
-    cooldownMinutes: Math.round(r.cooldownMs / 60_000),
-    maxRotationsPerDay: r.maxRotationsPerDay,
-    drainMinutes: Math.round(r.drainMs / 60_000),
+    cooldownMinutes: Math.round(policy.cooldownMs / 60_000),
+    maxRotationsPerDay: policy.maxRotationsPerDay,
+    drainMinutes: Math.round(policy.drainMs / 60_000),
+    overrides: originOverrideNames(r),
     publicationEpoch: r.publicationEpoch,
     publishedEdgeIds: r.publishedEdgeIds.map((e) => (e as string | null) ?? null),
     publishedCount: publishedCount(r.publishedEdgeIds),
@@ -489,24 +493,17 @@ export function todayKey(now = Date.now()): string {
 
 export const listForAdmin = internalQuery({
   args: {},
-  handler: async (ctx) =>
-    (await ctx.db.query('relays').collect())
+  handler: async (ctx) => {
+    const cfg = await resolveEdgeConfig(ctx.db);
+    return (await ctx.db.query('relays').collect())
       .sort((a, b) => a.slug.localeCompare(b.slug))
-      .map(mapRelayAdmin),
+      .map((r) => mapRelayAdmin(r, cfg));
+  },
 });
 
 export const get = internalQuery({
   args: { id: v.id('relays') },
   handler: (ctx, { id }) => ctx.db.get(id),
-});
-
-export const getBySlug = internalQuery({
-  args: { slug: v.string() },
-  handler: (ctx, { slug }) =>
-    ctx.db
-      .query('relays')
-      .withIndex('by_slug', (q) => q.eq('slug', slug))
-      .unique(),
 });
 
 /** Every origin (small, operator-managed table) for the reconcile cron. */
@@ -550,12 +547,6 @@ export async function relayForBackendNode(
     .collect();
   return rows.find((r) => r.origin.kind === 'backend-server') ?? null;
 }
-
-export const forNode = internalQuery({
-  args: { backendServerId: v.id('backendServers'), nodeName: v.optional(v.string()) },
-  handler: (ctx, { backendServerId, nodeName }) =>
-    relayForBackendNode(ctx.db, backendServerId, nodeName),
-});
 
 // --- validation ---------------------------------------------------------------------------------
 
@@ -611,11 +602,11 @@ function checkOriginFields(a: {
   originAddress?: string;
   label?: string | null;
   desiredPublished?: number;
-  standbyPerRelay?: number;
-  standbyPerListener?: number;
-  cooldownMinutes?: number;
-  maxRotationsPerDay?: number;
-  drainMinutes?: number;
+  standbyPerRelay?: number | null;
+  standbyPerListener?: number | null;
+  cooldownMinutes?: number | null;
+  maxRotationsPerDay?: number | null;
+  drainMinutes?: number | null;
   locationCode?: string | null;
 }) {
   if (a.originAddress !== undefined) {
@@ -643,20 +634,20 @@ function checkOriginFields(a: {
       code: 'validation',
       message: `desiredPublished must be 1..${MAX_DESIRED_PUBLISHED}`,
     });
-  if (a.standbyPerRelay !== undefined && (a.standbyPerRelay < 0 || a.standbyPerRelay > 2))
+  if (a.standbyPerRelay != null && (a.standbyPerRelay < 0 || a.standbyPerRelay > 2))
     throw new ConvexError({ code: 'validation', message: 'standbyPerRelay must be 0..2' });
   if (
-    a.standbyPerListener !== undefined &&
+    a.standbyPerListener != null &&
     (!Number.isInteger(a.standbyPerListener) ||
       a.standbyPerListener < 0 ||
       a.standbyPerListener > 2)
   )
     throw new ConvexError({ code: 'validation', message: 'standbyPerListener must be 0..2' });
-  if (a.cooldownMinutes !== undefined && (a.cooldownMinutes < 10 || a.cooldownMinutes > 1440))
+  if (a.cooldownMinutes != null && (a.cooldownMinutes < 10 || a.cooldownMinutes > 1440))
     throw new ConvexError({ code: 'validation', message: 'cooldownMinutes must be 10..1440' });
-  if (a.maxRotationsPerDay !== undefined && (a.maxRotationsPerDay < 1 || a.maxRotationsPerDay > 12))
+  if (a.maxRotationsPerDay != null && (a.maxRotationsPerDay < 1 || a.maxRotationsPerDay > 12))
     throw new ConvexError({ code: 'validation', message: 'maxRotationsPerDay must be 1..12' });
-  if (a.drainMinutes !== undefined && (a.drainMinutes < 1 || a.drainMinutes > 7 * 1440))
+  if (a.drainMinutes != null && (a.drainMinutes < 1 || a.drainMinutes > 7 * 1440))
     throw new ConvexError({ code: 'validation', message: 'drainMinutes must be 1..10080' });
   if (
     a.locationCode !== undefined &&
@@ -679,11 +670,12 @@ const originWriteArgs = {
   probeNode: v.optional(v.boolean()),
   providerPreference: v.optional(v.union(edgeProviderIdValidator, v.null())),
   desiredPublished: v.optional(v.number()),
-  standbyPerRelay: v.optional(v.number()),
-  standbyPerListener: v.optional(v.number()),
-  cooldownMinutes: v.optional(v.number()),
-  maxRotationsPerDay: v.optional(v.number()),
-  drainMinutes: v.optional(v.number()),
+  // The per-origin overrides: a number sets one, null follows the fleet again.
+  standbyPerRelay: v.optional(v.union(v.number(), v.null())),
+  standbyPerListener: v.optional(v.union(v.number(), v.null())),
+  cooldownMinutes: v.optional(v.union(v.number(), v.null())),
+  maxRotationsPerDay: v.optional(v.union(v.number(), v.null())),
+  drainMinutes: v.optional(v.union(v.number(), v.null())),
   // The connection mode whose placement the L7 qualification user is minted on
   // (null = the backend's default placement).
   qualificationModeSlug: v.optional(v.union(v.string(), v.null())),
@@ -700,11 +692,11 @@ type OriginWrite = {
   probeNode?: boolean;
   providerPreference?: Doc<'relays'>['providerPreference'] | null;
   desiredPublished?: number;
-  standbyPerRelay?: number;
-  standbyPerListener?: number;
-  cooldownMinutes?: number;
-  maxRotationsPerDay?: number;
-  drainMinutes?: number;
+  standbyPerRelay?: number | null;
+  standbyPerListener?: number | null;
+  cooldownMinutes?: number | null;
+  maxRotationsPerDay?: number | null;
+  drainMinutes?: number | null;
   qualificationModeSlug?: string | null;
 };
 
@@ -720,11 +712,14 @@ function patchFrom(a: OriginWrite): Partial<Doc<'relays'>> {
   if (a.probeNode !== undefined) p.probeNode = a.probeNode;
   if (a.providerPreference !== undefined) p.providerPreference = a.providerPreference ?? undefined;
   if (a.desiredPublished !== undefined) p.desiredPublished = a.desiredPublished;
-  if (a.standbyPerRelay !== undefined) p.standbyPerRelay = a.standbyPerRelay;
-  if (a.standbyPerListener !== undefined) p.standbyPerListener = a.standbyPerListener;
-  if (a.cooldownMinutes !== undefined) p.cooldownMs = a.cooldownMinutes * 60_000;
-  if (a.maxRotationsPerDay !== undefined) p.maxRotationsPerDay = a.maxRotationsPerDay;
-  if (a.drainMinutes !== undefined) p.drainMs = a.drainMinutes * 60_000;
+  // An override: a number sets it, null clears it (the origin follows the fleet again).
+  if (a.standbyPerRelay !== undefined) p.standbyPerRelay = a.standbyPerRelay ?? undefined;
+  if (a.standbyPerListener !== undefined) p.standbyPerListener = a.standbyPerListener ?? undefined;
+  if (a.cooldownMinutes !== undefined)
+    p.cooldownMs = a.cooldownMinutes === null ? undefined : a.cooldownMinutes * 60_000;
+  if (a.maxRotationsPerDay !== undefined) p.maxRotationsPerDay = a.maxRotationsPerDay ?? undefined;
+  if (a.drainMinutes !== undefined)
+    p.drainMs = a.drainMinutes === null ? undefined : a.drainMinutes * 60_000;
   if (a.qualificationModeSlug !== undefined)
     p.qualificationModeSlug = a.qualificationModeSlug?.trim() || undefined;
   return p;
@@ -818,14 +813,13 @@ async function insertRelay(
     probeNode: p.probeNode ?? false,
     providerPreference: p.providerPreference,
     desiredPublished: p.desiredPublished ?? cfg.desiredPublishedDefault,
-    standbyPerRelay: p.standbyPerRelay ?? cfg.standbyPerRelay,
-    // An OVERRIDE of the global `edge.standbyPerListener`: persisted only when
-    // the caller set it, so a later change of the global applies to this origin
-    // (the reconcile reads `origin.standbyPerListener ?? cfg.standbyPerListener`).
+    // OVERRIDES of the fleet knobs, persisted only when the caller set them, so
+    // a later change of the fleet value applies to this origin (`originPolicy`).
+    ...(p.standbyPerRelay !== undefined ? { standbyPerRelay: p.standbyPerRelay } : {}),
     ...(p.standbyPerListener !== undefined ? { standbyPerListener: p.standbyPerListener } : {}),
-    cooldownMs: p.cooldownMs ?? edgeMs.cooldown(cfg),
-    maxRotationsPerDay: p.maxRotationsPerDay ?? cfg.maxRotationsPerRelayPerDay,
-    drainMs: p.drainMs ?? edgeMs.drain(cfg),
+    ...(p.cooldownMs !== undefined ? { cooldownMs: p.cooldownMs } : {}),
+    ...(p.maxRotationsPerDay !== undefined ? { maxRotationsPerDay: p.maxRotationsPerDay } : {}),
+    ...(p.drainMs !== undefined ? { drainMs: p.drainMs } : {}),
     publicationEpoch: 0,
     publishedEdgeIds: [],
     standbyEdgeIds: [],
@@ -844,8 +838,8 @@ async function insertRelay(
 /**
  * Claim the deferred delivery binding of an origin (the go-live step): upsert the
  * binding (policy version bump + mirror refresh, exactly as an insert does) and
- * clear `bindingDeferred`. Not wired to any route yet: the activation policy
- * (`require-edges`) that decides WHEN this may run is a later release.
+ * clear `bindingDeferred`. Its one caller is the guided setup run's stage-8
+ * `goLive` (edgeSetupRuns.ts), after the activation promotion.
  */
 export async function claimDeliveryBinding(ctx: MutationCtx, relay: Doc<'relays'>): Promise<void> {
   await upsertDeliveryBinding(ctx, { origin: relay.origin, slug: relay.slug });
@@ -1055,12 +1049,11 @@ export const requestDelete = internalMutation({
       }
     }
     if (disposition === 'restore-direct' && (await needsRestoreWorkflow(ctx.db, row))) {
+      // The cohorts a completed guided setup left dark by consent (stamped on
+      // the origin at go-live) are skipped by the workflow's raw-body checks.
       await startRestoreWorkflow(ctx, row, {
         purpose: 'delete_relay',
         force,
-        // The cohorts a completed guided setup left dark by consent have no FCP
-        // entry to verify; the raw-body checks must skip them or never pass.
-        darkCohortKeys: row.darkCohortKeys ?? [],
         ...(actorAdminId ? { actorAdminId } : {}),
       });
       await writeAuditLog(ctx, {
@@ -1110,6 +1103,7 @@ export async function applyDeleteBody(
 ): Promise<void> {
   const { force, disposition, actorAdminId } = opts;
   const id = row._id;
+  const { drainMs } = originPolicy(row, await resolveEdgeConfig(ctx.db));
   {
     const now = Date.now();
     const edges = await liveEdgesOfRelay(ctx.db, id);
@@ -1124,11 +1118,11 @@ export async function applyDeleteBody(
         });
         continue;
       }
-      if (['active', 'standby', 'verifying'].includes(e.status)) {
+      if (['active', 'verifying'].includes(e.status)) {
         await ctx.db.patch(e._id, {
           status: 'draining',
           publication: 'draining',
-          drainUntil: force ? now : now + row.drainMs,
+          drainUntil: force ? now : now + drainMs,
           statusChangedAt: now,
           updatedAt: now,
         });
@@ -1872,7 +1866,8 @@ export async function unpublishFromPool(
     await ctx.db.patch(edgeId, {
       publication: 'draining',
       status: 'draining',
-      drainUntil: now + (opts.drainMs ?? origin.drainMs),
+      drainUntil:
+        now + (opts.drainMs ?? originPolicy(origin, await resolveEdgeConfig(ctx.db)).drainMs),
       poolIndex: undefined,
       statusChangedAt: now,
       updatedAt: now,
@@ -2011,16 +2006,6 @@ export const rebalance = internalMutation({
     });
     await scheduleMirrorRefresh(ctx);
     return { ok: true as const, edgeId: picked._id, poolIndex, epoch };
-  },
-});
-
-export const bumpEpoch = internalMutation({
-  args: { relayId: v.id('relays') },
-  handler: async (ctx, { relayId }) => {
-    const origin = await ctx.db.get(relayId);
-    if (!origin) return null;
-    await bumpEpochAndRefresh(ctx, origin);
-    return null;
   },
 });
 

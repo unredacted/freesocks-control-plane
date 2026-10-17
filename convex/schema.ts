@@ -286,7 +286,6 @@ const relayEdgeStatus = v.union(
   v.literal('planning'),
   v.literal('provisioning'),
   v.literal('verifying'),
-  v.literal('standby'),
   v.literal('active'),
   v.literal('draining'),
   v.literal('destroying'),
@@ -1027,9 +1026,9 @@ export default defineSchema({
     scopes: v.array(v.string()),
     subjectType: v.union(v.literal('service'), v.literal('user')),
     subjectUserId: v.optional(v.id('users')),
-    // Registration boundary for `admin:edges:register` tokens: the backend
-    // servers (and optionally node names) the node role may register origins
-    // for. Enforced on GET, PUT and DELETE of the by-slug origin routes.
+    // Registration boundary for `admin:edges:register` (and `admin:servers:manage`)
+    // tokens: the backend servers (and optionally node names) the token may act
+    // for on the Servers by-name node routes (lib/adminHttp.ts registrationBoundaryOf).
     edgeRegistration: v.optional(
       v.object({
         backendServerIds: v.array(v.id('backendServers')),
@@ -1220,13 +1219,17 @@ export default defineSchema({
     enabled: v.boolean(),
     autoRotate: v.boolean(),
     providerPreference: v.optional(relayProviderId),
+    // The published-pool size (state: setup runs and re-protect widen it), seeded
+    // from `edge.desiredPublishedDefault`.
     desiredPublished: v.number(),
-    standbyPerRelay: v.number(),
-    // Verified standbys kept per coverage listener (absent = the config default at read).
+    // Per-origin OVERRIDES of the fleet knobs, one rule for all five
+    // (`originPolicy` in lib/edgeConfig.ts): absent = follow `edge.*`.
+    standbyPerRelay: v.optional(v.number()),
+    // Verified standbys kept per coverage listener.
     standbyPerListener: v.optional(v.number()),
-    cooldownMs: v.number(),
-    maxRotationsPerDay: v.number(),
-    drainMs: v.number(),
+    cooldownMs: v.optional(v.number()),
+    maxRotationsPerDay: v.optional(v.number()),
+    drainMs: v.optional(v.number()),
     // Bumps on every published-pool / profile / rule change; part of the
     // subscription render cache key.
     publicationEpoch: v.number(),
@@ -1259,10 +1262,11 @@ export default defineSchema({
     // (backendNodeRenames.ts): every pool, edge and listener write waits
     // (`edge.panel_op_running`, the same guard as a server change's claim).
     renaming: v.optional(v.object({ renameId: v.id('panelNodeRenames'), since: v.number() })),
-    // Member cohorts the operator knowingly left without protected delivery at
-    // go-live (their whole body went with the consented hides). The restore
-    // workflow's raw-body checks skip them; without this the origin could never
-    // release its binding or be removed.
+    // Member cohorts the operator knowingly left without protected delivery
+    // (their whole body went with the consented hides): stamped at go-live, or
+    // from the run's rehearsal when a restore cancels a setup. The ONE copy the
+    // restore workflow's raw-body checks read; without it the origin could
+    // never release its binding or be removed.
     darkCohortKeys: v.optional(v.array(v.string())),
     // The stage the setup run recorded last (informational; the run machine is a later release).
     setupStage: v.optional(v.string()),
@@ -1291,8 +1295,6 @@ export default defineSchema({
         // Passes of the current phase that could not advance it (bounded per phase).
         attempt: v.number(),
         lastError: v.optional(v.string()),
-        // Cohorts the operator approved to go dark (their raw bodies are not checked).
-        darkCohortKeys: v.array(v.string()),
         // `delete_relay`: what the deletion body runs with once phase 7 is reached.
         force: v.optional(v.boolean()),
         actorAdminId: v.optional(v.id('adminUsers')),
@@ -1988,7 +1990,8 @@ export default defineSchema({
   })
     .index('by_relay', ['relayId'])
     .index('by_run', ['runId'])
-    .index('by_host', ['hostUuid']),
+    .index('by_host', ['hostUuid'])
+    .index('by_state_updated', ['state', 'updatedAt']),
 
   // External / internal reachability probe requests against one edge.
   // Operator-entered probe targets (any host:port), alongside the derived ones
@@ -2250,7 +2253,8 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_binding', ['bindingId'])
-    .index('by_op', ['opId']),
+    .index('by_op', ['opId'])
+    .index('by_phase_updated', ['phase', 'updatedAt']),
 
   // The proof that ONE node accepts a name: an authenticated REALITY session,
   // made by an operator with an isolated test link through one of that node's
@@ -2499,7 +2503,11 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_server', ['backendServerId'])
-    .index('by_open', ['open', 'backendServerId']),
+    .index('by_open', ['open', 'backendServerId'])
+    // The newest ops of one kind (foreign-edit detection reads profile ops only).
+    .index('by_server_kind', ['backendServerId', 'kind'])
+    // Retention: settled ops past the window (retention.sweepPanelOps).
+    .index('by_open_updated', ['open', 'updatedAt']),
 
   // One row per claimed resource (`host:<uuid>`, `hostid:<identity>`,
   // `mode group:<uuid>`, `profile:<uuid>`, `node:<uuid>`), scoped by instance.
@@ -2532,19 +2540,12 @@ export default defineSchema({
     identity: v.string(),
     lookup: v.array(v.string()),
     panelUuid: v.optional(v.string()),
-    // TRANSITIONAL: 'reserved' is a v1 role reservation. Rows carrying it are
-    // settled by `backendSetup:migrateContractV2`; the literal goes with it.
-    state: v.union(v.literal('owned'), v.literal('reserved'), v.literal('tombstoned')),
-    // An open reservation by the node role: blocks tombstoning until settled.
-    reservation: v.optional(
-      v.object({ roleOpId: v.string(), at: v.number(), tokenId: v.optional(v.id('apiTokens')) }),
-    ),
+    state: v.union(v.literal('owned'), v.literal('tombstoned')),
     since: v.number(),
     updatedAt: v.number(),
   })
     .index('by_server_kind_identity', ['backendServerId', 'kind', 'identity'])
-    .index('by_server_uuid', ['backendServerId', 'panelUuid'])
-    .index('by_reservation', ['reservation.roleOpId']),
+    .index('by_server_uuid', ['backendServerId', 'panelUuid']),
 
   // Member reports attributed to the server names the reporter held, as
   // AGGREGATE fractional weights per (name, country, day). No member, no
@@ -2659,16 +2660,6 @@ export default defineSchema({
     .index('by_family', ['familyId'])
     .index('by_oldest', ['oldestAt']),
 
-  // TRANSITIONAL: the v1 role's handoff declaration. Contract v1 is gone and
-  // nothing reads this; the table stays declared only so a deployment that has
-  // such rows can be pushed, and `backendSetup:migrateContractV2` empties it.
-  panelHandoff: defineTable({
-    backendServerId: v.id('backendServers'),
-    roleContractVersion: v.number(),
-    reportedAt: v.number(),
-    reportedBy: v.optional(v.string()),
-  }).index('by_server', ['backendServerId']),
-
   // --- Bootstrap contract v2 (docs/servers.md "Setting up a backend", "Node lifecycle") ---
   //
   // FCP owns the backend; the node role bootstraps the MACHINE and reports.
@@ -2687,13 +2678,7 @@ export default defineSchema({
     desiredHash: v.string(),
     generation: v.number(),
     claim: v.optional(v.object({ attemptId: v.string(), expiresAt: v.number() })),
-    // TRANSITIONAL: 'needs_takeover' is a v1 row's state (see `modes` below).
-    state: v.union(
-      v.literal('pending'),
-      v.literal('needs_takeover'),
-      v.literal('ready'),
-      v.literal('failed'),
-    ),
+    state: v.union(v.literal('pending'), v.literal('ready'), v.literal('failed')),
     step: v.optional(v.string()),
     code: v.optional(v.string()),
     profileName: v.string(),
@@ -2701,58 +2686,45 @@ export default defineSchema({
     // One entry per mode the backend serves: the connection mode it feeds,
     // its group, its shape, its family, and the EFFECTIVE transport (from
     // the adopted or created profile, never the defaults).
-    // TRANSITIONAL optional: a row written by the release before modes has no
-    // `modes` (it had `transports`/`mode groups`/`placements` instead) and Convex
-    // validates stored documents on every push, so the field cannot be
-    // required until `backendSetup:migrateContractV2` has removed those rows.
-    // `setupReady` treats a row without modes as not set up.
-    modes: v.optional(
-      v.array(
-        v.object({
-          slug: v.string(),
-          name: v.string(),
-          shape: v.object({
-            transport: v.union(v.literal('reality'), v.literal('xhttp-reality'), v.literal('ws')),
-            fronting: v.union(v.literal('direct'), v.literal('edge-l4'), v.literal('edge-l7')),
-          }),
-          familySlug: v.optional(v.string()),
-          acceptProxyProtocol: v.boolean(),
-          ws: v.optional(v.object({ path: v.string(), port: v.number() })),
-          // The transport tag: the group name's, or the tag an adopted profile
-          // already carried (a backend keys transports by tag; never renamed).
-          tag: v.string(),
-          groupUuid: v.optional(v.string()),
-          // The name the group was found under when it was renamed in place.
-          renamedFrom: v.optional(v.string()),
-          placement: v.union(v.literal('pending'), v.literal('bound'), v.literal('skipped')),
-          transport: v.optional(
-            v.object({
-              uuid: v.string(),
-              listen: v.optional(v.string()),
-              port: v.number(),
-              path: v.optional(v.string()),
-              serverNames: v.optional(v.array(v.string())),
-              target: v.optional(v.object({ address: v.string(), port: v.number() })),
-              publicKey: v.optional(v.string()),
-            }),
-          ),
-          family: v.union(
-            v.literal('none'),
-            v.literal('bound'),
-            v.literal('unbound'),
-            v.literal('target_mismatch'),
-            // Bound to a DIFFERENT family: that family's rollouts own the names.
-            v.literal('bound_elsewhere'),
-          ),
+    modes: v.array(
+      v.object({
+        slug: v.string(),
+        name: v.string(),
+        shape: v.object({
+          transport: v.union(v.literal('reality'), v.literal('xhttp-reality'), v.literal('ws')),
+          fronting: v.union(v.literal('direct'), v.literal('edge-l4'), v.literal('edge-l7')),
         }),
-      ),
+        familySlug: v.optional(v.string()),
+        acceptProxyProtocol: v.boolean(),
+        ws: v.optional(v.object({ path: v.string(), port: v.number() })),
+        // The transport tag: the group name's, or the tag an adopted profile
+        // already carried (a backend keys transports by tag; never renamed).
+        tag: v.string(),
+        groupUuid: v.optional(v.string()),
+        // The name the group was found under when it was renamed in place.
+        renamedFrom: v.optional(v.string()),
+        placement: v.union(v.literal('pending'), v.literal('bound'), v.literal('skipped')),
+        transport: v.optional(
+          v.object({
+            uuid: v.string(),
+            listen: v.optional(v.string()),
+            port: v.number(),
+            path: v.optional(v.string()),
+            serverNames: v.optional(v.array(v.string())),
+            target: v.optional(v.object({ address: v.string(), port: v.number() })),
+            publicKey: v.optional(v.string()),
+          }),
+        ),
+        family: v.union(
+          v.literal('none'),
+          v.literal('bound'),
+          v.literal('unbound'),
+          v.literal('target_mismatch'),
+          // Bound to a DIFFERENT family: that family's rollouts own the names.
+          v.literal('bound_elsewhere'),
+        ),
+      }),
     ),
-    // TRANSITIONAL: the shape the release before modes wrote, kept only so its
-    // rows validate until the migration removes them. Nothing reads these.
-    inbounds: v.optional(v.any()),
-    squads: v.optional(v.any()),
-    placements: v.optional(v.any()),
-    handoff: v.optional(v.any()),
     templates: v.array(
       v.object({
         family: v.string(),
@@ -2773,8 +2745,7 @@ export default defineSchema({
       ),
     ),
     // Taken over with existing nodes or addresses (the operator's typed adopt).
-    // TRANSITIONAL optional: absent on a row from before modes (see above).
-    adopted: v.optional(v.boolean()),
+    adopted: v.boolean(),
     // The delivery gate version of this backend: bumped on every disposition
     // or resource-set change of any of its nodes; part of every render's token.
     gateVersion: v.number(),
@@ -2791,13 +2762,7 @@ export default defineSchema({
     label: v.string(),
     // The connection mode this node serves (one per node); the machine shape
     // follows from the backend setup's entry for it.
-    // TRANSITIONAL optional: a row from the release before modes carries
-    // `purpose` instead. Those rows are removed by
-    // `backendSetup:migrateContractV2`; until then the field cannot be required,
-    // and a row without it fails closed (`servers.mode_unknown`).
-    mode: v.optional(v.string()),
-    // TRANSITIONAL: direct | front | origin, the pre-modes shape of a node.
-    purpose: v.optional(v.any()),
+    mode: v.string(),
     contractVersion: v.number(),
     generation: v.number(),
     desiredHash: v.string(),
@@ -2938,8 +2903,6 @@ export default defineSchema({
     formerNames: v.optional(v.array(v.string())),
     // A direct node's own addresses on the backend: one per family name.
     addressUuids: v.optional(v.array(v.string())),
-    // TRANSITIONAL: the single Host of a pre-modes direct node.
-    hostUuid: v.optional(v.string()),
     // Taken over as it was (already serving members): live at once, with its
     // current addresses committed. `externallyFronted`: a fronted node whose
     // edge FCP does not run yet (an earlier tool made it); Edges takes over later.
@@ -3005,7 +2968,8 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_server', ['backendServerId'])
-    .index('by_state', ['state']),
+    .index('by_state', ['state'])
+    .index('by_op', ['opId']),
 
   // A name a node had before a rename, and the name it has now. Lookups by a
   // name that is not current (a subscription pinned before its drain, a body
@@ -3056,7 +3020,9 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_server', ['backendServerId'])
-    .index('by_state', ['state']),
+    .index('by_state', ['state'])
+    .index('by_state_updated', ['state', 'updatedAt'])
+    .index('by_op', ['opId']),
 
   // One node that must let a staged change's port in. `role`: an enrolled node
   // the node role runs, confirmed by its applied report; `operator`: a node FCP
@@ -3128,9 +3094,10 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_intent', ['intentId'])
-    .index('by_state', ['state']),
+    .index('by_state', ['state'])
+    .index('by_state_updated', ['state', 'updatedAt']),
 
-  // The retirement ladder of one node (docs/servers.md "Retirement and migration").
+  // The retirement ladder of one node (docs/servers.md "Retirement").
   panelRetirements: defineTable({
     backendServerId: v.id('backendServers'),
     intentId: v.id('panelNodeIntents'),
@@ -3140,57 +3107,17 @@ export default defineSchema({
       v.literal('draining'),
       v.literal('panel_removed'),
       v.literal('ready_to_wipe'),
-      v.literal('wiped'),
       v.literal('retired'),
     ),
-    disposition: v.optional(v.union(v.literal('keep-dark'), v.literal('migrate'))),
-    migrationId: v.optional(v.id('panelMigrations')),
+    // Moving members to another node is not offered; a retired node's members
+    // get the edge-required unavailable behaviour.
+    disposition: v.optional(v.literal('keep-dark')),
     requestedBy: v.union(v.literal('role'), v.literal('admin')),
     code: v.optional(v.string()),
     events: v.array(v.object({ at: v.number(), code: v.string() })),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index('by_intent', ['intentId']),
-
-  // Moving a source node's members to a target node: a persisted cohort with
-  // each member's assignment version, batches, and a conditional rollback.
-  panelMigrations: defineTable({
-    backendServerId: v.id('backendServers'),
-    sourceIntentId: v.id('panelNodeIntents'),
-    targetIntentId: v.id('panelNodeIntents'),
-    generation: v.number(),
-    stage: v.union(
-      v.literal('admit'),
-      v.literal('rehearse'),
-      v.literal('cutover'),
-      v.literal('verify'),
-      v.literal('rollback'),
-      v.literal('drain'),
-      v.literal('done'),
-      v.literal('failed'),
-    ),
-    cohort: v.array(
-      v.object({
-        subscriptionId: v.id('subscriptions'),
-        previousNode: v.optional(v.string()),
-        previousVersion: v.number(),
-        state: v.union(
-          v.literal('pending'),
-          v.literal('moved'),
-          v.literal('skipped'),
-          v.literal('restored'),
-        ),
-        movedVersion: v.optional(v.number()),
-      }),
-    ),
-    position: v.number(),
-    code: v.optional(v.string()),
-    events: v.array(v.object({ at: v.number(), code: v.string() })),
-    createdAt: v.number(),
-    updatedAt: v.number(),
-  })
-    .index('by_source', ['sourceIntentId'])
-    .index('by_target', ['targetIntentId']),
 
   // External side effects of the workflows above, persisted BEFORE the call.
   // A superseded owner generation never releases an unresolved one; on
@@ -3203,7 +3130,6 @@ export default defineSchema({
       v.literal('intent'),
       v.literal('activation'),
       v.literal('retirement'),
-      v.literal('migration'),
     ),
     ownerId: v.string(),
     ownerGeneration: v.number(),

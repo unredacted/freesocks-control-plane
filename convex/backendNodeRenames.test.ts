@@ -32,6 +32,7 @@ import { renamedRemark } from './lib/backend/nodeRename';
 import { currentNodeName } from './lib/backend/nodeAliases';
 import { matcherOf } from './edgeRender';
 import { assertNoRelayPanelClaim } from './lib/edges/relayGuards';
+import { deliveryBindingOf, gateOfNode, relayForNode } from './lib/edges/testing/reads';
 
 const modules = import.meta.glob('./**/*.*s');
 type T = TestConvex<typeof schema>;
@@ -376,19 +377,19 @@ describe('a rename moves every reference', () => {
       expect(inv.name).toBe('node-b');
 
     // The old name still answers: origin, binding, gate, and the role's view.
-    const viaOld = await s.t.query(internal.relays.forNode, {
+    const viaOld = await relayForNode(s.t, {
       backendServerId: s.serverId,
       nodeName: 'node-a',
     });
     expect(viaOld?._id).toBe(s.relayId);
-    const binding = await s.t.query(internal.relays.deliveryBinding, {
+    const binding = await deliveryBindingOf(s.t, {
       backendServerId: s.serverId,
       nodeName: 'node-a',
     });
     expect(binding?.relaySlug).toBe('node-a');
     const [gateOld, gateNew] = await Promise.all(
       ['node-a', 'node-b'].map((nodeName) =>
-        s.t.query(internal.nodeIntents.nodeGate, { backendServerId: s.serverId, nodeName }),
+        gateOfNode(s.t, { backendServerId: s.serverId, nodeName }),
       ),
     );
     expect(gateOld).toEqual(gateNew);
@@ -417,7 +418,7 @@ describe('a rename moves every reference', () => {
     await drained(s.t);
     const second = NodeRenameView.parse(await (await rename(s, 'node-c')).json());
     expect((await settledRename(s, second.id))?.state).toBe('done');
-    const viaFirst = await s.t.query(internal.relays.forNode, {
+    const viaFirst = await relayForNode(s.t, {
       backendServerId: s.serverId,
       nodeName: 'node-a',
     });

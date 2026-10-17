@@ -28,6 +28,7 @@ import { claimKey } from './lib/backend/ops';
 import { jsonRes, routeFetch, type Captured } from './lib/edges/testing/mockFetch';
 import { signValue } from './lib/cookies';
 import { PortChangeView, ProfilePatchPreview } from '../src/shared/contracts/servers';
+import { gateOfNode } from './lib/edges/testing/reads';
 
 const modules = import.meta.glob('./**/*.*s');
 type T = TestConvex<typeof schema>;
@@ -373,7 +374,7 @@ describe('a port change waits for the firewalls', () => {
     );
     expect(done.state).toBe('applied');
     // Held closed by name until released.
-    const gate = await s.t.query(internal.nodeIntents.nodeGate, {
+    const gate = await gateOfNode(s.t, {
       backendServerId: s.serverId,
       nodeName: 'stranger',
     });

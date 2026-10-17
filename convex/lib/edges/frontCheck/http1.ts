@@ -61,19 +61,6 @@ export function headerHasToken(value: string | undefined, token: string): boolea
     .includes(token.toLowerCase());
 }
 
-/**
- * Response headers that identify a CDN-generated answer. Used only to describe
- * a failure precisely; the decision is always "did the transport answer".
- */
-const FRONT_HEADERS = ['cf-ray', 'x-served-by', 'x-cache', 'fastly-io-info'];
-
-export function looksFrontGenerated(head: HttpHead): boolean {
-  if (FRONT_HEADERS.some((h) => head.headers[h] !== undefined)) return true;
-  const server = head.headers['server'];
-  // A `server` header at all on a 101 path is unusual; only flag known fronts.
-  return server !== undefined && /^(cloudflare|varnish|artifactory-cdn)/i.test(server);
-}
-
 export function buildRequest(
   method: string,
   path: string,

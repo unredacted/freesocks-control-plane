@@ -20,7 +20,6 @@ import {
 export type { QualificationBinding } from '../intent';
 export {
   qualificationVerdict,
-  qualificationCurrent,
   qualificationRefusal,
   type QualificationVerdict,
   type StoredQualification,

@@ -29,7 +29,6 @@ import { mapTransportsToListeners } from './lib/edges/inboundMapping';
 import { applyOriginProbes, originProbeTargets } from './edgeOriginProbe';
 import type { OriginProbeOutcome } from './lib/edges/originProbe';
 import { classifyDirectHosts } from './lib/edges/directHosts';
-import { listenerLayers } from './lib/edges/layers';
 import { templateHostRemark } from './lib/edges/hosts';
 import { accountsForSlot } from './lib/edges/rotation';
 import {

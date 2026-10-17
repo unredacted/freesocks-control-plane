@@ -16,7 +16,6 @@ import type { ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { cloudflareDnsClient } from './lib/edges/providers/dns/cloudflareDns';
-import type { DnsClient } from './lib/edges/providers/dns/types';
 import {
   originMarker,
   planRecord,
@@ -25,18 +24,6 @@ import {
 } from './lib/backend/originDns';
 
 const fence = { intentId: v.id('panelNodeIntents'), generation: v.number(), attemptId: v.string() };
-
-type DnsClientFactory = (cfg: {
-  apiToken: string;
-  zoneId: string;
-  zoneName: string;
-  accountId: string;
-}) => DnsClient;
-let dnsFactory: DnsClientFactory = cloudflareDnsClient;
-/** Test seam: an in-memory DnsClient. */
-export function __setDnsClientFactoryForTests(f: DnsClientFactory | null): void {
-  dnsFactory = f ?? cloudflareDnsClient;
-}
 
 /**
  * Ensure the A (and, when published, AAAA) record of a front node's origin
@@ -68,7 +55,7 @@ export const ensureOriginDns = internalAction({
       });
       return { state: 'conflict' };
     }
-    const client = dnsFactory({
+    const client = cloudflareDnsClient({
       apiToken,
       zoneId: zone.zoneId,
       zoneName: zone.zoneName,
@@ -242,7 +229,7 @@ async function withdrawRecord(ctx: ActionCtx, o: Obligation): Promise<'removed' 
   });
   const apiToken = (acct?.credentials as { apiToken?: string } | undefined)?.apiToken;
   if (!apiToken) return 'unresolved';
-  const client = dnsFactory({
+  const client = cloudflareDnsClient({
     apiToken,
     zoneId: d.zoneId,
     zoneName: d.zoneName,

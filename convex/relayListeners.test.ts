@@ -21,6 +21,7 @@ import {
   shadowsocksListener,
   wsListener,
 } from './lib/edges/testing/fixtures';
+import { listenerById } from './lib/edges/testing/reads';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -622,22 +623,5 @@ describe('relayListeners: sni pick version', () => {
     await expect(
       t.mutation(internal.relayListeners.setSniPick, { id: listenerId, version: 'hrw1' }),
     ).rejects.toThrow(/rotation_running/);
-  });
-});
-
-describe('relayListeners: template edge', () => {
-  test('setTemplateEdge records / clears the edge a listener’s Host points at', async () => {
-    const { t, relayId, listenerId } = await seed();
-    const { edgeId } = await adoptL4Edge(t, relayId, listenerId);
-    await t.mutation(internal.relayListeners.setTemplateEdge, {
-      id: listenerId,
-      edgeId: edgeId as Id<'edges'>,
-    });
-    expect((await row(t, listenerId))!.templateEdgeId).toBe(edgeId);
-    expect((await t.query(internal.relayListeners.get, { id: listenerId }))!.templateEdgeId).toBe(
-      edgeId,
-    );
-    await t.mutation(internal.relayListeners.setTemplateEdge, { id: listenerId, edgeId: null });
-    expect((await row(t, listenerId))!.templateEdgeId).toBeUndefined();
   });
 });

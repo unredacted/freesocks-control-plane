@@ -29,7 +29,13 @@ import type { Doc, Id } from './_generated/dataModel';
 import { sanitizeAuditPayload, writeAuditLog, type AuditEntry } from './lib/audit';
 import { randomHex } from './lib/crypto';
 import { assertNoRelayPanelClaim } from './lib/edges/relayGuards';
-import { resolveEdgeConfig, edgeMs, type EdgeConfig } from './lib/edgeConfig';
+import {
+  EDGE_PLUMBING,
+  originPolicy,
+  resolveEdgeConfig,
+  edgeMs,
+  type EdgeConfig,
+} from './lib/edgeConfig';
 import {
   checkPublishable,
   liveEdgesOfAccount,
@@ -575,7 +581,8 @@ export async function collectStartBlockers(
         push('edge.cooldown', 'Origin is cooling down');
       const today = todayKey(now);
       const used = origin.rotationsDayKey === today ? origin.rotationsToday : 0;
-      if (used >= origin.maxRotationsPerDay) push('edge.daily_cap', 'Daily rotation cap reached');
+      if (used >= originPolicy(origin, cfg).maxRotationsPerDay)
+        push('edge.daily_cap', 'Daily rotation cap reached');
     }
     if (targetEdge) listenerId = targetEdge.listenerId;
     // Replacing an L4 edge switches ONLY to an already-tested spare: a freshly
@@ -1152,12 +1159,11 @@ export const advance = internalMutation({
   handler: async (ctx, { rotationId, stepVersion, event }) => {
     const r = await guard(ctx, rotationId, stepVersion);
     if (!r) return { ok: false as const };
-    const cfg = await resolveEdgeConfig(ctx.db);
     const now = Date.now();
     const next = stepVersion + 1;
     const ev = (level: RotationEvent['level'], code: string, detail?: string) =>
       appendEvent(r.events, { at: now, level, code, detail });
-    const poll = edgeMs.poll(cfg);
+    const poll = EDGE_PLUMBING.pollMs;
     switch (event.type) {
       case 'selected': {
         await ctx.db.patch(rotationId, {
@@ -1613,7 +1619,7 @@ export const applyPublish = internalMutation({
         publication: 'draining',
         status: 'draining',
         poolIndex: undefined,
-        drainUntil: now + edgeMs.drain(cfg),
+        drainUntil: now + originPolicy(origin, cfg).drainMs,
         statusChangedAt: now,
         updatedAt: now,
       });
@@ -1782,12 +1788,12 @@ export const claimHostOp = internalMutation({
   handler: async (ctx, a) => {
     const r = await guard(ctx, a.rotationId, a.stepVersion);
     if (!r) return { ok: false as const, code: 'stale' as const };
-    const cfg = await resolveEdgeConfig(ctx.db);
     const now = Date.now();
     if (r.currentOp && r.currentOp.expiresAt > now)
       return { ok: false as const, code: 'op_busy' as const };
     const attempts = a.direction === 'forward' ? r.flipAttempts + 1 : r.rollbackAttempts + 1;
-    const cap = a.direction === 'forward' ? cfg.maxFlipAttempts : cfg.maxRollbackAttempts;
+    const cap =
+      a.direction === 'forward' ? EDGE_PLUMBING.maxFlipAttempts : EDGE_PLUMBING.maxRollbackAttempts;
     if (attempts > cap) return { ok: false as const, code: 'max_attempts' as const };
     const op = {
       opId: randomHex(8),
@@ -1796,7 +1802,7 @@ export const claimHostOp = internalMutation({
       direction: a.direction,
       attempt: attempts,
       claimedAt: now,
-      expiresAt: now + edgeMs.opClaim(cfg),
+      expiresAt: now + EDGE_PLUMBING.opClaimMs,
     };
     await ctx.db.patch(a.rotationId, {
       currentOp: op,
@@ -1945,7 +1951,7 @@ export const finalize = internalMutation({
         await ctx.db.patch(from._id, {
           publication: 'draining',
           status: 'draining',
-          drainUntil: now + (r.burn ? edgeMs.burnedDrain(cfg) : edgeMs.drain(cfg)),
+          drainUntil: now + (r.burn ? edgeMs.burnedDrain(cfg) : originPolicy(origin, cfg).drainMs),
           ...(r.burn ? { burnedAt: now } : {}),
           statusChangedAt: from.status === 'draining' ? from.statusChangedAt : now,
           updatedAt: now,
@@ -1984,7 +1990,7 @@ export const finalize = internalMutation({
         ? { l7ReplacementsDayKey: today, l7ReplacementsToday: usedToday + 1 }
         : {}),
       ...(r.kind === 'replace'
-        ? { lastRotatedAt: now, cooldownUntil: now + origin.cooldownMs }
+        ? { lastRotatedAt: now, cooldownUntil: now + originPolicy(origin, cfg).cooldownMs }
         : {}),
       // Standby bookkeeping for a provision that did not publish. Only an edge
       // that could actually be published later belongs on the list: a destroyed
@@ -1993,7 +1999,7 @@ export const finalize = internalMutation({
       ...(to && !published
         ? {
             standbyEdgeIds:
-              to.status === 'active' || to.status === 'standby'
+              to.status === 'active'
                 ? [...origin.standbyEdgeIds.filter((e) => e !== to._id), to._id]
                 : origin.standbyEdgeIds.filter((e) => e !== to._id),
           }
@@ -2145,7 +2151,8 @@ export const resolveQuarantine = internalMutation({
               publication: 'draining',
               status: 'draining',
               poolIndex: undefined,
-              drainUntil: now + (rotation.burn ? edgeMs.burnedDrain(cfg) : edgeMs.drain(cfg)),
+              drainUntil:
+                now + (rotation.burn ? edgeMs.burnedDrain(cfg) : originPolicy(origin, cfg).drainMs),
               ...(rotation.burn ? { burnedAt: now } : {}),
               statusChangedAt: now,
               updatedAt: now,
@@ -2777,7 +2784,7 @@ export const step = internalAction({
   handler: async (ctx, { rotationId }): Promise<null> => {
     const c = await stepContextHandler(ctx, rotationId);
     if (!c || isTerminalPhase(c.rotation.phase)) return null;
-    const { rotation: r, cfg } = c;
+    const { rotation: r } = c;
     const sv = r.stepVersion;
     await ctx.runMutation(internal.edgeRotations.markStepStarted, { rotationId, stepVersion: sv });
     const adv = (event: Parameters<typeof advanceCall>[3]) =>
@@ -2801,7 +2808,7 @@ export const step = internalAction({
     // `rolling_back` only the error budget + the Host attempt caps apply.)
     const now = Date.now();
     const cap =
-      r.phase !== 'rolling_back' && now - r.startedAt > edgeMs.maxRotation(cfg)
+      r.phase !== 'rolling_back' && now - r.startedAt > EDGE_PLUMBING.maxRotationMs
         ? 'rotation_timeout'
         : (r.stepErrors ?? 0) >= MAX_STEP_ERRORS
           ? 'step_errors_exhausted'
@@ -2864,7 +2871,7 @@ export const step = internalAction({
       const { code, detail } = errCode(err);
       await adv({
         type: 'progress',
-        delayMs: edgeMs.poll(cfg),
+        delayMs: EDGE_PLUMBING.pollMs,
         detail: `step error: ${code} ${detail}`.trim(),
         countPoll: true,
         countError: true,
@@ -3039,15 +3046,15 @@ async function phaseSelect(ctx: ActionCtx, c: Ctx) {
 }
 
 async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
-  const { rotation: r, cfg, toEdge: edge } = c;
+  const { rotation: r, toEdge: edge } = c;
   const sv = r.stepVersion;
-  const poll = edgeMs.poll(cfg);
+  const poll = EDGE_PLUMBING.pollMs;
   if (!edge || !edge.accountId) {
     await advanceCall(ctx, r._id, sv, { type: 'fail', code: 'edge_missing', rollback: false });
     return;
   }
   const now = Date.now();
-  if (edge._creationTime + edgeMs.provisionTimeout(cfg) < now) {
+  if (edge._creationTime + EDGE_PLUMBING.provisionTimeoutMs < now) {
     await advanceCall(ctx, r._id, sv, { type: 'fail', code: 'provision_timeout', rollback: false });
     return;
   }
@@ -3123,7 +3130,7 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
       edgeId: edge._id,
       kind,
       target: pending.stepId,
-      claimMs: edgeMs.opClaim(cfg),
+      claimMs: EDGE_PLUMBING.opClaimMs,
     });
 
   const applyOutcome = async (opId: string, out: StepOutcome) => {
@@ -3196,7 +3203,7 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
           key: lockKey,
           edgeId: edge._id,
           opId: cl.opId,
-          ttlMs: edgeMs.opClaim(cfg),
+          ttlMs: EDGE_PLUMBING.opClaimMs,
         });
         if (!lk.ok) {
           await settle(cl.opId, {});
@@ -3395,7 +3402,7 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
           discoverAttempts: discoverAttempt,
         },
       });
-      if ((pending.startedAt ?? edge._creationTime) + edgeMs.discoveryTimeout(cfg) < now) {
+      if ((pending.startedAt ?? edge._creationTime) + EDGE_PLUMBING.discoveryTimeoutMs < now) {
         await ctx.runMutation(internal.edges.patchEdge, {
           edgeId: edge._id,
           status: 'needs_operator',
@@ -3474,7 +3481,7 @@ async function phaseVerifying(ctx: ActionCtx, c: Ctx) {
       });
     } catch (err) {
       const { code, detail } = errCode(err);
-      if (r.pollAttempts + 1 >= cfg.verifyAttempts) {
+      if (r.pollAttempts + 1 >= EDGE_PLUMBING.verifyAttempts) {
         await advanceCall(ctx, r._id, sv, {
           type: 'fail',
           code: 'verify_timeout',
@@ -3485,7 +3492,7 @@ async function phaseVerifying(ctx: ActionCtx, c: Ctx) {
       }
       await advanceCall(ctx, r._id, sv, {
         type: 'progress',
-        delayMs: edgeMs.poll(cfg),
+        delayMs: EDGE_PLUMBING.pollMs,
         detail: `describe failed: ${code}`,
         countPoll: true,
       });
@@ -3519,7 +3526,7 @@ async function phaseVerifying(ctx: ActionCtx, c: Ctx) {
     // A provider without member health never answers `online`: `unknown` is enough from it.
     const healthy = providerHealthSatisfies(edge.provider, desc.health, cfg.requireProviderHealth);
     if (!(desc.state === 'active' && publishAddress && healthy)) {
-      if (r.pollAttempts + 1 >= cfg.verifyAttempts) {
+      if (r.pollAttempts + 1 >= EDGE_PLUMBING.verifyAttempts) {
         await advanceCall(ctx, r._id, sv, {
           type: 'fail',
           code: 'verify_timeout',
@@ -3530,7 +3537,7 @@ async function phaseVerifying(ctx: ActionCtx, c: Ctx) {
       }
       await advanceCall(ctx, r._id, sv, {
         type: 'progress',
-        delayMs: edgeMs.poll(cfg),
+        delayMs: EDGE_PLUMBING.pollMs,
         detail: `waiting: state=${desc.state} health=${desc.health}`,
         countPoll: true,
       });
@@ -3561,7 +3568,7 @@ async function phaseVerifying(ctx: ActionCtx, c: Ctx) {
       if (gate.kind === 'wait') {
         await advanceCall(ctx, r._id, sv, {
           type: 'progress',
-          delayMs: edgeMs.poll(cfg),
+          delayMs: EDGE_PLUMBING.pollMs,
           detail: gate.detail,
           countPoll: true,
         });
@@ -3597,14 +3604,14 @@ type VerifyGate =
  * A manual publish may waive ONLY step 2 with an audited `forceGeoEvidence`.
  */
 async function l7VerifyGate(ctx: ActionCtx, c: Ctx, edge: Edge): Promise<VerifyGate> {
-  const { rotation: r, cfg } = c;
+  const { rotation: r } = c;
   try {
     await ctx.runAction(internal.frontQualifyOps.run, { edgeId: edge._id });
   } catch (err) {
     // The session could not be RUN (the action threw): that is a poll failure,
     // never a verdict about the front.
     const { code, detail } = errCode(err);
-    if (r.pollAttempts + 1 >= cfg.verifyAttempts)
+    if (r.pollAttempts + 1 >= EDGE_PLUMBING.verifyAttempts)
       return {
         kind: 'fail',
         code: 'front_qualification_failed',
@@ -3618,7 +3625,7 @@ async function l7VerifyGate(ctx: ActionCtx, c: Ctx, edge: Edge): Promise<VerifyG
   });
   if (!state) return { kind: 'fail', code: 'edge_missing' };
   if (!state.qualified) {
-    if (r.pollAttempts + 1 >= cfg.verifyAttempts)
+    if (r.pollAttempts + 1 >= EDGE_PLUMBING.verifyAttempts)
       return {
         kind: 'fail',
         code: 'front_unqualified',
@@ -3637,7 +3644,7 @@ async function geoEvidenceGate(
   edge: Edge,
   countries: readonly string[],
 ): Promise<VerifyGate> {
-  const { rotation: r, cfg } = c;
+  const { rotation: r } = c;
   if (countries.length === 0)
     // The detector named no country: there is nothing to prove reachable, and
     // an empty proof is not a proof.
@@ -3660,7 +3667,7 @@ async function geoEvidenceGate(
   if (verdicts.every((v) => v.verdict === 'reachable')) return { kind: 'ok' };
   // Still waiting: request the round once, then poll until the timeout.
   const waitedMs = Date.now() - (r.provisionedAt ?? r.startedAt);
-  if (waitedMs > cfg.l7.qualifyTimeoutMinutes * 60_000)
+  if (waitedMs > EDGE_PLUMBING.l7QualifyTimeoutMs)
     return {
       kind: 'fail',
       code: 'qualification_inconclusive',
@@ -3721,9 +3728,9 @@ function panelServerId(origin: Origin): Id<'backendServers'> {
 }
 
 async function phaseHostFlip(ctx: ActionCtx, c: Ctx) {
-  const { rotation: r, cfg, toEdge: edge, origin, listener: slot } = c;
+  const { rotation: r, toEdge: edge, origin, listener: slot } = c;
   const sv = r.stepVersion;
-  const poll = edgeMs.poll(cfg);
+  const poll = EDGE_PLUMBING.pollMs;
   if (!edge || !hasPublishableAddress(edge) || !slot) {
     await advanceCall(ctx, r._id, sv, {
       type: 'fail',
@@ -3761,7 +3768,7 @@ async function phaseHostFlip(ctx: ActionCtx, c: Ctx) {
     hosts = await listHosts(ctx, origin);
   } catch (err) {
     const { code, detail } = errCode(err);
-    if (r.flipAttempts + 1 > cfg.maxFlipAttempts) {
+    if (r.flipAttempts + 1 > EDGE_PLUMBING.maxFlipAttempts) {
       await advanceCall(ctx, r._id, sv, {
         type: 'fail',
         code: 'panel_unreachable',
@@ -3945,7 +3952,6 @@ export const bumpFlipAttempts = internalMutation({
   handler: async (ctx, { rotationId, stepVersion, detail }) => {
     const r = await guard(ctx, rotationId, stepVersion);
     if (!r) return null;
-    const cfg = await resolveEdgeConfig(ctx.db);
     const now = Date.now();
     const field =
       r.phase === 'rolling_back'
@@ -3957,13 +3963,13 @@ export const bumpFlipAttempts = internalMutation({
       events: appendEvent(r.events, { at: now, level: 'warn', code: 'panel_unreachable', detail }),
       updatedAt: now,
     });
-    await scheduleStep(ctx, rotationId, edgeMs.poll(cfg));
+    await scheduleStep(ctx, rotationId, EDGE_PLUMBING.pollMs);
     return null;
   },
 });
 
 async function phaseConfirming(ctx: ActionCtx, c: Ctx) {
-  const { rotation: r, cfg, toEdge: edge, origin, listener } = c;
+  const { rotation: r, toEdge: edge, origin, listener } = c;
   const sv = r.stepVersion;
   // The affected countries are asked ONCE MORE after the flip: the front is now
   // the one members actually receive, so a block that only shows up under real
@@ -4004,7 +4010,7 @@ async function phaseConfirming(ctx: ActionCtx, c: Ctx) {
     // The backend is down after the Host write: bounded like the flip itself.
     // Past the cap the rotation rolls back (itself bounded → quarantine).
     const { code, detail } = errCode(err);
-    if (r.flipAttempts + 1 > cfg.maxFlipAttempts) {
+    if (r.flipAttempts + 1 > EDGE_PLUMBING.maxFlipAttempts) {
       await advanceCall(ctx, r._id, sv, {
         type: 'fail',
         code: 'panel_unreachable',
@@ -4033,9 +4039,9 @@ async function phaseConfirming(ctx: ActionCtx, c: Ctx) {
 }
 
 async function phaseRollingBack(ctx: ActionCtx, c: Ctx) {
-  const { rotation: r, cfg, origin } = c;
+  const { rotation: r, origin } = c;
   const sv = r.stepVersion;
-  const poll = edgeMs.poll(cfg);
+  const poll = EDGE_PLUMBING.pollMs;
   await ctx.runMutation(internal.edgeRotations.applyRollbackBinding, { rotationId: r._id });
   if (r.hostPlan.length === 0 || !forwardWriteAttempted(r)) {
     // No forward Host write was ever claimed: the DB restore is the whole
@@ -4049,7 +4055,7 @@ async function phaseRollingBack(ctx: ActionCtx, c: Ctx) {
     hosts = await listHosts(ctx, origin);
   } catch (err) {
     const { code, detail } = errCode(err);
-    if (r.rollbackAttempts + 1 > cfg.maxRollbackAttempts) {
+    if (r.rollbackAttempts + 1 > EDGE_PLUMBING.maxRollbackAttempts) {
       await advanceCall(ctx, r._id, sv, {
         type: 'quarantine',
         reason: `panel unreachable during rollback: ${code} ${detail}`.trim(),

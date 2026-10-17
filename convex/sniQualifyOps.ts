@@ -11,7 +11,6 @@
  * connection goes to one of those verified literals (never to the name again).
  * At most two handshakes a second per run, so a target never sees a scan.
  */
-import { v } from 'convex/values';
 import { internalAction } from './_generated/server';
 import { internal } from './_generated/api';
 import { runWithCronOutcome } from './cronHeartbeat';
@@ -102,11 +101,4 @@ export const run = internalAction({
       }
       return { checked: names.length, ok };
     }),
-});
-
-/** Qualify now (the operator pressed "check"): the same run, on demand. */
-export const runNow = internalAction({
-  args: { confirm: v.optional(v.boolean()) },
-  handler: async (ctx): Promise<{ checked: number; ok: number }> =>
-    ctx.runAction(internal.sniQualifyOps.run, {}),
 });

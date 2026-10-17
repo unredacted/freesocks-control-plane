@@ -17,7 +17,8 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import {
   RENDER_CLIENT_FAMILIES,
-  edgeMs,
+  EDGE_PLUMBING,
+  originPolicy,
   resolveEdgeConfig,
   type EdgeConfig,
 } from './lib/edgeConfig';
@@ -925,7 +926,7 @@ export const attention = internalQuery({
     // Provider health refresh: a live managed edge is described every few
     // polls; one whose health has not been refreshed for this long means the
     // refresh keeps failing (or never runs) for its account.
-    const healthStaleMs = Math.max(HEALTH_STALE_MIN_MS, edgeMs.poll(cfg) * 30);
+    const healthStaleMs = Math.max(HEALTH_STALE_MIN_MS, EDGE_PLUMBING.pollMs * 30);
     const staleByAccount = new Map<string, number>();
     // Per origin, the facts its status is judged on (after every item exists).
     const statusFacts = new Map<string, Omit<OriginStatusFacts, 'attention'>>();
@@ -2026,6 +2027,7 @@ export const quarantineInspect = internalAction({
 export const providersUsage = internalQuery({
   args: {},
   handler: async (ctx) => {
+    const cfg = await resolveEdgeConfig(ctx.db);
     const fake = fakeShadowedIds();
     const accounts = (await ctx.db.query('edgeProviderAccounts').collect()).sort(
       (a, b) => a.priority - b.priority || a.name.localeCompare(b.name),
@@ -2067,7 +2069,9 @@ export const providersUsage = internalQuery({
       const fillFromStandby = Math.min(standby, Math.max(0, r.desiredPublished - published));
       const provisionForPool = Math.max(0, r.desiredPublished - published - fillFromStandby);
       const standbyLeft = standby - fillFromStandby;
-      const provisionForStandby = r.enabled ? Math.max(0, r.standbyPerRelay - standbyLeft) : 0;
+      const provisionForStandby = r.enabled
+        ? Math.max(0, originPolicy(r, cfg).standbyPerRelay - standbyLeft)
+        : 0;
       const planned = r.enabled && !r.deleting ? provisionForPool + provisionForStandby : 0;
       relayRows.push({
         id: r._id as string,
@@ -2119,7 +2123,7 @@ export const relayLookup = internalQuery({
       .query('relays')
       .withIndex('by_slug', (q) => q.eq('slug', slug))
       .unique();
-    return relay ? mapRelayAdmin(relay) : null;
+    return relay ? mapRelayAdmin(relay, await resolveEdgeConfig(ctx.db)) : null;
   },
 });
 

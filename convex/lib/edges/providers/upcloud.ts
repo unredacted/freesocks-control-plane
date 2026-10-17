@@ -27,11 +27,9 @@ import type {
   ChildResource,
   EdgeDescription,
   EdgeSpec,
-  Ledger,
   EdgeProvider,
   ResourceStep,
   StepOutcome,
-  TemplateFieldDescriptor,
   UpcloudConfig,
 } from './types';
 import { firstResource, metaOf, orderByKind } from './types';

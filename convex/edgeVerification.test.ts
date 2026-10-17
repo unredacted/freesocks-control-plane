@@ -25,6 +25,7 @@ import {
   verifyL4Edge,
   wsListener,
 } from './lib/edges/testing/fixtures';
+import { evaluateAutoQualification } from './lib/edges/testing/reads';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -560,7 +561,7 @@ describe('L7 auto-trust (cases 7 and 13)', () => {
   test('a current proof on a template-matching edge trusts the account (by:auto, evidence bound to the proof + template hash)', async () => {
     const { t, accountId, template, provenEdge } = await l7World();
     const edgeId = await provenEdge(template.hash);
-    const r = await t.mutation(internal.edgeProviderAccounts.evaluateAutoQualification, {
+    const r = await evaluateAutoQualification(t, {
       accountId,
     });
     expect(r).toEqual({ qualified: true, code: null });
@@ -578,22 +579,24 @@ describe('L7 auto-trust (cases 7 and 13)', () => {
     ).toMatchObject({ name: 'acct-cf', provider: 'cloudflare', qualified: true, edgeId });
     expect(JSON.stringify(audit)).not.toContain('front.example');
     // Idempotent: a second evaluation changes nothing.
-    expect(
-      await t.mutation(internal.edgeProviderAccounts.evaluateAutoQualification, { accountId }),
-    ).toEqual({ qualified: true, code: 'already_qualified' });
+    expect(await evaluateAutoQualification(t, { accountId })).toEqual({
+      qualified: true,
+      code: 'already_qualified',
+    });
   });
 
   test('case 7: a template change after the proof is an evidence mismatch; an expired or failed proof is no proof', async () => {
     const { t, accountId, provenEdge } = await l7World();
     await provenEdge('some-other-template');
-    expect(
-      await t.mutation(internal.edgeProviderAccounts.evaluateAutoQualification, { accountId }),
-    ).toEqual({ qualified: false, code: 'template_mismatch' });
+    expect(await evaluateAutoQualification(t, { accountId })).toEqual({
+      qualified: false,
+      code: 'template_mismatch',
+    });
     const { template } = await l7World();
     const w = await l7World();
     await w.provenEdge(w.template.hash, { expired: true });
     expect(
-      await w.t.mutation(internal.edgeProviderAccounts.evaluateAutoQualification, {
+      await evaluateAutoQualification(w.t, {
         accountId: w.accountId,
       }),
     ).toEqual({ qualified: false, code: 'no_current_proof' });
@@ -608,9 +611,10 @@ describe('L7 auto-trust (cases 7 and 13)', () => {
       id: accountId,
       qualified: false,
     });
-    expect(
-      await t.mutation(internal.edgeProviderAccounts.evaluateAutoQualification, { accountId }),
-    ).toEqual({ qualified: false, code: 'hold' });
+    expect(await evaluateAutoQualification(t, { accountId })).toEqual({
+      qualified: false,
+      code: 'hold',
+    });
     expect(await t.mutation(internal.edgeProviderAccounts.reconcileAutoQualification, {})).toEqual({
       evaluated: 0,
       qualified: 0,
@@ -620,9 +624,10 @@ describe('L7 auto-trust (cases 7 and 13)', () => {
       id: accountId,
       credentials: { apiToken: 'cf-2' },
     });
-    expect(
-      await t.mutation(internal.edgeProviderAccounts.evaluateAutoQualification, { accountId }),
-    ).toEqual({ qualified: false, code: 'tested_before_credential_change' });
+    expect(await evaluateAutoQualification(t, { accountId })).toEqual({
+      qualified: false,
+      code: 'tested_before_credential_change',
+    });
     await t.mutation(internal.edgeProviderAccounts.recordTest, { id: accountId, ok: true });
     expect(await t.mutation(internal.edgeProviderAccounts.reconcileAutoQualification, {})).toEqual({
       evaluated: 1,
@@ -638,9 +643,10 @@ describe('L7 auto-trust (cases 7 and 13)', () => {
     expect(
       (await t.query(internal.edges.get, { id: edgeId as Id<'edges'> }))!.verification?.rung,
     ).toBe('verified');
-    expect(
-      await t.mutation(internal.edgeProviderAccounts.evaluateAutoQualification, { accountId }),
-    ).toEqual({ qualified: false, code: 'not_l7' });
+    expect(await evaluateAutoQualification(t, { accountId })).toEqual({
+      qualified: false,
+      code: 'not_l7',
+    });
     expect(await t.mutation(internal.edgeProviderAccounts.reconcileAutoQualification, {})).toEqual({
       evaluated: 0,
       qualified: 0,

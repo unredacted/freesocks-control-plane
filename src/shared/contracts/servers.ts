@@ -389,8 +389,6 @@ export const MODE_SHAPES: readonly ModeShape[] = [
   { transport: 'xhttp-reality', fronting: 'edge-l4' },
   { transport: 'ws', fronting: 'edge-l7' },
 ];
-export const shapeAllowed = (s: ModeShape): boolean =>
-  MODE_SHAPES.some((m) => m.transport === s.transport && m.fronting === s.fronting);
 
 /**
  * One mode a backend is set up for: the connection mode it feeds, the group
@@ -437,17 +435,6 @@ export const DEFAULT_MODE_SETUP: readonly ModeSetupInput[] = [
     ws: { path: '/ws', port: 8443 },
   },
 ];
-
-/**
- * Group names an earlier setup gave the same modes. An adopted backend's
- * groups are found under these and renamed in place (their ids and every
- * member assignment survive); nothing is created beside them.
- */
-export const LEGACY_GROUP_NAMES: Readonly<Record<string, readonly string[]>> = {
-  'privacy-reality': ['FreeSocks-Reality'],
-  'freedom-reality': ['FreeSocks-Relay'],
-  'freedom-ws': ['FreeSocks-Fronted', 'FreeSocks-Fastly'],
-};
 
 /** What "Set up this backend" is asked for. Non-secret: names, shapes, families. */
 export const BackendSetupInput = z.object({

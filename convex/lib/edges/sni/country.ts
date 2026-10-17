@@ -17,7 +17,7 @@
  * The member's own answer is already stored by their choice, so a body chosen
  * by it caches like any other.
  */
-import type { CountryContext, PublishedEdge } from '../assignment';
+import type { CountryContext } from '../assignment';
 
 export type CountrySource = 'override' | 'inferred' | 'none';
 
@@ -40,15 +40,6 @@ export function resolveWhere(args: {
   if (inferred && curated.includes(inferred))
     return { where: { country: inferred, curated }, source: 'inferred' };
   return { where: { country: null, curated }, source: 'none' };
-}
-
-/** Whether any name this body could carry is judged per country at all. */
-export function isCountrySensitive(published: readonly PublishedEdge[]): boolean {
-  return published.some(
-    (e) =>
-      e.sniPick === 'hrw1' &&
-      e.serverNames.some((s) => (s.blockedIn?.length ?? 0) > 0 || (s.provenIn?.length ?? 0) > 0),
-  );
 }
 
 /**

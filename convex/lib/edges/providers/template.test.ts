@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { canonicalJson, parseTemplateParams, renderTemplateValue } from './template';
+import { canonicalJson, renderTemplateValue } from './template';
 import { GcoreTemplate } from './gcore';
 
 const spec = {
@@ -28,13 +28,5 @@ describe('templates', () => {
     expect(canonicalJson({ b: 1, a: { d: [3, { z: 1, y: 2 }], c: 2 } })).toBe(
       '{"a":{"c":2,"d":[3,{"y":2,"z":1}]},"b":1}',
     );
-  });
-
-  test('parseTemplateParams validates stored JSON through the adapter schema and defaults missing fields', () => {
-    const t = parseTemplateParams(GcoreTemplate, '{"flavor":"lb1-2-4"}');
-    expect(t.flavor).toBe('lb1-2-4');
-    expect(t.healthMonitor.delay).toBe(10);
-    expect(() => parseTemplateParams(GcoreTemplate, '{"flavor":""}')).toThrow();
-    expect(parseTemplateParams(GcoreTemplate, 'not json').flavor).toBe('lb1-1-2');
   });
 });

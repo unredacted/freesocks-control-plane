@@ -11,11 +11,11 @@
  *                                   plus `throttled`), shown as explain + fix in error lines
  *   codeLabel / codeExplain / codeFix(code)   with a humanised fallback for unknown codes
  *   humanizeCode(code)              'l7_auto_select_blocked' -> 'L7 auto select blocked'
- *   ROTATION_PHASE_LABELS, phaseLabel, isTerminalPhase
+ *   ROTATION_PHASE_LABELS, phaseLabel
  *   EDGE_STATUS_LABELS, edgeStatusLabel, edgeStatusTone
  *   EDGE_HEALTH_LABELS, healthTone, PUBLICATION_LABELS, publicationTone
  *   HOST_STATE_LABELS, SETUP_STEP_TITLES, SETUP_STATUS_LABELS
- *   ATTENTION_ACTION_LABELS, attentionSeverityTone, severityTone
+ *   ATTENTION_ACTION_LABELS, severityTone
  *   auditActionLabel(action)        audit `action` -> short sentence (small map + fallback)
  *   Tone                            the badge tone union the components share
  */
@@ -32,8 +32,6 @@ import type {
   SetupAccountReason,
   SetupBlockerCode,
   SetupRunNeed,
-  SetupRunStage,
-  SetupRunState,
   SetupStepId,
   SetupStepStatus,
 } from '../../shared/contracts/edgeCodes';
@@ -628,11 +626,6 @@ const COPY = {
     explain: 'A temporary test key could not be removed from the server after several tries.',
     fix: 'Check the server, remove the key by hand if it is still there, then retry the cleanup.',
   },
-  drift: {
-    label: 'Drift',
-    explain: 'What the provider reports differs from what FCP recorded for an edge.',
-    fix: 'Open the edge and compare the live snapshot.',
-  },
   direct_host_reappeared: {
     label: 'Direct address back in the backend',
     explain:
@@ -716,6 +709,11 @@ const COPY = {
   leak_detected: {
     label: 'Origin leak detected',
     explain: 'An outgoing entry still carried the origin address; the body was withheld.',
+  },
+  render_failed: {
+    label: 'Could not rewrite',
+    explain:
+      'The body could not be rewritten in this format for a reason other than a missing or mismatched entry, so it was withheld.',
   },
   // --- extra server codes the components may meet (vetoes, host states) ------------------
   node_offline: {
@@ -1153,11 +1151,9 @@ export const ROTATION_PHASE_LABELS: Record<string, string> = {
   quarantined: 'Quarantined',
   cancelled: 'Cancelled',
 };
-const TERMINAL_PHASES = new Set(['done', 'failed', 'rolled_back', 'quarantined', 'cancelled']);
 
 export const phaseLabel = (phase: string): string =>
   ROTATION_PHASE_LABELS[phase] ?? humanizeCode(phase);
-export const isTerminalPhase = (phase: string): boolean => TERMINAL_PHASES.has(phase);
 export function phaseTone(phase: string): Tone {
   if (phase === 'done') return 'success';
   if (phase === 'failed' || phase === 'quarantined') return 'danger';
@@ -1172,7 +1168,6 @@ export const EDGE_STATUS_LABELS: Record<string, string> = {
   planning: 'Planning',
   provisioning: 'Provisioning',
   verifying: 'Verifying',
-  standby: 'Standby',
   active: 'Active',
   draining: 'Draining',
   destroying: 'Destroying',
@@ -1188,8 +1183,6 @@ export function edgeStatusTone(status: string): Tone {
   switch (status) {
     case 'active':
       return 'success';
-    case 'standby':
-      return 'info';
     case 'planning':
     case 'provisioning':
     case 'verifying':
@@ -1362,7 +1355,6 @@ export function severityTone(s: AttentionSeverity): Tone {
   if (s === 'warning') return 'warning';
   return 'info';
 }
-export const attentionSeverityTone = severityTone;
 
 // --- guided setup runs (Autopilot) -------------------------------------------------------------
 
@@ -1380,32 +1372,6 @@ export const SETUP_RUN_PLAIN_STAGES = [
  * server's origin status reads the same table) and re-exported here.
  */
 export { SETUP_RUN_STAGE_STEP };
-
-/** The plain stage label of each machine stage (`done` = Live). */
-export const SETUP_RUN_STAGE_LABELS = Object.fromEntries(
-  Object.entries(SETUP_RUN_STAGE_STEP).map(([stage, step]) => [
-    stage,
-    step === 5 ? 'Live' : SETUP_RUN_PLAIN_STAGES[step - 1],
-  ]),
-) as Record<SetupRunStage, string>;
-
-export const SETUP_RUN_STATE_LABELS: Record<SetupRunState, string> = {
-  running: 'Working',
-  waiting: 'Waiting',
-  needs_you: 'Needs you',
-  done: 'Live',
-  done_unbound: 'Finished without going live',
-  failed: 'Stopped',
-  cancelled: 'Cancelled',
-};
-
-export function setupRunStateTone(s: SetupRunState): Tone {
-  if (s === 'done') return 'success';
-  if (s === 'needs_you') return 'warning';
-  if (s === 'failed') return 'danger';
-  if (s === 'cancelled' || s === 'done_unbound') return 'muted';
-  return 'info';
-}
 
 /** One card per interruption: `explain` is the sentence, `fix` the button (secondary in parentheses). */
 export const SETUP_RUN_NEED_COPY: Record<SetupRunNeed, CodeCopy> = {

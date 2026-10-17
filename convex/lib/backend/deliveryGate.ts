@@ -79,11 +79,6 @@ export function nodeGateOf(
   };
 }
 
-/** Whether a body entry belongs to a candidate resource and must be dropped from member bodies. */
-export function isCandidateHost(gate: NodeGate, hostUuid: string | null | undefined): boolean {
-  return !!hostUuid && gate.candidates.hostUuids.includes(hostUuid);
-}
-
 export function isCandidateEdge(gate: NodeGate, edgeId: string): boolean {
   return gate.candidates.edgeIds.includes(edgeId);
 }

@@ -157,10 +157,6 @@ export const vectorNow = internalQuery({
   },
 });
 
-export function sameVector(a: RehearsalVector, b: RehearsalVector): boolean {
-  return canonicalJson(a) === canonicalJson(b);
-}
-
 /**
  * Everything one rehearsal attempt reads, in one transaction. With
  * `activationRunId` (an enrolled node's setup run) the bodies are rendered

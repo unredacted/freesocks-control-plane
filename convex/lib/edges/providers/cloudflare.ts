@@ -848,6 +848,3 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
     }
   },
 };
-
-/** The ledger kinds this adapter creates (the wire-contract table reads them). */
-export const CLOUDFLARE_RESOURCE_KINDS = ['dns_record', 'origin_rule'] as const;

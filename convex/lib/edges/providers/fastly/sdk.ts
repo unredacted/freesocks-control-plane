@@ -611,11 +611,6 @@ export function fastlyApi(cfg: FastlyConfig, basePath?: string): FastlyApi {
   };
 }
 
-let apiFactory: ((cfg: FastlyConfig) => FastlyApi) | null = null;
-/** Test seam: replace the whole API surface (unit tests that never touch HTTP). */
-export function __setFastlyApiFactory(f: ((cfg: FastlyConfig) => FastlyApi) | null): void {
-  apiFactory = f;
-}
 export function fastlyApiFor(cfg: FastlyConfig): FastlyApi {
-  return apiFactory ? apiFactory(cfg) : fastlyApi(cfg);
+  return fastlyApi(cfg);
 }

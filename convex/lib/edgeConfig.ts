@@ -3,10 +3,15 @@
  * analyticsConfig.ts pattern — typed defaults, per-field sanitizers, a parallel
  * by_key resolver, partial-PATCH writes; deliberately NOT in SETTINGS_DEFAULTS).
  *
- * Three sub-namespaces:
- *   origin.*          rotation / pool / detector knobs (`EdgeConfig`)
- *   origin.render.*   how FCP renders origin endpoints per client family
- *   origin.probe.*    external/internal reachability probes
+ * Sub-namespaces:
+ *   edge.*          rotation / pool knobs (`EdgeConfig`); an origin may override
+ *                   its own (`originPolicy`, one inheritance rule)
+ *   edge.detect.*   the block detector
+ *   edge.l7.*       CDN fronts
+ *   edge.render.*   how FCP renders origin endpoints per client family
+ *   edge.probe.*    external/internal reachability probes
+ * The machinery's timeouts, attempt caps and intervals are constants
+ * (`EDGE_PLUMBING`), not settings.
  * Probe credentials use the billing.secret.* pattern: `edge.secret.*` keys,
  * write-only (blank = unchanged), surfaced to the admin as set/not-set booleans.
  */
@@ -85,7 +90,6 @@ export interface EdgeConfig {
   enabled: boolean;
   /** Global auto-rotate gate; per-origin opt-in is still required. */
   autoRotate: boolean;
-  providerAffinity: 'rotate' | 'sticky';
   desiredPublishedDefault: number;
   standbyPerRelay: number;
   /** Verified standbys kept PER coverage listener (on top of `standbyPerRelay`). */
@@ -96,21 +100,9 @@ export interface EdgeConfig {
   cooldownMinutes: number;
   maxRotationsPerRelayPerDay: number;
   maxConcurrentRotations: number;
-  maxReconcileStartsPerTick: number;
   autoPublishStandby: boolean;
   autoProvisionToDesired: boolean;
-  provisionTimeoutMinutes: number;
-  pollSeconds: number;
-  verifyAttempts: number;
   requireProviderHealth: boolean;
-  maxFlipAttempts: number;
-  maxRollbackAttempts: number;
-  /** Wall-clock cap for one rotation run; past it the run rolls back / quarantines. */
-  maxRotationMinutes: number;
-  maxDestroyAttempts: number;
-  opClaimSeconds: number;
-  settleGraceSeconds: number;
-  discoveryTimeoutMinutes: number;
   refreshMirrorsAfterFlip: boolean;
   detect: {
     windowMinutes: number;
@@ -127,8 +119,6 @@ export interface EdgeConfig {
     minBaselineSamples: number;
     probeWeight: number;
     allowProbeOnlyAutoRotate: boolean;
-    /** Report rows read per origin per evaluation; past it the window is `incomplete` (no rotation). */
-    maxReportRowsPerEval: number;
     /**
      * The fleet brake: when more than this share (percent) of the evaluated
      * origins is suspected in one detector pass, every automatic rotation is
@@ -140,18 +130,10 @@ export interface EdgeConfig {
   };
   /** L7 (CDN front) edges. */
   l7: {
-    /** Automatic selection of L7 accounts (detector replacements, auto-provision). Off until the node role registers the L7 slot fields. */
+    /** Automatic selection of L7 accounts (detector replacements, auto-provision); a guided setup run's chosen account is used either way. Ships off. */
     autoSelect: boolean;
     /** Same-provider L7 replacements per origin per UTC day (a new hostname is not a new frontend IP). */
     maxSameProviderReplacementsPerDay: number;
-    /** Affected-country evidence wait for a detector-triggered L7 replacement. */
-    qualifyTimeoutMinutes: number;
-    /** Per-step timeout of the authenticated front qualification session. */
-    qualifyStepTimeoutMs: number;
-    /** How long a front qualification stays valid (its binding must also still match). */
-    qualificationTtlMinutes: number;
-    /** Front re-proofs one reconcile tick may run (each is an outbound session, not a read). */
-    maxRequalifyPerTick: number;
   };
   render: {
     /** Master switch for FCP-rendered origin endpoints; off = the backend body passes through. */
@@ -183,8 +165,6 @@ export interface EdgeConfig {
     hourlyBudget: number;
     agreementVantages: number;
     preferEyeball: boolean;
-    /** Gap between consecutive runs against the same external source within one batch (ms). */
-    sourceSpacingMs: number;
     /** Probe the IPv6 path of origin / custom targets (edge targets follow `render.ipv6Mode`). */
     ipv6: boolean;
   };
@@ -199,7 +179,6 @@ const defaultClients = (): Record<RenderClientFamily, ClientRenderRule> =>
 export const EDGE_DEFAULTS: EdgeConfig = {
   enabled: false,
   autoRotate: false,
-  providerAffinity: 'rotate',
   desiredPublishedDefault: 2,
   standbyPerRelay: 0,
   standbyPerListener: 0,
@@ -209,20 +188,9 @@ export const EDGE_DEFAULTS: EdgeConfig = {
   cooldownMinutes: 120,
   maxRotationsPerRelayPerDay: 3,
   maxConcurrentRotations: 2,
-  maxReconcileStartsPerTick: 1,
   autoPublishStandby: true,
   autoProvisionToDesired: false,
-  provisionTimeoutMinutes: 20,
-  pollSeconds: 20,
-  verifyAttempts: 8,
   requireProviderHealth: true,
-  maxFlipAttempts: 6,
-  maxRollbackAttempts: 6,
-  maxRotationMinutes: 120,
-  maxDestroyAttempts: 48,
-  opClaimSeconds: 60,
-  settleGraceSeconds: 30,
-  discoveryTimeoutMinutes: 30,
   refreshMirrorsAfterFlip: true,
   detect: {
     windowMinutes: 30,
@@ -239,17 +207,12 @@ export const EDGE_DEFAULTS: EdgeConfig = {
     minBaselineSamples: 72,
     probeWeight: 0.5,
     allowProbeOnlyAutoRotate: false,
-    maxReportRowsPerEval: 2000,
     fleetBreakerPct: 30,
     fleetRotationsPerDay: 12,
   },
   l7: {
     autoSelect: false,
     maxSameProviderReplacementsPerDay: 2,
-    qualifyTimeoutMinutes: 15,
-    qualifyStepTimeoutMs: 10_000,
-    qualificationTtlMinutes: 60,
-    maxRequalifyPerTick: 6,
   },
   render: {
     enabled: false,
@@ -273,7 +236,6 @@ export const EDGE_DEFAULTS: EdgeConfig = {
     hourlyBudget: 200,
     agreementVantages: 2,
     preferEyeball: true,
-    sourceSpacingMs: 1500,
     ipv6: true,
   },
 };
@@ -355,7 +317,6 @@ export function sanitizeClientRule(v: unknown, family: RenderClientFamily): Clie
 export const EDGE_KEYS = {
   enabled: 'edge.enabled',
   autoRotate: 'edge.autoRotate',
-  providerAffinity: 'edge.providerAffinity',
   desiredPublishedDefault: 'edge.desiredPublishedDefault',
   standbyPerRelay: 'edge.standbyPerRelay',
   standbyPerListener: 'edge.standbyPerListener',
@@ -365,20 +326,9 @@ export const EDGE_KEYS = {
   cooldownMinutes: 'edge.cooldownMinutes',
   maxRotationsPerRelayPerDay: 'edge.maxRotationsPerRelayPerDay',
   maxConcurrentRotations: 'edge.maxConcurrentRotations',
-  maxReconcileStartsPerTick: 'edge.maxReconcileStartsPerTick',
   autoPublishStandby: 'edge.autoPublishStandby',
   autoProvisionToDesired: 'edge.autoProvisionToDesired',
-  provisionTimeoutMinutes: 'edge.provisionTimeoutMinutes',
-  pollSeconds: 'edge.pollSeconds',
-  verifyAttempts: 'edge.verifyAttempts',
   requireProviderHealth: 'edge.requireProviderHealth',
-  maxFlipAttempts: 'edge.maxFlipAttempts',
-  maxRollbackAttempts: 'edge.maxRollbackAttempts',
-  maxRotationMinutes: 'edge.maxRotationMinutes',
-  maxDestroyAttempts: 'edge.maxDestroyAttempts',
-  opClaimSeconds: 'edge.opClaimSeconds',
-  settleGraceSeconds: 'edge.settleGraceSeconds',
-  discoveryTimeoutMinutes: 'edge.discoveryTimeoutMinutes',
   refreshMirrorsAfterFlip: 'edge.refreshMirrorsAfterFlip',
   'detect.windowMinutes': 'edge.detect.windowMinutes',
   'detect.minReporters': 'edge.detect.minReporters',
@@ -394,15 +344,10 @@ export const EDGE_KEYS = {
   'detect.minBaselineSamples': 'edge.detect.minBaselineSamples',
   'detect.probeWeight': 'edge.detect.probeWeight',
   'detect.allowProbeOnlyAutoRotate': 'edge.detect.allowProbeOnlyAutoRotate',
-  'detect.maxReportRowsPerEval': 'edge.detect.maxReportRowsPerEval',
   'detect.fleetBreakerPct': 'edge.detect.fleetBreakerPct',
   'detect.fleetRotationsPerDay': 'edge.detect.fleetRotationsPerDay',
   'l7.autoSelect': 'edge.l7.autoSelect',
   'l7.maxSameProviderReplacementsPerDay': 'edge.l7.maxSameProviderReplacementsPerDay',
-  'l7.qualifyTimeoutMinutes': 'edge.l7.qualifyTimeoutMinutes',
-  'l7.qualifyStepTimeoutMs': 'edge.l7.qualifyStepTimeoutMs',
-  'l7.qualificationTtlMinutes': 'edge.l7.qualificationTtlMinutes',
-  'l7.maxRequalifyPerTick': 'edge.l7.maxRequalifyPerTick',
   'render.enabled': 'edge.render.enabled',
   'render.autoGroupName': 'edge.render.autoGroupName',
   'render.primaryLabel': 'edge.render.primaryLabel',
@@ -424,7 +369,6 @@ export const EDGE_KEYS = {
   'probe.hourlyBudget': 'edge.probe.hourlyBudget',
   'probe.agreementVantages': 'edge.probe.agreementVantages',
   'probe.preferEyeball': 'edge.probe.preferEyeball',
-  'probe.sourceSpacingMs': 'edge.probe.sourceSpacingMs',
   'probe.ipv6': 'edge.probe.ipv6',
 } as const;
 export type RelayKeyPath = keyof typeof EDGE_KEYS;
@@ -465,11 +409,6 @@ export function sanitizeRelayConfig(
   return {
     enabled: sanitizeBool(raw.enabled, D.enabled),
     autoRotate: sanitizeBool(raw.autoRotate, D.autoRotate),
-    providerAffinity: sanitizeEnum(
-      raw.providerAffinity,
-      ['rotate', 'sticky'] as const,
-      D.providerAffinity,
-    ),
     desiredPublishedDefault: sanitizeInt(
       raw.desiredPublishedDefault,
       1,
@@ -494,35 +433,9 @@ export function sanitizeRelayConfig(
       10,
       D.maxConcurrentRotations,
     ),
-    maxReconcileStartsPerTick: sanitizeInt(
-      raw.maxReconcileStartsPerTick,
-      0,
-      5,
-      D.maxReconcileStartsPerTick,
-    ),
     autoPublishStandby: sanitizeBool(raw.autoPublishStandby, D.autoPublishStandby),
     autoProvisionToDesired: sanitizeBool(raw.autoProvisionToDesired, D.autoProvisionToDesired),
-    provisionTimeoutMinutes: sanitizeInt(
-      raw.provisionTimeoutMinutes,
-      5,
-      120,
-      D.provisionTimeoutMinutes,
-    ),
-    pollSeconds: sanitizeInt(raw.pollSeconds, 5, 300, D.pollSeconds),
-    verifyAttempts: sanitizeInt(raw.verifyAttempts, 1, 30, D.verifyAttempts),
     requireProviderHealth: sanitizeBool(raw.requireProviderHealth, D.requireProviderHealth),
-    maxFlipAttempts: sanitizeInt(raw.maxFlipAttempts, 1, 20, D.maxFlipAttempts),
-    maxRollbackAttempts: sanitizeInt(raw.maxRollbackAttempts, 1, 20, D.maxRollbackAttempts),
-    maxRotationMinutes: sanitizeInt(raw.maxRotationMinutes, 10, 24 * 60, D.maxRotationMinutes),
-    maxDestroyAttempts: sanitizeInt(raw.maxDestroyAttempts, 1, 500, D.maxDestroyAttempts),
-    opClaimSeconds: sanitizeInt(raw.opClaimSeconds, 15, 300, D.opClaimSeconds),
-    settleGraceSeconds: sanitizeInt(raw.settleGraceSeconds, 5, 600, D.settleGraceSeconds),
-    discoveryTimeoutMinutes: sanitizeInt(
-      raw.discoveryTimeoutMinutes,
-      5,
-      1440,
-      D.discoveryTimeoutMinutes,
-    ),
     refreshMirrorsAfterFlip: sanitizeBool(raw.refreshMirrorsAfterFlip, D.refreshMirrorsAfterFlip),
     detect: {
       windowMinutes: sanitizeInt(raw['detect.windowMinutes'], 5, 180, D.detect.windowMinutes),
@@ -555,12 +468,6 @@ export function sanitizeRelayConfig(
         raw['detect.allowProbeOnlyAutoRotate'],
         D.detect.allowProbeOnlyAutoRotate,
       ),
-      maxReportRowsPerEval: sanitizeInt(
-        raw['detect.maxReportRowsPerEval'],
-        100,
-        20_000,
-        D.detect.maxReportRowsPerEval,
-      ),
       fleetBreakerPct: sanitizeInt(raw['detect.fleetBreakerPct'], 1, 100, D.detect.fleetBreakerPct),
       fleetRotationsPerDay: sanitizeInt(
         raw['detect.fleetRotationsPerDay'],
@@ -576,30 +483,6 @@ export function sanitizeRelayConfig(
         0,
         50,
         D.l7.maxSameProviderReplacementsPerDay,
-      ),
-      qualifyTimeoutMinutes: sanitizeInt(
-        raw['l7.qualifyTimeoutMinutes'],
-        1,
-        120,
-        D.l7.qualifyTimeoutMinutes,
-      ),
-      qualifyStepTimeoutMs: sanitizeInt(
-        raw['l7.qualifyStepTimeoutMs'],
-        1_000,
-        60_000,
-        D.l7.qualifyStepTimeoutMs,
-      ),
-      qualificationTtlMinutes: sanitizeInt(
-        raw['l7.qualificationTtlMinutes'],
-        5,
-        1440,
-        D.l7.qualificationTtlMinutes,
-      ),
-      maxRequalifyPerTick: sanitizeInt(
-        raw['l7.maxRequalifyPerTick'],
-        1,
-        50,
-        D.l7.maxRequalifyPerTick,
       ),
     },
     render: {
@@ -653,12 +536,6 @@ export function sanitizeRelayConfig(
         D.probe.agreementVantages,
       ),
       preferEyeball: sanitizeBool(raw['probe.preferEyeball'], D.probe.preferEyeball),
-      sourceSpacingMs: sanitizeInt(
-        raw['probe.sourceSpacingMs'],
-        0,
-        60_000,
-        D.probe.sourceSpacingMs,
-      ),
       ipv6: sanitizeBool(raw['probe.ipv6'], D.probe.ipv6),
     },
   };
@@ -793,34 +670,119 @@ export function edgeSecretWrites(patch: unknown): Array<{ key: string; value: st
   return writes;
 }
 
-/** Millisecond views of the minute/second knobs, shared by the rotation machine + detector. */
+/** Millisecond views of the minute knobs, shared by the rotation machine + detector. */
 export const edgeMs = {
   drain: (cfg: EdgeConfig) => cfg.drainMinutes * MIN,
   burnedDrain: (cfg: EdgeConfig) => cfg.burnedDrainMinutes * MIN,
   cooldown: (cfg: EdgeConfig) => cfg.cooldownMinutes * MIN,
-  provisionTimeout: (cfg: EdgeConfig) => cfg.provisionTimeoutMinutes * MIN,
-  maxRotation: (cfg: EdgeConfig) => cfg.maxRotationMinutes * MIN,
-  discoveryTimeout: (cfg: EdgeConfig) => cfg.discoveryTimeoutMinutes * MIN,
   detectWindow: (cfg: EdgeConfig) => cfg.detect.windowMinutes * MIN,
   sniDrain: (cfg: EdgeConfig) => cfg.sniDrainMinutes * MIN,
-  opClaim: (cfg: EdgeConfig) => cfg.opClaimSeconds * 1000,
-  settleGrace: (cfg: EdgeConfig) => cfg.settleGraceSeconds * 1000,
-  poll: (cfg: EdgeConfig) => cfg.pollSeconds * 1000,
-  qualificationTtl: (cfg: EdgeConfig) => cfg.l7.qualificationTtlMinutes * MIN,
-  /**
-   * How long BEFORE a front qualification expires the reconcile cron renews it.
-   * An expired proof makes the edge ineligible for rendering the moment it
-   * lapses, so waiting for the expiry would flap a healthy front out of every
-   * new subscription body until the next tick re-proves it. A quarter of the
-   * TTL, never less than 15 minutes (a proof is an outbound session, not a
-   * read) and never as much as half the TTL, so a fresh proof is not due again
-   * at once.
-   */
-  renewLead: (cfg: EdgeConfig) => {
-    const ttl = edgeMs.qualificationTtl(cfg);
-    return Math.min(Math.max(15 * MIN, ttl * 0.25), ttl / 2);
-  },
 };
+
+// --- plumbing (constants, not settings) ------------------------------------------------------------
+
+const PLUMBING_DEFAULTS = {
+  /** How long the provider may take to build an edge before the run fails. */
+  provisionTimeoutMs: 20 * MIN,
+  /** How long to look for a resource whose create call was cut off. */
+  discoveryTimeoutMs: 30 * MIN,
+  /** Wall-clock cap of one rotation run; past it the run rolls back, else quarantines. */
+  maxRotationMs: 120 * MIN,
+  /** A running rotation checks the provider this often. */
+  pollMs: 20_000,
+  /** How long one step holds its claim before another worker may take it over. */
+  opClaimMs: 60_000,
+  /** Connect checks against a new edge before the run gives up on it. */
+  verifyAttempts: 8,
+  /** Tries to write the new address to the backend before rolling back. */
+  maxFlipAttempts: 6,
+  /** Tries to restore the previous state before the origin is quarantined. */
+  maxRollbackAttempts: 6,
+  /** Tries to delete a provider resource before the edge is left to the operator. */
+  maxDestroyAttempts: 48,
+  /** Automatic starts one reconcile pass may make (`edge.enabled` is the switch). */
+  maxReconcileStartsPerTick: 1,
+  /** Report rows read per origin per evaluation; past it the window is `incomplete` (no rotation). */
+  maxReportRowsPerEval: 2000,
+  /** Per-step timeout of the authenticated front qualification session. */
+  l7QualifyStepTimeoutMs: 10_000,
+  /** Front re-proofs one reconcile pass may run (each is an outbound session, not a read). */
+  l7MaxRequalifyPerTick: 6,
+  /** How long a front qualification stays valid (its binding must also still match). */
+  l7QualificationTtlMs: 60 * MIN,
+  /** Affected-country evidence wait for a detector-triggered L7 replacement. */
+  l7QualifyTimeoutMs: 15 * MIN,
+  /** Gap between consecutive runs against the same external probe source within one batch. */
+  probeSourceSpacingMs: 1500,
+};
+export type EdgePlumbing = typeof PLUMBING_DEFAULTS;
+
+/**
+ * The machinery's timeouts, attempt caps, poll and claim intervals and
+ * per-pass caps. Nothing here is an operator decision, so none of it is a
+ * setting; tests and the edge-connection gate shorten them through
+ * `__setEdgePlumbingForTests`.
+ */
+export const EDGE_PLUMBING: Readonly<EdgePlumbing> = { ...PLUMBING_DEFAULTS };
+
+/** Test seam: override some plumbing constants; `null` restores every default. */
+export function __setEdgePlumbingForTests(patch: Partial<EdgePlumbing> | null): void {
+  Object.assign(EDGE_PLUMBING as EdgePlumbing, patch ?? PLUMBING_DEFAULTS);
+}
+
+/**
+ * How long BEFORE a front qualification expires the reconcile cron renews it.
+ * An expired proof makes the edge ineligible for rendering the moment it
+ * lapses, so waiting for the expiry would flap a healthy front out of every
+ * new subscription body until the next tick re-proves it. A quarter of the
+ * TTL, never less than 15 minutes (a proof is an outbound session, not a
+ * read) and never as much as half the TTL, so a fresh proof is not due again
+ * at once.
+ */
+export function qualificationRenewLeadMs(): number {
+  const ttl = EDGE_PLUMBING.l7QualificationTtlMs;
+  return Math.min(Math.max(15 * MIN, ttl * 0.25), ttl / 2);
+}
+
+// --- per-origin knobs (one inheritance rule) ---------------------------------------------------------
+
+/** The knobs an origin may override, as stored on `relays` (absent = follow the fleet). */
+export interface OriginOverrides {
+  standbyPerRelay?: number;
+  standbyPerListener?: number;
+  cooldownMs?: number;
+  maxRotationsPerDay?: number;
+  drainMs?: number;
+}
+
+/**
+ * ONE inheritance rule for every per-origin knob: the origin's own value when
+ * it set one, else the fleet's (`edge.*`). Every reader goes through this, so a
+ * fleet change applies to each origin that did not override it, and a
+ * per-origin value (a drain, a cooldown, a daily cap, spares) is honoured by the
+ * rotation machine, the reconcile and the detector alike.
+ */
+export function originPolicy(o: OriginOverrides, cfg: EdgeConfig) {
+  return {
+    standbyPerRelay: o.standbyPerRelay ?? cfg.standbyPerRelay,
+    standbyPerListener: o.standbyPerListener ?? cfg.standbyPerListener,
+    cooldownMs: o.cooldownMs ?? edgeMs.cooldown(cfg),
+    maxRotationsPerDay: o.maxRotationsPerDay ?? cfg.maxRotationsPerRelayPerDay,
+    drainMs: o.drainMs ?? edgeMs.drain(cfg),
+  };
+}
+export type OriginPolicy = ReturnType<typeof originPolicy>;
+
+/** The override fields an origin set, by their names in the admin contract. */
+export function originOverrideNames(o: OriginOverrides): string[] {
+  const out: string[] = [];
+  if (o.standbyPerRelay !== undefined) out.push('standbyPerRelay');
+  if (o.standbyPerListener !== undefined) out.push('standbyPerListener');
+  if (o.cooldownMs !== undefined) out.push('cooldownMinutes');
+  if (o.maxRotationsPerDay !== undefined) out.push('maxRotationsPerDay');
+  if (o.drainMs !== undefined) out.push('drainMinutes');
+  return out;
+}
 
 // --- bounds (the CMS reads these; `edgeConfig.test.ts` pins them against the sanitizer) ---------
 
@@ -839,17 +801,6 @@ export const EDGE_CONFIG_BOUNDS: Readonly<Record<string, { min: number; max: num
   cooldownMinutes: { min: 10, max: 1440 },
   maxRotationsPerRelayPerDay: { min: 1, max: 12 },
   maxConcurrentRotations: { min: 1, max: 10 },
-  maxReconcileStartsPerTick: { min: 0, max: 5 },
-  provisionTimeoutMinutes: { min: 5, max: 120 },
-  pollSeconds: { min: 5, max: 300 },
-  verifyAttempts: { min: 1, max: 30 },
-  maxFlipAttempts: { min: 1, max: 20 },
-  maxRollbackAttempts: { min: 1, max: 20 },
-  maxRotationMinutes: { min: 10, max: 24 * 60 },
-  maxDestroyAttempts: { min: 1, max: 500 },
-  opClaimSeconds: { min: 15, max: 300 },
-  settleGraceSeconds: { min: 5, max: 600 },
-  discoveryTimeoutMinutes: { min: 5, max: 1440 },
   'detect.windowMinutes': { min: 5, max: 180 },
   'detect.minReporters': { min: 1, max: 500 },
   'detect.minEdgeReporters': { min: 1, max: 500 },
@@ -862,14 +813,9 @@ export const EDGE_CONFIG_BOUNDS: Readonly<Record<string, { min: number; max: num
   'detect.clearAfterEvals': { min: 1, max: 24 },
   'detect.minBaselineSamples': { min: 12, max: 1008 },
   'detect.probeWeight': { min: 0, max: 1 },
-  'detect.maxReportRowsPerEval': { min: 100, max: 20_000 },
   'detect.fleetBreakerPct': { min: 1, max: 100 },
   'detect.fleetRotationsPerDay': { min: 0, max: 500 },
   'l7.maxSameProviderReplacementsPerDay': { min: 0, max: 50 },
-  'l7.qualifyTimeoutMinutes': { min: 1, max: 120 },
-  'l7.qualifyStepTimeoutMs': { min: 1_000, max: 60_000 },
-  'l7.qualificationTtlMinutes': { min: 5, max: 1440 },
-  'l7.maxRequalifyPerTick': { min: 1, max: 50 },
   'render.namesPerEndpoint': { min: 1, max: 5 },
   'render.backupNames': { min: 1, max: 5 },
   'probe.intervalMinutes': { min: 5, max: 1440 },
@@ -877,7 +823,6 @@ export const EDGE_CONFIG_BOUNDS: Readonly<Record<string, { min: number; max: num
   'probe.perCountryLimit': { min: 1, max: 10 },
   'probe.hourlyBudget': { min: 0, max: 10_000 },
   'probe.agreementVantages': { min: 2, max: 10 },
-  'probe.sourceSpacingMs': { min: 0, max: 60_000 },
   'render.clients.maxEntries': { min: 0, max: 20 },
 };
 

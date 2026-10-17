@@ -481,4 +481,16 @@ describe('acceptance 25: release_requirement', () => {
     w.panel.find(D1).isDisabled = true;
     expect(await w.step()).toMatchObject({ phase: 'release_binding', advanced: true });
   });
+
+  test('"Serve this node directly again" skips the cohorts the go-live left dark by consent', async () => {
+    const w = await world({ bound: true });
+    // The go-live stamped this cohort as knowingly dark (the origin's one copy).
+    await w.t.run((ctx) => ctx.db.patch(w.relayId, { darkCohortKeys: ['squad-1'] }));
+    await w.t.mutation(internal.edgeRestore.serveDirect, { relayId: w.relayId });
+    await w.step(); // settle
+    await w.step(); // -> verify_fcp_raw
+    // A judged cohort with the origin back in its body would hold the release.
+    w.panel.find(D1).isDisabled = false;
+    expect(await w.step()).toMatchObject({ phase: 'release_binding', advanced: true });
+  });
 });

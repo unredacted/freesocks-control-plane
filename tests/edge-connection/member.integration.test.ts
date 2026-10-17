@@ -47,6 +47,7 @@ import { internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import { __setStageOpsForTests } from '../../convex/edgeSetupRuns';
 import { __setFrontChecker } from '../../convex/frontQualifyOps';
+import { __setEdgePlumbingForTests } from '../../convex/lib/edgeConfig';
 import { qualifyFront } from '../../convex/lib/edges/frontCheck';
 import { createAccount } from '../../convex/lib/edges/testing/fixtures';
 import { signValue } from '../../convex/lib/cookies';
@@ -322,11 +323,11 @@ beforeAll(async () => {
   for (const slug of ['freedom-reality', 'freedom-xhttp'])
     await t.mutation(internal.connectionModes.updateMode, { slug, enabled: true });
   await t.mutation(internal.serverAdmin.patchConfig, { patch: { 'manage.enabled': true } });
-  // Polls every 5 s instead of 20 (the floor), and L7 accounts may be picked by
-  // the run (automatic L7 selection is an operator switch, off by default).
-  await t.mutation(internal.edgeAdmin.patchConfig, {
-    patch: { pollSeconds: 5, l7: { autoSelect: true } },
-  });
+  // Polls every 5 s instead of 20 (a constant, shortened through the test
+  // seam), and L7 accounts may be picked by the run (automatic L7 selection is
+  // an operator switch, off by default).
+  __setEdgePlumbingForTests({ pollMs: 5_000 });
+  await t.mutation(internal.edgeAdmin.patchConfig, { patch: { l7: { autoSelect: true } } });
 
   // The REALITY family: the stack's target serves every name it lists.
   await t.mutation(internal.sniFamilies.patchConfig, { patch: { enabled: true } });

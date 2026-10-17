@@ -30,7 +30,12 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { recordHeartbeat, runWithCronOutcome } from './cronHeartbeat';
-import { resolveEdgeConfig, resolveEdgeSecrets, type EdgeConfig } from './lib/edgeConfig';
+import {
+  EDGE_PLUMBING,
+  resolveEdgeConfig,
+  resolveEdgeSecrets,
+  type EdgeConfig,
+} from './lib/edgeConfig';
 import { addressFamily, bracketIfV6 } from './lib/edges/ip';
 import { isValidHostname } from './lib/edges/hostname';
 import {
@@ -492,8 +497,11 @@ function staggerSpacing(cfg: EdgeConfig, source: ProbeSource, batchRunsPerSource
   if (source === 'internal') return 0;
   const total = Math.floor(batchRunsPerSource ?? 0);
   if (total > 1)
-    return Math.min(cfg.probe.sourceSpacingMs, Math.floor(staggerSpanCap(cfg) / (total - 1)));
-  return cfg.probe.sourceSpacingMs;
+    return Math.min(
+      EDGE_PLUMBING.probeSourceSpacingMs,
+      Math.floor(staggerSpanCap(cfg) / (total - 1)),
+    );
+  return EDGE_PLUMBING.probeSourceSpacingMs;
 }
 
 /** Insert a planned round: one run per source per port per address family. */
@@ -1042,13 +1050,78 @@ export const matrix = internalQuery({
   },
 });
 
+/** Finished runs one summary page reads (one query execution, far under the read limit). */
+const SUMMARY_PAGE = 2000;
+/** Pages one summary reads at most; past it the answer says `truncated` (the 14-day retention keeps a window well below it). */
+const SUMMARY_MAX_PAGES = 100;
+
+type Tally = { ok: number; fail: number };
+
 /**
- * Time-bucketed probe outcomes for the Telemetry → Probes chart: per bucket
- * (hourly on short ranges, daily otherwise) the failing and succeeding vantage
- * counts, split per country, plus per-country totals. Reads finished runs by
- * (status, requestedAt): bounded by the 14-day retention and the span clamp.
+ * One page of the probe chart: the finished runs of the window, in
+ * (status, requestedAt) order from `cursor`, tallied per bucket index,
+ * country and source. `summary` drives the pages and merges them.
  */
-export const summary = internalQuery({
+export const summaryPage = internalQuery({
+  args: {
+    since: v.number(),
+    until: v.number(),
+    alignedSince: v.number(),
+    bucketMs: v.number(),
+    cursor: v.union(v.string(), v.null()),
+  },
+  handler: async (ctx, a) => {
+    const page = await ctx.db
+      .query('probeRuns')
+      .withIndex('by_status_requested', (q) =>
+        q.eq('status', 'finished').gte('requestedAt', a.since).lt('requestedAt', a.until),
+      )
+      .paginate({ cursor: a.cursor, numItems: SUMMARY_PAGE });
+    const buckets = new Map<number, Tally & { runs: number; byCountry: Map<string, Tally> }>();
+    const bySource = new Map<string, Tally & { runs: number }>();
+    for (const r of page.page) {
+      const i = Math.floor((r.requestedAt - a.alignedSince) / a.bucketMs);
+      let b = buckets.get(i);
+      if (!b) buckets.set(i, (b = { runs: 0, ok: 0, fail: 0, byCountry: new Map() }));
+      b.runs++;
+      let src = bySource.get(r.source);
+      if (!src) bySource.set(r.source, (src = { runs: 0, ok: 0, fail: 0 }));
+      src.runs++;
+      for (const x of r.results) {
+        const k = x.ok ? 'ok' : 'fail';
+        b[k]++;
+        src[k]++;
+        // The internal probe ('XX') is not a country: it shows under bySource only.
+        if (x.country === 'XX') continue;
+        let c = b.byCountry.get(x.country);
+        if (!c) b.byCountry.set(x.country, (c = { ok: 0, fail: 0 }));
+        c[k]++;
+      }
+    }
+    return {
+      buckets: [...buckets].map(([i, b]) => ({
+        i,
+        runs: b.runs,
+        ok: b.ok,
+        fail: b.fail,
+        byCountry: [...b.byCountry].map(([country, c]) => ({ country, ...c })),
+      })),
+      bySource: [...bySource].map(([source, c]) => ({ source, ...c })),
+      continueCursor: page.continueCursor,
+      isDone: page.isDone,
+    };
+  },
+});
+
+/**
+ * Time-bucketed probe outcomes for the Probes chart (Edges, Advanced): per
+ * bucket (hourly on short ranges, daily otherwise) the failing and succeeding
+ * vantage counts, split per country, plus per-country and per-source totals.
+ * Every finished run of the window counts: the window is read page by page
+ * (`summaryPage`, one query each), bounded by the 14-day retention, the span
+ * clamp and SUMMARY_MAX_PAGES (`truncated` past it).
+ */
+export const summary = internalAction({
   args: {
     windowMs: v.optional(v.number()),
     sinceMs: v.optional(v.number()),
@@ -1071,37 +1144,57 @@ export const summary = internalQuery({
       ok: 0,
       fail: 0,
       runs: 0,
-      byCountry: {} as Record<string, { ok: number; fail: number }>,
+      byCountry: {} as Record<string, Tally>,
     }));
-    const rows = await ctx.db
-      .query('probeRuns')
-      .withIndex('by_status_requested', (q) =>
-        q.eq('status', 'finished').gte('requestedAt', since).lt('requestedAt', until),
-      )
-      // Newest first: when the window holds more than the cap, the OLDEST
-      // measurements fall off, never the current ones (bucketing is order-free).
-      .order('desc')
-      .take(5000);
     const totals = { runs: 0, ok: 0, fail: 0 };
-    const byCountry: Record<string, { ok: number; fail: number }> = {};
-    const bySource: Record<string, { runs: number; ok: number; fail: number }> = {};
-    for (const r of rows) {
-      const b = buckets[Math.floor((r.requestedAt - alignedSince) / bucketMs)];
-      if (!b) continue;
-      b.runs++;
-      totals.runs++;
-      const src = (bySource[r.source] ??= { runs: 0, ok: 0, fail: 0 });
-      src.runs++;
-      for (const x of r.results) {
-        const k = x.ok ? 'ok' : 'fail';
-        b[k]++;
-        totals[k]++;
-        src[k]++;
-        // The internal probe ('XX') is not a country: it shows under bySource only.
-        if (x.country === 'XX') continue;
-        (b.byCountry[x.country] ??= { ok: 0, fail: 0 })[k]++;
-        (byCountry[x.country] ??= { ok: 0, fail: 0 })[k]++;
+    const byCountry: Record<string, Tally> = {};
+    const bySource: Record<string, Tally & { runs: number }> = {};
+    let cursor: string | null = null;
+    let truncated = true;
+    for (let pages = 0; pages < SUMMARY_MAX_PAGES; pages++) {
+      const p: {
+        buckets: Array<
+          { i: number; runs: number; byCountry: Array<{ country: string } & Tally> } & Tally
+        >;
+        bySource: Array<{ source: string; runs: number } & Tally>;
+        continueCursor: string;
+        isDone: boolean;
+      } = await ctx.runQuery(internal.probes.summaryPage, {
+        since,
+        until,
+        alignedSince,
+        bucketMs,
+        cursor,
+      });
+      for (const pb of p.buckets) {
+        const b = buckets[pb.i];
+        if (!b) continue;
+        b.runs += pb.runs;
+        b.ok += pb.ok;
+        b.fail += pb.fail;
+        totals.runs += pb.runs;
+        totals.ok += pb.ok;
+        totals.fail += pb.fail;
+        for (const c of pb.byCountry) {
+          const bc = (b.byCountry[c.country] ??= { ok: 0, fail: 0 });
+          bc.ok += c.ok;
+          bc.fail += c.fail;
+          const tc = (byCountry[c.country] ??= { ok: 0, fail: 0 });
+          tc.ok += c.ok;
+          tc.fail += c.fail;
+        }
       }
+      for (const src of p.bySource) {
+        const t = (bySource[src.source] ??= { runs: 0, ok: 0, fail: 0 });
+        t.runs += src.runs;
+        t.ok += src.ok;
+        t.fail += src.fail;
+      }
+      if (p.isDone) {
+        truncated = false;
+        break;
+      }
+      cursor = p.continueCursor;
     }
     return {
       sinceMs: since,
@@ -1115,7 +1208,7 @@ export const summary = internalQuery({
       bySource: Object.entries(bySource)
         .map(([source, c]) => ({ source, ...c }))
         .sort((x, y) => x.source.localeCompare(y.source)),
-      truncated: rows.length >= 5000,
+      truncated,
     };
   },
 });

@@ -124,9 +124,6 @@ export function modeOf(setup: Setup, slug: string): SetupMode | undefined {
   return setup.modes.find((m) => m.slug === slug);
 }
 
-/** The modes a row carries, whatever its vintage (a pre-modes row has none). */
-const modesOf = (row: SetupRow): SetupMode[] => row.modes ?? [];
-
 /** The mode entries a fresh row starts with: definitions only, nothing found yet. */
 function freshModes(input: SetupInput, prev: readonly SetupMode[] = []): SetupMode[] {
   return input.modes.map((m) => {
@@ -243,14 +240,9 @@ export const start = internalMutation({
         step: undefined,
         code: undefined,
         profileName: input.profileName,
-        modes: freshModes(input, modesOf(row)),
+        modes: freshModes(input, row.modes),
         originDns,
-        adopted: row.adopted === true || existing,
-        // A row from before modes is replaced, not merged (see schema.ts).
-        inbounds: undefined,
-        squads: undefined,
-        placements: undefined,
-        handoff: undefined,
+        adopted: row.adopted || existing,
         updatedAt: now,
       });
       row = (await ctx.db.get(row._id))!;
@@ -296,7 +288,7 @@ function setupNeedsRefresh(row: SetupRow): boolean {
   return (
     row.privacy === 'drifted' ||
     row.templates.some((t) => t.state !== 'matched') ||
-    modesOf(row).some((m) => m.placement !== 'bound' || m.family === 'unbound' || !m.transport)
+    row.modes.some((m) => m.placement !== 'bound' || m.family === 'unbound' || !m.transport)
   );
 }
 
@@ -324,7 +316,7 @@ async function loadSetupContext(ctx: QueryCtx, f: Fence) {
     string,
     { slug: string; target: { address: string; port: number }; names: string[] }
   > = {};
-  for (const m of modesOf(row)) {
+  for (const m of row.modes) {
     if (!m.familySlug || families[m.familySlug]) continue;
     const family = await ctx.db
       .query('sniFamilies')
@@ -476,12 +468,6 @@ export const recordGroupRename = internalMutation({
 
 // --- the delivery gate version lives on the setup row -------------------------------------------
 
-export const gateVersionOf = internalQuery({
-  args: { backendServerId: v.id('backendServers') },
-  handler: async (ctx, { backendServerId }) =>
-    (await setupRow(ctx, backendServerId))?.gateVersion ?? 0,
-});
-
 /** Bump the backend-wide gate version (every disposition or resource-set change). */
 export async function bumpGateVersion(
   ctx: { db: import('./_generated/server').MutationCtx['db'] },
@@ -493,11 +479,6 @@ export async function bumpGateVersion(
   await ctx.db.patch(row._id, { gateVersion: next, updatedAt: Date.now() });
   return next;
 }
-
-export const bumpGate = internalMutation({
-  args: { backendServerId: v.id('backendServers') },
-  handler: (ctx, { backendServerId }) => bumpGateVersion(ctx, backendServerId),
-});
 
 // --- the run ------------------------------------------------------------------------------------------
 
@@ -552,7 +533,7 @@ export const run = internalAction({
     }
     const config = c.server.config as BackendConfig;
     const input = c.input;
-    let modes: SetupMode[] = modesOf(c.row).map((m) => ({ ...m }));
+    let modes: SetupMode[] = c.row.modes.map((m) => ({ ...m }));
     const save = () => record({ modes });
     try {
       // 1. A fresh look at the backend: everything below reads the cache.
@@ -932,7 +913,7 @@ export const view = internalQuery({
       generation: row.generation,
       running: !!row.claim && row.claim.expiresAt > Date.now(),
       profile: { name: row.profileName, uuid: row.profileUuid ?? null },
-      modes: modesOf(row).map((m) => ({
+      modes: row.modes.map((m) => ({
         slug: m.slug,
         name: m.name,
         shape: m.shape,
@@ -957,7 +938,7 @@ export const view = internalQuery({
       originDns: row.originDns
         ? { accountId: row.originDns.accountId, zoneName: row.originDns.zoneName }
         : null,
-      adopted: row.adopted === true,
+      adopted: row.adopted,
       updatedAt: new Date(row.updatedAt).toISOString(),
     };
   },
@@ -969,98 +950,7 @@ export function setupReady(row: SetupRow | null): row is Setup {
     !!row &&
     row.state === 'ready' &&
     !!row.profileUuid &&
-    // A row from before modes is not set up: the operator sets the backend up
-    // again (which adopts what is there) and the migration removes the row.
-    !!row.modes &&
     row.modes.length > 0 &&
     row.modes.every((m) => !!m.transport && !!m.groupUuid)
   );
 }
-
-/** The setup row a node intent reads its transports and origin zone from; null until ready. */
-export const readyFor = internalQuery({
-  args: { backendServerId: v.id('backendServers') },
-  handler: async (ctx, { backendServerId }) => {
-    const row = await setupRow(ctx, backendServerId);
-    return setupReady(row) ? row : null;
-  },
-});
-
-// --- the one-shot migration off contract v1 ---------------------------------------------------------
-
-/**
- * ONE-SHOT operator migration for the modes release (run once per deployment,
- * right after the deploy; docs/servers.md "Moving to modes"):
- *
- *  - `panelHandoff` rows go: the v1 role's declaration means nothing now.
- *  - A v1 reservation on a `panelOwnership` row is settled to `owned`: no role
- *    holds one any more (contract v1 is gone), and nothing may stay reserved.
- *  - A `panelSetups` row written before modes is removed with everything it
- *    fenced (its intents, their activation runs, retirements, obligations and
- *    holds). Such a row describes three fixed transports and mode groups, a shape
- *    that no longer exists; the operator sets the backend up again, which
- *    ADOPTS what is there, and adopts each live node. Nothing on the backend
- *    and nothing a member holds is touched here: these are FCP's own rows.
- *  - A `panelNodeIntents` row with no mode goes the same way even where its
- *    setup row is current (it was enrolled by purpose).
- *
- * Idempotent: a second run finds nothing. Once every deployment has run it,
- * the TRANSITIONAL fields in schema.ts go (see the notes there).
- */
-export const migrateContractV2 = internalMutation({
-  args: {},
-  handler: async (ctx) => {
-    let handoffs = 0;
-    for (const h of await ctx.db.query('panelHandoff').collect()) {
-      await ctx.db.delete(h._id);
-      handoffs++;
-    }
-    let reservations = 0;
-    for (const o of await ctx.db.query('panelOwnership').collect()) {
-      if (o.state !== 'reserved' && !o.reservation) continue;
-      await ctx.db.patch(o._id, {
-        ...(o.state === 'reserved' ? { state: 'owned' as const } : {}),
-        reservation: undefined,
-        updatedAt: Date.now(),
-      });
-      reservations++;
-    }
-    const dropIntent = async (id: Id<'panelNodeIntents'>) => {
-      for (const r of await ctx.db
-        .query('panelActivationRuns')
-        .withIndex('by_intent', (q) => q.eq('intentId', id))
-        .collect())
-        await ctx.db.delete(r._id);
-      const intent = await ctx.db.get(id);
-      if (intent?.retirementId) await ctx.db.delete(intent.retirementId);
-      await ctx.db.delete(id);
-    };
-    const legacySetups = (await ctx.db.query('panelSetups').collect()).filter((r) => !r.modes);
-    const legacyServers = new Set(legacySetups.map((r) => r.backendServerId));
-    let intents = 0;
-    for (const i of await ctx.db.query('panelNodeIntents').collect()) {
-      if (i.mode !== undefined && !legacyServers.has(i.backendServerId)) continue;
-      await dropIntent(i._id);
-      intents++;
-    }
-    for (const sid of legacyServers) {
-      for (const h of await ctx.db
-        .query('panelMaintenanceHolds')
-        .withIndex('by_server', (q) => q.eq('backendServerId', sid))
-        .collect())
-        await ctx.db.delete(h._id);
-      for (const o of (await ctx.db.query('backendObligations').collect()).filter(
-        (o) => o.backendServerId === sid,
-      ))
-        await ctx.db.delete(o._id);
-    }
-    for (const r of legacySetups) await ctx.db.delete(r._id);
-    await writeAuditLog(ctx, {
-      actorType: 'system',
-      action: 'servers.contract.migrated',
-      targetType: 'system',
-      payload: { handoffs, reservations, setups: legacySetups.length, intents },
-    });
-    return { handoffs, reservations, setups: legacySetups.length, intents };
-  },
-});

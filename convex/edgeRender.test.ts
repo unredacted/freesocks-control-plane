@@ -23,6 +23,7 @@ import {
   wsListener,
   type ListenerSpecFixture,
 } from './lib/edges/testing/fixtures';
+import { bumpEpoch } from './lib/edges/testing/reads';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -748,7 +749,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     expect(view?.refreshSuggested).toBe(false);
     // Any epoch bump after this key's last render → nudge, and the stale
     // snapshot's labels are no longer trusted.
-    await t.mutation(internal.relays.bumpEpoch, { relayId });
+    await bumpEpoch(t, { relayId });
     view = await t.query(internal.edgeRender.memberView, { subscriptionId: subId });
     expect(view).toEqual({ refreshSuggested: true, known: false, connections: [] });
     // …until the next delivery renders against the new epoch.

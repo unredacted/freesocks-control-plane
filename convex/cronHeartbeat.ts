@@ -191,6 +191,36 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
     everyMs: DAY,
     description: 'Prune terminal origin rotations past the retention window',
   },
+  {
+    name: 'retention-panel-ops',
+    everyMs: DAY,
+    description: 'Prune settled backend ledger ops past the retention window',
+  },
+  {
+    name: 'retention-sni-rollouts',
+    everyMs: DAY,
+    description: 'Prune finished server-name rollouts past the retention window',
+  },
+  {
+    name: 'retention-edge-setup-runs',
+    everyMs: DAY,
+    description: 'Prune finished guided setup runs past the retention window',
+  },
+  {
+    name: 'retention-activation-runs',
+    everyMs: DAY,
+    description: 'Prune finished node activation runs whose candidates are gone',
+  },
+  {
+    name: 'retention-edge-host-hides',
+    everyMs: DAY,
+    description: 'Prune released direct-Host hide rows past the retention window',
+  },
+  {
+    name: 'retention-port-changes',
+    everyMs: DAY,
+    description: 'Prune finished port changes past the retention window',
+  },
 ];
 
 /**

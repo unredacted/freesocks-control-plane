@@ -7,6 +7,7 @@ import type { Id } from './_generated/dataModel';
 import { EDGE_PROVIDER_IDS } from '../src/shared/contracts/edgeProviderIds';
 import { resolveTemplateFor } from './edgeTemplates';
 import { qualificationBinding } from './lib/edges/frontCheck/binding';
+import { evaluateAutoQualification } from './lib/edges/testing/reads';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -1334,14 +1335,14 @@ describe('edgeProviderAccounts: the DNS-account reference', () => {
       (await t.mutation(internal.edgeProviderAccounts.reconcileAutoQualification, {})).qualified,
     ).toBe(0);
     expect(
-      await t.mutation(internal.edgeProviderAccounts.evaluateAutoQualification, {
+      await evaluateAutoQualification(t, {
         accountId: fastlyId,
       }),
     ).toEqual({ qualified: false, code: 'tested_before_dependency_change' });
     // A fresh credential test alone is not enough: the proof predates the change.
     await t.run((ctx) => ctx.db.patch(fastlyId, { lastTestOkAt: marked.dependencyChangedAt! + 1 }));
     expect(
-      await t.mutation(internal.edgeProviderAccounts.evaluateAutoQualification, {
+      await evaluateAutoQualification(t, {
         accountId: fastlyId,
       }),
     ).toEqual({ qualified: false, code: 'proof_before_dependency_change' });

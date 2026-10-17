@@ -11,7 +11,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['convex/**/*.node-integration.test.ts'],
-    exclude: ['**/node_modules/**', '**/.claude/**', '**/dist/**'],
+    exclude: ['**/node_modules/**', '**/dist/**'],
     testTimeout: 300_000,
     hookTimeout: 300_000,
     fileParallelism: false,

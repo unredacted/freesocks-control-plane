@@ -597,15 +597,17 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
     if (verb === 'retire') {
       // With a disposition this is the admin's decision; without, a request.
       const disposition = body.disposition;
-      if (disposition === 'keep-dark' || disposition === 'migrate')
+      // Moving a node's members to another node is not offered.
+      if (disposition === 'migrate')
+        throw new ConvexError({
+          code: 'servers.migration_not_built',
+          message: 'Migration is not available in this version; choose keep-dark',
+        });
+      if (disposition === 'keep-dark')
         return json(
           await ctx.runMutation(internal.nodeRetirement.decide, {
             intentId,
             disposition,
-            targetIntentId:
-              typeof body.targetIntentId === 'string'
-                ? (body.targetIntentId as Id<'panelNodeIntents'>)
-                : undefined,
             ...actorOf(admin),
           }),
         );

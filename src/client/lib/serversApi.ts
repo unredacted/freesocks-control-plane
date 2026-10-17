@@ -216,11 +216,7 @@ export const approveNode = (slug: string, id: string, reviewHash: string) =>
     { reviewHash },
     z.object({ runId: z.string() }),
   );
-export const retireNode = (
-  slug: string,
-  id: string,
-  decision?: { disposition: 'keep-dark' | 'migrate'; targetIntentId?: string },
-) =>
+export const retireNode = (slug: string, id: string, decision?: { disposition: 'keep-dark' }) =>
   apiClient.post(`${intentPath(slug, id)}/retire`, decision ?? {}, z.object({ stage: z.string() }));
 /** An adopted node's machine is never run by the role: an admin confirms it is gone. */
 export const confirmWiped = (slug: string, id: string) =>
@@ -233,17 +229,6 @@ export const startMaintenance = (slug: string, id: string) =>
     `${intentPath(slug, id)}/maintenance`,
     { start: true },
     z.object({ ok: z.literal(true) }),
-  );
-export const patchNodeSettings = (
-  slug: string,
-  id: string,
-  patch: Record<string, unknown>,
-  maintenance = false,
-) =>
-  apiClient.post(
-    `${intentPath(slug, id)}/settings`,
-    { patch, maintenance },
-    z.object({ change: z.string(), machineRevision: z.number() }),
   );
 
 const ROOT = ['admin', 'servers'] as const;

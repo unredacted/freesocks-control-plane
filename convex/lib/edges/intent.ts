@@ -310,14 +310,6 @@ export function qualificationVerdict(
   return same ? 'ok' : 'stale';
 }
 
-export function qualificationCurrent(
-  stored: StoredQualification | null | undefined,
-  binding: QualificationBinding,
-  now: number,
-): boolean {
-  return qualificationVerdict(stored, binding, now) === 'ok';
-}
-
 /** The publish refusal code for a verdict (`ok` has none). */
 export function qualificationRefusal(v: QualificationVerdict): string | null {
   switch (v) {

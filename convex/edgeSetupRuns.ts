@@ -42,7 +42,7 @@ import { upsertSettingRow } from './appSettings';
 import {
   EDGE_KEYS,
   RENDER_CLIENT_FAMILIES,
-  edgeMs,
+  EDGE_PLUMBING,
   resolveEdgeConfig,
   type EdgeConfig,
 } from './lib/edgeConfig';
@@ -121,7 +121,6 @@ const LIVE_CANDIDATE: ReadonlySet<string> = new Set([
   'planning',
   'provisioning',
   'verifying',
-  'standby',
   'active',
 ]);
 
@@ -525,11 +524,6 @@ export async function activeRunForOrigin(
     .collect();
   return rows.find((r) => !isTerminalRunState(r.state)) ?? null;
 }
-
-export const activeForOrigin = internalQuery({
-  args: { backendServerId: v.id('backendServers'), nodeName: v.string() },
-  handler: (ctx, a) => activeRunForOrigin(ctx.db, a.backendServerId, a.nodeName),
-});
 
 /**
  * The local version vector stage 7 records and stage 8 compares: every
@@ -1073,7 +1067,6 @@ export const startStageRotation = internalMutation({
     );
     const entry = r.listeners.find((l) => l.listenerKey === a.listenerKey);
     if (!listener || !entry) return { ok: false as const, code: 'listener_not_found' };
-    const cfg = await resolveEdgeConfig(ctx.db);
     const now = Date.now();
     const next = r.stepVersion + 1;
     // An enrolled node's edge reaches members only under the node's approval
@@ -1136,7 +1129,7 @@ export const startStageRotation = internalMutation({
           }),
           updatedAt: now,
         });
-        await scheduleStep(ctx, r._id, edgeMs.poll(cfg));
+        await scheduleStep(ctx, r._id, EDGE_PLUMBING.pollMs);
         return { ok: false as const, code };
       }
       // The node's approval moved between the check above and the start (or a
@@ -1457,7 +1450,7 @@ async function waitPoll(ctx: ActionCtx, run: Run, cfg: EdgeConfig, detail: strin
   return tr(ctx, run, {
     state: 'waiting',
     event: { level: 'info', code: 'waiting', detail },
-    scheduleMs: edgeMs.poll(cfg),
+    scheduleMs: EDGE_PLUMBING.pollMs,
     ...patch,
   });
 }
@@ -2240,7 +2233,7 @@ export const goLive = internalMutation({
                 }),
                 updatedAt: now,
               });
-              await scheduleStep(ctx, runId, edgeMs.poll(await resolveEdgeConfig(ctx.db)));
+              await scheduleStep(ctx, runId, EDGE_PLUMBING.pollMs);
               return { ok: false as const, code: p.code };
             }
             // Anything else means the approved candidate cannot go live as it

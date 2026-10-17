@@ -1,6 +1,6 @@
 # Server management
 
-Admin -> Servers shows, and will later manage, what lives on a proxy backend: its **nodes**, the
+Admin -> Servers shows and manages what lives on a proxy backend: its **nodes**, the
 **config profiles** and **transports** they run, the **Hosts** members are handed and the
 **mode groups** that grant them. It is built the way [edges](edges.md) is: a pure library
 (`convex/lib/backend/`), isolate queries and mutations that are the only writers of their tables,
@@ -65,7 +65,7 @@ the other.
 A config profile holds the REALITY **private key**, the **short ids**, the **client list** and
 certificate material. None of it is stored, returned or logged:
 
-- A transport is the same **allowlist projection** discovery uses (`projectXrayInbound`): tag,
+- A transport is the same **allowlist projection** discovery uses (`projectXrayTransport`): tag,
   protocol, port, transport, security, server names, target, paths. The backend's derived
   `rawInbound` (the complete transport JSON) is stripped at the schema boundary.
 - Every config-profile call is made `sensitive` ([backends.md](backends.md) § Sensitive data):
@@ -177,9 +177,11 @@ revoked (not merely replaced), nothing in flight can still execute it, and the b
 and stalled jobs have finished or were cancelled; a fresh read is taken first and may simply
 settle the op. "The backend was restarted" is not a condition: queued work survives a restart.
 
-**Interruption.** `backend-reconcile` (every 5 min) never sends anything. An op that never
-recorded an attempt sent nothing and is released (`servers.never_sent`); one that recorded an
-attempt but no outcome becomes `uncertain`; everything open is looked at again.
+**Interruption.** `backend-reconcile` (every 5 min) never sends an attempt again. An op that
+never recorded an attempt sent nothing and is released (`servers.never_sent`); one that recorded
+an attempt but no outcome becomes `uncertain`; everything open is looked at again. The same pass
+admits a staged port change whose nodes all confirmed (§ Firewall acknowledgement), which sends
+its ONE attempt, and resumes a parked node rename (§ Renaming a node).
 
 **Other workflows** call `assertNoPanelClaim` and refuse while a key is claimed. An op's own
 follow-up work passes the same guard by **ownership**, never by a bypass flag: every required
@@ -244,8 +246,8 @@ token that moves without an FCP op is recorded (`tokenChangedAt`).
 
 **Claims.** One edit claims the profile, every enabled node on it and every affected origin
 together, and holds them until each node's `lastStatusChange` has moved (the `PATCH` answers in
-tens of milliseconds while application is asynchronous, measured). Rotations, restores,
-registrations and listener edits on a claimed origin refuse with `edge.panel_op_running`
+tens of milliseconds while application is asynchronous, measured). Rotations, restores and
+admin listener writes (`applyRegistration`) on a claimed origin refuse with `edge.panel_op_running`
 (`assertNoRelayPanelClaim`). An origin that is rotating, restoring, quarantined or mid-setup is
 left alone instead: the edit is refused.
 
@@ -336,8 +338,8 @@ every backend write through the ledger:
 3. **Members' pins.** The backend's subscriptions are walked a page at a time and a pin (or the
    node a key is kept off) under the old name moves to the new one.
 
-While it runs, the node's origins are fenced (`relays.renaming`: rotations, restores,
-registrations, setup runs and listener writes answer `edge.panel_op_running`), no new origin or
+While it runs, the node's origins are fenced (`relays.renaming`: rotations, restores, setup runs
+and admin listener writes answer `edge.panel_op_running`), no new origin or
 guided setup run is admitted for the node under either name (`edge.panel_op_running`), its
 retirement is refused (`servers.node_rename_running`, by the role and by an admin), and the node's
 own reconcile waits; it is reconciled under the new name when the rename finishes. A step whose write
@@ -461,8 +463,11 @@ The role repository implements this; FCP only describes it.
   SSH or the node API port on that basis.
 - **Report them.** `POST …/applied` gains `firewall: {ports: [{port, protocol: 'tcp'}]}`: the
   ports the firewall lets in for FCP after this run. FCP confirms every pending requirement of
-  THIS node whose port is listed, whatever the machine revision (a run that only opened a port
-  reports the same `appliedRevision` again, which is idempotent). A report without `firewall`
+  THIS node whose port is listed. The report's `appliedRevision` must be the node's current
+  `machineRevision`, as for every applied report (an older one is refused
+  `servers.revision_stale`, a newer one `servers.revision_unknown`, before anything is
+  confirmed); a run that only opened a port reports the same revision again, which is
+  idempotent. A report without `firewall`
   confirms nothing, so a role that predates this keeps a port change waiting (the Servers page
   says which node), and nothing else changes for it.
 - **Gate on it.** A `pending` port in the view means a change waits for this node: run the role
@@ -478,7 +483,7 @@ Admin -> Servers ("Set up this backend") with names, shapes and family slugs onl
 secret. Each step is idempotent and re-enterable; an interrupted attempt is resumed by the
 `backend-bootstrap-sweep` cron once its lease has expired.
 
-**Modes.** A backend is set up for a list of modes (`PanelSetupInput.modes`, pre-filled from
+**Modes.** A backend is set up for a list of modes (`BackendSetupInput.modes`, pre-filled from
 `DEFAULT_MODE_SETUP`; editable, a table, not a fixed set). Each names the connection mode it
 feeds (`slug`, which must exist in the catalog), the group on the backend (`name`, 2 to 20 plain
 characters; the transport tag is that name upper-cased), a **shape** and, for REALITY transports,
@@ -528,23 +533,13 @@ its retirement is closed by an admin rather than by a report (below).
 
 ### Moving to modes
 
-A deployment that ran the release before modes carries rows of the old shape, and Convex
-validates stored documents on every push, so those fields are still accepted (marked
-TRANSITIONAL in `convex/schema.ts`) and one mutation clears them, once per deployment, right
-after the deploy:
-
-```
-bunx convex run backendSetup:migrateContractV2 '{}'
-```
-
-(through the deployer container: docs/beta-deploy.md "One-off functions"). It deletes the v1
-handoff rows, settles any open v1 reservation on a `panelOwnership` row to `owned`, and removes
-`panelSetups` and `panelNodeIntents` rows written before modes together with what they fenced
-(activation runs, retirements, obligations, holds). Nothing on a backend and nothing a member
-holds is touched: these are FCP's own workflow rows. The operator then sets each backend up again
-(which ADOPTS what is there) and adopts each live node. It is idempotent, and audited
-`servers.contract.migrated` with counts. Once every deployment has run it, the TRANSITIONAL
-fields go.
+The release that introduced modes carried a one-shot mutation, `backendSetup:migrateContractV2`,
+that cleared the rows of the shape before it (the v1 handoff rows, v1 reservations on
+`panelOwnership`, and `panelSetups` / `panelNodeIntents` rows without modes). No deployment holds
+such rows any more, so the mutation and the TRANSITIONAL schema fields that accepted them are
+gone. A deployment that still holds them (one that skipped that release) must deploy a release
+that has the migration and run it first: Convex validates every stored document on each push, so
+this schema refuses those rows.
 
 ## Node lifecycle
 
@@ -609,11 +604,13 @@ affected node FCP does not manage needs a treatment from the operator, `hold` (c
 
 **The delivery gate** (`lib/backend/deliveryGate.ts`, enforced in `edgeRender.deliveryPolicyFor`,
 the pinner's exclusion list, the subscription route, the mirror refresh): closed for an enrolled
-node that is not live, under maintenance or retiring, open for an unmanaged node. Its
+node that is not live, under maintenance or retiring; open for an unmanaged node unless an open
+maintenance hold names it. Its
 **candidate set** is every resource of every activation run that never committed (running,
 blocked, under review, superseded, failed), minus what the committed set holds: a superseded or
 blocked run's candidate stays isolated until a later commit takes it over. Every render carries
-the gate token (gate version, committed set, a hash of the candidate set); the route and the
+the gate token (`<gate version>:<committed Host count>:<committed edge count>:<hash of the
+candidate set>`; the full cache token is in `docs/edges.md` "Rendering"); the route and the
 mirror refresh re-read it after rendering and never attach content rendered under an older
 policy to a newer token. **Publication** is admitted by `edgeRotations` only under a node's
 committed approval or as a candidate of its one activating run (below), for manual, reconcile
@@ -725,24 +722,40 @@ surface; the direct Host is enabled only during the run's rehearsal and disabled
 
 ### Node registration (contract v2)
 
-Routes on `{slug}/nodes/by-name/{name}`, scope `admin:servers:write` (a `GET` also takes
-`admin:servers:read`) or `admin:edges:register` confined to the token's registration boundary
-(backend servers and, optionally, node names). `admin:servers:manage` is accepted but bounded the
-same way: backend-write automation never reaches a node's secret (`bootstrap`) on its own:
+Routes on `{slug}/nodes/by-name/{name}` (`convex/httpServers.ts`; a former name resolves through
+the rename aliases). Scopes (`scopeFor`, `lib/adminHttp.ts` `registrationBoundaryOf`): a `GET`
+takes `admin:servers:read`, `admin:servers:write`, `admin:edges:register` or
+`admin:servers:manage`; every other verb `admin:servers:write`, `admin:edges:register` or
+`admin:servers:manage`. Only `admin:servers:write` (and `admin:servers:read` on a `GET`) is
+unbounded. `admin:edges:register` and `admin:servers:manage` are confined to the token's
+registration boundary (backend servers and, optionally, node names; none = nothing), so
+backend-write automation never reaches a node's secret (`bootstrap`) on its own; outside the
+boundary the answer is 403 `servers.registration_boundary`. Only `bootstrap` is throttled
+(`admin.servers.panel-write`). Nothing under `/api/v1/admin/edges/` accepts
+`admin:edges:register`.
 
-| Route              | What                                                                                                                                                                                                                                                                                                         |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `PUT`              | Enroll (`mode`, `label`; taken once) or report observations (`management`, `publicIps`, `capabilities`; every run). The role never sends FCP-owned settings.                                                                                                                                                 |
-| `GET`              | The node's own view: stage, disposition, revisions, the origin name, the retirement.                                                                                                                                                                                                                         |
-| `POST …/bootstrap` | The machine configuration (node port, the Caddy routes of a front node, each `{path, port}` plus `upstream: "h2c"` when the transport is gRPC and must be proxied over HTTP/2 cleartext, the origin hostname) and the node secret. `SEAL_BOTH`; bearer callers get plaintext over TLS as on every IaC route. |
-| `POST …/applied`   | `{appliedRevision, caddy.certificateReady, nodeStarted}`.                                                                                                                                                                                                                                                    |
-| `DELETE`           | A retirement request (below).                                                                                                                                                                                                                                                                                |
-| `POST …/wiped`     | The role's acknowledgement that the machine is cleaned up (`ready_to_wipe → retired`).                                                                                                                                                                                                                       |
+| Route              | What                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PUT`              | Enroll or report observations (`NodeRegistration`): `{roleContractVersion: 2, mode, label?, observed: {management: {address, port}, publicIps: {v4?, v6?}, capabilities: {caddy, ipv6}}}`. `mode` and `label` are taken once; observations every run. The role never sends FCP-owned settings. Answers the view.                                                                                                                                              |
+| `GET`              | The node's own view (`NodeRoleView`): `name` (the current one), `mode {slug, name, shape}`, `registration {state, code, generation}`, `stage`, `delivery`, `machineRevision`, `appliedRevision`, `node {uuid, port}`, `origin {hostname, dns}`, `retirement`, `firewall.ports`, `updatedAt`.                                                                                                                                                                  |
+| `POST …/bootstrap` | The machine configuration and the node secret: `machineRevision`, `secretKey` (read from the backend per call, never stored, logged or audited), `node {port, name, mode}`, `ingress {hostname, externalPort, routes[{path, port, upstream?: 'h2c'}]}` or null (`upstream: 'h2c'` for a gRPC transport, proxied over HTTP/2 cleartext), `origin {hostname, dns}`, `firewall.ports`. `SEAL_BOTH`; bearer callers get plaintext over TLS as on every IaC route. |
+| `POST …/applied`   | `NodeAppliedReport`: `{appliedRevision, caddy?: {certificateReady}, nodeStarted, firewall?: {ports: [{port, protocol: 'tcp'}]}}` (at most 64 ports). `appliedRevision` must equal the current `machineRevision`; the same revision again is idempotent. The listed ports confirm this node's waiting port requirements (§ Firewall acknowledgement).                                                                                                          |
+| `DELETE`           | A retirement request (below). Answers the view.                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `POST …/wiped`     | The role's acknowledgement that the machine is cleaned up (`ready_to_wipe → retired`).                                                                                                                                                                                                                                                                                                                                                                        |
 
-Refusals: `servers.panel_not_set_up`, `servers.contract_version`, `servers.node_exists_unowned`
-(a backend node or Host of that name no intent owns: an admin adopts first), `servers.tombstoned`
-(an admin restores), `servers.purpose_change_needs_admin`, `servers.node_retiring`,
-`servers.registration_boundary`.
+`firewall.ports` entries are `{port, protocol: 'tcp', reason: 'serving' | 'pending'}`
+(`lib/backend/portRequirements.ts`): `serving` = the non-loopback ports of the transports the
+node serves (its mode's transport before the backend node exists) plus the ingress external
+port; `pending` = a staged change's port, listed until that change ends. The node API port is
+never listed.
+
+Refusals. `PUT`: `servers.manage_disabled`, `servers.contract_version`,
+`servers.panel_not_set_up`, `servers.mode_unknown`, `servers.node_retiring`,
+`servers.mode_change_needs_admin`, `servers.node_exists_unowned` (a backend node or Host of that
+name no intent owns: an admin adopts first), `servers.tombstoned` (an admin restores),
+`servers.origin_label_invalid`, `validation`. `bootstrap`: `servers.node_retiring`,
+`servers.unsupported_backend`. `applied`: `servers.revision_stale` (the configuration moved on:
+run the role again), `servers.revision_unknown`. Every verb: `servers.registration_boundary`.
 
 A shared change (a profile edit, `POST {slug}/profiles/{uuid}/apply`) takes an `unmanaged`
 treatment (`hold` | `acknowledge`) whenever nodes FCP does not manage run the touched transports
@@ -768,24 +781,75 @@ Cleanup uses the obligation's own account and zone. `created` and `resolves` are
 
 ### Obligations
 
-External side effects of every workflow are rows persisted before the call. A superseded
-generation never releases an unresolved one; a lease expiry resumes discovery of the same
-attempt; settlement reconciles the result against what is wanted now (`lib/backend/obligations.ts`:
-reuse, retain, delete), so a late create generation B still needs is adopted, an update never
-authorises a delete, and a shared object is never disposable.
+External side effects of every workflow are rows persisted before the call
+(`backendObligations`). An outstanding row blocks its identity whatever generation owns it
+(`blocksIdentity` in `lib/backend/obligations.ts`); a superseded generation never releases an
+unresolved one; a lease expiry resumes discovery of the same attempt, and the owning workflow
+settles a late result by that discovery against what it wants now (the origin DNS record above,
+by name and marker), never by rule.
 
-### Retirement and migration
+### Retirement
 
 `DELETE …/by-name/{name}` only records the request. Whenever the node was ever live or anything
-of it is still out there, the retirement is `needs_admin`; the admin chooses `keep-dark` (its
-members get the edge-required unavailable answer) or `migrate` (refused in this version with
-`servers.migration_not_built`). Never `restore-direct`. The ladder: `draining` (the origin
-deleted keep-dark, credentials released, the direct Host deleted, DNS withdrawn) →
-`panel_removed` (the row removed with `removeOnly`, the name tombstoned) → `ready_to_wipe` →
-`wiped` → `retired`. The last step is the role's `wiped` ack for a machine FCP bootstrapped, or an
+of it is still out there, the retirement is `needs_admin`; the admin decides `keep-dark` (its
+members get the edge-required unavailable answer). Moving the members to another node is not
+offered: a `migrate` disposition is refused with `servers.migration_not_built`. Never
+`restore-direct`. The ladder: `draining` (the origin deleted keep-dark, credentials released,
+the direct Host deleted, DNS withdrawn) → `panel_removed` (the row removed with `removeOnly`, the
+name tombstoned) → `ready_to_wipe` → `retired` (events `wiped`, `retired`). The last step is the role's `wiped` ack for a machine FCP bootstrapped, or an
 admin's confirmation that the machine is gone for an ADOPTED node, whose machine no role runs
 ("The machine is gone" on the node, `POST {slug}/nodes/intents/{id}/wiped`, audited with
 `confirmedBy: admin`). Without either the ladder would sit at `ready_to_wipe` forever.
+
+## Deploy a fronted node
+
+From an empty machine to a member connecting through an edge, for an L4 mode
+(`freedom-reality`, `freedom-xhttp`) or an L7 one (`freedom-ws`). Every switch below ships off.
+
+1. **Switches, once per deployment.**
+   - `servers.manage.observe` and `servers.manage.enabled` on (§ Switches).
+   - The connection mode members are issued into enabled (Admin → Connection modes; the
+     `freedom-*` modes ship disabled).
+   - For a REALITY mode, server names on (`edge.sni.enabled`) and a family with qualified,
+     active names (`docs/edges.md` "Server-name families").
+   - Edge rendering (`edge.render.enabled`) may stay off: the first go-live turns it on
+     (audited `edge.render.enabled_by_setup`), and the protect plan says so first.
+2. **The backend is set up for the mode** (§ Setting up a backend): Servers → Backends, "Set up
+   this backend", with the mode's family and, for a front node, the origin DNS account and zone
+   (§ Origin names).
+3. **A provider account for the edge**: added and its credentials tested (in the protect
+   sheet's account step, or on the provider pages under Edges → Advanced), with a daily
+   allocation budget (0, no limit, is refused outside development). An L4 account is trusted by
+   its first ticked endpoint, an L7 account by its first passing front proof.
+4. **The role's token**: an `admin:edges:register` token bounded to the backend (and,
+   optionally, the node name), minted in Admin → API tokens or with
+   `adminApi:mintAutomationToken` (`docs/edges.md` "Node role contract"), or the fleet token
+   (`admin:servers:write`).
+5. **Run the role** with the node's name and `node_mode` (§ Node registration). It enrolls,
+   fetches the bootstrap, lets every `firewall.ports` port in, waits for a front node's origin
+   name to resolve, starts Caddy (front node) and the node, and reports `applied` with the
+   ports it opened. The node reaches `machine_ready` once its applied revision is current and
+   the evidence in § Node lifecycle holds; its page (Servers → Nodes) words each step and what
+   it waits for.
+6. **Protect it**: "Protect this node" on the node's page (also offered on the Edges home and as
+   attention `node_ready_to_protect`). The protect sheet preselects the node and a sole
+   compatible account; Start. The Autopilot run (`docs/edges.md` "Guided setup runs") creates
+   the origin and provisions one edge per transport (at most 8: a node with more asks which).
+7. **Try it** (L4): each new address shows a test link and a QR code. Import it into a client,
+   connect, and tick "Works" per address; "Doesn't work" replaces just that address. An L7
+   front is proven by FCP itself, with no tick.
+8. **Approve go-live**: the run parks at publish, waiting for the node's approval
+   (`node_not_approved`). The approval card (in the sheet and on the node page) shows the
+   review; type the node's name and approve. The run hides the direct Hosts the plan named,
+   rehearses delivery for every cohort and format, and goes live in one mutation: the
+   activation commits, the gate opens, the delivery binding is claimed.
+9. **A member connects**: a key issued into the mode is pinned to the node, and its
+   subscription is the fronted URL (`/api/v1/sub/<token>`), whose body names only the edge,
+   never the origin. The client imports it and connects through the edge.
+10. **Afterwards**, as needed: automatic protection (`POST automation {on}`, offered on the
+    run's Live card), probes and operator alerts (`docs/edges.md` "Operations safety").
+    "Protect again" on the node's page replaces every address of a live node; "Serve this node
+    directly again" ends edge-required delivery and gives members the direct address.
 
 ## Admin surface
 
@@ -793,26 +857,27 @@ admin's confirmation that the machine is gone for an ADOPTED node, whose machine
 surface (`src/shared/crypto/envelope.ts`): the responses carry node and Host addresses.
 `{slug}` is the backend server's slug.
 
-| Route                                                                                                            | Scope                  | What                                                                                                             |
-| ---------------------------------------------------------------------------------------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `GET summary`                                                                                                    | `admin:servers:read`   | Every instance: observable or not, last look, counts, the switches.                                              |
-| `GET {slug}/tree`                                                                                                | `admin:servers:read`   | One instance as a tree, from the cache (no backend call).                                                        |
-| `POST {slug}/refresh`                                                                                            | `admin:servers:read`   | Look now, then return the tree. Rate-limited (`admin.servers.panel-read`): the one route that reaches a backend. |
-| `POST {slug}/placements/validate`                                                                                | `admin:servers:read`   | Check the mode group pools in mode placements against the mode groups the backend has.                           |
-| `GET config`, `PATCH config`                                                                                     | `admin:settings:*`     | The switches. Audited as `servers.config.update {changedKeys}`.                                                  |
-| `POST {slug}/addresses`, `PATCH` / `DELETE {slug}/addresses/{uuid}`, `POST {slug}/addresses/reorder`             | `admin:servers:manage` | Address writes. Answer the op. Rate-limited (`admin.servers.panel-write`).                                       |
-| `POST {slug}/modeGroups`, `PATCH` / `DELETE {slug}/modeGroups/{uuid}`                                            | `admin:servers:manage` | Mode group writes.                                                                                               |
-| `POST {slug}/nodes`, `PATCH` / `DELETE {slug}/nodes/{uuid}`, `POST {slug}/nodes/{uuid}/enable\|disable\|restart` | `admin:servers:manage` | Node writes. `DELETE ...?removeOnly=1` is "remove from backend".                                                 |
-| `POST {slug}/nodes/{uuid}/rename`, `GET {slug}/renames`                                                          | manage / read          | Rename a node (§ Renaming a node), and the recent renames with the step each is at.                              |
-| `POST {slug}/profiles/{uuid}/preview`                                                                            | `admin:servers:read`   | What a typed profile edit would do. Writes nothing.                                                              |
-| `POST {slug}/profiles/{uuid}/acknowledge`                                                                        | `admin:servers:manage` | An operator has seen that the profile was edited elsewhere.                                                      |
-| `POST {slug}/profiles/{uuid}/apply`                                                                              | `admin:servers:manage` | Apply a previewed edit, conditioned on the previewed token. A port change is refused here: it is staged.         |
-| `POST {slug}/profiles/{uuid}/port-change`                                                                        | `admin:servers:manage` | Stage a previewed port change until every node's firewall lets the port in (§ Firewall acknowledgement).         |
-| `GET {slug}/port-changes`                                                                                        | `admin:servers:read`   | The open port changes, each node's wait, and the last few settled.                                               |
-| `POST {slug}/port-changes/{id}/acknowledge`, `POST {slug}/port-changes/{id}/cancel`                              | `admin:servers:manage` | An admin confirms nodes no role reports for; withdraw a change that still waits.                                 |
-| `GET {slug}/ops`                                                                                                 | `admin:servers:read`   | The last 50 ops of an instance.                                                                                  |
-| `POST {slug}/ops/{id}/observe`                                                                                   | `admin:servers:read`   | Look at the backend again for an open op. Changes nothing on the backend.                                        |
-| `POST {slug}/ops/{id}/recover`                                                                                   | `admin:servers:manage` | The attested recovery of an unknown outcome.                                                                     |
+| Route                                                                                                            | Scope                  | What                                                                                                                                                             |
+| ---------------------------------------------------------------------------------------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET summary`                                                                                                    | `admin:servers:read`   | Every instance: observable or not, last look, counts, the switches.                                                                                              |
+| `GET {slug}/tree`                                                                                                | `admin:servers:read`   | One instance as a tree, from the cache (no backend call).                                                                                                        |
+| `POST {slug}/refresh`                                                                                            | `admin:servers:read`   | Look now, then return the tree. Rate-limited (`admin.servers.panel-read`, shared with the profile preview and op observe, the other reads that reach a backend). |
+| `POST {slug}/placements/validate`                                                                                | `admin:servers:read`   | Check the mode group pools in mode placements against the mode groups the backend has.                                                                           |
+| `GET {slug}/setup`, `POST {slug}/setup`                                                                          | read / manage          | The backend's setup workflow (§ Setting up a backend): its view, and start / resume / adopt.                                                                     |
+| `GET config`, `PATCH config`                                                                                     | `admin:settings:*`     | The switches. Audited as `servers.config.update {changedKeys}`.                                                                                                  |
+| `POST {slug}/addresses`, `PATCH` / `DELETE {slug}/addresses/{uuid}`, `POST {slug}/addresses/reorder`             | `admin:servers:manage` | Address writes. Answer the op. Rate-limited (`admin.servers.panel-write`).                                                                                       |
+| `POST {slug}/modeGroups`, `PATCH` / `DELETE {slug}/modeGroups/{uuid}`                                            | `admin:servers:manage` | Mode group writes.                                                                                                                                               |
+| `POST {slug}/nodes`, `PATCH` / `DELETE {slug}/nodes/{uuid}`, `POST {slug}/nodes/{uuid}/enable\|disable\|restart` | `admin:servers:manage` | Node writes. `DELETE ...?removeOnly=1` is "remove from backend".                                                                                                 |
+| `POST {slug}/nodes/{uuid}/rename`, `GET {slug}/renames`                                                          | manage / read          | Rename a node (§ Renaming a node), and the recent renames with the step each is at.                                                                              |
+| `POST {slug}/profiles/{uuid}/preview`                                                                            | `admin:servers:read`   | What a typed profile edit would do. Writes nothing.                                                                                                              |
+| `POST {slug}/profiles/{uuid}/acknowledge`                                                                        | `admin:servers:manage` | An operator has seen that the profile was edited elsewhere.                                                                                                      |
+| `POST {slug}/profiles/{uuid}/apply`                                                                              | `admin:servers:manage` | Apply a previewed edit, conditioned on the previewed token. A port change is refused here: it is staged.                                                         |
+| `POST {slug}/profiles/{uuid}/port-change`                                                                        | `admin:servers:manage` | Stage a previewed port change until every node's firewall lets the port in (§ Firewall acknowledgement).                                                         |
+| `GET {slug}/port-changes`                                                                                        | `admin:servers:read`   | The open port changes, each node's wait, and the last few settled.                                                                                               |
+| `POST {slug}/port-changes/{id}/acknowledge`, `POST {slug}/port-changes/{id}/cancel`                              | `admin:servers:manage` | An admin confirms nodes no role reports for; withdraw a change that still waits.                                                                                 |
+| `GET {slug}/ops`                                                                                                 | `admin:servers:read`   | The last 50 ops of an instance.                                                                                                                                  |
+| `POST {slug}/ops/{id}/observe`                                                                                   | `admin:servers:read`   | Look at the backend again for an open op. Changes nothing on the backend.                                                                                        |
+| `POST {slug}/ops/{id}/recover`                                                                                   | `admin:servers:manage` | The attested recovery of an unknown outcome.                                                                                                                     |
 
 **The tree** is node -> the profile it runs -> the transports it **serves** -> the Hosts members
 get for each transport (a Host pinned to nodes appears under those only) and the mode groups that
@@ -822,7 +887,7 @@ a transport no node serves. That is usually a leftover worth noticing.
 **Placement validation** answers in counts and mode group names, never the pasted uuids (a pool is
 write-only over HTTP). `unknownHere` is a count to look into, not a verdict: several instances
 can share a backend type, and a uuid missing on this backend may live on another.
-`withoutInbounds` names mode groups that would issue keys connecting to nothing.
+`withoutTransports` names mode groups that would issue keys connecting to nothing.
 
 ### The page
 

@@ -3,7 +3,9 @@
    * Edit one origin: label, location, pool size, standbys, its own rotation
    * limits and (backend origins) the connection mode whose placement the front
    * qualification user is created on. Number knobs use the server bounds (`edgeConfigQuery().bounds`); only
-   * changed fields are sent.
+   * changed fields are sent. Standbys, cooldown, daily cap and drain follow the
+   * fleet setting unless this origin sets its own: a value changed to the fleet's
+   * is sent as null, so the origin follows the fleet again.
    *
    * Props: open (bindable); origin
    */
@@ -38,6 +40,21 @@
   const bounds = $derived(config.data?.bounds ?? {});
   const defaults = $derived(config.data?.defaults ?? {});
   const num = (v: unknown): number | undefined => (typeof v === 'number' ? v : undefined);
+  // The fleet's current values: what an origin without its own value uses.
+  const fleet = $derived({
+    standbyPerRelay: num(config.data?.config.standbyPerRelay),
+    cooldownMinutes: num(config.data?.config.cooldownMinutes),
+    maxRotationsPerDay: num(config.data?.config.maxRotationsPerRelayPerDay),
+    drainMinutes: num(config.data?.config.drainMinutes),
+  });
+  const own = (field: keyof typeof fleet): boolean => relay.overrides.includes(field);
+  /** Unchanged: nothing. Changed to the fleet's value: null (follow the fleet). Else this origin's own. */
+  const knob = (value: number, current: number, fleetValue: number | undefined) =>
+    value === current ? undefined : value === fleetValue ? null : value;
+  const knobHelper = (field: keyof typeof fleet, text: string): string =>
+    own(field)
+      ? `${text} Set for this origin; the fleet setting is ${fleet[field] ?? 'not loaded'}.`
+      : `${text} Follows the fleet setting.`;
 
   let label = $state('');
   let locationCode = $state('');
@@ -99,10 +116,14 @@
     const loc = locationCode.trim().toUpperCase();
     if (loc !== (relay.locationCode ?? '')) p.locationCode = loc === '' ? null : loc;
     if (desiredPublished !== relay.desiredPublished) p.desiredPublished = desiredPublished;
-    if (standbyPerRelay !== relay.standbyPerRelay) p.standbyPerRelay = standbyPerRelay;
-    if (cooldownMinutes !== relay.cooldownMinutes) p.cooldownMinutes = cooldownMinutes;
-    if (maxRotationsPerDay !== relay.maxRotationsPerDay) p.maxRotationsPerDay = maxRotationsPerDay;
-    if (drainMinutes !== relay.drainMinutes) p.drainMinutes = drainMinutes;
+    const standby = knob(standbyPerRelay, relay.standbyPerRelay, fleet.standbyPerRelay);
+    if (standby !== undefined) p.standbyPerRelay = standby;
+    const cooldown = knob(cooldownMinutes, relay.cooldownMinutes, fleet.cooldownMinutes);
+    if (cooldown !== undefined) p.cooldownMinutes = cooldown;
+    const cap = knob(maxRotationsPerDay, relay.maxRotationsPerDay, fleet.maxRotationsPerDay);
+    if (cap !== undefined) p.maxRotationsPerDay = cap;
+    const drain = knob(drainMinutes, relay.drainMinutes, fleet.drainMinutes);
+    if (drain !== undefined) p.drainMinutes = drain;
     if (probeNode !== relay.probeNode) p.probeNode = probeNode;
     if (qualificationMode !== (relay.qualificationModeSlug ?? ''))
       p.qualificationModeSlug = qualificationMode === '' ? null : qualificationMode;
@@ -127,7 +148,8 @@
       <Dialog.Title>Edit relay {relay.slug}</Dialog.Title>
       <Dialog.Description>
         The slug, the origin and its address are fixed once edges dial them. Everything here applies
-        to this origin only and overrides the fleet defaults in Settings.
+        to this origin only. A value you change here overrides the fleet setting in Settings; set it
+        back to the fleet value to follow the fleet again.
       </Dialog.Description>
     </Dialog.Header>
     <form
@@ -179,8 +201,11 @@
           bounds={bounds['standbyPerRelay']}
           min={0}
           max={2}
-          defaultValue={num(defaults['standbyPerRelay'])}
-          helper="Provisioned but unpublished edges. A rotation that finds one skips the slow provisioning."
+          defaultValue={fleet.standbyPerRelay}
+          helper={knobHelper(
+            'standbyPerRelay',
+            'Provisioned but unpublished edges. A rotation that finds one skips the slow provisioning.',
+          )}
         />
         <NumberField
           bind:value={cooldownMinutes}
@@ -190,8 +215,8 @@
           bounds={bounds['cooldownMinutes']}
           min={10}
           max={1440}
-          defaultValue={num(defaults['cooldownMinutes'])}
-          helper="After a rotation, automatic ones wait this long."
+          defaultValue={fleet.cooldownMinutes}
+          helper={knobHelper('cooldownMinutes', 'After a rotation, automatic ones wait this long.')}
         />
         <NumberField
           bind:value={maxRotationsPerDay}
@@ -200,8 +225,11 @@
           bounds={bounds['maxRotationsPerRelayPerDay']}
           min={1}
           max={12}
-          defaultValue={num(defaults['maxRotationsPerRelayPerDay'])}
-          helper="The daily cap that keeps a confused detector from burning through budget."
+          defaultValue={fleet.maxRotationsPerDay}
+          helper={knobHelper(
+            'maxRotationsPerDay',
+            'The daily cap that keeps a confused detector from burning through budget.',
+          )}
         />
         <NumberField
           bind:value={drainMinutes}
@@ -211,8 +239,11 @@
           bounds={bounds['drainMinutes']}
           min={1}
           max={10080}
-          defaultValue={num(defaults['drainMinutes'])}
-          helper="How long a replaced edge keeps forwarding before it is destroyed, so members who have not refreshed stay connected."
+          defaultValue={fleet.drainMinutes}
+          helper={knobHelper(
+            'drainMinutes',
+            'How long a replaced edge keeps forwarding before it is destroyed, so members who have not refreshed stay connected.',
+          )}
         />
       </div>
       {#if hasPanel}

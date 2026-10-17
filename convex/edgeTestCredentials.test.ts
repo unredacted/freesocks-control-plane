@@ -21,6 +21,7 @@ import {
   shadowsocksListener,
 } from './lib/edges/testing/fixtures';
 import { TEST_CREDENTIAL_MAX_ATTEMPTS } from './edgeTestCredentials';
+import { expireTestCredential } from './lib/edges/testing/reads';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -85,7 +86,7 @@ describe('edgeTestCredentials (Outline temporary keys)', () => {
     const id = r.credentialId!;
     // Not expired yet: the sweep leaves it alone.
     expect(await t.action(internal.edgeTestCredentials.sweep, {})).toMatchObject({ removed: 0 });
-    await t.mutation(internal.edgeTestCredentials.release, { id });
+    await expireTestCredential(t, { id });
     expect(await t.action(internal.edgeTestCredentials.sweep, {})).toMatchObject({ removed: 1 });
     expect(outline.deleted).toHaveLength(1);
     expect((await rows())[0]).toMatchObject({ removal: 'done' });
@@ -165,7 +166,7 @@ describe('edgeTestCredentials (Outline temporary keys)', () => {
     });
     if (!r.ok) throw new Error(r.code);
     const id = r.credentialId!;
-    await t.mutation(internal.edgeTestCredentials.release, { id });
+    await expireTestCredential(t, { id });
     outline.failDeleteWith = 500;
     for (let i = 1; i < TEST_CREDENTIAL_MAX_ATTEMPTS; i++) {
       expect(await t.action(internal.edgeTestCredentials.sweep, {})).toMatchObject({ retried: 1 });

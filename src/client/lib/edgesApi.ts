@@ -19,7 +19,7 @@
  *      10 s while a rotation runs, rotation detail 2 s until terminal, probe
  *      matrix 30 s.
  *   Plus `invalidateOverview / invalidateRelay / invalidateEdge /
- *   invalidateProviders / invalidateConfig / invalidateAllEdges(qc, …)`.
+ *   invalidateProviders / invalidateConfig (qc, …)`.
  *
  * Request-body types not in the contracts are declared here (`CreateProviderBody`,
  * `RelayPatch`, …); the coordinator may lift them into the contracts later.
@@ -55,7 +55,6 @@ import {
   EdgeTemplatesResponse,
   EdgeTemplatesSeedResponse,
   EdgeTestCredentialsResponse,
-  EdgeVerificationBinding,
   EdgeVerifyRequest,
   EdgeVerifyResponse,
   ListenerSpec,
@@ -72,12 +71,9 @@ import {
   ProvidersUsageResponse,
   QuarantineView,
   OriginAdmin,
-  RelayBySlugResponse,
-  RelayEndpointsResponse,
   RelayListenerUpsertResponse,
   RelayListenersResponse,
   RelayNodeCandidatesResponse,
-  InboundCandidatesResponse,
   EdgeTestLinkResponse,
   ResolveQuarantineRequest,
   SetupDraft,
@@ -99,7 +95,6 @@ import {
   SetupRunCreatedResponse,
   SetupRunRetryRequest,
   SetupRunRetryResponse,
-  SetupRunsResponse,
 } from '../../shared/contracts/edges';
 
 const BASE = '/api/v1/admin/edges';
@@ -185,11 +180,12 @@ export interface RelayPatch {
   locationCode?: string | null;
   originAddress?: string;
   desiredPublished?: number;
-  standbyPerRelay?: number;
+  /** The per-origin overrides: a number sets one, null follows the fleet setting again. */
+  standbyPerRelay?: number | null;
   providerPreference?: EdgeProviderId | null;
-  cooldownMinutes?: number;
-  maxRotationsPerDay?: number;
-  drainMinutes?: number;
+  cooldownMinutes?: number | null;
+  maxRotationsPerDay?: number | null;
+  drainMinutes?: number | null;
   probeNode?: boolean;
   /** The connection mode whose placement the L7 qualification user is minted on; null = default. */
   qualificationModeSlug?: string | null;
@@ -246,15 +242,11 @@ export const probeRangeQs = (r: ProbeRange): string =>
 
 // --- response shapes the contracts leave open --------------------------------------------------
 
-/** `POST {edgeId}/publish`: a rotation when the flip needs the machine, a plain ok otherwise. */
-export const EdgePublishResponse = z.union([EdgeRotationStartedResponse, EdgeOkResponse]);
-export type EdgePublishResponse = z.infer<typeof EdgePublishResponse>;
 /** `POST {edgeId}/qualify`: the front-qualification run result. */
 export const EdgeQualifyResponse = z
   .object({ ok: z.boolean(), code: z.string().nullable().optional() })
   .passthrough();
 export type EdgeQualifyResponse = z.infer<typeof EdgeQualifyResponse>;
-const RelayList = z.array(OriginAdmin);
 const EdgeList = z.array(EdgeAdmin);
 const RotationList = z.array(EdgeRotationAdmin);
 const NodeCandidatesLoose = RelayNodeCandidatesResponse.passthrough();
@@ -268,8 +260,6 @@ export const fetchSetupStatus = (relaySlug?: string | null) =>
     relaySlug ? `${BASE}/setup-status?relay=${enc(relaySlug)}` : `${BASE}/setup-status`,
     SetupStatusResponse,
   );
-export const postSetupDraftStatus = (draft: SetupDraftBody) =>
-  apiClient.post(`${BASE}/setup-status`, { draft }, SetupStatusResponse);
 
 export const fetchEdgeConfig = () => apiClient.get(`${BASE}/config`, EdgeConfigView);
 export const patchEdgeConfig = (patch: EdgeConfigPatch) =>
@@ -302,7 +292,6 @@ export const planSetupRun = (backendServerId: string, nodeUuid: string, listener
   );
 export const createSetupRun = (body: SetupRunCreateBody) =>
   apiClient.post(`${BASE}/setup-runs`, body, SetupRunCreatedResponse);
-export const fetchSetupRuns = () => apiClient.get(`${BASE}/setup-runs`, SetupRunsResponse);
 export const fetchSetupRun = (runId: string) =>
   apiClient.get(`${BASE}/setup-runs/${enc(runId)}`, SetupRunAdmin);
 export const cancelSetupRun = (runId: string) =>
@@ -380,7 +369,6 @@ export const deleteTemplate = (id: string) =>
 
 // --- origins ----------------------------------------------------------------------------------------
 
-export const fetchRelays = () => apiClient.get(`${BASE}/relays`, RelayList);
 /** 404 (an ApiCallError with status 404) when the slug is unknown. */
 export const lookupRelay = (slug: string) =>
   apiClient.get(`${BASE}/relays/lookup?slug=${enc(slug)}`, OriginAdmin);
@@ -388,12 +376,6 @@ export const fetchNodeCandidates = (backendServerId: string) =>
   apiClient.get(
     `${BASE}/relays/node-candidates?backendServerId=${enc(backendServerId)}`,
     RelayNodeCandidatesResponse,
-  );
-/** Discovery with the origin probe applied (throttled: reaches the backend and opens sockets). */
-export const fetchInboundCandidates = (backendServerId: string, nodeUuid: string) =>
-  apiClient.get(
-    `${BASE}/relays/inbound-candidates?backendServerId=${enc(backendServerId)}&nodeUuid=${enc(nodeUuid)}`,
-    InboundCandidatesResponse,
   );
 /** The isolated test link for an L4 candidate (throttled: fetches the credential body). */
 // A POST: building the link may mint the test credential (a backend user or a
@@ -407,9 +389,6 @@ export const releaseTestLink = (edgeId: string, credentialId: string) =>
     { credentialId },
     EdgeOkResponse,
   );
-/** What the operator is about to test, exactly as `verifyEdge` must echo it. */
-export const fetchVerificationBinding = (edgeId: string) =>
-  apiClient.get(`${BASE}/edges/${enc(edgeId)}/verification-binding`, EdgeVerificationBinding);
 /** The per-endpoint confirmation of an L4 address; `edge.verification_stale` when the binding moved. */
 export const verifyEdge = (edgeId: string, body: z.infer<typeof EdgeVerifyRequest>) =>
   apiClient.post(`${BASE}/edges/${enc(edgeId)}/verify`, body, EdgeVerifyResponse);
@@ -419,9 +398,6 @@ export const refreshNodeCandidates = (backendServerId: string) =>
     { backendServerId },
     NodeCandidatesLoose,
   );
-/** An origin's minimal projection by slug (the setup's Host plan reads it). */
-export const fetchRelayBySlug = (slug: string) =>
-  apiClient.get(`${BASE}/relays/by-slug/${enc(slug)}`, RelayBySlugResponse);
 export const createRelay = (body: CreateRelayBody) =>
   apiClient.post(`${BASE}/relays`, body, EdgeIdResponse);
 export const updateRelay = (relayId: string, patch: RelayPatch) =>
@@ -433,8 +409,6 @@ export const deleteRelay = (relayId: string, disposition: RelayDeleteDisposition
   );
 export const fetchRelayListeners = (relayId: string) =>
   apiClient.get(`${BASE}/relays/${enc(relayId)}/listeners`, RelayListenersResponse);
-export const fetchRelayEndpoints = (relayId: string) =>
-  apiClient.get(`${BASE}/relays/${enc(relayId)}/endpoints`, RelayEndpointsResponse);
 export const fetchRelayRotations = (relayId: string) =>
   apiClient.get(`${BASE}/relays/${enc(relayId)}/rotations`, RotationList);
 export const fetchRelayTimeline = (relayId: string) =>
@@ -493,8 +467,6 @@ export const fetchEdgeDetail = (edgeId: string) =>
   apiClient.get(`${BASE}/${enc(edgeId)}`, EdgeDetail);
 export const fetchEdgeLive = (edgeId: string) =>
   apiClient.get(`${BASE}/${enc(edgeId)}/live`, EdgeLiveResponse);
-export const publishEdge = (edgeId: string, body: PublishEdgeBody = {}) =>
-  apiClient.post(`${BASE}/${enc(edgeId)}/publish`, body, EdgePublishResponse);
 export const unpublishEdge = (edgeId: string, keepActive?: boolean) =>
   apiClient.post(
     `${BASE}/${enc(edgeId)}/unpublish`,
@@ -646,10 +618,6 @@ export function invalidateConfig(qc: QueryClient): void {
 export function invalidateProbes(qc: QueryClient): void {
   void qc.invalidateQueries({ queryKey: edgeKeys.probes });
 }
-/** The whole section (after a mutation whose blast radius is unclear). */
-export function invalidateAllEdges(qc: QueryClient): void {
-  void qc.invalidateQueries({ queryKey: edgeKeys.all });
-}
 
 // --- query wrappers ------------------------------------------------------------------------------
 
@@ -684,18 +652,6 @@ export const setupStatusQuery = (relaySlug: () => string | null) =>
       q.state.data?.steps.some((s) => s.status === 'ready') ? 5_000 : 30_000,
   }));
 
-/** Setup status judged against a draft (before the origin row exists); null = off. */
-export const setupDraftStatusQuery = (draft: () => SetupDraftBody | null) =>
-  createQuery(() => {
-    const d = draft();
-    return {
-      queryKey: edgeKeys.setupDraft(d ? JSON.stringify(d) : ''),
-      queryFn: () => postSetupDraftStatus(d!),
-      enabled: d !== null,
-      staleTime: 10_000,
-    };
-  });
-
 export const edgeConfigQuery = () =>
   createQuery(() => ({
     queryKey: edgeKeys.config,
@@ -704,15 +660,6 @@ export const edgeConfigQuery = () =>
   }));
 
 const RUN_TERMINAL = new Set(['done', 'done_unbound', 'failed', 'cancelled']);
-/** Every guided setup run: 15 s, 3 s while one is live. */
-export const setupRunsQuery = () =>
-  createQuery(() => ({
-    queryKey: edgeKeys.setupRuns,
-    queryFn: fetchSetupRuns,
-    staleTime: 2_000,
-    refetchInterval: (q) =>
-      q.state.data?.runs.some((r) => !RUN_TERMINAL.has(r.state)) ? 3_000 : 15_000,
-  }));
 
 /** One run as the progress view polls it: every 3 s until it is terminal. */
 export const setupRunQuery = (runId: () => string | null) =>
@@ -783,14 +730,6 @@ export const templatesQuery = () =>
     staleTime: 60_000,
   }));
 
-export const relaysQuery = () =>
-  createQuery(() => ({
-    queryKey: edgeKeys.relays,
-    queryFn: fetchRelays,
-    staleTime: 10_000,
-    refetchInterval: 30_000,
-  }));
-
 /** One origin by slug: 10 s while a rotation runs on it, 30 s otherwise. 404 = unknown slug. */
 export const relayLookupQuery = (relaySlug: () => string | null) =>
   createQuery(() => ({
@@ -799,14 +738,6 @@ export const relayLookupQuery = (relaySlug: () => string | null) =>
     enabled: relaySlug() !== null,
     staleTime: 5_000,
     refetchInterval: (q) => (q.state.data?.activeRotationId ? 10_000 : 30_000),
-  }));
-
-export const relayBySlugQuery = (relaySlug: () => string | null) =>
-  createQuery(() => ({
-    queryKey: edgeKeys.relayBySlug(relaySlug() ?? ''),
-    queryFn: () => fetchRelayBySlug(relaySlug()!),
-    enabled: relaySlug() !== null,
-    staleTime: 10_000,
   }));
 
 export const nodeCandidatesQuery = (backendServerId: () => string | null) =>
@@ -831,15 +762,6 @@ export const relayListenersQuery = (r: RelayRef) =>
   createQuery(() => ({
     queryKey: edgeKeys.relayListeners(r.slug() ?? ''),
     queryFn: () => fetchRelayListeners(r.id()!),
-    enabled: relayEnabled(r),
-    staleTime: 10_000,
-    refetchInterval: relayInterval(r),
-  }));
-
-export const relayEndpointsQuery = (r: RelayRef) =>
-  createQuery(() => ({
-    queryKey: edgeKeys.relayEndpoints(r.slug() ?? ''),
-    queryFn: () => fetchRelayEndpoints(r.id()!),
     enabled: relayEnabled(r),
     staleTime: 10_000,
     refetchInterval: relayInterval(r),

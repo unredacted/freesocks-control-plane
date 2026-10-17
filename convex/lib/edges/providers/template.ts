@@ -6,8 +6,6 @@
  */
 import type { EdgeSpec } from './types';
 
-export const TEMPLATE_PLACEHOLDERS = ['name', 'originAddress', 'originPort', 'edgePort'] as const;
-
 export function renderTemplateValue<T>(value: T, spec: EdgeSpec): T {
   const listener = spec.listeners[0];
   const vars: Record<string, string> = {
@@ -47,15 +45,4 @@ export function canonicalJson(value: unknown): string {
     return v;
   };
   return JSON.stringify(norm(value));
-}
-
-/** Parse + validate stored params with the adapter schema; throws the zod error. */
-export function parseTemplateParams<T>(schema: { parse: (v: unknown) => T }, raw: string): T {
-  let json: unknown;
-  try {
-    json = JSON.parse(raw);
-  } catch {
-    json = {};
-  }
-  return schema.parse(json);
 }

@@ -38,7 +38,7 @@ import {
 } from './lib/edges/providers/capabilities';
 import { renderTemplateValue } from './lib/edges/providers/template';
 import { isRelayProviderId, type EdgeProviderId } from './lib/edgeProviderIds';
-import { parseIntent, type ProvisionIntent } from './lib/edges/intent';
+import type { ProvisionIntent } from './lib/edges/intent';
 import type { ListenerProto } from './lib/edges/protocols';
 import { listenerProtoFields } from './lib/edgeProtocolIds';
 import {

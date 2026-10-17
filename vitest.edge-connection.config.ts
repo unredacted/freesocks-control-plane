@@ -25,7 +25,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['tests/edge-connection/**/*.integration.test.ts'],
-    exclude: ['**/node_modules/**', '**/.claude/**', '**/dist/**'],
+    exclude: ['**/node_modules/**', '**/dist/**'],
     server: { deps: { inline: ['convex-test'] } },
     fileParallelism: false,
     sequence: { sequencer: WiringFirst },

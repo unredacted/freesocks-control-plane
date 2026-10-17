@@ -151,16 +151,6 @@ export function isValidListenerCombo(p: ListenerProto): boolean {
   return BY_KEY.has(comboKey(p));
 }
 
-export function isListenerProtocolId(v: unknown): v is ListenerProtocolId {
-  return typeof v === 'string' && (LISTENER_PROTOCOL_IDS as readonly string[]).includes(v);
-}
-export function isListenerStreamTransport(v: unknown): v is ListenerStreamTransport {
-  return typeof v === 'string' && (LISTENER_STREAM_TRANSPORT_IDS as readonly string[]).includes(v);
-}
-export function isListenerSecurity(v: unknown): v is ListenerSecurity {
-  return typeof v === 'string' && (LISTENER_SECURITY_IDS as readonly string[]).includes(v);
-}
-
 /** Why an edge layer cannot carry a listener; surfaced to the operator in words. */
 export const LISTENER_LAYER_EXCLUSIONS = [
   'origin_plaintext',
