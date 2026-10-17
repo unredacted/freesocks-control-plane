@@ -9,19 +9,21 @@
  * `#remark`, a sing-box outbound tag, a Clash proxy name, an Xray config's
  * `remarks`), so a member, or a censor with a free account, would read the
  * fleet's internal names. This module renames every entry whose name names a
- * node (`splitPanelRemark`, the pinner's own parse) to a neutral label:
+ * node (`splitPanelRemark`, the pinner's own parse, given the entry's own server
+ * name as evidence) to a neutral label:
  *
  *   <site name> · <place>            one entry
  *   <site name> · <place> · <code>   several (one per server name)
  *
  * `<place>` is the backend instance's member-facing location label (its first
  * comma segment: "Example City, EX" reads "Example City"), left out when unset.
- * `<code>` is three characters derived from the part of the remark after the
- * node (the server name, `entryKey`), so an entry keeps its label across
- * refreshes, node renames and other entries coming and going; two entries whose codes
- * collide are told apart deterministically (`uniqueName`). Entries that name
- * no node (an edge's rendered label, a group, the backend's placeholder) are
- * left alone.
+ * `<code>` is four characters derived from the part of the remark after the
+ * node (the server name, `entryKey`) and nothing else, so an entry keeps its
+ * label across refreshes, node renames and other entries coming and going.
+ * Only when two server names in one body share a code do both carry their
+ * longer six-character code instead, again derived from each key alone.
+ * Entries that name no node (an edge's rendered label, a group, the backend's
+ * placeholder, an operator's own Host remark) are left alone.
  *
  * It runs on the body the member receives, AFTER node pinning and edge
  * rendering: both read the original names. References follow the rename
@@ -35,7 +37,7 @@ import YAML from 'yaml';
 import { remarkTag } from './backend/hostRemark';
 import { decodeBase64Loose, encodeBase64 } from './edges/render/base64';
 import { mentionsAny, renameRefs, uniqueName } from './edges/render/refs';
-import { linkRemark, splitPanelRemark } from './nodePinning';
+import { configServerName, linkRemark, linkServerName, splitPanelRemark } from './nodePinning';
 
 export const DEFAULT_SITE_NAME = 'FreeSocks';
 /** Between the label's parts (a middle dot: no comma, no pipe, no dash). */
@@ -43,7 +45,9 @@ export const ENTRY_NAME_SEP = ' · ';
 const MAX_SITE_NAME = 32;
 const MAX_PLACE = 32;
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O, 1/I
-const CODE_LENGTH = 3;
+const CODE_LENGTH = 4;
+// A 32-bit hash holds six characters of a 32-letter alphabet.
+const LONG_CODE_LENGTH = 6;
 
 const PROXY_LINE_RE = /^(vless|vmess|trojan|ss|ssr|hy2|hysteria2|tuic):\/\//i;
 // Names a Clash config resolves without a proxy of that name.
@@ -55,22 +59,25 @@ export interface EntryNaming {
   place: string | null;
 }
 
+// A UTF-16 surrogate half with no partner: invalid text that
+// `encodeURIComponent` throws on.
+const LONE_SURROGATE_RE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
 /**
  * Operator text made safe inside a connection name: no control characters, no
- * comma (a Clash rule splits on it) and no pipe (FCP's own remark separator),
- * whitespace collapsed, length capped.
+ * comma (a Clash rule splits on it), no pipe (FCP's own remark separator), no
+ * lone surrogate, whitespace collapsed, length capped in code points (a cut
+ * never splits a character, so the label always encodes).
  */
 function cleanPart(v: unknown, max: number): string {
   if (typeof v !== 'string') return '';
-  return (
-    v
-      // eslint-disable-next-line no-control-regex
-      .replace(/[\u0000-\u001f\u007f,|]/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, max)
-      .trim()
-  );
+  const text = v
+    .replace(LONE_SURROGATE_RE, '')
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f,|]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return Array.from(text).slice(0, max).join('').trim();
 }
 
 /** The site name members see (`subscription.siteName`), with the built-in default. */
@@ -111,8 +118,8 @@ export function entryKey(remarkRest: string): string {
   return remarkRest.includes('.') ? remarkTag(remarkRest) : remarkRest.toLowerCase();
 }
 
-/** The short code an entry is told apart by: FNV-1a 32 of its key, 3 chars of a 32-letter alphabet. */
-export function entryCode(key: string): string {
+/** An entry's code: FNV-1a 32 of its key, `length` characters of a 32-letter alphabet. */
+export function entryCode(key: string, length = CODE_LENGTH): string {
   let h = 0x811c9dc5;
   for (const b of new TextEncoder().encode(key)) {
     h ^= b;
@@ -120,7 +127,7 @@ export function entryCode(key: string): string {
   }
   h >>>= 0;
   let out = '';
-  for (let i = 0; i < CODE_LENGTH; i++) {
+  for (let i = 0; i < length; i++) {
     out += CODE_ALPHABET[h & 31];
     h >>>= 5;
   }
@@ -129,27 +136,43 @@ export function entryCode(key: string): string {
 
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
+/** A node-named entry: its current name and the rest of its remark after the node. */
+export interface NamedEntry {
+  name: string;
+  entry: string;
+}
+
 /**
- * The new name of every node-named entry, by its old name. `names` are the
- * distinct names in the body that name a node; `taken` every other name the
- * body defines (groups, edge labels, built-ins), which no new name may equal.
- * The order of `names` does not matter: the assignment is sorted by code, then
- * by the entry's key, then by the old name.
+ * The new name of every node-named entry, by its old name. `taken` holds every
+ * other name the body defines (groups, edge labels, built-ins), which no new
+ * name may equal. An entry's code depends on its own key only: the short code,
+ * or (when another key in the body has the same short code) its long code. The
+ * order of `entries` does not matter; a name that is still not unique (the
+ * same server name under two nodes, a taken name) gets `uniqueName`'s ` (2)`,
+ * assigned in sorted order.
  */
 export function planEntryNames(
-  names: readonly string[],
+  entries: readonly NamedEntry[],
   taken: ReadonlySet<string>,
   naming: EntryNaming,
 ): Map<string, string> {
   const base = naming.place
     ? `${naming.siteName}${ENTRY_NAME_SEP}${naming.place}`
     : naming.siteName;
-  const rows = [...new Set(names)]
-    .map((name) => {
-      const entry = entryKey(splitPanelRemark(name)?.entry ?? name);
-      return { name, entry, code: entryCode(entry) };
+  const byName = new Map<string, string>();
+  for (const e of entries) if (!byName.has(e.name)) byName.set(e.name, entryKey(e.entry));
+  const keysByCode = new Map<string, Set<string>>();
+  for (const key of byName.values()) {
+    const code = entryCode(key);
+    keysByCode.set(code, (keysByCode.get(code) ?? new Set()).add(key));
+  }
+  const rows = [...byName]
+    .map(([name, key]) => {
+      const short = entryCode(key);
+      const code = keysByCode.get(short)!.size > 1 ? entryCode(key, LONG_CODE_LENGTH) : short;
+      return { name, key, code };
     })
-    .sort((a, b) => cmp(a.code, b.code) || cmp(a.entry, b.entry) || cmp(a.name, b.name));
+    .sort((a, b) => cmp(a.code, b.code) || cmp(a.key, b.key) || cmp(a.name, b.name));
   const used = new Set(taken);
   const plan = new Map<string, string>();
   for (const r of rows) {
@@ -160,8 +183,12 @@ export function planEntryNames(
   return plan;
 }
 
-const namesNode = (name: unknown): name is string =>
-  typeof name === 'string' && splitPanelRemark(name) !== null;
+/** The node-named entry a name and its server name make, or null. */
+function named(name: unknown, serverName: string | null): NamedEntry | null {
+  if (typeof name !== 'string') return null;
+  const split = splitPanelRemark(name, serverName);
+  return split ? { name, entry: split.entry } : null;
+}
 
 export interface RelabelResult {
   content: string;
@@ -208,17 +235,17 @@ function relabelLinks(trimmed: string, naming: EntryNaming): RelabelResult | nul
     const cr = raw.endsWith('\r');
     const line = cr ? raw.slice(0, -1) : raw;
     const remark = PROXY_LINE_RE.test(line.trim()) ? linkRemark(line) : null;
-    return { line, cr, remark };
+    return { line, cr, remark, node: named(remark, linkServerName(line)) };
   });
-  const names = lines.map((l) => l.remark).filter(namesNode);
-  if (names.length === 0) return null;
+  const entries = lines.map((l) => l.node).filter((e): e is NamedEntry => e !== null);
+  if (entries.length === 0) return null;
   const taken = new Set(
-    lines.map((l) => l.remark).filter((r): r is string => r !== null && !namesNode(r)),
+    lines.filter((l) => l.remark !== null && l.node === null).map((l) => l.remark as string),
   );
-  const plan = planEntryNames(names, taken, naming);
+  const plan = planEntryNames(entries, taken, naming);
   const joined = lines
-    .map(({ line, cr, remark }) => {
-      const label = remark === null ? undefined : plan.get(remark);
+    .map(({ line, cr, node }) => {
+      const label = node ? plan.get(node.name) : undefined;
       const next =
         label === undefined
           ? line
@@ -242,14 +269,19 @@ function renameAll(tree: unknown, plan: Map<string, string>): unknown | null {
 function relabelSingbox(trimmed: string, naming: EntryNaming): RelabelResult | null {
   const cfg = JSON.parse(trimmed) as unknown;
   if (!isObj(cfg) || !Array.isArray(cfg.outbounds)) return null;
-  const tags = [
+  const defs = [
     ...cfg.outbounds,
     ...(Array.isArray(cfg.endpoints) ? (cfg.endpoints as unknown[]) : []),
-  ].map((o) => (isObj(o) ? o.tag : undefined));
-  const names = tags.filter(namesNode);
-  if (names.length === 0) return null;
-  const taken = new Set(tags.filter((t): t is string => typeof t === 'string' && !namesNode(t)));
-  const plan = planEntryNames(names, taken, naming);
+  ].filter(isObj);
+  const nodes = defs.map((o) => named(o.tag, configServerName(o)));
+  const entries = nodes.filter((e): e is NamedEntry => e !== null);
+  if (entries.length === 0) return null;
+  const taken = new Set(
+    defs
+      .filter((o, i) => nodes[i] === null && typeof o.tag === 'string')
+      .map((o) => o.tag as string),
+  );
+  const plan = planEntryNames(entries, taken, naming);
   const next = renameAll(cfg, plan);
   return next === null ? null : { content: JSON.stringify(next), renamed: plan.size };
 }
@@ -258,18 +290,21 @@ function relabelSingbox(trimmed: string, naming: EntryNaming): RelabelResult | n
 function relabelClash(trimmed: string, naming: EntryNaming): RelabelResult | null {
   const doc = YAML.parse(trimmed) as unknown;
   if (!isObj(doc) || !Array.isArray(doc.proxies)) return null;
-  const proxyNames = doc.proxies.map((p) => (isObj(p) ? p.name : undefined));
-  const names = proxyNames.filter(namesNode);
-  if (names.length === 0) return null;
+  const proxies = doc.proxies.filter(isObj);
+  const nodes = proxies.map((p) => named(p.name, configServerName(p)));
+  const entries = nodes.filter((e): e is NamedEntry => e !== null);
+  if (entries.length === 0) return null;
   const groups = Array.isArray(doc['proxy-groups']) ? (doc['proxy-groups'] as unknown[]) : [];
   const taken = new Set([
     ...CLASH_BUILTINS,
-    ...proxyNames.filter((n): n is string => typeof n === 'string' && !namesNode(n)),
+    ...proxies
+      .filter((p, i) => nodes[i] === null && typeof p.name === 'string')
+      .map((p) => p.name as string),
     ...groups
       .map((g) => (isObj(g) ? g.name : undefined))
       .filter((n): n is string => typeof n === 'string'),
   ]);
-  const plan = planEntryNames(names, taken, naming);
+  const plan = planEntryNames(entries, taken, naming);
   const next = renameAll(doc, plan);
   return next === null
     ? null
@@ -280,14 +315,32 @@ function relabelClash(trimmed: string, naming: EntryNaming): RelabelResult | nul
 function relabelXrayJson(trimmed: string, naming: EntryNaming): RelabelResult | null {
   const list = JSON.parse(trimmed) as unknown;
   if (!Array.isArray(list) || !list.every(isObj)) return null;
-  const remarks = list.map((c) => c.remarks);
-  const names = remarks.filter(namesNode);
-  if (names.length === 0) return null;
-  const taken = new Set(remarks.filter((r): r is string => typeof r === 'string' && !namesNode(r)));
-  const plan = planEntryNames(names, taken, naming);
-  const next = list.map((c) => {
-    const label = typeof c.remarks === 'string' ? plan.get(c.remarks) : undefined;
+  const nodes = list.map((c) => named(c.remarks, xrayServerName(c)));
+  const entries = nodes.filter((e): e is NamedEntry => e !== null);
+  if (entries.length === 0) return null;
+  const taken = new Set(
+    list
+      .filter((c, i) => nodes[i] === null && typeof c.remarks === 'string')
+      .map((c) => c.remarks as string),
+  );
+  const plan = planEntryNames(entries, taken, naming);
+  const next = list.map((c, i) => {
+    const label = nodes[i] ? plan.get(nodes[i].name) : undefined;
     return label === undefined ? c : { ...c, remarks: label };
   });
   return { content: JSON.stringify(next), renamed: plan.size };
+}
+
+/** The server name an Xray client config's first proxy outbound carries (REALITY or TLS), or null. */
+function xrayServerName(config: Obj): string | null {
+  const outbounds = Array.isArray(config.outbounds) ? config.outbounds : [];
+  for (const o of outbounds) {
+    if (!isObj(o) || !isObj(o.streamSettings)) continue;
+    for (const key of ['realitySettings', 'tlsSettings']) {
+      const settings = o.streamSettings[key];
+      if (isObj(settings) && typeof settings.serverName === 'string' && settings.serverName)
+        return settings.serverName;
+    }
+  }
+  return null;
 }

@@ -414,7 +414,7 @@ describe('GET /api/v1/sub/<token>: member-facing entry names', () => {
     const names = lines.map((l) => decodeURIComponent(l.slice(l.indexOf('#') + 1)));
     expect(new Set(names).size).toBe(names.length);
     for (const name of names) {
-      expect(name).toMatch(/^FreeSocks · Example City · [A-Z2-9]{3}$/);
+      expect(name).toMatch(/^FreeSocks · Example City · [A-Z2-9]{4}$/);
       for (const sni of SERVER_NAMES) expect(name).not.toContain(sni);
     }
     for (const n of NODES) expect(lines.join('\n')).not.toContain(n.node);

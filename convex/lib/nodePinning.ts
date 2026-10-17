@@ -42,6 +42,7 @@
  * `node: null`.
  */
 import YAML from 'yaml';
+import { remarkTag } from './backend/hostRemark';
 import { decodeBase64Loose, encodeBase64 } from './edges/render/base64';
 import { mentionsAny } from './edges/render/refs';
 import { parseProxyUri } from './edges/render/uri';
@@ -57,15 +58,36 @@ const TRANSPORT_SUFFIX_RE = /-(ws|reality|xhttp)(-[0-9a-f]{6})?$|-relay-[a-z0-9]
 // NODE_NAME charset), the ` | ` separator (ADDRESS_SEP), and the server name
 // or its short tag.
 const ADDRESS_REMARK_RE = /^([A-Za-z0-9 ._-]{3,30}) \| (\S.*)$/;
+// What that rest looks like when the entry carries no server name to compare:
+// a dotted host name, or the 7-character `remarkTag`.
+const DOTTED_HOST_RE = /^(?=.{1,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/i;
+const REMARK_TAG_RE = /^[0-9a-z]{7}$/;
 
 /**
  * A Host remark split into the node it names and the rest (`entry`: the server
  * name or tag of an FCP address, the transport suffix of a role-written one),
- * or null when the remark names no node (a group, an edge label, a placeholder).
+ * or null when the remark names no node (a group, an edge label, a placeholder,
+ * an operator's own display remark).
+ *
+ * `serverName` is the server name the entry itself carries (a link's `sni`,
+ * sing-box `tls.server_name`, Clash `servername`): the ` | ` form is FCP's only
+ * when its rest IS that name or that name's tag, so an operator's Host remark
+ * such as `Region | VLESS` is never read as a node. An entry with no server
+ * name to compare must at least carry a rest shaped like one (a dotted host
+ * name) or like a tag.
  */
-export function splitPanelRemark(remark: string): { node: string; entry: string } | null {
+export function splitPanelRemark(
+  remark: string,
+  serverName?: string | null,
+): { node: string; entry: string } | null {
   const fcp = ADDRESS_REMARK_RE.exec(remark);
-  if (fcp) return { node: fcp[1], entry: fcp[2] };
+  if (fcp) {
+    const [, node, entry] = fcp;
+    const owned = serverName
+      ? entry.toLowerCase() === serverName.toLowerCase() || entry === remarkTag(serverName)
+      : DOTTED_HOST_RE.test(entry) || REMARK_TAG_RE.test(entry);
+    if (owned) return { node, entry };
+  }
   const suffix = TRANSPORT_SUFFIX_RE.exec(remark);
   if (!suffix || suffix.index === 0) return null;
   return { node: remark.slice(0, suffix.index), entry: suffix[0].slice(1) };
@@ -82,17 +104,35 @@ export function linkRemark(line: string): string | null {
   }
 }
 
+/** The server name a share link carries (`sni`, else its HTTP `host`), or null. */
+export function linkServerName(line: string): string | null {
+  const params = parseProxyUri(line)?.params;
+  return params?.get('sni') || params?.get('host') || null;
+}
+
+/** The server name a sing-box outbound (`tls.server_name`) or a Clash proxy (`servername` / `sni`) carries, or null. */
+export function configServerName(entry: Record<string, unknown>): string | null {
+  const text = (v: unknown): string | null => (typeof v === 'string' && v ? v : null);
+  const tls = entry.tls;
+  const fromTls =
+    typeof tls === 'object' && tls !== null
+      ? text((tls as Record<string, unknown>).server_name)
+      : null;
+  return fromTls ?? text(entry.servername) ?? text(entry.sni);
+}
+
 /** Extract the node name from a proxy link's remark, or null if unparseable. */
 export function nodeNameFromLink(line: string): string | null {
   const remark = linkRemark(line);
-  return remark === null ? null : nodeNameFromTag(remark);
+  return remark === null ? null : nodeNameFromTag(remark, linkServerName(line));
 }
 
 /** Extract the node name from a sing-box outbound tag / Clash proxy name (the
  *  backend uses the Host remark verbatim), or null when the name names no node
- *  (selector/urltest groups, direct/block/dns outbounds, edge labels). */
-export function nodeNameFromTag(tag: string): string | null {
-  return splitPanelRemark(tag)?.node ?? null;
+ *  (selector/urltest groups, direct/block/dns outbounds, edge labels).
+ *  `serverName`: the entry's own, when it has one (see `splitPanelRemark`). */
+export function nodeNameFromTag(tag: string, serverName?: string | null): string | null {
+  return splitPanelRemark(tag, serverName)?.node ?? null;
 }
 
 /** FNV-1a 32-bit — small, synchronous, and stable across runs. */
@@ -299,7 +339,7 @@ function placeholderEntries(
     const o = e as Record<string, unknown>;
     if (typeof o.type === 'string' && NON_PROXY_TYPES.has(o.type)) continue;
     const name = o[nameKey];
-    if (typeof name === 'string' && nodeNameFromTag(name)) return false;
+    if (typeof name === 'string' && nodeNameFromTag(name, configServerName(o))) return false;
     if (!placeholderHost(o[hostKey])) return false;
   }
   return true;
@@ -317,7 +357,7 @@ function groupByNode(entries: unknown[], nameKey: 'tag' | 'name'): Map<string, s
     if (typeof e !== 'object' || e === null) return null;
     const name = (e as Record<string, unknown>)[nameKey];
     if (typeof name !== 'string') continue;
-    const node = nodeNameFromTag(name);
+    const node = nodeNameFromTag(name, configServerName(e as Record<string, unknown>));
     if (!node) continue;
     const list = byNode.get(node) ?? [];
     list.push(name);

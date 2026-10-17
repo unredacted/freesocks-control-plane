@@ -70,6 +70,20 @@ describe('FCP address remarks (<node> | <server name>)', () => {
       expect(splitPanelRemark(other)).toBeNull();
   });
 
+  test('need the entry’s own server name (or a server-name shape) after the separator', () => {
+    const long = `${'a'.repeat(40)}.decoy.example`;
+    expect(splitPanelRemark(addressRemark('node-a', long), long)?.node).toBe('node-a');
+    expect(splitPanelRemark('node-a | x.example', 'X.EXAMPLE')?.node).toBe('node-a');
+    expect(splitPanelRemark('node-a | x.example', 'y.example')).toBeNull();
+    // Operator display remarks: no server name of theirs, and not shaped like one.
+    expect(splitPanelRemark('USA | VLESS')).toBeNull();
+    expect(splitPanelRemark('Europe | VLESS', 'x.example')).toBeNull();
+    expect(nodeNameFromLink('vless://u@192.0.2.1:443?sni=x.example#USA%20%7C%20VLESS')).toBeNull();
+    // A single-label name counts only with the entry's own as evidence.
+    expect(splitPanelRemark('node-a | origin-name')).toBeNull();
+    expect(splitPanelRemark('node-a | origin-name', 'origin-name')?.node).toBe('node-a');
+  });
+
   test('a body of two direct nodes pins to one of them, in every format', () => {
     const names = ['www.decoy-a.example', 'cdn.decoy-b.example'];
     const nodes = [

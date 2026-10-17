@@ -318,7 +318,10 @@ The backend names every entry of a subscription body after its Host's remark, an
 how FCP reads which node an entry belongs to: node pinning (`lib/nodePinning.ts`
 `splitPanelRemark`, which also reads the older role-written `<node>-reality`, `<node>-ws[-<hash>]`
 and an origin's `<node>-relay-<key>`) keeps each member on one node's entries, and the edge
-render matches the entries it replaces by it.
+render matches the entries it replaces by it. A `|` remark is FCP's only when what follows the
+separator is the server name the entry itself serves (a link's `sni`, sing-box
+`tls.server_name`, Clash `servername`) or that name's tag; an operator's own Host remark such as
+`Region | VLESS` is never read as a node.
 
 **Members never see these remarks.** After pinning and rendering, every body a member receives
 (the fronted subscription route, the sealed configuration copy, every mirror upload) renames each
@@ -330,10 +333,11 @@ entry that names a node (`lib/memberEntryNames.ts`):
 | Several      | `<site name> · <place> · <code>`, one per server name |
 
 - `<site name>` is `subscription.siteName` (default `FreeSocks`), `<place>` the backend's
-  member-facing location label up to its first comma (left out when unset), `<code>` three
-  characters derived from the server name. A code is the same on every refresh, under a node
-  rename, and whatever other entries come or go; two entries whose codes collide get a
-  deterministic ` (2)`.
+  member-facing location label up to its first comma (left out when unset), `<code>` four
+  characters derived from the server name alone. A code is the same on every refresh, under a
+  node rename, and whatever other entries come or go. Only while two server names in one body
+  share a code do both carry their six-character code instead (each still from its own name);
+  a name that is still not unique gets a ` (2)`.
 - References follow the rename: sing-box selector/urltest members, `default`, `route.final`,
   rule `outbound`s and `detour`s; Clash proxy-group members and rule targets. Covered formats are
   link lists (base64-wrapped or not), sing-box JSON, Clash / Mihomo YAML and Xray JSON config

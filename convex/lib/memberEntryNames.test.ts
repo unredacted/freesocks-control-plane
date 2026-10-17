@@ -297,26 +297,69 @@ describe('relabelMemberEntries: stable across refreshes', () => {
     expect(one.content).not.toContain(NODE_A);
   });
 
-  test('colliding codes are told apart the same way whatever the order', () => {
-    // Find two entry keys whose codes collide.
-    const seen = new Map<string, string>();
-    let pair: [string, string] | null = null;
-    for (let i = 0; !pair; i++) {
+  test('colliding codes: each collider carries its own long code, whoever it collides with', () => {
+    // Three keys sharing one short code (searched, not assumed).
+    const byCode = new Map<string, string[]>();
+    let trio: string[] | null = null;
+    for (let i = 0; !trio; i++) {
       const key = `n${i}.decoy.example`;
-      const code = entryCode(entryKey(key));
-      const prior = seen.get(code);
-      if (prior) pair = [prior, key];
-      else seen.set(code, key);
+      const list = [...(byCode.get(entryCode(entryKey(key))) ?? []), key];
+      byCode.set(entryCode(entryKey(key)), list);
+      if (list.length === 3) trio = list;
     }
-    const names = pair.map((k) => addressRemark(NODE_A, k));
-    const forward = planEntryNames(names, new Set(), NAMING);
-    const backward = planEntryNames([...names].reverse(), new Set(), NAMING);
-    expect(forward).toEqual(backward);
-    const labels = [...forward.values()].sort();
-    expect(labels).toEqual([
-      `${BASE}${ENTRY_NAME_SEP}${entryCode(entryKey(pair[0]))}`,
-      `${BASE}${ENTRY_NAME_SEP}${entryCode(entryKey(pair[0]))} (2)`,
-    ]);
+    const [a, b, c] = trio;
+    const entry = (k: string) => ({ name: addressRemark(NODE_A, k), entry: k });
+    const longLabel = (k: string) => `${BASE}${ENTRY_NAME_SEP}${entryCode(entryKey(k), 6)}`;
+    const withB = planEntryNames([entry(a), entry(b)], new Set(), NAMING);
+    const withC = planEntryNames([entry(c), entry(a)], new Set(), NAMING);
+    // The label of `a` comes from `a` alone: not from its position, nor from its partner.
+    expect(withB.get(entry(a).name)).toBe(longLabel(a));
+    expect(withC.get(entry(a).name)).toBe(longLabel(a));
+    expect(withB.get(entry(b).name)).toBe(longLabel(b));
+    expect(new Set(withB.values()).size).toBe(2);
+    // A new entry that collides with nobody leaves every label alone.
+    const more = planEntryNames(
+      [entry(a), entry(b), entry('img.decoy-d.example')],
+      new Set(),
+      NAMING,
+    );
+    expect(more.get(entry(a).name)).toBe(longLabel(a));
+  });
+});
+
+describe('only FCP’s own remarks are read as nodes', () => {
+  test('an operator’s display remark is left alone', () => {
+    const body = [
+      `vless://u@${ADDR_A}:443?security=reality&sni=${NAMES[0]}#USA%20%7C%20VLESS`,
+      `vless://u@${ADDR_B}:443?security=reality&sni=${NAMES[1]}#Europe%20%7C%20VLESS`,
+    ].join('\n');
+    expect(relabelMemberEntries(body, NAMING)).toEqual({ content: body, renamed: 0 });
+    expect(pinSubscriptionToNode(body, 'short-1')).toEqual({ content: body, node: null });
+  });
+
+  test('the remark must carry the server name the entry itself serves (or its tag)', () => {
+    const remark = encodeURIComponent(addressRemark(NODE_A, NAMES[0]));
+    const mismatch = `vless://u@${ADDR_A}:443?security=reality&sni=${NAMES[1]}#${remark}`;
+    expect(relabelMemberEntries(mismatch, NAMING).renamed).toBe(0);
+    const long = `${'a'.repeat(40)}.decoy.example`;
+    const tagged = link(NODE_A, long);
+    expect(decodeURIComponent(tagged.split('#')[1])).toBe(addressRemark(NODE_A, long));
+    expect(relabelMemberEntries(tagged, NAMING).renamed).toBe(1);
+    // A single-label server name is FCP's too when the entry carries it.
+    const single = `vless://u@${ADDR_A}:443?security=reality&sni=origin-name#${encodeURIComponent(addressRemark(NODE_A, 'origin-name'))}`;
+    expect(relabelMemberEntries(single, NAMING).renamed).toBe(1);
+  });
+});
+
+describe('labels always encode', () => {
+  test('a name cut at its length cap never splits a character', () => {
+    const siteName = memberSiteName(`${'a'.repeat(31)}\u{1F30D}tail`);
+    expect(Array.from(siteName)).toHaveLength(32);
+    expect(() => encodeURIComponent(siteName)).not.toThrow();
+    expect(memberSiteName('ab\uD800cd')).toBe('abcd');
+    const out = relabelMemberEntries(link(NODE_A, NAMES[0]), { siteName, place: null });
+    expect(out.renamed).toBe(1);
+    expect(out.content).not.toContain(NODE_A);
   });
 });
 

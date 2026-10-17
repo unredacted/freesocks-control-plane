@@ -189,7 +189,7 @@ included, so what it names is part of the posture.
 - **No infrastructure names.** The backend names each entry after its Host's remark,
   and FCP's remarks carry the node name and the server name (`<node> | <server name>`).
   Every body a member receives (the fronted route, the sealed configuration copy, every
-  S3 mirror) renames those entries to `<site name> · <place>`, with a three-character
+  S3 mirror) renames those entries to `<site name> · <place>`, with a four-character
   code per server name when there are several (`convex/lib/memberEntryNames.ts`,
   `docs/servers.md` § "A direct node's addresses"). `<place>` is the backend's
   member-facing location label, which the location picker already shows; the code is
@@ -197,6 +197,9 @@ included, so what it names is part of the posture.
   member nothing the entry itself does not. Edge entries already carry neutral labels
   (`edge.render.*`). The machine's own host name never reaches a member at all: it is
   operator-only (`docs/servers.md` § "Node registration (contract v2)").
+- **Only the fronted URL is handed out.** The backend's own subscription URL serves the
+  backend's names; members are given FCP's `/api/v1/sub/<token>` URL instead (issuance mints
+  the token for every key), so the rename covers every key's normal path.
 - **What a member still sees** is what a client needs to connect: the entry's address,
   port, server name and transport parameters, and their own credential.
 - **Off switch.** `subscription.entryNames` (Admin → Settings → "Names in members'
