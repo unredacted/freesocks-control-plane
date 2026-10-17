@@ -41,6 +41,12 @@ export const SETTINGS_DEFAULTS = {
   // support. Enforcement ALSO requires HWID_DEVICE_LIMIT_ENABLED=true on the
   // Remnawave backend (FCP can't read that); see docs/backends.md.
   'devices.enforcementEnabled': false,
+  // The service name members' apps show (lib/memberEntryNames.ts): every
+  // connection the backend names after a node or server name is renamed to
+  // `<siteName> · <location>` (plus a short code when there are several).
+  // `subscription.entryNames` false serves the backend's own names.
+  'subscription.siteName': 'FreeSocks',
+  'subscription.entryNames': true,
 } as const;
 
 // `getAll` / `get` (public queries) were deleted in pass 2: dead code (the SPA

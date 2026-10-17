@@ -11,6 +11,8 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
+import { addressRemark } from './lib/backend/hostRemark';
+import { decodeBase64Loose, encodeBase64 } from './lib/edges/render/base64';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -352,6 +354,102 @@ describe('GET /api/v1/sub/<token>', () => {
       headers: { 'user-agent': 'sing-box/1' },
     });
     expect(other.status).toBe(502);
+  });
+});
+
+describe('GET /api/v1/sub/<token>: member-facing entry names', () => {
+  // Two direct nodes serving the same mode, two server names each: what the
+  // backend serves a key whose mode group holds both (example names).
+  const NODES = [
+    { node: 'quiet-amber-falcon', address: '192.0.2.10' },
+    { node: 'brisk-cobalt-otter', address: '198.51.100.20' },
+  ];
+  const SERVER_NAMES = ['www.decoy-a.example', 'cdn.decoy-b.example'];
+  const LINKS = NODES.flatMap(({ node, address }) =>
+    SERVER_NAMES.map(
+      (sni) =>
+        `vless://11111111-2222-3333-4444-555555555555@${address}:443?security=reality&type=tcp&sni=${sni}&pbk=PUBKEY&sid=ab#${encodeURIComponent(addressRemark(node, sni))}`,
+    ),
+  );
+
+  beforeEach(() => {
+    vi.stubEnv('IP_HASH_SALT', 'test-salt');
+    mockBody = encodeBase64(LINKS.join('\n'));
+    mockStatus = 200;
+    mockHeaders = { 'content-type': 'text/plain' };
+    stubFrontFetch();
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  async function seedWithLocation(t: ReturnType<typeof convexTest>) {
+    const seeded = await seedSub(t);
+    await t.run(async (ctx) => {
+      const sub = (await ctx.db.get(seeded.subId))!;
+      await ctx.db.patch(sub.backendServerId!, {
+        location: 'EXC',
+        locationLabel: 'Example City, EX',
+      });
+    });
+    return seeded;
+  }
+
+  async function served(t: ReturnType<typeof convexTest>): Promise<string[]> {
+    const res = await t.fetch('/api/v1/sub/tok_abc', { headers: { 'user-agent': 'Hiddify/2.0' } });
+    expect(res.status).toBe(200);
+    return decodeBase64Loose(await res.text())!.split('\n');
+  }
+
+  test('the member gets one node, pinned, under neutral names; no node or server name in a name', async () => {
+    const t = convexTest(schema, modules);
+    const { subId } = await seedWithLocation(t);
+    const lines = await served(t);
+    const pinned = (await t.run((ctx) => ctx.db.get(subId)))!.pinnedNode;
+    const node = NODES.find((n) => n.node === pinned)!;
+    expect(node).toBeTruthy();
+    expect(lines).toHaveLength(SERVER_NAMES.length);
+    expect(lines.every((l) => new URL(l).hostname === node.address)).toBe(true);
+    const names = lines.map((l) => decodeURIComponent(l.slice(l.indexOf('#') + 1)));
+    expect(new Set(names).size).toBe(names.length);
+    for (const name of names) {
+      expect(name).toMatch(/^FreeSocks · Example City · [A-Z2-9]{4}$/);
+      for (const sni of SERVER_NAMES) expect(name).not.toContain(sni);
+    }
+    for (const n of NODES) expect(lines.join('\n')).not.toContain(n.node);
+    // A refresh (cache cleared) gives the same names.
+    await t.run((ctx) => ctx.db.patch(subId, { subCache: undefined }));
+    expect(await served(t)).toEqual(lines);
+  });
+
+  test('the service name comes from subscription.siteName; turned off, the backend names pass', async () => {
+    const t = convexTest(schema, modules);
+    const { subId } = await seedWithLocation(t);
+    await t.run((ctx) =>
+      ctx.db.insert('appSettings', {
+        key: 'subscription.siteName',
+        value: JSON.stringify('Example VPN'),
+        updatedAt: Date.now(),
+      }),
+    );
+    const named = await served(t);
+    expect(
+      named.every((l) => decodeURIComponent(l.split('#')[1]).startsWith('Example VPN · ')),
+    ).toBe(true);
+    await t.run(async (ctx) => {
+      await ctx.db.insert('appSettings', {
+        key: 'subscription.entryNames',
+        value: 'false',
+        updatedAt: Date.now(),
+      });
+      await ctx.db.patch(subId, { subCache: undefined });
+    });
+    const raw = await served(t);
+    const pinned = (await t.run((ctx) => ctx.db.get(subId)))!.pinnedNode!;
+    expect(raw.every((l) => decodeURIComponent(l.split('#')[1]).startsWith(`${pinned} | `))).toBe(
+      true,
+    );
   });
 });
 

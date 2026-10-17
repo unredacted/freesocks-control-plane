@@ -19,6 +19,7 @@ import { hmacSha256Hex } from './lib/crypto';
 import { sanitizeConnectionChoice } from './edgeAttribution';
 import { classifyClient } from './lib/edges/clientFamilies';
 import { applyEdgeRender } from './lib/edges/renderPipeline';
+import { relabelMemberEntries } from './lib/memberEntryNames';
 import type { Id } from './_generated/dataModel';
 import { ConvexError } from 'convex/values';
 import { SETTINGS_DEFAULTS } from './appSettings';
@@ -997,7 +998,13 @@ http.route({
           node: fetched.pinnedNode,
         });
       }
-      return json({ content: fetched.content, contentType: fetched.contentType ?? 'text/plain' });
+      const naming = await ctx.runQuery(internal.subscriptions.entryNamingFor, {
+        backendServerId: sub.backendServerId ?? undefined,
+      });
+      return json({
+        content: relabelMemberEntries(fetched.content, naming).content,
+        contentType: fetched.contentType ?? 'text/plain',
+      });
     } catch (err) {
       console.error(
         `[subscription] content fetch failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -1274,6 +1281,15 @@ http.route({
           return refuse('policy_moved');
         relay = renderedUnder;
       }
+      // Member-facing names (docs/privacy.md): an entry the backend named after
+      // its node and server name gets a neutral label. Last, because pinning
+      // and the edge render both read those names.
+      content = relabelMemberEntries(
+        content,
+        await ctx.runQuery(internal.subscriptions.entryNamingFor, {
+          backendServerId: sub.backendServerId ?? undefined,
+        }),
+      ).content;
       const entry: SubCacheEntry = {
         content,
         contentType: fetched.contentType ?? 'text/plain',

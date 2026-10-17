@@ -5,6 +5,7 @@ import { convexTest } from 'convex-test';
 import schema from './schema';
 import { internal } from './_generated/api';
 import { pinSubscriptionToNode } from './lib/nodePinning';
+import { relabelMemberEntries } from './lib/memberEntryNames';
 import { sha256Hex } from './lib/crypto';
 import {
   deleteFromProviders,
@@ -145,6 +146,10 @@ const RAW = [
   'vless://b@2.2.2.2:443?type=ws#xray2-ws',
 ].join('\n');
 
+/** What a mirror holds for a pinned body: the member-facing names (no location set here). */
+const memberBody = (pinned: string) =>
+  relabelMemberEntries(pinned, { siteName: 'FreeSocks', place: null }).content;
+
 describe('mirror refresh records the pinned node', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -240,7 +245,7 @@ describe('mirror refresh records the pinned node', () => {
     // upload short-circuits and the only observable effect is the recorded pin.
     const pinned = pinSubscriptionToNode(RAW, 'short1');
     expect(pinned.node).toBeTruthy();
-    const subId = await seedMirroredSub(t, await sha256Hex(pinned.content));
+    const subId = await seedMirroredSub(t, await sha256Hex(memberBody(pinned.content)));
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => new Response(RAW, { status: 200 })),
@@ -253,12 +258,32 @@ describe('mirror refresh records the pinned node', () => {
     });
   });
 
+  test('a mirror holds the member-facing names, never the backend’s node names', async () => {
+    vi.stubEnv('DEV_MOCK_BACKEND', '');
+    vi.stubEnv('ENVIRONMENT', 'production');
+    const t = convexTest(schema, modules);
+    const pinned = pinSubscriptionToNode(RAW, 'short1');
+    expect(memberBody(pinned.content)).not.toContain(pinned.node!);
+    // The stored hash of the body WITH the node names does not describe what
+    // the refresh would upload: it tries to re-upload (and fails against the
+    // unroutable endpoint), so the pin stays unrecorded.
+    const subId = await seedMirroredSub(t, await sha256Hex(pinned.content));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(RAW, { status: 200 })),
+    );
+    await t.action(internal.storage.refreshActiveMirrors, {});
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(subId))!.pinnedNode).toBeUndefined();
+    });
+  }, 20_000);
+
   test('stamps lastDeliveredContentAt once the mirror provably holds the current content (mirror-only members are not "never refreshed")', async () => {
     vi.stubEnv('DEV_MOCK_BACKEND', '');
     vi.stubEnv('ENVIRONMENT', 'production');
     const t = convexTest(schema, modules);
     const pinned = pinSubscriptionToNode(RAW, 'short1');
-    const subId = await seedMirroredSub(t, await sha256Hex(pinned.content));
+    const subId = await seedMirroredSub(t, await sha256Hex(memberBody(pinned.content)));
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => new Response(RAW, { status: 200 })),

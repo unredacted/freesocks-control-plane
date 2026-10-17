@@ -318,6 +318,49 @@ to the same node is refused (`servers.op_running`) rather than queued behind it.
 | `servers.node_name_taken`      | As named. Node names are how a lost create is found again.                                                                                                                       |
 | `servers.unknown_inbound`      | A transport that is not part of the profile being assigned.                                                                                                                      |
 
+### A direct node's addresses
+
+A direct node gets one address (a backend Host) per server name its transport lists, and FCP
+writes each with the remark `<node> | <server name>` (`lib/backend/hostRemark.ts`). The backend
+caps a remark at 40 characters, so a pair that does not fit carries a 7-character tag derived from
+the server name instead (`<node> | <tag>`); the address itself carries the full name in its `sni`.
+FCP finds its own addresses by the uuids it recorded, and the remark only has to be unique per node.
+
+The backend names every entry of a subscription body after its Host's remark, and the remark is
+how FCP reads which node an entry belongs to: node pinning (`lib/nodePinning.ts`
+`splitPanelRemark`, which also reads the older role-written `<node>-reality`, `<node>-ws[-<hash>]`
+and an origin's `<node>-relay-<key>`) keeps each member on one node's entries, and the edge
+render matches the entries it replaces by it. A `|` remark is FCP's only when what follows the
+separator is the server name the entry itself serves (a link's `sni`, sing-box
+`tls.server_name`, Clash `servername`) or that name's tag; an operator's own Host remark such as
+`Region | VLESS` is never read as a node.
+
+**Members never see these remarks.** After pinning and rendering, every body a member receives
+(the fronted subscription route, the sealed configuration copy, every mirror upload) renames each
+entry that names a node (`lib/memberEntryNames.ts`):
+
+| Entries left | Name in the member's app                              |
+| ------------ | ----------------------------------------------------- |
+| One          | `<site name> · <place>`                               |
+| Several      | `<site name> · <place> · <code>`, one per server name |
+
+- `<site name>` is `subscription.siteName` (default `FreeSocks`), `<place>` the backend's
+  member-facing location label up to its first comma (left out when unset), `<code>` four
+  characters derived from the server name alone. A code is the same on every refresh, under a
+  node rename, and whatever other entries come or go. Only while two server names in one body
+  share a code do both carry their six-character code instead (each still from its own name);
+  a name that is still not unique gets a ` (2)`.
+- References follow the rename: sing-box selector/urltest members, `default`, `route.final`,
+  rule `outbound`s and `detour`s; Clash proxy-group members and rule targets. Covered formats are
+  link lists (base64-wrapped or not), sing-box JSON, Clash / Mihomo YAML and Xray JSON config
+  lists; a body none of them reads is served as it is (like the pinner, the step never emits a
+  broken config).
+- Entries that name no node keep their names: an edge's rendered entries (their labels are
+  `edge.render.*`, docs/edges.md), the backend's placeholders, groups.
+- `subscription.entryNames` (default on, Admin → Settings → "Names in members' apps") turns it
+  off. Turning it off, or changing the site name, reaches a member at their next refresh past the
+  content cache, and every mirror at its next sweep.
+
 ### Renaming a node
 
 A node's name is an identifier well beyond the backend row: origins and their delivery

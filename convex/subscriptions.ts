@@ -11,6 +11,8 @@ import { ConvexError, v } from 'convex/values';
 import { moveOpenUploads } from './mirrorUploads';
 import { randomHex } from './lib/crypto';
 import { backendIdValidator, type BackendId } from './lib/backendIds';
+import { capabilitiesOf } from './lib/backends/capabilities';
+import { entryNamingFrom, type EntryNaming } from './lib/memberEntryNames';
 import { profileTitleValue, resolveSubscriptionSiteName } from './lib/subscriptionTitle';
 
 const mirror = v.object({
@@ -539,6 +541,35 @@ export const mirrorContextForUser = internalQuery({
       triedProviders: sub.subscriptionMirrors.map((m) => m.provider),
       objectPath: sub.subscriptionMirrors[0]?.objectPath ?? null,
     };
+  },
+});
+
+/**
+ * What the entry names of a member body served from this backend instance are
+ * built from (lib/memberEntryNames.ts): the site name and the instance's
+ * location label, or null when they are off or the backend's names are not
+ * panel remarks (a backend without node pinning). Two settings rows and one
+ * instance row, all point reads.
+ */
+export const entryNamingFor = internalQuery({
+  args: { backendServerId: v.optional(v.id('backendServers')) },
+  handler: async (ctx, { backendServerId }): Promise<EntryNaming | null> => {
+    const server = backendServerId ? await ctx.db.get(backendServerId) : null;
+    if (server && !capabilitiesOf(server.backend).nodePinning) return null;
+    const settings: Record<string, unknown> = {};
+    for (const key of ['subscription.entryNames', 'subscription.siteName']) {
+      const row = await ctx.db
+        .query('appSettings')
+        .withIndex('by_key', (q) => q.eq('key', key))
+        .unique();
+      if (!row) continue;
+      try {
+        settings[key] = JSON.parse(row.value);
+      } catch {
+        /* the default applies */
+      }
+    }
+    return entryNamingFrom(settings, server?.locationLabel);
   },
 });
 

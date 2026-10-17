@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto';
 import schema from '../../convex/schema';
 import { clients } from './manifest';
 import { assertSubscription } from './assertions';
-import { docker, seedPanel } from './panel';
+import { COMPAT_NODE, COMPAT_REMARK, docker, seedPanel } from './panel';
 
 const modules = import.meta.glob('../../convex/**/*.*s');
 const t = convexTest(schema, modules);
@@ -75,6 +75,20 @@ beforeAll(async () => {
   });
 });
 
+/** The body as a member's app reads it (a link list may be base64-wrapped). */
+function readable(body: string): string {
+  const t = body.trim();
+  return /^[a-z0-9]+:\/\//i.test(t) || t.startsWith('{') || /^proxies:/m.test(t)
+    ? body
+    : Buffer.from(t, 'base64').toString('utf8');
+}
+
+/** The panel's remark names the node; the member gets the neutral name instead. */
+function expectMemberNames(body: string): void {
+  expect(readable(body)).not.toContain(COMPAT_NODE);
+  expect(readable(body)).toContain('FreeSocks');
+}
+
 async function subscription(ua: string) {
   const response = await t.fetch(`/api/v1/sub/${token}`, { headers: { 'user-agent': ua } });
   expect(response.status).toBe(200);
@@ -88,6 +102,7 @@ describe('real panel → FCP HTTP handler → client format (Convex test runtime
       test(`${client.name}: ${ua}`, async () => {
         const body = await subscription(ua);
         assertSubscription(body, client.format);
+        expectMemberNames(body);
         // An immediate repeat is a fresh-cache hit for this UA and must be byte-identical.
         expect(await subscription(ua)).toBe(body);
       });
@@ -122,14 +137,23 @@ describe('real panel → FCP HTTP handler → client format (Convex test runtime
   test('refresh after upstream Host change delivers the new endpoint', async () => {
     const hosts = await panel.api('hosts');
     const host = (hosts.hosts ?? hosts)[0];
-    await panel.api('hosts', 'PATCH', { uuid: host.uuid, remark: 'compat-node-refreshed' });
-    await t.run(async (ctx) => {
-      const sub = await ctx.db.query('subscriptions').first();
-      await ctx.db.patch(sub!._id, { subCache: undefined });
-    });
-    const body = await subscription(clients[0]!.userAgents[0]!);
-    assertSubscription(body, 'singbox');
-    expect(body.includes('compat-node-refreshed')).toBe(true);
+    const clearCache = () =>
+      t.run(async (ctx) => {
+        const sub = await ctx.db.query('subscriptions').first();
+        await ctx.db.patch(sub!._id, { subCache: undefined });
+      });
+    // A remark that names no node passes through as it is, so the refresh shows.
+    await panel.api('hosts', 'PATCH', { uuid: host.uuid, remark: 'compat-refreshed' });
+    try {
+      await clearCache();
+      const body = await subscription(clients[0]!.userAgents[0]!);
+      assertSubscription(body, 'singbox');
+      expect(body.includes('compat-refreshed')).toBe(true);
+    } finally {
+      // The engines below run the member-facing (renamed) body.
+      await panel.api('hosts', 'PATCH', { uuid: host.uuid, remark: COMPAT_REMARK });
+      await clearCache();
+    }
   });
 });
 
@@ -261,7 +285,9 @@ describe('reference engines: real panel-generated REALITY connections', () => {
   ] as const) {
     test(`${engine}: native config validation, REALITY, remote DNS, HTTPS and UDP DNS`, async () => {
       try {
-        await startEngine(engine, await subscription(ua));
+        const body = await subscription(ua);
+        expectMemberNames(body);
+        await startEngine(engine, body);
         await httpsProbe();
         expect(
           docker(

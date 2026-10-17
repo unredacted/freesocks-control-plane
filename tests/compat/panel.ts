@@ -2,7 +2,12 @@ import { randomUUID, generateKeyPairSync } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { remnawaveIssueUser } from '../../convex/lib/backends/remnawave';
+import { addressRemark } from '../../convex/lib/backend/hostRemark';
 import { compose } from './compose';
+
+/** The seeded node's name: it must never reach a member body. */
+export const COMPAT_NODE = 'compat-node';
+export const COMPAT_REMARK = addressRemark(COMPAT_NODE, 'compat-origin');
 
 export function docker(...args: string[]) {
   return execFileSync('docker', [...compose, ...args], {
@@ -75,7 +80,9 @@ export async function seedPanel() {
   });
   await api('hosts', 'POST', {
     inbound: { configProfileUuid: profile.uuid, configProfileInboundUuid: inbound.uuid },
-    remark: 'compat-node',
+    // FCP's own address remark for a direct node (`<node> | <server name>`):
+    // members receive it renamed (convex/lib/memberEntryNames.ts).
+    remark: COMPAT_REMARK,
     address: 'compat-proxy',
     port: 443,
     sni: 'compat-origin',
