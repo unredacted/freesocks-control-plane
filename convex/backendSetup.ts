@@ -16,6 +16,11 @@
  * profile) is an obligation persisted before the call. The REALITY keys are
  * generated inside the claimed attempt right before that call and exist
  * nowhere else.
+ *
+ * Once a backend is ready, the sweep runs the templates step alone whenever
+ * its templates are not what FCP ships, and hourly to catch a change made on
+ * the backend (`resyncTemplates`): a release that changes a template reaches
+ * every backend without a new setup.
  */
 import { ConvexError, v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
@@ -44,8 +49,11 @@ import {
   SUBSCRIPTION_TEMPLATES,
   TEMPLATE_FAMILIES,
   desiredTemplateBody,
+  shippedTemplateHashes,
+  stageShippedTemplates,
   templateDrift,
   templateHash,
+  templatesOutdated,
 } from './lib/backend/subscriptionTemplates';
 import { resolveServerConfig } from './lib/serverConfig';
 import { observeInstance } from './backendObserve';
@@ -397,6 +405,7 @@ const stepPatch = v.object({
   profileUuid: v.optional(v.string()),
   modes: v.optional(v.any()),
   templates: v.optional(v.any()),
+  templatesCheckedAt: v.optional(v.number()),
   privacy: v.optional(v.union(v.literal('ok'), v.literal('drifted'))),
 });
 
@@ -794,37 +803,9 @@ export const run = internalAction({
       // 7. Subscription templates: reconcile on drift; a refused write blocks activation later.
       await record({ step: 'templates' });
       if (!(await writable('templates'))) return null;
-      const listed = await writes.listSubscriptionTemplates(config);
-      const templates: {
-        family: string;
-        hash: string;
-        state: 'matched' | 'drifted' | 'refused';
-      }[] = [];
-      for (const family of TEMPLATE_FAMILIES) {
-        const ref = listed.find((t) => t.templateType === family);
-        if (!ref) continue;
-        const desired = SUBSCRIPTION_TEMPLATES[family];
-        const hash = await templateHash(desired);
-        let live = await writes.readSubscriptionTemplate(config, ref.uuid);
-        if (!templateDrift(live, desired)) {
-          templates.push({ family, hash, state: 'matched' });
-          continue;
-        }
-        try {
-          await writes.updateSubscriptionTemplate(config, ref.uuid, desiredTemplateBody(desired));
-          live = await writes.readSubscriptionTemplate(config, ref.uuid);
-          templates.push({
-            family,
-            hash,
-            state: templateDrift(live, desired) ? 'drifted' : 'matched',
-          });
-        } catch (err) {
-          const r = callResultOf(err);
-          const refused = r.kind === 'http' && (r.status === 401 || r.status === 403);
-          templates.push({ family, hash, state: refused ? 'refused' : 'drifted' });
-        }
-      }
-      await record({ templates });
+      const reconciled = await reconcileTemplates(writes, config, () => writable('templates'));
+      if (!reconciled) return null;
+      await record({ templates: reconciled.templates, templatesCheckedAt: Date.now() });
 
       await finish('ready', undefined, 'done');
       return null;
@@ -882,6 +863,211 @@ async function createProfile(
     return 'unresolved';
   }
 }
+
+// --- subscription templates ---------------------------------------------------------------------------
+
+type BackendWrites = NonNullable<(typeof PROVIDERS)[keyof typeof PROVIDERS]['backendWrites']>;
+type TemplateRecord = SetupRow['templates'][number];
+const templateRecord = v.object({
+  family: v.string(),
+  hash: v.string(),
+  state: v.union(v.literal('matched'), v.literal('drifted'), v.literal('refused')),
+});
+
+/**
+ * Install every template FCP ships that the backend has, where the live one
+ * differs: what each ended as, under the hash of what FCP ships, and the
+ * families the backend accepted a write for. `mayWrite` is asked before every
+ * write: when it says no, nothing more is written and the answer is null.
+ */
+async function reconcileTemplates(
+  writes: BackendWrites,
+  config: BackendConfig,
+  mayWrite: () => Promise<boolean>,
+): Promise<{ templates: TemplateRecord[]; written: string[] } | null> {
+  const listed = await writes.listSubscriptionTemplates(config);
+  const templates: TemplateRecord[] = [];
+  const written: string[] = [];
+  for (const family of TEMPLATE_FAMILIES) {
+    const ref = listed.find((t) => t.templateType === family);
+    if (!ref) continue;
+    const desired = SUBSCRIPTION_TEMPLATES[family];
+    const hash = await templateHash(desired);
+    let live = await writes.readSubscriptionTemplate(config, ref.uuid);
+    if (!templateDrift(live, desired)) {
+      templates.push({ family, hash, state: 'matched' });
+      continue;
+    }
+    if (!(await mayWrite())) return null;
+    try {
+      await writes.updateSubscriptionTemplate(config, ref.uuid, desiredTemplateBody(desired));
+      written.push(family);
+      live = await writes.readSubscriptionTemplate(config, ref.uuid);
+      templates.push({
+        family,
+        hash,
+        state: templateDrift(live, desired) ? 'drifted' : 'matched',
+      });
+    } catch (err) {
+      const r = callResultOf(err);
+      const refused = r.kind === 'http' && (r.status === 401 || r.status === 403);
+      templates.push({ family, hash, state: refused ? 'refused' : 'drifted' });
+    }
+  }
+  return { templates, written };
+}
+
+/** How often a ready backend's live templates are looked at even when the record says matched. */
+export const TEMPLATE_RECHECK_MS = 60 * 60_000;
+
+/**
+ * Whether a ready row's templates are due: not matched at what FCP ships, or
+ * not looked at live for an hour (a backend upgrade or an edit on the backend
+ * changes them without FCP seeing it).
+ */
+function templatesDueNow(row: SetupRow, shipped: Record<string, string>, now: number): boolean {
+  return (
+    templatesOutdated(row.templates, shipped) ||
+    now - (row.templatesCheckedAt ?? 0) >= TEMPLATE_RECHECK_MS
+  );
+}
+
+const templatesKey = (ts: readonly TemplateRecord[]) =>
+  ts.map((t) => `${t.family}:${t.hash}:${t.state}`).join(',');
+
+/** Ready backends whose templates are due, with no attempt holding them. */
+export const templatesDue = internalQuery({
+  args: { now: v.number() },
+  handler: async (ctx, { now }): Promise<Id<'panelSetups'>[]> => {
+    const shipped = await shippedTemplateHashes();
+    return (await ctx.db.query('panelSetups').collect())
+      .filter(
+        (s) => s.state === 'ready' && claimAvailable(s, now) && templatesDueNow(s, shipped, now),
+      )
+      .map((s) => s._id);
+  },
+});
+
+/**
+ * Take a ready backend's setup lease for one template re-sync: a setup run
+ * cannot start meanwhile (`servers.setup_running`), and the row stays ready.
+ * A template FCP ships differently is recorded under its new hash, not
+ * matched, BEFORE anything is written: the review hash moves and activation
+ * holds (`servers.template_drifted`) until the outcome is recorded, so no node
+ * is approved or goes live against the old template while the write is in
+ * flight.
+ */
+export const claimTemplates = internalMutation({
+  args: { setupId: v.id('panelSetups') },
+  handler: async (
+    ctx,
+    { setupId },
+  ): Promise<{ fence: Fence; backend: string; config: unknown } | null> => {
+    const row = await ctx.db.get(setupId);
+    const now = Date.now();
+    if (!row || row.state !== 'ready' || !claimAvailable(row, now)) return null;
+    const shipped = await shippedTemplateHashes();
+    if (!templatesDueNow(row, shipped, now)) return null;
+    const server = await ctx.db.get(row.backendServerId);
+    if (!server) return null;
+    const attemptId = crypto.randomUUID();
+    await ctx.db.patch(setupId, {
+      templates: stageShippedTemplates(row.templates, shipped),
+      claim: { attemptId, expiresAt: now + CLAIM_LEASE_MS },
+      updatedAt: now,
+    });
+    return {
+      fence: { setupId, generation: row.generation, attemptId },
+      backend: server.backend,
+      config: server.config,
+    };
+  },
+});
+
+/**
+ * Record a template re-sync (fenced) and release the lease. No answer from the
+ * backend, or server changes switched off on the way, records nothing: what
+ * the claim staged stays, and the next sweep tries again.
+ */
+export const finishTemplates = internalMutation({
+  args: {
+    ...fence,
+    templates: v.optional(v.array(templateRecord)),
+    written: v.optional(v.array(v.string())),
+  },
+  handler: async (ctx, { templates, written = [], ...f }) => {
+    const row = await ctx.db.get(f.setupId);
+    if (!row || !fenceHolds(row, f)) return null;
+    const now = Date.now();
+    await ctx.db.patch(f.setupId, {
+      ...(templates ? { templates, templatesCheckedAt: now } : {}),
+      claim: undefined,
+      updatedAt: now,
+    });
+    // Audited when something was written or the outcome moved, so a write the
+    // backend keeps refusing is not logged every sweep.
+    if (
+      templates &&
+      (written.length > 0 || templatesKey(templates) !== templatesKey(row.templates))
+    ) {
+      const server = await ctx.db.get(row.backendServerId);
+      await writeAuditLog(ctx, {
+        actorType: 'system',
+        action: 'servers.setup.templates_installed',
+        targetType: 'backend_server',
+        targetId: row.backendServerId,
+        payload: {
+          backendSlug: server?.slug ?? '',
+          templates: templates.map((t) => `${t.family}:${t.state}`).join(','),
+          written: written.join(','),
+        },
+      });
+    }
+    return null;
+  },
+});
+
+/**
+ * On `backend-bootstrap-sweep`: keep every set-up backend's subscription
+ * templates on what FCP ships. A backend is due when a template is not matched
+ * at today's hash (a release changed one, or an earlier write failed), and
+ * hourly otherwise, since the backend can change them without FCP seeing it.
+ * Only the templates step runs, never the rest of the setup, and only what
+ * differs is written. With server changes switched off it writes nothing; the
+ * switch is read again before every write.
+ */
+export const resyncTemplates = internalAction({
+  args: {},
+  handler: async (ctx): Promise<number> => {
+    const due: Id<'panelSetups'>[] = await ctx.runQuery(internal.backendSetup.templatesDue, {
+      now: Date.now(),
+    });
+    const mayWrite = (): Promise<boolean> => ctx.runQuery(internal.serverAdmin.manageEnabled, {});
+    let done = 0;
+    for (const setupId of due) {
+      if (!(await mayWrite())) break;
+      const claimed = (await ctx.runMutation(internal.backendSetup.claimTemplates, {
+        setupId,
+      })) as { fence: Fence; backend: string; config: unknown } | null;
+      if (!claimed) continue;
+      const writes = PROVIDERS[claimed.backend as keyof typeof PROVIDERS]?.backendWrites;
+      let reconciled: { templates: TemplateRecord[]; written: string[] } | null = null;
+      try {
+        if (writes)
+          reconciled = await reconcileTemplates(writes, claimed.config as BackendConfig, mayWrite);
+      } catch {
+        // The list or a read went unanswered: the next sweep tries again.
+      }
+      await ctx.runMutation(internal.backendSetup.finishTemplates, {
+        ...claimed.fence,
+        templates: reconciled?.templates,
+        written: reconciled?.written,
+      });
+      if (reconciled) done++;
+    }
+    return done;
+  },
+});
 
 // --- the view ---------------------------------------------------------------------------------------
 

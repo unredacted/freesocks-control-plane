@@ -563,11 +563,30 @@ shape (Caddy or not, ingress, what an edge dials) follows from the mode's shape.
 | bind       | Each REALITY transport is bound to its family (`sniFamilies.bind`, by the transport's own uuid, since a tag is unique per profile and not per backend): the family is the one authoritative allowlist from then on, and later name changes are rollouts (docs/edges.md). An adopted transport forwarding elsewhere than the family's target is `servers.family_target_mismatch`; one already bound to a DIFFERENT family is `servers.family_bound_elsewhere:<slug>` (that family's rollouts own its names, so an admin unbinds it or the mode names that family).                                                                                                           |
 | groups     | Each mode's group, found under its name, or under a name an earlier setup gave the same mode (`FreeSocks-Reality` → `Privacy-Reality`, `FreeSocks-Relay` → `Freedom-Reality`, `FreeSocks-Fronted`/`FreeSocks-Fastly` → `Freedom-WebSocket`) and **renamed in place** through the ledger (its id and every member assignment survive; audited `servers.setup.group_renamed`), else created; carrying EXACTLY the mode's transport (a transport an earlier release left in the group is removed: a mode grants one way in).                                                                                                                                                   |
 | placements | Each group into its mode's pool (`addSquadUuids`). A mode that does not exist is recorded `skipped` and blocks activation of its nodes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| templates  | The four subscription templates (`lib/backend/subscriptionTemplates/`, YAML byte-exact) reconciled on drift; a refused write (401/403) blocks activation unless the live template already matches.                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| templates  | The four subscription templates (`lib/backend/subscriptionTemplates/`, YAML byte-exact) reconciled on drift; a refused write (401/403) blocks activation unless the live template already matches. Kept current afterwards by the sweep ("Templates after setup").                                                                                                                                                                                                                                                                                                                                                                                                          |
 
 A ready row that still records a blocker (a drifted or refused template, a skipped placement, an
 unbound family, drifted privacy) is re-run on the next request so the blocker can clear. The
 setup row also carries the backend-wide **delivery gate version** (below).
+
+**Templates after setup.** FCP owns the subscription templates, so a release that changes one
+must reach every backend already set up, and a change made on the backend (an edit, an upgrade
+that resets one) must be put back. The `backend-bootstrap-sweep` cron (every 5 minutes,
+`backendSetup.resyncTemplates`) runs the templates step alone on each ready backend whose
+recorded templates are not all `matched` at the hash of what FCP ships now, and on every ready
+backend whose live templates were last looked at an hour ago or more (`templatesCheckedAt`).
+After a deploy that changed a template, that is one re-sync per backend; each run writes only
+the templates that differ. It holds the setup's lease meanwhile (a setup request answers
+`servers.setup_running`), the row stays ready, and nothing else of the setup runs. Server
+changes switched off: nothing is written, and the switch is read again before every write. A
+refused or failed write is recorded as during setup and tried again on every sweep;
+`servers.setup.templates_installed` is audited when something was written or the outcome moved.
+Before writing, the claim records a template FCP now ships differently under its new hash, not
+matched: the review hash (`awaiting_approval`, below) moves and activation holds
+(`servers.template_drifted`) until the outcome is recorded, so no node is approved or goes live
+against the old template while the write is in flight. A node approved but not yet live parks
+until it is approved again (`servers.review_stale`); live nodes are untouched. Members get the
+new body on their app's next subscription refresh.
 
 ### Adopting a backend
 

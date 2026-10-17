@@ -54,3 +54,38 @@ export function templateDrift(
 export async function templateHash(d: DesiredTemplate): Promise<string> {
   return sha256Hex(d.kind === 'json' ? canonicalJson(d.body) : d.body);
 }
+
+/** The hash of every template FCP ships today, by family. */
+export async function shippedTemplateHashes(): Promise<Record<TemplateFamily, string>> {
+  const out = {} as Record<TemplateFamily, string>;
+  for (const f of TEMPLATE_FAMILIES) out[f] = await templateHash(SUBSCRIPTION_TEMPLATES[f]);
+  return out;
+}
+
+/**
+ * Whether a backend's recorded templates need installing again: one is not
+ * matched, or was matched under a template FCP no longer ships (a release
+ * changed it). A family FCP no longer ships is judged by its state alone.
+ */
+export function templatesOutdated(
+  recorded: readonly { family: string; hash: string; state: string }[],
+  shipped: Readonly<Record<string, string>>,
+): boolean {
+  return recorded.some(
+    (t) => t.state !== 'matched' || (t.family in shipped && t.hash !== shipped[t.family]),
+  );
+}
+
+/**
+ * The record a re-sync starts from: an entry FCP now ships differently takes
+ * the new hash, not matched, before anything is written; the rest stay.
+ */
+export function stageShippedTemplates<
+  T extends { family: string; hash: string; state: 'matched' | 'drifted' | 'refused' },
+>(recorded: readonly T[], shipped: Readonly<Record<string, string>>): T[] {
+  return recorded.map((t) =>
+    t.family in shipped && t.hash !== shipped[t.family]
+      ? { ...t, hash: shipped[t.family]!, state: 'drifted' }
+      : t,
+  );
+}

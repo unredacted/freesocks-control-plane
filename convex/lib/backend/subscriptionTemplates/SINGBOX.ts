@@ -63,10 +63,13 @@ export const SINGBOX_JSON = {
       external_ui_download_url: 'https://github.com/MetaCubeX/Yacd-meta/archive/gh-pages.zip',
       external_ui_download_detour: 'direct',
     },
+    // Neutral names (docs/privacy.md §5c): `cache.db` is sing-box's own default
+    // file; a non-empty id keeps this profile's store apart from other profiles
+    // that share the file in the same app.
     cache_file: {
-      path: 'remnawave.db',
+      path: 'cache.db',
       enabled: true,
-      cache_id: 'remnawave',
+      cache_id: 'default',
       store_fakeip: true,
     },
   },
