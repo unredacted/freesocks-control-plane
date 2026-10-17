@@ -2,15 +2,21 @@ import { describe, expect, test } from 'vitest';
 import YAML from 'yaml';
 import { addressRemark, remarkTag } from './backend/hostRemark';
 import { decodeBase64Loose, encodeBase64 } from './edges/render/base64';
+import { SUBSCRIPTION_TEMPLATES } from './backend/subscriptionTemplates';
+import { CLASH_YAML } from './backend/subscriptionTemplates/CLASH';
+import { SINGBOX_JSON } from './backend/subscriptionTemplates/SINGBOX';
 import {
+  backendGroupName,
   DEFAULT_SITE_NAME,
   ENTRY_NAME_SEP,
   entryCode,
   entryKey,
   entryNamingFrom,
+  memberGroupName,
   memberPlace,
   memberSiteName,
   planEntryNames,
+  planGroupNames,
   relabelMemberEntries,
   type EntryNaming,
 } from './memberEntryNames';
@@ -402,5 +408,232 @@ describe('naming from settings', () => {
     expect(memberPlace('Example City, EX')).toBe('Example City');
     expect(memberPlace(' , EX')).toBeNull();
     expect(memberPlace(undefined)).toBeNull();
+  });
+});
+
+describe('relabelMemberEntries: the backend’s groups', () => {
+  const TEMPLATE_GROUP = '→ Remnawave';
+  const SELECT = 'FreeSocks Select';
+  type Obj = Record<string, unknown>;
+
+  function vless(tag: string, sni: string, server = ADDR_A): Obj {
+    return {
+      type: 'vless',
+      tag,
+      server,
+      server_port: 443,
+      uuid: '11111111-2222-3333-4444-555555555555',
+      tls: { enabled: true, server_name: sni, reality: { enabled: true } },
+    };
+  }
+
+  /** The backend's sing-box body: its template, the entries spliced into the template group. */
+  function singboxFromTemplate(entries: Obj[]): Obj & { outbounds: Obj[]; route: Obj } {
+    const cfg = JSON.parse(JSON.stringify(SINGBOX_JSON)) as Obj & { outbounds: Obj[]; route: Obj };
+    cfg.outbounds[0].outbounds = entries.map((e) => e.tag);
+    cfg.outbounds.splice(1, 0, ...entries);
+    return cfg;
+  }
+
+  /** The backend's Clash body: its template, the proxies spliced in at the anchors. */
+  function clashFromTemplate(proxies: Obj[], groups: Obj[] = []): Obj & { 'proxy-groups': Obj[] } {
+    const doc = YAML.parse(CLASH_YAML) as Obj & { 'proxy-groups': Obj[] };
+    doc.proxies = proxies;
+    doc['proxy-groups'][0].proxies = proxies.map((p) => p.name);
+    doc['proxy-groups'].unshift(...groups);
+    return doc;
+  }
+
+  function clashProxy(name: string, sni: string, server = ADDR_A): Obj {
+    return {
+      name,
+      type: 'vless',
+      server,
+      port: 443,
+      uuid: '11111111-2222-3333-4444-555555555555',
+      servername: sni,
+      'reality-opts': { 'public-key': 'PUBKEY', 'short-id': 'ab' },
+    };
+  }
+
+  /** Every sing-box group member, `default`, `route.final` and rule target names an outbound. */
+  function expectSingboxResolves(cfg: { outbounds: Obj[]; route: Obj }): Set<string> {
+    const tags = new Set(cfg.outbounds.map((o) => o.tag as string));
+    for (const o of cfg.outbounds) {
+      for (const m of (o.outbounds as string[] | null) ?? []) expect(tags.has(m)).toBe(true);
+      if (o.default) expect(tags.has(o.default as string)).toBe(true);
+    }
+    if (cfg.route.final) expect(tags.has(cfg.route.final as string)).toBe(true);
+    for (const r of cfg.route.rules as Obj[])
+      if (typeof r.outbound === 'string') expect(tags.has(r.outbound)).toBe(true);
+    return tags;
+  }
+
+  /** Every Clash group member and rule target names a proxy, a group or a built-in. */
+  function expectClashResolves(doc: { proxies: Obj[]; 'proxy-groups': Obj[]; rules: string[] }) {
+    const known = new Set([
+      'DIRECT',
+      'REJECT',
+      ...doc.proxies.map((p) => p.name as string),
+      ...doc['proxy-groups'].map((g) => g.name as string),
+    ]);
+    for (const g of doc['proxy-groups'])
+      for (const m of g.proxies as string[]) expect(known.has(m)).toBe(true);
+    for (const r of doc.rules) expect(known.has(r.split(',').at(-1)!)).toBe(true);
+    return known;
+  }
+
+  test('sing-box from the backend’s template: the group is "<site> Select", every reference follows', () => {
+    const cfg = singboxFromTemplate(NAMES.map((n) => vless(addressRemark(NODE_A, n), n)));
+    cfg.route = { ...cfg.route, final: TEMPLATE_GROUP };
+    (cfg.route.rules as Obj[]).push({ domain_suffix: ['example.org'], outbound: TEMPLATE_GROUP });
+    const out = relabelMemberEntries(JSON.stringify(cfg), NAMING);
+    expect(out.renamed).toBe(NAMES.length + 1);
+    const next = JSON.parse(out.content) as { outbounds: Obj[]; route: Obj };
+    const tags = expectSingboxResolves(next);
+    const selector = next.outbounds.find((o) => o.type === 'selector')!;
+    expect(selector.tag).toBe(SELECT);
+    expect(selector.outbounds).toHaveLength(NAMES.length);
+    expect(next.route.final).toBe(SELECT);
+    for (const tag of tags) expect(tag).not.toMatch(/remnawave/i);
+    expectNeutral(
+      out.content,
+      [...tags].filter((t) => t.startsWith(`${BASE}${ENTRY_NAME_SEP}`)),
+    );
+  });
+
+  test('Clash from the backend’s template: the group and its MATCH rule follow', () => {
+    const doc = clashFromTemplate(NAMES.map((n) => clashProxy(addressRemark(NODE_A, n), n)));
+    const out = relabelMemberEntries(YAML.stringify(doc), NAMING);
+    expect(out.renamed).toBe(NAMES.length + 1);
+    const next = YAML.parse(out.content) as {
+      proxies: Obj[];
+      'proxy-groups': Obj[];
+      rules: string[];
+    };
+    expectClashResolves(next);
+    expect(next['proxy-groups'].map((g) => g.name)).toEqual([SELECT]);
+    expect(next.rules).toEqual([`MATCH,${SELECT}`]);
+    expect(out.content).not.toMatch(/remnawave/i);
+  });
+
+  test('an edge-only body (no entry names a node): the group alone is renamed, apart from the edge names', () => {
+    // What the edge renderer leaves: its entry under the default label, its
+    // url-test group, both inside the template group.
+    const edge = 'FreeSocks';
+    const auto = 'FreeSocks Auto';
+    const doc = clashFromTemplate(
+      [clashProxy(edge, NAMES[0], '203.0.113.5')],
+      [{ name: auto, type: 'url-test', proxies: [edge] }],
+    );
+    doc['proxy-groups'][1].proxies = [auto, edge];
+    const clash = relabelMemberEntries(YAML.stringify(doc), NAMING);
+    expect(clash.renamed).toBe(1);
+    const next = YAML.parse(clash.content) as {
+      proxies: Obj[];
+      'proxy-groups': Obj[];
+      rules: string[];
+    };
+    expectClashResolves(next);
+    expect(next.proxies.map((p) => p.name)).toEqual([edge]);
+    expect(next['proxy-groups'].map((g) => g.name)).toEqual([auto, SELECT]);
+    expect(next['proxy-groups'][1].proxies).toEqual([auto, edge]);
+
+    const cfg = singboxFromTemplate([vless(edge, NAMES[0], '203.0.113.5')]);
+    cfg.outbounds.splice(1, 0, { type: 'urltest', tag: auto, outbounds: [edge] });
+    cfg.outbounds[0].outbounds = [auto, edge];
+    const singbox = relabelMemberEntries(JSON.stringify(cfg), NAMING);
+    expect(singbox.renamed).toBe(1);
+    const tags = expectSingboxResolves(JSON.parse(singbox.content) as typeof cfg);
+    expect([...tags]).toEqual([SELECT, auto, edge, 'direct']);
+  });
+
+  test('the site name is the operator’s', () => {
+    const doc = clashFromTemplate([clashProxy('FreeSocks', NAMES[0], '203.0.113.5')]);
+    const out = relabelMemberEntries(YAML.stringify(doc), { siteName: 'Example VPN', place: null });
+    const next = YAML.parse(out.content) as { 'proxy-groups': Obj[] };
+    expect(next['proxy-groups'][0].name).toBe('Example VPN Select');
+  });
+
+  test('the new group name never takes a name the body uses (an edge label, an operator group)', () => {
+    const doc = clashFromTemplate(
+      [
+        clashProxy(SELECT, NAMES[0], '203.0.113.5'),
+        clashProxy(addressRemark(NODE_A, NAMES[1]), NAMES[1]),
+      ],
+      [{ name: `${SELECT} (2)`, type: 'select', proxies: [SELECT] }],
+    );
+    const out = relabelMemberEntries(YAML.stringify(doc), NAMING);
+    const next = YAML.parse(out.content) as {
+      proxies: Obj[];
+      'proxy-groups': Obj[];
+      rules: string[];
+    };
+    const known = expectClashResolves(next);
+    expect(next['proxy-groups'].map((g) => g.name)).toEqual([`${SELECT} (2)`, `${SELECT} (3)`]);
+    expect(next.proxies.map((p) => p.name)).toEqual([SELECT, BASE]);
+    expect(known.size).toBe(2 + next.proxies.length + next['proxy-groups'].length);
+  });
+
+  test('an operator’s own groups keep their names; one named after the backend product is renamed', () => {
+    const proxies = NAMES.map((n) => clashProxy(addressRemark(NODE_A, n), n));
+    const names = proxies.map((p) => p.name as string);
+    const doc = clashFromTemplate(proxies, [
+      { name: 'Streaming', type: 'select', proxies: [TEMPLATE_GROUP, 'DIRECT'] },
+      { name: 'auto', type: 'url-test', proxies: names },
+      { name: 'Remnawave fallback', type: 'fallback', proxies: names },
+    ]);
+    const out = relabelMemberEntries(YAML.stringify(doc), NAMING);
+    const next = YAML.parse(out.content) as {
+      proxies: Obj[];
+      'proxy-groups': Obj[];
+      rules: string[];
+    };
+    expectClashResolves(next);
+    // The template's group takes the plain name; the other follows.
+    expect(next['proxy-groups'].map((g) => g.name)).toEqual([
+      'Streaming',
+      'auto',
+      `${SELECT} (2)`,
+      SELECT,
+    ]);
+    expect(next['proxy-groups'][0].proxies).toEqual([SELECT, 'DIRECT']);
+    expect(out.content).not.toMatch(/remnawave/i);
+  });
+
+  test('off, the backend’s group name passes with the rest of the body', () => {
+    const body = YAML.stringify(
+      clashFromTemplate([clashProxy('FreeSocks', NAMES[0], '203.0.113.5')]),
+    );
+    expect(relabelMemberEntries(body, null)).toEqual({ content: body, renamed: 0 });
+  });
+
+  test('every group of every template the backend is given is recognized as the backend’s', () => {
+    for (const [family, template] of Object.entries(SUBSCRIPTION_TEMPLATES)) {
+      const groups =
+        template.kind === 'json'
+          ? (template.body as { outbounds: Obj[] }).outbounds
+              .filter((o) => o.type === 'selector' || o.type === 'urltest')
+              .map((o) => o.tag as string)
+          : (YAML.parse(template.body) as { 'proxy-groups': Obj[] })['proxy-groups'].map(
+              (g) => g.name as string,
+            );
+      expect(groups.length, family).toBeGreaterThan(0);
+      for (const g of groups) expect(backendGroupName(g), `${family}: ${g}`).toBe(true);
+    }
+  });
+
+  test('planGroupNames: the template group first, then body order; each once; other groups skipped', () => {
+    const plan = planGroupNames(
+      ['proxy', 'Remnawave EU', TEMPLATE_GROUP, 'Remnawave EU'],
+      new Set(['proxy', 'Remnawave EU', TEMPLATE_GROUP, 'FreeSocks']),
+      NAMING,
+    );
+    expect([...plan]).toEqual([
+      [TEMPLATE_GROUP, SELECT],
+      ['Remnawave EU', `${SELECT} (2)`],
+    ]);
+    expect(memberGroupName(NAMING)).toBe(SELECT);
+    expect(backendGroupName('proxy')).toBe(false);
   });
 });

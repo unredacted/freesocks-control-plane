@@ -25,6 +25,19 @@
  * Entries that name no node (an edge's rendered label, a group, the backend's
  * placeholder, an operator's own Host remark) are left alone.
  *
+ * Groups are named too: the backend's subscription templates
+ * (lib/backend/subscriptionTemplates) hold one selector group, named after the
+ * backend product ("→ Remnawave"), that apps show like an entry. That group,
+ * and any group whose name carries the backend product's name, is renamed to
+ *
+ *   <site name> Select
+ *
+ * "Select" because it is the group the member picks a connection in, and it
+ * pairs with the edge renderer's url-test group (`edge.render.autoGroupName`,
+ * "FreeSocks Auto"); never the bare site name, which the default edge entry
+ * label already is. An operator's own groups keep their names, and a new group
+ * name never takes a name the body already uses.
+ *
  * It runs on the body the member receives, AFTER node pinning and edge
  * rendering: both read the original names. References follow the rename
  * (sing-box selector/urltest members, `default`, `route.final`, rule
@@ -52,6 +65,13 @@ const LONG_CODE_LENGTH = 6;
 const PROXY_LINE_RE = /^(vless|vmess|trojan|ss|ssr|hy2|hysteria2|tuic):\/\//i;
 // Names a Clash config resolves without a proxy of that name.
 const CLASH_BUILTINS = ['DIRECT', 'REJECT', 'REJECT-DROP', 'PASS', 'COMPATIBLE', 'GLOBAL'];
+// The group names of the backend's own subscription templates
+// (lib/backend/subscriptionTemplates; a test keeps the two in step).
+const TEMPLATE_GROUP_NAMES: ReadonlySet<string> = new Set(['→ Remnawave']);
+// The backend product's name, anywhere in a group's name.
+const BACKEND_PRODUCT_RE = /remnawave/i;
+// sing-box outbound types that are groups.
+const SINGBOX_GROUP_TYPES = new Set(['selector', 'urltest']);
 
 /** What a member's entry names are built from. */
 export interface EntryNaming {
@@ -183,6 +203,57 @@ export function planEntryNames(
   return plan;
 }
 
+/** Whether a group is the backend's: a template group, or one named after the backend product. */
+export function backendGroupName(name: string): boolean {
+  return TEMPLATE_GROUP_NAMES.has(name) || BACKEND_PRODUCT_RE.test(name);
+}
+
+/** The name a backend group gets: `<site name> Select`. */
+export function memberGroupName(naming: EntryNaming): string {
+  return `${naming.siteName} Select`;
+}
+
+/**
+ * The new name of every backend group (`backendGroupName`) among `groups`, by
+ * its old name: the member group name, then ` (2)`, ` (3)` for any further one,
+ * the template's group first and the rest in body order. `taken` holds every
+ * name the body uses or is given, which no new name may equal. Every other
+ * group keeps its name.
+ */
+export function planGroupNames(
+  groups: readonly string[],
+  taken: ReadonlySet<string>,
+  naming: EntryNaming,
+): Map<string, string> {
+  const used = new Set(taken);
+  const plan = new Map<string, string>();
+  const template = (name: string) => TEMPLATE_GROUP_NAMES.has(name);
+  for (const name of [...groups.filter(template), ...groups.filter((g) => !template(g))]) {
+    if (plan.has(name) || !backendGroupName(name)) continue;
+    const next = uniqueName(memberGroupName(naming), used);
+    used.add(next);
+    plan.set(name, next);
+  }
+  return plan;
+}
+
+/**
+ * Every rename of a body with groups: its node-named entries (`planEntryNames`,
+ * with `taken` as it is there), then its backend groups, which take none of the
+ * body's names, old or new.
+ */
+function planWithGroups(
+  entries: readonly NamedEntry[],
+  groups: readonly string[],
+  taken: ReadonlySet<string>,
+  naming: EntryNaming,
+): Map<string, string> {
+  const plan = planEntryNames(entries, taken, naming);
+  const used = new Set([...taken, ...entries.map((e) => e.name), ...plan.values()]);
+  for (const [from, to] of planGroupNames(groups, used, naming)) plan.set(from, to);
+  return plan;
+}
+
 /** The node-named entry a name and its server name make, or null. */
 function named(name: unknown, serverName: string | null): NamedEntry | null {
   if (typeof name !== 'string') return null;
@@ -192,15 +263,16 @@ function named(name: unknown, serverName: string | null): NamedEntry | null {
 
 export interface RelabelResult {
   content: string;
-  /** Distinct entry names replaced (0 = the body came back verbatim). */
+  /** Distinct entry and group names replaced (0 = the body came back verbatim). */
   renamed: number;
 }
 
 /**
  * Rename every node-named entry of a member body (link list, base64-wrapped or
- * not; sing-box JSON; Clash / Mihomo YAML; an Xray JSON config list). A null
- * naming (off), an unknown shape, a body with no node-named entry, or any
- * parse failure returns the body verbatim.
+ * not; sing-box JSON; Clash / Mihomo YAML; an Xray JSON config list), and every
+ * backend group of a sing-box or Clash body. A null naming (off), an unknown
+ * shape, a body with nothing to rename, or any parse failure returns the body
+ * verbatim.
  */
 export function relabelMemberEntries(content: string, naming: EntryNaming | null): RelabelResult {
   const verbatim = { content, renamed: 0 };
@@ -265,7 +337,7 @@ function renameAll(tree: unknown, plan: Map<string, string>): unknown | null {
   return mentionsAny(next, new Set(plan.keys())) ? null : next;
 }
 
-/** sing-box: outbound (and endpoint) tags, and every reference to them. */
+/** sing-box: outbound (and endpoint) tags, group tags, and every reference to them. */
 function relabelSingbox(trimmed: string, naming: EntryNaming): RelabelResult | null {
   const cfg = JSON.parse(trimmed) as unknown;
   if (!isObj(cfg) || !Array.isArray(cfg.outbounds)) return null;
@@ -275,36 +347,38 @@ function relabelSingbox(trimmed: string, naming: EntryNaming): RelabelResult | n
   ].filter(isObj);
   const nodes = defs.map((o) => named(o.tag, configServerName(o)));
   const entries = nodes.filter((e): e is NamedEntry => e !== null);
-  if (entries.length === 0) return null;
-  const taken = new Set(
-    defs
-      .filter((o, i) => nodes[i] === null && typeof o.tag === 'string')
-      .map((o) => o.tag as string),
-  );
-  const plan = planEntryNames(entries, taken, naming);
+  const others = defs.filter((o, i) => nodes[i] === null && typeof o.tag === 'string');
+  const taken = new Set(others.map((o) => o.tag as string));
+  const groups = others
+    .filter((o) => typeof o.type === 'string' && SINGBOX_GROUP_TYPES.has(o.type))
+    .map((o) => o.tag as string);
+  const plan = planWithGroups(entries, groups, taken, naming);
+  if (plan.size === 0) return null;
   const next = renameAll(cfg, plan);
   return next === null ? null : { content: JSON.stringify(next), renamed: plan.size };
 }
 
-/** Clash / Mihomo: proxy names, and every group member / rule target naming them. */
+/** Clash / Mihomo: proxy and group names, and every group member / rule target naming them. */
 function relabelClash(trimmed: string, naming: EntryNaming): RelabelResult | null {
   const doc = YAML.parse(trimmed) as unknown;
-  if (!isObj(doc) || !Array.isArray(doc.proxies)) return null;
-  const proxies = doc.proxies.filter(isObj);
+  if (!isObj(doc) || (!Array.isArray(doc.proxies) && !Array.isArray(doc['proxy-groups'])))
+    return null;
+  // A key with no entry yet still shows the template's group.
+  const proxies = Array.isArray(doc.proxies) ? doc.proxies.filter(isObj) : [];
   const nodes = proxies.map((p) => named(p.name, configServerName(p)));
   const entries = nodes.filter((e): e is NamedEntry => e !== null);
-  if (entries.length === 0) return null;
-  const groups = Array.isArray(doc['proxy-groups']) ? (doc['proxy-groups'] as unknown[]) : [];
+  const groups = (Array.isArray(doc['proxy-groups']) ? (doc['proxy-groups'] as unknown[]) : [])
+    .map((g) => (isObj(g) ? g.name : undefined))
+    .filter((n): n is string => typeof n === 'string');
   const taken = new Set([
     ...CLASH_BUILTINS,
     ...proxies
       .filter((p, i) => nodes[i] === null && typeof p.name === 'string')
       .map((p) => p.name as string),
-    ...groups
-      .map((g) => (isObj(g) ? g.name : undefined))
-      .filter((n): n is string => typeof n === 'string'),
+    ...groups,
   ]);
-  const plan = planEntryNames(entries, taken, naming);
+  const plan = planWithGroups(entries, groups, taken, naming);
+  if (plan.size === 0) return null;
   const next = renameAll(doc, plan);
   return next === null
     ? null

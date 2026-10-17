@@ -20,6 +20,7 @@ import { sanitizeConnectionChoice } from './edgeAttribution';
 import { classifyClient } from './lib/edges/clientFamilies';
 import { applyEdgeRender } from './lib/edges/renderPipeline';
 import { relabelMemberEntries } from './lib/memberEntryNames';
+import { SUBSCRIPTION_PASSTHROUGH_HEADERS } from './lib/backends/types';
 import type { Id } from './_generated/dataModel';
 import { ConvexError } from 'convex/values';
 import { SETTINGS_DEFAULTS } from './appSettings';
@@ -276,7 +277,10 @@ interface SubCacheEntry {
  *  (traffic/expiry counters, update cadence). `profile-title` is FCP's own (the
  *  service name, `subscription.siteName`), set last so a backend's title (or one cached with an older body)
  *  never reaches the app, whatever path the body took: rendered, cached, stale,
- *  or a backend with no headers at all (Outline).
+ *  or a backend with no headers at all (Outline). The stored headers are
+ *  re-checked against `SUBSCRIPTION_PASSTHROUGH_HEADERS` for the same reason: a
+ *  body cached while the backend's `profile-web-page-url` (the key's raw backend
+ *  URL) still passed must not hand it out when served from the cache or stale.
  *
  *  Caching (this route can sit behind a shared cache/CDN): the body is formatted
  *  per User-Agent, so the public path MUST send `Vary: User-Agent` or a shared
@@ -289,7 +293,11 @@ function subscriptionResponse(
 ): Response {
   const headers: Record<string, string> = {
     'content-type': entry.contentType || 'text/plain',
-    ...(entry.headers ?? {}),
+    ...Object.fromEntries(
+      Object.entries(entry.headers ?? {}).filter(([name]) =>
+        SUBSCRIPTION_PASSTHROUGH_HEADERS.includes(name.toLowerCase()),
+      ),
+    ),
     'profile-title': opts.title,
     // The backend legitimately returns an HTML landing page for browser UAs, and
     // this route serves it SAME-ORIGIN with the SPA + admin CMS. Sandbox it so
