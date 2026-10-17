@@ -58,6 +58,12 @@ import {
   SetupRunCancelResponse,
   SetupRunCreatedResponse,
 } from '../src/shared/contracts/edges';
+import {
+  deliveryBindingOf,
+  gateOfNode,
+  insertPlanned,
+  openMirrorUploads,
+} from './lib/edges/testing/reads';
 
 const modules = import.meta.glob('./**/*.*s');
 type T = TestConvex<typeof schema>;
@@ -650,7 +656,7 @@ async function relayOfRun(t: T, runId: Id<'edgeSetupRuns'>) {
 }
 
 const gateOf = (t: T, serverId: Id<'backendServers'>, nodeName = NODE) =>
-  t.query(internal.nodeIntents.nodeGate, { backendServerId: serverId, nodeName });
+  gateOfNode(t, { backendServerId: serverId, nodeName });
 
 // --- the golden path ------------------------------------------------------------------------------
 
@@ -735,9 +741,7 @@ describe('a fronted node goes from enrollment to members', () => {
     expect(intent.activation.stage).toBe('live');
     expect(intent.approved?.committed.edgeIds.length).toBe(1);
     expect((await gateOf(t, serverId)).state).toBe('open');
-    expect(
-      await t.query(internal.relays.deliveryBinding, { backendServerId: serverId, nodeName: NODE }),
-    ).toBeTruthy();
+    expect(await deliveryBindingOf(t, { backendServerId: serverId, nodeName: NODE })).toBeTruthy();
     // The rehearsal rendered exactly the activation's candidates.
     expect(w.calls.rehearsedEdges.at(-1)).toEqual(act.resources.edgeIds.map(String).sort());
 
@@ -1014,7 +1018,7 @@ async function memberBody(t: T, committed: string, absent: string[] = []) {
 
 const relayRow = (t: T, id: Id<'relays'>) => t.run((c) => c.db.get(id)).then((r) => r!);
 const bindingOf = (t: T, serverId: Id<'backendServers'>) =>
-  t.query(internal.relays.deliveryBinding, { backendServerId: serverId, nodeName: NODE });
+  deliveryBindingOf(t, { backendServerId: serverId, nodeName: NODE });
 
 /** A re-protect run driven to its first card, with the fresh candidate it provisioned. */
 async function reprotectToTryIt(w: World, live: Awaited<ReturnType<typeof liveL4>>) {
@@ -1581,9 +1585,7 @@ describe('ownership links and attempt fencing', () => {
     const res = await t.action(internal.edgeSetupRuns.cancel, { runId });
     expect(res.disposition).toBe('restore');
     expect((await setupRun(t, runId)).state).toBe('cancelled');
-    expect(
-      await t.query(internal.relays.deliveryBinding, { backendServerId: serverId, nodeName: NODE }),
-    ).toBeNull();
+    expect(await deliveryBindingOf(t, { backendServerId: serverId, nodeName: NODE })).toBeNull();
     expect((await gateOf(t, serverId)).state).toBe('blocked');
   });
 
@@ -2129,7 +2131,7 @@ describe('the mirror barrier', () => {
     });
     const stale = w.calls.s3.filter((x) => x.op.kind === 'put').at(-1)!.op as { body: string };
     expect(stale.body).toContain(await edgeAddress(t, live.e1));
-    const open = await t.query(internal.mirrorUploads.openFor, { subscriptionId: live.subId });
+    const open = await openMirrorUploads(t, { subscriptionId: live.subId });
     expect(open).toHaveLength(1);
     expect(open[0]!.kind).toBe('refresh');
 
@@ -2137,16 +2139,12 @@ describe('the mirror barrier', () => {
     // object is re-rendered under the CURRENT policy: the node is gated, so
     // the mirror stops serving the edge (the unavailable stub).
     await t.action(internal.storage.repairMirrorUploads, {});
-    expect(
-      await t.query(internal.mirrorUploads.openFor, { subscriptionId: live.subId }),
-    ).toHaveLength(1);
+    expect(await openMirrorUploads(t, { subscriptionId: live.subId })).toHaveLength(1);
     vi.advanceTimersByTime(REPAIR_GRACE_MS + 1_000);
     await t.action(internal.storage.repairMirrorUploads, {});
     const repaired = w.calls.s3.filter((x) => x.op.kind === 'put').at(-1)!.op as { body: string };
     expect(repaired.body).toBe(MIRROR_UNAVAILABLE_STUB);
-    expect(await t.query(internal.mirrorUploads.openFor, { subscriptionId: live.subId })).toEqual(
-      [],
-    );
+    expect(await openMirrorUploads(t, { subscriptionId: live.subId })).toEqual([]);
   });
 
   test("a first mirror's upload overtaken by a policy move is repaired the same way", async () => {
@@ -2159,15 +2157,13 @@ describe('the mirror barrier', () => {
       t.mutation(internal.nodeIntents.startMaintenance, { intentId: live.intentId }).then(() => {});
     const res = await t.action(internal.storage.provisionMirror, { userId, countryCode: null });
     expect(res.status).toBe('ok');
-    const open = await t.query(internal.mirrorUploads.openFor, { subscriptionId: live.subId });
+    const open = await openMirrorUploads(t, { subscriptionId: live.subId });
     expect(open.map((o) => o.kind)).toEqual(['initial']);
     vi.advanceTimersByTime(REPAIR_GRACE_MS + 1_000);
     await t.action(internal.storage.repairMirrorUploads, {});
     const repaired = w.calls.s3.filter((x) => x.op.kind === 'put').at(-1)!.op as { body: string };
     expect(repaired.body).toBe(MIRROR_UNAVAILABLE_STUB);
-    expect(await t.query(internal.mirrorUploads.openFor, { subscriptionId: live.subId })).toEqual(
-      [],
-    );
+    expect(await openMirrorUploads(t, { subscriptionId: live.subId })).toEqual([]);
   });
 
   test('a provider that keeps failing keeps ONE open record for its copy (the repair retries it), and it settles once that copy is rewritten', async () => {
@@ -2214,15 +2210,13 @@ describe('the mirror barrier', () => {
         force: true,
       });
     // The copy that was not rewritten may still serve an older policy's body.
-    const left = await t.query(internal.mirrorUploads.openFor, { subscriptionId: live.subId });
+    const left = await openMirrorUploads(t, { subscriptionId: live.subId });
     expect(left.map((o) => o.providers)).toEqual([['p2']]);
     // The provider recovers: the repair rewrites its copy and the record settles.
     __setS3SendForTests(async () => {});
     vi.advanceTimersByTime(REPAIR_GRACE_MS + 1_000);
     await t.action(internal.storage.repairMirrorUploads, {});
-    expect(await t.query(internal.mirrorUploads.openFor, { subscriptionId: live.subId })).toEqual(
-      [],
-    );
+    expect(await openMirrorUploads(t, { subscriptionId: live.subId })).toEqual([]);
     // A policy that keeps moving under the uploads leaves ONE open record, not one per pass.
     __setS3SendForTests(async () => {
       await t.run((c) =>
@@ -2243,9 +2237,9 @@ describe('the mirror barrier', () => {
       });
       await t.action(internal.storage.repairMirrorUploads, {});
     }
-    expect(
-      (await t.query(internal.mirrorUploads.openFor, { subscriptionId: live.subId })).length,
-    ).toBeLessThanOrEqual(1);
+    expect((await openMirrorUploads(t, { subscriptionId: live.subId })).length).toBeLessThanOrEqual(
+      1,
+    );
   });
 
   test('a re-issue that carries the mirror takes its open record along: the repair rewrites the object, never withdraws it', async () => {
@@ -2271,9 +2265,7 @@ describe('the mirror barrier', () => {
       subscriptionId: live.subId,
       force: true,
     });
-    expect(
-      await t.query(internal.mirrorUploads.openFor, { subscriptionId: live.subId }),
-    ).toHaveLength(1);
+    expect(await openMirrorUploads(t, { subscriptionId: live.subId })).toHaveLength(1);
     // The member's key is re-issued: the mirror moves to the new row.
     const old = (await t.run((c) => c.db.get(live.subId)))!;
     const newSub = await t.mutation(internal.subscriptions.insertSubscription, {
@@ -2286,16 +2278,14 @@ describe('the mirror barrier', () => {
       subscriptionMirrors: [],
       carrySubTokenFromId: live.subId,
     });
-    expect(await t.query(internal.mirrorUploads.openFor, { subscriptionId: newSub })).toHaveLength(
-      1,
-    );
+    expect(await openMirrorUploads(t, { subscriptionId: newSub })).toHaveLength(1);
     const deletesBefore = w.calls.s3.filter((x) => x.op.kind === 'delete').length;
     vi.advanceTimersByTime(REPAIR_GRACE_MS + 1_000);
     await t.action(internal.storage.repairMirrorUploads, {});
     expect(w.calls.s3.filter((x) => x.op.kind === 'delete').length).toBe(deletesBefore);
     const rewritten = w.calls.s3.filter((x) => x.op.kind === 'put').at(-1)!.op as { body: string };
     expect(rewritten.body).toBe(MIRROR_UNAVAILABLE_STUB);
-    expect(await t.query(internal.mirrorUploads.openFor, { subscriptionId: newSub })).toEqual([]);
+    expect(await openMirrorUploads(t, { subscriptionId: newSub })).toEqual([]);
   });
 
   test('a residue copy whose delete fails stays open until the delete goes through', async () => {
@@ -2316,7 +2306,7 @@ describe('the mirror barrier', () => {
     });
     vi.advanceTimersByTime(REPAIR_GRACE_MS + 1_000);
     await t.action(internal.storage.repairMirrorUploads, {});
-    const still = await t.query(internal.mirrorUploads.openFor, { subscriptionId: live.subId });
+    const still = await openMirrorUploads(t, { subscriptionId: live.subId });
     expect(still.map((o) => o._id)).toEqual([id]);
     __setS3SendForTests(async (provider, op) => {
       w.calls.s3.push({ op, provider: provider.name });
@@ -2327,9 +2317,7 @@ describe('the mirror barrier', () => {
       op: { kind: 'delete', key: 'mirrors/orphan' },
       provider: 'p1',
     });
-    expect(await t.query(internal.mirrorUploads.openFor, { subscriptionId: live.subId })).toEqual(
-      [],
-    );
+    expect(await openMirrorUploads(t, { subscriptionId: live.subId })).toEqual([]);
   });
 
   test('closing a live node for maintenance rewrites its mirrors under the closed gate', async () => {
@@ -2367,8 +2355,189 @@ describe('the mirror barrier', () => {
     expect(
       (await t.action(internal.storage.provisionMirror, { userId, countryCode: null })).status,
     ).toBe('ok');
-    expect(await t.query(internal.mirrorUploads.openFor, { subscriptionId: live.subId })).toEqual(
-      [],
+    expect(await openMirrorUploads(t, { subscriptionId: live.subId })).toEqual([]);
+  });
+});
+
+describe('retention of the workflow rows (convex/retention.ts)', () => {
+  const OLD = 100 * 86_400_000;
+  const strip = <D extends { _id: unknown; _creationTime: number }>(d: D) => {
+    const { _id, _creationTime, ...rest } = d;
+    return rest;
+  };
+
+  test('terminal rows past the window go; every row something still reads stays', async () => {
+    const w = await world();
+    const { t } = w;
+    const live = await liveL4(w);
+    const old = Date.now() - OLD;
+    const intent = await intentOf(t, live.intentId);
+    const act = await activationRun(t, live.actId);
+    const run = await setupRun(t, live.runId);
+
+    // Setup runs: the node's newest run stays whatever its age; an older finished one goes.
+    const newestRun = await t.run(async (c) => {
+      await c.db.patch(live.runId, { updatedAt: old });
+      return c.db.insert('edgeSetupRuns', { ...strip(run), state: 'failed', updatedAt: old });
+    });
+
+    // Activation runs.
+    const planned = await insertPlanned(t, {
+      relayId: live.relayId,
+      listenerId: (await t.run((c) => c.db.get(live.e1)))!.listenerId,
+      accountId: live.l4,
+      templateHash: 'h',
+      listeners: [{ edgePort: 443, originAddress: ORIGIN_V4, originPort: 443 }],
+      steps: [],
+    });
+    const acts = await t.run(async (c) => {
+      const base = { ...strip(act), updatedAt: old };
+      const other = (hash: string) => ({ ...base.candidate, reviewHash: hash });
+      return {
+        // Committed under an older approval: nothing reads it.
+        staleCommit: await c.db.insert('panelActivationRuns', {
+          ...base,
+          candidate: other('older-review'),
+        }),
+        // Committed under the node's current approval: admission reads its review.
+        approvalCommit: await c.db.insert('panelActivationRuns', { ...base }),
+        // Superseded with a candidate edge still alive: it stays isolated only while the row exists.
+        liveCandidate: await c.db.insert('panelActivationRuns', {
+          ...base,
+          state: 'superseded',
+          resources: { hostUuids: [], edgeIds: [planned.id] },
+        }),
+        // Superseded with only committed resources: nothing left to isolate.
+        spent: await c.db.insert('panelActivationRuns', { ...base, state: 'failed' }),
+      };
+    });
+
+    // Ledger ops: a claimed one stays, an open one stays, the other settled ones go.
+    const ops = await t.run(async (c) => {
+      const all = await c.db
+        .query('panelOps')
+        .withIndex('by_server', (q) => q.eq('backendServerId', w.serverId))
+        .collect();
+      const closed = all.filter((o) => !o.open);
+      expect(closed.length).toBeGreaterThan(1);
+      for (const o of closed) await c.db.patch(o._id, { updatedAt: old });
+      await c.db.insert('panelClaims', {
+        backendServerId: w.serverId,
+        key: 'test:claimed',
+        opId: closed[0]!._id,
+        generation: 1,
+        claimedAt: old,
+      });
+      const open = await c.db.insert('panelOps', { ...strip(closed[1]!), open: true });
+      return { claimed: closed[0]!._id, gone: closed.slice(1).map((o) => o._id), open };
+    });
+
+    // Host hides: the newest row of a Host stays; an older one of the same Host goes;
+    // every row of a deleted origin goes.
+    const hides = await t.run(async (c) => {
+      const row = {
+        relayId: live.relayId,
+        backendServerId: w.serverId,
+        hostUuid: 'host-1',
+        observed: {
+          remark: 'r',
+          address: ORIGIN_V4,
+          port: 443,
+          sni: null,
+          host: null,
+          inboundUuid: null,
+          isDisabled: false,
+        },
+        intent: 'disable' as const,
+        state: 'released' as const,
+        attempt: 1,
+        updatedAt: old,
+      };
+      const older = await c.db.insert('edgeHostHides', row);
+      const newest = await c.db.insert('edgeHostHides', row);
+      const relay = (await c.db.get(live.relayId))!;
+      const goneRelay = await c.db.insert('relays', { ...strip(relay), slug: 'gone-relay' });
+      await c.db.delete(goneRelay);
+      const orphan = await c.db.insert('edgeHostHides', { ...row, relayId: goneRelay });
+      return { older, newest, orphan };
+    });
+
+    // Port changes: a finished one goes with its requirements; one whose op is open stays.
+    const ports = await t.run(async (c) => {
+      const base = {
+        backendServerId: w.serverId,
+        profileUuid: 'p',
+        profileName: 'p',
+        inboundTag: 'tag',
+        inboundUuid: 'u',
+        toPort: 8443,
+        ops: '[]',
+        baseToken: 'b',
+        expectedToken: 'e',
+        inboundUuids: {},
+        createdAt: old,
+        updatedAt: old,
+      };
+      const cancelled = await c.db.insert('panelPortChanges', { ...base, state: 'cancelled' });
+      const requirement = await c.db.insert('panelPortRequirements', {
+        backendServerId: w.serverId,
+        changeId: cancelled,
+        nodeName: NODE,
+        port: 8443,
+        confirmedBy: 'role',
+        state: 'cancelled',
+        createdAt: old,
+        updatedAt: old,
+      });
+      const applying = await c.db.insert('panelPortChanges', {
+        ...base,
+        state: 'applying',
+        opId: ops.open,
+      });
+      return { cancelled, requirement, applying };
+    });
+
+    await t.mutation(internal.retention.sweepEdgeSetupRuns, {});
+    await t.mutation(internal.retention.sweepActivationRuns, {});
+    await t.mutation(internal.retention.sweepHostHides, {});
+    await t.mutation(internal.retention.sweepPortChanges, {});
+    await t.mutation(internal.retention.sweepPanelOps, {});
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const exists = (id: string) =>
+      t.run(async (c) => (await c.db.get(id as Id<'edgeSetupRuns'>)) !== null);
+    expect(await exists(live.runId)).toBe(false);
+    expect(await exists(newestRun)).toBe(true);
+
+    expect(intent.approved?.reviewHash).toBe(act.candidate.reviewHash);
+    expect(await exists(acts.staleCommit)).toBe(false);
+    expect(await exists(acts.approvalCommit)).toBe(true);
+    expect(await exists(acts.liveCandidate)).toBe(true);
+    expect(await exists(acts.spent)).toBe(false);
+    // The node's current run is never swept.
+    if (intent.activation.currentRunId)
+      expect(await exists(intent.activation.currentRunId)).toBe(true);
+    // The live candidate goes once its edge is destroyed.
+    await t.run((c) => c.db.patch(planned.id, { status: 'destroyed' }));
+    await t.mutation(internal.retention.sweepActivationRuns, {});
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(await exists(acts.liveCandidate)).toBe(false);
+
+    expect(await exists(hides.older)).toBe(false);
+    expect(await exists(hides.newest)).toBe(true);
+    expect(await exists(hides.orphan)).toBe(false);
+
+    expect(await exists(ports.cancelled)).toBe(false);
+    expect(await exists(ports.requirement)).toBe(false);
+    expect(await exists(ports.applying)).toBe(true);
+
+    expect(await exists(ops.claimed)).toBe(true);
+    expect(await exists(ops.open)).toBe(true);
+    for (const id of ops.gone) expect(await exists(id)).toBe(false);
+
+    // Members keep the committed delivery throughout.
+    expect((await gateOfNode(t, { backendServerId: w.serverId, nodeName: NODE })).state).toBe(
+      'open',
     );
   });
 });

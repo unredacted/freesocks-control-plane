@@ -111,10 +111,6 @@ export function transportFor(setup: Setup, slug: string) {
   return { ...m.transport!, tag: m.tag };
 }
 
-export function shapeOf(setup: Setup, slug: string): ModeShape {
-  return modeEntry(setup, slug).shape;
-}
-
 /** Whether a node of this mode runs Caddy in front of a loopback WebSocket transport. */
 export const isWs = (shape: ModeShape): boolean => shape.transport === 'ws';
 /** Whether members reach a node of this mode at its own address. */
@@ -1584,11 +1580,6 @@ export const blockedNodeNames = internalQuery({
   },
 });
 
-export const nodeGate = internalQuery({
-  args: { backendServerId: v.id('backendServers'), nodeName: v.optional(v.string()) },
-  handler: (ctx, { backendServerId, nodeName }) => nodeGateFor(ctx, backendServerId, nodeName),
-});
-
 // --- retirement request (the role) ---------------------------------------------------------------------
 
 /**
@@ -1918,7 +1909,7 @@ export const holdsView = internalQuery({
 });
 
 /**
- * The machine is cleaned up: `ready_to_wipe` -> `wiped` -> `retired`. The role
+ * The machine is cleaned up: `ready_to_wipe` -> `retired` (events `wiped`, `retired`). The role
  * reports it for a node FCP bootstrapped; for an ADOPTED node the role is never
  * run, so an admin confirms it instead (`byAdminId`) and the same step closes
  * the ladder. Without either, the retirement would sit at `ready_to_wipe`.
@@ -1930,7 +1921,7 @@ export const markWiped = internalMutation({
     if (!intent) return refuse('not_found', 'No such node');
     const r = intent.retirementId ? await ctx.db.get(intent.retirementId) : null;
     if (!r) refuse('servers.not_retiring', 'This node is not being retired');
-    if (r!.stage === 'wiped' || r!.stage === 'retired') return { stage: r!.stage };
+    if (r!.stage === 'retired') return { stage: r!.stage };
     if (r!.stage !== 'ready_to_wipe')
       refuse('servers.retirement_stage', `The node is not ready to wipe yet (${r!.stage})`);
     const byAdmin = byAdminId !== undefined;
@@ -1967,15 +1958,6 @@ export const markWiped = internalMutation({
 export const byName = internalQuery({
   args: { backendServerId: v.id('backendServers'), name: v.string() },
   handler: (ctx, { backendServerId, name }) => intentByName(ctx, backendServerId, name),
-});
-
-export const listForServer = internalQuery({
-  args: { backendServerId: v.id('backendServers') },
-  handler: (ctx, { backendServerId }) =>
-    ctx.db
-      .query('panelNodeIntents')
-      .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
-      .collect(),
 });
 
 /** The role-facing view: what the role may know (never a secret, never another node). */

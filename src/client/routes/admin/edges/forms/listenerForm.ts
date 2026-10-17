@@ -11,7 +11,6 @@
  *   formCombo(form)                      the catalogue entry for the chosen combination
  *   listenerFormIssues(form, originKind) -> string[] (empty = valid)
  *   toListenerSpec(form)                 -> ListenerSpec body
- *   toDraftListener(form)                -> the triple (+ port, names) the setup draft carries
  */
 import type { z } from 'zod';
 import type { RelayListenerAdmin, SetupDraft } from '@shared/contracts/edges';
@@ -220,24 +219,4 @@ export function toListenerSpec(form: ListenerForm, originKind: OriginKind): List
       provider: form.providerScope as NonNullable<ListenerSpecBody['providerScope']>['provider'],
     };
   return spec;
-}
-
-export function toDraftListener(form: ListenerForm): DraftListener {
-  const combo = formCombo(form);
-  const port = portOf(form.originPort);
-  const out: DraftListener = {
-    protocol: combo.protocol,
-    streamTransport: combo.streamTransport,
-    security: combo.security,
-  };
-  if (port !== null) out.originPort = port;
-  if (combo.usesSni && form.tlsNames.length > 0) out.tlsNames = [...form.tlsNames];
-  if (combo.isHttpTransport && form.frontable)
-    out.originTransport = {
-      scheme: form.scheme,
-      certPublic: form.scheme === 'https' ? form.certPublic : false,
-      certNames: form.scheme === 'https' ? [...form.certNames] : [],
-      acceptsHostHeader: form.acceptsHostHeader,
-    };
-  return out;
 }

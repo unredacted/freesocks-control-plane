@@ -27,6 +27,7 @@ import {
   installFakeBackend,
   type FakeBackend,
 } from './lib/edges/testing/fakeBackend';
+import { gateOfNode } from './lib/edges/testing/reads';
 
 const modules = import.meta.glob('./**/*.*s');
 type T = TestConvex<typeof schema>;
@@ -151,7 +152,7 @@ async function seedLiveDirect(
 }
 
 const gateOf = (t: T, serverId: Id<'backendServers'>) =>
-  t.query(internal.nodeIntents.nodeGate, { backendServerId: serverId, nodeName: 'node-a' });
+  gateOfNode(t, { backendServerId: serverId, nodeName: 'node-a' });
 
 /** A live direct node: seeded, confirmed, approved and committed. */
 async function liveAndCommitted() {
@@ -659,7 +660,7 @@ describe('activating a direct node', () => {
     });
     expect(
       (
-        await t.query(internal.nodeIntents.nodeGate, {
+        await gateOfNode(t, {
           backendServerId: serverId,
           nodeName: 'legacy-a',
         })
@@ -805,8 +806,7 @@ describe('activating a direct node', () => {
     expect(intent.activation.stage).toBe('awaiting_approval');
     expect((await gateOf(t, serverId)).state).toBe('blocked');
     // The unmanaged node is held closed by name until released.
-    const strangerGate = () =>
-      t.query(internal.nodeIntents.nodeGate, { backendServerId: serverId, nodeName: 'stranger' });
+    const strangerGate = () => gateOfNode(t, { backendServerId: serverId, nodeName: 'stranger' });
     expect((await strangerGate()).state).toBe('blocked');
     const holds = await t.query(internal.nodeIntents.holdsView, { backendServerId: serverId });
     expect(holds).toHaveLength(1);

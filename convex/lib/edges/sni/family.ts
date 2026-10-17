@@ -155,11 +155,6 @@ export function planAllowlist(
   };
 }
 
-/** `host:port` of a static target, as the backend spells a REALITY target. */
-export function targetString(t: { address: string; port: number }): string {
-  return t.address.includes(':') ? `[${t.address}]:${t.port}` : `${t.address}:${t.port}`;
-}
-
 export function sameTarget(
   a: { address: string; port: number } | null | undefined,
   b: { address: string; port: number },

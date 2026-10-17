@@ -5,7 +5,7 @@
  * users-online here; the per-PLACEMENT cache (remnawaveNodeStats) cannot
  * isolate one node behind a shared origin mode group. Stats only, no secrets.
  */
-import { internalAction, internalMutation, internalQuery } from './_generated/server';
+import { internalAction, internalMutation } from './_generated/server';
 import { internal } from './_generated/api';
 import { v } from 'convex/values';
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
@@ -55,26 +55,6 @@ export const markNodeInventory = internalMutation({
     for (const r of existing) if (!seen.has(r.nodeUuid)) await ctx.db.delete(r._id);
     return null;
   },
-});
-
-/** One node's cached row by (instance, backend node name). */
-export const getByServerName = internalQuery({
-  args: { backendServerId: v.id('backendServers'), name: v.string() },
-  handler: (ctx, { backendServerId, name }) =>
-    ctx.db
-      .query('backendNodeInventory')
-      .withIndex('by_server_name', (q) => q.eq('backendServerId', backendServerId).eq('name', name))
-      .unique(),
-});
-
-/** Every cached node row for one instance (small, admin/detector reads). */
-export const listByServer = internalQuery({
-  args: { backendServerId: v.id('backendServers') },
-  handler: (ctx, { backendServerId }) =>
-    ctx.db
-      .query('backendNodeInventory')
-      .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
-      .collect(),
 });
 
 /**

@@ -15,7 +15,6 @@
  * cannot be released while an LB holds it). Every kind is read back after its
  * delete: an LB still `ready` means the delete never landed (`still_present`).
  */
-import { z } from 'zod';
 import {
   createAdvancedClient,
   withHTTPClient,
@@ -34,7 +33,6 @@ import type {
   ResourceStep,
   ScalewayConfig,
   StepOutcome,
-  TemplateFieldDescriptor,
 } from './types';
 import { firstResource, orderByKind, resourcesOfKind } from './types';
 import { EdgeProviderError, toProviderError, credentialTestFailure } from './http';

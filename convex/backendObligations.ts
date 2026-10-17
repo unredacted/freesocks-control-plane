@@ -1,10 +1,10 @@
 /**
  * Obligation rows: the external side effects of the bootstrap workflows
  * (docs/servers.md "Node lifecycle"). A row lands BEFORE the call; an
- * outstanding one blocks its identity whatever generation owns it; a lease
- * expiry only resumes discovery of the same attempt; settlement reconciles
- * the result against what is wanted now (lib/backend/obligations.ts). Nothing
- * here calls a provider.
+ * outstanding one blocks its identity whatever generation owns it
+ * (`blocksIdentity`, lib/backend/obligations.ts); a lease expiry only resumes
+ * discovery of the same attempt, and the owning workflow settles a late result
+ * against what it wants now. Nothing here calls a provider.
  */
 import { v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
@@ -16,7 +16,6 @@ export const ownerKind = v.union(
   v.literal('intent'),
   v.literal('activation'),
   v.literal('retirement'),
-  v.literal('migration'),
 );
 export const obligationKind = v.union(
   v.literal('profile.create'),
@@ -128,9 +127,4 @@ export const mark = internalMutation({
     });
     return null;
   },
-});
-
-export const get = internalQuery({
-  args: { id: v.id('backendObligations') },
-  handler: (ctx, { id }) => ctx.db.get(id),
 });

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { judgeHandshake, judgeImport, planAllowlist, sameTarget, targetString } from './family';
+import { judgeHandshake, judgeImport, planAllowlist, sameTarget } from './family';
 
 describe('judgeImport', () => {
   test('every line gets a verdict; nothing is decided silently', () => {
@@ -132,9 +132,7 @@ describe('planAllowlist', () => {
 });
 
 describe('targets', () => {
-  test('spelling and comparison', () => {
-    expect(targetString({ address: 'target.example', port: 443 })).toBe('target.example:443');
-    expect(targetString({ address: '2001:db8::1', port: 443 })).toBe('[2001:db8::1]:443');
+  test('comparison', () => {
     expect(
       sameTarget(
         { address: 'Target.Example', port: 443 },

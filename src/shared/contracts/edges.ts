@@ -277,9 +277,15 @@ export const OriginAdmin = z.object({
     .default(null),
   providerPreference: EdgeProviderId.nullable(),
   desiredPublished: z.number(),
+  /**
+   * The five per-origin knobs (`standbyPerRelay`, `standbyPerListener`,
+   * `cooldownMinutes`, `maxRotationsPerDay`, `drainMinutes`) are EFFECTIVE
+   * values: the origin's own override, else the fleet setting. `overrides`
+   * names the ones this origin sets itself; a PATCH with `null` clears one.
+   */
   standbyPerRelay: z.number(),
-  /** Verified standbys kept per coverage listener (null = the config default). */
-  standbyPerListener: z.number().nullable().default(null),
+  /** Verified standbys kept per coverage listener. */
+  standbyPerListener: z.number().default(0),
   /** The delivery binding is deferred to go-live (a guided relay): members still get the raw body. */
   bindingDeferred: z.boolean().default(false),
   /** A guided setup owns the relay: upkeep and automatic replacement skip it. */
@@ -287,6 +293,7 @@ export const OriginAdmin = z.object({
   cooldownMinutes: z.number(),
   maxRotationsPerDay: z.number(),
   drainMinutes: z.number(),
+  overrides: z.array(z.string()).default([]),
   publicationEpoch: z.number(),
   publishedEdgeIds: z.array(z.string().nullable()),
   publishedCount: z.number(),
@@ -1144,7 +1151,6 @@ export const EdgeConfigView = z.object({
     .object({
       enabled: z.boolean(),
       autoRotate: z.boolean(),
-      providerAffinity: z.enum(['rotate', 'sticky']),
       desiredPublishedDefault: z.number(),
       standbyPerRelay: z.number(),
       standbyPerListener: z.number().default(0),

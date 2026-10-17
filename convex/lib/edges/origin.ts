@@ -49,16 +49,6 @@ export function hostModeAllowed(o: RelayOrigin, caps: BackendCapabilities | null
   return o.kind === 'panel-node' && !!caps?.hostManagement;
 }
 
-/** Whether subscriptions can render for this origin (a body FCP serves maps to it). */
-export function originRenders(o: RelayOrigin): boolean {
-  return o.kind !== 'manual';
-}
-
-/** Whether the detector has a node-online / load signal for this origin. */
-export function originHasNodeSignal(o: RelayOrigin, caps: BackendCapabilities | null): boolean {
-  return o.kind === 'panel-node' && !!caps?.nodeInventory;
-}
-
 /** Audit-safe description: kind + which backend, never the address. */
 export function describeOrigin(o: RelayOrigin): {
   kind: RelayOriginKind;
@@ -66,13 +56,4 @@ export function describeOrigin(o: RelayOrigin): {
 } {
   const id = originBackendServerId(o);
   return id ? { kind: o.kind, backendServerId: id as string } : { kind: o.kind };
-}
-
-/** Two origins name the same place (the one-origin-per-node / per-server rule). */
-export function sameOriginKey(a: RelayOrigin, b: RelayOrigin): boolean {
-  if (a.kind !== b.kind) return false;
-  if (a.kind === 'manual') return false;
-  if (a.kind === 'panel-node' && b.kind === 'panel-node')
-    return a.backendServerId === b.backendServerId && a.nodeName === b.nodeName;
-  return originBackendServerId(a) === originBackendServerId(b);
 }

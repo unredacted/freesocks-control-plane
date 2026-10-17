@@ -5,7 +5,7 @@
  *
  * Exports:
  *   suspicionChip(suspicion)         the detector chip of the header (null = nothing to say)
- *   tupleLine / tuplesEqual          Host tuples of the quarantine resolver
+ *   tupleLine                        Host tuples of the quarantine resolver
  *   highlightedColumn(match)         which recorded binding the live Host matches
  *   MATCH_WORDS                      the match verdict in words
  *   recommendKeep(listeners)         the binding every inspected listener agrees on, or null
@@ -82,10 +82,6 @@ export type QuarantineMatch = QuarantineListener['match'];
 export function tupleLine(t: Tuple | null | undefined): string {
   if (!t) return '';
   return `${t.address}:${t.port}`;
-}
-export function tuplesEqual(a: Tuple | null | undefined, b: Tuple | null | undefined): boolean {
-  if (!a || !b) return false;
-  return a.address === b.address && a.port === b.port && a.sni === b.sni && a.host === b.host;
 }
 export function highlightedColumn(match: QuarantineMatch): 'previous' | 'current' | null {
   return match === 'previous' || match === 'current' ? match : null;

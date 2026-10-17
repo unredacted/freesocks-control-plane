@@ -12,7 +12,7 @@
 import { writeAuditLog } from './lib/audit';
 import { ConvexError, v } from 'convex/values';
 import type { ActionCtx } from './_generated/server';
-import { internalAction, internalMutation, internalQuery } from './_generated/server';
+import { internalAction, internalMutation } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { capabilitiesOf } from './lib/backends/capabilities';
@@ -246,14 +246,15 @@ export const record = internalMutation({
     const profileBy = new Map(profileRows.map((r) => [r.profileUuid, r]));
     // Every token a change made from FCP said the profile would end up with.
     // An edit that lands on one of them is ours, whenever it is first seen.
+    // Only PROFILE ops are read (their own index), so a busy Host or node
+    // history can never push FCP's last profile edit out of the window.
     const expectedTokens = new Set<string>();
     if (!a.ownEdit)
       for (const op of await ctx.db
         .query('panelOps')
-        .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+        .withIndex('by_server_kind', (q) => q.eq('backendServerId', sid).eq('kind', 'profile'))
         .order('desc')
         .take(200)) {
-        if (op.kind !== 'profile') continue;
         try {
           const token = (JSON.parse(op.postcondition) as { expectedToken?: unknown }).expectedToken;
           if (typeof token === 'string') expectedTokens.add(token);
@@ -331,27 +332,6 @@ export const recordFailure = internalMutation({
       errorCode,
       counts: prev?.counts,
     });
-    return null;
-  },
-});
-
-/** Drop an instance's cache (the instance was removed, or lost the capability). */
-export const clear = internalMutation({
-  args: { backendServerId: v.id('backendServers') },
-  handler: async (ctx, { backendServerId }) => {
-    for (const table of [
-      'panelNodes',
-      'panelProfiles',
-      'panelHosts',
-      'panelSquads',
-      'panelObserveState',
-    ] as const) {
-      const rows = await ctx.db
-        .query(table)
-        .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
-        .collect();
-      for (const r of rows) await ctx.db.delete(r._id);
-    }
     return null;
   },
 });
@@ -447,38 +427,3 @@ export const refresh = internalAction({
 });
 
 // --- reads ---------------------------------------------------------------------------------------
-
-export const snapshot = internalQuery({
-  args: { backendServerId: v.id('backendServers') },
-  handler: async (ctx, { backendServerId }) => {
-    const sid = backendServerId;
-    const [nodes, profiles, hosts, squads, state] = await Promise.all([
-      ctx.db
-        .query('panelNodes')
-        .withIndex('by_server', (q) => q.eq('backendServerId', sid))
-        .collect(),
-      ctx.db
-        .query('panelProfiles')
-        .withIndex('by_server', (q) => q.eq('backendServerId', sid))
-        .collect(),
-      ctx.db
-        .query('panelHosts')
-        .withIndex('by_server', (q) => q.eq('backendServerId', sid))
-        .collect(),
-      ctx.db
-        .query('panelSquads')
-        .withIndex('by_server', (q) => q.eq('backendServerId', sid))
-        .collect(),
-      ctx.db
-        .query('panelObserveState')
-        .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
-        .unique(),
-    ]);
-    return { nodes, profiles, hosts, squads, state };
-  },
-});
-
-export const states = internalQuery({
-  args: {},
-  handler: (ctx) => ctx.db.query('panelObserveState').collect(),
-});

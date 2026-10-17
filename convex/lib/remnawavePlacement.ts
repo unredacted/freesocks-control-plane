@@ -94,17 +94,6 @@ export async function resolvePlacementPool(
   return [];
 }
 
-/** Deterministic first-of-pool (declaration order) — the tier-push preserve
- *  fallback for rows with no persisted placement. Routes through
- *  `resolvePlacementPool` so a renewal never CLEARS the mode group of a key whose mode
- *  lost its pool (which would strand a live key). */
-export async function resolveModePlacementStable(
-  db: DatabaseReader,
-  modeId: string | null | undefined,
-): Promise<string | null> {
-  return (await resolvePlacementPool(db, modeId))[0] ?? null;
-}
-
 /** Per-mode bound-mode group COUNTS (non-secret — pool sizes only, never the UUIDs).
  *  Feeds the admin placement editor's "N mode groups bound" feedback so a typo'd or
  *  half-pasted pool is visible immediately, not as a silently dead node. Raw

@@ -4,12 +4,7 @@
  * the things an operator should notice. No em-dashes, no API paths, no bare
  * code words: copy only.
  */
-import type {
-  TransportView,
-  NodeView,
-  ServerObserveState,
-  ServerTree,
-} from '../../../../../shared/contracts/servers';
+import type { TransportView, NodeView, ServerTree } from '../../../../../shared/contracts/servers';
 
 export type Dot = 'green' | 'amber' | 'red' | 'grey';
 
@@ -49,20 +44,6 @@ export function serverNamesLabel(i: Pick<TransportView, 'serverNames'>): string 
   const n = i.serverNames.length;
   if (n === 0) return 'No server names';
   return n === 1 ? '1 server name' : `${n} server names`;
-}
-
-/** How fresh the picture is, in the words of someone reading the page. */
-export function observedWords(s: ServerObserveState, observeOn: boolean, now: number): string {
-  if (s.ok === null)
-    return observeOn
-      ? 'Not read yet. It is read every ten minutes, or press Refresh.'
-      : 'Not read yet. Press Refresh to read it once, or turn on regular reading below.';
-  const when = s.observedAt ? ago(now - Date.parse(s.observedAt)) : null;
-  if (!s.ok)
-    return when
-      ? `The last read failed. Showing what was read ${when}.`
-      : 'The backend could not be read. Check the address and the API token of this server.';
-  return `Read ${when ?? 'just now'}.`;
 }
 
 export function ago(ms: number): string {
@@ -203,11 +184,6 @@ export function nodeNotes(n: Pick<NodeView, 'transports'>): string[] {
 function list(names: readonly string[]): string {
   if (names.length <= 3) return names.join(', ');
   return `${names.slice(0, 3).join(', ')} and ${names.length - 3} more`;
-}
-
-/** A profile was edited on the backend by something other than this page. */
-export function foreignEditWords(name: string, agoWords: string): string {
-  return `${name} was changed on the backend ${agoWords}, not from here. What this page shows of it may be out of date.`;
 }
 
 /** One line for a toast when a server call failed, from its error code. */
@@ -395,7 +371,6 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.relay_draining': 'Its edges are still being taken down.',
   'servers.credentials_pending': 'Its test credentials are still being removed from the backend.',
   'servers.retirement_failed': 'Retiring stopped on an error. It is tried again shortly.',
-  'servers.migration_target': 'The target node must be live.',
   'servers.migration_not_built':
     'Moving members to another node is not available yet. Choose to keep them dark.',
 };

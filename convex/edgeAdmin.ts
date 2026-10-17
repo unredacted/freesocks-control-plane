@@ -41,13 +41,7 @@ import {
   mapRelayAdmin,
   scheduleMirrorRefresh,
 } from './relays';
-import {
-  activeNames,
-  hostSniOf,
-  listenerRemark,
-  listenersOf,
-  mapListenerAdmin,
-} from './relayListeners';
+import { hostSniOf, listenerRemark, listenersOf, mapListenerAdmin } from './relayListeners';
 import { EDGE_PROVIDER_CAPABILITIES } from './lib/edges/providers/capabilities';
 import { protocolLabel } from './lib/edges/protocols';
 import { destroyedPatch, mapEdgeAdmin } from './edges';
@@ -61,6 +55,7 @@ const SAMPLE_RENDER_KEY = 'sample-subscriber-0000';
 export const summary = internalQuery({
   args: {},
   handler: async (ctx) => {
+    const cfg = await resolveEdgeConfig(ctx.db);
     const origins = (await ctx.db.query('relays').collect()).sort((a, b) =>
       a.slug.localeCompare(b.slug),
     );
@@ -134,7 +129,7 @@ export const summary = internalQuery({
         }
       }
       out.push({
-        relay: mapRelayAdmin(o),
+        relay: mapRelayAdmin(o, cfg),
         pool,
         standbys: edges.filter((e) => e.status === 'active' && e.publication === 'unpublished')
           .length,
@@ -144,28 +139,6 @@ export const summary = internalQuery({
       });
     }
     return { counts, relays: out, generatedAt: new Date().toISOString() };
-  },
-});
-
-/** The dashboard mini-card figures (cheap subset of `summary`). */
-export const dashboardCounts = internalQuery({
-  args: {},
-  handler: async (ctx) => {
-    const origins = await ctx.db.query('relays').collect();
-    let published = 0;
-    let suspected = 0;
-    let quarantined = 0;
-    let rotating = 0;
-    for (const o of origins) {
-      published += publishedCount(o.publishedEdgeIds);
-      if (o.suspicion?.state === 'suspected') suspected++;
-      if (o.quarantine) quarantined++;
-      if (o.activeRotationId) {
-        const r = await ctx.db.get(o.activeRotationId);
-        if (r && !isTerminalPhase(r.phase)) rotating++;
-      }
-    }
-    return { relays: origins.length, published, suspected, quarantined, rotating };
   },
 });
 
@@ -401,9 +374,9 @@ function udpProviderAvailable(): boolean {
 }
 
 /**
- * The node role's view of an origin (`GET/PUT …/origins/by-slug/{slug}`): the
- * minimal projection. No detector state, no rotation limits, no pool-wide
- * provider names: a leaked register token learns none of them.
+ * An origin's minimal projection (`GET …/relays/by-slug/{slug}`, an admin read
+ * since the v1 role's registration route is gone). No detector state, no
+ * rotation limits, no pool-wide provider names.
  */
 export const relayBySlugView = internalQuery({
   args: { slug: v.string() },

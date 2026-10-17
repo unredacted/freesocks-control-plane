@@ -203,23 +203,6 @@ export const dropUnissued = internalMutation({
 });
 
 /**
- * Release a credential early (the sheet closed, the run was cancelled): the
- * row expires now and the next sweep removes the key. Idempotent.
- */
-export const release = internalMutation({
-  args: { id: v.id('edgeTestCredentials') },
-  handler: async (ctx, { id }) => {
-    const row = await ctx.db.get(id);
-    if (!row || row.removal !== 'pending') return null;
-    await ctx.db.patch(id, {
-      expiresAt: Math.min(row.expiresAt, Date.now()),
-      updatedAt: Date.now(),
-    });
-    return null;
-  },
-});
-
-/**
  * The operator closed or finished a test card: the temporary credential behind
  * its link expires now (the sweep removes it). Scoped to the edge's origin so a
  * caller cannot expire another origin's credential by id.
@@ -513,16 +496,6 @@ export const dropRows = internalMutation({
     for (const id of ids) if (await ctx.db.get(id)) await ctx.db.delete(id);
     return null;
   },
-});
-
-/** `failed` rows (the attention query reads these). */
-export const listFailed = internalQuery({
-  args: {},
-  handler: (ctx) =>
-    ctx.db
-      .query('edgeTestCredentials')
-      .withIndex('by_removal_expires', (q) => q.eq('removal', 'failed'))
-      .take(SWEEP_BATCH),
 });
 
 export type TestCredentialRow = Doc<'edgeTestCredentials'>;

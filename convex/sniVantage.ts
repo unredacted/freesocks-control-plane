@@ -25,7 +25,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { writeAuditLog } from './lib/audit';
 import { recordHeartbeat } from './cronHeartbeat';
-import { resolveEdgeConfig, resolveEdgeSecrets } from './lib/edgeConfig';
+import { EDGE_PLUMBING, resolveEdgeConfig, resolveEdgeSecrets } from './lib/edgeConfig';
 import { admitted, assertAdmission } from './lib/edges/maintenance';
 import { normalizeName } from './lib/edges/registration';
 import { SUSPECT_DEFAULTS, dayOf, suspectNames, type NameCount } from './lib/edges/sni/health';
@@ -563,7 +563,7 @@ export const batchContext = internalQuery({
       country,
       perCountryLimit: cfg.perCountryLimit,
       preferEyeball: edgeCfg.probe.preferEyeball,
-      spacingMs: edgeCfg.probe.sourceSpacingMs,
+      spacingMs: EDGE_PLUMBING.probeSourceSpacingMs,
       secrets,
       rows: rows.map((r) => ({
         id: r._id,

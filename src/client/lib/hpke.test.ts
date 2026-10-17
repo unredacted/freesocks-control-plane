@@ -56,11 +56,11 @@ describe('prepareOutbound on the member routes sealed in 2026-09', () => {
       method: 'GET',
       path,
       respEphPubB64: out!.header!.value,
-      responseObj: { content: 'vless://uuid@1.2.3.4:443', contentType: 'text/plain' },
+      responseObj: { content: 'vless://uuid@192.0.2.4:443', contentType: 'text/plain' },
     });
     expect(isSealedWire(wire)).toBe(true);
     const opened = await hpke.openInbound(out!, path, 'GET', wire);
-    expect(opened).toEqual({ content: 'vless://uuid@1.2.3.4:443', contentType: 'text/plain' });
+    expect(opened).toEqual({ content: 'vless://uuid@192.0.2.4:443', contentType: 'text/plain' });
   });
 
   test('POST /api/v1/account/redeem-code: the request body is a sealed envelope the server opens to the code', async () => {

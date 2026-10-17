@@ -63,8 +63,3 @@ export function edgeProviderConfigFrom(
   }
   return { ...settings, ...credentials } as unknown as EdgeProviderConfig;
 }
-
-/** Default template params per provider (seeded on first use). */
-export function defaultTemplateParams(id: EdgeProviderId): Record<string, unknown> {
-  return EDGE_PROVIDERS[id].defaultTemplate as Record<string, unknown>;
-}

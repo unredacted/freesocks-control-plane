@@ -209,7 +209,6 @@ export const ATTENTION_KINDS = [
   'account_unqualified',
   'account_untested',
   'test_key_cleanup',
-  'drift',
   'restore_in_progress',
   'maintenance_frozen',
   // Operations safety (docs/edges.md § "Operations safety").
@@ -284,6 +283,8 @@ export const DELIVERY_UNAVAILABLE_CODES = [
   'node_gated',
   'policy_moved',
   'family_disabled',
+  // the format's renderer could not rewrite the body for another reason
+  'render_failed',
 ] as const;
 export type DeliveryUnavailableCode = (typeof DELIVERY_UNAVAILABLE_CODES)[number];
 

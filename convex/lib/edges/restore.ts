@@ -12,16 +12,6 @@ import { writeAuditLog } from '../audit';
 export type RestorePurpose = 'cancel_setup' | 'release_requirement' | 'delete_relay';
 export type RestorePhase = NonNullable<Doc<'relays'>['restore']>['phase'];
 
-export const RESTORE_PHASES: readonly RestorePhase[] = [
-  'freeze',
-  'settle',
-  'verify_fcp_raw',
-  'release_binding',
-  'restore',
-  'verify_direct',
-  'finish',
-];
-
 export function assertNoRestore(relay: Pick<Doc<'relays'>, 'restore'>): void {
   if (relay.restore)
     throw new ConvexError({
@@ -70,10 +60,13 @@ export async function startRestoreWorkflow(
       startedAt: now,
       updatedAt: now,
       attempt: 0,
-      darkCohortKeys: opts.darkCohortKeys ?? [],
       ...(opts.force !== undefined ? { force: opts.force } : {}),
       ...(opts.actorAdminId ? { actorAdminId: opts.actorAdminId } : {}),
     },
+    // The consented dark cohorts live on the origin, the one copy the workflow
+    // reads: a cancelled setup's (from its rehearsal) replace them; otherwise
+    // the origin keeps the ones its go-live stamped.
+    ...(opts.darkCohortKeys ? { darkCohortKeys: opts.darkCohortKeys } : {}),
     updatedAt: now,
   });
   await writeAuditLog(ctx, {

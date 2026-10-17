@@ -506,6 +506,36 @@ describe('edgeRotations: replace', () => {
     expect(audit.some((a) => a.action === 'admin.edge.burn')).toBe(true);
   });
 
+  test("the origin's own drain and cooldown win over the fleet's (one inheritance rule)", async () => {
+    vi.useFakeTimers();
+    fakeWorld();
+    const { t, relayId, oldEdgeId } = await seed();
+    // The fleet drains for a day; this origin set 7 minutes and a 15-minute cooldown.
+    await t.mutation(internal.relays.update, { id: relayId, drainMinutes: 7, cooldownMinutes: 15 });
+    await provisionSpare(t, relayId);
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'replace',
+      trigger: 'manual',
+      targetEdgeId: oldEdgeId,
+    });
+    await drain(t, rotationId);
+    expect((await t.query(internal.edgeRotations.get, { id: rotationId }))!.phase).toBe('done');
+    const oldEdge = (await t.query(internal.edges.get, { id: oldEdgeId }))!;
+    expect(oldEdge.status).toBe('draining');
+    // Stamped at publish and again at finalize (a poll later): minutes, never the fleet's day.
+    const drainMs = oldEdge.drainUntil! - oldEdge.statusChangedAt!;
+    expect(drainMs).toBeGreaterThanOrEqual(7 * 60_000);
+    expect(drainMs).toBeLessThan(8 * 60_000);
+    const origin = (await t.query(internal.relays.get, { id: relayId }))!;
+    expect(origin.cooldownUntil! - origin.lastRotatedAt!).toBe(15 * 60_000);
+    // Null clears the override: the origin follows the fleet again.
+    await t.mutation(internal.relays.update, { id: relayId, drainMinutes: null });
+    const cleared = (await t.query(internal.relays.get, { id: relayId }))!;
+    expect(cleared.drainMs).toBeUndefined();
+    expect(cleared.cooldownMs).toBe(15 * 60_000);
+  });
+
   test('hosts_changed during the flip rolls back the complete binding; the new edge stays as a standby', async () => {
     vi.useFakeTimers();
     const world = fakeWorld({ vanishAfterFirstPatch: true });

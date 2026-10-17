@@ -124,10 +124,6 @@ export function isProviderNotFound(err: unknown): boolean {
   return err instanceof EdgeProviderError && err.meta.status === 404;
 }
 
-export function isProviderTimeout(err: unknown): boolean {
-  return err instanceof EdgeProviderError && err.meta.timedOut;
-}
-
 /** A short error code from a JSON error body, under the keys providers use; else undefined. */
 export function extractErrorCode(json: unknown): string | undefined {
   if (!json || typeof json !== 'object') return undefined;

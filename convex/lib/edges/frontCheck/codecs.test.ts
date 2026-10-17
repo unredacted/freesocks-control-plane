@@ -34,7 +34,7 @@ import {
 } from './grpc';
 import { buildVlessRequest, isUuid, parseVlessResponse, uuidToBytes } from './vless';
 import { buildTrojanRequest, trojanKey } from './trojan';
-import { headerHasToken, looksFrontGenerated, parseHttpHead, tunnelProbeRequest } from './http1';
+import { headerHasToken, parseHttpHead, tunnelProbeRequest } from './http1';
 
 const enc = (s: string) => new TextEncoder().encode(s);
 const hex = (b: Uint8Array) => Buffer.from(b).toString('hex');
@@ -69,17 +69,6 @@ describe('http/1.1 head parsing', () => {
     expect(headerHasToken('keep-alive, Upgrade', 'upgrade')).toBe(true);
     expect(headerHasToken('keep-alive', 'upgrade')).toBe(false);
     expect(headerHasToken(undefined, 'upgrade')).toBe(false);
-  });
-
-  test('recognises a front-generated answer by its own headers', () => {
-    const head = parseHttpHead(
-      enc('HTTP/1.1 403 Forbidden\r\nServer: cloudflare\r\ncf-ray: 1\r\n\r\n'),
-    )!;
-    expect(looksFrontGenerated(head)).toBe(true);
-    const node = parseHttpHead(
-      enc('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n'),
-    )!;
-    expect(looksFrontGenerated(node)).toBe(false);
   });
 
   test('the tunnel probe asks for the target by name and closes after it', () => {

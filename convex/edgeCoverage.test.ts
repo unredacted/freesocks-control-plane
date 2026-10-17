@@ -25,6 +25,7 @@ import {
   shadowsocksListener,
   wsListener,
 } from './lib/edges/testing/fixtures';
+import { relayBySlug } from './lib/edges/testing/reads';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -148,7 +149,7 @@ describe('coverage: capacity follows the deployed listeners', () => {
       /listener_cap.*at most 8|at most 8/,
     );
     // The refused create left nothing behind.
-    expect(await t.query(internal.relays.getBySlug, { slug: 'node-cap' })).toBeNull();
+    expect(await relayBySlug(t, { slug: 'node-cap' })).toBeNull();
     const eight = await t.mutation(internal.relays.create, body(8));
     expect((await relayOf(t, eight.id)).desiredPublished).toBe(8);
     // An existing listener re-stated is not "a ninth".

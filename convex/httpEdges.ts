@@ -186,7 +186,7 @@ export function throttlePolicyFor(parts: string[]): RateLimitPolicyKey | null {
  * listing): throttled under the same policy as the provider-calling POSTs.
  */
 export function throttlePolicyForGet(parts: string[]): RateLimitPolicyKey | null {
-  const [a, b, c, d] = parts;
+  const [a, b, c] = parts;
   if (a === 'relays' && b === 'inbound-candidates' && !c) return 'admin.edges.provider-call';
   return null;
 }
@@ -425,7 +425,7 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
       const fromMs = Number(query.get('from') ?? '');
       const toMs = Number(query.get('to') ?? '');
       return json(
-        await ctx.runQuery(internal.probes.summary, {
+        await ctx.runAction(internal.probes.summary, {
           ...(Number.isFinite(fromMs) && fromMs > 0
             ? { sinceMs: fromMs, ...(Number.isFinite(toMs) && toMs > 0 ? { untilMs: toMs } : {}) }
             : { windowMs: Number.isFinite(windowMs) && windowMs > 0 ? windowMs : 7 * 86_400_000 }),

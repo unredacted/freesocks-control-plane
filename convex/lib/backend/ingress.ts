@@ -7,8 +7,9 @@
  * describe that hop, so the node's intent carries it, versioned, and
  * `applyIngress` turns the loopback transport into what the world sees: TLS on
  * the external port, the origin hostname as its certificate name, the same
- * path. The origin probe then verifies that external hop exactly as it does
- * for any HTTPS origin; nothing here asserts that the hop works.
+ * path. Nothing here asserts that the hop works: the node's ingress check
+ * (`ingress_verified` evidence at machine_ready) does, and the plan takes the
+ * Host-header answer from that evidence rather than from the origin probe.
  */
 import type { BackendTransport } from '../backends/types';
 
@@ -88,19 +89,6 @@ export function applyIngress(
       tls: { serverName: ingress.hostname },
     };
   });
-}
-
-/** What of the ingress is machine configuration (what the role renders Caddy from). */
-export function ingressMachineFacts(ingress: IngressMapping): {
-  hostname: string;
-  externalPort: number;
-  routes: IngressRoute[];
-} {
-  return {
-    hostname: ingress.hostname,
-    externalPort: ingress.external.port,
-    routes: ingress.internal.map(ingressRoute),
-  };
 }
 
 /** One route as the role renders it: the path, the loopback port, and `h2c` when the transport needs it. */

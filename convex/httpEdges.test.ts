@@ -50,6 +50,7 @@ import { scopeFor, throttlePolicyFor, throttlePolicyForGet } from './httpEdges';
 import { __setEdgeProviderForTests } from './lib/edges/providers/registry';
 import { qualificationBinding } from './lib/edges/frontCheck/binding';
 import type { AdoptionInspection } from './lib/edges/providers/types';
+import { deliveryBindingOf, relayBySlug } from './lib/edges/testing/reads';
 
 const modules = import.meta.glob('./**/*.*s');
 const ADMIN_SIGN_KEY = 'test-admin-sign';
@@ -518,11 +519,11 @@ describe('origin admin routes', () => {
       const put = await caller('PUT', 'relays/by-slug/node-one', body);
       expect(put.status).toBe(404);
     }
-    expect(await t.query(internal.relays.getBySlug, { slug: 'node-one' })).toBeNull();
+    expect(await relayBySlug(t, { slug: 'node-one' })).toBeNull();
     expect(await t.run((ctx) => ctx.db.query('relays').collect())).toEqual([]);
     expect(await t.run((ctx) => ctx.db.query('relayListeners').collect())).toEqual([]);
     expect(
-      await t.query(internal.relays.deliveryBinding, {
+      await deliveryBindingOf(t, {
         backendServerId: serverId,
         nodeName: 'node-one',
       }),
@@ -533,7 +534,7 @@ describe('origin admin routes', () => {
     expect((await call('GET', 'relays/by-slug/node-one/listeners/u')).status).toBe(404);
     expect((await call('DELETE', 'relays/by-slug/node-one/listeners/u')).status).toBe(404);
     expect((await call('DELETE', 'relays/by-slug/node-one')).status).toBe(404);
-    const row = (await t.query(internal.relays.getBySlug, { slug: 'node-one' }))!;
+    const row = (await relayBySlug(t, { slug: 'node-one' }))!;
     expect(row.deleting).toBeUndefined();
     const listener = (await t.run((ctx) =>
       ctx.db
@@ -560,9 +561,7 @@ describe('origin admin routes', () => {
       const res = await bounded(method, path, payload);
       expect([401, 403], `${method} ${path}`).toContain(res.status);
     }
-    expect(
-      (await t.query(internal.relays.getBySlug, { slug: 'node-one' }))!.deleting,
-    ).toBeUndefined();
+    expect((await relayBySlug(t, { slug: 'node-one' }))!.deleting).toBeUndefined();
   });
 
   test('malformed percent escapes answer 400 validation on every verb (the unsealed DELETE included)', async () => {
@@ -725,7 +724,7 @@ describe('origin admin routes', () => {
     expect(JSON.stringify(view1.listeners)).not.toContain('upcloud');
     // The delivery binding covers the node from now on.
     expect(
-      await t.query(internal.relays.deliveryBinding, {
+      await deliveryBindingOf(t, {
         backendServerId: serverId,
         nodeName: 'node-one',
       }),
@@ -880,7 +879,7 @@ describe('origin admin routes', () => {
     expect(del.status).toBe(200);
     expect(await del.json()).toMatchObject({ ok: true });
     expect(
-      await t.query(internal.relays.deliveryBinding, {
+      await deliveryBindingOf(t, {
         backendServerId: serverId,
         nodeName: 'node-one',
       }),
@@ -1014,7 +1013,7 @@ describe('origin admin routes', () => {
     expect(await dark.json()).toEqual({ ok: true, deleted: false });
     // keep-dark: members of the node stay edge-required (503) until another origin claims it.
     expect(
-      await t.query(internal.relays.deliveryBinding, {
+      await deliveryBindingOf(t, {
         backendServerId: serverId,
         nodeName: 'node-one',
       }),

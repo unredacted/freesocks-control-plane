@@ -12,7 +12,6 @@ import {
   SETUP_BLOCKER_CODES,
   SETUP_RUN_NEEDS,
   SETUP_RUN_STAGES,
-  SETUP_RUN_STATES,
   SETUP_STEP_IDS,
   SETUP_STEP_STATUSES,
   WORKFLOW_CODES,
@@ -29,9 +28,7 @@ import {
   SETUP_ACCOUNT_REASON_COPY,
   SETUP_RUN_NEED_COPY,
   SETUP_RUN_PLAIN_STAGES,
-  SETUP_RUN_STAGE_LABELS,
   SETUP_RUN_STAGE_STEP,
-  SETUP_RUN_STATE_LABELS,
   setupRunNeedCopy,
   SETUP_STATUS_LABELS,
   SETUP_STEP_TITLES,
@@ -41,7 +38,6 @@ import {
   codeLabel,
   edgeStatusLabel,
   humanizeCode,
-  isTerminalPhase,
   phaseLabel,
   PLAIN_ATTENTION_ACTION_LABELS,
   PLAIN_WORDS,
@@ -170,16 +166,12 @@ describe('INBOUND_UNSUPPORTED_COPY', () => {
 
 describe('guided setup run vocabularies', () => {
   test('every stage, state, need and account reason is worded, in sentences, without an em-dash or an API path', () => {
-    for (const s of SETUP_RUN_STAGES) expect(SETUP_RUN_STAGE_LABELS[s].trim()).toBeTruthy();
-    // One table: a stage's label is the plain stage its step shows.
+    // One table: every stage maps to a plain step (`publish` is "Going live").
     for (const s of SETUP_RUN_STAGES) {
       const step = SETUP_RUN_STAGE_STEP[s];
-      expect(SETUP_RUN_STAGE_LABELS[s]).toBe(
-        step === 5 ? 'Live' : SETUP_RUN_PLAIN_STAGES[step - 1],
-      );
+      expect(step === 5 || !!SETUP_RUN_PLAIN_STAGES[step - 1]).toBe(true);
     }
-    expect(SETUP_RUN_STAGE_LABELS.publish).toBe('Going live');
-    for (const s of SETUP_RUN_STATES) expect(SETUP_RUN_STATE_LABELS[s].trim()).toBeTruthy();
+    expect(SETUP_RUN_PLAIN_STAGES[SETUP_RUN_STAGE_STEP.publish - 1]).toBe('Going live');
     const offenders: string[] = [];
     const check = (code: string, e: { label: string; explain: string; fix?: string }) => {
       expect(e.label.trim()).toBeTruthy();
@@ -254,13 +246,6 @@ describe('phase, status and step maps', () => {
       'cancelled',
     ];
     for (const p of phases) expect(ROTATION_PHASE_LABELS[p]).toBeTruthy();
-    expect(phases.filter(isTerminalPhase)).toEqual([
-      'done',
-      'failed',
-      'rolled_back',
-      'quarantined',
-      'cancelled',
-    ]);
     expect(phaseLabel('host_flipping')).toBe('Flipping Hosts');
     expect(phaseLabel('brand_new_phase')).toBe('Brand new phase');
   });
@@ -270,7 +255,6 @@ describe('phase, status and step maps', () => {
       'planning',
       'provisioning',
       'verifying',
-      'standby',
       'active',
       'draining',
       'destroying',

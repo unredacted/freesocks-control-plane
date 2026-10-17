@@ -604,7 +604,7 @@ export const status = internalQuery({
             .filter(
               (e) =>
                 e.listenerId === listener._id &&
-                (e.status === 'active' || e.status === 'standby' || e.status === 'verifying'),
+                (e.status === 'active' || e.status === 'verifying'),
             )
             .map((e) => ({ id: e._id as string, name: e.name, status: e.status as string })),
         );

@@ -13,7 +13,7 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { runWithCronOutcome } from './cronHeartbeat';
-import { resolveEdgeConfig, edgeMs } from './lib/edgeConfig';
+import { EDGE_PLUMBING, originPolicy, resolveEdgeConfig, edgeMs } from './lib/edgeConfig';
 import { todayKey } from './relays';
 import { familyKeyOf } from './probes';
 import {
@@ -265,7 +265,7 @@ export const relayWindow = internalAction({
   handler: async (ctx, { relayId, now }): Promise<RelayWindow | null> => {
     const c = await ctx.runQuery(internal.edgeDetector.relayContext, { relayId, now });
     if (!c) return null;
-    const cap = Math.max(1, c.cfg.detect.maxReportRowsPerEval);
+    const cap = Math.max(1, EDGE_PLUMBING.maxReportRowsPerEval);
     const window = await drainReportWindow(ctx, c.origin.slug, c.since, now, cap);
     return { ...c, window };
   },
@@ -546,7 +546,7 @@ export const run = internalAction({
               cooldownUntil: w.origin.cooldownUntil ?? null,
               rotationsToday:
                 w.origin.rotationsDayKey === todayKey(now) ? w.origin.rotationsToday : 0,
-              maxRotationsPerDay: w.origin.maxRotationsPerDay,
+              maxRotationsPerDay: originPolicy(w.origin, w.cfg).maxRotationsPerDay,
               // Only an operator-managed Host blocks a rotation at index 0.
               hostManaged: w.origin.hostMode !== 'operator',
             },

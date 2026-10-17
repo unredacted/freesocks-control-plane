@@ -45,7 +45,7 @@ describe('ip helpers', () => {
     ]) {
       expect(isPublicIpLiteral(bad), bad).toBe(false);
     }
-    for (const ok of ['203.0.113.5', '8.8.8.8', '2001:db8::5', '2a00:1450::1']) {
+    for (const ok of ['203.0.113.5', '198.51.100.9', '2001:db8::5', '2001:db8:4::1']) {
       expect(isPublicIpLiteral(ok), ok).toBe(true);
     }
   });

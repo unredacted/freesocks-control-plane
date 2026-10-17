@@ -227,5 +227,44 @@ crons.daily(
   internal.retention.sweepEdgeRotations,
   {},
 );
+// The servers and edges workflow rows (ledger ops, name rollouts, setup and
+// activation runs, Host hides, port changes): terminal rows past their window,
+// never one something still reads (convex/retention.ts).
+crons.daily(
+  'retention-panel-ops',
+  { hourUTC: 5, minuteUTC: 5 },
+  internal.retention.sweepPanelOps,
+  {},
+);
+crons.daily(
+  'retention-sni-rollouts',
+  { hourUTC: 5, minuteUTC: 10 },
+  internal.retention.sweepSniRollouts,
+  {},
+);
+crons.daily(
+  'retention-edge-setup-runs',
+  { hourUTC: 5, minuteUTC: 15 },
+  internal.retention.sweepEdgeSetupRuns,
+  {},
+);
+crons.daily(
+  'retention-activation-runs',
+  { hourUTC: 5, minuteUTC: 20 },
+  internal.retention.sweepActivationRuns,
+  {},
+);
+crons.daily(
+  'retention-edge-host-hides',
+  { hourUTC: 5, minuteUTC: 25 },
+  internal.retention.sweepHostHides,
+  {},
+);
+crons.daily(
+  'retention-port-changes',
+  { hourUTC: 5, minuteUTC: 30 },
+  internal.retention.sweepPortChanges,
+  {},
+);
 
 export default crons;

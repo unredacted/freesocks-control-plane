@@ -32,6 +32,7 @@ import {
   type SetupRunCreateRequest,
   type SetupRunRetryRequest,
 } from '../src/shared/contracts/edges';
+import { deliveryBindingOf } from './lib/edges/testing/reads';
 
 const modules = import.meta.glob('./**/*.*s');
 type T = TestConvex<typeof schema>;
@@ -352,7 +353,7 @@ async function tickAll(t: T, runId: Id<'edgeSetupRuns'>) {
 }
 
 async function bindingFor(t: T, serverId: Id<'backendServers'>) {
-  return t.query(internal.relays.deliveryBinding, {
+  return deliveryBindingOf(t, {
     backendServerId: serverId,
     nodeName: 'node-one',
   });

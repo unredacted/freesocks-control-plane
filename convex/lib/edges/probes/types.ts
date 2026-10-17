@@ -78,8 +78,6 @@ export interface ProbePoll {
   results: ProbeResult[];
 }
 
-export const DEFAULT_PROBE_TIMEOUT_MS = 45_000;
-
 /** `[v6]:port` / `name:port` / `v4:port` as the wire formats want it. */
 export function targetHost(t: Pick<ProbeTarget, 'address' | 'ipVersion' | 'addressKind'>): string {
   return t.addressKind === 'ip' && t.ipVersion === 6 ? `[${t.address}]` : t.address;

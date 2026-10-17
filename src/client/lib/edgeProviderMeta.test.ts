@@ -1,14 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { EDGE_PROVIDER_IDS } from '../../shared/contracts/edges';
-import {
-  EDGE_PROVIDER_META,
-  addressLine,
-  dnsProviderIds,
-  layerLabel,
-  providerAddressKind,
-  providerLabel,
-  providerLayer,
-} from './edgeProviderMeta';
+import { EDGE_PROVIDER_META, addressLine } from './edgeProviderMeta';
 
 describe('edge provider meta', () => {
   it('has an entry for every provider id', () => {
@@ -39,19 +31,8 @@ describe('edge provider meta', () => {
   });
 
   it('offers a DNS account only from providers that host DNS', () => {
-    expect(dnsProviderIds()).toEqual(['cloudflare']);
     expect(EDGE_PROVIDER_META.fastly.needsDnsAccount).toBe(true);
     expect(EDGE_PROVIDER_META.fastly.providesDns).toBe(false);
-  });
-
-  it('labels providers and layers', () => {
-    expect(providerLabel('cloudflare')).toBe('Cloudflare');
-    expect(providerLabel(null)).toBe('adopted');
-    expect(providerLayer('fastly')).toBe('l7');
-    expect(providerLayer(null)).toBe('l4');
-    expect(providerAddressKind('cloudflare')).toBe('hostname');
-    expect(providerAddressKind('gcore')).toBe('ip');
-    expect(layerLabel('l7')).toBe('L7');
   });
 
   it('prefers the hostname over IP literals in one address line', () => {

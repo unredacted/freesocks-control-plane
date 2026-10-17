@@ -5,6 +5,7 @@
  */
 import { convexTest } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { __setEdgePlumbingForTests } from './lib/edgeConfig';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
@@ -35,6 +36,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   vi.useRealTimers();
+  __setEdgePlumbingForTests(null);
 });
 
 const ORIGIN = '203.0.113.10';
@@ -421,17 +423,17 @@ describe('origin block detector', () => {
     expect(w.window.incomplete ?? false).toBe(false);
   });
 
-  test('a window past detect.maxReportRowsPerEval is INCOMPLETE: suspicion still shows, but the veto is evidence_incomplete and nothing rotates', async () => {
+  test('a window past the report row cap is INCOMPLETE: suspicion still shows, but the veto is evidence_incomplete and nothing rotates', async () => {
     vi.useFakeTimers({ now: NOW });
     const s = await seed();
     await warmBaseline(s.t, s.relayId, 100);
     await nodeLoad(s.t, s.serverId, 0);
+    // A cap below the row count: the same evidence that rotates under the cap
+    // must not rotate over it.
+    __setEdgePlumbingForTests({ maxReportRowsPerEval: 100 });
     await s.t.run(async (ctx) => {
       await upsertSettingRow(ctx, 'edge.enabled', 'true');
       await upsertSettingRow(ctx, 'edge.autoRotate', 'true');
-      // A cap below the row count (100 is the configurable floor): the same
-      // evidence that rotates under the cap must not rotate over it.
-      await upsertSettingRow(ctx, 'edge.detect.maxReportRowsPerEval', '100');
       await ctx.db.patch(s.relayId, { autoRotate: true });
     });
     // Enough edge-attributed reporters to rotate, behind enough duplicates to
@@ -457,7 +459,7 @@ describe('origin block detector', () => {
     const samples = await s.t.run((ctx) => ctx.db.query('relaySamples').collect());
     expect(samples.some((x) => x.at === NOW)).toBe(false);
     // Raise the cap over the row count and the very same rows rotate.
-    await s.t.run((ctx) => upsertSettingRow(ctx, 'edge.detect.maxReportRowsPerEval', '2000'));
+    __setEdgePlumbingForTests(null);
     const whole = (await s.t.action(internal.edgeDetector.relayWindow, {
       relayId: s.relayId,
       now: NOW,
@@ -634,7 +636,6 @@ describe('origin block detector', () => {
     await s.t.run(async (ctx) => {
       await upsertSettingRow(ctx, 'edge.enabled', 'true');
       await upsertSettingRow(ctx, 'edge.probe.enabled', 'true');
-      await upsertSettingRow(ctx, 'edge.probe.sourceSpacingMs', '1500');
     });
     await bulkReports(s.t, { zeroWeight: 0, weighted: 10 });
     const r = await s.t.action(internal.edgeDetector.run, {});

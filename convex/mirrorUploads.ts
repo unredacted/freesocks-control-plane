@@ -177,15 +177,3 @@ export const listDue = internalQuery({
     return out;
   },
 });
-
-/** Open obligations of one subscription (tests and the admin view). */
-export const openFor = internalQuery({
-  args: { subscriptionId: v.id('subscriptions') },
-  handler: (ctx, { subscriptionId }) =>
-    ctx.db
-      .query('mirrorUploads')
-      .withIndex('by_subscription', (q) =>
-        q.eq('subscriptionId', subscriptionId).eq('state', 'open'),
-      )
-      .collect(),
-});

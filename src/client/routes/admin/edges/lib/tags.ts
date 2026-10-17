@@ -5,7 +5,6 @@
  *   splitTags(raw)                      split pasted / typed text on commas, whitespace and semicolons
  *   addTags(current, raw, opts)         -> { next, rejected } (normalised, de-duplicated, capped)
  *   normalizeHostname(raw)              lower-case DNS name or null
- *   normalizeCountry(raw)               upper-case ISO 3166-1 alpha-2 shape or null
  */
 export function splitTags(raw: string): string[] {
   return raw
@@ -50,9 +49,4 @@ export function normalizeHostname(raw: string): string | null {
   const labels = name.split('.');
   if (labels.length < 2) return null;
   return labels.every((l) => LABEL.test(l)) ? name : null;
-}
-
-export function normalizeCountry(raw: string): string | null {
-  const code = raw.trim().toUpperCase();
-  return /^[A-Z]{2}$/.test(code) ? code : null;
 }

@@ -13,7 +13,7 @@ import type { Id } from './_generated/dataModel';
 import { upsertSettingRow } from './appSettings';
 import { __setGlobalpingFactory, __setInternalProbeDeps } from './probeOps';
 import { familiesOf, type ResolvedTarget } from './probes';
-import { EDGE_DEFAULTS, type EdgeConfig } from './lib/edgeConfig';
+import { EDGE_DEFAULTS, __setEdgePlumbingForTests, type EdgeConfig } from './lib/edgeConfig';
 import type { GlobalpingLike } from './lib/edges/probes/globalping';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -22,6 +22,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
   __setGlobalpingFactory(null);
+  __setEdgePlumbingForTests(null);
   __setInternalProbeDeps(null);
 });
 
@@ -687,8 +688,8 @@ describe('relayProbes', () => {
     expect(gp.sort((a, b) => a - b)).toEqual([0, 1500, 3000]);
     const internalRuns = runs.filter((r) => r.source === 'internal').map((r) => offsetOf(r._id));
     expect(internalRuns).toEqual([0, 0, 0]);
-    // Configurable spacing; the cron tick staggers the same way.
-    await t.run((ctx) => upsertSettingRow(ctx, 'edge.probe.sourceSpacingMs', '4000'));
+    // Another spacing; the cron tick staggers the same way.
+    __setEdgePlumbingForTests({ probeSourceSpacingMs: 4000 });
     await t.mutation(internal.relays.update, { id: relayId, probeNode: true });
     await t.run(async (ctx) => {
       for (const run of await ctx.db.query('probeRuns').collect()) await ctx.db.delete(run._id);
@@ -807,7 +808,7 @@ describe('relayProbes', () => {
       { country: 'XX', ok: true },
     ]);
     await insert(2 * HOUR, [{ country: 'RU', ok: true }]);
-    const s = await t.query(internal.probes.summary, { windowMs: 6 * HOUR });
+    const s = await t.action(internal.probes.summary, { windowMs: 6 * HOUR });
     expect(s.bucketMs).toBe(HOUR);
     for (const b of s.buckets) expect(b.start % HOUR).toBe(0);
     expect(s.buckets[0].start).toBeLessThanOrEqual(s.sinceMs);
@@ -816,6 +817,31 @@ describe('relayProbes', () => {
     expect(s.byCountry.map((c) => c.country)).toEqual(['IR', 'RU']);
     for (const b of s.buckets) expect(Object.keys(b.byCountry)).not.toContain('XX');
     expect(s.bySource).toEqual([{ source: 'globalping', runs: 2, ok: 2, fail: 1 }]);
+  });
+
+  test('the chart counts every finished run of the window, page by page (past the old 5,000-row cut)', async () => {
+    const { t, edgeId } = await seed();
+    const now = Date.now();
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 5_100; i++)
+        await ctx.db.insert('probeRuns', {
+          targetKind: 'edge',
+          targetRef: edgeId,
+          source: 'globalping',
+          target: `${EDGE}:443`,
+          ipVersion: 4,
+          status: 'finished',
+          trigger: 'cron',
+          requestedAt: now - 60_000 - i * 1000,
+          finishedAt: now - 60_000 - i * 1000,
+          results: [{ country: 'IR', ok: i % 2 === 0, vantageClass: 'eyeball' as const }],
+        });
+    });
+    const s = await t.action(internal.probes.summary, { windowMs: 24 * 60 * 60_000 });
+    expect(s.truncated).toBe(false);
+    expect(s.totals).toEqual({ runs: 5_100, ok: 2_550, fail: 2_550 });
+    expect(s.byCountry).toEqual([{ country: 'IR', ok: 2_550, fail: 2_550 }]);
+    expect(s.buckets.reduce((n, b) => n + b.runs, 0)).toBe(5_100);
   });
 
   test('a country summary carries its OWN freshness and counts persisted networks, not placeholders', async () => {
@@ -1128,8 +1154,8 @@ describe('relayProbes', () => {
     __setGlobalpingFactory(() => fakeGlobalping(() => 'ok'));
     const { t, edgeId } = await seed();
     const MIN = 60_000;
+    __setEdgePlumbingForTests({ probeSourceSpacingMs: 60_000 });
     await t.run(async (ctx) => {
-      await upsertSettingRow(ctx, 'edge.probe.sourceSpacingMs', '60000');
       await upsertSettingRow(ctx, 'edge.probe.intervalMinutes', '5');
     });
     const customs = [];

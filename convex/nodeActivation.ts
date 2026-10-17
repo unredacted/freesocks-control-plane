@@ -824,17 +824,6 @@ export const approve = internalMutation({
   },
 });
 
-/** A revision change under a node supersedes its running activation (called by the settings patch). */
-export async function supersedeRuns(ctx: MutationCtx, intentId: Id<'panelNodeIntents'>) {
-  const now = Date.now();
-  for (const r of await ctx.db
-    .query('panelActivationRuns')
-    .withIndex('by_intent', (q) => q.eq('intentId', intentId))
-    .collect())
-    if (r.state === 'running' || r.state === 'blocked' || r.state === 'review')
-      await ctx.db.patch(r._id, { state: 'superseded', updatedAt: now });
-}
-
 // --- the direct run: enable the Host, rehearse, commit ----------------------------------------------
 
 async function runContextOf(ctx: QueryCtx, runId: Id<'panelActivationRuns'>, stepVersion: number) {

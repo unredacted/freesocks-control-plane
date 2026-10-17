@@ -8,7 +8,7 @@
    *   value: string[] (bindable)
    *   label: string                         visible label (also names the group)
    *   normalize?: (raw: string) => string | null
-   *       normalise or reject one tag; see normalizeHostname / normalizeCountry in lib/tags.ts
+   *       normalise or reject one tag; see normalizeHostname in lib/tags.ts
    *   placeholder?: string
    *   helper?: string                       muted helper text under the field
    *   invalidText?: string                  shown when a tag was rejected (default 'Not a valid value')

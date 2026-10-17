@@ -27,6 +27,14 @@ import {
   wsListener,
   type ListenerSpecFixture,
 } from './lib/edges/testing/fixtures';
+import { EDGE_DEFAULTS } from './lib/edgeConfig';
+import {
+  deliveryBindingOf,
+  edgeAdminView,
+  insertPlanned,
+  listenerById,
+  relayBySlug,
+} from './lib/edges/testing/reads';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -445,7 +453,7 @@ describe('origins: create, listeners, kinds and the delivery binding', () => {
 
   test('a delivery binding is written on create; delete needs a disposition; keep-dark survives, restore-direct releases', async () => {
     const { t, relayId, serverId } = await seed();
-    const b = (await t.query(internal.relays.deliveryBinding, {
+    const b = (await deliveryBindingOf(t, {
       backendServerId: serverId,
       nodeName: FIXTURE_NODE,
     }))!;
@@ -459,7 +467,7 @@ describe('origins: create, listeners, kinds and the delivery binding', () => {
     });
     // Another node of the backend is not covered (no whole-server binding).
     expect(
-      await t.query(internal.relays.deliveryBinding, {
+      await deliveryBindingOf(t, {
         backendServerId: serverId,
         nodeName: 'other',
       }),
@@ -474,7 +482,7 @@ describe('origins: create, listeners, kinds and the delivery binding', () => {
       listeners: [shadowsocksListener()],
     });
     const outlineId = (await t.query(internal.relays.get, { id: whole.relayId }))!.backendServerId!;
-    const wholeBinding = (await t.query(internal.relays.deliveryBinding, {
+    const wholeBinding = (await deliveryBindingOf(t, {
       backendServerId: outlineId,
       nodeName: 'any',
     }))!;
@@ -519,7 +527,7 @@ describe('origins: create, listeners, kinds and the delivery binding', () => {
       policyVersion: 2,
     });
     expect(
-      await t.query(internal.relays.deliveryBinding, {
+      await deliveryBindingOf(t, {
         backendServerId: serverId,
         nodeName: FIXTURE_NODE,
       }),
@@ -533,13 +541,13 @@ describe('origins: create, listeners, kinds and the delivery binding', () => {
       disposition: 'restore-direct',
     });
     expect(
-      await t.query(internal.relays.deliveryBinding, {
+      await deliveryBindingOf(t, {
         backendServerId: outlineId,
         nodeName: undefined,
       }),
     ).toBeNull();
     // A manual origin needs no disposition (it never bound anything).
-    const hand = await t.query(internal.relays.getBySlug, { slug: 'hand-a' });
+    const hand = await relayBySlug(t, { slug: 'hand-a' });
     expect(await t.mutation(internal.relays.requestDelete, { id: hand!._id })).toEqual({
       ok: true,
       deleted: false,
@@ -585,7 +593,7 @@ describe('origins: operator knobs and epochs', () => {
     await t.mutation(internal.relays.update, { id: off, enabled: false });
     const before = await epochOf(t, relayId);
     const beforeOff = await epochOf(t, off);
-    await t.mutation(internal.edgeAdmin.patchConfig, { patch: { pollSeconds: 30 } });
+    await t.mutation(internal.edgeAdmin.patchConfig, { patch: { cooldownMinutes: 30 } });
     expect(await epochOf(t, relayId)).toBe(before);
     const res = await t.mutation(internal.edgeAdmin.patchConfig, {
       patch: { render: { enabled: true, ipv6Mode: 'off' } },
@@ -658,7 +666,7 @@ describe('origins: adoption and the published pool', () => {
     )!;
     expect(origin.publishedEdgeIds).toEqual([a.edgeId, b.edgeId]);
     expect(origin.publishedCount).toBe(2);
-    const edge = await t.query(internal.edges.getForAdmin, { id: a.edgeId as Id<'edges'> });
+    const edge = await edgeAdminView(t, { id: a.edgeId as Id<'edges'> });
     expect(edge).toMatchObject({
       managed: false,
       listenerId,
@@ -1024,7 +1032,7 @@ describe('origins: delete lifecycle', () => {
 
   test('requestDelete honours the origin drain window unless forced', async () => {
     const { t, relayId, listenerId, accountId } = await seed();
-    const planned = await t.mutation(internal.edges.insertPlanned, {
+    const planned = await insertPlanned(t, {
       relayId,
       listenerId,
       accountId,
@@ -1034,7 +1042,11 @@ describe('origins: delete lifecycle', () => {
     const relay = (await t.query(internal.relays.get, { id: relayId }))!;
     await t.mutation(internal.relays.requestDelete, { id: relayId, disposition: 'restore-direct' });
     const drained = (await t.query(internal.edges.get, { id: planned.id }))!;
-    expect(drained.drainUntil).toBeGreaterThanOrEqual(Date.now() + relay.drainMs - 5_000);
+    // No override on the origin: the fleet drain applies.
+    expect(relay.drainMs).toBeUndefined();
+    expect(drained.drainUntil).toBeGreaterThanOrEqual(
+      Date.now() + EDGE_DEFAULTS.drainMinutes * 60_000 - 5_000,
+    );
     expect((await audits(t, 'relay.delete'))[0].payload).toEqual({
       slug: FIXTURE_RELAY_SLUG,
       force: false,
@@ -1042,7 +1054,7 @@ describe('origins: delete lifecycle', () => {
     });
     // Forced: the drain is skipped.
     const s2 = await seed();
-    const p2 = await s2.t.mutation(internal.edges.insertPlanned, {
+    const p2 = await insertPlanned(s2.t, {
       relayId: s2.relayId,
       listenerId: s2.listenerId,
       accountId: s2.accountId,
@@ -1065,7 +1077,7 @@ describe('origins: delete lifecycle', () => {
       ipv4: '198.51.100.1',
       publish: true,
     });
-    const planned = await t.mutation(internal.edges.insertPlanned, {
+    const planned = await insertPlanned(t, {
       relayId,
       listenerId,
       accountId,
@@ -1287,7 +1299,7 @@ describe('origins: layers, adoption by hostname and the L7 publish gates', () =>
         }),
       ],
     });
-    const grpc = await t.query(internal.relayListeners.get, { id: listenerIds.g });
+    const grpc = await listenerById(t, { id: listenerIds.g });
     expect(grpc?.transportParams).toEqual({ serviceName: 'svc' });
     const { edgeId: grpcEdge } = await t.mutation(internal.relays.adoptEdge, {
       relayId,

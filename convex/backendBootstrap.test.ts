@@ -18,6 +18,7 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { insertPanelServer } from './lib/edges/testing/fixtures';
 import { addressRemark, addressesOf, ownsAddress } from './nodeIntents';
+import { gateOfNode } from './lib/edges/testing/reads';
 
 const modules = import.meta.glob('./**/*.*s');
 type T = TestConvex<typeof schema>;
@@ -520,7 +521,7 @@ describe('enrolling a direct node', () => {
     expect(intent.activation.stage).toBe('machine_ready');
 
     // The gate stays closed before any approval; the role view says so.
-    const gate = await t.query(internal.nodeIntents.nodeGate, {
+    const gate = await gateOfNode(t, {
       backendServerId: serverId,
       nodeName: 'node-a',
     });
@@ -619,101 +620,5 @@ describe('an address belongs to exactly one node', () => {
     expect(
       addressesOf({ name: 'node-a', addressUuids: ['h1'] }, hosts).map((h) => h.hostUuid),
     ).toEqual(['h1', 'h2']);
-  });
-});
-
-describe('moving off contract v1', () => {
-  test('the migration clears the v1 rows and leaves a current setup alone', async () => {
-    const { t, serverId, panel } = await seed();
-    const current = await runSetup(t, serverId);
-    expect(current.state).toBe('ready');
-    expect(panel.profiles).toHaveLength(1);
-    // A second backend carrying what the release before modes wrote.
-    const legacy = await insertPanelServer(t, { slug: 'panel-b' });
-    const legacyIds = await t.run(async (ctx) => {
-      const setupId = await ctx.db.insert('panelSetups', {
-        backendServerId: legacy,
-        desired: '{}',
-        desiredHash: 'h',
-        generation: 1,
-        state: 'ready',
-        profileName: 'FreeSocks-Config',
-        profileUuid: UUID(80),
-        inbounds: { cdn: { uuid: UUID(81), tag: 'VLESS_WS_CDN' } },
-        squads: { fronted: { name: 'FreeSocks-Fronted' } },
-        placements: [{ mode: 'freedom-ws', state: 'bound' }],
-        handoff: 'fresh',
-        templates: [],
-        gateVersion: 3,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      });
-      const intentId = await ctx.db.insert('panelNodeIntents', {
-        backendServerId: legacy,
-        name: 'legacy-node',
-        label: 'legacy-node',
-        purpose: 'front',
-        contractVersion: 1,
-        generation: 1,
-        desiredHash: 'h',
-        state: 'ready',
-        observed: {
-          management: { address: '192.0.2.9', port: 2222 },
-          publicIps: {},
-          capabilities: { caddy: true, ipv6: false },
-          at: Date.now(),
-        },
-        settings: { originHostnameSource: 'none', publishV6: false, nodePort: 2222 },
-        machineRevision: 1,
-        activation: { stage: 'live', evidence: [] },
-        delivery: {
-          disposition: 'live',
-          acceptingAssignments: true,
-          exposure: { everLive: true, hosts: [], mirrors: 0, testCredentials: 0, dns: 0 },
-        },
-        origin: { dns: 'none' },
-        hostUuid: UUID(82),
-        registeredAt: Date.now(),
-        updatedAt: Date.now(),
-      });
-      await ctx.db.insert('panelHandoff', {
-        backendServerId: legacy,
-        roleContractVersion: 1,
-        reportedAt: Date.now(),
-        reportedBy: 'role',
-      });
-      const ownershipId = await ctx.db.insert('panelOwnership', {
-        backendServerId: legacy,
-        kind: 'node',
-        identity: 'legacy-node',
-        lookup: ['legacy-node'],
-        state: 'reserved',
-        reservation: { roleOpId: 'op-1', at: Date.now() },
-        since: Date.now(),
-        updatedAt: Date.now(),
-      });
-      return { setupId, intentId, ownershipId };
-    });
-
-    const out = await t.mutation(internal.backendSetup.migrateContractV2, {});
-    expect(out).toEqual({ handoffs: 1, reservations: 1, setups: 1, intents: 1 });
-    await t.run(async (ctx) => {
-      expect(await ctx.db.get(legacyIds.setupId)).toBeNull();
-      expect(await ctx.db.get(legacyIds.intentId)).toBeNull();
-      expect(await ctx.db.query('panelHandoff').collect()).toHaveLength(0);
-      const own = (await ctx.db.get(legacyIds.ownershipId))!;
-      expect(own.state).toBe('owned');
-      expect(own.reservation).toBeUndefined();
-      // The current backend is untouched, and nothing on a backend was called.
-      expect((await ctx.db.get(current._id))!.state).toBe('ready');
-    });
-    expect(panel.writes.filter((w) => w.call.startsWith('DELETE'))).toHaveLength(0);
-    // Idempotent.
-    expect(await t.mutation(internal.backendSetup.migrateContractV2, {})).toEqual({
-      handoffs: 0,
-      reservations: 0,
-      setups: 0,
-      intents: 0,
-    });
   });
 });

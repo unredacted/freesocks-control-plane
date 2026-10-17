@@ -173,10 +173,6 @@ export const EDGE_PROVIDER_CAPABILITIES: Record<EdgeProviderId, EdgeProviderCapa
   },
 };
 
-export function edgeCapabilitiesOf(id: EdgeProviderId): EdgeProviderCapabilities {
-  return EDGE_PROVIDER_CAPABILITIES[id];
-}
-
 export function edgeLayerOf(id: EdgeProviderId | string | null | undefined): EdgeLayer {
   return id && id in EDGE_PROVIDER_CAPABILITIES
     ? EDGE_PROVIDER_CAPABILITIES[id as EdgeProviderId].layer

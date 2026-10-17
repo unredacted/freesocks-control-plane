@@ -30,14 +30,12 @@ import type {
   EdgeSpec,
   Inventory,
   InspectResult,
-  Ledger,
   LedgerResource,
   EdgeProvider,
   ResourceStep,
   StepOutcome,
   DestroyOutcome,
   GcoreConfig,
-  TemplateFieldDescriptor,
 } from './types';
 import { firstResource, metaOf, orderByKind, stepOf } from './types';
 import { discoveryMaySettle } from './capabilities';

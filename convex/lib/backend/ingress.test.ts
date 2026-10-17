@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import type { BackendTransport } from '../backends/types';
 import { mapTransportsToListeners } from '../edges/inboundMapping';
-import { applyIngress, ingressMachineFacts, type IngressMapping } from './ingress';
+import { applyIngress, ingressRoute, type IngressMapping } from './ingress';
 
 const PROFILE = '11111111-1111-4111-8111-111111111111';
 const INBOUND = '22222222-2222-4222-8222-222222222222';
@@ -75,7 +75,7 @@ describe('applyIngress', () => {
       grpc: { serviceName: 'relay-svc' },
     });
     // The role is told to proxy that route over HTTP/2 cleartext.
-    expect(ingressMachineFacts(mapping).routes).toEqual([
+    expect(mapping.internal.map(ingressRoute)).toEqual([
       { path: '/relay-svc', port: 8444, upstream: 'h2c' },
     ]);
     // A route the terminator would proxy over HTTP/1.1 carries no gRPC stream:
@@ -102,7 +102,7 @@ describe('applyIngress', () => {
   });
 
   test('a WebSocket route carries no upstream marker', () => {
-    expect(ingressMachineFacts(ingress).routes).toEqual([{ path: '/ws', port: 8443 }]);
+    expect(ingress.internal.map(ingressRoute)).toEqual([{ path: '/ws', port: 8443 }]);
   });
 
   test('discovery refuses the loopback transport without an ingress and maps it with one', async () => {

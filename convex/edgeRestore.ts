@@ -442,7 +442,7 @@ async function checkCohorts(
   c: RestoreContext,
   want: 'fcp' | 'direct',
 ): Promise<string | null> {
-  const dark = new Set(c.restore.darkCohortKeys);
+  const dark = new Set(c.relay.darkCohortKeys ?? []);
   for (const cohort of await restoreCohorts(ctx, c.relay._id)) {
     if (dark.has(cohort.key)) continue;
     let body: string;

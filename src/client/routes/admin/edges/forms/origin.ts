@@ -10,11 +10,9 @@
  *   OriginDraft, emptyOrigin()
  *   addressIssue(raw)                 null when the address is a public IP literal or DNS name
  *   originIssue(o)                    the first thing still missing, in words (null = complete)
- *   toCreateOrigin(o) / toWireOrigin(o)
+ *   toCreateOrigin(o)
  *   suggestSlug(o)                    a slug proposal from the node / backend name
  */
-import type { z } from 'zod';
-import type { RelayWireOrigin } from '@shared/contracts/edges';
 import type { CreateRelayOrigin } from '@client/lib/edgesApi';
 import { normalizeHostname } from '../lib/tags';
 
@@ -116,21 +114,6 @@ export function toCreateOrigin(o: OriginDraft): CreateRelayOrigin {
   if (o.kind === 'backend-server')
     return { kind: 'backend-server', backendServerId: o.backendServerId };
   return { kind: 'manual' };
-}
-
-/** The draft's origin for `POST setup-status`; null until enough is chosen to judge it. */
-export function toWireOrigin(o: OriginDraft | null): z.infer<typeof RelayWireOrigin> | null {
-  if (!o) return null;
-  if (o.kind === 'manual') return { kind: 'manual' };
-  if (!o.backendSlug) return null;
-  if (o.kind === 'backend-server') return { kind: 'backend-server', backendSlug: o.backendSlug };
-  if (!o.nodeName) return null;
-  return {
-    kind: 'panel-node',
-    backendSlug: o.backendSlug,
-    nodeName: o.nodeName,
-    ...(o.nodeUuid ? { nodeUuid: o.nodeUuid } : {}),
-  };
 }
 
 export function slugify(raw: string): string {

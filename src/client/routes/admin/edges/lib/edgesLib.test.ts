@@ -22,7 +22,7 @@ import {
 } from './routes';
 import { SETUP_STEP_IDS } from '../../../../../shared/contracts/edgeCodes';
 import { resolveServersRoute } from '../../servers/lib/routes';
-import { addTags, normalizeCountry, normalizeHostname, splitTags } from './tags';
+import { addTags, normalizeHostname, splitTags } from './tags';
 import { actorLabel, subjectOf } from './timeline';
 import type { TimelineRow } from './types';
 
@@ -340,17 +340,17 @@ describe('tags', () => {
     });
     expect(r.next).toEqual(['one.example', 'two.example']);
     expect(r.rejected).toEqual(['bad_name']);
-    expect(addTags(['IR'], 'cn ru', { normalize: normalizeCountry, max: 2 })).toEqual({
-      next: ['IR', 'CN'],
-      rejected: ['ru'],
+    expect(
+      addTags(['a.example'], 'b.example c.example', { normalize: normalizeHostname, max: 2 }),
+    ).toEqual({
+      next: ['a.example', 'b.example'],
+      rejected: ['c.example'],
     });
   });
-  it('validates hostnames and country codes', () => {
+  it('validates hostnames', () => {
     expect(normalizeHostname('Front.Example.')).toBe('front.example');
     expect(normalizeHostname('localhost')).toBeNull();
     expect(normalizeHostname('-a.example')).toBeNull();
-    expect(normalizeCountry('ir')).toBe('IR');
-    expect(normalizeCountry('IRN')).toBeNull();
   });
 });
 

@@ -308,9 +308,10 @@ export const deliveryPolicy = internalQuery({
 });
 
 /**
- * Cache token for a subscription's place: `<policyVersion>:<epoch>` while the
- * place is edge-required (the epoch is the origin's, or -1 when the binding has
- * no live origin), null for a place no origin covers (raw delivery, no token).
+ * Cache token for a subscription's place: `<policyVersion>[:g<gate>]:<epoch>`
+ * while the place is edge-required (the epoch is the origin's, or -1 when the
+ * binding has no live origin or rendering is off), `g<gate>` for an unbound
+ * place with a managed node, null for a place with neither (raw delivery).
  */
 async function epochTokenFor(
   ctx: { db: QueryCtx['db'] },

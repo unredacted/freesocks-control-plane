@@ -19,7 +19,6 @@ import {
   buildCredentials,
   locatingSettingsChanged,
   maskCredentials,
-  pickCredentialIdentifiers,
   settingsEqual,
   validateSettings,
   type EdgeCredentials,
@@ -133,27 +132,6 @@ export const getWithSecret = internalQuery({
   handler: async (ctx, { id }): Promise<RelayAccountWithSecret | null> => {
     const r = await ctx.db.get(id);
     return r ? toWithSecret(r) : null;
-  },
-});
-
-/** Every enabled account WITHOUT secrets, for selection (small table). */
-export const listEnabledForSelection = internalQuery({
-  args: {},
-  handler: async (ctx) => {
-    const rows = await ctx.db.query('edgeProviderAccounts').collect();
-    return rows
-      .filter((r) => r.enabled)
-      .map((r) => ({
-        id: r._id,
-        provider: r.provider,
-        name: r.name,
-        qualified: r.qualified,
-        priority: r.priority,
-        dailyAllocationBudget: r.dailyAllocationBudget,
-        allocationsToday: r.allocationsDayKey === dayKey() ? r.allocationsToday : 0,
-        maxLiveEdges: r.maxLiveEdges,
-        defaultTemplateId: r.defaultTemplateId ?? null,
-      }));
   },
 });
 
@@ -908,11 +886,6 @@ export async function evaluateAutoQualificationFor(
   await applyQualification(ctx, row, { by: 'auto', evidence: decision.evidence });
   return { qualified: true, code: null };
 }
-
-export const evaluateAutoQualification = internalMutation({
-  args: { accountId: v.id('edgeProviderAccounts') },
-  handler: (ctx, { accountId }) => evaluateAutoQualificationFor(ctx, accountId),
-});
 
 /**
  * The reconcile sweep: every enabled, unqualified, unheld L7 account is

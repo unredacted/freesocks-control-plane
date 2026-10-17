@@ -16,7 +16,6 @@ import {
 import {
   WORDED_CODES,
   ago,
-  foreignEditWords,
   inboundSummary,
   namesDelta,
   nodeWords,
@@ -25,7 +24,6 @@ import {
   nodeNotes,
   fleetSentence,
   countryLabel,
-  observedWords,
   opTitle,
   opWords,
   parseNames,
@@ -102,27 +100,7 @@ describe('transport words', () => {
   });
 });
 
-describe('observedWords', () => {
-  const NOW = Date.parse('2026-01-01T12:00:00Z');
-  const state = (over: Record<string, unknown>) => ({
-    observedAt: null,
-    attemptedAt: null,
-    ok: null,
-    errorCode: null,
-    counts: null,
-    ...over,
-  });
-  test('never read, read, failed with and without an older picture', () => {
-    expect(observedWords(state({}) as never, false, NOW)).toMatch(/turn on regular reading/);
-    expect(observedWords(state({}) as never, true, NOW)).toMatch(/every ten minutes/);
-    expect(
-      observedWords(state({ ok: true, observedAt: '2026-01-01T11:55:00Z' }) as never, true, NOW),
-    ).toBe('Read 5 minutes ago.');
-    expect(
-      observedWords(state({ ok: false, observedAt: '2026-01-01T10:00:00Z' }) as never, true, NOW),
-    ).toBe('The last read failed. Showing what was read 2 hours ago.');
-    expect(observedWords(state({ ok: false }) as never, true, NOW)).toMatch(/could not be read/);
-  });
+describe('ago', () => {
   test('ago', () => {
     expect(ago(10_000)).toBe('just now');
     expect(ago(60_000)).toBe('1 minute ago');
@@ -311,12 +289,6 @@ describe('write wording', () => {
       const words = serverErrorWords(code);
       expect(words).not.toMatch(/—|servers\./);
     }
-  });
-
-  test('an edit made elsewhere says what may now be wrong, without blame', () => {
-    const words = foreignEditWords('Default', '5 minutes ago');
-    expect(words).toMatch(/^Default was changed on the backend 5 minutes ago, not from here/);
-    expect(words).not.toMatch(/—/);
   });
 
   test('a change in words', () => {

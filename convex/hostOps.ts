@@ -57,12 +57,6 @@ const targetValidator = v.object({
   host: v.union(v.string(), v.null()),
 });
 
-function sameOptional(a: string | null | undefined, b: string | null | undefined): boolean {
-  const n = (x: string | null | undefined) =>
-    x === undefined || x === null || x === '' ? null : x.trim().toLowerCase();
-  return n(a) === n(b);
-}
-
 /** A live Host is the intended one when remark, transport AND address:port agree. */
 export function matchesIntent(h: BackendHost, intent: HostIntent): boolean {
   return (
@@ -71,13 +65,6 @@ export function matchesIntent(h: BackendHost, intent: HostIntent): boolean {
       intent.inboundUuid.toLowerCase() &&
     sameAddress(h.address, intent.address) &&
     h.port === intent.port
-  );
-}
-
-/** Whether a present Host is at the intended tuple (sni/host too). */
-export function atIntent(h: BackendHost, intent: HostIntent): boolean {
-  return (
-    matchesIntent(h, intent) && sameOptional(h.sni, intent.sni) && sameOptional(h.host, intent.host)
   );
 }
 

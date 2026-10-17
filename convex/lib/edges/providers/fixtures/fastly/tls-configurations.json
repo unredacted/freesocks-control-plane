@@ -19,7 +19,7 @@
               "type": "dns_record"
             },
             {
-              "id": "151.101.1.0",
+              "id": "192.0.2.1",
               "type": "dns_record"
             }
           ]
@@ -56,7 +56,7 @@
       }
     },
     {
-      "id": "151.101.1.0",
+      "id": "192.0.2.1",
       "type": "dns_record",
       "attributes": {
         "record_type": "A",

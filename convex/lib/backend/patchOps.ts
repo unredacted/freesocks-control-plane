@@ -63,13 +63,6 @@ export type PatchOp =
   | { op: 'setInboundPort'; inboundTag: string; port: number }
   | { op: 'addInboundFromTemplate'; inboundTag: string; template: TransportTemplate };
 
-export const PATCH_OP_IDS = [
-  'setRealityServerNames',
-  'setRealityTarget',
-  'setInboundPort',
-  'addInboundFromTemplate',
-] as const;
-
 /**
  * Key material for the REALITY transports an edit creates, by tag: generated in
  * the attempt immediately before the write, held in memory only, never stored,

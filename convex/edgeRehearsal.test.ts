@@ -32,7 +32,6 @@ import {
   __setHostObserverForTests,
   REHEARSAL_MAX_ATTEMPTS,
   REHEARSAL_USER_AGENTS,
-  sameVector,
 } from './edgeRehearsal';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -228,11 +227,11 @@ describe('the delivery rehearsal', () => {
     expect(r.hostsObservation.listingHash).toBeTruthy();
     expect(r.hostsObservation.version).toBe(r.hostsObservation.observedAt);
     const now = (await t.query(internal.edgeRehearsal.vectorNow, { relayId: fx.relayId }))!;
-    expect(sameVector(r.vector, now)).toBe(true);
+    expect(r.vector).toEqual(now);
     // A listener revision bump changes the vector (the go-live compare catches it).
     await t.mutation(internal.relayListeners.setEnabled, { id: fx.listenerIds.b, enabled: false });
     const later = (await t.query(internal.edgeRehearsal.vectorNow, { relayId: fx.relayId }))!;
-    expect(sameVector(r.vector, later)).toBe(false);
+    expect(r.vector).not.toEqual(later);
   });
 
   test('an approved dark cohort is excluded from the serve requirement; a cohort whose body cannot render is a failure per format', async () => {

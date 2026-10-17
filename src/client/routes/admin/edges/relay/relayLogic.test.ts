@@ -11,7 +11,6 @@ import {
   suspicionChip,
   timelineLinkParams,
   tupleLine,
-  tuplesEqual,
   type QuarantineListener,
 } from './relayLogic';
 
@@ -55,13 +54,10 @@ const ql = (listenerKey: string, match: QuarantineListener['match']): Quarantine
 });
 
 describe('quarantine helpers', () => {
-  it('formats and compares tuples', () => {
+  it('formats tuples', () => {
     const t = { address: '198.51.100.7', port: 443, sni: 'a.example', host: null };
     expect(tupleLine(t)).toBe('198.51.100.7:443');
     expect(tupleLine(null)).toBe('');
-    expect(tuplesEqual(t, { ...t })).toBe(true);
-    expect(tuplesEqual(t, { ...t, sni: 'b.example' })).toBe(false);
-    expect(tuplesEqual(t, null)).toBe(false);
   });
   it('highlights only a recorded binding', () => {
     expect(highlightedColumn('previous')).toBe('previous');

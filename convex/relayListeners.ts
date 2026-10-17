@@ -212,11 +212,6 @@ export const listByRelay = internalQuery({
   },
 });
 
-export const get = internalQuery({
-  args: { id: v.id('relayListeners') },
-  handler: (ctx, { id }) => ctx.db.get(id),
-});
-
 // --- writes: registration diff (shared by the role PUT and the admin form) -----------------
 
 function specToRow(
@@ -939,14 +934,3 @@ export const setSniPick = internalMutation({
 });
 
 // --- template edge / host bookkeeping used by the rotation machine -------------------------
-
-/** Record which published edge this listener's Host and plans point at. */
-export const setTemplateEdge = internalMutation({
-  args: { id: v.id('relayListeners'), edgeId: v.union(v.id('edges'), v.null()) },
-  handler: async (ctx, { id, edgeId }) => {
-    const l = await ctx.db.get(id);
-    if (!l) return null;
-    await ctx.db.patch(id, { templateEdgeId: edgeId ?? undefined, updatedAt: Date.now() });
-    return null;
-  },
-});
