@@ -549,7 +549,8 @@ last configuration; an empty 200 would wipe it. Each one is counted per reason (
 safety, attention `delivery_refusals`). The policy is judged AFTER the fetch against the node
 the body actually belongs to, so a first fetch without a stored pin and a pin that moved onto an
 origin node are both classified correctly. A place no origin covers and whose gate is open passes
-the body through.
+the body through. Either way, the last step renames the entries the backend named after a node
+(`docs/servers.md` § "A direct node's addresses"); a rendered edge entry keeps its label.
 
 **The cache token** (`epochTokenFor`, `convex/edgeRender.ts`): on a bound place
 `<binding policyVersion>[:g<gateToken>]:<publicationEpoch>` (the epoch is -1 when the origin is

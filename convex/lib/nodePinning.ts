@@ -12,13 +12,20 @@
  *     rest keep their node (rendezvous property),
  *   - uniform: keys spread across nodes approximately evenly.
  *
- * Node identity comes from the link remark, which the Ansible role writes as
- *   <hostname>-<transport>            e.g. xray2-front-mci1-beta-fs-ce-ws
+ * Node identity comes from the link remark (the backend Host's remark):
+ *   <node> | <server name or tag>     FCP's own addresses of a direct node
+ *                                     (lib/backend/hostRemark.ts)
+ *   <hostname>-<transport>            e.g. xray2-front-mci1-beta-fs-ce-ws (v1 role)
  *   <hostname>-<transport>-<hash6>    (multi-edge: xray2-…-ws-6a536a)
- *   <hostname>-reality                (direct nodes)
- * so the node name is the remark with the transport suffix stripped. All of a
- * node's edges (multi-domain fronting) stay together — pinning is per NODE,
- * not per endpoint.
+ *   <hostname>-reality                (v1 direct nodes)
+ *   <node>-relay-<slot>               an origin's template Host
+ * so the node name is the part before the separator, or the remark with the
+ * transport suffix stripped. All of a node's entries (one per server name, or
+ * multi-domain fronting) stay together — pinning is per NODE, not per endpoint.
+ *
+ * These remarks are infrastructure names. The member-facing body never keeps
+ * them: lib/memberEntryNames.ts relabels every entry the parse below
+ * recognises, AFTER pinning (and after edge rendering, which may match on them).
  *
  * Three content shapes are understood:
  *   - link lists (optionally base64-wrapped) — filtered line by line;
@@ -35,7 +42,7 @@
  * `node: null`.
  */
 import YAML from 'yaml';
-import { decodeBase64Loose } from './edges/render/base64';
+import { decodeBase64Loose, encodeBase64 } from './edges/render/base64';
 import { mentionsAny } from './edges/render/refs';
 import { parseProxyUri } from './edges/render/uri';
 
@@ -46,26 +53,46 @@ const PROXY_LINE_RE = /^(vless|vmess|trojan|ss|ssr|hy2|hysteria2|tuic):\/\//i;
 // a node's origin templates must pin WITH the node, never pass through to all.
 const TRANSPORT_SUFFIX_RE = /-(ws|reality|xhttp)(-[0-9a-f]{6})?$|-relay-[a-z0-9]{1,16}$/i;
 
-/** Extract the node name from a proxy link's remark, or null if unparseable. */
-export function nodeNameFromLink(line: string): string | null {
+// An FCP address remark (`addressRemark`): a node name (nodeIntents'
+// NODE_NAME charset), the ` | ` separator (ADDRESS_SEP), and the server name
+// or its short tag.
+const ADDRESS_REMARK_RE = /^([A-Za-z0-9 ._-]{3,30}) \| (\S.*)$/;
+
+/**
+ * A Host remark split into the node it names and the rest (`entry`: the server
+ * name or tag of an FCP address, the transport suffix of a role-written one),
+ * or null when the remark names no node (a group, an edge label, a placeholder).
+ */
+export function splitPanelRemark(remark: string): { node: string; entry: string } | null {
+  const fcp = ADDRESS_REMARK_RE.exec(remark);
+  if (fcp) return { node: fcp[1], entry: fcp[2] };
+  const suffix = TRANSPORT_SUFFIX_RE.exec(remark);
+  if (!suffix || suffix.index === 0) return null;
+  return { node: remark.slice(0, suffix.index), entry: suffix[0].slice(1) };
+}
+
+/** A proxy link's remark (its `#fragment`, decoded), or null. */
+export function linkRemark(line: string): string | null {
   const hashIdx = line.indexOf('#');
   if (hashIdx < 0 || hashIdx === line.length - 1) return null;
-  let remark: string;
   try {
-    remark = decodeURIComponent(line.slice(hashIdx + 1));
+    return decodeURIComponent(line.slice(hashIdx + 1));
   } catch {
     return null;
   }
-  const node = remark.replace(TRANSPORT_SUFFIX_RE, '');
-  return node.length > 0 && node !== remark ? node : null;
+}
+
+/** Extract the node name from a proxy link's remark, or null if unparseable. */
+export function nodeNameFromLink(line: string): string | null {
+  const remark = linkRemark(line);
+  return remark === null ? null : nodeNameFromTag(remark);
 }
 
 /** Extract the node name from a sing-box outbound tag / Clash proxy name (the
- *  backend uses the Host remark verbatim), or null when the name carries no
- *  transport suffix (selector/urltest groups, direct/block/dns outbounds). */
+ *  backend uses the Host remark verbatim), or null when the name names no node
+ *  (selector/urltest groups, direct/block/dns outbounds, edge labels). */
 export function nodeNameFromTag(tag: string): string | null {
-  const node = tag.replace(TRANSPORT_SUFFIX_RE, '');
-  return node.length > 0 && node !== tag ? node : null;
+  return splitPanelRemark(tag)?.node ?? null;
 }
 
 /** FNV-1a 32-bit — small, synchronous, and stable across runs. */
@@ -184,7 +211,7 @@ export function pinSubscriptionToNode(
     if (!chosen) return { content, node: null };
 
     const out = [...passthrough, ...(byNode.get(chosen) ?? [])].join('\n');
-    return { content: encoded ? btoa(out) : out, node: chosen };
+    return { content: encoded ? encodeBase64(out) : out, node: chosen };
   } catch {
     return { content, node: null };
   }

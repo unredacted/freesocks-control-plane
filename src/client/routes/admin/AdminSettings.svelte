@@ -545,6 +545,45 @@
         </CardContent>
       </Card>
 
+      <!-- Connection names in members' apps -->
+      <Card>
+        <CardHeader>
+          <CardTitle class="text-base">Names in members' apps</CardTitle>
+          <CardDescription>
+            The backend names each connection after its node and server name, and members (and
+            anyone with a free account) would see those names in their app. When this is on, FCP
+            renames them to "service name · location" (the backend's location label up to its first
+            comma), with a short code when there are several. Edge connections keep their own
+            labels.
+          </CardDescription>
+        </CardHeader>
+        <CardContent class="space-y-3 text-sm">
+          <label class="flex items-center gap-3">
+            <Checkbox
+              checked={draft['subscription.entryNames'] !== false}
+              onCheckedChange={(v) => (draft = { ...draft, 'subscription.entryNames': v === true })}
+            />
+            <span>Give connections neutral names</span>
+          </label>
+          <div>
+            <label class="text-xs text-muted-foreground mb-1 block" for="subscription-site-name">
+              Service name
+            </label>
+            <Input
+              id="subscription-site-name"
+              class="w-64"
+              maxlength={32}
+              value={String(draft['subscription.siteName'] ?? 'FreeSocks')}
+              oninput={(e) =>
+                (draft = {
+                  ...draft,
+                  'subscription.siteName': (e.target as HTMLInputElement).value,
+                })}
+            />
+          </div>
+        </CardContent>
+      </Card>
+
       <!-- Delivery preference suggestion (country-based) -->
       <Card>
         <CardHeader>

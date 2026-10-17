@@ -27,6 +27,7 @@ import { randomHex, sha256Hex } from './lib/crypto';
 import type { MirrorContext } from './subscriptions';
 import type { ActiveMirrorPage } from './subscriptions';
 import { applyEdgeRender } from './lib/edges/renderPipeline';
+import { relabelMemberEntries } from './lib/memberEntryNames';
 import type { Id } from './_generated/dataModel';
 
 /** The body a mirror holds when its place is edge-required and nothing can render. */
@@ -52,6 +53,23 @@ export interface MirrorValidation {
  * distributed, so the object itself must stop serving the origin.
  */
 async function renderMirrorBody(
+  ctx: ActionCtx,
+  sub: { id: Id<'subscriptions'>; backendServerId: Id<'backendServers'> | null | undefined },
+  node: string | undefined,
+  content: string,
+): Promise<{ content: string; renderedEpoch: number | null; validated: MirrorValidation | null }> {
+  const out = await renderMirrorEndpoints(ctx, sub, node, content);
+  if (out.validated?.stub) return out;
+  // The same member-facing names as the fronted route (docs/privacy.md), after
+  // the render for the same reason.
+  const naming = await ctx.runQuery(internal.subscriptions.entryNamingFor, {
+    backendServerId: sub.backendServerId ?? undefined,
+  });
+  return { ...out, content: relabelMemberEntries(out.content, naming).content };
+}
+
+/** The edge-render half of `renderMirrorBody`. */
+async function renderMirrorEndpoints(
   ctx: ActionCtx,
   sub: { id: Id<'subscriptions'>; backendServerId: Id<'backendServers'> | null | undefined },
   node: string | undefined,

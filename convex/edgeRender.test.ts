@@ -373,7 +373,9 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     const { t, subId, serverId } = await seed({ pinned: false });
     const res = await get(t);
     expect(res.status).toBe(200);
-    expect(await res.text()).toBe(raw);
+    // The backend's body, under the member-facing entry name (docs/servers.md
+    // "A direct node's addresses"): nothing else changes.
+    expect(await res.text()).toBe(`${raw.slice(0, raw.indexOf('#'))}#FreeSocks`);
     const sub = (await t.run((ctx) => ctx.db.get(subId)))!;
     expect(sub.pinnedNode).toBe('node-nine');
     expect(cacheOf(sub)[0].relay).toBeNull();

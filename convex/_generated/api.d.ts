@@ -94,6 +94,7 @@ import type * as lib_issueTelemetry from "../lib/issueTelemetry.js";
 import type * as lib_legacyFields from "../lib/legacyFields.js";
 import type * as lib_loadBands from "../lib/loadBands.js";
 import type * as lib_locations from "../lib/locations.js";
+import type * as lib_memberEntryNames from "../lib/memberEntryNames.js";
 import type * as lib_membershipCode from "../lib/membershipCode.js";
 import type * as lib_nodePinning from "../lib/nodePinning.js";
 import type * as lib_panel_digest from "../lib/backend/digest.js";
@@ -264,6 +265,7 @@ declare const fullApi: ApiFromModules<{
   "lib/legacyFields": typeof lib_legacyFields;
   "lib/loadBands": typeof lib_loadBands;
   "lib/locations": typeof lib_locations;
+  "lib/memberEntryNames": typeof lib_memberEntryNames;
   "lib/membershipCode": typeof lib_membershipCode;
   "lib/nodePinning": typeof lib_nodePinning;
   "lib/backend/digest": typeof lib_panel_digest;

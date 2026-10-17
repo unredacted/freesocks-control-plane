@@ -1,11 +1,13 @@
 import { describe, expect, test } from 'vitest';
 import YAML from 'yaml';
+import { addressRemark } from './backend/hostRemark';
 import {
   nodeNameFromLink,
   nodeNameFromTag,
   nodelessBody,
   pickNode,
   pinSubscriptionToNode,
+  splitPanelRemark,
 } from './nodePinning';
 
 const NODE_A = 'xray1-front-mci1-beta-fs-ce';
@@ -43,6 +45,63 @@ describe('nodeNameFromLink', () => {
     expect(nodeNameFromLink(`vless://u@x.org:443?security=reality#${NODE_B}-relay-a`)).toBe(NODE_B);
     expect(nodeNameFromLink(`vless://u@x.org:443#${NODE_B}-relay-gc1`)).toBe(NODE_B);
     expect(nodeNameFromTag(`${NODE_B}-relay-a`)).toBe(NODE_B);
+  });
+});
+
+describe('FCP address remarks (<node> | <server name>)', () => {
+  // FCP's own addresses of a direct node (lib/backend/hostRemark.ts).
+  const fcpLink = (node: string, sni: string, address: string) =>
+    `vless://u@${address}:443?security=reality&sni=${sni}#${encodeURIComponent(addressRemark(node, sni))}`;
+
+  test('name the node, with the server name (or its tag) as the entry', () => {
+    expect(splitPanelRemark(addressRemark('node-a', 'www.decoy-a.example'))).toEqual({
+      node: 'node-a',
+      entry: 'www.decoy-a.example',
+    });
+    const long = `${'a'.repeat(40)}.decoy.example`;
+    expect(splitPanelRemark(addressRemark('node-a', long))?.node).toBe('node-a');
+    expect(splitPanelRemark(addressRemark('node with spaces', 'x.example'))?.node).toBe(
+      'node with spaces',
+    );
+    expect(nodeNameFromLink(fcpLink('node-a', 'x.example', '192.0.2.1'))).toBe('node-a');
+    expect(nodeNameFromTag(addressRemark('node-a', 'x.example'))).toBe('node-a');
+    // Not a node: a group, an edge label, a name with no node before the separator.
+    for (const other of ['proxy', 'FreeSocks Primary', ' | x.example', 'ab | x.example'])
+      expect(splitPanelRemark(other)).toBeNull();
+  });
+
+  test('a body of two direct nodes pins to one of them, in every format', () => {
+    const names = ['www.decoy-a.example', 'cdn.decoy-b.example'];
+    const nodes = [
+      { node: 'node-alpha', address: '192.0.2.1' },
+      { node: 'node-beta', address: '198.51.100.1' },
+    ];
+    const lines = nodes.flatMap((n) => names.map((sni) => fcpLink(n.node, sni, n.address)));
+    const pinned = pinSubscriptionToNode(lines.join('\n'), 'short-1');
+    const chosen = nodes.find((n) => n.node === pinned.node)!;
+    expect(chosen).toBeTruthy();
+    expect(pinned.content.split('\n')).toEqual(
+      lines.filter((l) => l.includes(`@${chosen.address}:`)),
+    );
+    const tags = nodes.flatMap((n) => names.map((sni) => addressRemark(n.node, sni)));
+    const sb = pinSubscriptionToNode(
+      JSON.stringify({
+        outbounds: [
+          { type: 'selector', tag: 'proxy', outbounds: tags },
+          ...tags.map((tag) => ({ type: 'vless', tag, server: '192.0.2.9', server_port: 443 })),
+        ],
+      }),
+      'short-1',
+    );
+    expect(sb.node).toBe(pinned.node);
+    const clash = pinSubscriptionToNode(
+      YAML.stringify({
+        proxies: tags.map((name) => ({ name, type: 'vless', server: '192.0.2.9', port: 443 })),
+        'proxy-groups': [{ name: 'proxy', type: 'select', proxies: tags }],
+      }),
+      'short-1',
+    );
+    expect(clash.node).toBe(pinned.node);
   });
 });
 
