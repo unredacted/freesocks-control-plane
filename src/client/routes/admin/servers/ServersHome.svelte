@@ -67,6 +67,14 @@
   const providers = providersQuery();
   let setupOpen = $state(false);
   let nodeQuery = $state('');
+  // A query belongs to the backend it was typed on: switching backends clears it.
+  let queriedSlug: string | null = null;
+  $effect(() => {
+    if (slug !== queriedSlug) {
+      queriedSlug = slug;
+      nodeQuery = '';
+    }
+  });
   let setupRow = $derived(setup.data ? setupWords(setup.data) : null);
   // A setup run finishes in the background, and only the setup query polls
   // while it runs: when it stops, everything else on the page (the summary's
@@ -298,7 +306,8 @@
         {@const shown = t.nodes.filter((n) =>
           nodeMatches(nodeQuery, n.name, intentOf(n)?.machineName ?? null),
         )}
-        {#if t.nodes.length > 1}
+        <!-- Kept while a query is set, so the only control that clears it never hides. -->
+        {#if t.nodes.length > 1 || nodeQuery.trim()}
           <div class="mb-3 max-w-sm">
             <Label for="node-filter" class="sr-only">Find a node</Label>
             <Input

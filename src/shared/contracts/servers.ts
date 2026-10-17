@@ -506,7 +506,9 @@ export const NodeRegistration = z.object({
    * operators next to the node. Never member-facing. A value that is not a
    * plain host name is ignored, not refused.
    */
-  machineName: z.string().max(253).optional(),
+  // `.catch`: an unusable value (too long, not a string) reads as absent instead
+  // of failing the whole registration.
+  machineName: z.string().max(253).optional().catch(undefined),
   observed: z.object({
     management: z.object({ address: z.string().min(2), port: z.number().int().min(1).max(65535) }),
     publicIps: z.object({ v4: z.string().optional(), v6: z.string().optional() }).default({}),
