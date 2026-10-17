@@ -637,3 +637,76 @@ describe('relabelMemberEntries: the backend’s groups', () => {
     expect(backendGroupName('proxy')).toBe(false);
   });
 });
+
+describe('relabelling again, and values that are not names', () => {
+  type Obj = Record<string, unknown>;
+  const singboxBody = (groupTag: string, entries: Obj[]) => {
+    const cfg = JSON.parse(JSON.stringify(SINGBOX_JSON)) as Obj & { outbounds: Obj[] };
+    cfg.outbounds[0].tag = groupTag;
+    cfg.outbounds[0].outbounds = entries.map((e) => e.tag);
+    cfg.outbounds.splice(1, 0, ...entries);
+    return JSON.stringify(cfg);
+  };
+  const vless = (tag: string, sni: string) => ({
+    type: 'vless',
+    tag,
+    server: ADDR_A,
+    server_port: 443,
+    uuid: '11111111-2222-3333-4444-555555555555',
+    tls: { enabled: true, server_name: sni, reality: { enabled: true } },
+  });
+  const clashBody = (names: string[]) => {
+    const doc = YAML.parse(CLASH_YAML) as Obj & { 'proxy-groups': Obj[] };
+    doc.proxies = names.map((name, i) => ({
+      name,
+      type: 'vless',
+      server: ADDR_A,
+      port: 443,
+      uuid: '11111111-2222-3333-4444-555555555555',
+      servername: NAMES[i],
+    }));
+    doc['proxy-groups'][0].proxies = names;
+    return YAML.stringify(doc);
+  };
+
+  test('a relabelled body relabels to itself (a cached body is relabelled again when served)', () => {
+    const bodies = [
+      singboxBody(
+        '→ Remnawave',
+        NAMES.map((n) => vless(addressRemark(NODE_A, n), n)),
+      ),
+      singboxBody('→ Remnawave', [vless('FreeSocks', NAMES[0])]),
+      clashBody(NAMES.map((n) => addressRemark(NODE_A, n))),
+      clashBody(['FreeSocks']),
+    ];
+    // A site name carrying the backend product's name must not add a suffix each time.
+    for (const naming of [NAMING, { siteName: 'Remnawave VPN', place: null }]) {
+      for (const body of bodies) {
+        const once = relabelMemberEntries(body, naming);
+        expect(once.renamed).toBeGreaterThan(0);
+        expect(once.content).toContain(memberGroupName(naming));
+        expect(relabelMemberEntries(once.content, naming)).toEqual({
+          content: once.content,
+          renamed: 0,
+        });
+      }
+    }
+  });
+
+  test('a group named like the template’s cache id renames the group, never the cache id or a path', () => {
+    const out = relabelMemberEntries(
+      singboxBody('remnawave', [vless('FreeSocks', NAMES[0])]),
+      NAMING,
+    );
+    expect(out.renamed).toBe(1);
+    const cfg = JSON.parse(out.content) as {
+      outbounds: Obj[];
+      experimental: { cache_file: { cache_id: string; path: string } };
+    };
+    expect(cfg.outbounds[0].tag).toBe('FreeSocks Select');
+    expect(cfg.experimental.cache_file).toEqual(
+      (SINGBOX_JSON as { experimental: { cache_file: unknown } }).experimental.cache_file,
+    );
+    expect(cfg.experimental.cache_file.cache_id).toBe('remnawave');
+  });
+});

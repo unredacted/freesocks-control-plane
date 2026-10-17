@@ -36,7 +36,8 @@
  * pairs with the edge renderer's url-test group (`edge.render.autoGroupName`,
  * "FreeSocks Auto"); never the bare site name, which the default edge entry
  * label already is. An operator's own groups keep their names, and a new group
- * name never takes a name the body already uses.
+ * name never takes a name the body already uses. A relabelled body relabels to
+ * itself, so a cached body can go through it again when it is served.
  *
  * It runs on the body the member receives, AFTER node pinning and edge
  * rendering: both read the original names. References follow the rename
@@ -72,6 +73,10 @@ const TEMPLATE_GROUP_NAMES: ReadonlySet<string> = new Set(['→ Remnawave']);
 const BACKEND_PRODUCT_RE = /remnawave/i;
 // sing-box outbound types that are groups.
 const SINGBOX_GROUP_TYPES = new Set(['selector', 'urltest']);
+// Keys whose values are never an entry or group name, however they read: the
+// sing-box template's `cache_file.cache_id` is "remnawave" (a group of that
+// name must not rename the cache), and a `path` is a file or URL path.
+const NOT_REFERENCES: ReadonlySet<string> = new Set(['cache_id', 'path']);
 
 /** What a member's entry names are built from. */
 export interface EntryNaming {
@@ -213,6 +218,12 @@ export function memberGroupName(naming: EntryNaming): string {
   return `${naming.siteName} Select`;
 }
 
+/** Whether a group already has a member group name (`<site name> Select`, ` (2)`…). */
+function hasMemberGroupName(name: string, naming: EntryNaming): boolean {
+  const base = memberGroupName(naming);
+  return name === base || (name.startsWith(base) && /^ \(\d+\)$/.test(name.slice(base.length)));
+}
+
 /**
  * The new name of every backend group (`backendGroupName`) among `groups`, by
  * its old name: the member group name, then ` (2)`, ` (3)` for any further one,
@@ -229,7 +240,9 @@ export function planGroupNames(
   const plan = new Map<string, string>();
   const template = (name: string) => TEMPLATE_GROUP_NAMES.has(name);
   for (const name of [...groups.filter(template), ...groups.filter((g) => !template(g))]) {
-    if (plan.has(name) || !backendGroupName(name)) continue;
+    // Already renamed (a body relabelled before, a site name that carries
+    // the backend product's name): renaming again would only add a suffix.
+    if (plan.has(name) || !backendGroupName(name) || hasMemberGroupName(name, naming)) continue;
     const next = uniqueName(memberGroupName(naming), used);
     used.add(next);
     plan.set(name, next);
@@ -331,10 +344,10 @@ function relabelLinks(trimmed: string, naming: EntryNaming): RelabelResult | nul
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
 
-/** Rename across the whole tree, then prove no old name survives anywhere. */
+/** Rename across the whole tree (`NOT_REFERENCES` aside), then prove no old name survives as a reference. */
 function renameAll(tree: unknown, plan: Map<string, string>): unknown | null {
-  const next = renameRefs(tree, plan);
-  return mentionsAny(next, new Set(plan.keys())) ? null : next;
+  const next = renameRefs(tree, plan, NOT_REFERENCES);
+  return mentionsAny(next, new Set(plan.keys()), NOT_REFERENCES) ? null : next;
 }
 
 /** sing-box: outbound (and endpoint) tags, group tags, and every reference to them. */

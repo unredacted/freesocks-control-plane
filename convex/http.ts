@@ -1086,6 +1086,18 @@ http.route({
 
     const now = Date.now();
     const title = await ctx.runQuery(internal.subscriptions.profileTitle, {});
+    // Member-facing names (docs/privacy.md) under the current settings. A
+    // fetched body is relabelled before it is cached; a cached or stale one is
+    // relabelled again when served, since it may predate a rename (a relabelled
+    // body relabels to itself, so this is a no-op otherwise).
+    const naming = () =>
+      ctx.runQuery(internal.subscriptions.entryNamingFor, {
+        backendServerId: sub.backendServerId ?? undefined,
+      });
+    const memberNamed = async <T extends { content: string }>(entry: T): Promise<T> => ({
+      ...entry,
+      content: relabelMemberEntries(entry.content, await naming()).content,
+    });
     // Every edge-required refusal is counted per reason (deliveryRefusals.ts,
     // attention `delivery_refusals`): dark members must be visible to the
     // operator, not only to the member. Counting never changes the answer.
@@ -1157,7 +1169,7 @@ http.route({
         contentAt: fresh.at,
         renderedEpoch: fresh.renderedEpoch ?? null,
       });
-      return subscriptionResponse(fresh, { title }); // fresh + same format → cache hit
+      return subscriptionResponse(await memberNamed(fresh), { title }); // fresh + same format → cache hit
     }
     // Last-resort fallback MUST match this UA — never serve another client's
     // format (the same invariant the fresh path enforces). (Review #11.)
@@ -1292,12 +1304,7 @@ http.route({
       // Member-facing names (docs/privacy.md): an entry the backend named after
       // its node and server name gets a neutral label. Last, because pinning
       // and the edge render both read those names.
-      content = relabelMemberEntries(
-        content,
-        await ctx.runQuery(internal.subscriptions.entryNamingFor, {
-          backendServerId: sub.backendServerId ?? undefined,
-        }),
-      ).content;
+      content = relabelMemberEntries(content, await naming()).content;
       const entry: SubCacheEntry = {
         content,
         contentType: fetched.contentType ?? 'text/plain',
@@ -1353,7 +1360,7 @@ http.route({
           contentAt: stale.at,
           renderedEpoch: stale.renderedEpoch ?? null,
         });
-        return subscriptionResponse(stale, { title });
+        return subscriptionResponse(await memberNamed(stale), { title });
       }
       console.error(
         `[subscription] fronted fetch failed: ${err instanceof Error ? err.message : String(err)}`,

@@ -723,6 +723,40 @@ describe('GET /api/v1/sub/<token>: the backend’s group', () => {
     expect(off.doc['proxy-groups'].map((g) => g.name)).toEqual(['→ Remnawave']);
     expect(off.doc.rules).toEqual(['MATCH,→ Remnawave']);
   });
+
+  test('a body cached before the rename is renamed on a cache hit and when served stale', async () => {
+    const t = convexTest(schema, modules);
+    const { subId } = await seedSub(t);
+    await served(t);
+    // What a body cached before this change holds: the backend's group name.
+    const patchCache = (edit: (e: { at: number; content: string }) => void) =>
+      t.run(async (ctx) => {
+        const sub = (await ctx.db.get(subId))!;
+        const entries = JSON.parse(sub.subCache!) as Array<{ at: number; content: string }>;
+        for (const e of entries) edit(e);
+        await ctx.db.patch(subId, { subCache: JSON.stringify(entries) });
+      });
+    await patchCache((e) => {
+      e.content = e.content.replaceAll('FreeSocks Select', '→ Remnawave');
+    });
+    const hit = await served(t);
+    expect(fetchCalls).toBe(1); // a cache hit
+    expect(hit.text).not.toMatch(/remnawave/i);
+    expect(hit.doc.rules).toEqual(['MATCH,FreeSocks Select']);
+    // The same body, aged past its TTL, served while the backend is down.
+    await patchCache((e) => {
+      e.at -= 24 * 3600_000;
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('backend down');
+      }),
+    );
+    const stale = await served(t);
+    expect(stale.text).not.toMatch(/remnawave/i);
+    expect(stale.doc['proxy-groups'].map((g) => g.name)).toEqual(['FreeSocks Select']);
+  });
 });
 
 describe('getAccountView subscription URL', () => {

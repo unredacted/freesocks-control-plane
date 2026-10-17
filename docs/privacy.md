@@ -206,6 +206,8 @@ included, so what it names is part of the posture.
   url-test group (`edge.render.autoGroupName`, `FreeSocks Auto` by default) and from the
   default edge entry label (the bare site name). An operator's own groups keep their
   names. The subscription title is the site name too (`profile-title`, `docs/backends.md`).
+  The fronted route relabels a cached or stale body again when it serves it, so a body cached
+  before a rename never brings back the old names (a relabelled body relabels to itself).
 - **Only the fronted URL is handed out.** The backend's own subscription URL serves the
   backend's names; members are given FCP's `/api/v1/sub/<token>` URL instead (issuance mints
   the token for every key), so the rename covers every key's normal path. The fronted route
