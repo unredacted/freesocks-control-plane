@@ -21,6 +21,11 @@
    * use opens "Replace now", a spare is renewed (SpareDialog), a go-live check
    * retries its run for that line.
    *
+   * "Put it in use" on a spare: while fewer addresses are in use than the node
+   * wants, the server's `pool_below_desired` attention item names the one spare
+   * that passes the publish checks; its line offers the same publish as the
+   * Edges home (lib/attentionCalls.ts), which opens the run.
+   *
    * Props:
    *   slug: string                          the origin's slug
    *   enrolled?: { stage: string } | null   the enrolled node behind it (Servers knows)
@@ -36,7 +41,12 @@
   import Link from '@client/components/Link.svelte';
   import { router } from '@client/stores/router.svelte';
   import { searchParam } from '@client/lib/urlState.svelte';
-  import { plainAuditActionLabel, restorePhaseWords } from '@client/lib/edgeCodes';
+  import {
+    PLAIN_ATTENTION_ACTION_LABELS,
+    plainAuditActionLabel,
+    plainWords,
+    restorePhaseWords,
+  } from '@client/lib/edgeCodes';
   import {
     attentionQuery,
     deleteRelay,
@@ -56,6 +66,9 @@
   import Timeline from '../components/Timeline.svelte';
   import ActionConfirm from '../relay/ActionConfirm.svelte';
   import ReplaceDialog from '../relay/ReplaceDialog.svelte';
+  import { ATTENTION_ACTION_PLAN } from '../lib/attention';
+  import { runAttentionCall } from '../lib/attentionCalls';
+  import { attentionCallDeps } from '../lib/attentionCallDeps';
   import { assertEdgeOk, edgeErrorMessage } from '../lib/edgeErrors';
   import { transportName } from '../lib/format';
   import { edgesPaths } from '../lib/routes';
@@ -115,6 +128,21 @@
       !busy,
   );
   const protectAgainFirst = $derived(canProtectAgain && enrolled?.stage !== 'live');
+
+  // Put a spare in use: the server's publish item for this origin (it names the
+  // spare that passes the publish checks), and the same call the Edges home makes.
+  const putInUse = $derived(
+    attention.data?.items.find(
+      (i) =>
+        i.kind === 'pool_below_desired' &&
+        i.action === 'publish' &&
+        i.relaySlug === slug &&
+        i.edgeId,
+    ) ?? null,
+  );
+  const PUBLISH = ATTENTION_ACTION_PLAN.publish.confirm;
+  const publishDeps = attentionCallDeps(qc, { plain: true });
+  let putInUseOpen = $state(false);
 
   // Replace: one published address, or a choice when several are in use.
   let replacing = $state<{ kind: 'rotate' | 'burn'; edge: EdgeAdmin } | null>(null);
@@ -319,6 +347,8 @@
                 listener={l}
                 {edges}
                 onTest={(edgeId) => (testEdgeIds = [edgeId])}
+                publishable={busy ? null : (putInUse?.edgeId ?? null)}
+                onPublish={() => (putInUseOpen = true)}
               />
             </li>
           {/each}
@@ -412,6 +442,16 @@
     </ActionConfirm>
   {/if}
   <SpareDialog bind:open={spareOpen} {relay} />
+  {#if putInUse}
+    {@const item = putInUse}
+    <ActionConfirm
+      bind:open={putInUseOpen}
+      title={plainWords(PUBLISH.title)}
+      body={plainWords(PUBLISH.body)}
+      confirmLabel={PLAIN_ATTENTION_ACTION_LABELS.publish}
+      run={() => runAttentionCall(item, publishDeps)}
+    />
+  {/if}
   {#if renewing}
     <SpareDialog open={true} {relay} renew={renewing} onClose={() => (renewing = null)} />
   {/if}

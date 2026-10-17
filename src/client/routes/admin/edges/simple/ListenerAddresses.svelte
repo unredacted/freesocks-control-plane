@@ -4,11 +4,13 @@
    * dot per address in use, a spare cell per spare) and a plain line per
    * address (In use / Spare / Retiring, health, tested or not).
    *
-   * Props: listener; edges (every non-destroyed edge of the origin); onTest(edgeId)
+   * Props: listener; edges (every non-destroyed edge of the origin); onTest(edgeId);
+   *        publishable? (the spare the server says can be put in use now, or null)
+   *        with onPublish() (the caller confirms and publishes it)
    */
   import type { EdgeAdmin, RelayListenerAdmin } from '@shared/contracts/edges';
   import { Button } from '@client/components/ui/button';
-  import { healthLabel } from '@client/lib/edgeCodes';
+  import { PLAIN_ATTENTION_ACTION_LABELS, healthLabel } from '@client/lib/edgeCodes';
   import PoolStrip from '../components/PoolStrip.svelte';
   import type { PoolEntry } from '../lib/types';
 
@@ -16,8 +18,10 @@
     listener: RelayListenerAdmin;
     edges: EdgeAdmin[];
     onTest: (edgeId: string) => void;
+    publishable?: string | null;
+    onPublish?: () => void;
   }
-  let { listener, edges, onTest }: Props = $props();
+  let { listener, edges, onTest, publishable = null, onPublish }: Props = $props();
 
   const mine = $derived(edges.filter((e) => e.listenerId === listener.id));
   const inUse = $derived(mine.filter((e) => e.publication === 'published'));
@@ -82,6 +86,16 @@
               onclick={() => onTest(e.id)}
             >
               Test it
+            </Button>
+          {/if}
+          {#if onPublish && e.id === publishable}
+            <Button
+              variant="link"
+              size="sm"
+              class="h-auto min-h-11 p-0 sm:min-h-0"
+              onclick={onPublish}
+            >
+              {PLAIN_ATTENTION_ACTION_LABELS.publish}
             </Button>
           {/if}
         </li>
