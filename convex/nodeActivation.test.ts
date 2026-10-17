@@ -48,7 +48,8 @@ const UUID = (n: number) => `${String(n).padStart(8, '0')}-0000-4000-8000-000000
 const TAG = 'PRIVACY_REALITY';
 
 type Panel = FakeBackend;
-const installPanel = (): Panel => installFakeBackend();
+const installPanel = (opts: { userIds?: 'uuid' | 'numeric' } = {}): Panel =>
+  installFakeBackend(opts);
 
 const setupInput = {
   profileName: 'FreeSocks-Config',
@@ -94,11 +95,16 @@ async function runUntil<R extends { state: string }>(
 }
 
 async function seedLiveDirect(
-  opts: { nodeName?: string; names?: string[]; expectReady?: boolean } = {},
+  opts: {
+    nodeName?: string;
+    names?: string[];
+    expectReady?: boolean;
+    userIds?: 'uuid' | 'numeric';
+  } = {},
 ) {
   const t = convexTest(schema, modules);
   const serverId = await insertPanelServer(t);
-  const panel = installPanel();
+  const panel = installPanel({ userIds: opts.userIds });
   await t.mutation(internal.seed.seedConnectionModes, {});
   await t.mutation(internal.serverAdmin.patchConfig, { patch: { 'manage.enabled': true } });
   await t.mutation(internal.sniFamilies.patchConfig, { patch: { enabled: true } });
@@ -363,6 +369,16 @@ describe('a direct node with long names', () => {
     );
     expect(mine.map((h) => h.sni).sort()).toEqual([...names].sort());
     for (const h of mine) expect(String(h.remark).length).toBeLessThanOrEqual(40);
+  });
+
+  test('a 3.x backend (numeric user ids): the test link reads its credential by the bare id', async () => {
+    // FCP stores a 3.x user id scoped (`<serverId>:<id>`); the backend only knows the bare id.
+    const { t, panel, intentId } = await seedLiveDirect({ userIds: 'numeric' });
+    const built = await t.action(internal.nodeActivation.buildDirectTestLink, { intentId });
+    expect(built.link).toMatch(/^vless:\/\//);
+    const creds = await t.run((ctx) => ctx.db.query('edgeTestCredentials').collect());
+    expect(creds[0]!.backendUserId).toMatch(/^[^:]+:\d+$/);
+    expect(panel.users.some((u) => typeof u.id === 'number' && !u.uuid)).toBe(true);
   });
 
   test('the test link of a node with a 30-character name: its backend user fits the 36-character cap', async () => {

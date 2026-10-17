@@ -29,6 +29,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
 import { randomHex } from './lib/crypto';
+import { toProviderUserId } from './lib/backendUserId';
 import {
   evidenceHolds,
   publicationAdmitted,
@@ -581,7 +582,11 @@ export const buildDirectTestLink = internalAction({
         code: 'servers.inbound_missing',
         message: 'The REALITY transport is gone',
       });
-    const { protocolUuid } = await writes.userCredential(config, cred.backendUserId);
+    // Stored ids of a 3.x backend are scoped (`<serverId>:<id>`); the backend speaks the bare id.
+    const { protocolUuid } = await writes.userCredential(
+      config,
+      toProviderUserId(cred.backendUserId),
+    );
     if (!protocolUuid)
       throw new ConvexError({
         code: 'servers.credential_unavailable',

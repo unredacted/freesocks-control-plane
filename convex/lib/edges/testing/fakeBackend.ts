@@ -121,8 +121,17 @@ function clashOf(entries: Entry[]): string {
     .join('')}`;
 }
 
-export function createFakeBackend(opts: { host?: string } = {}): FakeBackend {
+/**
+ * `userIds: 'numeric'` answers like a 3.x backend: users carry a per-backend
+ * integer `id` and no `uuid`, so FCP stores them scoped (`<serverId>:<id>`)
+ * and must strip the scope before every call (lib/backendUserId.ts).
+ */
+export function createFakeBackend(
+  opts: { host?: string; userIds?: 'uuid' | 'numeric' } = {},
+): FakeBackend {
   const host = opts.host ?? FAKE_BACKEND_HOST;
+  const numericIds = opts.userIds === 'numeric';
+  const userKey = (x: { uuid?: string; id?: number }) => x.uuid ?? String(x.id);
   const panel: FakeBackend = {
     profiles: [],
     squads: [],
@@ -160,7 +169,7 @@ export function createFakeBackend(opts: { host?: string } = {}): FakeBackend {
         const u = panel.users.find((x) => x.username === decodeURIComponent(byName[1]!));
         return u ? json(u) : jsonRes({ message: 'User not found' }, 404);
       }
-      const u = panel.users.find((x) => path === `/api/users/${x.uuid}`);
+      const u = panel.users.find((x) => path === `/api/users/${userKey(x)}`);
       if (u) return json(u);
       if (path.startsWith('/api/hwid/devices/')) return json({ devices: [] });
       if (path.startsWith('/api/sub/'))
@@ -285,7 +294,7 @@ export function createFakeBackend(opts: { host?: string } = {}): FakeBackend {
       if (!BACKEND_USERNAME_RE.test(String(body.username)))
         return jsonRes({ statusCode: 400, message: 'Validation failed' }, 400);
       const made = {
-        uuid: UUID(++panel.seq),
+        ...(numericIds ? { id: ++panel.seq } : { uuid: UUID(++panel.seq) }),
         shortUuid: `short-${panel.seq}`,
         vlessUuid: FAKE_BACKEND_USER_UUID,
         username: body.username,
@@ -302,7 +311,7 @@ export function createFakeBackend(opts: { host?: string } = {}): FakeBackend {
     }
     const userDelete = path.match(/^\/api\/users\/([^/]+)$/);
     if (userDelete && method === 'DELETE') {
-      panel.users = panel.users.filter((x) => x.uuid !== userDelete[1]);
+      panel.users = panel.users.filter((x) => userKey(x) !== userDelete[1]);
       return json({ isDeleted: true });
     }
     return json({});
@@ -312,8 +321,10 @@ export function createFakeBackend(opts: { host?: string } = {}): FakeBackend {
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
 /** The fake backend as the global fetch on its own (the activation tests' shape). */
-export function installFakeBackend(): FakeBackend & { stub: FetchStub } {
-  const panel = createFakeBackend();
+export function installFakeBackend(
+  opts: { userIds?: 'uuid' | 'numeric' } = {},
+): FakeBackend & { stub: FetchStub } {
+  const panel = createFakeBackend(opts);
   const stub = mockFetch(routeFetch(panel.handle));
   return Object.assign(panel, { stub });
 }
