@@ -2737,6 +2737,9 @@ export default defineSchema({
         state: v.union(v.literal('matched'), v.literal('drifted'), v.literal('refused')),
       }),
     ),
+    // When the live templates were last looked at (setup or the sweep's re-sync);
+    // absent on rows from before the re-sync, which are due at once.
+    templatesCheckedAt: v.optional(v.number()),
     // The privacy posture of the adopted profile, from the harden preview.
     privacy: v.optional(v.union(v.literal('ok'), v.literal('drifted'))),
     originDns: v.optional(

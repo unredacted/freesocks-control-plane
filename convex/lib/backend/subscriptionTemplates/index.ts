@@ -75,3 +75,17 @@ export function templatesOutdated(
     (t) => t.state !== 'matched' || (t.family in shipped && t.hash !== shipped[t.family]),
   );
 }
+
+/**
+ * The record a re-sync starts from: an entry FCP now ships differently takes
+ * the new hash, not matched, before anything is written; the rest stay.
+ */
+export function stageShippedTemplates<
+  T extends { family: string; hash: string; state: 'matched' | 'drifted' | 'refused' },
+>(recorded: readonly T[], shipped: Readonly<Record<string, string>>): T[] {
+  return recorded.map((t) =>
+    t.family in shipped && t.hash !== shipped[t.family]
+      ? { ...t, hash: shipped[t.family]!, state: 'drifted' }
+      : t,
+  );
+}

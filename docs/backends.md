@@ -595,7 +595,7 @@ backend is configured to emit Clash output for that UA** — a **backend** conce
 get base64 instead of YAML, fix that on the backend; the FCP front already does the
 right thing. The template bodies themselves (what a sing-box or Clash body carries
 beside the entries) are FCP's: setup installs them and the bootstrap sweep keeps every
-set-up backend on what FCP ships (`convex/lib/backend/subscriptionTemplates/`,
+set-up backend on what FCP ships, looking at the live ones hourly (`convex/lib/backend/subscriptionTemplates/`,
 `docs/servers.md` § "Templates after setup", `docs/privacy.md` §5c).
 
 **The ONE exception to exact-UA forwarding** (`normalizeSubscriptionUserAgent`,

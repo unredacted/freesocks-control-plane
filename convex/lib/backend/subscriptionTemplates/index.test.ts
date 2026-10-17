@@ -5,6 +5,7 @@ import {
   base64Utf8,
   desiredTemplateBody,
   shippedTemplateHashes,
+  stageShippedTemplates,
   templateDrift,
   templateHash,
   templatesOutdated,
@@ -79,5 +80,23 @@ describe('subscription templates', () => {
     expect(templatesOutdated([{ family: 'GONE', hash: 'x', state: 'matched' }], shipped)).toBe(
       false,
     );
+  });
+
+  test('staging: an entry FCP ships differently takes the new hash, not matched; the rest stay', () => {
+    const shipped = { SINGBOX: 'new', MIHOMO: 'm' };
+    expect(
+      stageShippedTemplates(
+        [
+          { family: 'SINGBOX', hash: 'old', state: 'matched' as const },
+          { family: 'MIHOMO', hash: 'm', state: 'refused' as const },
+          { family: 'GONE', hash: 'x', state: 'matched' as const },
+        ],
+        shipped,
+      ),
+    ).toEqual([
+      { family: 'SINGBOX', hash: 'new', state: 'drifted' },
+      { family: 'MIHOMO', hash: 'm', state: 'refused' },
+      { family: 'GONE', hash: 'x', state: 'matched' },
+    ]);
   });
 });

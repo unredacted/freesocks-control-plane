@@ -570,17 +570,23 @@ unbound family, drifted privacy) is re-run on the next request so the blocker ca
 setup row also carries the backend-wide **delivery gate version** (below).
 
 **Templates after setup.** FCP owns the subscription templates, so a release that changes one
-must reach every backend already set up. The `backend-bootstrap-sweep` cron (every 5 minutes,
+must reach every backend already set up, and a change made on the backend (an edit, an upgrade
+that resets one) must be put back. The `backend-bootstrap-sweep` cron (every 5 minutes,
 `backendSetup.resyncTemplates`) runs the templates step alone on each ready backend whose
-recorded templates are not all `matched` at the hash of what FCP ships now. After a deploy that
-changed a template, that is one re-sync per backend, writing only the templates that differ. It
-holds the setup's lease meanwhile (a setup request answers `servers.setup_running`), the row
-stays ready, and nothing else of the setup runs; with server changes switched off it writes
-nothing. A refused or failed write is recorded as during setup and tried again on every sweep;
-`servers.setup.templates_installed` is audited only when the outcome moves. The recorded hashes
-are part of the review hash (`awaiting_approval`, below), so a node approved but not yet live when
-a re-sync lands parks until it is approved again (`servers.review_stale`); live nodes are
-untouched. Members get the new body on their app's next subscription refresh.
+recorded templates are not all `matched` at the hash of what FCP ships now, and on every ready
+backend whose live templates were last looked at an hour ago or more (`templatesCheckedAt`).
+After a deploy that changed a template, that is one re-sync per backend; each run writes only
+the templates that differ. It holds the setup's lease meanwhile (a setup request answers
+`servers.setup_running`), the row stays ready, and nothing else of the setup runs. Server
+changes switched off: nothing is written, and the switch is read again before every write. A
+refused or failed write is recorded as during setup and tried again on every sweep;
+`servers.setup.templates_installed` is audited when something was written or the outcome moved.
+Before writing, the claim records a template FCP now ships differently under its new hash, not
+matched: the review hash (`awaiting_approval`, below) moves and activation holds
+(`servers.template_drifted`) until the outcome is recorded, so no node is approved or goes live
+against the old template while the write is in flight. A node approved but not yet live parks
+until it is approved again (`servers.review_stale`); live nodes are untouched. Members get the
+new body on their app's next subscription refresh.
 
 ### Adopting a backend
 

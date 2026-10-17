@@ -207,11 +207,13 @@ included, so what it names is part of the posture.
   FCP's choice. Apart from the selector group's name, the templates name nothing of the
   backend (a test pins it). The sing-box template's local cache is `cache.db` (sing-box's own
   default file name) with store id `default`; before, both were named after the backend
-  product. Apps never show these, but anyone holding the raw body (the sealed configuration
-  copy, a mirror) reads them. A changed template reaches each backend on the next bootstrap
-  sweep (`docs/servers.md` § "Templates after setup"). The new store starts empty, so a
-  sing-box member's app forgets once which connection they picked by hand and its remembered
-  fake-IP mappings; the old cache file stays on the device until the app's data is cleared.
+  product. Apps never show these, but anyone holding the subscription URL can fetch the
+  sing-box body and read them (the sealed configuration copy and the S3 mirrors carry the
+  link list, not a template). A changed template reaches each backend on the next bootstrap
+  sweep, and one changed on the backend is put back within the hour (`docs/servers.md` §
+  "Templates after setup"). The new store starts empty, so a sing-box member's app forgets
+  once which connection they picked by hand and its remembered fake-IP mappings; the old
+  cache file stays on the device until the app's data is cleared.
 - **Off switch.** `subscription.entryNames` (Admin → Settings → "Names in members'
   apps", default on) serves the backend's own names; only do that on a deployment whose
   node names are meant to be public. VMess links carry their name inside the link's
