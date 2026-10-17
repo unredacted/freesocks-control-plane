@@ -24,6 +24,7 @@ import {
   nodeNotes,
   fleetSentence,
   intentRestarting,
+  nodesBeingChanged,
   countryLabel,
   opRepeatKey,
   opRepeatWords,
@@ -350,6 +351,13 @@ describe('write wording', () => {
     expect(intentRestarting({ ...intent, appliedRevision: 1 }, now)).toBe(true);
     expect(intentRestarting({ ...intent, state: 'pending' }, now)).toBe(true);
     expect(intentRestarting({ ...intent, run: { state: 'running' } }, now)).toBe(true);
+    // Only the nodes an open change waits on are restarting, never the whole backend.
+    const changed = nodesBeingChanged([
+      { open: true, state: 'waiting_for_nodes', asyncNodeUuids: ['n1'] },
+      { open: false, state: 'done', asyncNodeUuids: ['n2'] },
+      { open: true, state: 'working', asyncNodeUuids: ['n3'] },
+    ]);
+    expect([...changed]).toEqual(['n1']);
   });
 
   test('a change in words', () => {

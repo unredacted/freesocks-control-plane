@@ -186,6 +186,8 @@ export const OpView = z.object({
   request: z.string(),
   panelState: z.string(),
   asyncEffect: z.string(),
+  /** The nodes the backend queued work on for this change (they restart for it). */
+  asyncNodeUuids: z.array(z.string()).default([]),
   open: z.boolean(),
   errorCode: z.string().nullable(),
   createdAt: z.string(),

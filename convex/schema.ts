@@ -1112,6 +1112,9 @@ export default defineSchema({
     trafficBytesRealtime: v.optional(v.number()),
     online: v.boolean(),
     nodeCount: v.number(),
+    // The group's node membership has never been read successfully: nodeCount
+    // is a placeholder and mode availability treats the group as unknown.
+    nodeCountUnknown: v.optional(v.boolean()),
     lastStatsAt: v.number(),
     updatedAt: v.number(),
   })

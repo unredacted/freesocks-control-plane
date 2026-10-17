@@ -118,6 +118,15 @@ export function fleetSentence<N extends Pick<NodeView, 'online' | 'isDisabled' |
   };
 }
 
+/** The nodes an open change is waiting on right now (the backend restarts them for it). */
+export function nodesBeingChanged(
+  ops: readonly { open: boolean; state: string; asyncNodeUuids: readonly string[] }[],
+): Set<string> {
+  return new Set(
+    ops.filter((o) => o.open && o.state === 'waiting_for_nodes').flatMap((o) => o.asyncNodeUuids),
+  );
+}
+
 /**
  * Whether the node an enrolled intent describes is being changed right now, so
  * an offline reading is its restart: the role reported in within the last

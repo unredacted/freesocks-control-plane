@@ -52,6 +52,7 @@
     fleetSentence,
     intentRestarting,
     needsYou,
+    nodesBeingChanged,
     nodeWords,
     quietNotes,
     serverErrorWords,
@@ -114,17 +115,16 @@
   );
   const intentOf = (node: { nodeUuid: string; name: string }) =>
     intents.data?.intents.find((i) => i.nodeUuid === node.nodeUuid || i.name === node.name) ?? null;
-  // A change the nodes are picking up right now (they restart for it), shared
-  // with Recent changes' query: an offline reading then is a restart, not an outage.
+  // The nodes a change is being applied to right now (they restart for it),
+  // shared with Recent changes' query: an offline reading of one of THEM is a
+  // restart, not an outage. Any other offline node still counts as unreachable.
   const ops = opsQuery(
     () => slug,
     () => true,
   );
-  let applying = $derived(
-    (ops.data?.ops ?? []).some((o) => o.open && o.state === 'waiting_for_nodes'),
-  );
+  let applyingTo = $derived(nodesBeingChanged(ops.data?.ops ?? []));
   const restarting = (node: { nodeUuid: string; name: string }): boolean => {
-    if (applying) return true;
+    if (applyingTo.has(node.nodeUuid)) return true;
     const i = intentOf(node);
     return !!i && intentRestarting(i, Date.now());
   };

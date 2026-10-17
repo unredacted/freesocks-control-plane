@@ -404,7 +404,8 @@ export const getAccountView = internalAction({
     // Member's chosen connection mode (or the catalog default) — surfaced so the
     // client renders the selected transport server-authoritatively.
     const connectionModeId =
-      user.connectionModeId ?? (await ctx.runQuery(internal.connectionModes.defaultId, {}));
+      user.connectionModeId ??
+      (await ctx.runQuery(internal.connectionModes.defaultId, { backend: tier.backend }));
     const currentMode = await ctx.runQuery(internal.connectionModes.memberMode, {
       modeId: connectionModeId,
       backend: tier.backend,

@@ -53,9 +53,10 @@ async function readStoredPool(db: DatabaseReader, slug: string): Promise<string[
  * The signal is the panel's own count of the nodes wired to each group (the
  * healthcheck cron's `remnawaveNodeStats.nodeCount`: live nodes and nodes still
  * being brought up alike). A group never observed is UNKNOWN, not empty (bring-
- * up, or a group made since the last read): it counts as able to serve, so a
- * fresh deploy is never locked out. Only a pool whose every group was seen with
- * zero nodes is dead.
+ * up, a group made since the last read, or one whose membership has never
+ * been read successfully): it counts as able to serve, so a fresh deploy is
+ * never locked out. Only a pool whose every group was seen with zero nodes is
+ * dead.
  */
 async function poolHasNode(db: DatabaseReader, pool: readonly string[]): Promise<boolean> {
   for (const placement of pool) {
@@ -63,7 +64,7 @@ async function poolHasNode(db: DatabaseReader, pool: readonly string[]): Promise
       .query('remnawaveNodeStats')
       .withIndex('by_placement', (q) => q.eq('placement', placement))
       .unique();
-    if (!row || row.nodeCount > 0) return true;
+    if (!row || row.nodeCountUnknown || row.nodeCount > 0) return true;
   }
   return false;
 }

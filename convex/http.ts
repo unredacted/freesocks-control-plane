@@ -912,7 +912,11 @@ http.route({
     // the resolved default. (Privacy Mode is deliberately never flagged: its
     // decoy is SNI-blocked in China by design.)
     const modeList = await ctx.runQuery(internal.connectionModes.list, {});
-    const resolvedDefault = modeList.find((m) => m.isDefault)?.id ?? DEFAULT_CONNECTION_MODE;
+    // The default on the member's OWN backend: what a key with no choice issues into.
+    const resolvedDefault =
+      (await ctx.runQuery(internal.connectionModes.defaultId, {
+        backend: view.user.tier.backend,
+      })) ?? DEFAULT_CONNECTION_MODE;
     const censorshipModeId = modeList.find(
       (m) => m.isCensorshipRecommended && m.availableBackends.includes(view.user.tier.backend),
     )?.id;

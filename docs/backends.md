@@ -475,11 +475,15 @@ How a placement is chosen for Remnawave (all Remnawave-local, under
   failed group read keeps the last count. An enabled, bound mode whose pool has
   no node is not offered, not suggested, and refused as a member's choice; the
   re-issue gate treats it like an unbound one.
-- **The effective default.** `isDefault` (publicConfig, the mode list, the
-  account view's default for a member with no choice, issuance with no choice)
-  is the configured default while a node serves it; otherwise the first mode a
-  node serves in the same family, then in catalog order; with nothing served
-  anywhere (bring-up) it stays the configured one. Admin, Connection modes shows
+- **The effective default.** The configured default while it is available;
+  otherwise the first available mode in the same family, then in catalog
+  order; with nothing available (bring-up) it stays the configured one. A
+  member with no choice is judged ON THEIR BACKEND (`effectiveDefaultFor`: the
+  account view, the suggestion, Remnawave issuance), so what they are shown is
+  what their key issues into; the catalog-wide `isDefault` (publicConfig, the
+  mode list) is for surfaces that know no backend yet. A group whose first
+  membership read failed is unknown (`remnawaveNodeStats.nodeCountUnknown`),
+  never empty. Admin, Connection modes shows
   both (`configuredDefault` is the admin's pick) and says "no node in its pool"
   on a bound pool without one.
 - At issuance FCP picks the **least-loaded node** of the mode's pool

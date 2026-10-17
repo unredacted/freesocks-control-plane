@@ -38,7 +38,7 @@
   import * as Select from '@client/components/ui/select';
   import { Skeleton } from '@client/components/ui/skeleton';
   import AuditRow from './AuditRow.svelte';
-  import { collapseRepeats } from '../../lib/collapseRepeats';
+  import { auditRepeatKey, collapseRepeats } from '../../lib/collapseRepeats';
   import { adminAuditQuery } from '../../lib/queries';
   import AdminListState from './AdminListState.svelte';
 
@@ -89,14 +89,10 @@
   }));
 
   let entries = $derived(audit.data?.pages.flatMap((p) => p.entries) ?? []);
-  // The same event again and again in a row (a retry loop) reads as one row with a count.
-  let groups = $derived(
-    collapseRepeats(entries, (e) =>
-      [e.action, e.actorType, e.actorId ?? '', e.targetType ?? '', JSON.stringify(e.payload)].join(
-        '\u0000',
-      ),
-    ),
-  );
+  // The same event again and again in a row reads as one row with a count. Only
+  // the same TARGET folds, except a server change: each retry of it is a new
+  // op (a new target id), so those fold on what they did, not which op it was.
+  let groups = $derived(collapseRepeats(entries, auditRepeatKey));
   let hasFilters = $derived(!!actionFilter || !!actorTypeFilter || !!sinceInput);
 
   function clearFilters() {

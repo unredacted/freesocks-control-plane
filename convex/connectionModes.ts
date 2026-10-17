@@ -22,7 +22,12 @@ import {
   resolveModeCatalog,
   type DeliveryStyle,
 } from './lib/connectionModes';
-import { hasPlacementResolver, resolveCatalogWithAvailability, resolverFor } from './lib/placement';
+import {
+  effectiveDefaultFor,
+  hasPlacementResolver,
+  resolveCatalogWithAvailability,
+  resolverFor,
+} from './lib/placement';
 
 // --- reads --------------------------------------------------------------------
 
@@ -58,13 +63,18 @@ export const families = internalQuery({
   handler: async (ctx) => (await resolveModeCatalog(ctx.db)).families,
 });
 
-/** The default a member who hasn't chosen is on (AccountView): the effective
- *  one, never a default no node serves while another mode is served. */
+/** The default a member who hasn't chosen is on (AccountView, the suggestion):
+ *  the effective one ON THEIR BACKEND when given (what their key issues into),
+ *  else the catalog-wide one; never a default no node serves while another
+ *  mode is served. */
 export const defaultId = internalQuery({
-  args: {},
-  handler: async (ctx) => {
-    const { modes } = await resolveCatalogWithAvailability(ctx.db);
-    return modes.find((m) => m.isDefault)?.id ?? (await resolveDefaultModeId(ctx.db));
+  args: { backend: v.optional(backendIdValidator) },
+  handler: async (ctx, { backend }) => {
+    const catalog = await resolveCatalogWithAvailability(ctx.db);
+    const id = backend
+      ? effectiveDefaultFor(catalog, backend)
+      : (catalog.modes.find((m) => m.isDefault)?.id ?? null);
+    return id ?? (await resolveDefaultModeId(ctx.db));
   },
 });
 
@@ -81,9 +91,12 @@ export const memberMode = internalQuery({
     backend: backendIdValidator,
   },
   handler: async (ctx, { modeId, backend }) => {
-    const { families, modes } = await resolveCatalogWithAvailability(ctx.db);
+    const catalog = await resolveCatalogWithAvailability(ctx.db);
+    const { families, modes } = catalog;
+    const fallbackId = effectiveDefaultFor(catalog, backend);
     const effective =
-      (modeId ? modes.find((m) => m.id === modeId) : undefined) ?? modes.find((m) => m.isDefault);
+      (modeId ? modes.find((m) => m.id === modeId) : undefined) ??
+      modes.find((m) => m.id === fallbackId);
     if (!effective) {
       // Deleted-from-catalog id on an empty-ish catalog: ship a minimal echo so
       // the client still has a stable id + a sane delivery default.

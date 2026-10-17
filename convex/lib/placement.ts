@@ -186,6 +186,24 @@ export async function resolveCatalogWithAvailability(
   };
 }
 
+/**
+ * The effective default for members on ONE backend: the configured default
+ * while it is available there, else the next mode available there
+ * (`effectiveDefaultId`). What a member with no choice is shown and suggested
+ * is what their key issues into (Remnawave issuance resolves the same mode);
+ * the catalog-wide `isDefault` is for surfaces that know no backend yet.
+ */
+export function effectiveDefaultFor(
+  catalog: Pick<CatalogWithAvailability, 'modes' | 'configuredDefaultId'>,
+  backend: BackendId,
+): string | null {
+  const modes = catalog.modes.map((m) => ({
+    ...m,
+    isDefault: m.id === catalog.configuredDefaultId,
+  }));
+  return effectiveDefaultId(modes, (m) => m.availableBackends.includes(backend));
+}
+
 /** The public modes projection (what publicConfig ships). */
 export async function resolvePublicModes(db: DatabaseReader): Promise<{
   modes: PublicConnectionMode[];

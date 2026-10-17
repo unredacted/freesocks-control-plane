@@ -780,6 +780,8 @@ export function mapOp(op: Op) {
     request: op.request,
     panelState: op.panelState,
     asyncEffect: op.asyncEffect,
+    // The nodes the backend queued work on for this change (they restart for it).
+    asyncNodeUuids: (op.asyncNodes ?? []).map((n) => n.nodeUuid),
     open: op.open,
     errorCode: op.errorCode ?? null,
     createdAt: new Date(op.createdAt).toISOString(),

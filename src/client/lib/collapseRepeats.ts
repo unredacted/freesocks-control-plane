@@ -34,3 +34,28 @@ export function collapseRepeats<T>(
   }
   return out;
 }
+
+/**
+ * When two audit rows are the same event for folding: same action, actor,
+ * target and payload. A server change (`panel_op`) folds across targets: each
+ * retry of the same change is a new op, so its id says nothing new, while two
+ * different records (two orders, two members) never fold into one row.
+ */
+export function auditRepeatKey(e: {
+  action: string;
+  actorType: string;
+  actorId: string | null;
+  targetType: string | null;
+  targetId: string | null;
+  payload: unknown;
+}): string {
+  const target = e.targetType === 'panel_op' ? '' : (e.targetId ?? '');
+  return [
+    e.action,
+    e.actorType,
+    e.actorId ?? '',
+    e.targetType ?? '',
+    target,
+    JSON.stringify(e.payload),
+  ].join('\u0000');
+}
