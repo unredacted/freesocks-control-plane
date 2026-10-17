@@ -18,6 +18,7 @@ import {
   resolveModeCatalog,
 } from './lib/connectionModes';
 import { resolveCatalogWithAvailability, resolvePublicModes } from './lib/placement';
+import { resolvePlacementPool } from './lib/remnawavePlacement';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -219,6 +220,264 @@ describe('per-backend availability', () => {
       return { modes };
     });
     expect(modes.find((m) => m.id === 'freedom-reality')!.availableBackends).toEqual([]);
+  });
+});
+
+/**
+ * The dead default (beta walk 2026-10-17): an enabled, bound mode whose pool has
+ * no node handed every new member a key with no server. Availability now also
+ * needs a node in the pool, judged from the panel's own group counts.
+ */
+describe('a pool with no node is not offered', () => {
+  const EMPTY = '11111111-2222-3333-4444-000000000000';
+  const FULL = '11111111-2222-3333-4444-111111111111';
+
+  async function seedServer(t: ReturnType<typeof convexTest>): Promise<Id<'backendServers'>> {
+    return t.run((ctx) =>
+      ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'rw',
+        slug: 'rw',
+        config: { type: 'remnawave', baseUrl: 'https://rw.example', apiToken: 'tok' },
+        isActive: true,
+        priority: 0,
+        keyCount: 0,
+        updatedAt: Date.now(),
+      }),
+    );
+  }
+  /** The panel's count for one group, as the healthcheck cron stamps it. */
+  async function observe(
+    t: ReturnType<typeof convexTest>,
+    server: Id<'backendServers'>,
+    placement: string,
+    nodeCount: number,
+  ) {
+    await t.mutation(internal.remnawaveNodes.markNodeStats, {
+      backendServerId: server,
+      nodes: [{ placement, label: placement, usersOnline: 0, online: nodeCount > 0, nodeCount }],
+    });
+  }
+  const read = (t: ReturnType<typeof convexTest>) =>
+    t.run(async (ctx) => {
+      const c = await resolveCatalogWithAvailability(ctx.db);
+      return {
+        modes: c.modes.map((m) => ({
+          id: m.id,
+          isDefault: m.isDefault,
+          availableBackends: m.availableBackends,
+        })),
+        configuredDefaultId: c.configuredDefaultId,
+      };
+    });
+
+  test('an enabled, bound default whose pool has no node is neither offered nor the default', async () => {
+    const t = convexTest(schema, modules);
+    const server = await seedServer(t);
+    await bindPool(t, 'freedom-ws', [EMPTY]);
+    await bindPool(t, 'privacy-reality', [FULL]);
+    await observe(t, server, EMPTY, 0);
+    await observe(t, server, FULL, 1);
+
+    const { modes, configuredDefaultId } = await read(t);
+    const ws = modes.find((m) => m.id === 'freedom-ws')!;
+    expect(ws.availableBackends).toEqual([]);
+    expect(ws.isDefault).toBe(false);
+    // New members land on the mode a node serves; the admin's pick is kept.
+    expect(modes.find((m) => m.isDefault)!.id).toBe('privacy-reality');
+    expect(configuredDefaultId).toBe('freedom-ws');
+
+    // The public projection and the mode list agree (one source).
+    const pub = await t.run(async (ctx) => (await resolvePublicModes(ctx.db)).modes);
+    expect(pub.find((m) => m.id === 'freedom-ws')).toMatchObject({
+      available: false,
+      isDefault: false,
+    });
+    expect(pub.find((m) => m.id === 'privacy-reality')).toMatchObject({
+      available: true,
+      isDefault: true,
+    });
+    const list = await t.query(internal.connectionModes.list, {});
+    expect(list.find((m) => m.isDefault)!.id).toBe('privacy-reality');
+    expect(await t.query(internal.connectionModes.defaultId, {})).toBe('privacy-reality');
+  });
+
+  test('it becomes available (and the default again) once a node joins its pool', async () => {
+    const t = convexTest(schema, modules);
+    const server = await seedServer(t);
+    await bindPool(t, 'freedom-ws', [EMPTY]);
+    await bindPool(t, 'privacy-reality', [FULL]);
+    await observe(t, server, EMPTY, 0);
+    await observe(t, server, FULL, 1);
+    expect((await read(t)).modes.find((m) => m.id === 'freedom-ws')!.availableBackends).toEqual([]);
+
+    await observe(t, server, EMPTY, 1);
+    const { modes } = await read(t);
+    expect(modes.find((m) => m.id === 'freedom-ws')).toMatchObject({
+      availableBackends: ['remnawave'],
+      isDefault: true,
+    });
+  });
+
+  test('a group the panel was never read for counts as able to serve (bring-up stays open)', async () => {
+    const t = convexTest(schema, modules);
+    await bindPool(t, 'freedom-ws', [EMPTY]);
+    const { modes } = await read(t);
+    expect(modes.find((m) => m.id === 'freedom-ws')).toMatchObject({
+      availableBackends: ['remnawave'],
+      isDefault: true,
+    });
+  });
+
+  test('one group with a node is enough; nothing served anywhere keeps the configured default', async () => {
+    const t = convexTest(schema, modules);
+    const server = await seedServer(t);
+    await bindPool(t, 'freedom-ws', [EMPTY, FULL]);
+    await observe(t, server, EMPTY, 0);
+    await observe(t, server, FULL, 1);
+    expect((await read(t)).modes.find((m) => m.id === 'freedom-ws')!.availableBackends).toEqual([
+      'remnawave',
+    ]);
+
+    await observe(t, server, FULL, 0);
+    const { modes } = await read(t);
+    expect(modes.find((m) => m.id === 'freedom-ws')!.availableBackends).toEqual([]);
+    // Nothing can be served anywhere: the default stays put (issuance follows it, audited).
+    expect(modes.find((m) => m.isDefault)!.id).toBe('freedom-ws');
+  });
+
+  test('a failed group read keeps the last count instead of reading as empty', async () => {
+    const t = convexTest(schema, modules);
+    const server = await seedServer(t);
+    await bindPool(t, 'freedom-ws', [EMPTY]);
+    await observe(t, server, EMPTY, 2);
+    await t.mutation(internal.remnawaveNodes.markNodeStats, {
+      backendServerId: server,
+      nodes: [
+        {
+          placement: EMPTY,
+          label: EMPTY,
+          usersOnline: 0,
+          online: false,
+          nodeCount: 0,
+          nodeCountUnknown: true,
+        },
+      ],
+    });
+    expect((await read(t)).modes.find((m) => m.id === 'freedom-ws')!.availableBackends).toEqual([
+      'remnawave',
+    ]);
+  });
+
+  test('a group whose very first read failed stays unknown until a read succeeds', async () => {
+    const t = convexTest(schema, modules);
+    const server = await seedServer(t);
+    await bindPool(t, 'freedom-ws', [EMPTY]);
+    const unknown = {
+      placement: EMPTY,
+      label: EMPTY,
+      usersOnline: 0,
+      online: false,
+      nodeCount: 0,
+      nodeCountUnknown: true,
+    };
+    await t.mutation(internal.remnawaveNodes.markNodeStats, {
+      backendServerId: server,
+      nodes: [unknown],
+    });
+    // A row exists (the picker can attribute the group), but it is not "empty".
+    expect((await read(t)).modes.find((m) => m.id === 'freedom-ws')!.availableBackends).toEqual([
+      'remnawave',
+    ]);
+    // A failed read again changes nothing; a real read of zero does.
+    await t.mutation(internal.remnawaveNodes.markNodeStats, {
+      backendServerId: server,
+      nodes: [unknown],
+    });
+    expect((await read(t)).modes.find((m) => m.id === 'freedom-ws')!.availableBackends).toEqual([
+      'remnawave',
+    ]);
+    await observe(t, server, EMPTY, 0);
+    expect((await read(t)).modes.find((m) => m.id === 'freedom-ws')!.availableBackends).toEqual([]);
+  });
+
+  test('with two backends, the default is resolved per backend: what a key with no choice issues into', async () => {
+    const t = convexTest(schema, modules);
+    const server = await seedServer(t);
+    await t.run(async (ctx) => {
+      await ctx.db.insert('connectionModeFamilies', {
+        slug: 'fam',
+        label: 'Fam',
+        iconId: 'zap',
+        enabled: true,
+        order: 0,
+        updatedAt: Date.now(),
+      });
+      for (const [slug, backends, order] of [
+        ['both-mode', ['remnawave', 'outline'], 0],
+        ['rw-only', ['remnawave'], 1],
+      ] as const)
+        await ctx.db.insert('connectionModes', {
+          slug,
+          familySlug: 'fam',
+          deliveryStyle: 'url',
+          label: slug,
+          enabled: true,
+          isFamilyDefault: order === 0,
+          backends: [...backends],
+          order,
+          updatedAt: Date.now(),
+        });
+      await ctx.db.insert('appSettings', {
+        key: 'connectionMode.default',
+        value: JSON.stringify('both-mode'),
+        updatedAt: Date.now(),
+      });
+    });
+    // The configured default's Remnawave pool has no node; another mode's has one.
+    await bindPool(t, 'both-mode', [EMPTY]);
+    await bindPool(t, 'rw-only', [FULL]);
+    await observe(t, server, EMPTY, 0);
+    await observe(t, server, FULL, 1);
+
+    expect(await t.query(internal.connectionModes.defaultId, { backend: 'remnawave' })).toBe(
+      'rw-only',
+    );
+    expect(await t.query(internal.connectionModes.defaultId, { backend: 'outline' })).toBe(
+      'both-mode',
+    );
+    // Still offered somewhere, so the catalog-wide default does not move.
+    expect(await t.query(internal.connectionModes.defaultId, {})).toBe('both-mode');
+    // The account view and issuance agree for a Remnawave member with no choice.
+    expect(
+      (await t.query(internal.connectionModes.memberMode, { modeId: null, backend: 'remnawave' }))!
+        .id,
+    ).toBe('rw-only');
+    expect(await t.run((ctx) => resolvePlacementPool(ctx.db, null))).toEqual([FULL]);
+  });
+
+  test('the member choice and the re-issue gate refuse a mode that lost its last node', async () => {
+    const t = convexTest(schema, modules);
+    const server = await seedServer(t);
+    await bindPool(t, 'freedom-ws', [EMPTY]);
+    await bindPool(t, 'privacy-reality', [FULL]);
+    await observe(t, server, EMPTY, 0);
+    await observe(t, server, FULL, 1);
+    // Issuance with no explicit choice lands in the pool a node serves.
+    expect(await t.run((ctx) => resolvePlacementPool(ctx.db, null))).toEqual([FULL]);
+    // A member on the empty mode must pick another one, never be downgraded silently.
+    expect(
+      await t.query(internal.connectionModes.effectiveGate, {
+        backend: 'remnawave',
+        modeId: 'freedom-ws',
+      }),
+    ).toEqual({ blocked: true });
+    expect(
+      await t.query(internal.connectionModes.effectiveGate, {
+        backend: 'remnawave',
+        modeId: null,
+      }),
+    ).toEqual({ blocked: false });
   });
 });
 

@@ -14,6 +14,7 @@
    *   label?: string                        accessible name (default 'Timeline')
    *   labelFor?: (action: string) => string the words for an action (default auditActionLabel;
    *                                         the simple node page passes plainAuditActionLabel)
+   *   listenerName?: (key: string) => string a listener in words (the simple node page; else its key)
    *   class?: string
    */
   import Waypoints from '@lucide/svelte/icons/waypoints';
@@ -40,6 +41,7 @@
     max?: number;
     label?: string;
     labelFor?: (action: string) => string;
+    listenerName?: (listenerKey: string) => string;
     class?: string;
   }
   let {
@@ -50,6 +52,7 @@
     max,
     label = 'Timeline',
     labelFor = auditActionLabel,
+    listenerName,
     class: className,
   }: Props = $props();
 
@@ -82,7 +85,7 @@
       {@const subject = subjectOf(entry)}
       {@const Icon = ICONS[subject]}
       {@const href = hrefFor?.(entry) ?? null}
-      {@const detail = auditDetailLine(entry.payload)}
+      {@const detail = auditDetailLine(entry.payload, listenerName)}
       <li class="flex gap-2.5 text-sm">
         <span
           class="bg-muted text-muted-foreground mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full"

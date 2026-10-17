@@ -46,6 +46,7 @@ import type { SetupPlanAccount, SetupPlanInbound, SetupPlanSnapshot } from './li
 import type { ListenerSpecInput } from './lib/edges/registration';
 import type { EdgeLayer } from './lib/edges/providers/capabilities';
 import { SETUP_RUN_MAX_LISTENERS } from '../src/shared/contracts/edgeCodes';
+import { resolveModeCatalog } from './lib/connectionModes';
 
 const MAX_REQUIRED_LISTENERS = SETUP_RUN_MAX_LISTENERS;
 
@@ -133,6 +134,21 @@ async function planContextOf(
     // address is the MANAGEMENT one, and a loopback WebSocket behind Caddy is
     // only frontable through the ingress.
     const enrolled = await enrolledOriginOf(ctx, backendServerId, node.name);
+    // The modes this backend serves, by transport tag, with whether members can pick them.
+    const setup = await ctx.db
+      .query('panelSetups')
+      .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
+      .unique();
+    const { modes: catalog } = await resolveModeCatalog(ctx.db);
+    const modes = (setup?.modes ?? []).map((m) => {
+      const entry = catalog.find((c) => c.id === m.slug);
+      return {
+        slug: m.slug,
+        tag: m.tag,
+        label: entry?.label ?? null,
+        enabled: entry?.enabled ?? false,
+      };
+    });
     return {
       backend: server.backend as string,
       node: {
@@ -141,6 +157,7 @@ async function planContextOf(
         port: node.port ?? null,
       },
       enrolled,
+      modes,
       relay: relay
         ? {
             id: relay._id,
@@ -181,6 +198,20 @@ async function planContextOf(
 }
 
 type PlanContext = Awaited<ReturnType<typeof planContextOf>>;
+
+/**
+ * The modes the protected transports feed (an enrolled node's own mode, and
+ * every mode whose transport tag is one of them) that members cannot pick.
+ */
+function modesOffOf(
+  c: Pick<PlanContext, 'modes' | 'enrolled'>,
+  required: readonly Pick<SetupPlanInbound, 'sourceTag'>[],
+): Array<{ slug: string; label: string | null }> {
+  const tags = new Set(required.map((i) => i.sourceTag));
+  return c.modes
+    .filter((m) => !m.enabled && (m.slug === c.enrolled?.mode || tags.has(m.tag)))
+    .map((m) => ({ slug: m.slug, label: m.label }));
+}
 
 function accountCompatibility(
   a: PlanContext['accounts'][number],
@@ -423,6 +454,7 @@ export async function buildPlan(
         : null,
     activeRunId: c.activeRunId,
     enrolled: !!c.enrolled,
+    modesOff: modesOffOf(c, required),
   };
   const planHash = await planHashOf({
     listenerSpecs: required.map((i) => i.listenerSpec),

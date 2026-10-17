@@ -181,14 +181,14 @@ export const RENDER_GLOBAL_FIELDS: Field[] = [
     kind: 'text',
     path: 'render.primaryLabel',
     label: 'Primary entry label',
-    helper: 'What members see as the name of the first edge entry.',
+    helper: 'What members see as the name of the first edge entry (blank: FreeSocks).',
     maxLength: 48,
   },
   {
     kind: 'text',
     path: 'render.backupLabel',
     label: 'Backup entry label',
-    helper: 'The name of the second and later edge entries.',
+    helper: 'The name of the second and later edge entries (blank: FreeSocks (backup)).',
     maxLength: 48,
   },
   {

@@ -57,7 +57,7 @@
   import ActionConfirm from '../relay/ActionConfirm.svelte';
   import ReplaceDialog from '../relay/ReplaceDialog.svelte';
   import { assertEdgeOk, edgeErrorMessage } from '../lib/edgeErrors';
-  import { protocolLine } from '../lib/format';
+  import { transportName } from '../lib/format';
   import { edgesPaths } from '../lib/routes';
   import { originSentence, statusOf } from '../lib/statusWords';
   import EndpointTestCard from './EndpointTestCard.svelte';
@@ -273,6 +273,10 @@
       <EndpointTestCard
         edgeIds={testEdgeIds}
         runId={testRunId}
+        nameOf={(key) => {
+          const l = listeners.find((x) => x.listenerKey === key);
+          return l ? transportName(l) : null;
+        }}
         onClose={closeTest}
         onRetried={(id) => {
           closeTest();
@@ -310,10 +314,7 @@
         <ul class="space-y-3">
           {#each listeners as l (l.id)}
             <li class="rounded-lg border p-3">
-              <p class="text-sm font-medium">
-                {l.listenerKey}
-                <span class="text-muted-foreground font-normal">{protocolLine(l)}</span>
-              </p>
+              <p class="text-sm font-medium">{transportName(l)}</p>
               <ListenerAddresses
                 listener={l}
                 {edges}
@@ -355,6 +356,10 @@
           entries={timelineQ.data?.entries ?? []}
           max={8}
           labelFor={plainAuditActionLabel}
+          listenerName={(key) => {
+            const l = listeners.find((x) => x.listenerKey === key);
+            return l ? transportName(l) : 'a transport';
+          }}
           label="Recent activity"
         />
       {/if}

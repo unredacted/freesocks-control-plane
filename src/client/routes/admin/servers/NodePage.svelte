@@ -41,6 +41,7 @@
   import {
     countryLabel,
     inboundSummary,
+    intentRestarting,
     nodeNotes,
     nodeWords,
     portChangeable,
@@ -72,6 +73,9 @@
     intents.data?.intents.find((i) => i.nodeUuid === uuid || (node && i.name === node.name)) ??
       null,
   );
+  // An enrolled node not live yet: its addresses are staged (off, or held back
+  // by the closed gate), so nobody gets them until go-live.
+  let notLiveYet = $derived(!!intent && intent.stage !== 'live');
   let manageOn = $derived(summary.data?.config['manage.enabled'] ?? false);
   let canWrite = $derived(manageOn && !!instance?.writable && !!instance?.setUp);
   // The Edges origin in front of this node, if any: its panel is part of this page.
@@ -115,7 +119,7 @@
     There is no node with this id on the backend any more, or the link is old.
   </p>
 {:else}
-  {@const w = nodeWords(node)}
+  {@const w = nodeWords(node, { restarting: !!intent && intentRestarting(intent, Date.now()) })}
   {@const country = countryLabel(node.countryCode)}
   {@const notes = nodeNotes(node)}
   <SectionHeader
@@ -261,7 +265,7 @@
 
               <div class="mt-3">
                 <h3 class="text-muted-foreground text-xs font-medium uppercase">
-                  Addresses members get
+                  {notLiveYet ? 'Addresses members will get once live' : 'Addresses members get'}
                 </h3>
                 {#if inbound.addresses.length === 0}
                   <p class="text-muted-foreground">None yet.</p>

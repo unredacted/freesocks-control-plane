@@ -230,7 +230,9 @@
                   {#if n.relaySlug}
                     already relay {n.relaySlug}
                   {:else}
-                    {n.countryCode ?? ''} {n.online ? 'online' : 'offline'}
+                    {n.countryCode && n.countryCode.toUpperCase() !== 'XX'
+                      ? `${n.countryCode} `
+                      : ''}{n.online ? 'online' : 'offline'}
                   {/if}
                 </span>
               </Combobox.Item>

@@ -111,8 +111,13 @@ Higher-level code never calls `fetch` directly; it runs the dispatch actions:
   capability), with a short server-side TTL cache on `subscriptions.subCache` keyed by User-Agent
   (Remnawave formats config by UA). It forwards the caller's UA (with one sing-box normalization
   exception — see "Subscription formats" below) and re-emits the allowlisted
-  `subscription-userinfo` / `profile-*` headers `fetchContent` returns (`SubscriptionContent.headers`),
-  so the fronted URL is a faithful stand-in. `getAccountView` returns the raw backend URL + the opaque
+  `subscription-userinfo` / `profile-update-interval` / `profile-web-page-url` headers
+  `fetchContent` returns (`SubscriptionContent.headers`), so the fronted URL is a faithful
+  stand-in. Not the backend's `profile-title`: FCP sets it itself on EVERY subscription
+  response (fresh, cached, stale fallback, rendered edge body, Outline key) from the service
+  name members see (`subscription.siteName`, the name their connections are labelled with;
+  unset = `FreeSocks`), in the `base64:<utf-8 base64>` form the backend used, so apps show the
+  deployment's name, never the backend product's. `getAccountView` returns the raw backend URL + the opaque
   `subToken` (both in the sealed reveal-leg); the SPA builds the fronted `<origin>/api/v1/sub/<token>`
   URL client-side (`subscriptionDisplayUrl` in `src/client/lib/utils.ts`), so no deployment-origin env
   is needed and every UI surface fronts uniformly. Privacy members still copy via the sealed
@@ -458,9 +463,29 @@ How a placement is chosen for Remnawave (all Remnawave-local, under
 - A mode declares **backend applicability** (`connectionModes.backends[]`, the
   clients-catalog pattern) and is **available** on a backend when it is enabled
   (own toggle AND its family's) AND applicable AND — on placement-capable
-  backends — bound there. `publicConfig.connectionModes[].availableBackends`
+  backends — bound there AND its pool has a node. `publicConfig.connectionModes[].availableBackends`
   ships the per-backend result; the SPA judges availability against the
   member's own backend.
+- **A node in the pool** (`resolveServedModeIds`, lib/remnawavePlacement.ts): a
+  bound pool counts once one of its mode groups has a node, by the panel's own
+  count of the nodes wired to it (`remnawaveNodeStats.nodeCount`, live nodes and
+  nodes still being brought up alike), or once an enrolled node serving the mode
+  is live (the count can lag a go-live by one healthcheck). A group the panel was
+  never read for is unknown, not empty, so a fresh deploy is not locked out; a
+  failed group read keeps the last count. An enabled, bound mode whose pool has
+  no node is not offered, not suggested, and refused as a member's choice; the
+  re-issue gate treats it like an unbound one.
+- **The effective default.** The configured default while it is available;
+  otherwise the first available mode in the same family, then in catalog
+  order; with nothing available (bring-up) it stays the configured one. A
+  member with no choice is judged ON THEIR BACKEND (`effectiveDefaultFor`: the
+  account view, the suggestion, Remnawave issuance), so what they are shown is
+  what their key issues into; the catalog-wide `isDefault` (publicConfig, the
+  mode list) is for surfaces that know no backend yet. A group whose first
+  membership read failed is unknown (`remnawaveNodeStats.nodeCountUnknown`),
+  never empty. Admin, Connection modes shows
+  both (`configuredDefault` is the admin's pick) and says "no node in its pool"
+  on a bound pool without one.
 - At issuance FCP picks the **least-loaded node** of the mode's pool
   (`pickByNodeLoad`): per-mode group node load — `usersOnline` (primary) + optional
   realtime bandwidth (secondary; weights `remnawave.nodePlacement.*_weight`, default

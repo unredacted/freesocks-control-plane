@@ -25,6 +25,7 @@
     acknowledgeForeignEdit,
     intentsQuery,
     invalidateServers,
+    opsQuery,
     patchServerConfig,
     refreshServer,
     releaseHold,
@@ -49,7 +50,9 @@
     ago,
     countryLabel,
     fleetSentence,
+    intentRestarting,
     needsYou,
+    nodesBeingChanged,
     nodeWords,
     quietNotes,
     serverErrorWords,
@@ -112,6 +115,19 @@
   );
   const intentOf = (node: { nodeUuid: string; name: string }) =>
     intents.data?.intents.find((i) => i.nodeUuid === node.nodeUuid || i.name === node.name) ?? null;
+  // The nodes a change is being applied to right now (they restart for it),
+  // shared with Recent changes' query: an offline reading of one of THEM is a
+  // restart, not an outage. Any other offline node still counts as unreachable.
+  const ops = opsQuery(
+    () => slug,
+    () => true,
+  );
+  let applyingTo = $derived(nodesBeingChanged(ops.data?.ops ?? []));
+  const restarting = (node: { nodeUuid: string; name: string }): boolean => {
+    if (applyingTo.has(node.nodeUuid)) return true;
+    const i = intentOf(node);
+    return !!i && intentRestarting(i, Date.now());
+  };
 
   let instance = $derived(summary.data?.instances.find((i) => i.slug === slug) ?? null);
   let observeOn = $derived(summary.data?.config['manage.observe'] ?? false);
@@ -217,7 +233,7 @@
     <p class="text-destructive text-sm">{serverErrorWords(codeOf(tree.error))}</p>
   {:else if tree.data}
     {@const t = tree.data}
-    {@const headline = fleetSentence(t.nodes)}
+    {@const headline = fleetSentence(t.nodes, restarting)}
     {@const attention = needsYou(t)}
     {@const notes = quietNotes(t)}
 
@@ -323,7 +339,7 @@
         {/if}
         <ul class="space-y-2">
           {#each shown as node (node.nodeUuid)}
-            {@const w = nodeWords(node)}
+            {@const w = nodeWords(node, { restarting: restarting(node) })}
             {@const country = countryLabel(node.countryCode)}
             {@const intent = intentOf(node)}
             {@const st = intent ? stageWords(intent) : null}

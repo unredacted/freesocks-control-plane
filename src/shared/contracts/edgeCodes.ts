@@ -223,6 +223,8 @@ export const ATTENTION_KINDS = [
   'node_ready_to_protect',
   'node_awaiting_approval',
   'account_budget_unlimited',
+  // A live node whose connection mode is turned off: no member can pick it.
+  'node_mode_disabled',
 ] as const;
 export type AttentionKind = (typeof ATTENTION_KINDS)[number];
 
@@ -251,6 +253,8 @@ export const ATTENTION_ACTIONS = [
   // An enrolled node: start protecting it (the protect sheet), or open its page under Servers.
   'protect_node',
   'open_node',
+  // The admin Connection modes page (turn a mode on).
+  'open_modes',
 ] as const;
 export type AttentionAction = (typeof ATTENTION_ACTIONS)[number];
 

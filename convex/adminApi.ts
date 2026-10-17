@@ -2426,8 +2426,9 @@ export const setAnalyticsConfig = internalMutation({
 export const getConnectionModes = internalQuery({
   args: {},
   handler: async (ctx) => {
-    const { families, modes } = await resolveCatalogWithAvailability(ctx.db);
-    const summaries = await placementSummariesFor(ctx.db, modes);
+    const { families, modes, servedByBackend, configuredDefaultId } =
+      await resolveCatalogWithAvailability(ctx.db);
+    const summaries = await placementSummariesFor(ctx.db, modes, servedByBackend);
     return {
       families: families.map((f) => ({
         id: f.id,
@@ -2446,6 +2447,9 @@ export const getConnectionModes = internalQuery({
         description: m.description,
         deliveryStyle: m.deliveryStyle,
         isDefault: m.isDefault,
+        // The admin's own pick: differs from isDefault (what new members get)
+        // only while no node serves it and another mode can.
+        configuredDefault: m.id === configuredDefaultId,
         isFamilyDefault: m.isFamilyDefault,
         isCensorshipRecommended: m.isCensorshipRecommended,
         enabled: m.enabled,
@@ -2461,16 +2465,22 @@ export const getConnectionModes = internalQuery({
   },
 });
 
+type PlacementSummary = {
+  backendId: BackendId;
+  bound: boolean;
+  boundCount: number;
+  /** Bound and a node in the pool: false on a bound pool is why the mode is not offered. */
+  hasNode: boolean;
+};
+
 /** Per-(mode, backend) placement summaries for the modes given (sizes only). */
 async function placementSummariesFor(
   db: DatabaseReader,
   modes: Array<{ id: string; backends: BackendId[] }>,
-): Promise<Record<string, Array<{ backendId: BackendId; bound: boolean; boundCount: number }>>> {
+  servedByBackend: Map<BackendId, Set<string>>,
+): Promise<Record<string, PlacementSummary[]>> {
   const countsByBackend = new Map<BackendId, Record<string, number>>();
-  const out: Record<
-    string,
-    Array<{ backendId: BackendId; bound: boolean; boundCount: number }>
-  > = {};
+  const out: Record<string, PlacementSummary[]> = {};
   for (const m of modes) {
     out[m.id] = [];
     for (const b of m.backends) {
@@ -2481,7 +2491,12 @@ async function placementSummariesFor(
         countsByBackend.set(b, counts);
       }
       const n = counts[m.id] ?? 0;
-      out[m.id]!.push({ backendId: b, bound: n > 0, boundCount: n });
+      out[m.id]!.push({
+        backendId: b,
+        bound: n > 0,
+        boundCount: n,
+        hasNode: n > 0 && (servedByBackend.get(b)?.has(m.id) ?? false),
+      });
     }
   }
   return out;

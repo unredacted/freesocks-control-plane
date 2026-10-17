@@ -1147,13 +1147,15 @@ export async function remnawaveGetNodeStats(cfg: RemnawaveConfig): Promise<NodeS
         });
       } catch {
         // A mode group whose node membership can't be read is emitted as unroutable
-        // (nodeCount 0 → the picker deprioritizes/skips it), never dropped silently.
+        // (offline → the picker deprioritizes/skips it), never dropped silently.
+        // Its count is unknown, not zero: the cache keeps the last one.
         return {
           placement: squad.uuid,
           label: squad.name,
           usersOnline: 0,
           online: false,
           nodeCount: 0,
+          nodeCountUnknown: true,
         };
       }
       let usersOnline = 0;
@@ -1421,14 +1423,11 @@ export async function remnawaveFetchSubscription(
     if (!res.ok) throw await RemnawaveApiError.fromResponse(res, 'subscription content');
     // Pass through the well-known subscription metadata headers (never a secret)
     // so the FCP-fronted URL is a faithful stand-in for the backend URL — the proxy
-    // app still sees its traffic/expiry counters + update cadence.
+    // app still sees its traffic/expiry counters + update cadence. Not the
+    // backend's `profile-title`: FCP names the subscription itself
+    // (subscription.siteName).
     const passthrough: Record<string, string> = {};
-    for (const h of [
-      'subscription-userinfo',
-      'profile-update-interval',
-      'profile-title',
-      'profile-web-page-url',
-    ]) {
+    for (const h of ['subscription-userinfo', 'profile-update-interval', 'profile-web-page-url']) {
       const val = res.headers.get(h);
       if (val) passthrough[h] = val;
     }

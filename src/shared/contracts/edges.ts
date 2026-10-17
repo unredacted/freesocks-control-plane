@@ -1705,6 +1705,8 @@ export const SetupPlanResponse = z.object({
   activeRunId: z.string().nullable(),
   /** An enrolled node: goes live through its approval; keep-direct does not exist for it. */
   enrolled: z.boolean().default(false),
+  /** The connection modes the node serves that members cannot pick yet (turned off). */
+  modesOff: z.array(z.object({ slug: z.string(), label: z.string().nullable() })).default([]),
   planHash: z.string(),
   generatedAt: iso,
 });
@@ -1783,6 +1785,17 @@ export const SetupRunAdmin = z.object({
       edgeId: z.string().nullable(),
       verify: z.enum(['pending', 'partial', 'verified', 'unreachable']),
       published: z.boolean(),
+      /** What it carries (from the plan), for naming it in words; null on older runs. */
+      transport: z
+        .object({
+          protocol: ListenerProtocolId,
+          streamTransport: ListenerStreamTransport,
+          security: ListenerSecurity,
+          originPort: z.number().nullable(),
+        })
+        .nullable()
+        .default(null)
+        .catch(null),
     }),
   ),
   testLinks: z.array(SetupRunTestLink).default([]),

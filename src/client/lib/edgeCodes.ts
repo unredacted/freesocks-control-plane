@@ -846,6 +846,12 @@ const COPY = {
     explain: 'A node is tested and goes live only once you approve it.',
     fix: 'Open the node and approve go-live.',
   },
+  node_mode_disabled: {
+    label: 'Live node nobody can pick',
+    explain:
+      'A node is live, but the connection mode it serves is turned off, so no member is given it.',
+    fix: 'Turn the mode on in Connection modes, unless that is intended.',
+  },
   node_gated: {
     label: 'Node not live',
     explain:
@@ -1326,6 +1332,7 @@ export const PLAIN_ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
   require_edges: 'Go live',
   protect_node: 'Protect the node',
   open_node: 'Review go-live',
+  open_modes: 'Open Connection modes',
 };
 
 export const ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
@@ -1348,6 +1355,7 @@ export const ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
   require_edges: 'Go live',
   protect_node: 'Protect node',
   open_node: 'Open node',
+  open_modes: 'Connection modes',
 };
 
 export function severityTone(s: AttentionSeverity): Tone {

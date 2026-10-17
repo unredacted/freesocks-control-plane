@@ -8,8 +8,10 @@
 
   interface Props {
     entry: z.infer<typeof AuditEntry>;
+    /** The same event folded in from the rows below (newest shown): how often, since when. */
+    repeat?: { count: number; firstAt: string } | null;
   }
-  let { entry }: Props = $props();
+  let { entry, repeat = null }: Props = $props();
 
   // Always two views available: redacted (default) and raw (toggle). The
   // Collapsible drives the raw view; the redacted view is always rendered
@@ -36,6 +38,11 @@
     <div class="text-muted-foreground">
       {formatDateTime(entry.createdAt)} · request {entry.requestId ?? '-'}
     </div>
+    {#if repeat}
+      <div class="text-muted-foreground">
+        The same event {repeat.count} times in a row, the first at {formatDateTime(repeat.firstAt)}.
+      </div>
+    {/if}
     {#if payload !== null}
       <div class="mt-2">
         <pre class="text-xs bg-muted px-2 py-1 rounded overflow-x-auto">{JSON.stringify(

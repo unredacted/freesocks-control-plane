@@ -15,6 +15,7 @@ import type { DatabaseReader } from '../_generated/server';
 import { BACKEND_IDS, type BackendId } from './backendIds';
 import { CAPABILITIES } from './backends/capabilities';
 import {
+  effectiveDefaultId,
   publicProjection,
   resolveModeCatalog,
   type ModeCatalog,
@@ -27,6 +28,7 @@ import {
   resolveBoundModeCounts,
   resolveBoundModeIds,
   resolvePlacementTarget,
+  resolveServedModeIds,
   summarizeRemnawaveConfig,
 } from './remnawavePlacement';
 
@@ -52,9 +54,11 @@ export interface PlacementResolver {
       rand?: () => number;
     },
   ): Promise<PlacementTarget>;
-  /** Mode slugs with a usable binding on this backend (raw, no cross-mode
-   *  fallback — feeds per-backend availability). */
+  /** Mode slugs with a pool bound on this backend (raw, no cross-mode fallback). */
   boundModeSlugs(db: DatabaseReader): Promise<Set<string>>;
+  /** The bound slugs a member can actually be served on: a node in the pool
+   *  (a subset of `boundModeSlugs`; feeds per-backend availability). */
+  servedModeSlugs(db: DatabaseReader): Promise<Set<string>>;
   /** Per-mode bound counts (sizes only, never the config) for admin feedback. */
   boundCounts(db: DatabaseReader): Promise<Record<string, number>>;
   /** The re-issue anti-downgrade gate: blocked iff the member's effective mode
@@ -71,6 +75,7 @@ export interface PlacementResolver {
 const remnawaveResolver: PlacementResolver = {
   resolveTarget: (db, modeSlug, opts) => resolvePlacementTarget(db, modeSlug, opts),
   boundModeSlugs: (db) => resolveBoundModeIds(db),
+  servedModeSlugs: (db) => resolveServedModeIds(db),
   boundCounts: (db) => resolveBoundModeCounts(db),
   effectiveGate: (db, modeSlug) => remnawaveEffectiveGate(db, modeSlug),
   applyConfigPatch: applyRemnawaveConfigPatch,
@@ -88,6 +93,7 @@ export function trivialResolver(backend: BackendId): PlacementResolver {
   return {
     resolveTarget: async () => ({ placement: null, serverId: null }),
     boundModeSlugs: async (db) => new Set((await resolveModeCatalog(db)).modes.map((m) => m.id)),
+    servedModeSlugs: async (db) => new Set((await resolveModeCatalog(db)).modes.map((m) => m.id)),
     boundCounts: async () => ({}),
     effectiveGate: async (db, modeSlug) => {
       if (!modeSlug) return { blocked: false }; // no choice yet → the default applies
@@ -131,12 +137,21 @@ export interface CatalogWithAvailability extends ModeCatalog {
   modes: ModeWithAvailability[];
   /** Per-backend bound sets (placement-capable backends only). */
   boundByBackend: Map<BackendId, Set<string>>;
+  /** Per-backend served sets: bound AND a node in the pool (placement-capable only). */
+  servedByBackend: Map<BackendId, Set<string>>;
+  /** The default the admin configured. `isDefault` on `modes` is the EFFECTIVE
+   *  one (what a new member lands on), which differs only while the configured
+   *  default cannot be served anywhere and another mode can. */
+  configuredDefaultId: string | null;
 }
 
 /**
  * The catalog with per-backend availability composed in:
  *   availableBackends(mode) = mode.backends where the mode is enabled AND
- *   (the backend has no placement concept OR the mode is bound there).
+ *   (the backend has no placement concept OR the mode is bound there AND its
+ *   pool has a node).
+ * `isDefault` is re-pointed to the effective default (`effectiveDefaultId`), so
+ * no surface hands a new member a default that no node serves.
  * The single source for publicConfig, the internal mode list, and the admin
  * view — so "available" can never mean different things on different surfaces.
  */
@@ -145,18 +160,48 @@ export async function resolveCatalogWithAvailability(
 ): Promise<CatalogWithAvailability> {
   const catalog = await resolveModeCatalog(db);
   const boundByBackend = new Map<BackendId, Set<string>>();
+  const servedByBackend = new Map<BackendId, Set<string>>();
   for (const b of BACKEND_IDS) {
     if (CAPABILITIES[b].placement) {
       boundByBackend.set(b, await resolverFor(b).boundModeSlugs(db));
+      servedByBackend.set(b, await resolverFor(b).servedModeSlugs(db));
     }
   }
+  const usableOn = (b: BackendId, slug: string) =>
+    !CAPABILITIES[b].placement ||
+    (boundByBackend.get(b)!.has(slug) && servedByBackend.get(b)!.has(slug));
   const modes: ModeWithAvailability[] = catalog.modes.map((m) => ({
     ...m,
-    availableBackends: m.enabled
-      ? m.backends.filter((b) => !CAPABILITIES[b].placement || boundByBackend.get(b)!.has(m.id))
-      : [],
+    availableBackends: m.enabled ? m.backends.filter((b) => usableOn(b, m.id)) : [],
   }));
-  return { families: catalog.families, modes, boundByBackend };
+  const configuredDefaultId = catalog.modes.find((m) => m.isDefault)?.id ?? null;
+  const effective = effectiveDefaultId(modes, (m) => m.availableBackends.length > 0);
+  for (const m of modes) m.isDefault = m.id === effective;
+  return {
+    families: catalog.families,
+    modes,
+    boundByBackend,
+    servedByBackend,
+    configuredDefaultId,
+  };
+}
+
+/**
+ * The effective default for members on ONE backend: the configured default
+ * while it is available there, else the next mode available there
+ * (`effectiveDefaultId`). What a member with no choice is shown and suggested
+ * is what their key issues into (Remnawave issuance resolves the same mode);
+ * the catalog-wide `isDefault` is for surfaces that know no backend yet.
+ */
+export function effectiveDefaultFor(
+  catalog: Pick<CatalogWithAvailability, 'modes' | 'configuredDefaultId'>,
+  backend: BackendId,
+): string | null {
+  const modes = catalog.modes.map((m) => ({
+    ...m,
+    isDefault: m.id === catalog.configuredDefaultId,
+  }));
+  return effectiveDefaultId(modes, (m) => m.availableBackends.includes(backend));
 }
 
 /** The public modes projection (what publicConfig ships). */

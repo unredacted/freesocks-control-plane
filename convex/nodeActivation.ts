@@ -859,6 +859,15 @@ async function runContextOf(ctx: QueryCtx, runId: Id<'panelActivationRuns'>, ste
 }
 type RunContext = NonNullable<Awaited<ReturnType<typeof runContextOf>>>;
 
+/** Who an activation's backend writes are by: the admin who approved it, and the run. */
+function activationActor(run: RunContext['run']): {
+  actorAdminId?: Id<'adminUsers'>;
+  actorRun: string;
+} {
+  const by = run.candidate.approval?.byAdminId;
+  return { ...(by ? { actorAdminId: by } : {}), actorRun: `activation:${run._id}` };
+}
+
 export const runContext = internalQuery({
   args: { runId: v.id('panelActivationRuns'), stepVersion: v.number() },
   handler: (ctx, { runId, stepVersion }) => runContextOf(ctx, runId, stepVersion),
@@ -970,6 +979,7 @@ export const runDirect = internalAction({
             backendServerId: c.server._id,
             hostUuid: h.hostUuid,
             isDisabled: false,
+            ...activationActor(c.run),
           });
           const r = await ctx.runAction(internal.backendWrites.run, { opId });
           if (r.open) return block('servers.op_running').then(() => null);
@@ -1035,6 +1045,7 @@ export const runDirect = internalAction({
               backendServerId: c.server._id,
               hostUuid: h.hostUuid,
               isDisabled: true,
+              ...activationActor(c.run),
             });
             await ctx.runAction(internal.backendWrites.run, { opId });
           }

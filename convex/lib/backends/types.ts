@@ -241,6 +241,10 @@ export interface NodeStats {
   trafficBytesRealtime?: number; // summed realtime throughput, when available
   online: boolean; // ≥1 mapped node connected & not disabled
   nodeCount: number; // mapped nodes: 0 = unroutable, >1 = aggregated
+  // The group's node membership could not be read this cycle: nodeCount is a
+  // placeholder 0, and the cache keeps the last count it knew (mode
+  // availability must not flip on a transient read failure).
+  nodeCountUnknown?: boolean;
 }
 
 /**

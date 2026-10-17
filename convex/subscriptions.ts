@@ -13,6 +13,7 @@ import { randomHex } from './lib/crypto';
 import { backendIdValidator, type BackendId } from './lib/backendIds';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import { entryNamingFrom, type EntryNaming } from './lib/memberEntryNames';
+import { profileTitleValue, resolveSubscriptionSiteName } from './lib/subscriptionTitle';
 
 const mirror = v.object({
   provider: v.string(),
@@ -913,4 +914,11 @@ export const remapBackendUserId = internalMutation({
     await ctx.db.patch(id, { backendUserId: next, updatedAt: Date.now() });
     return 'remapped' as const;
   },
+});
+
+/** The `profile-title` every subscription response carries: the service name
+ *  (`subscription.siteName`), never the backend's own title. */
+export const profileTitle = internalQuery({
+  args: {},
+  handler: async (ctx) => profileTitleValue(await resolveSubscriptionSiteName(ctx.db)),
 });

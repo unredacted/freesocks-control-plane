@@ -218,6 +218,8 @@ export async function enrolledOriginOf(
    * stricter reading (a 2xx at `/`) must not overrule what the node proved.
    */
   acceptsAnyHost: boolean;
+  /** The connection mode the node serves (its slug). */
+  mode: string;
 } | null> {
   const intent = await intentByName(ctx, sid, nodeName);
   if (!intent) return null;
@@ -235,6 +237,7 @@ export async function enrolledOriginOf(
     ingress: ingressOf(intent, hostname),
     directAddresses: IPV4.test(originAddress) || originAddress.includes(':') ? [] : ips,
     acceptsAnyHost: ingressVerified && intent.settings.ingress?.hostHeader === 'any',
+    mode: modeSlug(intent),
   };
 }
 
@@ -1288,6 +1291,7 @@ export const reconcile = internalAction({
                 securityLayer: 'DEFAULT',
                 isDisabled: true,
                 inboundUuid: t.uuid,
+                actorRun: `node:${c.intent._id}`,
               }),
             );
           else if (moved.some((m) => m.hostUuid === have.hostUuid))
@@ -1298,6 +1302,7 @@ export const reconcile = internalAction({
                 address: w.address,
                 port: w.port,
                 sni: w.sni,
+                actorRun: `node:${c.intent._id}`,
               }),
             );
         }
@@ -1306,6 +1311,7 @@ export const reconcile = internalAction({
             ctx.runMutation(internal.backendWrites.requestAddressDelete, {
               backendServerId: sid,
               hostUuid: h.hostUuid,
+              actorRun: `node:${c.intent._id}`,
             }),
           );
         if (ops.length > 0) {

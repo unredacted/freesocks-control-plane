@@ -192,13 +192,13 @@ describe('applyEdgeRender: listener-aware assignment', () => {
     const out = applyEdgeRender(rctx([edgeA, edgeS]), both, k, { now: NOW });
     expect(out.snapshot.primaryEdgeId).toBe('eS');
     const lines = out.body.split('\n');
-    const primary = lines.find((l) => l.endsWith('#FreeSocks%20Primary'))!;
+    const primary = lines.find((l) => l.endsWith('#FreeSocks'))!;
     expect(
       primary.startsWith(
         'ss://Y2hhY2hhMjAtaWV0Zi1wb2x5MTMwNTpleGFtcGxlLXBhc3N3b3Jk@203.0.113.20:8388',
       ),
     ).toBe(true);
-    const backup = lines.find((l) => l.endsWith('#FreeSocks%20Backup'))!;
+    const backup = lines.find((l) => l.endsWith('#FreeSocks%20(backup)'))!;
     expect(backup.startsWith(`vless://${UUID}@203.0.113.10:443?`)).toBe(true);
     expect(backup).toContain('sni=cdn-a.example');
     expect(out.body).not.toContain(ORIGIN);

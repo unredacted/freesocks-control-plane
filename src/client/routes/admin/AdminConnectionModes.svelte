@@ -17,6 +17,7 @@
     AdminConnectionModeFamily,
   } from '../../../shared/contracts/connectionModes';
   import { resolveModeIcon } from '../../lib/connectionModeIcons';
+  import { adminFamilyName, adminModeName } from '../../lib/connectionModeCopy';
   import { ADMIN_BACKEND_LABELS } from '../../lib/backendLabels';
   import Link from '../../components/Link.svelte';
   import { toast } from 'svelte-sonner';
@@ -44,6 +45,22 @@
 
   let families = $derived(catalog.data?.families ?? []);
   let modes = $derived(catalog.data?.modes ?? []);
+  // The admin's pick while no node serves it: new members land on `isDefault` instead.
+  let strandedDefault = $derived(
+    modes.find((m) => m.configuredDefault === true && !m.isDefault) ?? null,
+  );
+  let effectiveDefault = $derived(modes.find((m) => m.isDefault) ?? null);
+  /** Why an enabled mode is not offered on a backend, in words (null: it is offered). */
+  function placementWords(
+    m: AdminConnectionMode,
+    summary: AdminConnectionMode['placements'][number] | undefined,
+  ): { text: string; warn: boolean } {
+    if (!summary) return { text: 'no placement needed', warn: false };
+    if (!summary.bound) return { text: 'no pool bound', warn: true };
+    if (!summary.hasNode)
+      return { text: `${summary.boundCount} bound, no node in its pool`, warn: m.enabled };
+    return { text: `${summary.boundCount} bound`, warn: false };
+  }
   // Family sections in order, then a bucket for orphan modes (family row gone)
   // so nothing is ever unmanageable (the old editors hid orphans entirely).
   let sections = $derived([
@@ -114,8 +131,18 @@
         transports inside them. A new mode ships unselectable until it is enabled here AND its
         placement pool is bound in <Link href={serversPaths.pools()} class="underline"
           >Servers, Mode pools</Link
-        >. While the catalog is empty the picker falls back to the built-in defaults.
+        >, with at least one node in that pool. While the catalog is empty the picker falls back to
+        the built-in defaults.
       </p>
+      {#if strandedDefault && effectiveDefault}
+        <p
+          class="mt-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-sm"
+          role="status"
+        >
+          The default, {adminModeName(strandedDefault)}, has no node in its pool, so new members get
+          {adminModeName(effectiveDefault)} until a node joins it.
+        </p>
+      {/if}
     </div>
     <div class="flex gap-2">
       <Button variant="outline" onclick={() => (creatingFamily = true)}>
@@ -151,7 +178,7 @@
               <span class="flex items-center gap-2">
                 {#if FamIcon}<FamIcon class="size-4 text-primary" />{/if}
                 {#if f}
-                  <span>{f.label ?? '(translated name)'}</span>
+                  <span>{adminFamilyName(f)}</span>
                   <code class="text-xs font-normal text-muted-foreground">{f.id}</code>
                 {:else}
                   <span>No family</span>
@@ -203,14 +230,20 @@
               >
                 <div class="min-w-0">
                   <div class="flex items-center gap-2 flex-wrap text-sm">
-                    <span class="font-semibold">{m.label ?? '(translated name)'}</span>
+                    <span class="font-semibold">{adminModeName(m)}</span>
                     <code class="text-xs text-muted-foreground">{m.id}</code>
                     <span class="text-xs px-1.5 py-0.5 rounded bg-primary/10 text-primary">
                       {m.deliveryStyle === 'rawConfig' ? 'raw config' : 'URL'}
                     </span>
                     {#if m.isDefault}
                       <span class="text-xs px-1.5 py-0.5 rounded bg-primary/10 text-primary">
-                        Default
+                        {strandedDefault ? 'Default for now' : 'Default'}
+                      </span>
+                    {:else if m.configuredDefault}
+                      <span
+                        class="text-xs px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                      >
+                        Default, not offered
                       </span>
                     {/if}
                     {#if m.isFamilyDefault}
@@ -231,25 +264,24 @@
                   </div>
                   <div class="mt-1 flex items-center gap-2 flex-wrap text-xs text-muted-foreground">
                     {#each m.backends as b (b)}
-                      {@const summary = m.placements.find((p) => p.backendId === b)}
+                      {@const words = placementWords(
+                        m,
+                        m.placements.find((p) => p.backendId === b),
+                      )}
                       <span
-                        class="rounded px-1.5 py-0.5 {summary && !summary.bound
+                        class="rounded px-1.5 py-0.5 {words.warn
                           ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
                           : 'bg-muted'}"
                       >
                         {ADMIN_BACKEND_LABELS[b as keyof typeof ADMIN_BACKEND_LABELS] ?? b}:
-                        {summary
-                          ? summary.bound
-                            ? `${summary.boundCount} bound`
-                            : 'no pool bound'
-                          : 'no placement needed'}
+                        {words.text}
                       </span>
                     {/each}
                     <span class="tabular-nums">order {m.order}</span>
                   </div>
                 </div>
                 <div class="flex items-center gap-2">
-                  {#if !m.isDefault && m.enabled}
+                  {#if !(m.configuredDefault ?? m.isDefault) && m.enabled}
                     <Button
                       size="sm"
                       variant="ghost"

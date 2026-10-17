@@ -89,6 +89,8 @@ export interface ClaimArgs {
   /** Nodes whose application work the backend will queue behind this write. */
   asyncNodeUuids?: string[];
   actorAdminId?: Id<'adminUsers'>;
+  /** No admin asked: the FCP run that made the write (`<kind>:<id>`), for the audit. */
+  actorRun?: string;
 }
 
 /** The gates every management write passes, in the claiming transaction. */
@@ -161,6 +163,7 @@ export async function claimOp(ctx: MutationCtx, a: ClaimArgs): Promise<Id<'panel
     open: true,
     quietLooks: 0,
     actorAdminId: a.actorAdminId,
+    actorRun: a.actorAdminId ? undefined : a.actorRun?.slice(0, 120),
     createdAt: now,
     updatedAt: now,
   });
@@ -669,9 +672,11 @@ async function audit(
   outcome: 'done' | 'refused' | 'adopted' | 'recovered',
 ) {
   const server = await ctx.db.get(op.backendServerId);
+  // An admin's change names the admin; anything else is FCP's own work, named
+  // by the run that made it (never "an admin" with no id).
   await writeAuditLog(ctx, {
-    actorType: 'admin',
-    actorId: op.actorAdminId ?? undefined,
+    actorType: op.actorAdminId ? 'admin' : 'system',
+    actorId: op.actorAdminId ?? op.actorRun ?? undefined,
     action: `servers.${op.kind}.${op.verb}`,
     targetType: 'panel_op',
     targetId: op._id,
@@ -775,6 +780,8 @@ export function mapOp(op: Op) {
     request: op.request,
     panelState: op.panelState,
     asyncEffect: op.asyncEffect,
+    // The nodes the backend queued work on for this change (they restart for it).
+    asyncNodeUuids: (op.asyncNodes ?? []).map((n) => n.nodeUuid),
     open: op.open,
     errorCode: op.errorCode ?? null,
     createdAt: new Date(op.createdAt).toISOString(),
@@ -800,6 +807,7 @@ export const listForServer = internalQuery({
         .query('panelOps')
         .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
         .order('desc')
-        .take(50)
+        // Room for a run of retries: the list folds identical neighbours into one line.
+        .take(200)
     ).map(mapOp),
 });

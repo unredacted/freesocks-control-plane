@@ -540,9 +540,18 @@ describe('activating a direct node', () => {
     await expect(
       t.mutation(internal.nodeActivation.approve, { intentId, reviewHash: 'stale' }),
     ).rejects.toThrow(/review_stale/);
+    const adminId = await t.run((ctx) =>
+      ctx.db.insert('adminUsers', {
+        username: 'approver',
+        displayName: 'Approver',
+        isActive: true,
+        updatedAt: Date.now(),
+      }),
+    );
     const { runId } = await t.mutation(internal.nodeActivation.approve, {
       intentId,
       reviewHash: review.reviewHash,
+      actorAdminId: adminId,
     });
     const run = await runUntil(
       () => t.run((ctx) => ctx.db.get(runId)),
@@ -551,6 +560,19 @@ describe('activating a direct node', () => {
     expect(run.state).toBe('committed');
     expect(panel.hosts).toHaveLength(1);
     expect(panel.hosts[0]!.isDisabled).toBe(false);
+    // Every backend write of the activation names the admin who approved it;
+    // FCP's own address work before it names the node's run, never "an admin".
+    const audits = await t.run((ctx) => ctx.db.query('auditLog').collect());
+    const hostWrites = audits.filter((a) => a.action.startsWith('servers.host.'));
+    expect(hostWrites.find((a) => a.action === 'servers.host.update')).toMatchObject({
+      actorType: 'admin',
+      actorId: adminId,
+    });
+    expect(hostWrites.find((a) => a.action === 'servers.host.create')).toMatchObject({
+      actorType: 'system',
+      actorId: `node:${intentId}`,
+    });
+    expect(hostWrites.every((a) => a.actorType === 'system' || a.actorId === adminId)).toBe(true);
     const intent = (await t.run((ctx) => ctx.db.get(intentId)))!;
     expect(intent.activation.stage).toBe('live');
     expect(intent.delivery.disposition).toBe('live');

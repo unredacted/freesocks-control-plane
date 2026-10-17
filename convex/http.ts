@@ -273,7 +273,10 @@ interface SubCacheEntry {
 
 /** The RAW subscription Response a proxy app consumes (not the JSON envelope):
  *  the backend content-type + cache-control + the passed-through metadata headers
- *  (traffic/expiry counters, update cadence).
+ *  (traffic/expiry counters, update cadence). `profile-title` is FCP's own (the
+ *  service name, `subscription.siteName`), set last so a backend's title (or one cached with an older body)
+ *  never reaches the app, whatever path the body took: rendered, cached, stale,
+ *  or a backend with no headers at all (Outline).
  *
  *  Caching (this route can sit behind a shared cache/CDN): the body is formatted
  *  per User-Agent, so the public path MUST send `Vary: User-Agent` or a shared
@@ -282,11 +285,12 @@ interface SubCacheEntry {
  *  device must reach the backend to register + get its own body. */
 function subscriptionResponse(
   entry: { content: string; contentType: string; headers?: Record<string, string> },
-  opts?: { hwid?: boolean },
+  opts: { hwid?: boolean; title: string },
 ): Response {
   const headers: Record<string, string> = {
     'content-type': entry.contentType || 'text/plain',
     ...(entry.headers ?? {}),
+    'profile-title': opts.title,
     // The backend legitimately returns an HTML landing page for browser UAs, and
     // this route serves it SAME-ORIGIN with the SPA + admin CMS. Sandbox it so
     // backend-injected markup can never execute scripts on the FCP origin
@@ -294,7 +298,7 @@ function subscriptionResponse(
     'content-security-policy': "sandbox; default-src 'none'",
     'x-content-type-options': 'nosniff',
   };
-  if (opts?.hwid) {
+  if (opts.hwid) {
     headers['cache-control'] = 'private, no-store';
   } else {
     headers['cache-control'] = `public, max-age=${Math.floor(SUBSCRIPTION_CACHE_TTL_MS / 1000)}`;
@@ -909,7 +913,11 @@ http.route({
     // the resolved default. (Privacy Mode is deliberately never flagged: its
     // decoy is SNI-blocked in China by design.)
     const modeList = await ctx.runQuery(internal.connectionModes.list, {});
-    const resolvedDefault = modeList.find((m) => m.isDefault)?.id ?? DEFAULT_CONNECTION_MODE;
+    // The default on the member's OWN backend: what a key with no choice issues into.
+    const resolvedDefault =
+      (await ctx.runQuery(internal.connectionModes.defaultId, {
+        backend: view.user.tier.backend,
+      })) ?? DEFAULT_CONNECTION_MODE;
     const censorshipModeId = modeList.find(
       (m) => m.isCensorshipRecommended && m.availableBackends.includes(view.user.tier.backend),
     )?.id;
@@ -1069,6 +1077,7 @@ http.route({
     }
 
     const now = Date.now();
+    const title = await ctx.runQuery(internal.subscriptions.profileTitle, {});
     // Every edge-required refusal is counted per reason (deliveryRefusals.ts,
     // attention `delivery_refusals`): dark members must be visible to the
     // operator, not only to the member. Counting never changes the answer.
@@ -1140,7 +1149,7 @@ http.route({
         contentAt: fresh.at,
         renderedEpoch: fresh.renderedEpoch ?? null,
       });
-      return subscriptionResponse(fresh); // fresh + same format → cache hit
+      return subscriptionResponse(fresh, { title }); // fresh + same format → cache hit
     }
     // Last-resort fallback MUST match this UA — never serve another client's
     // format (the same invariant the fresh path enforces). (Review #11.)
@@ -1312,7 +1321,7 @@ http.route({
       });
       // hwid'd → `private, no-store` (device-specific); otherwise public + Vary: UA.
       // An inferred country shaped this body: it is this member's, here, now.
-      return subscriptionResponse(entry, { hwid: hasHwid || !cacheable });
+      return subscriptionResponse(entry, { hwid: hasHwid || !cacheable, title });
     } catch (err) {
       // A HWID rejection (backend 404 for a device-limited key fetched without a
       // valid x-hwid) is authoritative — pass 404 through, and never serve a
@@ -1336,7 +1345,7 @@ http.route({
           contentAt: stale.at,
           renderedEpoch: stale.renderedEpoch ?? null,
         });
-        return subscriptionResponse(stale);
+        return subscriptionResponse(stale, { title });
       }
       console.error(
         `[subscription] fronted fetch failed: ${err instanceof Error ? err.message : String(err)}`,

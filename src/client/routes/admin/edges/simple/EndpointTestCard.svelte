@@ -17,6 +17,7 @@
    *   onRetried?: (runId: string) => void
    *   onDoesNotWork?: (edgeId: string) => void
    *   onClose?: () => void
+   *   nameOf?: (listenerKey: string) => string | null   the transport in words for a line
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -41,8 +42,17 @@
     onRetried?: (runId: string) => void;
     onDoesNotWork?: (edgeId: string) => void;
     onClose?: () => void;
+    nameOf?: (listenerKey: string) => string | null;
   }
-  let { edgeIds, runId = null, onAllDone, onRetried, onDoesNotWork, onClose }: Props = $props();
+  let {
+    edgeIds,
+    runId = null,
+    onAllDone,
+    onRetried,
+    onDoesNotWork,
+    onClose,
+    nameOf = () => null,
+  }: Props = $props();
 
   const qc = useQueryClient();
   const links = testLinksQuery(() => edgeIds);
@@ -50,6 +60,7 @@
     (links.data ?? []).map((l) => ({
       edgeId: l.binding.edgeId,
       listenerKey: l.binding.listenerKey,
+      name: nameOf(l.binding.listenerKey),
       link: l.link,
       method: 'test_link',
       endpoint: l.binding.endpoint,

@@ -15,7 +15,16 @@
   import type { OpView } from '../../../../../shared/contracts/servers';
   import ConfirmDialog from '../../edges/components/ConfirmDialog.svelte';
   import { codeOf } from '../lib/run';
-  import { ago, opTitle, opWords, serverErrorWords, type Dot } from '../lib/words';
+  import { collapseRepeats } from '@client/lib/collapseRepeats';
+  import {
+    ago,
+    opRepeatKey,
+    opRepeatWords,
+    opTitle,
+    opWords,
+    serverErrorWords,
+    type Dot,
+  } from '../lib/words';
 
   let { slug }: { slug: string } = $props();
   const qc = useQueryClient();
@@ -30,6 +39,9 @@
     red: 'bg-destructive',
     grey: 'bg-muted-foreground/50',
   };
+
+  // Identical settled changes in a row (a retried create) read as one line with a count.
+  const groups = $derived(collapseRepeats(ops.data?.ops ?? [], opRepeatKey));
 
   let looking = $state<string | null>(null);
   let settling = $state<OpView | null>(null);
@@ -83,8 +95,9 @@
     <p class="text-muted-foreground text-sm">Nothing has been changed from here yet.</p>
   {:else}
     <ul class="divide-y rounded-lg border text-sm" aria-live="polite">
-      {#each ops.data?.ops ?? [] as op (op.id)}
-        {@const w = opWords(op)}
+      {#each groups as g (g.item.id)}
+        {@const op = g.item}
+        {@const w = opRepeatWords(op, g.count)}
         <li class="flex flex-wrap items-start gap-3 px-3 py-2.5">
           <span
             class={`mt-1.5 inline-block size-2.5 shrink-0 rounded-full ${DOT[w.dot]}`}
@@ -94,7 +107,11 @@
             <span class="block font-medium break-all">{opTitle(op)}</span>
             <span class="text-muted-foreground block">{w.sentence}</span>
           </span>
-          <span class="text-muted-foreground">{ago(Date.now() - Date.parse(op.createdAt))}</span>
+          <span class="text-muted-foreground"
+            >{ago(Date.now() - Date.parse(op.createdAt))}{g.count > 1
+              ? `, first ${ago(Date.now() - Date.parse(g.last.createdAt))}`
+              : ''}</span
+          >
           {#if op.open}
             <span class="flex gap-2">
               <Button

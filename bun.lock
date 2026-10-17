@@ -6,8 +6,8 @@
       "name": "freesocks-control-plane",
       "dependencies": {
         "@aws-sdk/client-s3": "^3.1063.0",
-        "@cap.js/wasm": "0.0.7",
-        "@cap.js/widget": "^0.1.56",
+        "@cap.js/wasm": "0.0.8",
+        "@cap.js/widget": "0.1.58",
         "@fontsource/inter": "^5.2.8",
         "@fontsource/inter-tight": "^5.2.7",
         "@fontsource/jetbrains-mono": "^5.2.8",
@@ -126,9 +126,9 @@
 
     "@aws/lambda-invoke-store": ["@aws/lambda-invoke-store@0.2.4", "", {}, "sha512-iY8yvjE0y651BixKNPgmv1WrQc+GZ142sb0z4gYnChDDY2YqI4P/jsSopBWrKfAt7LOJAkOXt7rC/hms+WclQQ=="],
 
-    "@cap.js/wasm": ["@cap.js/wasm@0.0.7", "", {}, "sha512-IgUjrPOUBaOjTp+BkrhfEBBeQ4An7fQiSWWezDy9Uvd+OdTYm4+h3AJU0j/CpHYayp7FltZU+UePC6p28oGQaw=="],
+    "@cap.js/wasm": ["@cap.js/wasm@0.0.8", "", {}, "sha512-rX+4/v2sz4GKLnygXHOS89O7c4GM2qNQcDJP6Y2cyGwoKjg83bsfWHt1TWr9GBzHpFADvju5fvLWYds21nS8sA=="],
 
-    "@cap.js/widget": ["@cap.js/widget@0.1.56", "", {}, "sha512-j640dNNNIF8IWmwqmSx0ihgU8sz/6Jm9mHveeDWUk8aXVqFm+2TSsp5bawtMtgf0aa7rFkmT9p76jrqO1uSEpQ=="],
+    "@cap.js/widget": ["@cap.js/widget@0.1.58", "", {}, "sha512-snNjlYZLx1XddDH7DPZF9uedynSXTPPeRl/nExDlMjw0pCHiu/Fm1NKjRcT4HmqpOBf0TZRvio1HhkTMWg9p9A=="],
 
     "@dagrejs/dagre": ["@dagrejs/dagre@2.0.4", "", { "dependencies": { "@dagrejs/graphlib": "3.0.4" } }, "sha512-J6vCWTNpicHF4zFlZG1cS5DkGzMr9941gddYkakjrg3ZNev4bbqEgLHFTWiFrcJm7UCRu7olO3K6IRDd9gSGhA=="],
 

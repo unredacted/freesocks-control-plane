@@ -453,6 +453,121 @@ describe('GET /api/v1/sub/<token>: member-facing entry names', () => {
   });
 });
 
+/**
+ * The subscription title: the backend sent its own (`profile-title`), so apps
+ * named the subscription after the backend product. FCP names it itself, from
+ * the service name (`subscription.siteName`), on every path a body can take.
+ */
+describe('profile-title is the service name on every subscription response', () => {
+  const b64 = (name: string) =>
+    `base64:${btoa(String.fromCharCode(...new TextEncoder().encode(name)))}`;
+  beforeEach(() => {
+    vi.stubEnv('IP_HASH_SALT', 'test-salt');
+    mockBody = 'RAW-CONFIG-1';
+    mockStatus = 200;
+    mockHeaders = { 'content-type': 'text/yaml', 'profile-title': 'base64:UmVtbmF3YXZl' };
+    stubFrontFetch();
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+  const get = (t: ReturnType<typeof convexTest>, ua = 'Clash/1') =>
+    t.fetch('/api/v1/sub/tok_abc', { headers: { 'user-agent': ua } });
+
+  test('the backend title never reaches the app: the default name, then the admin-set one (cache hit too)', async () => {
+    const t = convexTest(schema, modules);
+    await seedSub(t);
+    const first = await get(t);
+    expect(first.headers.get('profile-title')).toBe(b64('FreeSocks'));
+    expect(b64('FreeSocks')).toBe('base64:RnJlZVNvY2tz');
+
+    // A name with non-ASCII letters survives the header (that is what base64 is for).
+    await t.run((ctx) =>
+      ctx.db.insert('appSettings', {
+        key: 'subscription.siteName',
+        value: JSON.stringify('  Свобода VPN\n'),
+        updatedAt: Date.now(),
+      }),
+    );
+    const cached = await get(t);
+    expect(fetchCalls).toBe(1); // a cache hit, still titled now
+    expect(cached.headers.get('profile-title')).toBe(b64('Свобода VPN'));
+  });
+
+  test('a stale body served while the backend is down carries it', async () => {
+    const t = convexTest(schema, modules);
+    const { subId } = await seedSub(t);
+    await get(t);
+    // Age the cached body past its TTL, then take the backend down.
+    await t.run(async (ctx) => {
+      const sub = (await ctx.db.get(subId))!;
+      const entries = JSON.parse(sub.subCache!) as Array<{ at: number }>;
+      for (const e of entries) e.at -= 24 * 3600_000;
+      await ctx.db.patch(subId, { subCache: JSON.stringify(entries) });
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('backend down');
+      }),
+    );
+    const res = await get(t);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('RAW-CONFIG-1');
+    expect(res.headers.get('profile-title')).toBe(b64('FreeSocks'));
+  });
+
+  test('an Outline key (no headers of its own) is titled too', async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      const tierId = await ctx.db.insert('tiers', {
+        ...FREE_TIER,
+        backend: 'outline',
+        updatedAt: Date.now(),
+      });
+      const userId = await ctx.db.insert('users', {
+        tierId,
+        status: 'active',
+        supportId: 'SUP-2',
+        updatedAt: Date.now(),
+      });
+      const serverId = await ctx.db.insert('backendServers', {
+        backend: 'outline',
+        name: 'OL',
+        slug: 'ol-1',
+        config: {
+          type: 'outline',
+          apiUrl: 'https://outline.test/secret/',
+          websocketEnabled: false,
+        },
+        isActive: true,
+        priority: 0,
+        keyCount: 0,
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert('subscriptions', {
+        userId,
+        backend: 'outline',
+        backendUserId: '7',
+        backendShortId: '7',
+        backendServerId: serverId,
+        subscriptionUrl: 'ss://key',
+        subscriptionMirrors: [],
+        subToken: 'tok_abc',
+        state: 'active',
+        updatedAt: Date.now(),
+      });
+    });
+    mockHeaders = { 'content-type': 'application/json' };
+    mockBody = JSON.stringify({ id: '7', accessUrl: 'ss://key@192.0.2.9:443' });
+    const res = await get(t);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('ss://key@192.0.2.9:443\n');
+    expect(res.headers.get('profile-title')).toBe(b64('FreeSocks'));
+  });
+});
+
 describe('getAccountView subscription URL', () => {
   beforeEach(() => {
     // Mock backend so getAccountView's live getUser doesn't hit the network.

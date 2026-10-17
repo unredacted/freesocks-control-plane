@@ -78,6 +78,7 @@ import { accountTested, API_FAILING_AFTER } from './edgeProviderAccounts';
 import { readRefusals, REFUSAL_WINDOW_MS, REFUSALS_CRITICAL_AT } from './deliveryRefusals';
 import { fleetRotationsToday, readFleetBrake } from './lib/edges/fleet';
 import { modeRefOf } from './nodeIntents';
+import { resolveModeCatalog } from './lib/connectionModes';
 import { requiredPoolSize } from './lib/edges/poolCapacity';
 import { uncoveredListeners } from './lib/edges/pool';
 import { renderPreviewFor } from './edgeAdmin';
@@ -713,7 +714,8 @@ interface AttentionItem {
     | 'rebalance'
     | 'require_edges'
     | 'protect_node'
-    | 'open_node';
+    | 'open_node'
+    | 'open_modes';
   since: string | null;
 }
 
@@ -728,13 +730,15 @@ const HEALTH_STALE_MIN_MS = 60 * 60_000;
  * is ready and that nobody has started protecting (`node_ready_to_protect`),
  * and a node whose go-live waits for an approval (`node_awaiting_approval`:
  * tested and not approved yet, parked after a block, or a protect run parked
- * at `node_not_approved`). Facts name the server and the node so the row can
- * link to them; never an address.
+ * at `node_not_approved`), and a LIVE node whose connection mode is turned off
+ * (`node_mode_disabled`: no member can pick it, so it serves nobody). Facts name
+ * the server and the node so the row can link to them; never an address.
  */
 async function nodeAttention(ctx: QueryCtx, relays: Relay[]): Promise<AttentionItem[]> {
   const out: AttentionItem[] = [];
   // Operator-scale: one row per enrolled node.
   const intents = await ctx.db.query('panelNodeIntents').collect();
+  const { modes: catalog } = await resolveModeCatalog(ctx.db);
   const slugs = new Map<string, string | null>();
   for (const i of intents) {
     if (i.state === 'retiring' || i.state === 'retired') continue;
@@ -775,6 +779,17 @@ async function nodeAttention(ctx: QueryCtx, relays: Relay[]): Promise<AttentionI
         ...(open ? { runId: open._id as string } : {}),
       },
     };
+    if (stage === 'live' && !(catalog.find((m) => m.id === mode.slug)?.enabled ?? false))
+      out.push({
+        ...common,
+        id: `node_mode_disabled:${i._id}`,
+        kind: 'node_mode_disabled',
+        severity: 'warning',
+        code: null,
+        action: 'open_modes',
+        facts: { ...common.facts, mode: mode.slug },
+        since: iso(i.updatedAt),
+      });
     const waitingApproval =
       stage === 'candidates_verified' ||
       stage === 'awaiting_approval' ||

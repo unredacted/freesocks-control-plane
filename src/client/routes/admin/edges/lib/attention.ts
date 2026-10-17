@@ -98,6 +98,7 @@ export const ATTENTION_ACTION_PLAN = {
   // An enrolled node: the protect sheet with it preselected, or its page under Servers.
   protect_node: { type: 'navigate' },
   open_node: { type: 'navigate' },
+  open_modes: { type: 'navigate' },
 } as const satisfies Record<AttentionAction, AttentionPlan>;
 
 /**
@@ -155,6 +156,8 @@ export function attentionTarget(item: AttentionItem): string {
       const instance = factString(item, 'serverSlug') ?? undefined;
       return uuid ? serversPaths.node(uuid, { instance }) : serversPaths.home({ instance });
     }
+    case 'open_modes':
+      return '/admin/connection-modes';
   }
 }
 

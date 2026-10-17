@@ -14,7 +14,7 @@
  * (modeSlug, 'remnawave'), config = {"squadUuids":[...]}.
  */
 import type { DatabaseReader } from '../_generated/server';
-import { resolveDefaultModeId, resolveModeCatalog } from './connectionModes';
+import { DEFAULT_CONNECTION_MODE, effectiveDefaultId, resolveModeCatalog } from './connectionModes';
 
 /** Fail-safe parse of a stored mode group pool: a JSON array of non-empty strings,
  *  de-duplicated in declaration order; anything else resolves to []. */
@@ -48,19 +48,88 @@ async function readStoredPool(db: DatabaseReader, slug: string): Promise<string[
   return row ? poolFromConfig(row.config) : [];
 }
 
+/**
+ * Whether a bound pool can serve a member: one of its mode groups has a node.
+ * The signal is the panel's own count of the nodes wired to each group (the
+ * healthcheck cron's `remnawaveNodeStats.nodeCount`: live nodes and nodes still
+ * being brought up alike). A group never observed is UNKNOWN, not empty (bring-
+ * up, a group made since the last read, or one whose membership has never
+ * been read successfully): it counts as able to serve, so a fresh deploy is
+ * never locked out. Only a pool whose every group was seen with zero nodes is
+ * dead.
+ */
+async function poolHasNode(db: DatabaseReader, pool: readonly string[]): Promise<boolean> {
+  for (const placement of pool) {
+    const row = await db
+      .query('remnawaveNodeStats')
+      .withIndex('by_placement', (q) => q.eq('placement', placement))
+      .unique();
+    if (!row || row.nodeCountUnknown || row.nodeCount > 0) return true;
+  }
+  return false;
+}
+
+/** Modes an FCP-enrolled node serves LIVE: the panel's group count may lag a
+ *  go-live by one healthcheck, the node's own delivery disposition does not. */
+async function liveNodeModes(db: DatabaseReader): Promise<Set<string>> {
+  const ready = await db
+    .query('panelNodeIntents')
+    .withIndex('by_state', (q) => q.eq('state', 'ready'))
+    .collect();
+  return new Set(ready.filter((i) => i.delivery.disposition === 'live').map((i) => i.mode));
+}
+
+/**
+ * The mode slugs a member can actually be served on, on Remnawave: a bound pool
+ * AND a node in it (`poolHasNode`), or a live enrolled node serving the mode.
+ * A subset of `resolveBoundModeIds`; feeds per-backend availability, so an
+ * enabled, bound mode whose pool has no node is never offered or suggested
+ * (it would hand every new member a key with no server).
+ */
+export async function resolveServedModeIds(db: DatabaseReader): Promise<Set<string>> {
+  const served = new Set<string>();
+  const rows = await db
+    .query('modePlacements')
+    .withIndex('by_backend', (q) => q.eq('backend', 'remnawave'))
+    .collect();
+  let live: Set<string> | null = null;
+  for (const r of rows) {
+    const pool = poolFromConfig(r.config);
+    if (pool.length === 0) continue;
+    live ??= await liveNodeModes(db);
+    if (live.has(r.modeSlug) || (await poolHasNode(db, pool))) served.add(r.modeSlug);
+  }
+  return served;
+}
+
+/** The mode a key with no explicit choice issues into: the configured default
+ *  while it can be served here, else the next servable mode (`effectiveDefaultId`). */
+async function resolveIssueDefaultSlug(db: DatabaseReader): Promise<string> {
+  const { modes } = await resolveModeCatalog(db);
+  const served = await resolveServedModeIds(db);
+  return (
+    effectiveDefaultId(
+      modes,
+      (m) => m.enabled && m.backends.includes('remnawave') && served.has(m.id),
+    ) ?? DEFAULT_CONNECTION_MODE
+  );
+}
+
 /** The mode group pool a mode issues into. When the member has made no explicit
  *  choice (id null/unknown), resolves the DEFAULT mode's pool — a new member
- *  follows the catalog default. Returns [] when the resolved mode has no pool
- *  bound; callers that must never issue a mode group-less key use `resolvePlacementPool`
- *  (which then falls back across modes). `resolveBoundModeIds` intentionally reads
- *  raw per-slug pools so the public availability stays truthful. */
+ *  follows the default, and never a default whose pool has no node while
+ *  another mode's has one (`resolveIssueDefaultSlug`). Returns [] when the
+ *  resolved mode has no pool bound; callers that must never issue a mode
+ *  group-less key use `resolvePlacementPool` (which then falls back across
+ *  modes). `resolveBoundModeIds` intentionally reads raw per-slug pools so the
+ *  public availability stays truthful. */
 export async function resolveModeSquadPool(
   db: DatabaseReader,
   modeId: string | null | undefined,
 ): Promise<string[]> {
   const { modes } = await resolveModeCatalog(db);
   const known = new Set(modes.map((m) => m.id));
-  const slug = modeId && known.has(modeId) ? modeId : await resolveDefaultModeId(db);
+  const slug = modeId && known.has(modeId) ? modeId : await resolveIssueDefaultSlug(db);
   return readStoredPool(db, slug);
 }
 
@@ -82,16 +151,19 @@ export async function resolvePlacementPool(
   if (own.length) return own;
   const viaDefault = await resolveModeSquadPool(db, null);
   if (viaDefault.length) return viaDefault;
-  // Last resort: any bound pool — but never one belonging to an admin-DISABLED
-  // mode. An operator who turns a mode off must not have keys land on its nodes
-  // by way of the fallback ladder.
+  // Last resort: any bound pool, one with a node first — but never one
+  // belonging to an admin-DISABLED mode. An operator who turns a mode off must
+  // not have keys land on its nodes by way of the fallback ladder.
   const { modes } = await resolveModeCatalog(db);
+  const served = await resolveServedModeIds(db);
+  let anyBound: string[] = [];
   for (const m of modes) {
     if (!m.enabled) continue;
     const pool = await readStoredPool(db, m.id);
-    if (pool.length) return pool;
+    if (pool.length && served.has(m.id)) return pool;
+    if (pool.length && anyBound.length === 0) anyBound = pool;
   }
-  return [];
+  return anyBound;
 }
 
 /** Per-mode bound-mode group COUNTS (non-secret — pool sizes only, never the UUIDs).
@@ -130,7 +202,8 @@ export async function resolveBoundModeIds(db: DatabaseReader): Promise<Set<strin
  * is true exactly when the effective mode is unusable AND some other mode is
  * usable — the caller then refuses with an actionable error. When NO mode is
  * usable anywhere (bring-up), blocked is false and issuance proceeds mode group-less
- * + audited. "Unusable" covers admin-DISABLED as well as unbound.
+ * + audited. "Unusable" covers admin-DISABLED and unbound as well as a pool
+ * with no node in it.
  */
 export async function remnawaveEffectiveGate(
   db: DatabaseReader,
@@ -138,14 +211,15 @@ export async function remnawaveEffectiveGate(
 ): Promise<{ blocked: boolean }> {
   const { modes } = await resolveModeCatalog(db);
   const enabled = new Set(modes.filter((m) => m.enabled).map((m) => m.id));
+  // Usable = enabled AND bound with a node in the pool: a pool that lost its
+  // last node is as unusable as an unbound one.
+  const served = await resolveServedModeIds(db);
+  const usable = (id: string) => enabled.has(id) && served.has(id);
 
-  const own = await resolveModeSquadPool(db, modeId);
-  if (own.length > 0 && (modeId === null || enabled.has(modeId))) {
-    return { blocked: false };
-  }
-  // Some OTHER mode is both enabled and bound → refuse rather than downgrade.
-  const bound = await resolveBoundModeIds(db);
-  const alternativeExists = [...enabled].some((id) => id !== modeId && bound.has(id));
+  const effective = modeId ?? (await resolveIssueDefaultSlug(db));
+  if (usable(effective)) return { blocked: false };
+  // Some OTHER mode is usable → refuse rather than downgrade.
+  const alternativeExists = [...enabled].some((id) => id !== effective && usable(id));
   return { blocked: alternativeExists };
 }
 

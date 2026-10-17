@@ -12,7 +12,7 @@
 import { writeAuditLog } from './lib/audit';
 import { ConvexError, v } from 'convex/values';
 import type { ActionCtx } from './_generated/server';
-import { internalAction, internalMutation } from './_generated/server';
+import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { capabilitiesOf } from './lib/backends/capabilities';
@@ -42,6 +42,27 @@ const observedInbound = v.object({
   realityAuth: v.optional(
     v.object({ digest: nullableString, publicKey: nullableString, publicKeyMismatch: v.boolean() }),
   ),
+});
+
+/** One Host as the provider reads it (`ObservedAddress`). */
+const observedHostV = v.object({
+  hostUuid: v.string(),
+  remark: v.string(),
+  address: v.string(),
+  port: v.number(),
+  sni: nullableString,
+  host: nullableString,
+  path: nullableString,
+  alpn: nullableString,
+  fingerprint: nullableString,
+  securityLayer: nullableString,
+  isDisabled: v.boolean(),
+  isHidden: v.boolean(),
+  tag: nullableString,
+  viewPosition: v.union(v.number(), v.null()),
+  configProfileUuid: nullableString,
+  configProfileInboundUuid: nullableString,
+  nodeUuids: v.array(v.string()),
 });
 
 type StoredInbound = Doc<'panelProfiles'>['inbounds'][number];
@@ -177,27 +198,7 @@ export const record = internalMutation({
         inbounds: v.array(observedInbound),
       }),
     ),
-    hosts: v.array(
-      v.object({
-        hostUuid: v.string(),
-        remark: v.string(),
-        address: v.string(),
-        port: v.number(),
-        sni: nullableString,
-        host: nullableString,
-        path: nullableString,
-        alpn: nullableString,
-        fingerprint: nullableString,
-        securityLayer: nullableString,
-        isDisabled: v.boolean(),
-        isHidden: v.boolean(),
-        tag: nullableString,
-        viewPosition: v.union(v.number(), v.null()),
-        configProfileUuid: nullableString,
-        configProfileInboundUuid: nullableString,
-        nodeUuids: v.array(v.string()),
-      }),
-    ),
+    hosts: v.array(observedHostV),
     squads: v.array(
       v.object({
         squadUuid: v.string(),
@@ -373,6 +374,57 @@ export async function observeInstance(
       errorCode: 'servers.observe_failed',
     });
     return false;
+  }
+}
+
+/**
+ * The Hosts of an instance, re-read right after FCP itself changed one OUTSIDE
+ * the ledger (an edge rotation repointing an address, a go-live creating one, a
+ * hide flipping one off): Servers then shows what members get at once, not
+ * after the next periodic read. Only an instance that is observed at all (it
+ * has an observation state) is touched; the ledger keeps its own refresh.
+ */
+export const recordHosts = internalMutation({
+  args: { backendServerId: v.id('backendServers'), hosts: v.array(observedHostV) },
+  handler: async (ctx, a) => {
+    const state = await ctx.db
+      .query('panelObserveState')
+      .withIndex('by_server', (q) => q.eq('backendServerId', a.backendServerId))
+      .unique();
+    if (!state) return null;
+    await upsertObservedHosts(ctx, a.backendServerId, a.hosts, Date.now());
+    return null;
+  },
+});
+
+/** Whether Servers observes this instance at all (it has an observation state). */
+export const isObserved = internalQuery({
+  args: { backendServerId: v.id('backendServers') },
+  handler: async (ctx, { backendServerId }) =>
+    (await ctx.db
+      .query('panelObserveState')
+      .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
+      .unique()) !== null,
+});
+
+/** Best effort: a failed re-read leaves the cache to the next periodic one. An
+ *  instance Servers does not observe is never read for it. */
+export async function refreshObservedHosts(
+  ctx: ActionCtx,
+  server: { _id: Id<'backendServers'>; backend: Doc<'backendServers'>['backend']; config: unknown },
+): Promise<void> {
+  const writes = PROVIDERS[server.backend].backendWrites;
+  if (!writes || !capabilitiesOf(server.backend).panelObservation) return;
+  try {
+    if (!(await ctx.runQuery(internal.backendObserve.isObserved, { backendServerId: server._id })))
+      return;
+    const hosts = await writes.readHosts(server.config as BackendConfig);
+    await ctx.runMutation(internal.backendObserve.recordHosts, {
+      backendServerId: server._id,
+      hosts,
+    });
+  } catch {
+    /* the periodic read catches up */
   }
 }
 

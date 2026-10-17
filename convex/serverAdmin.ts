@@ -14,6 +14,7 @@ import type { Doc } from './_generated/dataModel';
 import { upsertSettingRow } from './appSettings';
 import { writeAuditLog } from './lib/audit';
 import { capabilitiesOf } from './lib/backends/capabilities';
+import { resolveModeCatalog } from './lib/connectionModes';
 import { poolFromConfig } from './lib/remnawavePlacement';
 import { flattenServerConfig, resolveServerConfig, serverConfigWrites } from './lib/serverConfig';
 import { modeRefOf } from './nodeIntents';
@@ -84,6 +85,7 @@ export const intentsView = internalQuery({
       .query('panelNodeIntents')
       .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
       .collect();
+    const { modes: catalog } = await resolveModeCatalog(ctx.db);
     const out = [];
     for (const i of intents) {
       const retirement = i.retirementId ? await ctx.db.get(i.retirementId) : null;
@@ -104,12 +106,16 @@ export const intentsView = internalQuery({
         name: i.name,
         machineName: i.machineName ?? null,
         mode: await modeRefOf(ctx, i),
+        // Members can pick the mode this node serves (off: nobody gets the node).
+        modeEnabled: catalog.find((m) => m.id === i.mode)?.enabled ?? false,
         state: i.state,
         code: i.code ?? null,
         stage: i.activation.stage,
         disposition: i.delivery.disposition,
         machineRevision: i.machineRevision,
         appliedRevision: i.appliedRevision ?? null,
+        // When the node role last reported in (each run starts with a report).
+        roleSeenAt: new Date(i.observed.at).toISOString(),
         nodeUuid: i.nodeUuid ?? null,
         addressUuids: i.addressUuids ?? [],
         adopted: !!i.adopted,

@@ -747,9 +747,19 @@ describe('a fronted node goes from enrollment to members', () => {
 
     // The member now gets the rendered body: the edge's PUBLIC address, never the origin.
     const address = await edgeAddress(t, act.resources.edgeIds[0] as Id<'edges'>);
+    // Servers shows the address FCP put on the backend at once, not at the next read.
+    const cachedHosts = await t.run((c) =>
+      c.db
+        .query('panelHosts')
+        .withIndex('by_server', (q) => q.eq('backendServerId', serverId))
+        .collect(),
+    );
+    expect(cachedHosts.map((h) => h.address)).toContain(address);
     for (const ua of [LINKS_UA, SINGBOX_UA]) {
       const res = await fetchSub(t, ua);
       expect(res.status).toBe(200);
+      // A rendered body is titled with the site's name like every other one.
+      expect(res.headers.get('profile-title')).toBe('base64:RnJlZVNvY2tz');
       const body = await res.text();
       expect(body).toContain(address);
       expect(body).not.toContain(ORIGIN_V4);
@@ -1767,6 +1777,18 @@ describe("an L4 endpoint tick binds to the enrolled node's REALITY key", () => {
     const intentId = await enrollReady(w, { name: NODE, mode: 'freedom-reality', v4: ORIGIN_V4 });
     await seedMember(w, NODE);
     const cookie = await adminCookie(t);
+    // freedom-reality ships dark: the protect review says no member can pick it.
+    const inventory = await t.run((c) =>
+      c.db
+        .query('backendNodeInventory')
+        .withIndex('by_server', (q) => q.eq('backendServerId', w.serverId))
+        .collect(),
+    );
+    const plan = await t.action(internal.edgeSetupPlan.plan, {
+      backendServerId: w.serverId,
+      nodeUuid: inventory.find((n) => n.name === NODE)!.nodeUuid,
+    });
+    expect(plan.modesOff).toEqual([{ slug: 'freedom-reality', label: null }]);
     const runId = await protectToPark(w, { nodeName: NODE, accountId: accts.l4 });
     const l4 = (await setupRun(t, runId)).listeners
       .filter((l) => l.layer === 'l4')
@@ -1856,7 +1878,7 @@ describe("an L4 endpoint tick binds to the enrolled node's REALITY key", () => {
 });
 
 describe('the operator hears about a node that waits on them', () => {
-  test('ready to protect, then waiting for approval, then nothing once live', async () => {
+  test('ready to protect, then waiting for approval, then its dark mode once live, then nothing', async () => {
     const w = await world();
     const { t } = w;
     installSeams(w);
@@ -1877,6 +1899,18 @@ describe('the operator hears about a node that waits on them', () => {
     ]);
     await seedMember(w, NODE);
     const cookie = await adminCookie(t);
+    // freedom-reality ships dark: the protect review says no member can pick it.
+    const inventory = await t.run((c) =>
+      c.db
+        .query('backendNodeInventory')
+        .withIndex('by_server', (q) => q.eq('backendServerId', w.serverId))
+        .collect(),
+    );
+    const plan = await t.action(internal.edgeSetupPlan.plan, {
+      backendServerId: w.serverId,
+      nodeUuid: inventory.find((n) => n.name === NODE)!.nodeUuid,
+    });
+    expect(plan.modesOff).toEqual([{ slug: 'freedom-reality', label: null }]);
     const runId = await protectToPark(w, { nodeName: NODE, accountId: accts.l4 });
     expect(await nodeItems()).toEqual([
       expect.objectContaining({
@@ -1888,7 +1922,27 @@ describe('the operator hears about a node that waits on them', () => {
     ]);
     await approveOverHttp(t, cookie, intentId);
     await drive(t, () => setupRun(t, runId), movedOn, 'setup run after approval');
+    // Live and protected, yet nobody is given it: the mode is still off.
+    expect(await nodeItems()).toEqual([
+      expect.objectContaining({
+        id: `node_mode_disabled:${intentId}`,
+        kind: 'node_mode_disabled',
+        action: 'open_modes',
+        facts: expect.objectContaining({ mode: 'freedom-reality', node: NODE }),
+      }),
+    ]);
+    const view = await t.query(internal.serverAdmin.intentsView, { backendServerId: w.serverId });
+    expect(view.find((i) => i.id === intentId)!.modeEnabled).toBe(false);
+    await t.mutation(internal.connectionModes.updateMode, {
+      slug: 'freedom-reality',
+      enabled: true,
+    });
     expect(await nodeItems()).toEqual([]);
+    expect(
+      (await t.query(internal.serverAdmin.intentsView, { backendServerId: w.serverId })).find(
+        (i) => i.id === intentId,
+      )!.modeEnabled,
+    ).toBe(true);
   });
 });
 

@@ -186,6 +186,8 @@ export const OpView = z.object({
   request: z.string(),
   panelState: z.string(),
   asyncEffect: z.string(),
+  /** The nodes the backend queued work on for this change (they restart for it). */
+  asyncNodeUuids: z.array(z.string()).default([]),
   open: z.boolean(),
   errorCode: z.string().nullable(),
   createdAt: z.string(),
@@ -585,12 +587,16 @@ export const NodeIntentView = z.object({
   /** The machine's own name as the role reported it (operator-only); null when none was. */
   machineName: z.string().nullable().default(null),
   mode: NodeModeRef,
+  /** Members can pick the mode (Connection modes). Off: the node reaches nobody. */
+  modeEnabled: z.boolean().default(true),
   state: z.enum(['pending', 'ready', 'blocked', 'retiring', 'retired']),
   code: z.string().nullable(),
   stage: NodeStage,
   disposition: NodeDisposition,
   machineRevision: z.number(),
   appliedRevision: z.number().nullable(),
+  /** When the node role last reported in (a run starts with a report); null on older servers. */
+  roleSeenAt: z.string().nullable().default(null),
   nodeUuid: z.string().nullable(),
   /** The node's own addresses on the backend (one per family name on a direct node). */
   addressUuids: z.array(z.string()),

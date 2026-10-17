@@ -1370,6 +1370,88 @@ describe('suggestedModeId respects enabled + availability', () => {
     expect(body.suggestedModeId).toBe('freedom-reality');
   });
 
+  test('a censorship pick or a default whose pool has no node is never suggested', async () => {
+    vi.stubEnv('CF_FRONTED', 'true');
+    const t = convexTest(schema, modules);
+    const { userId } = await seedTierAndUser(t);
+    const cookie = await memberCookie(t, userId);
+    const EMPTY = '11111111-2222-3333-4444-000000000000';
+    const FULL = '11111111-2222-3333-4444-111111111111';
+    const serverId = await t.run(async (ctx) => {
+      await ctx.db.insert('appSettings', {
+        key: 'delivery.privacyCountries',
+        value: JSON.stringify(['IR']),
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert('connectionModeFamilies', {
+        slug: 'freedom',
+        iconId: 'zap',
+        enabled: true,
+        order: 0,
+        updatedAt: Date.now(),
+      });
+      for (const [slug, order, censorship] of [
+        ['freedom-ws', 0, false],
+        ['freedom-reality', 1, true],
+      ] as const)
+        await ctx.db.insert('connectionModes', {
+          slug,
+          familySlug: 'freedom',
+          deliveryStyle: 'url',
+          enabled: true,
+          isFamilyDefault: order === 0,
+          isCensorshipRecommended: censorship,
+          backends: ['remnawave'],
+          order,
+          updatedAt: Date.now(),
+        });
+      // Both bound; only the default's group has a node.
+      for (const [slug, squad] of [
+        ['freedom-ws', FULL],
+        ['freedom-reality', EMPTY],
+      ] as const)
+        await ctx.db.insert('modePlacements', {
+          modeSlug: slug,
+          backend: 'remnawave',
+          config: JSON.stringify({ squadUuids: [squad] }),
+          updatedAt: Date.now(),
+        });
+      return ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'rw',
+        slug: 'rw',
+        config: { type: 'remnawave', baseUrl: 'https://rw.example', apiToken: 'tok' },
+        isActive: true,
+        priority: 0,
+        keyCount: 0,
+        updatedAt: Date.now(),
+      });
+    });
+    const observe = (placement: string, nodeCount: number) =>
+      t.mutation(internal.remnawaveNodes.markNodeStats, {
+        backendServerId: serverId,
+        nodes: [{ placement, label: placement, usersOnline: 0, online: true, nodeCount }],
+      });
+    await observe(FULL, 1);
+    await observe(EMPTY, 0);
+    const suggested = async (country = 'IR') =>
+      (
+        (await (
+          await t.fetch('/api/v1/account', { headers: { cookie, 'cf-ipcountry': country } })
+        ).json()) as { suggestedModeId: string }
+      ).suggestedModeId;
+    // The censorship pick has no node: the default is suggested instead.
+    expect(await suggested()).toBe('freedom-ws');
+    // Once a node joins its pool it is suggested again.
+    await observe(EMPTY, 1);
+    expect(await suggested()).toBe('freedom-reality');
+    // The configured default loses its node: anyone outside the listed countries
+    // is suggested a mode a node serves, not the empty default.
+    expect(await suggested('DE')).toBe('freedom-ws');
+    await observe(FULL, 0);
+    expect(await suggested('DE')).toBe('freedom-reality');
+  });
+
   test('a non-listed country gets the compiled default', async () => {
     vi.stubEnv('CF_FRONTED', 'true');
     const t = convexTest(schema, modules);

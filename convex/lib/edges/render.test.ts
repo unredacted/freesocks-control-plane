@@ -116,7 +116,7 @@ describe('rewriteProxyUri', () => {
       address: '2001:db8::10',
       port: 443,
       sni: 'cdn-a.example',
-      label: 'FreeSocks Primary (IPv6)',
+      label: 'FreeSocks (IPv6)',
     });
     expect(out.startsWith(`vless://${UUID}@[2001:db8::10]:443?`)).toBe(true);
     const qs = qsOf(out);
@@ -125,7 +125,7 @@ describe('rewriteProxyUri', () => {
     expect(qs.get('sid')).toBe('abcd1234');
     expect(qs.get('flow')).toBe('xtls-rprx-vision');
     expect(qs.get('security')).toBe('reality');
-    expect(decodeURIComponent(out.slice(out.indexOf('#') + 1))).toBe('FreeSocks Primary (IPv6)');
+    expect(decodeURIComponent(out.slice(out.indexOf('#') + 1))).toBe('FreeSocks (IPv6)');
     // Trojan lines are rewritable too; a vmess blob has no host:port and never parses.
     expect(
       rewriteProxyUri(parseProxyUri('trojan://x@y:1?security=tls&sni=node.example#z')!, {
@@ -187,9 +187,9 @@ describe('renderEntries', () => {
   test('emits v4 + v6 per endpoint in both mode, only v4 when off, primary first', () => {
     const both = renderEntries(assigned, linksRule, false);
     expect(both.map((e) => [e.role, e.family, e.label, e.listenerKey])).toEqual([
-      ['primary', 'v4', 'FreeSocks Primary', 'a1'],
-      ['primary', 'v6', 'FreeSocks Primary (IPv6)', 'a1'],
-      ['backup', 'v4', 'FreeSocks Backup', 'a1'],
+      ['primary', 'v4', 'FreeSocks', 'a1'],
+      ['primary', 'v6', 'FreeSocks (IPv6)', 'a1'],
+      ['backup', 'v4', 'FreeSocks (backup)', 'a1'],
     ]);
     const off = renderEntries(assigned, { ...linksRule, ipv6Mode: 'off' }, false);
     expect(off.every((e) => e.family === 'v4')).toBe(true);
@@ -232,7 +232,7 @@ describe('link-list rendering', () => {
     const primary = lines[1];
     expect(primary).toContain('@203.0.113.10:443?');
     expect(primary).toContain('sni=cdn-a.example');
-    expect(primary.endsWith(`#${encodeURIComponent('FreeSocks Primary')}`)).toBe(true);
+    expect(primary.endsWith(`#${encodeURIComponent('FreeSocks')}`)).toBe(true);
     expect(lines[2]).toContain('@[2001:db8::10]:443?');
     expect(lines[3]).toContain('@203.0.113.20:443?');
     expect(lines[3]).toContain('sni=cdn-b.example');
@@ -255,7 +255,7 @@ describe('link-list rendering', () => {
     const lines = links.body.split('\n');
     expect(lines).toHaveLength(2); // v4 + v6 of the one edge
     expect(lines[0]).toBe(
-      'ss://Y2hhY2hhMjAtaWV0Zi1wb2x5MTMwNTpleGFtcGxlLXBhc3N3b3Jk@203.0.113.10:443/?outline=1#FreeSocks%20Primary',
+      'ss://Y2hhY2hhMjAtaWV0Zi1wb2x5MTMwNTpleGFtcGxlLXBhc3N3b3Jk@203.0.113.10:443/?outline=1#FreeSocks',
     );
     expect(lines[1]).toContain('@[2001:db8::10]:443/?outline=1#');
     const sb = render(
@@ -323,7 +323,7 @@ describe('link-list rendering', () => {
     const decoded = decodeBase64Loose(out.body)!;
     expect(decoded.split('\n')).toHaveLength(4);
     expect(decoded).toContain(encodeURIComponent('Прямое подключение'));
-    expect(decoded).toContain('FreeSocks%20Primary');
+    expect(decoded).toContain('FreeSocks');
   });
 
   test('no template line: nothing applied, the body is refused as no_match (never served as-is)', () => {
@@ -382,7 +382,7 @@ describe('link-list rendering', () => {
     expect(out.delivery).toEqual({ kind: 'serve' });
     expect(out.listeners).toEqual([{ listenerKey: 'a1', matched: true }]);
     expect(out.body).not.toContain('whatever');
-    expect(out.body).toContain('FreeSocks%20Primary');
+    expect(out.body).toContain('FreeSocks');
     // A different port at the same address is not this listener.
     const otherPort = `vless://${UUID}@${ORIGIN}:8443?${REALITY_QS}#x`;
     expect(matchListeners(otherPort, byAddress).matches).toEqual([
@@ -466,7 +466,7 @@ describe('link-list rendering', () => {
       (o) => o.tag,
     );
     expect(tags).not.toContain('FreeSocks Auto');
-    expect(tags.filter((t) => t.startsWith('FreeSocks'))).toEqual(['FreeSocks Primary']);
+    expect(tags.filter((t) => t.startsWith('FreeSocks'))).toEqual(['FreeSocks']);
   });
 
   test('an unsupported body shape is unavailable:unsupported_format', () => {
@@ -482,7 +482,7 @@ describe('link-list rendering', () => {
     expect(out.applied).toBe(true);
     expect(out.body).toMatch(/^[A-Za-z0-9+/]+=*$/);
     const decoded = atob(out.body);
-    expect(decoded).toContain('FreeSocks%20Primary');
+    expect(decoded).toContain('FreeSocks');
     expect(decoded).not.toContain(encodeURIComponent(TEMPLATE));
   });
 });
@@ -491,11 +491,11 @@ describe('further server names per endpoint', () => {
   test('renderEntries: one more IPv4 entry per name, no IPv6 sibling, numbered labels', () => {
     const entries = renderEntries(withNames, autoRule, true, ORIGIN);
     expect(entries.map((e) => [e.label, e.family, e.sni, e.variant ?? 0])).toEqual([
-      ['FreeSocks Primary', 'v4', 'cdn-a.example', 0],
-      ['FreeSocks Primary (IPv6)', 'v6', 'cdn-a.example', 0],
-      ['FreeSocks Backup', 'v4', 'cdn-b.example', 0],
-      ['FreeSocks Primary 2', 'v4', 'cdn-c.example', 1],
-      ['FreeSocks Primary 3', 'v4', 'cdn-d.example', 2],
+      ['FreeSocks', 'v4', 'cdn-a.example', 0],
+      ['FreeSocks (IPv6)', 'v6', 'cdn-a.example', 0],
+      ['FreeSocks (backup)', 'v4', 'cdn-b.example', 0],
+      ['FreeSocks 2', 'v4', 'cdn-c.example', 1],
+      ['FreeSocks 3', 'v4', 'cdn-d.example', 2],
     ]);
   });
 
@@ -514,7 +514,7 @@ describe('further server names per endpoint', () => {
       expect(qsOf(l).get('sid')).toBe(new URLSearchParams(REALITY_QS).get('sid'));
       expect(l).not.toContain(ORIGIN);
     }
-    expect(decodeURIComponent(lines[3].split('#')[1])).toBe('FreeSocks Primary 2');
+    expect(decodeURIComponent(lines[3].split('#')[1])).toBe('FreeSocks 2');
   });
 
   test('an entry cap drops the further names before it drops a role', () => {
@@ -524,9 +524,9 @@ describe('further server names per endpoint', () => {
     const out = render(templateLink, { assigned: withNames, rule: capped });
     const lines = out.body.split('\n').filter((l) => l.startsWith('vless://'));
     expect(lines.map((l) => decodeURIComponent(l.split('#')[1]))).toEqual([
-      'FreeSocks Primary',
-      'FreeSocks Primary (IPv6)',
-      'FreeSocks Backup',
+      'FreeSocks',
+      'FreeSocks (IPv6)',
+      'FreeSocks (backup)',
     ]);
   });
 
@@ -647,11 +647,11 @@ describe('sing-box rendering', () => {
       (o) => o.type === 'vless' && String(o.tag).startsWith('FreeSocks'),
     );
     expect(emitted.map((o) => [o.tag, (o.tls as { server_name: string }).server_name])).toEqual([
-      ['FreeSocks Primary', 'cdn-a.example'],
-      ['FreeSocks Primary (IPv6)', 'cdn-a.example'],
-      ['FreeSocks Backup', 'cdn-b.example'],
-      ['FreeSocks Primary 2', 'cdn-c.example'],
-      ['FreeSocks Primary 3', 'cdn-d.example'],
+      ['FreeSocks', 'cdn-a.example'],
+      ['FreeSocks (IPv6)', 'cdn-a.example'],
+      ['FreeSocks (backup)', 'cdn-b.example'],
+      ['FreeSocks 2', 'cdn-c.example'],
+      ['FreeSocks 3', 'cdn-d.example'],
     ]);
     // Same endpoint, same keys: only the name differs.
     for (const o of emitted.slice(3)) {
@@ -674,9 +674,9 @@ describe('sing-box rendering', () => {
       (o) => o.type === 'vless' && String(o.tag).startsWith('FreeSocks'),
     );
     expect(emitted.map((o) => o.tag)).toEqual([
-      'FreeSocks Primary',
-      'FreeSocks Primary (IPv6)',
-      'FreeSocks Backup',
+      'FreeSocks',
+      'FreeSocks (IPv6)',
+      'FreeSocks (backup)',
     ]);
     expect(emitted[0]).toMatchObject({ server: '203.0.113.10', server_port: 443, uuid: UUID });
     expect((emitted[0].tls as { server_name: string }).server_name).toBe('cdn-a.example');
@@ -761,7 +761,7 @@ describe('sing-box rendering', () => {
       ...singbox,
       outbounds: [
         ...singbox.outbounds,
-        { type: 'vless', tag: 'FreeSocks Primary', server: 'z', server_port: 1 },
+        { type: 'vless', tag: 'FreeSocks', server: 'z', server_port: 1 },
         { type: 'vless', tag: 'FreeSocks Auto', server: 'z', server_port: 1 }, // NOT a group
       ],
     };
@@ -770,15 +770,11 @@ describe('sing-box rendering', () => {
     const cfg = JSON.parse(out.body) as { outbounds: Array<Record<string, unknown>> };
     const tags = cfg.outbounds.map((o) => o.tag as string);
     expect(new Set(tags).size).toBe(tags.length);
-    expect(tags).toContain('FreeSocks Primary (2)');
+    expect(tags).toContain('FreeSocks (2)');
     expect(tags).toContain('FreeSocks Auto (2)');
     const auto = cfg.outbounds.find((o) => o.tag === 'FreeSocks Auto (2)')!;
     expect(auto.type).toBe('urltest');
-    expect(auto.outbounds).toEqual([
-      'FreeSocks Primary (2)',
-      'FreeSocks Primary (IPv6)',
-      'FreeSocks Backup',
-    ]);
+    expect(auto.outbounds).toEqual(['FreeSocks (2)', 'FreeSocks (IPv6)', 'FreeSocks (backup)']);
     const selector = cfg.outbounds.find((o) => o.type === 'selector')!;
     expect(selector.default).toBe('FreeSocks Auto (2)');
   });
@@ -797,9 +793,9 @@ describe('sing-box rendering', () => {
     const operator = cfg.outbounds.find((o) => o.tag === 'FreeSocks Auto')!;
     expect(operator.type).toBe('selector');
     expect(operator.outbounds).toEqual([
-      'FreeSocks Primary',
-      'FreeSocks Primary (IPv6)',
-      'FreeSocks Backup',
+      'FreeSocks',
+      'FreeSocks (IPv6)',
+      'FreeSocks (backup)',
       OTHER_NODE_WS,
     ]);
     // With the auto group ON the same group IS adopted.
@@ -861,11 +857,11 @@ rules:
     };
     const emitted = doc.proxies.filter((p) => String(p.name).startsWith('FreeSocks'));
     expect(emitted.map((p) => [p.name, p.servername])).toEqual([
-      ['FreeSocks Primary', 'cdn-a.example'],
-      ['FreeSocks Primary (IPv6)', 'cdn-a.example'],
-      ['FreeSocks Backup', 'cdn-b.example'],
-      ['FreeSocks Primary 2', 'cdn-c.example'],
-      ['FreeSocks Primary 3', 'cdn-d.example'],
+      ['FreeSocks', 'cdn-a.example'],
+      ['FreeSocks (IPv6)', 'cdn-a.example'],
+      ['FreeSocks (backup)', 'cdn-b.example'],
+      ['FreeSocks 2', 'cdn-c.example'],
+      ['FreeSocks 3', 'cdn-d.example'],
     ]);
     const auto = doc['proxy-groups'].find((g) => g.type === 'url-test')!;
     expect(auto.proxies).toEqual(emitted.map((p) => p.name));
@@ -880,9 +876,9 @@ rules:
       rules: string[];
     };
     expect(doc.proxies.map((p) => p.name)).toEqual([
-      'FreeSocks Primary',
-      'FreeSocks Primary (IPv6)',
-      'FreeSocks Backup',
+      'FreeSocks',
+      'FreeSocks (IPv6)',
+      'FreeSocks (backup)',
       OTHER_NODE_WS,
     ]);
     expect(doc.proxies[0]).toMatchObject({
@@ -898,13 +894,13 @@ rules:
     expect(doc['proxy-groups'][0]).toMatchObject({
       name: 'FreeSocks Auto',
       type: 'url-test',
-      proxies: ['FreeSocks Primary', 'FreeSocks Primary (IPv6)', 'FreeSocks Backup'],
+      proxies: ['FreeSocks', 'FreeSocks (IPv6)', 'FreeSocks (backup)'],
     });
     expect(doc['proxy-groups'][1].proxies).toEqual([
       'FreeSocks Auto',
-      'FreeSocks Primary',
-      'FreeSocks Primary (IPv6)',
-      'FreeSocks Backup',
+      'FreeSocks',
+      'FreeSocks (IPv6)',
+      'FreeSocks (backup)',
       OTHER_NODE_WS,
     ]);
     expect(doc.rules).toEqual(['MATCH,→ Remnawave']);
@@ -998,9 +994,9 @@ rules:
     const operator = doc['proxy-groups'].find((g) => g.name === 'FreeSocks Auto')!;
     expect(operator.type).toBe('select');
     expect(operator.proxies).toEqual([
-      'FreeSocks Primary',
-      'FreeSocks Primary (IPv6)',
-      'FreeSocks Backup',
+      'FreeSocks',
+      'FreeSocks (IPv6)',
+      'FreeSocks (backup)',
       OTHER_NODE_WS,
     ]);
     const on = renderClash(body);
@@ -1013,7 +1009,7 @@ rules:
   test('label / auto-group collisions with existing proxy names are suffixed', () => {
     const body = clash.replace(
       `  - name: ${OTHER_NODE_WS}`,
-      `  - name: FreeSocks Primary\n    type: vless\n    server: s.example\n    port: 443\n    uuid: y\n  - name: FreeSocks Auto\n    type: vless\n    server: s.example\n    port: 443\n    uuid: y\n  - name: ${OTHER_NODE_WS}`,
+      `  - name: FreeSocks\n    type: vless\n    server: s.example\n    port: 443\n    uuid: y\n  - name: FreeSocks Auto\n    type: vless\n    server: s.example\n    port: 443\n    uuid: y\n  - name: ${OTHER_NODE_WS}`,
     );
     const out = renderClash(body);
     expect(out.delivery).toEqual({ kind: 'serve' });
@@ -1026,7 +1022,7 @@ rules:
     expect(doc['proxy-groups'][0]).toMatchObject({
       name: 'FreeSocks Auto (2)',
       type: 'url-test',
-      proxies: ['FreeSocks Primary (2)', 'FreeSocks Primary (IPv6)', 'FreeSocks Backup'],
+      proxies: ['FreeSocks (2)', 'FreeSocks (IPv6)', 'FreeSocks (backup)'],
     });
   });
 });
