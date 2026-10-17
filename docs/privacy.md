@@ -178,6 +178,36 @@ and the transport/Reality settings remain Ansible-only. See `docs/backends.md`
   (`subscriptions.lastRender`: epoch + edge ids, no addresses); audit payloads carry origin
   slugs, listener keys and codes, never addresses, hostnames or provider account names.
 
+## 5c. What a member's subscription shows
+
+A subscription body is readable by anyone who holds it, a censor with a free account
+included, so what it names is part of the posture.
+
+- **One node's entries.** Node pinning (`convex/lib/nodePinning.ts`) serves each key
+  the entries of one node, never the mode's whole fleet; a fronted node's entries are its
+  edges, never the origin (§5b).
+- **No infrastructure names.** The backend names each entry after its Host's remark,
+  and FCP's remarks carry the node name and the server name (`<node> | <server name>`).
+  Every body a member receives (the fronted route, the sealed configuration copy, every
+  S3 mirror) renames those entries to `<site name> · <place>`, with a four-character
+  code per server name when there are several (`convex/lib/memberEntryNames.ts`,
+  `docs/servers.md` § "A direct node's addresses"). `<place>` is the backend's
+  member-facing location label, which the location picker already shows; the code is
+  derived from the server name, which the entry carries anyway, so a name tells a
+  member nothing the entry itself does not. Edge entries already carry neutral labels
+  (`edge.render.*`). The machine's own host name never reaches a member at all: it is
+  operator-only (`docs/servers.md` § "Node registration (contract v2)").
+- **Only the fronted URL is handed out.** The backend's own subscription URL serves the
+  backend's names; members are given FCP's `/api/v1/sub/<token>` URL instead (issuance mints
+  the token for every key), so the rename covers every key's normal path.
+- **What a member still sees** is what a client needs to connect: the entry's address,
+  port, server name and transport parameters, and their own credential.
+- **Off switch.** `subscription.entryNames` (Admin → Settings → "Names in members'
+  apps", default on) serves the backend's own names; only do that on a deployment whose
+  node names are meant to be public. VMess links carry their name inside the link's
+  base64 payload and are not renamed (FCP's modes do not use VMess). Response headers
+  the backend sends (such as the subscription title) are outside this step.
+
 ## 6. Analytics (optional self-hosted Umami origin)
 
 FCP can report **anonymous pageview counts** to an operator-run

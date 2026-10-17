@@ -86,6 +86,36 @@ export function pruneRefs(
   return value;
 }
 
+/**
+ * Deep-copy `value` with every reference to a renamed name rewritten to its new
+ * name: the same structural walk as `pruneRefs` (a string value equal to a name,
+ * a membership-list item, a comma-joined rule segment), but nothing is dropped.
+ * The new names must not contain a comma (a Clash rule would split on it).
+ */
+export function renameRefs(value: Json, renamed: ReadonlyMap<string, string>): Json {
+  if (typeof value === 'string') {
+    const direct = renamed.get(value);
+    if (direct !== undefined) return direct;
+    if (!value.includes(',')) return value;
+    const parts = value.split(',');
+    let hit = false;
+    const next = parts.map((p) => {
+      const to = renamed.get(p.trim());
+      if (to === undefined) return p;
+      hit = true;
+      return to;
+    });
+    return hit ? next.join(',') : value;
+  }
+  if (Array.isArray(value)) return value.map((v) => renameRefs(v, renamed));
+  if (isObj(value)) {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) out[k] = renameRefs(v, renamed);
+    return out;
+  }
+  return value;
+}
+
 /** Whether any string in the tree references one of the names (structural, token-exact). */
 export function mentionsAny(value: Json, names: ReadonlySet<string>): boolean {
   if (typeof value === 'string') {
