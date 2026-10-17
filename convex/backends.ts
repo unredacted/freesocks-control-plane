@@ -46,6 +46,7 @@ import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
 import { backendIdValidator } from './lib/backendIds';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import { nodelessBody, pinSubscriptionToNode } from './lib/nodePinning';
+import { refreshObservedHosts } from './backendObserve';
 import {
   mockBackendEnabled,
   mockFetchContent,
@@ -440,7 +441,9 @@ export const createAddress = internalAction({
     if (!server) throw new ConvexError({ code: 'backend.not_found' });
     const provider = PROVIDERS[server.backend];
     if (!provider.createAddress) throw new ConvexError({ code: 'backend.hosts_unsupported' });
-    return provider.createAddress(server.config as BackendConfig, h);
+    const created = await provider.createAddress(server.config as BackendConfig, h);
+    await refreshObservedHosts(ctx, server);
+    return created;
   },
 });
 
@@ -452,6 +455,7 @@ export const deleteAddress = internalAction({
     const provider = PROVIDERS[server.backend];
     if (!provider.deleteAddress) throw new ConvexError({ code: 'backend.hosts_unsupported' });
     await provider.deleteAddress(server.config as BackendConfig, uuid);
+    await refreshObservedHosts(ctx, server);
     return null;
   },
 });
@@ -485,6 +489,8 @@ export const updateAddress = internalAction({
       ...(host !== undefined ? { host } : {}),
       ...(securityLayer !== undefined ? { securityLayer } : {}),
     });
+    // Servers' "Addresses members get" follows the flip now, not at the next read.
+    await refreshObservedHosts(ctx, server);
     return null;
   },
 });
@@ -504,6 +510,7 @@ export const setHostDisabled = internalAction({
     const provider = PROVIDERS[server.backend];
     if (!provider.setHostDisabled) throw new ConvexError({ code: 'backend.hosts_unsupported' });
     await provider.setHostDisabled(server.config as BackendConfig, uuid, disabled);
+    await refreshObservedHosts(ctx, server);
     return null;
   },
 });

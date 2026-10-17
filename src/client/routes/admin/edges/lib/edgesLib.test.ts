@@ -199,6 +199,11 @@ describe('attention', () => {
         expect(resolveServersRoute(href.split('?')[0]!).page).not.toBe('not-found');
         continue;
       }
+      // Turning a mode on is the Connection modes page's job.
+      if (action === 'open_modes') {
+        expect(href).toBe('/admin/connection-modes');
+        continue;
+      }
       expect(href.startsWith('/admin/edges')).toBe(true);
       expect(resolveEdgesRoute(href.split('?')[0]!).page).not.toBe('not-found');
     }
@@ -312,6 +317,11 @@ describe('format', () => {
   it('reads only known audit payload keys', () => {
     expect(auditDetailLine({ code: 'edge.cooldown', token: 'nope' })).toBe('In cooldown');
     expect(auditDetailLine({ changedKeys: ['a', 'b'] })).toBe('changed a, b');
+    // Advanced keeps the key; the simple face names the listener in words.
+    expect(auditDetailLine({ listenerKey: 'freedomrea55ng1t' })).toBe('listener freedomrea55ng1t');
+    expect(auditDetailLine({ listenerKey: 'freedomrea55ng1t' }, () => 'VLESS + REALITY')).toBe(
+      'VLESS + REALITY',
+    );
     expect(auditDetailLine(null)).toBe('');
     expect(auditDetailLine('x')).toBe('');
   });

@@ -201,7 +201,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     const lines = proxyLines(body);
     expect(body).not.toContain(`#${TEMPLATE}`);
     expect(body).not.toContain(ORIGIN);
-    const primary = lines.filter((l) => labelOf(l).startsWith('FreeSocks Primary'));
+    const primary = lines.filter((l) => labelOf(l).startsWith('FreeSocks'));
     expect(primary).toHaveLength(2); // v4 + v6 of the single published edge, no backup
     expect(primary[0]).toContain(`@${EDGE_A}:443?`);
     expect(primary[1]).toContain(`@[${EDGE_A6}]:443?`);
@@ -212,7 +212,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
       expect(qs.get('security')).toBe('reality');
       expect(qs.get('pbk')).toBe('PUBKEY');
     }
-    expect(lines.some((l) => labelOf(l).startsWith('FreeSocks Backup'))).toBe(false);
+    expect(lines.some((l) => labelOf(l).startsWith('FreeSocks (backup)'))).toBe(false);
     // The sub got a render key; the cache entry carries the `<policyVersion>:<epoch>` token.
     const sub = (await t.run((ctx) => ctx.db.get(subId)))!;
     const relay = (await t.run((ctx) => ctx.db.get(relayId)))!;
@@ -251,7 +251,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     stubPanel();
     const { t, subId, relayId, listenerId } = await seed();
     const first = await (await get(t)).text();
-    expect(first).not.toContain('FreeSocks%20Backup');
+    expect(first).not.toContain('FreeSocks%20(backup)');
     expect(fetchCalls).toBe(1);
     // Publish a second edge (epoch bump) → the fresh cache entry is no longer valid.
     const b = await t.mutation(internal.relays.adoptEdge, {
@@ -265,14 +265,12 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     expect(fetchCalls).toBe(2);
     const lines = proxyLines(body);
     const labels = lines.map(labelOf);
-    expect(labels.filter((l) => l.startsWith('FreeSocks Primary')).length).toBeGreaterThan(0);
-    expect(labels.filter((l) => l.startsWith('FreeSocks Backup')).length).toBeGreaterThan(0);
+    expect(labels.filter((l) => l.startsWith('FreeSocks')).length).toBeGreaterThan(0);
+    expect(labels.filter((l) => l.startsWith('FreeSocks (backup)')).length).toBeGreaterThan(0);
     // Primary and backup are different edges.
     const addrOf = (l: string) => l.slice(l.indexOf('@') + 1, l.indexOf(':443'));
-    const primaryAddr = addrOf(
-      lines.find((l) => l.includes('FreeSocks%20Primary') && !l.includes('['))!,
-    );
-    const backupAddr = addrOf(lines.find((l) => l.includes('FreeSocks%20Backup'))!);
+    const primaryAddr = addrOf(lines.find((l) => l.includes('FreeSocks') && !l.includes('['))!);
+    const backupAddr = addrOf(lines.find((l) => l.includes('FreeSocks%20(backup)'))!);
     expect(primaryAddr).not.toBe(backupAddr);
     expect([EDGE_A, EDGE_B]).toContain(primaryAddr);
     expect([EDGE_A, EDGE_B]).toContain(backupAddr);
@@ -297,7 +295,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     await t.run((ctx) => upsertSettingRow(ctx, 'edge.render.enabled', 'true'));
     const after = await get(t);
     expect(after.status).toBe(200);
-    expect(await after.text()).toContain('FreeSocks%20Primary');
+    expect(await after.text()).toContain('FreeSocks');
     expect(fetchCalls).toBe(2);
   });
 
@@ -364,7 +362,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     expect(v2.headers.get('x-fcp-delivery')).toBe('family_disabled');
     const other = await get(t, 'curl/8.0');
     expect(other.status).toBe(200);
-    expect(await other.text()).toContain('FreeSocks%20Primary');
+    expect(await other.text()).toContain('FreeSocks');
   });
 
   test('the raw body is served ONLY for a place no origin covers (token null, decision raw)', async () => {
@@ -415,7 +413,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     stubPanel();
     const next = await get(t);
     expect(next.status).toBe(200);
-    expect(await next.text()).toContain('FreeSocks%20Primary');
+    expect(await next.text()).toContain('FreeSocks');
     expect(fetchCalls).toBe(1);
   });
 
@@ -553,7 +551,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     stubPanel();
     const { t, relayId, edgeA, serverId } = await seed();
     const before = await (await get(t)).text();
-    expect(before).toContain('FreeSocks%20Primary');
+    expect(before).toContain('FreeSocks');
     const epochBefore = (await t.run((ctx) => ctx.db.get(relayId)))!.publicationEpoch;
     await t.mutation(internal.relays.unpublishEdge, { relayId, edgeId: edgeA, keepActive: true });
     // The epoch bump invalidated the cache within one request.
@@ -587,7 +585,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     expect(view.published[0]).toMatchObject({ layer: 'l7', addresses: { hostname: HOSTNAME } });
     expect(view.published[0].eligible).toBeUndefined(); // a hostname IS a publish address
     const lines = proxyLines(await (await get(t)).text());
-    const primary = lines.filter((l) => l.includes('FreeSocks%20Primary'));
+    const primary = lines.filter((l) => l.includes('FreeSocks'));
     // One entry only: an L7 front has no address families of its own.
     expect(primary).toHaveLength(1);
     expect(primary[0]).toContain(`@${HOSTNAME}:443?`);
@@ -673,7 +671,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     const body = await (await get(t)).text();
     expect(body).toContain(`@${EDGE_A}:443?`);
     expect(body).not.toContain('198.51.100.9');
-    expect(body).not.toContain('FreeSocks%20Backup');
+    expect(body).not.toContain('FreeSocks%20(backup)');
     // Still published: nothing unpublishes automatically; the operator retests.
     expect((await t.run((ctx) => ctx.db.get(relayId)))!.publishedEdgeIds).toEqual([edgeA, edgeB]);
     const { items } = await t.query(internal.edgeOperator.attention, {});
@@ -702,7 +700,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     stubPanel();
     const { t, relayId, edgeA, subId } = await seed();
     const first = await (await get(t)).text();
-    expect(first).toContain('FreeSocks%20Primary');
+    expect(first).toContain('FreeSocks');
     // Backend down, pool unchanged → the last-known body for this UA is fine.
     vi.stubGlobal(
       'fetch',
@@ -735,7 +733,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
       ['primary', 'v4'],
       ['primary', 'v6'],
     ]);
-    expect(view?.connections[0].label).toContain('FreeSocks Primary');
+    expect(view?.connections[0].label).toContain('FreeSocks');
     expect(JSON.stringify(view)).not.toContain(EDGE_A);
     // The delivery stamped the epoch the body was rendered against.
     const relay = (await t.run((ctx) => ctx.db.get(relayId)))!;
@@ -927,7 +925,7 @@ describe('edgeRender: single-node bodies (one mode group per node)', () => {
     const body = await (await get(t)).text();
     const lines = proxyLines(body);
     expect(body).not.toContain(`#${TEMPLATE}`);
-    const primary = lines.filter((l) => l.includes('FreeSocks%20Primary'));
+    const primary = lines.filter((l) => l.includes('FreeSocks'));
     expect(primary).toHaveLength(2); // v4 + v6 of the one published edge
     expect(primary[0]).toContain(`@${EDGE_A}:443?`);
     const sub = (await t.run((ctx) => ctx.db.get(subId)))!;
@@ -949,9 +947,9 @@ describe('edgeRender: single-node bodies (one mode group per node)', () => {
     const cfg = JSON.parse(await res.text()) as { outbounds: Array<Record<string, unknown>> };
     const tags = cfg.outbounds.map((o) => o.tag);
     expect(tags).not.toContain(TEMPLATE);
-    expect(tags).toContain('FreeSocks Primary');
+    expect(tags).toContain('FreeSocks');
     expect(tags).toContain('FreeSocks Auto');
-    const emitted = cfg.outbounds.find((o) => o.tag === 'FreeSocks Primary')!;
+    const emitted = cfg.outbounds.find((o) => o.tag === 'FreeSocks')!;
     expect(emitted).toMatchObject({ server: EDGE_A, server_port: 443, uuid: UUID });
     expect(NAMES).toContain((emitted.tls as { server_name: string }).server_name);
     const selector = cfg.outbounds.find((o) => o.type === 'selector')!;
@@ -969,7 +967,7 @@ describe('edgeRender: single-node bodies (one mode group per node)', () => {
     expect(res.status).toBe(200);
     const text = await res.text();
     expect(text).not.toContain(TEMPLATE);
-    expect(text).toContain('FreeSocks Primary');
+    expect(text).toContain('FreeSocks');
     expect(text).toContain('FreeSocks Auto');
     expect(text).toContain(`server: ${EDGE_A}`);
     expect((await t.run((ctx) => ctx.db.get(subId)))!.pinnedNode).toBe(NODE);

@@ -2499,6 +2499,8 @@ export default defineSchema({
       }),
     ),
     actorAdminId: v.optional(v.id('adminUsers')),
+    // No admin asked: the FCP run that made the write (`<kind>:<id>`), for the audit.
+    actorRun: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })

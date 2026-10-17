@@ -781,6 +781,7 @@
     "freedomWsBody": "The standard option - an auto-updating link that works in every app.",
     "freedomRealityTitle": "REALITY",
     "freedomRealityBody": "For the heaviest censorship, when WebSocket won't connect. Harder to block, but you copy the configuration in by hand.",
+    "freedomRealityLinkBody": "For the heaviest censorship, when WebSocket won't connect. Harder to block, and it still comes as an auto-updating link.",
     "privacyTitle": "Privacy Mode",
     "privacyAudience": "For open internet - a traditional VPN",
     "privacyBody": "Your traffic mixes with everyone else's on a shared address, and your configuration stays off third-party servers. Not built for censored networks.",

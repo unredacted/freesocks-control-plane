@@ -139,7 +139,7 @@ function emittedLink(body: string): Emitted {
 
 function emittedSingbox(body: string): Emitted {
   const doc = JSON.parse(body) as { outbounds: Array<Record<string, unknown>> };
-  const ob = doc.outbounds.find((o) => String(o.tag).startsWith('FreeSocks Primary'))!;
+  const ob = doc.outbounds.find((o) => String(o.tag).startsWith('FreeSocks'))!;
   const tls = (ob.tls ?? null) as { server_name?: string } | null;
   const transport = (ob.transport ?? null) as {
     type?: string;
@@ -160,7 +160,7 @@ function emittedSingbox(body: string): Emitted {
 
 function emittedClash(body: string): Emitted {
   const doc = YAML.parse(body) as { proxies: Array<Record<string, unknown>> };
-  const p = doc.proxies.find((x) => String(x.name).startsWith('FreeSocks Primary'))!;
+  const p = doc.proxies.find((x) => String(x.name).startsWith('FreeSocks'))!;
   const ws = (p['ws-opts'] ?? null) as { path?: string; headers?: Record<string, string> } | null;
   const grpc = (p['grpc-opts'] ?? null) as Record<string, string> | null;
   const xhttp = (p['xhttp-opts'] ?? null) as { path?: string; host?: string } | null;

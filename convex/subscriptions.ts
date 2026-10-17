@@ -11,6 +11,7 @@ import { ConvexError, v } from 'convex/values';
 import { moveOpenUploads } from './mirrorUploads';
 import { randomHex } from './lib/crypto';
 import { backendIdValidator, type BackendId } from './lib/backendIds';
+import { profileTitleValue, resolveSiteName } from './lib/siteConfig';
 
 const mirror = v.object({
   provider: v.string(),
@@ -882,4 +883,11 @@ export const remapBackendUserId = internalMutation({
     await ctx.db.patch(id, { backendUserId: next, updatedAt: Date.now() });
     return 'remapped' as const;
   },
+});
+
+/** The `profile-title` every subscription response carries: the site's name
+ *  (`site.name`), never the backend's own title. */
+export const profileTitle = internalQuery({
+  args: {},
+  handler: async (ctx) => profileTitleValue(await resolveSiteName(ctx.db)),
 });

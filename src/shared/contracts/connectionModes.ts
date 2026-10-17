@@ -30,9 +30,9 @@ export type PublicConnectionModeFamily = z.infer<typeof PublicConnectionModeFami
  *  are omitted entirely; a member sitting on one is served their own mode via
  *  the account view's `currentMode` instead. `availableBackends` = the backend
  *  types the mode is actually selectable on (enabled AND applicable AND bound
- *  where the backend has a placement concept) — the client joins it against
- *  the member's backend; `available` is the any-backend convenience bool kept
- *  for deploy skew. */
+ *  with a node in the pool where the backend has a placement concept) — the
+ *  client joins it against the member's backend; `available` is the
+ *  any-backend convenience bool kept for deploy skew. */
 export const PublicConnectionMode = z.object({
   id: z.string(),
   family: z.string().optional(),
@@ -78,6 +78,9 @@ export const ModePlacementSummary = z.object({
   backendId: z.string(),
   bound: z.boolean(),
   boundCount: z.number().int().nonnegative(),
+  /** Bound AND a node in the pool. A bound pool without one is why the mode is
+   *  not offered (older servers do not send it: treated as true). */
+  hasNode: z.boolean().optional().default(true),
 });
 export type ModePlacementSummary = z.infer<typeof ModePlacementSummary>;
 
@@ -101,7 +104,11 @@ export const AdminConnectionMode = z.object({
   label: z.string().nullable(),
   description: z.string().nullable(),
   deliveryStyle: DeliveryStyle,
+  /** What a NEW member lands on (the effective default). */
   isDefault: z.boolean(),
+  /** The admin's own pick; differs from `isDefault` only while no node serves
+   *  it and another mode can. Older servers do not send it: `isDefault`. */
+  configuredDefault: z.boolean().optional(),
   isFamilyDefault: z.boolean(),
   isCensorshipRecommended: z.boolean().optional().default(false),
   enabled: z.boolean(),
@@ -112,7 +119,7 @@ export const AdminConnectionMode = z.object({
   orphaned: z.boolean().optional().default(false),
   /** Backend APPLICABILITY (admin intent). */
   backends: z.array(z.string()).optional().default([]),
-  /** Per-backend selectability (enabled AND applicable AND bound). */
+  /** Per-backend selectability (enabled AND applicable AND bound with a node in the pool). */
   availableBackends: z.array(z.string()).optional().default([]),
   order: z.number().int().optional().default(0),
   builtIn: z.boolean().optional().default(false),

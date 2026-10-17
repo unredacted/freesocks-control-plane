@@ -19,11 +19,11 @@
    * An account picked or created stays picked when the node changes, as long as
    * the new plan still offers it as compatible.
    *
-   * The node list can be re-read from the backend (Refresh). A link from the
-   * Servers page names the node (`server` = the backend's slug or id, `node` =
-   * its node uuid): it is picked for you, and when the list does not have it
-   * yet the list is refreshed once. A plan with exactly one compatible account
-   * picks that account.
+   * The node list is re-read from the backend once each time the sheet opens,
+   * and on Refresh. A link from the Servers page names the node (`server` = the
+   * backend's slug or id, `node` = its node uuid): it is picked for you, and
+   * when the list does not have it yet the list is refreshed once. A plan with
+   * exactly one compatible account picks that account.
    *
    * Props:
    *   open: boolean
@@ -52,7 +52,7 @@
     planSetupRun,
     refreshNodeCandidates,
   } from '@client/lib/edgesApi';
-  import { countryName } from '@client/lib/countries';
+  import { adminModeName } from '@client/lib/connectionModeCopy';
   import { SETUP_ACCOUNT_REASON_COPY, inboundUnsupportedCopy } from '@client/lib/edgeCodes';
   import type { EdgeLayer, SetupPlanResponse } from '@shared/contracts/edges';
   import { ListenerSpec } from '@shared/contracts/edges';
@@ -62,7 +62,8 @@
   import CodeNote from '../components/CodeNote.svelte';
   import ProviderAccountStepper from '../forms/ProviderAccountStepper.svelte';
   import { edgeErrorIssue, edgeErrorMessage } from '../lib/edgeErrors';
-  import { protocolLine, providerLabel } from '../lib/format';
+  import { providerLabel, transportName } from '../lib/format';
+  import { countryLabel } from '../../servers/lib/words';
   import { edgesPaths } from '../lib/routes';
   import { router } from '@client/stores/router.svelte';
   import ProtectProgress from './ProtectProgress.svelte';
@@ -114,6 +115,19 @@
       if (v.manual) toast.error(edgeErrorMessage(e));
     },
   }));
+
+  // The inventory lags the backend: a node enrolled minutes ago reads "Offline"
+  // until it is read again, so every opening re-reads it once (throttled server-side).
+  let refreshedFor = $state<string | null>(null);
+  $effect(() => {
+    if (!open) {
+      refreshedFor = null;
+      return;
+    }
+    if (!serverId || runId || refreshedFor === serverId) return;
+    refreshedFor = serverId;
+    untrack(() => refresh.mutate({ id: serverId, manual: false }));
+  });
 
   // Resolving the preset node: pick it, or say it is protected already, or (after one
   // refresh) that the list does not have it. Any choice by hand ends it.
@@ -168,9 +182,10 @@
     planM.mutate({ uuid, keys: null });
   }
   const planIssue = $derived(planM.error ? edgeErrorIssue(planM.error) : null);
+  // A transport in words: never its internal key.
   const inboundLine = (i: SetupPlanResponse['inbounds'][number]): string => {
     const parsed = ListenerSpec.safeParse(i.listenerSpec);
-    return parsed.success ? protocolLine(parsed.data) : i.sourceTag;
+    return parsed.success ? transportName(parsed.data) : i.sourceTag;
   };
   const required = $derived(
     plan ? plan.inbounds.filter((i) => plan!.requiredListeners.includes(i.listenerKey)) : [],
@@ -226,9 +241,8 @@
     if (required.length === 0) return undefined;
     return (['l4', 'l7'] as const).filter((l) => required.every((i) => i.layers.includes(l)));
   });
-  const nodeCountry = $derived(
-    pickedNode?.countryCode ? countryName(pickedNode.countryCode, 'en') : null,
-  );
+  // Remnawave's "XX" (no country set) names no country.
+  const nodeCountry = $derived(countryLabel(pickedNode?.countryCode));
   /** Where an account's reason is fixed: its provider page, or nowhere (the transport). */
   function reasonLink(reason: string, id: string): string | null {
     switch (reason as SetupAccountReason) {
@@ -443,7 +457,7 @@
                     <span class="min-w-0 flex-1">
                       <span class="block font-medium">{n.name}</span>
                       <span class="text-muted-foreground block text-xs">
-                        {n.countryCode ? countryName(n.countryCode, 'en') : 'Country unknown'}
+                        {countryLabel(n.countryCode) ?? 'No country set'}
                         {#if taken}
                           <span class="mx-1" aria-hidden="true">·</span>Already protected
                         {:else if !n.online}
@@ -482,10 +496,7 @@
                         disabled={!on && picking.length >= SETUP_RUN_MAX_LISTENERS}
                         onchange={(e) => togglePick(i.listenerKey, e.currentTarget.checked)}
                       />
-                      <span class="min-w-0">
-                        <span class="font-medium">{i.listenerKey}</span>
-                        <span class="text-muted-foreground">{inboundLine(i)}</span>
-                      </span>
+                      <span class="min-w-0 font-medium">{inboundLine(i)}</span>
                     </label>
                   </li>
                 {/each}
@@ -513,10 +524,7 @@
                 </p>
                 <ul class="space-y-1">
                   {#each required as i (i.listenerKey)}
-                    <li>
-                      <span class="font-medium">{i.listenerKey}</span>
-                      <span class="text-muted-foreground">{inboundLine(i)}</span>
-                    </li>
+                    <li class="font-medium">{inboundLine(i)}</li>
                   {/each}
                 </ul>
                 <p class="text-muted-foreground text-xs">
@@ -663,6 +671,24 @@
         {/if}
       {:else if words && plan}
         <p class="text-sm">{words.sentence}</p>
+        {#if plan.modesOff.length > 0}
+          <div
+            class="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
+            role="status"
+          >
+            <p>
+              Members cannot pick {plan.modesOff
+                .map((m) => adminModeName({ id: m.slug, label: m.label }))
+                .join(', ')} yet: {plan.modesOff.length === 1 ? 'the mode is' : 'the modes are'} turned
+              off. The node is protected, but nobody is given it until {plan.modesOff.length === 1
+                ? 'it is'
+                : 'they are'} on.
+            </p>
+            <Link href="/admin/connection-modes" class={`${LINK} mt-1 inline-block`}
+              >Open Connection modes</Link
+            >
+          </div>
+        {/if}
         {#if words.uncovered}
           <div class="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
             <p>{words.uncovered.statement}</p>

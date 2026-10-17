@@ -71,6 +71,7 @@ describe('runTestItems', () => {
       {
         edgeId: 'e1',
         listenerKey: 'main',
+        name: null,
         link: 'vless://x',
         method: 'test_link',
         endpoint: '192.0.2.4:443',
@@ -96,6 +97,15 @@ describe('runTestLines', () => {
     edgeId,
     verify: 'pending' as const,
     published: false,
+    transport:
+      listenerKey === 'a'
+        ? {
+            protocol: 'vless' as const,
+            streamTransport: 'raw' as const,
+            security: 'reality' as const,
+            originPort: 443,
+          }
+        : null,
   });
   it('keeps a ticked line on the card as done, in listener order, and drops a replaced edge', () => {
     const { items, done } = runTestLines({
@@ -114,6 +124,8 @@ describe('runTestLines', () => {
     });
     expect(items.map((i) => i.edgeId)).toEqual(['e1', 'e2', 'e3']);
     expect([...done].sort()).toEqual(['e1', 'e3']);
+    // Lines are named by what they carry, never by the listener key.
+    expect(items.map((i) => i.name)).toEqual(['VLESS · raw · REALITY, port 443', null, null]);
   });
   it('a link issued after the tick is a retest: pending again', () => {
     const { done } = runTestLines({

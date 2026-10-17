@@ -457,6 +457,36 @@ site key, and put the **site key** + **secret** into `.env.convex` as
 `CAP_API_ENDPOINT=http://cap:3000`, `CAP_PUBLIC_ENDPOINT=/cap`). Re-run the
 deployer (`docker compose ... up -d`) so the env applies.
 
+**Key protocol.** Cap creates a key with protocol `hashwx` unless told
+otherwise; `sha256-pow` works too. The bundled widget (`@cap.js/widget` 0.1.58
+with `@cap.js/wasm` 0.0.8, pinned exactly) solves both, from same-origin WASM
+(`src/client/lib/cap-wasm-config.ts`: `cap_wasm_bg.wasm` for `sha256-pow`,
+`hashwx.wasm` for `hashwx`), under the strict member CSP above. An older widget
+fails a `hashwx` key in the browser with `unsupported format-2 protocol
+'hashwx'`; if the widget is ever pinned back, create keys with `sha256-pow`.
+
+**After a rebuild that wiped valkey** (Cap keeps its keys there), the site key
+no longer exists: the widget fails, and `POST /cap/<siteKey>/challenge` answers
+`404 {"error":"Invalid site key or secret"}`. Recreate the key, in the dashboard
+as above, or headlessly with the admin API (from the host, against the loopback
+port; the session token never leaves it):
+
+```sh
+# 1. a session: {session_token, hashed_token, expires}
+curl -s -X POST http://127.0.0.1:3000/auth/login \
+  -H 'content-type: application/json' -d '{"admin_key":"'"$CAP_ADMIN_KEY"'"}'
+# 2. the bearer is base64(JSON {"token": session_token, "hash": hashed_token})
+AUTH=$(printf '{"token":"%s","hash":"%s"}' "$SESSION_TOKEN" "$HASHED_TOKEN" | base64 | tr -d '\n')
+# 3. a key: {siteKey, secretKey}
+curl -s -X POST http://127.0.0.1:3000/server/keys -H "Authorization: Bearer $AUTH" \
+  -H 'content-type: application/json' \
+  -d '{"name":"freesocks","instrumentation":true,"protocol":"hashwx"}'
+```
+
+Put the new `siteKey` / `secretKey` into `.env.convex` as `CAP_SITE_KEY` /
+`CAP_SECRET` and re-run the deployer. The SPA reads the site key from
+`/api/v1/config` at runtime, so no SPA rebuild is needed.
+
 > **"Instrumentation challenges" can stay ON** (it defaults on in the dashboard,
 > labelled "recommended"; "block automated browsers" depends on it). Cap's
 > instrumentation runs a server-supplied, per-challenge-randomised **inline**

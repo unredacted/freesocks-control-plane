@@ -279,6 +279,7 @@ export const advance = internalAction({
         const { opId } = await ctx.runMutation(internal.backendWrites.requestAddressDelete, {
           backendServerId: sid,
           hostUuid: h.hostUuid,
+          actorRun: `retirement:${retirementId}`,
         });
         const r = await ctx.runAction(internal.backendWrites.run, { opId });
         if (r.open) {

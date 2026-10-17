@@ -188,6 +188,12 @@ export interface SetupPlanSnapshot {
   /** A non-terminal run already owns this origin. */
   activeRunId: string | null;
   /**
+   * The connection modes this node serves that members cannot pick (turned
+   * off in Connection modes): protecting it reaches nobody until one is on.
+   * Absent on runs from before.
+   */
+  modesOff?: Array<{ slug: string; label: string | null }>;
+  /**
    * The node is ENROLLED (FCP manages it, docs/servers.md "Node lifecycle"):
    * it goes live through its approval, and has no direct address to keep
    * members on (`keepDirect` is refused). Absent on runs from before.

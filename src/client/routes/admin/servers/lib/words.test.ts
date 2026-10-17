@@ -23,7 +23,10 @@ import {
   quietNotes,
   nodeNotes,
   fleetSentence,
+  intentRestarting,
   countryLabel,
+  opRepeatKey,
+  opRepeatWords,
   opTitle,
   opWords,
   parseNames,
@@ -289,6 +292,64 @@ describe('write wording', () => {
       const words = serverErrorWords(code);
       expect(words).not.toMatch(/—|servers\./);
     }
+  });
+
+  test('a run of the same change folds to one line that says how often', () => {
+    const op = {
+      kind: 'host',
+      verb: 'create',
+      label: 'node-one',
+      state: 'refused',
+      errorCode: 'servers.never_sent',
+      open: false,
+    } as const;
+    expect(opRepeatWords(op, 40).sentence).toBe('Tried 40 times, never sent. Nothing was changed.');
+    expect(opRepeatWords(op, 1).sentence).toBe(opWords(op).sentence);
+    expect(opRepeatWords({ ...op, state: 'done', errorCode: null }, 3).sentence).toBe(
+      '3 times in a row. Done, and seen on the backend.',
+    );
+    // An open change keeps its own line (it has buttons); settled twins share a key.
+    expect(opRepeatKey({ ...op, open: true })).toBeNull();
+    expect(opRepeatKey(op)).toBe(opRepeatKey({ ...op }));
+    expect(opRepeatKey(op)).not.toBe(opRepeatKey({ ...op, label: 'node-two' }));
+  });
+
+  test('a node restarting for a change softens the headline instead of turning it red', () => {
+    const node = (name: string, online: boolean) => ({
+      name,
+      online,
+      isDisabled: false,
+      usersOnline: online ? 2 : 0,
+    });
+    const nodes = [node('a', false)];
+    expect(fleetSentence(nodes).dot).toBe('red');
+    const soft = fleetSentence(nodes, () => true);
+    expect(soft.dot).toBe('amber');
+    expect(soft.text).toBe('1 node is restarting while a change is applied. Back in a moment.');
+    const mixed = fleetSentence(
+      [node('a', true), node('b', false), node('c', false)],
+      (n) => n.name === 'b',
+    );
+    expect(mixed.text).toBe(
+      '1 of 3 nodes online, 2 people connected. 1 restarting while a change is applied, and the backend cannot reach 1 more.',
+    );
+    // Without a restart the words are unchanged.
+    expect(fleetSentence([node('a', true), node('b', false)]).text).toBe(
+      '1 of 2 nodes online, 2 people connected. The backend cannot reach the other one.',
+    );
+    const now = Date.parse('2026-10-17T10:00:00Z');
+    const intent = {
+      state: 'ready',
+      machineRevision: 2,
+      appliedRevision: 2,
+      roleSeenAt: '2026-10-17T09:00:00Z',
+      run: null,
+    };
+    expect(intentRestarting(intent, now)).toBe(false);
+    expect(intentRestarting({ ...intent, roleSeenAt: '2026-10-17T09:59:00Z' }, now)).toBe(true);
+    expect(intentRestarting({ ...intent, appliedRevision: 1 }, now)).toBe(true);
+    expect(intentRestarting({ ...intent, state: 'pending' }, now)).toBe(true);
+    expect(intentRestarting({ ...intent, run: { state: 'running' } }, now)).toBe(true);
   });
 
   test('a change in words', () => {

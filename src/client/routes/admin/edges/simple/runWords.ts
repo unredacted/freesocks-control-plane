@@ -10,10 +10,13 @@
  *   hideButton(n), moreDirectWords(n)  the "hide the unsupported direct addresses" words
  */
 import type { SetupRunAdmin, SetupPlanResponse } from '../../../../../shared/contracts/edges';
+import { transportName } from '../lib/format';
 
 export interface TestItem {
   edgeId: string;
   listenerKey: string;
+  /** The transport in words (never the key); null when not known. */
+  name: string | null;
   /** Empty for a named-connection retest of an address already in use. */
   link: string;
   method: 'test_link' | 'named_connection';
@@ -22,10 +25,22 @@ export interface TestItem {
   configHash: string;
 }
 
-export function runTestItems(run: Pick<SetupRunAdmin, 'testLinks'>): TestItem[] {
+/** A run listener's transport in words, by key (null when the run predates it). */
+export function runListenerName(
+  run: Pick<SetupRunAdmin, 'listeners'>,
+  listenerKey: string,
+): string | null {
+  const t = run.listeners.find((l) => l.listenerKey === listenerKey)?.transport;
+  return t ? transportName(t) : null;
+}
+
+export function runTestItems(
+  run: Pick<SetupRunAdmin, 'testLinks'> & Partial<Pick<SetupRunAdmin, 'listeners'>>,
+): TestItem[] {
   return run.testLinks.map((l) => ({
     edgeId: l.edgeId,
     listenerKey: l.listenerKey,
+    name: run.listeners ? runListenerName({ listeners: run.listeners }, l.listenerKey) : null,
     link: l.link,
     method: l.method,
     endpoint: l.binding.endpoint,
@@ -55,11 +70,12 @@ export function runTestLines(
     const tick = tickOf.get(edgeId);
     const ticked =
       tick !== undefined && (!link || Date.parse(tick.at) >= Date.parse(link.binding.issuedAt));
-    if (link) items.push(runTestItems({ testLinks: [link] })[0]!);
+    if (link) items.push(runTestItems({ testLinks: [link], listeners: run.listeners })[0]!);
     else if (ticked)
       items.push({
         edgeId,
         listenerKey: tick.listenerKey,
+        name: runListenerName(run, tick.listenerKey),
         link: '',
         method: 'test_link',
         endpoint: tick.endpoint,

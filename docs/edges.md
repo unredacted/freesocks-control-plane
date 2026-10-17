@@ -523,7 +523,9 @@ mirror refresh) fetches a body, it pins the node as before, then, in this order:
 4. rewrites: address, port, SNI, HTTP Host header (and Clash `servername`); never the
    credentials or routing (`pbk`, `sid`, `flow`, `path`, `serviceName`, SIP002 userinfo,
    `hy2`/`tuic` auth). Per **client family** (`render.clients.<family>`): auto-capable
-   families get one named auto group, link-list families get labelled Primary/Backup entries.
+   families get one named auto group, link-list families get labelled primary/backup entries.
+   The labels are settings (`render.primaryLabel` / `render.backupLabel`, per family too),
+   plain by default: `FreeSocks` and `FreeSocks (backup)`, since most members see one entry.
    An L7 edge renders as ONE entry (its hostname). A backend that hands out a single access
    key (Outline) renders in **single-key** style: one entry, no backup, no auto group;
 5. checks every outgoing entry, emitted AND retained, against the origin address
@@ -1060,6 +1062,9 @@ own; it asks. `node_ready_to_protect`: a fronted node at `machine_ready` with no
 run (action `protect_node`, the protect sheet with the node preselected).
 `node_awaiting_approval`: a node tested and not approved yet, parked after a block, or a protect
 run parked at `node_not_approved` (action `open_node`, its Servers page).
+`node_mode_disabled`: a live node whose connection mode is turned off, so no member is given it
+(action `open_modes`, Admin, Connection modes). The protect review says so first (the plan's
+`modesOff`), and so does the node's Servers page (`modeEnabled` on the intent view).
 
 **Approval shape in automatic work.** A replace, or a provision that publishes when done,
 outside a guided setup run, picks only a spare or an account whose shape (listener, account,

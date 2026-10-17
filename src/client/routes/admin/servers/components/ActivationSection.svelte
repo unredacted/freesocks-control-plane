@@ -26,10 +26,11 @@
     invalidateServers,
     retireNode,
   } from '@client/lib/serversApi';
+  import Link from '@client/components/Link.svelte';
   import { router } from '@client/stores/router.svelte';
   import type { DirectTestLink, NodeIntentView } from '../../../../../shared/contracts/servers';
   import ConfirmDialog from '../../edges/components/ConfirmDialog.svelte';
-  import CopyButton from '../../edges/components/CopyButton.svelte';
+  import TestLink from '../../edges/simple/TestLink.svelte';
   import { edgesPaths } from '../../edges/lib/routes';
   import StatusDot from '../../edges/simple/StatusDot.svelte';
   import { codeOf } from '../lib/run';
@@ -119,6 +120,17 @@
     <StatusDot dot={words.dot} />
     <span>{intent.mode.name}. {words.sentence}</span>
   </p>
+  {#if !intent.modeEnabled && !intent.retirement}
+    <p class="mt-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm" role="status">
+      Members cannot pick {intent.mode.name} yet: the mode is turned off, so nobody is given this node{intent.stage ===
+      'live'
+        ? ''
+        : ' once it is live'}.
+      <Link href="/admin/connection-modes" class="text-primary underline underline-offset-4"
+        >Turn it on in Connection modes</Link
+      >
+    </p>
+  {/if}
   {#if intent.origin.hostname}
     <p class="text-muted-foreground mt-1 text-sm">
       Origin name {intent.origin.hostname}{intent.origin.dns === 'resolves'
@@ -132,23 +144,22 @@
   {#if canTest}
     <div class="bg-card mt-3 space-y-3 rounded-md border p-3">
       <p class="text-sm">
-        Import the test link into a client (it uses FCP's own test account), connect, load a page,
-        then tick Works. Nobody else can see this node yet.
+        Scan or copy the test link into a client on the device you test with (it uses FCP's own test
+        account), connect, load a page, then tick Works. Nobody else can see this node yet.
       </p>
       {#if link}
         <div class="flex flex-wrap items-center justify-between gap-2">
-          <span class="text-muted-foreground text-sm">{link.binding.endpoint}</span>
-          <div class="flex items-center gap-2">
-            <CopyButton value={link.link} label="Copy test link" />
-            {#if ticked}
-              <span class="flex items-center gap-1 text-sm text-emerald-700 dark:text-emerald-300">
-                <Check class="size-4" aria-hidden="true" /> Works
-              </span>
-            {:else}
-              <Button size="sm" variant="outline" disabled={busy} onclick={works}>Works</Button>
-            {/if}
-          </div>
+          <span class="text-muted-foreground text-sm break-all">{link.binding.endpoint}</span>
+          {#if ticked}
+            <span class="flex items-center gap-1 text-sm text-emerald-700 dark:text-emerald-300">
+              <Check class="size-4" aria-hidden="true" /> Works
+            </span>
+          {/if}
         </div>
+        {#if !ticked}
+          <TestLink link={link.link} label={`Copy the test link for ${intent.name}`} />
+          <Button class="h-11 sm:h-9" disabled={busy} onclick={works}>Works</Button>
+        {/if}
       {:else}
         <Button size="sm" variant="outline" disabled={busy} onclick={buildLink}
           >Build a test link</Button

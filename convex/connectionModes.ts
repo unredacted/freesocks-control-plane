@@ -58,10 +58,14 @@ export const families = internalQuery({
   handler: async (ctx) => (await resolveModeCatalog(ctx.db)).families,
 });
 
-/** The resolved default mode id (AccountView when a member hasn't chosen). */
+/** The default a member who hasn't chosen is on (AccountView): the effective
+ *  one, never a default no node serves while another mode is served. */
 export const defaultId = internalQuery({
   args: {},
-  handler: (ctx) => resolveDefaultModeId(ctx.db),
+  handler: async (ctx) => {
+    const { modes } = await resolveCatalogWithAvailability(ctx.db);
+    return modes.find((m) => m.isDefault)?.id ?? (await resolveDefaultModeId(ctx.db));
+  },
 });
 
 /**

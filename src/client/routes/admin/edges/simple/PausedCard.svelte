@@ -23,6 +23,7 @@
     inspectRelayQuarantine,
     invalidateRelay,
     invalidateOverview,
+    relayListenersQuery,
     relayQuarantineQuery,
     resolveRelayQuarantine,
   } from '@client/lib/edgesApi';
@@ -32,6 +33,7 @@
   import { assertEdgeOk, edgeErrorMessage } from '../lib/edgeErrors';
   import { edgesPaths } from '../lib/routes';
   import { relativeTime } from '../lib/time';
+  import { transportName } from '../lib/format';
 
   interface Props {
     relay: OriginAdmin;
@@ -41,6 +43,12 @@
 
   const qc = useQueryClient();
   const viewQ = relayQuarantineQuery({ slug: () => relay.slug, id: () => relay.id });
+  // The listeners' transports, to name each line in words (never its key).
+  const listenersQ = relayListenersQuery({ slug: () => relay.slug, id: () => relay.id });
+  const nameOf = (key: string): string => {
+    const l = listenersQ.data?.listeners.find((x) => x.listenerKey === key);
+    return l ? transportName(l) : 'A transport';
+  };
   const view = $derived(viewQ.data ?? null);
   const recommended = $derived(view ? recommendKeep(view.listeners) : null);
 
@@ -112,7 +120,7 @@
     {#if view.listeners.length > 0}
       <ul class="space-y-1">
         {#each view.listeners as l (l.listenerKey)}
-          <li><span class="font-medium">{l.listenerKey}</span>: {MATCH[l.match]}.</li>
+          <li><span class="font-medium">{nameOf(l.listenerKey)}</span>: {MATCH[l.match]}.</li>
         {/each}
       </ul>
     {/if}

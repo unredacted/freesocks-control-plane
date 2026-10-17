@@ -217,8 +217,9 @@ export const EDGE_DEFAULTS: EdgeConfig = {
   render: {
     enabled: false,
     autoGroupName: 'FreeSocks Auto',
-    primaryLabel: 'FreeSocks Primary',
-    backupLabel: 'FreeSocks Backup',
+    // Plain names: most members see one entry, and "Primary" alone reads oddly.
+    primaryLabel: 'FreeSocks',
+    backupLabel: 'FreeSocks (backup)',
     ipv6Label: 'IPv6',
     ipv6Mode: 'both',
     namesPerEndpoint: 3,

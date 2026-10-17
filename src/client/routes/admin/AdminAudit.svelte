@@ -38,6 +38,7 @@
   import * as Select from '@client/components/ui/select';
   import { Skeleton } from '@client/components/ui/skeleton';
   import AuditRow from './AuditRow.svelte';
+  import { collapseRepeats } from '../../lib/collapseRepeats';
   import { adminAuditQuery } from '../../lib/queries';
   import AdminListState from './AdminListState.svelte';
 
@@ -88,6 +89,14 @@
   }));
 
   let entries = $derived(audit.data?.pages.flatMap((p) => p.entries) ?? []);
+  // The same event again and again in a row (a retry loop) reads as one row with a count.
+  let groups = $derived(
+    collapseRepeats(entries, (e) =>
+      [e.action, e.actorType, e.actorId ?? '', e.targetType ?? '', JSON.stringify(e.payload)].join(
+        '\u0000',
+      ),
+    ),
+  );
   let hasFilters = $derived(!!actionFilter || !!actorTypeFilter || !!sinceInput);
 
   function clearFilters() {
@@ -160,8 +169,11 @@
       />
     {/if}
     <div class="space-y-2">
-      {#each entries as e (e.id)}
-        <AuditRow entry={e} />
+      {#each groups as g (g.item.id)}
+        <AuditRow
+          entry={g.item}
+          repeat={g.count > 1 ? { count: g.count, firstAt: g.last.createdAt } : null}
+        />
       {/each}
     </div>
     {#if audit.hasNextPage}

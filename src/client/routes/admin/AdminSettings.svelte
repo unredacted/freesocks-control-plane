@@ -130,6 +130,7 @@
   // the banner text (trim/cap) and the repo URL (https-only) and echoes the cleaned
   // values back.
   let sDraft = $state<{
+    name: string;
     bannerEnabled: boolean;
     bannerText: string;
     bannerLinkUrl: string;
@@ -147,6 +148,7 @@
     heroSubtitle: string;
     heroTitles: string;
   }>({
+    name: '',
     bannerEnabled: false,
     bannerText: '',
     bannerLinkUrl: '',
@@ -183,6 +185,7 @@
     const s = cfg.data?.site;
     if (s && !sInit) {
       sDraft = {
+        name: s.name,
         bannerEnabled: s.bannerEnabled,
         bannerText: s.bannerText,
         bannerLinkUrl: s.bannerLinkUrl,
@@ -206,6 +209,7 @@
   const saveSite = createMutation(() => ({
     mutationFn: async () => {
       const Resp = z.object({
+        name: z.string().optional().default(''),
         bannerEnabled: z.boolean(),
         bannerText: z.string(),
         bannerLinkUrl: z.string(),
@@ -816,6 +820,21 @@
             />
             <p class="text-xs text-muted-foreground mt-1">
               Leave a URL blank to hide that footer link. All URLs must be https.
+            </p>
+          </div>
+          <div>
+            <label class="text-xs text-muted-foreground mb-1 block" for="site-name">
+              Site name
+            </label>
+            <Input
+              id="site-name"
+              maxlength={40}
+              placeholder="FreeSocks"
+              value={sDraft.name}
+              oninput={(e) => (sDraft = { ...sDraft, name: (e.target as HTMLInputElement).value })}
+            />
+            <p class="text-xs text-muted-foreground mt-1">
+              The name VPN apps show for a member's subscription. Blank uses FreeSocks.
             </p>
           </div>
           <div>

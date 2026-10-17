@@ -37,7 +37,13 @@ import { CAPABILITIES } from './lib/backends/capabilities';
 import { resolveCatalogWithAvailability, resolverFor } from './lib/placement';
 import { resolveBoundModeIds } from './lib/remnawavePlacement';
 import { sanitizeHttpsUrl, sanitizeOnion } from './lib/verificationConfig';
-import { sanitizeBannerText, sanitizeEmail, sanitizeHeroTitles } from './lib/siteConfig';
+import {
+  resolveSiteConfig,
+  sanitizeBannerText,
+  sanitizeEmail,
+  sanitizeHeroTitles,
+  sanitizeSiteName,
+} from './lib/siteConfig';
 import {
   sanitizeGeoMode,
   sanitizeIpHeaderName,
@@ -2238,11 +2244,15 @@ export const setSiteConfig = internalMutation({
     // Optional: the rotating hero title variants (empty array = back to the
     // static heroTitle / built-in translated title).
     heroTitles: v.optional(v.array(v.string())),
+    // Optional: the site's name (the subscription title proxy apps show);
+    // absent = no change, '' = back to the default.
+    name: v.optional(v.string()),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (
     ctx,
     {
+      name,
       bannerEnabled,
       bannerText,
       bannerLinkUrl,
@@ -2279,6 +2289,7 @@ export const setSiteConfig = internalMutation({
       heroTitle: sanitizeBannerText(heroTitle ?? '', 160),
       heroSubtitle: sanitizeBannerText(heroSubtitle ?? '', 500),
       heroTitles: sanitizeHeroTitles(heroTitles ?? []),
+      name: name !== undefined ? sanitizeSiteName(name) : (await resolveSiteConfig(ctx.db)).name,
     };
     await upsertSetting(
       ctx,
@@ -2342,6 +2353,9 @@ export const setSiteConfig = internalMutation({
     }
     if (heroTitles !== undefined) {
       await upsertSetting(ctx, 'site.heroTitles', JSON.stringify(clean.heroTitles), actorAdminId);
+    }
+    if (name !== undefined) {
+      await upsertSetting(ctx, 'site.name', JSON.stringify(clean.name), actorAdminId);
     }
     await writeAuditLog(ctx, {
       actorType: 'admin',
@@ -2426,8 +2440,9 @@ export const setAnalyticsConfig = internalMutation({
 export const getConnectionModes = internalQuery({
   args: {},
   handler: async (ctx) => {
-    const { families, modes } = await resolveCatalogWithAvailability(ctx.db);
-    const summaries = await placementSummariesFor(ctx.db, modes);
+    const { families, modes, servedByBackend, configuredDefaultId } =
+      await resolveCatalogWithAvailability(ctx.db);
+    const summaries = await placementSummariesFor(ctx.db, modes, servedByBackend);
     return {
       families: families.map((f) => ({
         id: f.id,
@@ -2446,6 +2461,9 @@ export const getConnectionModes = internalQuery({
         description: m.description,
         deliveryStyle: m.deliveryStyle,
         isDefault: m.isDefault,
+        // The admin's own pick: differs from isDefault (what new members get)
+        // only while no node serves it and another mode can.
+        configuredDefault: m.id === configuredDefaultId,
         isFamilyDefault: m.isFamilyDefault,
         isCensorshipRecommended: m.isCensorshipRecommended,
         enabled: m.enabled,
@@ -2461,16 +2479,22 @@ export const getConnectionModes = internalQuery({
   },
 });
 
+type PlacementSummary = {
+  backendId: BackendId;
+  bound: boolean;
+  boundCount: number;
+  /** Bound and a node in the pool: false on a bound pool is why the mode is not offered. */
+  hasNode: boolean;
+};
+
 /** Per-(mode, backend) placement summaries for the modes given (sizes only). */
 async function placementSummariesFor(
   db: DatabaseReader,
   modes: Array<{ id: string; backends: BackendId[] }>,
-): Promise<Record<string, Array<{ backendId: BackendId; bound: boolean; boundCount: number }>>> {
+  servedByBackend: Map<BackendId, Set<string>>,
+): Promise<Record<string, PlacementSummary[]>> {
   const countsByBackend = new Map<BackendId, Record<string, number>>();
-  const out: Record<
-    string,
-    Array<{ backendId: BackendId; bound: boolean; boundCount: number }>
-  > = {};
+  const out: Record<string, PlacementSummary[]> = {};
   for (const m of modes) {
     out[m.id] = [];
     for (const b of m.backends) {
@@ -2481,7 +2505,12 @@ async function placementSummariesFor(
         countsByBackend.set(b, counts);
       }
       const n = counts[m.id] ?? 0;
-      out[m.id]!.push({ backendId: b, bound: n > 0, boundCount: n });
+      out[m.id]!.push({
+        backendId: b,
+        bound: n > 0,
+        boundCount: n,
+        hasNode: n > 0 && (servedByBackend.get(b)?.has(m.id) ?? false),
+      });
     }
   }
   return out;

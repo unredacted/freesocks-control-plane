@@ -163,6 +163,18 @@ port; mode group: name) and looks for it **before** sending: one match is adopte
 sent, several are refused (`servers.duplicate_object`). After a lost answer the same look
 settles it.
 
+**Who a write is by.** Each settled op is audited as `servers.<kind>.<verb>`: by the admin who
+asked, or, when no admin did, as `system` with the FCP run that made it as the actor id
+(`<kind>:<id>`: `node:<intent>` for a node's own address reconcile, `retirement:<id>`,
+`activation:<run>`). An activation's writes are by the admin who approved it. Admin, Recent
+changes and the audit log fold identical neighbours into one line ("Tried 40 times, never
+sent"); an open op keeps its own line.
+
+**Writes outside the ledger.** Edges change Hosts they own straight through the provider (an
+origin's Host, a rotation's repoint, a hide). Each such write re-reads the instance's Hosts into
+the cache right after, when Servers observes the instance, so "Addresses members get" follows
+the flip at once instead of at the next read.
+
 **What queues node work.** Changing a mode group's transports, and deleting a mode group, make the backend
 re-apply the affected config profiles to their nodes; creating or renaming a mode group and every
 Host write do not. The first kind also claims those **profiles and nodes** and holds the claims

@@ -86,4 +86,11 @@ export function t(key: MessageKey, params?: Record<string, string | number>): st
   return fn ? fn(params ?? {}, { locale }) : key; // last-resort: surface the key
 }
 
+/** The base-locale (English) message, whatever the visitor's locale: for the
+ *  admin CMS, which is English-only, when it names a built-in member string. */
+export function tEn(key: MessageKey, params?: Record<string, string | number>): string {
+  const fn = messages[key];
+  return fn ? fn(params ?? {}, { locale: DEFAULT_LOCALE }) : key;
+}
+
 export { LOCALES, normalizeDigits, type LocaleCode, type MessageKey };

@@ -2,7 +2,7 @@
  * Small display formatters for the Edges section (pure).
  *
  * Exports:
- *   PROTOCOL_LABELS / TRANSPORT_LABELS / SECURITY_LABELS, protocolLine(p)
+ *   PROTOCOL_LABELS / TRANSPORT_LABELS / SECURITY_LABELS, protocolLine(p), transportName(p)
  *   LAYER_LABELS, LAYER_HINTS
  *   PROVIDER_LABELS, providerLabel(id)      adapter ids -> display names
  *   formatBytes(n), displayValue(v)         for KeyValue rows
@@ -41,6 +41,18 @@ export interface ProtoLike {
   streamTransport: ListenerStreamTransport;
   security: ListenerSecurity;
 }
+/**
+ * A transport in plain words, where the CMS would otherwise print its internal
+ * key: the operator's label when set, else "VLESS · raw · REALITY, port 443".
+ */
+export function transportName(
+  p: ProtoLike & { originPort?: number | null; label?: string | null },
+): string {
+  if (p.label?.trim()) return p.label;
+  const line = protocolLine(p);
+  return p.originPort != null ? `${line}, port ${p.originPort}` : line;
+}
+
 /** "VLESS · raw · REALITY" */
 export function protocolLine(p: ProtoLike): string {
   return [
@@ -99,9 +111,13 @@ export function displayValue(v: unknown): string {
 /**
  * One short line of context from an audit payload. Only keys known to be short,
  * non-secret codes or names are read; `code` / `reason` / `veto` go through the
- * code copy so the operator never sees a bare identifier.
+ * code copy so the operator never sees a bare identifier. `listenerName` names a
+ * listener in words (the simple screens pass it; Advanced keeps the key).
  */
-export function auditDetailLine(payload: unknown): string {
+export function auditDetailLine(
+  payload: unknown,
+  listenerName?: (listenerKey: string) => string,
+): string {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return '';
   const p = payload as Record<string, unknown>;
   const out: string[] = [];
@@ -110,7 +126,8 @@ export function auditDetailLine(payload: unknown): string {
     if (typeof v === 'string' && v && v.length <= 64) out.push(codeLabel(v.replace(/^edge\./, '')));
   }
   const listener = p['listenerKey'];
-  if (typeof listener === 'string' && listener) out.push(`listener ${listener}`);
+  if (typeof listener === 'string' && listener)
+    out.push(listenerName ? listenerName(listener) : `listener ${listener}`);
   const keys = p['changedKeys'];
   if (Array.isArray(keys) && keys.length > 0) {
     const names = keys.filter((x): x is string => typeof x === 'string').slice(0, 4);

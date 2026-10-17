@@ -75,7 +75,10 @@ const hostFields = {
   inboundUuid: v.optional(v.string()),
   nodeUuids: v.optional(v.array(v.string())),
 };
-const actor = { actorAdminId: v.optional(v.id('adminUsers')) };
+// Who asked: an admin, or (no admin) the FCP run that made the write, as a
+// short `<kind>:<id>` the audit names it by (an activation, a node's address
+// reconcile, a retirement).
+const actor = { actorAdminId: v.optional(v.id('adminUsers')), actorRun: v.optional(v.string()) };
 
 const ALPN = new Set(['h3', 'h2', 'http/1.1', 'h2,http/1.1', 'h3,h2,http/1.1', 'h3,h2']);
 const FINGERPRINTS = new Set([
@@ -227,7 +230,14 @@ export const requestAddressCreate = internalMutation({
       port: a.port,
     });
     await assertNotTombstoned(ctx, sid, 'host', identity, a.restore === true);
-    const { backendServerId: _s, actorAdminId, inboundUuid: _i, restore: _r, ...fields } = a;
+    const {
+      backendServerId: _s,
+      actorAdminId,
+      actorRun,
+      inboundUuid: _i,
+      restore: _r,
+      ...fields
+    } = a;
     const spec: PanelHostCreate = { ...fields, inbound };
     const opId = await claimOp(ctx, {
       backendServerId: sid,
@@ -239,6 +249,7 @@ export const requestAddressCreate = internalMutation({
       intent: spec,
       postcondition: {},
       actorAdminId,
+      actorRun,
     });
     return { opId };
   },
@@ -255,7 +266,7 @@ export const requestAddressUpdate = internalMutation({
       if (looksLikeRelayRemark(a.remark, await nodeNames(ctx, sid)))
         refuse('servers.relay_remark', 'Remarks ending in -origin belong to edges. Pick another');
     }
-    const { backendServerId: _s, hostUuid, actorAdminId, inboundUuid, ...rest } = a;
+    const { backendServerId: _s, hostUuid, actorAdminId, actorRun, inboundUuid, ...rest } = a;
     const fields: BackendAddressFields = { ...rest };
     const expected: Record<string, unknown> = { ...rest };
     // The postcondition is what a later read must SHOW, not what was asked. A
@@ -278,6 +289,7 @@ export const requestAddressUpdate = internalMutation({
       intent: fields,
       postcondition: expected,
       actorAdminId,
+      actorRun,
     });
     return { opId };
   },
@@ -304,6 +316,7 @@ export const requestAddressDelete = internalMutation({
       intent: {},
       postcondition: {},
       actorAdminId: a.actorAdminId,
+      actorRun: a.actorRun,
     });
     return { opId };
   },
@@ -331,6 +344,7 @@ export const requestAddressReorder = internalMutation({
       intent: { order },
       postcondition: { order },
       actorAdminId: a.actorAdminId,
+      actorRun: a.actorRun,
     });
     return { opId };
   },
@@ -421,6 +435,7 @@ export const requestModeGroupCreate = internalMutation({
       intent: { name: a.name, inboundUuids: a.inboundUuids },
       postcondition: {},
       actorAdminId: a.actorAdminId,
+      actorRun: a.actorRun,
     });
     return { opId };
   },
@@ -475,6 +490,7 @@ export const requestModeGroupUpdate = internalMutation({
       postcondition: expected,
       asyncNodeUuids,
       actorAdminId: a.actorAdminId,
+      actorRun: a.actorRun,
     });
     return { opId };
   },
@@ -506,6 +522,7 @@ export const requestModeGroupDelete = internalMutation({
       postcondition: {},
       asyncNodeUuids: affected.nodeUuids,
       actorAdminId: a.actorAdminId,
+      actorRun: a.actorRun,
     });
     return { opId };
   },
@@ -597,7 +614,7 @@ export const requestNodeCreate = internalMutation({
     if (await currentNodeName(ctx.db, sid, a.name))
       refuse('servers.node_name_taken', 'A node had that name before it was renamed');
     await assertNotTombstoned(ctx, sid, 'node', a.name, a.restore === true);
-    const { backendServerId: _s, actorAdminId, restore: _r, ...spec } = a;
+    const { backendServerId: _s, actorAdminId, actorRun, restore: _r, ...spec } = a;
     // The backend ROW only. Installing the node and giving it its secret is the
     // node role's job, against the backend directly.
     const opId = await claimOp(ctx, {
@@ -610,6 +627,7 @@ export const requestNodeCreate = internalMutation({
       intent: spec,
       postcondition: {},
       actorAdminId,
+      actorRun,
     });
     return { opId };
   },
@@ -682,6 +700,7 @@ export const requestNodeUpdate = internalMutation({
       postcondition: expected,
       asyncNodeUuids: restarts ? [a.nodeUuid] : undefined,
       actorAdminId: a.actorAdminId,
+      actorRun: a.actorRun,
     });
     return { opId, restartsNode: restarts };
   },
@@ -719,6 +738,7 @@ export const requestNodeAction = internalMutation({
       postcondition: a.action === 'restart' ? {} : { isDisabled: a.action === 'disable' },
       asyncNodeUuids: [a.nodeUuid],
       actorAdminId: a.actorAdminId,
+      actorRun: a.actorRun,
     });
     return { opId };
   },
@@ -760,6 +780,7 @@ export const requestNodeDelete = internalMutation({
       intent: { removeOnly: a.removeOnly === true },
       postcondition: {},
       actorAdminId: a.actorAdminId,
+      actorRun: a.actorRun,
     });
     return { opId };
   },
@@ -902,6 +923,7 @@ export async function claimProfilePatch(
     unmanaged?: 'hold' | 'acknowledge';
     portChangeId?: Id<'panelPortChanges'>;
     actorAdminId?: Id<'adminUsers'>;
+    actorRun?: string;
   },
 ): Promise<{ opId: Id<'panelOps'>; restartsNodes: number; affectedRelays: number }> {
   const sid = a.backendServerId;
@@ -1100,6 +1122,7 @@ export async function claimProfilePatch(
     },
     asyncNodeUuids: nodes.map((n) => n.nodeUuid),
     actorAdminId: a.actorAdminId,
+    actorRun: a.actorRun,
   });
   return { opId, restartsNodes: nodes.length, affectedRelays: affected.length };
 }

@@ -321,6 +321,22 @@ export interface RunEnrolled {
   stage: string;
 }
 
+/** What a listener carries, from the plan, so the CMS names it in words (never its key). */
+function transportOf(plan: SetupPlanSnapshot, listenerKey: string) {
+  const spec = plan.inbounds.find((i) => i.listenerKey === listenerKey)?.listenerSpec as
+    | { protocol?: string; streamTransport?: string; security?: string; originPort?: number }
+    | null
+    | undefined;
+  return spec?.protocol && spec.streamTransport && spec.security
+    ? {
+        protocol: spec.protocol,
+        streamTransport: spec.streamTransport,
+        security: spec.security,
+        originPort: spec.originPort ?? null,
+      }
+    : null;
+}
+
 /** The admin projection (`GET setup-runs/{id}`); never the plan's addresses beyond the origin the operator typed. */
 export function mapRunAdmin(r: Run, enrolled: RunEnrolled | null = null) {
   const plan = parsePlan(r);
@@ -347,6 +363,7 @@ export function mapRunAdmin(r: Run, enrolled: RunEnrolled | null = null) {
       edgeId: (l.edgeId as string | undefined) ?? null,
       verify: l.verify,
       published: l.published,
+      transport: transportOf(plan, l.listenerKey),
     })),
     testLinks: (r.testLinks ?? []).map((t) => ({
       edgeId: t.edgeId as string,

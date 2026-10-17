@@ -312,8 +312,29 @@ export async function resolveModeCatalog(db: DatabaseReader): Promise<ModeCatalo
   return { families, modes };
 }
 
-/** The resolved default mode id (AccountView when a member hasn't chosen).
- *  Never a disabled mode while any mode is enabled — see resolveModeCatalog. */
+/**
+ * The default a NEW member actually lands on, judged by `servable` (a member
+ * can be served on it: enabled, bound, a node in its pool). The configured
+ * default while it is servable; otherwise the first servable mode of the same
+ * family, then of the catalog, in catalog order. With nothing servable yet
+ * (bring-up: no pool bound, no node anywhere) it stays the configured one, so
+ * issuance still follows it. Null only for an empty catalog.
+ */
+export function effectiveDefaultId<M extends ConnectionMode>(
+  modes: readonly M[],
+  servable: (m: M) => boolean,
+): string | null {
+  const configured = modes.find((m) => m.isDefault) ?? null;
+  if (configured && servable(configured)) return configured.id;
+  const sameFamily = configured
+    ? modes.find((m) => m.family === configured.family && servable(m))
+    : undefined;
+  return (sameFamily ?? modes.find(servable))?.id ?? configured?.id ?? null;
+}
+
+/** The CONFIGURED default mode id (the catalog alone, availability not judged).
+ *  Never a disabled mode while any mode is enabled — see resolveModeCatalog.
+ *  What a new member lands on is `effectiveDefaultId` over the availability. */
 export async function resolveDefaultModeId(db: DatabaseReader): Promise<string> {
   const { modes } = await resolveModeCatalog(db);
   return modes.find((m) => m.isDefault)?.id ?? DEFAULT_CONNECTION_MODE;

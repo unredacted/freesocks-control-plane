@@ -1133,9 +1133,15 @@ describe('adminApi connection modes + placements (DB-driven catalog)', () => {
     expect(priv.description).toBe('Direct Reality, no CDN in the path.');
     expect(priv.deliveryStyle).toBe('rawConfig');
     expect(priv.isDefault).toBe(true);
-    expect(priv.placements).toEqual([{ backendId: 'remnawave', bound: true, boundCount: 1 }]);
+    expect(priv.configuredDefault).toBe(true);
+    // Never observed by the panel yet: counted as able to serve (bring-up).
+    expect(priv.placements).toEqual([
+      { backendId: 'remnawave', bound: true, boundCount: 1, hasNode: true },
+    ]);
     const ws = out.modes.find((m: { id: string }) => m.id === 'freedom-ws')!;
-    expect(ws.placements).toEqual([{ backendId: 'remnawave', bound: true, boundCount: 1 }]);
+    expect(ws.placements).toEqual([
+      { backendId: 'remnawave', bound: true, boundCount: 1, hasNode: true },
+    ]);
     // No custom copy set on freedom-ws → nulls (never the compiled English
     // default, which would round-trip through the admin form and pin English
     // over i18n for the built-ins).

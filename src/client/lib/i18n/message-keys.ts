@@ -109,6 +109,7 @@ export type MessageKey =
   | "delivery.freedomAudience"
   | "delivery.freedomBody"
   | "delivery.freedomRealityBody"
+  | "delivery.freedomRealityLinkBody"
   | "delivery.freedomRealityTitle"
   | "delivery.freedomTitle"
   | "delivery.freedomWsBody"

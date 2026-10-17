@@ -3,7 +3,15 @@ import { convexTest } from 'convex-test';
 import { describe, expect, test } from 'vitest';
 import schema from '../schema';
 import { internal } from '../_generated/api';
-import { resolveSiteConfig, sanitizeBannerText, sanitizeEmail, SITE_DEFAULTS } from './siteConfig';
+import {
+  profileTitleValue,
+  resolveSiteConfig,
+  resolveSiteName,
+  sanitizeBannerText,
+  sanitizeEmail,
+  sanitizeSiteName,
+  SITE_DEFAULTS,
+} from './siteConfig';
 
 const modules = import.meta.glob('../**/*.*s');
 
@@ -19,6 +27,33 @@ describe('sanitizeBannerText', () => {
   test('caps length (banners are one-liners)', () => {
     expect(sanitizeBannerText('a'.repeat(400)).length).toBe(280);
     expect(sanitizeBannerText('a'.repeat(400), 10)).toBe('aaaaaaaaaa');
+  });
+});
+
+describe('the site name', () => {
+  test('one plain line: trimmed, control characters dropped, capped', () => {
+    expect(sanitizeSiteName('  My VPN\n')).toBe('My VPN');
+    expect(sanitizeSiteName('a\u0007b')).toBe('ab');
+    expect(sanitizeSiteName('x'.repeat(80)).length).toBe(40);
+    expect(sanitizeSiteName(7)).toBe('');
+  });
+
+  test('profile-title is the base64 form of the name, the default while unset', async () => {
+    expect(profileTitleValue('')).toBe('base64:RnJlZVNvY2tz');
+    expect(atob(profileTitleValue('VPN ✓').slice('base64:'.length))).toBe(
+      String.fromCharCode(...new TextEncoder().encode('VPN ✓')),
+    );
+    const t = convexTest(schema, modules);
+    expect(await t.run((ctx) => resolveSiteName(ctx.db))).toBe('FreeSocks');
+    await t.run((ctx) =>
+      ctx.db.insert('appSettings', {
+        key: 'site.name',
+        value: JSON.stringify(' Ours '),
+        updatedAt: Date.now(),
+      }),
+    );
+    expect(await t.run((ctx) => resolveSiteName(ctx.db))).toBe('Ours');
+    expect((await t.run((ctx) => resolveSiteConfig(ctx.db))).name).toBe('Ours');
   });
 });
 

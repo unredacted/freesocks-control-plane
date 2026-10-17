@@ -12,7 +12,7 @@
  * .svelte-bearing — deliberately NOT imported here so this module stays
  * loadable in pure-TS tests) and ride the wire per family.
  */
-import { t, type MessageKey } from './i18n/index.svelte';
+import { t, tEn, type MessageKey } from './i18n/index.svelte';
 import { humanizeSlug } from './humanize';
 
 export { humanizeSlug } from './humanize';
@@ -38,11 +38,18 @@ export const FAMILY_COPY: Record<string, FamilyCopy> = {
   },
 };
 
-export const MODE_COPY: Record<string, { titleKey: MessageKey; bodyKey: MessageKey }> = {
+/** `bodyKey` describes the mode as it ships; `rawConfigBodyKey`, when set, is
+ *  the body for a deployment that delivers it as a hand-copied configuration
+ *  instead (the copy follows the mode's `deliveryStyle`, never a guess). */
+export const MODE_COPY: Record<
+  string,
+  { titleKey: MessageKey; bodyKey: MessageKey; rawConfigBodyKey?: MessageKey }
+> = {
   'freedom-ws': { titleKey: 'delivery.freedomWsTitle', bodyKey: 'delivery.freedomWsBody' },
   'freedom-reality': {
     titleKey: 'delivery.freedomRealityTitle',
-    bodyKey: 'delivery.freedomRealityBody',
+    bodyKey: 'delivery.freedomRealityLinkBody',
+    rawConfigBodyKey: 'delivery.freedomRealityBody',
   },
   'privacy-reality': {
     titleKey: 'delivery.privacyRealityTitle',
@@ -61,6 +68,7 @@ interface ModeLike {
   family?: string | null;
   label?: string | null;
   description?: string | null;
+  deliveryStyle?: 'url' | 'rawConfig';
 }
 
 export function familyTitle(f: FamilyLike): string {
@@ -83,7 +91,22 @@ export function modeTitle(m: ModeLike): string {
 }
 export function modeBody(m: ModeLike): string {
   if (m.description?.trim()) return m.description;
-  return MODE_COPY[m.id] ? t(MODE_COPY[m.id]!.bodyKey) : '';
+  const copy = MODE_COPY[m.id];
+  if (!copy) return '';
+  return t(
+    m.deliveryStyle === 'rawConfig' && copy.rawConfigBodyKey ? copy.rawConfigBodyKey : copy.bodyKey,
+  );
+}
+
+/** The admin CMS names (English-only): the admin-set label, else the built-in
+ *  English name, else the humanized slug. Never a placeholder. */
+export function adminFamilyName(f: FamilyLike): string {
+  if (f.label?.trim()) return f.label;
+  return FAMILY_COPY[f.id] ? tEn(FAMILY_COPY[f.id]!.titleKey) : humanizeSlug(f.id);
+}
+export function adminModeName(m: ModeLike): string {
+  if (m.label?.trim()) return m.label;
+  return MODE_COPY[m.id] ? tEn(MODE_COPY[m.id]!.titleKey) : humanizeSlug(m.id);
 }
 
 /**

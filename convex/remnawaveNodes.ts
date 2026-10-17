@@ -23,6 +23,10 @@ export const markNodeStats = internalMutation({
         trafficBytesRealtime: v.optional(v.number()),
         online: v.boolean(),
         nodeCount: v.number(),
+        // The group's membership was not readable: keep the last known count
+        // (mode availability reads it; the offline flag already keeps the
+        // picker off the group).
+        nodeCountUnknown: v.optional(v.boolean()),
       }),
     ),
   },
@@ -40,7 +44,7 @@ export const markNodeStats = internalMutation({
         usersOnline: n.usersOnline,
         trafficBytesRealtime: n.trafficBytesRealtime,
         online: n.online,
-        nodeCount: n.nodeCount,
+        nodeCount: n.nodeCountUnknown && existing ? existing.nodeCount : n.nodeCount,
         lastStatsAt: now,
         updatedAt: now,
       };

@@ -15,12 +15,15 @@ export interface NodeWords {
 
 export function nodeWords(
   n: Pick<NodeView, 'online' | 'isDisabled' | 'profile' | 'transports' | 'usersOnline'>,
+  opts: { restarting?: boolean } = {},
 ): NodeWords {
   if (n.isDisabled) return { dot: 'grey', sentence: 'Turned off on the backend.' };
   if (!n.profile)
     return { dot: 'amber', sentence: 'No config profile is assigned, so it serves nothing.' };
   if (n.transports.length === 0)
     return { dot: 'amber', sentence: 'A profile is assigned but no transport is switched on.' };
+  if (!n.online && opts.restarting)
+    return { dot: 'amber', sentence: 'Restarting while a change is applied. Back in a moment.' };
   if (!n.online) return { dot: 'red', sentence: 'The backend cannot reach this node.' };
   const people = n.usersOnline === 1 ? '1 person' : `${n.usersOnline} people`;
   return { dot: 'green', sentence: `Online, ${people} connected.` };
@@ -66,9 +69,15 @@ export function countryLabel(code: string | null | undefined): string | null {
   }
 }
 
-/** The instance in one sentence: how many nodes are up, and how many people are on them. */
-export function fleetSentence(
-  nodes: readonly Pick<NodeView, 'online' | 'isDisabled' | 'usersOnline'>[],
+/**
+ * The instance in one sentence: how many nodes are up, and how many people are
+ * on them. `restarting(n)` says an offline node is down because a change is
+ * being applied to it right now (a role run, a profile change the nodes pick
+ * up): that is a moment, not an outage, and never turns the headline red.
+ */
+export function fleetSentence<N extends Pick<NodeView, 'online' | 'isDisabled' | 'usersOnline'>>(
+  nodes: readonly N[],
+  restarting: (n: N) => boolean = () => false,
 ): {
   dot: Dot;
   text: string;
@@ -83,11 +92,52 @@ export function fleetSentence(
       dot: 'green',
       text: `${on.length === 1 ? 'The node is' : `All ${on.length} nodes are`} online, ${who}.`,
     };
-  if (online.length === 0) return { dot: 'red', text: 'No node is reachable from the backend.' };
+  const offline = on.filter((n) => !n.online);
+  const unreachable = offline.filter((n) => !restarting(n));
+  if (unreachable.length === 0) {
+    const back = offline.length === 1 ? '1 node is' : `${offline.length} nodes are`;
+    return {
+      dot: 'amber',
+      text:
+        online.length === 0
+          ? `${back} restarting while a change is applied. Back in a moment.`
+          : `${online.length} of ${on.length} nodes online, ${who}. ${back} restarting while a change is applied.`,
+    };
+  }
+  const restartingCount = offline.length - unreachable.length;
+  if (restartingCount === 0) {
+    if (online.length === 0) return { dot: 'red', text: 'No node is reachable from the backend.' };
+    return {
+      dot: 'amber',
+      text: `${online.length} of ${on.length} nodes online, ${who}. The backend cannot reach the ${offline.length === 1 ? 'other one' : 'others'}.`,
+    };
+  }
   return {
     dot: 'amber',
-    text: `${online.length} of ${on.length} nodes online, ${who}. The backend cannot reach the ${on.length - online.length === 1 ? 'other one' : 'others'}.`,
+    text: `${online.length} of ${on.length} nodes online, ${who}. ${restartingCount} restarting while a change is applied, and the backend cannot reach ${unreachable.length === 1 ? '1 more' : `${unreachable.length} more`}.`,
   };
+}
+
+/**
+ * Whether the node an enrolled intent describes is being changed right now, so
+ * an offline reading is its restart: the role reported in within the last
+ * three minutes (a run starts with a report), the machine settings it was given
+ * are not applied yet, a reconcile holds it, or its activation is running.
+ */
+export function intentRestarting(
+  i: {
+    state: string;
+    machineRevision: number;
+    appliedRevision: number | null;
+    roleSeenAt: string | null;
+    run: { state: string } | null;
+  },
+  now: number,
+): boolean {
+  if (i.state === 'pending') return true;
+  if (i.appliedRevision !== null && i.appliedRevision < i.machineRevision) return true;
+  if (i.run?.state === 'running') return true;
+  return i.roleSeenAt !== null && now - Date.parse(i.roleSeenAt) < 3 * 60_000;
 }
 
 export interface AttentionRow {
@@ -613,6 +663,24 @@ export function opWords(op: OpLike): { dot: Dot; sentence: string } {
     case 'recovered':
       return { dot: 'grey', sentence: 'Settled by hand.' };
   }
+}
+
+/**
+ * The words for `count` identical changes in a row (Recent changes folds them):
+ * one change reads as `opWords`; a retried create that never went out reads
+ * "Tried 40 times, never sent".
+ */
+export function opRepeatWords(op: OpLike, count: number): { dot: Dot; sentence: string } {
+  const w = opWords(op);
+  if (count < 2) return w;
+  if (op.state === 'refused' && op.errorCode === 'servers.never_sent')
+    return { dot: w.dot, sentence: `Tried ${count} times, never sent. Nothing was changed.` };
+  return { dot: w.dot, sentence: `${count} times in a row. ${w.sentence}` };
+}
+
+/** What makes two changes the same for folding: never an open one (it has its own buttons). */
+export function opRepeatKey(op: OpLike & { open: boolean }): string | null {
+  return op.open ? null : [op.kind, op.verb, op.label, op.state, op.errorCode ?? ''].join('\u0000');
 }
 
 /** One server name per line or comma; trimmed, blanks dropped, order kept, no repeats. */
