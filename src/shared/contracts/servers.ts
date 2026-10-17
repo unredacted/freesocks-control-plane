@@ -501,6 +501,14 @@ export const NodeRegistration = z.object({
   /** The connection mode this node serves (one per node); the machine shape follows from it. */
   mode: z.string().min(1).max(40),
   label: z.string().min(1).max(63).optional(),
+  /**
+   * The machine's own name (the role sends its inventory host name), shown to
+   * operators next to the node. Never member-facing. A value that is not a
+   * plain host name is ignored, not refused.
+   */
+  // `.catch`: an unusable value (too long, not a string) reads as absent instead
+  // of failing the whole registration.
+  machineName: z.string().max(253).optional().catch(undefined),
   observed: z.object({
     management: z.object({ address: z.string().min(2), port: z.number().int().min(1).max(65535) }),
     publicIps: z.object({ v4: z.string().optional(), v6: z.string().optional() }).default({}),
@@ -574,6 +582,8 @@ export type NodeRoleView = z.infer<typeof NodeRoleView>;
 export const NodeIntentView = z.object({
   id: z.string(),
   name: z.string(),
+  /** The machine's own name as the role reported it (operator-only); null when none was. */
+  machineName: z.string().nullable().default(null),
   mode: NodeModeRef,
   state: z.enum(['pending', 'ready', 'blocked', 'retiring', 'retired']),
   code: z.string().nullable(),

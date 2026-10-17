@@ -48,6 +48,17 @@ const refuse = (code: string, message: string): never => {
 export const ROLE_CONTRACT_VERSION = 2;
 const NODE_NAME = /^[A-Za-z0-9 ._-]{3,30}$/;
 const IPV4 = /^(\d{1,3}\.){3}\d{1,3}$/;
+const MACHINE_NAME = /^[A-Za-z0-9._-]{1,253}$/;
+
+/**
+ * The machine name a registration carries, if usable. A label for the operator
+ * only, so a value that is not a plain host name is dropped rather than
+ * refusing the enrollment.
+ */
+export function usableMachineName(raw: string | undefined): string | undefined {
+  const s = raw?.trim();
+  return s && MACHINE_NAME.test(s) ? s : undefined;
+}
 const HOSTNAME_RE = /^(?=.{1,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))*$/i;
 
 const observed = v.object({
@@ -255,6 +266,7 @@ export const enroll = internalMutation({
     backendServerId: v.id('backendServers'),
     name: v.string(),
     label: v.optional(v.string()),
+    machineName: v.optional(v.string()),
     mode: v.string(),
     contractVersion: v.number(),
     observed,
@@ -262,6 +274,9 @@ export const enroll = internalMutation({
   },
   handler: async (ctx, a) => {
     const sid = a.backendServerId;
+    // Outside `observed` on purpose: it is not machine configuration, so a new
+    // value never moves the desired hash or the generation.
+    const machineName = usableMachineName(a.machineName);
     const cfg = await resolveServerConfig(ctx.db);
     if (!cfg.manage.enabled)
       refuse('servers.manage_disabled', 'Server changes are switched off in Servers settings');
@@ -300,6 +315,8 @@ export const enroll = internalMutation({
         desiredHash,
         generation: changed ? intent.generation + 1 : intent.generation,
         tokenId: a.tokenId,
+        // A run that omits it keeps the last one reported.
+        ...(machineName ? { machineName } : {}),
         updatedAt: now,
       });
       intent = (await ctx.db.get(intent._id))!;
@@ -349,6 +366,7 @@ export const enroll = internalMutation({
         backendServerId: sid,
         name: a.name,
         label,
+        machineName,
         mode: a.mode,
         contractVersion: a.contractVersion,
         generation: 1,

@@ -202,6 +202,7 @@ async function byNameHandler(
       backendServerId: instance.id,
       name,
       label: parsed.data.label,
+      machineName: parsed.data.machineName,
       mode: parsed.data.mode,
       contractVersion: parsed.data.roleContractVersion,
       observed: parsed.data.observed,

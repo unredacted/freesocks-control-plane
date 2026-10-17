@@ -2760,6 +2760,11 @@ export default defineSchema({
     backendServerId: v.id('backendServers'),
     name: v.string(),
     label: v.string(),
+    // The machine's own name as the node role reports it (its inventory host
+    // name), so an operator can tell nodes apart. OPERATOR-ONLY: the node name
+    // stays the member-facing one (address remarks, subscription bodies); this
+    // never leaves the admin surface. Absent for adopted and hand-added nodes.
+    machineName: v.optional(v.string()),
     // The connection mode this node serves (one per node); the machine shape
     // follows from the backend setup's entry for it.
     mode: v.string(),

@@ -15,6 +15,7 @@
   import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import { Button } from '@client/components/ui/button';
+  import { Input } from '@client/components/ui/input';
   import { Label } from '@client/components/ui/label';
   import { Skeleton } from '@client/components/ui/skeleton';
   import { Switch } from '@client/components/ui/switch';
@@ -42,6 +43,7 @@
   import ModeGroupsCard from './components/ModeGroupsCard.svelte';
   import PortChangesCard from './components/PortChangesCard.svelte';
   import { codeOf } from './lib/run';
+  import { nodeMatches } from './lib/nodeFilter';
   import { pickInstance, serversPaths } from './lib/routes';
   import {
     ago,
@@ -64,6 +66,15 @@
   const intents = intentsQuery(() => slug);
   const providers = providersQuery();
   let setupOpen = $state(false);
+  let nodeQuery = $state('');
+  // A query belongs to the backend it was typed on: switching backends clears it.
+  let queriedSlug: string | null = null;
+  $effect(() => {
+    if (slug !== queriedSlug) {
+      queriedSlug = slug;
+      nodeQuery = '';
+    }
+  });
   let setupRow = $derived(setup.data ? setupWords(setup.data) : null);
   // A setup run finishes in the background, and only the setup query polls
   // while it runs: when it stops, everything else on the page (the summary's
@@ -292,8 +303,26 @@
           can be added by hand with Add a node.
         </p>
       {:else}
+        {@const shown = t.nodes.filter((n) =>
+          nodeMatches(nodeQuery, n.name, intentOf(n)?.machineName ?? null),
+        )}
+        <!-- Kept while a query is set, so the only control that clears it never hides. -->
+        {#if t.nodes.length > 1 || nodeQuery.trim()}
+          <div class="mb-3 max-w-sm">
+            <Label for="node-filter" class="sr-only">Find a node</Label>
+            <Input
+              id="node-filter"
+              type="search"
+              placeholder="Find a node by its name or machine name"
+              bind:value={nodeQuery}
+            />
+          </div>
+        {/if}
+        {#if shown.length === 0}
+          <p class="text-muted-foreground text-sm">No node name or machine name matches.</p>
+        {/if}
         <ul class="space-y-2">
-          {#each t.nodes as node (node.nodeUuid)}
+          {#each shown as node (node.nodeUuid)}
             {@const w = nodeWords(node)}
             {@const country = countryLabel(node.countryCode)}
             {@const intent = intentOf(node)}
@@ -307,6 +336,11 @@
                 <span class="min-w-0 flex-1">
                   <span class="flex flex-wrap items-baseline gap-x-2">
                     <span class="font-medium">{node.name}</span>
+                    {#if intent?.machineName}
+                      <span class="text-muted-foreground font-mono text-xs" title="Machine name"
+                        >{intent.machineName}</span
+                      >
+                    {/if}
                     {#if intent}
                       <span class="text-muted-foreground text-xs">{intent.mode.name}</span>
                     {/if}
