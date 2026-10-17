@@ -358,9 +358,9 @@ describe('GET /api/v1/sub/<token>', () => {
 /**
  * The subscription title: the backend sent its own (`profile-title`), so apps
  * named the subscription after the backend product. FCP names it itself, from
- * `site.name`, on every path a body can take.
+ * the service name (`subscription.siteName`), on every path a body can take.
  */
-describe('profile-title is the site name on every subscription response', () => {
+describe('profile-title is the service name on every subscription response', () => {
   const b64 = (name: string) =>
     `base64:${btoa(String.fromCharCode(...new TextEncoder().encode(name)))}`;
   beforeEach(() => {
@@ -385,20 +385,13 @@ describe('profile-title is the site name on every subscription response', () => 
     expect(b64('FreeSocks')).toBe('base64:RnJlZVNvY2tz');
 
     // A name with non-ASCII letters survives the header (that is what base64 is for).
-    await t.mutation(internal.adminApi.setSiteConfig, {
-      bannerEnabled: false,
-      bannerText: '',
-      repoEnabled: false,
-      repoUrl: '',
-      tosUrl: '',
-      privacyUrl: '',
-      transparencyUrl: '',
-      socialXUrl: '',
-      socialMastodonUrl: '',
-      socialBlueskyUrl: '',
-      supportEmail: '',
-      name: '  Свобода VPN\n',
-    });
+    await t.run((ctx) =>
+      ctx.db.insert('appSettings', {
+        key: 'subscription.siteName',
+        value: JSON.stringify('  Свобода VPN\n'),
+        updatedAt: Date.now(),
+      }),
+    );
     const cached = await get(t);
     expect(fetchCalls).toBe(1); // a cache hit, still titled now
     expect(cached.headers.get('profile-title')).toBe(b64('Свобода VPN'));

@@ -273,7 +273,7 @@ interface SubCacheEntry {
 /** The RAW subscription Response a proxy app consumes (not the JSON envelope):
  *  the backend content-type + cache-control + the passed-through metadata headers
  *  (traffic/expiry counters, update cadence). `profile-title` is FCP's own (the
- *  site's name), set last so a backend's title (or one cached with an older body)
+ *  service name, `subscription.siteName`), set last so a backend's title (or one cached with an older body)
  *  never reaches the app, whatever path the body took: rendered, cached, stale,
  *  or a backend with no headers at all (Outline).
  *
@@ -3182,12 +3182,10 @@ http.route({
       heroTitle?: string;
       heroSubtitle?: string;
       heroTitles?: string[];
-      name?: string;
     }>(req);
     try {
       return json(
         await ctx.runMutation(internal.adminApi.setSiteConfig, {
-          name: typeof body.name === 'string' ? body.name : undefined,
           bannerEnabled: body.bannerEnabled === true,
           bannerText: typeof body.bannerText === 'string' ? body.bannerText : '',
           bannerLinkUrl: typeof body.bannerLinkUrl === 'string' ? body.bannerLinkUrl : undefined,

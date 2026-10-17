@@ -513,7 +513,7 @@ describe('remnawaveFetchSubscription', () => {
             'content-type': 'text/yaml',
             'subscription-userinfo': 'upload=0; download=10; total=100; expire=0',
             'profile-update-interval': '12',
-            // The backend's own title: FCP sets the title itself (site.name).
+            // The backend's own title: FCP sets the title itself (subscription.siteName).
             'profile-title': 'base64:UmVtbmF3YXZl',
             'x-internal': 'must-be-dropped', // not allowlisted
           },

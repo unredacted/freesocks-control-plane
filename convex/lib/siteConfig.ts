@@ -53,14 +53,7 @@ export interface SiteConfig {
    *  home hero through them; 1 shows it statically; empty falls back to
    *  heroTitle, then the built-in translated variant list. */
   heroTitles: string[];
-  /** The deployment's name where FCP names itself outside the SPA: the title a
-   *  proxy app shows for the subscription (`profile-title`). '' = unset, which
-   *  means SITE_NAME_DEFAULT. Plain text, one line. */
-  name: string;
 }
-
-/** The name used while `site.name` is unset. */
-export const SITE_NAME_DEFAULT = 'FreeSocks';
 
 export const SITE_DEFAULTS: SiteConfig = {
   bannerEnabled: false,
@@ -79,7 +72,6 @@ export const SITE_DEFAULTS: SiteConfig = {
   heroTitle: '',
   heroSubtitle: '',
   heroTitles: [],
-  name: '',
 };
 
 const MAX_BANNER = 280;
@@ -88,41 +80,6 @@ const MAX_EMAIL = 254;
 const MAX_HERO_TITLE = 160;
 const MAX_HERO_SUBTITLE = 500;
 const MAX_HERO_TITLES = 8;
-const MAX_SITE_NAME = 40;
-
-/** One line of plain text: control characters dropped, trimmed, capped. */
-export function sanitizeSiteName(v: unknown): string {
-  if (typeof v !== 'string') return '';
-  // eslint-disable-next-line no-control-regex
-  return v
-    .replace(/[\u0000-\u001f\u007f]/g, '')
-    .trim()
-    .slice(0, MAX_SITE_NAME);
-}
-
-/** The `profile-title` value for a site name, in the `base64:` form Remnawave
- *  sends and proxy apps decode (UTF-8 survives an HTTP header that way). */
-export function profileTitleValue(name: string): string {
-  const bytes = new TextEncoder().encode(name || SITE_NAME_DEFAULT);
-  let bin = '';
-  for (const b of bytes) bin += String.fromCharCode(b);
-  return `base64:${btoa(bin)}`;
-}
-
-/** The site name alone (one point read): the subscription route needs nothing else. */
-export async function resolveSiteName(db: DatabaseReader): Promise<string> {
-  const row = await db
-    .query('appSettings')
-    .withIndex('by_key', (q) => q.eq('key', 'site.name'))
-    .unique();
-  let stored: unknown;
-  try {
-    stored = row ? JSON.parse(row.value) : undefined;
-  } catch {
-    stored = undefined;
-  }
-  return sanitizeSiteName(stored) || SITE_NAME_DEFAULT;
-}
 
 /**
  * Sanitize the rotating hero-title list: keep plain trimmed strings, drop
@@ -197,7 +154,6 @@ export async function resolveSiteConfig(db: DatabaseReader): Promise<SiteConfig>
     heroTitleVal,
     heroSubtitleVal,
     heroTitlesVal,
-    nameVal,
   ] = await Promise.all([
     read('site.bannerEnabled'),
     read('site.bannerText'),
@@ -215,7 +171,6 @@ export async function resolveSiteConfig(db: DatabaseReader): Promise<SiteConfig>
     read('site.heroTitle'),
     read('site.heroSubtitle'),
     read('site.heroTitles'),
-    read('site.name'),
   ]);
   return {
     bannerEnabled:
@@ -237,6 +192,5 @@ export async function resolveSiteConfig(db: DatabaseReader): Promise<SiteConfig>
     heroTitle: sanitizeBannerText(heroTitleVal, MAX_HERO_TITLE),
     heroSubtitle: sanitizeBannerText(heroSubtitleVal, MAX_HERO_SUBTITLE),
     heroTitles: sanitizeHeroTitles(heroTitlesVal),
-    name: sanitizeSiteName(nameVal),
   };
 }

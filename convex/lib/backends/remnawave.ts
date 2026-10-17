@@ -1424,7 +1424,8 @@ export async function remnawaveFetchSubscription(
     // Pass through the well-known subscription metadata headers (never a secret)
     // so the FCP-fronted URL is a faithful stand-in for the backend URL — the proxy
     // app still sees its traffic/expiry counters + update cadence. Not the
-    // backend's `profile-title`: FCP names the subscription itself (site.name).
+    // backend's `profile-title`: FCP names the subscription itself
+    // (subscription.siteName).
     const passthrough: Record<string, string> = {};
     for (const h of ['subscription-userinfo', 'profile-update-interval', 'profile-web-page-url']) {
       const val = res.headers.get(h);

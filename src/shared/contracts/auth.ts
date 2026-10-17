@@ -298,8 +298,6 @@ export const PublicConfig = z.object({
        *  home hero; 1 shows it statically; [] falls back to heroTitle, then the
        *  built-in translated variant list. */
       heroTitles: z.array(z.string()).optional().default([]),
-      /** The site's name (the subscription title proxy apps show); '' = the default. */
-      name: z.string().optional().default(''),
     })
     .optional(),
   /** Whether the SPA should send its anonymous pageview beacon to

@@ -37,13 +37,7 @@ import { CAPABILITIES } from './lib/backends/capabilities';
 import { resolveCatalogWithAvailability, resolverFor } from './lib/placement';
 import { resolveBoundModeIds } from './lib/remnawavePlacement';
 import { sanitizeHttpsUrl, sanitizeOnion } from './lib/verificationConfig';
-import {
-  resolveSiteConfig,
-  sanitizeBannerText,
-  sanitizeEmail,
-  sanitizeHeroTitles,
-  sanitizeSiteName,
-} from './lib/siteConfig';
+import { sanitizeBannerText, sanitizeEmail, sanitizeHeroTitles } from './lib/siteConfig';
 import {
   sanitizeGeoMode,
   sanitizeIpHeaderName,
@@ -2244,15 +2238,11 @@ export const setSiteConfig = internalMutation({
     // Optional: the rotating hero title variants (empty array = back to the
     // static heroTitle / built-in translated title).
     heroTitles: v.optional(v.array(v.string())),
-    // Optional: the site's name (the subscription title proxy apps show);
-    // absent = no change, '' = back to the default.
-    name: v.optional(v.string()),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (
     ctx,
     {
-      name,
       bannerEnabled,
       bannerText,
       bannerLinkUrl,
@@ -2289,7 +2279,6 @@ export const setSiteConfig = internalMutation({
       heroTitle: sanitizeBannerText(heroTitle ?? '', 160),
       heroSubtitle: sanitizeBannerText(heroSubtitle ?? '', 500),
       heroTitles: sanitizeHeroTitles(heroTitles ?? []),
-      name: name !== undefined ? sanitizeSiteName(name) : (await resolveSiteConfig(ctx.db)).name,
     };
     await upsertSetting(
       ctx,
@@ -2353,9 +2342,6 @@ export const setSiteConfig = internalMutation({
     }
     if (heroTitles !== undefined) {
       await upsertSetting(ctx, 'site.heroTitles', JSON.stringify(clean.heroTitles), actorAdminId);
-    }
-    if (name !== undefined) {
-      await upsertSetting(ctx, 'site.name', JSON.stringify(clean.name), actorAdminId);
     }
     await writeAuditLog(ctx, {
       actorType: 'admin',

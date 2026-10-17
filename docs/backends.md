@@ -114,9 +114,10 @@ Higher-level code never calls `fetch` directly; it runs the dispatch actions:
   `subscription-userinfo` / `profile-update-interval` / `profile-web-page-url` headers
   `fetchContent` returns (`SubscriptionContent.headers`), so the fronted URL is a faithful
   stand-in. Not the backend's `profile-title`: FCP sets it itself on EVERY subscription
-  response (fresh, cached, stale fallback, rendered edge body, Outline key) from the site's
-  name (`site.name`, Admin, Settings; blank = `FreeSocks`), in the `base64:<utf-8 base64>`
-  form the backend used, so apps show the deployment's name, never the backend product's. `getAccountView` returns the raw backend URL + the opaque
+  response (fresh, cached, stale fallback, rendered edge body, Outline key) from the service
+  name members see (`subscription.siteName`, the name their connections are labelled with;
+  unset = `FreeSocks`), in the `base64:<utf-8 base64>` form the backend used, so apps show the
+  deployment's name, never the backend product's. `getAccountView` returns the raw backend URL + the opaque
   `subToken` (both in the sealed reveal-leg); the SPA builds the fronted `<origin>/api/v1/sub/<token>`
   URL client-side (`subscriptionDisplayUrl` in `src/client/lib/utils.ts`), so no deployment-origin env
   is needed and every UI surface fronts uniformly. Privacy members still copy via the sealed

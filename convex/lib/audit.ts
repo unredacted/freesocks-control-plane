@@ -102,7 +102,6 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
     'heroTitle',
     'heroSubtitle',
     'heroTitles',
-    'name',
   ],
   // Analytics origin config. Booleans + presence/hash flags ONLY: the Umami
   // host is an apiUrl-class value (and an exfiltration target if repointed) and
