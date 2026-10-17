@@ -102,6 +102,7 @@ export const intentsView = internalQuery({
       out.push({
         id: i._id as string,
         name: i.name,
+        machineName: i.machineName ?? null,
         mode: await modeRefOf(ctx, i),
         state: i.state,
         code: i.code ?? null,

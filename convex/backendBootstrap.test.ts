@@ -19,6 +19,7 @@ import type { Id } from './_generated/dataModel';
 import { insertPanelServer } from './lib/edges/testing/fixtures';
 import { addressRemark, addressesOf, ownsAddress } from './nodeIntents';
 import { gateOfNode } from './lib/edges/testing/reads';
+import { NodeIntentView } from '../src/shared/contracts/servers';
 
 const modules = import.meta.glob('./**/*.*s');
 type T = TestConvex<typeof schema>;
@@ -599,6 +600,50 @@ describe('enrolling a direct node', () => {
         observed,
       }),
     ).rejects.toThrow(/mode_change_needs_admin/);
+  });
+
+  test('the machine name is for operators only: kept, shown, never in a remark or the desired hash', async () => {
+    const { t, serverId, panel } = await seed();
+    await runSetup(t, serverId);
+    const observed = {
+      management: { address: '192.0.2.10', port: 2222 },
+      publicIps: { v4: '203.0.113.10' },
+      capabilities: { caddy: false, ipv6: false },
+    };
+    const enroll = (machineName?: string) =>
+      t.mutation(internal.nodeIntents.enroll, {
+        backendServerId: serverId,
+        name: 'node-a',
+        machineName,
+        mode: 'privacy-reality',
+        contractVersion: 2,
+        observed,
+      });
+    const { intentId } = await enroll('node1.example.org');
+    let intent = await runIntent(t, intentId);
+    expect(intent.machineName).toBe('node1.example.org');
+    const before = { hash: intent.desiredHash, generation: intent.generation };
+    // What members can see keeps the node name.
+    expect(panel.nodes[0]!.name).toBe('node-a');
+    for (const h of panel.hosts) expect(String(h.remark)).not.toContain('node1');
+
+    // A run that omits it keeps it; an unusable value is dropped, not refused.
+    await enroll();
+    await enroll('not a host name!');
+    intent = (await t.run((ctx) => ctx.db.get(intentId)))!;
+    expect(intent.machineName).toBe('node1.example.org');
+
+    // A new one replaces it without touching the machine configuration.
+    await enroll('node1b.example.org');
+    intent = (await t.run((ctx) => ctx.db.get(intentId)))!;
+    expect(intent.machineName).toBe('node1b.example.org');
+    expect({ hash: intent.desiredHash, generation: intent.generation }).toEqual(before);
+
+    const view = await t.query(internal.serverAdmin.intentsView, { backendServerId: serverId });
+    expect(NodeIntentView.parse(view[0])).toMatchObject({
+      name: 'node-a',
+      machineName: 'node1b.example.org',
+    });
   });
 });
 

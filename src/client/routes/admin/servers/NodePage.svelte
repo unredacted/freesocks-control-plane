@@ -120,7 +120,8 @@
   {@const notes = nodeNotes(node)}
   <SectionHeader
     title={node.name}
-    description={[country, node.address].filter(Boolean).join(' · ') || undefined}
+    description={[intent?.machineName, country, node.address].filter(Boolean).join(' · ') ||
+      undefined}
     {back}
   >
     {#snippet actions()}
