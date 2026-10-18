@@ -7,6 +7,10 @@
    * operator-entered custom targets. Only edge evidence reaches the block
    * detector. No member data is involved anywhere on this page. Probe SETTINGS
    * live under Settings, not here.
+   *
+   * Sources: whether each enabled source brings back evidence (a failing one
+   * says why). A target's run history groups its runs by round, with the
+   * control countries labelled and, for an edge, what each round found there.
    */
   import {
     Card,
@@ -28,6 +32,7 @@
   import { edgesPaths } from './lib/routes';
   import ProbeMatrix from './probes/ProbeMatrix.svelte';
   import CustomTargets from './probes/CustomTargets.svelte';
+  import SourcesCard from './probes/SourcesCard.svelte';
   import { decodeProbeRange, encodeProbeRange } from './probes/rangeParam';
 
   const target = searchParam('target');
@@ -58,6 +63,19 @@
     </div>
   {/if}
 
+  <Card>
+    <CardHeader>
+      <CardTitle class="text-base">Sources</CardTitle>
+      <CardDescription>
+        Whether each source brings back evidence. A source that fails is never read as a block, so
+        the countries only it covers read as not known until it works again.
+      </CardDescription>
+    </CardHeader>
+    <CardContent>
+      <SourcesCard />
+    </CardContent>
+  </Card>
+
   <ProbeTimeChart bind:range={() => range, (r) => (rangeParam.value = encodeProbeRange(r))} />
 
   <Card>
@@ -66,7 +84,8 @@
       <CardDescription>
         The last verdict per target and country over IPv4, with the IPv6 and by-name paths noted
         where probed. A fronted hostname is probed by name with a TLS handshake. UDP listeners are
-        not probed. Only edge rows feed the block detector.
+        not probed. Only edge rows feed the block detector. Open a row for its runs, grouped by
+        round, with the control countries labelled.
       </CardDescription>
     </CardHeader>
     <CardContent>

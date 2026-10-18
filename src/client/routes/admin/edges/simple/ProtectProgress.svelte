@@ -15,13 +15,19 @@
    * paused (quarantined) node shows the plain PausedCard; the Live card offers
    * automatic protection while it is off.
    *
+   * With the checks from each country on, each new address says how it fares
+   * from every checked country as its first round comes back ("IR: checking",
+   * then works or blocked); the checks read every 4 s while the run is live.
+   *
    * Props: runId; onClose()
    */
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
   import Check from '@lucide/svelte/icons/check';
+  import { Badge } from '@client/components/ui/badge';
   import { Button } from '@client/components/ui/button';
   import { Skeleton } from '@client/components/ui/skeleton';
+  import { countryName } from '@client/lib/countries';
   import * as Select from '@client/components/ui/select';
   import { router } from '@client/stores/router.svelte';
   import { adminConnectionModesQuery } from '@client/lib/queries';
@@ -31,6 +37,7 @@
     moreDirectWords,
     needButtons,
     runTestLines,
+    runLineName,
     runPickLines,
     runListenerName,
     type NeedAction,
@@ -40,6 +47,7 @@
     cancelSetupRun,
     continueSetupRun,
     edgeConfigQuery,
+    edgeCountriesQuery,
     invalidateConfig,
     invalidateOverview,
     patchEdgeConfig,
@@ -57,8 +65,10 @@
   import NodeApprovalCard from '../../servers/components/NodeApprovalCard.svelte';
   import { serversPaths } from '../../servers/lib/routes';
   import CodeNote from '../components/CodeNote.svelte';
+  import { edgeCountryLines } from '../lib/countryChecks';
   import { edgeErrorMessage } from '../lib/edgeErrors';
   import { edgesPaths } from '../lib/routes';
+  import { countryChip } from '../lib/statusWords';
   import { durationLabel } from '../lib/time';
   import { cn } from '@client/lib/utils';
   import PausedCard from './PausedCard.svelte';
@@ -96,6 +106,20 @@
         )
       : '',
   );
+
+  // The new addresses from each checked country, as their first round comes back.
+  const countriesQ = edgeCountriesQuery({ busy: () => live });
+  const countryAddresses = $derived.by(() => {
+    const data = countriesQ.data;
+    if (!run || !data?.enabled || data.countries.length === 0) return [];
+    return run.listeners
+      .filter((l): l is typeof l & { edgeId: string } => l.edgeId !== null)
+      .map((l) => ({
+        edgeId: l.edgeId,
+        name: runLineName(run, l.edgeId, l.listenerKey) ?? 'New address',
+        chips: edgeCountryLines(data, l.edgeId).map((line) => countryChip(line, now, live)),
+      }));
+  });
 
   const refresh = () => {
     void runQ.refetch();
@@ -286,6 +310,25 @@
         <li>{line.text}</li>
       {/each}
     </ul>
+  {/if}
+  {#if countryAddresses.length > 0}
+    <section class="space-y-1 text-sm" aria-label="From each country">
+      <p class="font-medium">From each country</p>
+      <ul class="space-y-1">
+        {#each countryAddresses as a (a.edgeId)}
+          <li class="flex flex-wrap items-center gap-1">
+            <span class="me-1">{a.name}</span>
+            {#each a.chips as c (c.country)}
+              <Badge
+                variant={c.tone}
+                title={[countryName(c.country, 'en'), c.title].filter(Boolean).join('. ')}
+                >{c.country}: {c.label}</Badge
+              >
+            {/each}
+          </li>
+        {/each}
+      </ul>
+    </section>
   {/if}
   {#if run.reduced.length > 0}
     <p class="text-muted-foreground text-sm">

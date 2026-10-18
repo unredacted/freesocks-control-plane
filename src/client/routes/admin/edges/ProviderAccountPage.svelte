@@ -1,7 +1,8 @@
 <script lang="ts">
   /**
    * One provider account (`/admin/edges/providers/:id`; URL state `?tab` =
-   * overview | inventory | templates).
+   * overview | inventory | templates). The overview's Countries card grades
+   * each location from each checked country, with the location marks.
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -45,6 +46,7 @@
   import { edgesPaths } from './lib/routes';
   import { relativeTime } from './lib/time';
   import type { KeyValueRow } from './lib/types';
+  import CountriesCard from './providers/CountriesCard.svelte';
   import DeleteDialog from './providers/DeleteDialog.svelte';
   import InventoryTab from './providers/InventoryTab.svelte';
   import LimitsCard from './providers/LimitsCard.svelte';
@@ -349,6 +351,8 @@
       {/if}
 
       <LocationsCard account={a} />
+
+      <CountriesCard account={a} />
 
       {#key a.id}
         <LimitsCard account={a} templates={tplList} />

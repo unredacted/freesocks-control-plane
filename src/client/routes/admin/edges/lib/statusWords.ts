@@ -11,14 +11,42 @@
  *   fleetSentence(fleet)         the Edges home's headline
  *   deliveryWords(delivery)      the Delivery card: tone, headline, what members get, why, the fix
  *   statusOf(origins, slug)      one origin's status from the attention response, or null
+ *
+ * The checks from each country (docs/edges.md "Checks from each country"), in
+ * the same one place: every round result, every reason the server records and
+ * every probe failure class has a sentence here (pinned by statusWords.test.ts,
+ * which reads the server's rules for the literals they write).
+ *   ROUND_RESULT_WORDS / COUNTRY_REASON_WORDS / PROBE_FAILURE_WORDS / GROUP_GRADE_WORDS
+ *   STATE_FROM_WORDS / MARK_WORDS
+ *   countryReasonSentence(code), probeFailureWords(code)
+ *   countryLine(line, now)       one edge in one country: label, tone, reason, where from, age, conflict
+ *   countryChip(line, now, waiting)  the same as a short chip ("checking" while its round is out)
+ *   gradeWords(cell, now)        one location in one country: label, tone, age, mark, conflict
+ *   sourceWords(health, now)     one probe source: working or failing, and why
  */
 import type {
   FleetStatus,
   OriginDelivery,
   OriginStatus,
   OriginStatusRow,
+  ProbeSourceHealth,
 } from '../../../../../shared/contracts/edges';
-import { codeExplain, codeFix, codeLabel, type Tone } from '../../../../lib/edgeCodes';
+import type {
+  CountryGroupGrade,
+  CountryReason,
+  CountryRoundResult,
+  CountryStateFrom,
+  ProbeFailureClass,
+} from '../../../../../shared/contracts/edgeCodes';
+import {
+  codeExplain,
+  codeFix,
+  codeLabel,
+  humanizeCode,
+  type Tone,
+} from '../../../../lib/edgeCodes';
+import type { EdgeCountryLine, LocationGradeCell } from './countryChecks';
+import { durationLabel, relativeTime } from './time';
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
@@ -148,4 +176,330 @@ export function statusOf(
   slug: string,
 ): OriginStatus | null {
   return origins?.find((o) => o.relaySlug === slug)?.status ?? null;
+}
+
+// --- checks from each country -----------------------------------------------------------------
+
+export interface WordsWithTone {
+  label: string;
+  sentence: string;
+  tone: Tone;
+}
+
+/** What one round said about an edge from one country. */
+export const ROUND_RESULT_WORDS: Record<CountryRoundResult, WordsWithTone> = {
+  proven: {
+    label: 'Works',
+    sentence: 'Enough vantages there reached it, on more than one network.',
+    tone: 'success',
+  },
+  blocked: {
+    label: 'Blocked',
+    sentence: 'Every vantage there failed while the control countries reached it.',
+    tone: 'danger',
+  },
+  down: {
+    label: 'Down',
+    sentence: 'It failed from there and from the control countries too: broken, not blocked.',
+    tone: 'warning',
+  },
+  unknown: {
+    label: 'Not known',
+    sentence: 'The checks from there did not decide anything.',
+    tone: 'muted',
+  },
+};
+
+/** Every reason the server records on a round or a track, as one sentence. */
+export const COUNTRY_REASON_WORDS: Record<CountryReason, string> = {
+  too_few: 'Too few vantages there answered, or they sat on too few networks, to decide anything.',
+  no_evidence: 'No vantage there gave an answer: the probe services failed or had no probe there.',
+  mixed: 'Some vantages there reached it and more than a third failed, so nothing is decided.',
+  controls_failed:
+    'Every vantage there failed, and so did the control countries: it looks broken, not blocked.',
+  tls_unchecked:
+    'It answers from there, but FCP has not yet checked its TLS handshake with the real name.',
+  tls_failed: 'It answers from there, but FCP’s own TLS check with the real name failed.',
+  needs_repeat:
+    'One check said blocked. FCP checks again at least 30 minutes later before it counts.',
+  group_blocked:
+    'Blocked on its first check, because other addresses in its location are blocked there too.',
+  country_wide:
+    'Held as not known: most addresses checked from there failed at once, which looks like an outage or a probe problem, not a censor.',
+  expired: 'Its last decided result is older than the checks keep, so it is not known again.',
+  handshake:
+    'Connections reach it from there, but no name gets through the handshake: it is blocked by name.',
+  no_tcp_pairing:
+    'A name check failed from there, but no fresh working connection check pairs with it, so it does not count yet.',
+  recovered: 'Names get through from there again.',
+  blocked:
+    'Every vantage there failed in checks at least 30 minutes apart while the control countries reached it.',
+};
+
+/** An edge with nothing decided of its own, in a location blocked there. */
+const INHERITED_SENTENCE =
+  'Nothing is decided for it yet, and other addresses in its location are blocked there.';
+
+export function countryReasonSentence(code: string | null | undefined): string | null {
+  if (!code) return null;
+  return COUNTRY_REASON_WORDS[code as CountryReason] ?? `${humanizeCode(code)}.`;
+}
+
+/** Why a probe run could not measure. */
+export const PROBE_FAILURE_WORDS: Record<ProbeFailureClass, { label: string; sentence: string }> = {
+  auth: { label: 'Credential refused', sentence: 'The service refused the credential.' },
+  rate_limited: {
+    label: 'Rate limited',
+    sentence: 'The service answered that too many requests were made.',
+  },
+  globalping_limit: {
+    label: 'Out of Globalping credits',
+    sentence:
+      'The measurement would not fit in what Globalping allows this hour, so it was not started.',
+  },
+  no_key: { label: 'No key set', sentence: 'The source needs a key that is not set.' },
+  no_vantages: {
+    label: 'No probe there',
+    sentence: 'The service had no probe in the places asked for.',
+  },
+  timeout: { label: 'Timed out', sentence: 'The service did not answer in time.' },
+  service_error: { label: 'Service error', sentence: 'The service failed on its side.' },
+  request_refused: { label: 'Request refused', sentence: 'The service refused the request.' },
+  network: { label: 'Not reachable', sentence: 'FCP could not reach the service.' },
+  error: { label: 'Failed', sentence: 'The run failed for another reason.' },
+  no_results: { label: 'Nothing came back', sentence: 'The run finished without a single result.' },
+  failed: { label: 'Failed', sentence: 'The run failed without saying why.' },
+};
+
+export function probeFailureWords(code: string | null | undefined): {
+  label: string;
+  sentence: string;
+} {
+  if (!code) return PROBE_FAILURE_WORDS.error;
+  return (
+    PROBE_FAILURE_WORDS[code as ProbeFailureClass] ?? {
+      label: humanizeCode(code),
+      sentence: PROBE_FAILURE_WORDS.error.sentence,
+    }
+  );
+}
+
+/** A provider location's grade in one country. */
+export const GROUP_GRADE_WORDS: Record<CountryGroupGrade, WordsWithTone> = {
+  proven: {
+    label: 'Works',
+    sentence: 'At least one address there works and none is blocked.',
+    tone: 'success',
+  },
+  blocked: {
+    label: 'Blocked',
+    sentence:
+      'At least two addresses there are blocked, at least half of those decided, none works.',
+    tone: 'danger',
+  },
+  mixed: {
+    label: 'Some addresses blocked',
+    sentence: 'Some addresses there work and some are blocked.',
+    tone: 'warning',
+  },
+  unknown: {
+    label: 'Not checked yet',
+    sentence: 'No address there has a decided result yet.',
+    tone: 'muted',
+  },
+};
+
+/** Where an edge's state in a country comes from. */
+export const STATE_FROM_WORDS: Record<CountryStateFrom, string> = {
+  edge: 'From its own checks',
+  group: 'From its location',
+  mark: 'Your mark',
+};
+
+/** The mark menu, and a mark in words. */
+export const MARK_WORDS = {
+  proven: 'Works there',
+  blocked: 'Blocked there',
+  clear: 'Use the checks',
+} as const;
+
+export interface CountryLineWords {
+  country: string;
+  label: string;
+  tone: Tone;
+  /** Why, in one sentence (null when the label says it all). */
+  reason: string | null;
+  /** Where the state comes from (null: nothing decided). */
+  from: string | null;
+  /** "Checked 12 min ago" (null: never checked from there). */
+  checked: string | null;
+  /** A mark that disagrees with the edge's own checks, in one sentence. */
+  conflict: string | null;
+}
+
+const ago = (at: string | number | null | undefined, now: number) =>
+  at === null || at === undefined ? null : relativeTime(at, now);
+
+/**
+ * One edge in one checked country: works / blocked since / down / not checked,
+ * the reason, and where it comes from (its own checks, its location, a mark).
+ * "Blocked for 5 h" counts from when its own state turned blocked there.
+ */
+export function countryLine(line: EdgeCountryLine, now: number): CountryLineWords {
+  const { country, row } = line;
+  const mark = line.edgeMark ?? line.groupMark;
+  const lastAt = row?.lastRound?.at ?? row?.handshake.lastBatchAt ?? null;
+  const checked = lastAt ? `Checked ${ago(lastAt, now)}` : null;
+  const out = (
+    label: string,
+    tone: Tone,
+    reason: string | null,
+    from: string | null,
+    conflict: string | null = null,
+  ): CountryLineWords => ({ country, label, tone, reason, from, checked, conflict });
+
+  if (mark) {
+    const own = row?.combined ?? 'unknown';
+    const conflict =
+      own !== 'unknown' && own !== mark.state
+        ? `The checks say ${own === 'blocked' ? 'blocked' : 'it works'}.`
+        : null;
+    return out(
+      mark.state === 'proven' ? 'Works' : 'Blocked',
+      mark.state === 'proven' ? 'success' : 'danger',
+      null,
+      line.edgeMark ? STATE_FROM_WORDS.mark : 'Your mark on its location',
+      conflict,
+    );
+  }
+  if (!row) return out('Not checked yet', 'muted', null, null);
+  const eff = row.effective;
+  if (eff?.state === 'blocked') {
+    if (eff.from === 'group')
+      return out('Blocked', 'danger', INHERITED_SENTENCE, STATE_FROM_WORDS.group);
+    // How long it has been blocked: since its own state turned blocked there.
+    const since = row.blockedSince
+      ? ` for ${durationLabel(Math.max(0, now - new Date(row.blockedSince).getTime()))}`
+      : '';
+    const why =
+      row.handshake.state === 'blocked'
+        ? (row.handshake.reason ?? 'handshake')
+        : (row.address.reason ?? 'blocked');
+    return out(`Blocked${since}`, 'danger', countryReasonSentence(why), STATE_FROM_WORDS[eff.from]);
+  }
+  if (eff?.state === 'proven')
+    return out(
+      'Works',
+      'success',
+      countryReasonSentence(row.address.reason ?? row.handshake.reason),
+      STATE_FROM_WORDS[eff.from],
+    );
+  // Nothing decided: say what the newest checks found.
+  if (row.address.reason === 'needs_repeat' || row.handshake.reason === 'needs_repeat')
+    return out('Blocked once, checking again', 'warning', COUNTRY_REASON_WORDS.needs_repeat, null);
+  if (row.address.reason === 'country_wide')
+    return out('Held, not known', 'warning', COUNTRY_REASON_WORDS.country_wide, null);
+  if (row.lastRound?.result === 'down')
+    return out(
+      'Down',
+      'warning',
+      countryReasonSentence(row.lastRound.reason) ?? ROUND_RESULT_WORDS.down.sentence,
+      null,
+    );
+  return out(
+    'Not known',
+    'muted',
+    countryReasonSentence(row.address.reason ?? row.lastRound?.reason ?? row.handshake.reason),
+    null,
+  );
+}
+
+export interface CountryChip {
+  country: string;
+  /** Lower case, for "IR: works". */
+  label: string;
+  tone: Tone;
+  /** The country's name, the reason and where it comes from, for a tooltip. */
+  title: string;
+}
+
+/**
+ * One address in one country as a short chip; `waiting` = its first round is
+ * still out (a setup run checking the new address), so "checking" instead of
+ * "not checked yet".
+ */
+export function countryChip(line: EdgeCountryLine, now: number, waiting: boolean): CountryChip {
+  const w = countryLine(line, now);
+  const fresh = !line.row && !line.edgeMark && !line.groupMark;
+  return {
+    country: line.country,
+    label: fresh && waiting ? 'checking' : w.label.toLowerCase(),
+    tone: w.tone,
+    title: [w.from, w.reason, w.conflict].filter(Boolean).join(' '),
+  };
+}
+
+export interface GradeWords {
+  country: string;
+  label: string;
+  tone: Tone;
+  /** "checked 2 h ago" (null: never). */
+  age: string | null;
+  /** The operator's mark in words ("Marked: blocked there"), or null. */
+  mark: string | null;
+  /** The mark itself (it wins over the grade wherever a short chip has room for one word). */
+  markState: 'proven' | 'blocked' | null;
+  /** The mark disagrees with the checks, in one sentence. */
+  conflict: string | null;
+}
+
+/** One provider location in one country: Works, Blocked, Some addresses blocked, Not checked yet. */
+export function gradeWords(cell: LocationGradeCell, now: number): GradeWords {
+  const state = cell.grade?.state ?? 'unknown';
+  const words = GROUP_GRADE_WORDS[state];
+  // Checked but nothing decided is not the same as never checked.
+  const label = state === 'unknown' && cell.checkedEdges > 0 ? 'Not known yet' : words.label;
+  return {
+    country: cell.country,
+    label,
+    tone: words.tone,
+    age: cell.checkedAt ? `checked ${ago(cell.checkedAt, now)}` : null,
+    mark: cell.mark ? `Marked: ${MARK_WORDS[cell.mark.state].toLowerCase()}` : null,
+    markState: cell.mark?.state ?? null,
+    conflict: cell.conflict
+      ? `Your mark says ${cell.mark?.state === 'blocked' ? 'blocked' : 'it works'}; the checks say ${words.label.toLowerCase()}.`
+      : null,
+  };
+}
+
+export interface SourceWords {
+  label: string;
+  tone: Tone;
+  detail: string;
+}
+
+/** One probe source: working, failing (with its last failure in words), or idle. */
+export function sourceWords(h: ProbeSourceHealth, now: number): SourceWords {
+  const counted = `${h.withEvidence} of ${h.runs} recent ${h.runs === 1 ? 'run' : 'runs'} brought evidence.`;
+  if (h.runs === 0) return { label: 'No runs yet', tone: 'muted', detail: 'Nothing has run yet.' };
+  const last = h.lastError ? probeFailureWords(h.lastError) : null;
+  if (h.failing)
+    return {
+      label: `Failing: ${last?.label.toLowerCase() ?? 'no evidence'}`,
+      tone: 'danger',
+      detail: `${last?.sentence ?? ''} ${h.streak} runs in a row brought nothing${
+        h.lastOkAt ? `; the last good one was ${ago(h.lastOkAt, now)}` : ''
+      }. The countries it alone covers read as not known.`.trim(),
+    };
+  if (h.streak > 0 && last)
+    return {
+      label: 'Working, with failures',
+      tone: 'warning',
+      detail: `The newest ${h.streak === 1 ? 'run' : `${h.streak} runs`} failed: ${last.label.toLowerCase()}. ${counted}`,
+    };
+  return {
+    label: 'Working',
+    tone: 'success',
+    detail: `${counted}${h.lastOkAt ? ` The last good run was ${ago(h.lastOkAt, now)}.` : ''}`,
+  };
 }

@@ -23,6 +23,7 @@ import {
   type EdgeConfig,
 } from './lib/edgeConfig';
 import { probeSourceHealth } from './probes';
+import { countryWideHolds, newEdgeBlockedIn } from './edgeCountry';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import { readMaintenance } from './lib/edges/maintenance';
 import { isTerminalPhase } from './lib/edges/rotation';
@@ -728,7 +729,8 @@ interface AttentionItem {
     | 'require_edges'
     | 'protect_node'
     | 'open_node'
-    | 'open_modes';
+    | 'open_modes'
+    | 'open_probes';
   since: string | null;
 }
 
@@ -1329,6 +1331,24 @@ export const attention = internalQuery({
           });
         }
       }
+      // Checks from each country: a new address (active, never in use) whose
+      // round finds it blocked in a checked country, before anyone relies on it.
+      if (cfg.country.enabled)
+        for (const e of edges) {
+          const blockedIn = await newEdgeBlockedIn(ctx.db, e, cfg.probe.countries);
+          if (blockedIn.length === 0) continue;
+          items.push({
+            ...base(relay),
+            id: `new_edge_blocked_in:${e._id}`,
+            kind: 'new_edge_blocked_in',
+            severity: 'warning',
+            edgeId: e._id as string,
+            listenerKey: listenerOf(e)?.listenerKey ?? null,
+            facts: { countries: blockedIn.map((b) => b.country) },
+            action: 'open_edge',
+            since: iso(Math.min(...blockedIn.map((b) => b.at))),
+          });
+        }
       // Coverage at the cap: a deployed listener has no published edge, every
       // slot is taken and no expansion can make room. Only a rebalance
       // (unpublishing a duplicate) frees a slot, and that is the operator's call.
@@ -1639,6 +1659,25 @@ export const attention = internalQuery({
         since: isoN(h.lastFailAt),
       });
     }
+    // The country-wide guard holds new blocks in a country: most of what is
+    // checked there failed at once (an outage or a probe problem, not a
+    // censor), so nothing turned blocked there; the sources say which.
+    if (cfg.country.enabled)
+      for (const c of await countryWideHolds(
+        ctx.db,
+        cfg.probe.countries,
+        now,
+        Math.max(cfg.country.standbyRecheckHours, 1) * 60 * 60_000,
+      ))
+        items.push({
+          ...fleetBase,
+          id: `country_wide_failure:${c.country}`,
+          kind: 'country_wide_failure',
+          severity: 'warning',
+          facts: { countries: [c.country], edges: c.edges, groups: c.groups },
+          action: 'open_probes',
+          since: iso(c.since),
+        });
     // Enrolled nodes waiting on the operator (docs/servers.md "Node lifecycle"):
     // FCP never starts a protect run or approves on its own, it asks.
     items.push(...(await nodeAttention(ctx, relays)));

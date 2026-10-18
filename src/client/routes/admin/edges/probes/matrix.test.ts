@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { ProbeMatrixTarget } from '../../../../../shared/contracts/edges';
+import type { ProbeMatrixTarget, ProbeRunAdmin } from '../../../../../shared/contracts/edges';
 import {
   countryTally,
   familyLabel,
+  groupRounds,
   groupTargets,
   matrixCell,
   parseSkipped,
@@ -97,6 +98,7 @@ describe('small labels', () => {
       vantageClass: 'unknown' as const,
       rttMs: null,
       error: null,
+      control: false,
     };
     expect(
       countryTally([
@@ -105,8 +107,20 @@ describe('small labels', () => {
         { ...base, country: 'BB', ok: true },
       ]),
     ).toEqual([
-      { country: 'AA', ok: 1, fail: 1 },
-      { country: 'BB', ok: 1, fail: 0 },
+      { country: 'AA', control: false, ok: 1, fail: 1 },
+      { country: 'BB', control: false, ok: 1, fail: 0 },
+    ]);
+    // A control vantage is counted apart, after the checked countries, even for the same code.
+    expect(
+      countryTally([
+        { ...base, country: 'DE', ok: true, control: true },
+        { ...base, country: 'AA', ok: false },
+        { ...base, country: 'DE', ok: false },
+      ]),
+    ).toEqual([
+      { country: 'AA', control: false, ok: 0, fail: 1 },
+      { country: 'DE', control: false, ok: 0, fail: 1 },
+      { country: 'DE', control: true, ok: 1, fail: 0 },
     ]);
   });
   it('labels the address family', () => {
@@ -116,5 +130,33 @@ describe('small labels', () => {
   it('puts an edge detail in words', () => {
     expect(targetDetail({ kind: 'edge', detail: 'published · adopted' })).toContain('Imported');
     expect(targetDetail({ kind: 'custom', detail: '198.51.100.9:443' })).toBe('198.51.100.9:443');
+  });
+});
+
+describe('groupRounds', () => {
+  const run = (id: string, roundId: string | null, requestedAt: string, status = 'finished') =>
+    ({
+      id,
+      roundId,
+      requestedAt,
+      status,
+    }) as unknown as ProbeRunAdmin;
+  it('groups the runs of one request, newest round first, and keeps old runs alone', () => {
+    const rounds = groupRounds([
+      run('a', 'r2', '2026-10-18T10:00:02Z', 'running'),
+      run('b', 'r2', '2026-10-18T10:00:01Z'),
+      run('c', 'r1', '2026-10-18T09:00:00Z'),
+      run('d', null, '2026-10-17T09:00:00Z'),
+      run('e', null, '2026-10-17T08:00:00Z'),
+      run('f', 'r1', '2026-10-18T08:59:59Z'),
+    ]);
+    expect(rounds.map((r) => [r.roundId, r.runs.map((x) => x.id), r.open])).toEqual([
+      ['r2', ['a', 'b'], true],
+      ['r1', ['c', 'f'], false],
+      [null, ['d'], false],
+      [null, ['e'], false],
+    ]);
+    expect(rounds[0]!.requestedAt).toBe('2026-10-18T10:00:01Z');
+    expect(rounds[1]!.requestedAt).toBe('2026-10-18T08:59:59Z');
   });
 });

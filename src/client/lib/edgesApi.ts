@@ -17,7 +17,9 @@
  *      section relies on: summary 30 s (3 s while `counts.rotating > 0`),
  *      attention 15 s, setup-status 30 s (5 s while a step is `ready`), the
  *      origin and its lists 30 s (4 s while something runs on it; never off,
- *      lib/livePoll.ts), rotation detail 2 s until terminal, probe matrix 30 s.
+ *      lib/livePoll.ts), rotation detail 2 s until terminal, probe matrix 30 s,
+ *      the checks from each country and the probe sources 30 s (4 s while a
+ *      check the page asked for is out), a target's runs 30 s (4 s while one runs).
  *      The origin lookup, the summary and attention also note each origin's
  *      stamp; a stamp that moved invalidates that origin's lists
  *      (lib/edgesLive.ts `noteOrigins`), so a rotation shorter than one poll
@@ -37,11 +39,14 @@ import {
   AdoptHostRequest,
   AdoptHostResponse,
   AttentionResponse,
+  CountryMarkResponse,
+  type CountryMarkRequest,
   DeliveryBindingsResponse,
   EdgeAdmin,
   EdgeAdoptResponse,
   EdgeConfigPatchResponse,
   EdgeConfigView,
+  EdgeCountriesResponse,
   EdgeDetail,
   EdgeDiscoverResponse,
   EdgeIdResponse,
@@ -78,6 +83,7 @@ import {
   ProbeReachabilityMatrix,
   ProbeRequestedResponse,
   ProbeRunsResponse,
+  ProbeSourcesResponse,
   ProbeSummary,
   ProbeTargetCreatedResponse,
   ProbeTargetsResponse,
@@ -640,6 +646,20 @@ export const updateProbeTarget = (id: string, body: Partial<ProbeTargetBody>) =>
   apiClient.patch(`${BASE}/probes/targets/${enc(id)}`, body, EdgeOkResponse);
 export const deleteProbeTarget = (id: string) =>
   apiClient.delete(`${BASE}/probes/targets/${enc(id)}`, EdgeOkResponse);
+/** Whether each enabled source is bringing back evidence. */
+export const fetchProbeSources = () =>
+  apiClient.get(`${BASE}/probes/sources`, ProbeSourcesResponse);
+
+// --- checks from each country --------------------------------------------------------------------
+
+/** Grades per location, every edge's state per checked country, marks, sources. */
+export const fetchEdgeCountries = () => apiClient.get(`${BASE}/countries`, EdgeCountriesResponse);
+/** An operator's mark on an edge or a location in one country (`state: null` removes it). */
+export const setCountryMark = (body: CountryMarkRequest) =>
+  apiClient.post(`${BASE}/countries/marks`, body, CountryMarkResponse);
+/** One round of one edge from every checked country now (throttled like a probe request). */
+export const requestCountryCheck = (edgeId: string) =>
+  apiClient.post(`${BASE}/countries/check`, { edgeId }, ProbeRequestedResponse);
 
 // --- render / delivery bindings --------------------------------------------------------------------
 
@@ -695,6 +715,8 @@ export const edgeKeys = {
   probeRuns: (targetKey: string) => [...ROOT, 'probes', 'runs', targetKey] as const,
   probeSummary: (qs: string) => [...ROOT, 'probes', 'summary', qs] as const,
   probeAudit: [...ROOT, 'probes', 'audit'] as const,
+  probeSources: [...ROOT, 'probes', 'sources'] as const,
+  countries: [...ROOT, 'countries'] as const,
   deliveryBindings: [...ROOT, 'delivery-bindings'] as const,
 };
 
@@ -733,6 +755,12 @@ export function invalidateConfig(qc: QueryClient): void {
 }
 export function invalidateProbes(qc: QueryClient): void {
   void qc.invalidateQueries({ queryKey: edgeKeys.probes });
+}
+/** The checks from each country, the probes (a check is a round of runs) and attention. */
+export function invalidateCountries(qc: QueryClient): void {
+  void qc.invalidateQueries({ queryKey: edgeKeys.countries });
+  void qc.invalidateQueries({ queryKey: edgeKeys.probes });
+  void qc.invalidateQueries({ queryKey: edgeKeys.attention });
 }
 
 // --- query wrappers ------------------------------------------------------------------------------
@@ -1018,13 +1046,51 @@ export const probeTargetsQuery = () =>
     staleTime: 30_000,
   }));
 
+/** One target's runs: 30 s, 4 s while one of them is requested or running. */
 export const probeRunsQuery = (targetKey: () => string | null) =>
   createQuery(() => ({
     queryKey: edgeKeys.probeRuns(targetKey() ?? ''),
     queryFn: () => fetchProbeRuns(targetKey()!),
     enabled: !!targetKey(),
     staleTime: 10_000,
-    refetchInterval: 15_000,
+    refetchInterval: (q) =>
+      liveInterval(
+        (q.state.data?.runs ?? []).some((r) => r.status === 'requested' || r.status === 'running'),
+      ),
+  }));
+
+/** Whether each probe source brings back evidence: 30 s. */
+export const probeSourcesQuery = () =>
+  createQuery(() => ({
+    queryKey: edgeKeys.probeSources,
+    queryFn: fetchProbeSources,
+    staleTime: 15_000,
+    refetchInterval: liveInterval(false),
+  }));
+
+/**
+ * The checks from each country (one cache for every page that shows them):
+ * 30 s, 4 s while `busy(data)` (a check the page asked for has not come back,
+ * a setup run waits for its round; judged after every read). `poll: false`
+ * reads once (a dialog); `enabled` keeps a mounted but hidden view from reading.
+ */
+export const edgeCountriesQuery = (
+  o: {
+    busy?: (data: EdgeCountriesResponse | undefined) => boolean;
+    poll?: boolean;
+    enabled?: () => boolean;
+  } = {},
+) =>
+  createQuery(() => ({
+    queryKey: edgeKeys.countries,
+    queryFn: fetchEdgeCountries,
+    enabled: o.enabled?.() ?? true,
+    staleTime: 10_000,
+    refetchInterval:
+      o.poll === false
+        ? (false as const)
+        : (q: { state: { data: EdgeCountriesResponse | undefined } }) =>
+            liveInterval(!!o.busy?.(q.state.data)),
   }));
 
 export const probeSummaryQuery = (range: () => ProbeRange) =>

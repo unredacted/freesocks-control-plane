@@ -58,6 +58,8 @@ export const ATTENTION_RANK = [
   'block_simulated',
   'block_suspected',
   'edge_unreachable',
+  'new_edge_blocked_in',
+  'country_wide_failure',
   'probe_source_failing',
   'fleet_rotation_cap',
   'family_rule_disabled',
