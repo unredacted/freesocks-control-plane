@@ -211,6 +211,13 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // PATCH /admin/settings flipped a key (e.g. devices.enforcementEnabled) —
   // the key NAME only, never the value (some values are secret-adjacent).
   'admin.settings.change': ['key'],
+  // The censored-country list (lib/censoredCountries.ts): the country CODES added,
+  // removed or re-flagged (comma-joined; infrastructure configuration, never a
+  // member's country) and the new length.
+  'censorship.countries.update': ['added', 'removed', 'flagsChanged', 'count'],
+  // Admin -> Status: the availability matrix's row count and the load-band
+  // thresholds (operator configuration of the public status page).
+  'status.page.update': ['censorshipRows', 'busyAt', 'crowdedAt'],
   // By-id backend-server CRUD from the CMS (the by-slug IaC path audits
   // separately); never the config secret / apiUrl.
   'admin.backend_server.create': ['slug', 'backend'],

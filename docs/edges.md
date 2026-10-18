@@ -1275,8 +1275,8 @@ writes the new tuple by itself).
 ### Names for the member's country
 
 A name that works almost everywhere can be blocked in one place: a large site that is itself
-censored there. So in the **curated countries** (`edge.sni.curatedCountries`, default
-`CN, RU, IR, MM`) "usable" is judged per country.
+censored there. So in the **curated countries** (every country on the censored-country list,
+§ Configuration, "The censored-country list") "usable" is judged per country.
 
 **Judging.** `POST sni/families/{slug}/names/country {snis, country, state}` records an
 operator's judgement (`proven`, `blocked`, or `unknown` to clear it) in `sniNameCountry`, for a
@@ -1389,8 +1389,9 @@ volunteers' home connections. These rules are built in, not settings:
   within `edge.sni.vantage.hourlyBudget` measurements an hour (default 12; one measurement = one
   name, one source, at most `perCountryLimit` vantages, default 3). Calls to one service inside a
   batch are spaced like the address-level probes (1.5 s apart, `EDGE_PLUMBING.probeSourceSpacingMs`).
-- **Opt-in per country.** Nothing runs until the switch is on **and** a curated country is
-  ticked under `edge.sni.vantage.countries`. Unticking a country stops new measurements at once.
+- **Opt-in per country.** Nothing runs until the switch is on **and** a country on the
+  censored-country list has "Check names from inside" on (Settings, Censored countries). Turning
+  it off stops new measurements at once.
 - **Each source's rules.** Globalping: own addresses, HEAD, within the rate limit. Atlas:
   non-public one-offs within credits. check-host.net is not used. A maintenance freeze stops new
   measurements like any probe.
@@ -1501,8 +1502,9 @@ Admin -> Edges -> Advanced -> Server names (`/admin/edges/names`, `/admin/edges/
   check again, retire (confirmed: it states the name drain, `edge.sniDrainMinutes`), bring
   back, burn (typed), or record for a curated country that they work
   or are blocked there.
-- Checks from inside countries (the list page): the switch for `edge.sni.vantage.enabled`, a
-  box per curated country, the services, "Apply suggestions by themselves", the budget in one
+- Checks from inside countries (the list page): the switch for `edge.sni.vantage.enabled`, the
+  countries they run from (read only: changed on Settings, Censored countries), the services,
+  "Apply suggestions by themselves", the budget in one
   line, and the residual risk next to the switch. On a family, every name shows one line per
   country it was checked from (what the checks saw, then what they suggest against the mark
   standing today) with **Apply** (or "Use the checks instead" on a conflict); picked names can be
@@ -1597,7 +1599,6 @@ block in that body, read by their own resolver so the render path never reads th
 | Key (`edge.sni.vantage.*`)                | Default         | Bounds       | Meaning                                                                                   |
 | ----------------------------------------- | --------------- | ------------ | ----------------------------------------------------------------------------------------- |
 | `enabled`                                 | `false`         |              | the switch (needs `edge.sni.enabled` too)                                                 |
-| `countries`                               | `[]`            | curated      | the opt-in per country; a country that is not curated is ignored                          |
 | `sources.globalping`, `sources.ripeatlas` | `true`, `false` |              | services; Atlas also needs `edge.secret.probe.ripeatlas.key` / `EDGE_PROBE_RIPEATLAS_KEY` |
 | `intervalHours`                           | 72              | 6..720       | a name is checked from a country again after this long                                    |
 | `hourlyBudget`                            | 12              | 0..120       | measurements an hour (one name, one source, one country)                                  |
@@ -1607,10 +1608,46 @@ block in that body, read by their own resolver so the render path never reads th
 | `minVantages`, `minNetworks`              | 3, 2            | 1..20, 1..10 | what a suggestion needs                                                                   |
 | `autoApply`                               | `false`         |              | apply suggestions by themselves (never over an operator's mark)                           |
 
-At the defaults one source spends at most 12 measurements an hour (36 vantage results); a
+The countries are not a key here: they are the listed countries with "Check names from inside"
+on (next section). At the defaults one source spends at most 12 measurements an hour (36 vantage
+results); a
 family of 40 names in four countries is covered in about 14 hours and then every 72 (a name on several addresses takes one of them per interval); a family
 of 500 is covered about once a week unless the budget is raised. Globalping tests count against
 the same account limit as the address-level probes.
+
+### The censored-country list
+
+One list, `censorship.countries` in `appSettings` (`convex/lib/censoredCountries.ts`), replaces
+five that had drifted apart: `edge.sni.curatedCountries`, `edge.probe.countries`,
+`edge.sni.vantage.countries`, `delivery.privacyCountries` and the rows of the status page's
+availability matrix (`status.censorship`). Admin -> Settings -> "Censored countries"
+(`GET|PUT /api/v1/admin/censored-countries`, `admin:settings:read|write`; PUT replaces the
+whole list). Up to 40 entries, in the operator's order, each
+`{ code, checkEdges, checkNamesInside }`:
+
+- being on the list makes a country a **curated country** for server names (§ Names for the
+  member's country), a choice under "Where are you connecting from?", a row the status page can
+  show, and a country where the connection-mode suggestion follows the availability matrix
+  (`convex/lib/modeSuggestion.ts`: modes available on the member's backend ranked by that
+  country's cell, `available` before `partial`; a listed country without a row gets the
+  censorship-recommended mode; elsewhere the default);
+- `checkEdges`: edges are probed from there (`EdgeConfig.probe.countries` is filled from these;
+  the Edges settings page shows them read only);
+- `checkNamesInside`: the checks from inside a country run there (`SniVantageConfig.countries`),
+  with the residual risk above stated next to the switch.
+
+While the key has never been written the list is computed **live** from the five old keys (their
+union, in the order curated, probe, vantage, privacy, matrix rows; a probe country keeps
+`checkEdges`, a vantage country keeps `checkNamesInside` only if it was also curated), so nothing
+moves between `convex deploy` and the seed. `seed:seedCensoredCountries` (part of `seedCutover`)
+then writes that list once and never overwrites a stored one. The union is never truncated: when
+the old keys together hold more than 40 countries the seed does not copy it (dropping the tail
+would silently stop checks, suggestions and matrix rows), it stays live, and the Settings card asks
+the operator to remove the extra countries and save. The old keys are left in place for
+a rollback and no longer read once the list is stored; the edges and server-name PATCH routes no
+longer write them. A matrix row of a country that leaves the list stays stored (adding the
+country back brings it back) but is not shown on the public page. Audit:
+`censorship.countries.update` with the codes added, removed and re-flagged, and the new length.
 
 ## Sealing
 

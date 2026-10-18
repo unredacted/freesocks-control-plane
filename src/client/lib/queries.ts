@@ -32,6 +32,7 @@ import {
   AdminConnectionModesResponse,
   RemnawaveNodeStatsResponse,
   AdminAlertsConfig,
+  AdminCensoredCountries,
   AdminAnalyticsConfig,
   AdminReferralConfig,
   TierAdmin,
@@ -101,6 +102,7 @@ export const queryKeys = {
   adminReferralConfig: ['admin', 'referral-config'] as const,
   adminAnalytics: ['admin', 'analytics'] as const,
   adminAlerts: ['admin', 'alerts'] as const,
+  adminCensoredCountries: ['admin', 'censored-countries'] as const,
 };
 
 // --- Public surface ----------------------------------------------------------
@@ -286,6 +288,14 @@ export const adminAlertsQuery = () =>
   createQuery(() => ({
     queryKey: queryKeys.adminAlerts,
     queryFn: () => apiClient.get('/api/v1/admin/alerts', AdminAlertsConfig),
+    staleTime: 60_000,
+  }));
+
+/** The censored-country list (Settings), in order. */
+export const adminCensoredCountriesQuery = () =>
+  createQuery(() => ({
+    queryKey: queryKeys.adminCensoredCountries,
+    queryFn: () => apiClient.get('/api/v1/admin/censored-countries', AdminCensoredCountries),
     staleTime: 60_000,
   }));
 

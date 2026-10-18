@@ -20,6 +20,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import { signValue } from './lib/cookies';
+import { DEFAULT_CENSORED_COUNTRIES } from './lib/censoredCountries';
 import {
   FIXTURE_CONFIG_PROFILE as PROFILE,
   FIXTURE_INBOUND as INBOUND,
@@ -333,7 +334,8 @@ describe('judging names per country', () => {
     // Judging a name does not stale the operator's endpoint test.
     expect((await t.run((ctx) => ctx.db.get(listenerIds.a)))!.revision).toBe(1);
     const detail = await (await call('GET', 'families/fam-a')).json();
-    expect(detail.curatedCountries).toEqual(['CN', 'RU', 'IR', 'MM']);
+    // Every country on the censored-country list (here: the default one).
+    expect(detail.curatedCountries).toEqual(DEFAULT_CENSORED_COUNTRIES.codes);
     expect(detail.names.find((n: { name: string }) => n.name === 'big-site.example')).toMatchObject(
       {
         blockedIn: ['CN'],

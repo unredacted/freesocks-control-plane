@@ -309,8 +309,8 @@ const COPY = {
   },
   probe_countries_none: {
     label: 'No probe countries',
-    explain: 'No country is configured for probing.',
-    fix: 'Add countries under Settings.',
+    explain: 'No country on the censored-country list has "Check edges from here" on.',
+    fix: 'Turn it on for a country under Settings, Censored countries.',
   },
   edge_layer_disabled: {
     label: 'Edges switched off',
