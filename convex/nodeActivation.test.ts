@@ -29,8 +29,10 @@ import {
   type FakeBackend,
 } from './lib/edges/testing/fakeBackend';
 import { gateOfNode } from './lib/edges/testing/reads';
+import { scheduledWork } from './lib/edges/testing/scheduled';
 
 const modules = import.meta.glob('./**/*.*s');
+const scheduled = scheduledWork();
 type T = TestConvex<typeof schema>;
 
 beforeEach(() => {
@@ -39,7 +41,8 @@ beforeEach(() => {
   vi.stubEnv('IP_HASH_SALT', 'test-salt');
   vi.stubEnv('ACCOUNT_ID_PEPPER', 'test-pepper');
 });
-afterEach(() => {
+afterEach(async () => {
+  await scheduled.end();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
@@ -102,7 +105,7 @@ async function seedLiveDirect(
     userIds?: 'uuid' | 'numeric';
   } = {},
 ) {
-  const t = convexTest(schema, modules);
+  const t = scheduled.track(convexTest(schema, modules));
   const serverId = await insertPanelServer(t);
   const panel = installPanel({ userIds: opts.userIds });
   await t.mutation(internal.seed.seedConnectionModes, {});

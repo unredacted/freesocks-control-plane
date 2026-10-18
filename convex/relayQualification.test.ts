@@ -16,17 +16,20 @@ import {
   MINT_SETTLE_MS,
   qualificationUsername,
 } from './relayQualification';
+import { scheduledWork } from './lib/edges/testing/scheduled';
 
 const modules = import.meta.glob('./**/*.*s');
+const scheduled = scheduledWork();
 
 async function seed() {
-  const t = convexTest(schema, modules);
+  const t = scheduled.track(convexTest(schema, modules));
   await insertPanelServer(t);
   const { relayId } = await registerRelay(t);
   return { t, relayId };
 }
 
-afterEach(() => {
+afterEach(async () => {
+  await scheduled.end();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   __setQualificationRemoverForTests(null);
@@ -195,7 +198,7 @@ describe('origin qualification credential', () => {
 
 async function seedWithPanel() {
   const panel = fakePanel();
-  const t = convexTest(schema, modules);
+  const t = scheduled.track(convexTest(schema, modules));
   await insertPanelServer(t);
   const { relayId } = await registerRelay(t);
   const relay = () => t.run((ctx) => ctx.db.get(relayId)).then((r) => r!);
@@ -207,7 +210,7 @@ async function seedWithPanel() {
 describe('relayQualification.ensure: the persisted mint operation', () => {
   test('a stored credential without a Trojan password is completed from the same account, not re-minted', async () => {
     const panel = fakePanel();
-    const t = convexTest(schema, modules);
+    const t = scheduled.track(convexTest(schema, modules));
     await insertPanelServer(t);
     const { relayId } = await registerRelay(t, {
       listeners: [

@@ -26,10 +26,13 @@ import {
   wsListener,
 } from './lib/edges/testing/fixtures';
 import { relayBySlug } from './lib/edges/testing/reads';
+import { scheduledWork } from './lib/edges/testing/scheduled';
 
 const modules = import.meta.glob('./**/*.*s');
+const scheduled = scheduledWork();
 
-afterEach(() => {
+afterEach(async () => {
+  await scheduled.end();
   vi.unstubAllGlobals();
 });
 
@@ -42,7 +45,7 @@ function forbidNetwork() {
 
 async function world(opts: { hostMode?: 'operator'; listeners?: 'as' | 'a' } = {}) {
   forbidNetwork();
-  const t = convexTest(schema, modules);
+  const t = scheduled.track(convexTest(schema, modules));
   const serverId = await insertPanelServer(t);
   const accountId = await createAccount(t, { provider: 'gcore', name: 'acct-a', qualified: true });
   const listeners =
@@ -73,7 +76,7 @@ const setEnabledRaw = (
 describe('coverage: capacity follows the deployed listeners', () => {
   test('creating an origin with its listeners raises desiredPublished to the listener count and warns edge.pool_raised', async () => {
     forbidNetwork();
-    const t = convexTest(schema, modules);
+    const t = scheduled.track(convexTest(schema, modules));
     const serverId = await insertPanelServer(t);
     const r = await t.mutation(internal.relays.create, {
       slug: 'node-three',
@@ -127,7 +130,7 @@ describe('coverage: capacity follows the deployed listeners', () => {
 
   test('a ninth deployed, enabled listener is refused (edge.listener_cap) at create and at the CMS upsert; eight are fine', async () => {
     forbidNetwork();
-    const t = convexTest(schema, modules);
+    const t = scheduled.track(convexTest(schema, modules));
     const serverId = await insertPanelServer(t);
     const listener = (i: number) =>
       realityListener({
@@ -340,7 +343,7 @@ describe('coverage: listener-aware reconcile upkeep', () => {
 
   test('a setupOwned origin is skipped by upkeep even with a standby and the switches on', async () => {
     forbidNetwork();
-    const t = convexTest(schema, modules);
+    const t = scheduled.track(convexTest(schema, modules));
     const serverId = await insertPanelServer(t);
     await createAccount(t, { provider: 'gcore', name: 'acct-a', qualified: true });
     await t.run((ctx) => upsertSettingRow(ctx, 'edge.enabled', 'true'));
@@ -380,7 +383,7 @@ describe('coverage: listener-aware reconcile upkeep', () => {
 describe('deferred binding and setup ownership', () => {
   async function guided() {
     forbidNetwork();
-    const t = convexTest(schema, modules);
+    const t = scheduled.track(convexTest(schema, modules));
     const serverId = await insertPanelServer(t);
     await createAccount(t, { provider: 'gcore', name: 'acct-a', qualified: true });
     const { id: relayId } = await t.mutation(internal.relays.create, {
