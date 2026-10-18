@@ -478,6 +478,10 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'edge.fleet_brake': ['engaged', 'suspected', 'evaluated', 'threshold'],
   'probe.run': ['targetKey', 'source', 'trigger'],
   'probe.verdict': ['targetKey', 'source', 'country', 'ipVersion', 'verdict'],
+  // Per-country checks of edges (edgeCountry.ts): slugs, countries and states, never an address.
+  'edge.country.state': ['relaySlug', 'country', 'track', 'state', 'reason'],
+  'edge.country.mark': ['scope', 'country', 'state', 'count'],
+  'edge.country.check': ['relaySlug'],
   'probe.requested': ['targets', 'runs', 'sources'],
   'probe.target.create': ['label'],
   'probe.target.update': ['label'],

@@ -369,6 +369,30 @@ const probeReachabilitySummary = v.object({
   ),
   updatedAt: v.number(),
 });
+// What one round of checks says about an edge from one country (lib/edges/country/verdict.ts).
+const countryRoundResult = v.union(
+  v.literal('proven'),
+  v.literal('blocked'),
+  v.literal('down'),
+  v.literal('unknown'),
+);
+const countryDecided = v.union(v.literal('proven'), v.literal('blocked'));
+/**
+ * The EFFECTIVE result per checked country, copied onto the edge (like name
+ * marks onto listeners) so a render needs no extra read. Decided entries only;
+ * one past its `until` is unknown at read (a mark has none).
+ */
+const edgeCountryStateV = v.object({
+  byCountry: v.array(
+    v.object({
+      country: v.string(),
+      state: countryDecided,
+      until: v.optional(v.number()),
+      from: v.union(v.literal('edge'), v.literal('group'), v.literal('mark')),
+    }),
+  ),
+  updatedAt: v.number(),
+});
 const probeTargetKind = v.union(v.literal('edge'), v.literal('relay'), v.literal('custom'));
 // What a probe speaks (lib/edges/probes/types.ts `ProbeProtocol`). `tls-sni` is
 // the internal protocol-shape check of an L4 edge in front of a REALITY / TLS
@@ -1758,6 +1782,8 @@ export default defineSchema({
     liveSnapshot: v.optional(v.string()), // JSON from the adapter's inspect(); cleared on destroy
     liveAt: v.optional(v.number()),
     reachability: v.optional(probeReachabilitySummary),
+    // Per-country checks (edgeCountry.ts): the effective state per checked country.
+    countryState: v.optional(edgeCountryStateV),
     destroyAttempts: v.number(),
     // Consecutive `gone` describes (reset by any other state). The pool drop +
     // status transition need TWO so an auth-shaped 404 or one blip cannot act.
@@ -2188,6 +2214,16 @@ export default defineSchema({
     // When the executor actually started the measurement (`running`).
     startedAt: v.optional(v.number()),
     finishedAt: v.optional(v.number()),
+    // The ROUND this run belongs to: the runs one request inserted for one
+    // target together (edgeCountry.ts settles a round once every run of it has).
+    roundId: v.optional(v.string()),
+    // What the run costs at Globalping (probes asked for), for the tests budget.
+    tests: v.optional(v.number()),
+    // Control countries asked in the same measurement (one vantage each); their
+    // results carry `control` and never reach `probeReachability`.
+    controls: v.optional(v.array(v.string())),
+    // A short failure class when the run could not measure (never service text).
+    error: v.optional(v.string()),
     results: v.array(
       v.object({
         country: v.string(),
@@ -2197,10 +2233,14 @@ export default defineSchema({
         ok: v.boolean(),
         rttMs: v.optional(v.number()),
         error: v.optional(v.string()),
+        control: v.optional(v.boolean()),
       }),
     ),
   })
     .index('by_target_requested', ['targetKind', 'targetRef', 'requestedAt'])
+    .index('by_target_source_requested', ['targetKind', 'targetRef', 'source', 'requestedAt'])
+    .index('by_source_requested', ['source', 'requestedAt'])
+    .index('by_round', ['roundId'])
     .index('by_status', ['status'])
     .index('by_status_requested', ['status', 'requestedAt']),
 
@@ -2234,6 +2274,114 @@ export default defineSchema({
     verdict: relayReachVerdict,
     updatedAt: v.number(),
   }).index('by_target_country', ['targetKind', 'targetRef', 'country']),
+
+  // Per-country checks of edges (edgeCountry.ts, docs/edges.md "Countries:
+  // checks and delivery"). One row per (edge, country): the ADDRESS track
+  // (rounds with controls) and the HANDSHAKE track (#126 name batches paired
+  // with a working TCP reading), never merged. Infrastructure only: an
+  // operator-owned edge and third-party vantages. Rows outlive the edge for
+  // `edge.country.windowDays` (a burned address is evidence about its range).
+  edgeCountryEvidence: defineTable({
+    edgeId: v.id('edges'),
+    relayId: v.id('relays'),
+    groupKey: v.string(),
+    country: v.string(),
+    address: v.object({
+      state: v.union(v.literal('proven'), v.literal('blocked'), v.literal('unknown')),
+      reason: v.optional(v.string()),
+      // The last round that decided (or re-confirmed) the state; absent = never decided.
+      decidedAt: v.optional(v.number()),
+      until: v.optional(v.number()),
+      // Blocked rounds counted towards `blockedRounds` (at least 30 min apart).
+      blockedRounds: v.number(),
+      lastBlockedAt: v.optional(v.number()),
+      // A repeat round is due (the probe planner takes it first).
+      repeatAt: v.optional(v.number()),
+    }),
+    lastRound: v.optional(
+      v.object({
+        roundId: v.string(),
+        at: v.number(),
+        result: countryRoundResult,
+        reason: v.optional(v.string()),
+        ok: v.number(),
+        fail: v.number(),
+        networks: v.number(),
+        controlsOk: v.number(),
+        v6Result: v.optional(countryRoundResult),
+      }),
+    ),
+    // The newest TCP reading per path (family x port): what a name batch pairs with.
+    paths: v.optional(
+      v.array(
+        v.object({
+          family: v.union(v.literal(4), v.literal(6), v.literal('name')),
+          port: v.number(),
+          address: v.string(),
+          tcp: v.union(
+            v.literal('works'),
+            v.literal('fails'),
+            v.literal('thin'),
+            v.literal('mixed'),
+          ),
+          at: v.number(),
+        }),
+      ),
+    ),
+    handshake: v.object({
+      state: v.union(v.literal('blocked'), v.literal('none')),
+      reason: v.optional(v.string()),
+      decidedAt: v.optional(v.number()),
+      until: v.optional(v.number()),
+      // When the paired `path` batches counted towards a block happened (bounded).
+      pathBatches: v.array(v.number()),
+      lastBatchAt: v.optional(v.number()),
+    }),
+    combined: v.union(v.literal('proven'), v.literal('blocked'), v.literal('unknown')),
+    // The earliest `until` of the decided tracks (the expiry worker's clock).
+    until: v.optional(v.number()),
+    lastRoundAt: v.optional(v.number()),
+    updatedAt: v.number(),
+  })
+    .index('by_edge_country', ['edgeId', 'country'])
+    .index('by_group_country', ['groupKey', 'country'])
+    .index('by_country_round', ['country', 'lastRoundAt'])
+    .index('by_repeat', ['address.repeatAt'])
+    .index('by_until', ['until'])
+    .index('by_updated', ['updatedAt']),
+
+  // What the edges of one (provider, location) say from one country, rolled up.
+  countryGroupGrades: defineTable({
+    groupKey: v.string(),
+    country: v.string(),
+    state: v.union(
+      v.literal('proven'),
+      v.literal('blocked'),
+      v.literal('mixed'),
+      v.literal('unknown'),
+    ),
+    counts: v.object({ edges: v.number(), proven: v.number(), blocked: v.number() }),
+    // When the grade must be looked at again (its earliest contributing expiry).
+    until: v.optional(v.number()),
+    updatedAt: v.number(),
+  })
+    .index('by_group_country', ['groupKey', 'country'])
+    .index('by_country', ['country'])
+    .index('by_until', ['until']),
+
+  // An operator's word about an edge or a whole group in one country. Checks
+  // never override it (a disagreeing check shows as a conflict); it never expires.
+  countryMarks: defineTable({
+    scope: v.union(v.literal('edge'), v.literal('group')),
+    edgeId: v.optional(v.id('edges')),
+    groupKey: v.optional(v.string()),
+    country: v.string(),
+    state: countryDecided,
+    at: v.number(),
+    by: v.optional(v.id('adminUsers')),
+  })
+    .index('by_edge_country', ['edgeId', 'country'])
+    .index('by_group_country', ['groupKey', 'country']),
 
   // Detector ring buffer: one row per origin per evaluation (7-day retention).
   relaySamples: defineTable({

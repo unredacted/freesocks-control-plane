@@ -32,10 +32,14 @@ import { writeAuditLog } from './lib/audit';
 import { recordHeartbeat, runWithCronOutcome } from './cronHeartbeat';
 import {
   EDGE_PLUMBING,
+  controlCountriesOf,
   resolveEdgeConfig,
   resolveEdgeSecrets,
   type EdgeConfig,
 } from './lib/edgeConfig';
+import { resolveCensoredCountries } from './lib/censoredCountries';
+import { failureCode, sourceHealth, type SourceHealth } from './lib/edges/country/sourceHealth';
+import { settleRoundIfDone, dueRepeatEdges } from './edgeCountry';
 import { addressFamily, bracketIfV6 } from './lib/edges/ip';
 import { isValidHostname } from './lib/edges/hostname';
 import {
@@ -96,6 +100,7 @@ const probeResult = v.object({
   ok: v.boolean(),
   rttMs: v.optional(v.number()),
   error: v.optional(v.string()),
+  control: v.optional(v.boolean()),
 });
 
 /** `<kind>:<ref>`: the stable string form used by the routes, the audit log and the client. */
@@ -126,9 +131,16 @@ export function mapRunAdmin(r: Doc<'probeRuns'>) {
     trigger: r.trigger,
     requestedAt: new Date(r.requestedAt).toISOString(),
     finishedAt: r.finishedAt ? new Date(r.finishedAt).toISOString() : null,
-    okVantages: r.results.filter((x) => x.ok).length,
-    failVantages: r.results.filter((x) => !x.ok).length,
+    // Control vantages (uncensored countries asked in the same measurement)
+    // are not the target's countries: they are counted apart.
+    okVantages: r.results.filter((x) => x.ok && !x.control).length,
+    failVantages: r.results.filter((x) => !x.ok && !x.control).length,
+    roundId: r.roundId ?? null,
+    tests: r.tests ?? null,
+    controls: r.controls ?? [],
+    error: r.error ?? null,
     results: r.results.map((x) => ({
+      control: x.control === true,
       country: x.country,
       asn: x.asn ?? null,
       network: x.network ?? null,
@@ -384,11 +396,19 @@ async function insertRun(
     trigger: 'cron' | 'manual' | 'detector' | 'qualification';
     /** Executor start delay: staggers a batch's runs against one external service. */
     delayMs: number;
+    roundId: string;
+    /** Control countries asked in the same measurement (external sources only). */
+    controls: string[];
+    /** What the run costs at Globalping (Globalping runs only). */
+    tests?: number;
   },
 ): Promise<Id<'probeRuns'>> {
   const now = Date.now();
   const delayMs = Math.max(0, Math.floor(a.delayMs));
   const runId = await ctx.db.insert('probeRuns', {
+    roundId: a.roundId,
+    ...(a.controls.length > 0 ? { controls: a.controls } : {}),
+    ...(a.tests !== undefined ? { tests: a.tests } : {}),
     targetKind: a.target.kind,
     targetRef: a.target.ref,
     source: a.source,
@@ -428,6 +448,13 @@ interface TargetPlan {
   runsPerSource: number;
   /** Runs the round costs in total (sources × runsPerSource): its hourly-budget reservation. */
   cost: number;
+  /**
+   * Control countries every external run of the round also asks (one vantage
+   * each): only for edges, only with per-country checks on (edge.country.*).
+   */
+  controls: string[];
+  /** Globalping probes one Globalping run asks for (countries × vantages + controls). */
+  testsPerRun: number;
 }
 
 async function planTarget(
@@ -458,6 +485,10 @@ async function planTarget(
   const use = sources ?? enabledSources(cfg, secrets);
   const families = familiesOf(resolved, cfg);
   const runsPerSource = families.length * resolved.ports.length;
+  const controls =
+    cfg.country.enabled && target.kind === 'edge'
+      ? controlCountriesOf(cfg, (await resolveCensoredCountries(ctx.db)).codes)
+      : [];
   return {
     target,
     resolved,
@@ -466,6 +497,53 @@ async function planTarget(
     families,
     runsPerSource,
     cost: use.length * runsPerSource,
+    controls,
+    testsPerRun: globalpingTestsPerRun(cfg, controls.length),
+  };
+}
+
+/** What one Globalping run asks for: every checked country's vantages, plus one per control. */
+export function globalpingTestsPerRun(cfg: EdgeConfig, controls: number): number {
+  return (
+    cfg.probe.countries.length * Math.max(1, Math.min(cfg.probe.perCountryLimit, 10)) + controls
+  );
+}
+
+/**
+ * Globalping probes asked for in the last hour (`probeRuns.tests`). Reads the
+ * same bounded window as `spentThisHour` (the run budget caps how many there
+ * can be).
+ */
+async function globalpingTestsThisHour(
+  db: QueryCtx['db'],
+  now: number,
+  hourlyBudget: number,
+): Promise<number> {
+  const hourStart = now - 60 * MIN;
+  let tests = 0;
+  for (const status of ['requested', 'running', 'finished', 'failed', 'timeout'] as const) {
+    for (const r of await db
+      .query('probeRuns')
+      .withIndex('by_status_requested', (q) => q.eq('status', status).gte('requestedAt', hourStart))
+      .take(hourlyBudget + 1))
+      if (r.source === 'globalping') tests += r.tests ?? 0;
+  }
+  return tests;
+}
+
+/**
+ * A round whose Globalping runs would pass `probe.globalpingTestsPerHour`
+ * runs without Globalping (the other sources still measure). `spent` is the
+ * hour's tests so far; the plan comes back adjusted, with what it now spends.
+ */
+function fitGlobalpingTests(plan: TargetPlan, spent: number): { plan: TargetPlan; tests: number } {
+  if (!plan.sources.includes('globalping')) return { plan, tests: 0 };
+  const tests = plan.testsPerRun * plan.runsPerSource;
+  if (spent + tests <= plan.cfg.probe.globalpingTestsPerHour) return { plan, tests };
+  const sources = plan.sources.filter((s) => s !== 'globalping');
+  return {
+    plan: { ...plan, sources, cost: sources.length * plan.runsPerSource },
+    tests: 0,
   };
 }
 
@@ -517,6 +595,8 @@ async function insertPlanned(
   );
   const spanCap = staggerSpanCap(plan.cfg);
   const runIds: Id<'probeRuns'>[] = [];
+  // One round = this call's runs for this target (edgeCountry.ts settles it).
+  const roundId = `${targetKeyOf(plan.target)}:${Date.now()}:${Math.random().toString(36).slice(2, 10)}`;
   for (const source of plan.sources) {
     const spacing = staggerSpacing(plan.cfg, source, opts.batchRunsPerSource);
     let k = 0;
@@ -537,6 +617,9 @@ async function insertPlanned(
             requestedFamily,
             trigger,
             delayMs: Math.min((offset + k) * spacing, spanCap),
+            roundId,
+            controls: source === 'internal' ? [] : plan.controls,
+            ...(source === 'globalping' ? { tests: plan.testsPerRun } : {}),
           }),
         );
         k++;
@@ -569,8 +652,14 @@ export async function requestProbesFor(
   sources?: ProbeSource[],
   opts: StaggerOpts = {},
 ): Promise<{ runIds: Id<'probeRuns'>[]; runsPerSource: number }> {
-  const plan = await planTarget(ctx, target, sources);
-  if (plan.cost > (await remainingBudget(ctx.db, plan.cfg, Date.now()))) throw budgetExhausted();
+  const now = Date.now();
+  const planned = await planTarget(ctx, target, sources);
+  const { plan } = fitGlobalpingTests(
+    planned,
+    await globalpingTestsThisHour(ctx.db, now, planned.cfg.probe.hourlyBudget),
+  );
+  if (plan.sources.length === 0) throw budgetExhausted();
+  if (plan.cost > (await remainingBudget(ctx.db, plan.cfg, now))) throw budgetExhausted();
   const runIds = await insertPlanned(ctx, plan, trigger, opts);
   return { runIds, runsPerSource: plan.runsPerSource };
 }
@@ -654,14 +743,23 @@ export const requestMany = internalMutation({
     // The same target twice is one request (a duplicate would double-spend the budget).
     const unique = [...new Map(targets.map((t) => [targetKeyOf(t), t])).values()];
     const cfg = await resolveEdgeConfig(ctx.db);
-    let remaining = await remainingBudget(ctx.db, cfg, Date.now());
+    const now = Date.now();
+    let remaining = await remainingBudget(ctx.db, cfg, now);
     if (remaining <= 0) throw budgetExhausted();
     const skipped: string[] = [];
     // Resolve everything first: the batch's total decides the stagger spacing.
+    // A target whose Globalping runs no longer fit the tests budget goes without them.
+    let tests = await globalpingTestsThisHour(ctx.db, now, cfg.probe.hourlyBudget);
     const plans: TargetPlan[] = [];
     for (const t of unique) {
       try {
-        plans.push(await planTarget(ctx, t, sources));
+        const fit = fitGlobalpingTests(await planTarget(ctx, t, sources), tests);
+        if (fit.plan.sources.length === 0) {
+          skipped.push(`${targetKeyOf(t)}: probe.budget_exhausted`);
+          continue;
+        }
+        tests += fit.tests;
+        plans.push(fit.plan);
       } catch (err) {
         skipped.push(`${targetKeyOf(t)}: ${codeOf(err)}`);
       }
@@ -722,10 +820,17 @@ export const failRun = internalMutation({
     if (!run || run.status === 'finished' || run.status === 'failed' || run.status === 'timeout')
       return null;
     const now = Date.now();
-    void error; // kept out of the row: failure text is operational, not evidence
-    await ctx.db.patch(runId, { status: timeout ? 'timeout' : 'failed', finishedAt: now });
+    // Only a short class is kept (never the service text): the Probes page and
+    // the `probe_source_failing` attention item say why a source gives nothing.
+    await ctx.db.patch(runId, {
+      status: timeout ? 'timeout' : 'failed',
+      finishedAt: now,
+      error: timeout ? 'timeout' : failureCode(error),
+    });
     // A failed shape run is evidence too (lib/edges/verifyRung.ts).
     if (run.targetKind === 'edge') await refreshPartialRung(ctx, run.targetRef as Id<'edges'>, now);
+    // A failed run is no evidence, but it may be the last of its round.
+    if (run.roundId) await settleRoundIfDone(ctx, run.roundId, now);
     return null;
   },
 });
@@ -739,12 +844,22 @@ export const finishRun = internalMutation({
     // target changed under it) or timed out keeps its state.
     if (!run || (run.status !== 'requested' && run.status !== 'running')) return null;
     const now = Date.now();
-    await ctx.db.patch(runId, { status: 'finished', finishedAt: now, results });
+    // Results from the run's CONTROL countries are tagged: they feed only the
+    // per-country round verdict, never the rollup below (nor the detector,
+    // scoring or the verification rung, which read it).
+    const controls = new Set(run.controls ?? []);
+    const tagged = results.map((r) =>
+      controls.has(r.country) && run.source !== 'internal' ? { ...r, control: true } : r,
+    );
+    await ctx.db.patch(runId, { status: 'finished', finishedAt: now, results: tagged });
     const cfg = await resolveEdgeConfig(ctx.db);
     const target: ProbeTargetRef = { kind: run.targetKind, ref: run.targetRef };
     // Per-country rollup for THIS source.
     const byCountry = new Map<string, ProbeResult[]>();
-    for (const r of results) byCountry.set(r.country, [...(byCountry.get(r.country) ?? []), r]);
+    for (const r of tagged) {
+      if (r.control) continue;
+      byCountry.set(r.country, [...(byCountry.get(r.country) ?? []), r]);
+    }
     const existing = await ctx.db
       .query('probeReachability')
       .withIndex('by_target_country', (q) =>
@@ -829,6 +944,7 @@ export const finishRun = internalMutation({
     await refreshTargetSummary(ctx, target, now);
     // The L4 verification rung follows the evidence (never past `partial`).
     if (run.targetKind === 'edge') await refreshPartialRung(ctx, run.targetRef as Id<'edges'>, now);
+    if (run.roundId) await settleRoundIfDone(ctx, run.roundId, now);
     return null;
   },
 });
@@ -959,6 +1075,75 @@ function internalVerdict(perSource: SourceSummary[]): Verdict {
 
 // --- reads -------------------------------------------------------------------------------------
 
+/** The newest runs per source a source's health is judged on (one indexed read each). */
+const SOURCE_HEALTH_RUNS = 50;
+
+/**
+ * Whether each ENABLED source is giving evidence (lib/edges/country/sourceHealth.ts):
+ * a source that keeps failing makes every country it alone covers read "not
+ * known", so the failure itself is shown (Probes page, attention).
+ */
+export async function probeSourceHealth(db: QueryCtx['db'], now: number): Promise<SourceHealth[]> {
+  const cfg = await resolveEdgeConfig(db);
+  const secrets = await resolveEdgeSecrets(db);
+  const sources = enabledSources(cfg, secrets);
+  if (!cfg.probe.enabled || sources.length === 0) return [];
+  const runs = [];
+  for (const source of sources)
+    for (const r of await db
+      .query('probeRuns')
+      .withIndex('by_source_requested', (q) => q.eq('source', source))
+      .order('desc')
+      .take(SOURCE_HEALTH_RUNS))
+      runs.push({
+        source: r.source,
+        status: r.status,
+        requestedAt: r.requestedAt,
+        ...(r.finishedAt !== undefined ? { finishedAt: r.finishedAt } : {}),
+        results: r.results.length,
+        ...(r.error !== undefined ? { error: r.error } : {}),
+      });
+  return sourceHealth(sources, runs, now);
+}
+
+const isoOrNull = (n: number | null) => (n === null ? null : new Date(n).toISOString());
+
+export function mapSourceHealthAdmin(h: SourceHealth) {
+  return { ...h, lastOkAt: isoOrNull(h.lastOkAt), lastFailAt: isoOrNull(h.lastFailAt) };
+}
+
+export const sourceHealthView = internalQuery({
+  args: {},
+  handler: async (ctx) => ({
+    sources: (await probeSourceHealth(ctx.db, Date.now())).map(mapSourceHealthAdmin),
+  }),
+});
+
+/**
+ * "Check it from every country now" for one edge (Edges -> Countries): one
+ * manual round, the same budget as any other request.
+ */
+export const requestCountryCheck = internalMutation({
+  args: { edgeId: v.id('edges'), actorAdminId: v.optional(v.id('adminUsers')) },
+  handler: async (ctx, { edgeId, actorAdminId }) => {
+    await assertAdmission(ctx.db, 'probe.request');
+    const edge = await ctx.db.get(edgeId);
+    if (!edge || edge.status === 'destroyed')
+      throw new ConvexError({ code: 'not_found', message: 'Edge not found' });
+    const { runIds } = await requestProbesFor(ctx, { kind: 'edge', ref: edgeId }, 'manual');
+    const relay = await ctx.db.get(edge.relayId);
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: actorAdminId ?? undefined,
+      action: 'edge.country.check',
+      targetType: 'edge',
+      targetId: edgeId,
+      payload: { relaySlug: relay?.slug ?? '' },
+    });
+    return { runIds };
+  },
+});
+
 export const runContext = internalQuery({
   args: { runId: v.id('probeRuns') },
   handler: async (ctx, { runId }) => {
@@ -1046,7 +1231,11 @@ export const matrix = internalQuery({
         reachability: mapSummaryAdmin(t.reachability),
       });
     }
-    return { countries: cfg.probe.countries, targets };
+    return {
+      countries: cfg.probe.countries,
+      targets,
+      sources: (await probeSourceHealth(ctx.db, Date.now())).map(mapSourceHealthAdmin),
+    };
   },
 });
 
@@ -1091,8 +1280,9 @@ export const summaryPage = internalQuery({
         const k = x.ok ? 'ok' : 'fail';
         b[k]++;
         src[k]++;
-        // The internal probe ('XX') is not a country: it shows under bySource only.
-        if (x.country === 'XX') continue;
+        // The internal probe ('XX') is not a country, and a control vantage is
+        // not a checked one: both show under bySource only.
+        if (x.country === 'XX' || x.control) continue;
         let c = b.byCountry.get(x.country);
         if (!c) b.byCountry.set(x.country, (c = { ok: 0, fail: 0 }));
         c[k]++;
@@ -1271,6 +1461,12 @@ export const due = internalQuery({
     const dueTargets: Array<{
       target: ProbeTargetRef;
       suspected: boolean;
+      /**
+       * Who goes first when the budget is short: 0 a repeat round a country
+       * verdict waits for, 1 a suspected origin's edge, 2 a published edge or
+       * an operator target, 3 a spare.
+       */
+      rank: number;
       /** Runs one source will cost for this target (ports × address families). */
       runsPerSource: number;
     }> = [];
@@ -1278,7 +1474,17 @@ export const due = internalQuery({
     // qualification, whatever its state — not only the due candidates' runs.
     // (The plan's estimate; requestProbes re-checks and reserves atomically.)
     const spent = await spentThisHour(ctx.db, now, cfg.probe.hourlyBudget);
-    const consider = async (target: ProbeTargetRef, interval: number, suspected: boolean) => {
+    const seen = new Set<string>();
+    /** `dueSince`: a round requested at or after it is the one owed (a repeat). */
+    const consider = async (
+      target: ProbeTargetRef,
+      interval: number,
+      suspected: boolean,
+      rank: number,
+      dueSince?: number,
+    ) => {
+      const key = targetKeyOf(target);
+      if (seen.has(key)) return;
       const newest = await ctx.db
         .query('probeRuns')
         .withIndex('by_target_requested', (q) =>
@@ -1287,15 +1493,27 @@ export const due = internalQuery({
         .order('desc')
         .first();
       const last = newest?.requestedAt ?? 0;
-      if (last !== 0 && now - last < interval) return;
+      if (dueSince !== undefined ? last >= dueSince : last !== 0 && now - last < interval) return;
       const resolved = await resolveTarget(ctx, target);
       // No address, or no listener port to aim at: not probeable (probing a
       // guessed port would record its silence as a block).
       if (!resolved || !hasAddress(resolved) || resolved.ports.length === 0) return;
       const runsPerSource = familiesOf(resolved, cfg).length * resolved.ports.length;
       if (runsPerSource === 0) return;
-      dueTargets.push({ target, suspected, runsPerSource });
+      seen.add(key);
+      dueTargets.push({ target, suspected, rank, runsPerSource });
     };
+    const probeable = (edge: Doc<'edges'> | null): edge is Doc<'edges'> =>
+      !!edge &&
+      edge.status === 'active' &&
+      !!(edge.addresses.v4 || edge.addresses.v6 || edge.addresses.hostname);
+    // Per-country checks: a blocked round waiting for its repeat goes first.
+    if (cfg.country.enabled) {
+      for (const due of await dueRepeatEdges(ctx.db, now)) {
+        if (!probeable(await ctx.db.get(due.edgeId))) continue;
+        await consider({ kind: 'edge', ref: due.edgeId }, 0, false, 0, due.repeatAt);
+      }
+    }
     const baseInterval = cfg.probe.intervalMinutes * MIN;
     for (const relay of relays) {
       const suspected = relay.suspicion?.state === 'suspected';
@@ -1305,24 +1523,32 @@ export const due = internalQuery({
         const edge = await ctx.db.get(edgeId);
         // v6-only and hostname (L7) edges are probed too; `consider` applies
         // the family rules and skips a target with nothing to aim at.
-        if (
-          !edge ||
-          edge.status !== 'active' ||
-          (!edge.addresses.v4 && !edge.addresses.v6 && !edge.addresses.hostname)
-        )
-          continue;
-        await consider({ kind: 'edge', ref: edgeId }, interval, suspected);
+        if (!probeable(edge)) continue;
+        await consider({ kind: 'edge', ref: edgeId }, interval, suspected, suspected ? 1 : 2);
       }
-      if (relay.probeNode) await consider({ kind: 'relay', ref: relay._id }, baseInterval, false);
+      if (relay.probeNode)
+        await consider({ kind: 'relay', ref: relay._id }, baseInterval, false, 2);
     }
     for (const t of await ctx.db
       .query('probeTargets')
       .withIndex('by_enabled', (q) => q.eq('enabled', true))
       .collect()) {
-      await consider({ kind: 'custom', ref: t._id }, baseInterval, false);
+      await consider({ kind: 'custom', ref: t._id }, baseInterval, false, 2);
     }
-    // Suspected origins' edges first so a tight budget goes where it matters.
-    dueTargets.sort((a, b) => Number(b.suspected) - Number(a.suspected));
+    // Spares are checked from every country too (less often): a standby that
+    // turns active gets its first round at the next tick, so what is known per
+    // country is there before it is ever published.
+    if (cfg.country.enabled) {
+      const standbyInterval = cfg.country.standbyRecheckHours * 60 * MIN;
+      for (const relay of relays)
+        for (const edgeId of relay.standbyEdgeIds) {
+          const edge = await ctx.db.get(edgeId);
+          if (!probeable(edge) || edge.publication !== 'unpublished') continue;
+          await consider({ kind: 'edge', ref: edgeId }, standbyInterval, false, 3);
+        }
+    }
+    // Repeats, then suspected origins' edges, so a tight budget goes where it matters.
+    dueTargets.sort((a, b) => a.rank - b.rank);
     return {
       enabled: cfg.probe.enabled,
       sources: enabledSources(cfg, secrets),
@@ -1343,6 +1569,7 @@ export const sweepStuck = internalMutation({
   args: { now: v.number() },
   handler: async (ctx, { now }) => {
     let n = 0;
+    const rounds = new Set<string>();
     for (const status of ['requested', 'running'] as const) {
       const rows = await ctx.db
         .query('probeRuns')
@@ -1351,11 +1578,14 @@ export const sweepStuck = internalMutation({
       for (const r of rows) {
         const since = Math.max(r.requestedAt, r.scheduledAt ?? 0, r.startedAt ?? 0);
         if (since + RUN_TIMEOUT_MS <= now) {
-          await ctx.db.patch(r._id, { status: 'timeout', finishedAt: now });
+          await ctx.db.patch(r._id, { status: 'timeout', finishedAt: now, error: 'timeout' });
+          if (r.roundId) rounds.add(r.roundId);
           n++;
         }
       }
     }
+    // A timed-out run may be the last open one of its round.
+    for (const roundId of rounds) await settleRoundIfDone(ctx, roundId, now);
     return { timedOut: n };
   },
 });

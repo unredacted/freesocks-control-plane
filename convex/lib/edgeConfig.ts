@@ -186,6 +186,37 @@ export interface EdgeConfig {
     preferEyeball: boolean;
     /** Probe the IPv6 path of origin / custom targets (edge targets follow `render.ipv6Mode`). */
     ipv6: boolean;
+    /**
+     * Globalping probes asked for per hour (a run asks countries x vantages,
+     * plus one per control country). A round that would exceed it runs without
+     * Globalping. Counted from `probeRuns.tests`.
+     */
+    globalpingTestsPerHour: number;
+  };
+  /** Checks of edges from each censored country (edgeCountry.ts, lib/edges/country). */
+  country: {
+    /** Off: probes behave exactly as before (no controls, no verdicts, no waits). */
+    enabled: boolean;
+    /**
+     * Uncensored countries asked in the same measurement, one vantage each,
+     * as `DE US JP` (codes on the censored-country list are ignored). They tell
+     * a blocked edge from a broken one.
+     */
+    controlCountries: string;
+    /** Vantages with evidence a round needs before it can decide anything. */
+    minProbes: number;
+    /** Distinct networks among them. */
+    minNetworks: number;
+    /** Controls (FCP's own check counts as one) that must work for "blocked". */
+    minControls: number;
+    /** Blocked rounds, at least 30 minutes apart, before a proven edge counts as blocked. */
+    blockedRounds: number;
+    /** How long a decided result stands without a new one. */
+    windowDays: number;
+    /** A spare (active, not published) is checked this often. */
+    standbyRecheckHours: number;
+    /** How long a setup run or a replacement waits for its first round. */
+    preUseWaitMinutes: number;
   };
 }
 
@@ -260,6 +291,18 @@ export const EDGE_DEFAULTS: EdgeConfig = {
     agreementVantages: 2,
     preferEyeball: true,
     ipv6: true,
+    globalpingTestsPerHour: 400,
+  },
+  country: {
+    enabled: false,
+    controlCountries: 'DE US JP',
+    minProbes: 3,
+    minNetworks: 2,
+    minControls: 2,
+    blockedRounds: 2,
+    windowDays: 14,
+    standbyRecheckHours: 12,
+    preUseWaitMinutes: 15,
   },
 };
 
@@ -393,6 +436,16 @@ export const EDGE_KEYS = {
   'probe.agreementVantages': 'edge.probe.agreementVantages',
   'probe.preferEyeball': 'edge.probe.preferEyeball',
   'probe.ipv6': 'edge.probe.ipv6',
+  'probe.globalpingTestsPerHour': 'edge.probe.globalpingTestsPerHour',
+  'country.enabled': 'edge.country.enabled',
+  'country.controlCountries': 'edge.country.controlCountries',
+  'country.minProbes': 'edge.country.minProbes',
+  'country.minNetworks': 'edge.country.minNetworks',
+  'country.minControls': 'edge.country.minControls',
+  'country.blockedRounds': 'edge.country.blockedRounds',
+  'country.windowDays': 'edge.country.windowDays',
+  'country.standbyRecheckHours': 'edge.country.standbyRecheckHours',
+  'country.preUseWaitMinutes': 'edge.country.preUseWaitMinutes',
 } as const;
 export type RelayKeyPath = keyof typeof EDGE_KEYS;
 
@@ -562,8 +615,72 @@ export function sanitizeRelayConfig(
       ),
       preferEyeball: sanitizeBool(raw['probe.preferEyeball'], D.probe.preferEyeball),
       ipv6: sanitizeBool(raw['probe.ipv6'], D.probe.ipv6),
+      globalpingTestsPerHour: sanitizeInt(
+        raw['probe.globalpingTestsPerHour'],
+        0,
+        100_000,
+        D.probe.globalpingTestsPerHour,
+      ),
+    },
+    country: {
+      enabled: sanitizeBool(raw['country.enabled'], D.country.enabled),
+      controlCountries: sanitizeCountryCodes(
+        raw['country.controlCountries'],
+        D.country.controlCountries,
+      ),
+      minProbes: sanitizeInt(raw['country.minProbes'], 2, 10, D.country.minProbes),
+      minNetworks: sanitizeInt(raw['country.minNetworks'], 1, 5, D.country.minNetworks),
+      minControls: sanitizeInt(raw['country.minControls'], 1, 5, D.country.minControls),
+      blockedRounds: sanitizeInt(raw['country.blockedRounds'], 1, 5, D.country.blockedRounds),
+      windowDays: sanitizeInt(raw['country.windowDays'], 1, 60, D.country.windowDays),
+      standbyRecheckHours: sanitizeInt(
+        raw['country.standbyRecheckHours'],
+        1,
+        168,
+        D.country.standbyRecheckHours,
+      ),
+      preUseWaitMinutes: sanitizeInt(
+        raw['country.preUseWaitMinutes'],
+        0,
+        60,
+        D.country.preUseWaitMinutes,
+      ),
     },
   };
+}
+
+/** At most this many control countries (each one is a probe in every run). */
+export const MAX_CONTROL_COUNTRIES = 5;
+
+/**
+ * Control countries as their canonical `DE US JP` spelling: codes split on
+ * spaces or commas, upper-cased, deduplicated, at most MAX_CONTROL_COUNTRIES.
+ * Anything that is not a two-letter code is dropped; nothing usable = default.
+ */
+export function sanitizeCountryCodes(v: unknown, dflt: string): string {
+  const parts = Array.isArray(v) ? v : typeof v === 'string' ? v.split(/[\s,]+/) : [];
+  const codes = [
+    ...new Set(
+      parts
+        .filter((x): x is string => typeof x === 'string')
+        .map((x) => x.trim().toUpperCase())
+        .filter((x) => /^[A-Z]{2}$/.test(x)),
+    ),
+  ].slice(0, MAX_CONTROL_COUNTRIES);
+  return codes.length > 0 ? codes.join(' ') : dflt;
+}
+
+/**
+ * The control countries a run asks for: the setting's codes minus any country
+ * on the censored-country list (a censored vantage cannot vouch for an edge).
+ */
+export function controlCountriesOf(
+  cfg: Pick<EdgeConfig, 'country'>,
+  listed: readonly string[],
+): string[] {
+  return cfg.country.controlCountries
+    .split(' ')
+    .filter((c) => /^[A-Z]{2}$/.test(c) && !listed.includes(c));
 }
 
 export async function resolveEdgeConfig(db: DatabaseReader): Promise<EdgeConfig> {
@@ -766,6 +883,18 @@ const PLUMBING_DEFAULTS = {
   l7QualifyTimeoutMs: 15 * MIN,
   /** Gap between consecutive runs against the same external probe source within one batch. */
   probeSourceSpacingMs: 1500,
+  /** Two blocked rounds closer than this are one look (the repeat is scheduled this far out). */
+  countryRepeatMs: 30 * MIN,
+  /** A name batch pairs with an address round finished at most this far from it. */
+  countryHandshakePairMs: 60 * MIN,
+  /** Two paired `path` batches closer than this count once. */
+  countryHandshakeRepeatMs: 60 * MIN,
+  /** Country-wide guard: this share of the edges checked there in the window turned blocked... */
+  countryWideShare: 0.8,
+  countryWideWindowMs: 120 * MIN,
+  /** ...across at least this many groups and edges. */
+  countryWideMinGroups: 2,
+  countryWideMinEdges: 3,
 };
 export type EdgePlumbing = typeof PLUMBING_DEFAULTS;
 
@@ -876,6 +1005,14 @@ export const EDGE_CONFIG_BOUNDS: Readonly<Record<string, { min: number; max: num
   'probe.perCountryLimit': { min: 1, max: 10 },
   'probe.hourlyBudget': { min: 0, max: 10_000 },
   'probe.agreementVantages': { min: 2, max: 10 },
+  'probe.globalpingTestsPerHour': { min: 0, max: 100_000 },
+  'country.minProbes': { min: 2, max: 10 },
+  'country.minNetworks': { min: 1, max: 5 },
+  'country.minControls': { min: 1, max: 5 },
+  'country.blockedRounds': { min: 1, max: 5 },
+  'country.windowDays': { min: 1, max: 60 },
+  'country.standbyRecheckHours': { min: 1, max: 168 },
+  'country.preUseWaitMinutes': { min: 0, max: 60 },
   'render.clients.maxEntries': { min: 0, max: 20 },
 };
 

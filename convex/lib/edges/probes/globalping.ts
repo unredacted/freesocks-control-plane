@@ -25,6 +25,39 @@ import {
 export interface GlobalpingLike {
   createMeasurement(req: unknown): Promise<{ ok: boolean; data?: unknown; response?: Response }>;
   getMeasurement(id: string): Promise<{ ok: boolean; data?: unknown; response?: Response }>;
+  /** `GET /v1/limits` (optional in fakes: no preflight without it). */
+  getLimits?(): Promise<{ ok: boolean; data?: unknown; response?: Response }>;
+}
+
+/** Probes asked for by one request (what Globalping's rate limit counts). */
+export function globalpingTestsOf(req: { locations: ReadonlyArray<{ limit: number }> }): number {
+  return req.locations.reduce((n, l) => n + l.limit, 0);
+}
+
+/**
+ * Whether the measurement fits what Globalping still allows: the rate-limit
+ * points left in the window plus any credits. `null` when it cannot be told
+ * (no limits call, an error, an unexpected shape): the create itself decides.
+ */
+export async function globalpingFits(
+  client: GlobalpingLike,
+  tests: number,
+): Promise<boolean | null> {
+  if (!client.getLimits) return null;
+  try {
+    const res = await client.getLimits();
+    if (!res.ok || !res.data) return null;
+    const d = res.data as {
+      rateLimit?: { measurements?: { create?: { remaining?: unknown } } };
+      credits?: { remaining?: unknown };
+    };
+    const remaining = Number(d.rateLimit?.measurements?.create?.remaining);
+    if (!Number.isFinite(remaining)) return null;
+    const credits = Number(d.credits?.remaining ?? 0);
+    return remaining + (Number.isFinite(credits) ? credits : 0) >= tests;
+  } catch {
+    return null;
+  }
 }
 
 /** Which Globalping measurement type a probe protocol maps to. */
@@ -43,11 +76,15 @@ function ipVersionOf(target: ProbeTarget): { ipVersion?: 4 | 6 } {
 
 export function globalpingRequest(target: ProbeTarget, opts: ProbeRequestOptions) {
   const limit = Math.max(1, Math.min(opts.perCountryLimit, 10));
-  const locations = opts.countries.map((country) => ({
-    country,
-    limit,
-    ...(opts.preferEyeball ? { tags: ['eyeball-network'] } : {}),
-  }));
+  const locations = [
+    ...opts.countries.map((country) => ({
+      country,
+      limit,
+      ...(opts.preferEyeball ? { tags: ['eyeball-network'] } : {}),
+    })),
+    // A control needs any vantage that answers, not a residential one.
+    ...(opts.controls ?? []).map((country) => ({ country, limit: 1 })),
+  ];
   if (globalpingKind(target) === 'http') {
     return {
       type: 'http' as const,

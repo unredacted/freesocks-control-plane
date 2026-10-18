@@ -591,6 +591,9 @@ Convex runs these natively (no Workers triggers, no node-cron):
 - `edge-probe` (5 min): budgeted reachability probes of every probe target (published edges,
   opted-in origin nodes, enabled custom targets) from the configured countries (no-op unless
   `edge.probe.enabled`). `retention-edge-probes` (daily) prunes settled runs after two weeks.
+- `edge-country-expiry` (hourly): per-country results of edges past their window lapse to not
+  known; the provider-location grades and every edge's copied country state follow
+  (`edgeCountry.ts`, whether or not probes run).
 - `edge-block-detector` (5 min): per-origin scoring of attributed reports, node load and probe
   verdicts; automatic rotation only with edge-level evidence and every gate open, held fleet-wide
   by the fleet brake (a mass block) and the fleet's daily cap.

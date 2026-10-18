@@ -14,9 +14,12 @@ import type { Id } from './_generated/dataModel';
 import Globalping from 'globalping';
 import {
   GLOBALPING_USER_AGENT,
+  globalpingFits,
   globalpingKind,
   globalpingPoll,
+  globalpingRequest,
   globalpingStart,
+  globalpingTestsOf,
   type GlobalpingLike,
 } from './lib/edges/probes/globalping';
 import { checkhostNodes, checkhostPoll, checkhostStart } from './lib/edges/probes/checkhost';
@@ -109,6 +112,8 @@ export const execute = internalAction({
       countries: cfg.probe.countries,
       perCountryLimit: cfg.probe.perCountryLimit,
       preferEyeball: cfg.probe.preferEyeball,
+      // Fixed when the round was requested (per-country checks, external sources only).
+      controls: run.controls ?? [],
     };
     try {
       switch (run.source) {
@@ -121,6 +126,15 @@ export const execute = internalAction({
         case 'globalping': {
           const client = globalpingFactory(secrets.globalpingToken);
           const kind = globalpingKind(target);
+          // Never start what Globalping would refuse half-way: a run that does
+          // not fit its limit is no evidence, not a failing country.
+          if (
+            (await globalpingFits(client, globalpingTestsOf(globalpingRequest(target, opts)))) ===
+            false
+          ) {
+            await fail(ctx, runId, 'globalping_limit');
+            return null;
+          }
           const started = await globalpingStart(client, target, opts);
           await ctx.runMutation(internal.probes.markRunning, {
             runId,

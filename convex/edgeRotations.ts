@@ -3808,7 +3808,69 @@ async function phaseVerifying(ctx: ActionCtx, c: Ctx) {
     await advanceCall(ctx, r._id, sv, { type: 'fail', code: 'no_address', rollback: false });
     return;
   }
+  // Per-country checks: an L4 address gets its first round from every checked
+  // country before it goes out (the L7 geo gate above is its own rule). A
+  // provision that only makes a spare does not wait: spares are checked on
+  // their own schedule, and a setup run waits for its own round.
+  const publishes = r.kind !== 'provision' || r.publishOnDone === true;
+  if ((edge.layer ?? 'l4') !== 'l7' && publishes) {
+    const gate = await countryGate(ctx, c, edge);
+    if (gate.kind === 'fail') {
+      await advanceCall(ctx, r._id, sv, {
+        type: 'fail',
+        code: gate.code,
+        detail: gate.detail,
+        rollback: false,
+      });
+      return;
+    }
+    if (gate.kind === 'wait') {
+      // Bounded by its own clock (`edge.country.preUseWaitMinutes`), not the poll budget.
+      await advanceCall(ctx, r._id, sv, {
+        type: 'progress',
+        delayMs: EDGE_PLUMBING.pollMs,
+        detail: gate.detail,
+      });
+      return;
+    }
+  }
   await advanceCall(ctx, r._id, sv, { type: 'verified' });
+}
+
+/**
+ * The country wait of an L4 address (edgeCountry.ts `preUse`, docs/edges.md
+ * "Countries: checks and delivery"): its first round from every checked
+ * country is requested once and waited for at most `preUseWaitMinutes`; an
+ * unknown answer never holds the run. A DETECTOR replacement whose round finds
+ * it blocked in one of the countries that triggered the replacement fails
+ * (`replacement_blocked`): it would not help the members it is for.
+ */
+async function countryGate(ctx: ActionCtx, c: Ctx, edge: Edge): Promise<VerifyGate> {
+  const { rotation: r } = c;
+  const since = r.provisionedAt ?? r.startedAt;
+  const pu = await ctx.runQuery(internal.edgeCountry.preUse, { edgeId: edge._id, since });
+  if (!pu.enabled) return { kind: 'ok' };
+  const now = Date.now();
+  if (pu.state === 'none') {
+    if (now - since >= pu.waitMs) return { kind: 'ok' };
+    try {
+      await ctx.runMutation(internal.probes.requestProbes, {
+        target: { kind: 'edge', ref: edge._id as string },
+        trigger: 'qualification',
+      });
+    } catch (err) {
+      // A budget refusal is not a verdict; the next poll tries again until the wait is over.
+      return { kind: 'wait', detail: `country round request: ${errCode(err).code}` };
+    }
+    return { kind: 'wait', detail: 'awaiting the first round from every checked country' };
+  }
+  if (pu.state === 'open' && now - (pu.requestedAt ?? since) < pu.waitMs)
+    return { kind: 'wait', detail: 'awaiting the first round from every checked country' };
+  if (r.trigger === 'detector') {
+    const hit = (r.affectedCountries ?? []).filter((x) => pu.blockedIn.includes(x));
+    if (hit.length > 0) return { kind: 'fail', code: 'replacement_blocked', detail: hit.join(',') };
+  }
+  return { kind: 'ok' };
 }
 
 type VerifyGate =
