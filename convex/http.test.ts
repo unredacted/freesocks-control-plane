@@ -17,6 +17,7 @@ import { resolveCountry } from './lib/http';
 import { CENSORED_COUNTRIES_KEY } from './lib/censoredCountries';
 import { upsertSettingRow } from './appSettings';
 import { bytesToB64Url } from '../src/shared/crypto/envelope';
+import { refuseNetwork } from './lib/edges/testing/mockFetch';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -1086,7 +1087,9 @@ describe('test-connection tolerates an upsert-shaped body (strict-validator guar
     // testBackendConnection. The route must forward ONLY the connection fields;
     // otherwise Convex's strict arg validator throws and this 500s (the exact
     // trap the Ansible role hit reusing its upsert body). apiUrl points at a
-    // refused port so the provider returns a clean {ok:false}, never a throw.
+    // refused port so the provider returns a clean {ok:false}, never a throw;
+    // the refusal is stubbed, so the test never dials even the loopback.
+    const net = refuseNetwork();
     const res = await t.fetch('/api/v1/admin/backend-servers/test-connection', {
       method: 'POST',
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
@@ -1103,6 +1106,8 @@ describe('test-connection tolerates an upsert-shaped body (strict-validator guar
     expect(res.status).toBe(200); // NOT 500 — the undeclared fields were filtered out
     const body = (await res.json()) as { ok: boolean };
     expect(body.ok).toBe(false); // unreachable origin → clean verdict, not a validation throw
+    // …after dialing the forwarded apiUrl.
+    expect(net.calls.some((c) => c.url.startsWith('https://127.0.0.1:1/proxy/secret/'))).toBe(true);
   });
 });
 
