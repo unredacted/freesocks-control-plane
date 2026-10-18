@@ -11,6 +11,7 @@
   import { formatDate, formatDateTime } from '../../lib/i18n/format';
   import { formatBytes } from '../../lib/utils';
   import AdminListState from './AdminListState.svelte';
+  import MemberCountryDetails from './MemberCountryDetails.svelte';
   import { UserAdmin } from '../../../shared/contracts/admin';
   import { deviceLimitsShown } from '../../lib/tiers';
   import {
@@ -421,6 +422,7 @@
                     No live data (no subscription, or the backend is unreachable).
                   </p>
                 {/if}
+                <MemberCountryDetails userId={u.id} />
               </div>
             {/if}
           </CardContent>

@@ -1405,16 +1405,27 @@ Each tier keeps the rendezvous order, so the stability properties hold inside it
 of an edge is excluded for a member's country, that edge is not assignable **for them** and the
 walk moves to the next edge; with none left the existing edge-required behaviour applies.
 
-**Where the member is.** Their own answer first (`subscriptions.sniRegion`, set on the account
-page: "Where are you connecting from?", Automatic by default), else the country the CDN reports
-for the request (`resolveCountry`: only when the deployment is fronted by it, otherwise it is a
-header a client could forge and it is ignored). Either counts only when it is a curated country.
+**Where the member is** (`convex/lib/memberCountry.ts` `memberWhere`; the privacy rules are
+docs/privacy.md §1 "Where a member connects from"). Only a key of a freedom-family mode has a
+country; any other key gets the universal pool. Their own answer first (`subscriptions.sniRegion`,
+set on the account page: "Where are you connecting from?", Automatic by default; "Somewhere
+else" means no country), else, with `delivery.country.detect` on, the country stored as a guess
+from earlier requests (this request's CDN country may set or refresh it first, unless the request
+came from one of FCP's own exits), else, with detection off, the country the CDN reports for this
+request (`resolveCountry`: only when the deployment is fronted by it, otherwise it is a header a
+client could forge and it is ignored). Each counts only when it is a curated country, and only
+at a place an origin covers (elsewhere nothing is rendered). The subscription route and the
+raw-config view locate the member with the same function (`lib/subscriptionDelivery.ts`
+`locateMember`), so both read this request's country, may set or refresh the guess, and pick the
+same names; the family and the place are judged again at the node the body resolves to.
 
-**What is stored.** Only the member's own answer. An inferred country is used for that one
-response and kept nowhere: such a body is neither read from nor written to the content cache, is
-served `private, no-store`, and a cached body is never handed to a request that infers a curated
-country (`convex/lib/edges/sni/country.ts`). A body for the member's own answer caches under that
-answer. When no listener has any judged name, caching is exactly as before.
+**What is stored.** The member's own answer, and with detection on the guess, on the subscription
+row; a body shaped by either caches under that country, and the cache keeps no body for any other
+(`subscriptions.writeContentCache` refuses one). With detection off, the request's country is used
+for that one response and kept nowhere: such a body is neither read from nor written to the
+content cache, is served `private, no-store`, and a cached body is never handed to a request that
+infers a curated country (`convex/lib/edges/sni/country.ts`). When no listener has any judged
+name, caching is exactly as before.
 
 Routes, under `/api/v1/admin/edges/sni/`: `GET|PATCH config` (settings scope),
 `GET|POST families`, `GET|PATCH|DELETE families/{slug}`, `POST families/{slug}/names` (a pasted

@@ -3,6 +3,7 @@ import type { MutationCtx } from './_generated/server';
 import type { Id } from './_generated/dataModel';
 import { v } from 'convex/values';
 import { writeAuditLog } from './lib/audit';
+import { internal } from './_generated/api';
 
 /**
  * Compiled-in defaults so an install with no rows still behaves. Mirrors
@@ -43,6 +44,17 @@ export const SETTINGS_DEFAULTS = {
   // `subscription.entryNames` false serves the backend's own names.
   'subscription.siteName': 'FreeSocks',
   'subscription.entryNames': true,
+  // Where members connect from (lib/memberCountry.ts, docs/privacy.md). Off: the
+  // CDN country is used for one response and stored nowhere (as before). On:
+  // stored as a guess on freedom-family keys of Automatic members, only when it
+  // is on the censored-country list, forgotten `stickyDays` after it was last
+  // seen and written again at most every `refreshHours`. `ownExitRanges`: CIDRs
+  // traffic leaves the service from beyond the addresses FCP knows (a reading
+  // from there is the member's app refreshing through the tunnel).
+  'delivery.country.detect': false,
+  'delivery.country.stickyDays': 30,
+  'delivery.country.refreshHours': 6,
+  'delivery.country.ownExitRanges': [] as string[],
 } as const;
 
 // `getAll` / `get` (public queries) were deleted in pass 2: dead code (the SPA
@@ -122,6 +134,8 @@ export const setMany = internalMutation({
   handler: async (ctx, { entries, updatedByAdminId }) => {
     for (const { key, value } of entries) {
       await upsertSettingRow(ctx, key, value, updatedByAdminId);
+      if (key === 'delivery.country.ownExitRanges')
+        await ctx.scheduler.runAfter(0, internal.ownExits.refresh, {});
       await writeAuditLog(ctx, {
         actorType: 'admin',
         actorId: updatedByAdminId ?? undefined,

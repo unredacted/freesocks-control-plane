@@ -9,18 +9,19 @@
  * Every input that shapes the answer is explicit, so no caller keeps a piece of
  * it to itself:
  *  - `sub`: the delivery projection (the row id, its backend server, the STORED
- *    pin, the stored country answer);
+ *    pin, the member's country: their answer, the stored guess and its revision);
  *  - `fetched`: the backend body; the node it names wins over the stored pin, a
  *    body that names none is judged against the stored pin, and a changed pin
  *    is recorded here;
  *  - `ua`: the client family the render rule follows (`classifyClient`; the raw
  *    view passes an empty one and gets the panel's default link format);
  *  - `location`: where the member is, from `locateMember` over the caller's own
- *    request (located at the STORED pin, for the caller's cache lookups). When
- *    the body resolves to another node (no pin yet, or a moved one), the
- *    country rules of THAT node's place are read again from the same request
- *    inputs before anything is rendered, and the outcome carries the location
- *    it rendered with.
+ *    request (located at the STORED pin, for the caller's cache lookups; it may
+ *    set or refresh the stored guess first, lib/memberCountry.ts). When the body
+ *    resolves to another node (no pin yet, or a moved one), the country rules of
+ *    THAT node's place (and the key's family there) are read again from the same
+ *    request inputs before anything is rendered, and the outcome carries the
+ *    location it rendered with. The guess is written once, at `locateMember`.
  */
 import type { ActionCtx } from '../_generated/server';
 import { internal } from '../_generated/api';
@@ -28,19 +29,24 @@ import type { Id } from '../_generated/dataModel';
 import type { CountryContext } from './edges/assignment';
 import { classifyClient } from './edges/clientFamilies';
 import { applyEdgeRender } from './edges/renderPipeline';
-import { resolveWhere, type ResolvedWhere } from './edges/sni/country';
-import { resolveCountry } from './http';
+import type { ResolvedWhere } from './edges/sni/country';
+import { resolveClientIp, resolveCountry } from './http';
+import { memberWhere, nextGuess, type CountryFields } from './memberCountry';
 import { relabelMemberEntries } from './memberEntryNames';
+import { isOwnExit } from './ownExits';
 import { subscriptionNow, withinValidity } from './subscriptionEtag';
 
 /** The delivery projection of a subscription: what the decision reads from the row. */
-export interface DeliverySubscription {
+export interface DeliverySubscription extends CountryFields {
   subscriptionId: Id<'subscriptions'>;
   backendServerId: Id<'backendServers'> | null;
   /** The node the row is pinned to (the decision's place when the body names none). */
   pinnedNode: string | null;
-  /** The member's own stored country answer, if any. */
-  sniRegion?: string | null;
+  /**
+   * The revision of the stored country this request read (convex/memberCountry.ts):
+   * a guess this request writes is applied only while it is still current.
+   */
+  countryRev?: number | null;
 }
 
 export interface MemberLocation {
@@ -53,48 +59,101 @@ export interface MemberLocation {
   located: ResolvedWhere;
   /** The country the CDN reported for this request (null unless fronted): kept to re-locate. */
   inferred: string | null;
+  /** The member's country fields this request located with (after any guess it wrote). */
+  fields: CountryFields;
 }
 
 /**
- * The member's location at one node of a backend: the place's curated countries
- * and cache token (`edgeRender.renderContextFor`), then their own stored answer,
- * else the CDN-reported country, only when curated there.
+ * The member's location at one node of a backend (lib/memberCountry.ts
+ * `memberWhere`): nothing for a key that is not freedom-family THERE; else
+ * their own answer; else, with detection on, the stored guess; else, with
+ * detection off, the CDN-reported country for this one response. Only a
+ * country on the list counts, and only where an origin covers the place (the
+ * place's curated countries, `edgeRender.renderContextFor`: none elsewhere, as
+ * nothing is rendered there). A stored country is `source: 'override'` and keys
+ * the cache; an inferred one is never cached (lib/edges/sni/country.ts).
  */
 export async function locateAt(
   ctx: ActionCtx,
   a: {
+    subscriptionId: Id<'subscriptions'>;
     backendServerId: Id<'backendServers'> | null;
     node: string | null;
-    sniRegion?: string | null;
+    fields: CountryFields;
     inferred: string | null;
   },
 ): Promise<MemberLocation> {
-  const { token, curated, sensitive } = a.backendServerId
-    ? await ctx.runQuery(internal.edgeRender.renderContextFor, {
-        backendServerId: a.backendServerId,
-        nodeName: a.node ?? undefined,
-      })
-    : { token: null as string | null, curated: [] as string[], sensitive: false };
-  const located = resolveWhere({ override: a.sniRegion, inferred: a.inferred, curated });
-  return { node: a.node, edgeToken: token, sensitive, located, inferred: a.inferred };
+  const [place, country] = await Promise.all([
+    a.backendServerId
+      ? ctx.runQuery(internal.edgeRender.renderContextFor, {
+          backendServerId: a.backendServerId,
+          nodeName: a.node ?? undefined,
+        })
+      : { token: null as string | null, curated: [] as string[], sensitive: false },
+    ctx.runQuery(internal.memberCountry.contextFor, {
+      subscriptionId: a.subscriptionId,
+      nodeName: a.node ?? undefined,
+    }),
+  ]);
+  const located = memberWhere({
+    family: country.family,
+    sub: a.fields,
+    cfg: country.cfg,
+    listed: place.curated,
+    now: Date.now(),
+    reading: a.inferred,
+  });
+  return {
+    node: a.node,
+    edgeToken: place.token,
+    sensitive: place.sensitive,
+    located,
+    inferred: a.inferred,
+    fields: a.fields,
+  };
 }
 
 /**
  * Where the member is, for server-name selection, and the cache token of their
- * place, from THIS request: their own stored answer, else the country the CDN
- * reports (only when fronted), and only a curated one. One function for every
- * route, so the raw view and the subscription pick the same names.
+ * place, from THIS request. One function for every route, so the raw view and
+ * the subscription pick the same names. First the request's CDN country may set
+ * or refresh the stored guess (lib/memberCountry.ts `nextGuess`; a reading from
+ * one of FCP's own exits only keeps a guess alive): the client address is
+ * compared HERE and only a yes/no goes on, and the write applies only at the
+ * revision this request read (a transition in between wins).
  */
 export async function locateMember(
   ctx: ActionCtx,
   sub: DeliverySubscription,
   req: Request,
 ): Promise<MemberLocation> {
+  const reading = resolveCountry(req);
+  let fields: CountryFields = {
+    sniRegion: sub.sniRegion ?? null,
+    regionSeenCountry: sub.regionSeenCountry ?? null,
+    regionSeenFirstAt: sub.regionSeenFirstAt ?? null,
+    regionSeenAt: sub.regionSeenAt ?? null,
+  };
+  const country = await ctx.runQuery(internal.memberCountry.contextFor, {
+    subscriptionId: sub.subscriptionId,
+    nodeName: sub.pinnedNode ?? undefined,
+  });
+  const ownExit = isOwnExit(resolveClientIp(req), country.ownExits);
+  if (nextGuess({ ...country, sub: fields, now: Date.now(), reading, ownExit }).kind !== 'none') {
+    const after = await ctx.runMutation(internal.memberCountry.noteSeenCountry, {
+      subscriptionId: sub.subscriptionId,
+      countryRev: sub.countryRev ?? 0,
+      country: reading,
+      ownExit,
+    });
+    if (after) fields = after;
+  }
   return locateAt(ctx, {
+    subscriptionId: sub.subscriptionId,
     backendServerId: sub.backendServerId,
     node: sub.pinnedNode,
-    sniRegion: sub.sniRegion,
-    inferred: resolveCountry(req),
+    fields,
+    inferred: reading,
   });
 }
 
@@ -177,9 +236,10 @@ export async function deliverBody(
     input.location.node === node
       ? input.location
       : await locateAt(ctx, {
+          subscriptionId: sub.subscriptionId,
           backendServerId: sub.backendServerId,
           node,
-          sniRegion: sub.sniRegion,
+          fields: input.location.fields,
           inferred: input.location.inferred,
         });
   const where: CountryContext = location.located.where;

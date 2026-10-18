@@ -25,6 +25,9 @@ import { effectiveRule } from './lib/edges/render';
 import { resolveEdgeConfig } from './lib/edgeConfig';
 import { resolveSniConfig } from './lib/sniConfig';
 import { recordHeartbeat } from './cronHeartbeat';
+import { memberWhere } from './lib/memberCountry';
+import { memberFamilyOf } from './lib/memberFamily';
+import { resolveMemberCountryConfig } from './memberCountry';
 import { publishedEdgesOf } from './edgeRender';
 
 /**
@@ -60,12 +63,32 @@ export async function attributeReport(
   const backup = snap.backupEdgeId ? byId.get(snap.backupEdgeId) : undefined;
   if (!primary) return 0;
 
-  const [cfg, sniCfg] = await Promise.all([resolveEdgeConfig(ctx.db), resolveSniConfig(ctx.db)]);
-  const { where } = resolveWhere({
+  const [cfg, sniCfg, countryCfg, family] = await Promise.all([
+    resolveEdgeConfig(ctx.db),
+    resolveSniConfig(ctx.db),
+    resolveMemberCountryConfig(ctx.db),
+    memberFamilyOf(ctx.db, sub),
+  ]);
+  // The names are recomputed for the country the RENDER used (lib/memberCountry.ts
+  // `memberWhere`: the member's answer, else the stored guess, else, with
+  // detection off, the country they shared with this report standing in for
+  // the request's), so a member whose body followed a guess is credited the
+  // names they actually hold.
+  const where = memberWhere({
+    family,
+    sub,
+    cfg: countryCfg,
+    listed: sniCfg.curatedCountries,
+    now,
+    reading: args.consentedCountry,
+  }).where;
+  // The country the counts are KEPT under is never a guess (docs/privacy.md): the
+  // member's own answer, else the country they shared with the report.
+  const counted = resolveWhere({
     override: sub.sniRegion ?? null,
     inferred: args.consentedCountry,
     curated: sniCfg.curatedCountries,
-  });
+  }).where;
   const rule = effectiveRule(cfg.render, cfg.render.clients.other);
   const assigned = assignEndpoints(sub.renderKey, [primary, ...(backup ? [backup] : [])], {
     now,
@@ -86,7 +109,7 @@ export async function attributeReport(
   const share = shareOf(names);
   if (share === 0) return 0;
 
-  const country = where.country ?? NO_COUNTRY;
+  const country = counted.country ?? NO_COUNTRY;
   const day = dayOf(now);
   for (const name of names) {
     const row = await ctx.db

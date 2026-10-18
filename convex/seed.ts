@@ -584,6 +584,11 @@ export const seedCutover = internalAction({
     const settings = await ctx.runMutation(internal.seed.seedAppSettings, {});
     await ctx.runMutation(internal.seed.renameAppSettingKeys, {});
     await ctx.runMutation(internal.seed.seedCensoredCountries, {});
+    // Where members connect from: drop stored countries that may no longer be
+    // stored (a choice off the list, a key that is not freedom-family), and
+    // rebuild the own-exit set (convex/memberCountry.ts, convex/ownExits.ts).
+    await ctx.runMutation(internal.memberCountry.cleanStoredCountries, {});
+    await ctx.runMutation(internal.ownExits.refresh, {});
     const instances = await ctx.runMutation(internal.seed.seedBackendServersFromEnv, {});
     const clients = await ctx.runMutation(internal.seed.seedClients, {});
     const modes = await ctx.runMutation(internal.seed.seedConnectionModes, {});

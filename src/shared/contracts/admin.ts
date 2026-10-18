@@ -633,6 +633,31 @@ export type AdminAlertsPatch = z.infer<typeof AdminAlertsPatch>;
 export const AdminAlertsTestResult = z.object({ ok: z.boolean(), error: z.string().nullable() });
 export type AdminAlertsTestResult = z.infer<typeof AdminAlertsTestResult>;
 
+/**
+ * Where a member connects from, per active key (`GET /api/v1/admin/member-country/{id}`,
+ * sealed; convex/memberCountry.ts `adminView`). Admin-only, never audited.
+ */
+export const AdminMemberCountry = z.object({
+  detect: z.boolean(),
+  stickyDays: z.number(),
+  keys: z.array(
+    z.object({
+      current: z.boolean(),
+      backend: z.string(),
+      family: z.enum(['freedom', 'privacy', 'none']),
+      applies: z.boolean(),
+      choice: z.string().nullable(),
+      guess: z.object({ country: z.string(), firstAt: z.number(), lastAt: z.number() }).nullable(),
+      effective: z.string().nullable(),
+      source: z.enum(['choice', 'guess', 'none']),
+      delivered: z
+        .object({ at: z.number(), primary: z.string().nullable(), backup: z.string().nullable() })
+        .nullable(),
+    }),
+  ),
+});
+export type AdminMemberCountry = z.infer<typeof AdminMemberCountry>;
+
 /** One entry of the censored-country list (`/api/v1/admin/censored-countries`). */
 export const CensoredCountry = z.object({
   /** ISO 3166-1 alpha-2, uppercase. */

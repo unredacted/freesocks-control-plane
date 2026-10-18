@@ -38,21 +38,53 @@ accidentally regress it).
 - **No `console.*` in `convex/` logs an IP, header, or raw request.**
 - The admin self-diagnostic `GET /api/v1/admin/client-ip` computes the resolved
   IP **transiently** and returns it `no-store`; it is never persisted or audited.
-- The country used to suggest a connection mode is read transiently from
-  `CF-IPCountry` (only when `CF_FRONTED=true`) and **never stored**. In a country on the
-  censored-country list the status page's availability matrix picks the suggestion; only the
-  suggested mode id leaves the server.
-- The same transient country also picks **server names** for a key fetched from a heavily
-  filtered country (`docs/edges.md` § Names for the member's country), and the same rule holds:
-  it is used for that one response and **kept nowhere**. A subscription body shaped by an
-  inferred country is not written to the key's content cache (that would record the country on
-  the row), is served `private, no-store` (a shared cache would hand one country's body to
-  another), and is not part of the render snapshot. The one country FCP does store is the
-  member's **own answer** to "Where are you connecting from?" on the account page
-  (`subscriptions.sniRegion`): they chose to say it, it is one of the countries on the
-  censored-country list (Admin -> Settings), they can
-  set it back to Automatic (which removes it), it follows them to a re-issued key, and it is sent
-  to no analytics or telemetry.
+- **Where a member connects from** (`convex/lib/memberCountry.ts`, `convex/memberCountry.ts`).
+  The country is used to pick what works there: the server names a key uses
+  (`docs/edges.md` § Names for the member's country) and the connection mode the account page
+  suggests. The rules:
+  - **Freedom-family keys only.** A key of any other mode (the privacy family, a backend
+    without connection modes, a key whose family cannot be told) has no country at all: no
+    reading, nothing stored, nothing country-dependent in what it receives. The family is
+    decided fail-closed (`convex/lib/memberFamily.ts`).
+  - **The member's own answer wins**: "Where are you connecting from?" on the account page
+    (`subscriptions.sniRegion`), a country on the censored-country list (Admin -> Settings) or
+    "Somewhere else" (`ZZ`). While an answer is set nothing is guessed, and any guess is
+    cleared. Automatic removes the answer.
+  - **The guess.** Only with `delivery.country.detect` on (Admin -> Settings, off by default)
+    and only on Automatic: the country the CDN reports (`CF-IPCountry`, read only when
+    `CF_FRONTED=true`) is stored on the subscription (`regionSeenCountry`, first and last
+    seen) **only when it is on the censored-country list**; anything else stores nothing and
+    reads "elsewhere". A newer listed reading replaces it; an unlisted one leaves it (a member
+    whose app sometimes refreshes from elsewhere keeps it), and it is forgotten
+    `delivery.country.stickyDays` (30) after it was last seen, by a daily sweep. It is read on
+    the subscription route, the raw-config view and the account view only.
+  - **Our own exits.** An app that refreshes its subscription through the tunnel reaches FCP
+    from one of FCP's own addresses, and the CDN country is then the node's. Such a reading
+    never sets or changes the guess (it only keeps an existing one alive). The client address
+    is compared in the HTTP action with a set of **infrastructure** addresses
+    (`convex/ownExits.ts`: node, origin and edge addresses and the operator's
+    `delivery.country.ownExitRanges`) and dropped; only a yes/no reaches any function, and no
+    address is stored.
+  - **On the subscription row only**, and deleted with the key (the choice, the guess, and the
+    cached bodies shaped for it, at deletion rather than when the row is swept), on a switch to
+    a mode that is not freedom-family, and when the country leaves the list. Every stored copy
+    of the country on a row equals the row's choice or guess (`setStoredCountry`); a request
+    that read an older one cannot write it back. It follows the member to a re-issued key of a
+    freedom mode (regenerate carries the answer only).
+  - **Never in logs, audit payloads or analytics**: no audit action records a choice or a
+    guess, Umami never sees it, issue reports do not get it.
+  - **Sealed in transit.** The routes that carry it (`GET|POST /api/v1/account/connection-region`,
+    `GET /api/v1/admin/member-country/{id}`) are HPKE-sealed and refuse plaintext, so it never
+    crosses the CDN in the clear; a caller that cannot seal is refused. The admin view answers a
+    signed-in admin's passkey session only, never an API token, even one that seals.
+  - **Shown** to the member ("We think you're connecting from Iran. Change", or their own
+    answer) and to admins per member (Admin -> Users -> Live details: country, choice or guess,
+    first and last seen, the last delivery).
+  - **With detection off** (the default) the CDN country is used for that one response's server
+    names and **kept nowhere**: the body is not written to the content cache, is served
+    `private, no-store`, and is not part of the render snapshot. The mode suggestion uses it the
+    same way. In a country on the censored-country list the status page's availability matrix
+    picks the suggestion; only the suggested mode id leaves the server.
 - **Device identification (HWID) is opt-in and backend-side.** When the admin
   enables device-limit enforcement, a proxy app that sends `x-hwid` gets that
   device id forwarded to the Remnawave backend, which keeps its own device rows;
@@ -179,7 +211,9 @@ and the transport/Reality settings remain Ansible-only. See `docs/backends.md`
 - **No member data in the edges area.** Probes measure FCP's own addresses; report
   attribution uses a peppered per-member dedupe mark and the member's own render snapshot
   (`subscriptions.lastRender`: epoch + edge ids, no addresses); audit payloads carry origin
-  slugs, listener keys and codes, never addresses, hostnames or provider account names.
+  slugs, listener keys and codes, never addresses, hostnames or provider account names. The one
+  member fact the delivery uses is where they connect from, which lives on their subscription
+  row under the rules in §1 and nowhere in the edges tables.
 
 ## 5c. What a member's subscription shows
 
@@ -429,6 +463,10 @@ If you deploy or fork FCP, keep the posture:
       your Umami version's IP handling AND that Umami's fronting proxy doesn't
       access-log requests; when adding a member-facing SPA route, add it to
       `ROUTE_ALLOWLIST` in `convex/lib/umami.ts` or it reports as `/other`.
+- [ ] Member country (§1): turn `delivery.country.detect` on only on a deployment that is
+      really fronted by Cloudflare (`CF_FRONTED=true`), and list the ranges your nodes send
+      traffic from in `delivery.country.ownExitRanges` when they are not the node addresses FCP
+      already knows (NAT, a separate egress).
 - [ ] Nodes (§5): Xray Config Profile has `log.access:"none"` + `loglevel:"none"` +
       `dnsLog:false` (+ `maskAddress:"full"`) and `policy.statsUserOnline:false`;
       node container logging driver `none`. Enforced by `ansible-role-freesocks`;

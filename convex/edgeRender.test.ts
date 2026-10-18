@@ -858,14 +858,15 @@ describe("edgeRender: server names for the member's country", () => {
     const { t, subId } = await seedCountry();
     const userId = (await t.run((ctx) => ctx.db.get(subId)))!.userId;
     // The choices are the censored-country list (here: the default one).
-    expect(await t.query(internal.subscriptions.connectionRegion, { userId })).toEqual({
-      region: null,
+    expect(await t.query(internal.memberCountry.memberView, { userId })).toMatchObject({
+      applies: true,
+      choice: null,
       options: DEFAULT_CENSORED_COUNTRIES.codes,
     });
     await expect(
-      t.mutation(internal.subscriptions.setConnectionRegion, { userId, region: 'DE' }),
+      t.mutation(internal.memberCountry.setChoice, { userId, region: 'DE' }),
     ).rejects.toThrow(/unknown region/);
-    await t.mutation(internal.subscriptions.setConnectionRegion, { userId, region: 'cn' });
+    await t.mutation(internal.memberCountry.setChoice, { userId, region: 'cn' });
     // The request says RU; the member said CN.
     const res = await from(t, 'RU');
     const names = sniOf(await res.text());
@@ -876,7 +877,7 @@ describe("edgeRender: server names for the member's country", () => {
     }[];
     expect(entries.map((e) => e.region)).toEqual(['CN']);
     // Back to automatic: the answer is gone from the row, and the CN body is not reused.
-    await t.mutation(internal.subscriptions.setConnectionRegion, { userId, region: null });
+    await t.mutation(internal.memberCountry.setChoice, { userId, region: null });
     expect((await t.run((ctx) => ctx.db.get(subId)))!.sniRegion).toBeUndefined();
     const auto = await from(t);
     expect(auto.headers.get('cache-control')).toMatch(/^public/);
@@ -1351,7 +1352,7 @@ describe('edgeRender: the raw-config view goes through delivery', () => {
     expect(sniOf(inferredRaw.content)).toEqual(sniOf(inferredSub));
     // The member's own answer wins over the request, on both routes.
     const userId = (await s.t.run((ctx) => ctx.db.get(s.subId)))!.userId;
-    await s.t.mutation(internal.subscriptions.setConnectionRegion, { userId, region: 'CN' });
+    await s.t.mutation(internal.memberCountry.setChoice, { userId, region: 'CN' });
     const storedRaw = (await (await raw(s.t, cookie, { 'cf-ipcountry': 'RU' })).json()) as {
       content: string;
     };
@@ -1404,7 +1405,7 @@ describe('edgeRender: the raw-config view goes through delivery', () => {
           });
           if (country === 'stored') {
             const userId = (await s.t.run((ctx) => ctx.db.get(s.subId)))!.userId;
-            await s.t.mutation(internal.subscriptions.setConnectionRegion, {
+            await s.t.mutation(internal.memberCountry.setChoice, {
               userId,
               region: 'CN',
             });
@@ -1450,5 +1451,191 @@ describe('edgeRender: the raw-config view goes through delivery', () => {
     expect(await (await subNoUa(t)).text()).toBe(content);
     // The pin is unchanged (the body reported none to record).
     expect((await t.run((ctx) => ctx.db.get(subId)))!.pinnedNode).toBe(NODE);
+  });
+});
+
+describe('edgeRender: where a member connects from, at a place an origin covers', () => {
+  const SIGN_KEY = 'country-sign';
+  const PRIVACY_SQUAD = '11111111-2222-3333-4444-0000000000aa';
+  const CN_OK = ['cn-ok-1.example', 'cn-ok-2.example'];
+  async function memberCookie(t: ReturnType<typeof convexTest>, subId: Id<'subscriptions'>) {
+    vi.stubEnv('SESSION_SIGNING_KEY', SIGN_KEY);
+    const userId = (await t.run((ctx) => ctx.db.get(subId)))!.userId;
+    const sid = `sid-c-${Math.random().toString(36).slice(2)}`;
+    await t.mutation(internal.sessions.create, { sid, kind: 'member', userId, ttlMs: 3_600_000 });
+    return `fs_session=${await signValue(sid, SIGN_KEY)}`;
+  }
+  const sniOf = (body: string) => [
+    ...new Set(
+      proxyLines(body).map((l) =>
+        new URLSearchParams(l.slice(l.indexOf('?') + 1).split('#')[0]).get('sni'),
+      ),
+    ),
+  ];
+  /** The panel's answer; `during` runs once while a request waits for it. */
+  let during: (() => Promise<unknown>) | null = null;
+  function stubPanelDuring() {
+    during = null;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        const hook = during;
+        during = null;
+        if (hook) await hook();
+        return new Response(panelBody, { status: 200, headers: { 'content-type': 'text/plain' } });
+      }),
+    );
+  }
+  /** Names proven / blocked in CN on an hrw1 listener; detection on; a privacy pool bound. */
+  async function world() {
+    stubPanelDuring();
+    vi.stubEnv('CF_FRONTED', 'true');
+    vi.stubEnv('IP_HASH_SALT', 'test-salt');
+    const s = await seed({
+      listeners: [
+        realityListener({
+          tlsNames: ['cn-ok-1.example', 'cn-ok-2.example', 'cn-blocked.example', 'plain.example'],
+        }),
+      ],
+    });
+    await s.t.run(async (ctx) => {
+      const l = (await ctx.db.get(s.listenerId))!;
+      const mark: Record<string, { provenIn?: string[]; blockedIn?: string[] }> = {
+        'cn-ok-1.example': { provenIn: ['CN'] },
+        'cn-ok-2.example': { provenIn: ['CN'] },
+        'cn-blocked.example': { blockedIn: ['CN'] },
+        'plain.example': { blockedIn: ['CN'] },
+      };
+      await ctx.db.patch(s.listenerId, {
+        sniPick: 'hrw1',
+        tlsNames: l.tlsNames!.map((n) => ({ ...n, ...mark[n.name] })),
+      });
+      await upsertSettingRow(ctx, 'delivery.country.detect', 'true');
+      await ctx.db.insert('modePlacements', {
+        modeSlug: 'privacy-reality',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: [PRIVACY_SQUAD] }),
+        updatedAt: Date.now(),
+      });
+    });
+    const userId = (await s.t.run((ctx) => ctx.db.get(s.subId)))!.userId;
+    // A freedom key (with the privacy pool bound, the default would be privacy).
+    await s.t.run((ctx) => ctx.db.patch(userId, { connectionModeId: 'freedom-ws' }));
+    return { ...s, userId };
+  }
+  const sub = (t: ReturnType<typeof convexTest>, ua: string, country: string) =>
+    t.fetch('/api/v1/sub/tok_abc', {
+      headers: { 'user-agent': ua, 'cf-ipcountry': country, 'cf-connecting-ip': '192.0.2.60' },
+    });
+  const row = (t: ReturnType<typeof convexTest>, id: Id<'subscriptions'>) =>
+    t.run((ctx) => ctx.db.get(id)) as Promise<Doc<'subscriptions'>>;
+  const regions = (s: Doc<'subscriptions'>) =>
+    (s.subCache ? (JSON.parse(s.subCache) as { region?: string | null }[]) : []).map(
+      (e) => e.region ?? null,
+    );
+  const countriesOn = (s: Doc<'subscriptions'>) =>
+    [s.sniRegion, s.regionSeenCountry, ...regions(s)].filter(
+      (c): c is string => typeof c === 'string' && c !== 'ZZ',
+    );
+
+  test('the guess is stored once, keys the cache, and both routes pick the same names with it', async () => {
+    const { t, subId } = await world();
+    const first = await sub(t, 'v2rayNG/1.9.0', 'CN');
+    expect(first.headers.get('cache-control')).toMatch(/^public/);
+    expect(sniOf(await first.text()).sort()).toEqual(CN_OK);
+    let s = await row(t, subId);
+    expect(s.regionSeenCountry).toBe('CN');
+    expect(regions(s)).toEqual(['CN']);
+    // Later readings from elsewhere keep it (sticky): the next body is still CN's.
+    const later = await sub(t, 'Hiddify/2.0', 'DE');
+    expect(sniOf(await later.text()).sort()).toEqual(CN_OK);
+    s = await row(t, subId);
+    expect(s.regionSeenCountry).toBe('CN');
+    // The raw-config view locates the member the same way, from its own request.
+    const raw = await t.fetch('/api/v1/subscription/content', {
+      headers: { cookie: await memberCookie(t, subId), 'cf-ipcountry': 'DE' },
+    });
+    expect(sniOf(((await raw.json()) as { content: string }).content).sort()).toEqual(CN_OK);
+  });
+
+  test('the raw-config view takes a reading too, and a stored answer wins over it', async () => {
+    const { t, subId, userId } = await world();
+    const cookie = await memberCookie(t, subId);
+    await t.fetch('/api/v1/subscription/content', {
+      headers: { cookie, 'cf-ipcountry': 'CN', 'cf-connecting-ip': '192.0.2.61' },
+    });
+    expect((await row(t, subId)).regionSeenCountry).toBe('CN');
+    await t.mutation(internal.memberCountry.setChoice, { userId, region: 'ZZ' });
+    const raw = await t.fetch('/api/v1/subscription/content', {
+      headers: { cookie, 'cf-ipcountry': 'CN' },
+    });
+    // "Somewhere else": the universal pool, never a name blocked in any listed country.
+    const names = sniOf(((await raw.json()) as { content: string }).content);
+    expect(names).not.toContain('cn-blocked.example');
+    expect(names).not.toContain('plain.example');
+    expect((await row(t, subId)).regionSeenCountry).toBeUndefined();
+  });
+
+  describe('a transition while the request waits for the panel leaves no country behind', () => {
+    async function midFetch(
+      transition: (w: Awaited<ReturnType<typeof world>>) => Promise<unknown>,
+    ) {
+      const w = await world();
+      await sub(w.t, 'v2rayNG/1.9.0', 'CN');
+      expect(regions(await row(w.t, w.subId))).toEqual(['CN']);
+      let ran = false;
+      during = async () => {
+        ran = true;
+        await transition(w);
+      };
+      const res = await sub(w.t, 'Hiddify/2.0', 'CN');
+      expect(res.status).toBe(200);
+      expect(ran).toBe(true);
+      await w.t.finishInProgressScheduledFunctions();
+      return { ...w, s: await row(w.t, w.subId) };
+    }
+
+    test('"Somewhere else"', async () => {
+      const { s } = await midFetch(({ t, userId }) =>
+        t.mutation(internal.memberCountry.setChoice, { userId, region: 'ZZ' }),
+      );
+      expect(s.sniRegion).toBe('ZZ');
+      expect(countriesOn(s)).toEqual([]);
+    });
+
+    test('the key is deleted', async () => {
+      const { s } = await midFetch(({ t, subId }) =>
+        t.mutation(internal.subscriptions.markSubscriptionDeleted, { subscriptionId: subId }),
+      );
+      expect(countriesOn(s)).toEqual([]);
+      expect(s.subCache).toBeUndefined();
+    });
+
+    test('an in-place switch into a privacy-family mode', async () => {
+      const { s } = await midFetch(({ t, subId }) =>
+        t.mutation(internal.subscriptions.setPlacementAndClearCache, {
+          subscriptionId: subId,
+          placement: PRIVACY_SQUAD,
+        }),
+      );
+      expect(countriesOn(s)).toEqual([]);
+    });
+
+    test('the guess moves to RU, then CN leaves the list, then the CN request resumes', async () => {
+      const { s } = await midFetch(async ({ t, subId }) => {
+        await t.mutation(internal.memberCountry.noteSeenCountry, {
+          subscriptionId: subId,
+          countryRev: (await row(t, subId)).countryRev ?? 0,
+          country: 'RU',
+          ownExit: false,
+        });
+        await t.mutation(internal.censoredCountries.set, {
+          countries: ['RU', 'IR'].map((code) => ({ code, checkEdges: true })),
+        });
+        await t.finishInProgressScheduledFunctions();
+      });
+      expect(s.regionSeenCountry).toBe('RU');
+      expect(countriesOn(s)).not.toContain('CN');
+    });
   });
 });

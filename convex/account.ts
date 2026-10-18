@@ -733,7 +733,9 @@ export const regenerate = internalAction({
       excludeNode: oldSub?.pinnedNode ?? undefined,
       // NO carrySubTokenFromId: regenerate exists to ROTATE the member's URL
       // (the recover-from-a-leaked-link action) — mode/backend switches carry
-      // the token so their URL never changes; this one must not.
+      // the token so their URL never changes; this one must not. Their answer
+      // to "where are you connecting from?" does follow them (not a guess).
+      carryCountryFromId: oldSub?._id,
     });
 
     if (oldSub) {

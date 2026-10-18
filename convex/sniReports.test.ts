@@ -84,7 +84,9 @@ import { realityListener, registerRelay } from './lib/edges/testing/fixtures';
 
 const NAMES = ['a.example', 'b.example', 'c.example', 'd.example', 'e.example'];
 
-async function seedMember(opts: { hrw?: boolean; sniRegion?: string } = {}) {
+async function seedMember(
+  opts: { hrw?: boolean; sniRegion?: string; mode?: string; guess?: string } = {},
+) {
   const t = convexTest(schema, modules);
   const serverId = await t.run(async (ctx) => {
     const id = await ctx.db.insert('backendServers', {
@@ -133,6 +135,7 @@ async function seedMember(opts: { hrw?: boolean; sniRegion?: string } = {}) {
       tierId,
       status: 'active',
       supportId: 'SUP-1',
+      ...(opts.mode ? { connectionModeId: opts.mode } : {}),
       updatedAt: Date.now(),
     });
     const relay = (await ctx.db.get(relayId))!;
@@ -149,6 +152,9 @@ async function seedMember(opts: { hrw?: boolean; sniRegion?: string } = {}) {
       pinnedNode: 'node-one',
       renderKey: 'a'.repeat(64),
       sniRegion: opts.sniRegion,
+      ...(opts.guess
+        ? { regionSeenCountry: opts.guess, regionSeenAt: Date.now(), regionSeenFirstAt: Date.now() }
+        : {}),
       lastRenderedEpoch: relay.publicationEpoch,
       lastRender: {
         at: Date.now(),
@@ -229,6 +235,36 @@ describe('a report, attributed', () => {
     await report({ country: 'IR' });
     expect((await counts()).map((r) => r.name).sort()).toEqual([
       'c.example',
+      'd.example',
+      'e.example',
+    ]);
+  });
+
+  test('a guessed country shapes the names credited, never the country they are counted under', async () => {
+    // a, b and c are blocked in RU: with no country (the universal pool) only d
+    // and e are usable; for a member whose body followed an IR guess all five are.
+    const blockElsewhere = async (s: Awaited<ReturnType<typeof seedMember>>) =>
+      s.t.run(async (ctx) => {
+        await upsertSettingRow(ctx, 'delivery.country.detect', 'true');
+        const l = (await ctx.db.get(s.listenerId))!;
+        await ctx.db.patch(s.listenerId, {
+          tlsNames: (l.tlsNames ?? []).map((n) =>
+            ['a.example', 'b.example', 'c.example'].includes(n.name)
+              ? { ...n, blockedIn: ['RU'] }
+              : n,
+          ),
+        });
+      });
+    const guessed = await seedMember({ mode: 'freedom-ws', guess: 'IR' });
+    await blockElsewhere(guessed);
+    await guessed.report({ country: null });
+    const rows = await guessed.counts();
+    expect(rows).toHaveLength(3);
+    expect(new Set(rows.map((r) => r.country))).toEqual(new Set([NO_COUNTRY]));
+    const unguessed = await seedMember({ mode: 'freedom-ws' });
+    await blockElsewhere(unguessed);
+    await unguessed.report({ country: null });
+    expect((await unguessed.counts()).map((r) => r.name).sort()).toEqual([
       'd.example',
       'e.example',
     ]);

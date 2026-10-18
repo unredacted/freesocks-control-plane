@@ -152,6 +152,7 @@ async function sealedInner(ctx: ActionCtx, req: Request, handler: RawHandler): P
   // credential that would authenticate the request (see `isBearerCaller`).
   const isAdminPath = path.startsWith('/api/v1/admin/');
   const hpkeRequired =
+    policy.required === true ||
     (postureKnob('FS_HPKE_REQUIRED') && !isAdminPath) ||
     (postureKnob('FS_HPKE_ADMIN_REQUIRED') && isAdminPath && !(await isBearerCaller(ctx, req)));
   const sealedRequired = (): Response =>

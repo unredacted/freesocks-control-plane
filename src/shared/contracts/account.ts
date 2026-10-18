@@ -411,12 +411,21 @@ export const PasskeyListResponse = z.object({ passkeys: z.array(PasskeyEntry) })
 export type PasskeyListResponse = z.infer<typeof PasskeyListResponse>;
 
 /**
- * "Where are you connecting from?": the member's own answer. `region` is one of
- * `options` (curated country codes) or null for automatic. It is the only
- * country the service stores, because the member chose to say it.
+ * "Where are you connecting from?" (sealed; convex/memberCountry.ts). `applies`
+ * is false for a key whose mode has no country (privacy family): the control is
+ * hidden. `choice`: a listed country, `ZZ` ("Somewhere else") or null
+ * (Automatic). `guess`: on Automatic with detection on, the country guessed from
+ * the connection (epoch ms first and last seen). `effective`: what is used.
  */
 export const ConnectionRegionResponse = z.object({
-  region: z.string().nullable(),
+  applies: z.boolean(),
+  choice: z.string().nullable(),
+  guess: z.object({ country: z.string(), firstAt: z.number(), lastAt: z.number() }).nullable(),
+  effective: z.string().nullable(),
+  source: z.enum(['choice', 'guess', 'none']),
   options: z.array(z.string()),
+  detect: z.boolean(),
+  /** A guess is forgotten about this many days after it was last seen. */
+  stickyDays: z.number(),
 });
 export type ConnectionRegionResponse = z.infer<typeof ConnectionRegionResponse>;

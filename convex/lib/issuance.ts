@@ -48,6 +48,9 @@ export async function issueNewSubscription(
     // saga failure the compensation hands the token BACK to this row.
     // regenerate omits it — URL rotation is that action's purpose.
     carrySubTokenFromId?: Id<'subscriptions'>;
+    // regenerate: carry only the member's answer to "where are you connecting
+    // from?" from this row (convex/memberCountry.ts).
+    carryCountryFromId?: Id<'subscriptions'>;
   },
 ): Promise<IssueResult> {
   const issued = await ctx.runAction(internal.backends.issueUser, {
@@ -74,6 +77,7 @@ export async function issueNewSubscription(
         : undefined,
       excludeNode: input.excludeNode,
       carrySubTokenFromId: input.carrySubTokenFromId,
+      carryCountryFromId: input.carryCountryFromId,
     });
     await ctx.runMutation(internal.subscriptions.setCurrentSubscription, {
       userId: input.userId,

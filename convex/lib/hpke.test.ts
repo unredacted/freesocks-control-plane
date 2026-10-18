@@ -383,3 +383,153 @@ describe('hpke: FS_HPKE_REQUIRED on the member routes sealed in 2026-09', () => 
     expect(mirror.status).toBe(401); // past the gate, into auth
   });
 });
+
+// --- REQUIRED routes: where a member connects from -------------------------------
+
+const REGION = '/api/v1/account/connection-region';
+const MEMBER_COUNTRY = '/api/v1/admin/member-country/';
+
+describe('hpke: routes that refuse plaintext whatever the knobs say (required)', () => {
+  async function both() {
+    const { t, cookie: adminCookie, bearer, kp, kid } = await setup();
+    const userId = await t.run(async (ctx) => {
+      const tierId = await ctx.db.insert('tiers', {
+        slug: 'free',
+        name: 'Free',
+        backend: 'remnawave',
+        monthlyTrafficGb: 50,
+        deviceLimit: 1,
+        hwidLimit: 1,
+        hwidEnabled: true,
+        trafficStrategy: 'MONTH',
+        isDefaultFree: true,
+        isActive: true,
+        priority: 0,
+        expirationDaysAfterMembershipLapse: 0,
+        updatedAt: Date.now(),
+      });
+      return ctx.db.insert('users', { tierId, status: 'active', updatedAt: Date.now() });
+    });
+    const sid = `sid-${Math.random().toString(36).slice(2)}`;
+    await t.mutation(internal.sessions.create, { sid, kind: 'member', userId, ttlMs: 3_600_000 });
+    const cookie = `fs_session=${await signValue(sid, 'test-sign')}`;
+    return { t, cookie, adminCookie, bearer, kp, kid, userId };
+  }
+
+  test('both knobs off: plaintext is still refused, for a member, an admin cookie and a token', async () => {
+    const { t, cookie, adminCookie, bearer, userId } = await both();
+    for (const [path, init] of [
+      [REGION, { headers: { cookie } }],
+      [
+        REGION,
+        {
+          method: 'POST',
+          headers: { cookie, ...JSON_HDR },
+          body: JSON.stringify({ region: 'IR' }),
+        },
+      ],
+      [`${MEMBER_COUNTRY}${userId}`, { headers: { cookie: adminCookie } }],
+      [`${MEMBER_COUNTRY}${userId}`, { headers: { authorization: bearer } }],
+    ] as [string, RequestInit][]) {
+      const res = await t.fetch(path, init);
+      expect(res.status, `${init.method ?? 'GET'} ${path}`).toBe(400);
+      expect(await res.json()).toMatchObject({ error: { code: 'hpke.sealed_required' } });
+    }
+  });
+
+  test('the sealed forms work: the request body is an envelope, the response ciphertext', async () => {
+    const { t, cookie, adminCookie, kp, kid, userId } = await both();
+    const open = async (path: string, method: string, respEphPriv: CryptoKey, res: Response) => {
+      expect(res.status).toBe(200);
+      expect(res.headers.get('x-fs-sealed')).toBe('1');
+      const wire = await res.json();
+      expect(isSealedWire(wire)).toBe(true);
+      return clientOpenResponse({ serverKid: kid, method, path, respEphPriv, wire });
+    };
+    // GET reveal.
+    const prepGet = await clientPrepareRequest({
+      serverPub: kp.publicKey,
+      serverKid: kid,
+      method: 'GET',
+      path: REGION,
+      policy: routePolicy(REGION, 'GET')!,
+    });
+    const view = await open(
+      REGION,
+      'GET',
+      prepGet.respEphPriv!,
+      await t.fetch(REGION, { headers: { cookie, 'x-fs-resp-eph': prepGet.respEphPubB64! } }),
+    );
+    // No key yet: the control does not apply.
+    expect(view).toMatchObject({ applies: false, choice: null, options: [] });
+    // POST seal-both: the choice travels only inside the envelope.
+    const prepPost = await clientPrepareRequest({
+      serverPub: kp.publicKey,
+      serverKid: kid,
+      method: 'POST',
+      path: REGION,
+      policy: routePolicy(REGION, 'POST')!,
+      bodyObj: { region: null },
+    });
+    expect(isSealedWire(prepPost.body)).toBe(true);
+    expect(JSON.stringify(prepPost.body)).not.toContain('region');
+    await open(
+      REGION,
+      'POST',
+      prepPost.respEphPriv!,
+      await t.fetch(REGION, {
+        method: 'POST',
+        headers: { cookie, ...JSON_HDR },
+        body: JSON.stringify(prepPost.body),
+      }),
+    );
+    // The admin member view.
+    const path = `${MEMBER_COUNTRY}${userId}`;
+    const prepAdmin = await clientPrepareRequest({
+      serverPub: kp.publicKey,
+      serverKid: kid,
+      method: 'GET',
+      path,
+      policy: routePolicy(path, 'GET')!,
+    });
+    const admin = await open(
+      path,
+      'GET',
+      prepAdmin.respEphPriv!,
+      await t.fetch(path, {
+        headers: { cookie: adminCookie, 'x-fs-resp-eph': prepAdmin.respEphPubB64! },
+      }),
+    );
+    expect(admin).toMatchObject({ keys: [] });
+  });
+
+  test('the admin member view is for a signed-in admin only: a token is refused even when it seals', async () => {
+    const { t, kp, kid, userId } = await both();
+    const plaintext = `fsv1_${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+    await t.run(async (ctx) => {
+      const createdByAdminId = (await ctx.db.query('adminUsers').first())!._id;
+      await ctx.db.insert('apiTokens', {
+        name: 'reader',
+        tokenHash: await sha256Hex(plaintext),
+        tokenPrefix: plaintext.slice(0, 12),
+        createdByAdminId,
+        scopes: ['admin:users:read'],
+        subjectType: 'service',
+        updatedAt: Date.now(),
+      });
+    });
+    const path = `${MEMBER_COUNTRY}${userId}`;
+    const prep = await clientPrepareRequest({
+      serverPub: kp.publicKey,
+      serverKid: kid,
+      method: 'GET',
+      path,
+      policy: routePolicy(path, 'GET')!,
+    });
+    const res = await t.fetch(path, {
+      headers: { authorization: `Bearer ${plaintext}`, 'x-fs-resp-eph': prep.respEphPubB64! },
+    });
+    expect(res.status).toBe(401);
+    expect(res.headers.get('x-fs-sealed')).toBeNull();
+  });
+});

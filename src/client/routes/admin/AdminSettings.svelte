@@ -47,10 +47,16 @@
   // edits if the underlying query refetches in the background.
   let draft = $state<Record<string, unknown>>({});
   let initialized = $state(false);
+  // Free-text mirror of the exit ranges so typing a new line isn't reflowed by
+  // re-joining; parsed back into `draft` as a list on input.
+  let exitRangesText = $state('');
 
   $effect(() => {
     if (settings.data && !initialized) {
       draft = { ...settings.data };
+      exitRangesText = (
+        (settings.data['delivery.country.ownExitRanges'] as string[] | undefined) ?? []
+      ).join('\n');
       initialized = true;
     }
   });
@@ -575,6 +581,102 @@
                   'subscription.siteName': (e.target as HTMLInputElement).value,
                 })}
             />
+          </div>
+        </CardContent>
+      </Card>
+
+      <!-- Where members connect from (lib/memberCountry.ts, docs/privacy.md) -->
+      <Card>
+        <CardHeader>
+          <CardTitle class="text-base">Where members connect from</CardTitle>
+          <CardDescription>
+            Off: the country the CDN reports is used for one response and stored nowhere. On: for
+            members of freedom modes left on Automatic, a country on the censored-country list is
+            stored with their key as a guess (shown to them and to admins, never logged, audited or
+            sent to analytics), forgotten the number of days below after it was last seen, and
+            deleted with the key. A member's own choice always wins. Needs the deployment to be
+            fronted by Cloudflare (CF_FRONTED).
+          </CardDescription>
+        </CardHeader>
+        <CardContent class="space-y-3 text-sm">
+          <label class="flex items-center gap-3">
+            <Checkbox
+              checked={draft['delivery.country.detect'] === true}
+              onCheckedChange={(v) => (draft = { ...draft, 'delivery.country.detect': v === true })}
+            />
+            <span>Guess the country from the connection</span>
+          </label>
+          <div class="flex flex-wrap gap-6">
+            <div>
+              <label class="text-xs text-muted-foreground mb-1 block" for="country-sticky-days">
+                Forget a guess after (days, 1 to 90)
+              </label>
+              <Input
+                id="country-sticky-days"
+                type="number"
+                min={1}
+                max={90}
+                class="w-32"
+                value={Number(draft['delivery.country.stickyDays'] ?? 30)}
+                oninput={(e) =>
+                  (draft = {
+                    ...draft,
+                    'delivery.country.stickyDays': Math.min(
+                      90,
+                      Math.max(1, Math.round(Number((e.target as HTMLInputElement).value) || 30)),
+                    ),
+                  })}
+              />
+            </div>
+            <div>
+              <label class="text-xs text-muted-foreground mb-1 block" for="country-refresh-hours">
+                Write a guess again at most every (hours, 1 to 48)
+              </label>
+              <Input
+                id="country-refresh-hours"
+                type="number"
+                min={1}
+                max={48}
+                class="w-32"
+                value={Number(draft['delivery.country.refreshHours'] ?? 6)}
+                oninput={(e) =>
+                  (draft = {
+                    ...draft,
+                    'delivery.country.refreshHours': Math.min(
+                      48,
+                      Math.max(1, Math.round(Number((e.target as HTMLInputElement).value) || 6)),
+                    ),
+                  })}
+              />
+            </div>
+          </div>
+          <div>
+            <label class="text-xs text-muted-foreground mb-1 block" for="country-exit-ranges">
+              Extra exit ranges (CIDR, one per line)
+            </label>
+            <textarea
+              id="country-exit-ranges"
+              rows="3"
+              class="border-input bg-background w-full max-w-md rounded-md border px-3 py-2 font-mono text-xs"
+              placeholder="192.0.2.0/24"
+              value={exitRangesText}
+              oninput={(e) => {
+                exitRangesText = (e.target as HTMLTextAreaElement).value;
+                draft = {
+                  ...draft,
+                  'delivery.country.ownExitRanges': exitRangesText
+                    .split(/\s+/)
+                    .map((r) => r.trim())
+                    .filter((r) => r.length > 0)
+                    .slice(0, 64),
+                };
+              }}
+            ></textarea>
+            <p class="text-xs text-muted-foreground mt-1">
+              A request from one of the service's own exits (a member's app refreshing through the
+              tunnel) never sets a guess. Node, origin and edge addresses are known already; add
+              ranges traffic leaves from otherwise (NAT, a separate egress).
+            </p>
           </div>
         </CardContent>
       </Card>
