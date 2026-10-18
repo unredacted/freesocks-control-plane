@@ -76,40 +76,29 @@ export async function defaultLocationOf(
   return rows.find((r) => r.enabled) ?? rows[0] ?? null;
 }
 
-/**
- * The location an edge was created in: its own frozen `locationId`, else (a
- * row written before locations existed, until the migration reaches it) its
- * account's default location.
- */
+/** The location an edge was created in (null for an adopted edge without an account). */
 export async function locationOfEdge(
   db: DatabaseReader,
-  edge: Pick<Doc<'edges'>, 'locationId' | 'accountId'>,
+  edge: Pick<Doc<'edges'>, 'locationId'>,
 ): Promise<Location | null> {
-  if (edge.locationId) return db.get(edge.locationId);
-  if (!edge.accountId) return null;
-  const account = await db.get(edge.accountId);
-  return account ? defaultLocationOf(db, account) : null;
+  return edge.locationId ? db.get(edge.locationId) : null;
 }
 
-/** Non-destroyed edges of an account in this location (the account scan covers rows not migrated yet). */
+/** Non-destroyed edges in this location. */
 export async function liveEdgesOfLocation(
   db: DatabaseReader,
-  location: Pick<Location, '_id' | 'accountId'>,
+  location: Pick<Location, '_id'>,
 ): Promise<Doc<'edges'>[]> {
-  const account = await db.get(location.accountId);
-  const fallback = account ? await defaultLocationOf(db, account) : null;
   const out: Doc<'edges'>[] = [];
   for (const status of EDGE_LIVE_STATUSES) {
-    const rows = await db
-      .query('edges')
-      .withIndex('by_account_status', (q) =>
-        q.eq('accountId', location.accountId).eq('status', status),
-      )
-      .take(LIVE_EDGE_SCAN_LIMIT);
-    for (const e of rows) {
-      const at = e.locationId ?? fallback?._id ?? null;
-      if (at === location._id) out.push(e);
-    }
+    out.push(
+      ...(await db
+        .query('edges')
+        .withIndex('by_location_status', (q) =>
+          q.eq('locationId', location._id).eq('status', status),
+        )
+        .take(LIVE_EDGE_SCAN_LIMIT)),
+    );
   }
   return out;
 }
@@ -117,7 +106,7 @@ export async function liveEdgesOfLocation(
 /** Managed live edges in this location (the `maxLiveEdges` regional cap). */
 export async function liveCountForLocation(
   db: DatabaseReader,
-  location: Pick<Location, '_id' | 'accountId'>,
+  location: Pick<Location, '_id'>,
 ): Promise<number> {
   return (await liveEdgesOfLocation(db, location)).filter((e) => e.managed).length;
 }
@@ -512,9 +501,8 @@ export const getForOps = internalQuery({
 });
 
 /**
- * The placement an EXISTING edge acts in: its own frozen copy, else (a row the
- * migration has not reached yet) null, and the caller keeps the account's
- * legacy settings.
+ * The placement an EXISTING edge acts in: its own frozen copy (null for an
+ * edge without one, which `loadAdapter` refuses for a placed provider).
  */
 export const placementOfEdge = internalQuery({
   args: { edgeId: v.id('edges') },

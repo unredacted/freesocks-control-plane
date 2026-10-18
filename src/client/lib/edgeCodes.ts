@@ -516,6 +516,11 @@ const COPY = {
     explain: 'The new credentials could not read one of the account locations in use.',
     fix: 'Use credentials that reach every location, or switch that location off first.',
   },
+  placement_missing: {
+    label: 'Address has no location',
+    explain: 'FCP does not know which region this address was made in, so it will not act on it.',
+    fix: 'Find it in the provider console and remove it there if it is unused.',
+  },
   account_disabled: {
     label: 'Account disabled',
     explain: 'The named account is switched off.',

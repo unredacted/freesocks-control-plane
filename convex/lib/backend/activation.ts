@@ -132,8 +132,8 @@ export interface PublicationShape {
  * same template. A replacement ADDRESS within that shape reuses the approval;
  * another account, location, template or listener needs a new review. An
  * approval whose shape predates the per-listener review (no `listeners`)
- * fits nothing, and so does an entry that names an account but no location
- * (written before locations existed and never migrated): it fails closed.
+ * fits nothing, and so does an entry that names an account but no location:
+ * it fails closed.
  */
 export function publicationFits(
   approved: Pick<ReviewShape, 'listeners'> | null,

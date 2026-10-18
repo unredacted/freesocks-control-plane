@@ -123,34 +123,20 @@ const relayProviderCredentials = v.union(
   v.object({ type: v.literal('cloudflare'), apiToken: v.string() }),
   v.object({ type: v.literal('fastly'), apiToken: v.string() }),
 );
-// Account settings. The placement fields (project / region / zone / network)
-// are TRANSITIONAL here: they moved to `edgeLocations.placement` (and a copy
-// frozen on each edge). `seed:migrateEdgeLocations` clears them from every
-// account; the next release drops them from this validator (two deploys).
+// Account settings: credential identifiers, the DNS zone / account and intent
+// defaults. WHERE an account's edges live is never here: it is a location
+// (`edgeLocations.placement`, frozen on each edge).
 const relayProviderSettings = v.union(
-  v.object({
-    type: v.literal('gcore'),
-    projectId: v.optional(v.number()), // TRANSITIONAL (placement)
-    regionId: v.optional(v.number()), // TRANSITIONAL (placement)
-    networkId: v.optional(v.string()), // TRANSITIONAL (placement)
-    subnetId: v.optional(v.string()), // TRANSITIONAL (placement)
-  }),
-  v.object({ type: v.literal('upcloud'), zone: v.optional(v.string()) }), // zone: TRANSITIONAL
+  v.object({ type: v.literal('gcore') }),
+  v.object({ type: v.literal('upcloud') }),
   v.object({
     type: v.literal('scaleway'),
     accessKey: v.string(), // public key id (the SDK pairs it with the secret); not a secret
-    projectId: v.optional(v.string()), // TRANSITIONAL (placement)
-    zone: v.optional(v.string()), // TRANSITIONAL (placement)
   }),
   v.object({
     type: v.literal('ovh'),
     applicationKey: v.string(), // public app identifier, not a secret
     endpoint: v.union(v.literal('ovh-eu'), v.literal('ovh-ca'), v.literal('ovh-us')),
-    serviceName: v.optional(v.string()), // TRANSITIONAL (placement)
-    regionName: v.optional(v.string()), // TRANSITIONAL (placement)
-    networkId: v.optional(v.string()), // TRANSITIONAL (placement)
-    subnetId: v.optional(v.string()), // TRANSITIONAL (placement)
-    gatewayId: v.optional(v.string()), // TRANSITIONAL (placement)
   }),
   // L7 (CDN front): the zone the account's hostnames live in. Both locate.
   v.object({
@@ -1212,12 +1198,6 @@ export default defineSchema({
     // had a single fixed location, else the first one added).
     defaultLocationId: v.optional(v.id('edgeLocations')),
     enabled: v.boolean(),
-    // TRANSITIONAL: trust moved to `edgeLocations` (per location). Cleared by
-    // `seed:migrateEdgeLocations`, never read; dropped by the next release.
-    qualified: v.optional(v.boolean()),
-    qualifiedTemplateHash: v.optional(v.string()),
-    qualification: v.optional(relayAccountQualification),
-    autoQualifyHold: v.optional(v.boolean()),
     // When the credentials or locating settings last changed (an edit, not a
     // keep-qualification rotation): auto-trust needs a test AFTER this.
     credentialsChangedAt: v.optional(v.number()),
@@ -1242,9 +1222,6 @@ export default defineSchema({
     // values only; frozen per edge into its provisionIntent.
     observedSettings: v.optional(v.string()),
     observedAt: v.optional(v.number()),
-    // TRANSITIONAL: the inventory moved to `edgeLocations` (it is per region).
-    inventorySnapshot: v.optional(v.string()),
-    inventoryAt: v.optional(v.number()),
     // Provider API health (edgeProviderOps `tracked`): consecutive calls that
     // failed for a reason on the provider's side (timeout, network, 5xx,
     // 401/403/429, an answer the adapter cannot read), reset by the first
@@ -1946,9 +1923,6 @@ export default defineSchema({
     backendServerId: v.id('backendServers'),
     nodeName: v.string(),
     nodeUuid: v.string(),
-    // TRANSITIONAL: the run's one account before picks existed. Cleared by
-    // `seed:migrateEdgeLocations` (moved into `picks`); dropped by the next release.
-    accountId: v.optional(v.id('edgeProviderAccounts')),
     // The (account, location) picks the run creates addresses in.
     picks: v.optional(
       v.array(
