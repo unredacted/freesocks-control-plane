@@ -41,7 +41,11 @@ import {
   EdgeIdResponse,
   EdgeInventoryResponse,
   EdgeLiveResponse,
+  EdgeLocationCreateResponse,
+  EdgeLocationList,
   EdgeMaintenanceView,
+  type EdgeLocationCreateRequest,
+  type EdgeLocationUpdateRequest,
   EdgeOkResponse,
   EdgeProviderAccountAdmin,
   EdgeProviderAccountsResponse,
@@ -115,7 +119,10 @@ export type EdgeConfigPatch = Record<string, unknown>;
 export interface CreateProviderBody {
   provider: EdgeProviderId;
   name: string;
+  /** The account's own settings, plus the first location's keys (split off by the server). */
   settings: Record<string, unknown>;
+  /** The provider's name for that first location's region. */
+  locationLabel?: string;
   credentials: Record<string, string>;
   maxLiveEdges?: number;
   dailyAllocationBudget?: number;
@@ -206,6 +213,8 @@ export interface RotateBody {
 }
 export interface AdoptEdgeBody {
   accountId?: string;
+  /** The account's location the resource lives in (its default when absent). */
+  locationId?: string;
   resourceId?: string;
   hostname?: string;
   ipv4?: string;
@@ -315,10 +324,10 @@ export const serveRelayDirect = (relayId: string) =>
 export const reprotectRelay = (relayId: string) =>
   apiClient.post(`${BASE}/relays/${enc(relayId)}/reprotect`, {}, SetupRunCreatedResponse);
 /** The activation policy on a deferred origin: pending untested L4 endpoints come back instead of a binding. */
-export const requireRelayEdges = (relayId: string, accountId?: string) =>
+export const requireRelayEdges = (relayId: string, accountId?: string, locationId?: string) =>
   apiClient.post(
     `${BASE}/relays/${enc(relayId)}/require-edges`,
-    accountId ? { accountId } : {},
+    { ...(accountId ? { accountId } : {}), ...(locationId ? { locationId } : {}) },
     RequireEdgesResponse,
   );
 
@@ -330,18 +339,66 @@ export const fetchProvidersUsage = () =>
   apiClient.get(`${BASE}/providers/usage`, ProvidersUsageResponse);
 export const fetchProvider = (id: string) =>
   apiClient.get(`${BASE}/providers/${enc(id)}`, EdgeProviderAccountAdmin);
-export const fetchProviderInventory = (id: string) =>
-  apiClient.get(`${BASE}/providers/${enc(id)}/inventory`, EdgeInventoryResponse);
+export const fetchProviderInventory = (id: string, locationId?: string | null) =>
+  apiClient.get(
+    `${BASE}/providers/${enc(id)}/inventory${locationId ? `?location=${enc(locationId)}` : ''}`,
+    EdgeInventoryResponse,
+  );
 export const createProvider = (body: CreateProviderBody) =>
   apiClient.post(`${BASE}/providers`, body, EdgeIdResponse);
 export const discoverProviderOptions = (body: DiscoverProviderBody) =>
   apiClient.post(`${BASE}/providers/discover`, body, EdgeDiscoverResponse);
 export const testProviderCredentials = (accountId: string) =>
   apiClient.post(`${BASE}/providers/test-credentials`, { accountId }, EdgeTestCredentialsResponse);
-export const refreshProviderInventory = (id: string) =>
-  apiClient.post(`${BASE}/providers/${enc(id)}/inventory/refresh`, {}, EdgeInventoryResponse);
+export const refreshProviderInventory = (id: string, locationId?: string | null) =>
+  apiClient.post(
+    `${BASE}/providers/${enc(id)}/inventory/refresh`,
+    locationId ? { locationId } : {},
+    EdgeInventoryResponse,
+  );
 export const qualifyProvider = (id: string, qualified: boolean) =>
   apiClient.post(`${BASE}/providers/${enc(id)}/qualify`, { qualified }, EdgeOkResponse);
+
+// --- an account's locations (where its edges live) --------------------------------------------------
+
+export const fetchProviderLocations = (accountId: string) =>
+  apiClient.get(`${BASE}/providers/${enc(accountId)}/locations`, EdgeLocationList);
+/** The location form's choices for a stored account: regions, then networks and flavors of the chosen one. */
+export const locationOptions = (accountId: string, placement: Record<string, unknown> = {}) =>
+  apiClient.post(
+    `${BASE}/providers/${enc(accountId)}/locations/options`,
+    { placement },
+    EdgeDiscoverResponse,
+  );
+/** Add a location (the provider must offer the region to this key); the same place twice is one location. */
+export const createProviderLocation = (accountId: string, body: EdgeLocationCreateRequest) =>
+  apiClient.post(`${BASE}/providers/${enc(accountId)}/locations`, body, EdgeLocationCreateResponse);
+export const updateProviderLocation = (
+  accountId: string,
+  locationId: string,
+  patch: EdgeLocationUpdateRequest,
+) =>
+  apiClient.patch(
+    `${BASE}/providers/${enc(accountId)}/locations/${enc(locationId)}`,
+    patch,
+    EdgeOkResponse,
+  );
+export const deleteProviderLocation = (accountId: string, locationId: string) =>
+  apiClient.delete(
+    `${BASE}/providers/${enc(accountId)}/locations/${enc(locationId)}`,
+    EdgeOkResponse,
+  );
+/** The trust override for one location (an untrust holds the automatic rules off). */
+export const qualifyProviderLocation = (
+  accountId: string,
+  locationId: string,
+  qualified: boolean,
+) =>
+  apiClient.post(
+    `${BASE}/providers/${enc(accountId)}/locations/${enc(locationId)}/qualify`,
+    { qualified },
+    EdgeOkResponse,
+  );
 export const rotateProviderCredentials = (id: string, body: RotateCredentialsBody) =>
   apiClient.post(
     `${BASE}/providers/${enc(id)}/rotate-credentials`,
@@ -715,10 +772,13 @@ export const providerQuery = (accountId: () => string | null) =>
     staleTime: 15_000,
   }));
 
-export const providerInventoryQuery = (accountId: () => string | null) =>
+export const providerInventoryQuery = (
+  accountId: () => string | null,
+  locationId: () => string | null = () => null,
+) =>
   createQuery(() => ({
-    queryKey: edgeKeys.providerInventory(accountId() ?? ''),
-    queryFn: () => fetchProviderInventory(accountId()!),
+    queryKey: [...edgeKeys.providerInventory(accountId() ?? ''), locationId() ?? 'default'],
+    queryFn: () => fetchProviderInventory(accountId()!, locationId()),
     enabled: accountId() !== null,
     staleTime: 15_000,
   }));

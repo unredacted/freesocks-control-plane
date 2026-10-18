@@ -151,6 +151,10 @@ export function throttlePolicyFor(parts: string[]): RateLimitPolicyKey | null {
   if (a === 'providers' && b && c === 'inventory' && d === 'refresh') {
     return 'admin.edges.provider-call';
   }
+  // A location's choices and its creation ask the provider for its regions.
+  if (a === 'providers' && b && c === 'locations' && (d === 'options' || !d)) {
+    return 'admin.edges.provider-call';
+  }
   // Credential rotation tests the new secret against the provider first.
   if (a === 'providers' && b && c === 'rotate-credentials' && !d) {
     return 'admin.edges.provider-call';
@@ -273,11 +277,19 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
       return json({ accounts, credentialFields });
     }
     if (c === 'inventory') {
+      const location = query.get('location');
       const inv = await ctx.runQuery(internal.edgeProviderAccounts.getInventory, {
         id: id<'edgeProviderAccounts'>(b),
+        ...(location ? { locationId: id<'edgeLocations'>(location) } : {}),
       });
-      return json(inv ?? { inventory: null, inventoryAt: null });
+      return json(inv ?? { locationId: null, inventory: null, inventoryAt: null });
     }
+    if (c === 'locations' && !d)
+      return json(
+        await ctx.runQuery(internal.edgeLocations.listForAccount, {
+          accountId: id<'edgeProviderAccounts'>(b),
+        }),
+      );
     if (!c) {
       const acct = await ctx.runQuery(internal.edgeProviderAccounts.getForAdmin, {
         id: id<'edgeProviderAccounts'>(b),
@@ -459,16 +471,18 @@ async function maintenanceView(ctx: ActionCtx) {
 async function refreshInventory(
   ctx: ActionCtx,
   accountId: Id<'edgeProviderAccounts'>,
+  locationId?: Id<'edgeLocations'>,
 ): Promise<Response> {
+  // The action records the pull on the location itself.
   const inventory: Inventory = await ctx.runAction(internal.edgeProviderOps.inventory, {
     accountId,
+    ...(locationId ? { locationId } : {}),
   });
-  await ctx.runMutation(internal.edgeProviderAccounts.recordInventory, {
+  const view = await ctx.runQuery(internal.edgeProviderAccounts.getInventory, {
     id: accountId,
-    inventory: JSON.stringify(inventory),
+    ...(locationId ? { locationId } : {}),
   });
-  const view = await ctx.runQuery(internal.edgeProviderAccounts.getInventory, { id: accountId });
-  return json(view ?? { inventory, inventoryAt: new Date().toISOString() });
+  return json(view ?? { locationId: null, inventory, inventoryAt: new Date().toISOString() });
 }
 
 const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
@@ -637,7 +651,12 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           backendServerId: id<'backendServers'>(String(body.backendServerId ?? '')),
           nodeUuid: String(body.nodeUuid ?? ''),
           ...listenerKeys,
-          accountId: id<'edgeProviderAccounts'>(String(body.accountId ?? '')),
+          ...(typeof body.accountId === 'string' && body.accountId
+            ? { accountId: id<'edgeProviderAccounts'>(body.accountId) }
+            : {}),
+          ...(typeof body.locationId === 'string' && body.locationId
+            ? { locationId: id<'edgeLocations'>(body.locationId) }
+            : {}),
           planHash: String(body.planHash ?? ''),
           approvedHideUuids: uuids,
           ...(body.keepDirect === true ? { keepDirect: true } : {}),
@@ -659,6 +678,9 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
             : {}),
           ...(typeof body.accountId === 'string' && body.accountId
             ? { accountId: id<'edgeProviderAccounts'>(body.accountId) }
+            : {}),
+          ...(typeof body.locationId === 'string' && body.locationId
+            ? { locationId: id<'edgeLocations'>(body.locationId) }
             : {}),
           ...act,
         }),
@@ -733,16 +755,57 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
       return json({ ok: res.ok, code: res.code ?? null, detail: res.detail ?? null, regions });
     }
     if (c === 'inventory' && d === 'refresh')
-      return refreshInventory(ctx, id<'edgeProviderAccounts'>(b));
+      return refreshInventory(
+        ctx,
+        id<'edgeProviderAccounts'>(b),
+        typeof body.locationId === 'string' && body.locationId
+          ? id<'edgeLocations'>(body.locationId)
+          : undefined,
+      );
     if (c === 'qualify') {
       // The effective template hash is computed server-side; a client-sent one is ignored.
       return json(
         await ctx.runMutation(internal.edgeProviderAccounts.setQualified, {
           id: id<'edgeProviderAccounts'>(b),
           qualified: body.qualified !== false,
+          ...(typeof body.locationId === 'string' && body.locationId
+            ? { locationId: id<'edgeLocations'>(body.locationId) }
+            : {}),
           ...act,
         }),
       );
+    }
+    if (c === 'locations') {
+      const accountId = id<'edgeProviderAccounts'>(b);
+      // The location form's lists: regions this key can use, then networks,
+      // subnets and flavors once a region is chosen.
+      if (d === 'options' && !parts[4])
+        return json(
+          await ctx.runAction(internal.edgeProviderOps.locationOptions, {
+            accountId,
+            placement: body.placement ?? {},
+          }),
+        );
+      if (!d)
+        return json(
+          await ctx.runAction(internal.edgeProviderOps.createLocation, {
+            accountId,
+            placement: body.placement ?? {},
+            ...(body.regionalParams !== undefined ? { regionalParams: body.regionalParams } : {}),
+            ...(typeof body.maxLiveEdges === 'number' ? { maxLiveEdges: body.maxLiveEdges } : {}),
+            ...(typeof body.costNote === 'string' ? { costNote: body.costNote } : {}),
+            ...act,
+          }),
+        );
+      if (d && parts[4] === 'qualify' && !parts[5])
+        return json(
+          await ctx.runMutation(internal.edgeLocations.setQualified, {
+            id: id<'edgeLocations'>(d),
+            qualified: body.qualified !== false,
+            ...act,
+          }),
+        );
+      return notFound();
     }
     if (c === 'rotate-credentials' && !d) {
       // New secret (+ its non-secret identifiers) → tested against the provider,
@@ -866,6 +929,10 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
             typeof body.accountId === 'string' && body.accountId
               ? id<'edgeProviderAccounts'>(body.accountId)
               : undefined,
+          locationId:
+            typeof body.locationId === 'string' && body.locationId
+              ? id<'edgeLocations'>(body.locationId)
+              : undefined,
           templateId:
             typeof body.templateId === 'string' && body.templateId
               ? id<'edgeTemplates'>(body.templateId)
@@ -882,7 +949,11 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
       const listeners = await ctx.runQuery(internal.relayListeners.listByRelay, { relayId });
       const l = listeners.find((x) => x.listenerKey === listenerKey && !x.retired);
       if (!l) return errorJson('edge.listener_not_found', 'Unknown listener', 404);
-      if (typeof body.accountId !== 'string' || !body.accountId)
+      const named =
+        typeof body.locationId === 'string' && body.locationId
+          ? id<'edgeLocations'>(body.locationId)
+          : undefined;
+      if ((typeof body.accountId !== 'string' || !body.accountId) && !named)
         return errorJson('validation', 'accountId is required', 400);
       return json(
         await ctx.runMutation(internal.edgeRotations.start, {
@@ -891,7 +962,10 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           trigger: 'manual',
           publishOnDone: false,
           listenerId: id<'relayListeners'>(l.id),
-          requestedAccountId: id<'edgeProviderAccounts'>(body.accountId),
+          ...(typeof body.accountId === 'string' && body.accountId
+            ? { requestedAccountId: id<'edgeProviderAccounts'>(body.accountId) }
+            : {}),
+          ...(named ? { requestedLocationId: named } : {}),
           requestedTemplateId:
             typeof body.templateId === 'string' && body.templateId
               ? id<'edgeTemplates'>(body.templateId)
@@ -915,6 +989,9 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
             relayId,
             ...(typeof body.accountId === 'string' && body.accountId
               ? { accountId: id<'edgeProviderAccounts'>(body.accountId) }
+              : {}),
+            ...(typeof body.locationId === 'string' && body.locationId
+              ? { locationId: id<'edgeLocations'>(body.locationId) }
               : {}),
             ...act,
           }),
@@ -950,9 +1027,14 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           resources: Array<{ kind: string; resourceId: string; meta?: string }>;
           inspection: { hostnames: string[]; shared: boolean; content?: string };
         } | null = null;
+        const locationId =
+          typeof body.locationId === 'string' && body.locationId
+            ? id<'edgeLocations'>(body.locationId)
+            : undefined;
         if (accountId && resourceId && hostname) {
           const insp = await ctx.runAction(internal.edgeProviderOps.inspectForAdoption, {
             accountId,
+            ...(locationId ? { locationId } : {}),
             resourceId,
             hostname,
           });
@@ -1272,6 +1354,31 @@ const patchHandler: Handler = async (ctx, _req, parts, admin, body) => {
         ...act,
       } as never),
     );
+  if (a === 'providers' && b && c === 'locations' && parts[3] && !parts[4])
+    return json(
+      await ctx.runMutation(internal.edgeLocations.update, {
+        id: id<'edgeLocations'>(parts[3]),
+        ...(typeof body.enabled === 'boolean' ? { enabled: body.enabled } : {}),
+        ...(typeof body.label === 'string' ? { label: body.label } : {}),
+        ...(body.maxLiveEdges === null || typeof body.maxLiveEdges === 'number'
+          ? { maxLiveEdges: body.maxLiveEdges as number | null }
+          : {}),
+        ...(body.costNote === null || typeof body.costNote === 'string'
+          ? { costNote: body.costNote as string | null }
+          : {}),
+        ...(body.regionalParams !== undefined ? { regionalParams: body.regionalParams } : {}),
+        ...(body.defaultTemplateId === null ||
+        (typeof body.defaultTemplateId === 'string' && body.defaultTemplateId)
+          ? {
+              defaultTemplateId: body.defaultTemplateId
+                ? id<'edgeTemplates'>(body.defaultTemplateId as string)
+                : null,
+            }
+          : {}),
+        ...(body.makeDefault === true ? { makeDefault: true } : {}),
+        ...act,
+      }),
+    );
   if (c) return notFound();
   if (a === 'providers' && b) {
     const res = await ctx.runMutation(internal.edgeProviderAccounts.update, {
@@ -1316,6 +1423,13 @@ const deleteHandler: Handler = async (ctx, _req, parts, admin, _body, query) => 
     return json(
       await ctx.runMutation(internal.sniFamilies.unbind, {
         bindingId: id<'sniInboundBindings'>(c),
+        ...act,
+      }),
+    );
+  if (a === 'providers' && b && c === 'locations' && d && !e)
+    return json(
+      await ctx.runMutation(internal.edgeLocations.remove, {
+        id: id<'edgeLocations'>(d),
         ...act,
       }),
     );

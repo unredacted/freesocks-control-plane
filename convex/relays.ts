@@ -68,6 +68,7 @@ import {
 } from './lib/edges/pool';
 import { ensurePoolCapacity } from './lib/edges/poolCapacity';
 import { resolveTemplateFor } from './edgeTemplates';
+import { defaultLocationOf } from './edgeLocations';
 import { assertAdmission } from './lib/edges/maintenance';
 import { assertNoRestore, hasHideRows, startRestoreWorkflow } from './lib/edges/restore';
 import {
@@ -1256,6 +1257,8 @@ interface AdoptInput {
   hostname?: string;
   port?: number;
   accountRow: Doc<'edgeProviderAccounts'> | null;
+  /** Where the imported resource lives (its account's location); frozen on the edge. */
+  locationRow?: Doc<'edgeLocations'> | null;
   resources: Array<{
     kind: string;
     resourceId: string;
@@ -1362,6 +1365,7 @@ async function insertAdoptedEdge(
       null,
       accountRow!.defaultTemplateId ?? null,
       accountRow!._id,
+      a.locationRow ?? null,
     );
     const dnsAccountId = (accountRow!.settings as { dnsAccountId?: string }).dnsAccountId;
     const dnsAccount = dnsAccountId
@@ -1402,6 +1406,13 @@ async function insertAdoptedEdge(
     relayId: origin._id,
     listenerId: listener._id,
     accountId: accountRow?._id,
+    ...(accountRow && a.locationRow
+      ? {
+          locationId: a.locationRow._id,
+          placeKey: a.locationRow.placeKey,
+          placement: a.locationRow.placement,
+        }
+      : {}),
     provider: accountRow?.provider,
     managed,
     name: `adopted-${origin.slug}-${now.toString(36)}`,
@@ -1530,6 +1541,8 @@ export const adoptEdge = internalMutation({
     hostname: v.optional(v.string()),
     port: v.optional(v.number()),
     accountId: v.optional(v.union(v.id('edgeProviderAccounts'), v.null())),
+    /** The account's location the resource lives in (its default location when absent). */
+    locationId: v.optional(v.union(v.id('edgeLocations'), v.null())),
     resources: v.optional(
       v.array(
         v.object({
@@ -1564,9 +1577,16 @@ export const adoptEdge = internalMutation({
     // An import that publishes is a pool write: not while a setup run is working on the origin.
     if (a.publish) await assertNoRunningSetup(ctx.db, origin);
     let accountRow: Doc<'edgeProviderAccounts'> | null = null;
+    let locationRow: Doc<'edgeLocations'> | null = null;
     if (a.accountId) {
       accountRow = await ctx.db.get(a.accountId);
       if (!accountRow) throw new ConvexError({ code: 'validation', message: 'unknown account' });
+      // A managed import is destroyed by FCP one day: it must know the region.
+      locationRow = a.locationId
+        ? await ctx.db.get(a.locationId)
+        : await defaultLocationOf(ctx.db, accountRow);
+      if (!locationRow || locationRow.accountId !== accountRow._id)
+        throw new ConvexError({ code: 'validation', message: 'unknown location for the account' });
     }
     return insertAdoptedEdge(ctx, origin, listener, {
       ipv4: a.ipv4,
@@ -1574,6 +1594,7 @@ export const adoptEdge = internalMutation({
       hostname: a.hostname,
       port: a.port,
       accountRow,
+      locationRow,
       resources: a.resources ?? [],
       inspection: a.inspection,
       publish: a.publish,

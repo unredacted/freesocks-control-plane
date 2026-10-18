@@ -1,11 +1,13 @@
 <script lang="ts">
   /**
-   * What FCP sees at the provider for one account: load balancers or fronts,
-   * reserved addresses and the sizes on offer. A resource no edge of FCP
-   * references is marked foreign.
+   * What FCP sees at the provider for one location of an account: load
+   * balancers or fronts, reserved addresses and the sizes on offer there (an
+   * inventory is per region). A resource no edge of FCP references is marked
+   * foreign.
    *
    * Props:
    *   accountId: string
+   *   locations: the account's locations (a picker shows when there are several)
    */
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -13,6 +15,8 @@
   import { Button } from '@client/components/ui/button';
   import { Skeleton } from '@client/components/ui/skeleton';
   import * as Table from '@client/components/ui/table';
+  import * as Select from '@client/components/ui/select';
+  import type { EdgeLocationAdmin } from '../../../../../shared/contracts/edges';
   import {
     edgeKeys,
     providerInventoryQuery,
@@ -27,15 +31,23 @@
 
   interface Props {
     accountId: string;
+    locations?: EdgeLocationAdmin[];
   }
-  let { accountId }: Props = $props();
+  let { accountId, locations = [] }: Props = $props();
 
   const qc = useQueryClient();
-  const inventory = providerInventoryQuery(() => accountId);
+  let chosen = $state<string | null>(null);
+  const locationId = $derived(
+    chosen ?? locations.find((l) => l.isDefault)?.id ?? locations[0]?.id ?? null,
+  );
+  const inventory = providerInventoryQuery(
+    () => accountId,
+    () => locationId,
+  );
   const refresh = createMutation(() => ({
-    mutationFn: () => refreshProviderInventory(accountId),
+    mutationFn: () => refreshProviderInventory(accountId, locationId),
     onSuccess: (res) => {
-      qc.setQueryData(edgeKeys.providerInventory(accountId), res);
+      qc.setQueryData([...edgeKeys.providerInventory(accountId), locationId ?? 'default'], res);
       void qc.invalidateQueries({ queryKey: edgeKeys.provider(accountId) });
       toast.success('Inventory refreshed');
     },
@@ -53,6 +65,20 @@
 </script>
 
 <div class="space-y-4">
+  {#if locations.length > 1}
+    <div class="max-w-sm">
+      <Select.Root type="single" value={locationId ?? ''} onValueChange={(v) => (chosen = v)}>
+        <Select.Trigger class="w-full" aria-label="Location">
+          {locations.find((l) => l.id === locationId)?.label ?? 'Choose a location'}
+        </Select.Trigger>
+        <Select.Content>
+          {#each locations as l (l.id)}
+            <Select.Item value={l.id} label={l.label}>{l.label}</Select.Item>
+          {/each}
+        </Select.Content>
+      </Select.Root>
+    </div>
+  {/if}
   <div class="flex flex-wrap items-center justify-between gap-3">
     <p class="text-sm text-muted-foreground">
       {#if inventory.data?.inventoryAt}

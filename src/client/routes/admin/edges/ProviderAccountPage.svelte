@@ -48,6 +48,7 @@
   import DeleteDialog from './providers/DeleteDialog.svelte';
   import InventoryTab from './providers/InventoryTab.svelte';
   import LimitsCard from './providers/LimitsCard.svelte';
+  import LocationsCard from './providers/LocationsCard.svelte';
   import QualifyDialog from './providers/QualifyDialog.svelte';
   import RenameDialog from './providers/RenameDialog.svelte';
   import RotateCredentialsDialog from './providers/RotateCredentialsDialog.svelte';
@@ -186,9 +187,11 @@
       <Button size="sm" variant="outline" onclick={() => (rotateOpen = true)}>
         Rotate credentials
       </Button>
-      <Button size="sm" onclick={() => (qualifyOpen = true)}>
-        {a.qualified ? 'Remove trust' : 'Trust override'}
-      </Button>
+      {#if a.locations.length <= 1}
+        <Button size="sm" onclick={() => (qualifyOpen = true)}>
+          {a.qualified ? 'Remove trust' : 'Trust override'}
+        </Button>
+      {/if}
     {/snippet}
   </SectionHeader>
 
@@ -204,7 +207,8 @@
         <CardHeader>
           <CardTitle class="text-base">Readiness</CardTitle>
           <CardDescription>
-            FCP provisions automatically only in accounts that are enabled, tested and qualified.
+            FCP provisions automatically only in accounts that are enabled and tested, and only in
+            their trusted locations.
           </CardDescription>
         </CardHeader>
         <CardContent class="grid gap-4 sm:grid-cols-3">
@@ -254,7 +258,9 @@
           <CardContent class="space-y-6 pt-6">
             <KeyValue
               title="Settings"
-              description="Where FCP creates edges. Changing these would move the account, so they are fixed once edges exist. Add a second account for another location."
+              description={settingsRows.length > 0
+                ? 'The settings of the account itself. Where its edges are created is a location (below).'
+                : 'This account is its credentials. Where its edges are created is a location (below).'}
               rows={settingsRows}
               columns={1}
             />
@@ -342,6 +348,8 @@
         </Card>
       {/if}
 
+      <LocationsCard account={a} />
+
       {#key a.id}
         <LimitsCard account={a} templates={tplList} />
       {/key}
@@ -370,7 +378,7 @@
     </Tabs.Content>
 
     <Tabs.Content value="inventory" class="pt-4">
-      {#if tab === 'inventory'}<InventoryTab accountId={a.id} />{/if}
+      {#if tab === 'inventory'}<InventoryTab accountId={a.id} locations={a.locations} />{/if}
     </Tabs.Content>
 
     <Tabs.Content value="templates" class="space-y-4 pt-4">

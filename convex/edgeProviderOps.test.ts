@@ -193,9 +193,14 @@ describe('edgeProviderOps: failures cross the action boundary as ConvexError dat
 });
 
 describe('edgeProviderOps.rotateCredentials', () => {
-  /** OVH: the clock, then whatever `rest` answers (default: the project read succeeds). */
-  const ovhOk = (rest: (path: string) => Response = () => jsonRes({ description: 'p' })) =>
-    mockFetch((c) => (c.path.endsWith('/auth/time') ? jsonRes(1_700_000_000) : rest(c.path)));
+  /**
+   * OVH: the clock, then whatever `rest` answers (default: the account-level
+   * credential test, the project listing, succeeds).
+   */
+  const ovhOk = (
+    rest: (path: string) => Response = (path) =>
+      path.endsWith('/cloud/project') ? jsonRes(['svc']) : jsonRes({ description: 'p' }),
+  ) => mockFetch((c) => (c.path.endsWith('/auth/time') ? jsonRes(1_700_000_000) : rest(c.path)));
 
   test('a passing test applies the new secret + identifier, keeps the qualification, audits booleans only', async () => {
     const t = newT();
@@ -223,7 +228,8 @@ describe('edgeProviderOps.rotateCredentials', () => {
       applicationSecret: 'AS2',
       consumerKey: 'CK1',
     });
-    expect(secret?.settings).toMatchObject({ applicationKey: 'AK2', regionName: 'GRA9' });
+    // The account is credentials only: the region stays on its location.
+    expect(secret?.settings).toEqual({ type: 'ovh', applicationKey: 'AK2', endpoint: 'ovh-eu' });
     const view = await t.query(internal.edgeProviderAccounts.getForAdmin, { id });
     expect(view).toMatchObject({ qualified: true, lastTestError: null });
     expect(view?.lastTestOkAt).toBeTruthy();
@@ -276,7 +282,7 @@ describe('edgeProviderOps.rotateCredentials', () => {
       applicationSecret: 'AS9',
       consumerKey: 'CK9',
     });
-    expect(stored.settings).toMatchObject({ applicationKey: 'AK9', regionName: 'GRA9' });
+    expect(stored.settings).toEqual({ type: 'ovh', applicationKey: 'AK9', endpoint: 'ovh-eu' });
   });
 
   test('a failing test changes nothing (stored credentials, identifier, qualification) and reports the code', async () => {

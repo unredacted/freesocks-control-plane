@@ -1,8 +1,8 @@
 /**
  * Pure helpers for the rotation machine (convex/edgeRotations.ts): phase
  * bookkeeping, the weighted progress bar, the bounded live log, and the
- * selection rules (compatible standby first, then a qualified account with
- * capacity + budget).
+ * selection rules (compatible standby first, then a trusted location of an
+ * account with capacity + budget).
  */
 
 import { protocolUsesSni, type ListenerProto } from './protocols';
@@ -180,8 +180,14 @@ export function accountsForSlot<T extends { provider: string }>(
   });
 }
 
+/**
+ * One place selection may create an edge in: a LOCATION of an account. `id`
+ * is the account (its budget, its live cap, its priority); `qualified` is the
+ * location's trust; the location's own cap applies too when it set one.
+ */
 export interface AccountCandidate {
   id: string;
+  locationId: string | null;
   provider: string;
   qualified: boolean;
   priority: number;
@@ -189,6 +195,9 @@ export interface AccountCandidate {
   allocationsToday: number;
   maxLiveEdges: number;
   liveEdges: number;
+  /** The location's own live-edge cap (null / absent = none) and its live count. */
+  locationMaxLiveEdges?: number | null;
+  locationLiveEdges?: number;
 }
 
 export type AccountPickFailure =
@@ -196,7 +205,11 @@ export type AccountPickFailure =
   | 'no_qualified_account'
   | 'accounts_exhausted';
 
-/** Qualified account of the provider with capacity + budget; lowest priority number first, then fewest live edges. */
+/**
+ * A trusted location of the provider whose account has capacity + budget (and
+ * the location room under its own cap); lowest account priority first, then
+ * fewest live edges on the account, then in the location.
+ */
 export function pickAccount(
   accounts: readonly AccountCandidate[],
   provider: string,
@@ -210,9 +223,15 @@ export function pickAccount(
     .filter(
       (a) =>
         a.liveEdges < a.maxLiveEdges &&
+        (a.locationMaxLiveEdges == null || (a.locationLiveEdges ?? 0) < a.locationMaxLiveEdges) &&
         (a.dailyAllocationBudget === 0 || a.allocationsToday < a.dailyAllocationBudget),
     )
-    .sort((a, b) => a.priority - b.priority || a.liveEdges - b.liveEdges);
+    .sort(
+      (a, b) =>
+        a.priority - b.priority ||
+        a.liveEdges - b.liveEdges ||
+        (a.locationLiveEdges ?? 0) - (b.locationLiveEdges ?? 0),
+    );
   if (usable.length === 0) return { ok: false, code: 'accounts_exhausted' };
   return { ok: true, account: usable[0] };
 }

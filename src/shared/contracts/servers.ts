@@ -665,11 +665,12 @@ export const ActivationReview = z.object({
     ingress: z.unknown().nullable(),
     configRevision: z.string(),
     authRevision: z.string().nullable(),
-    /** A fronted node's required listeners, each with the account and template it is fronted by. */
+    /** A fronted node's required listeners, each with the account, location and template it is fronted by. */
     listeners: z.array(
       z.object({
         listenerKey: z.string(),
         accountId: z.string().nullable(),
+        locationId: z.string().nullable().optional(),
         templateHash: z.string().nullable(),
       }),
     ),
@@ -695,6 +696,8 @@ export const ActivationReview = z.object({
           layer: z.enum(['l4', 'l7']),
           endpoint: z.string().nullable(),
           accountName: z.string().nullable(),
+          /** The location the address is in (null on an import without an account). */
+          locationLabel: z.string().nullable().default(null),
           provider: z.string().nullable(),
         }),
       ),

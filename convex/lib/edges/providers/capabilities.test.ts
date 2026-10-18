@@ -10,7 +10,7 @@
  */
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { EDGE_PROVIDER_IDS } from '../../edgeProviderIds';
-import { EDGE_SETTINGS_SCHEMAS } from '../accountSettings';
+import { EDGE_PLACEMENT_SCHEMAS, EDGE_SETTINGS_SCHEMAS } from '../accountSettings';
 import { jsonRes, mockFetch } from '../testing/mockFetch';
 import {
   EDGE_PROVIDER_CAPABILITIES,
@@ -169,13 +169,13 @@ describe('origin capability record ⇔ adapters', () => {
   });
 
   test.each([...EDGE_PROVIDER_IDS])(
-    '%s: needsPrivateNetwork mirrors the settings schema requiring network + subnet',
+    '%s: needsPrivateNetwork mirrors the placement schema requiring network + subnet',
     (id) => {
       const { networkId: _n, subnetId: _s, ...without } = SETTINGS_WITH_NETWORK[id];
       expect(
-        EDGE_SETTINGS_SCHEMAS[id].safeParse({ ...SETTINGS_WITH_NETWORK[id], type: id }).success,
+        EDGE_PLACEMENT_SCHEMAS[id].safeParse({ ...SETTINGS_WITH_NETWORK[id], type: id }).success,
       ).toBe(true);
-      const okWithout = EDGE_SETTINGS_SCHEMAS[id].safeParse({ ...without, type: id }).success;
+      const okWithout = EDGE_PLACEMENT_SCHEMAS[id].safeParse({ ...without, type: id }).success;
       expect(okWithout).toBe(!EDGE_PROVIDER_CAPABILITIES[id].needsPrivateNetwork);
     },
   );

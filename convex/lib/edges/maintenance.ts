@@ -34,6 +34,10 @@ export type AdmissionKind =
   | 'probe.request'
   | 'detector'
   | 'upkeep'
+  // A guided setup run (or a require-edges run, a change of a node's
+  // providers) starting: new work, held by a freeze. A run already open keeps
+  // finishing what it was admitted for (`setup.complete` below).
+  | 'setup.start'
   // A guided setup run finishing work it was admitted for BEFORE the freeze
   // (its publish rotations at stage 5): completion, not new work. Only a
   // rotation start carrying `setupRun` may name this kind (edgeRotations.ts).

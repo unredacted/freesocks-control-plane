@@ -1,0 +1,788 @@
+/**
+ * Edge LOCATIONS (docs/edges.md § "Provider accounts and locations"): one
+ * account's place to create edges in. An account is a provider plus
+ * credentials; a location is the placement (region / zone / project /
+ * network) it provisions in, chosen when a node is protected or an address is
+ * added. Every edge freezes its location's placement (`edges.placement`), so
+ * a describe or a destroy always acts in the edge's own region.
+ *
+ * Trust lives here, per location: automatic selection only uses trusted
+ * locations, and a new region is trusted by its first tested address (or a
+ * passing L7 proof), bound to the effective template it was taken with. An
+ * account's credential or settings edit untrusts all of its locations.
+ *
+ * A CDN account (L7) has exactly one location, `anycast` with an empty
+ * placement, created with the account. Rows are operator-scale.
+ */
+import { ConvexError, v } from 'convex/values';
+import { internalMutation, internalQuery } from './_generated/server';
+import type { DatabaseReader, MutationCtx, QueryCtx } from './_generated/server';
+import type { Doc, Id } from './_generated/dataModel';
+import { writeAuditLog } from './lib/audit';
+import { EDGE_LIVE_STATUSES, LIVE_EDGE_SCAN_LIMIT } from './lib/edges/pool';
+import {
+  EDGE_PLACEMENT_SETTINGS,
+  placementKeysOf,
+  validatePlacement,
+  type EdgePlacement,
+} from './lib/edges/accountSettings';
+import {
+  ANYCAST_PLACE,
+  locationKeyOf,
+  parseRegionalParams,
+  placeKeyOf,
+  placementHashOf,
+  regionalParamsOf,
+} from './lib/edges/locations';
+import { resolveTemplateFor } from './edgeTemplates';
+import { assertAdmission } from './lib/edges/maintenance';
+import { edgeLayerOf } from './lib/edges/providers/capabilities';
+import { autoQualifyDecision, type AutoQualifyEvidence } from './lib/edges/autoQualify';
+import { verificationEndpoint } from './lib/edges/verification';
+import type { EdgeProviderId } from './lib/edgeProviderIds';
+
+export type Location = Doc<'edgeLocations'>;
+type Account = Doc<'edgeProviderAccounts'>;
+
+// --- reads (helpers) ---------------------------------------------------------------------
+
+/** Every location of an account, oldest first. */
+export async function locationsOfAccount(
+  db: DatabaseReader,
+  accountId: Id<'edgeProviderAccounts'>,
+): Promise<Location[]> {
+  const rows = await db
+    .query('edgeLocations')
+    .withIndex('by_account', (q) => q.eq('accountId', accountId))
+    .collect();
+  return rows.sort((a, b) => a.createdAt - b.createdAt || a._creationTime - b._creationTime);
+}
+
+/**
+ * The location pickers preselect and the account-level calls act on: the
+ * account's `defaultLocationId` when it still names one of its own rows, else
+ * its first enabled location, else its first one, else none.
+ */
+export async function defaultLocationOf(
+  db: DatabaseReader,
+  account: Pick<Account, '_id' | 'defaultLocationId'>,
+): Promise<Location | null> {
+  if (account.defaultLocationId) {
+    const row = await db.get(account.defaultLocationId);
+    if (row && row.accountId === account._id) return row;
+  }
+  const rows = await locationsOfAccount(db, account._id);
+  return rows.find((r) => r.enabled) ?? rows[0] ?? null;
+}
+
+/**
+ * The location an edge was created in: its own frozen `locationId`, else (a
+ * row written before locations existed, until the migration reaches it) its
+ * account's default location.
+ */
+export async function locationOfEdge(
+  db: DatabaseReader,
+  edge: Pick<Doc<'edges'>, 'locationId' | 'accountId'>,
+): Promise<Location | null> {
+  if (edge.locationId) return db.get(edge.locationId);
+  if (!edge.accountId) return null;
+  const account = await db.get(edge.accountId);
+  return account ? defaultLocationOf(db, account) : null;
+}
+
+/** Non-destroyed edges of an account in this location (the account scan covers rows not migrated yet). */
+export async function liveEdgesOfLocation(
+  db: DatabaseReader,
+  location: Pick<Location, '_id' | 'accountId'>,
+): Promise<Doc<'edges'>[]> {
+  const account = await db.get(location.accountId);
+  const fallback = account ? await defaultLocationOf(db, account) : null;
+  const out: Doc<'edges'>[] = [];
+  for (const status of EDGE_LIVE_STATUSES) {
+    const rows = await db
+      .query('edges')
+      .withIndex('by_account_status', (q) =>
+        q.eq('accountId', location.accountId).eq('status', status),
+      )
+      .take(LIVE_EDGE_SCAN_LIMIT);
+    for (const e of rows) {
+      const at = e.locationId ?? fallback?._id ?? null;
+      if (at === location._id) out.push(e);
+    }
+  }
+  return out;
+}
+
+/** Managed live edges in this location (the `maxLiveEdges` regional cap). */
+export async function liveCountForLocation(
+  db: DatabaseReader,
+  location: Pick<Location, '_id' | 'accountId'>,
+): Promise<number> {
+  return (await liveEdgesOfLocation(db, location)).filter((e) => e.managed).length;
+}
+
+/** The template a location provisions with now (its default, else its account's), regional values laid over. */
+export async function effectiveTemplateOfLocation(
+  ctx: { db: DatabaseReader },
+  account: Pick<Account, '_id' | 'provider' | 'defaultTemplateId'>,
+  location: Pick<Location, 'defaultTemplateId' | 'regionalParams'> | null,
+  explicitId?: Id<'edgeTemplates'> | null,
+) {
+  return resolveTemplateFor(
+    ctx,
+    account.provider,
+    explicitId ?? null,
+    account.defaultTemplateId ?? null,
+    account._id,
+    location,
+  );
+}
+
+// --- writes (helpers) --------------------------------------------------------------------
+
+export interface LocationExtras {
+  label?: string;
+  regionalParams?: Record<string, string>;
+  maxLiveEdges?: number;
+  costNote?: string;
+}
+
+function cleanLabel(raw: string | undefined, fallback: string): string {
+  const s = (raw ?? '').replace(/\s+/g, ' ').trim().slice(0, 80);
+  return s.length > 0 ? s : fallback;
+}
+
+function cleanCostNote(raw: string | undefined): string | undefined {
+  if (raw === undefined) return undefined;
+  const s = raw.replace(/\s+/g, ' ').trim().slice(0, 120);
+  return s.length > 0 ? s : undefined;
+}
+
+function checkLocationCap(n: number | undefined): void {
+  if (n !== undefined && (!Number.isInteger(n) || n < 1 || n > 200))
+    throw new ConvexError({ code: 'validation', message: 'maxLiveEdges must be 1..200' });
+}
+
+/**
+ * Create a location for an account, or return the existing one with the same
+ * placement (`by_account_placement`). The first location of an account
+ * becomes its default. Audited `edge.location.created` (never the placement).
+ */
+export async function upsertLocation(
+  ctx: MutationCtx,
+  account: Account,
+  rawPlacement: Record<string, unknown> | EdgePlacement,
+  extras: LocationExtras = {},
+  opts: { actorAdminId?: Id<'adminUsers'>; quiet?: boolean } = {},
+): Promise<{ id: Id<'edgeLocations'>; created: boolean }> {
+  const parsed = validatePlacement(account.provider, rawPlacement);
+  if (!parsed.ok) throw new ConvexError({ code: 'validation', message: parsed.issues.join('; ') });
+  const placement = parsed.placement;
+  const placementHash = placementHashOf(placement);
+  const existing = await ctx.db
+    .query('edgeLocations')
+    .withIndex('by_account_placement', (q) =>
+      q.eq('accountId', account._id).eq('placementHash', placementHash),
+    )
+    .first();
+  if (existing) return { id: existing._id, created: false };
+  checkLocationCap(extras.maxLiveEdges);
+  const placeKey = placeKeyOf(placement);
+  const regional = regionalParamsOf(account.provider, extras.regionalParams ?? {});
+  const now = Date.now();
+  const id = await ctx.db.insert('edgeLocations', {
+    accountId: account._id,
+    provider: account.provider,
+    placeKey,
+    placement: placement as never,
+    placementHash,
+    label: cleanLabel(extras.label, placeKey === ANYCAST_PLACE ? 'Anycast' : placeKey),
+    enabled: true,
+    qualified: false,
+    ...(Object.keys(regional).length > 0 ? { regionalParams: JSON.stringify(regional) } : {}),
+    ...(extras.maxLiveEdges !== undefined ? { maxLiveEdges: extras.maxLiveEdges } : {}),
+    ...(cleanCostNote(extras.costNote) ? { costNote: cleanCostNote(extras.costNote) } : {}),
+    createdAt: now,
+    updatedAt: now,
+  });
+  if (!account.defaultLocationId) await ctx.db.patch(account._id, { defaultLocationId: id });
+  if (!opts.quiet)
+    await writeAuditLog(ctx, {
+      actorType: opts.actorAdminId ? 'admin' : 'system',
+      actorId: opts.actorAdminId,
+      action: 'edge.location.created',
+      targetType: 'edge_provider_account',
+      targetId: account._id,
+      payload: { name: account.name, provider: account.provider, placeKey },
+    });
+  return { id, created: true };
+}
+
+/**
+ * The location an account created with its old single-location shape (or a
+ * CDN account) gets at once: the placement keys its settings carried, or the
+ * empty placement of a provider without places. Null when the payload names
+ * no place for a provider that has them (the operator adds one later).
+ */
+export function initialPlacementOf(
+  provider: EdgeProviderId,
+  rawSettings: Record<string, unknown> | undefined,
+): Record<string, unknown> | null {
+  if (EDGE_PLACEMENT_SETTINGS[provider].length === 0) return { type: provider };
+  const keys = placementKeysOf(provider, rawSettings);
+  return keys ? { ...keys, type: provider } : null;
+}
+
+// --- trust ---------------------------------------------------------------------------------
+
+/**
+ * Trust a location: the ONLY writer of `qualified: true`. The hash recorded is
+ * the one of the template this location provisions with NOW, never a
+ * client-supplied value: the template-edit invalidation keys off it. `by`
+ * says who took the trust: an operator (the trust override, or the first
+ * confirmed L4 endpoint here, which carries endpoint evidence) or the L7
+ * auto-trust rule. Trusting clears a manual hold.
+ */
+export async function applyLocationQualification(
+  ctx: MutationCtx,
+  account: Account,
+  location: Location,
+  opts: {
+    by: 'admin' | 'auto';
+    actorAdminId?: Id<'adminUsers'>;
+    evidence?: Omit<AutoQualifyEvidence, 'proofCheckedAt'> & { proofCheckedAt?: number };
+  },
+): Promise<void> {
+  const effective = await effectiveTemplateOfLocation(ctx, account, location);
+  const now = Date.now();
+  await ctx.db.patch(location._id, {
+    qualified: true,
+    qualifiedTemplateHash: effective.hash,
+    qualification: {
+      by: opts.by,
+      at: now,
+      ...(opts.evidence
+        ? {
+            evidence: {
+              edgeId: opts.evidence.edgeId as Id<'edges'>,
+              endpoint: opts.evidence.endpoint,
+              accountTestedAt: opts.evidence.accountTestedAt,
+              templateHash: opts.evidence.templateHash,
+              listenerId: opts.evidence.listenerId as Id<'relayListeners'>,
+              listenerRevision: opts.evidence.listenerRevision,
+              ...(opts.evidence.proofCheckedAt !== undefined
+                ? { proofCheckedAt: opts.evidence.proofCheckedAt }
+                : {}),
+            },
+          }
+        : {}),
+    },
+    autoQualifyHold: undefined,
+    updatedAt: now,
+  });
+  await writeAuditLog(ctx, {
+    actorType: opts.by === 'admin' ? 'admin' : 'system',
+    actorId: opts.actorAdminId ?? undefined,
+    action:
+      opts.by === 'auto'
+        ? 'edge.provider_account.auto_qualified'
+        : 'edge.provider_account.qualified',
+    targetType: 'edge_provider_account',
+    targetId: account._id,
+    // Ids only: never the endpoint.
+    payload: {
+      name: account.name,
+      provider: account.provider,
+      qualified: true,
+      placeKey: location.placeKey,
+      ...(opts.evidence ? { edgeId: opts.evidence.edgeId, endpointEvidence: true } : {}),
+    },
+  });
+}
+
+/**
+ * Untrust one location. `hold` (a manual untrust) keeps the automatic rules
+ * off until an operator trusts again or the account's credentials change.
+ */
+export async function untrustLocation(
+  ctx: MutationCtx,
+  account: Account,
+  location: Location,
+  opts: { hold?: boolean; actorAdminId?: Id<'adminUsers'> } = {},
+): Promise<void> {
+  await ctx.db.patch(location._id, {
+    qualified: false,
+    qualifiedTemplateHash: undefined,
+    qualification: undefined,
+    ...(opts.hold ? { autoQualifyHold: true } : {}),
+    updatedAt: Date.now(),
+  });
+  await writeAuditLog(ctx, {
+    actorType: 'admin',
+    actorId: opts.actorAdminId ?? undefined,
+    action: 'edge.provider_account.qualified',
+    targetType: 'edge_provider_account',
+    targetId: account._id,
+    payload: {
+      name: account.name,
+      provider: account.provider,
+      qualified: false,
+      placeKey: location.placeKey,
+    },
+  });
+}
+
+/**
+ * An account edit (credentials, settings, its default template) changes what
+ * every location of it provisions with: each trusted one is untrusted
+ * (audited), and `releaseHolds` clears the manual holds so the automatic
+ * rules may look again once a test after the change passes. `onlyFallingBack`
+ * limits it to the locations that use the account's default template.
+ */
+export async function untrustAccountLocations(
+  ctx: MutationCtx,
+  account: Account,
+  opts: {
+    actorAdminId?: Id<'adminUsers'>;
+    releaseHolds?: boolean;
+    onlyFallingBack?: boolean;
+  } = {},
+): Promise<number> {
+  let n = 0;
+  for (const loc of await locationsOfAccount(ctx.db, account._id)) {
+    if (opts.onlyFallingBack && loc.defaultTemplateId) continue;
+    if (loc.qualified) {
+      await untrustLocation(ctx, account, loc, { actorAdminId: opts.actorAdminId });
+      n++;
+    }
+    if (opts.releaseHolds && loc.autoQualifyHold)
+      await ctx.db.patch(loc._id, { autoQualifyHold: undefined, updatedAt: Date.now() });
+  }
+  return n;
+}
+
+/**
+ * The L7 auto-trust rule (lib/edges/autoQualify.ts) for ONE location: trusts
+ * it when an active edge there carries a current authenticated proof for the
+ * location's effective template NOW. Only ever sets `qualified: true`. L4
+ * locations always answer `not_l7`.
+ */
+export async function evaluateAutoQualificationForLocation(
+  ctx: MutationCtx,
+  account: Account,
+  location: Location,
+  now = Date.now(),
+): Promise<{ qualified: boolean; code: string | null }> {
+  if (!account.enabled) return { qualified: location.qualified, code: 'account_disabled' };
+  if (!location.enabled) return { qualified: location.qualified, code: 'location_disabled' };
+  const effective = await effectiveTemplateOfLocation(ctx, account, location);
+  const candidates = [];
+  for (const e of await liveEdgesOfLocation(ctx.db, location)) {
+    const listener = await ctx.db.get(e.listenerId);
+    if (!listener || listener.retired) continue;
+    candidates.push({
+      id: e._id as string,
+      status: e.status,
+      layer: e.layer ?? edgeLayerOf(e.provider),
+      templateHash: e.templateHash ?? null,
+      listenerId: e.listenerId as string,
+      listenerRevision: listener.revision,
+      endpoint: verificationEndpoint(e),
+      frontQualification: e.frontQualification
+        ? {
+            ok: e.frontQualification.ok,
+            checkedAt: e.frontQualification.checkedAt,
+            expiresAt: e.frontQualification.expiresAt,
+            binding: {
+              listenerId: e.frontQualification.binding.listenerId as string,
+              listenerRevision: e.frontQualification.binding.listenerRevision,
+            },
+          }
+        : null,
+    });
+  }
+  const decision = autoQualifyDecision(
+    {
+      layer: edgeLayerOf(account.provider),
+      qualified: location.qualified,
+      autoQualifyHold: location.autoQualifyHold ?? false,
+      lastTestOkAt: account.lastTestOkAt ?? null,
+      lastTestError: account.lastTestError ?? null,
+      credentialsChangedAt: account.credentialsChangedAt ?? null,
+      dependencyChangedAt: account.dependencyChangedAt ?? null,
+      effectiveTemplateHash: effective.hash,
+    },
+    candidates,
+    now,
+  );
+  if (!decision.ok) return { qualified: location.qualified, code: decision.code };
+  await applyLocationQualification(ctx, account, location, {
+    by: 'auto',
+    evidence: decision.evidence,
+  });
+  return { qualified: true, code: null };
+}
+
+// --- admin view ------------------------------------------------------------------------------
+
+/** Admin-safe view of one location (the placement is admin data: region / project / network ids). */
+export function mapLocationAdmin(r: Location, extras: { liveEdges: number; isDefault: boolean }) {
+  const { type: _t, ...placement } = r.placement as { type: string } & Record<string, unknown>;
+  return {
+    id: r._id as string,
+    accountId: r.accountId as string,
+    provider: r.provider,
+    placeKey: r.placeKey,
+    locationKey: locationKeyOf(r.provider, r.placeKey),
+    label: r.label,
+    placement,
+    enabled: r.enabled,
+    isDefault: extras.isDefault,
+    qualified: r.qualified,
+    qualifiedTemplateHash: r.qualifiedTemplateHash ?? null,
+    qualification: r.qualification
+      ? {
+          by: r.qualification.by,
+          at: new Date(r.qualification.at).toISOString(),
+          edgeId: (r.qualification.evidence?.edgeId as string | undefined) ?? null,
+          proofCheckedAt: r.qualification.evidence?.proofCheckedAt
+            ? new Date(r.qualification.evidence.proofCheckedAt).toISOString()
+            : null,
+        }
+      : null,
+    autoQualifyHold: r.autoQualifyHold === true,
+    defaultTemplateId: (r.defaultTemplateId as string | undefined) ?? null,
+    regionalParams: parseRegionalParams(r.provider, r.regionalParams),
+    maxLiveEdges: r.maxLiveEdges ?? null,
+    liveEdges: extras.liveEdges,
+    costNote: r.costNote ?? null,
+    inventoryAt: r.inventoryAt ? new Date(r.inventoryAt).toISOString() : null,
+    createdAt: new Date(r.createdAt).toISOString(),
+    updatedAt: new Date(r.updatedAt).toISOString(),
+  };
+}
+
+export type LocationAdmin = ReturnType<typeof mapLocationAdmin>;
+
+/** Every location of an account in its admin shape (default first, then oldest first). */
+export async function locationsAdminOf(
+  db: DatabaseReader,
+  account: Pick<Account, '_id' | 'defaultLocationId'>,
+): Promise<LocationAdmin[]> {
+  const dflt = await defaultLocationOf(db, account);
+  const out: LocationAdmin[] = [];
+  for (const r of await locationsOfAccount(db, account._id)) {
+    out.push(
+      mapLocationAdmin(r, {
+        liveEdges: await liveCountForLocation(db, r),
+        isDefault: !!dflt && dflt._id === r._id,
+      }),
+    );
+  }
+  return out.sort((a, b) => Number(b.isDefault) - Number(a.isDefault));
+}
+
+// --- queries ---------------------------------------------------------------------------------
+
+export const listForAccount = internalQuery({
+  args: { accountId: v.id('edgeProviderAccounts') },
+  handler: async (ctx, { accountId }) => {
+    const account = await ctx.db.get(accountId);
+    return account ? locationsAdminOf(ctx.db, account) : [];
+  },
+});
+
+/** What a provider action needs to act in a location: its account and its placement. */
+export const getForOps = internalQuery({
+  args: { id: v.id('edgeLocations') },
+  handler: async (ctx, { id }) => {
+    const r = await ctx.db.get(id);
+    if (!r) return null;
+    return {
+      id: r._id,
+      accountId: r.accountId,
+      provider: r.provider,
+      placeKey: r.placeKey,
+      placement: r.placement as Record<string, unknown>,
+      defaultTemplateId: r.defaultTemplateId ?? null,
+      regionalParams: r.regionalParams ?? null,
+    };
+  },
+});
+
+/**
+ * The placement an EXISTING edge acts in: its own frozen copy, else (a row the
+ * migration has not reached yet) null, and the caller keeps the account's
+ * legacy settings.
+ */
+export const placementOfEdge = internalQuery({
+  args: { edgeId: v.id('edges') },
+  handler: async (ctx, { edgeId }) => {
+    const e = await ctx.db.get(edgeId);
+    return e?.placement ? (e.placement as Record<string, unknown>) : null;
+  },
+});
+
+/** The default location of an account (ops: inventory, adoption without a named location). */
+export const defaultOf = internalQuery({
+  args: { accountId: v.id('edgeProviderAccounts') },
+  handler: async (ctx, { accountId }) => {
+    const account = await ctx.db.get(accountId);
+    const loc = account ? await defaultLocationOf(ctx.db, account) : null;
+    return loc ? loc._id : null;
+  },
+});
+
+/** The stored inventory snapshot of one location (addresses are public client-facing data). */
+export const getInventory = internalQuery({
+  args: { id: v.id('edgeLocations') },
+  handler: async (ctx, { id }) => {
+    const r = await ctx.db.get(id);
+    if (!r) return null;
+    return inventoryView(ctx, r);
+  },
+});
+
+/** A location's inventory with `unowned` marked (no live edge ledger references the LB). */
+export async function inventoryView(ctx: { db: QueryCtx['db'] }, r: Location) {
+  let inventory: { loadBalancers?: Array<Record<string, unknown>> } | null = null;
+  if (r.inventorySnapshot) {
+    try {
+      inventory = JSON.parse(r.inventorySnapshot);
+    } catch {
+      inventory = null;
+    }
+  }
+  if (inventory && Array.isArray(inventory.loadBalancers)) {
+    // `unowned` = no live edge ledger references the LB: what the origin import
+    // picker offers first (an owned one is already an edge).
+    const owned = new Set<string>();
+    for (const e of await ctx.db
+      .query('edges')
+      .withIndex('by_account_status', (q) => q.eq('accountId', r.accountId))
+      .collect()) {
+      if (e.status === 'destroyed') continue;
+      for (const res of e.resources) owned.add(res.resourceId);
+    }
+    inventory = {
+      ...inventory,
+      loadBalancers: inventory.loadBalancers.map((lb) => ({
+        ...lb,
+        unowned: !owned.has(String(lb.id)),
+      })),
+    };
+  }
+  return {
+    locationId: r._id as string,
+    inventory,
+    inventoryAt: r.inventoryAt ? new Date(r.inventoryAt).toISOString() : null,
+  };
+}
+
+// --- mutations -------------------------------------------------------------------------------
+
+/**
+ * Create a location (the action `edgeProviderOps.createLocation` checked the
+ * region is offered to this key and read its label first). Returns the
+ * existing row for a placement the account already has.
+ */
+export const create = internalMutation({
+  args: {
+    accountId: v.id('edgeProviderAccounts'),
+    placement: v.any(),
+    label: v.optional(v.string()),
+    regionalParams: v.optional(v.any()),
+    maxLiveEdges: v.optional(v.number()),
+    costNote: v.optional(v.string()),
+    actorAdminId: v.optional(v.id('adminUsers')),
+  },
+  handler: async (ctx, a) => {
+    await assertAdmission(ctx.db, 'provider.write');
+    const account = await ctx.db.get(a.accountId);
+    if (!account) throw new ConvexError({ code: 'not_found', message: 'Account not found' });
+    if (EDGE_PLACEMENT_SETTINGS[account.provider].length === 0)
+      throw new ConvexError({
+        code: 'edge.location_not_geographic',
+        message: 'This provider has one location per account',
+      });
+    const res = await upsertLocation(
+      ctx,
+      account,
+      { ...((a.placement ?? {}) as Record<string, unknown>), type: account.provider },
+      {
+        label: a.label,
+        regionalParams: regionalParamsOf(account.provider, a.regionalParams),
+        maxLiveEdges: a.maxLiveEdges,
+        costNote: a.costNote,
+      },
+      { actorAdminId: a.actorAdminId },
+    );
+    return { id: res.id as string, created: res.created };
+  },
+});
+
+export const update = internalMutation({
+  args: {
+    id: v.id('edgeLocations'),
+    enabled: v.optional(v.boolean()),
+    label: v.optional(v.string()),
+    maxLiveEdges: v.optional(v.union(v.number(), v.null())),
+    costNote: v.optional(v.union(v.string(), v.null())),
+    regionalParams: v.optional(v.any()),
+    defaultTemplateId: v.optional(v.union(v.id('edgeTemplates'), v.null())),
+    makeDefault: v.optional(v.boolean()),
+    actorAdminId: v.optional(v.id('adminUsers')),
+  },
+  handler: async (ctx, a) => {
+    await assertAdmission(ctx.db, 'provider.write');
+    const row = await ctx.db.get(a.id);
+    if (!row) throw new ConvexError({ code: 'not_found', message: 'Location not found' });
+    const account = await ctx.db.get(row.accountId);
+    if (!account) throw new ConvexError({ code: 'not_found', message: 'Account not found' });
+    const patch: Partial<Location> = { updatedAt: Date.now() };
+    if (a.enabled !== undefined) patch.enabled = a.enabled;
+    if (a.label !== undefined) patch.label = cleanLabel(a.label, row.label);
+    if (a.maxLiveEdges !== undefined) {
+      checkLocationCap(a.maxLiveEdges ?? undefined);
+      patch.maxLiveEdges = a.maxLiveEdges ?? undefined;
+    }
+    if (a.costNote !== undefined) patch.costNote = cleanCostNote(a.costNote ?? undefined);
+    // What the location provisions with: a change re-opens its trust (the
+    // parameters it was trusted with are not the ones it would use next).
+    let templateMoved = false;
+    if (a.regionalParams !== undefined) {
+      const next = regionalParamsOf(row.provider, a.regionalParams);
+      const prev = parseRegionalParams(row.provider, row.regionalParams);
+      patch.regionalParams = Object.keys(next).length > 0 ? JSON.stringify(next) : undefined;
+      templateMoved ||= JSON.stringify(next) !== JSON.stringify(prev);
+    }
+    if (a.defaultTemplateId !== undefined) {
+      if (a.defaultTemplateId) {
+        const tpl = await ctx.db.get(a.defaultTemplateId);
+        if (!tpl || tpl.provider !== row.provider)
+          throw new ConvexError({
+            code: 'validation',
+            message: 'unknown template for this provider',
+          });
+        if (tpl.accountId && tpl.accountId !== row.accountId)
+          throw new ConvexError({
+            code: 'validation',
+            message: 'that template is scoped to another account',
+          });
+      }
+      patch.defaultTemplateId = a.defaultTemplateId ?? undefined;
+      templateMoved ||= (a.defaultTemplateId ?? undefined) !== row.defaultTemplateId;
+    }
+    await ctx.db.patch(row._id, patch);
+    if (templateMoved && row.qualified)
+      await untrustLocation(ctx, account, row, { actorAdminId: a.actorAdminId });
+    if (a.makeDefault) await ctx.db.patch(account._id, { defaultLocationId: row._id });
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: a.actorAdminId ?? undefined,
+      action: 'edge.location.updated',
+      targetType: 'edge_provider_account',
+      targetId: account._id,
+      payload: {
+        name: account.name,
+        provider: account.provider,
+        placeKey: row.placeKey,
+        enabled: patch.enabled ?? row.enabled,
+      },
+    });
+    return { ok: true as const };
+  },
+});
+
+/** Locations named by a node's provider set (operator-scale scan of the relays). */
+async function setsReferencing(db: DatabaseReader, id: Id<'edgeLocations'>): Promise<number> {
+  let n = 0;
+  for (const r of await db.query('relays').collect())
+    if ((r.providerSet ?? []).some((p) => p.locationId === id)) n++;
+  return n;
+}
+
+/** Whether anything still depends on a location (a live edge, a node's provider set, an open setup run). */
+export async function locationInUse(
+  db: DatabaseReader,
+  location: Location,
+): Promise<{ edges: number; sets: number }> {
+  const edges = (await liveEdgesOfLocation(db, location)).length;
+  return { edges, sets: await setsReferencing(db, location._id) };
+}
+
+export const remove = internalMutation({
+  args: { id: v.id('edgeLocations'), actorAdminId: v.optional(v.id('adminUsers')) },
+  handler: async (ctx, { id, actorAdminId }) => {
+    await assertAdmission(ctx.db, 'provider.write');
+    const row = await ctx.db.get(id);
+    if (!row) return { ok: true as const };
+    const account = await ctx.db.get(row.accountId);
+    const use = await locationInUse(ctx.db, row);
+    if (use.edges > 0)
+      throw new ConvexError({
+        code: 'edge.location_in_use',
+        message: 'Edges still live in this location; destroy them first',
+      });
+    if (use.sets > 0)
+      throw new ConvexError({
+        code: 'edge.location_in_use',
+        message: 'A protected node still uses this location; remove it from the node first',
+      });
+    if (account && EDGE_PLACEMENT_SETTINGS[account.provider].length === 0)
+      throw new ConvexError({
+        code: 'edge.location_not_geographic',
+        message: 'This provider has one location per account',
+      });
+    await ctx.db.delete(id);
+    if (account && account.defaultLocationId === id) {
+      const next = (await locationsOfAccount(ctx.db, account._id))[0];
+      await ctx.db.patch(account._id, { defaultLocationId: next?._id });
+    }
+    if (account)
+      await writeAuditLog(ctx, {
+        actorType: 'admin',
+        actorId: actorAdminId ?? undefined,
+        action: 'edge.location.removed',
+        targetType: 'edge_provider_account',
+        targetId: account._id,
+        payload: { name: account.name, provider: account.provider, placeKey: row.placeKey },
+      });
+    return { ok: true as const };
+  },
+});
+
+/** The trust override for one location (an untrust holds the automatic rules off). */
+export const setQualified = internalMutation({
+  args: {
+    id: v.id('edgeLocations'),
+    qualified: v.boolean(),
+    actorAdminId: v.optional(v.id('adminUsers')),
+  },
+  handler: async (ctx, { id, qualified, actorAdminId }) => {
+    await assertAdmission(ctx.db, 'provider.write');
+    const row = await ctx.db.get(id);
+    if (!row) throw new ConvexError({ code: 'not_found', message: 'Location not found' });
+    const account = await ctx.db.get(row.accountId);
+    if (!account) throw new ConvexError({ code: 'not_found', message: 'Account not found' });
+    if (qualified)
+      await applyLocationQualification(ctx, account, row, { by: 'admin', actorAdminId });
+    else await untrustLocation(ctx, account, row, { hold: true, actorAdminId });
+    return { ok: true as const };
+  },
+});
+
+/** Store the latest provider inventory pull for one location (admin-only JSON). */
+export const recordInventory = internalMutation({
+  args: { id: v.id('edgeLocations'), inventory: v.string() },
+  handler: async (ctx, { id, inventory }) => {
+    const row = await ctx.db.get(id);
+    if (!row) return null;
+    await ctx.db.patch(id, {
+      inventorySnapshot: inventory.slice(0, 200_000),
+      inventoryAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+    return null;
+  },
+});

@@ -38,6 +38,7 @@ import {
 } from './lib/edges/providers/capabilities';
 import type { EdgeProviderId } from './lib/edgeProviderIds';
 import { todayKey, liveEdgesOfAccount, relayForBackendNode } from './relays';
+import { defaultLocationOf, liveCountForLocation, locationsOfAccount } from './edgeLocations';
 import { accountTested } from './edgeProviderAccounts';
 import { listenersOf } from './relayListeners';
 import { enrolledOriginOf, withVerifiedIngress } from './nodeIntents';
@@ -108,10 +109,37 @@ async function planContextOf(
       (a) => a.enabled,
     );
     const accountLive: Record<string, number> = {};
+    const accountLocations: Record<
+      string,
+      Array<{
+        id: string;
+        label: string;
+        placeKey: string;
+        enabled: boolean;
+        qualified: boolean;
+        isDefault: boolean;
+        live: number;
+        maxLiveEdges: number | null;
+      }>
+    > = {};
     for (const a of accounts) {
       accountLive[a._id as string] = (await liveEdgesOfAccount(ctx.db, a._id)).filter(
         (e) => e.managed,
       ).length;
+      const dflt = await defaultLocationOf(ctx.db, a);
+      const rows = [];
+      for (const loc of await locationsOfAccount(ctx.db, a._id))
+        rows.push({
+          id: loc._id as string,
+          label: loc.label,
+          placeKey: loc.placeKey,
+          enabled: loc.enabled,
+          qualified: loc.qualified,
+          isDefault: !!dflt && dflt._id === loc._id,
+          live: await liveCountForLocation(ctx.db, loc),
+          maxLiveEdges: loc.maxLiveEdges ?? null,
+        });
+      accountLocations[a._id as string] = rows;
     }
     const cfg = await resolveEdgeConfig(ctx.db);
     const runs = await ctx.db
@@ -188,6 +216,7 @@ async function planContextOf(
         dailyAllocationBudget: a.dailyAllocationBudget,
         allocationsToday: a.allocationsDayKey === todayKey() ? a.allocationsToday : 0,
         settings: a.settings as Record<string, unknown>,
+        locations: accountLocations[a._id as string] ?? [],
       })),
       renderEnabled: cfg.render.enabled,
       familiesDisabled: RENDER_CLIENT_FAMILIES.filter((f) => !cfg.render.clients[f].enabled),
@@ -257,6 +286,25 @@ function accountCompatibility(
   const caps = EDGE_PROVIDER_CAPABILITIES[a.provider];
   if (layer === 'l7' && caps.needsDnsAccount && !a.settings.dnsAccountId)
     reasons.push('dns_zone_missing');
+  // Where the addresses would be created: every location of the account,
+  // judged on its own (an untrusted one is offered: its first tested address
+  // trusts it). An account with no usable location cannot be picked yet.
+  const locations = a.locations.map((loc) => {
+    const why: string[] = [];
+    if (!loc.enabled) why.push('location_disabled');
+    if (loc.maxLiveEdges !== null && loc.maxLiveEdges - loc.live < required.length)
+      why.push('location_capacity_reached');
+    return {
+      id: loc.id,
+      label: loc.label,
+      placeKey: loc.placeKey,
+      isDefault: loc.isDefault,
+      qualified: loc.qualified,
+      compatible: why.length === 0,
+      reasons: why,
+    };
+  });
+  if (!locations.some((l) => l.compatible)) reasons.push('no_location');
   return {
     id: a.id,
     name: a.name,
@@ -264,6 +312,7 @@ function accountCompatibility(
     layer,
     compatible: reasons.length === 0,
     reasons: [...new Set(reasons)],
+    locations,
   };
 }
 
@@ -456,10 +505,14 @@ export async function buildPlan(
     enrolled: !!c.enrolled,
     modesOff: modesOffOf(c, required),
   };
+  const offered = accounts.filter((x) => x.compatible);
   const planHash = await planHashOf({
     listenerSpecs: required.map((i) => i.listenerSpec),
     directHosts,
-    accountIds: accounts.filter((x) => x.compatible).map((x) => x.id),
+    accountIds: offered.map((x) => x.id),
+    locationIds: offered.flatMap((x) =>
+      (x.locations ?? []).filter((l) => l.compatible).map((l) => l.id),
+    ),
   });
   return { plan, planHash };
 }
@@ -482,18 +535,21 @@ export const plan = internalAction({
 });
 
 /**
- * `POST setup-runs {backendServerId, nodeUuid, accountId, planHash, approvedHideUuids[], keepDirect?, listenerKeys?}`:
+ * `POST setup-runs {backendServerId, nodeUuid, accountId?, locationId?, planHash, approvedHideUuids[], keepDirect?, listenerKeys?}`:
  * re-plans (with the same `listenerKeys` the plan was shown with), refuses a
- * stale hash (`edge.plan_stale`), an unoffered account (`edge.account_incompatible`),
- * too many transports without a choice (`edge.too_many_inbounds`), an unknown
- * approved uuid (`validation`), then persists the run and schedules its first step.
+ * stale hash (`edge.plan_stale`), an unoffered account or location
+ * (`edge.account_incompatible`), too many transports without a choice
+ * (`edge.too_many_inbounds`), an unknown approved uuid (`validation`), then
+ * persists the run and schedules its first step. The pick is a location (its
+ * account implied) or an account (its default location).
  */
 export const create = internalAction({
   args: {
     backendServerId: v.id('backendServers'),
     nodeUuid: v.string(),
     listenerKeys: v.optional(v.array(v.string())),
-    accountId: v.id('edgeProviderAccounts'),
+    accountId: v.optional(v.id('edgeProviderAccounts')),
+    locationId: v.optional(v.id('edgeLocations')),
     planHash: v.string(),
     approvedHideUuids: v.array(v.string()),
     keepDirect: v.optional(v.boolean()),
@@ -530,6 +586,7 @@ export const create = internalAction({
         plan: JSON.stringify(plan),
         planHash,
         accountId: a.accountId,
+        locationId: a.locationId,
         approvedHideUuids: a.approvedHideUuids,
         keepDirect: a.keepDirect,
         actorAdminId: a.actorAdminId,

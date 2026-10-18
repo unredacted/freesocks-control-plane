@@ -45,6 +45,7 @@ const DIAGNOSTIC_STEPS = new Set([
   'zones',
   'networks',
   'subnets',
+  'flavors',
   'tls-configurations',
 ]);
 export const capturesErrorDetail = (step: string): boolean => DIAGNOSTIC_STEPS.has(step);

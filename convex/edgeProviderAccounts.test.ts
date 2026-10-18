@@ -7,7 +7,11 @@ import type { Id } from './_generated/dataModel';
 import { EDGE_PROVIDER_IDS } from '../src/shared/contracts/edgeProviderIds';
 import { resolveTemplateFor } from './edgeTemplates';
 import { qualificationBinding } from './lib/edges/frontCheck/binding';
-import { evaluateAutoQualification } from './lib/edges/testing/reads';
+import {
+  defaultLocationRow,
+  evaluateAutoQualification,
+  patchDefaultLocation,
+} from './lib/edges/testing/reads';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -131,14 +135,26 @@ describe('edgeProviderAccounts', () => {
     });
     const list = await t.query(internal.edgeProviderAccounts.listForAdmin, {});
     expect(list).toHaveLength(1);
+    // An account is credentials only; the place it was created with in the
+    // old single-location shape became its first (default) location.
     expect(list[0]).toMatchObject({
       name: 'acct-a',
       provider: 'gcore',
-      settings: { projectId: 11, regionId: 22 },
+      settings: {},
       credentialsSet: { apiKey: true },
       qualified: false,
       enabled: true,
     });
+    expect(list[0].locations).toEqual([
+      expect.objectContaining({
+        placeKey: '22',
+        locationKey: 'gcore:22',
+        placement: { projectId: 11, regionId: 22 },
+        isDefault: true,
+        qualified: false,
+      }),
+    ]);
+    expect(list[0].defaultLocationId).toBe(list[0].locations[0].id);
     expect(JSON.stringify(list)).not.toContain('SECRET_KEY');
     const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
     expect(audit.some((a) => a.action === 'edge.provider_account.create')).toBe(true);
@@ -190,7 +206,7 @@ describe('edgeProviderAccounts', () => {
       });
     const { id } = await mk('Main');
     await mk('Other');
-    await t.run((ctx) => ctx.db.patch(id as never, { qualified: true }));
+    await patchDefaultLocation(t, id as never, { qualified: true });
     await expect(
       t.mutation(internal.edgeProviderAccounts.update, { id: id as never, name: 'Other' }),
     ).rejects.toThrow(/exists/);
@@ -378,21 +394,21 @@ describe('edgeProviderAccounts', () => {
     await expect(t.mutation(internal.edgeProviderAccounts.remove, { id })).rejects.toThrow(
       /Edges still reference/,
     );
-    // The zone locates the live edge's resources: it cannot move under them.
+    // A zone is a location's, never the account's: another zone is a new
+    // location, not a move of this one (the live edge froze its own zone).
     await expect(
       t.mutation(internal.edgeProviderAccounts.update, { id, settings: { zone: 'nl-ams1' } }),
-    ).rejects.toThrow(/still reference this account/);
-    // Re-sending the same settings is not a change; flags and credentials stay editable.
+    ).rejects.toThrow(/placement_on_location/);
+    // Re-sending the same place is not a change; flags and credentials stay editable.
     await t.mutation(internal.edgeProviderAccounts.update, {
       id,
       settings: { zone: 'de-fra1' },
       priority: 3,
     });
     await t.mutation(internal.edgeProviderAccounts.update, { id, credentials: { token: 'T2' } });
-    expect(await t.query(internal.edgeProviderAccounts.getForAdmin, { id })).toMatchObject({
-      priority: 3,
-      settings: { zone: 'de-fra1' },
-    });
+    const view = await t.query(internal.edgeProviderAccounts.getForAdmin, { id });
+    expect(view).toMatchObject({ priority: 3, settings: {} });
+    expect(view?.locations.map((l) => l.placement)).toEqual([{ zone: 'de-fra1' }]);
   });
 });
 
@@ -417,7 +433,11 @@ describe('edgeProviderAccounts: change detection + qualification hash', () => {
     const shuffled = Object.fromEntries(Object.entries(ovhSettings).sort(() => -1));
     await t.mutation(internal.edgeProviderAccounts.update, { id, settings: shuffled, priority: 2 });
     const view = await t.query(internal.edgeProviderAccounts.getForAdmin, { id });
-    expect(view).toMatchObject({ qualified: true, priority: 2, settings: ovhSettings });
+    expect(view).toMatchObject({
+      qualified: true,
+      priority: 2,
+      settings: { applicationKey: 'AK', endpoint: 'ovh-eu' },
+    });
     // Same for credentials: stored order differs, same values re-sent → no change.
     await t.run(async (ctx) => {
       await ctx.db.patch(id, {
@@ -433,7 +453,7 @@ describe('edgeProviderAccounts: change detection + qualification hash', () => {
     );
   });
 
-  test('only LOCATING settings are locked by live edges; the credential identifier stays editable (but unverified: qualification drops)', async () => {
+  test('only LOCATING settings are locked by live edges, a place belongs to a location, the credential identifier stays editable (but unverified: trust drops)', async () => {
     const t = convexTest(schema, modules);
     const { id } = await t.mutation(internal.edgeProviderAccounts.create, {
       provider: 'ovh',
@@ -443,16 +463,24 @@ describe('edgeProviderAccounts: change detection + qualification hash', () => {
     });
     await t.mutation(internal.edgeProviderAccounts.setQualified, { id, qualified: true });
     await insertLiveEdge(t, id, 'ovh');
+    // Another region or gateway is another location, never an edit of the account.
     await expect(
       t.mutation(internal.edgeProviderAccounts.update, {
         id,
         settings: { ...ovhSettings, regionName: 'SBG5' },
       }),
-    ).rejects.toThrow(/still reference this account/);
+    ).rejects.toThrow(/placement_on_location/);
     await expect(
       t.mutation(internal.edgeProviderAccounts.update, {
         id,
         settings: { ...ovhSettings, gatewayId: 'gw-9' },
+      }),
+    ).rejects.toThrow(/placement_on_location/);
+    // The API endpoint the key was issued for still locates every edge of the account.
+    await expect(
+      t.mutation(internal.edgeProviderAccounts.update, {
+        id,
+        settings: { ...ovhSettings, endpoint: 'ovh-ca' },
       }),
     ).rejects.toThrow(/still reference this account/);
     await t.mutation(internal.edgeProviderAccounts.update, {
@@ -460,7 +488,8 @@ describe('edgeProviderAccounts: change detection + qualification hash', () => {
       settings: { ...ovhSettings, applicationKey: 'AK-rotated' },
     });
     const view = await t.query(internal.edgeProviderAccounts.getForAdmin, { id });
-    expect(view?.settings).toMatchObject({ applicationKey: 'AK-rotated', regionName: 'GRA9' });
+    expect(view?.settings).toEqual({ applicationKey: 'AK-rotated', endpoint: 'ovh-eu' });
+    expect(view?.locations[0]?.placement).toMatchObject({ regionName: 'GRA9' });
     expect(view?.qualified).toBe(false);
     // Scaleway's access key is the same kind of identifier.
     const { id: sid } = await t.mutation(internal.edgeProviderAccounts.create, {
@@ -479,7 +508,7 @@ describe('edgeProviderAccounts: change detection + qualification hash', () => {
         id: sid,
         settings: { accessKey: 'SCWBBBBBBBBBBBBBBBBB', zone: 'nl-ams-1' },
       }),
-    ).rejects.toThrow(/still reference this account/);
+    ).rejects.toThrow(/placement_on_location/);
   });
 
   test('setQualified records the EFFECTIVE template hash server-side and ignores a client-supplied one', async () => {
@@ -887,7 +916,9 @@ describe('edgeTemplates', () => {
       settings: { projectId: 11, regionId: 22 },
       credentials: { apiKey: 'k' },
     });
+    const loc = await defaultLocationRow(t, id);
     expect(await t.query(internal.edgeProviderAccounts.getInventory, { id })).toEqual({
+      locationId: loc!._id,
       inventory: null,
       inventoryAt: null,
     });
@@ -1319,7 +1350,7 @@ describe('edgeProviderAccounts: the DNS-account reference', () => {
       (await t.mutation(internal.edgeProviderAccounts.reconcileAutoQualification, {})).qualified,
     ).toBe(1);
     const before = (await t.run((ctx) => ctx.db.get(fastlyId)))!;
-    expect(before.qualified).toBe(true);
+    expect((await defaultLocationRow(t, fastlyId))!.qualified).toBe(true);
     expect(before.dependencyChangedAt).toBeUndefined();
     // The DNS account changes its token: the qualification goes, the dependency is marked...
     const r = await t.mutation(internal.edgeProviderAccounts.update, {
@@ -1328,7 +1359,7 @@ describe('edgeProviderAccounts: the DNS-account reference', () => {
     });
     expect(r.requalify).toBe(1);
     const marked = (await t.run((ctx) => ctx.db.get(fastlyId)))!;
-    expect(marked.qualified).toBe(false);
+    expect((await defaultLocationRow(t, fastlyId))!.qualified).toBe(false);
     expect(marked.dependencyChangedAt).toBeGreaterThan(0);
     // ...and the next sweep does NOT re-trust it from the old proof.
     expect(
@@ -1346,13 +1377,13 @@ describe('edgeProviderAccounts: the DNS-account reference', () => {
         accountId: fastlyId,
       }),
     ).toEqual({ qualified: false, code: 'proof_before_dependency_change' });
-    expect((await t.run((ctx) => ctx.db.get(fastlyId)))!.qualified).toBe(false);
+    expect((await defaultLocationRow(t, fastlyId))!.qualified).toBe(false);
     // A proof taken through the NEW dependency lands: trusted again, on that proof.
     const fresh = await provenEdge(marked.dependencyChangedAt! + 2);
     expect(
       (await t.mutation(internal.edgeProviderAccounts.reconcileAutoQualification, {})).qualified,
     ).toBe(1);
-    expect((await t.run((ctx) => ctx.db.get(fastlyId)))!.qualification).toMatchObject({
+    expect((await defaultLocationRow(t, fastlyId))!.qualification).toMatchObject({
       by: 'auto',
       evidence: { edgeId: fresh },
     });

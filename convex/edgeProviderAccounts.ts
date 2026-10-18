@@ -1,7 +1,8 @@
 /**
- * Origin provider ACCOUNTS: one cloud account (+ region/zone/network settings)
- * FCP may provision edges in. A sibling of mirrorProviders/backendServers: a
- * variable-length pool of secret-bearing rows.
+ * Origin provider ACCOUNTS: one cloud or CDN account FCP may provision edges
+ * in, a provider plus credentials. WHERE its edges live is a LOCATION
+ * (convex/edgeLocations.ts), and trust is taken per location. A sibling of
+ * mirrorProviders/backendServers: a variable-length pool of secret-bearing rows.
  *
  * Secret invariant: `credentials` is stored on create/edit, read back ONLY by
  * the "use node" provider actions (`getWithSecret`), and surfaced to the admin
@@ -19,18 +20,34 @@ import {
   buildCredentials,
   locatingSettingsChanged,
   maskCredentials,
+  placementKeysOf,
   settingsEqual,
+  validatePlacement,
   validateSettings,
+  withoutPlacementKeys,
   type EdgeCredentials,
   type EdgeSettings,
 } from './lib/edges/accountSettings';
-import { resolveTemplateFor } from './edgeTemplates';
 import { EDGE_PROVIDER_CAPABILITIES, edgeLayerOf } from './lib/edges/providers/capabilities';
 import { parseIntent, parseObservedSettings } from './lib/edges/intent';
 import { liveEdgesOfAccount } from './relays';
 import { assertAdmission } from './lib/edges/maintenance';
-import { autoQualifyDecision, type AutoQualifyEvidence } from './lib/edges/autoQualify';
-import { verificationEndpoint } from './lib/edges/verification';
+import { type AutoQualifyEvidence } from './lib/edges/autoQualify';
+import { placementHashOf } from './lib/edges/locations';
+import {
+  applyLocationQualification,
+  defaultLocationOf,
+  evaluateAutoQualificationForLocation,
+  initialPlacementOf,
+  inventoryView,
+  locationInUse,
+  locationsAdminOf,
+  locationsOfAccount,
+  untrustAccountLocations,
+  untrustLocation,
+  upsertLocation,
+  type LocationAdmin,
+} from './edgeLocations';
 
 // A display label (never a provider resource name or a URL segment): same shape as a
 // template name.
@@ -45,9 +62,16 @@ function checkName(name: string): void {
   }
 }
 
-/** Admin-safe view of one account. */
-export function mapAccountAdmin(r: Doc<'edgeProviderAccounts'>) {
-  const { type: _t, ...settings } = r.settings as { type: string } & Record<string, unknown>;
+/**
+ * Admin-safe view of one account. `settings` holds the account's own keys only
+ * (never a placement: that is a location's). The trust fields read the
+ * DEFAULT location's (`qualified`: any enabled location is trusted), so a
+ * single-location account reads as it always did; `locations` has them all.
+ */
+export function mapAccountAdmin(r: Doc<'edgeProviderAccounts'>, locations: LocationAdmin[]) {
+  const { type: _t, ...raw } = r.settings as { type: string } & Record<string, unknown>;
+  const settings = withoutPlacementKeys(r.provider, raw);
+  const dflt = locations.find((l) => l.isDefault) ?? null;
   return {
     id: r._id as string,
     provider: r.provider,
@@ -55,21 +79,14 @@ export function mapAccountAdmin(r: Doc<'edgeProviderAccounts'>) {
     settings,
     credentialsSet: maskCredentials(r.credentials as Record<string, unknown>),
     defaultTemplateId: (r.defaultTemplateId as string | undefined) ?? null,
+    defaultLocationId: dflt?.id ?? null,
+    locations,
     enabled: r.enabled,
-    qualified: r.qualified,
-    qualifiedTemplateHash: r.qualifiedTemplateHash ?? null,
+    qualified: locations.some((l) => l.enabled && l.qualified),
+    qualifiedTemplateHash: dflt?.qualifiedTemplateHash ?? null,
     // How the trust was taken (never the endpoint itself: ids + dates only).
-    qualification: r.qualification
-      ? {
-          by: r.qualification.by,
-          at: new Date(r.qualification.at).toISOString(),
-          edgeId: (r.qualification.evidence?.edgeId as string | undefined) ?? null,
-          proofCheckedAt: r.qualification.evidence?.proofCheckedAt
-            ? new Date(r.qualification.evidence.proofCheckedAt).toISOString()
-            : null,
-        }
-      : null,
-    autoQualifyHold: r.autoQualifyHold === true,
+    qualification: dflt?.qualification ?? null,
+    autoQualifyHold: dflt?.autoQualifyHold === true,
     priority: r.priority,
     dailyAllocationBudget: r.dailyAllocationBudget,
     allocationsToday: r.allocationsDayKey === dayKey() ? r.allocationsToday : 0,
@@ -81,7 +98,7 @@ export function mapAccountAdmin(r: Doc<'edgeProviderAccounts'>) {
     // encryption mode). Planning needs it; the operator never types it.
     observedSettings: r.observedSettings ? parseObservedSettings(r.observedSettings) : null,
     observedAt: r.observedAt ? new Date(r.observedAt).toISOString() : null,
-    inventoryAt: r.inventoryAt ? new Date(r.inventoryAt).toISOString() : null,
+    inventoryAt: dflt?.inventoryAt ?? null,
     // Dev only: the adapter behind this account is the in-memory fake, so the
     // CMS can badge it and no screenshot shows a real adapter name for it.
     fake: fakeShadowedIds().includes(r.provider),
@@ -102,7 +119,6 @@ export interface RelayAccountWithSecret {
   credentials: EdgeCredentials;
   settings: EdgeSettings;
   enabled: boolean;
-  qualified: boolean;
   defaultTemplateId: Id<'edgeTemplates'> | null;
   /** Row version for compare-and-set writes (a rotation applies only to the row it tested). */
   updatedAt: number;
@@ -118,7 +134,6 @@ function toWithSecret(r: Doc<'edgeProviderAccounts'>): RelayAccountWithSecret {
     credentials: r.credentials as EdgeCredentials,
     settings: r.settings as EdgeSettings,
     enabled: r.enabled,
-    qualified: r.qualified,
     defaultTemplateId: r.defaultTemplateId ?? null,
     updatedAt: r.updatedAt,
     apiFailures: r.apiFailures ?? 0,
@@ -139,9 +154,10 @@ export const listForAdmin = internalQuery({
   args: {},
   handler: async (ctx) => {
     const rows = await ctx.db.query('edgeProviderAccounts').collect();
-    return rows
-      .sort((a, b) => a.priority - b.priority || a.name.localeCompare(b.name))
-      .map(mapAccountAdmin);
+    const out = [];
+    for (const r of rows.sort((a, b) => a.priority - b.priority || a.name.localeCompare(b.name)))
+      out.push(mapAccountAdmin(r, await locationsAdminOf(ctx.db, r)));
+    return out;
   },
 });
 
@@ -149,47 +165,24 @@ export const getForAdmin = internalQuery({
   args: { id: v.id('edgeProviderAccounts') },
   handler: async (ctx, { id }) => {
     const r = await ctx.db.get(id);
-    return r ? mapAccountAdmin(r) : null;
+    return r ? mapAccountAdmin(r, await locationsAdminOf(ctx.db, r)) : null;
   },
 });
 
-/** The stored inventory snapshot, decoded for the admin contract (addresses are public client-facing data). */
+/**
+ * The stored inventory snapshot of one of the account's locations (the
+ * default one when none is named), decoded for the admin contract (addresses
+ * are public client-facing data). Inventory is per region.
+ */
 export const getInventory = internalQuery({
-  args: { id: v.id('edgeProviderAccounts') },
-  handler: async (ctx, { id }) => {
+  args: { id: v.id('edgeProviderAccounts'), locationId: v.optional(v.id('edgeLocations')) },
+  handler: async (ctx, { id, locationId }) => {
     const r = await ctx.db.get(id);
     if (!r) return null;
-    let inventory: { loadBalancers?: Array<Record<string, unknown>> } | null = null;
-    if (r.inventorySnapshot) {
-      try {
-        inventory = JSON.parse(r.inventorySnapshot);
-      } catch {
-        inventory = null;
-      }
-    }
-    if (inventory && Array.isArray(inventory.loadBalancers)) {
-      // `unowned` = no live edge ledger references the LB: what the origin import
-      // picker offers first (an owned one is already an edge).
-      const owned = new Set<string>();
-      for (const e of await ctx.db
-        .query('edges')
-        .withIndex('by_account_status', (q) => q.eq('accountId', id))
-        .collect()) {
-        if (e.status === 'destroyed') continue;
-        for (const res of e.resources) owned.add(res.resourceId);
-      }
-      inventory = {
-        ...inventory,
-        loadBalancers: inventory.loadBalancers.map((lb) => ({
-          ...lb,
-          unowned: !owned.has(String(lb.id)),
-        })),
-      };
-    }
-    return {
-      inventory,
-      inventoryAt: r.inventoryAt ? new Date(r.inventoryAt).toISOString() : null,
-    };
+    const loc = locationId ? await ctx.db.get(locationId) : await defaultLocationOf(ctx.db, r);
+    if (!loc || loc.accountId !== r._id)
+      return { locationId: null, inventory: null, inventoryAt: null };
+    return inventoryView(ctx, loc);
   },
 });
 
@@ -199,6 +192,8 @@ const upsertArgs = {
   provider: edgeProviderIdValidator,
   name: v.string(),
   settings: v.any(),
+  /** The region's display name, for a first location given in the old single-location shape. */
+  locationLabel: v.optional(v.string()),
   credentials: v.optional(v.any()),
   enabled: v.optional(v.boolean()),
   priority: v.optional(v.number()),
@@ -313,34 +308,15 @@ async function edgesDependingOnDnsAccount(
  * proof or a credential test taken through the old dependency.
  */
 async function clearQualificationOfReferencing(
-  ctx: { db: import('./_generated/server').DatabaseWriter },
+  ctx: import('./_generated/server').MutationCtx,
   id: Id<'edgeProviderAccounts'>,
   actorAdminId: Id<'adminUsers'> | undefined,
-  write: (entry: Parameters<typeof writeAuditLog>[1]) => Promise<void>,
 ): Promise<number> {
   let n = 0;
   const now = Date.now();
   for (const r of await fastlyAccountsUsing(ctx.db, id)) {
-    if (!r.qualified) {
-      await ctx.db.patch(r._id, { dependencyChangedAt: now, updatedAt: now });
-      continue;
-    }
-    await ctx.db.patch(r._id, {
-      qualified: false,
-      qualifiedTemplateHash: undefined,
-      qualification: undefined,
-      dependencyChangedAt: now,
-      updatedAt: now,
-    });
-    n++;
-    await write({
-      actorType: 'admin',
-      actorId: actorAdminId ?? undefined,
-      action: 'edge.provider_account.qualified',
-      targetType: 'edge_provider_account',
-      targetId: r._id,
-      payload: { name: r.name, provider: r.provider, qualified: false },
-    });
+    await ctx.db.patch(r._id, { dependencyChangedAt: now, updatedAt: now });
+    n += await untrustAccountLocations(ctx, r, { actorAdminId });
   }
   return n;
 }
@@ -368,6 +344,49 @@ async function assertDnsAccountUsable(
 }
 
 /**
+ * A settings payload may still carry placement keys (the old single-location
+ * shape). Re-sending the place the account already has is accepted; any other
+ * place is a new location, never an edit of this account.
+ */
+async function assertPlacementUnchanged(
+  db: import('./_generated/server').DatabaseReader,
+  row: Doc<'edgeProviderAccounts'>,
+  raw: Record<string, unknown>,
+): Promise<void> {
+  const keys = placementKeysOf(row.provider, raw);
+  if (!keys) return;
+  const parsed = validatePlacement(row.provider, keys);
+  if (!parsed.ok) throw new ConvexError({ code: 'validation', message: parsed.issues.join('; ') });
+  const hash = placementHashOf(parsed.placement);
+  const dflt = await defaultLocationOf(db, row);
+  if (dflt && dflt.placementHash === hash) return;
+  const legacy = placementKeysOf(row.provider, row.settings as Record<string, unknown>);
+  if (legacy) {
+    const p = validatePlacement(row.provider, legacy);
+    if (p.ok && placementHashOf(p.placement) === hash) return;
+  }
+  throw new ConvexError({
+    code: 'edge.placement_on_location',
+    message: 'A place belongs to a location: add a location instead of moving the account',
+  });
+}
+
+/**
+ * The settings to store: the account's own keys, plus any placement keys a row
+ * written before locations existed still holds (they locate its edges until
+ * `seed:migrateEdgeLocations` moves them; never written anew).
+ */
+function withLegacyPlacement(
+  row: Doc<'edgeProviderAccounts'>,
+  own: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    ...(placementKeysOf(row.provider, row.settings as Record<string, unknown>) ?? {}),
+    ...own,
+  };
+}
+
+/**
  * "Tested" = a successful credential test on record AND the latest test did
  * not fail. A failure keeps the older success timestamp (so the history stays
  * readable), which must not keep the account usable: one rule for the guided
@@ -391,9 +410,19 @@ export const create = internalMutation({
       .unique();
     if (dup)
       throw new ConvexError({ code: 'conflict', message: 'An account with this name exists' });
-    const settings = validateSettings(a.provider, a.settings);
+    // An account is a provider plus credentials. A payload in the old
+    // single-location shape (placement keys among the settings) also gets
+    // that place as the account's first location, so nothing that created
+    // accounts that way breaks; a CDN account always gets its one location.
+    const rawSettings = (a.settings ?? {}) as Record<string, unknown>;
+    const settings = validateSettings(a.provider, withoutPlacementKeys(a.provider, rawSettings));
     if (!settings.ok)
       throw new ConvexError({ code: 'validation', message: settings.issues.join('; ') });
+    const initialPlacement = initialPlacementOf(a.provider, rawSettings);
+    if (initialPlacement) {
+      const p = validatePlacement(a.provider, initialPlacement);
+      if (!p.ok) throw new ConvexError({ code: 'validation', message: p.issues.join('; ') });
+    }
     const creds = buildCredentials(
       a.provider,
       a.credentials as Record<string, unknown> | undefined,
@@ -416,7 +445,6 @@ export const create = internalMutation({
       settings: settings.settings as never,
       defaultTemplateId: a.defaultTemplateId ?? undefined,
       enabled: a.enabled ?? true,
-      qualified: false,
       priority: a.priority ?? 0,
       dailyAllocationBudget: a.dailyAllocationBudget ?? 10,
       allocationsToday: 0,
@@ -431,7 +459,20 @@ export const create = internalMutation({
       targetId: id,
       payload: { name: a.name, provider: a.provider },
     });
-    return { id };
+    let locationId: Id<'edgeLocations'> | null = null;
+    if (initialPlacement) {
+      const row = (await ctx.db.get(id))!;
+      locationId = (
+        await upsertLocation(
+          ctx,
+          row,
+          initialPlacement,
+          { label: typeof a.locationLabel === 'string' ? a.locationLabel : undefined },
+          { actorAdminId: a.actorAdminId },
+        )
+      ).id;
+    }
+    return { id, locationId };
   },
 });
 
@@ -479,12 +520,18 @@ export const update = internalMutation({
       patch.name = a.name;
     }
     if (a.settings !== undefined) {
-      const settings = validateSettings(row.provider, a.settings);
+      const raw = a.settings as Record<string, unknown>;
+      // A placement is a location's, never the account's: the old
+      // single-location shape re-sent unchanged is accepted, a different
+      // place is a new location (`POST providers/{id}/locations`).
+      await assertPlacementUnchanged(ctx.db, row, raw);
+      const settings = validateSettings(row.provider, withoutPlacementKeys(row.provider, raw));
       if (!settings.ok)
         throw new ConvexError({ code: 'validation', message: settings.issues.join('; ') });
-      // Canonical (key-order-insensitive) compare: a stored row re-sent in a
-      // different key order is not a change.
-      settingsChanged = !settingsEqual(settings.settings, row.settings);
+      // Canonical (key-order-insensitive) compare of the account's own keys: a
+      // stored row re-sent in a different key order is not a change.
+      const ownNow = withoutPlacementKeys(row.provider, row.settings as Record<string, unknown>);
+      settingsChanged = !settingsEqual(settings.settings, ownNow);
       if (
         settingsChanged &&
         locatingSettingsChanged(
@@ -516,7 +563,7 @@ export const update = internalMutation({
         row.provider,
         settings.settings as Record<string, unknown>,
       );
-      patch.settings = settings.settings as never;
+      patch.settings = withLegacyPlacement(row, settings.settings) as never;
     }
     if (a.credentials !== undefined) {
       const creds = buildCredentials(
@@ -545,31 +592,32 @@ export const update = internalMutation({
       patch.defaultTemplateId = a.defaultTemplateId ?? undefined;
       templateChanged = (a.defaultTemplateId ?? undefined) !== row.defaultTemplateId;
     }
-    // New credentials or settings invalidate the qualification (a different
-    // account/network may not carry the protocol the same way); so does a
-    // different effective template — its parameters were never qualified. A
-    // routine secret rotation that must KEEP the qualification goes through
+    // New credentials or settings invalidate the trust of every location (a
+    // different account/network may not carry the protocol the same way); so
+    // does a different effective template for the locations that fall back
+    // to the account's: its parameters were never trusted. A routine secret
+    // rotation that must KEEP the trust goes through
     // `edgeProviderOps.rotateCredentials` (tests the new secret first) instead.
-    if (credentialsChanged || settingsChanged || templateChanged) {
-      patch.qualified = false;
-      patch.qualifiedTemplateHash = undefined;
-      patch.qualification = undefined;
-    }
     // New credentials or a moved account: the automatic rules may look again
     // once a test AFTER this change passes (lib/edges/autoQualify.ts).
-    if (credentialsChanged || settingsChanged) {
-      patch.credentialsChangedAt = Date.now();
-      patch.autoQualifyHold = undefined;
-    }
+    if (credentialsChanged || settingsChanged) patch.credentialsChangedAt = Date.now();
     await ctx.db.patch(a.id, patch);
-    // A DNS account's new token or zone was never qualified by the accounts
-    // that write THROUGH it either: clear theirs too, audited per account.
+    const fresh = (await ctx.db.get(a.id))!;
     let requalify = 0;
-    if (credentialsChanged || settingsChanged) {
-      requalify = await clearQualificationOfReferencing(ctx, a.id, a.actorAdminId, (entry) =>
-        writeAuditLog(ctx, entry),
-      );
-    }
+    if (credentialsChanged || settingsChanged)
+      requalify += await untrustAccountLocations(ctx, fresh, {
+        actorAdminId: a.actorAdminId,
+        releaseHolds: true,
+      });
+    else if (templateChanged)
+      requalify += await untrustAccountLocations(ctx, fresh, {
+        actorAdminId: a.actorAdminId,
+        onlyFallingBack: true,
+      });
+    // A DNS account's new token or zone was never trusted by the accounts
+    // that write THROUGH it either: clear theirs too, audited per location.
+    if (credentialsChanged || settingsChanged)
+      requalify += await clearQualificationOfReferencing(ctx, a.id, a.actorAdminId);
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: a.actorAdminId ?? undefined,
@@ -610,6 +658,16 @@ export const remove = internalMutation({
         message: 'Another provider account uses this one for DNS; repoint or remove it first',
       });
     }
+    // Its locations go with it, unless a protected node still names one.
+    const locations = await locationsOfAccount(ctx.db, id);
+    for (const loc of locations) {
+      if ((await locationInUse(ctx.db, loc)).sets > 0)
+        throw new ConvexError({
+          code: 'edge.account_in_use',
+          message: 'A protected node still uses a location of this account; remove it there first',
+        });
+    }
+    for (const loc of locations) await ctx.db.delete(loc._id);
     await ctx.db.delete(id);
     await writeAuditLog(ctx, {
       actorType: 'admin',
@@ -665,7 +723,10 @@ export const applyCredentialRotation = internalMutation({
         code: 'validation',
         message: `missing credentials: ${creds.missing.join(', ')}`,
       });
-    const settings = validateSettings(row.provider, a.settings as Record<string, unknown>);
+    const settings = validateSettings(
+      row.provider,
+      withoutPlacementKeys(row.provider, a.settings as Record<string, unknown>),
+    );
     if (!settings.ok)
       throw new ConvexError({ code: 'validation', message: settings.issues.join('; ') });
     if (
@@ -677,11 +738,15 @@ export const applyCredentialRotation = internalMutation({
     )
       throw new ConvexError({ code: 'validation', message: 'rotation cannot move the account' });
     const credentialsChanged = !settingsEqual(creds.credentials, row.credentials);
-    const identifiersChanged = !settingsEqual(settings.settings, row.settings);
+    const identifiersChanged = !settingsEqual(
+      settings.settings,
+      withoutPlacementKeys(row.provider, row.settings as Record<string, unknown>),
+    );
+    const trusted = (await locationsOfAccount(ctx.db, row._id)).some((l) => l.qualified);
     const now = Date.now();
     await ctx.db.patch(a.id, {
       credentials: creds.credentials as never,
-      settings: settings.settings as never,
+      settings: withLegacyPlacement(row, settings.settings) as never,
       lastTestOkAt: now,
       lastTestError: undefined,
       // The passing test observed the provider's live facts; a test that observed
@@ -703,61 +768,60 @@ export const applyCredentialRotation = internalMutation({
         provider: row.provider,
         credentialsChanged,
         identifiersChanged,
-        qualifiedKept: row.qualified,
+        qualifiedKept: trusted,
       },
     });
-    return { ok: true as const, credentialsChanged, identifiersChanged, qualified: row.qualified };
+    return { ok: true as const, credentialsChanged, identifiersChanged, qualified: trusted };
   },
 });
 
+/**
+ * The trust override for one of the account's locations (its default one when
+ * none is named): trusts the LOCATION, verifies no endpoint. An untrust holds
+ * every automatic rule off until an operator trusts again or the credentials
+ * change.
+ */
 export const setQualified = internalMutation({
   args: {
     id: v.id('edgeProviderAccounts'),
     qualified: v.boolean(),
+    locationId: v.optional(v.id('edgeLocations')),
     /** DEPRECATED and ignored: the effective template's hash is computed server-side. */
     templateHash: v.optional(v.string()),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
-  handler: async (ctx, { id, qualified, actorAdminId }) => {
+  handler: async (ctx, { id, qualified, locationId, actorAdminId }) => {
     await assertAdmission(ctx.db, 'provider.write');
     const row = await ctx.db.get(id);
     if (!row) throw new ConvexError({ code: 'not_found', message: 'Account not found' });
-    if (qualified) {
-      // The Providers override: trusts the ACCOUNT, verifies no endpoint.
-      await applyQualification(ctx, row, { by: 'admin', actorAdminId });
-      return { ok: true as const };
-    }
-    // A manual untrust holds every automatic rule off until an operator trusts
-    // again or the credentials change.
-    await ctx.db.patch(id, {
-      qualified: false,
-      qualifiedTemplateHash: undefined,
-      qualification: undefined,
-      autoQualifyHold: true,
-      updatedAt: Date.now(),
-    });
-    await writeAuditLog(ctx, {
-      actorType: 'admin',
-      actorId: actorAdminId ?? undefined,
-      action: 'edge.provider_account.qualified',
-      targetType: 'edge_provider_account',
-      targetId: id,
-      payload: { name: row.name, provider: row.provider, qualified: false },
-    });
+    const loc = await locationFor(ctx, row, locationId);
+    if (qualified) await applyLocationQualification(ctx, row, loc, { by: 'admin', actorAdminId });
+    else await untrustLocation(ctx, row, loc, { hold: true, actorAdminId });
     return { ok: true as const };
   },
 });
 
 type QualificationCtx = import('./_generated/server').MutationCtx;
 
+/** A named location of the account, else its default one; refused when it has none. */
+async function locationFor(
+  ctx: { db: import('./_generated/server').DatabaseReader },
+  row: Doc<'edgeProviderAccounts'>,
+  locationId: Id<'edgeLocations'> | undefined,
+): Promise<Doc<'edgeLocations'>> {
+  const loc = locationId ? await ctx.db.get(locationId) : await defaultLocationOf(ctx.db, row);
+  if (!loc || loc.accountId !== row._id)
+    throw new ConvexError({
+      code: 'edge.no_location',
+      message: 'This account has no location yet; add one first',
+    });
+  return loc;
+}
+
 /**
- * Trust an account: the ONLY writer of `qualified: true`. The hash recorded is
- * the one of the template this account provisions with NOW (its default, else
- * the scoped/provider default), never a client-supplied value: the
- * template-edit invalidation keys off it. `by` says who took the trust: an
- * operator (the Providers override, or the first confirmed L4 endpoint, which
- * carries endpoint evidence) or the L7 auto-trust rule. Trusting clears a
- * manual hold.
+ * Trust one of the account's locations (`opts.locationId`, else its default
+ * one): the account-level entry point kept for the callers that name an
+ * account (lib/edges trust rules live in edgeLocations.ts).
  */
 export async function applyQualification(
   ctx: QualificationCtx,
@@ -765,68 +829,21 @@ export async function applyQualification(
   opts: {
     by: 'admin' | 'auto';
     actorAdminId?: Id<'adminUsers'>;
+    locationId?: Id<'edgeLocations'>;
     evidence?: Omit<AutoQualifyEvidence, 'proofCheckedAt'> & { proofCheckedAt?: number };
   },
 ): Promise<void> {
-  const effective = await resolveTemplateFor(
-    ctx,
-    row.provider,
-    null,
-    row.defaultTemplateId ?? null,
-    row._id,
-  );
-  const now = Date.now();
-  await ctx.db.patch(row._id, {
-    qualified: true,
-    qualifiedTemplateHash: effective.hash,
-    qualification: {
-      by: opts.by,
-      at: now,
-      ...(opts.evidence
-        ? {
-            evidence: {
-              edgeId: opts.evidence.edgeId as Id<'edges'>,
-              endpoint: opts.evidence.endpoint,
-              accountTestedAt: opts.evidence.accountTestedAt,
-              templateHash: opts.evidence.templateHash,
-              listenerId: opts.evidence.listenerId as Id<'relayListeners'>,
-              listenerRevision: opts.evidence.listenerRevision,
-              ...(opts.evidence.proofCheckedAt !== undefined
-                ? { proofCheckedAt: opts.evidence.proofCheckedAt }
-                : {}),
-            },
-          }
-        : {}),
-    },
-    autoQualifyHold: undefined,
-    updatedAt: now,
-  });
-  await writeAuditLog(ctx, {
-    actorType: opts.by === 'admin' ? 'admin' : 'system',
-    actorId: opts.actorAdminId ?? undefined,
-    action:
-      opts.by === 'auto'
-        ? 'edge.provider_account.auto_qualified'
-        : 'edge.provider_account.qualified',
-    targetType: 'edge_provider_account',
-    targetId: row._id,
-    // Ids only: never the endpoint.
-    payload: {
-      name: row.name,
-      provider: row.provider,
-      qualified: true,
-      ...(opts.evidence ? { edgeId: opts.evidence.edgeId, endpointEvidence: true } : {}),
-    },
-  });
+  const loc = await locationFor(ctx, row, opts.locationId);
+  await applyLocationQualification(ctx, row, loc, opts);
 }
 
 /**
- * The L7 auto-trust rule (lib/edges/autoQualify.ts) for ONE account: trusts it
- * when an active edge of the account carries a current authenticated proof for
- * the account's effective template NOW. Only ever sets `qualified: true`; every
- * existing invalidation stays. Called after a passing front proof
- * (frontQualify.record) and by the reconcile sweep below. L4 accounts always
- * answer `not_l7`.
+ * The L7 auto-trust rule (lib/edges/autoQualify.ts) for ONE account: each of
+ * its locations is trusted when an active edge there carries a current
+ * authenticated proof for the location's effective template NOW. Only ever
+ * sets `qualified: true`; every existing invalidation stays. Called after a
+ * passing front proof (frontQualify.record) and by the reconcile sweep below.
+ * L4 accounts always answer `not_l7`.
  */
 export async function evaluateAutoQualificationFor(
   ctx: QualificationCtx,
@@ -835,62 +852,23 @@ export async function evaluateAutoQualificationFor(
 ): Promise<{ qualified: boolean; code: string | null }> {
   const row = await ctx.db.get(accountId);
   if (!row) return { qualified: false, code: 'account_not_found' };
-  if (!row.enabled) return { qualified: row.qualified, code: 'account_disabled' };
-  const effective = await resolveTemplateFor(
-    ctx,
-    row.provider,
-    null,
-    row.defaultTemplateId ?? null,
-    row._id,
-  );
-  const candidates = [];
-  for (const e of await liveEdgesOfAccount(ctx.db, row._id)) {
-    const listener = await ctx.db.get(e.listenerId);
-    if (!listener || listener.retired) continue;
-    candidates.push({
-      id: e._id as string,
-      status: e.status,
-      layer: e.layer ?? edgeLayerOf(e.provider),
-      templateHash: e.templateHash ?? null,
-      listenerId: e.listenerId as string,
-      listenerRevision: listener.revision,
-      endpoint: verificationEndpoint(e),
-      frontQualification: e.frontQualification
-        ? {
-            ok: e.frontQualification.ok,
-            checkedAt: e.frontQualification.checkedAt,
-            expiresAt: e.frontQualification.expiresAt,
-            binding: {
-              listenerId: e.frontQualification.binding.listenerId as string,
-              listenerRevision: e.frontQualification.binding.listenerRevision,
-            },
-          }
-        : null,
-    });
+  const locations = await locationsOfAccount(ctx.db, row._id);
+  if (locations.length === 0) return { qualified: false, code: 'no_location' };
+  // Every location is judged; the answer is the default location's (an
+  // account with one location reads exactly as before locations existed).
+  const dflt = await defaultLocationOf(ctx.db, row);
+  let answer: { qualified: boolean; code: string | null } | null = null;
+  for (const loc of locations) {
+    const r = await evaluateAutoQualificationForLocation(ctx, row, loc, now);
+    if (!answer || loc._id === dflt?._id) answer = r;
   }
-  const decision = autoQualifyDecision(
-    {
-      layer: edgeLayerOf(row.provider),
-      qualified: row.qualified,
-      autoQualifyHold: row.autoQualifyHold ?? false,
-      lastTestOkAt: row.lastTestOkAt ?? null,
-      lastTestError: row.lastTestError ?? null,
-      credentialsChangedAt: row.credentialsChangedAt ?? null,
-      dependencyChangedAt: row.dependencyChangedAt ?? null,
-      effectiveTemplateHash: effective.hash,
-    },
-    candidates,
-    now,
-  );
-  if (!decision.ok) return { qualified: row.qualified, code: decision.code };
-  await applyQualification(ctx, row, { by: 'auto', evidence: decision.evidence });
-  return { qualified: true, code: null };
+  return answer!;
 }
 
 /**
- * The reconcile sweep: every enabled, unqualified, unheld L7 account is
- * evaluated (bounded: the accounts table is operator-scale). L4 accounts are
- * never looked at here; they are trusted only by an operator.
+ * The reconcile sweep: every enabled, untrusted, unheld location of an
+ * enabled L7 account is evaluated (bounded: the tables are operator-scale).
+ * L4 locations are never looked at here; they are trusted only by an operator.
  */
 export const reconcileAutoQualification = internalMutation({
   args: {},
@@ -899,10 +877,12 @@ export const reconcileAutoQualification = internalMutation({
     let evaluated = 0;
     let qualified = 0;
     for (const row of await ctx.db.query('edgeProviderAccounts').collect()) {
-      if (!row.enabled || row.qualified || row.autoQualifyHold) continue;
-      if (edgeLayerOf(row.provider) !== 'l7') continue;
-      evaluated++;
-      if ((await evaluateAutoQualificationFor(ctx, row._id, now)).qualified) qualified++;
+      if (!row.enabled || edgeLayerOf(row.provider) !== 'l7') continue;
+      for (const loc of await locationsOfAccount(ctx.db, row._id)) {
+        if (!loc.enabled || loc.qualified || loc.autoQualifyHold) continue;
+        evaluated++;
+        if ((await evaluateAutoQualificationForLocation(ctx, row, loc, now)).qualified) qualified++;
+      }
     }
     return { evaluated, qualified };
   },
@@ -977,13 +957,19 @@ export const recordApiOutcome = internalMutation({
   },
 });
 
-/** Store the latest provider inventory pull (admin-only JSON). */
+/** Store the latest provider inventory pull of one location (the account's default when none is named). */
 export const recordInventory = internalMutation({
-  args: { id: v.id('edgeProviderAccounts'), inventory: v.string() },
-  handler: async (ctx, { id, inventory }) => {
+  args: {
+    id: v.id('edgeProviderAccounts'),
+    locationId: v.optional(v.id('edgeLocations')),
+    inventory: v.string(),
+  },
+  handler: async (ctx, { id, locationId, inventory }) => {
     const row = await ctx.db.get(id);
     if (!row) return null;
-    await ctx.db.patch(id, {
+    const loc = locationId ? await ctx.db.get(locationId) : await defaultLocationOf(ctx.db, row);
+    if (!loc || loc.accountId !== row._id) return null;
+    await ctx.db.patch(loc._id, {
       inventorySnapshot: inventory.slice(0, 200_000),
       inventoryAt: Date.now(),
       updatedAt: Date.now(),

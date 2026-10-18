@@ -66,7 +66,6 @@ import {
   mapRelayAdmin,
 } from './relays';
 import { activeNames, hostSniOf, listenerRemark, listenersOf } from './relayListeners';
-import { resolveTemplateFor } from './edgeTemplates';
 import { mapEdgeAdmin } from './edges';
 import {
   mapRotationAdmin,
@@ -75,6 +74,12 @@ import {
   selectionContext,
 } from './edgeRotations';
 import { accountTested, API_FAILING_AFTER } from './edgeProviderAccounts';
+import {
+  defaultLocationOf,
+  effectiveTemplateOfLocation,
+  liveCountForLocation,
+  locationsOfAccount,
+} from './edgeLocations';
 import { readRefusals, REFUSAL_WINDOW_MS, REFUSALS_CRITICAL_AT } from './deliveryRefusals';
 import { fleetRotationsToday, readFleetBrake } from './lib/edges/fleet';
 import { modeRefOf } from './nodeIntents';
@@ -212,13 +217,19 @@ async function accountFacts(
     }
     const observed = parseObservedSettings(a.observedSettings);
     const layer = edgeLayerOf(a.provider);
-    const effective = await resolveTemplateFor(
-      ctx,
-      a.provider,
-      null,
-      a.defaultTemplateId ?? null,
-      a._id,
-    );
+    // Trust is per location: the account counts as trusted when one of its
+    // enabled locations is, and current when that trust was taken with what
+    // the location provisions with now.
+    const locations = (await locationsOfAccount(ctx.db, a._id)).filter((l) => l.enabled);
+    let qualified = false;
+    let qualificationCurrent = false;
+    for (const loc of locations) {
+      if (!loc.qualified) continue;
+      qualified = true;
+      const eff = await effectiveTemplateOfLocation(ctx, a, loc);
+      if (loc.qualifiedTemplateHash === eff.hash) qualificationCurrent = true;
+    }
+    const effective = await effectiveTemplateOfLocation(ctx, a, await defaultLocationOf(ctx.db, a));
     // A stored default row that no longer validates is an invalid template
     // (resolveTemplateFor skips it silently and falls back to compiled defaults).
     let templateInvalid = false;
@@ -245,8 +256,8 @@ async function accountFacts(
       enabled: a.enabled,
       tested: accountTested(a),
       testFailed: !!a.lastTestError,
-      qualified: a.qualified,
-      qualificationCurrent: a.qualified && a.qualifiedTemplateHash === effective.hash,
+      qualified,
+      qualificationCurrent,
       frontsListeners: fronts,
       dnsAccountMissing,
       zoneModeUnknown: layer === 'l7' && zoneModeGovernsOrigin(a.provider) && !observed.zoneSslMode,
@@ -1434,22 +1445,31 @@ export const attention = internalQuery({
           action: 'test_credentials',
           since: null,
         });
-      } else if (!a.qualified) {
-        items.push({
-          id: `account_unqualified:${a._id}`,
-          kind: 'account_unqualified',
-          severity: 'info',
-          relaySlug: null,
-          relayId: null,
-          edgeId: null,
-          listenerKey: null,
-          accountId: a._id as string,
-          rotationId: null,
-          code: null,
-          facts: { name: a.name, provider: a.provider },
-          action: 'open_account',
-          since: null,
-        });
+      } else {
+        // Trust is per location: one item per enabled location not trusted yet.
+        for (const loc of await locationsOfAccount(ctx.db, a._id)) {
+          if (!loc.enabled || loc.qualified) continue;
+          items.push({
+            id: `account_unqualified:${a._id}:${loc._id}`,
+            kind: 'account_unqualified',
+            severity: 'info',
+            relaySlug: null,
+            relayId: null,
+            edgeId: null,
+            listenerKey: null,
+            accountId: a._id as string,
+            rotationId: null,
+            code: null,
+            facts: {
+              name: a.name,
+              provider: a.provider,
+              location: loc.label,
+              locationId: loc._id as string,
+            },
+            action: 'open_account',
+            since: null,
+          });
+        }
       }
     }
     // Temporary test keys whose backend delete kept failing (edgeTestCredentials.ts).
@@ -1625,6 +1645,8 @@ const preflightArgs = {
   edgeId: v.optional(v.id('edges')),
   listenerKey: v.optional(v.string()),
   accountId: v.optional(v.id('edgeProviderAccounts')),
+  /** An explicit location (its account implied); the account's default otherwise. */
+  locationId: v.optional(v.id('edgeLocations')),
   templateId: v.optional(v.id('edgeTemplates')),
   /** `provision` only: false = the edge stays an unpublished spare (no standby is published instead). */
   publish: v.optional(v.boolean()),
@@ -1664,10 +1686,11 @@ export const preflight = internalQuery({
       // result a spare, so no existing standby is picked to be published.
       publishOnDone: a.kind === 'provision' && a.publish !== false,
       requestedAccountId: isTest || a.accountId ? a.accountId : undefined,
+      requestedLocationId: a.locationId,
       requestedTemplateId: a.templateId,
       allowUnqualified: isTest,
     };
-    if (isTest && !a.accountId)
+    if (isTest && !a.accountId && !a.locationId)
       blockers.push({ code: 'validation', detail: 'accountId is required' });
     const g = await collectStartBlockers(ctx, startArgs);
     for (const b of g.blockers)
@@ -1677,6 +1700,8 @@ export const preflight = internalQuery({
       standbyEdgeId: string | null;
       accountId: string | null;
       accountName: string | null;
+      locationId?: string | null;
+      locationLabel?: string | null;
       provider: string | null;
       layer: 'l4' | 'l7' | null;
       templateId: string | null;
@@ -1699,17 +1724,20 @@ export const preflight = internalQuery({
         blockers.push({ code: sel.accountFailure ?? 'no_account', detail: null });
       } else {
         const acct = await ctx.db.get(sel.account.id);
+        const loc = await ctx.db.get(sel.account.locationId);
         wouldSelect = {
           listenerKey: sel.listener.listenerKey,
           standbyEdgeId: null,
           accountId: sel.account.id as string,
           accountName: acct?.name ?? null,
+          locationId: sel.account.locationId as string,
+          locationLabel: loc?.label ?? null,
           provider: sel.account.provider,
           layer: edgeLayerOf(sel.account.provider),
           templateId: (sel.template.id as string | null) ?? null,
         };
-        if (acct && !acct.qualified)
-          warnings.push({ code: 'account_unqualified', detail: acct.name });
+        if (loc && !loc.qualified)
+          warnings.push({ code: 'account_unqualified', detail: acct?.name ?? null });
         // Plan-phase refusals that need no adapter call.
         if (edgeLayerOf(sel.account.provider) === 'l7') {
           if (!sel.account.zoneName)
@@ -2107,13 +2135,26 @@ export const providersUsage = internalQuery({
       const live = (await liveEdgesOfAccount(ctx.db, a._id)).filter((e) => e.managed).length;
       totals.liveEdges += live;
       const counts = perAccount.get(a._id as string) ?? { published: 0, standby: 0, draining: 0 };
+      // Per location: its live edges against its own cap, and its trust.
+      const locations = [];
+      for (const loc of await locationsOfAccount(ctx.db, a._id))
+        locations.push({
+          id: loc._id as string,
+          label: loc.label,
+          placeKey: loc.placeKey,
+          enabled: loc.enabled,
+          qualified: loc.qualified,
+          liveEdges: await liveCountForLocation(ctx.db, loc),
+          maxLiveEdges: loc.maxLiveEdges ?? null,
+        });
       accountRows.push({
         id: a._id as string,
         name: a.name,
         provider: a.provider,
         layer: edgeLayerOf(a.provider),
         enabled: a.enabled,
-        qualified: a.qualified,
+        qualified: locations.some((l) => l.enabled && l.qualified),
+        locations,
         tested: accountTested(a),
         fake: fake.includes(a.provider),
         liveEdges: live,

@@ -20,6 +20,7 @@ import {
 import { EDGE_TEMPLATES, validateTemplateParams } from './lib/edges/providers/templates';
 import { canonicalJson } from './lib/edges/providers/template';
 import { assertAdmission } from './lib/edges/maintenance';
+import { parseRegionalParams, withRegionalOverlay } from './lib/edges/locations';
 
 /** FNV-1a 64-bit as 16 hex chars (isolate-safe, no WebCrypto needed). */
 export function fnv1a64Hex(input: string): string {
@@ -92,13 +93,22 @@ function visibleTo(
   return !row.accountId || (!!accountId && row.accountId === accountId);
 }
 
+/** What a location adds to the template choice: its own default and its regional values. */
+export interface TemplateLocation {
+  defaultTemplateId?: Doc<'edgeTemplates'>['_id'] | null;
+  regionalParams?: string | null;
+}
+
 /**
- * Resolve the template to provision with, for ONE account: an explicit id, else
- * the account's default, else the account's own scoped default, else the
+ * Resolve the template to provision with, for ONE account (and one of its
+ * locations): an explicit id, else the location's default, else the
+ * account's default, else the account's own scoped default, else the
  * provider-wide (unscoped) default, else the first unscoped row, else the
  * compiled defaults. A template scoped to ANOTHER account is never used — its
- * `isDefault` flag is that account's default, not the provider's. Returns the
- * parsed params + hash.
+ * `isDefault` flag is that account's default, not the provider's. The
+ * location's regional values (a flavor offered in its region) are laid over
+ * the result; with none the params and hash are the template's own. Returns
+ * the parsed params + hash.
  */
 export async function resolveTemplateFor(
   ctx: { db: import('./_generated/server').DatabaseReader },
@@ -106,12 +116,39 @@ export async function resolveTemplateFor(
   explicitId: Doc<'edgeTemplates'>['_id'] | null | undefined,
   accountDefaultId: Doc<'edgeTemplates'>['_id'] | null | undefined,
   accountId?: Doc<'edgeProviderAccounts'>['_id'] | null,
+  location?: TemplateLocation | null,
 ): Promise<{
   id: Doc<'edgeTemplates'>['_id'] | null;
   params: Record<string, unknown>;
   hash: string;
 }> {
-  const candidates = [explicitId, accountDefaultId].filter(
+  const base = await resolveBaseTemplate(
+    ctx,
+    provider,
+    explicitId,
+    accountDefaultId,
+    accountId,
+    location,
+  );
+  const overlay = parseRegionalParams(provider, location?.regionalParams);
+  if (Object.keys(overlay).length === 0) return base;
+  const params = withRegionalOverlay(provider, base.params, overlay);
+  return { id: base.id, params, hash: templateHashOf(params) };
+}
+
+async function resolveBaseTemplate(
+  ctx: { db: import('./_generated/server').DatabaseReader },
+  provider: EdgeProviderId,
+  explicitId: Doc<'edgeTemplates'>['_id'] | null | undefined,
+  accountDefaultId: Doc<'edgeTemplates'>['_id'] | null | undefined,
+  accountId: Doc<'edgeProviderAccounts'>['_id'] | null | undefined,
+  location: TemplateLocation | null | undefined,
+): Promise<{
+  id: Doc<'edgeTemplates'>['_id'] | null;
+  params: Record<string, unknown>;
+  hash: string;
+}> {
+  const candidates = [explicitId, location?.defaultTemplateId, accountDefaultId].filter(
     (x): x is Doc<'edgeTemplates'>['_id'] => !!x,
   );
   for (const id of candidates) {
@@ -145,14 +182,17 @@ export const resolveForProvision = internalQuery({
     accountDefaultId: v.optional(v.union(v.id('edgeTemplates'), v.null())),
     /** The provisioning account: scopes which templates may be used (see resolveTemplateFor). */
     accountId: v.optional(v.union(v.id('edgeProviderAccounts'), v.null())),
+    /** The location: its default template and regional values (an edge's own, at a step). */
+    locationId: v.optional(v.union(v.id('edgeLocations'), v.null())),
   },
-  handler: (ctx, a) =>
+  handler: async (ctx, a) =>
     resolveTemplateFor(
       ctx,
       a.provider,
       a.templateId ?? null,
       a.accountDefaultId ?? null,
       a.accountId ?? null,
+      a.locationId ? await ctx.db.get(a.locationId) : null,
     ),
 });
 
@@ -190,29 +230,32 @@ export const ensureDefaults = internalMutation({
 });
 
 /**
- * The effective template hash of every QUALIFIED account of a provider — the
- * template it names, else the default it falls back to. Taken before a write
- * that can move a template (create / update / remove) and compared after it:
- * an account whose effective template changed was qualified with parameters
- * it will no longer provision with, so its qualification is revoked
- * (audited) until re-run. `selectionContext` trusts `qualified` alone.
+ * The effective template hash of every TRUSTED location of a provider's
+ * accounts: the template it names (or its account names), else the default it
+ * falls back to, with the location's regional values laid over it. Taken
+ * before a write that can move a template (create / update / remove) and
+ * compared after it: a location whose effective template changed was trusted
+ * with parameters it will no longer provision with, so its trust is revoked
+ * (audited) until taken again. Selection trusts `qualified` alone.
  */
 async function effectiveDefaultHashes(
   ctx: { db: import('./_generated/server').DatabaseReader },
   provider: EdgeProviderId,
 ): Promise<Map<string, string>> {
   const out = new Map<string, string>();
-  const accounts = await ctx.db.query('edgeProviderAccounts').collect();
-  for (const acct of accounts) {
-    if (acct.provider !== provider || !acct.qualified) continue;
+  for (const loc of await ctx.db.query('edgeLocations').collect()) {
+    if (loc.provider !== provider || !loc.qualified) continue;
+    const acct = await ctx.db.get(loc.accountId);
+    if (!acct) continue;
     const eff = await resolveTemplateFor(
       ctx,
       provider,
       null,
       acct.defaultTemplateId ?? null,
       acct._id,
+      loc,
     );
-    out.set(acct._id, eff.hash);
+    out.set(loc._id, eff.hash);
   }
   return out;
 }
@@ -225,33 +268,46 @@ async function revokeMovedDefaults(
 ): Promise<number> {
   let revoked = 0;
   for (const [id, prevHash] of before) {
-    const fresh = await ctx.db.get(id as Doc<'edgeProviderAccounts'>['_id']);
+    const fresh = await ctx.db.get(id as Doc<'edgeLocations'>['_id']);
     if (!fresh || !fresh.qualified) continue; // already revoked by another rule
+    const acct = await ctx.db.get(fresh.accountId);
+    if (!acct) continue;
     const eff = await resolveTemplateFor(
       ctx,
       provider,
       null,
-      fresh.defaultTemplateId ?? null,
-      fresh._id,
+      acct.defaultTemplateId ?? null,
+      acct._id,
+      fresh,
     );
     if (eff.hash === prevHash) continue;
-    await ctx.db.patch(fresh._id, {
-      qualified: false,
-      qualifiedTemplateHash: undefined,
-      qualification: undefined,
-      updatedAt: Date.now(),
-    });
-    await writeAuditLog(ctx, {
-      actorType: 'admin',
-      actorId: actorAdminId,
-      action: 'edge.provider_account.qualified',
-      targetType: 'edge_provider_account',
-      targetId: fresh._id,
-      payload: { name: fresh.name, provider: fresh.provider, qualified: false },
-    });
+    await untrustForTemplate(ctx, acct, fresh, actorAdminId);
     revoked++;
   }
   return revoked;
+}
+
+/** Revoke one location's trust because the parameters it was trusted with moved (audited). */
+async function untrustForTemplate(
+  ctx: import('./_generated/server').MutationCtx,
+  acct: Doc<'edgeProviderAccounts'>,
+  loc: Doc<'edgeLocations'>,
+  actorAdminId: Doc<'adminUsers'>['_id'] | undefined,
+): Promise<void> {
+  await ctx.db.patch(loc._id, {
+    qualified: false,
+    qualifiedTemplateHash: undefined,
+    qualification: undefined,
+    updatedAt: Date.now(),
+  });
+  await writeAuditLog(ctx, {
+    actorType: 'admin',
+    actorId: actorAdminId,
+    action: 'edge.provider_account.qualified',
+    targetType: 'edge_provider_account',
+    targetId: acct._id,
+    payload: { name: acct.name, provider: acct.provider, qualified: false, placeKey: loc.placeKey },
+  });
 }
 
 export const create = internalMutation({
@@ -339,7 +395,7 @@ export const update = internalMutation({
         throw new ConvexError({ code: 'validation', message: 'invalid template name' });
       patch.name = a.name;
     }
-    let requalify: Doc<'edgeProviderAccounts'>[] = [];
+    let requalify: Doc<'edgeLocations'>[] = [];
     const before = await effectiveDefaultHashes(ctx, row.provider);
     if (a.params !== undefined) {
       const parsed = validateTemplateParams(row.provider, a.params);
@@ -348,21 +404,25 @@ export const update = internalMutation({
       patch.params = JSON.stringify(parsed.params);
       patch.paramsHash = templateHashOf(parsed.params);
       if (patch.paramsHash !== row.paramsHash) {
-        // The qualification was run with the OLD parameters: every qualified
-        // account that was qualified with them, or that would provision from this
-        // template next (explicitly, or implicitly through the default it falls
-        // back to when it names no template of its own — its own scoped default
-        // or the provider-wide one), must be re-qualified before automation
-        // uses it.
-        const accounts = await ctx.db.query('edgeProviderAccounts').collect();
-        requalify = accounts.filter(
-          (acct) =>
-            acct.provider === row.provider &&
-            acct.qualified &&
-            (acct.defaultTemplateId === a.id ||
-              (acct.defaultTemplateId === undefined && row.isDefault && visibleTo(row, acct._id)) ||
-              acct.qualifiedTemplateHash === row.paramsHash),
-        );
+        // The trust was taken with the OLD parameters: every trusted location
+        // that provisions from this template (named by it or its account, or
+        // reached through the default it falls back to) or that was trusted
+        // with exactly these parameters must be trusted again before
+        // automation uses it.
+        for (const loc of await ctx.db.query('edgeLocations').collect()) {
+          if (loc.provider !== row.provider || !loc.qualified) continue;
+          const acct = await ctx.db.get(loc.accountId);
+          if (!acct) continue;
+          const eff = await resolveTemplateFor(
+            ctx,
+            row.provider,
+            null,
+            acct.defaultTemplateId ?? null,
+            acct._id,
+            loc,
+          );
+          if (eff.id === a.id || loc.qualifiedTemplateHash === row.paramsHash) requalify.push(loc);
+        }
       }
     }
     if (a.isDefault === true) {
@@ -372,21 +432,9 @@ export const update = internalMutation({
       patch.isDefault = false;
     }
     await ctx.db.patch(a.id, patch);
-    for (const acct of requalify) {
-      await ctx.db.patch(acct._id, {
-        qualified: false,
-        qualifiedTemplateHash: undefined,
-        qualification: undefined,
-        updatedAt: Date.now(),
-      });
-      await writeAuditLog(ctx, {
-        actorType: 'admin',
-        actorId: a.actorAdminId ?? undefined,
-        action: 'edge.provider_account.qualified',
-        targetType: 'edge_provider_account',
-        targetId: acct._id,
-        payload: { name: acct.name, provider: acct.provider, qualified: false },
-      });
+    for (const loc of requalify) {
+      const acct = await ctx.db.get(loc.accountId);
+      if (acct) await untrustForTemplate(ctx, acct, loc, a.actorAdminId ?? undefined);
     }
     await writeAuditLog(ctx, {
       actorType: 'admin',
@@ -431,6 +479,10 @@ export const remove = internalMutation({
     for (const acct of referencing) {
       if (acct.defaultTemplateId === id)
         await ctx.db.patch(acct._id, { defaultTemplateId: undefined, updatedAt: Date.now() });
+    }
+    for (const loc of await ctx.db.query('edgeLocations').collect()) {
+      if (loc.defaultTemplateId === id)
+        await ctx.db.patch(loc._id, { defaultTemplateId: undefined, updatedAt: Date.now() });
     }
     await ctx.db.delete(id);
     if (row.isDefault) {

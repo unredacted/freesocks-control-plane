@@ -21,6 +21,7 @@ const HY2: ListenerProto = { protocol: 'hysteria2', streamTransport: 'udp', secu
 
 const acct = (over: Partial<AccountCandidate>): AccountCandidate => ({
   id: 'a',
+  locationId: 'loc-a',
   provider: 'gcore',
   qualified: true,
   priority: 0,
@@ -64,6 +65,36 @@ describe('pickAccount', () => {
       code: 'no_qualified_account',
     });
     expect(pickAccount([acct({})], 'ovh')).toEqual({ ok: false, code: 'no_account_for_provider' });
+  });
+
+  test('a candidate is a location: its own trust and cap count, the account budget too', () => {
+    // Two locations of one account: the trusted one with room is picked.
+    const r = pickAccount(
+      [
+        acct({ locationId: 'full', locationMaxLiveEdges: 2, locationLiveEdges: 2 }),
+        acct({ locationId: 'untrusted', qualified: false }),
+        acct({ locationId: 'room', locationMaxLiveEdges: 2, locationLiveEdges: 1 }),
+      ],
+      'gcore',
+    );
+    expect(r).toMatchObject({ ok: true, account: { id: 'a', locationId: 'room' } });
+    // A location without its own cap is limited by the account alone.
+    expect(
+      pickAccount([acct({ locationMaxLiveEdges: null, locationLiveEdges: 50 })], 'gcore'),
+    ).toMatchObject({ ok: true });
+    // Equal accounts: the location with fewer live edges first.
+    expect(
+      pickAccount(
+        [
+          acct({ locationId: 'busy', locationLiveEdges: 3 }),
+          acct({ locationId: 'quiet', locationLiveEdges: 0 }),
+        ],
+        'gcore',
+      ),
+    ).toMatchObject({ ok: true, account: { locationId: 'quiet' } });
+    expect(pickAccount([acct({ locationMaxLiveEdges: 1, locationLiveEdges: 1 })], 'gcore')).toEqual(
+      { ok: false, code: 'accounts_exhausted' },
+    );
   });
 });
 

@@ -44,9 +44,12 @@ import { listenerProtoFields } from './lib/edgeProtocolIds';
 import {
   buildCredentials,
   pickCredentialIdentifiers,
+  validatePlacement,
   validateSettings,
+  withoutPlacementKeys,
   EDGE_INTENT_DEFAULT_SETTINGS,
 } from './lib/edges/accountSettings';
+import { placeKeyOf } from './lib/edges/locations';
 import { l7HostAccepted, l7HostHeaderFor, zoneModeCarriesOrigin } from './lib/edges/layers';
 import type {
   AdoptionInspection,
@@ -298,7 +301,17 @@ const ledgerResource = v.object({
 });
 
 /**
- * The adapter + its config for one account.
+ * The adapter + its config for one account, in one place.
+ *
+ * WHERE the call acts (region / zone / project / network) is never the
+ * account's: an EXISTING edge (`edgeId`) acts in the placement it froze when
+ * it was planned, so a describe or a destroy always reaches the edge's own
+ * region (a wrong-region 404 would read as "gone" and orphan a billing
+ * resource); PLANNING a new edge or an inventory pull acts in the chosen
+ * location (`locationId`). The account is read first and the edge second, so
+ * a call racing the one-time migration (which freezes every edge before it
+ * clears the account's old fixed location) always sees a placement on one of
+ * the two. An account-level call (a credential test) acts nowhere.
  *
  * A provider whose DNS lives in ANOTHER account (Fastly's records in a
  * Cloudflare zone) needs that account's secret attached. Which DNS account is
@@ -320,6 +333,7 @@ async function loadAdapter(
   accountId: Id<'edgeProviderAccounts'>,
   edgeId?: Id<'edges'>,
   seen?: ApiSeen,
+  locationId?: Id<'edgeLocations'>,
 ): Promise<{
   provider: EdgeProvider;
   cfg: EdgeProviderConfig;
@@ -341,6 +355,15 @@ async function loadAdapter(
     acct.credentials as Record<string, unknown> & { type: typeof acct.provider },
     acct.settings as Record<string, unknown> & { type: typeof acct.provider },
   );
+  const placement = edgeId
+    ? await ctx.runQuery(internal.edgeLocations.placementOfEdge, { edgeId })
+    : locationId
+      ? await locationPlacement(ctx, accountId, locationId)
+      : null;
+  if (placement) {
+    const { type: _t, ...where } = placement;
+    Object.assign(cfg as unknown as Record<string, unknown>, where);
+  }
   // Acting on an EXISTING edge: every setting the intent froze wins over the
   // account row. The zone/DNS account below is one of them; so is the TLS
   // subscription (`certificateAuthority`, `tlsConfigurationId`), which decides
@@ -393,6 +416,24 @@ async function loadAdapter(
     };
   }
   return { provider: edgeProviderFor(acct.provider), cfg, providerId: acct.provider, intent };
+}
+
+/** A location's placement, checked to belong to the account the call acts for. */
+async function locationPlacement(
+  ctx: ActionCtx,
+  accountId: Id<'edgeProviderAccounts'>,
+  locationId: Id<'edgeLocations'>,
+): Promise<Record<string, unknown>> {
+  const loc = await ctx.runQuery(internal.edgeLocations.getForOps, { id: locationId });
+  if (!loc || loc.accountId !== accountId)
+    throw new ConvexError<EdgeProviderOpsFailure>({
+      code: 'location_missing',
+      message: 'location not found for this account',
+      step: 'load',
+      retryable: false,
+      timedOut: false,
+    });
+  return loc.placement;
 }
 
 /**
@@ -547,10 +588,18 @@ function checkSpec(
  * the template row again.
  */
 export const effectiveTemplate = internalAction({
-  args: { accountId: v.id('edgeProviderAccounts'), spec: edgeSpec, templateParams: v.any() },
-  handler: (ctx, { accountId, spec, templateParams }): Promise<Record<string, unknown>> =>
+  args: {
+    accountId: v.id('edgeProviderAccounts'),
+    locationId: v.optional(v.id('edgeLocations')),
+    spec: edgeSpec,
+    templateParams: v.any(),
+  },
+  handler: (
+    ctx,
+    { accountId, locationId, spec, templateParams },
+  ): Promise<Record<string, unknown>> =>
     run(async () => {
-      const { provider } = await loadAdapter(ctx, accountId);
+      const { provider } = await loadAdapter(ctx, accountId, undefined, undefined, locationId);
       return renderedTemplate(provider, templateParams, spec);
     }),
 });
@@ -621,7 +670,7 @@ export const rotateCredentials = internalAction({
           message: `missing credentials: ${creds.missing.join(', ')}`,
         });
       const settings = validateSettings(acct.provider, {
-        ...(acct.settings as Record<string, unknown>),
+        ...withoutPlacementKeys(acct.provider, acct.settings as Record<string, unknown>),
         ...pickCredentialIdentifiers(
           acct.provider,
           a.identifiers as Record<string, unknown> | undefined,
@@ -702,6 +751,99 @@ export const discoverOptions = internalAction({
     }),
 });
 
+/**
+ * The choices for a NEW location of a stored account (the location form): the
+ * account's credentials and settings, plus the placement chosen so far
+ * (project, region, network), through the adapter's discovery. Regions come
+ * back as the key can use them; networks, subnets and flavors once a region
+ * is chosen. Nothing is stored.
+ */
+export const locationOptions = internalAction({
+  args: { accountId: v.id('edgeProviderAccounts'), placement: v.optional(v.any()) },
+  handler: (ctx, a): Promise<DiscoverResult> =>
+    tracked(ctx, a.accountId, async (seen) => {
+      const { provider, cfg } = await loadAdapter(ctx, a.accountId, undefined, seen);
+      if (!provider.discoverOptions) return {};
+      const chosen = Object.fromEntries(
+        Object.entries((a.placement as Record<string, unknown> | undefined) ?? {}).filter(
+          ([k, v]) => k !== 'type' && v !== undefined && v !== null && v !== '',
+        ),
+      );
+      return provider.discoverOptions({ ...cfg, ...chosen } as never);
+    }),
+});
+
+/**
+ * Add a location to an account: the provider's own listing must offer the
+ * region to this key (`edge.location_not_offered`; a listing that failed is
+ * `edge.location_unchecked`, never a guess), and its name becomes the label.
+ * Creating a location the account already has returns it. Its inventory is
+ * pulled at once (fail-soft).
+ */
+export const createLocation = internalAction({
+  args: {
+    accountId: v.id('edgeProviderAccounts'),
+    placement: v.any(),
+    regionalParams: v.optional(v.any()),
+    maxLiveEdges: v.optional(v.number()),
+    costNote: v.optional(v.string()),
+    actorAdminId: v.optional(v.id('adminUsers')),
+  },
+  handler: async (ctx, a): Promise<{ id: string; created: boolean }> => {
+    const acct = await ctx.runQuery(internal.edgeProviderAccounts.getWithSecret, {
+      id: a.accountId,
+    });
+    if (!acct) throw new ConvexError({ code: 'not_found', message: 'Account not found' });
+    const raw = { ...((a.placement as Record<string, unknown> | undefined) ?? {}) };
+    const parsed = validatePlacement(acct.provider, raw);
+    if (!parsed.ok)
+      throw new ConvexError({ code: 'validation', message: parsed.issues.join('; ') });
+    const placeKey = placeKeyOf(parsed.placement);
+    let label: string | undefined;
+    const provider = edgeProviderFor(acct.provider);
+    if (provider.discoverOptions) {
+      const { cfg } = await loadAdapter(ctx, a.accountId);
+      const { type: _t, ...where } = parsed.placement as Record<string, unknown>;
+      let found: DiscoverResult;
+      try {
+        found = await provider.discoverOptions({ ...cfg, ...where } as never);
+      } catch {
+        found = { errors: { regions: 'error' } };
+      }
+      if (found.errors?.regions || !found.regions)
+        throw new ConvexError({
+          code: 'edge.location_unchecked',
+          message: 'The provider did not list its regions; try again',
+        });
+      const offered = found.regions.find((r) => String(r.id) === placeKey);
+      if (!offered)
+        throw new ConvexError({
+          code: 'edge.location_not_offered',
+          message: 'This key cannot create load balancers in that region',
+        });
+      label = offered.label;
+    }
+    const res: { id: string; created: boolean } = await ctx.runMutation(
+      internal.edgeLocations.create,
+      {
+        accountId: a.accountId,
+        placement: parsed.placement,
+        label,
+        regionalParams: a.regionalParams,
+        maxLiveEdges: a.maxLiveEdges,
+        costNote: a.costNote,
+        actorAdminId: a.actorAdminId,
+      },
+    );
+    if (res.created)
+      await ctx.scheduler.runAfter(0, internal.edgeProviderOps.inventory, {
+        accountId: a.accountId,
+        locationId: res.id as Id<'edgeLocations'>,
+      });
+    return res;
+  },
+});
+
 export const listRegions = internalAction({
   args: { accountId: v.id('edgeProviderAccounts') },
   handler: (ctx, { accountId }): Promise<Array<{ id: string; label: string }>> =>
@@ -711,14 +853,26 @@ export const listRegions = internalAction({
     }),
 });
 
+/**
+ * One location's inventory (its region's load balancers, addresses and
+ * flavors), the account's default location when none is named; recorded on
+ * the location. An account without a location yet has nothing to list.
+ */
 export const inventory = internalAction({
-  args: { accountId: v.id('edgeProviderAccounts') },
-  handler: (ctx, { accountId }): Promise<Inventory> =>
-    tracked(ctx, accountId, async (seen) => {
-      const { provider, cfg } = await loadAdapter(ctx, accountId, undefined, seen);
+  args: { accountId: v.id('edgeProviderAccounts'), locationId: v.optional(v.id('edgeLocations')) },
+  handler: (ctx, a): Promise<Inventory> =>
+    tracked(ctx, a.accountId, async (seen) => {
+      const accountId = a.accountId;
+      const locationId =
+        a.locationId ??
+        (await ctx.runQuery(internal.edgeLocations.defaultOf, { accountId })) ??
+        undefined;
+      if (!locationId) return { loadBalancers: [], ips: [], flavors: [] };
+      const { provider, cfg } = await loadAdapter(ctx, accountId, undefined, seen, locationId);
       const inv = await provider.inventory(cfg);
       await ctx.runMutation(internal.edgeProviderAccounts.recordInventory, {
         id: accountId,
+        locationId,
         inventory: JSON.stringify(inv),
       });
       // The observed facts (a zone's encryption mode) go stale exactly like the
@@ -747,6 +901,8 @@ export const inventory = internalAction({
 export const planProvision = internalAction({
   args: {
     accountId: v.id('edgeProviderAccounts'),
+    /** The location the new edge is created in (its placement is frozen on the edge). */
+    locationId: v.optional(v.id('edgeLocations')),
     spec: edgeSpec,
     templateParams: v.any(),
     /** What the listener speaks, so the carriage / port rules can be checked. */
@@ -756,7 +912,13 @@ export const planProvision = internalAction({
   },
   handler: (ctx, a): Promise<ResourceStep[]> =>
     run(async () => {
-      const { provider, cfg, providerId } = await loadAdapter(ctx, a.accountId);
+      const { provider, cfg, providerId } = await loadAdapter(
+        ctx,
+        a.accountId,
+        undefined,
+        undefined,
+        a.locationId,
+      );
       const tpl = renderedTemplate(provider, a.templateParams, a.spec, a.zoneSslMode);
       checkSpec(providerId, a.spec, a.proto, tpl, a.zoneSslMode);
       return provider.planProvision(cfg, a.spec, tpl);
@@ -881,12 +1043,24 @@ export const inspect = internalAction({
 export const inspectForAdoption = internalAction({
   args: {
     accountId: v.id('edgeProviderAccounts'),
+    /** Where the resource lives (the account's default location when absent). */
+    locationId: v.optional(v.id('edgeLocations')),
     resourceId: v.string(),
     hostname: v.string(),
   },
   handler: (ctx, a): Promise<AdoptionInspection> =>
     run(async () => {
-      const { provider, cfg, providerId } = await loadAdapter(ctx, a.accountId);
+      const locationId =
+        a.locationId ??
+        (await ctx.runQuery(internal.edgeLocations.defaultOf, { accountId: a.accountId })) ??
+        undefined;
+      const { provider, cfg, providerId } = await loadAdapter(
+        ctx,
+        a.accountId,
+        undefined,
+        undefined,
+        locationId,
+      );
       if (!provider.inspectForAdoption)
         refuse(
           'adoption_unsupported',
