@@ -22,7 +22,7 @@ export default defineConfig({
     environment: 'edge-runtime',
     server: { deps: { inline: ['convex-test'] } },
     // A test's scheduled functions end with the test, before its afterEach hooks
-    // run, and one further out than Node can arm a timer never fires mid-suite.
+    // run, and a job further out than Node can arm a timer never fires mid-suite.
     runner: path.resolve(__dirname, './convex/lib/edges/testing/scheduledWork.runner.ts'),
     // convex-test suites default to edge-runtime (the global env above). Shared
     // crypto tests opt into the node env per-file via a `@vitest-environment node`

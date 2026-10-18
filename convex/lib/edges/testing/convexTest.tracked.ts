@@ -6,8 +6,9 @@
  *
  * An instance is live from its creation and again whenever a test calls one of
  * its methods (also through `withIdentity`), so an instance shared across tests
- * is ended after each test that used it. The registry lives on `globalThis`
- * because the runner and the test files load this module separately.
+ * is ended after each test that used it. The registry lives on `globalThis`,
+ * so it stays one registry however many times the runner and the test files
+ * load this module.
  *
  * Test-only: the two-dot name keeps it out of the Convex bundle.
  */
