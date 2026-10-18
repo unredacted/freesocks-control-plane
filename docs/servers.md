@@ -897,8 +897,8 @@ From an empty machine to a member connecting through an edge, for an L4 mode
 
 1. **Switches, once per deployment.**
    - `servers.manage.observe` and `servers.manage.enabled` on (§ Switches).
-   - The connection mode members are issued into enabled (Admin → Connection modes; the
-     `freedom-*` modes ship disabled).
+   - The connection mode members are issued into enabled (Admin → Connection modes;
+     `freedom-ws` ships enabled, `freedom-reality` and `freedom-xhttp` ship disabled).
    - For a REALITY mode, server names on (`edge.sni.enabled`) and a family with qualified,
      active names (`docs/edges.md` "Server-name families").
    - Edge rendering (`edge.render.enabled`) may stay off: the first go-live turns it on
