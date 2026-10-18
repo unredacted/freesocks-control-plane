@@ -223,8 +223,8 @@ describe('edgeProviderOps.rotateCredentials', () => {
       credentialsChanged: true,
       identifiersChanged: true,
     });
-    // The provider test ran with the NEW credentials.
-    const probe = stub.calls.find((c) => !c.path.endsWith('/auth/time'))!;
+    // The provider test (the project listing) ran with the NEW credentials.
+    const probe = stub.calls.find((c) => c.path.endsWith('/cloud/project'))!;
     expect(probe.headers['x-ovh-application']).toBe('AK2');
     expect(probe.headers['x-ovh-consumer']).toBe('CK1');
     const secret = await t.query(internal.edgeProviderAccounts.getWithSecret, { id });
