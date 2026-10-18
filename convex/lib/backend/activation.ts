@@ -151,6 +151,19 @@ export function publicationFits(
 }
 
 /** Review entries in their canonical order (the hash is taken over this order). */
+/** One entry per distinct (listenerKey, accountId, locationId, templateHash), first kept. */
+export function dedupeReviewListeners(rows: readonly ReviewListener[]): ReviewListener[] {
+  const seen = new Set<string>();
+  const out: ReviewListener[] = [];
+  for (const r of rows) {
+    const k = `${r.listenerKey}\u0000${r.locationId ?? ''}\u0000${r.accountId ?? ''}\u0000${r.templateHash ?? ''}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(r);
+  }
+  return out;
+}
+
 export function sortReviewListeners(rows: ReviewListener[]): ReviewListener[] {
   const k = (r: ReviewListener) =>
     `${r.listenerKey}\u0000${r.locationId ?? ''}\u0000${r.accountId ?? ''}\u0000${r.templateHash ?? ''}`;

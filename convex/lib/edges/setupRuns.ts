@@ -125,6 +125,8 @@ export async function planHashOf(input: {
   directHosts: ReadonlyArray<{ uuid: string; covered: boolean }>;
   accountIds: readonly string[];
   locationIds?: readonly string[];
+  /** The operator's picks, in set order (a plan shown for a chosen set). */
+  pickIds?: readonly string[];
 }): Promise<string> {
   return sha256Hex(
     canonicalJson({
@@ -134,6 +136,7 @@ export async function planHashOf(input: {
         .sort((a, b) => a.uuid.localeCompare(b.uuid)),
       accounts: [...input.accountIds].sort(),
       ...(input.locationIds ? { locations: [...input.locationIds].sort() } : {}),
+      ...(input.pickIds && input.pickIds.length > 0 ? { picks: [...input.pickIds] } : {}),
     }),
   );
 }
@@ -181,6 +184,33 @@ export interface SetupPlanAccount {
   reasons: string[];
   /** The account's locations (absent on runs from before locations). */
   locations?: SetupPlanLocation[];
+  /** The required transports it can front (a pick need not carry them all). */
+  carries?: string[];
+}
+
+/** One pick of a chosen set, as the plan shows it. */
+export interface SetupPlanPick {
+  locationId: string;
+  accountId: string;
+  provider: string;
+  /** `<provider>:<placeKey>` (admin-only). */
+  locationKey: string;
+  label: string;
+}
+
+/** What a chosen set of picks makes (docs/edges.md § "Provider sets"). */
+export interface SetupPlanSet {
+  picks: SetupPlanPick[];
+  /** The (transport, pick) addresses the run creates: the fewest that meet the requirement. */
+  targets: Array<{ listenerKey: string; locationId: string }>;
+  /** Transports whose picks give no backup in another failure domain. */
+  reduced: Array<{ listenerKey: string; reason: 'one_group' }>;
+  /** Required transports no pick can carry (the run is refused: `edge.set_uncovered_listener`). */
+  uncovered: string[];
+  /** More addresses than one origin publishes (`edge.set_too_large`). */
+  tooLarge: boolean;
+  /** Per pick: what keeps it from being used (capacity, budget, not offered). */
+  problems: Array<{ locationId: string; reason: string }>;
 }
 
 /** The read-only plan `POST setup-runs/plan` returns and `POST setup-runs` persists (JSON on the run). */
@@ -223,7 +253,9 @@ export interface SetupPlanSnapshot {
    * ends without going live, and once go-live retired the addresses the new
    * ones replace.
    */
-  reprotect?: { desiredBefore: number };
+  reprotect?: { desiredBefore: number; mode?: 'replace_all' | 'add' };
+  /** The operator's picks and what they make (absent until a set is named). */
+  set?: SetupPlanSet;
 }
 
 const SLUG_MAX = 40;

@@ -59,6 +59,7 @@ import {
   SetupRunCreatedResponse,
 } from '../src/shared/contracts/edges';
 import {
+  defaultLocationRow,
   deliveryBindingOf,
   gateOfNode,
   insertPlanned,
@@ -948,12 +949,14 @@ describe("a live node's replacement stays a candidate until its commit", () => {
     if (member.kind === 'render')
       expect(member.context.published.map((p) => p.edgeId)).toContain(e2);
     expect((await gateOf(t, serverId)).candidates.edgeIds).toEqual([]);
-    // What members are served stays committed: the edge it replaced beside the
-    // new one (still published), so the next review is not mistaken for a new Host.
+    // The commit promoted exactly the reviewed delivery snapshot: the new
+    // address (the one it replaced drains at go-live, so it is not part of it),
+    // and the next review is not mistaken for a new Host.
     const after = await intentOf(t, live.intentId);
-    expect([...after.approved!.committed.edgeIds].sort()).toEqual(
-      [live.e1 as string, e2 as string].sort(),
-    );
+    expect([...after.approved!.committed.edgeIds]).toEqual([e2 as string]);
+    expect((await activationRun(t, act3)).delivery?.edgeIds).toEqual([e2 as string]);
+    // The run still owns what it created; nothing else.
+    expect((await activationRun(t, act3)).resources.edgeIds).toEqual([e2 as string]);
     const next = await t.query(internal.nodeActivation.review, { intentId: live.intentId });
     expect(next.blockers).not.toContain('servers.maintenance_required');
   });
@@ -1394,21 +1397,30 @@ describe('re-protect a live node (its own run kind)', () => {
     }
   });
 
-  test('refused with no room left, and for an origin served through more than one account', async () => {
+  test('a full pool gets temporary room for the run; a node served through several accounts is protected again from its set', async () => {
     const w = await world();
     const { t } = w;
     const live = await liveL4(w);
-    // Already at the most addresses one origin may use.
-    const full = Array.from({ length: 8 }, () => live.e1);
-    await t.run((c) => c.db.patch(live.relayId, { publishedEdgeIds: full, desiredPublished: 8 }));
+    // A pool past the cap is not a supported shape: refused.
+    const over = Array.from({ length: 17 }, () => live.e1);
+    await t.run((c) => c.db.patch(live.relayId, { publishedEdgeIds: over, desiredPublished: 17 }));
     const noRoom = await edgesPost(t, live.cookie, `relays/${live.relayId}/reprotect`);
     expect(noRoom.status).toBe(409);
     expect(await errorCode(noRoom)).toBe('edge.reprotect_no_room');
     expect((await relayRow(t, live.relayId)).setupOwned).toBeFalsy();
+    // At the cap, the run's own addresses are room above it, given back later.
+    const full = Array.from({ length: 16 }, () => live.e1);
+    await t.run((c) => c.db.patch(live.relayId, { publishedEdgeIds: full, desiredPublished: 16 }));
+    const atCap = await edgesPost(t, live.cookie, `relays/${live.relayId}/reprotect`);
+    expect(atCap.status).toBe(200);
+    expect((await relayRow(t, live.relayId)).desiredPublished).toBe(17);
+    const { runId: first } = (await atCap.json()) as { runId: string };
+    await edgesPost(t, live.cookie, `setup-runs/${first}/cancel`);
     await t.run((c) =>
       c.db.patch(live.relayId, { publishedEdgeIds: [live.e1], desiredPublished: 2 }),
     );
-    // A second transport served through another account.
+    // A second transport served through another account: no longer refused.
+    // The run's picks are the node's set; its targets cover both transports.
     await t.run(async (c) => {
       const e1 = (await c.db.get(live.e1))!;
       const l1 = (await c.db.get(e1.listenerId))!;
@@ -1420,8 +1432,15 @@ describe('re-protect a live node (its own run kind)', () => {
       await c.db.patch(live.relayId, { publishedEdgeIds: [live.e1, e2], desiredPublished: 3 });
     });
     const mixed = await edgesPost(t, live.cookie, `relays/${live.relayId}/reprotect`);
-    expect(mixed.status).toBe(409);
-    expect(await errorCode(mixed)).toBe('edge.reprotect_mixed_accounts');
+    expect(mixed.status).toBe(200);
+    const { runId } = (await mixed.json()) as { runId: string };
+    const run = await setupRun(t, runId as Id<'edgeSetupRuns'>);
+    const set = (await relayRow(t, live.relayId)).providerSet!.map((p) => p.locationId);
+    expect(run.picks!.map((p) => p.locationId)).toEqual(set);
+    const firstKey = (await t.run(
+      async (c) => (await c.db.get((await c.db.get(live.e1))!.listenerId))!.listenerKey,
+    ))!;
+    expect(run.listeners.map((l) => l.listenerKey).sort()).toEqual([firstKey, 'second'].sort());
   });
 
   test('a node not live behind its origin yet is refused: protect it first', async () => {
@@ -1995,7 +2014,33 @@ describe('automatic work on a live node stays in its approved shape', () => {
         await resolveEdgeConfig(ctx.db),
       ),
     );
-    expect(standby.account?.id).toBe(other);
+    // Automatic work stays inside the node's provider set (its picks since go-live).
+    expect(standby.account?.id).toBe(live.l4);
+    // A pick added to the set is in reach (and preferred here by its priority).
+    const otherLocation = (await defaultLocationRow(t, other))!._id;
+    await t.run(async (c) => {
+      const relay = (await c.db.get(live.relayId))!;
+      await c.db.patch(live.relayId, {
+        providerSet: [...(relay.providerSet ?? []), { locationId: otherLocation, addedAt: 1 }],
+      });
+    });
+    const inSet = await t.run(async (ctx) =>
+      selectionContext(
+        ctx,
+        { kind: 'provision', trigger: 'reconcile', listenerId: e1.listenerId },
+        (await ctx.db.get(live.relayId))!,
+        null,
+        await resolveEdgeConfig(ctx.db),
+      ),
+    );
+    expect(inSet.account?.id).toBe(other);
+    // (Back to the set the node went live with.)
+    await t.run(async (c) => {
+      const relay = (await c.db.get(live.relayId))!;
+      await c.db.patch(live.relayId, {
+        providerSet: (relay.providerSet ?? []).filter((p) => p.locationId !== otherLocation),
+      });
+    });
     // The approved account gone: nothing fits, and a new review is the way forward.
     await t.run((c) => c.db.patch(live.l4, { enabled: false }));
     expect(await select('replace')).toMatchObject({

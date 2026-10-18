@@ -408,9 +408,14 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
     'stage',
     // `reprotect` for a live node protected again (absent on a first protection).
     'kind',
+    // `replace_all` or `add` for a re-protect.
+    'mode',
     'listeners',
     'accountName',
     'provider',
+    // The provider set: how many picks, how many (transport, pick) addresses.
+    'picks',
+    'targets',
     'approvedHides',
     'keepDirect',
   ],

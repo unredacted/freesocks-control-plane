@@ -131,7 +131,9 @@ async function activationCandidatesOf(
     intent.name !== origin.origin.nodeName
   )
     return null;
-  return new Set(run.resources.edgeIds);
+  // The reviewed delivery snapshot when the run recorded one (what members will
+  // get: the addresses go-live keeps plus the candidates), else its candidates.
+  return new Set(run.delivery?.edgeIds ?? run.resources.edgeIds);
 }
 
 /**

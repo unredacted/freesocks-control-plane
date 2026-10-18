@@ -93,6 +93,7 @@ describe('runTestLines', () => {
   });
   const listener = (listenerKey: string, edgeId: string | null) => ({
     listenerKey,
+    locationId: null,
     layer: 'l4' as const,
     edgeId,
     verify: 'pending' as const,
