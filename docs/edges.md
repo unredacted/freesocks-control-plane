@@ -1838,8 +1838,13 @@ the names and the edges (`locateMember` / `locateAt`).
   was (pinned over a fixed corpus).
 - **Caching.** The cache token is unchanged (it also drives the before/after check, the mirror
   barrier and the stale fallback). Entries are keyed by the stored country as before; a change
-  of an edge's tier reaches a member within the cache's 30 seconds, and a stale fallback during
-  a backend outage may carry an older order of still-published edges.
+  of an edge's tier reaches a member within the cache's 30 seconds, or, for an app that asks
+  whether its copy changed, within the 10 minutes a held copy may answer it with a 304; a stale
+  fallback during a backend outage may carry an older order of still-published edges.
+- **Turning it on or off** (`appSettings.setMany` -> `edgeRender.steeringChanged`) moves every
+  origin's publication epoch (cached bodies stop matching, members are nudged to refresh) and
+  refreshes the mirrors; turning it on starts the detector vetoes' settle clock
+  (`delivery:steerSince`).
 - **Snapshot.** `subscriptions.lastRender` gains `country` (the stored country the body was
   shaped for) and `primaryTier` / `backupTier` (when steered); a transient reading is written
   nowhere, the snapshot included. Every cached body carries the snapshot of what it holds, and a
@@ -1850,19 +1855,30 @@ the names and the edges (`locateMember` / `locateAt`).
   names anything else. The account labels and report attribution replay the snapshot's own
   roles (`endpointsFor`), and attribution reads the names under the snapshot's country.
 - **Mirrors** are ordered by the member's own choice only (a public object held by a third
-  party is never shaped by a guess), on a freedom-family key, while steering is on.
+  party is never shaped by a guess), on a freedom-family key, while steering is on. Without a
+  choice, a mirror puts edges blocked in ANY listed country last (no member data shapes it: a
+  mirror exists for exactly the people who are blocked).
 - **The detector.** With steering on, `autoRotateDecision` gains two vetoes, after
   `protocol_level_block` and before the fleet brake, over the evidence countries edges are
   checked from:
   - `country_wide`: every one of them is under the country-wide guard (nothing is decided
     there, so a global replacement would act on an outage);
-  - `country_scoped`: the chosen edge is effectively blocked in each, and on every delivery path
-    it serves (its listener x each body format with a codec x each IPv6 allowance the enabled
-    render rules produce) a DISTINCT edge not blocked there is assignable
-    (`steeringAvoids`, built from the assignment's own rules and cross-checked against it).
-    It rotates as today when the evidence names no checked country, when the edge is blocked in
-    every checked country (it would only serve members outside the list), or when the edge is
-    only not known there. A test block (§ Simulating a block) meets the same vetoes.
+  - `country_scoped`: every evidence country is either under the guard or routed around: the
+    chosen edge is effectively blocked there, and on every delivery path it serves (its
+    listener x each body format with a codec x each IPv6 allowance and backup order the enabled
+    render rules produce) a DISTINCT edge not blocked there is assignable, and one not blocked
+    in any listed country (mirrors without a choice); a path that hands out the backup first
+    needs two of each (`steeringAvoids`, built from the assignment's own rules and
+    cross-checked against it).
+
+  Only an edge on a listener whose transport only freedom-family modes use (the backend
+  setup's modes) can be vetoed: privacy-family members are never steered. The vetoes wait one
+  refresh interval (plus the 10-minute revalidation) after steering was turned on, so members
+  already hold the steered order. It rotates as today when the evidence names no checked
+  country, when the edge is blocked in every checked country (it would only serve members
+  outside the list), or when the edge is only not known there. A test block (§ Simulating a
+  block) meets the same vetoes.
+
 - **Preview.** `POST render/preview {country}` (and "As a member in" on the preview) renders as
   a member whose stored country that is (a listed one): names chosen for it and, with steering
   on, addresses ordered for it, with the tier each endpoint came from.

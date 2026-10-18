@@ -405,6 +405,12 @@ export interface AssignOptions {
    */
   minProvenForExclusive?: number;
   /**
+   * Without an `edgeCountry`: edges blocked in ANY of these countries go last
+   * (a mirror without the member's own choice: it exists for exactly the
+   * people who are blocked, and no member data shapes it). Absent = none.
+   */
+  avoidBlockedIn?: readonly string[];
+  /**
    * @deprecated No longer consulted: a retired server name is never selected,
    * whoever held it. Kept so existing callers type-check; remove at will.
    */
@@ -452,7 +458,14 @@ export function assignEndpoints(
 ): Assignment {
   const pool = [...published].sort((a, b) => a.poolIndex - b.poolIndex);
   if (pool.length === 0) return { primary: null, backup: null };
-  if (opts.edgeCountry) return assignByCountry(subscriberKey, pool, opts, opts.edgeCountry);
+  if (opts.edgeCountry)
+    return assignByTier(subscriberKey, pool, opts, (e) => edgeTier(e, opts.edgeCountry!));
+  if (opts.avoidBlockedIn && opts.avoidBlockedIn.length > 0) {
+    const avoid = opts.avoidBlockedIn;
+    return assignByTier(subscriberKey, pool, opts, (e) =>
+      (e.blockedIn ?? []).some((c) => avoid.includes(c)) ? 2 : 1,
+    );
+  }
   // An edge every one of whose names is excluded for this member's country is
   // not assignable FOR THEM: the walk moves on to the next edge.
   const assignable = (e: PublishedEdge) => assignableFor(subscriberKey, e, opts);
@@ -492,19 +505,19 @@ function differentLocation(a: PublishedEdge, b: PublishedEdge): boolean {
   return !!a.locationKey && !!b.locationKey && a.locationKey !== b.locationKey;
 }
 
-/** The tiered walk of `assignEndpoints` (see there). */
-function assignByCountry(
+/** The tiered walk of `assignEndpoints` (see there); `ownTier` is an edge's tier where the member is. */
+function assignByTier(
   subscriberKey: string,
   pool: readonly PublishedEdge[],
   opts: AssignOptions,
-  country: string,
+  ownTier: (e: PublishedEdge) => EdgeTier,
 ): Assignment {
   const assignable = pool.map((e) => assignableFor(subscriberKey, e, opts));
-  const proven = pool.filter((e, i) => assignable[i] && edgeTier(e, country) === 0).length;
+  const proven = pool.filter((e, i) => assignable[i] && ownTier(e) === 0).length;
   // Fewer proven edges than the exclusivity floor: proven and not-known share tier 1.
   const exclusive = proven >= Math.max(1, opts.minProvenForExclusive ?? 1);
   const tierOf = (e: PublishedEdge): EdgeTier => {
-    const t = edgeTier(e, country);
+    const t = ownTier(e);
     return t === 0 && !exclusive ? 1 : t;
   };
   const tiers = pool.map(tierOf);
@@ -522,7 +535,7 @@ function assignByCountry(
     }
   }
   const primaryEdge = pool[pIdx]!;
-  const primaryTier = edgeTier(primaryEdge, country);
+  const primaryTier = ownTier(primaryEdge);
   let backupEdge: PublishedEdge | null = null;
   if (opts.includeBackup) {
     const candidates: Array<{ e: PublishedEdge; key: number[] }> = [];
@@ -553,7 +566,7 @@ function assignByCountry(
   return {
     ...out,
     ...(out.primary ? { primaryTier } : {}),
-    ...(out.backup ? { backupTier: edgeTier(out.backup.edge, country) } : {}),
+    ...(out.backup ? { backupTier: ownTier(out.backup.edge) } : {}),
   };
 }
 
@@ -602,6 +615,12 @@ export function endpointsFor(
 export interface DeliveryPath {
   format: RenderFormat;
   canEmitV6: boolean;
+  /**
+   * The rule hands out the BACKUP first (`order: 'backup-first'`, backup on),
+   * and with a cap maybe only the backup: the backup is then a member's first
+   * address too, so it must not be the blocked edge either.
+   */
+  backupFirst?: boolean;
 }
 
 /**
@@ -620,7 +639,12 @@ export interface DeliveryPath {
  *
  * The same rules `assignEndpoints` and the pipeline apply, so the two cannot
  * drift: with both true, tier 2 is never the best tier on any of those paths.
- * An edge that serves no path proves nothing (false: no veto).
+ * On a path that hands out the backup first, TWO such edges are needed (the
+ * backup is the best one besides the primary, a blocked one last), so the
+ * chosen edge is not the backup either. With `universal` (mirrors without the
+ * member's choice avoid edges blocked in ANY listed country), the same holds
+ * for edges not blocked in any listed country. An edge that serves no path
+ * proves nothing (false: no veto).
  */
 export function steeringAvoids(
   chosen: PublishedEdge,
@@ -628,6 +652,7 @@ export function steeringAvoids(
   country: string,
   paths: readonly DeliveryPath[],
   curated: readonly string[],
+  opts: { universal?: boolean } = {},
 ): boolean {
   if (edgeTier(chosen, country) !== 2) return false;
   const where: CountryContext = { country, curated };
@@ -643,7 +668,12 @@ export function steeringAvoids(
     usableThere(e);
   const served = paths.filter((p) => on(chosen, p));
   if (served.length === 0) return false;
-  return served.every((p) =>
-    published.some((e) => e.edgeId !== chosen.edgeId && edgeTier(e, country) < 2 && on(e, p)),
-  );
+  const blockedAnywhere = (e: PublishedEdge) =>
+    (e.blockedIn ?? []).some((c) => curated.includes(c));
+  return served.every((p) => {
+    const need = p.backupFirst ? 2 : 1;
+    const others = published.filter((e) => e.edgeId !== chosen.edgeId && on(e, p));
+    if (others.filter((e) => edgeTier(e, country) < 2).length < need) return false;
+    return !opts.universal || others.filter((e) => !blockedAnywhere(e)).length >= need;
+  });
 }

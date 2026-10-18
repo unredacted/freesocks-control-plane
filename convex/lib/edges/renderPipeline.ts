@@ -97,6 +97,8 @@ export function applyEdgeRender(
      * (lib/memberCountry.ts `steeringCountry`); absent/null = no tiers at all.
      */
     edgeCountry?: string | null;
+    /** Without an `edgeCountry`: edges blocked in any of these go last (a mirror). */
+    avoidBlockedIn?: readonly string[];
   },
 ): PipelineResult {
   const format = detectBodyFormat(body);
@@ -126,6 +128,7 @@ export function applyEdgeRender(
     backupNames: rule.backupNames,
     where: opts.where,
     edgeCountry: opts.edgeCountry ?? null,
+    ...(opts.avoidBlockedIn ? { avoidBlockedIn: opts.avoidBlockedIn } : {}),
     minProvenForExclusive: rctx.minProvenForExclusive,
   });
   // (5): render + the edge-required verdict.

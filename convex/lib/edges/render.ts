@@ -105,8 +105,13 @@ export function deliveryPathsOf(
       ['singbox', 'singbox-json'],
       ['clash', 'clash-yaml'],
     ] as const) {
-      const path = { format, canEmitV6: ruleCanEmitV6(rule, formatHasAutoGroup(rule, body)) };
-      out.set(`${path.format}|${path.canEmitV6}`, path);
+      const path: DeliveryPath = {
+        format,
+        canEmitV6: ruleCanEmitV6(rule, formatHasAutoGroup(rule, body)),
+        // The backup leads (and, under a cap, may be all that is handed out).
+        backupFirst: rule.includeBackup && rule.order === 'backup-first',
+      };
+      out.set(`${path.format}|${path.canEmitV6}|${path.backupFirst}`, path);
     }
   }
   return [...out.values()];

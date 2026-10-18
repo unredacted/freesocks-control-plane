@@ -355,6 +355,12 @@ export interface SteeringInput {
   curated: string[];
   /** Checked countries where the country-wide guard holds new blocks. */
   held: string[];
+  /**
+   * Listeners whose members are all freedom-family (the only ones steering
+   * orders): an edge on any other listener is never vetoed, since its
+   * privacy-family members keep it whatever the steering says.
+   */
+  freedomListeners: string[];
 }
 
 /**
@@ -369,13 +375,20 @@ export function steeringVeto(
 ): 'country_scoped' | 'country_wide' | null {
   const countries = [...new Set(chosen.countries)].filter((c) => s.checked.includes(c));
   if (countries.length === 0) return null;
-  if (countries.every((c) => s.held.includes(c))) return 'country_wide';
   const edge = s.published.find((e) => e.edgeId === chosen.edgeId);
-  if (!edge) return null;
+  if (!edge || !s.freedomListeners.includes(edge.listenerKey)) return null;
   if (s.checked.every((c) => edgeTier(edge, c) === 2)) return null;
-  return countries.every((c) => steeringAvoids(edge, s.published, c, s.paths, s.curated))
-    ? 'country_scoped'
-    : null;
+  // Each evidence country must be covered on its own: under the country-wide
+  // guard (an outage, not a block), or routed around by the steering. A mix is
+  // as good as either: neither kind of country justifies a global burn.
+  const held = countries.filter((c) => s.held.includes(c));
+  const routed = countries.filter(
+    (c) =>
+      !s.held.includes(c) &&
+      steeringAvoids(edge, s.published, c, s.paths, s.curated, { universal: true }),
+  );
+  if (held.length + routed.length < countries.length) return null;
+  return routed.length > 0 ? 'country_scoped' : 'country_wide';
 }
 
 /**

@@ -137,9 +137,23 @@ export const setMany = internalMutation({
   },
   handler: async (ctx, { entries, updatedByAdminId }) => {
     for (const { key, value } of entries) {
+      const before =
+        key === 'delivery.country.steer'
+          ? (
+              await ctx.db
+                .query('appSettings')
+                .withIndex('by_key', (q) => q.eq('key', key))
+                .unique()
+            )?.value
+          : undefined;
       await upsertSettingRow(ctx, key, value, updatedByAdminId);
       if (key === 'delivery.country.ownExitRanges')
         await ctx.scheduler.runAfter(0, internal.ownExits.refresh, {});
+      // Delivery by country turned on or off: what members receive changes.
+      if (key === 'delivery.country.steer' && (before === 'true') !== (value === 'true'))
+        await ctx.scheduler.runAfter(0, internal.edgeRender.steeringChanged, {
+          on: value === 'true',
+        });
       await writeAuditLog(ctx, {
         actorType: 'admin',
         actorId: updatedByAdminId ?? undefined,

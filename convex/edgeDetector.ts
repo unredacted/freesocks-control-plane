@@ -24,6 +24,9 @@ import { resolveCensoredCountries } from './lib/censoredCountries';
 import { deliveryPathsOf } from './lib/edges/render';
 import { deliveryStyleOf, publishedEdgesOf } from './edgeRender';
 import { heldCountries } from './edgeCountry';
+import { steeringSettleMs, steeringSince } from './edgeRender';
+import { listenersOf } from './relayListeners';
+import { resolveModeCatalog } from './lib/connectionModes';
 import { resolveMemberCountryConfig } from './memberCountry';
 import { todayKey } from './relays';
 import { familyKeyOf } from './probes';
@@ -281,6 +284,10 @@ async function steeringInputFor(
   now: number,
 ): Promise<SteeringInput | null> {
   if (!(await resolveMemberCountryConfig(ctx.db)).steer) return null;
+  // A veto assumes members already hold the steered order: one refresh
+  // interval (and the revalidation window) after steering was turned on.
+  const since = await steeringSince(ctx.db);
+  if (since === null || now - since < steeringSettleMs(cfg)) return null;
   const { published } = await publishedEdgesOf(
     ctx,
     origin,
@@ -296,7 +303,33 @@ async function steeringInputFor(
     checked: cfg.probe.countries,
     curated: (await resolveCensoredCountries(ctx.db)).codes,
     held: await heldCountries(ctx.db, cfg.probe.countries, now),
+    freedomListeners: await freedomListenersOf(ctx, origin),
   };
+}
+
+/**
+ * The origin's listeners whose transport only freedom-family modes use (the
+ * backend setup's modes by transport tag, judged against the mode catalog).
+ * Fails closed: a listener without a binding, a tag no mode claims, or one a
+ * privacy-family mode also uses is not on the list.
+ */
+async function freedomListenersOf(ctx: QueryCtx, origin: Origin): Promise<string[]> {
+  if (!origin.backendServerId) return [];
+  const setup = await ctx.db
+    .query('panelSetups')
+    .withIndex('by_server', (q) => q.eq('backendServerId', origin.backendServerId!))
+    .first();
+  if (!setup) return [];
+  const catalog = await resolveModeCatalog(ctx.db);
+  const familyOfTag = (tag: string) => {
+    const families = setup.modes
+      .filter((m) => m.tag === tag)
+      .map((m) => catalog.modes.find((c) => c.id === m.slug)?.family ?? null);
+    return families.length > 0 && families.every((f) => f === 'freedom');
+  };
+  return (await listenersOf(ctx, origin._id))
+    .filter((l) => l.panelBinding && familyOfTag(l.panelBinding.inboundTag))
+    .map((l) => l.listenerKey);
 }
 
 export const relayContext = internalQuery({

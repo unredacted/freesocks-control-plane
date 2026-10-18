@@ -446,6 +446,7 @@ describe('autoRotateDecision', () => {
       checked: ['IR', 'RU'],
       curated: ['IR', 'RU'],
       held: [],
+      freedomListeners: ['a1'],
       ...over,
     });
     const blockedE1 = pub('e1', 0, { blockedIn: ['IR'] });
@@ -506,6 +507,54 @@ describe('autoRotateDecision', () => {
       expect(decide({ steering: steer([pub('e1', 0), pub('e2', 1)], { held: ['IR'] }) })).toEqual({
         veto: 'country_wide',
       });
+    });
+
+    test('a held country and a routed-around one together still veto (neither justifies a burn)', () => {
+      const both = { ...blockedE1, blockedIn: ['RU'] };
+      const ev = evaluate(
+        input({
+          window: loud,
+          usersOnline: 0,
+          edges: [
+            edge('e1', { byCountry: [c('IR', 'unreachable'), c('RU', 'unreachable')] }),
+            edge('e2'),
+          ],
+        }),
+      );
+      // RU: routed around (e1 blocked there, e2 not); IR: under the country-wide guard.
+      expect(
+        decide({ evaluation: ev, steering: steer([both, pub('e2', 1)], { held: ['IR'] }) }),
+      ).toEqual({ veto: 'country_scoped' });
+      // Neither covered for IR (not held, not blocked on e1): rotates.
+      expect(decide({ evaluation: ev, steering: steer([both, pub('e2', 1)]) })).toEqual({
+        edgeId: 'e1',
+        source: 'probes',
+      });
+    });
+
+    test('a path that hands out the backup first needs two edges that are not blocked there', () => {
+      const backupFirst: DeliveryPath[] = [{ format: 'links', canEmitV6: true, backupFirst: true }];
+      // One alternative: the blocked edge would be the backup, the first address handed out.
+      expect(
+        decide({ steering: steer([blockedE1, pub('e2', 1)], { paths: backupFirst }) }),
+      ).toEqual({ edgeId: 'e1', source: 'probes' });
+      expect(
+        decide({
+          steering: steer([blockedE1, pub('e2', 1), pub('e3', 2)], { paths: backupFirst }),
+        }),
+      ).toEqual({ veto: 'country_scoped' });
+    });
+
+    test('mirrors without a choice avoid edges blocked anywhere: an alternative blocked elsewhere is not enough', () => {
+      expect(decide({ steering: steer([blockedE1, pub('e2', 1, { blockedIn: ['RU'] })]) })).toEqual(
+        { edgeId: 'e1', source: 'probes' },
+      );
+    });
+
+    test('never on a listener that privacy-family members use (they are not steered)', () => {
+      expect(
+        decide({ steering: steer([blockedE1, pub('e2', 1)], { freedomListeners: [] }) }),
+      ).toEqual({ edgeId: 'e1', source: 'probes' });
     });
 
     test('evidence from a country edges are not checked from changes nothing', () => {

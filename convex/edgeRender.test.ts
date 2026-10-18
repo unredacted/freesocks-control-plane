@@ -1786,6 +1786,48 @@ describe('edgeRender: delivery by country', () => {
     expect(s.lastRender?.primaryTier).toBeUndefined();
   });
 
+  test('turning it on or off moves every origin\u2019s epoch and starts the settle clock; a re-save does not', async () => {
+    vi.useFakeTimers();
+    try {
+      const { t, relayId } = await world({ steer: false });
+      const epoch = async () => (await t.run((ctx) => ctx.db.get(relayId)))!.publicationEpoch;
+      const since = () =>
+        t.run((ctx) =>
+          ctx.db
+            .query('appState')
+            .withIndex('by_key', (q) => q.eq('key', 'delivery:steerSince'))
+            .unique(),
+        );
+      const save = async (on: boolean) => {
+        await t.mutation(internal.appSettings.setMany, {
+          entries: [{ key: 'delivery.country.steer', value: JSON.stringify(on) }],
+        });
+        await t.finishAllScheduledFunctions(vi.runAllTimers);
+      };
+      const e0 = await epoch();
+      await save(true);
+      expect(await epoch()).toBe(e0 + 1);
+      expect(await since()).not.toBeNull();
+      await save(true);
+      expect(await epoch()).toBe(e0 + 1);
+      await save(false);
+      expect(await epoch()).toBe(e0 + 2);
+      expect(await since()).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('a mirror without a choice puts edges blocked in any listed country last', async () => {
+    const { t, subId } = await world({ choice: null });
+    const d = await t.query(internal.edgeRender.decideForSubscription, {
+      subscriptionId: subId,
+      family: 'other',
+    });
+    expect(d.kind === 'render' && d.context.storedEdgeCountry).toBe(null);
+    expect(d.kind === 'render' && d.context.storedAvoidBlockedIn).toContain('IR');
+  });
+
   test("a mirror is steered by the member's own choice only, never by a guess", async () => {
     const { t, subId, userId } = await world();
     const decide = () =>

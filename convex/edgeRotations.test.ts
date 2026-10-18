@@ -1990,9 +1990,63 @@ describe('edgeRotations: delivery by country holds a block it already routes aro
           },
         });
       });
-      // Members' bodies are rendered (steering orders what is rendered).
-      await t.run((ctx) => upsertSettingRow(ctx, 'edge.render.enabled', 'true'));
-      await t.mutation(internal.edgeSimulations.start, { edgeId: oldEdgeId, country: 'IR' });
+      // Members' bodies are rendered (steering orders what is rendered), and the
+      // listener's transport is a freedom-family mode's (only those are steered).
+      await t.run(async (ctx) => {
+        await upsertSettingRow(ctx, 'edge.render.enabled', 'true');
+        const relay = (await ctx.db.get(relayId))!;
+        const listener = (
+          await ctx.db
+            .query('relayListeners')
+            .withIndex('by_relay', (q) => q.eq('relayId', relayId))
+            .collect()
+        )[0]!;
+        let setup = await ctx.db
+          .query('panelSetups')
+          .withIndex('by_server', (q) => q.eq('backendServerId', relay.backendServerId!))
+          .unique();
+        if (!setup) {
+          const now = Date.now();
+          await ctx.db.insert('panelSetups', {
+            backendServerId: relay.backendServerId!,
+            desired: '{}',
+            desiredHash: 'fixture',
+            generation: 1,
+            state: 'ready',
+            profileName: 'FreeSocks-Config',
+            modes: [],
+            templates: [],
+            originDns: null,
+            adopted: false,
+            gateVersion: 0,
+            createdAt: now,
+            updatedAt: now,
+          });
+          setup = await ctx.db
+            .query('panelSetups')
+            .withIndex('by_server', (q) => q.eq('backendServerId', relay.backendServerId!))
+            .unique();
+        }
+        await ctx.db.patch(setup!._id, {
+          modes: [
+            {
+              slug: 'freedom-reality',
+              name: 'Freedom',
+              shape: { transport: 'reality', fronting: 'edge-l4' },
+              acceptProxyProtocol: false,
+              tag: listener.panelBinding!.inboundTag,
+              placement: 'bound',
+              family: 'none',
+            },
+          ],
+        });
+      });
+      // Long enough to outlast the steering's settle time below.
+      await t.mutation(internal.edgeSimulations.start, {
+        edgeId: oldEdgeId,
+        country: 'IR',
+        minutes: 180,
+      });
       const veto = async () =>
         (await t.query(internal.relays.get, { id: relayId }))!.suspicion?.veto;
       // Steering off: the block is acted on as before (no spare is left, so the
@@ -2000,8 +2054,14 @@ describe('edgeRotations: delivery by country holds a block it already routes aro
       await t.run((ctx) => upsertSettingRow(ctx, 'delivery.country.steer', 'false'));
       await t.action(internal.edgeDetector.run, {});
       expect(await veto()).toBeNull();
-      // Steering on: members in IR already get the other edge; nothing is burned.
+      // Steering just turned on: members still hold the old order for one
+      // refresh interval, so nothing is vetoed yet.
       await t.run((ctx) => upsertSettingRow(ctx, 'delivery.country.steer', 'true'));
+      await t.mutation(internal.edgeRender.steeringChanged, { on: true });
+      await t.action(internal.edgeDetector.run, {});
+      expect(await veto()).toBeNull();
+      // One refresh interval later members in IR already get the other edge; nothing is burned.
+      vi.setSystemTime(Date.now() + 71 * 60_000);
       expect((await t.action(internal.edgeDetector.run, {})).rotated).toBe(0);
       const origin = (await t.query(internal.relays.get, { id: relayId }))!;
       expect(origin.suspicion?.veto).toBe('country_scoped');
