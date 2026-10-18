@@ -13,7 +13,9 @@ import { httpAction } from './_generated/server';
 import type { ActionCtx } from './_generated/server';
 import { api, internal } from './_generated/api';
 import { registerEdgeRoutes } from './httpEdges';
-import { bodyIsCacheable, cacheIsServable, resolveWhere } from './lib/edges/sni/country';
+import { bodyIsCacheable, cacheIsServable } from './lib/edges/sni/country';
+import { memberWhere, nextGuess, type CountryFields } from './lib/memberCountry';
+import { isOwnExit } from './lib/ownExits';
 import { registerServerRoutes } from './httpServers';
 import { hmacSha256Hex } from './lib/crypto';
 import { sanitizeConnectionChoice } from './edgeAttribution';
@@ -903,15 +905,30 @@ http.route({
     if (!view) return errorJson('not_found', 'user not found', 404);
     // geoCountry (transient, from the CDN header) prefills the "try a mirror"
     // picker AND drives the mode suggestion. Inside the sealed body; never
-    // stored. In a country on the censored-country list the status page's
+    // stored as such. With detection on it may set or refresh the GUESS on the
+    // member's freedom-family keys (lib/memberCountry.ts; a reading from one of
+    // FCP's own exits only keeps a guess alive, and the client address is
+    // compared here, never passed on). The suggestion reads the member's stored
+    // country (their choice or the guess) when there is one, else this
+    // request's: in a country on the censored-country list the status page's
     // availability matrix picks the mode (lib/modeSuggestion.ts), from modes
-    // AVAILABLE on the member's own backend only; elsewhere it is the default
-    // on that backend. The list and the matrix stay server-side: only the
-    // verdict ships, and the choice itself stays client-side.
+    // AVAILABLE on the member's own backend only; elsewhere the default. The
+    // list and the matrix stay server-side: only the verdict ships.
     const geoCountry = resolveCountry(req);
+    const reading = await ctx.runQuery(internal.memberCountry.readingContext, {});
+    const ownExit = isOwnExit(resolveClientIp(req), reading.ownExits);
+    const storedCountry =
+      reading.detect && (geoCountry || ownExit)
+        ? await ctx.runMutation(internal.memberCountry.noteSeenCountryForUser, {
+            userId: member.userId,
+            country: geoCountry,
+            ownExit,
+          })
+        : (await ctx.runQuery(internal.memberCountry.memberView, { userId: member.userId }))
+            .effective;
     const suggestedModeId = await ctx.runQuery(internal.censoredCountries.suggestMode, {
       backend: view.user.tier.backend,
-      country: geoCountry,
+      country: storedCountry ?? geoCountry,
     });
     return json({ ...view, geoCountry, suggestedModeId });
   }),
@@ -1120,17 +1137,32 @@ http.route({
           nodeName: sub.pinnedNode ?? undefined,
         })
       : { token: null as string | null, curated: [] as string[], sensitive: false };
-    // Where the member is, for server-name selection: their OWN stored answer,
-    // else the country the CDN reports for this request (null unless fronted),
-    // and only when it is a curated one. An INFERRED country is used for this
-    // response and kept nowhere: a body shaped by it is neither read from nor
-    // written to the content cache, and is served `private, no-store`
-    // (lib/edges/sni/country.ts).
-    const located = resolveWhere({
-      override: sub.sniRegion,
-      inferred: resolveCountry(req),
-      curated: countryPolicy.curated,
+    // Where the member is, for server-name selection (lib/memberCountry.ts):
+    // nothing for a key that is not freedom-family; else their own answer; else,
+    // with detection on, the STORED guess, which this request's CDN country may
+    // set or refresh first (a reading from one of FCP's own exits only keeps it
+    // alive: the client address is compared here and passed on as a boolean,
+    // never stored). A stored country keys the cache (`source: 'override'`).
+    // With detection off, the CDN country shapes this one response and is kept
+    // nowhere: not cached, served `private, no-store` (lib/edges/sni/country.ts).
+    const reading = resolveCountry(req);
+    const countryCtx = await ctx.runQuery(internal.memberCountry.contextFor, {
+      subscriptionId: sub._id,
     });
+    const ownExit = isOwnExit(ip, countryCtx.ownExits);
+    let countryFields: CountryFields = sub;
+    const seen = { ...countryCtx, sub, now, reading, ownExit };
+    if (nextGuess(seen).kind !== 'none') {
+      // Applied only at the revision this request read: a transition in between wins.
+      const after = await ctx.runMutation(internal.memberCountry.noteSeenCountry, {
+        subscriptionId: sub._id,
+        countryRev: sub.countryRev ?? 0,
+        country: reading,
+        ownExit,
+      });
+      if (after) countryFields = after;
+    }
+    const located = memberWhere({ ...countryCtx, sub: countryFields, now, reading });
     const useCache = cacheIsServable(located.source, countryPolicy.sensitive);
     const fresh = useCache
       ? cached.find(
@@ -1441,29 +1473,26 @@ http.route({
   }),
 });
 
-// Set the member's connection mode WITHOUT re-issuing — used at sign-up, before
-// the first key exists, so that first key is issued into the chosen mode's
-// placement. A member who already HAS a key changes it via /switch-mode (which
-// re-issues); this plain set only records the preference. Not sealed (the mode
-// "Where are you connecting from?" The member's own answer (a curated country or
-// automatic). It picks server names known to work there; it is the only country
-// FCP stores, because they chose to say it (docs/privacy.md).
+// "Where are you connecting from?" (lib/memberCountry.ts, docs/privacy.md): the
+// member's answer (a country on the censored-country list, `ZZ` "Somewhere
+// else", or Automatic) and, on Automatic with detection on, the country guessed
+// from the CDN. Freedom-family keys only. Both routes are SEALED and refuse
+// plaintext (the `required` seal policy), so neither the choice nor the guess
+// crosses the CDN in the clear; a caller that cannot seal (a token) is refused.
 http.route({
   path: '/api/v1/account/connection-region',
   method: 'GET',
-  handler: guard(async (ctx, req) => {
+  handler: sealed(async (ctx, req) => {
     const member = await resolveMember(ctx, req, 'account:read');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
-    return json(
-      await ctx.runQuery(internal.subscriptions.connectionRegion, { userId: member.userId }),
-    );
+    return json(await ctx.runQuery(internal.memberCountry.memberView, { userId: member.userId }));
   }),
 });
 
 http.route({
   path: '/api/v1/account/connection-region',
   method: 'POST',
-  handler: guard(async (ctx, req) => {
+  handler: sealed(async (ctx, req) => {
     const member = await resolveMember(ctx, req, 'subscription:write');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
     const rl = await ctx.runMutation(internal.rateLimits.enforce, {
@@ -1480,22 +1509,26 @@ http.route({
     if (body.region !== null && body.region !== undefined && region === null)
       return errorJson('validation', 'unknown region', 400);
     try {
-      return json(
-        await ctx.runMutation(internal.subscriptions.setConnectionRegion, {
-          userId: member.userId,
-          region,
-        }),
-      );
+      await ctx.runMutation(internal.memberCountry.setChoice, { userId: member.userId, region });
+      return json(await ctx.runQuery(internal.memberCountry.memberView, { userId: member.userId }));
     } catch (err) {
       // Only the mutation's own refusal is the member's mistake; anything else
       // (a write conflict, a fault) is the server's and is reported as such.
       if (err instanceof ConvexError && (err.data as { code?: string }).code === 'validation')
-        return errorJson('validation', 'unknown region', 400);
+        return errorJson(
+          'validation',
+          (err.data as { message?: string }).message ?? 'unknown region',
+          400,
+        );
       throw err;
     }
   }),
 });
 
+// Set the member's connection mode WITHOUT re-issuing — used at sign-up, before
+// the first key exists, so that first key is issued into the chosen mode's
+// placement. A member who already HAS a key changes it via /switch-mode (which
+// re-issues); this plain set only records the preference. Not sealed (the mode
 // id is not a secret). The id is validated against the live mode catalog.
 http.route({
   path: '/api/v1/account/connection-mode',
@@ -3114,7 +3147,39 @@ http.route({
   handler: httpAction(async (ctx, req) => {
     if (!(await resolveAdmin(ctx, req, 'admin:status:read'))) return ADMIN_UNAUTH();
     const d = resolveClientIpDetailed(req);
-    return json({ resolvedIp: d.ip, rule: d.rule, hops: d.hops, chain: d.chain });
+    // What member-country detection would make of THIS request (transient,
+    // never stored): the CDN country and whether the address is one of FCP's
+    // own exits (open it through a node's tunnel to check the set).
+    const { ownExits } = await ctx.runQuery(internal.memberCountry.ownExitsForDiagnostic, {});
+    return json({
+      resolvedIp: d.ip,
+      rule: d.rule,
+      hops: d.hops,
+      chain: d.chain,
+      country: resolveCountry(req),
+      ownExit: isOwnExit(d.ip, ownExits),
+    });
+  }),
+});
+
+// GET /api/v1/admin/member-country/{userId}: where a member connects from, per
+// active key (their choice, the guess with first and last seen, what delivery
+// uses, what their last render handed out). Sealed and REQUIRED (no plaintext,
+// so no token caller): member countries never cross the CDN in the clear. Not
+// audited (docs/privacy.md).
+http.route({
+  pathPrefix: '/api/v1/admin/member-country/',
+  method: 'GET',
+  handler: sealed(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:users:read'))) return ADMIN_UNAUTH();
+    const id = lastPathSegment(req);
+    if (!id) return errorJson('not_found', 'Not found', 404);
+    try {
+      const view = await ctx.runQuery(internal.memberCountry.adminView, { userId: id });
+      return view ? json(view) : errorJson('not_found', 'No such user', 404);
+    } catch (err) {
+      return adminError(err);
+    }
   }),
 });
 

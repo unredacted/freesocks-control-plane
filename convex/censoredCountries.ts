@@ -4,6 +4,7 @@
  * mode suggestion that reads it with the status page's availability matrix.
  */
 import { internalMutation, internalQuery } from './_generated/server';
+import { internal } from './_generated/api';
 import { ConvexError, v } from 'convex/values';
 import { upsertSettingRow } from './appSettings';
 import { writeAuditLog } from './lib/audit';
@@ -51,6 +52,10 @@ export const set = internalMutation({
         count: checked.list.length,
       },
     });
+    // A country that left the list takes every member's choice and guess of it
+    // with it (convex/memberCountry.ts).
+    for (const country of diff.removed)
+      await ctx.scheduler.runAfter(0, internal.memberCountry.sweepCountry, { country });
     const after = await resolveCensoredCountries(ctx.db);
     return { countries: after.list, stored: true, max: MAX_CENSORED_COUNTRIES };
   },

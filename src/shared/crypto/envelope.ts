@@ -240,6 +240,13 @@ export async function fingerprintB64Url(b64url: string): Promise<string> {
 export interface RoutePolicy {
   request: 'seal' | 'plain';
   response: 'reveal' | 'plain';
+  /**
+   * Plaintext is refused on this route whatever the rollout knobs
+   * (FS_HPKE_REQUIRED / FS_HPKE_ADMIN_REQUIRED) say, so a caller that cannot
+   * seal (an `fsv1_` token, an IaC client) is refused too. For routes whose
+   * data must never cross the CDN in the clear (a member's country).
+   */
+  required?: true;
 }
 
 const SEAL_REQ: RoutePolicy = { request: 'seal', response: 'plain' };
@@ -249,6 +256,9 @@ const REVEAL: RoutePolicy = { request: 'plain', response: 'reveal' };
  *  INSIDE the sealed request body (clientPrepareRequest), so the server opens the
  *  request first and then reveals to that ephemeral. */
 const SEAL_BOTH: RoutePolicy = { request: 'seal', response: 'reveal' };
+/** Where a member connects from (convex/memberCountry.ts): sealed, never plaintext. */
+const REVEAL_REQUIRED: RoutePolicy = { ...REVEAL, required: true };
+const SEAL_BOTH_REQUIRED: RoutePolicy = { ...SEAL_BOTH, required: true };
 
 /**
  * Keyed by `"METHOD /path"` (method-aware): several admin paths serve BOTH a GET
@@ -282,6 +292,10 @@ export const SEALED_ROUTES: Record<string, RoutePolicy> = {
   // privacy copy path — the whole point of that route is to never cross the CDN
   // in the clear (docs/threat-model-cdn-blinding.md).
   'GET /api/v1/subscription/content': REVEAL,
+  // "Where are you connecting from?": the member's choice and the country guessed
+  // for them ride these, so plaintext is refused (docs/privacy.md).
+  'GET /api/v1/account/connection-region': REVEAL_REQUIRED,
+  'POST /api/v1/account/connection-region': SEAL_BOTH_REQUIRED,
   // The membership code is a bearer secret and rides the REQUEST (the response
   // is only the granted tier + duration).
   'POST /api/v1/account/redeem-code': SEAL_REQ,
@@ -316,6 +330,8 @@ export const SEALED_PREFIXES: { method: string; prefix: string; policy: RoutePol
   { method: 'PATCH', prefix: '/api/v1/admin/mirror-providers/', policy: SEAL_REQ },
   // Member gift-code reveal (same secret class; the buyer polls this GET).
   { method: 'GET', prefix: '/api/v1/billing/order/', policy: REVEAL },
+  // Admin -> Users: where a member connects from (cookie sessions only: required).
+  { method: 'GET', prefix: '/api/v1/admin/member-country/', policy: REVEAL_REQUIRED },
   // Relay edges (docs/edges.md): every admin route under this prefix carries
   // provider credentials, edge addresses, provider handles or live LB data, so
   // the whole surface is sealed by verb class — GET reveals, POST seals both

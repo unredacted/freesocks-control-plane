@@ -33,6 +33,7 @@ import {
   RemnawaveNodeStatsResponse,
   AdminAlertsConfig,
   AdminCensoredCountries,
+  AdminMemberCountry,
   AdminAnalyticsConfig,
   AdminReferralConfig,
   TierAdmin,
@@ -73,6 +74,7 @@ export const queryKeys = {
   adminUsers: (q: string, status = '', tier = '', drift = false) =>
     ['admin', 'users', q, status, tier, drift] as const,
   adminUserBackendState: (userId: string) => ['admin', 'users', userId, 'backend-state'] as const,
+  adminMemberCountry: (userId: string) => ['admin', 'users', userId, 'member-country'] as const,
   adminTokens: ['admin', 'tokens'] as const,
   adminAudit: ['admin', 'audit'] as const,
   adminSettings: ['admin', 'settings'] as const,
@@ -221,11 +223,7 @@ export const connectionRegionQuery = (enabled: () => boolean) =>
   }));
 
 export const setConnectionRegion = (region: string | null) =>
-  apiClient.post(
-    '/api/v1/account/connection-region',
-    { region },
-    z.object({ region: z.string().nullable() }),
-  );
+  apiClient.post('/api/v1/account/connection-region', { region }, ConnectionRegionResponse);
 
 /**
  * Raw subscription content (the proxy config), delivered SEALED. Lazy: only
@@ -487,6 +485,15 @@ export const adminUserBackendStateQuery = (userId: () => string, enabled: () => 
     queryKey: queryKeys.adminUserBackendState(userId()),
     queryFn: () =>
       apiClient.get(`/api/v1/admin/users/${userId()}/backend-state`, AdminUserBackendState),
+    staleTime: 15_000,
+    enabled: enabled() && !!userId(),
+  }));
+
+/** Where a member connects from (sealed; Admin -> Users -> Live details). */
+export const adminMemberCountryQuery = (userId: () => string, enabled: () => boolean) =>
+  createQuery(() => ({
+    queryKey: queryKeys.adminMemberCountry(userId()),
+    queryFn: () => apiClient.get(`/api/v1/admin/member-country/${userId()}`, AdminMemberCountry),
     staleTime: 15_000,
     enabled: enabled() && !!userId(),
   }));

@@ -765,8 +765,14 @@
   },
   "region": {
     "title": "Where are you connecting from?",
-    "help": "Leave this on Automatic unless connecting is unreliable. In a few countries some of the website names a key uses are blocked. Choosing yours makes your key use names known to work there. Your choice is saved with your account and is never used for anything else.",
+    "help": "Leave this on Automatic unless connecting is unreliable. We use it only to choose what works where you are: the website names your key uses and the connection mode we suggest. It is kept with your key, deleted with it, and never shared.",
+    "helpDetect": "On Automatic we guess it from your connection, keep the guess only for the countries listed here, and forget it {days} days after we last see you there.",
     "automatic": "Automatic",
+    "elsewhere": "Somewhere else",
+    "guessed": "We think you're connecting from {country}.",
+    "chosen": "You told us you're connecting from {country}.",
+    "chosenElsewhere": "You told us you're connecting from somewhere not listed here.",
+    "change": "Change",
     "saved": "Saved. Refresh your app to pick up the change.",
     "failed": "That did not save. Try again."
   },

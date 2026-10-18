@@ -224,12 +224,13 @@ describe('readers', () => {
       });
       return ctx.db.insert('users', { tierId, status: 'active', updatedAt: Date.now() });
     });
-    expect(await t.query(internal.subscriptions.connectionRegion, { userId })).toEqual({
-      region: null,
-      options: ['TR', 'IR'],
+    // A member without a key has no country to choose (and no list to choose from).
+    expect(await t.query(internal.memberCountry.memberView, { userId })).toMatchObject({
+      applies: false,
+      options: [],
     });
     await expect(
-      t.mutation(internal.subscriptions.setConnectionRegion, { userId, region: 'RU' }),
+      t.mutation(internal.memberCountry.setChoice, { userId, region: 'RU' }),
     ).rejects.toThrow(/unknown region/);
   });
 });

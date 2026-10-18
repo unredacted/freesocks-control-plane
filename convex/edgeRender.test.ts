@@ -856,14 +856,15 @@ describe("edgeRender: server names for the member's country", () => {
     const { t, subId } = await seedCountry();
     const userId = (await t.run((ctx) => ctx.db.get(subId)))!.userId;
     // The choices are the censored-country list (here: the default one).
-    expect(await t.query(internal.subscriptions.connectionRegion, { userId })).toEqual({
-      region: null,
+    expect(await t.query(internal.memberCountry.memberView, { userId })).toMatchObject({
+      applies: true,
+      choice: null,
       options: DEFAULT_CENSORED_COUNTRIES.codes,
     });
     await expect(
-      t.mutation(internal.subscriptions.setConnectionRegion, { userId, region: 'DE' }),
+      t.mutation(internal.memberCountry.setChoice, { userId, region: 'DE' }),
     ).rejects.toThrow(/unknown region/);
-    await t.mutation(internal.subscriptions.setConnectionRegion, { userId, region: 'cn' });
+    await t.mutation(internal.memberCountry.setChoice, { userId, region: 'cn' });
     // The request says RU; the member said CN.
     const res = await from(t, 'RU');
     const names = sniOf(await res.text());
@@ -874,7 +875,7 @@ describe("edgeRender: server names for the member's country", () => {
     }[];
     expect(entries.map((e) => e.region)).toEqual(['CN']);
     // Back to automatic: the answer is gone from the row, and the CN body is not reused.
-    await t.mutation(internal.subscriptions.setConnectionRegion, { userId, region: null });
+    await t.mutation(internal.memberCountry.setChoice, { userId, region: null });
     expect((await t.run((ctx) => ctx.db.get(subId)))!.sniRegion).toBeUndefined();
     const auto = await from(t);
     expect(auto.headers.get('cache-control')).toMatch(/^public/);

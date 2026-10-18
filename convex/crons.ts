@@ -267,4 +267,15 @@ crons.daily(
   {},
 );
 
+// Where members connect from (convex/memberCountry.ts): the own-exit set the
+// fronted route compares a client address with (hourly), and the guesses past
+// their sticky window or kept while detection is off (daily).
+crons.interval('own-exits-refresh', { hours: 1 }, internal.ownExits.refresh, {});
+crons.daily(
+  'region-seen-expire',
+  { hourUTC: 5, minuteUTC: 35 },
+  internal.memberCountry.sweepGuesses,
+  {},
+);
+
 export default crons;

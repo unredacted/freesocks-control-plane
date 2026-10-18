@@ -14,6 +14,9 @@ import { backendIdValidator, type BackendId } from './lib/backendIds';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import { entryNamingFrom, type EntryNaming } from './lib/memberEntryNames';
 import { profileTitleValue, resolveSubscriptionSiteName } from './lib/subscriptionTitle';
+import { resolveCensoredCountries } from './lib/censoredCountries';
+import { storedCountry } from './lib/memberCountry';
+import { carriedCountry, onPlacementChanged, resolveMemberCountryConfig } from './memberCountry';
 
 const mirror = v.object({
   provider: v.string(),
@@ -123,6 +126,9 @@ export const insertSubscription = internalMutation({
     // survives a mode/backend-switch re-issue byte-identical. `regenerate`
     // deliberately omits it — rotating the URL is that action's whole point.
     carrySubTokenFromId: v.optional(v.id('subscriptions')),
+    // `regenerate`: carry only the member's answer to "where are you connecting
+    // from?" (not the URL, not a guessed country) from this row.
+    carryCountryFromId: v.optional(v.id('subscriptions')),
   },
   handler: async (ctx, a) => {
     // The fronted-URL token: carried from the old row when requested, else a
@@ -142,12 +148,21 @@ export const insertSubscription = internalMutation({
     // them with the new key's config (the new row has no rawContentHash, so it
     // cannot short-circuit) well inside the old key's 24h grace.
     let carriedMirrors: typeof a.subscriptionMirrors | null = null;
-    // The member's answer to "where are you connecting from?" follows them to
-    // a re-issued key, like the stable URL does.
-    let carriedRegion: string | undefined;
+    // Where the member connects from follows them to a re-issued key of a
+    // freedom-family mode, like the stable URL does: the choice and the guess on
+    // a switch, the choice only on regenerate; nothing into a privacy mode
+    // (convex/memberCountry.ts).
+    let carried: Partial<Doc<'subscriptions'>> = {};
+    if (a.carryCountryFromId && !a.carrySubTokenFromId)
+      carried = await carriedCountry(
+        ctx.db,
+        await ctx.db.get(a.carryCountryFromId),
+        a.placement,
+        'choice',
+      );
     if (a.carrySubTokenFromId) {
       const old = await ctx.db.get(a.carrySubTokenFromId);
-      carriedRegion = old?.sniRegion;
+      carried = await carriedCountry(ctx.db, old, a.placement, 'choice_and_guess');
       if (old?.subToken) {
         subToken = old.subToken;
       }
@@ -176,11 +191,16 @@ export const insertSubscription = internalMutation({
         subToken = randomHex(16);
       }
     }
-    const { placement, carrySubTokenFromId: _carry, ...rest } = a;
+    const {
+      placement,
+      carrySubTokenFromId: _carry,
+      carryCountryFromId: _carryCountry,
+      ...rest
+    } = a;
     const inserted = await ctx.db.insert('subscriptions', {
       ...rest,
       ...(carriedMirrors ? { subscriptionMirrors: carriedMirrors } : {}),
-      ...(carriedRegion ? { sniRegion: carriedRegion } : {}),
+      ...carried,
       // Map the generic arg onto the schema field name.
       backendPlacement: placement,
       subToken,
@@ -201,45 +221,6 @@ export const insertSubscription = internalMutation({
  * Lazily mint the origin-edge assignment key for rows that predate it (every new
  * row gets one at insert). Returns the key; idempotent.
  */
-/**
- * "Where are you connecting from?": the member's own answer, one of the
- * curated countries or null for automatic. Stored because they said so, on
- * every active key of theirs; it is the ONLY country FCP keeps (one inferred
- * from a request is used for that response and kept nowhere). It selects server
- * names known to work there, and is sent to no analytics or telemetry.
- */
-export const connectionRegion = internalQuery({
-  args: { userId: v.id('users') },
-  handler: async (ctx, { userId }) => {
-    const { curatedCountries } = await resolveSniConfig(ctx.db);
-    const subs = await ctx.db
-      .query('subscriptions')
-      .withIndex('by_user_state', (q) => q.eq('userId', userId).eq('state', 'active'))
-      .collect();
-    const region = subs.find((s) => s.sniRegion)?.sniRegion ?? null;
-    return {
-      region: region && curatedCountries.includes(region) ? region : null,
-      options: curatedCountries,
-    };
-  },
-});
-
-export const setConnectionRegion = internalMutation({
-  args: { userId: v.id('users'), region: v.union(v.string(), v.null()) },
-  handler: async (ctx, { userId, region }) => {
-    const { curatedCountries } = await resolveSniConfig(ctx.db);
-    const next = region ? region.trim().toUpperCase() : null;
-    if (next && !curatedCountries.includes(next))
-      throw new ConvexError({ code: 'validation', message: 'unknown region' });
-    const subs = await ctx.db
-      .query('subscriptions')
-      .withIndex('by_user_state', (q) => q.eq('userId', userId).eq('state', 'active'))
-      .collect();
-    for (const s of subs) await ctx.db.patch(s._id, { sniRegion: next ?? undefined });
-    return { region: next };
-  },
-});
-
 export const ensureRenderKey = internalMutation({
   args: { subscriptionId: v.id('subscriptions') },
   handler: async (ctx, { subscriptionId }): Promise<string | null> => {
@@ -345,6 +326,8 @@ interface SubCacheEntry {
   headers?: Record<string, string>;
   ua: string;
   at: number;
+  /** The stored country the body was shaped for (convex/memberCountry.ts). */
+  region?: string | null;
 }
 
 /**
@@ -359,13 +342,24 @@ export const writeContentCache = internalMutation({
   args: { subscriptionId: v.id('subscriptions'), entry: v.string() },
   handler: async (ctx, { subscriptionId, entry }) => {
     const sub = await ctx.db.get(subscriptionId);
-    if (!sub) return;
+    if (!sub || sub.state === 'deleted') return;
     let incoming: SubCacheEntry;
     try {
       incoming = JSON.parse(entry) as SubCacheEntry;
     } catch {
       return;
     }
+    // Where the member connects from (convex/memberCountry.ts): a body shaped
+    // for a country is kept only while that is the row's stored country, so a
+    // request that read an older one (a switch, "Somewhere else", a new guess,
+    // a country taken off the list) can never write it back.
+    const [countryCfg, censored] = await Promise.all([
+      resolveMemberCountryConfig(ctx.db),
+      resolveCensoredCountries(ctx.db),
+    ]);
+    const stored = storedCountry(sub, countryCfg, censored.codes, Date.now());
+    const allowed = (e: SubCacheEntry) => e.region == null || e.region === stored;
+    if (!allowed(incoming)) return;
     let existing: SubCacheEntry[] = [];
     if (sub.subCache) {
       try {
@@ -379,7 +373,7 @@ export const writeContentCache = internalMutation({
         existing = [];
       }
     }
-    const merged = [incoming, ...existing.filter((e) => e.ua !== incoming.ua)]
+    const merged = [incoming, ...existing.filter((e) => e.ua !== incoming.ua && allowed(e))]
       .sort((a, b) => b.at - a.at)
       .slice(0, SUB_CACHE_MAX);
     await ctx.db.patch(subscriptionId, { subCache: JSON.stringify(merged) });
@@ -727,6 +721,17 @@ export const markSubscriptionDeleted = internalMutation({
       state: 'deleted',
       deletedAt: Date.now(),
       subToken: undefined,
+      // Where the member connects from goes with the key, now rather than when
+      // the row itself is swept (convex/memberCountry.ts): the choice, the guess,
+      // the cached bodies (they carry the country they were shaped for) and the
+      // last render's snapshot.
+      sniRegion: undefined,
+      regionSeenCountry: undefined,
+      regionSeenFirstAt: undefined,
+      regionSeenAt: undefined,
+      subCache: undefined,
+      lastRender: undefined,
+      countryRev: (dying?.countryRev ?? 0) + 1,
       // Released with the mirrors below, so the teardown of this dead row can't
       // delete S3 objects the source row is about to own again.
       ...(returnSubTokenToId && dying && dying.subscriptionMirrors.length > 0
@@ -802,6 +807,10 @@ export const setPlacementAndClearCache = internalMutation({
       subCache: undefined,
       updatedAt: Date.now(),
     });
+    // An in-place move into a mode that is not freedom-family takes the member's
+    // country with it (convex/memberCountry.ts).
+    const moved = await ctx.db.get(subscriptionId);
+    if (moved) await onPlacementChanged(ctx, moved, placement);
     return null;
   },
 });
