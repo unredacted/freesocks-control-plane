@@ -257,6 +257,8 @@ export interface RenderPreviewBody {
   relayId: string;
   family: RenderClientFamily;
   sampleKey?: string;
+  /** "As a member in <country>" (a listed country). */
+  country?: string;
 }
 
 /** Either a trailing window ending now, or an explicit custom date range (mirrors queries.ts). */

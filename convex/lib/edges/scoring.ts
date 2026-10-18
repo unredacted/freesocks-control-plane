@@ -9,6 +9,7 @@
  * Origin-level evidence can only HINT. Edge-level evidence (probes, or members
  * who said which connection failed) is what an automatic rotation needs.
  */
+import { edgeTier, steeringAvoids, type DeliveryPath, type PublishedEdge } from './assignment';
 import type { EdgeConfig } from '../edgeConfig';
 import {
   probeScore as probeScoreOf,
@@ -334,7 +335,48 @@ export type AutoRotateVeto =
   // The fleet guards (lib/edges/fleet.ts): a mass block holds every automatic
   // rotation, and the fleet's own daily cap bounds them all together.
   | 'fleet_brake'
-  | 'fleet_daily_cap';
+  | 'fleet_daily_cap'
+  // Delivery by country (steering on): the block is already routed around for
+  // the members it affects (`country_scoped`), or every country it was seen
+  // from is under the country-wide guard, an outage or a probe problem
+  // (`country_wide`). A global burn would act on either.
+  | 'country_scoped'
+  | 'country_wide';
+
+/** What the steering vetoes read (delivery by country on); absent = no such veto. */
+export interface SteeringInput {
+  /** The origin's published edges as the assignment sees them (per-country state included). */
+  published: PublishedEdge[];
+  /** Every delivery path a member body can take (format x IPv6 allowance). */
+  paths: DeliveryPath[];
+  /** The countries edges are checked from. */
+  checked: string[];
+  /** The censored-country list (names' curated set). */
+  curated: string[];
+  /** Checked countries where the country-wide guard holds new blocks. */
+  held: string[];
+}
+
+/**
+ * The steering veto for the edge the detector chose (docs/edges.md "Delivery
+ * by country"). Only countries edges are checked from count. Rotates as today
+ * (null) when the evidence names none of them, or when the edge is blocked in
+ * EVERY checked country (it would only serve members outside the list).
+ */
+export function steeringVeto(
+  chosen: Pick<EdgeEvidence, 'edgeId' | 'countries'>,
+  s: SteeringInput,
+): 'country_scoped' | 'country_wide' | null {
+  const countries = [...new Set(chosen.countries)].filter((c) => s.checked.includes(c));
+  if (countries.length === 0) return null;
+  if (countries.every((c) => s.held.includes(c))) return 'country_wide';
+  const edge = s.published.find((e) => e.edgeId === chosen.edgeId);
+  if (!edge) return null;
+  if (s.checked.every((c) => edgeTier(edge, c) === 2)) return null;
+  return countries.every((c) => steeringAvoids(edge, s.published, c, s.paths, s.curated))
+    ? 'country_scoped'
+    : null;
+}
 
 /**
  * Pick the edge an automatic rotation should replace, or the reason it must not
@@ -361,6 +403,8 @@ export function autoRotateDecision(args: {
   now: number;
   /** The fleet guards; absent = neither applies (a unit test of one origin). */
   fleet?: { brakeEngaged: boolean; rotationsToday: number; rotationsPerDay: number };
+  /** Delivery by country is on: its vetoes apply. Absent = steering off, nothing changes. */
+  steering?: SteeringInput;
 }): { edgeId: string; source: 'reports' | 'probes' } | { veto: AutoRotateVeto } {
   const { evaluation: ev, cfg, origin } = args;
   // 1. enabled  2. autoRotate (global, then the origin's own opt-in)  2b. not setup-owned
@@ -389,6 +433,13 @@ export function autoRotateDecision(args: {
   if (chosen.source === 'probes' && !reportBacked) {
     if (!cfg.detect.allowProbeOnlyAutoRotate) return { veto: 'probe_only_disallowed' };
     if (ev.probeSourcesDown) return { veto: 'probe_sources_down' };
+  }
+  // 5a. delivery by country: a block the steering provably routes members
+  //     around, or one seen only where everything fails at once, is no reason
+  //     to burn the address for everyone.
+  if (args.steering) {
+    const veto = steeringVeto(chosen, args.steering);
+    if (veto) return { veto };
   }
   // 5b. the fleet brake (a mass block) and the fleet's daily cap
   if (args.fleet?.brakeEngaged) return { veto: 'fleet_brake' };

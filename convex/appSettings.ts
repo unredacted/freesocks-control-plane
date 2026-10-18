@@ -55,6 +55,10 @@ export const SETTINGS_DEFAULTS = {
   'delivery.country.stickyDays': 30,
   'delivery.country.refreshHours': 6,
   'delivery.country.ownExitRanges': [] as string[],
+  // Delivery by country (docs/edges.md): order a freedom-family member's
+  // addresses by their STORED country (choice or guess), edges proven there
+  // first and blocked ones last. Off: the assignment ignores countries.
+  'delivery.country.steer': false,
 } as const;
 
 // `getAll` / `get` (public queries) were deleted in pass 2: dead code (the SPA

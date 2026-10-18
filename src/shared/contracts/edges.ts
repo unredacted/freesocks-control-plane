@@ -1245,6 +1245,13 @@ export const EdgeRenderPreviewResponse = z.object({
       z.object({ listenerKey: z.string(), matched: z.boolean(), reason: z.string().optional() }),
     )
     .default([]),
+  /** "As a member in <country>": the country rendered for (null = no country). */
+  country: z.string().nullable().optional(),
+  /** Addresses were ordered by that country (delivery by country is on). */
+  steered: z.boolean().optional(),
+  /** The tier each endpoint came from there: 0 works there, 1 not known, 2 blocked there. */
+  primaryTier: z.number().nullable().optional(),
+  backupTier: z.number().nullable().optional(),
 });
 export type EdgeRenderPreviewResponse = z.infer<typeof EdgeRenderPreviewResponse>;
 

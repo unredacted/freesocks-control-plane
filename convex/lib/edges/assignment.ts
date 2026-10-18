@@ -36,7 +36,12 @@
 
 import { hostTargetFor } from './layers';
 import type { EdgeLayer } from './providers/capabilities';
-import { protocolUsesSni, type ListenerProto } from './protocols';
+import {
+  formatSupported,
+  protocolUsesSni,
+  type ListenerProto,
+  type RenderFormat,
+} from './protocols';
 import type { MatchRule } from './registration';
 
 /** Name-selection PRF versions a listener can opt into (absent = legacy modulus). */
@@ -85,6 +90,13 @@ export interface PublishedEdge {
    * is only good until then (`validUntil` of the render); absent for L4.
    */
   proofExpiresAt?: number;
+  /**
+   * Checked countries where this edge is EFFECTIVELY proven / blocked
+   * (`edges.countryState`, entries past their `until` already dropped). Read
+   * only when the assignment is given an `edgeCountry` (delivery by country).
+   */
+  provenIn?: string[];
+  blockedIn?: string[];
   /**
    * False when the edge is published but must not be selected (listener retired,
    * undeployed or disabled, no codec for the body, no template entry). It still occupies its pool index so the
@@ -248,6 +260,24 @@ function namesFor(
 export interface Assignment {
   primary: AssignedEndpoint | null;
   backup: AssignedEndpoint | null;
+  /**
+   * With an `edgeCountry`: the tier each endpoint was picked from in that
+   * country (0 proven, 1 not known, 2 blocked). Absent without one.
+   */
+  primaryTier?: EdgeTier;
+  backupTier?: EdgeTier;
+}
+
+/** 0 = proven in the country, 1 = nothing known, 2 = blocked there. */
+export type EdgeTier = 0 | 1 | 2;
+
+/** An edge's tier in one country (its effective per-country state). */
+export function edgeTier(
+  e: Pick<PublishedEdge, 'provenIn' | 'blockedIn'>,
+  country: string,
+): EdgeTier {
+  if ((e.blockedIn ?? []).includes(country)) return 2;
+  return (e.provenIn ?? []).includes(country) ? 0 : 1;
 }
 
 /** FNV-1a 32-bit (matches nodePinning's; small and synchronous). */
@@ -363,10 +393,42 @@ export interface AssignOptions {
   /** Where the member is, for listeners on `hrw1`. Absent = no country logic at all. */
   where?: CountryContext;
   /**
+   * Delivery by country (docs/edges.md "Delivery by country"): the member's
+   * STORED country when steering applies to them. Edges proven there come
+   * first, edges blocked there only when nothing else is assignable. Absent or
+   * null = exactly the assignment without it.
+   */
+  edgeCountry?: string | null;
+  /**
+   * Proven edges needed before tier 0 is exclusive (default 1): with fewer,
+   * proven and not-known edges share the first tier.
+   */
+  minProvenForExclusive?: number;
+  /**
    * @deprecated No longer consulted: a retired server name is never selected,
    * whoever held it. Kept so existing callers type-check; remove at will.
    */
   subscriberLastContentAt?: number | null;
+}
+
+/**
+ * Whether the edge is assignable for this member at all: its own rules
+ * (`edgeAssignable`), and, for an `hrw1` name-presenting listener with a
+ * country context, at least one name usable there.
+ */
+function assignableFor(
+  subscriberKey: string,
+  e: PublishedEdge,
+  opts: Pick<AssignOptions, 'canEmitV6' | 'where'>,
+): boolean {
+  return (
+    edgeAssignable(e, { canEmitV6: opts.canEmitV6 }) &&
+    (!opts.where ||
+      e.sniPick !== 'hrw1' ||
+      !!edgeHostname(e) ||
+      !protocolUsesSni(e.proto) ||
+      rankSniHrw(subscriberKey, e.edgeId, e.serverNames, opts.where).length > 0)
+  );
 }
 
 /**
@@ -375,6 +437,13 @@ export interface AssignOptions {
  * assignable edge, so a single edge turning ineligible moves only its own
  * subscribers; the backup is the next assignable edge after the primary,
  * preferring a different provider.
+ *
+ * With an `edgeCountry` the walk is by TIER (`edgeTier`): the primary is the
+ * first assignable edge from the seeded index whose tier is the best any
+ * assignable edge has (blocked only when nothing else is left), so a member
+ * moves only when a tier changes and the modulus spread holds inside a tier;
+ * the backup prefers, in order: not blocked, another provider, the better
+ * tier, another location, the walk order.
  */
 export function assignEndpoints(
   subscriberKey: string,
@@ -383,15 +452,10 @@ export function assignEndpoints(
 ): Assignment {
   const pool = [...published].sort((a, b) => a.poolIndex - b.poolIndex);
   if (pool.length === 0) return { primary: null, backup: null };
+  if (opts.edgeCountry) return assignByCountry(subscriberKey, pool, opts, opts.edgeCountry);
   // An edge every one of whose names is excluded for this member's country is
   // not assignable FOR THEM: the walk moves on to the next edge.
-  const assignable = (e: PublishedEdge) =>
-    edgeAssignable(e, { canEmitV6: opts.canEmitV6 }) &&
-    (!opts.where ||
-      e.sniPick !== 'hrw1' ||
-      !!edgeHostname(e) ||
-      !protocolUsesSni(e.proto) ||
-      rankSniHrw(subscriberKey, e.edgeId, e.serverNames, opts.where).length > 0);
+  const assignable = (e: PublishedEdge) => assignableFor(subscriberKey, e, opts);
   const start = poolSeed(subscriberKey) % pool.length;
   // Walk forward (wrapping) from the seeded index to the first assignable edge.
   let pIdx = -1;
@@ -404,6 +468,108 @@ export function assignEndpoints(
   }
   if (pIdx < 0) return { primary: null, backup: null };
   const primaryEdge = pool[pIdx];
+  if (!opts.includeBackup) return endpointsFor(subscriberKey, primaryEdge, null, opts);
+  // Backup: the next assignable edge after the primary in pool order, away
+  // from the primary's failure domain: another provider first, then another
+  // location (a missing key counts as unknown, never as "different").
+  const ordered: PublishedEdge[] = [];
+  for (let step = 1; step < pool.length; step++) {
+    const e = pool[(pIdx + step) % pool.length];
+    if (assignable(e)) ordered.push(e);
+  }
+  const backupEdge =
+    ordered.length === 0
+      ? null
+      : ((opts.preferDistinctProviders
+          ? (ordered.find((e) => e.provider !== primaryEdge.provider) ??
+            ordered.find((e) => differentLocation(e, primaryEdge)))
+          : undefined) ?? ordered[0]);
+  return endpointsFor(subscriberKey, primaryEdge, backupEdge, opts);
+}
+
+/** Two known, different locations (a missing key counts as unknown, never as "different"). */
+function differentLocation(a: PublishedEdge, b: PublishedEdge): boolean {
+  return !!a.locationKey && !!b.locationKey && a.locationKey !== b.locationKey;
+}
+
+/** The tiered walk of `assignEndpoints` (see there). */
+function assignByCountry(
+  subscriberKey: string,
+  pool: readonly PublishedEdge[],
+  opts: AssignOptions,
+  country: string,
+): Assignment {
+  const assignable = pool.map((e) => assignableFor(subscriberKey, e, opts));
+  const proven = pool.filter((e, i) => assignable[i] && edgeTier(e, country) === 0).length;
+  // Fewer proven edges than the exclusivity floor: proven and not-known share tier 1.
+  const exclusive = proven >= Math.max(1, opts.minProvenForExclusive ?? 1);
+  const tierOf = (e: PublishedEdge): EdgeTier => {
+    const t = edgeTier(e, country);
+    return t === 0 && !exclusive ? 1 : t;
+  };
+  const tiers = pool.map(tierOf);
+  let best: EdgeTier | null = null;
+  for (let i = 0; i < pool.length; i++)
+    if (assignable[i] && (best === null || tiers[i]! < best)) best = tiers[i]!;
+  if (best === null) return { primary: null, backup: null };
+  const start = poolSeed(subscriberKey) % pool.length;
+  let pIdx = -1;
+  for (let step = 0; step < pool.length; step++) {
+    const i = (start + step) % pool.length;
+    if (assignable[i] && tiers[i] === best) {
+      pIdx = i;
+      break;
+    }
+  }
+  const primaryEdge = pool[pIdx]!;
+  const primaryTier = edgeTier(primaryEdge, country);
+  let backupEdge: PublishedEdge | null = null;
+  if (opts.includeBackup) {
+    const candidates: Array<{ e: PublishedEdge; key: number[] }> = [];
+    for (let step = 1; step < pool.length; step++) {
+      const i = (pIdx + step) % pool.length;
+      if (!assignable[i]) continue;
+      const e = pool[i]!;
+      const distinct = opts.preferDistinctProviders;
+      candidates.push({
+        e,
+        key: [
+          tiers[i] === 2 ? 1 : 0,
+          distinct && e.provider === primaryEdge.provider ? 1 : 0,
+          tiers[i]!,
+          distinct && !differentLocation(e, primaryEdge) ? 1 : 0,
+          step,
+        ],
+      });
+    }
+    candidates.sort((a, b) => {
+      for (let k = 0; k < a.key.length; k++)
+        if (a.key[k] !== b.key[k]) return a.key[k]! - b.key[k]!;
+      return 0;
+    });
+    backupEdge = candidates[0]?.e ?? null;
+  }
+  const out = endpointsFor(subscriberKey, primaryEdge, backupEdge, opts);
+  return {
+    ...out,
+    ...(out.primary ? { primaryTier } : {}),
+    ...(out.backup ? { backupTier: edgeTier(out.backup.edge, country) } : {}),
+  };
+}
+
+/**
+ * The endpoints for an already chosen primary (and backup): the names, the
+ * alternates and the Host headers, exactly as the assignment makes them. Also
+ * what a REPLAY of a stored snapshot uses (the account labels, report
+ * attribution): the snapshot's roles are taken as they were, never re-derived
+ * from a seed over the two edges.
+ */
+export function endpointsFor(
+  subscriberKey: string,
+  primaryEdge: PublishedEdge,
+  backupEdge: PublishedEdge | null,
+  opts: Pick<AssignOptions, 'where' | 'namesPerEndpoint' | 'backupNames'>,
+): Assignment {
   const primarySni = sniFor(subscriberKey, primaryEdge, opts.where);
   if (!primarySni.ok) return { primary: null, backup: null };
   const primaryAlts = namesFor(
@@ -415,26 +581,7 @@ export function assignEndpoints(
     opts.where,
   );
   const primary = endpointFor('primary', primaryEdge, primarySni.sni, primaryAlts);
-  if (!opts.includeBackup) return { primary, backup: null };
-  // Backup: the next assignable edge after the primary in pool order, away
-  // from the primary's failure domain: another provider first, then another
-  // location (a missing key counts as unknown, never as "different").
-  const ordered: PublishedEdge[] = [];
-  for (let step = 1; step < pool.length; step++) {
-    const e = pool[(pIdx + step) % pool.length];
-    if (assignable(e)) ordered.push(e);
-  }
-  if (ordered.length === 0) return { primary, backup: null };
-  const backupEdge =
-    (opts.preferDistinctProviders
-      ? (ordered.find((e) => e.provider !== primaryEdge.provider) ??
-        ordered.find(
-          (e) =>
-            !!e.locationKey &&
-            !!primaryEdge.locationKey &&
-            e.locationKey !== primaryEdge.locationKey,
-        ))
-      : undefined) ?? ordered[0];
+  if (!backupEdge) return { primary, backup: null };
   // The backup's names avoid the primary's where the list allows it: two
   // edges sharing a blocked name would fail together.
   const taken = new Set([primarySni.sni, ...primaryAlts].filter((n): n is string => n !== null));
@@ -449,4 +596,54 @@ export function assignEndpoints(
     opts.where,
   );
   return { primary, backup: endpointFor('backup', backupEdge, backupSni.sni, backupAlts) };
+}
+
+/** One way a member's body can be built: its format, and whether it may carry IPv6-only edges. */
+export interface DeliveryPath {
+  format: RenderFormat;
+  canEmitV6: boolean;
+}
+
+/**
+ * Whether delivery by country PROVABLY keeps `chosen` off the primary of every
+ * member in `country` (the detector's `country_scoped` veto, docs/edges.md):
+ *
+ *  1. the chosen edge is EFFECTIVELY blocked there (tier 2; not known is not
+ *     enough: two not-known edges rank equally and some members would still
+ *     get the suspected one);
+ *  2. on every delivery path the chosen edge serves (its listener, each body
+ *     format with a codec for it, each IPv6 allowance the render rules
+ *     produce), a DISTINCT edge that is not blocked there is assignable on that
+ *     same path: same listener, a codec for the format, an address the path
+ *     can emit, and, for an `hrw1` name-presenting listener, a name usable in
+ *     that country.
+ *
+ * The same rules `assignEndpoints` and the pipeline apply, so the two cannot
+ * drift: with both true, tier 2 is never the best tier on any of those paths.
+ * An edge that serves no path proves nothing (false: no veto).
+ */
+export function steeringAvoids(
+  chosen: PublishedEdge,
+  published: readonly PublishedEdge[],
+  country: string,
+  paths: readonly DeliveryPath[],
+  curated: readonly string[],
+): boolean {
+  if (edgeTier(chosen, country) !== 2) return false;
+  const where: CountryContext = { country, curated };
+  const usableThere = (e: PublishedEdge) =>
+    e.sniPick !== 'hrw1' ||
+    !!edgeHostname(e) ||
+    !protocolUsesSni(e.proto) ||
+    e.serverNames.some((n) => n.status === 'active' && countryTier(n, where) !== null);
+  const on = (e: PublishedEdge, p: DeliveryPath) =>
+    edgeAssignable(e, { canEmitV6: p.canEmitV6 }) &&
+    e.listenerKey === chosen.listenerKey &&
+    formatSupported(e.proto, p.format) &&
+    usableThere(e);
+  const served = paths.filter((p) => on(chosen, p));
+  if (served.length === 0) return false;
+  return served.every((p) =>
+    published.some((e) => e.edgeId !== chosen.edgeId && edgeTier(e, country) < 2 && on(e, p)),
+  );
 }

@@ -13,7 +13,18 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { runWithCronOutcome } from './cronHeartbeat';
-import { EDGE_PLUMBING, originPolicy, resolveEdgeConfig, edgeMs } from './lib/edgeConfig';
+import {
+  EDGE_PLUMBING,
+  originPolicy,
+  resolveEdgeConfig,
+  edgeMs,
+  type EdgeConfig,
+} from './lib/edgeConfig';
+import { resolveCensoredCountries } from './lib/censoredCountries';
+import { deliveryPathsOf } from './lib/edges/render';
+import { deliveryStyleOf, publishedEdgesOf } from './edgeRender';
+import { heldCountries } from './edgeCountry';
+import { resolveMemberCountryConfig } from './memberCountry';
 import { todayKey } from './relays';
 import { familyKeyOf } from './probes';
 import {
@@ -28,6 +39,7 @@ import {
   type BaselineSample,
   type EdgeProbeState,
   type Evaluation,
+  type SteeringInput,
   type WindowReports,
 } from './lib/edges/scoring';
 import type { Verdict } from './lib/edges/probes/verdict';
@@ -244,6 +256,7 @@ async function loadRelayContext(ctx: QueryCtx, relayId: Id<'relays'>, now: numbe
   return {
     origin,
     cfg,
+    steering: await steeringInputFor(ctx, origin, cfg, now),
     since: now - edgeMs.detectWindow(cfg),
     baseline,
     usersOnline,
@@ -252,6 +265,37 @@ async function loadRelayContext(ctx: QueryCtx, relayId: Id<'relays'>, now: numbe
     edges,
     published,
     rotationActive,
+  };
+}
+
+/**
+ * The steering vetoes' inputs (delivery by country, docs/edges.md), or null
+ * while `delivery.country.steer` is off: the origin's published edges as the
+ * assignment sees them (their per-country state included), every delivery
+ * path its members' bodies can take, and where the country-wide guard holds.
+ */
+async function steeringInputFor(
+  ctx: QueryCtx,
+  origin: Origin,
+  cfg: EdgeConfig,
+  now: number,
+): Promise<SteeringInput | null> {
+  if (!(await resolveMemberCountryConfig(ctx.db)).steer) return null;
+  const { published } = await publishedEdgesOf(
+    ctx,
+    origin,
+    { kind: 'member' },
+    { includeIneligible: true },
+  );
+  const style = origin.backendServerId
+    ? await deliveryStyleOf(ctx, origin.backendServerId)
+    : 'subscription';
+  return {
+    published,
+    paths: deliveryPathsOf(cfg.render, style),
+    checked: cfg.probe.countries,
+    curated: (await resolveCensoredCountries(ctx.db)).codes,
+    held: await heldCountries(ctx.db, cfg.probe.countries, now),
   };
 }
 
@@ -588,6 +632,7 @@ export const run = internalAction({
               rotationsToday,
               rotationsPerDay: w.cfg.detect.fleetRotationsPerDay,
             },
+            ...(w.steering ? { steering: w.steering } : {}),
           });
           const veto = 'veto' in decision ? decision.veto : null;
           let lastRotateError: string | null | undefined = undefined;

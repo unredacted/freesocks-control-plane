@@ -1639,3 +1639,169 @@ describe('edgeRender: where a member connects from, at a place an origin covers'
     });
   });
 });
+
+describe('edgeRender: delivery by country', () => {
+  const PRIVACY_SQUAD = '11111111-2222-3333-4444-0000000000aa';
+  /** Seeds 0x00000000: the pool walk starts at index 0, edge A. */
+  const RENDER_KEY = '00000000' + 'ab'.repeat(28);
+  const addressesOf = (body: string) =>
+    proxyLines(body).map((l) => l.slice(l.indexOf('@') + 1).split(':')[0]);
+
+  /** Two published edges of one listener; A is blocked in IR; a freedom-family member. */
+  async function world(opts: { steer?: boolean; choice?: string | null } = {}) {
+    stubPanel();
+    vi.stubEnv('CF_FRONTED', 'true');
+    vi.stubEnv('IP_HASH_SALT', 'test-salt');
+    const s = await seed();
+    const b = await s.t.mutation(internal.relays.adoptEdge, {
+      relayId: s.relayId,
+      listenerId: s.listenerId,
+      ipv4: EDGE_B,
+      publish: true,
+      verified: true,
+    });
+    const edgeB = b.edgeId as Id<'edges'>;
+    const userId = (await s.t.run((ctx) => ctx.db.get(s.subId)))!.userId;
+    await s.t.run(async (ctx) => {
+      const now = Date.now();
+      await ctx.db.patch(s.edgeA, {
+        countryState: {
+          byCountry: [{ country: 'IR', state: 'blocked', from: 'mark' }],
+          updatedAt: now,
+        },
+      });
+      await ctx.db.patch(s.subId, { renderKey: RENDER_KEY });
+      await upsertSettingRow(ctx, 'delivery.country.steer', JSON.stringify(opts.steer ?? true));
+      await ctx.db.insert('modePlacements', {
+        modeSlug: 'privacy-reality',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: [PRIVACY_SQUAD] }),
+        updatedAt: now,
+      });
+      await ctx.db.patch(userId, { connectionModeId: 'freedom-ws' });
+    });
+    if (opts.choice !== null)
+      await s.t.mutation(internal.memberCountry.setChoice, {
+        userId,
+        region: opts.choice ?? 'IR',
+      });
+    return { ...s, edgeB, userId };
+  }
+  const fetchAs = (t: ReturnType<typeof convexTest>, ua: string, country?: string) =>
+    t.fetch('/api/v1/sub/tok_abc', {
+      headers: {
+        'user-agent': ua,
+        ...(country ? { 'cf-ipcountry': country, 'cf-connecting-ip': '192.0.2.70' } : {}),
+      },
+    });
+  const row = (t: ReturnType<typeof convexTest>, id: Id<'subscriptions'>) =>
+    t.run((ctx) => ctx.db.get(id)) as Promise<Doc<'subscriptions'>>;
+
+  test('steer on: a member in IR gets the edge that is not blocked there, and the snapshot says so', async () => {
+    const { t, subId, edgeA, edgeB } = await world();
+    const res = await fetchAs(t, 'v2rayNG/1.9.0');
+    expect(res.status).toBe(200);
+    const addresses = addressesOf(await res.text());
+    expect(addresses[0]).toBe(EDGE_B);
+    const s = await row(t, subId);
+    expect(s.lastRender).toMatchObject({
+      primaryEdgeId: edgeB,
+      country: 'IR',
+      primaryTier: 1,
+    });
+    // The blocked edge is at most the backup (nothing else is left for it).
+    if (s.lastRender?.backupEdgeId) {
+      expect(s.lastRender.backupEdgeId).toBe(edgeA);
+      expect(s.lastRender.backupTier).toBe(2);
+    }
+    // The body is cached under the member's stored country.
+    const entries = JSON.parse(s.subCache!) as Array<{ region?: string; render?: unknown }>;
+    expect(entries[0]).toMatchObject({ region: 'IR', render: { primaryEdgeId: edgeB } });
+  });
+
+  test('steer off: the same member gets the edge their seed points at, as before', async () => {
+    const { t, subId, edgeA } = await world({ steer: false });
+    const res = await fetchAs(t, 'v2rayNG/1.9.0');
+    expect(addressesOf(await res.text())[0]).toBe(EDGE_A);
+    const s = await row(t, subId);
+    expect(s.lastRender).toMatchObject({ primaryEdgeId: edgeA, country: 'IR' });
+    expect(s.lastRender?.primaryTier).toBeUndefined();
+  });
+
+  test('a transient reading never steers and is stored nowhere (detection off, Automatic)', async () => {
+    const { t, subId, edgeA } = await world({ choice: null });
+    const res = await fetchAs(t, 'v2rayNG/1.9.0', 'IR');
+    expect(addressesOf(await res.text())[0]).toBe(EDGE_A);
+    const s = await row(t, subId);
+    expect(s.lastRender?.primaryEdgeId).toBe(edgeA);
+    expect(s.lastRender?.country).toBeUndefined();
+    expect(s.lastRender?.primaryTier).toBeUndefined();
+    expect(s.regionSeenCountry).toBeUndefined();
+    expect(JSON.stringify(s)).not.toContain('"IR"');
+  });
+
+  test('a cache hit records the snapshot of the body it serves (two apps alternating)', async () => {
+    const { t, subId } = await world();
+    await fetchAs(t, 'v2rayNG/1.9.0');
+    expect((await row(t, subId)).lastRender?.family).toBe('v2rayng');
+    await fetchAs(t, 'Hiddify/2.0');
+    const hiddify = (await row(t, subId)).lastRender?.family;
+    expect(hiddify).not.toBe('v2rayng');
+    // A hit for the first app: the snapshot follows the body served, not the last miss.
+    await fetchAs(t, 'v2rayNG/1.9.0');
+    expect((await row(t, subId)).lastRender?.family).toBe('v2rayng');
+  });
+
+  test('"Somewhere else" strips the snapshot country with every other copy', async () => {
+    const { t, subId, userId, edgeB } = await world();
+    await fetchAs(t, 'v2rayNG/1.9.0');
+    expect((await row(t, subId)).lastRender?.country).toBe('IR');
+    await t.mutation(internal.memberCountry.setChoice, { userId, region: 'ZZ' });
+    const s = await row(t, subId);
+    expect(s.lastRender?.primaryEdgeId).toBe(edgeB);
+    expect(s.lastRender?.country).toBeUndefined();
+    expect(s.lastRender?.primaryTier).toBeUndefined();
+    expect(s.lastRender?.backupTier).toBeUndefined();
+  });
+
+  test('a snapshot naming a country that is no longer stored keeps only its plain facts', async () => {
+    const { t, subId, userId, edgeB } = await world();
+    await t.mutation(internal.memberCountry.setChoice, { userId, region: 'ZZ' });
+    await t.mutation(internal.subscriptions.markDelivered, {
+      subscriptionId: subId,
+      contentAt: Date.now(),
+      renderedEpoch: 1,
+      render: {
+        epoch: 1,
+        family: 'other',
+        listenerKeys: ['a1'],
+        primaryEdgeId: edgeB,
+        country: 'IR',
+        primaryTier: 1,
+      },
+    });
+    const s = await row(t, subId);
+    expect(s.lastRender).toMatchObject({ primaryEdgeId: edgeB, family: 'other' });
+    expect(s.lastRender?.country).toBeUndefined();
+    expect(s.lastRender?.primaryTier).toBeUndefined();
+  });
+
+  test("a mirror is steered by the member's own choice only, never by a guess", async () => {
+    const { t, subId, userId } = await world();
+    const decide = () =>
+      t.query(internal.edgeRender.decideForSubscription, {
+        subscriptionId: subId,
+        family: 'other',
+      });
+    let d = await decide();
+    expect(d.kind === 'render' && d.context.storedEdgeCountry).toBe('IR');
+    // Automatic with a stored guess: the mirror is not steered.
+    await t.mutation(internal.memberCountry.setChoice, { userId, region: null });
+    await t.run(async (ctx) => {
+      await upsertSettingRow(ctx, 'delivery.country.detect', 'true');
+      await ctx.db.patch(subId, { regionSeenCountry: 'IR', regionSeenAt: Date.now() });
+    });
+    d = await decide();
+    expect(d.kind === 'render' && d.context.storedEdgeCountry).toBe(null);
+  });
+});

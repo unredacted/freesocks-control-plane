@@ -606,6 +606,16 @@
             />
             <span>Guess the country from the connection</span>
           </label>
+          <label class="flex items-center gap-3">
+            <Checkbox
+              checked={draft['delivery.country.steer'] === true}
+              onCheckedChange={(v) => (draft = { ...draft, 'delivery.country.steer': v === true })}
+            />
+            <span>
+              Order each member's addresses by their country: addresses that work there first,
+              blocked ones only when nothing else is left (their own choice or a stored guess only)
+            </span>
+          </label>
           <div class="flex flex-wrap gap-6">
             <div>
               <label class="text-xs text-muted-foreground mb-1 block" for="country-sticky-days">

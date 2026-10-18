@@ -23,6 +23,10 @@ import {
   RENDER_CLIENT_FAMILIES,
   type RenderClientFamily,
 } from './lib/edgeConfig';
+import { liveCountryState } from './lib/edges/country/group';
+import { ELSEWHERE, liveChoice } from './lib/memberCountry';
+import { memberFamilyOf } from './lib/memberFamily';
+import { resolveMemberCountryConfig } from './memberCountry';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import {
   effectiveRule,
@@ -30,7 +34,7 @@ import {
   type DeliveryStyle,
   type RenderMatcher,
 } from './lib/edges/render';
-import { assignEndpoints } from './lib/edges/assignment';
+import { assignEndpoints, endpointsFor } from './lib/edges/assignment';
 import type { CountryContext, PublishedEdge } from './lib/edges/assignment';
 import { protocolUsesSni } from './lib/edges/protocols';
 import { parseIntent } from './lib/edges/intent';
@@ -204,7 +208,7 @@ export async function publishedEdgesOf(
       listener.enabled;
     if (!eligible && !opts.includeIneligible) continue;
     if (!listener) continue; // no listener at all: nothing to render from
-    published.push(toPublishedEdge(edge, listener, edge.poolIndex ?? i, eligible));
+    published.push(toPublishedEdge(edge, listener, edge.poolIndex ?? i, eligible, now));
   }
   return { published, matchers };
 }
@@ -219,7 +223,13 @@ export function toPublishedEdge(
   listener: Doc<'relayListeners'>,
   poolIndex: number,
   eligible: boolean,
+  now = Date.now(),
 ): PublishedEdge {
+  // The effective per-country state (edgeCountry.ts), entries past their
+  // `until` already dropped: only an assignment given an `edgeCountry` reads it.
+  const country = liveCountryState(edge.countryState?.byCountry, now);
+  const provenIn = country.filter((c) => c.state === 'proven').map((c) => c.country);
+  const blockedIn = country.filter((c) => c.state === 'blocked').map((c) => c.country);
   const proto = {
     protocol: listener.protocol,
     streamTransport: listener.streamTransport,
@@ -255,6 +265,8 @@ export function toPublishedEdge(
         }))
       : [],
     ...(listener.sniPick ? { sniPick: listener.sniPick } : {}),
+    ...(provenIn.length > 0 ? { provenIn } : {}),
+    ...(blockedIn.length > 0 ? { blockedIn } : {}),
     ...((edge.layer ?? 'l4') === 'l7' && edge.frontQualification?.ok
       ? { proofExpiresAt: edge.frontQualification.expiresAt }
       : {}),
@@ -389,6 +401,12 @@ export interface SubscriptionRenderContext extends EdgeRenderContext {
   renderKey: string | null;
   /** The country context of a render that has no request behind it (a mirror). */
   storedWhere: CountryContext;
+  /**
+   * Delivery by country for a render with no request behind it (a mirror):
+   * the member's own CHOICE only (a public object held by a third party is
+   * never shaped by a guess), on a freedom-family key, while steering is on.
+   */
+  storedEdgeCountry: string | null;
 }
 
 export type SubscriptionRenderDecision =
@@ -455,6 +473,16 @@ export const decideForSubscription = internalQuery({
       { kind: 'member' },
       { includeIneligible: true },
     );
+    const curated = (await resolveSniConfig(ctx.db)).curatedCountries;
+    const countryCfg = await resolveMemberCountryConfig(ctx.db);
+    const choice = liveChoice(sub, curated);
+    const storedEdgeCountry =
+      countryCfg.steer &&
+      choice &&
+      choice !== ELSEWHERE &&
+      (await memberFamilyOf(ctx.db, { ...sub, pinnedNode: node ?? sub.pinnedNode })) === 'freedom'
+        ? choice
+        : null;
     return {
       kind: 'render',
       context: {
@@ -464,6 +492,7 @@ export const decideForSubscription = internalQuery({
         published,
         rule,
         preferDistinctProviders: cfg.render.preferDistinctProviders,
+        minProvenForExclusive: cfg.country.minProvenForExclusive,
         renderKey: sub.renderKey ?? null,
         // For a render with NO request behind it (a mirror): the member's own
         // stored answer when it is a curated country, else no country at all,
@@ -471,8 +500,9 @@ export const decideForSubscription = internalQuery({
         storedWhere: resolveWhere({
           override: sub.sniRegion,
           inferred: null,
-          curated: (await resolveSniConfig(ctx.db)).curatedCountries,
+          curated,
         }).where,
+        storedEdgeCountry,
         originAddress: relay.originAddress,
         deliveryStyle: await deliveryStyleOf(ctx, sub.backendServerId),
       },
@@ -524,14 +554,14 @@ export const memberView = internalQuery({
     const backup = snap.backupEdgeId ? byId.get(snap.backupEdgeId) : undefined;
     if (!primary) return { refreshSuggested: true, known: false, connections: [] };
     const rule = effectiveRule(cfg.render, cfg.render.clients.other);
-    const assigned = assignEndpoints(sub.renderKey ?? '', [primary, ...(backup ? [backup] : [])], {
-      now: Date.now(),
-      preferDistinctProviders: cfg.render.preferDistinctProviders,
-      includeBackup: rule.includeBackup && !!backup,
-      canEmitV6: rule.ipv6Mode === 'both',
-      namesPerEndpoint: rule.namesPerEndpoint,
-      backupNames: rule.backupNames,
-    });
+    // The snapshot's roles as they were: a seed over just these two edges could
+    // swap them (the member's primary would read as their backup).
+    const assigned = endpointsFor(
+      sub.renderKey ?? '',
+      primary,
+      rule.includeBackup ? (backup ?? null) : null,
+      { namesPerEndpoint: rule.namesPerEndpoint, backupNames: rule.backupNames },
+    );
     const connections = renderEntries(assigned, rule, false, origin.originAddress).map((e) => ({
       label: e.label,
       role: e.role,

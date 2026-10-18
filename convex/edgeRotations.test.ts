@@ -1965,3 +1965,49 @@ describe('edgeRotations: per-country checks before a replacement goes out', () =
     }
   });
 });
+
+describe('edgeRotations: delivery by country holds a block it already routes around', () => {
+  test('steer on: a test block on an edge blocked in IR, beside a published edge that is not, is vetoed country_scoped', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('EDGE_SIMULATOR_ALLOW', 'simulate-blocks');
+    fakeWorld();
+    try {
+      const { t, relayId, oldEdgeId } = await seed();
+      const spare = await provisionSpare(t, relayId);
+      await t.run(async (ctx) => {
+        await upsertSettingRow(ctx, 'edge.enabled', 'true');
+        await upsertSettingRow(ctx, 'edge.autoRotate', 'true');
+        await upsertSettingRow(ctx, 'edge.probe.enabled', 'true');
+        await ctx.db.patch(relayId, { autoRotate: true, desiredPublished: 2 });
+      });
+      // A second published edge on the same listener, not blocked in IR.
+      await t.mutation(internal.relays.publishEdge, { relayId, edgeId: spare, poolIndex: 1 });
+      await t.run(async (ctx) => {
+        await ctx.db.patch(oldEdgeId, {
+          countryState: {
+            byCountry: [{ country: 'IR', state: 'blocked', from: 'mark' }],
+            updatedAt: Date.now(),
+          },
+        });
+      });
+      // Members' bodies are rendered (steering orders what is rendered).
+      await t.run((ctx) => upsertSettingRow(ctx, 'edge.render.enabled', 'true'));
+      await t.mutation(internal.edgeSimulations.start, { edgeId: oldEdgeId, country: 'IR' });
+      const veto = async () =>
+        (await t.query(internal.relays.get, { id: relayId }))!.suspicion?.veto;
+      // Steering off: the block is acted on as before (no spare is left, so the
+      // start is refused, but nothing vetoes it).
+      await t.run((ctx) => upsertSettingRow(ctx, 'delivery.country.steer', 'false'));
+      await t.action(internal.edgeDetector.run, {});
+      expect(await veto()).toBeNull();
+      // Steering on: members in IR already get the other edge; nothing is burned.
+      await t.run((ctx) => upsertSettingRow(ctx, 'delivery.country.steer', 'true'));
+      expect((await t.action(internal.edgeDetector.run, {})).rotated).toBe(0);
+      const origin = (await t.query(internal.relays.get, { id: relayId }))!;
+      expect(origin.suspicion?.veto).toBe('country_scoped');
+      expect(origin.activeRotationId).toBeUndefined();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});

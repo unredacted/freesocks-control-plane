@@ -18,7 +18,7 @@
 import { v } from 'convex/values';
 import type { Doc, Id } from './_generated/dataModel';
 import { internalMutation, type MutationCtx } from './_generated/server';
-import { assignEndpoints } from './lib/edges/assignment';
+import { endpointsFor, type CountryContext } from './lib/edges/assignment';
 import { resolveWhere } from './lib/edges/sni/country';
 import { NO_COUNTRY, dayOf, shareOf } from './lib/edges/sni/health';
 import { effectiveRule } from './lib/edges/render';
@@ -74,14 +74,19 @@ export async function attributeReport(
   // detection off, the country they shared with this report standing in for
   // the request's), so a member whose body followed a guess is credited the
   // names they actually hold.
-  const where = memberWhere({
-    family,
-    sub,
-    cfg: countryCfg,
-    listed: sniCfg.curatedCountries,
-    now,
-    reading: args.consentedCountry,
-  }).where;
+  // The render's own stored country when its snapshot kept one (what the body
+  // was shaped for, whatever has changed since); else the rule above.
+  const where: CountryContext =
+    snap.country !== undefined
+      ? { country: snap.country, curated: sniCfg.curatedCountries }
+      : memberWhere({
+          family,
+          sub,
+          cfg: countryCfg,
+          listed: sniCfg.curatedCountries,
+          now,
+          reading: args.consentedCountry,
+        }).where;
   // The country the counts are KEPT under is never a guess (docs/privacy.md): the
   // member's own answer, else the country they shared with the report.
   const counted = resolveWhere({
@@ -90,15 +95,17 @@ export async function attributeReport(
     curated: sniCfg.curatedCountries,
   }).where;
   const rule = effectiveRule(cfg.render, cfg.render.clients.other);
-  const assigned = assignEndpoints(sub.renderKey, [primary, ...(backup ? [backup] : [])], {
-    now,
-    preferDistinctProviders: cfg.render.preferDistinctProviders,
-    includeBackup: rule.includeBackup && !!backup,
-    canEmitV6: rule.ipv6Mode === 'both',
-    namesPerEndpoint: rule.namesPerEndpoint,
-    backupNames: rule.backupNames,
-    where,
-  });
+  // The snapshot's roles as they were (a seed over two edges could swap them).
+  const assigned = endpointsFor(
+    sub.renderKey,
+    primary,
+    rule.includeBackup ? (backup ?? null) : null,
+    {
+      namesPerEndpoint: rule.namesPerEndpoint,
+      backupNames: rule.backupNames,
+      where,
+    },
+  );
   const endpoint = [assigned.primary, assigned.backup].find((e) => e?.edge.edgeId === edgeId);
   // Only ranked, name-presenting L4 listeners: elsewhere the name is not a
   // per-member choice, so a report says nothing about it.
