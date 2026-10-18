@@ -30,11 +30,9 @@
     invalidateConfig,
     invalidateOverview,
     invalidateRelay,
-    rebalanceRelay,
     requireRelayEdges,
     retrySetupRun,
     setEdgeAutomation,
-    thawMaintenance,
   } from '@client/lib/edgesApi';
   import { serverSummaryQuery } from '@client/lib/serversApi';
   import { nodeHomeOf } from '../../servers/lib/routes';
@@ -42,7 +40,8 @@
   import AttentionList from '../components/AttentionList.svelte';
   import SectionHeader from '../components/SectionHeader.svelte';
   import type { AttentionItem } from '../lib/attention';
-  import { attentionTarget } from '../lib/attention';
+  import { runAttentionCall } from '../lib/attentionCalls';
+  import { attentionCallDeps } from '../lib/attentionCallDeps';
   import { edgeErrorMessage } from '../lib/edgeErrors';
   import { edgesPaths } from '../lib/routes';
   import { fleetSentence, statusOf } from '../lib/statusWords';
@@ -107,42 +106,21 @@
     runParam.value = res.runId;
   }
 
-  /** Server-call attention actions; the rest navigate to the page that does it by hand. */
-  async function onAction(item: AttentionItem): Promise<void> {
-    try {
-      switch (item.action) {
-        case 'verify_endpoint':
-          if (!item.edgeId) break;
-          testEdgeIds = [item.edgeId];
-          testRelayId = null;
-          testRelaySlug = item.relaySlug;
-          testRunId = null;
-          return;
-        case 'require_edges':
-          if (!item.relayId) break;
-          await goLive(item.relayId, item.relaySlug);
-          return;
-        case 'rebalance':
-          if (!item.relayId) break;
-          await rebalanceRelay(item.relayId);
-          toast.success('Made room. The uncovered transport gets its address next.');
-          invalidateOverview(qc);
-          return;
-        case 'thaw':
-          await thawMaintenance();
-          toast.success('New work is allowed again.');
-          invalidateConfig(qc);
-          invalidateOverview(qc);
-          return;
-        default:
-          break;
-      }
-      router.navigate(attentionTarget(item));
-    } catch (e) {
-      toast.error(edgeErrorMessage(e));
-      throw e;
-    }
-  }
+  /**
+   * Server-call attention actions (lib/attentionCalls.ts): a publish puts the
+   * named spare in use and opens its run, the test card and go-live open here.
+   */
+  const attentionDeps = attentionCallDeps(qc, {
+    plain: true,
+    openTest: (item) => {
+      testEdgeIds = item.edgeId ? [item.edgeId] : [];
+      testRelayId = null;
+      testRelaySlug = item.relaySlug;
+      testRunId = null;
+    },
+    goLive: (item) => goLive(item.relayId!, item.relaySlug),
+  });
+  const onAction = (item: AttentionItem) => runAttentionCall(item, attentionDeps);
 
   let automationBusy = $state(false);
   async function setAutomation(on: boolean): Promise<void> {
