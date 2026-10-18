@@ -48,6 +48,7 @@ import {
   validateSettings,
   withoutPlacementKeys,
   EDGE_INTENT_DEFAULT_SETTINGS,
+  EDGE_PLACEMENT_SETTINGS,
 } from './lib/edges/accountSettings';
 import { placeKeyOf } from './lib/edges/locations';
 import { l7HostAccepted, l7HostHeaderFor, zoneModeCarriesOrigin } from './lib/edges/layers';
@@ -685,6 +686,30 @@ export const rotateCredentials = internalAction({
       const res = await edgeProviderFor(acct.provider).testCredentials(cfg);
       // The stored (still valid) credentials are untouched on a failed test.
       if (!res.ok) return { ok: false, code: res.code ?? 'error', detail: res.detail };
+      // The test above needs no location, so a key scoped to fewer projects or
+      // regions can pass it. Every location still in use (switched on, or with
+      // edges that describe and destroy must keep reaching) is read with the new
+      // key first; one it cannot read refuses the rotation, nothing changed.
+      if (EDGE_PLACEMENT_SETTINGS[acct.provider].length > 0) {
+        const locations = await ctx.runQuery(internal.edgeLocations.listForAccount, {
+          accountId: a.accountId,
+        });
+        for (const loc of locations) {
+          if (!loc.enabled && loc.liveEdges === 0) continue;
+          try {
+            await edgeProviderFor(acct.provider).inventory({
+              ...cfg,
+              ...loc.placement,
+            } as EdgeProviderConfig);
+          } catch (err) {
+            return {
+              ok: false,
+              code: 'location_unreachable',
+              detail: `${loc.label} (${toOpsFailure(err).data.code})`,
+            };
+          }
+        }
+      }
       // Apply EXACTLY what was tested, against the row version it was built from.
       const applied = await ctx.runMutation(internal.edgeProviderAccounts.applyCredentialRotation, {
         id: a.accountId,

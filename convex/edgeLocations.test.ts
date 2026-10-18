@@ -80,6 +80,33 @@ describe('an account is credentials; a location is where its edges live', () => 
     expect(again).toEqual({ id: locs[0].id, created: false });
   });
 
+  test('a location that would provision without a required regional value is refused', async () => {
+    const t = convexTest(schema, modules);
+    // The template names no flavor (the compiled default is empty) and OVH needs one.
+    const accountId = await createAccount(t, {
+      provider: 'ovh',
+      name: 'ovh',
+      settings: { applicationKey: 'ak', endpoint: 'ovh-eu' },
+    });
+    const placement = { serviceName: 'svc', regionName: 'REG2', networkId: 'n', subnetId: 's' };
+    await expect(
+      t.mutation(internal.edgeLocations.create, { accountId, placement }),
+    ).rejects.toThrow(/template_value_required/);
+    const made = await t.mutation(internal.edgeLocations.create, {
+      accountId,
+      placement,
+      regionalParams: { flavorId: 'flavor-small' },
+    });
+    expect(made.created).toBe(true);
+    // Clearing its own value later is refused the same way.
+    await expect(
+      t.mutation(internal.edgeLocations.update, {
+        id: made.id as Id<'edgeLocations'>,
+        regionalParams: {},
+      }),
+    ).rejects.toThrow(/template_value_required/);
+  });
+
   test('a new location is offered by the provider to this key, labelled by it, and created once', async () => {
     const t = convexTest(schema, modules);
     const accountId = await createAccount(t, { provider: 'upcloud', name: 'up', settings: {} });
@@ -305,7 +332,7 @@ describe('selection picks a trusted location', () => {
 });
 
 describe('removing a location', () => {
-  test('refused while an edge lives there or a node names it; the default moves to the next', async () => {
+  test('refused while an edge lives there, a node names it or an open run picked it; the default moves to the next', async () => {
     const t = convexTest(schema, modules);
     const fx = await seedEdgeFixture(t, { qualified: true });
     const first = (await defaultLocationRow(t, fx.accountId))!._id;
@@ -330,6 +357,34 @@ describe('removing a location', () => {
       /location_in_use/,
     );
     await t.run((c) => c.db.patch(fx.relayId, { providerSet: [] }));
+    // A setup run that picked it before creating its first edge holds it too.
+    const now = Date.now();
+    const runId = await t.run((c) =>
+      c.db.insert('edgeSetupRuns', {
+        relaySlug: 'node-one',
+        backendServerId: fx.serverId,
+        nodeName: 'node-one',
+        nodeUuid: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+        picks: [{ locationId: first, accountId: fx.accountId }],
+        plan: '{}',
+        planHash: 'h',
+        planRevision: 1,
+        approvedHideUuids: [],
+        stage: 'provision',
+        state: 'running',
+        generation: 1,
+        stepVersion: 1,
+        listeners: [],
+        stageEnteredAt: now,
+        events: [],
+        startedAt: now,
+        updatedAt: now,
+      }),
+    );
+    await expect(t.mutation(internal.edgeLocations.remove, { id: first })).rejects.toThrow(
+      /location_in_use/,
+    );
+    await t.run((c) => c.db.patch(runId, { state: 'cancelled' }));
     await t.mutation(internal.edgeLocations.remove, { id: first });
     expect((await t.run((c) => c.db.get(fx.accountId)))!.defaultLocationId).toBe(second);
     const audit = await t.run((c) => c.db.query('auditLog').collect());

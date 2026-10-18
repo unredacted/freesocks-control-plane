@@ -28,6 +28,7 @@
     createProviderLocation,
     invalidateProviders,
     locationOptions,
+    providersQuery,
     templatesQuery,
   } from '@client/lib/edgesApi';
   import CodeNote from '../components/CodeNote.svelte';
@@ -53,6 +54,7 @@
   const uid = $props.id();
   const qc = useQueryClient();
   const templates = templatesQuery();
+  const providers = providersQuery();
 
   let values = $state<Record<string, string>>({});
   let discovered = $state<EdgeDiscoverResponse | null>(null);
@@ -66,13 +68,21 @@
     missingRequired(provider, values).filter((l) => fields.some((f) => f.label === l)),
   );
 
-  /** The template fields whose value differs per region, with the value the template carries now. */
+  /**
+   * The template fields whose value differs per region, with the value the template carries now.
+   * The template is the one the server would use for a new location: the account's chosen one,
+   * then the account-scoped default, then the provider default (`resolveTemplateFor`).
+   */
   const regionalFields = $derived.by(() => {
     const schema = templates.data?.schemas[provider];
-    const list = templates.data?.templates ?? [];
+    const list = (templates.data?.templates ?? []).filter(
+      (t) => t.provider === provider && (t.accountId === null || t.accountId === accountId),
+    );
+    const chosenId = providers.data?.accounts.find((a) => a.id === accountId)?.defaultTemplateId;
     const tpl =
-      list.find((t) => t.provider === provider && t.isDefault && t.accountId === accountId) ??
-      list.find((t) => t.provider === provider && t.isDefault && t.accountId === null);
+      (chosenId ? list.find((t) => t.id === chosenId) : undefined) ??
+      list.find((t) => t.isDefault && t.accountId === accountId) ??
+      list.find((t) => t.isDefault && t.accountId === null);
     const params = (tpl?.params ?? schema?.defaults ?? {}) as Record<string, unknown>;
     return (schema?.fields ?? [])
       .filter((f) => f.regional)

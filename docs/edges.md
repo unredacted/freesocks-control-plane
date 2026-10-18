@@ -1807,15 +1807,18 @@ asks the provider again before it saves, refuses a place it does not offer
 takes the region's name as the label and schedules that location's inventory. The same place
 twice is the same location (upsert on account and `placementHash`). `PATCH …/locations/{locId}`
 switches one off, sets its limit, cost note, default template or regional values, or makes it the
-default; `DELETE` refuses while an edge that is not destroyed lives there
-(`edge.location_in_use`). An account PATCH that names a placement key is
+default; `DELETE` refuses while an edge that is not destroyed lives there, a node's provider set
+names it, or an open setup run picked it before creating its first edge (`edge.location_in_use`).
+A create, or a change to the location's template or regional values, refuses
+(`edge.template_value_required`) when a regional value the provider requires (the OVH flavor id)
+would be empty in both the template the location resolves and its own values. An account PATCH that names a placement key is
 `edge.placement_on_location`. Both kinds of call go through the `admin.edges.provider-call`
 throttle when they reach the provider.
 
 **Frozen per edge.** Each edge records `locationId`, `placeKey` and `placement` when it is
 planned (`edges.ts insertPlannedEdge`, `relays.ts` adopt). `edgeProviderOps.loadAdapter` builds
 the adapter's settings from the account, then the edge's own placement for a call about that
-edge (step, poll, discover, describe, inspect, destroy), or the location's for planning
+edge (step, poll, discover, describe, inspect including the live refresh, destroy), or the location's for planning
 (`planProvision`, `effectiveTemplate`, `inventory`, adoption). A credential test takes no
 placement: Gcore and OVH list projects, Scaleway reads its first zone, UpCloud reads the
 account. So a describe or a destroy always reaches the region the resource is in, even when the
@@ -1825,7 +1828,10 @@ account has others.
 `autoQualifyHold` live on the location; the account's `qualified` in the admin projection means
 any switched-on location is trusted. A new location is trusted by its first tested address (a
 Try it tick or a passing L7 proof) or by the Trust override. Editing an account's settings
-untrusts every location; a credential rotation that passes its test keeps trust; moving an
+untrusts every location; a credential rotation that passes its test keeps trust. Because that
+test needs no location, a rotation first reads every location still in use (switched on, or with
+edges) with the new key, through the adapter's inventory call; a location it cannot read refuses
+the rotation (`location_unreachable`, naming the location) and nothing is stored. Moving an
 account's default template untrusts the locations that fall back to it.
 
 **Regional template values.** A template field whose value differs per region is flagged

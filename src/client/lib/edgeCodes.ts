@@ -509,6 +509,11 @@ const COPY = {
     explain: 'The location already runs as many addresses as its limit allows.',
     fix: 'Raise the limit on the location or pick another one.',
   },
+  location_unreachable: {
+    label: 'A location is not reachable',
+    explain: 'The new credentials could not read one of the account locations in use.',
+    fix: 'Use credentials that reach every location, or switch that location off first.',
+  },
   account_disabled: {
     label: 'Account disabled',
     explain: 'The named account is switched off.',
@@ -1129,6 +1134,11 @@ const REFUSAL_COPY = {
   location_not_geographic: {
     label: 'No regions for this provider',
     explain: 'This provider is not tied to a region: its account has one location already.',
+  },
+  template_value_required: {
+    label: 'Choose a value for this region',
+    explain: 'The template leaves a value empty that this provider needs per region.',
+    fix: 'Pick it for this location, or set it in the template.',
   },
   placement_on_location: {
     label: 'Region is set per location',

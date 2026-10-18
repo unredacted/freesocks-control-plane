@@ -1160,8 +1160,10 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           'An adopted edge has no provider account to inspect',
           409,
         );
+      // The edge's own placement: its location, never the account's default.
       const res: InspectResult = await ctx.runAction(internal.edgeProviderOps.inspect, {
         accountId: edge.accountId,
+        edgeId,
         ledger: { steps: edge.steps, resources: edge.resources },
       });
       await ctx.runMutation(internal.edgeAdmin.recordLive, {

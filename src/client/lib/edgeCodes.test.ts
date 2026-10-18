@@ -123,6 +123,7 @@ describe('EDGE_REFUSAL_COPY', () => {
     'location_in_use',
     'location_not_geographic',
     'placement_on_location',
+    'template_value_required',
   ];
 
   test('every refusal the pages meet is worded, and is part of the shared table', () => {

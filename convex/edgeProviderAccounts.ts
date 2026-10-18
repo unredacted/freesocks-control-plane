@@ -658,13 +658,15 @@ export const remove = internalMutation({
         message: 'Another provider account uses this one for DNS; repoint or remove it first',
       });
     }
-    // Its locations go with it, unless a protected node still names one.
+    // Its locations go with it, unless a protected node or an open setup run
+    // still names one.
     const locations = await locationsOfAccount(ctx.db, id);
     for (const loc of locations) {
-      if ((await locationInUse(ctx.db, loc)).sets > 0)
+      const use = await locationInUse(ctx.db, loc);
+      if (use.sets > 0 || use.runs > 0)
         throw new ConvexError({
           code: 'edge.account_in_use',
-          message: 'A protected node still uses a location of this account; remove it there first',
+          message: 'A node still uses or is being protected in a location of this account',
         });
     }
     for (const loc of locations) await ctx.db.delete(loc._id);

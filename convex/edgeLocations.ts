@@ -34,7 +34,8 @@ import {
   placementHashOf,
   regionalParamsOf,
 } from './lib/edges/locations';
-import { resolveTemplateFor } from './edgeTemplates';
+import { resolveTemplateFor, type TemplateLocation } from './edgeTemplates';
+import { EDGE_TEMPLATES } from './lib/edges/providers/templates';
 import { assertAdmission } from './lib/edges/maintenance';
 import { edgeLayerOf } from './lib/edges/providers/capabilities';
 import { autoQualifyDecision, type AutoQualifyEvidence } from './lib/edges/autoQualify';
@@ -586,6 +587,43 @@ export async function inventoryView(ctx: { db: QueryCtx['db'] }, r: Location) {
  * region is offered to this key and read its label first). Returns the
  * existing row for a placement the account already has.
  */
+/**
+ * The required per-region template values a location would provision without:
+ * empty both in the template it resolves and in its own overlay (an OVH load
+ * balancer needs a flavor id, and which ones exist depends on the region).
+ * Returns the field labels.
+ */
+async function missingRegionalValues(
+  db: DatabaseReader,
+  account: Doc<'edgeProviderAccounts'>,
+  location: TemplateLocation,
+): Promise<string[]> {
+  const required = EDGE_TEMPLATES[account.provider].fields.filter((f) => f.regional && f.required);
+  if (required.length === 0) return [];
+  const eff = await resolveTemplateFor(
+    { db },
+    account.provider,
+    null,
+    account.defaultTemplateId ?? null,
+    account._id,
+    location,
+  );
+  return required
+    .filter((f) => {
+      const value = eff.params[f.key];
+      return value === undefined || value === null || String(value).trim() === '';
+    })
+    .map((f) => f.label);
+}
+
+function refuseMissingRegional(missing: string[]): void {
+  if (missing.length > 0)
+    throw new ConvexError({
+      code: 'edge.template_value_required',
+      message: `Choose ${missing.join(', ')} for this region: the template leaves it empty`,
+    });
+}
+
 export const create = internalMutation({
   args: {
     accountId: v.id('edgeProviderAccounts'),
@@ -605,13 +643,20 @@ export const create = internalMutation({
         code: 'edge.location_not_geographic',
         message: 'This provider has one location per account',
       });
+    const regionalParams = regionalParamsOf(account.provider, a.regionalParams);
+    refuseMissingRegional(
+      await missingRegionalValues(ctx.db, account, {
+        regionalParams:
+          Object.keys(regionalParams).length > 0 ? JSON.stringify(regionalParams) : null,
+      }),
+    );
     const res = await upsertLocation(
       ctx,
       account,
       { ...((a.placement ?? {}) as Record<string, unknown>), type: account.provider },
       {
         label: a.label,
-        regionalParams: regionalParamsOf(account.provider, a.regionalParams),
+        regionalParams,
         maxLiveEdges: a.maxLiveEdges,
         costNote: a.costNote,
       },
@@ -673,6 +718,14 @@ export const update = internalMutation({
       patch.defaultTemplateId = a.defaultTemplateId ?? undefined;
       templateMoved ||= (a.defaultTemplateId ?? undefined) !== row.defaultTemplateId;
     }
+    if (templateMoved)
+      refuseMissingRegional(
+        await missingRegionalValues(ctx.db, account, {
+          defaultTemplateId:
+            'defaultTemplateId' in patch ? patch.defaultTemplateId : row.defaultTemplateId,
+          regionalParams: 'regionalParams' in patch ? patch.regionalParams : row.regionalParams,
+        }),
+      );
     await ctx.db.patch(row._id, patch);
     if (templateMoved && row.qualified)
       await untrustLocation(ctx, account, row, { actorAdminId: a.actorAdminId });
@@ -702,13 +755,38 @@ async function setsReferencing(db: DatabaseReader, id: Id<'edgeLocations'>): Pro
   return n;
 }
 
+/**
+ * Open setup runs that picked a location: a run chooses its location before it
+ * creates its first edge, so neither a live edge nor a provider set shows it yet.
+ */
+async function runsReferencing(db: DatabaseReader, id: Id<'edgeLocations'>): Promise<number> {
+  let n = 0;
+  for (const state of ['running', 'waiting', 'needs_you'] as const) {
+    const rows = await db
+      .query('edgeSetupRuns')
+      .withIndex('by_state', (q) => q.eq('state', state))
+      .collect();
+    for (const r of rows)
+      if (
+        (r.picks ?? []).some((p) => p.locationId === id) ||
+        r.listeners.some((l) => l.locationId === id)
+      )
+        n++;
+  }
+  return n;
+}
+
 /** Whether anything still depends on a location (a live edge, a node's provider set, an open setup run). */
 export async function locationInUse(
   db: DatabaseReader,
   location: Location,
-): Promise<{ edges: number; sets: number }> {
+): Promise<{ edges: number; sets: number; runs: number }> {
   const edges = (await liveEdgesOfLocation(db, location)).length;
-  return { edges, sets: await setsReferencing(db, location._id) };
+  return {
+    edges,
+    sets: await setsReferencing(db, location._id),
+    runs: await runsReferencing(db, location._id),
+  };
 }
 
 export const remove = internalMutation({
@@ -728,6 +806,11 @@ export const remove = internalMutation({
       throw new ConvexError({
         code: 'edge.location_in_use',
         message: 'A protected node still uses this location; remove it from the node first',
+      });
+    if (use.runs > 0)
+      throw new ConvexError({
+        code: 'edge.location_in_use',
+        message: 'A node is being protected in this location; finish or cancel that first',
       });
     if (account && EDGE_PLACEMENT_SETTINGS[account.provider].length === 0)
       throw new ConvexError({
