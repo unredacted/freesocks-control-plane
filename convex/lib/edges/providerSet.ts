@@ -256,6 +256,65 @@ export function removableUnder(
   return coverageDeficit(req, without) <= coverageDeficit(req, published);
 }
 
+// --- what a member's body can expect ---------------------------------------------------------------
+
+/** Why a member body gets no backup in another failure domain (reported, never a failure). */
+export type ReducedReason =
+  | 'single_key'
+  | 'backup_disabled'
+  | 'max_entries'
+  | 'distinct_off'
+  | 'one_group';
+
+/**
+ * Whether a rendered body should carry a backup in another group than its
+ * primary, under the EFFECTIVE delivery rule the renderer applies: a
+ * subscription (single-key delivery forces one entry), backups on, room for
+ * a second role (`maxEntries` 0 = unlimited; it cuts further names before
+ * roles, so at 1 the backup is gone), distinct providers preferred, and at
+ * least two groups among the listeners in that body.
+ */
+export function resilienceExpectation(input: {
+  style: 'subscription' | 'single-key';
+  includeBackup: boolean;
+  maxEntries: number;
+  preferDistinct: boolean;
+  groupsOffered: number;
+}): { on: true } | { on: false; reason: ReducedReason } {
+  if (input.style !== 'subscription') return { on: false, reason: 'single_key' };
+  if (!input.includeBackup) return { on: false, reason: 'backup_disabled' };
+  if (input.maxEntries === 1) return { on: false, reason: 'max_entries' };
+  if (!input.preferDistinct) return { on: false, reason: 'distinct_off' };
+  if (input.groupsOffered < 2) return { on: false, reason: 'one_group' };
+  return { on: true };
+}
+
+/** A published edge as the body-level rules read it. */
+export interface GroupedEdge {
+  listenerKey: string;
+  provider: string;
+  locationKey?: string | null;
+  eligible?: boolean;
+}
+
+/**
+ * The groups a body can choose from: among the eligible edges of the
+ * listeners in it, distinct providers, or distinct locations when they are
+ * all one provider. Returns the count and the group function.
+ */
+export function bodyGroups(
+  published: readonly GroupedEdge[],
+  listenerKeys: readonly string[],
+): { count: number; groupOf: (e: GroupedEdge) => string | null } {
+  const pool = published.filter(
+    (e) => e.eligible !== false && listenerKeys.includes(e.listenerKey),
+  );
+  const providers = new Set(pool.map((e) => e.provider));
+  if (providers.size >= 2) return { count: providers.size, groupOf: (e) => e.provider };
+  const locations = new Set(pool.map((e) => e.locationKey).filter((k): k is string => !!k));
+  return { count: locations.size, groupOf: (e) => e.locationKey ?? null };
+}
+
 // --- max flow (tiny graphs) -------------------------------------------------------------------------
 
 interface Need {

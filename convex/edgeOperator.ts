@@ -1672,6 +1672,8 @@ const preflightArgs = {
   accountId: v.optional(v.id('edgeProviderAccounts')),
   /** An explicit location (its account implied); the account's default otherwise. */
   locationId: v.optional(v.id('edgeLocations')),
+  /** `replace`: an explicit spare (that one or nothing). */
+  spareEdgeId: v.optional(v.id('edges')),
   templateId: v.optional(v.id('edgeTemplates')),
   /** `provision` only: false = the edge stays an unpublished spare (no standby is published instead). */
   publish: v.optional(v.boolean()),
@@ -1712,6 +1714,7 @@ export const preflight = internalQuery({
       publishOnDone: a.kind === 'provision' && a.publish !== false,
       requestedAccountId: isTest || a.accountId ? a.accountId : undefined,
       requestedLocationId: a.locationId,
+      requestedSpareEdgeId: a.kind === 'replace' ? a.spareEdgeId : undefined,
       requestedTemplateId: a.templateId,
       allowUnqualified: isTest,
     };

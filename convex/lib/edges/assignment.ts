@@ -57,6 +57,14 @@ export interface PublishedEdge {
   edgeId: string;
   poolIndex: number;
   provider: string;
+  /** The provisioning account (absent for an edge without one). */
+  accountId?: string;
+  /**
+   * `<provider>:<placeKey>`, the edge's location (absent = unknown). The backup
+   * avoids the primary's provider first, then its location (admin-only: never
+   * rendered into a member body).
+   */
+  locationKey?: string;
   listenerId: string;
   listenerKey: string;
   /** How the renderer finds this listener's template entry in a body. */
@@ -403,8 +411,9 @@ export function assignEndpoints(
   );
   const primary = endpointFor('primary', primaryEdge, primarySni.sni, primaryAlts);
   if (!opts.includeBackup) return { primary, backup: null };
-  // Backup: the next assignable edge after the primary in pool order,
-  // preferring a different provider.
+  // Backup: the next assignable edge after the primary in pool order, away
+  // from the primary's failure domain: another provider first, then another
+  // location (a missing key counts as unknown, never as "different").
   const ordered: PublishedEdge[] = [];
   for (let step = 1; step < pool.length; step++) {
     const e = pool[(pIdx + step) % pool.length];
@@ -413,7 +422,13 @@ export function assignEndpoints(
   if (ordered.length === 0) return { primary, backup: null };
   const backupEdge =
     (opts.preferDistinctProviders
-      ? ordered.find((e) => e.provider !== primaryEdge.provider)
+      ? (ordered.find((e) => e.provider !== primaryEdge.provider) ??
+        ordered.find(
+          (e) =>
+            !!e.locationKey &&
+            !!primaryEdge.locationKey &&
+            e.locationKey !== primaryEdge.locationKey,
+        ))
       : undefined) ?? ordered[0];
   // The backup's names avoid the primary's where the list allows it: two
   // edges sharing a blocked name would fail together.

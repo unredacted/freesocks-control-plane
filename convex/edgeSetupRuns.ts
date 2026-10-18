@@ -2221,6 +2221,16 @@ async function stageRehearse(ctx: ActionCtx, run: Run): Promise<null> {
         event: { level: 'warn', code: 'dark_cohorts', detail: dark.join(',') },
         scheduleMs: 0,
       });
+    // Every failure is a body whose backup sits in its primary's failure
+    // domain although another is on offer: the run parks for the operator
+    // (more addresses of its own would not change the assignment; it never
+    // loops through provisioning).
+    if (res.failures.length > 0 && res.failures.every((f) => f.reason === 'resilience_short')) {
+      const f = res.failures[0]!;
+      return needsYou(ctx, run, 'resilience_short', `${f.cohortKey}/${f.format}`, {
+        rehearsal: rehearsalRecord(res, attempts, run),
+      });
+    }
     const f = res.failures[0];
     return needsYou(
       ctx,
@@ -2232,9 +2242,15 @@ async function stageRehearse(ctx: ActionCtx, run: Run): Promise<null> {
       },
     );
   }
+  // Bodies with no backup in another failure domain are reported, with why.
+  const reduced = [...new Set((res.reduced ?? []).map((r) => r.reason))];
   return advance(ctx, run, {
     rehearsal: rehearsalRecord(res, attempts, run),
-    event: { level: 'info', code: 'rehearsed', detail: `attempt ${attempts}` },
+    event: {
+      level: 'info',
+      code: 'rehearsed',
+      detail: `attempt ${attempts}${reduced.length > 0 ? `; reduced: ${reduced.join(',')}` : ''}`,
+    },
   });
 }
 
@@ -2949,7 +2965,7 @@ async function assertReprotectReclaimable(ctx: MutationCtx, r: Run): Promise<voi
 }
 
 /** Whether the node's members are served through THIS origin (its delivery binding is active). */
-async function boundToRelay(ctx: { db: QueryCtx['db'] }, relay: Relay): Promise<boolean> {
+export async function boundToRelay(ctx: { db: QueryCtx['db'] }, relay: Relay): Promise<boolean> {
   if (relay.bindingDeferred || !relay.backendServerId) return false;
   const binding = await deliveryBindingFor(ctx.db, relay.backendServerId, relay.nodeName);
   return !!binding && binding.relaySlug === relay.slug;
@@ -3438,36 +3454,62 @@ export const requireEdges = internalMutation({
         }
       }
     }
-    // The pick: the named location (or account), else the place the origin's
-    // template edges are served from.
+    // The picks: the named location (or account), else the node's provider set,
+    // else the places the origin's template edges are served from.
     const named = locationId ? await ctx.db.get(locationId) : null;
-    const servedFrom = edges.find(
-      (e) => e.accountId && listeners.some((l) => l.templateEdgeId === e._id),
-    );
-    const account =
-      (accountId ? await ctx.db.get(accountId) : null) ??
-      (named ? await ctx.db.get(named.accountId) : null) ??
-      (servedFrom?.accountId ? await ctx.db.get(servedFrom.accountId) : null) ??
-      (await (async () => {
+    const pickRows: Array<{
+      location: Doc<'edgeLocations'>;
+      account: Doc<'edgeProviderAccounts'>;
+    }> = [];
+    const addPick = async (loc: Doc<'edgeLocations'> | null) => {
+      if (!loc || pickRows.some((p) => p.location._id === loc._id)) return;
+      const acct = await ctx.db.get(loc.accountId);
+      if (acct) pickRows.push({ location: loc, account: acct });
+    };
+    if (named || accountId) {
+      const account =
+        (accountId ? await ctx.db.get(accountId) : null) ??
+        (named ? await ctx.db.get(named.accountId) : null);
+      if (!account) throw new ConvexError({ code: 'not_found', message: 'Account not found' });
+      const location = await pickLocationOf(ctx.db, account, named?._id);
+      if (!location)
+        throw new ConvexError({
+          code: 'edge.account_incompatible',
+          message: 'The account has no such location',
+        });
+      await addPick(location);
+    } else if (relay.providerSet) {
+      for (const p of relay.providerSet) await addPick(await ctx.db.get(p.locationId));
+    } else {
+      for (const l of listeners) {
+        const e = l.templateEdgeId ? edges.find((x) => x._id === l.templateEdgeId) : undefined;
+        if (e?.locationId) await addPick(await ctx.db.get(e.locationId));
+      }
+      if (pickRows.length === 0) {
         const withAccount = edges.find((e) => e.accountId);
-        return withAccount?.accountId ? ctx.db.get(withAccount.accountId) : null;
-      })());
-    if (!account)
+        const account = withAccount?.accountId ? await ctx.db.get(withAccount.accountId) : null;
+        if (account) await addPick(await pickLocationOf(ctx.db, account, undefined));
+      }
+    }
+    if (pickRows.length === 0)
       throw new ConvexError({
         code: 'validation',
         message: 'accountId is required for this origin',
       });
-    const location = await pickLocationOf(
-      ctx.db,
-      account,
-      named?._id ??
-        (servedFrom && servedFrom.accountId === account._id ? servedFrom.locationId : undefined),
-    );
-    if (!location)
-      throw new ConvexError({
-        code: 'edge.account_incompatible',
-        message: 'The account has no such location',
-      });
+    const accountsOfPlan = new Map<string, SetupPlanAccount>();
+    for (const p of pickRows) {
+      const row = accountsOfPlan.get(p.account._id as string) ?? {
+        id: p.account._id as string,
+        name: p.account.name,
+        provider: p.account.provider,
+        layer: edgeLayerOf(p.account.provider),
+        compatible: true,
+        reasons: [],
+        locations: [],
+      };
+      row.locations = [...(row.locations ?? []), planLocationOf(p.location)];
+      accountsOfPlan.set(row.id, row);
+    }
     const plan: SetupPlanSnapshot = {
       backendServerId: relay.backendServerId as string,
       backend: '',
@@ -3479,17 +3521,7 @@ export const requireEdges = internalMutation({
       requiredListeners: entries.map((e) => e.listenerKey),
       tooManyInbounds: false,
       directHosts: [],
-      accounts: [
-        {
-          id: account._id as string,
-          name: account.name,
-          provider: account.provider,
-          layer: edgeLayerOf(account.provider),
-          compatible: true,
-          reasons: [],
-          locations: [planLocationOf(location)],
-        },
-      ],
+      accounts: [...accountsOfPlan.values()],
       renderGlobal: { willEnable: false, affectedRelays: [] },
       familiesDisabled: [],
       emptyNode: false,
@@ -3510,7 +3542,7 @@ export const requireEdges = internalMutation({
       backendServerId: relay.backendServerId,
       nodeName: relay.nodeName,
       nodeUuid: plan.nodeUuid,
-      picks: [{ locationId: location._id, accountId: account._id }],
+      picks: pickRows.map((p) => ({ locationId: p.location._id, accountId: p.account._id })),
       plan: JSON.stringify(plan),
       planHash: '',
       planRevision: 1,
@@ -3541,8 +3573,9 @@ export const requireEdges = internalMutation({
       {
         stage,
         listeners: entries.length,
-        accountName: account.name,
-        provider: account.provider,
+        accountName: pickRows[0]!.account.name,
+        provider: pickRows[0]!.account.provider,
+        picks: pickRows.length,
         approvedHides: 0,
         keepDirect: false,
       },
@@ -3578,7 +3611,25 @@ export const reprotect = internalMutation({
     addPicks: v.optional(v.array(v.id('edgeLocations'))),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
-  handler: async (ctx, { relayId, actorAdminId, addPicks, ...rest }) => {
+  handler: (ctx, a) => startReprotect(ctx, a),
+});
+
+/** The re-protect start (`reprotect`, and a set edit that adds a pick to a live enrolled node). */
+export async function startReprotect(
+  ctx: MutationCtx,
+  {
+    relayId,
+    actorAdminId,
+    addPicks,
+    ...rest
+  }: {
+    relayId: Id<'relays'>;
+    mode?: 'replace_all' | 'add';
+    addPicks?: Id<'edgeLocations'>[];
+    actorAdminId?: Id<'adminUsers'>;
+  },
+): Promise<{ runId: Id<'edgeSetupRuns'>; stage: SetupRunStage }> {
+  {
     const mode = rest.mode ?? (addPicks && addPicks.length > 0 ? 'add' : 'replace_all');
     const relay = await ctx.db.get(relayId);
     if (!relay || relay.deleting)
@@ -3826,8 +3877,8 @@ export const reprotect = internalMutation({
     );
     await scheduleStep(ctx, id, 0);
     return { runId: id, stage };
-  },
-});
+  }
+}
 
 // --- reconcile: crash safety ------------------------------------------------------------------------
 

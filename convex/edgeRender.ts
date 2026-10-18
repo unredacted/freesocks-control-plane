@@ -12,6 +12,7 @@
  * the binding's policy version while the subscription is edge-required, null
  * for a subscription no origin covers.
  */
+import { locationKeyOf } from './lib/edges/locations';
 import { verificationListenersOf } from './lib/edges/verificationContext';
 import { v } from 'convex/values';
 import { internalQuery } from './_generated/server';
@@ -228,6 +229,10 @@ export function toPublishedEdge(
     edgeId: edge._id,
     poolIndex,
     provider: edge.provider ?? 'adopted',
+    ...(edge.accountId ? { accountId: edge.accountId as string } : {}),
+    ...(edge.provider && edge.placeKey
+      ? { locationKey: locationKeyOf(edge.provider, edge.placeKey) }
+      : {}),
     listenerId: listener._id,
     listenerKey: listener.listenerKey,
     matchRule: listener.matchRule,

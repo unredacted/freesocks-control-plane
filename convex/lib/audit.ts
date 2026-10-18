@@ -398,6 +398,8 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // rebalance unpublished a duplicate back to standby. Counts and ids only.
   'edge.pool_expanded': ['relaySlug', 'from', 'to', 'blocked'],
   'edge.relay.rebalanced': ['relaySlug', 'edgeId', 'poolIndex', 'epoch'],
+  // A node's provider set edited by hand: counts only (never location names).
+  'edge.relay.providers_changed': ['relaySlug', 'added', 'removed', 'drained', 'picks', 'run'],
   // The automation switch: the one boolean it was set to.
   'edge.automation.set': ['on'],
   // Guided setup runs (edgeSetupRuns.ts): slugs, run ids, stage / code words

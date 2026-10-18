@@ -951,6 +951,10 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
             typeof body.locationId === 'string' && body.locationId
               ? id<'edgeLocations'>(body.locationId)
               : undefined,
+          spareEdgeId:
+            typeof body.spareEdgeId === 'string' && body.spareEdgeId
+              ? id<'edges'>(body.spareEdgeId)
+              : undefined,
           templateId:
             typeof body.templateId === 'string' && body.templateId
               ? id<'edgeTemplates'>(body.templateId)
@@ -1014,6 +1018,24 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
             ...act,
           }),
         );
+      case 'providers': {
+        // The node's provider set: add or remove locations (a live enrolled
+        // node gets its new addresses through an `add` run).
+        const ids = (x: unknown) =>
+          Array.isArray(x)
+            ? x
+                .filter((y): y is string => typeof y === 'string' && y.length > 0)
+                .map((y) => id<'edgeLocations'>(y))
+            : undefined;
+        return json(
+          await ctx.runMutation(internal.edgeProviderSets.change, {
+            relayId,
+            ...(ids(body.add) ? { add: ids(body.add) } : {}),
+            ...(ids(body.remove) ? { remove: ids(body.remove) } : {}),
+            ...act,
+          }),
+        );
+      }
       case 'reprotect':
         // "Protect again" on a live, bound enrolled node: a re-protect run
         // (fresh candidates, Try it, the approval when one is needed). Members

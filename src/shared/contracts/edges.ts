@@ -1433,6 +1433,8 @@ export const PreflightRequest = z.object({
   accountId: z.string().optional(),
   /** An explicit location (its account implied); the account's default location otherwise. */
   locationId: z.string().optional(),
+  /** `replace`: an explicit spare (that one or nothing). */
+  spareEdgeId: z.string().optional(),
   templateId: z.string().optional(),
   /** `provision` only: false checks an unpublished spare, as `provision {publish: false}` starts it. */
   publish: z.boolean().optional(),
