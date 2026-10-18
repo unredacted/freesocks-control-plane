@@ -93,6 +93,17 @@ export function mockFetch(handler: Handler): FetchStub {
   };
 }
 
+/**
+ * No host answers: every call fails the way an unreachable network does (and
+ * is still logged). For tests whose code reaches out in the background
+ * (scheduled provider pulls, probes) without the test caring what comes back.
+ */
+export function refuseNetwork(): FetchStub {
+  return mockFetch((call) => {
+    throw new TypeError(`fetch failed: ${call.method} ${call.url} is unreachable in this test`);
+  });
+}
+
 /** A handler that answers only the calls it owns (null = not mine). */
 export type PartialHandler = (
   call: Captured,

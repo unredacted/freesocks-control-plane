@@ -26,7 +26,9 @@ bun run build
 
 New behavior needs tests. The existing `convex/*.test.ts` files show the patterns: backend logic
 runs in an in-memory Convex (`convex-test`), API routes are tested in `convex/http.test.ts`, and
-proxy-server and payment adapters are tested with a fake `fetch`.
+proxy-server and payment adapters are tested with a fake `fetch`. The fast suite never reaches
+the network: until a test stubs `fetch` (`convex/lib/edges/testing/mockFetch.ts`), a call fails
+the test running at the time (`vitest.setup.ts`), a call from work the test scheduled included.
 
 If you change how FCP talks to proxy servers or how keys reach apps, also run the Docker suites
 (`bun run test:integration:remnawave`, `bun run test:compat`).

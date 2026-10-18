@@ -338,6 +338,14 @@ describe('edgeProviderOps.rotateCredentials', () => {
     expect(res).toMatchObject({ ok: false, code: 'location_unreachable' });
     expect((res as { detail?: string }).detail).toMatch(/\(Client::Forbidden\)$/);
     expect(stub.calls.some((c) => c.path.endsWith('/loadbalancing/loadbalancer'))).toBe(true);
+    // The location read is three parallel calls: the refused one ends the
+    // rotation while the other two are still in flight. They land on this
+    // stub, not on whatever `fetch` is once the test is over.
+    await vi.waitFor(() =>
+      expect(
+        stub.calls.filter((c) => /\/(floatingip|loadbalancing\/flavor)$/.test(c.path)),
+      ).toHaveLength(2),
+    );
     const secret = await t.query(internal.edgeProviderAccounts.getWithSecret, { id });
     expect(secret?.credentials).toEqual({
       type: 'ovh',
