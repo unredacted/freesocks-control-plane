@@ -691,7 +691,7 @@ async function settleBatch(ctx: MutationCtx, batch: string, now: number) {
     country,
     measurements: rows
       .filter((r) => r.status === 'finished')
-      .map((r) => ({ name: r.name, results: r.results })),
+      .map((r) => ({ name: r.name, source: r.source, results: r.results })),
     at: Math.max(...rows.map((r) => r.finishedAt ?? r.requestedAt)),
   });
 }

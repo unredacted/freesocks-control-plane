@@ -1951,21 +1951,31 @@ async function stageVerify(ctx: ActionCtx, run: Run): Promise<null> {
         },
       );
     }
-    // Per-country checks (edgeCountry.ts): the round this stage asked for is the
-    // address's first one from every checked country. It is waited for (at most
-    // `edge.country.preUseWaitMinutes`; unknown never holds the run), and one
-    // that finds the address blocked somewhere while the controls reach it asks
-    // before going live: try another address, or use this one anyway.
-    if (l.probeRequestedAt) {
-      const pu = await ctx.runQuery(internal.edgeCountry.preUse, {
-        edgeId: l.edgeId,
-        since: l.probeRequestedAt - 1000,
-      });
-      if (pu.enabled && pu.state === 'open' && now - (pu.requestedAt ?? now) < pu.waitMs) {
+    // Per-country checks (edgeCountry.ts): this stage asks for the address's
+    // round from every checked country ITSELF, before the rung is looked at:
+    // evidence already on record (a reused spare, background probes) may make
+    // the rung `partial`, and that must not skip the country check. The round
+    // is waited for (at most `edge.country.preUseWaitMinutes`; unknown never
+    // holds the run), and one that finds the address blocked somewhere while
+    // the controls reach it asks before going live: try another address, or
+    // use this one anyway.
+    const pu = await ctx.runQuery(internal.edgeCountry.preUse, {
+      edgeId: l.edgeId,
+      since: (l.probeRequestedAt ?? now) - 1000,
+    });
+    if (pu.enabled) {
+      if (!l.probeRequestedAt) {
+        await ops.requestVerificationProbes(ctx, l.edgeId);
+        l.probeRequestedAt = now;
         waiting = waiting ?? l.listenerKey;
         continue;
       }
-      if (pu.enabled && pu.blockedIn.length > 0) {
+      const clock = pu.requestedAt ?? l.probeRequestedAt;
+      if (pu.state !== 'settled' && now - clock < pu.waitMs) {
+        waiting = waiting ?? l.listenerKey;
+        continue;
+      }
+      if (pu.blockedIn.length > 0) {
         l.verify = 'unreachable';
         return needsYou(ctx, run, 'blocked_in', `${l.listenerKey}:${pu.blockedIn.join(',')}`, {
           listeners,

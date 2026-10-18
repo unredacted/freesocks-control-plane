@@ -2312,6 +2312,9 @@ export default defineSchema({
       lastBatchAt: v.optional(v.number()),
     }),
     combined: v.union(v.literal('proven'), v.literal('blocked'), v.literal('unknown')),
+    // How long `combined` itself holds (a block: its latest blocking track; a
+    // proof: the address proof): what every copy of the state carries.
+    stateUntil: v.optional(v.number()),
     // The earliest `until` of the decided tracks (the expiry worker's clock).
     until: v.optional(v.number()),
     lastRoundAt: v.optional(v.number()),

@@ -1724,7 +1724,9 @@ yet (a later change orders members' addresses by it).
 - **A source that errors is no evidence.** A failed or timed-out run adds nothing, and a probe
   that could not run the test is dropped by the parsers. Per path (family, port), from one
   country: `unknown` with fewer than `minProbes` (3) vantages answering or fewer than
-  `minNetworks` (2) networks among them, or with more than a third failing while some work;
+  `minNetworks` (2) networks among them (an ASN or a network name, normalized; a vantage the
+  source gave neither for adds no network, whichever service it came from), or with more than a
+  third failing while some work;
   `proven` with at least 3 working on 2 networks, a third failing at most, and, where the edge
   presents a name (an L7 front, an L4 edge before a REALITY / TLS listener), FCP's own TLS
   check with the real name passed; `blocked` when every vantage fails with the spread met AND
@@ -1742,7 +1744,8 @@ yet (a later change orders members' addresses by it).
   probe problem does.
 - **The handshake track** (`edgeCountryEvidence.handshake`) reads the checks from inside a
   country: a finished batch in which no name got through (`path`, from at least the name
-  checks' `minVantages` on `minNetworks`) counts only when PAIRED with a working TCP reading of
+  checks' `minVantages` on `minNetworks`; a service measures every name of a batch from the
+  same probes, so a probe counts once however many names it tried) counts only when PAIRED with a working TCP reading of
   the same address, port, family and country from a round within 60 minutes; an unpaired one
   is recorded (`no_tcp_pairing`) and asks for a round at once. Two paired batches at least an
   hour apart block (one when the group is already blocked there). It clears only when names
@@ -1758,11 +1761,15 @@ yet (a later change orders members' addresses by it).
   (`countryMarks`, edge or group, never expires) wins over every check. What an edge counts as
   per country (its mark, the group's mark, its own result, else the group's block for an edge
   with nothing decided) is copied onto `edges.countryState` (decided entries only, each with
-  its `until`; one past it reads as unknown). A group never proves an edge.
+  its `until`; one past it reads as unknown). That `until` is how long the combined state
+  itself holds (`edgeCountryEvidence.stateUntil`: a block while any blocking track does, a proof
+  while the address proof does), not the earliest track's expiry the worker runs on: an address
+  proof lapsing never ends a handshake block that still stands. A group never proves an edge.
 - **Expiry.** Cron `edge-country-expiry` (hourly, whether or not probes run) lapses decided
   tracks past their `until`, regrades the groups, rewrites every affected `countryState` and
   deletes rows nothing touched for a whole window.
-- **Before use.** A guided setup's stage 4 waits for its address's first round (at most
+- **Before use.** A guided setup's stage 4 asks for its address's round itself (even when the
+  evidence on record already makes the rung `partial`, as for a reused spare) and waits for it (at most
   `preUseWaitMinutes`, 15; not known never holds it); one that finds the address blocked in a
   checked country while the controls reach it stops at `blocked_in` ("Try another address" or
   "Use it anyway"). A rotation that publishes an L4 address (a replacement, a spare's

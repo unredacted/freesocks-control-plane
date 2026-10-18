@@ -7,8 +7,10 @@ import {
   expireAddressTrack,
   expireHandshakeTrack,
   nextAddressTrack,
+  networkIdOf,
   nextHandshakeTrack,
   roundVerdict,
+  stateUntil,
   trackUntil,
   type AddressTrack,
   type RoundRun,
@@ -150,15 +152,50 @@ describe('roundVerdict', () => {
     expect(r).toMatchObject({ result: 'unknown', reason: 'too_few' });
   });
 
-  it('collapses vantages without a network into one per source', () => {
+  it('never counts a vantage without a network as one, across sources either', () => {
     const anon = (ok: boolean): RoundRunResult => ({ country: 'IR', ok });
+    // Two failing from one service and one from another, none with an ASN or a
+    // network: that is not two networks, however many services answered.
     const r = roundVerdict(
-      [ext([anon(false), anon(false), anon(false), ...controls(true)])],
+      [
+        ext([anon(false), anon(false), ...controls(true)], { source: 'globalping' }),
+        ext([anon(false)], { source: 'checkhost' }),
+      ],
       'IR',
       CFG,
       false,
     );
-    expect(r.result).toBe('unknown');
+    expect(r).toMatchObject({ result: 'unknown', reason: 'too_few', networks: 0 });
+    // Nor can missing metadata make a positive verdict.
+    const ok = roundVerdict(
+      [
+        ext([anon(true), anon(true)], { source: 'globalping' }),
+        ext([anon(true), v('IR', true, 'AS10')], { source: 'checkhost' }),
+      ],
+      'IR',
+      CFG,
+      false,
+    );
+    expect(ok).toMatchObject({ result: 'unknown', networks: 1 });
+  });
+
+  it('compares network ids normalized', () => {
+    expect(networkIdOf({ asn: 'AS1234' })).toBe('AS1234');
+    expect(networkIdOf({ asn: 'as1234' })).toBe('AS1234');
+    expect(networkIdOf({ asn: '1234' })).toBe('AS1234');
+    expect(networkIdOf({ network: ' Example Net ' })).toBe('net:example net');
+    expect(networkIdOf({})).toBeNull();
+    // The same network spelled two ways by two services is one network.
+    const r = roundVerdict(
+      [
+        ext([v('IR', false, 'AS10'), v('IR', false, 'as10')], { source: 'globalping' }),
+        ext([v('IR', false, '10'), ...controls(true)], { source: 'checkhost' }),
+      ],
+      'IR',
+      CFG,
+      false,
+    );
+    expect(r).toMatchObject({ result: 'unknown', reason: 'too_few', networks: 1 });
   });
 
   it('is mixed (unknown) when more than a third fail with some working', () => {
@@ -404,27 +441,70 @@ describe('combinedState and trackUntil', () => {
     expect(trackUntil(p, { state: 'blocked', until: T0 + 3, pathBatches: [] })).toBe(T0 + 3);
     expect(trackUntil(EMPTY_ADDRESS_TRACK, EMPTY_HANDSHAKE_TRACK)).toBeUndefined();
   });
+
+  it('a block holds while any blocking track does, not until the earliest track lapses', () => {
+    const proof: AddressTrack = { state: 'proven', until: T0 + 5, blockedRounds: 0 };
+    const block = { state: 'blocked' as const, until: T0 + 9, pathBatches: [] };
+    expect(trackUntil(proof, block)).toBe(T0 + 5);
+    expect(stateUntil(proof, block)).toBe(T0 + 9);
+    const both: AddressTrack = { state: 'blocked', until: T0 + 12, blockedRounds: 2 };
+    expect(stateUntil(both, block)).toBe(T0 + 12);
+    expect(stateUntil(proof, EMPTY_HANDSHAKE_TRACK)).toBe(T0 + 5);
+    expect(stateUntil(EMPTY_ADDRESS_TRACK, EMPTY_HANDSHAKE_TRACK)).toBeUndefined();
+  });
 });
 
 describe('batchReading', () => {
-  const m = (name: string, outcomes: Array<[string, 'ok' | 'reset' | 'timeout' | 'error']>) => ({
+  const m = (
+    name: string,
+    outcomes: Array<[string, 'ok' | 'reset' | 'timeout' | 'error']>,
+    source = 'globalping',
+  ) => ({
     name,
+    source,
     results: outcomes.map(([asn, outcome]) => ({ asn, outcome })),
   });
   const o = { minVantages: 3, minNetworks: 2 };
+  const names = ['a.example.org', 'b.example.org', 'c.example.org'];
 
   it('reads path when no name got through from enough vantages', () => {
     expect(
       batchReading(
-        [
-          m('a.example.org', [
+        names.map((n) =>
+          m(n, [
             ['AS1', 'reset'],
             ['AS2', 'timeout'],
+            ['AS3', 'reset'],
           ]),
-          m('b.example.org', [
-            ['AS1', 'reset'],
-            ['AS2', 'reset'],
-          ]),
+        ),
+        o,
+      ),
+    ).toEqual({ reading: 'path', vantages: 3, networks: 3 });
+  });
+
+  it('counts the same probes once however many names they tried', () => {
+    // Two probes, three names: two vantages, not six.
+    const failing = names.map((n) =>
+      m(n, [
+        ['AS1', 'reset'],
+        ['AS2', 'reset'],
+      ]),
+    );
+    expect(batchReading(failing, o)).toEqual({ reading: 'none', vantages: 2, networks: 2 });
+    const working = names.map((n) =>
+      m(n, [
+        ['AS1', 'ok'],
+        ['AS2', 'ok'],
+      ]),
+    );
+    expect(batchReading(working, o)).toEqual({ reading: 'none', vantages: 2, networks: 2 });
+    // A second service's probes are other vantages.
+    expect(
+      batchReading(
+        [
+          ...failing,
+          m('a.example.org', [['AS3', 'reset']], 'ripeatlas'),
+          m('b.example.org', [['AS3', 'timeout']], 'ripeatlas'),
         ],
         o,
       ).reading,

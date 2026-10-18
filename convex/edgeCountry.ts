@@ -35,6 +35,7 @@ import {
   nextAddressTrack,
   nextHandshakeTrack,
   roundVerdict,
+  stateUntil,
   trackUntil,
   type AddressTrack,
   type BatchMeasurement,
@@ -183,6 +184,7 @@ async function writeEvidence(
     address: next.address,
     handshake: next.handshake,
     combined,
+    stateUntil: stateUntil(next.address, next.handshake),
     until,
     ...(next.lastRound !== undefined ? { lastRound: next.lastRound } : {}),
     ...(next.paths !== undefined ? { paths: next.paths } : {}),
@@ -192,6 +194,14 @@ async function writeEvidence(
   if (prev) await ctx.db.replace(prev._id, { ...stripId(prev), ...row });
   else await ctx.db.insert('edgeCountryEvidence', row);
   return { before: prev?.combined ?? 'unknown', after: combined };
+}
+
+/**
+ * How long a row's combined state holds (`stateUntil`; a row written before it
+ * existed falls back to the earliest track's expiry).
+ */
+function lifetimeOf(r: Evidence): number | undefined {
+  return r.stateUntil ?? r.until;
 }
 
 function withoutControl<T extends { control?: boolean }>(x: T): Omit<T, 'control'> {
@@ -434,7 +444,10 @@ async function refreshGroup(
     .withIndex('by_group_country', (q) => q.eq('groupKey', groupKey).eq('country', country))
     .take(500);
   const g = gradeOf(
-    rows.map((r) => ({ state: r.combined, ...(r.until !== undefined ? { until: r.until } : {}) })),
+    rows.map((r) => {
+      const until = lifetimeOf(r);
+      return { state: r.combined, ...(until !== undefined ? { until } : {}) };
+    }),
     now,
   );
   const prev = await gradeRowOf(ctx.db, groupKey, country);
@@ -502,12 +515,13 @@ export async function refreshEdgeCountryState(
   const byCountry: NonNullable<Doc<'edges'>['countryState']>['byCountry'] = [];
   for (const country of countries) {
     const o = own.find((r) => r.country === country);
+    const ownUntil = o ? lifetimeOf(o) : undefined;
     const g = grades.find((r) => r.country === country);
     const eff = effectiveState({
       edgeMark: edgeMarks.find((m) => m.country === country && m.scope === 'edge')?.state ?? null,
       groupMark:
         groupMarks.find((m) => m.country === country && m.scope === 'group')?.state ?? null,
-      own: o ? { state: o.combined, ...(o.until !== undefined ? { until: o.until } : {}) } : null,
+      own: o ? { state: o.combined, ...(ownUntil !== undefined ? { until: ownUntil } : {}) } : null,
       grade: g
         ? { state: g.state as GroupGrade, ...(g.until !== undefined ? { until: g.until } : {}) }
         : null,
@@ -694,6 +708,7 @@ export const expire = internalMutation({
         address,
         handshake,
         combined,
+        stateUntil: stateUntil(address, handshake),
         until: trackUntil(address, handshake),
         updatedAt: now,
       });

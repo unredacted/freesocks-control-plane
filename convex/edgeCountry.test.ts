@@ -18,6 +18,7 @@ import type { GlobalpingLike } from './lib/edges/probes/globalping';
 import { CENSORED_COUNTRIES_KEY } from './lib/censoredCountries';
 import { blockedCountries, noteNameBatch, settleRoundIfDone } from './edgeCountry';
 import { internalRunsOf } from './edgeVerification';
+import { liveCountryState } from './lib/edges/country/group';
 
 const modules = import.meta.glob('./**/*.*s');
 type T = TestConvex<typeof schema>;
@@ -198,7 +199,8 @@ async function syntheticRound(
     };
     const v = (country: string, ok: boolean, k: number, control = false) => ({
       country,
-      asn: `AS${country}${k}`,
+      // A numeric ASN per (country, vantage): a real network id.
+      asn: `AS${country.charCodeAt(0) * 100 + country.charCodeAt(1) * 10 + k}`,
       vantageClass: 'eyeball' as const,
       ok,
       ...(control ? { control: true } : {}),
@@ -483,6 +485,7 @@ describe('edgeCountry: the handshake track', () => {
   const batch = (outcome: 'reset' | 'ok') =>
     ['a.example', 'b.example'].map((name) => ({
       name,
+      source: 'globalping',
       results: [1, 2, 3].map((k) => ({ asn: `AS${k}`, outcome })),
     }));
 
@@ -538,6 +541,40 @@ describe('edgeCountry: the handshake track', () => {
     ir = (await evidence(t, edgeId, 'IR'))!;
     expect(ir.handshake).toMatchObject({ state: 'none', reason: 'recovered' });
     expect(ir.combined).toBe('proven');
+  });
+
+  test('a handshake block outlives an earlier address proof (read without the expiry worker)', async () => {
+    __setGlobalpingFactory(() => fakeGlobalping(() => 'ok'));
+    const { t, edgeId } = await seed();
+    const t0 = Date.now();
+    const note = (at: number) =>
+      t.run((ctx) =>
+        noteNameBatch(ctx, {
+          targetKind: 'edge',
+          targetRef: edgeId,
+          address: EDGE,
+          port: 443,
+          country: 'IR',
+          measurements: batch('reset'),
+          at,
+        }),
+      );
+    await syntheticRound(t, edgeId, 'ok', { at: t0 });
+    await note(t0 + 2 * MIN);
+    await syntheticRound(t, edgeId, 'ok', { at: t0 + 65 * MIN });
+    await note(t0 + 70 * MIN);
+    const ir = (await evidence(t, edgeId, 'IR'))!;
+    expect(ir.combined).toBe('blocked');
+    expect(ir.address.until).toBeLessThan(ir.handshake.until!);
+    expect(ir.until).toBe(ir.address.until);
+    expect(ir.stateUntil).toBe(ir.handshake.until);
+    // The address proof has lapsed, the handshake block has not; no expiry pass ran.
+    const now = ir.address.until! + MIN;
+    const edge = await edgeDoc(t, edgeId);
+    expect(liveCountryState(edge.countryState?.byCountry, now)).toEqual([
+      expect.objectContaining({ country: 'IR', state: 'blocked' }),
+    ]);
+    expect(blockedCountries(edge, now)).toBe(1);
   });
 
   test('a TCP reading of another port or address does not pair', async () => {

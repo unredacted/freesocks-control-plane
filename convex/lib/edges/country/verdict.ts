@@ -88,7 +88,21 @@ export interface RoundVerdict {
 /** Failures above this share of the evidence, with some vantage working, are a mixed answer. */
 export const MIXED_SHARE = 1 / 3;
 
-const networkKey = (r: RoundRunResult, source: string) => r.asn ?? r.network ?? `${source}:unknown`;
+/**
+ * A vantage's network, normalized (`AS13335`, or a lower-cased network name),
+ * or null when the source did not say. A vantage without one never adds a
+ * network: a measurement service is no evidence that its probes sit in
+ * distinct networks, so missing metadata cannot manufacture the spread.
+ */
+export function networkIdOf(r: { asn?: string; network?: string }): string | null {
+  const digits = r.asn?.trim().replace(/^as/i, '');
+  if (digits && /^\d+$/.test(digits)) return `AS${Number(digits)}`;
+  const net = r.network?.trim().toLowerCase();
+  return net ? `net:${net}` : null;
+}
+
+const distinctNetworks = (rows: ReadonlyArray<{ asn?: string; network?: string }>) =>
+  new Set(rows.map(networkIdOf).filter((n): n is string => n !== null)).size;
 const isTls = (p: ProbeProtocol) => p === 'tls' || p === 'tls-sni' || p === 'https';
 const settled = (r: RoundRun) => r.status === 'finished';
 
@@ -107,15 +121,13 @@ export function pathVerdict(
   const external = runs.filter((r) => settled(r) && r.source !== 'internal');
   const internal = runs.filter((r) => settled(r) && r.source === 'internal');
   const inCountry = external.flatMap((r) =>
-    r.results
-      .filter((x) => !x.control && x.country === country)
-      .map((x) => ({ x, source: r.source })),
+    r.results.filter((x) => !x.control && x.country === country),
   );
-  const okRows = inCountry.filter((v) => v.x.ok);
+  const okRows = inCountry.filter((x) => x.ok);
   const ok = okRows.length;
   const fail = inCountry.length - ok;
-  const networks = new Set(inCountry.map((v) => networkKey(v.x, v.source))).size;
-  const okNetworks = new Set(okRows.map((v) => networkKey(v.x, v.source))).size;
+  const networks = distinctNetworks(inCountry);
+  const okNetworks = distinctNetworks(okRows);
   const controlsOk =
     external.reduce((n, r) => n + r.results.filter((x) => x.control && x.ok).length, 0) +
     (internal.some((r) => r.results.some((x) => x.ok)) ? 1 : 0);
@@ -394,6 +406,24 @@ export function combinedState(a: AddressTrack, h: HandshakeTrack): TrackState {
   return a.state === 'proven' ? 'proven' : 'unknown';
 }
 
+/**
+ * How long the COMBINED state itself holds, for every copy of it (the edge's
+ * `countryState`, the group grade): a block while ANY blocking track still
+ * does (the latest of them), a proof while the address proof does. This is not
+ * the expiry worker's clock (`trackUntil`, the earliest decided track): an
+ * address proof lapsing must not end a handshake block that still stands.
+ */
+export function stateUntil(a: AddressTrack, h: HandshakeTrack): number | undefined {
+  const state = combinedState(a, h);
+  if (state === 'proven') return a.until;
+  if (state !== 'blocked') return undefined;
+  const xs = [
+    a.state === 'blocked' ? a.until : undefined,
+    h.state === 'blocked' ? h.until : undefined,
+  ].filter((x): x is number => x !== undefined);
+  return xs.length > 0 ? Math.max(...xs) : undefined;
+}
+
 /** The earliest expiry among the decided tracks (the expiry worker's clock). */
 export function trackUntil(a: AddressTrack, h: HandshakeTrack): number | undefined {
   const xs = [
@@ -407,11 +437,30 @@ export function trackUntil(a: AddressTrack, h: HandshakeTrack): number | undefin
 
 export interface BatchMeasurement {
   name: string;
+  /** The service that measured it: one source's names are measured from the same probes. */
+  source: string;
   results: ReadonlyArray<{ asn?: string; network?: string; outcome: NameOutcome }>;
 }
 
 const reached = (o: NameOutcome) => o === 'ok' || o === 'answered';
-const batchNetwork = (r: { asn?: string; network?: string }) => r.asn ?? r.network ?? 'unknown';
+
+/**
+ * Distinct vantages behind the results that `pick` keeps. Every name of a
+ * batch is measured from the SAME probes of a source (sniVantageOps), so the
+ * count is, per source, the most any one name got, summed over the sources:
+ * adding names to a batch can never make more vantages out of the same probes.
+ */
+function batchVantages(
+  measurements: readonly BatchMeasurement[],
+  pick: (o: NameOutcome) => boolean,
+): number {
+  const bySource = new Map<string, number>();
+  for (const m of measurements) {
+    const n = m.results.filter((r) => pick(r.outcome)).length;
+    bySource.set(m.source, Math.max(bySource.get(m.source) ?? 0, n));
+  }
+  return [...bySource.values()].reduce((a, b) => a + b, 0);
+}
 
 /**
  * One finished batch (every source settled) of names on one address from one
@@ -426,13 +475,15 @@ export function batchReading(
   const all = measurements.flatMap((m) => m.results);
   const ok = all.filter((r) => reached(r.outcome));
   if (ok.length > 0) {
-    const networks = new Set(ok.map(batchNetwork)).size;
-    const reading = ok.length >= o.minVantages && networks >= o.minNetworks ? 'recovery' : 'none';
-    return { reading, vantages: ok.length, networks };
+    const vantages = batchVantages(measurements, reached);
+    const networks = distinctNetworks(ok);
+    const reading = vantages >= o.minVantages && networks >= o.minNetworks ? 'recovery' : 'none';
+    return { reading, vantages, networks };
   }
   const failing = all.filter((r) => NAME_FAILURES.has(r.outcome));
-  const networks = new Set(failing.map(batchNetwork)).size;
+  const vantages = batchVantages(measurements, (x) => NAME_FAILURES.has(x));
+  const networks = distinctNetworks(failing);
   const reading =
-    failing.length >= o.minVantages && networks >= o.minNetworks ? ('path' as const) : 'none';
-  return { reading, vantages: failing.length, networks };
+    vantages >= o.minVantages && networks >= o.minNetworks ? ('path' as const) : 'none';
+  return { reading, vantages, networks };
 }

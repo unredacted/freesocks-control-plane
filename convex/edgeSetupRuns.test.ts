@@ -661,6 +661,24 @@ describe('edgeSetupRuns: per-country checks before use', () => {
     expect((await t.run((ctx) => ctx.db.get(first!)))!.status).toBe('cancelled');
   });
 
+  test('an address the probes already find partial still gets its own round first, and stops at blocked_in', async () => {
+    const { t, serverId, accountId, calls } = await seed({
+      countryRound: countryRound(() => 'fail'),
+    });
+    await checkFromIran(t);
+    const { runId } = await startRun(t, serverId, accountId);
+    // Evidence lands before stage 4 looks (a reused spare, background probes):
+    // the rung alone would already be `partial`.
+    const early = await pumpFine(t, runId, (x) => x.listeners[0]?.edgeId !== undefined);
+    await landPartialEvidence(t, early.listeners[0]!.edgeId!);
+    const r = await pump(t, runId, settled);
+    expect(calls.probes).toHaveLength(1);
+    expect(r.need).toMatchObject({
+      code: 'blocked_in',
+      detail: `${r.listeners[0]!.listenerKey}:IR`,
+    });
+  });
+
   test('"Use it anyway" keeps the blocked address and goes on', async () => {
     const { t, serverId, accountId } = await seed({ countryRound: countryRound(() => 'fail') });
     await checkFromIran(t);
