@@ -540,7 +540,6 @@ export const PROBE_FIELDS: Field[] = [
     helper: 'Applies to origin and custom targets. Edge targets follow the rendering IPv6 setting.',
   },
 ];
-export const PROBE_COUNTRIES_PATH = 'probe.countries';
 
 export const L7_FIELDS: Field[] = [
   {
@@ -561,6 +560,6 @@ export const SECTION_PATHS: Record<Exclude<SettingsSection, 'maintenance'>, stri
   rotation: pathsOf(ROTATION_FIELDS),
   rendering: pathsOf(RENDER_GLOBAL_FIELDS),
   detector: pathsOf(DETECTOR_FIELDS),
-  probes: [...pathsOf(PROBE_SOURCE_FIELDS), ...pathsOf(PROBE_FIELDS), PROBE_COUNTRIES_PATH],
+  probes: [...pathsOf(PROBE_SOURCE_FIELDS), ...pathsOf(PROBE_FIELDS)],
   l7: pathsOf(L7_FIELDS),
 };

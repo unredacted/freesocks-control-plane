@@ -380,13 +380,17 @@ export const ovhProvider: EdgeProvider<OvhConfig, OvhTemplateParams> = {
 
   async testCredentials(cfg) {
     try {
-      await ovh(
-        cfg,
-        'test',
-        'GET',
-        `/cloud/project/${encodeURIComponent(cfg.serviceName)}`,
-        z.unknown(),
-      );
+      // An account is credentials only: without a location the key is tested
+      // by the project listing; with one, by reading the location's project.
+      if (cfg.serviceName)
+        await ovh(
+          cfg,
+          'test',
+          'GET',
+          `/cloud/project/${encodeURIComponent(cfg.serviceName)}`,
+          z.unknown(),
+        );
+      else await ovh(cfg, 'test', 'GET', `/cloud/project`, z.array(z.string()));
       return { ok: true };
     } catch (e) {
       return credentialTestFailure(e);
@@ -467,6 +471,15 @@ export const ovhProvider: EdgeProvider<OvhConfig, OvhTemplateParams> = {
         out.networks = networks;
       } catch (e) {
         noteDiscoverError(out, 'networks', e);
+      }
+      // The balancer flavor ids are per region: the location form picks one.
+      if (cfg.regionName) {
+        try {
+          const fl = await ovh(cfg, 'flavors', 'GET', `${base(cfg)}/loadbalancing/flavor`, Flavors);
+          out.flavors = fl.map((f) => ({ id: f.id, label: f.name ?? f.id }));
+        } catch (e) {
+          noteDiscoverError(out, 'flavors', e);
+        }
       }
     }
     return out;

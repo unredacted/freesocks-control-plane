@@ -15,6 +15,7 @@ import { __setGlobalpingFactory, __setInternalProbeDeps } from './probeOps';
 import { familiesOf, type ResolvedTarget } from './probes';
 import { EDGE_DEFAULTS, __setEdgePlumbingForTests, type EdgeConfig } from './lib/edgeConfig';
 import type { GlobalpingLike } from './lib/edges/probes/globalping';
+import { CENSORED_COUNTRIES_KEY } from './lib/censoredCountries';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -111,10 +112,17 @@ async function seed(
       updatedAt: Date.now(),
     });
     await upsertSettingRow(ctx, 'edge.probe.enabled', JSON.stringify(opts.probeEnabled ?? true));
+    // Probes run from the listed countries with "check edges" on, in list order.
     await upsertSettingRow(
       ctx,
-      'edge.probe.countries',
-      JSON.stringify(opts.countries ?? ['IR', 'RU']),
+      CENSORED_COUNTRIES_KEY,
+      JSON.stringify(
+        (opts.countries ?? ['IR', 'RU']).map((code) => ({
+          code,
+          checkEdges: true,
+          checkNamesInside: false,
+        })),
+      ),
     );
     // check-host / ripe atlas off: this test drives globalping + internal only.
     await upsertSettingRow(ctx, 'edge.probe.sources.checkhost', 'false');

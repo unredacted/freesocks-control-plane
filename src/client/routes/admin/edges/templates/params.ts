@@ -141,6 +141,13 @@ interface AccountLike {
   defaultTemplateId: string | null;
   qualified: boolean;
   qualifiedTemplateHash: string | null;
+  /** The account's locations: trust is per location, a regional value is laid over the template. */
+  locations?: ReadonlyArray<{
+    isDefault: boolean;
+    enabled: boolean;
+    qualified: boolean;
+    regionalParams: Record<string, string>;
+  }>;
 }
 
 /** The account's named template, else its own default, else the provider's default. */
@@ -165,8 +172,24 @@ export function qualificationState(
   if (!account.qualified) {
     return { state: 'unqualified', words: 'Not qualified. Ordinary provisioning skips it.' };
   }
+  const locations = account.locations ?? [];
+  const live = locations.filter((l) => l.enabled);
+  const trusted = live.filter((l) => l.qualified).length;
+  if (live.length > 1)
+    return {
+      state: 'qualified',
+      words: `Trusted in ${trusted} of ${live.length} locations. Ordinary provisioning uses the trusted ones.`,
+    };
   const tpl = effectiveTemplate(templates, account);
-  if (tpl && account.qualifiedTemplateHash && tpl.paramsHash !== account.qualifiedTemplateHash) {
+  // A location with its own regional value (a flavor) provisions with the
+  // template plus that value: its hash is not the template's, by design.
+  const overlaid = locations.some((l) => l.isDefault && Object.keys(l.regionalParams).length > 0);
+  if (
+    tpl &&
+    !overlaid &&
+    account.qualifiedTemplateHash &&
+    tpl.paramsHash !== account.qualifiedTemplateHash
+  ) {
     return {
       state: 'stale',
       words: `Qualified with older parameters than "${tpl.name}" has now. Qualify it again.`,

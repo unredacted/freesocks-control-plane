@@ -116,12 +116,15 @@ export function canonicalJson(v: unknown): string {
 /**
  * The plan hash a `POST setup-runs` must echo: sha256 over the canonical
  * required listener specs + the direct-Host identities + the account ids the
- * plan offered. Anything else on the snapshot (labels, reasons) is free to move.
+ * plan offered + the locations it offered in them. Anything else on the
+ * snapshot (labels, reasons) is free to move. A location added after the plan
+ * was shown makes it stale: the sheet plans again once it created one.
  */
 export async function planHashOf(input: {
   listenerSpecs: readonly unknown[];
   directHosts: ReadonlyArray<{ uuid: string; covered: boolean }>;
   accountIds: readonly string[];
+  locationIds?: readonly string[];
 }): Promise<string> {
   return sha256Hex(
     canonicalJson({
@@ -130,6 +133,7 @@ export async function planHashOf(input: {
         .map((h) => ({ uuid: h.uuid, covered: h.covered }))
         .sort((a, b) => a.uuid.localeCompare(b.uuid)),
       accounts: [...input.accountIds].sort(),
+      ...(input.locationIds ? { locations: [...input.locationIds].sort() } : {}),
     }),
   );
 }
@@ -156,6 +160,18 @@ export interface SetupPlanDirectHost {
   covered: boolean;
 }
 
+/** One location of an account the plan offers (where the run would create its addresses). */
+export interface SetupPlanLocation {
+  id: string;
+  label: string;
+  placeKey: string;
+  isDefault: boolean;
+  /** Trusted here already (an untrusted one is offered: its first tested address trusts it). */
+  qualified: boolean;
+  compatible: boolean;
+  reasons: string[];
+}
+
 export interface SetupPlanAccount {
   id: string;
   name: string;
@@ -163,6 +179,8 @@ export interface SetupPlanAccount {
   layer: 'l4' | 'l7';
   compatible: boolean;
   reasons: string[];
+  /** The account's locations (absent on runs from before locations). */
+  locations?: SetupPlanLocation[];
 }
 
 /** The read-only plan `POST setup-runs/plan` returns and `POST setup-runs` persists (JSON on the run). */

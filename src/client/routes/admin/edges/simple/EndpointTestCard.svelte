@@ -96,9 +96,7 @@
       });
       done = new Set([...done, item.edgeId]);
       toast.success(
-        res.accountTrusted
-          ? 'Address tested. The provider account is now trusted.'
-          : 'Address tested.',
+        res.accountTrusted ? 'Address tested. Its location is now trusted.' : 'Address tested.',
       );
       invalidateOverview(qc);
       if (items.every((i) => done.has(i.edgeId))) {

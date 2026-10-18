@@ -21,34 +21,20 @@ import { z } from 'zod';
 import type { EdgeProviderId } from '../edgeProviderIds';
 import { canonicalJson } from './providers/template';
 
+/** Account-level settings per provider: identifiers, the DNS zone / account, intent defaults. */
 export const EDGE_SETTINGS_SCHEMAS = {
-  gcore: z.object({
-    type: z.literal('gcore'),
-    projectId: z.number().int().positive(),
-    regionId: z.number().int().positive(),
-    networkId: z.string().min(1).max(128).optional(),
-    subnetId: z.string().min(1).max(128).optional(),
-  }),
-  upcloud: z.object({
-    type: z.literal('upcloud'),
-    zone: z.string().regex(/^[a-z]{2}-[a-z]{3}\d$/, 'zone like de-fra1'),
-  }),
+  gcore: z.object({ type: z.literal('gcore') }),
+  upcloud: z.object({ type: z.literal('upcloud') }),
   scaleway: z.object({
     type: z.literal('scaleway'),
     accessKey: z.string().regex(/^SCW[A-Z0-9]{17}$/, 'access key like SCWXXXXXXXXXXXXXXXXX'),
-    // Optional: the API key's default project is used when absent.
-    projectId: z.string().uuid().optional(),
-    zone: z.string().regex(/^[a-z]{2}-[a-z]{3}-\d$/, 'zone like fr-par-1'),
   }),
   ovh: z.object({
     type: z.literal('ovh'),
     applicationKey: z.string().min(1).max(128),
+    // The API endpoint the application key was issued for: part of the
+    // credential's identity, never a location.
     endpoint: z.enum(['ovh-eu', 'ovh-ca', 'ovh-us']),
-    serviceName: z.string().min(1).max(128),
-    regionName: z.string().min(1).max(64),
-    networkId: z.string().min(1).max(128),
-    subnetId: z.string().min(1).max(128),
-    gatewayId: z.string().min(1).max(128).optional(),
   }),
   // L7: one DNS zone the account's hostnames live in (proxied records). The zone
   // NAME is recorded from the zone read at credential test so hostname minting
@@ -80,6 +66,47 @@ export const EDGE_SETTINGS_SCHEMAS = {
   }),
 } as const;
 
+/**
+ * Where an edge's resources live, per provider: what a LOCATION holds and each
+ * edge freezes. A provider that is not geographic (a CDN) has an empty
+ * placement and exactly one location per account (`anycast`).
+ */
+export const EDGE_PLACEMENT_SCHEMAS = {
+  gcore: z.object({
+    type: z.literal('gcore'),
+    projectId: z.number().int().positive(),
+    regionId: z.number().int().positive(),
+    // Private VIP + floating-IP mode needs a network/subnet; public-VIP mode does not.
+    networkId: z.string().min(1).max(128).optional(),
+    subnetId: z.string().min(1).max(128).optional(),
+  }),
+  upcloud: z.object({
+    type: z.literal('upcloud'),
+    zone: z.string().regex(/^[a-z]{2}-[a-z]{3}\d$/, 'zone like de-fra1'),
+  }),
+  scaleway: z.object({
+    type: z.literal('scaleway'),
+    // Optional: the API key's default project is used when absent.
+    projectId: z.string().uuid().optional(),
+    zone: z.string().regex(/^[a-z]{2}-[a-z]{3}-\d$/, 'zone like fr-par-1'),
+  }),
+  ovh: z.object({
+    type: z.literal('ovh'),
+    serviceName: z.string().min(1).max(128),
+    regionName: z.string().min(1).max(64),
+    networkId: z.string().min(1).max(128),
+    subnetId: z.string().min(1).max(128),
+    gatewayId: z.string().min(1).max(128).optional(),
+  }),
+  cloudflare: z.object({ type: z.literal('cloudflare') }),
+  fastly: z.object({ type: z.literal('fastly') }),
+} as const;
+
+export type EdgePlacementFor<P extends EdgeProviderId> = z.infer<
+  (typeof EDGE_PLACEMENT_SCHEMAS)[P]
+>;
+export type EdgePlacement = EdgePlacementFor<EdgeProviderId>;
+
 export type EdgeSettingsFor<P extends EdgeProviderId> = z.infer<(typeof EDGE_SETTINGS_SCHEMAS)[P]>;
 export type EdgeSettings = EdgeSettingsFor<EdgeProviderId>;
 
@@ -93,12 +120,24 @@ export const EDGE_CREDENTIAL_FIELDS: Record<EdgeProviderId, readonly string[]> =
   fastly: ['apiToken'],
 };
 
-/** Settings that LOCATE resources: locked while any non-destroyed edge references the account. */
-export const EDGE_LOCATING_SETTINGS: Record<EdgeProviderId, readonly string[]> = {
+/** Placement fields per provider: on a LOCATION (and frozen on each edge), never on the account. */
+export const EDGE_PLACEMENT_SETTINGS: Record<EdgeProviderId, readonly string[]> = {
   gcore: ['projectId', 'regionId', 'networkId', 'subnetId'],
   upcloud: ['zone'],
   scaleway: ['projectId', 'zone'],
-  ovh: ['endpoint', 'serviceName', 'regionName', 'networkId', 'subnetId', 'gatewayId'],
+  ovh: ['serviceName', 'regionName', 'networkId', 'subnetId', 'gatewayId'],
+  cloudflare: [],
+  fastly: [],
+};
+
+/** Account settings that still LOCATE every edge of the account: locked while any non-destroyed edge references it. */
+export const EDGE_LOCATING_SETTINGS: Record<EdgeProviderId, readonly string[]> = {
+  gcore: [],
+  upcloud: [],
+  scaleway: [],
+  // The application key was issued for one API endpoint: another endpoint is
+  // another API, where none of the account's resources exist.
+  ovh: ['endpoint'],
   cloudflare: ['zoneId', 'zoneName', 'accountId'],
   // The DNS account locates every record a Fastly edge depends on; the TLS
   // configuration and CA are frozen per edge in its provisionIntent, so they
@@ -143,6 +182,47 @@ export function validateSettings(
       .slice(0, 10)
       .map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`),
   };
+}
+
+export function validatePlacement(
+  provider: EdgeProviderId,
+  raw: unknown,
+): { ok: true; placement: EdgePlacement } | { ok: false; issues: string[] } {
+  const res = EDGE_PLACEMENT_SCHEMAS[provider].safeParse({
+    ...((raw ?? {}) as Record<string, unknown>),
+    type: provider,
+  });
+  if (res.success) return { ok: true, placement: res.data as EdgePlacement };
+  return {
+    ok: false,
+    issues: res.error.issues
+      .slice(0, 10)
+      .map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`),
+  };
+}
+
+/**
+ * The placement keys an admin payload or a stored row carries (null when it
+ * carries none): what an account created with its old single-location shape,
+ * or one written before locations existed, says about where it lives.
+ */
+export function placementKeysOf(
+  provider: EdgeProviderId,
+  raw: Record<string, unknown> | undefined,
+): Record<string, unknown> | null {
+  const keys = EDGE_PLACEMENT_SETTINGS[provider];
+  if (keys.length === 0 || !raw) return null;
+  const out = pick(raw, keys);
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+/** The settings with every placement key removed (what the account itself keeps). */
+export function withoutPlacementKeys(
+  provider: EdgeProviderId,
+  raw: Record<string, unknown>,
+): Record<string, unknown> {
+  const drop = new Set(EDGE_PLACEMENT_SETTINGS[provider]);
+  return Object.fromEntries(Object.entries(raw).filter(([k]) => !drop.has(k)));
 }
 
 /** Key-order-insensitive, recursive equality (stored rows may reorder keys). */

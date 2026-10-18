@@ -32,7 +32,6 @@ import {
 import type { Id } from './_generated/dataModel';
 import { ConvexError } from 'convex/values';
 import { SETTINGS_DEFAULTS } from './appSettings';
-import { DEFAULT_CONNECTION_MODE } from './lib/connectionModes';
 import { buildSetCookie, parseCookies, verifySignedValue } from './lib/cookies';
 import { verifyCaptcha } from './lib/captcha';
 import { sendUmamiEvent } from './lib/umami';
@@ -989,36 +988,17 @@ http.route({
     const view = await ctx.runAction(internal.account.getAccountView, { userId: member.userId });
     if (!view) return errorJson('not_found', 'user not found', 404);
     // geoCountry (transient, from the CDN header) prefills the "try a mirror"
-    // picker AND drives the delivery suggestion. Inside the sealed body; never
-    // stored on the user. The suggestion = "privacy" only for the admin-listed
-    // countries (delivery.privacyCountries), else "evade"; the choice itself is
-    // client-side. The country list stays server-side — only the verdict ships.
+    // picker AND drives the mode suggestion. Inside the sealed body; never
+    // stored. In a country on the censored-country list the status page's
+    // availability matrix picks the mode (lib/modeSuggestion.ts), from modes
+    // AVAILABLE on the member's own backend only; elsewhere it is the default
+    // on that backend. The list and the matrix stay server-side: only the
+    // verdict ships, and the choice itself stays client-side.
     const geoCountry = resolveCountry(req);
-    const settings = await ctx.runQuery(internal.appSettings.resolved, {});
-    const privacyCountries = (settings['delivery.privacyCountries'] as string[] | undefined) ?? [];
-    // Suggest a censorship-hardened mode for the admin-listed countries, else the
-    // catalog default. The country list never leaves the server; only the verdict
-    // ships, and the choice itself stays client-side.
-    //
-    // Resolved from the LIVE catalog: only a mode flagged isCensorshipRecommended
-    // that is actually AVAILABLE on the member's backend (enabled + applicable +
-    // bound) is ever suggested — the old compiled-array pick could point a
-    // censored-region member at a dark, unbound mode. No available candidate →
-    // the resolved default. (Privacy Mode is deliberately never flagged: its
-    // decoy is SNI-blocked in China by design.)
-    const modeList = await ctx.runQuery(internal.connectionModes.list, {});
-    // The default on the member's OWN backend: what a key with no choice issues into.
-    const resolvedDefault =
-      (await ctx.runQuery(internal.connectionModes.defaultId, {
-        backend: view.user.tier.backend,
-      })) ?? DEFAULT_CONNECTION_MODE;
-    const censorshipModeId = modeList.find(
-      (m) => m.isCensorshipRecommended && m.availableBackends.includes(view.user.tier.backend),
-    )?.id;
-    const suggestedModeId =
-      geoCountry && privacyCountries.includes(geoCountry) && censorshipModeId
-        ? censorshipModeId
-        : resolvedDefault;
+    const suggestedModeId = await ctx.runQuery(internal.censoredCountries.suggestMode, {
+      backend: view.user.tier.backend,
+      country: geoCountry,
+    });
     return json({ ...view, geoCountry, suggestedModeId });
   }),
 });
@@ -3557,6 +3537,40 @@ http.route({
         limit: Number.isFinite(limit) && limit > 0 ? limit : undefined,
       }),
     );
+  }),
+});
+
+// --- admin: the censored-country list (lib/censoredCountries.ts) -------------
+// One list: server names judged per country, members' choices, the countries
+// edges are probed from, the opt-in for name checks from inside, the status
+// matrix rows and the mode suggestion. PUT replaces the whole list.
+
+http.route({
+  path: '/api/v1/admin/censored-countries',
+  method: 'GET',
+  handler: httpAction(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:settings:read'))) return ADMIN_UNAUTH();
+    return json(await ctx.runQuery(internal.censoredCountries.view, {}));
+  }),
+});
+
+http.route({
+  path: '/api/v1/admin/censored-countries',
+  method: 'PUT',
+  handler: guard(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
+    if (!admin) return ADMIN_UNAUTH();
+    const body = await readJson<{ countries?: unknown }>(req);
+    try {
+      return json(
+        await ctx.runMutation(internal.censoredCountries.set, {
+          countries: body.countries,
+          actorAdminId: admin.adminUserId,
+        }),
+      );
+    } catch (err) {
+      return adminError(err);
+    }
   }),
 });
 

@@ -132,9 +132,10 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
 
   async testCredentials(cfg) {
     try {
-      await sdk(cfg, 'test', () =>
-        apiFactory(cfg).listLbs({ pageSize: 1, projectId: cfg.projectId }),
-      );
+      // An account is credentials only: without a location the key is tested
+      // in the first offered zone (a key is valid in every zone).
+      const at = cfg.zone ? cfg : { ...cfg, zone: SCALEWAY_ZONES[0] };
+      await sdk(at, 'test', () => apiFactory(at).listLbs({ pageSize: 1, projectId: at.projectId }));
       return { ok: true };
     } catch (e) {
       return credentialTestFailure(e);

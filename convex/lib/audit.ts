@@ -211,6 +211,13 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // PATCH /admin/settings flipped a key (e.g. devices.enforcementEnabled) —
   // the key NAME only, never the value (some values are secret-adjacent).
   'admin.settings.change': ['key'],
+  // The censored-country list (lib/censoredCountries.ts): the country CODES added,
+  // removed or re-flagged (comma-joined; infrastructure configuration, never a
+  // member's country) and the new length.
+  'censorship.countries.update': ['added', 'removed', 'flagsChanged', 'count'],
+  // Admin -> Status: the availability matrix's row count and the load-band
+  // thresholds (operator configuration of the public status page).
+  'status.page.update': ['censorshipRows', 'busyAt', 'crowdedAt'],
   // By-id backend-server CRUD from the CMS (the by-slug IaC path audits
   // separately); never the config secret / apiUrl.
   'admin.backend_server.create': ['slug', 'backend'],
@@ -324,12 +331,14 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'edge.provider_account.update': ['name', 'provider'],
   'edge.provider_account.delete': ['name', 'provider'],
   'edge.provider_account.upsert': ['name', 'provider', 'created'],
+  // Trust is per location: `placeKey` names it (the provider's region id).
   'edge.provider_account.qualified': [
     'name',
     'provider',
     'qualified',
     'edgeId',
     'endpointEvidence',
+    'placeKey',
   ],
   // The L7 auto-trust rule (lib/edges/autoQualify.ts): ids only, never the endpoint.
   'edge.provider_account.auto_qualified': [
@@ -338,7 +347,14 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
     'qualified',
     'edgeId',
     'endpointEvidence',
+    'placeKey',
   ],
+  // An account's locations (docs/edges.md § "Provider accounts and locations").
+  'edge.location.created': ['name', 'provider', 'placeKey'],
+  'edge.location.updated': ['name', 'provider', 'placeKey', 'enabled'],
+  'edge.location.removed': ['name', 'provider', 'placeKey'],
+  // The one-time move of accounts' fixed locations into locations: counts only.
+  'edge.locations.migrated': ['accounts', 'edges', 'runs', 'reviews', 'relays'],
   // An operator confirmed an L4 endpoint (lib/edges/verification.ts): never the address.
   'edge.verified': ['relaySlug', 'edgeId', 'listenerKey', 'method'],
   // The system's `partial` rung moved (lib/edges/verifyRung.ts): the word only, never the address.

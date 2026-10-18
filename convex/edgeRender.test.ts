@@ -24,6 +24,7 @@ import {
   type ListenerSpecFixture,
 } from './lib/edges/testing/fixtures';
 import { bumpEpoch } from './lib/edges/testing/reads';
+import { DEFAULT_CENSORED_COUNTRIES } from './lib/censoredCountries';
 import { __setSubscriptionClockForTests } from './lib/subscriptionEtag';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -855,9 +856,10 @@ describe("edgeRender: server names for the member's country", () => {
     vi.stubEnv('CF_FRONTED', 'true');
     const { t, subId } = await seedCountry();
     const userId = (await t.run((ctx) => ctx.db.get(subId)))!.userId;
+    // The choices are the censored-country list (here: the default one).
     expect(await t.query(internal.subscriptions.connectionRegion, { userId })).toEqual({
       region: null,
-      options: ['CN', 'RU', 'IR', 'MM'],
+      options: DEFAULT_CENSORED_COUNTRIES.codes,
     });
     await expect(
       t.mutation(internal.subscriptions.setConnectionRegion, { userId, region: 'DE' }),

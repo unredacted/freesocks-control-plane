@@ -16,6 +16,7 @@
  * write-only (blank = unchanged), surfaced to the admin as set/not-set booleans.
  */
 import type { DatabaseReader } from '../_generated/server';
+import { resolveCensoredCountries } from './censoredCountries';
 import { drainWarningCodes } from '../../src/shared/contracts/edgeCodes';
 
 const MIN = 60_000;
@@ -165,6 +166,10 @@ export interface EdgeConfig {
   probe: {
     enabled: boolean;
     sources: { globalping: boolean; checkhost: boolean; ripeatlas: boolean; internal: boolean };
+    /**
+     * Not a setting of its own: the countries on the censored-country list with
+     * "check edges" (lib/censoredCountries.ts), filled in by `resolveEdgeConfig`.
+     */
     countries: string[];
     intervalMinutes: number;
     suspectedIntervalMinutes: number;
@@ -374,7 +379,6 @@ export const EDGE_KEYS = {
   'probe.sources.checkhost': 'edge.probe.sources.checkhost',
   'probe.sources.ripeatlas': 'edge.probe.sources.ripeatlas',
   'probe.sources.internal': 'edge.probe.sources.internal',
-  'probe.countries': 'edge.probe.countries',
   'probe.intervalMinutes': 'edge.probe.intervalMinutes',
   'probe.suspectedIntervalMinutes': 'edge.probe.suspectedIntervalMinutes',
   'probe.perCountryLimit': 'edge.probe.perCountryLimit',
@@ -530,7 +534,8 @@ export function sanitizeRelayConfig(
         ripeatlas: sanitizeBool(raw['probe.sources.ripeatlas'], D.probe.sources.ripeatlas),
         internal: sanitizeBool(raw['probe.sources.internal'], D.probe.sources.internal),
       },
-      countries: sanitizeCountryList(raw['probe.countries'], D.probe.countries),
+      // From the censored-country list (resolveEdgeConfig); the default is for pure callers.
+      countries: D.probe.countries,
       intervalMinutes: sanitizeInt(raw['probe.intervalMinutes'], 5, 1440, D.probe.intervalMinutes),
       suspectedIntervalMinutes: sanitizeInt(
         raw['probe.suspectedIntervalMinutes'],
@@ -558,9 +563,10 @@ export async function resolveEdgeConfig(db: DatabaseReader): Promise<EdgeConfig>
   const paths = Object.keys(EDGE_KEYS) as RelayKeyPath[];
   // Parallel point reads (the analyticsConfig lesson: sequential awaits march a
   // slow datastore into the 1s UDF limit).
-  const [values, clientValues] = await Promise.all([
+  const [values, clientValues, censored] = await Promise.all([
     Promise.all(paths.map((p) => readSetting(db, EDGE_KEYS[p]))),
     Promise.all(RENDER_CLIENT_FAMILIES.map((f) => readSetting(db, clientRuleKey(f)))),
+    resolveCensoredCountries(db),
   ]);
   const raw: Partial<Record<RelayKeyPath, unknown>> = {};
   paths.forEach((p, i) => {
@@ -570,7 +576,8 @@ export async function resolveEdgeConfig(db: DatabaseReader): Promise<EdgeConfig>
   RENDER_CLIENT_FAMILIES.forEach((f, i) => {
     rawClients[f] = clientValues[i];
   });
-  return sanitizeRelayConfig(raw, rawClients);
+  const cfg = sanitizeRelayConfig(raw, rawClients);
+  return { ...cfg, probe: { ...cfg.probe, countries: censored.edgeChecks } };
 }
 
 /** Whole hours, 1..24: the header is read as an integer by the apps that honour it. */

@@ -25,7 +25,6 @@ import type { DatabaseReader, MutationCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { resolveEdgeConfig } from './lib/edgeConfig';
-import { resolveTemplateFor } from './edgeTemplates';
 import { providerHealthSatisfies } from './lib/edges/providers/capabilities';
 import {
   bindingMatches,
@@ -39,6 +38,7 @@ import { partialRungFor } from './lib/edges/verifyRung';
 import { verificationListenerOf, type VerifiableListener } from './lib/edges/verificationContext';
 import { checkPublishable } from './relays';
 import { applyQualification } from './edgeProviderAccounts';
+import { effectiveTemplateOfLocation, locationOfEdge } from './edgeLocations';
 
 const methodValidator = v.union(v.literal('test_link'), v.literal('named_connection'));
 
@@ -186,9 +186,10 @@ export async function confirmEndpoint(
       },
     });
     // The separate consequence: the first confirmed endpoint of an untrusted
-    // account trusts the account, when the endpoint is evidence FOR THE
-    // ACCOUNT AS IT IS NOW: the credentials passed a test after they last
-    // changed, and the edge was provisioned with the template the account
+    // LOCATION trusts it (the edge's own location: a new region is trusted by
+    // its first tested address), when the endpoint is evidence FOR IT AS IT
+    // IS NOW: the account's credentials passed a test after they last
+    // changed, and the edge was provisioned with the template the location
     // provisions with now (the qualification's `templateHash` keys the
     // template-edit invalidation). An adopted edge or one from an older
     // template proves its own endpoint only. A manual untrust holds it off.
@@ -196,16 +197,19 @@ export async function confirmEndpoint(
     let accountTrustReason: string | null = null;
     if (edge.accountId) {
       const account = await ctx.db.get(edge.accountId);
+      const location = await locationOfEdge(ctx.db, edge);
       if (!account) accountTrustReason = 'account_not_found';
-      else if (account.qualified) accountTrustReason = 'already_qualified';
-      else if (account.autoQualifyHold) accountTrustReason = 'hold';
+      else if (!location) accountTrustReason = 'no_location';
+      else if (location.qualified) accountTrustReason = 'already_qualified';
+      else if (location.autoQualifyHold) accountTrustReason = 'hold';
       else {
-        const trust = await accountTrustEvidence(ctx, account, edge);
+        const trust = await accountTrustEvidence(ctx, account, location, edge);
         if (!trust.ok) accountTrustReason = trust.code;
         else {
           await applyQualification(ctx, account, {
             by: 'admin',
             actorAdminId: a.actorAdminId,
+            locationId: location._id,
             evidence: {
               edgeId: edge._id,
               endpoint: current!.endpoint,
@@ -239,6 +243,7 @@ export async function confirmEndpoint(
 async function accountTrustEvidence(
   ctx: { db: DatabaseReader },
   account: Doc<'edgeProviderAccounts'>,
+  location: Doc<'edgeLocations'>,
   edge: Doc<'edges'>,
 ): Promise<
   | { ok: true; testedAt: number; templateHash: string }
@@ -251,13 +256,7 @@ async function accountTrustEvidence(
   if (!testedAt || account.lastTestError) return { ok: false, code: 'account_untested' };
   if (testedAt <= (account.credentialsChangedAt ?? 0))
     return { ok: false, code: 'tested_before_credential_change' };
-  const effective = await resolveTemplateFor(
-    ctx,
-    account.provider,
-    null,
-    account.defaultTemplateId ?? null,
-    account._id,
-  );
+  const effective = await effectiveTemplateOfLocation(ctx, account, location);
   if (!edge.templateHash || edge.templateHash !== effective.hash)
     return { ok: false, code: 'template_mismatch' };
   return { ok: true, testedAt, templateHash: effective.hash };

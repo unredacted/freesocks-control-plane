@@ -14,6 +14,8 @@ import type { Id } from './_generated/dataModel';
 import { signValue } from './lib/cookies';
 import { hmacSha256Hex, hmacSha512Hex, sha256Hex } from './lib/crypto';
 import { resolveCountry } from './lib/http';
+import { CENSORED_COUNTRIES_KEY } from './lib/censoredCountries';
+import { upsertSettingRow } from './appSettings';
 import { bytesToB64Url } from '../src/shared/crypto/envelope';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -1284,25 +1286,30 @@ describe('rate-limit coverage (pre-launch review)', () => {
   });
 });
 
+/** The censored-country list row (lib/censoredCountries.ts) listing `codes`. */
+const listedRow = (codes: string[]) => ({
+  key: CENSORED_COUNTRIES_KEY,
+  value: JSON.stringify(
+    codes.map((code) => ({ code, checkEdges: false, checkNamesInside: false })),
+  ),
+  updatedAt: Date.now(),
+});
+
 /**
  * suggestedModeId respects the LIVE catalog (flipped characterization from the
  * mode overhaul): a censorship-recommended mode is suggested only when it is
  * enabled AND available on the member's backend; otherwise the resolved
  * default. The old compiled-array pick suggested the dark freedom-reality.
+ * Which countries count is the censored-country list; in a listed country the
+ * status page's availability matrix decides (lib/modeSuggestion.ts).
  */
 describe('suggestedModeId respects enabled + availability', () => {
-  test('privacy-country caller falls back to the default while freedom-reality is dark/unbound', async () => {
+  test('listed-country caller falls back to the default while freedom-reality is dark/unbound', async () => {
     vi.stubEnv('CF_FRONTED', 'true');
     const t = convexTest(schema, modules);
     const { userId } = await seedTierAndUser(t);
     const cookie = await memberCookie(t, userId);
-    await t.run((ctx) =>
-      ctx.db.insert('appSettings', {
-        key: 'delivery.privacyCountries',
-        value: JSON.stringify(['IR']),
-        updatedAt: Date.now(),
-      }),
-    );
+    await t.run((ctx) => ctx.db.insert('appSettings', listedRow(['IR'])));
 
     const res = await t.fetch('/api/v1/account', {
       headers: { cookie, 'cf-ipcountry': 'IR' },
@@ -1314,17 +1321,13 @@ describe('suggestedModeId respects enabled + availability', () => {
     expect(body.suggestedModeId).toBe('freedom-ws');
   });
 
-  test('privacy-country caller gets the censorship-recommended mode once enabled + bound', async () => {
+  test('listed-country caller gets the censorship-recommended mode once enabled + bound', async () => {
     vi.stubEnv('CF_FRONTED', 'true');
     const t = convexTest(schema, modules);
     const { userId } = await seedTierAndUser(t);
     const cookie = await memberCookie(t, userId);
     await t.run(async (ctx) => {
-      await ctx.db.insert('appSettings', {
-        key: 'delivery.privacyCountries',
-        value: JSON.stringify(['IR']),
-        updatedAt: Date.now(),
-      });
+      await ctx.db.insert('appSettings', listedRow(['IR']));
       // Materialize the catalog with freedom-reality enabled + bound.
       await ctx.db.insert('connectionModeFamilies', {
         slug: 'freedom',
@@ -1378,11 +1381,7 @@ describe('suggestedModeId respects enabled + availability', () => {
     const EMPTY = '11111111-2222-3333-4444-000000000000';
     const FULL = '11111111-2222-3333-4444-111111111111';
     const serverId = await t.run(async (ctx) => {
-      await ctx.db.insert('appSettings', {
-        key: 'delivery.privacyCountries',
-        value: JSON.stringify(['IR']),
-        updatedAt: Date.now(),
-      });
+      await ctx.db.insert('appSettings', listedRow(['IR']));
       await ctx.db.insert('connectionModeFamilies', {
         slug: 'freedom',
         iconId: 'zap',
@@ -1452,18 +1451,94 @@ describe('suggestedModeId respects enabled + availability', () => {
     expect(await suggested('DE')).toBe('freedom-reality');
   });
 
+  test('in a listed country the availability matrix picks the mode', async () => {
+    vi.stubEnv('CF_FRONTED', 'true');
+    const t = convexTest(schema, modules);
+    const { userId } = await seedTierAndUser(t);
+    const cookie = await memberCookie(t, userId);
+    const WS = '11111111-2222-3333-4444-000000000001';
+    const REALITY = '11111111-2222-3333-4444-000000000002';
+    const serverId = await t.run(async (ctx) => {
+      await ctx.db.insert('appSettings', listedRow(['IR', 'RU']));
+      await ctx.db.insert('connectionModeFamilies', {
+        slug: 'freedom',
+        iconId: 'zap',
+        enabled: true,
+        order: 0,
+        updatedAt: Date.now(),
+      });
+      for (const [slug, order, censorship, squad] of [
+        ['freedom-ws', 0, false, WS],
+        ['freedom-reality', 1, true, REALITY],
+      ] as const) {
+        await ctx.db.insert('connectionModes', {
+          slug,
+          familySlug: 'freedom',
+          deliveryStyle: 'url',
+          enabled: true,
+          isFamilyDefault: order === 0,
+          isCensorshipRecommended: censorship,
+          backends: ['remnawave'],
+          order,
+          updatedAt: Date.now(),
+        });
+        await ctx.db.insert('modePlacements', {
+          modeSlug: slug,
+          backend: 'remnawave',
+          config: JSON.stringify({ squadUuids: [squad] }),
+          updatedAt: Date.now(),
+        });
+      }
+      return ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'rw',
+        slug: 'rw',
+        config: { type: 'remnawave', baseUrl: 'https://rw.example', apiToken: 'tok' },
+        isActive: true,
+        priority: 0,
+        keyCount: 0,
+        updatedAt: Date.now(),
+      });
+    });
+    for (const placement of [WS, REALITY])
+      await t.mutation(internal.remnawaveNodes.markNodeStats, {
+        backendServerId: serverId,
+        nodes: [{ placement, label: placement, usersOnline: 0, online: true, nodeCount: 1 }],
+      });
+    const matrix = (rows: unknown[]) =>
+      t.run((ctx) => upsertSettingRow(ctx, 'status.censorship', JSON.stringify({ rows })));
+    const suggested = async (country: string) =>
+      (
+        (await (
+          await t.fetch('/api/v1/account', { headers: { cookie, 'cf-ipcountry': country } })
+        ).json()) as { suggestedModeId: string }
+      ).suggestedModeId;
+    // No row: a listed country gets the censorship-recommended mode.
+    expect(await suggested('IR')).toBe('freedom-reality');
+    // The matrix says the recommended mode is blocked there and the default works.
+    await matrix([
+      { countryCode: 'IR', cells: { 'freedom-ws': 'available', 'freedom-reality': 'blocked' } },
+      { countryCode: 'RU', cells: { 'freedom-ws': 'partial', 'freedom-reality': 'available' } },
+    ]);
+    expect(await suggested('IR')).toBe('freedom-ws');
+    // `available` beats `partial`.
+    expect(await suggested('RU')).toBe('freedom-reality');
+    // Every cell blocked: nothing wins, the recommended mode is the fallback.
+    await matrix([
+      { countryCode: 'IR', cells: { 'freedom-ws': 'blocked', 'freedom-reality': 'blocked' } },
+    ]);
+    expect(await suggested('IR')).toBe('freedom-reality');
+    // A matrix row for a country that is NOT listed changes nothing there.
+    await matrix([{ countryCode: 'DE', cells: { 'freedom-reality': 'available' } }]);
+    expect(await suggested('DE')).toBe('freedom-ws');
+  });
+
   test('a non-listed country gets the compiled default', async () => {
     vi.stubEnv('CF_FRONTED', 'true');
     const t = convexTest(schema, modules);
     const { userId } = await seedTierAndUser(t);
     const cookie = await memberCookie(t, userId);
-    await t.run((ctx) =>
-      ctx.db.insert('appSettings', {
-        key: 'delivery.privacyCountries',
-        value: JSON.stringify(['IR']),
-        updatedAt: Date.now(),
-      }),
-    );
+    await t.run((ctx) => ctx.db.insert('appSettings', listedRow(['IR'])));
 
     const res = await t.fetch('/api/v1/account', {
       headers: { cookie, 'cf-ipcountry': 'DE' },

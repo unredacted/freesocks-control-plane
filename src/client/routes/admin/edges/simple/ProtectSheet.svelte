@@ -61,6 +61,8 @@
   import { serversPaths } from '../../servers/lib/routes';
   import CodeNote from '../components/CodeNote.svelte';
   import ProviderAccountStepper from '../forms/ProviderAccountStepper.svelte';
+  import LocationPicker from '../forms/LocationPicker.svelte';
+  import { hasLocations } from '../forms/providerFields';
   import { edgeErrorIssue, edgeErrorMessage } from '../lib/edgeErrors';
   import { providerLabel, transportName } from '../lib/format';
   import { countryLabel } from '../../servers/lib/words';
@@ -168,8 +170,14 @@
       if (p.nodeUuid !== nodeUuid || p.backendServerId !== serverId || v.keys !== chosenKeys)
         return;
       plan = p;
-      // The account stays picked while the new plan still offers it.
-      if (accountId && !p.accounts.some((a) => a.id === accountId && a.compatible)) accountId = '';
+      // The account stays picked while the new plan still offers it (a location
+      // just added to it is picked once the plan offers it).
+      if (
+        accountId &&
+        !p.accounts.some((a) => a.id === accountId && a.compatible) &&
+        wantLocation === null
+      )
+        accountId = '';
       if (p.activeRunId) onRunCreated(p.activeRunId);
     },
   }));
@@ -228,6 +236,7 @@
     [...(plan?.accounts ?? [])].sort((a, b) => Number(b.compatible) - Number(a.compatible)),
   );
   const compatible = $derived(accounts.filter((a) => a.compatible));
+  const account = $derived(accounts.find((a) => a.id === accountId) ?? null);
   // Exactly one account can carry the node: it is the answer, picked for you.
   $effect(() => {
     if (accountId === '' && compatible.length === 1) accountId = compatible[0]!.id;
@@ -251,6 +260,8 @@
       case 'account_capacity_reached':
       case 'account_budget_exhausted':
       case 'dns_zone_missing':
+      case 'location_disabled':
+      case 'location_capacity_reached':
         return edgesPaths.provider(id);
       case 'provider_mismatch':
         return plan?.existingRelay
@@ -269,15 +280,51 @@
     replan();
   }
 
+  // 2b. Where in that account? The default location is preselected; one the
+  // new plan no longer offers is dropped. A CDN account has one location.
+  let locationId = $state('');
+  let addingLocationFor = $state<string | null>(null);
+  /** A location just created: picked once the re-read plan offers it. */
+  let wantLocation = $state<string | null>(null);
+  const location = $derived(account?.locations.find((l) => l.id === locationId) ?? null);
+  $effect(() => {
+    const offered = (account?.locations ?? []).filter((l) => l.compatible);
+    if (wantLocation !== null) {
+      if (offered.some((l) => l.id === wantLocation)) {
+        locationId = wantLocation;
+        wantLocation = null;
+        return;
+      }
+      if (planM.isPending) return;
+      // The new plan does not offer it: its reasons on the list say why.
+      wantLocation = null;
+    }
+    if (locationId && offered.some((l) => l.id === locationId)) return;
+    const pick = offered.find((l) => l.isDefault) ?? (offered.length === 1 ? offered[0] : null);
+    locationId = pick?.id ?? '';
+  });
+  function onLocationCreated(account: string, id: string) {
+    addingLocationFor = null;
+    accountId = account;
+    wantLocation = id;
+    replan();
+  }
+  /** Where the addresses go, for the review sentence: the location when the provider has places. */
+  const whereName = $derived(
+    account && location && hasLocations(account.provider)
+      ? `${account.name} (${location.label})`
+      : (account?.name ?? ''),
+  );
+
   // 3. Review
-  const account = $derived(accounts.find((a) => a.id === accountId) ?? null);
-  const words = $derived(plan && account ? planWords(plan, account.name) : null);
+  const words = $derived(plan && account ? planWords(plan, whereName) : null);
   const create = createMutation(() => ({
     mutationFn: (keepDirect: boolean) =>
       createSetupRun({
         backendServerId: plan!.backendServerId,
         nodeUuid: plan!.nodeUuid,
         accountId,
+        ...(locationId ? { locationId } : {}),
         planHash: plan!.planHash,
         approvedHideUuids: keepDirect ? [] : (words?.uncovered?.uuids ?? []),
         ...(keepDirect ? { keepDirect: true } : {}),
@@ -297,7 +344,7 @@
           !choosingTransports &&
           plan.requiredListeners.length > 0
       : step === 'account'
-        ? !!account?.compatible
+        ? !!account?.compatible && !!location?.compatible
         : false,
   );
   function next() {
@@ -306,6 +353,7 @@
   }
   function back() {
     addingAccount = false;
+    addingLocationFor = null;
     if (step === 'review') step = 'account';
     else if (step === 'account') step = 'node';
   }
@@ -334,8 +382,8 @@
         {:else if step === 'node'}
           Pick the node members should reach through a provider address instead of its own.
         {:else if step === 'account'}
-          The provider account the address is created in. Only accounts that can carry every
-          transport can be picked.
+          The provider account and the location the address is created in. Only accounts that can
+          carry every transport can be picked.
         {:else}
           One last look before anything is created.
         {/if}
@@ -605,8 +653,10 @@
             <fieldset class="space-y-2">
               <legend class="sr-only">Provider account</legend>
               {#each accounts as a (a.id)}
-                <div class={['rounded-md', !a.compatible && 'border']}>
-                  <label class={[CARD, !a.compatible && 'border-0 pb-1']}>
+                {@const places = a.compatible && accountId === a.id && hasLocations(a.provider)}
+                {@const boxed = !a.compatible || places || addingLocationFor === a.id}
+                <div class={['rounded-md', boxed && 'border']}>
+                  <label class={[CARD, boxed && 'border-0 pb-1']}>
                     <input
                       type="radio"
                       name="protect-account"
@@ -633,7 +683,13 @@
                       {#each a.reasons as r (r)}
                         {@const href = reasonLink(r, a.id)}
                         <li>
-                          {#if href}
+                          {#if r === 'no_location' && hasLocations(a.provider)}
+                            <button
+                              type="button"
+                              class={`${LINK} inline-flex min-h-11 items-center sm:min-h-0`}
+                              onclick={() => (addingLocationFor = a.id)}>Add a location</button
+                            >
+                          {:else if href}
                             <Link
                               {href}
                               class={`${LINK} inline-flex min-h-11 items-center sm:min-h-0`}
@@ -649,6 +705,63 @@
                         </li>
                       {/each}
                     </ul>
+                  {/if}
+                  {#if places}
+                    <fieldset class="space-y-1.5 px-3 pb-3 ps-10">
+                      <legend class="text-muted-foreground mb-1 text-xs">Location</legend>
+                      {#each a.locations as l (l.id)}
+                        <label
+                          class="has-[:checked]:border-primary flex cursor-pointer items-start gap-2 rounded-md border px-2 py-1.5 has-[:disabled]:cursor-not-allowed"
+                        >
+                          <input
+                            type="radio"
+                            name="protect-location"
+                            class="accent-primary mt-1"
+                            value={l.id}
+                            checked={locationId === l.id}
+                            disabled={!l.compatible}
+                            onchange={() => (locationId = l.id)}
+                          />
+                          <span class="min-w-0 flex-1">
+                            <span class={['block text-sm', !l.compatible && 'opacity-60']}
+                              >{l.label}{l.isDefault && a.locations.length > 1
+                                ? ' (default)'
+                                : ''}</span
+                            >
+                            <span class="text-muted-foreground block text-xs">
+                              {#if !l.compatible}
+                                {l.reasons.map(reasonLabel).join('. ')}.
+                              {:else if l.qualified}
+                                Trusted.
+                              {:else}
+                                Not trusted yet: the check before going live trusts it.
+                              {/if}
+                            </span>
+                          </span>
+                        </label>
+                      {/each}
+                      {#if addingLocationFor !== a.id}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          class="h-11 sm:h-7"
+                          onclick={() => (addingLocationFor = a.id)}
+                        >
+                          Add a location
+                        </Button>
+                      {/if}
+                    </fieldset>
+                  {/if}
+                  {#if addingLocationFor === a.id}
+                    <div class="border-t p-3">
+                      <LocationPicker
+                        accountId={a.id}
+                        provider={a.provider}
+                        {nodeCountry}
+                        onCreated={(id) => onLocationCreated(a.id, id)}
+                        onCancel={() => (addingLocationFor = null)}
+                      />
+                    </div>
                   {/if}
                 </div>
               {/each}

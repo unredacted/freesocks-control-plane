@@ -8,7 +8,9 @@ import { internalMutation, internalQuery } from './_generated/server';
 import { ConvexError, v } from 'convex/values';
 import { upsertSettingRow } from './appSettings';
 import { writeAuditLog } from './lib/audit';
+import { resolveCensoredCountries } from './lib/censoredCountries';
 import {
+  mergeCensorshipRows,
   resolvePublicStatusPage,
   resolveLocationLoad,
   resolveStatusConfig,
@@ -32,15 +34,23 @@ export const locationLoad = internalQuery({
 
 // --- admin: page config -----------------------------------------------------
 
-/** Current page config for the admin editor (sanitized, fail-safe). */
+/**
+ * Current page config for the admin editor (sanitized, fail-safe). `countries`
+ * is the censored-country list: the editor shows one row per listed country,
+ * in that order; `rows` holds every stored row, listed or not.
+ */
 export const getPageConfig = internalQuery({
   args: {},
   handler: async (ctx) => {
-    const cfg = await resolveStatusConfig(ctx.db);
+    const [cfg, censored] = await Promise.all([
+      resolveStatusConfig(ctx.db),
+      resolveCensoredCountries(ctx.db),
+    ]);
     return {
       busyAt: cfg.busyAt,
       crowdedAt: cfg.crowdedAt,
       rows: cfg.censorshipRows,
+      countries: censored.codes,
     };
   },
 });
@@ -76,8 +86,26 @@ export const setPageConfig = internalMutation({
         });
       }
     }
+    let savedRows: number | undefined;
     if (rows !== undefined) {
-      const clean = sanitizeCensorshipRows({ rows }, await resolveValidModeIds(ctx.db));
+      const valid = await resolveValidModeIds(ctx.db);
+      const [current, censored] = await Promise.all([
+        resolveStatusConfig(ctx.db),
+        resolveCensoredCountries(ctx.db),
+      ]);
+      // The editor shows only listed countries; rows of countries that left the
+      // list are kept (re-adding the country brings its row back).
+      const clean = sanitizeCensorshipRows(
+        {
+          rows: mergeCensorshipRows(
+            sanitizeCensorshipRows({ rows }, valid),
+            current.censorshipRows,
+            censored.codes,
+          ),
+        },
+        valid,
+      );
+      savedRows = clean.length;
       await upsertSettingRow(
         ctx,
         STATUS_KEYS.censorship,
@@ -101,18 +129,21 @@ export const setPageConfig = internalMutation({
       action: 'status.page.update',
       targetType: 'status_page',
       payload: {
-        ...(rows !== undefined
-          ? {
-              censorshipRows: sanitizeCensorshipRows({ rows }, await resolveValidModeIds(ctx.db))
-                .length,
-            }
-          : {}),
+        ...(savedRows !== undefined ? { censorshipRows: savedRows } : {}),
         ...(busyAt !== undefined ? { busyAt } : {}),
         ...(crowdedAt !== undefined ? { crowdedAt } : {}),
       },
     });
-    const cfg = await resolveStatusConfig(ctx.db);
-    return { busyAt: cfg.busyAt, crowdedAt: cfg.crowdedAt, rows: cfg.censorshipRows };
+    const [cfg, censored] = await Promise.all([
+      resolveStatusConfig(ctx.db),
+      resolveCensoredCountries(ctx.db),
+    ]);
+    return {
+      busyAt: cfg.busyAt,
+      crowdedAt: cfg.crowdedAt,
+      rows: cfg.censorshipRows,
+      countries: censored.codes,
+    };
   },
 });
 

@@ -73,6 +73,7 @@ import {
   ROLLBACK_ON_CANCEL_PHASES,
   ROTATION_PHASES,
   TERMINAL_PHASES,
+  type AccountCandidate,
   type RotationEvent,
 } from './lib/edges/rotation';
 import {
@@ -117,6 +118,8 @@ import {
   recordCandidateEdge,
   type PublicationAdmission,
 } from './nodeActivation';
+import type { PublicationShape } from './lib/backend/activation';
+import { defaultLocationOf, liveCountForLocation, locationsOfAccount } from './edgeLocations';
 
 type Rotation = Doc<'edgeRotations'>;
 type Edge = Doc<'edges'>;
@@ -423,6 +426,8 @@ const startArgs = {
   requestedAccountId: v.optional(v.id('edgeProviderAccounts')),
   requestedTemplateId: v.optional(v.id('edgeTemplates')),
   allowUnqualified: v.optional(v.boolean()),
+  /** An explicit provision's location (its account when `requestedAccountId` is absent). */
+  requestedLocationId: v.optional(v.id('edgeLocations')),
   reason: v.optional(v.string()),
   actorAdminId: v.optional(v.id('adminUsers')),
   /** The guided setup run starting this rotation (+ its generation, reported by the terminal hook). */
@@ -445,6 +450,7 @@ export interface StartRotationArgs {
   requestedAccountId?: Id<'edgeProviderAccounts'>;
   requestedTemplateId?: Id<'edgeTemplates'>;
   allowUnqualified?: boolean;
+  requestedLocationId?: Id<'edgeLocations'>;
   reason?: string;
   actorAdminId?: Id<'adminUsers'>;
   setupRun?: { runId: Id<'edgeSetupRuns'>; generation: number };
@@ -484,6 +490,7 @@ export async function publicationApproval(
   return publicationAdmission(ctx, origin.backendServerId, origin.origin.nodeName, {
     listenerKey: listener?.listenerKey ?? '',
     accountId: to.accountId ? String(to.accountId) : null,
+    locationId: to.locationId ? String(to.locationId) : null,
     templateHash: to.templateHash ?? null,
   });
 }
@@ -634,7 +641,7 @@ export async function collectStartBlockers(
       }
     }
   }
-  if (a.kind === 'provision' && a.requestedAccountId && !a.listenerId) {
+  if (a.kind === 'provision' && (a.requestedAccountId || a.requestedLocationId) && !a.listenerId) {
     push('validation', 'listenerId is required for an explicit account');
   }
   if (listenerId) {
@@ -823,6 +830,7 @@ export async function startRotation(
     requestedAccountId: a.kind === 'provision' ? a.requestedAccountId : undefined,
     requestedTemplateId: a.kind === 'provision' ? a.requestedTemplateId : undefined,
     allowUnqualified: a.kind === 'provision' && a.allowUnqualified ? true : undefined,
+    requestedLocationId: a.kind === 'provision' ? a.requestedLocationId : undefined,
     setupRun: a.setupRun,
     viaStandby: a.kind === 'publish' ? true : undefined,
     phase: 'select',
@@ -854,9 +862,15 @@ export async function startRotation(
       : {}),
     updatedAt: now,
   });
-  if (a.kind === 'provision' && a.allowUnqualified && a.requestedAccountId) {
+  if (
+    a.kind === 'provision' &&
+    a.allowUnqualified &&
+    (a.requestedAccountId || a.requestedLocationId)
+  ) {
     // The explicit bootstrap provision: audited by name, never by credential.
-    const account = await ctx.db.get(a.requestedAccountId);
+    const loc = a.requestedLocationId ? await ctx.db.get(a.requestedLocationId) : null;
+    const accountId = a.requestedAccountId ?? loc?.accountId;
+    const account = accountId ? await ctx.db.get(accountId) : null;
     const listener = listenerId ? await ctx.db.get(listenerId) : null;
     await auditRotation(ctx, id, {
       actorType: a.actorAdminId ? 'admin' : 'system',
@@ -1397,6 +1411,7 @@ export const commitSelection = internalMutation({
     stepVersion: v.number(),
     listenerId: v.id('relayListeners'),
     accountId: v.id('edgeProviderAccounts'),
+    locationId: v.optional(v.id('edgeLocations')),
     templateId: v.optional(v.union(v.id('edgeTemplates'), v.null())),
     templateHash: v.string(),
     nameNonce: v.string(),
@@ -1477,6 +1492,7 @@ export const commitSelection = internalMutation({
         relayId: r.relayId,
         listenerId: a.listenerId,
         accountId: a.accountId,
+        locationId: a.locationId ?? null,
         templateId: a.templateId,
         templateHash: a.templateHash,
         listeners: a.listeners,
@@ -2350,6 +2366,8 @@ export interface SelectionRequest {
   requestedAccountId?: Id<'edgeProviderAccounts'>;
   requestedTemplateId?: Id<'edgeTemplates'>;
   allowUnqualified?: boolean;
+  /** An explicit location (the operator's pick); its account is implied. */
+  requestedLocationId?: Id<'edgeLocations'>;
   /** Started by a guided setup run (the operator chose its account). */
   setupRun?: { runId: Id<'edgeSetupRuns'>; generation: number };
 }
@@ -2359,6 +2377,8 @@ export interface SelectionContext {
   standbyId: Id<'edges'> | null;
   account: {
     id: Id<'edgeProviderAccounts'>;
+    /** Where the new edge is created (frozen on it at plan time). */
+    locationId: Id<'edgeLocations'>;
     provider: string;
     defaultTemplateId: Id<'edgeTemplates'> | null;
     /** L7: the DNS zone the hostname is minted under (this account's, or its DNS account's). */
@@ -2395,7 +2415,7 @@ export function publishesUnderApproval(r: {
 async function shapeAdmitted(
   ctx: { db: QueryCtx['db'] },
   origin: Origin,
-  pub: { listenerKey: string; accountId: string | null; templateHash: string | null },
+  pub: PublicationShape,
   opts: { replace: boolean },
 ): Promise<boolean> {
   if (origin.origin.kind !== 'panel-node' || !origin.backendServerId) return true;
@@ -2474,12 +2494,16 @@ export async function selectionContext(
       template: null,
     };
   const listener = slot;
-  const fitsApproval = async (accountId: string | null, templateHash: string | null) =>
+  const fitsApproval = async (
+    accountId: string | null,
+    locationId: string | null,
+    templateHash: string | null,
+  ) =>
     !underApproval ||
     (await shapeAdmitted(
       ctx,
       origin,
-      { listenerKey: listener.listenerKey, accountId, templateHash },
+      { listenerKey: listener.listenerKey, accountId, locationId, templateHash },
       { replace: rotation.kind === 'replace' },
     ));
   const standbyCandidates = [];
@@ -2501,7 +2525,11 @@ export async function selectionContext(
         (e.listenerId !== slot._id ||
           e.status !== 'active' ||
           e.publication !== 'unpublished' ||
-          (await fitsApproval(e.accountId ? String(e.accountId) : null, e.templateHash ?? null))),
+          (await fitsApproval(
+            e.accountId ? String(e.accountId) : null,
+            e.locationId ? String(e.locationId) : null,
+            e.templateHash ?? null,
+          ))),
     });
   }
   const standby = pickStandby(
@@ -2544,20 +2572,35 @@ export async function selectionContext(
     accountFailure: code,
     template: null,
   });
-  if (rotation.requestedAccountId) {
-    // The explicit bootstrap path: the operator named the account. It must be
-    // enabled, tested and able to front this listener; qualification is waived
-    // only when the request says so (the result is then never published).
-    const a = await ctx.db.get(rotation.requestedAccountId);
+  if (rotation.requestedAccountId || rotation.requestedLocationId) {
+    // The explicit bootstrap path: the operator named the account (or one of
+    // its locations; the account's default location otherwise). It must be
+    // enabled, tested and able to front this listener; trust is waived only
+    // when the request says so (the result is then never published).
+    const named = rotation.requestedLocationId
+      ? await ctx.db.get(rotation.requestedLocationId)
+      : null;
+    if (rotation.requestedLocationId && !named) return failure('location_not_found');
+    if (named && rotation.requestedAccountId && named.accountId !== rotation.requestedAccountId)
+      return failure('location_not_found');
+    const a = await ctx.db.get((rotation.requestedAccountId ?? named!.accountId)!);
     if (!a) return failure('account_not_found');
     if (!a.enabled) return failure('account_disabled');
     if (!accountTested(a)) return failure('account_untested');
     if (!eligibleAccounts.some((e) => e._id === a._id)) return failure('account_incompatible');
-    if (!a.qualified && !rotation.allowUnqualified) return failure('no_qualified_account');
+    const where = named ?? (await defaultLocationOf(ctx.db, a));
+    if (!where) return failure('no_location');
+    if (!where.enabled) return failure('location_disabled');
+    if (!where.qualified && !rotation.allowUnqualified) return failure('no_qualified_account');
     if (listener.providerScope?.accountId && a._id !== listener.providerScope.accountId)
       return failure('account_mismatch');
     const live = (await liveEdgesOfAccount(ctx.db, a._id)).filter((e) => e.managed).length;
     if (live >= a.maxLiveEdges) return failure('account_capacity_reached');
+    if (
+      where.maxLiveEdges !== undefined &&
+      (await liveCountForLocation(ctx.db, where)) >= where.maxLiveEdges
+    )
+      return failure('location_capacity_reached');
     const today = a.allocationsDayKey === todayKey() ? a.allocationsToday : 0;
     if (a.dailyAllocationBudget !== 0 && today >= a.dailyAllocationBudget)
       return failure('account_budget_exhausted');
@@ -2567,50 +2610,60 @@ export async function selectionContext(
       rotation.requestedTemplateId ?? null,
       a.defaultTemplateId ?? null,
       a._id,
+      where,
     );
     if (rotation.requestedTemplateId && template.id !== rotation.requestedTemplateId)
       return failure('template_not_found');
-    if (!(await fitsApproval(a._id as string, template.hash)))
+    if (!(await fitsApproval(a._id as string, where._id as string, template.hash)))
       return failure('outside_approved_shape');
-    return { listener, standbyId: null, ...(await describeAccount(ctx, a)), template };
+    return { listener, standbyId: null, ...(await describeAccount(ctx, a, where)), template };
   }
   if (accounts.length === 0) {
     return failure(layers.length === 0 ? 'no_compatible_layer' : 'no_account_for_layer');
   }
-  const candidates = [];
+  // One candidate per enabled LOCATION of each eligible account: the account
+  // brings its budget, live cap and priority; the location its trust and cap.
+  const candidates: AccountCandidate[] = [];
   let outsideShape = 0;
   for (const a of accounts) {
     // An account-scoped profile provisions from that account only.
     if (listener.providerScope?.accountId && a._id !== listener.providerScope.accountId) continue;
-    if (underApproval) {
-      const tpl = await resolveTemplateFor(
-        ctx,
-        a.provider,
-        null,
-        a.defaultTemplateId ?? null,
-        a._id,
-      );
-      if (!(await fitsApproval(a._id as string, tpl.hash))) {
-        outsideShape++;
-        continue;
-      }
-    }
     // Same rule as the insert-time capacity check: observe-only edges were not
     // provisioned by FCP and never consume its allocation.
     const live = (await liveEdgesOfAccount(ctx.db, a._id)).filter((e) => e.managed).length;
-    candidates.push({
-      id: a._id as string,
-      provider: a.provider,
-      qualified: a.qualified,
-      priority: a.priority,
-      dailyAllocationBudget: a.dailyAllocationBudget,
-      allocationsToday: a.allocationsDayKey === todayKey() ? a.allocationsToday : 0,
-      maxLiveEdges: a.maxLiveEdges,
-      liveEdges: live,
-    });
+    for (const loc of await locationsOfAccount(ctx.db, a._id)) {
+      if (!loc.enabled) continue;
+      if (underApproval) {
+        const tpl = await resolveTemplateFor(
+          ctx,
+          a.provider,
+          null,
+          a.defaultTemplateId ?? null,
+          a._id,
+          loc,
+        );
+        if (!(await fitsApproval(a._id as string, loc._id as string, tpl.hash))) {
+          outsideShape++;
+          continue;
+        }
+      }
+      candidates.push({
+        id: a._id as string,
+        locationId: loc._id as string,
+        provider: a.provider,
+        qualified: loc.qualified,
+        priority: a.priority,
+        dailyAllocationBudget: a.dailyAllocationBudget,
+        allocationsToday: a.allocationsDayKey === todayKey() ? a.allocationsToday : 0,
+        maxLiveEdges: a.maxLiveEdges,
+        liveEdges: live,
+        locationMaxLiveEdges: loc.maxLiveEdges ?? null,
+        locationLiveEdges: await liveCountForLocation(ctx.db, loc),
+      });
+    }
   }
   // A provider-scoped profile binds the slot to that network; an unscoped one
-  // takes the best qualified account of any provider.
+  // takes the best trusted location of any provider.
   const picked = listener.providerScope?.provider
     ? pickAccount(candidates, listener.providerScope.provider)
     : pickAccountAny(
@@ -2631,20 +2684,28 @@ export async function selectionContext(
       template: null,
     };
   const account = accounts.find((a) => (a._id as string) === picked.account.id)!;
+  const location = (await ctx.db.get(picked.account.locationId as Id<'edgeLocations'>))!;
   const template = await resolveTemplateFor(
     ctx,
     account.provider,
     null,
     account.defaultTemplateId ?? null,
     account._id,
+    location,
   );
-  return { listener, standbyId: null, ...(await describeAccount(ctx, account)), template };
+  return {
+    listener,
+    standbyId: null,
+    ...(await describeAccount(ctx, account, location)),
+    template,
+  };
 }
 
 /** The selection's view of an account, with the DNS zone facts an L7 plan needs. */
 async function describeAccount(
   ctx: { db: QueryCtx['db'] },
   account: Doc<'edgeProviderAccounts'>,
+  location: Doc<'edgeLocations'>,
 ): Promise<Pick<SelectionContext, 'account' | 'accountFailure'>> {
   // The zone the hostname will be minted under: the account's own (a provider
   // that hosts its DNS) or the referenced DNS account's.
@@ -2661,6 +2722,7 @@ async function describeAccount(
   return {
     account: {
       id: account._id,
+      locationId: location._id,
       provider: account.provider,
       defaultTemplateId: account.defaultTemplateId ?? null,
       zoneName,
@@ -2997,6 +3059,7 @@ async function phaseSelect(ctx: ActionCtx, c: Ctx) {
   try {
     effectiveParams = await ctx.runAction(internal.edgeProviderOps.effectiveTemplate, {
       accountId: selection.account.id,
+      locationId: selection.account.locationId,
       spec,
       templateParams: selection.template.params,
     });
@@ -3009,6 +3072,7 @@ async function phaseSelect(ctx: ActionCtx, c: Ctx) {
   try {
     steps = await ctx.runAction(internal.edgeProviderOps.planProvision, {
       accountId: selection.account.id,
+      locationId: selection.account.locationId,
       spec,
       templateParams: selection.template.params,
       proto: protoOf(selection.listener),
@@ -3029,6 +3093,7 @@ async function phaseSelect(ctx: ActionCtx, c: Ctx) {
     stepVersion: sv,
     listenerId: selection.listener._id,
     accountId: selection.account.id,
+    locationId: selection.account.locationId,
     templateId: selection.template.id,
     templateHash: selection.template.hash,
     nameNonce: nonce,
@@ -3063,8 +3128,10 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
     provider: edge.provider!,
     templateId: edge.templateId ?? null,
     accountDefaultId: null,
-    // Account-scoped templates resolve only for their own account.
+    // Account-scoped templates resolve only for their own account; the edge's
+    // location lays its regional values over the template.
     accountId: edge.accountId,
+    locationId: edge.locationId ?? null,
   });
   if (tpl.hash !== edge.templateHash) {
     await advanceCall(ctx, r._id, sv, { type: 'fail', code: 'template_changed', rollback: false });

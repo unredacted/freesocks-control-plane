@@ -49,6 +49,7 @@ export const GCORE_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [
     label: 'Flavor',
     type: 'string',
     help: 'Load balancer flavor name for the region.',
+    regional: true,
   },
   {
     key: 'vipMode',
@@ -202,6 +203,7 @@ export const OVH_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [
     type: 'string',
     required: true,
     help: 'From the account inventory (Pull live).',
+    regional: true,
   },
   {
     key: 'gatewayModel',
@@ -371,3 +373,17 @@ export function validateTemplateParams(
       .map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`),
   };
 }
+
+/**
+ * Template fields whose value differs per region (a load balancer flavor id is
+ * only valid in the region that offers it): the descriptors marked `regional`.
+ * A location may set its own value for each (`edgeLocations.regionalParams`),
+ * laid over the template when it provisions (lib/edges/locations.ts).
+ */
+export const EDGE_TEMPLATE_REGIONAL_FIELDS: Record<EdgeProviderId, readonly string[]> =
+  Object.fromEntries(
+    (Object.keys(EDGE_TEMPLATES) as EdgeProviderId[]).map((p) => [
+      p,
+      EDGE_TEMPLATES[p].fields.filter((f) => f.regional).map((f) => f.key),
+    ]),
+  ) as unknown as Record<EdgeProviderId, readonly string[]>;

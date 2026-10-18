@@ -10,7 +10,9 @@
  * `EDGE_PROVIDER_IDS` and never in the wire contracts.
  *
  * Deterministic: addresses are RFC 5737 / RFC 3849 literals derived from the
- * resource name, hostnames live under `edge.example`. Every "call" records
+ * resource name (a different RFC 5737 range per fake zone, so a second
+ * location's addresses are told apart), hostnames live under `edge.example`.
+ * Like a real regional API, an L4 resource is found only in its own zone. Every "call" records
  * itself in `calls` (in memory) so tests and the live view have something to
  * show. Creates are instant; a `slowMs` knob (env `DEV_FAKE_EDGE_SLOW_MS`)
  * delays them to exercise the async paths.
@@ -33,6 +35,12 @@ import type {
 import type { EdgeLayer } from './capabilities';
 
 export const FAKE_L4_SHADOW: EdgeProviderId = 'upcloud';
+
+/** The fake's zones (shaped like the shadowed adapter's zone ids; no real region). */
+export const FAKE_ZONES = [
+  { id: 'zz-dev1', label: 'Dev zone 1' },
+  { id: 'zz-dev2', label: 'Dev zone 2' },
+] as const;
 export const FAKE_L7_SHADOW: EdgeProviderId = 'cloudflare';
 
 export function fakeEdgeProviderEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -53,9 +61,10 @@ function fnv1a32(s: string): number {
   return h >>> 0;
 }
 
-/** A stable RFC 5737 (TEST-NET-2) literal for a resource name. */
-export function fakeV4For(name: string): string {
-  return `198.51.100.${(fnv1a32(name) % 250) + 2}`;
+/** A stable RFC 5737 literal for a resource name: TEST-NET-2, or TEST-NET-3 in the second fake zone. */
+export function fakeV4For(name: string, zone?: string): string {
+  const net = zone === FAKE_ZONES[1].id ? '203.0.113' : '198.51.100';
+  return `${net}.${(fnv1a32(name) % 250) + 2}`;
 }
 /** A stable RFC 3849 literal for a resource name. */
 export function fakeV6For(name: string): string {
@@ -73,7 +82,13 @@ export interface FakeState {
   /** Resource name → live record. */
   resources: Map<
     string,
-    { kind: string; id: string; addresses: { v4?: string; v6?: string; hostname?: string } }
+    {
+      kind: string;
+      id: string;
+      addresses: { v4?: string; v6?: string; hostname?: string };
+      /** The zone an L4 resource lives in (absent: none given, or an L7 record). */
+      zone?: string;
+    }
   >;
 }
 
@@ -95,15 +110,24 @@ export function fakeEdgeProvider<Cfg extends EdgeProviderConfig, Tpl>(
 ): EdgeProvider<Cfg, Tpl> {
   const kind = layer === 'l7' ? 'create_dns_record' : 'create_lb';
   const childKind = layer === 'l7' ? 'dns_record' : 'lb';
-  const addressesFor = (spec: EdgeSpec) =>
+  const zoneOf = (cfg: unknown) =>
+    layer === 'l4' ? ((cfg as { zone?: string } | undefined)?.zone ?? undefined) : undefined;
+  const addressesFor = (spec: EdgeSpec, zone?: string) =>
     layer === 'l7'
       ? { hostname: spec.hostname ?? `${spec.name}.edge.example` }
-      : { v4: fakeV4For(spec.name), v6: fakeV6For(spec.name) };
-  const live = (ledger: Ledger) => {
+      : { v4: fakeV4For(spec.name, zone), v6: fakeV6For(spec.name) };
+  /** The resource, seen from `cfg`'s zone: one in another zone is invisible, as on a regional API. */
+  const visible = (id: string, cfg: unknown) => {
+    const r = STATE.resources.get(id);
+    if (!r) return undefined;
+    const zone = zoneOf(cfg);
+    return r.zone && zone && r.zone !== zone ? undefined : r;
+  };
+  const live = (ledger: Ledger, cfg: unknown) => {
     const r = ledger.resources.find(
       (x) => x.kind === childKind && x.deleteState !== 'confirmed_gone',
     );
-    return r ? STATE.resources.get(r.resourceId) : undefined;
+    return r ? visible(r.resourceId, cfg) : undefined;
   };
   return {
     id: real.id,
@@ -125,7 +149,7 @@ export function fakeEdgeProvider<Cfg extends EdgeProviderConfig, Tpl>(
           }
         : {
             projects: [{ id: 'proj-1', label: 'Fake project' }],
-            regions: [{ id: 'zone-1', label: 'Fake region' }],
+            regions: FAKE_ZONES.map((z) => ({ id: z.id, label: z.label })),
           };
     },
     planProvision(_cfg, spec) {
@@ -134,13 +158,14 @@ export function fakeEdgeProvider<Cfg extends EdgeProviderConfig, Tpl>(
         { id: 's1', kind, resourceName: spec.name, discoverability: 'by_name' },
       ] as ResourceStep[];
     },
-    async runStep(_cfg, step, spec): Promise<StepOutcome> {
+    async runStep(cfg, step, spec): Promise<StepOutcome> {
       record('runStep', spec.name);
       const slow = Number(process.env.DEV_FAKE_EDGE_SLOW_MS ?? '0');
       if (slow > 0) await new Promise((r) => setTimeout(r, Math.min(slow, 10_000)));
       const id = `fake-${childKind}-${fnv1a32(spec.name).toString(16)}`;
-      const addresses = addressesFor(spec);
-      STATE.resources.set(id, { kind: childKind, id, addresses });
+      const zone = zoneOf(cfg);
+      const addresses = addressesFor(spec, zone);
+      STATE.resources.set(id, { kind: childKind, id, addresses, ...(zone ? { zone } : {}) });
       return {
         status: 'done',
         resources: [
@@ -154,10 +179,10 @@ export function fakeEdgeProvider<Cfg extends EdgeProviderConfig, Tpl>(
         addresses,
       };
     },
-    async discover(_cfg, _step, spec): Promise<Discovery> {
+    async discover(cfg, _step, spec): Promise<Discovery> {
       record('discover', spec.name);
       const id = `fake-${childKind}-${fnv1a32(spec.name).toString(16)}`;
-      const r = STATE.resources.get(id);
+      const r = visible(id, cfg);
       if (!r) return { status: 'confirmed_absent' };
       return {
         status: 'found',
@@ -165,9 +190,9 @@ export function fakeEdgeProvider<Cfg extends EdgeProviderConfig, Tpl>(
         addresses: r.addresses,
       };
     },
-    async describe(_cfg, ledger): Promise<EdgeDescription> {
+    async describe(cfg, ledger): Promise<EdgeDescription> {
       record('describe');
-      const r = live(ledger);
+      const r = live(ledger, cfg);
       if (!r) return { state: 'gone', addresses: {}, health: 'unknown', code: 'not_found' };
       return {
         state: 'active',
@@ -176,15 +201,15 @@ export function fakeEdgeProvider<Cfg extends EdgeProviderConfig, Tpl>(
         ...(layer === 'l7' ? { readiness: { dns: 'ready', certificate: 'ready' } } : {}),
       };
     },
-    async inspect(_cfg, ledger): Promise<InspectResult> {
+    async inspect(cfg, ledger): Promise<InspectResult> {
       record('inspect');
-      const r = live(ledger);
+      const r = live(ledger, cfg);
       return {
         summary: {
           status: r ? 'ready' : 'gone',
           operatingStatus: r ? 'online' : 'gone',
           flavor: 'fake',
-          region: 'fake-region',
+          region: zoneOf(cfg) ?? 'fake-region',
           addresses: r?.addresses ?? {},
           members: [],
           listeners: [{ port: 443, protocol: 'tcp' }],
@@ -192,15 +217,18 @@ export function fakeEdgeProvider<Cfg extends EdgeProviderConfig, Tpl>(
         raw: { fake: true, calls: STATE.calls.length },
       };
     },
-    async inventory(): Promise<Inventory> {
+    async inventory(cfg): Promise<Inventory> {
       record('inventory');
+      const zone = zoneOf(cfg);
       return {
-        loadBalancers: [...STATE.resources.values()].map((r) => ({
-          id: r.id,
-          name: r.id,
-          status: 'ready',
-          addresses: r.addresses,
-        })),
+        loadBalancers: [...STATE.resources.values()]
+          .filter((r) => !r.zone || !zone || r.zone === zone)
+          .map((r) => ({
+            id: r.id,
+            name: r.id,
+            status: 'ready',
+            addresses: r.addresses,
+          })),
         ips: [],
         flavors: [{ id: 'fake', label: 'Fake flavor' }],
       };
@@ -208,9 +236,11 @@ export function fakeEdgeProvider<Cfg extends EdgeProviderConfig, Tpl>(
     planDestroy(_cfg, ledger) {
       return ledger.resources.filter((r) => r.deleteState !== 'confirmed_gone');
     },
-    async runDestroy(_cfg, r: LedgerResource): Promise<DestroyOutcome> {
+    async runDestroy(cfg, r: LedgerResource): Promise<DestroyOutcome> {
       record('runDestroy', r.resourceId);
-      STATE.resources.delete(r.resourceId);
+      // Like a regional API: a delete sent to another zone finds nothing there,
+      // and the resource stays (billing) in its own zone.
+      if (visible(r.resourceId, cfg)) STATE.resources.delete(r.resourceId);
       return { status: 'confirmed_gone' };
     },
   };

@@ -51,6 +51,7 @@ import { __setEdgeProviderForTests } from './lib/edges/providers/registry';
 import { qualificationBinding } from './lib/edges/frontCheck/binding';
 import type { AdoptionInspection } from './lib/edges/providers/types';
 import { deliveryBindingOf, relayBySlug } from './lib/edges/testing/reads';
+import { DEFAULT_CENSORED_COUNTRIES } from './lib/censoredCountries';
 
 const modules = import.meta.glob('./**/*.*s');
 const ADMIN_SIGN_KEY = 'test-admin-sign';
@@ -1038,12 +1039,13 @@ describe('origin admin routes', () => {
     });
     expect(res.status).toBe(200);
     const body = await res.json();
+    // The probe countries are the censored-country list's, not a setting: ignored.
     expect(body.changedKeys.sort()).toEqual(
-      ['probe.countries', 'probe.enabled', 'probe.secret', 'render.clients.v2rayng'].sort(),
+      ['probe.enabled', 'probe.secret', 'render.clients.v2rayng'].sort(),
     );
     const after = EdgeConfigView.parse(await (await call('GET', 'config')).json());
     expect(after.config.probe.enabled).toBe(true);
-    expect(after.config.probe.countries).toEqual(['IR', 'RU']);
+    expect(after.config.probe.countries).toEqual(DEFAULT_CENSORED_COUNTRIES.edgeChecks);
     expect(after.config.render.clients.v2rayng.enabled).toBe(false);
     expect(after.secrets.globalpingToken).toBe(true);
     expect(JSON.stringify(after)).not.toContain('gp_SECRET');

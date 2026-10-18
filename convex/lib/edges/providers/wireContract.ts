@@ -97,27 +97,27 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
       {
         method: 'GET',
         path: '^/cloud/v1/lbflavors/[^/]+/[^/]+$',
-        purpose: 'list load balancer flavors (inventory)',
+        purpose: 'list load balancer flavors (inventory, the location form)',
       },
       {
         method: 'GET',
         path: '^/cloud/v1/projects$',
-        purpose: 'account form: the projects the key can see',
+        purpose: 'credential test without a location; the projects the key can see (location form)',
       },
       {
         method: 'GET',
         path: '^/cloud/v1/regions$',
-        purpose: 'account form: the regions the key can see',
+        purpose: 'location form: the regions the key can see',
       },
       {
         method: 'GET',
         path: '^/cloud/v1/networks/[^/]+/[^/]+$',
-        purpose: 'account form: private networks for a private VIP',
+        purpose: 'location form: private networks for a private VIP',
       },
       {
         method: 'GET',
         path: '^/cloud/v1/subnets/[^/]+/[^/]+$',
-        purpose: 'account form: the subnets of those networks',
+        purpose: 'location form: the subnets of those networks',
       },
     ],
   },
@@ -127,7 +127,7 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
     source: 'https://developers.upcloud.com/1.3/ (Managed Load Balancer), 2026-09-16',
     calls: [
       { method: 'GET', path: '^/1\\.3/account$', purpose: 'credential test' },
-      { method: 'GET', path: '^/1\\.3/zone$', purpose: 'account form: the zones' },
+      { method: 'GET', path: '^/1\\.3/zone$', purpose: 'location form: the zones' },
       {
         method: 'POST',
         path: '^/1\\.3/load-balancer$',
@@ -291,26 +291,30 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
         path: '^/1\\.0/auth/time$',
         purpose: 'server clock for the request signature (cached, unsigned)',
       },
-      { method: 'GET', path: '^/1\\.0/cloud/project$', purpose: 'account form: the project ids' },
+      {
+        method: 'GET',
+        path: '^/1\\.0/cloud/project$',
+        purpose: 'credential test without a location; the project ids (location form)',
+      },
       {
         method: 'GET',
         path: '^/1\\.0/cloud/project/[^/]+$',
-        purpose: 'credential test and the project label in the account form',
+        purpose: 'credential test in a location and the project label in the location form',
       },
       {
         method: 'GET',
         path: '^/1\\.0/cloud/project/[^/]+/region$',
-        purpose: 'account form: the regions of the project',
+        purpose: 'location form: the regions of the project',
       },
       {
         method: 'GET',
         path: '^/1\\.0/cloud/project/[^/]+/network/private$',
-        purpose: 'account form: the private networks',
+        purpose: 'location form: the private networks',
       },
       {
         method: 'GET',
         path: '^/1\\.0/cloud/project/[^/]+/network/private/[^/]+/subnet$',
-        purpose: 'account form: the subnets of a private network',
+        purpose: 'location form: the subnets of a private network',
       },
       {
         method: 'GET',
@@ -351,7 +355,7 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
       {
         method: 'GET',
         path: '^/1\\.0/cloud/project/[^/]+/region/[^/]+/loadbalancing/flavor$',
-        purpose: 'list balancer flavors (inventory)',
+        purpose: 'list balancer flavors (inventory, the location form)',
       },
       {
         method: 'GET',

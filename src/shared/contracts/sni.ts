@@ -11,6 +11,7 @@ export const SniConfig = z.object({
   requalifyHours: z.number(),
   suspendAfterFails: z.number(),
   reportWindowDays: z.number(),
+  /** Read only: the censored-country list (Settings, Censored countries). */
   curatedCountries: z.array(z.string()),
 });
 export type SniConfig = z.infer<typeof SniConfig>;
@@ -18,6 +19,7 @@ export type SniConfig = z.infer<typeof SniConfig>;
 /** Checks of names from inside opted-in countries (`edge.sni.vantage.*`; docs/edges.md). */
 export const SniVantageConfig = z.object({
   enabled: z.boolean(),
+  /** Read only: the listed countries with "Check names from inside" on. */
   countries: z.array(z.string()),
   sources: z.object({ globalping: z.boolean(), ripeatlas: z.boolean() }),
   intervalHours: z.number(),
@@ -40,8 +42,9 @@ export const SniConfigView = z.object({
 export type SniConfigView = z.infer<typeof SniConfigView>;
 
 /** `PATCH …/sni/config`: any subset, the vantage block nested. */
-export type SniConfigPatch = Partial<SniConfig> & {
-  vantage?: Partial<Omit<SniVantageConfig, 'sources'>> & {
+/** The countries are not patched here: they come from the censored-country list. */
+export type SniConfigPatch = Partial<Omit<SniConfig, 'curatedCountries'>> & {
+  vantage?: Partial<Omit<SniVantageConfig, 'sources' | 'countries'>> & {
     sources?: Partial<SniVantageConfig['sources']>;
   };
 };

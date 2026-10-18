@@ -302,6 +302,8 @@ export interface TemplateFieldDescriptor {
   help?: string;
   options?: Array<{ value: string; label: string }>;
   required?: boolean;
+  /** The value differs per region (a flavor id): each location can set its own (`regionalParams`). */
+  regional?: boolean;
 }
 
 export interface CredentialTestResult {
@@ -361,6 +363,8 @@ export interface DiscoverResult {
   projects?: DiscoverOption[];
   regions?: DiscoverOption[];
   networks?: Array<DiscoverOption & { subnets: DiscoverOption[] }>;
+  /** Load balancer flavors of the chosen region (a location's regional template value). */
+  flavors?: DiscoverOption[];
   /** L7: DNS zones (Cloudflare) / TLS configurations (Fastly). */
   zones?: DiscoverOption[];
   tlsConfigurations?: DiscoverOption[];

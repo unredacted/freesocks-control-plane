@@ -193,9 +193,19 @@ describe('edgeProviderOps: failures cross the action boundary as ConvexError dat
 });
 
 describe('edgeProviderOps.rotateCredentials', () => {
-  /** OVH: the clock, then whatever `rest` answers (default: the project read succeeds). */
-  const ovhOk = (rest: (path: string) => Response = () => jsonRes({ description: 'p' })) =>
-    mockFetch((c) => (c.path.endsWith('/auth/time') ? jsonRes(1_700_000_000) : rest(c.path)));
+  /**
+   * OVH: the clock, then whatever `rest` answers (default: the account-level
+   * credential test, the project listing, succeeds, and so does the read in
+   * each location: an empty load balancer listing).
+   */
+  const ovhOk = (
+    rest: (path: string) => Response = (path) =>
+      path.endsWith('/cloud/project')
+        ? jsonRes(['svc'])
+        : path.includes('/loadbalancing/') || path.endsWith('/floatingip')
+          ? jsonRes([])
+          : jsonRes({ description: 'p' }),
+  ) => mockFetch((c) => (c.path.endsWith('/auth/time') ? jsonRes(1_700_000_000) : rest(c.path)));
 
   test('a passing test applies the new secret + identifier, keeps the qualification, audits booleans only', async () => {
     const t = newT();
@@ -223,7 +233,8 @@ describe('edgeProviderOps.rotateCredentials', () => {
       applicationSecret: 'AS2',
       consumerKey: 'CK1',
     });
-    expect(secret?.settings).toMatchObject({ applicationKey: 'AK2', regionName: 'GRA9' });
+    // The account is credentials only: the region stays on its location.
+    expect(secret?.settings).toEqual({ type: 'ovh', applicationKey: 'AK2', endpoint: 'ovh-eu' });
     const view = await t.query(internal.edgeProviderAccounts.getForAdmin, { id });
     expect(view).toMatchObject({ qualified: true, lastTestError: null });
     expect(view?.lastTestOkAt).toBeTruthy();
@@ -276,7 +287,7 @@ describe('edgeProviderOps.rotateCredentials', () => {
       applicationSecret: 'AS9',
       consumerKey: 'CK9',
     });
-    expect(stored.settings).toMatchObject({ applicationKey: 'AK9', regionName: 'GRA9' });
+    expect(stored.settings).toEqual({ type: 'ovh', applicationKey: 'AK9', endpoint: 'ovh-eu' });
   });
 
   test('a failing test changes nothing (stored credentials, identifier, qualification) and reports the code', async () => {
@@ -301,6 +312,38 @@ describe('edgeProviderOps.rotateCredentials', () => {
       consumerKey: 'CK1',
     });
     expect(secret?.settings).toMatchObject({ applicationKey: 'AK1' });
+    expect((await t.query(internal.edgeProviderAccounts.getForAdmin, { id }))?.qualified).toBe(
+      true,
+    );
+    const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
+    expect(audit.some((a) => a.action === 'edge.provider_account.credentials_rotated')).toBe(false);
+  });
+
+  test('a key that passes the account test but cannot read a location in use is refused, nothing changed', async () => {
+    const t = newT();
+    const id = await ovhAccount(t);
+    await t.mutation(internal.edgeProviderAccounts.setQualified, { id, qualified: true });
+    // The project listing passes; the read in the account's location is refused.
+    const stub = ovhOk((path) =>
+      path.endsWith('/cloud/project')
+        ? jsonRes(['svc'])
+        : path.endsWith('/loadbalancing/loadbalancer')
+          ? jsonRes({ class: 'Client::Forbidden', message: 'not this project' }, 403)
+          : jsonRes([]),
+    );
+    const res = await t.action(internal.edgeProviderOps.rotateCredentials, {
+      accountId: id,
+      credentials: { applicationSecret: 'AS2', consumerKey: 'CK2' },
+    });
+    expect(res).toMatchObject({ ok: false, code: 'location_unreachable' });
+    expect((res as { detail?: string }).detail).toMatch(/\(Client::Forbidden\)$/);
+    expect(stub.calls.some((c) => c.path.endsWith('/loadbalancing/loadbalancer'))).toBe(true);
+    const secret = await t.query(internal.edgeProviderAccounts.getWithSecret, { id });
+    expect(secret?.credentials).toEqual({
+      type: 'ovh',
+      applicationSecret: 'AS1',
+      consumerKey: 'CK1',
+    });
     expect((await t.query(internal.edgeProviderAccounts.getForAdmin, { id }))?.qualified).toBe(
       true,
     );

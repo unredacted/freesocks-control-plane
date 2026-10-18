@@ -123,31 +123,34 @@ const relayProviderCredentials = v.union(
   v.object({ type: v.literal('cloudflare'), apiToken: v.string() }),
   v.object({ type: v.literal('fastly'), apiToken: v.string() }),
 );
+// Account settings. The placement fields (project / region / zone / network)
+// are TRANSITIONAL here: they moved to `edgeLocations.placement` (and a copy
+// frozen on each edge). `seed:migrateEdgeLocations` clears them from every
+// account; the next release drops them from this validator (two deploys).
 const relayProviderSettings = v.union(
   v.object({
     type: v.literal('gcore'),
-    projectId: v.number(),
-    regionId: v.number(),
-    // Private VIP + floating-IP mode needs a network/subnet; public-VIP mode does not.
-    networkId: v.optional(v.string()),
-    subnetId: v.optional(v.string()),
+    projectId: v.optional(v.number()), // TRANSITIONAL (placement)
+    regionId: v.optional(v.number()), // TRANSITIONAL (placement)
+    networkId: v.optional(v.string()), // TRANSITIONAL (placement)
+    subnetId: v.optional(v.string()), // TRANSITIONAL (placement)
   }),
-  v.object({ type: v.literal('upcloud'), zone: v.string() }),
+  v.object({ type: v.literal('upcloud'), zone: v.optional(v.string()) }), // zone: TRANSITIONAL
   v.object({
     type: v.literal('scaleway'),
     accessKey: v.string(), // public key id (the SDK pairs it with the secret); not a secret
-    projectId: v.optional(v.string()), // absent = the key's default project
-    zone: v.string(),
+    projectId: v.optional(v.string()), // TRANSITIONAL (placement)
+    zone: v.optional(v.string()), // TRANSITIONAL (placement)
   }),
   v.object({
     type: v.literal('ovh'),
     applicationKey: v.string(), // public app identifier, not a secret
     endpoint: v.union(v.literal('ovh-eu'), v.literal('ovh-ca'), v.literal('ovh-us')),
-    serviceName: v.string(),
-    regionName: v.string(),
-    networkId: v.string(),
-    subnetId: v.string(),
-    gatewayId: v.optional(v.string()),
+    serviceName: v.optional(v.string()), // TRANSITIONAL (placement)
+    regionName: v.optional(v.string()), // TRANSITIONAL (placement)
+    networkId: v.optional(v.string()), // TRANSITIONAL (placement)
+    subnetId: v.optional(v.string()), // TRANSITIONAL (placement)
+    gatewayId: v.optional(v.string()), // TRANSITIONAL (placement)
   }),
   // L7 (CDN front): the zone the account's hostnames live in. Both locate.
   v.object({
@@ -169,6 +172,35 @@ const relayProviderSettings = v.union(
     ),
     tlsConfigurationId: v.optional(v.string()),
   }),
+);
+// Where an edge's resources live (lib/edges/accountSettings.ts
+// EDGE_PLACEMENT_SCHEMAS): what a location holds and each edge freezes. A CDN
+// provider has no place (an empty placement, one `anycast` location).
+const relayEdgePlacement = v.union(
+  v.object({
+    type: v.literal('gcore'),
+    projectId: v.number(),
+    regionId: v.number(),
+    // Private VIP + floating-IP mode needs a network/subnet; public-VIP mode does not.
+    networkId: v.optional(v.string()),
+    subnetId: v.optional(v.string()),
+  }),
+  v.object({ type: v.literal('upcloud'), zone: v.string() }),
+  v.object({
+    type: v.literal('scaleway'),
+    projectId: v.optional(v.string()), // absent = the key's default project
+    zone: v.string(),
+  }),
+  v.object({
+    type: v.literal('ovh'),
+    serviceName: v.string(),
+    regionName: v.string(),
+    networkId: v.string(),
+    subnetId: v.string(),
+    gatewayId: v.optional(v.string()),
+  }),
+  v.object({ type: v.literal('cloudflare') }),
+  v.object({ type: v.literal('fastly') }),
 );
 // Layers an edge can be: an L4 forwarder (address = IP literal) or an L7 CDN
 // front (address = hostname). Absent on rows written before L7 = l4.
@@ -1128,24 +1160,23 @@ export default defineSchema({
   // booleans for the admin) and are never logged or audited.
   // ===========================================================================
 
-  // One cloud account (+ region/zone/network) FCP may provision edges in.
+  // One cloud or CDN account FCP may provision edges in: a provider plus
+  // credentials. WHERE its edges live is a location (`edgeLocations`).
   edgeProviderAccounts: defineTable({
     provider: relayProviderId,
     name: v.string(), // unique (read-check in the create mutation); the IaC key
     credentials: relayProviderCredentials,
     settings: relayProviderSettings,
     defaultTemplateId: v.optional(v.id('edgeTemplates')),
+    // The location pickers preselect (the migrated one for an account that
+    // had a single fixed location, else the first one added).
+    defaultLocationId: v.optional(v.id('edgeLocations')),
     enabled: v.boolean(),
-    // Set by the operator after the qualification runbook (authenticated
-    // REALITY session through an edge from this account + template). Automatic
-    // selection uses qualified accounts only.
-    qualified: v.boolean(),
+    // TRANSITIONAL: trust moved to `edgeLocations` (per location). Cleared by
+    // `seed:migrateEdgeLocations`, never read; dropped by the next release.
+    qualified: v.optional(v.boolean()),
     qualifiedTemplateHash: v.optional(v.string()),
-    // How the trust was taken (an operator override or the L7 auto-trust rule)
-    // and the version-bound evidence behind it.
     qualification: v.optional(relayAccountQualification),
-    // A manual untrust (`setQualified(false)`) holds the automatic rules off
-    // until an operator trusts again or the credentials change.
     autoQualifyHold: v.optional(v.boolean()),
     // When the credentials or locating settings last changed (an edit, not a
     // keep-qualification rotation): auto-trust needs a test AFTER this.
@@ -1171,7 +1202,7 @@ export default defineSchema({
     // values only; frozen per edge into its provisionIntent.
     observedSettings: v.optional(v.string()),
     observedAt: v.optional(v.number()),
-    // Last provider inventory pull (LBs / IPs / flavors), JSON, admin-only.
+    // TRANSITIONAL: the inventory moved to `edgeLocations` (it is per region).
     inventorySnapshot: v.optional(v.string()),
     inventoryAt: v.optional(v.number()),
     // Provider API health (edgeProviderOps `tracked`): consecutive calls that
@@ -1186,6 +1217,49 @@ export default defineSchema({
   })
     .index('by_name', ['name'])
     .index('by_provider_enabled', ['provider', 'enabled', 'priority']),
+
+  // One account's place to create edges in (docs/edges.md § "Provider
+  // accounts and locations"): the frozen placement, the provider's own id for
+  // the region (`placeKey`, account-agnostic: what per-country grades key on,
+  // as `<provider>:<placeKey>`), and the trust taken there. An L7 account has
+  // exactly one (`anycast`, an empty placement), created with it.
+  edgeLocations: defineTable({
+    accountId: v.id('edgeProviderAccounts'),
+    provider: relayProviderId,
+    placeKey: v.string(),
+    placement: relayEdgePlacement,
+    // Canonical identity of the placement: creating it again returns this row.
+    placementHash: v.string(),
+    // The region's name as the provider lists it (admin display only).
+    label: v.string(),
+    enabled: v.boolean(),
+    // Trust (lib/edges/autoQualify.ts, edgeVerification): automatic selection
+    // uses trusted locations only. Taken by an operator (the trust override or
+    // the first confirmed L4 endpoint here) or by the L7 auto-trust rule,
+    // bound to the effective template it was taken with.
+    qualified: v.boolean(),
+    qualifiedTemplateHash: v.optional(v.string()),
+    qualification: v.optional(relayAccountQualification),
+    // A manual untrust holds the automatic rules off until an operator
+    // trusts again or the account's credentials change.
+    autoQualifyHold: v.optional(v.boolean()),
+    // The template this location provisions with (else the account's), and
+    // its own values of the template's regional fields (JSON, e.g. a flavor).
+    defaultTemplateId: v.optional(v.id('edgeTemplates')),
+    regionalParams: v.optional(v.string()),
+    // The provider's quota in this region (optional; the account cap applies too).
+    maxLiveEdges: v.optional(v.number()),
+    // Operator text shown next to the location when it is picked (a price).
+    costNote: v.optional(v.string()),
+    // Last provider inventory pull here (LBs / IPs / flavors), JSON, admin-only.
+    inventorySnapshot: v.optional(v.string()),
+    inventoryAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_account', ['accountId', 'enabled'])
+    .index('by_place', ['provider', 'placeKey'])
+    .index('by_account_placement', ['accountId', 'placementHash']),
 
   // Provisioning parameters for one provider (flavor/plan/type, health monitor,
   // timeouts, allowed CIDRs, tags, IP-family options). `params` is JSON validated
@@ -1222,6 +1296,16 @@ export default defineSchema({
     enabled: v.boolean(),
     autoRotate: v.boolean(),
     providerPreference: v.optional(relayProviderId),
+    // The node's provider set: the (account, location) picks its addresses come
+    // from. Absent = any trusted location (origins that are not a backend node).
+    providerSet: v.optional(
+      v.array(v.object({ locationId: v.id('edgeLocations'), addedAt: v.number() })),
+    ),
+    // Picks whose address the detector just burned here: no automatic work
+    // allocates, provisions or publishes into them until `until`.
+    cooling: v.optional(
+      v.array(v.object({ locationId: v.id('edgeLocations'), until: v.number() })),
+    ),
     // The published-pool size (state: setup runs and re-protect widen it), seeded
     // from `edge.desiredPublishedDefault`.
     desiredPublished: v.number(),
@@ -1528,6 +1612,13 @@ export default defineSchema({
     relayId: v.id('relays'),
     listenerId: v.id('relayListeners'),
     accountId: v.optional(v.id('edgeProviderAccounts')),
+    // The location the edge was created in, FROZEN at plan time with a copy of
+    // its placement: every step, describe, discovery and destroy acts in the
+    // edge's own region, whatever the location row or the account say later.
+    // `placeKey` is denormalised for the per-place reads (`<provider>:<placeKey>`).
+    locationId: v.optional(v.id('edgeLocations')),
+    placeKey: v.optional(v.string()),
+    placement: v.optional(relayEdgePlacement),
     templateId: v.optional(v.id('edgeTemplates')),
     templateHash: v.optional(v.string()),
     provider: v.optional(relayProviderId),
@@ -1671,6 +1762,7 @@ export default defineSchema({
     .index('by_relay_publication', ['relayId', 'publication'])
     .index('by_status', ['status', 'statusChangedAt'])
     .index('by_account_status', ['accountId', 'status'])
+    .index('by_location_status', ['locationId', 'status'])
     .index('by_name', ['name']),
 
   // The rotation ledger + saga state. Advanced ONLY through edgeRotations.advance
@@ -1712,6 +1804,9 @@ export default defineSchema({
     requestedAccountId: v.optional(v.id('edgeProviderAccounts')),
     requestedTemplateId: v.optional(v.id('edgeTemplates')),
     allowUnqualified: v.optional(v.boolean()),
+    // The location an explicit provision asks for (its account is
+    // `requestedAccountId`); a setup run's terminal hook matches its target on it.
+    requestedLocationId: v.optional(v.id('edgeLocations')),
     // The guided setup run that started this rotation, with the run GENERATION
     // it was started under: the terminal hook reports this stored generation,
     // never the run's current one, so a retried run ignores the old rotation.
@@ -1795,7 +1890,15 @@ export default defineSchema({
     backendServerId: v.id('backendServers'),
     nodeName: v.string(),
     nodeUuid: v.string(),
-    accountId: v.id('edgeProviderAccounts'),
+    // TRANSITIONAL: the run's one account before picks existed. Cleared by
+    // `seed:migrateEdgeLocations` (moved into `picks`); dropped by the next release.
+    accountId: v.optional(v.id('edgeProviderAccounts')),
+    // The (account, location) picks the run creates addresses in.
+    picks: v.optional(
+      v.array(
+        v.object({ locationId: v.id('edgeLocations'), accountId: v.id('edgeProviderAccounts') }),
+      ),
+    ),
     // The plan snapshot (JSON, edgeSetupPlan.ts) + its hash and the consent revision.
     plan: v.string(),
     planHash: v.string(),
@@ -1825,6 +1928,8 @@ export default defineSchema({
     listeners: v.array(
       v.object({
         listenerKey: v.string(),
+        // The pick this entry's address is created in (absent = the run's one pick).
+        locationId: v.optional(v.id('edgeLocations')),
         layer: v.union(v.literal('l4'), v.literal('l7')),
         edgeId: v.optional(v.id('edges')),
         verify: setupRunVerify,
@@ -3093,6 +3198,11 @@ export default defineSchema({
       approval: v.optional(v.object({ byAdminId: v.optional(v.id('adminUsers')), at: v.number() })),
     }),
     resources: v.object({ hostUuids: v.array(v.string()), edgeIds: v.array(v.string()) }),
+    // The reviewed delivery snapshot: the committed edges this activation keeps
+    // plus its candidates. The rehearsal renders it and the commit promotes
+    // exactly it; `resources` stays what the run OWNS (the gate's candidates,
+    // what a cancel removes).
+    delivery: v.optional(v.object({ edgeIds: v.array(v.string()) })),
     rehearsal: v.optional(
       v.object({
         at: v.number(),

@@ -145,7 +145,7 @@
     {@const s = review.data.shape}
     <ul class="text-muted-foreground space-y-1">
       {#if fronted}
-        {#each review.data.display.standbys as standby (standby.listenerKey)}
+        {#each review.data.display.standbys as standby (`${standby.listenerKey}:${standby.locationLabel ?? ''}:${standby.endpoint ?? ''}`)}
           <li>{standbyWords(standby)}</li>
         {/each}
         {#each bare as l (l.listenerKey)}

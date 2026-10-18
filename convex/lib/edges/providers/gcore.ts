@@ -306,7 +306,12 @@ export const gcoreProvider: EdgeProvider<GcoreConfig, GcoreTemplateParams> = {
 
   async testCredentials(cfg) {
     try {
-      await gcore(cfg, 'test', 'GET', `/cloud/v1/loadbalancers/${scope(cfg)}?limit=1`, LbList);
+      // An account is credentials only: without a location the key is tested
+      // by the project listing every key can make; with one (an inventory
+      // pull), by the location's own load balancer listing.
+      if (cfg.projectId && cfg.regionId)
+        await gcore(cfg, 'test', 'GET', `/cloud/v1/loadbalancers/${scope(cfg)}?limit=1`, LbList);
+      else await gcore(cfg, 'test', 'GET', `/cloud/v1/projects`, ProjectList);
       return { ok: true };
     } catch (e) {
       return credentialTestFailure(e);
@@ -363,6 +368,23 @@ export const gcoreProvider: EdgeProvider<GcoreConfig, GcoreTemplateParams> = {
         }));
       } catch (e) {
         noteDiscoverError(out, 'networks', e);
+      }
+      // A flavor is offered per region: the location form picks one when the
+      // template's own is not on this region's list.
+      try {
+        const fl = await gcore(
+          cfg,
+          'flavors',
+          'GET',
+          `/cloud/v1/lbflavors/${scope(cfg)}`,
+          FlavorList,
+        );
+        out.flavors = fl.results
+          .map((f) => f.flavor_name)
+          .filter((n): n is string => !!n)
+          .map((n) => ({ id: n, label: n }));
+      } catch (e) {
+        noteDiscoverError(out, 'flavors', e);
       }
     }
     return out;

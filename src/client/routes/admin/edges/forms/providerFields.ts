@@ -11,6 +11,11 @@
  *  - `text` fields are public identifiers the operator types;
  *  - `step` says which stepper step shows the field: identifiers a provider
  *    needs on every request belong with the credentials, the rest is placement.
+ *  - `location` marks the fields of a LOCATION (region / zone / project /
+ *    network): an account is credentials, a location is where its edges live
+ *    (docs/edges.md § "Provider accounts and locations"). The account form's
+ *    placement step names the account's first location with them; the
+ *    location form (`LocationPicker`) adds more.
  *
  * Exports:
  *   PROVIDER_FIELDS, CREDENTIAL_LABELS, CREDENTIAL_HELP, DEFAULT_SETTINGS
@@ -49,6 +54,8 @@ export interface ProviderField {
   numeric?: boolean;
   /** Derived from another field; shown, never typed. */
   readOnly?: boolean;
+  /** A location's field (where edges live), never the account's own. */
+  location?: boolean;
 }
 
 export const PROVIDER_FIELDS: Record<EdgeProviderId, ProviderField[]> = {
@@ -58,6 +65,7 @@ export const PROVIDER_FIELDS: Record<EdgeProviderId, ProviderField[]> = {
       label: 'Project',
       kind: 'select',
       step: 'placement',
+      location: true,
       from: 'projects',
       required: true,
       numeric: true,
@@ -67,6 +75,7 @@ export const PROVIDER_FIELDS: Record<EdgeProviderId, ProviderField[]> = {
       label: 'Region',
       kind: 'select',
       step: 'placement',
+      location: true,
       from: 'regions',
       required: true,
       numeric: true,
@@ -76,6 +85,7 @@ export const PROVIDER_FIELDS: Record<EdgeProviderId, ProviderField[]> = {
       label: 'Private network',
       kind: 'select',
       step: 'placement',
+      location: true,
       from: 'networks',
       required: false,
       advanced: true,
@@ -86,6 +96,7 @@ export const PROVIDER_FIELDS: Record<EdgeProviderId, ProviderField[]> = {
       label: 'Subnet',
       kind: 'select',
       step: 'placement',
+      location: true,
       from: 'subnets',
       required: false,
       advanced: true,
@@ -97,6 +108,7 @@ export const PROVIDER_FIELDS: Record<EdgeProviderId, ProviderField[]> = {
       label: 'Zone',
       kind: 'select',
       step: 'placement',
+      location: true,
       from: 'regions',
       required: true,
     },
@@ -115,6 +127,7 @@ export const PROVIDER_FIELDS: Record<EdgeProviderId, ProviderField[]> = {
       label: 'Zone',
       kind: 'select',
       step: 'placement',
+      location: true,
       from: 'regions',
       required: true,
     },
@@ -123,6 +136,7 @@ export const PROVIDER_FIELDS: Record<EdgeProviderId, ProviderField[]> = {
       label: 'Project id',
       kind: 'text',
       step: 'placement',
+      location: true,
       required: false,
       advanced: true,
       help: 'Leave empty to use the default project of the API key.',
@@ -154,6 +168,7 @@ export const PROVIDER_FIELDS: Record<EdgeProviderId, ProviderField[]> = {
       label: 'Public Cloud project',
       kind: 'select',
       step: 'placement',
+      location: true,
       from: 'projects',
       required: true,
     },
@@ -162,6 +177,7 @@ export const PROVIDER_FIELDS: Record<EdgeProviderId, ProviderField[]> = {
       label: 'Region',
       kind: 'select',
       step: 'placement',
+      location: true,
       from: 'regions',
       required: true,
     },
@@ -170,6 +186,7 @@ export const PROVIDER_FIELDS: Record<EdgeProviderId, ProviderField[]> = {
       label: 'Private network',
       kind: 'select',
       step: 'placement',
+      location: true,
       from: 'networks',
       required: true,
       help: 'The network the balancer address lives in.',
@@ -179,6 +196,7 @@ export const PROVIDER_FIELDS: Record<EdgeProviderId, ProviderField[]> = {
       label: 'Subnet',
       kind: 'select',
       step: 'placement',
+      location: true,
       from: 'subnets',
       required: true,
     },
@@ -187,6 +205,7 @@ export const PROVIDER_FIELDS: Record<EdgeProviderId, ProviderField[]> = {
       label: 'Existing gateway id',
       kind: 'text',
       step: 'placement',
+      location: true,
       required: false,
       advanced: true,
       help: 'Leave empty to let each edge create its own gateway (a template setting).',
@@ -292,6 +311,41 @@ export function credentialLabel(name: string): string {
 export function fieldsFor(provider: EdgeProviderId, step?: ProviderField['step']): ProviderField[] {
   const all = PROVIDER_FIELDS[provider];
   return step ? all.filter((f) => f.step === step) : all;
+}
+
+/** A location's fields (where its edges live); empty for a provider without places (a CDN). */
+export function locationFields(provider: EdgeProviderId): ProviderField[] {
+  return PROVIDER_FIELDS[provider].filter((f) => f.location);
+}
+
+/** Whether a provider has places at all (a CDN has one per account, created with it). */
+export function hasLocations(provider: EdgeProviderId): boolean {
+  return locationFields(provider).length > 0;
+}
+
+/** Only the location's keys of the form values (numbers where the adapter wants them). */
+export function placementBody(
+  provider: EdgeProviderId,
+  values: Record<string, string>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const f of locationFields(provider)) {
+    const raw = (values[f.key] ?? '').trim();
+    if (!raw) continue;
+    out[f.key] = f.numeric ? Number(raw) : raw;
+  }
+  return out;
+}
+
+/** The provider's name for the chosen region or zone (the location's label). */
+export function regionLabelOf(
+  provider: EdgeProviderId,
+  values: Record<string, string>,
+  discovered: EdgeDiscoverResponse | null,
+): string | undefined {
+  const f = locationFields(provider).find((x) => x.from === 'regions');
+  if (!f) return undefined;
+  return discovered?.regions?.find((o) => o.id === values[f.key])?.label;
 }
 
 export interface OptionsContext {

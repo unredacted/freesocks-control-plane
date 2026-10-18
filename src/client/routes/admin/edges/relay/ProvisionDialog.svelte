@@ -76,6 +76,8 @@
   let chosenKey = $state('');
   let accountId = $state('');
   let templateId = $state('');
+  /** '' = the account's default location. */
+  let locationId = $state('');
   let publish = $state(false);
   let busy = $state(false);
   let error = $state<unknown>(null);
@@ -91,6 +93,7 @@
       chosenKey = listenerKey ?? (usable.length === 1 ? usable[0]!.listenerKey : '');
       accountId = accountPreset ?? '';
       templateId = '';
+      locationId = '';
       publish = false;
       error = null;
     });
@@ -112,6 +115,13 @@
   $effect(() => {
     if (templateId && !template) templateId = '';
   });
+  // Where in that account the edge is created: its switched-on locations.
+  const accountLocations = $derived((account?.locations ?? []).filter((l) => l.enabled));
+  const location = $derived(accountLocations.find((l) => l.id === locationId) ?? null);
+  const defaultLocation = $derived(accountLocations.find((l) => l.isDefault) ?? null);
+  $effect(() => {
+    if (locationId && !location) locationId = '';
+  });
   const ready = $derived(!named || !!chosen);
 
   const preflight = createQuery(() => ({
@@ -121,6 +131,7 @@
       named ? 'test-provision' : 'provision',
       chosenKey,
       accountId,
+      locationId,
       templateId,
       publish,
     ] as const,
@@ -129,6 +140,7 @@
         ? preflightRelay(relay.id, {
             kind: 'test-provision',
             accountId,
+            ...(locationId ? { locationId } : {}),
             listenerKey: chosenKey,
             ...(templateId ? { templateId } : {}),
           })
@@ -153,6 +165,7 @@
       const res = named
         ? await testProvisionRelay(relay.id, {
             accountId,
+            ...(locationId ? { locationId } : {}),
             listenerKey: chosenKey,
             ...(templateId ? { templateId } : {}),
           })
@@ -247,6 +260,38 @@
           {/if}
         </p>
       </div>
+
+      {#if named && accountLocations.length > 1}
+        <div class="space-y-1.5">
+          <Label for={`${uid}-location`}>Location</Label>
+          <Select.Root
+            type="single"
+            value={locationId || 'default'}
+            onValueChange={(v: string) => (locationId = v === 'default' ? '' : v)}
+          >
+            <Select.Trigger id={`${uid}-location`} class="w-full">
+              {location ? location.label : `The default (${defaultLocation?.label ?? 'none'})`}
+            </Select.Trigger>
+            <Select.Content>
+              <Select.Item value="default" label="The default">
+                The default ({defaultLocation?.label ?? 'none'})
+              </Select.Item>
+              {#each accountLocations as l (l.id)}
+                <Select.Item value={l.id} label={l.label}>
+                  {l.label}
+                  <span class="text-muted-foreground text-xs">
+                    {l.qualified ? 'trusted' : 'not trusted yet'}
+                  </span>
+                </Select.Item>
+              {/each}
+            </Select.Content>
+          </Select.Root>
+          <p class="text-muted-foreground text-xs">
+            The edge stays in this location for its whole life. Its first tested address trusts a
+            new location.
+          </p>
+        </div>
+      {/if}
 
       {#if named}
         <div class="space-y-1.5">

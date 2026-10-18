@@ -667,16 +667,19 @@ export function protectionWords(p: ProtectionLike, stage?: string): string {
 
 /**
  * One standby a fronted node's approval releases, in words:
- * `main: members get 203.0.113.7:443, an address in Main account.`
+ * `main: members get 203.0.113.7:443, an address in Main account (Region A).`
+ * The location is named for an address only: a CDN name has no region.
  */
 export function standbyWords(s: {
   listenerKey: string;
   layer: 'l4' | 'l7';
   endpoint: string | null;
   accountName: string | null;
+  locationLabel?: string | null;
 }): string {
   const kind = s.layer === 'l7' ? 'a CDN name' : 'an address';
-  const where = s.accountName ? `, ${kind} in ${s.accountName}` : '';
+  const place = s.layer === 'l4' && s.locationLabel ? ` (${s.locationLabel})` : '';
+  const where = s.accountName ? `, ${kind} in ${s.accountName}${place}` : '';
   return `${s.listenerKey}: members get ${s.endpoint ?? 'a new address'}${where}.`;
 }
 

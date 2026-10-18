@@ -118,6 +118,14 @@ describe('EDGE_REFUSAL_COPY', () => {
     'reprotect_not_enrolled',
     'reprotect_mixed_accounts',
     'reprotect_no_room',
+    'no_location',
+    'location_capacity',
+    'location_not_offered',
+    'location_unchecked',
+    'location_in_use',
+    'location_not_geographic',
+    'placement_on_location',
+    'template_value_required',
   ];
 
   test('every refusal the pages meet is worded, and is part of the shared table', () => {

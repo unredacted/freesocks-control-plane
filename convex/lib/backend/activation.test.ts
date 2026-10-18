@@ -9,6 +9,7 @@ import {
   reviewHashOf,
   stageAfterChange,
   type Evidence,
+  type PublicationShape,
   type Revisions,
 } from './activation';
 
@@ -117,34 +118,55 @@ describe('reviewHash', () => {
 describe('publicationFits', () => {
   const approved = {
     listeners: [
-      { listenerKey: 'k1', accountId: 'acc', templateHash: 't1' },
-      { listenerKey: 'k2', accountId: 'acc', templateHash: null },
+      { listenerKey: 'k1', accountId: 'acc', locationId: 'loc', templateHash: 't1' },
+      { listenerKey: 'k2', accountId: 'acc', locationId: 'loc', templateHash: null },
     ],
   };
-  test('a replacement address within the approved shape fits; another account, template or listener does not', () => {
+  const pub = (over: Partial<PublicationShape>): PublicationShape => ({
+    listenerKey: 'k1',
+    accountId: 'acc',
+    locationId: 'loc',
+    templateHash: 't1',
+    ...over,
+  });
+  test('a replacement address within the approved shape fits; another account, location, template or listener does not', () => {
+    expect(publicationFits(approved, pub({}))).toBe(true);
+    expect(publicationFits(approved, pub({ listenerKey: 'k2', templateHash: null }))).toBe(true);
+    expect(publicationFits(approved, pub({ accountId: 'other' }))).toBe(false);
+    expect(publicationFits(approved, pub({ locationId: 'elsewhere' }))).toBe(false);
+    expect(publicationFits(approved, pub({ templateHash: 't2' }))).toBe(false);
+    expect(publicationFits(approved, pub({ listenerKey: 'k3' }))).toBe(false);
+  });
+  test('a listener may hold several approved picks: each one fits, nothing else does', () => {
+    const both = {
+      listeners: [
+        { listenerKey: 'k1', accountId: 'a1', locationId: 'l1', templateHash: 't1' },
+        { listenerKey: 'k1', accountId: 'a2', locationId: 'l2', templateHash: 't2' },
+      ],
+    };
+    expect(publicationFits(both, pub({ accountId: 'a1', locationId: 'l1' }))).toBe(true);
     expect(
-      publicationFits(approved, { listenerKey: 'k1', accountId: 'acc', templateHash: 't1' }),
+      publicationFits(both, pub({ accountId: 'a2', locationId: 'l2', templateHash: 't2' })),
     ).toBe(true);
+    expect(publicationFits(both, pub({ accountId: 'a1', locationId: 'l2' }))).toBe(false);
+  });
+  test('an entry stored before locations (an account, no location) fails closed', () => {
+    const legacy = { listeners: [{ listenerKey: 'k1', accountId: 'acc', templateHash: 't1' }] };
+    expect(publicationFits(legacy, pub({}))).toBe(false);
+    expect(publicationFits(legacy, pub({ locationId: null }))).toBe(false);
+  });
+  test('an adopted front with no account fits as no account, no location', () => {
+    const adopted = {
+      listeners: [{ listenerKey: 'k1', accountId: null, locationId: null, templateHash: null }],
+    };
     expect(
-      publicationFits(approved, { listenerKey: 'k2', accountId: 'acc', templateHash: null }),
+      publicationFits(adopted, pub({ accountId: null, locationId: null, templateHash: null })),
     ).toBe(true);
-    expect(
-      publicationFits(approved, { listenerKey: 'k1', accountId: 'other', templateHash: 't1' }),
-    ).toBe(false);
-    expect(
-      publicationFits(approved, { listenerKey: 'k1', accountId: 'acc', templateHash: 't2' }),
-    ).toBe(false);
-    expect(
-      publicationFits(approved, { listenerKey: 'k3', accountId: 'acc', templateHash: 't1' }),
-    ).toBe(false);
+    expect(publicationFits(adopted, pub({}))).toBe(false);
   });
   test('an approval without a per-listener shape (or none at all) fits nothing', () => {
-    expect(publicationFits(null, { listenerKey: 'k1', accountId: 'acc', templateHash: 't1' })).toBe(
-      false,
-    );
-    expect(
-      publicationFits({} as never, { listenerKey: 'k1', accountId: 'acc', templateHash: 't1' }),
-    ).toBe(false);
+    expect(publicationFits(null, pub({}))).toBe(false);
+    expect(publicationFits({} as never, pub({}))).toBe(false);
   });
 });
 

@@ -100,8 +100,9 @@ export interface ReviewShape {
   authRevision: string | null;
   /**
    * A fronted node's required listeners (sorted by key), each with the
-   * provider account and template it is fronted by: every listener, never one
-   * representative edge. Empty for a direct node.
+   * provider account, location and template it is fronted by: every listener,
+   * never one representative edge. A listener may hold several entries (one
+   * per pick of the node's provider set). Empty for a direct node.
    */
   listeners: ReviewListener[];
   subscriptionTemplates: Record<string, string>;
@@ -112,6 +113,8 @@ export interface ReviewShape {
 export interface ReviewListener {
   listenerKey: string;
   accountId: string | null;
+  /** The location the account fronts it from (null with no account: an adopted front). */
+  locationId?: string | null;
   templateHash: string | null;
 }
 
@@ -119,26 +122,39 @@ export interface ReviewListener {
 export interface PublicationShape {
   listenerKey: string;
   accountId: string | null;
+  locationId: string | null;
   templateHash: string | null;
 }
 
 /**
  * Whether a publication fits an approved review: its listener is one the
- * review names, fronted by the same account and template. A replacement
- * ADDRESS within that shape reuses the approval; another account, template
- * or listener needs a new review. An approval whose shape predates the
- * per-listener review (no `listeners`) fits nothing.
+ * review names, fronted by the same account, from the same location, with the
+ * same template. A replacement ADDRESS within that shape reuses the approval;
+ * another account, location, template or listener needs a new review. An
+ * approval whose shape predates the per-listener review (no `listeners`)
+ * fits nothing, and so does an entry that names an account but no location
+ * (written before locations existed and never migrated): it fails closed.
  */
 export function publicationFits(
   approved: Pick<ReviewShape, 'listeners'> | null,
   pub: PublicationShape,
 ): boolean {
-  const l = approved?.listeners?.find((x) => x.listenerKey === pub.listenerKey);
-  if (!l) return false;
-  return (
-    (l.accountId ?? null) === (pub.accountId ?? null) &&
-    (l.templateHash ?? null) === (pub.templateHash ?? null)
-  );
+  return (approved?.listeners ?? []).some((l) => {
+    if (l.listenerKey !== pub.listenerKey) return false;
+    if ((l.accountId ?? null) !== (pub.accountId ?? null)) return false;
+    if (l.accountId && l.locationId === undefined) return false;
+    return (
+      (l.locationId ?? null) === (pub.locationId ?? null) &&
+      (l.templateHash ?? null) === (pub.templateHash ?? null)
+    );
+  });
+}
+
+/** Review entries in their canonical order (the hash is taken over this order). */
+export function sortReviewListeners(rows: ReviewListener[]): ReviewListener[] {
+  const k = (r: ReviewListener) =>
+    `${r.listenerKey}\u0000${r.locationId ?? ''}\u0000${r.accountId ?? ''}\u0000${r.templateHash ?? ''}`;
+  return [...rows].sort((a, b) => (k(a) < k(b) ? -1 : k(a) > k(b) ? 1 : 0));
 }
 
 /** The hash the review card is approved under. Stable across edge address changes. */

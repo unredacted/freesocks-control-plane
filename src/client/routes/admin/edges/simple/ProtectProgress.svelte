@@ -143,7 +143,7 @@
           },
         ],
       }).then((r) => {
-        if (r.accountTrusted) toast.success('Address tested. The provider account is now trusted.');
+        if (r.accountTrusted) toast.success('Address tested. Its location is now trusted.');
       }),
     );
   const fails = (item: TestItem) =>
@@ -370,19 +370,37 @@
 
       {#if choosingAccount}
         <fieldset class="space-y-2">
-          <legend class="text-xs font-medium">Another account</legend>
+          <legend class="text-xs font-medium">Another account or location</legend>
           {#each run.plan.accounts.filter((a) => a.compatible) as a (a.id)}
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={act.isPending || a.id === run.accountId}
-              onclick={() => {
-                choosingAccount = false;
-                retry({ accountId: a.id });
-              }}
-            >
-              {a.name}
-            </Button>
+            {@const where = a.locations.filter((l) => l.compatible)}
+            {#if where.length <= 1}
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={act.isPending ||
+                  (a.id === run.accountId && (where[0]?.id ?? null) === run.locationId)}
+                onclick={() => {
+                  choosingAccount = false;
+                  retry({ accountId: a.id, ...(where[0] ? { locationId: where[0].id } : {}) });
+                }}
+              >
+                {a.name}
+              </Button>
+            {:else}
+              {#each where as l (l.id)}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={act.isPending || l.id === run.locationId}
+                  onclick={() => {
+                    choosingAccount = false;
+                    retry({ accountId: a.id, locationId: l.id });
+                  }}
+                >
+                  {a.name}, {l.label}
+                </Button>
+              {/each}
+            {/if}
           {/each}
         </fieldset>
       {:else if choosingMode}
