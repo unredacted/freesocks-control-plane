@@ -1432,6 +1432,9 @@ export default defineSchema({
         veto: v.union(v.string(), v.null()),
         hint: v.optional(v.string()),
         lastRotateError: v.optional(v.string()),
+        // Test block evidence (convex/edgeSimulations.ts) took part in this
+        // evaluation: a simulated block on a test deployment, never a real one.
+        simulated: v.optional(v.boolean()),
       }),
     ),
     driftHash: v.optional(v.string()),
@@ -1809,6 +1812,15 @@ export default defineSchema({
     requestedLocationId: v.optional(v.id('edgeLocations')),
     // A replace's explicit spare (the operator named it).
     requestedSpareEdgeId: v.optional(v.id('edges')),
+    // A DETECTOR start: the countries its evidence named for the target, taken
+    // from the evaluation that started it. The L7 replacement gate and the
+    // confirming re-check prove the new front against these, never against the
+    // origin's live suspicion (which later passes rewrite). Absent on a row
+    // written before the snapshot existed (the gate then reads the suspicion).
+    affectedCountries: v.optional(v.array(v.string())),
+    // The test block (edgeBlockSimulations) this detector start answered, consumed
+    // in the same transaction that created the row.
+    simulationId: v.optional(v.id('edgeBlockSimulations')),
     // The guided setup run that started this rotation, with the run GENERATION
     // it was started under: the terminal hook reports this stored generation,
     // never the run's current one, so a retried run ignores the old rotation.
@@ -3325,6 +3337,37 @@ export default defineSchema({
   })
     .index('by_key', ['key'])
     .index('by_expiresAt', ['expiresAt']),
+
+  // Test block evidence on a test deployment (convex/edgeSimulations.ts,
+  // docs/edges.md "Simulating a block on a test deployment"): while live, the
+  // block detector reads its edge as blocked in its country. Only accepted
+  // where EDGE_SIMULATOR_ALLOW opts in (or local development). One live per
+  // edge; a detector start that answers it consumes it atomically.
+  edgeBlockSimulations: defineTable({
+    relayId: v.id('relays'),
+    edgeId: v.id('edges'),
+    country: v.string(),
+    reporters: v.number(),
+    startedAt: v.number(),
+    expiresAt: v.number(),
+    startedBy: v.optional(v.id('adminUsers')),
+    endedAt: v.optional(v.number()),
+    endReason: v.optional(
+      v.union(
+        v.literal('ended'),
+        v.literal('expired'),
+        v.literal('consumed'),
+        v.literal('disabled'),
+      ),
+    ),
+    rotationId: v.optional(v.id('edgeRotations')),
+  })
+    // Open rows (`endedAt` absent) ordered by expiry: a live one is
+    // `endedAt == undefined && expiresAt > now`, read as a RANGE, so expired
+    // rows a stalled sweep left open never crowd a bounded read of live ones.
+    .index('by_relay_live', ['relayId', 'endedAt', 'expiresAt'])
+    .index('by_edge_live', ['edgeId', 'endedAt', 'expiresAt'])
+    .index('by_live', ['endedAt', 'expiresAt']),
 
   // S3 subscription-mirror providers (the censorship-resistance hedge): a
   // variable-length POOL of S3-compatible buckets the subscription content is

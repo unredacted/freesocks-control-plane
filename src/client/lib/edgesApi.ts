@@ -47,6 +47,9 @@ import {
   type EdgeLocationCreateRequest,
   type EdgeLocationUpdateRequest,
   EdgeOkResponse,
+  EdgeSimulationEndedResponse,
+  EdgeSimulationStartedResponse,
+  EdgeSimulationsView,
   EdgeProviderAccountAdmin,
   EdgeProviderAccountsResponse,
   EdgeRenderPreviewResponse,
@@ -492,6 +495,26 @@ export const deleteRelay = (relayId: string, disposition: RelayDeleteDisposition
     `${BASE}/relays/${enc(relayId)}?disposition=${disposition}${force ? '&force=true' : ''}`,
     EdgeOkResponse,
   );
+/** Test block evidence on an origin (accepted here at all, live, recent). */
+export const fetchRelaySimulations = (relayId: string) =>
+  apiClient.get(`${BASE}/relays/${enc(relayId)}/simulations`, EdgeSimulationsView);
+/** Start test block evidence on a published edge (a test deployment only). */
+export const simulateBlock = (
+  edgeId: string,
+  body: { country: string; reporters?: number; minutes?: number },
+) =>
+  apiClient.post(
+    `${BASE}/edges/${enc(edgeId)}/simulate-block`,
+    body,
+    EdgeSimulationStartedResponse,
+  );
+/** End every live test block on an edge. */
+export const endSimulatedBlock = (edgeId: string) =>
+  apiClient.post(
+    `${BASE}/edges/${enc(edgeId)}/simulate-block/end`,
+    {},
+    EdgeSimulationEndedResponse,
+  );
 export const fetchRelayListeners = (relayId: string) =>
   apiClient.get(`${BASE}/relays/${enc(relayId)}/listeners`, RelayListenersResponse);
 export const fetchRelayRotations = (relayId: string) =>
@@ -653,6 +676,7 @@ export const edgeKeys = {
   relayQuarantine: (slug: string) => [...ROOT, 'relay', slug, 'quarantine'] as const,
   relayEdges: (slug: string) => [...ROOT, 'relay', slug, 'edges'] as const,
   relayProviders: (slug: string) => [...ROOT, 'relay', slug, 'providers'] as const,
+  relaySimulations: (slug: string) => [...ROOT, 'relay', slug, 'simulations'] as const,
   nodeCandidates: (backendServerId: string) =>
     [...ROOT, 'node-candidates', backendServerId] as const,
   edge: (edgeId: string) => [...ROOT, 'edge', edgeId] as const,
@@ -846,6 +870,15 @@ export const nodeCandidatesQuery = (backendServerId: () => string | null) =>
 type RelayRef = { slug: () => string | null; id: () => string | null; rotating?: () => boolean };
 const relayEnabled = (r: RelayRef) => r.slug() !== null && r.id() !== null;
 const relayInterval = (r: RelayRef) => (r.rotating?.() ? 10_000 : false);
+
+export const relaySimulationsQuery = (r: RelayRef) =>
+  createQuery(() => ({
+    queryKey: edgeKeys.relaySimulations(r.slug() ?? ''),
+    queryFn: () => fetchRelaySimulations(r.id()!),
+    enabled: relayEnabled(r),
+    staleTime: 10_000,
+    refetchInterval: 30_000,
+  }));
 
 export const relayListenersQuery = (r: RelayRef) =>
   createQuery(() => ({

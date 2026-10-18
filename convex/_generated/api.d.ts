@@ -54,6 +54,7 @@ import type * as edgeRestore from "../edgeRestore.js";
 import type * as edgeRotations from "../edgeRotations.js";
 import type * as edgeSetupPlan from "../edgeSetupPlan.js";
 import type * as edgeSetupRuns from "../edgeSetupRuns.js";
+import type * as edgeSimulations from "../edgeSimulations.js";
 import type * as edgeTemplates from "../edgeTemplates.js";
 import type * as edgeTestCredentials from "../edgeTestCredentials.js";
 import type * as edgeTestLinks from "../edgeTestLinks.js";
@@ -229,6 +230,7 @@ declare const fullApi: ApiFromModules<{
   edgeRotations: typeof edgeRotations;
   edgeSetupPlan: typeof edgeSetupPlan;
   edgeSetupRuns: typeof edgeSetupRuns;
+  edgeSimulations: typeof edgeSimulations;
   edgeTemplates: typeof edgeTemplates;
   edgeTestCredentials: typeof edgeTestCredentials;
   edgeTestLinks: typeof edgeTestLinks;

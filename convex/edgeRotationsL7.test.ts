@@ -845,3 +845,122 @@ describe('edgeReconcile: a published front whose proof failed is re-proven soon'
     expect(sessions).toBe(2);
   });
 });
+
+describe('edgeRotations: a detector replacement answers to the countries of its START', () => {
+  test('later passes rewrite the suspicion; the snapshot still proves the new front where the block was seen', async () => {
+    // The same run twice, the origin's evidence wiped right after the start (a
+    // later detector pass with nothing real to say): with the snapshot the new
+    // front is proven in IR and goes out; a row from before the snapshot, which
+    // reads the live suspicion, has no country left to prove it in.
+    for (const snapshot of [true, false]) {
+      vi.useFakeTimers();
+      fakeL7();
+      fakePanel();
+      __setFrontChecker(async () => ({ ok: true, steps: [], checkedAt: Date.now() }));
+      __setEdgePlumbingForTests({ pollMs: 5_000, l7QualifyTimeoutMs: 2 * 60_000 });
+      const { t, relayId, listenerId } = await seed({ autoSelect: true });
+      await t.run(async (ctx) => {
+        for (const [key, value] of [
+          ['edge.autoRotate', 'true'],
+          ['edge.probe.enabled', 'true'],
+        ] as const) {
+          await ctx.db.insert('appSettings', { key, value, updatedAt: Date.now() });
+        }
+      });
+      const oldEdge = await insertPublishedFront(t, relayId, listenerId, {
+        name: 'adopted-old',
+        listeners: [{ edgePort: 443, originAddress: ORIGIN, originPort: 443 }],
+      });
+      const suspicion = (countries: string[]) => ({
+        state: 'suspected' as const,
+        hintLevel: 'probes' as const,
+        score: 1,
+        reportScore: 0,
+        loadScore: 0,
+        probeScore: 1,
+        scope: 'regional' as const,
+        countries: countries.map((code) => ({ code, count: 3 })),
+        edgeEvidence: countries.length
+          ? [{ edgeId: oldEdge, source: 'probes' as const, countries }]
+          : [],
+        firstSeenAt: Date.now(),
+        lastEvalAt: Date.now(),
+        quietEvals: 0,
+        baselineWarm: true,
+        veto: null,
+      });
+      await t.run((ctx) =>
+        ctx.db.patch(relayId, {
+          publishedEdgeIds: [oldEdge],
+          autoRotate: true,
+          suspicion: suspicion(['IR']),
+        }),
+      );
+      const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+        relayId,
+        kind: 'replace',
+        trigger: 'detector',
+        targetEdgeId: oldEdge,
+        ...(snapshot ? { affectedCountries: ['IR'] } : {}),
+      });
+      // The next pass found nothing: the suspicion now names no country.
+      await t.run((ctx) => ctx.db.patch(relayId, { suspicion: suspicion([]) }));
+      const stamped = new Set<string>();
+      for (let i = 0; i < 300; i++) {
+        await vi.advanceTimersByTimeAsync(2_000);
+        await t.finishInProgressScheduledFunctions();
+        const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
+        const newEdge = r.toEdgeId ?? r.createdEdgeId ?? null;
+        if (newEdge && !stamped.has(newEdge as string)) {
+          stamped.add(newEdge as string);
+          const at = Date.now();
+          await t.run((ctx) =>
+            ctx.db.patch(newEdge, {
+              reachability: {
+                byCountry: [
+                  {
+                    country: 'IR',
+                    verdict: 'reachable',
+                    okVantages: 3,
+                    failVantages: 0,
+                    lastAt: at,
+                  },
+                ],
+                updatedAt: at,
+              },
+            }),
+          );
+        }
+        if (['done', 'failed', 'rolled_back', 'quarantined', 'cancelled'].includes(r.phase)) break;
+      }
+      const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
+      expect(stamped.size).toBe(1);
+      if (snapshot) {
+        expect(r.affectedCountries).toEqual(['IR']);
+        expect([r.phase, r.outcome]).toEqual(['done', 'published']);
+      } else {
+        expect(r.affectedCountries).toBeUndefined();
+        expect(r.phase).toBe('failed');
+        expect(r.events.some((e) => (e.detail ?? '').includes('no affected country'))).toBe(true);
+      }
+      vi.useRealTimers();
+    }
+  }, 20_000);
+
+  test('only a detector start carries a snapshot', async () => {
+    const { t, relayId, listenerId } = await seed({ autoSelect: true });
+    const oldEdge = await insertPublishedFront(t, relayId, listenerId, {
+      name: 'adopted-old',
+      listeners: [{ edgePort: 443, originAddress: ORIGIN, originPort: 443 }],
+    });
+    await expect(
+      t.mutation(internal.edgeRotations.start, {
+        relayId,
+        kind: 'replace',
+        trigger: 'manual',
+        targetEdgeId: oldEdge,
+        affectedCountries: ['IR'],
+      }),
+    ).rejects.toThrow(/detector start/);
+  });
+});

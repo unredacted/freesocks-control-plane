@@ -741,3 +741,121 @@ docker pull tiago2/cap@sha256:<pinned-digest>
 docker tag  tiago2/cap@sha256:<pinned-digest> ghcr.io/<org>/cap:<version>
 docker push ghcr.io/<org>/cap:<version>      # then keep a digest pin on the mirror
 ```
+
+## Walking the edges on a test deployment
+
+Two walks prove the parts of edges that cannot be exercised by hand alone. Both run on a test
+deployment only; production never gets `EDGE_SIMULATOR_ALLOW`. Anything billable (a spare, a
+front, a machine), a real client and every typed approval are the owner's; deploys, env changes
+and one-offs follow "One-off functions" above.
+
+### Walking automatic rotation
+
+Proves: test block evidence, the detector, the start checks, a burn onto a tested spare, the
+epoch, members' subscriptions changing and a real client moving by itself
+(`docs/edges.md` "Simulating a block on a test deployment").
+
+Preconditions
+
+1. In `.env.convex`: `EDGE_MARK_PEPPER=<openssl rand -hex 32>` and
+   `EDGE_SIMULATOR_ALLOW=simulate-blocks`; recreate the deployer and check the log for both
+   `env set` lines. Every admin page then shows "Block simulator is on", and the
+   `mark_pepper_missing` preflight warning is gone.
+2. A fronted node live behind two published L4 edges and **no tested spare yet** (the first
+   negative check needs its absence).
+3. Edges, Settings: Automatic protection on, then **turn `edge.autoProvisionToDesired` off**
+   so nothing is provisioned during the walk (detection, rotation and standby publishing stay
+   on). The origin's own Auto rotate on (guided-setup origins have it). Keep the default
+   cooldown. Caps for a test: `detect.fleetRotationsPerDay` 3, `maxRotationsPerRelayPerDay` 2.
+   The fleet brake needs three suspected origins, so a one-origin test cannot engage it.
+4. Probes on; pick a country with address checks on where the edges read reachable from at
+   least two networks (Edges, Probes).
+5. A controlled client on a desktop machine that refreshes by itself on a short interval, with
+   an automatic url-test group holding primary and backup and a log of the address each
+   connection dials (`docs/client-compatibility.md` "Refresh behaviour": Mihomo Party, or a
+   bare Mihomo core with a proxy-provider on the member's URL). Record its name and version.
+
+Walk
+
+1. Baseline: no attention items. Fetch the member's key through the web container (the
+   subscription route answers on the site's Host; with an https Caddy use
+   `curl --resolve <site>:443:127.0.0.1 https://<site>/api/v1/sub/<token>`), note the
+   endpoints and the `ETag`, fetch again with `If-None-Match` and expect 304 (once with
+   `--compressed`).
+2. Start a poller standing in for an app: a shell loop every 60 s sending `If-None-Match`,
+   logging time, status and endpoints. It proves the HTTP contract, not client behaviour.
+3. The real report path: report a problem from the member page (primary connection, country
+   consent). The report detail shows weight 1 and the member's primary edge.
+4. No tested spare: Simulate a block (test) on the member's primary edge in the chosen country.
+   Within one detector pass the origin is suspected and the start is refused
+   `edge.no_verified_spare` (attention `needs_test`, critical); no rotation exists and the test
+   block stays live. End it. Then add a spare from the node's approved account and template
+   (billable) and test it (Try it, Works).
+5. Client failover, measured: on the controlled client's machine, block the member's primary
+   address (pf on macOS, nftables on Linux). Record the time to the first connection dialled to
+   the backup address.
+6. Simulate a block on the same edge again. Within one pass: `edge.block_suspected` (simulated,
+   corroborated), then a rotation `replace` + `burn`, actor system, reason
+   `detector:reports:simulated`, "Blocked in" showing the country, a Test block marker; phases
+   select, verifying, publishing (host_flipping only for the listener's template edge),
+   confirming, finalizing, done; epoch +1; the test block shows `consumed`.
+7. Members moved (HTTP): the poller turns 200 with a new `ETag` within a minute of `done`, the
+   body lists the spare and not the burned address, the next poll is 304.
+8. Cooldown, right away while the origin's cooldown is well ahead: simulate a block on the new
+   primary; within one pass it is suspected, vetoed `cooldown`, nothing starts. End it as soon
+   as the veto shows.
+9. Members moved (client), no manual action: wait for the controlled client's own scheduled
+   refresh. The evidence is the client's log and loaded configuration (its update time, the
+   new address), not the subscription's delivery stamp (the poller moves that too). Then its
+   first connection to the spare. Record block, failover, rotation done, client refresh and
+   first dial to the spare; lift the client-side block.
+10. Afterwards: suspicion clears after three passes; nothing was provisioned; the burned edge
+    drains for `edge.burnedDrainMinutes`, then is destroyed (check later, and at the provider).
+11. The opt-in: `bunx convex env remove EDGE_SIMULATOR_ALLOW` (deployer recipe). A live test
+    block stops counting at the next pass and new ones are refused (403). Set it again if more
+    walks follow.
+12. Replenishment (billable): turn `edge.autoProvisionToDesired` back on; upkeep provisions one
+    spare within the account's budget; test it.
+13. Wind down: leave automation on with the caps, or switch it off. Record the timings.
+
+### Walking an L7 front
+
+Proves: a CDN front for the WebSocket mode, its automatic proof, its renewal, a manual and an
+automatic L7 replacement.
+
+Inputs (the owner's): an L7 provider account that carries WebSocket, its API token with the
+scopes the account form lists, a daily allocation budget above 0, its DNS account and zone when
+the adapter needs one, and a machine for a front node.
+
+1. Set up this backend with the origin DNS account and zone (origin names `<label>.<zone>`) and
+   the `freedom-ws` placement, so its group has a pool.
+2. Enable `freedom-ws` in Admin, Connection modes (decide whether it becomes the default).
+3. Mint an `admin:edges:register` token bounded to the backend; run the node role with
+   `node_mode=freedom-ws`; expect `machine_ready` (origin name resolving, public certificate,
+   WebSocket path proxied, a foreign Host answered).
+4. Add the L7 account under Edges, Providers and test it. Check the origin TLS contract for the
+   adapter (`docs/edges.md` "Node role contract"); the plan refuses `dns_zone_missing`,
+   `origin_transport_missing`, `zone_mode_unknown` and `origin_tls_mismatch` before anything is
+   provisioned.
+5. Protect the node: one front is provisioned (minutes on an asynchronous adapter), proven end
+   to end with the qualification credential (no Try it for L7), the account is trusted
+   automatically, the run rehearses; approve by typing the node name; the node goes live.
+6. Member check: switch the test member to the WebSocket mode in place (same URL). The body
+   holds the front hostname in sing-box, Clash and link formats and none of the node's
+   addresses; a real client connects.
+7. Proof upkeep: over a few hours the reconcile renews the proof before its lifetime ends; the
+   front never leaves rendering.
+8. Manual Replace: a new front is provisioned and proven, published, epoch +1; the old one
+   drains; the poller sees the new hostname.
+9. Automatic: turn `edge.l7.autoSelect` on (a listener only frontable at L7 is refused
+   `edge.l7_auto_select_disabled` otherwise). File no real reports against the front in the 30
+   minutes before (every country the start snapshots must read reachable for the new front).
+   Simulate a block on the front in a country where the probes have vantages; the rotation shows
+   that country under "Blocked in"; the new front must read reachable there within 15 minutes
+   (from provisioning, or the start when a standby is used), across several detector passes,
+   else the rotation fails `qualification_inconclusive`. The test block is consumed either way,
+   so nothing repeats. Members move as in the rotation walk. For the controlled client, compare
+   the old and new hostnames' addresses first: a CDN often answers both from shared addresses,
+   and blocking those would cut the replacement too; then emulate the block by name (point the
+   old hostname at an unroutable address in the machine's hosts file).
+10. Clean up: decide whether the front node stays; turn `edge.l7.autoSelect` off if not soaking.

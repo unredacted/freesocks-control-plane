@@ -831,6 +831,10 @@ export const EdgeRotationAdmin = z.object({
     .nullable(),
   hostPlanSize: z.number(),
   flipAttempts: z.number(),
+  /** A detector start: the countries its evidence named for the target (the L7 gate proves the new front there). */
+  affectedCountries: z.array(z.string()).nullable().default(null),
+  /** Started by test block evidence (a simulated block on a test deployment). */
+  simulated: z.boolean().default(false),
   rollbackAttempts: z.number(),
   startedAt: iso,
   provisionedAt: isoN,
@@ -1055,6 +1059,45 @@ export const RelayHostsPlan = z.object({
   ),
 });
 /** The CMS view of a relay's listeners + what is published for them. */
+/**
+ * Test block evidence on one origin (`GET relays/{id}/simulations`,
+ * convex/edgeSimulations.ts): whether this deployment accepts it at all
+ * (`EDGE_SIMULATOR_ALLOW`), the live ones and the last few that ended.
+ */
+export const EdgeSimulationsView = z.object({
+  available: z.boolean(),
+  live: z.array(
+    z.object({
+      id: z.string(),
+      edgeId: z.string(),
+      country: z.string(),
+      reporters: z.number(),
+      startedAt: iso,
+      expiresAt: iso,
+    }),
+  ),
+  recent: z
+    .array(
+      z.object({
+        id: z.string(),
+        edgeId: z.string(),
+        country: z.string(),
+        endReason: z.enum(['ended', 'expired', 'consumed', 'disabled']),
+        endedAt: iso,
+        rotationId: z.string().nullable(),
+      }),
+    )
+    .default([]),
+});
+export type EdgeSimulationsView = z.infer<typeof EdgeSimulationsView>;
+/** `POST edges/{id}/simulate-block`. */
+export const EdgeSimulationStartedResponse = z.object({
+  ok: z.boolean(),
+  simulationId: z.string(),
+});
+/** `POST edges/{id}/simulate-block/end`. */
+export const EdgeSimulationEndedResponse = z.object({ ok: z.boolean(), ended: z.number() });
+
 export const RelayListenersResponse = z.object({
   listeners: z.array(RelayListenerAdmin),
   publishedEndpoints: z.array(RelayPublishedEndpoint),
