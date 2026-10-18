@@ -122,6 +122,13 @@ export const AdminTelemetryEvents = z.object({
       detectedCountry: z.string().nullable(),
       detectedCity: z.string().nullable(),
       detectedAsn: z.number().nullable(),
+      /** A report on a key behind edges: the origin, the connection the member
+       *  named, the one edge that maps to, and its detector weight (1 counted,
+       *  0 not). Null on other rows. Defaulted for skew. */
+      relaySlug: z.string().nullable().optional().default(null),
+      connectionChoice: z.string().nullable().optional().default(null),
+      relayEdgeId: z.string().nullable().optional().default(null),
+      detectorWeight: z.number().nullable().optional().default(null),
     }),
   ),
   nextCursor: z.string().nullable(),

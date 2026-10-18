@@ -18,6 +18,8 @@
   import { Input } from '@client/components/ui/input';
   import { Skeleton } from '@client/components/ui/skeleton';
   import InlineError from '../../components/InlineError.svelte';
+  import Link from '../../components/Link.svelte';
+  import { edgesPaths } from './edges/lib/routes';
   import { apiClient } from '../../lib/api';
   import { apiErrorMessage } from '../../lib/errors';
   import {
@@ -116,6 +118,22 @@
   // Free-text collection ended 2026-09-15; show the column only while a loaded
   // row from before then still carries text (retention drains them).
   const hasLegacyDetail = $derived(allEvents.some((e) => e.detail !== null));
+  // Reports on keys behind edges carry the origin, the connection the member
+  // named and whether the detector counted the report (the walk checks these).
+  const hasOrigin = $derived(allEvents.some((e) => e.relaySlug !== null));
+  const CONNECTION_WORDS: Record<string, string> = {
+    primary: 'primary',
+    backup: 'backup',
+    unsure: 'not sure which',
+  };
+  function attributionWords(e: (typeof allEvents)[number]): string {
+    const connection = e.connectionChoice
+      ? (CONNECTION_WORDS[e.connectionChoice] ?? e.connectionChoice)
+      : 'connection not named';
+    const weight =
+      e.detectorWeight === 1 ? ', counted' : e.detectorWeight === 0 ? ', not counted' : '';
+    return `${connection}${weight}`;
+  }
 
   const fmtAt = (iso: string) =>
     new Date(iso).toLocaleString('en-US', {
@@ -304,6 +322,9 @@
                   <th class="py-1.5 pe-4 text-start font-medium">Country</th>
                   <th class="py-1.5 pe-4 text-start font-medium">City</th>
                   <th class="py-1.5 pe-4 text-start font-medium">ASN</th>
+                  {#if hasOrigin}
+                    <th class="py-1.5 pe-4 text-start font-medium">Origin</th>
+                  {/if}
                   {#if hasLegacyDetail}
                     <th class="py-1.5 text-start font-medium">Detail</th>
                   {/if}
@@ -326,6 +347,26 @@
                         e.detectedAsn !== null ? `AS${e.detectedAsn}` : null,
                       )}
                     </td>
+                    {#if hasOrigin}
+                      <td class="py-1.5 pe-4 whitespace-nowrap">
+                        {#if e.relaySlug}
+                          <Link
+                            href={edgesPaths.relay(e.relaySlug, {
+                              tab: 'edges',
+                              edge: e.relayEdgeId,
+                            })}
+                            class="underline underline-offset-4"
+                          >
+                            {e.relaySlug}
+                          </Link>
+                          <span class="text-muted-foreground block text-xs">
+                            {attributionWords(e)}
+                          </span>
+                        {:else}
+                          ·
+                        {/if}
+                      </td>
+                    {/if}
                     {#if hasLegacyDetail}
                       <!-- Legacy free text (collection ended 2026-09-15): truncated
                            in the row, full text on hover. The column disappears once

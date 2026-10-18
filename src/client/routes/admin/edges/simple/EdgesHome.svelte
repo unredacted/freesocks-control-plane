@@ -11,7 +11,13 @@
    * A backend node's row opens its Servers node page (its one page).
    *
    * The "Turn on automatic protection" offer appears once a node is live (and on
-   * the Live card of a run), never on the empty home.
+   * the Live card of a run), never on the empty home. The switch reads ON when a
+   * blocked address can be replaced on its own (the master switch and automatic
+   * rotation); a line under it says when spares or probes are left to you (a test
+   * deployment keeps spares by hand), so turning it "on" never undoes that.
+   *
+   * The headline and the rows keep themselves current (lib/livePoll.ts);
+   * "Updated N s ago" beside the headline reads them again now.
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -26,6 +32,7 @@
   import {
     attentionQuery,
     edgeConfigQuery,
+    edgeKeys,
     edgeSummaryQuery,
     invalidateConfig,
     invalidateOverview,
@@ -37,6 +44,7 @@
   import { serverSummaryQuery } from '@client/lib/serversApi';
   import { nodeHomeOf } from '../../servers/lib/routes';
   import AdminListState from '../../AdminListState.svelte';
+  import UpdatedAgo from '../../UpdatedAgo.svelte';
   import AttentionList from '../components/AttentionList.svelte';
   import SectionHeader from '../components/SectionHeader.svelte';
   import type { AttentionItem } from '../lib/attention';
@@ -49,7 +57,7 @@
   import NodeRow from './NodeRow.svelte';
   import ProtectSheet from './ProtectSheet.svelte';
   import StatusDot from './StatusDot.svelte';
-  import { automationOn } from './runWords';
+  import { automationNote, automationState } from './runWords';
 
   const qc = useQueryClient();
   const summary = edgeSummaryQuery();
@@ -69,7 +77,15 @@
   );
   const statuses = $derived(rows.map((r) => statusOf(attention.data?.origins, r.relay.slug)));
   const fleet = $derived(attention.data?.fleet ?? null);
-  const automation = $derived(config.data ? automationOn(config.data.config) : null);
+  const autoState = $derived(config.data ? automationState(config.data.config) : null);
+  const automation = $derived(autoState ? autoState.replaces : null);
+  const autoNote = $derived(autoState ? automationNote(autoState) : null);
+  const updatedAt = $derived(Math.min(summary.dataUpdatedAt, attention.dataUpdatedAt));
+  const refreshNow = () =>
+    Promise.all([
+      qc.refetchQueries({ queryKey: edgeKeys.summary, type: 'active' }),
+      qc.refetchQueries({ queryKey: edgeKeys.attention, type: 'active' }),
+    ]);
   const anyLive = $derived(statuses.some((s) => s?.kind === 'protected'));
   /** A backend node's one page (Servers), else the edges page of the origin. */
   const rowHref = (row: (typeof rows)[number]) =>
@@ -163,10 +179,13 @@
   {:else if summary.isError}
     <AdminListState error={summary.error} onRetry={() => void summary.refetch()} />
   {:else if fleet}
-    <p class="flex items-center gap-2 text-lg font-medium" role="status">
-      <StatusDot dot={fleet.dot} class="size-3" />
-      {fleetSentence(fleet)}
-    </p>
+    <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+      <p class="flex items-center gap-2 text-lg font-medium" role="status">
+        <StatusDot dot={fleet.dot} class="size-3" />
+        {fleetSentence(fleet)}
+      </p>
+      <UpdatedAgo at={updatedAt} onRefresh={refreshNow} />
+    </div>
   {/if}
 
   {#if attention.isError}
@@ -267,16 +286,21 @@
     class="text-muted-foreground flex flex-wrap items-center justify-between gap-3 border-t pt-4 text-sm"
   >
     {#if automation !== null}
-      <div class="flex items-center gap-3">
-        <Switch
-          id="automation-switch"
-          checked={automation}
-          disabled={automationBusy}
-          onCheckedChange={(v) => void setAutomation(v)}
-        />
-        <Label for="automation-switch" class="font-normal">
-          Automatic protection is {automation ? 'on' : 'off'}
-        </Label>
+      <div class="space-y-1">
+        <div class="flex items-center gap-3">
+          <Switch
+            id="automation-switch"
+            checked={automation}
+            disabled={automationBusy}
+            onCheckedChange={(v) => void setAutomation(v)}
+          />
+          <Label for="automation-switch" class="font-normal">
+            Automatic protection is {automation ? 'on' : 'off'}
+          </Label>
+        </div>
+        {#if autoNote}
+          <p class="max-w-prose text-xs">{autoNote}</p>
+        {/if}
       </div>
     {:else}
       <span></span>

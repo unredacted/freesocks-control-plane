@@ -11,6 +11,11 @@
    * for a backend node, and `/admin/edges/nodes/<slug>` shows it for an origin
    * that is not a backend node (manual, a whole Outline server).
    *
+   * It keeps itself current (lib/livePoll.ts): its lists poll every 30 s, every
+   * 4 s while something runs on the node, and a change the origin lookup or
+   * attention sees (an automatic replacement shorter than one poll) refreshes
+   * them at once. "Updated N s ago" beside the status reads them again now.
+   *
    * "Protect again" (an enrolled node that is live behind edges): a re-protect
    * run (new addresses, Try it, the approval when one is needed) in the protect
    * sheet's progress. Members keep what they have until it goes live; a cancel
@@ -58,6 +63,7 @@
     deleteEdge,
     deleteRelay,
     edgeConfigQuery,
+    edgeKeys,
     invalidateRelay,
     relayEdgesQuery,
     relayListenersQuery,
@@ -69,8 +75,10 @@
     retrySetupRun,
     updateRelay,
   } from '@client/lib/edgesApi';
+  import { originBusy } from '@client/lib/livePoll';
   import type { EdgeAdmin } from '@shared/contracts/edges';
   import AdminListState from '../../AdminListState.svelte';
+  import UpdatedAgo from '../../UpdatedAgo.svelte';
   import Timeline from '../components/Timeline.svelte';
   import ActionConfirm from '../relay/ActionConfirm.svelte';
   import ReplaceDialog from '../relay/ReplaceDialog.svelte';
@@ -88,7 +96,7 @@
   import SpareDialog from './SpareDialog.svelte';
   import StatusDot from './StatusDot.svelte';
   import { endNowWords } from './drainWords';
-  import { automationOn } from './runWords';
+  import { nodeAutomationWords } from './runWords';
 
   interface Props {
     slug: string;
@@ -100,15 +108,17 @@
   const qc = useQueryClient();
   const relayQ = relayLookupQuery(() => slug);
   const relay = $derived(relayQ.data ?? null);
+  const attention = attentionQuery();
   const ref = {
     slug: () => slug,
     id: () => relay?.id ?? null,
-    rotating: () => !!relay?.activeRotationId,
+    // Faster while anything runs on the node: a rotation, a setup run, a restore.
+    rotating: () =>
+      (!!relay && originBusy(relay)) || !!statusOf(attention.data?.origins, slug)?.runId,
   };
   const listenersQ = relayListenersQuery(ref);
   const edgesQ = relayEdgesQuery(ref);
   const timelineQ = relayTimelineQuery(ref);
-  const attention = attentionQuery();
   const config = edgeConfigQuery();
   const testParam = searchParam('test');
 
@@ -118,7 +128,18 @@
   // The ONE status the server judged for this origin (the attention response).
   const status = $derived(statusOf(attention.data?.origins, slug));
   const runId = $derived(status?.runId ?? null);
-  const globalOn = $derived(config.data ? automationOn(config.data.config) : true);
+  const autoWords = $derived(
+    config.data && relay ? nodeAutomationWords(config.data.config, relay) : null,
+  );
+  // The oldest of what the panel shows, and one way to read it all again now.
+  const updatedAt = $derived(
+    Math.min(relayQ.dataUpdatedAt, listenersQ.dataUpdatedAt, edgesQ.dataUpdatedAt),
+  );
+  const refreshNow = () =>
+    Promise.all([
+      qc.refetchQueries({ queryKey: edgeKeys.relay(slug), type: 'active' }),
+      qc.refetchQueries({ queryKey: edgeKeys.attention, type: 'active' }),
+    ]);
   const name = $derived(
     relay
       ? (relay.label ?? (relay.origin.kind === 'panel-node' ? relay.origin.nodeName : relay.slug))
@@ -255,6 +276,7 @@
             Removing protection: {restorePhaseWords(relay.restore.phase)}.
           </p>
         {/if}
+        <UpdatedAgo at={updatedAt} onRefresh={refreshNow} />
       {:else if !relayQ.error}
         <Skeleton class="mt-2 h-5 w-64" />
       {/if}
@@ -391,13 +413,12 @@
     <section class="flex items-start justify-between gap-4 rounded-lg border p-3">
       <div class="min-w-0">
         <Label for={`${uid}-auto`}>Replace addresses automatically on this node</Label>
-        <p class="text-muted-foreground text-xs">
-          {#if !globalOn}
-            Global automatic protection is off. Turn it on from the Edges page for this to act.
-          {:else}
-            When an address looks blocked, FCP switches members to a tested spare on its own.
+        {#if autoWords}
+          <p class="text-muted-foreground text-xs">{autoWords.line}</p>
+          {#if autoWords.spares}
+            <p class="text-muted-foreground mt-1 text-xs">{autoWords.spares}</p>
           {/if}
-        </p>
+        {/if}
       </div>
       <Switch
         id={`${uid}-auto`}

@@ -11,6 +11,7 @@
   import { Skeleton } from '@client/components/ui/skeleton';
   import type { OriginAdmin } from '@shared/contracts/edges';
   import { cancelRelayRotation, edgeKeys, relayRotationsQuery } from '@client/lib/edgesApi';
+  import { originBusy } from '@client/lib/livePoll';
   import AdminListState from '../../AdminListState.svelte';
   import StatusBadge from '../components/StatusBadge.svelte';
   import { ROTATION_KIND_LABELS, ROTATION_TRIGGER_LABELS } from '../lib/rotation';
@@ -29,7 +30,7 @@
   const rotationsQ = relayRotationsQuery({
     slug: () => relay.slug,
     id: () => relay.id,
-    rotating: () => !!relay.activeRotationId,
+    rotating: () => originBusy(relay),
   });
   const rotations = $derived(
     [...(rotationsQ.data ?? [])].sort((a, b) => b.startedAt.localeCompare(a.startedAt)),

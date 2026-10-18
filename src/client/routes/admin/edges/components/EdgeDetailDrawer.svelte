@@ -26,10 +26,9 @@
   import { edgeErrorMessage } from '../lib/edgeErrors';
   import {
     edgeDetailQuery,
-    edgeKeys,
-    edgeLiveQuery,
     invalidateEdge,
     refreshEdgeLive,
+    setEdgeLiveSnapshot,
   } from '@client/lib/edgesApi';
   import { codeLabel, humanizeCode, readinessTone, READINESS_LABELS } from '@client/lib/edgeCodes';
   import { countryName } from '@client/lib/countries';
@@ -50,8 +49,9 @@
   let { edgeId, onClose, actions }: Props = $props();
 
   const qc = useQueryClient();
+  // The detail carries the live snapshot too: one cache, polled by the detail
+  // query, so a newer poll always replaces what is shown.
   const detail = edgeDetailQuery(() => edgeId);
-  const liveQ = edgeLiveQuery(() => edgeId);
 
   let showRaw = $state(false);
   $effect(() => {
@@ -60,12 +60,12 @@
   });
 
   const edge = $derived(detail.data?.edge ?? null);
-  const live = $derived(liveQ.data?.live ?? detail.data?.live ?? null);
+  const live = $derived(detail.data?.live ?? null);
 
   const refresh = createMutation(() => ({
     mutationFn: (id: string) => refreshEdgeLive(id),
     onSuccess: (data, id) => {
-      qc.setQueryData(edgeKeys.edgeLive(id), data);
+      setEdgeLiveSnapshot(qc, id, data.live);
       invalidateEdge(qc, id);
       toast.success(data.live ? 'Live snapshot refreshed' : 'The provider returned no snapshot');
     },

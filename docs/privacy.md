@@ -72,7 +72,10 @@ accidentally regress it).
     that read an older one cannot write it back. It follows the member to a re-issued key of a
     freedom mode (regenerate carries the answer only).
   - **Never in logs, audit payloads or analytics**: no audit action records a choice or a
-    guess, Umami never sees it, issue reports do not get it.
+    guess, Umami never sees it, and issue reports never get it by themselves: the report and
+    switch-server dialogs prefill the member's own answer (never the guess, never "Somewhere
+    else") in their consent block, where it is shown, editable and declined with the rest
+    (section 7), and only what the member sends is stored.
   - **Sealed in transit.** The routes that carry it (`GET|POST /api/v1/account/connection-region`,
     `GET /api/v1/admin/member-country/{id}`) are HPKE-sealed and refuse plaintext, so it never
     crosses the CDN in the clear; a caller that cannot seal is refused. The admin view answers a
@@ -371,9 +374,13 @@ one-click decline). What it does and does not do:
 
 - **What can be sent:** country, city, and network provider (ASN) — never an
   IP. The dialog shows the exact values before sending and every field is
-  **member-editable**: the prefill comes from the CDN edge's view of the
-  request, which is the VPN exit's network (not the member's) whenever they
-  report from inside the tunnel, so members are told to correct it.
+  **member-editable**: the country is prefilled with the member's own answer to
+  "Where are you connecting from?" when they gave one (a listed country; read
+  in the browser over the sealed route, never the guess), else, like city and
+  ASN, with the CDN edge's view of the request, which is the VPN exit's network
+  (not the member's) whenever they report from inside the tunnel, so members
+  are told to correct it. The stored row carries what was sent, still with no
+  link to the member.
   **No free text.** The report dialog has no "tell us what's happening" box
   (it was removed 2026-09-15; the server ignores a `detail` field if a stale
   client still sends one). A member who needs to say more is pointed at the

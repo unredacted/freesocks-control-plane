@@ -17,3 +17,15 @@ export function countryName(code: string, locale: string): string {
     return code;
   }
 }
+
+/**
+ * The member's own answer to "Where are you connecting from?" as a country the
+ * consent blocks may prefill: a listed country they chose, never the guess and
+ * never "Somewhere else" (`ZZ`). Null when there is no such answer.
+ */
+export function ownCountryOf(
+  view: { source: string; choice: string | null } | null | undefined,
+): string | null {
+  const c = view?.source === 'choice' ? view.choice : null;
+  return c && c !== 'ZZ' && COUNTRY_CODES.includes(c) ? c : null;
+}

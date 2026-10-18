@@ -6,6 +6,8 @@
  *   runTestLines(run)                every line of the card, the ones already ticked included
  *   needButtons(code)                the one button (and at most one secondary) of an interruption
  *   automationOn(config)             the four switches `POST automation` sets, read back as one
+ *   automationState(config), automationNote(state)   what those switches mean apart
+ *   nodeAutomationWords(config, node)  the node page's automatic-replacement card
  *   planWords(plan)                  the review sentence pieces of a plan
  *   hideButton(n), moreDirectWords(n)  the "hide the unsupported direct addresses" words
  */
@@ -202,16 +204,90 @@ export function needButtons(code: string): NeedButtons {
   }
 }
 
-/** The four switches `POST automation {on}` sets, read back as one. */
-export function automationOn(config: {
+type AutomationConfig = {
   enabled: boolean;
   autoRotate: boolean;
   autoProvisionToDesired: boolean;
   probe: { enabled: boolean };
-}): boolean {
+};
+
+/** The four switches `POST automation {on}` sets, read back as one. */
+export function automationOn(config: AutomationConfig): boolean {
   return (
     config.enabled && config.autoRotate && config.autoProvisionToDesired && config.probe.enabled
   );
+}
+
+/**
+ * What the four switches mean apart (a test deployment keeps spares by hand,
+ * docs/beta-deploy.md "Walking automatic rotation"):
+ *   replaces    a blocked address can be replaced on its own: the master switch
+ *               and automatic rotation (each node also opts in)
+ *   makesSpares upkeep makes new spares and fills pools (billable)
+ *   probes      reachability probes run
+ */
+export interface AutomationState {
+  replaces: boolean;
+  makesSpares: boolean;
+  probes: boolean;
+}
+export function automationState(config: AutomationConfig): AutomationState {
+  return {
+    replaces: config.enabled && config.autoRotate,
+    makesSpares: config.enabled && config.autoProvisionToDesired,
+    probes: config.probe.enabled,
+  };
+}
+
+/** The Edges home's line under the switch when replacement is on but not all of it. */
+export function automationNote(state: AutomationState): string | null {
+  if (!state.replaces) return null;
+  if (!state.makesSpares && !state.probes)
+    return 'FCP does not make new spares on its own, and reachability probes are off.';
+  if (!state.makesSpares)
+    return 'FCP does not make new spares on its own: each replacement uses a spare you added and tested.';
+  if (!state.probes)
+    return 'Reachability probes are off, so the detector only has member reports to go on.';
+  return null;
+}
+
+/**
+ * The node page's "Replace addresses automatically on this node" card: what
+ * actually decides whether this node's blocked address is replaced (the master
+ * switch, automatic rotation, a setup run that owns the node, this node's own
+ * switch), and on its own line whether spares come back by themselves.
+ */
+export function nodeAutomationWords(
+  config: AutomationConfig,
+  node: { autoRotate: boolean; setupOwned: boolean },
+): { line: string; spares: string | null } {
+  const spares = config.autoProvisionToDesired
+    ? null
+    : 'FCP does not make new spares on its own (Edges, Settings). Each replacement uses one tested spare; add and test the next one yourself.';
+  if (!config.enabled)
+    return {
+      line: 'Edge automation is off for every node. Turn on automatic protection from the Edges page for this to act.',
+      spares: null,
+    };
+  if (!config.autoRotate)
+    return {
+      line: 'Automatic rotation is off for every node (Edges, Settings). This switch acts once it is on.',
+      spares: null,
+    };
+  if (node.setupOwned)
+    return {
+      line: 'A setup run is working on this node. Automatic replacement starts once it is done.',
+      spares: null,
+    };
+  if (!node.autoRotate)
+    return {
+      line: 'Off for this node: an address that looks blocked shows under Needs you and waits for you to replace it.',
+      spares: null,
+    };
+  return {
+    line: 'When an address looks blocked, FCP switches members to a tested spare on its own.',
+    spares,
+  };
 }
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;

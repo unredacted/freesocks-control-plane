@@ -404,6 +404,11 @@ export const recent = internalQuery({
         detectedCountry: r.detectedCountry ?? null,
         detectedCity: r.detectedCity ?? null,
         detectedAsn: r.detectedAsn ?? null,
+        // Origin attribution (operator infrastructure labels on the same unlinked row).
+        relaySlug: r.relaySlug ?? null,
+        connectionChoice: r.connectionChoice ?? null,
+        relayEdgeId: r.relayEdgeId ?? null,
+        detectorWeight: r.detectorWeight ?? null,
       })),
       nextCursor: res.isDone ? null : res.continueCursor,
     };
