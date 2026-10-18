@@ -416,6 +416,8 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.run_superseded': 'A newer approval replaced this one.',
   'servers.run_not_running': 'This activation is not running.',
   'servers.revision_moved': 'Something changed since the approval. Review and approve again.',
+  'servers.delivery_changed':
+    'An address members would keep changed since the last check. It is checked again, then goes live.',
   'servers.node_not_approved':
     'The node is waiting for your approval to go live. Approve it in its protection progress.',
   'servers.standbys_missing':

@@ -322,8 +322,10 @@ quarter of its lifetime before it lapses (at most six re-proofs a pass); a faile
 retried, and once the proof lapses the front leaves rendering until a proof succeeds. **Importing a front**
 (`ImportFrontDialog`, `POST relays/{id}/adopt`) records an existing CDN front against a
 listener and publishes it only with a current proof (`front_unqualified` otherwise).
-`edge.l7.autoSelect` (default off) governs automatic selection of L7 accounts; manual
-provisioning, a guided setup run's chosen account and publishing work regardless.
+`edge.l7.autoSelect` (default off) governs automatic selection of L7 accounts on an origin
+without a provider set; manual provisioning, a guided setup run's chosen account, publishing
+and a pick of the node's provider set (the operator chose it, § "Provider sets") work
+regardless.
 
 ### Publication
 
@@ -343,26 +345,33 @@ template edge under `fcp` is refused (`edge.needs_rotation`): the rotation machi
 flip.
 
 **Coverage.** The pool exists to give every deployed, enabled, non-retired listener ("coverage
-listener") a published edge, so capacity follows the listeners (`convex/lib/edges/poolCapacity.ts`):
-`ensurePoolCapacity` raises `desiredPublished` to the coverage-listener count (bound 1..8,
-`MAX_DESIRED_PUBLISHED`; the admin create and the listener upsert answer `warnings:
+listener") a published edge, and, on a node with a provider set, what that set requires
+(§ "Provider sets"): the **coverage deficit** is how many addresses are still missing
+(`setStateOf`, `convex/lib/edges/setState.ts`). Capacity follows it
+(`convex/lib/edges/poolCapacity.ts`): `ensurePoolCapacity` raises `desiredPublished` to the
+coverage-listener count (the admin create and the listener upsert answer `warnings:
 ['edge.pool_raised']` when it did) on every origin create, admin listener add and listener
-re-enable, and the reconcile cron applies it each tick. A pool that is already FULL while a
-listener is uncovered is **expanded** within the cap (`desiredPublished = min(8, published +
-uncovered)`, audited `edge.pool_expanded`); it is never shrunk. The cap is enforced where the
-operator can act on it rather than clamped silently: a listener body (the create or the CMS
-upsert) that would leave more than eight deployed, enabled listeners is refused
-(`edge.listener_cap`; a pre-existing excess is not made worse), and `relays.update` refuses
-lowering `desiredPublished` below the coverage-listener count (`edge.pool_below_coverage`).
-**Reserved allocation**
-(`allocatePoolIndex`, `convex/lib/edges/pool.ts`, used by the rotation's `applyPublish`, the
-cron's `publishStandby` and both direct publish paths): the free slots are held for uncovered
-listeners, so a second edge for an already covered listener is refused (`edge.pool_reserved`,
-a `pool_reserved_standby` rotation event) while `freeSlots <= uncoveredListeners`. At the cap
-no expansion is possible: attention raises `pool_rebalance` and the operator calls
-`POST relays/{id}/rebalance`, which sends ONE duplicate (a published edge that is not its
-listener's template edge, highest index first) back to standby (`edge.no_duplicate` when
-there is none), bumps the epoch and lets upkeep publish the uncovered listener. Never automatic:
+re-enable, and the reconcile cron applies it each tick. A pool whose free slots cannot hold the
+deficit is **expanded** within the cap (`desiredPublished = min(16, desired + deficit - free)`,
+audited `edge.pool_expanded`); it is never shrunk. The pool cap is 16 (`MAX_DESIRED_PUBLISHED`)
+and the listener cap 8 (`MAX_COVERAGE_LISTENERS`); both are enforced where the operator can act
+on them rather than clamped silently: a listener body (the create or the CMS upsert) that would
+leave more than eight deployed, enabled listeners is refused (`edge.listener_cap`; a
+pre-existing excess is not made worse), and `relays.update` refuses lowering
+`desiredPublished` below the coverage-listener count, or (with a set) below what is published
+plus the deficit (`edge.pool_below_coverage`). The fleet default `desiredPublishedDefault`
+stays within 1..8. **Reserved allocation** (`allocatePoolIndex`, `convex/lib/edges/pool.ts`,
+used by the rotation's `applyPublish`, the cron's `publishStandby` and both direct publish
+paths): an edge that lowers the deficit takes the lowest free index; any other edge only while
+the free slots exceed the deficit (`edge.pool_reserved`, a `pool_reserved_standby` rotation
+event), so a second copy for A never takes the slot B is waiting for. A shortfall only a cooling
+pick could fill is not part of the deficit, so reserved slots never hold healthy work hostage.
+At the cap no expansion is possible: attention raises `pool_rebalance` and the operator calls
+`POST relays/{id}/rebalance`, which sends ONE **removable** edge back to standby, highest index
+first: published, not its listener's template edge, and its removal does not increase the
+deficit (`removableUnder`: rebalance exists to make room in a pool that is already short
+somewhere, so it cannot ask for a zero deficit after removal). `edge.no_duplicate` when none is
+removable. It bumps the epoch and lets upkeep publish what is missing. Never automatic:
 unpublishing changes what members receive.
 
 **Deferred binding and setup ownership.** An origin a guided setup creates is inserted with
@@ -500,7 +509,10 @@ mirror refresh) fetches a body, it pins the node as before, then, in this order:
    confirmation gone stale after a listener or address change) **ineligible** (it keeps its
    pool index);
 3. assigns primary (+ backup) with a stable PRF keyed on the subscription's `renderKey` over
-   the FULL pool order, walking forward past ineligible positions; one server name per emitted
+   the FULL pool order, walking forward past ineligible positions; the backup is the next
+   assignable edge away from the primary's failure domain (with `render.preferDistinctProviders`):
+   another provider first, then another location (`PublishedEdge.locationKey`, admin-only and
+   never rendered; a missing key counts as unknown), else the next one; one server name per emitted
    connection for name-presenting listeners, chosen from the listener's active names (a
    retired name is never selected again). How it is chosen is per listener (`sniPick`): the
    default PRF is a modulus over the stored list, stable when a name is retired but
@@ -707,35 +719,37 @@ All under `/api/v1/admin/edges/`, sealed by verb like every other route; the rea
 | `GET maintenance`, `POST maintenance/freeze`, `.../thaw`         | The maintenance switch (see below).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `GET delivery-bindings`, `POST delivery-bindings/{id}/release`   | The edge-required places, including ones whose origin was deleted with `keep-dark`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `GET config`                                                     | Also carries `bounds` and `defaults` per flat key, so the settings forms validate against the server's own limits.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `POST relays/{id}/rebalance`                                     | Coverage at the cap: unpublish ONE duplicate (a published edge that is not its listener's template edge, highest pool index first) back to standby, bump the epoch, refresh mirrors; upkeep then publishes the uncovered listener. Refuses `edge.no_duplicate`, and the usual rotation / quarantine guard. Audited `edge.relay.rebalanced`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `POST relays/{id}/rebalance`                                     | Coverage at the cap: unpublish ONE removable edge (not its listener's template edge, its removal does not increase the coverage deficit; highest pool index first) back to standby, bump the epoch, refresh mirrors; upkeep then publishes what is missing. Refuses `edge.no_duplicate`, and the usual rotation / quarantine guard. Audited `edge.relay.rebalanced`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `POST automation {on}`                                           | The one automation switch (settings scope): in ONE mutation sets `edge.enabled`, `edge.autoRotate`, `edge.probe.enabled` and `edge.autoProvisionToDesired` to `on`, and `edge.standbyPerListener = 1` when turning on (left as-is when off). Never `render.enabled` or `l7.autoSelect`; touches no origin row (an origin's own `autoRotate` keeps its meaning under the global gate: `cfg.enabled && cfg.autoRotate && relay.autoRotate`). Audited `edge.automation.set` (the boolean only).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `POST setup-runs/plan {backendServerId, nodeUuid}`               | The guided setup's read-only plan for one backend node (`listenerKeys?` as on create; throttled: it lists the node's transports and Hosts): frontable transports, direct Hosts tagged covered / uncovered, compatible accounts with reasons, the fleet-wide rendering consequence, disabled client families, and the `planHash` a run creation must echo. See § "Guided setup runs".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `POST setup-runs`, `GET setup-runs[/{id}]`                       | Create a run (`{backendServerId, nodeUuid, accountId, planHash, approvedHideUuids[], keepDirect?, listenerKeys?}`: `listenerKeys` is the operator's choice of 1 to 8 frontable transports when the node has more, covered by the plan hash; `edge.plan_stale`, `edge.account_incompatible`, `edge.too_many_inbounds`, `edge.setup_run_active`), list runs, poll one (stage, state, the interruption, per-listener verdicts, the `try_it` test links).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `POST setup-runs/{id}/{cancel\|retry\|continue}`                 | The three operator verbs on a run: cancel (before publish deletes the origin `restore-direct`; between publish and go-live, a run parked at `go_live` included, starts the restore workflow with purpose `cancel_setup`; a re-protect run instead drops only its own candidates, disposition `candidates`; after go-live refused), retry (re-enters the current stage under a new generation; `{tryAnotherAddress, edgeId?}` at `try_it` replaces only that line, `{acceptPartial}`, `{accountId}` answer the card's secondary buttons), continue (`{confirmations[]}` forwards each `try_it` tick to `POST edges/{id}/verify`; `{approvedHideUuids[]}` replaces the consent after `review_changed`; `{keepDirect}` finishes unbound).                                                                                                                                                                                                                                                                                                                       |
 | `POST relays/{id}/require-edges`                                 | Starts a guided run for a deferred origin (it never binds by itself): the SAME activation policy. Every published L4 edge without a current confirmation comes back as `pending[]` (the node page renders the `try_it` card) instead of a binding; with nothing pending the run starts at the rehearsal and goes live through stage 8. Refuses `edge.not_deferred`, `edge.coverage_incomplete`, `edge.setup_run_active`, `edge.busy`, `edge.quarantined`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `POST relays/{id}/serve-direct`                                  | "Serve this node directly again": the restore workflow with purpose `release_requirement` (binding released before any direct Host is re-enabled; edges and listeners kept). Refuses `edge.quarantined`, `edge.setup_owned`, `edge.restore_in_progress` and `edge.not_edge_required`. See § "Operations safety".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `POST relays/{id}/reprotect`                                     | "Protect again" for a live, bound, enrolled node: a re-protect run (`kind: 'reprotect'`) that keeps the committed delivery until go-live and drops only its candidates on cancel. Refuses `edge.reprotect_not_bound`, `edge.reprotect_not_enrolled`, `edge.reprotect_mixed_accounts`, `edge.reprotect_no_room` and the usual run refusals. See § "Guided setup runs".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `POST relays/{id}/reprotect`                                     | "Protect again" for a live, bound, enrolled node: a re-protect run (`kind: 'reprotect'`, `mode` `replace_all` or `add`) that keeps the committed delivery until go-live and drops only its candidates on cancel. Refuses `edge.reprotect_not_bound`, `edge.reprotect_not_enrolled`, `edge.reprotect_no_room` and the usual run refusals. See § "Guided setup runs".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `GET relays/{id}/providers`                                      | The node's provider set (§ "Provider sets"): each pick with its addresses in use and spare, whether it cools and until when, the transports with no backup at another provider, the deficit, and the locations that could be added.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `POST relays/{id}/providers {add?, remove?}`                     | Edit the set: adding a location to a live enrolled node starts an `add` re-protect run (the response names it); elsewhere the set is saved. Removing one drains its addresses, refused (`edge.set_would_uncover`) unless the tested survivors elsewhere still serve every transport and meet the remaining requirement. Refused under a setup run, a rotation, quarantine, a restore or the freeze; at most 6 picks (`edge.set_too_large`). Audited `edge.relay.providers_changed`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `POST edges/{id}/test-link`                                      | The isolated test link for an L4 candidate (throttled: fetches the test credential's body and the backend Hosts): the candidate connection only, plus the binding the confirmation must echo. See § "Publication".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `GET relays/inbound-candidates?backendServerId=&nodeUuid=`       | Discovery with the origin probe applied (throttled): the node's transports as listener candidates, `originTransport` filled where probed, `unsupported` with reasons. Registers nothing. See § "Listener catalogue".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 ### Guided setup runs (Autopilot)
 
 `convex/edgeSetupRuns.ts` (table `edgeSetupRuns`) + `convex/edgeSetupPlan.ts`. An operator
-protects a backend node by answering two questions (which node, which account and location), confirming each
+protects a backend node by answering two questions (which node, which locations its addresses come from), confirming each
 new L4 address once from a real client, and pressing Go live; FCP does everything else. ONE
 authoritative stage machine, every stage idempotent and re-enterable:
 
-| #   | Stage               | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Members download    |
-| --- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
-| 1   | `prepare`           | registration admitted; account tested, enabled and offered by the plan; `relays.create` with every frontable listener (or the operator's `listenerKeys` choice when the node has more than 8), `deferBinding` + `setupOwned`, `autoRotate: true`, `desiredPublished = max(default, required)` (bound 8). An origin a previous run left owned is reused at its recorded `setupStage` only while its listeners still match what the new plan discovered (same keys, same canonical hash, no extra deployed listener); otherwise `edge.plan_changed` and the operator removes protection first. Switching the account or location (`retry {accountId?, locationId?}`) is allowed only before anything is published (`edge.account_switch_late`); candidates of the old pick are cancelled, never re-labelled. | raw origin body     |
-| 2   | `credential`        | `relayQualification.ensure` for an L7 listener (`qualification`) or an EMPTY backend node (`rehearsal`); an empty Outline server is `use_manual_setup`; a placement problem is `choose_mode`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | unchanged           |
-| 3   | `provision`         | per required listener without a live candidate: ONE mutation starts `provision` (`publishOnDone: false`, `requestedLocationId`, `allowUnqualified`) AND records `expect`; a live unpublished edge on the listener is reused. `edge.busy` / `edge.concurrency` wait and poll; `edge.maintenance` asks the operator                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | unchanged           |
-| 4   | `verify`            | per standby: outside probes (`trigger: 'qualification'`) + the internal shape run, judged by `partialRungFor` (`partial` is the L4 ceiling); L7 runs the front proof. `unreachable` (or a timeout) asks the operator (`address_unreachable`: try another address, or accept partial)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | unchanged           |
-| 4b  | `try_it`            | one isolated **test link** per L4 endpoint lacking a current confirmation (`edgeTestLinks.build`; a published address gets a named-connection retest instead); the card's ticks echo `{edgeId, endpoint, listenerRevision, configHash}` into `edgeVerification.confirm` (`edge.verification_stale` rebuilds the card). Skipped when every listener is L7                                                                                                                                                                                                                                                                                                                                                                                                                                                   | unchanged           |
-| 5   | `publish`           | per required listener: the node's approval is checked in the same mutation as the start (an enrolled node without one PARKS: `needs_you` `node_not_approved`, nothing published, docs/servers.md "A fronted node's activation"); then a `publish` rotation (`admission: 'setup.complete'`, so a freeze declared meanwhile does not strand admitted work) through the UNCHANGED gate; `pool_full_standby` = `coverage_incomplete`; quarantine = `quarantined`. `keepDirect` finishes `done_unbound` here (never for an enrolled fronted node)                                                                                                                                                                                                                                                               | direct AND FCP Host |
-| 6   | `hide_direct_hosts` | every L4 confirmation re-checked (stale = back to the card); `edgeHostHides.hide` with the EXACT approved uuids; an uncovered Host the consent did not name = `review_changed` (a new consent bumps `planRevision`); `hide_failed`; pending rows are polled                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | FCP Hosts only      |
-| 7   | `rehearse`          | every client family's render rule on (`family_disabled`); `edgeRehearsal.run` (fresh cohort bodies through the real renderer, listing before and after; an enrolled node renders exactly its activation's candidates); expired proofs re-run and the rehearsal repeats (bounded); the version vector (with the activation candidate) + the FINAL Host observation are persisted                                                                                                                                                                                                                                                                                                                                                                                                                            | unchanged           |
-| 8   | `go_live`           | ONE mutation: no active rotation, no quarantine, origin enabled; the local vector equals the rehearsal's; the observation younger than 60 s; every L7 proof `expiresAt` ahead; every hide row settled and none outstanding; no FCP Host op claimed; every required listener's edge published (in the pool, on a listener whose FCP Host exists), L4 with a current confirmation; `render.enabled` turned on if off (`edge.render.enabled_by_setup`); an enrolled node's candidate promoted in the same mutation (a live node with no activation binds only when every edge fits its committed approval); then `claimDeliveryBinding` and `setupOwned` cleared. A failed check sends the run BACK (7, 6 or the card); a stale candidate blocks the activation and waits for a fresh approval                | rendered body       |
+| #   | Stage               | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Members download    |
+| --- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
+| 1   | `prepare`           | registration admitted; every pick's account tested, enabled and offered by the plan; `relays.create` with every frontable listener (or the operator's `listenerKeys` choice when the node has more than 8), `deferBinding` + `setupOwned`, `autoRotate: true`, `desiredPublished = max(default, required, targets)` (bound 16). An origin a previous run left owned is reused at its recorded `setupStage` only while its listeners still match what the new plan discovered (same keys, same canonical hash, no extra deployed listener); otherwise `edge.plan_changed` and the operator removes protection first. Replacing a pick (`retry {replacePick: {from, to}}`; a one-pick run also takes `{accountId?, locationId?}`) is allowed only before that pick's addresses are published (`edge.pick_switch_late`, `edge.account_switch_late` for a one-pick run); candidates of the old pick are cancelled, never re-labelled. | raw origin body     |
+| 2   | `credential`        | `relayQualification.ensure` for an L7 listener (`qualification`) or an EMPTY backend node (`rehearsal`); an empty Outline server is `use_manual_setup`; a placement problem is `choose_mode`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | unchanged           |
+| 3   | `provision`         | per target (a listener and a pick) without a live candidate: ONE mutation starts `provision` (`publishOnDone: false`, `requestedLocationId`, `allowUnqualified`) AND records `expect`; a live edge of the listener in that location, not used by another target, is reused. `edge.busy` / `edge.concurrency` wait and poll; `edge.maintenance` asks the operator                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | unchanged           |
+| 4   | `verify`            | per standby: outside probes (`trigger: 'qualification'`) + the internal shape run, judged by `partialRungFor` (`partial` is the L4 ceiling); L7 runs the front proof. `unreachable` (or a timeout) asks the operator (`address_unreachable`: try another address, or accept partial)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | unchanged           |
+| 4b  | `try_it`            | one isolated **test link** per L4 endpoint lacking a current confirmation (`edgeTestLinks.build`; a published address gets a named-connection retest instead); the card's ticks echo `{edgeId, endpoint, listenerRevision, configHash}` into `edgeVerification.confirm` (`edge.verification_stale` rebuilds the card). Skipped when every listener is L7                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | unchanged           |
+| 5   | `publish`           | per required listener: the node's approval is checked in the same mutation as the start (an enrolled node without one PARKS: `needs_you` `node_not_approved`, nothing published, docs/servers.md "A fronted node's activation"); then a `publish` rotation (`admission: 'setup.complete'`, so a freeze declared meanwhile does not strand admitted work) through the UNCHANGED gate; `pool_full_standby` = `coverage_incomplete`; quarantine = `quarantined`. `keepDirect` finishes `done_unbound` here (never for an enrolled fronted node)                                                                                                                                                                                                                                                                                                                                                                                      | direct AND FCP Host |
+| 6   | `hide_direct_hosts` | every L4 confirmation re-checked (stale = back to the card); `edgeHostHides.hide` with the EXACT approved uuids; an uncovered Host the consent did not name = `review_changed` (a new consent bumps `planRevision`); `hide_failed`; pending rows are polled                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | FCP Hosts only      |
+| 7   | `rehearse`          | every client family's render rule on (`family_disabled`); `edgeRehearsal.run` (fresh cohort bodies through the real renderer, listing before and after; an enrolled node renders exactly its activation's candidates); expired proofs re-run and the rehearsal repeats (bounded); the version vector (with the activation candidate) + the FINAL Host observation are persisted                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | unchanged           |
+| 8   | `go_live`           | ONE mutation: no active rotation, no quarantine, origin enabled; the local vector equals the rehearsal's; the observation younger than 60 s; every L7 proof `expiresAt` ahead; every hide row settled and none outstanding; no FCP Host op claimed; every required listener's edge published (in the pool, on a listener whose FCP Host exists), L4 with a current confirmation; `render.enabled` turned on if off (`edge.render.enabled_by_setup`); an enrolled node's candidate promoted in the same mutation (a live node with no activation binds only when every edge fits its committed approval); then `claimDeliveryBinding` and `setupOwned` cleared. A failed check sends the run BACK (7, 6 or the card); a stale candidate blocks the activation and waits for a fresh approval                                                                                                                                       | rendered body       |
 
 Fencing: a rotation the run starts stores `setupRun: {runId, generation}`; `releaseOrigin`
 (every terminal transition) schedules `edgeSetupRuns.onRotationTerminal` with THAT stored
@@ -755,12 +769,16 @@ through this origin (refused otherwise: `edge.reprotect_not_bound` for an origin
 `edge.setup_run_active`, `edge.busy`, `edge.maintenance`, quarantine, restore and a disabled
 origin). Its plan is read from the origin's own rows like `require-edges`: the listeners members
 are served through (deployed, enabled, with a published template edge; none is
-`edge.coverage_incomplete`) and the ONE account of their template edges (missing, disabled or
-untested is `edge.account_incompatible`; an origin served through several accounts is
-`edge.reprotect_mixed_accounts`). Each new address is published beside what members hold, so
-the run first makes room: `desiredPublished` is widened to the published addresses plus one per
-transport plus the slots reserved for uncovered listeners, at most `MAX_DESIRED_PUBLISHED`
-(beyond it `edge.reprotect_no_room`); the size it found is kept in the plan snapshot
+`edge.coverage_incomplete`) and its picks, the node's provider set (else the locations its
+served edges come from; a missing, disabled or untested one is `edge.account_incompatible`).
+Two modes (`POST relays/{id}/reprotect {mode?}`): `replace_all` (the default) provisions fresh
+targets over the whole requirement and the old addresses drain at go-live; `add` (a set edit
+that adds a location, § "Provider sets") provisions only what the larger set lacks given what
+is published, retires nothing, and the set becomes the union at go-live. Each new address is
+published beside what members hold, so the run first makes room: `desiredPublished` is widened
+to the published addresses plus one per target plus the slots the deficit reserves; the run's
+own targets are TEMPORARY room above the cap (beyond it `edge.reprotect_no_room`, which a
+supported set never reaches); the size it found is kept in the plan snapshot
 (`reprotect.desiredBefore`). It starts at stage 1 on the existing origin, owns it
 (`setupOwned`) while it runs, and never reuses an edge at stage 3: every candidate is a fresh
 address with a fresh test link, so a REALITY key change is proven through a new address, not a
@@ -822,10 +840,12 @@ automation`; while it is off, a card with the cost and limitation sentences show
 - **Protect a node** (`ProtectSheet` + `ProtectProgress`): three questions and then the
   progress. Which node (a backend's nodes; already protected ones greyed; the plan from `POST
 setup-runs/plan` lists the transports in words, a closed "Not supported yet" disclosure and a
-  formats note), which account (compatible accounts as radio cards, incompatible greyed with
-  the reason; "Add account" renders `ProviderAccountStepper` in its `compact` mode; the chosen
-  account lists its locations with their reasons, the default preselected, and "Add a location"
-  renders `LocationPicker` and re-plans), review
+  formats note), where from (each account's locations as checkboxes, an account carrying
+  only some transports says which, an incompatible one greyed with the reason; each change
+  plans again with the picks and the summary says the addresses per location, a transport no
+  pick carries and the transports with no backup at another provider; one usable location is
+  picked for you; "Add a location" renders `LocationPicker` and picks the new one; "Add
+  account" renders `ProviderAccountStepper` in its `compact` mode), review
   (one sentence; the uncovered-hosts statement with the button "Protect and hide N unsupported
   hosts", consent = the exact uuids; the fleet-wide rendering sentence; the quiet alternative
   "Keep those members on the direct address" = `keepDirect`). Progress: four plain stages
@@ -849,7 +869,10 @@ setup-runs/plan` lists the transports in words, a closed "Not supported yet" dis
   `drainMinutes`, or `edge.burnedDrainMinutes` for "Replace now, address is blocked" under
   More), the per-node
   "Replace addresses automatically" switch (origin `autoRotate`, captioned when the global
-  switch is off), "Recent activity" (the timeline through `plainAuditActionLabel`), and More: add
+  switch is off), "Where its addresses come from" (`NodeProvidersCard`: each pick with its
+  addresses in use and spare, cooling, untrusted; what members miss; Add a location and Remove,
+  § "Provider sets"; Replace and Add a spare take a "Where" choice), "Recent activity" (the
+  timeline through `plainAuditActionLabel`), and More: add
   a spare address, **Protect again** (an enrolled node live behind edges: a re-protect run, see
   "Guided setup runs"; the primary action while the node waits to be protected again), Origin
   details, remove protection (`restore-direct`; the restore workflow's phase is shown while it
@@ -1668,7 +1691,8 @@ and `edge.burnedDrainMinutes` (default 120) the drain of a burned edge; neither 
 override, and a drain shorter than the hint allows is saved with a warning (§ "How fast members
 move").
 `desiredPublishedDefault` seeds an origin's `desiredPublished`, which is pool state (setup and
-re-protect runs widen it), bounded 1..8 (`MAX_DESIRED_PUBLISHED`, the coverage cap).
+re-protect runs widen it), bounded 1..16 (`MAX_DESIRED_PUBLISHED`); the fleet default stays
+within 1..8.
 
 The fleet guards: `detect.fleetBreakerPct` (1..100, default 30) and
 `detect.fleetRotationsPerDay` (0..500, default 12); `detect.allowProbeOnlyAutoRotate` defaults
@@ -1968,6 +1992,92 @@ allows otherwise); a provision run may name `requestedLocationId`, and `requeste
 means that account's default location. A run that cannot use the one it names fails with
 `location_not_found`, `no_location`, `location_disabled` or `location_capacity_reached`.
 
+## Provider sets
+
+A node is protected by a SET of picks: locations (§ "Provider accounts and locations") its
+addresses come from, at most six (`MAX_PROVIDER_PICKS`), recorded on the origin
+(`relays.providerSet`) when a run goes live. A block on one provider's address ranges then
+leaves every member a backup elsewhere. An origin without a set (a manual origin, a whole
+server, a node from before sets) keeps the old rule: any trusted location.
+
+**The requirement** (pure, `convex/lib/edges/providerSet.ts`), per coverage listener:
+
+- basic coverage: at least one published edge, whatever the set says;
+- diversity: published edges in `min(2, G)` **groups**, where G counts the groups among the
+  picks that can carry the listener and are not cooling. A group is the provider (one block
+  on its ranges takes all its regions), or the location when every carrier of the listener is
+  one provider (two regions of one network still beat one);
+- every pick that carries a listener holds at least one published edge.
+  A pick carries a listener when its provider fronts the listener's layer, protocol and port and
+  the listener's provider or account scope names it (`carries`, `setState.ts`); a switched-off
+  location or a disabled or untested account carries nothing. A listener whose carriers make
+  fewer than two groups is **reduced** (`one_group`): reported in the plan, the review, the run,
+  the node's card and an info attention item `reduced_resilience`, never hidden.
+
+**The cover**: the fewest new (listener, pick) targets that meet the requirement given what is
+published: the listener demand left, plus every pick without an address, minus the targets
+that serve both (a maximum b-matching found as a max flow; instances are at most 8 x 6, and a
+test checks it against brute force). Targets that cover a listener publish before those that
+only cover a pick. The **deficit** is its size; pool admission, sizing and rebalance read it
+(§ Publication).
+
+**Setup.** The protect sheet's second step picks the set; the plan is asked again with
+`picks` and answers what they make (`set`: targets, reduced, transports no pick carries
+(`edge.set_uncovered_listener`), more addresses than one origin publishes
+(`edge.set_too_large`), a pick over its account's or location's capacity or budget, summed
+over its targets). `planHash` covers the picks. The run creates one address per target: stage 3
+reuses a live edge of the same listener AND location, a provision's terminal hook fills the
+target of its listener and its requested location (a publish, the target of its edge), and
+verification is keyed by each target's edge. `retry {replacePick: {from, to}}` swaps one pick
+before its addresses are published (`edge.pick_switch_late` after). Go-live records the set.
+
+**Selection with a set**: the set's usable picks, minus cooling ones for automatic work, ranked
+by what they add for the listener: lowers the deficit, a provider not yet published for it, a
+location not yet published for it, set order, fewest live edges (`pickLocation`). A set pick
+counts as the operator's choice, so automatic work on that node may use its L7 picks
+(`edge.l7.autoSelect` still governs origins without a set). Spares: a replace prefers a tested
+spare away from the target's provider, then its location, then any (`pickStandby`); upkeep
+publishes only spares inside the set and outside a cooling pick, a gap-filling one first. An
+operator may name the spare (`rotate`/`burn {spareEdgeId}`, that one or nothing), a location
+for a new CDN front (`rotate`/`burn {locationId}`) or for a spare (`provision {locationId,
+listenerId, publish: false}`; an untrusted location only for an unpublished spare, its first
+tested address trusts it); `preflight` says what Automatic would use.
+
+**Cooling.** When a detector burn finalizes, the burned address's pick cools on that origin for
+the origin's cooldown (`relays.cooling`). No automatic path allocates, provisions or publishes
+into it meanwhile: selection (`set_picks_cooling` when every carrying pick cools), standby
+publish, desired fill and spare replenishment all skip it; its shortfall is not part of the
+deficit. Manual work is not held. Attention: info `pick_cooling` with the minutes left.
+
+**Members.** The renderer's backup prefers another provider, then another location
+(§ Rendering). The rehearsal checks each (cohort, format) body under the EFFECTIVE delivery rule:
+when the body could carry a backup in another group (a subscription, backups on, `maxEntries`
+not 1, distinct providers preferred, at least two groups among its listeners) and the backup
+sits in the primary's group, the run parks at `resilience_short` (it never loops through
+provisioning); otherwise the reason is reported (`single_key`, `backup_disabled`,
+`max_entries`, `distinct_off`, `one_group`).
+
+**Editing a set** (`POST relays/{id}/providers`, the node page's card): adding a location to a
+live enrolled node starts an `add` re-protect run (new addresses in the added location, tested,
+reviewed when the location is a new shape, rehearsed against the whole future pool, committed);
+elsewhere the set is saved and the operator adds a spare there and puts it in use. Removing one
+is refused unless the SURVIVORS (published, active, addressed edges outside the removed pick
+whose verification is current) still serve every transport and meet the requirement the
+remaining picks make (`edge.set_would_uncover`); then its addresses drain, its spares are
+cancelled, and `desiredPublished` keeps room for the survivors plus what the set still lacks.
+
+**Re-protect** (§ Guided setup runs): `replace_all` covers the whole requirement fresh; `add`
+covers what a larger set lacks. Every enrolled run's activation records a **delivery snapshot**
+before its rehearsal (`panelActivationRuns.delivery.edgeIds`: the committed addresses go-live
+keeps plus the candidates; for `replace_all`, only the committed ones on transports the run
+does not touch). The rehearsal renders exactly it, the commit promotes exactly it
+(`servers.delivery_changed` when a kept address stopped serving, and the run rehearses again),
+and `resources` stays what the run owns (docs/servers.md "A fronted node's activation").
+
+**Location names.** A location the migration named after its bare region id gets the name its
+provider lists for that region (`edgeProviderOps.relabelLocations`, scheduled by `seedCutover`,
+touching only such rows; fail-soft).
+
 ## Provider accounts: names, test answers and offered regions
 
 **Name.** An account's name is a label for admins (1 to 63 letters, digits, spaces, dots,
@@ -2139,6 +2249,12 @@ lifecycle runs in that test and its rows appear here.
 | fastly     | GET    | `^/current_customer$`                                                             | credential test: the pricing plan (informational)                                                                 | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
 
 ## Deploy notes
+
+**Provider sets** add one optional field (`edgeRotations.requestedSpareEdgeId`, a replace's
+named spare); everything else the series needs came with locations. One deploy, no migration,
+no freeze. `seedCutover` schedules the location relabel (a read of each provider's region
+names for locations still named after a bare region id). The pool cap moves to 16; an origin's
+`desiredPublished` above 8 can only come from a set or a re-protect's temporary room.
 
 **Provider locations** add `edgeLocations`, the location fields on `edges`, and the fields the
 later releases of the series use (`edgeRotations.requestedLocationId`, `edgeSetupRuns.picks`,

@@ -747,6 +747,37 @@ export const update = internalMutation({
   },
 });
 
+/**
+ * Locations still named after their bare region id (the migration had no
+ * region name to copy from an account's settings): what `relabelLocations`
+ * asks the provider about.
+ */
+export const unnamed = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const out: Array<{
+      id: Id<'edgeLocations'>;
+      accountId: Id<'edgeProviderAccounts'>;
+      placeKey: string;
+    }> = [];
+    for (const r of await ctx.db.query('edgeLocations').collect())
+      if (r.placeKey !== ANYCAST_PLACE && r.label === r.placeKey)
+        out.push({ id: r._id, accountId: r.accountId, placeKey: r.placeKey });
+    return out;
+  },
+});
+
+/** A location's readable name, as its provider lists it (quiet: a name only, nothing else moves). */
+export const setLabel = internalMutation({
+  args: { id: v.id('edgeLocations'), label: v.string() },
+  handler: async (ctx, { id, label }) => {
+    const row = await ctx.db.get(id);
+    if (!row || row.label !== row.placeKey) return null;
+    await ctx.db.patch(id, { label: cleanLabel(label, row.label), updatedAt: Date.now() });
+    return null;
+  },
+});
+
 /** Locations named by a node's provider set (operator-scale scan of the relays). */
 async function setsReferencing(db: DatabaseReader, id: Id<'edgeLocations'>): Promise<number> {
   let n = 0;

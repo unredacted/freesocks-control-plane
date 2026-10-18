@@ -17,7 +17,7 @@ import type { DatabaseReader } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { writeAuditLog } from './lib/audit';
-import { edgeMs, MAX_DESIRED_PUBLISHED, resolveEdgeConfig } from './lib/edgeConfig';
+import { edgeMs, MAX_COVERAGE_LISTENERS, resolveEdgeConfig } from './lib/edgeConfig';
 import { listenerProtoFields } from './lib/edgeProtocolIds';
 import { edgeProviderIdValidator } from './lib/edgeProviderIds';
 import { listenerLayers } from './lib/edges/layers';
@@ -382,8 +382,7 @@ export async function applyRegistration(
     })),
   ];
   assertNoMatchOverlap(after);
-  // The pool can cover at most MAX_DESIRED_PUBLISHED listeners (one published
-  // slot each), so a body that would leave MORE deployed, enabled listeners
+  // An origin carries at most MAX_COVERAGE_LISTENERS listeners, so a body that would leave MORE deployed, enabled listeners
   // than that is refused here, where the operator can act on it, instead of
   // being clamped silently by `ensurePoolCapacity`. Judged on the resulting set
   // and only when the count grows: a pre-existing excess is not made worse.
@@ -399,10 +398,10 @@ export async function applyRegistration(
     ).length +
     diff.update.filter((u) => u.spec.deployed && u.existing.enabled).length +
     diff.create.filter((c) => c.deployed).length;
-  if (coverageAfter > MAX_DESIRED_PUBLISHED && coverageAfter > coverageBefore)
+  if (coverageAfter > MAX_COVERAGE_LISTENERS && coverageAfter > coverageBefore)
     throw new ConvexError({
       code: 'edge.listener_cap',
-      message: `a relay can carry at most ${MAX_DESIRED_PUBLISHED} deployed, enabled listeners (this body would leave ${coverageAfter}); retire or disable one first`,
+      message: `a relay can carry at most ${MAX_COVERAGE_LISTENERS} deployed, enabled listeners (this body would leave ${coverageAfter}); retire or disable one first`,
     });
 
   const material = diff.create.length + updates.length + diff.prune.length > 0;

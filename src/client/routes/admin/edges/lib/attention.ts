@@ -237,6 +237,8 @@ export function attentionFactsLine(item: AttentionItem): string {
   if (count !== null) out.push(`${count} affected`);
   const attempts = num('attempts');
   if (attempts !== null) out.push(`${attempts} ${attempts === 1 ? 'attempt' : 'attempts'}`);
+  const minutesLeft = num('minutesLeft');
+  if (minutesLeft !== null) out.push(`${minutesLeft} min left`);
   const ageMs = num('ageMs');
   if (ageMs !== null) out.push(`for ${durationLabel(ageMs)}`);
   // Operations safety facts.

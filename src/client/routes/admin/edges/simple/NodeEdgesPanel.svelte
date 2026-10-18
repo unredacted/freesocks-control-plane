@@ -83,6 +83,7 @@
   import { originSentence, statusOf } from '../lib/statusWords';
   import EndpointTestCard from './EndpointTestCard.svelte';
   import ListenerAddresses from './ListenerAddresses.svelte';
+  import NodeProvidersCard from './NodeProvidersCard.svelte';
   import PausedCard from './PausedCard.svelte';
   import SpareDialog from './SpareDialog.svelte';
   import StatusDot from './StatusDot.svelte';
@@ -375,6 +376,18 @@
       {/if}
     </section>
 
+    {#if relay.origin.kind === 'panel-node'}
+      <NodeProvidersCard
+        relay={{ id: relay.id, slug: relay.slug }}
+        {busy}
+        nameOf={(key) => {
+          const l = listeners.find((x) => x.listenerKey === key);
+          return l ? transportName(l) : key;
+        }}
+        onRunStarted={(id) => router.navigate(edgesPaths.home({ run: id }))}
+      />
+    {/if}
+
     <section class="flex items-start justify-between gap-4 rounded-lg border p-3">
       <div class="min-w-0">
         <Label for={`${uid}-auto`}>Replace addresses automatically on this node</Label>
@@ -425,6 +438,7 @@
       plain
       kind={replacing.kind}
       {relay}
+      {edges}
       edge={replacing.edge}
       onClose={() => (replacing = null)}
       onStarted={() => {
@@ -492,7 +506,11 @@
       />
     {/if}
   {/if}
-  <SpareDialog bind:open={spareOpen} {relay} />
+  <SpareDialog
+    bind:open={spareOpen}
+    {relay}
+    listeners={listeners.map((l) => ({ id: l.id, listenerKey: l.listenerKey }))}
+  />
   {#if putInUse}
     {@const item = putInUse}
     <ActionConfirm

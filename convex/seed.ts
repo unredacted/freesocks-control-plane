@@ -601,6 +601,8 @@ export const seedCutover = internalAction({
     try {
       const r = await ctx.runAction(internal.edgeLocationsMigration.drive, {});
       edgeLocations = r.result;
+      // Locations still named after a bare region id get their provider's name.
+      await ctx.scheduler.runAfter(0, internal.edgeProviderOps.relabelLocations, {});
       if (r.result !== 'already_done' && r.result !== 'nothing_to_migrate')
         console.log(
           `[seedCutover] edge locations migration: ${r.result} ${JSON.stringify(r.wrote)}`,

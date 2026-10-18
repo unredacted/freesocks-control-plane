@@ -1443,6 +1443,8 @@ export const PreflightRequest = z.object({
   accountId: z.string().optional(),
   /** An explicit location (its account implied); the account's default location otherwise. */
   locationId: z.string().optional(),
+  /** `replace`: an explicit spare (that one or nothing). */
+  spareEdgeId: z.string().optional(),
   templateId: z.string().optional(),
   /** `provision` only: false checks an unpublished spare, as `provision {publish: false}` starts it. */
   publish: z.boolean().optional(),
@@ -1802,9 +1804,85 @@ export const SetupPlanAccount = z.object({
   reasons: z.array(z.string()),
   /** Where the run would create its addresses. */
   locations: z.array(SetupPlanLocation).default([]),
+  /** The required transports it can front (a pick of a set need not carry them all). */
+  carries: z.array(z.string()).default([]),
 });
 
-/** `POST setup-runs/plan {backendServerId, nodeUuid}`: the read-only snapshot + its hash. */
+/** `GET relays/{id}/providers`: the node's provider set as its Providers card shows it. */
+export const ProviderSetView = z.object({
+  /** False: no set recorded (any trusted location; the picks shown are implied). */
+  hasSet: z.boolean(),
+  picks: z.array(
+    z.object({
+      locationId: z.string(),
+      accountId: z.string(),
+      accountName: z.string(),
+      provider: z.string(),
+      label: z.string(),
+      /** Switched on, its account enabled and tested. */
+      usable: z.boolean(),
+      qualified: z.boolean(),
+      inUse: z.number(),
+      spare: z.number(),
+      /** A burn here: automatic work keeps away until then. */
+      coolingUntil: iso.nullable(),
+      addedAt: iso,
+    }),
+  ),
+  /** Transports with no backup in another failure domain. */
+  reduced: z.array(z.object({ listenerKey: z.string(), reason: z.literal('one_group') })),
+  coolingOnly: z.array(z.string()),
+  uncarried: z.array(z.string()),
+  /** Addresses the set still needs (0 = complete). */
+  deficit: z.number(),
+  /** Locations that could be added (they carry at least one transport of the node). */
+  available: z.array(
+    z.object({
+      locationId: z.string(),
+      accountId: z.string(),
+      accountName: z.string(),
+      provider: z.string(),
+      label: z.string(),
+      qualified: z.boolean(),
+      carries: z.array(z.string()),
+    }),
+  ),
+});
+export type ProviderSetView = z.infer<typeof ProviderSetView>;
+
+/** `POST relays/{id}/providers {add?, remove?}`. */
+export const ProviderSetChangeResponse = z.object({
+  ok: z.literal(true),
+  /** The `add` run started on a live enrolled node (null: the set was saved). */
+  runId: z.string().nullable(),
+  drained: z.number(),
+});
+export type ProviderSetChangeResponse = z.infer<typeof ProviderSetChangeResponse>;
+
+/** What a chosen set of picks makes (docs/edges.md § "Provider sets"). */
+export const SetupPlanSet = z.object({
+  picks: z.array(
+    z.object({
+      locationId: z.string(),
+      accountId: z.string(),
+      provider: z.string(),
+      locationKey: z.string(),
+      label: z.string(),
+    }),
+  ),
+  /** The (transport, pick) addresses the run creates: the fewest that meet the requirement. */
+  targets: z.array(z.object({ listenerKey: z.string(), locationId: z.string() })),
+  /** Transports whose picks give no backup in another failure domain. */
+  reduced: z.array(z.object({ listenerKey: z.string(), reason: z.literal('one_group') })),
+  /** Required transports no pick can carry (`edge.set_uncovered_listener`). */
+  uncovered: z.array(z.string()),
+  /** More addresses than one origin publishes (`edge.set_too_large`). */
+  tooLarge: z.boolean(),
+  problems: z.array(z.object({ locationId: z.string(), reason: z.string() })),
+});
+export type SetupPlanSet = z.infer<typeof SetupPlanSet>;
+
+/** `POST setup-runs/plan {backendServerId, nodeUuid, listenerKeys?, picks?}`: the read-only snapshot + its hash. */
 export const SetupPlanResponse = z.object({
   backendServerId: z.string(),
   backend: z.string(),
@@ -1828,6 +1906,8 @@ export const SetupPlanResponse = z.object({
   enrolled: z.boolean().default(false),
   /** The connection modes the node serves that members cannot pick yet (turned off). */
   modesOff: z.array(z.object({ slug: z.string(), label: z.string().nullable() })).default([]),
+  /** What the named picks make (a plan asked with `picks`); null otherwise. */
+  set: SetupPlanSet.nullable().default(null),
   planHash: z.string(),
   generatedAt: iso,
 });
@@ -1837,7 +1917,9 @@ export type SetupPlanResponse = z.infer<typeof SetupPlanResponse>;
 export const SetupRunCreateRequest = z.object({
   backendServerId: z.string(),
   nodeUuid: z.string(),
-  /** The pick: a location (its account implied), or an account (its default location). */
+  /** The set: locations in set order (the plan must have been shown with the same `picks`). */
+  picks: z.array(z.string()).optional(),
+  /** One pick the old way: a location (its account implied), or an account (its default location). */
   accountId: z.string().optional(),
   locationId: z.string().optional(),
   planHash: z.string(),
@@ -1906,6 +1988,8 @@ export const SetupRunAdmin = z.object({
   listeners: z.array(
     z.object({
       listenerKey: z.string(),
+      /** The target's pick: a transport has one address per pick of the set. */
+      locationId: z.string().nullable().default(null),
       layer: EdgeLayer,
       edgeId: z.string().nullable(),
       verify: z.enum(['pending', 'partial', 'verified', 'unreachable']),
@@ -1923,6 +2007,22 @@ export const SetupRunAdmin = z.object({
         .catch(null),
     }),
   ),
+  /** The set's picks with their words (one on a single-pick run). */
+  picks: z
+    .array(
+      z.object({
+        locationId: z.string().nullable(),
+        accountId: z.string().nullable(),
+        accountName: z.string().nullable(),
+        provider: z.string().nullable(),
+        label: z.string().nullable(),
+      }),
+    )
+    .default([]),
+  /** Transports whose picks give no backup in another failure domain. */
+  reduced: z
+    .array(z.object({ listenerKey: z.string(), reason: z.literal('one_group') }))
+    .default([]),
   testLinks: z.array(SetupRunTestLink).default([]),
   testedEndpoints: z
     .array(z.object({ edgeId: z.string(), listenerKey: z.string(), endpoint: z.string(), at: iso }))
@@ -1951,6 +2051,8 @@ export const SetupRunAdmin = z.object({
           name: z.string(),
           provider: z.string(),
           compatible: z.boolean(),
+          /** The transports it can front (null on runs from before sets). */
+          carries: z.array(z.string()).nullable().default(null),
           locations: z
             .array(z.object({ id: z.string(), label: z.string(), compatible: z.boolean() }))
             .default([]),
@@ -1984,6 +2086,8 @@ export const SetupRunRetryRequest = z.object({
   accountId: z.string().optional(),
   /** Another location (of `accountId`, or of the run's account). */
   locationId: z.string().optional(),
+  /** Replace one pick of the set (before its addresses are published; `edge.pick_switch_late` after). */
+  replacePick: z.object({ from: z.string(), to: z.string() }).optional(),
 });
 export type SetupRunRetryRequest = z.infer<typeof SetupRunRetryRequest>;
 export const SetupRunRetryResponse = z.object({

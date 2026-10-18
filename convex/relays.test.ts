@@ -576,7 +576,7 @@ describe('origins: operator knobs and epochs', () => {
     expect(await mirrorRefreshes(t)).toBe(scheduled0 + 1);
     // Knob validation.
     await expect(
-      t.mutation(internal.relays.update, { id: relayId, desiredPublished: 9 }),
+      t.mutation(internal.relays.update, { id: relayId, desiredPublished: 17 }),
     ).rejects.toThrow(/desiredPublished/);
     await expect(t.mutation(internal.relays.update, { id: relayId, label: '' })).rejects.toThrow(
       /label/,

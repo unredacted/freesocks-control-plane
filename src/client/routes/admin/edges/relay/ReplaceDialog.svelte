@@ -9,19 +9,27 @@
    * long the old address drains: the origin's drain (`drainMinutes`, its own or
    * `edge.drainMinutes`), or `edge.burnedDrainMinutes` for a burn.
    *
-   * Props: kind 'rotate' | 'burn'; origin; edge; plain?; onClose(); onStarted(rotationId)
+   * Where the replacement comes from: Automatic (a tested spare, preferring
+   * another provider, then another location, else a new address; the dry run
+   * says what it would use), or the operator names a tested spare of the same
+   * transport, or a location of the node's set for a new address.
+   *
+   * Props: kind 'rotate' | 'burn'; origin; edge; edges? (the origin's, for the
+   * spares); plain?; onClose(); onStarted(rotationId)
    */
   import { createQuery, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
   import type { EdgeAdmin, OriginAdmin } from '@shared/contracts/edges';
   import { Checkbox } from '@client/components/ui/checkbox';
   import { Label } from '@client/components/ui/label';
+  import * as Select from '@client/components/ui/select';
   import {
     burnRelayEdge,
     edgeConfigQuery,
     edgeKeys,
     invalidateRelay,
     preflightRelay,
+    relayProvidersQuery,
     rotateRelayEdge,
   } from '@client/lib/edgesApi';
   import CodeNote from '../components/CodeNote.svelte';
@@ -35,6 +43,8 @@
     kind: 'rotate' | 'burn';
     relay: OriginAdmin;
     edge: EdgeAdmin;
+    /** The origin's edges: the tested spares of the same transport are offered by name. */
+    edges?: EdgeAdmin[];
     plain?: boolean;
     onClose: () => void;
     onStarted: (rotationId: string) => void;
@@ -44,20 +54,69 @@
     kind,
     relay,
     edge,
+    edges = [],
     plain = false,
     onClose,
     onStarted,
   }: Props = $props();
 
   const qc = useQueryClient();
+  const uid = $props.id();
+  // Where from: 'auto', `spare:<edgeId>` or `loc:<locationId>`.
+  let where = $state('auto');
+  const setQ = relayProvidersQuery({
+    slug: () => relay.slug,
+    id: () => relay.id,
+    rotating: () => false,
+  });
+  const picks = $derived(setQ.data?.picks ?? []);
+  const labelOf = (locationId: string | null) =>
+    picks.find((p) => p.locationId === locationId)?.label ?? null;
+  // An address: a TESTED spare of the same transport. A CDN front: a new one in a pick.
+  const spares = $derived(
+    edges.filter(
+      (e) =>
+        e.id !== edge.id &&
+        e.listenerId === edge.listenerId &&
+        e.publication === 'unpublished' &&
+        e.status === 'active' &&
+        e.verification.current !== false,
+    ),
+  );
+  const l7 = $derived(edge.layer === 'l7');
+  const choice = $derived(
+    where.startsWith('spare:')
+      ? { spareEdgeId: where.slice(6) }
+      : where.startsWith('loc:')
+        ? { locationId: where.slice(4) }
+        : {},
+  );
   const preflight = createQuery(() => ({
-    queryKey: [...edgeKeys.relay(relay.slug), 'preflight', 'replace', edge.id] as const,
+    queryKey: [...edgeKeys.relay(relay.slug), 'preflight', 'replace', edge.id, where] as const,
     queryFn: () =>
-      preflightRelay(relay.id, { kind: 'replace', edgeId: edge.id, trigger: 'manual' }),
+      preflightRelay(relay.id, {
+        kind: 'replace',
+        edgeId: edge.id,
+        trigger: 'manual',
+        ...choice,
+      }),
     enabled: open,
     staleTime: 0,
     gcTime: 0,
   }));
+  /** What Automatic would use, in words. */
+  const autoWords = $derived.by(() => {
+    const w = preflight.data?.wouldSelect;
+    if (!w || where !== 'auto') return null;
+    if (w.standbyEdgeId) {
+      const s = edges.find((e) => e.id === w.standbyEdgeId);
+      const place = labelOf(s?.locationId ?? null);
+      return `Automatic uses the tested spare ${s ? edgeAddress(s) || s.name : ''}${place ? ` in ${place}` : ''}.`;
+    }
+    if (w.accountName)
+      return `Automatic creates a new address in ${w.locationLabel ? `${w.locationLabel} (${w.accountName})` : w.accountName}.`;
+    return null;
+  });
 
   /** Limits an admin may override by hand; everything else has to be fixed first. */
   const FORCEABLE = new Set(['cooldown', 'daily_cap', 'hosts_operator_managed']);
@@ -77,7 +136,7 @@
   );
 
   async function start(): Promise<void> {
-    const body = { edgeId: edge.id, ...(force ? { force: true } : {}) };
+    const body = { edgeId: edge.id, ...(force ? { force: true } : {}), ...choice };
     const res = await (kind === 'burn'
       ? burnRelayEdge(relay.id, body)
       : rotateRelayEdge(relay.id, body));
@@ -117,6 +176,42 @@
   {onClose}
   run={start}
 >
+  {#if spares.length > 0 || (l7 && picks.length > 0)}
+    <div class="mb-3 space-y-1.5">
+      <Label for={`${uid}-where`}>Where from</Label>
+      <Select.Root type="single" value={where} onValueChange={(v: string) => (where = v)}>
+        <Select.Trigger id={`${uid}-where`} class="w-full">
+          {where === 'auto'
+            ? 'Automatic, prefer a different provider'
+            : where.startsWith('spare:')
+              ? `The spare ${(() => {
+                  const s = spares.find((x) => x.id === where.slice(6));
+                  return s ? edgeAddress(s) || s.name : '';
+                })()}`
+              : `A new address in ${labelOf(where.slice(4)) ?? 'that location'}`}
+        </Select.Trigger>
+        <Select.Content>
+          <Select.Item value="auto" label="Automatic, prefer a different provider">
+            Automatic, prefer a different provider
+          </Select.Item>
+          {#each spares as s (s.id)}
+            {@const place = labelOf(s.locationId)}
+            <Select.Item value={`spare:${s.id}`} label={edgeAddress(s) || s.name}>
+              The spare {edgeAddress(s) || s.name}{place ? ` in ${place}` : ''}
+            </Select.Item>
+          {/each}
+          {#if l7}
+            {#each picks.filter((p) => p.usable) as p (p.locationId)}
+              <Select.Item value={`loc:${p.locationId}`} label={p.label}>
+                A new address in {p.label} ({p.accountName})
+              </Select.Item>
+            {/each}
+          {/if}
+        </Select.Content>
+      </Select.Root>
+      {#if autoWords}<p class="text-muted-foreground text-xs">{autoWords}</p>{/if}
+    </div>
+  {/if}
   {#if !plain}
     <PreflightPanel
       result={preflight.data}
