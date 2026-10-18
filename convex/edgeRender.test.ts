@@ -1360,6 +1360,78 @@ describe('edgeRender: the raw-config view goes through delivery', () => {
     expect(sniOf(storedRaw.content)).not.toContain('cn-blocked.example');
   });
 
+  test('a body that resolves to another node than the stored pin is located THERE before rendering', async () => {
+    // Every name but the two proven in CN is blocked there, so only a render
+    // that judged the member's country can return just those two. Before the
+    // fix, a key with no pin (or a pin on another node) was located at that
+    // stored place, whose curated list is empty, and could be handed a name
+    // blocked in CN on its first fetch.
+    const allowed = ['cn-ok-1.example', 'cn-ok-2.example'];
+    for (const pin of ['none', 'moved'] as const)
+      for (const country of ['inferred', 'stored'] as const)
+        for (const route of ['raw', 'sub'] as const) {
+          stubPanel();
+          vi.stubEnv('CF_FRONTED', 'true');
+          const s = await seed({
+            pinned: false,
+            listeners: [
+              realityListener({
+                tlsNames: [
+                  'cn-ok-1.example',
+                  'cn-ok-2.example',
+                  'cn-blocked.example',
+                  'plain.example',
+                ],
+              }),
+            ],
+          });
+          await s.t.run(async (ctx) => {
+            const l = (await ctx.db.get(s.listenerId))!;
+            const mark: Record<string, { provenIn?: string[]; blockedIn?: string[] }> = {
+              'cn-ok-1.example': { provenIn: ['CN'] },
+              'cn-ok-2.example': { provenIn: ['CN'] },
+              'cn-blocked.example': { blockedIn: ['CN'] },
+              'plain.example': { blockedIn: ['CN'] },
+            };
+            await ctx.db.patch(s.listenerId, {
+              sniPick: 'hrw1',
+              tlsNames: l.tlsNames!.map((n) => ({ ...n, ...mark[n.name] })),
+            });
+            await ctx.db.patch(s.subId, {
+              renderKey: '0'.repeat(64),
+              ...(pin === 'moved' ? { pinnedNode: 'old-node' } : {}),
+            });
+          });
+          if (country === 'stored') {
+            const userId = (await s.t.run((ctx) => ctx.db.get(s.subId)))!.userId;
+            await s.t.mutation(internal.subscriptions.setConnectionRegion, {
+              userId,
+              region: 'CN',
+            });
+          }
+          // The stored answer wins over the request; the inferred case asks from CN.
+          const headers = { 'cf-ipcountry': country === 'stored' ? 'RU' : 'CN' };
+          const body =
+            route === 'raw'
+              ? (
+                  (await (await raw(s.t, await memberCookie(s.t, s.subId), headers)).json()) as {
+                    content: string;
+                  }
+                ).content
+              : await (await subNoUa(s.t, headers)).text();
+          const names = sniOf(body);
+          const label = `${pin} pin, ${country} country, ${route}`;
+          expect(names.length, label).toBeGreaterThan(0);
+          expect(
+            names.every((n) => allowed.includes(n!)),
+            `${label}: ${names.join(',')}`,
+          ).toBe(true);
+          // The pin the body named is recorded either way.
+          expect((await s.t.run((ctx) => ctx.db.get(s.subId)))!.pinnedNode, label).toBe(NODE);
+          vi.unstubAllEnvs();
+        }
+  });
+
   test('a body that names no node is judged against the STORED pin, on both routes', async () => {
     // An address-matched listener and a body entry with no remark: the pinner
     // reports no node, so only the stored pin puts the key behind its origin.

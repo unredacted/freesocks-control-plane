@@ -1077,12 +1077,12 @@ http.route({
         pinnedNode: sub.pinnedNode,
         sniRegion: sub.sniRegion,
       };
-      const { located } = await locateMember(ctx, place, req);
+      const location = await locateMember(ctx, place, req);
       const out = await deliverBody(ctx, {
         sub: place,
         fetched,
         ua: '',
-        where: located.where,
+        location,
         now: Date.now(),
       });
       if (out.kind === 'refuse')
@@ -1221,7 +1221,8 @@ http.route({
       pinnedNode: sub.pinnedNode ?? null,
       sniRegion: sub.sniRegion,
     };
-    const { edgeToken, sensitive, located } = await locateMember(ctx, place, req);
+    const location = await locateMember(ctx, place, req);
+    const { edgeToken, sensitive, located } = location;
     const useCache = cacheIsServable(located.source, sensitive);
     // An entry answers THIS request only for this UA's format, under the current
     // edge token and for the same stored country; and never once a proof inside
@@ -1292,8 +1293,11 @@ http.route({
       // covered place gets a rendered body that passed every check or a 503
       // (it keeps the client's last config; an empty 200 would wipe it), never
       // the origin body. Refusals are counted inside.
-      const out = await deliverBody(ctx, { sub: place, fetched, ua, where: located.where, now });
+      const out = await deliverBody(ctx, { sub: place, fetched, ua, location, now });
       if (out.kind === 'refuse') return unavailableResponse(out.reason);
+      // Where the member was located for THIS body (its node may not be the
+      // stored pin): what the entry's region and its cacheability follow.
+      const at = out.location;
       const {
         content,
         relay,
@@ -1313,11 +1317,11 @@ http.route({
         renderedEpoch,
         validUntil,
         // Only ever the member's OWN answer; an inferred country is not cached at all.
-        ...(located.source === 'override' ? { region: located.where.country } : {}),
+        ...(at.located.source === 'override' ? { region: at.located.where.country } : {}),
       };
       // Don't cache an hwid'd response — the next device (different hwid, same
       // UA) must reach the backend too, for its own registration + enforcement.
-      const cacheable = bodyIsCacheable(located.source, sensitive) && !placeholder;
+      const cacheable = bodyIsCacheable(at.located.source, at.sensitive) && !placeholder;
       if (!hasHwid && cacheable) {
         await ctx.runMutation(internal.subscriptions.writeContentCache, {
           subscriptionId: sub._id,

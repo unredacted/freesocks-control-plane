@@ -15,8 +15,12 @@
  *    is recorded here;
  *  - `ua`: the client family the render rule follows (`classifyClient`; the raw
  *    view passes an empty one and gets the panel's default link format);
- *  - `where`: the member's country, from `locateMember` over the caller's own
- *    request.
+ *  - `location`: where the member is, from `locateMember` over the caller's own
+ *    request (located at the STORED pin, for the caller's cache lookups). When
+ *    the body resolves to another node (no pin yet, or a moved one), the
+ *    country rules of THAT node's place are read again from the same request
+ *    inputs before anything is rendered, and the outcome carries the location
+ *    it rendered with.
  */
 import type { ActionCtx } from '../_generated/server';
 import { internal } from '../_generated/api';
@@ -40,11 +44,39 @@ export interface DeliverySubscription {
 }
 
 export interface MemberLocation {
+  /** The node this location was judged at (the place whose country rules apply). */
+  node: string | null;
   /** The cache token of the member's place (`edgeRender.epochFor`), null when none applies. */
   edgeToken: string | null;
   /** Names are judged per country at this place (an inferred country then shapes the body). */
   sensitive: boolean;
   located: ResolvedWhere;
+  /** The country the CDN reported for this request (null unless fronted): kept to re-locate. */
+  inferred: string | null;
+}
+
+/**
+ * The member's location at one node of a backend: the place's curated countries
+ * and cache token (`edgeRender.renderContextFor`), then their own stored answer,
+ * else the CDN-reported country, only when curated there.
+ */
+export async function locateAt(
+  ctx: ActionCtx,
+  a: {
+    backendServerId: Id<'backendServers'> | null;
+    node: string | null;
+    sniRegion?: string | null;
+    inferred: string | null;
+  },
+): Promise<MemberLocation> {
+  const { token, curated, sensitive } = a.backendServerId
+    ? await ctx.runQuery(internal.edgeRender.renderContextFor, {
+        backendServerId: a.backendServerId,
+        nodeName: a.node ?? undefined,
+      })
+    : { token: null as string | null, curated: [] as string[], sensitive: false };
+  const located = resolveWhere({ override: a.sniRegion, inferred: a.inferred, curated });
+  return { node: a.node, edgeToken: token, sensitive, located, inferred: a.inferred };
 }
 
 /**
@@ -58,18 +90,12 @@ export async function locateMember(
   sub: DeliverySubscription,
   req: Request,
 ): Promise<MemberLocation> {
-  const { token, curated, sensitive } = sub.backendServerId
-    ? await ctx.runQuery(internal.edgeRender.renderContextFor, {
-        backendServerId: sub.backendServerId,
-        nodeName: sub.pinnedNode ?? undefined,
-      })
-    : { token: null as string | null, curated: [] as string[], sensitive: false };
-  const located = resolveWhere({
-    override: sub.sniRegion,
+  return locateAt(ctx, {
+    backendServerId: sub.backendServerId,
+    node: sub.pinnedNode,
+    sniRegion: sub.sniRegion,
     inferred: resolveCountry(req),
-    curated,
   });
-  return { edgeToken: token, sensitive, located };
 }
 
 export interface RenderSnapshot {
@@ -95,6 +121,8 @@ export type DeliveryOutcome =
       /** The earliest proof expiry among the fronts it hands out, null when none. */
       validUntil: number | null;
       render: RenderSnapshot | null;
+      /** Where the member was located for this body (at `node`): what cacheability follows. */
+      location: MemberLocation;
     }
   | { kind: 'refuse'; reason: string };
 
@@ -112,7 +140,8 @@ export async function deliverBody(
     sub: DeliverySubscription;
     fetched: { content: string; pinnedNode?: string | null; nodeless?: boolean };
     ua: string;
-    where: CountryContext;
+    /** From `locateMember` (at the stored pin); re-read here when the body resolves elsewhere. */
+    location: MemberLocation;
     now: number;
   },
 ): Promise<DeliveryOutcome> {
@@ -139,6 +168,21 @@ export async function deliverBody(
       node: fetched.pinnedNode,
     });
   }
+  // The country rules are the place's: a body that resolved to another node
+  // than the one the caller located at (a first fetch with no pin, a moved pin)
+  // is located again there, from the same request inputs, before any render.
+  // Otherwise a node-scoped origin would see an empty curated list and judge no
+  // country at all (names blocked in the member's country could be picked).
+  const location =
+    input.location.node === node
+      ? input.location
+      : await locateAt(ctx, {
+          backendServerId: sub.backendServerId,
+          node,
+          sniRegion: sub.sniRegion,
+          inferred: input.location.inferred,
+        });
+  const where: CountryContext = location.located.where;
   let content = fetched.content;
   let relay: string | null = null;
   let renderedEpoch: number | null = null;
@@ -170,7 +214,7 @@ export async function deliverBody(
             subscriptionId: sub.subscriptionId,
           }));
         if (!renderKey) return refuse('no_render_key');
-        const out = applyEdgeRender(rctx, body, renderKey, { now, where: input.where });
+        const out = applyEdgeRender(rctx, body, renderKey, { now, where });
         if (out.delivery.kind !== 'serve') return refuse(out.delivery.reason);
         body = out.body;
         epoch = rctx.epoch;
@@ -217,5 +261,15 @@ export async function deliverBody(
   // Judged once more before the body is kept or stamped: a proof that lapsed
   // after the render answers like a policy that moved.
   if (!withinValidity(validUntil, subscriptionNow())) return refuse('policy_moved');
-  return { kind: 'serve', content, node, placeholder, relay, renderedEpoch, validUntil, render };
+  return {
+    kind: 'serve',
+    content,
+    node,
+    placeholder,
+    relay,
+    renderedEpoch,
+    validUntil,
+    render,
+    location,
+  };
 }
