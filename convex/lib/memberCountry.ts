@@ -171,6 +171,17 @@ export function memberCountryView(
   };
 }
 
+/**
+ * The country the mode suggestion reads: what is stored when anything is (a
+ * stored "Somewhere else" is an answer: no country), else this request's.
+ */
+export function suggestionCountry(
+  stored: { effective: string | null; source: 'choice' | 'guess' | 'none' },
+  requestCountry: string | null,
+): string | null {
+  return stored.source === 'none' ? requestCountry : stored.effective;
+}
+
 /** What one CDN reading does to the stored guess. */
 export type GuessUpdate =
   | { kind: 'none' }

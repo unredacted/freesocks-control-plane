@@ -26,6 +26,10 @@
   const name = (code: string) => `${countryName(code, 'en')} (${code})`;
   const choiceWords = (c: string | null) =>
     c === null ? 'Automatic' : c === 'ZZ' ? 'Somewhere else' : name(c);
+  // "Elsewhere" only when the member said so; with nothing stored the service
+  // does not know where they are.
+  const headline = (k: { effective: string | null; source: string; choice: string | null }) =>
+    k.effective ? name(k.effective) : k.source === 'choice' ? 'Elsewhere' : 'Not known';
 </script>
 
 <div class="mt-2 space-y-1 border-t border-border pt-2">
@@ -49,7 +53,7 @@
             ? 'privacy-family'
             : 'one without a country'}.
         {:else}
-          <span class="text-foreground">{k.effective ? name(k.effective) : 'Elsewhere'}</span>
+          <span class="text-foreground">{headline(k)}</span>
           {#if k.source === 'choice'}
             · their choice ({choiceWords(k.choice)})
           {:else if k.source === 'guess' && k.guess}

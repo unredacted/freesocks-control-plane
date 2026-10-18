@@ -75,7 +75,8 @@ accidentally regress it).
     guess, Umami never sees it, issue reports do not get it.
   - **Sealed in transit.** The routes that carry it (`GET|POST /api/v1/account/connection-region`,
     `GET /api/v1/admin/member-country/{id}`) are HPKE-sealed and refuse plaintext, so it never
-    crosses the CDN in the clear; a caller that cannot seal is refused.
+    crosses the CDN in the clear; a caller that cannot seal is refused. The admin view answers a
+    signed-in admin's passkey session only, never an API token, even one that seals.
   - **Shown** to the member ("We think you're connecting from Iran. Change", or their own
     answer) and to admins per member (Admin -> Users -> Live details: country, choice or guess,
     first and last seen, the last delivery).

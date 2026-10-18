@@ -7,6 +7,7 @@ import {
   memberWhere,
   nextGuess,
   storedCountry,
+  suggestionCountry,
   type CountryFields,
   type MemberFamily,
 } from './memberCountry';
@@ -145,6 +146,14 @@ describe('memberWhere', () => {
       where: { country: 'IR' },
       source: 'inferred',
     });
+  });
+});
+
+describe('suggestionCountry', () => {
+  test('a stored answer stands, "Somewhere else" included; the request only when nothing is stored', () => {
+    expect(suggestionCountry({ effective: null, source: 'choice' }, 'IR')).toBeNull();
+    expect(suggestionCountry({ effective: 'RU', source: 'guess' }, 'IR')).toBe('RU');
+    expect(suggestionCountry({ effective: null, source: 'none' }, 'IR')).toBe('IR');
   });
 });
 

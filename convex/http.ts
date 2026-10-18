@@ -14,7 +14,7 @@ import type { ActionCtx } from './_generated/server';
 import { api, internal } from './_generated/api';
 import { registerEdgeRoutes } from './httpEdges';
 import { bodyIsCacheable, cacheIsServable } from './lib/edges/sni/country';
-import { memberWhere, nextGuess, type CountryFields } from './lib/memberCountry';
+import { memberWhere, nextGuess, suggestionCountry, type CountryFields } from './lib/memberCountry';
 import { isOwnExit } from './lib/ownExits';
 import { registerServerRoutes } from './httpServers';
 import { hmacSha256Hex } from './lib/crypto';
@@ -56,6 +56,7 @@ import {
   newRequestId,
   readJson,
   resolveAdmin,
+  resolveAdminCookie,
   resolveClientIp,
   resolveClientIpDetailed,
   resolveCountry,
@@ -1003,18 +1004,19 @@ http.route({
     const geoCountry = resolveCountry(req);
     const reading = await ctx.runQuery(internal.memberCountry.readingContext, {});
     const ownExit = isOwnExit(resolveClientIp(req), reading.ownExits);
-    const storedCountry =
+    const stored =
       reading.detect && (geoCountry || ownExit)
         ? await ctx.runMutation(internal.memberCountry.noteSeenCountryForUser, {
             userId: member.userId,
             country: geoCountry,
             ownExit,
           })
-        : (await ctx.runQuery(internal.memberCountry.memberView, { userId: member.userId }))
-            .effective;
+        : await ctx.runQuery(internal.memberCountry.memberView, { userId: member.userId });
+    // A stored answer stands even when it is no country ("Somewhere else"): the
+    // request's country is used only when nothing is stored at all.
     const suggestedModeId = await ctx.runQuery(internal.censoredCountries.suggestMode, {
       backend: view.user.tier.backend,
-      country: storedCountry ?? geoCountry,
+      country: suggestionCountry(stored, geoCountry),
     });
     return json({ ...view, geoCountry, suggestedModeId });
   }),
@@ -3286,14 +3288,16 @@ http.route({
 
 // GET /api/v1/admin/member-country/{userId}: where a member connects from, per
 // active key (their choice, the guess with first and last seen, what delivery
-// uses, what their last render handed out). Sealed and REQUIRED (no plaintext,
-// so no token caller): member countries never cross the CDN in the clear. Not
+// uses, what their last render handed out). Sealed and REQUIRED (no plaintext):
+// member countries never cross the CDN in the clear. A signed-in admin's
+// passkey session only: no token, whatever its scopes, even one that seals
+// (an automation token has no business reading members' countries). Not
 // audited (docs/privacy.md).
 http.route({
   pathPrefix: '/api/v1/admin/member-country/',
   method: 'GET',
   handler: sealed(async (ctx, req) => {
-    if (!(await resolveAdmin(ctx, req, 'admin:users:read'))) return ADMIN_UNAUTH();
+    if (!(await resolveAdminCookie(ctx, req))) return ADMIN_UNAUTH();
     const id = lastPathSegment(req);
     if (!id) return errorJson('not_found', 'Not found', 404);
     try {

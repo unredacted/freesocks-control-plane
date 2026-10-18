@@ -502,4 +502,34 @@ describe('hpke: routes that refuse plaintext whatever the knobs say (required)',
     );
     expect(admin).toMatchObject({ keys: [] });
   });
+
+  test('the admin member view is for a signed-in admin only: a token is refused even when it seals', async () => {
+    const { t, kp, kid, userId } = await both();
+    const plaintext = `fsv1_${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+    await t.run(async (ctx) => {
+      const createdByAdminId = (await ctx.db.query('adminUsers').first())!._id;
+      await ctx.db.insert('apiTokens', {
+        name: 'reader',
+        tokenHash: await sha256Hex(plaintext),
+        tokenPrefix: plaintext.slice(0, 12),
+        createdByAdminId,
+        scopes: ['admin:users:read'],
+        subjectType: 'service',
+        updatedAt: Date.now(),
+      });
+    });
+    const path = `${MEMBER_COUNTRY}${userId}`;
+    const prep = await clientPrepareRequest({
+      serverPub: kp.publicKey,
+      serverKid: kid,
+      method: 'GET',
+      path,
+      policy: routePolicy(path, 'GET')!,
+    });
+    const res = await t.fetch(path, {
+      headers: { authorization: `Bearer ${plaintext}`, 'x-fs-resp-eph': prep.respEphPubB64! },
+    });
+    expect(res.status).toBe(401);
+    expect(res.headers.get('x-fs-sealed')).toBeNull();
+  });
 });

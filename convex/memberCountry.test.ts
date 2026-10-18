@@ -434,7 +434,22 @@ describe('the account view and the admin view', () => {
         country: 'TR',
         ownExit: false,
       }),
-    ).toBe('TR');
+    ).toEqual({ effective: 'TR', source: 'guess' });
+    // A stored "Somewhere else" comes back as an answer, not as "nothing stored".
+    await t.mutation(internal.memberCountry.setChoice, { userId, region: 'ZZ' });
+    expect(
+      await t.mutation(internal.memberCountry.noteSeenCountryForUser, {
+        userId,
+        country: 'IR',
+        ownExit: false,
+      }),
+    ).toEqual({ effective: null, source: 'choice' });
+    await t.mutation(internal.memberCountry.setChoice, { userId, region: null });
+    await t.mutation(internal.memberCountry.noteSeenCountryForUser, {
+      userId,
+      country: 'TR',
+      ownExit: false,
+    });
     expect((await row(t, subId)).regionSeenCountry).toBe('TR');
     const member = await t.query(internal.memberCountry.memberView, { userId });
     expect(member).toMatchObject({

@@ -243,8 +243,8 @@ export const noteSeenCountry = internalMutation({
 
 /**
  * One reading on the account view: every active freedom-family key of the
- * member. Returns the stored country of their current key (the mode suggestion
- * reads it), or null.
+ * member. Returns what their current key uses and where it came from (the mode
+ * suggestion reads it: a stored "Somewhere else" is an answer, not "unknown").
  */
 export const noteSeenCountryForUser = internalMutation({
   args: {
@@ -252,9 +252,13 @@ export const noteSeenCountryForUser = internalMutation({
     country: v.union(v.string(), v.null()),
     ownExit: v.boolean(),
   },
-  handler: async (ctx, a): Promise<string | null> => {
+  handler: async (
+    ctx,
+    a,
+  ): Promise<{ effective: string | null; source: 'choice' | 'guess' | 'none' }> => {
+    const nothing = { effective: null, source: 'none' as const };
     const user = await ctx.db.get(a.userId);
-    if (!user) return null;
+    if (!user) return nothing;
     const { cfg, listed } = await settingsAndList(ctx.db);
     const now = Date.now();
     const subs = await ctx.db
@@ -262,7 +266,7 @@ export const noteSeenCountryForUser = internalMutation({
       .withIndex('by_user_state', (q) => q.eq('userId', a.userId).eq('state', 'active'))
       .collect();
     const currentId = (subs.find((s) => s._id === user.currentSubscriptionId) ?? subs[0])?._id;
-    let current: string | null = null;
+    let current: { effective: string | null; source: 'choice' | 'guess' | 'none' } = nothing;
     for (const s of subs) {
       const family = await memberFamilyOf(ctx.db, s, user);
       if (family !== 'freedom') continue;
@@ -273,7 +277,10 @@ export const noteSeenCountryForUser = internalMutation({
         { country: a.country, ownExit: a.ownExit },
         { cfg, listed, now },
       );
-      if (s._id === currentId) current = storedCountry(fieldsOf(after), cfg, listed, now);
+      if (s._id === currentId) {
+        const view = memberCountryView(family, fieldsOf(after), cfg, listed, now);
+        current = { effective: view.effective, source: view.source };
+      }
     }
     return current;
   },
@@ -468,7 +475,9 @@ export const sweepCountry = internalMutation({
       const fresh = (await ctx.db.get(s._id))!;
       await setStoredCountry(ctx, fresh, { guess: null }, { cfg, listed });
     }
-    if ((choices.length === PAGE || guesses.length === PAGE) && (a.rounds ?? 0) < 50)
+    // Until done: every cleared row leaves both indexes, so the walk ends; a
+    // country removed from the list is never swept again by anything else.
+    if (choices.length === PAGE || guesses.length === PAGE)
       await ctx.scheduler.runAfter(0, internal.memberCountry.sweepCountry, {
         country: a.country,
         rounds: (a.rounds ?? 0) + 1,
