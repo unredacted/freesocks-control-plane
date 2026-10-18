@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'vitest';
 import {
+  bodyGroups,
   coverTargets,
   coverageDeficit,
   groupOf,
+  resilienceExpectation,
   removableUnder,
   requirementOf,
   type PublishedRef,
@@ -273,3 +275,51 @@ function bruteForce(req: Requirement, published: readonly PublishedRef[]): numbe
     ).length
   );
 }
+
+describe('resilienceExpectation and bodyGroups', () => {
+  const on = {
+    style: 'subscription' as const,
+    includeBackup: true,
+    maxEntries: 0,
+    preferDistinct: true,
+    groupsOffered: 2,
+  };
+  test('a backup in another group is expected only under the effective rule', () => {
+    expect(resilienceExpectation(on)).toEqual({ on: true });
+    expect(resilienceExpectation({ ...on, style: 'single-key' })).toEqual({
+      on: false,
+      reason: 'single_key',
+    });
+    expect(resilienceExpectation({ ...on, includeBackup: false })).toEqual({
+      on: false,
+      reason: 'backup_disabled',
+    });
+    expect(resilienceExpectation({ ...on, maxEntries: 1 })).toEqual({
+      on: false,
+      reason: 'max_entries',
+    });
+    expect(resilienceExpectation({ ...on, maxEntries: 2 })).toEqual({ on: true });
+    expect(resilienceExpectation({ ...on, preferDistinct: false })).toEqual({
+      on: false,
+      reason: 'distinct_off',
+    });
+    expect(resilienceExpectation({ ...on, groupsOffered: 1 })).toEqual({
+      on: false,
+      reason: 'one_group',
+    });
+  });
+
+  test('groups are providers among the body listeners, or locations of one provider', () => {
+    const edges = [
+      { listenerKey: 'a', provider: 'acme', locationKey: 'acme:1' },
+      { listenerKey: 'a', provider: 'acme', locationKey: 'acme:2' },
+      { listenerKey: 'b', provider: 'globex', locationKey: 'globex:1' },
+      { listenerKey: 'b', provider: 'initech', locationKey: 'initech:1', eligible: false },
+    ];
+    expect(bodyGroups(edges, ['a']).count).toBe(2);
+    expect(bodyGroups(edges, ['a']).groupOf(edges[0]!)).toBe('acme:1');
+    expect(bodyGroups(edges, ['a', 'b']).count).toBe(2);
+    expect(bodyGroups(edges, ['a', 'b']).groupOf(edges[0]!)).toBe('acme');
+    expect(bodyGroups(edges, ['b']).count).toBe(1);
+  });
+});

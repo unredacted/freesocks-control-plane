@@ -426,3 +426,25 @@ describe('a credential test needs no location', () => {
     expect(stub.calls.map((c) => c.path)).toEqual(['/lb/v1/zones/fr-par-1/lbs']);
   });
 });
+
+describe('a location named after its bare region id', () => {
+  test('gets the name its provider lists for that region; a named one is left alone', async () => {
+    const t = convexTest(schema, modules);
+    const accountId = await createAccount(t, { provider: 'gcore', name: 'g' });
+    const row = (await defaultLocationRow(t, accountId))!;
+    // A migrated account had no region name to copy: the id is the label.
+    await t.run((c) => c.db.patch(row._id, { label: row.placeKey }));
+    mockFetch((c) =>
+      c.path.startsWith('/cloud/v1/regions')
+        ? jsonRes({
+            count: 1,
+            results: [{ id: Number(row.placeKey), display_name: 'Region Two', state: 'ACTIVE' }],
+          })
+        : jsonRes({}, 404),
+    );
+    expect(await t.action(internal.edgeProviderOps.relabelLocations, {})).toEqual({ named: 1 });
+    expect((await defaultLocationRow(t, accountId))!.label).toBe('Region Two');
+    // Asked again, nothing is left to name.
+    expect(await t.action(internal.edgeProviderOps.relabelLocations, {})).toEqual({ named: 0 });
+  });
+});

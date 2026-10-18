@@ -33,6 +33,7 @@ import { resolveEdgeConfig } from './lib/edgeConfig';
 import type { Id } from './_generated/dataModel';
 import {
   FIXTURE_PANEL_SLUG,
+  adoptL4Edge,
   createAccount,
   insertPanelServer,
   verifyL4Edge,
@@ -2860,5 +2861,207 @@ describe('the maintenance switch holds new edge work around a migration', () => 
     // Members keep being served while it is held.
     await memberBody(t, (await t.run((c) => c.db.get(live.e1)))!.addresses.v4!);
     await t.mutation(internal.edgeMaintenance.thaw, {});
+  });
+});
+
+describe("a node's provider set, edited by hand", () => {
+  test('adding a location to a live node: an add run, a review for the new place, the rehearsal renders the whole future pool, nothing retired', async () => {
+    const w = await world();
+    const { t } = w;
+    const live = await liveL4(w);
+    const firstLoc = (await relayRow(t, live.relayId)).providerSet![0]!.locationId;
+    const second = (
+      await t.mutation(internal.edgeLocations.create, {
+        accountId: live.l4,
+        placement: { zone: 'nl-ams1' },
+        label: 'Zone two',
+      })
+    ).id as Id<'edgeLocations'>;
+    const res = await edgesPost(t, live.cookie, `relays/${live.relayId}/providers`, {
+      add: [second],
+    });
+    expect(res.status).toBe(200);
+    const { runId } = (await res.json()) as { runId: Id<'edgeSetupRuns'> };
+    const card = await drive(t, () => setupRun(t, runId), parked, 'add run to the card');
+    expect([card.stage, card.need?.code]).toEqual(['try_it', 'try_it']);
+    // Only what the larger set lacks: one address, in the new location.
+    expect(card.listeners.map((l) => l.locationId)).toEqual([second]);
+    const e2 = card.listeners[0]!.edgeId!;
+    await tickAll(t, runId);
+    // A new location is a new shape: the node's review.
+    const held = await drive(t, () => setupRun(t, runId), parked, 'add run to the approval');
+    expect(held.need?.code).toBe('node_not_approved');
+    const { review, runId: actId } = await approveOverHttp(t, live.cookie, live.intentId);
+    expect(review.display.standbys).toEqual([
+      expect.objectContaining({ locationLabel: 'Zone two' }),
+    ]);
+    const done = await drive(t, () => setupRun(t, runId), movedOn, 'add run after approval');
+    expect([done.stage, done.state]).toEqual(['done', 'done']);
+    // The rehearsal rendered the whole future pool, and the commit is exactly it.
+    expect([...w.calls.rehearsedEdges.at(-1)!].sort()).toEqual([live.e1 as string, e2].sort());
+    const act = await activationRun(t, actId);
+    expect([...act.delivery!.edgeIds].sort()).toEqual([live.e1 as string, e2].sort());
+    expect(act.resources.edgeIds).toEqual([e2]);
+    expect([...(await intentOf(t, live.intentId)).approved!.committed.edgeIds].sort()).toEqual(
+      [live.e1 as string, e2].sort(),
+    );
+    // Nothing retired; the set is the union.
+    expect((await t.run((c) => c.db.get(live.e1)))!.publication).toBe('published');
+    expect((await relayRow(t, live.relayId)).providerSet!.map((p) => p.locationId)).toEqual([
+      firstLoc,
+      second,
+    ]);
+  });
+
+  test('a kept address that stops serving between the rehearsal and go-live: the run rehearses a new snapshot and commits exactly it', async () => {
+    const w = await world();
+    const { t } = w;
+    const live = await liveL4(w);
+    const second = (
+      await t.mutation(internal.edgeLocations.create, {
+        accountId: live.l4,
+        placement: { zone: 'nl-ams1' },
+        label: 'Zone two',
+      })
+    ).id as Id<'edgeLocations'>;
+    const res = await edgesPost(t, live.cookie, `relays/${live.relayId}/providers`, {
+      add: [second],
+    });
+    const { runId } = (await res.json()) as { runId: Id<'edgeSetupRuns'> };
+    const card = await drive(t, () => setupRun(t, runId), parked, 'add run to the card');
+    const e2 = card.listeners[0]!.edgeId!;
+    await tickAll(t, runId);
+    await drive(t, () => setupRun(t, runId), parked, 'add run to the approval');
+    // Right after the rehearsal, the kept address stops serving (still in the pool).
+    w.hooks.afterRehearsal = () =>
+      t.run(async (c) => {
+        await c.db.patch(live.e1, { status: 'failed' });
+      });
+    const { runId: actId } = await approveOverHttp(t, live.cookie, live.intentId);
+    const done = await drive(t, () => setupRun(t, runId), movedOn, 'add run after approval');
+    expect([done.stage, done.state]).toEqual(['done', 'done']);
+    expect(
+      done.events.some((e) => e.code === 'vector_drift' || e.code === 'delivery_changed'),
+    ).toBe(true);
+    // The second rehearsal's snapshot, exactly what was committed.
+    const act = await activationRun(t, actId);
+    expect(act.state).toBe('committed');
+    expect(act.delivery!.edgeIds).toEqual([e2]);
+    expect((await intentOf(t, live.intentId)).approved!.committed.edgeIds).toEqual([e2]);
+  });
+
+  test('cooling keeps automatic selection out of a pick; every pick cooling is set_picks_cooling', async () => {
+    const w = await world();
+    const { t } = w;
+    const live = await liveL4(w);
+    const firstLoc = (await relayRow(t, live.relayId)).providerSet![0]!.locationId;
+    const second = (
+      await t.mutation(internal.edgeLocations.create, {
+        accountId: live.l4,
+        placement: { zone: 'nl-ams1' },
+        label: 'Zone two',
+      })
+    ).id as Id<'edgeLocations'>;
+    await t.mutation(internal.edgeLocations.setQualified, { id: second, qualified: true });
+    const until = Date.now() + 60 * 60_000;
+    await t.run((c) =>
+      c.db.patch(live.relayId, {
+        providerSet: [
+          { locationId: firstLoc, addedAt: 1 },
+          { locationId: second, addedAt: 2 },
+        ],
+        cooling: [{ locationId: firstLoc, until }],
+      }),
+    );
+    const e1 = (await t.run((c) => c.db.get(live.e1)))!;
+    const select = (trigger: 'reconcile' | 'manual') =>
+      t.run(async (ctx) =>
+        selectionContext(
+          ctx,
+          { kind: 'provision', trigger, listenerId: e1.listenerId },
+          (await ctx.db.get(live.relayId))!,
+          null,
+          await resolveEdgeConfig(ctx.db),
+        ),
+      );
+    expect((await select('reconcile')).account?.locationId).toBe(second);
+    await t.run((c) =>
+      c.db.patch(live.relayId, {
+        cooling: [
+          { locationId: firstLoc, until },
+          { locationId: second, until },
+        ],
+      }),
+    );
+    expect(await select('reconcile')).toMatchObject({
+      account: null,
+      accountFailure: 'set_picks_cooling',
+    });
+    // An operator's own request is not held.
+    expect((await select('manual')).account).not.toBeNull();
+  });
+
+  test('removing a location: refused while only an untested spare holds the rest; allowed once a tested address is published there; its addresses drain', async () => {
+    const w = await world();
+    const { t } = w;
+    const live = await liveL4(w);
+    const firstLoc = (await relayRow(t, live.relayId)).providerSet![0]!.locationId;
+    const second = (
+      await t.mutation(internal.edgeLocations.create, {
+        accountId: live.l4,
+        placement: { zone: 'nl-ams1' },
+        label: 'Zone two',
+      })
+    ).id as Id<'edgeLocations'>;
+    await t.run((c) =>
+      c.db.patch(live.relayId, {
+        providerSet: [
+          { locationId: firstLoc, addedAt: 1 },
+          { locationId: second, addedAt: 2 },
+        ],
+      }),
+    );
+    const listenerId = (await t.run((c) => c.db.get(live.e1)))!.listenerId;
+    const spare = await adoptL4Edge(t, live.relayId, listenerId, {
+      ipv4: '198.51.100.77',
+      accountId: live.l4,
+      verified: false,
+    });
+    const spareId = spare.edgeId as Id<'edges'>;
+    await t.run((c) => c.db.patch(spareId, { locationId: second, placeKey: 'nl-ams1' }));
+    const refused = await edgesPost(t, live.cookie, `relays/${live.relayId}/providers`, {
+      remove: [firstLoc],
+    });
+    expect(refused.status).toBe(409);
+    expect(await errorCode(refused)).toBe('edge.set_would_uncover');
+    expect((await t.run((c) => c.db.get(live.e1)))!.publication).toBe('published');
+    // Tested and published in the other location: now the removal goes through.
+    await verifyL4Edge(t, spareId);
+    await t.run(async (c) => {
+      const relay = (await c.db.get(live.relayId))!;
+      await c.db.patch(spareId, {
+        publication: 'published',
+        poolIndex: relay.publishedEdgeIds.length,
+      });
+      await c.db.patch(live.relayId, {
+        publishedEdgeIds: [...relay.publishedEdgeIds, spareId],
+        desiredPublished: relay.publishedEdgeIds.length + 1,
+      });
+    });
+    const ok = await edgesPost(t, live.cookie, `relays/${live.relayId}/providers`, {
+      remove: [firstLoc],
+    });
+    expect(ok.status).toBe(200);
+    expect((await t.run((c) => c.db.get(live.e1)))!.publication).toBe('draining');
+    const relay = await relayRow(t, live.relayId);
+    expect(relay.providerSet!.map((p) => p.locationId)).toEqual([second]);
+    expect(relay.desiredPublished).toBeGreaterThanOrEqual(1);
+    const audit = await t.run((c) =>
+      c.db
+        .query('auditLog')
+        .filter((q) => q.eq(q.field('action'), 'edge.relay.providers_changed'))
+        .collect(),
+    );
+    expect(audit.at(-1)?.payload).toMatchObject({ removed: 1, drained: 1, picks: 1 });
   });
 });

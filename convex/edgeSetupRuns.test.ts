@@ -32,7 +32,7 @@ import {
   type SetupRunCreateRequest,
   type SetupRunRetryRequest,
 } from '../src/shared/contracts/edges';
-import { deliveryBindingOf } from './lib/edges/testing/reads';
+import { defaultLocationRow, deliveryBindingOf } from './lib/edges/testing/reads';
 
 const modules = import.meta.glob('./**/*.*s');
 type T = TestConvex<typeof schema>;
@@ -1294,5 +1294,60 @@ describe('approvedDarkCohorts (case 3, the rehearsal side)', () => {
     expect(
       approvedDarkCohorts({ failures, formats: ['links'] }, run(['host-1'], ['squad-b'])),
     ).toEqual([]);
+  });
+});
+
+describe('edgeSetupRuns: a provider set of two locations', () => {
+  test('two picks: one address per pick, two ticks, both published, the set recorded; a hook never overwrites the other target', async () => {
+    const { t, serverId, accountId } = await seed();
+    const first = (await defaultLocationRow(t, accountId))!._id;
+    const second = (
+      await t.mutation(internal.edgeLocations.create, {
+        accountId,
+        placement: { zone: 'nl-ams1' },
+        label: 'Zone two',
+      })
+    ).id as Id<'edgeLocations'>;
+    // The plan shown for the set says what it makes: one provider, two
+    // locations, so the transport needs an address in each.
+    const plan = await t.action(internal.edgeSetupPlan.plan, {
+      backendServerId: serverId,
+      nodeUuid: NODE_UUID,
+      picks: [first, second],
+    });
+    expect(plan.set?.targets.map((x) => x.locationId).sort()).toEqual([first, second].sort());
+    expect(plan.set?.reduced).toEqual([]);
+    const { runId } = (await t.action(internal.edgeSetupPlan.create, {
+      backendServerId: serverId,
+      nodeUuid: NODE_UUID,
+      picks: [first, second],
+      planHash: plan.planHash,
+      approvedHideUuids: [],
+    })) as { runId: Id<'edgeSetupRuns'> };
+    let r = await pump(t, runId, settled);
+    expect(r.need?.code).toBe('try_it');
+    expect(r.listeners.map((l) => l.locationId).sort()).toEqual([first, second].sort());
+    // Each target holds its own address, in its own location.
+    const edges = await t.run(async (ctx) =>
+      Promise.all(r.listeners.map((l) => ctx.db.get(l.edgeId!))),
+    );
+    expect(new Set(edges.map((e) => e!._id)).size).toBe(2);
+    for (const [i, l] of r.listeners.entries()) expect(edges[i]!.locationId).toBe(l.locationId);
+    expect(r.testLinks).toHaveLength(2);
+    await tickAll(t, runId);
+    r = await pump(t, runId, settled);
+    expect([r.stage, r.state]).toEqual(['done', 'done']);
+    expect(r.listeners.every((l) => l.published)).toBe(true);
+    const relay = await relayOf(t, runId);
+    expect(relay.publishedEdgeIds.filter(Boolean)).toHaveLength(2);
+    expect(relay.providerSet?.map((p) => p.locationId)).toEqual([first, second]);
+    // Wrong picks are refused at the plan: a location picked twice.
+    await expect(
+      t.action(internal.edgeSetupPlan.plan, {
+        backendServerId: serverId,
+        nodeUuid: NODE_UUID,
+        picks: [first, first],
+      }),
+    ).rejects.toThrow(/picked twice/);
   });
 });
