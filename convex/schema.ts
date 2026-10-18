@@ -1807,6 +1807,8 @@ export default defineSchema({
     // The location an explicit provision asks for (its account is
     // `requestedAccountId`); a setup run's terminal hook matches its target on it.
     requestedLocationId: v.optional(v.id('edgeLocations')),
+    // A replace's explicit spare (the operator named it).
+    requestedSpareEdgeId: v.optional(v.id('edges')),
     // The guided setup run that started this rotation, with the run GENERATION
     // it was started under: the terminal hook reports this stored generation,
     // never the run's current one, so a retried run ignores the old rotation.

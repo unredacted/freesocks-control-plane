@@ -734,3 +734,48 @@ describe('hostname (L7) edges', () => {
     expect(assignEndpoints(sha(1), [bare], opts).primary).toBeNull();
   });
 });
+
+describe('the backup avoids the primary failure domain', () => {
+  test('another provider first, then another location, a missing location key counting as unknown', () => {
+    // One provider, two locations: the backup takes the other location.
+    const oneProvider = [
+      edge({ edgeId: 'x1', poolIndex: 0, locationKey: 'gcore:r1' }),
+      edge({ edgeId: 'x2', poolIndex: 1, locationKey: 'gcore:r1' }),
+      edge({ edgeId: 'y1', poolIndex: 2, locationKey: 'gcore:r2' }),
+    ];
+    for (let i = 0; i < 500; i++) {
+      const a = assignEndpoints(sha(i), oneProvider, opts);
+      expect(a.backup!.edge.locationKey).not.toBe(a.primary!.edge.locationKey);
+    }
+    // Another provider beats another location of the same provider.
+    const mixed = [
+      edge({ edgeId: 'x1', poolIndex: 0, locationKey: 'gcore:r1' }),
+      edge({ edgeId: 'y1', poolIndex: 1, locationKey: 'gcore:r2' }),
+      edge({ edgeId: 'z1', poolIndex: 2, provider: 'ovh', locationKey: 'ovh:r9' }),
+    ];
+    for (let i = 0; i < 500; i++) {
+      const a = assignEndpoints(sha(i), mixed, opts);
+      if (a.primary!.edge.provider === 'gcore') expect(a.backup!.edge.provider).toBe('ovh');
+    }
+    // Without location keys nothing is assumed different: the next edge, as before.
+    const unknown = [edge({ edgeId: 'u1', poolIndex: 0 }), edge({ edgeId: 'u2', poolIndex: 1 })];
+    const a = assignEndpoints(sha(1), unknown, opts);
+    expect(a.backup!.edge.edgeId).not.toBe(a.primary!.edge.edgeId);
+  });
+
+  test('with one location per provider the assignment is unchanged by location keys', () => {
+    const plain = [
+      edge({ edgeId: 'e0', poolIndex: 0, provider: 'gcore' }),
+      edge({ edgeId: 'e1', poolIndex: 1, provider: 'ovh' }),
+    ];
+    const keyed = plain.map((e) => ({ ...e, locationKey: `${e.provider}:only` }));
+    for (let i = 0; i < 200; i++) {
+      const a = assignEndpoints(sha(i), plain, opts);
+      const b = assignEndpoints(sha(i), keyed, opts);
+      expect([b.primary!.edge.edgeId, b.backup!.edge.edgeId]).toEqual([
+        a.primary!.edge.edgeId,
+        a.backup!.edge.edgeId,
+      ]);
+    }
+  });
+});

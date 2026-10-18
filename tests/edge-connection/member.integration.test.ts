@@ -1011,6 +1011,87 @@ describe.skipIf(!ENABLED)(
                   false,
                 );
             });
+
+        // A provider set of two locations (docs/edges.md "Provider sets"): the
+        // live node gets an address in a second location through an `add` run
+        // (tested, reviewed, committed), and a member's main address and backup
+        // land in different locations, each one connecting.
+        if (key === 'reality')
+          test('a second location: an add run, then main and backup in different locations, both connecting', async () => {
+            const relayId = await t.run(
+              async (c) =>
+                (await c.db.query('relays').collect()).find(
+                  (r) => r.origin.kind === 'panel-node' && r.origin.nodeName === node.name,
+                )!._id,
+            );
+            const second = (
+              await t.mutation(internal.edgeLocations.create, {
+                accountId: accounts.l4,
+                placement: { zone: 'nl-ams1' },
+                label: 'Zone two',
+              })
+            ).id as Id<'edgeLocations'>;
+            const change = await t.mutation(internal.edgeProviderSets.change, {
+              relayId,
+              add: [second],
+            });
+            const addRun = change.runId as Id<'edgeSetupRuns'>;
+            let r = await settle(() => setupRun(t, addRun), parked, 'add run', showRun, 300_000);
+            expect(r!.need?.code, showRun(r)).toBe('try_it');
+            await tryEveryLink(r!.testLinks ?? []);
+            await t.mutation(internal.edgeSetupRuns.resume, {
+              runId: addRun,
+              confirmations: (r!.testLinks ?? []).map((l) => ({
+                edgeId: l.edgeId,
+                endpoint: l.binding.endpoint,
+                listenerRevision: l.binding.listenerRevision,
+                configHash: l.binding.configHash,
+              })),
+            });
+            r = await settle(
+              () => setupRun(t, addRun),
+              (x) => parked(x) && x!.need?.code !== 'try_it',
+              'add run after the tick',
+              showRun,
+              300_000,
+            );
+            // A new location is a new shape: the node's review, then go-live.
+            expect(r!.need?.code, showRun(r)).toBe('node_not_approved');
+            await approveAndGoLive(intentId, addRun);
+            const both = await t.run(async (c) =>
+              (await c.db.query('edges').collect()).filter(
+                (e) =>
+                  e.relayId === relayId && e.publication === 'published' && e.status === 'active',
+              ),
+            );
+            expect(new Set(both.map((e) => e.locationId)).size).toBe(2);
+            const cellEdges: CellEdge[] = both.map((e) => ({
+              edgeId: e._id,
+              layer: 'l4',
+              address: e.addresses.v4!,
+            }));
+            const engine = (cells[0]!.engines as Engine[])[0]!;
+            // The member's body: a main address and a backup, in different locations.
+            const res = await fetchSub(token, UA[engine]);
+            expect(res.status).toBe(200);
+            const sub = await t.run(async (c) =>
+              (await c.db.query('subscriptions').collect()).find((x) => x.subToken === token),
+            );
+            const main = both.find((e) => e._id === sub?.lastRender?.primaryEdgeId);
+            const backup = both.find((e) => e._id === sub?.lastRender?.backupEdgeId);
+            expect(main && backup, 'a main address and a backup').toBeTruthy();
+            expect(main!.locationId).not.toBe(backup!.locationId);
+            // The engine connects through each of them.
+            for (const edge of cellEdges) {
+              const served = await bodyCarrying(
+                token,
+                engine,
+                edge,
+                cellEdges.map((x) => x.address),
+              );
+              await connectThrough(engine, served, edge, node.addr.origin);
+            }
+          });
       });
     }
 

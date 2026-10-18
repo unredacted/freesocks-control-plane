@@ -85,6 +85,7 @@ import { fleetRotationsToday, readFleetBrake } from './lib/edges/fleet';
 import { modeRefOf } from './nodeIntents';
 import { resolveModeCatalog } from './lib/connectionModes';
 import { requiredPoolSize } from './lib/edges/poolCapacity';
+import { setStateOf } from './lib/edges/setState';
 import { uncoveredListeners } from './lib/edges/pool';
 import { renderPreviewFor } from './edgeAdmin';
 import type { RelayOrigin } from './lib/edges/origin';
@@ -1307,39 +1308,61 @@ export const attention = internalQuery({
       // Coverage at the cap: a deployed listener has no published edge, every
       // slot is taken and no expansion can make room. Only a rebalance
       // (unpublishing a duplicate) frees a slot, and that is the operator's call.
+      const setState = await setStateOf(ctx.db, relay);
       const capacity = requiredPoolSize({
         desiredPublished: relay.desiredPublished,
         publishedEdgeIds: relay.publishedEdgeIds,
-        listeners: listeners.map((l) => ({
-          id: l._id as string,
-          templateEdgeId: (l.templateEdgeId as string | undefined) ?? null,
-          deployed: l.deployed,
-          enabled: l.enabled,
-          retired: l.retired,
-        })),
+        coverageListeners: setState.listeners.length,
+        deficit: setState.deficit,
       });
       if (relay.enabled && capacity.blocked > 0) {
-        const waiting = uncoveredListeners(
-          listeners.map((l) => ({
-            id: l._id as string,
-            key: l.listenerKey,
-            templateEdgeId: (l.templateEdgeId as string | undefined) ?? null,
-            deployed: l.deployed,
-            enabled: l.enabled,
-            retired: l.retired,
-          })),
-        );
+        const waiting = [...new Set(setState.targets.map((t) => t.listenerKey))];
         items.push({
           ...base(relay),
           id: `pool_rebalance:${relay._id}`,
           kind: 'pool_rebalance',
           severity: 'warning',
-          listenerKey: waiting[0]?.key ?? null,
+          listenerKey: waiting[0] ?? null,
           code: null,
-          facts: { published, desired: relay.desiredPublished, uncovered: waiting.length },
+          facts: { published, desired: relay.desiredPublished, uncovered: setState.deficit },
           action: 'rebalance',
           since: null,
         });
+      }
+      // The node's provider set: a pick that cools after a burn (no automatic
+      // work goes there until it ends), and transports whose picks give no
+      // backup in another failure domain (reported, never hidden).
+      if (relay.enabled && relay.providerSet) {
+        for (const c of relay.cooling ?? []) {
+          if (c.until <= now) continue;
+          const loc = await ctx.db.get(c.locationId);
+          items.push({
+            ...base(relay),
+            id: `pick_cooling:${relay._id}:${c.locationId}`,
+            kind: 'pick_cooling',
+            severity: 'info',
+            code: null,
+            facts: {
+              location: loc?.label ?? '',
+              minutesLeft: Math.ceil((c.until - now) / 60_000),
+            },
+            action: 'open_relay',
+            since: null,
+          });
+        }
+        const reduced = setState.requirement.reduced;
+        if (reduced.length > 0)
+          items.push({
+            ...base(relay),
+            id: `reduced_resilience:${relay._id}`,
+            kind: 'reduced_resilience',
+            severity: 'info',
+            listenerKey: reduced[0]!.listenerKey,
+            code: 'one_group',
+            facts: { count: reduced.length },
+            action: 'open_relay',
+            since: null,
+          });
       }
       if (relay.enabled && published < relay.desiredPublished) {
         const idle = edges.filter((e) => e.status === 'active' && e.publication === 'unpublished');
@@ -1649,6 +1672,8 @@ const preflightArgs = {
   accountId: v.optional(v.id('edgeProviderAccounts')),
   /** An explicit location (its account implied); the account's default otherwise. */
   locationId: v.optional(v.id('edgeLocations')),
+  /** `replace`: an explicit spare (that one or nothing). */
+  spareEdgeId: v.optional(v.id('edges')),
   templateId: v.optional(v.id('edgeTemplates')),
   /** `provision` only: false = the edge stays an unpublished spare (no standby is published instead). */
   publish: v.optional(v.boolean()),
@@ -1689,6 +1714,7 @@ export const preflight = internalQuery({
       publishOnDone: a.kind === 'provision' && a.publish !== false,
       requestedAccountId: isTest || a.accountId ? a.accountId : undefined,
       requestedLocationId: a.locationId,
+      requestedSpareEdgeId: a.kind === 'replace' ? a.spareEdgeId : undefined,
       requestedTemplateId: a.templateId,
       allowUnqualified: isTest,
     };

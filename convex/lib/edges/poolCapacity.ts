@@ -1,8 +1,8 @@
 /**
  * Pool capacity follows coverage (docs/edges.md § Publication): every deployed,
  * enabled, non-retired listener needs one published slot, so `desiredPublished`
- * is never left below the listener count, and a pool that is already full while
- * a listener is uncovered is EXPANDED (within the cap) so upkeep can cover it.
+ * is never left below the listener count, and a pool whose free slots cannot
+ * hold the coverage deficit is EXPANDED (within the cap) so upkeep can fill it.
  * Shrinking is never automatic; at the cap the operator rebalances.
  *
  * Kept out of origins.ts so relayListeners.ts (which origins.ts imports) can call
@@ -12,7 +12,8 @@ import type { MutationCtx } from '../../_generated/server';
 import type { Doc } from '../../_generated/dataModel';
 import { writeAuditLog } from '../audit';
 import { MAX_DESIRED_PUBLISHED } from '../edgeConfig';
-import { coverageListeners, freeSlotCount, publishedCount, uncoveredListeners } from './pool';
+import { freeSlotCount } from './pool';
+import { setStateOf } from './setState';
 
 export interface PoolCapacityResult {
   /** `desiredPublished` before / after (equal when nothing changed). */
@@ -26,40 +27,36 @@ export interface PoolCapacityResult {
   blocked: number;
 }
 
-/** Pure: the `desiredPublished` an origin needs for its listeners. */
+/**
+ * Pure: the `desiredPublished` an origin needs. Never below the coverage
+ * listener count, and when the free slots cannot hold the coverage deficit
+ * (lib/edges/providerSet.ts: a listener, a diversity group or a pick of the
+ * provider set without an address) the pool is expanded to published + what
+ * is missing, within the cap. `blocked` is what no expansion can make room for.
+ */
 export function requiredPoolSize(input: {
   desiredPublished: number;
   publishedEdgeIds: readonly (string | null)[];
-  listeners: readonly {
-    id: string;
-    templateEdgeId?: string | null;
-    deployed: boolean;
-    enabled: boolean;
-    retired: boolean;
-  }[];
+  coverageListeners: number;
+  deficit: number;
 }): PoolCapacityResult {
   const from = input.desiredPublished;
   let to = from;
   let raised = false;
   let expanded = false;
-  const required = coverageListeners(input.listeners).length;
-  if (to < required) {
-    to = Math.min(MAX_DESIRED_PUBLISHED, required);
+  if (to < input.coverageListeners) {
+    to = Math.min(MAX_DESIRED_PUBLISHED, input.coverageListeners);
     raised = to > from;
   }
-  const uncovered = uncoveredListeners(input.listeners).length;
-  let blocked = 0;
-  if (uncovered > 0 && freeSlotCount(input.publishedEdgeIds, to) === 0) {
-    const want = Math.min(
-      MAX_DESIRED_PUBLISHED,
-      publishedCount(input.publishedEdgeIds) + uncovered,
-    );
+  const free = freeSlotCount(input.publishedEdgeIds, to);
+  if (input.deficit > free) {
+    const want = Math.min(MAX_DESIRED_PUBLISHED, to + (input.deficit - free));
     if (want > to) {
       to = want;
       expanded = true;
     }
-    blocked = Math.max(0, uncovered - freeSlotCount(input.publishedEdgeIds, to));
   }
+  const blocked = Math.max(0, input.deficit - freeSlotCount(input.publishedEdgeIds, to));
   return { from, to, raised, expanded, blocked };
 }
 
@@ -72,20 +69,12 @@ export async function ensurePoolCapacity(
   ctx: MutationCtx,
   relay: Doc<'relays'>,
 ): Promise<PoolCapacityResult> {
-  const listeners = await ctx.db
-    .query('relayListeners')
-    .withIndex('by_relay', (q) => q.eq('relayId', relay._id))
-    .collect();
+  const state = await setStateOf(ctx.db, relay);
   const r = requiredPoolSize({
     desiredPublished: relay.desiredPublished,
     publishedEdgeIds: relay.publishedEdgeIds,
-    listeners: listeners.map((l) => ({
-      id: l._id as string,
-      templateEdgeId: (l.templateEdgeId as string | undefined) ?? null,
-      deployed: l.deployed,
-      enabled: l.enabled,
-      retired: l.retired,
-    })),
+    coverageListeners: state.listeners.length,
+    deficit: state.deficit,
   });
   if (relay.deleting || r.to === r.from)
     return { ...r, to: r.from, raised: false, expanded: false };

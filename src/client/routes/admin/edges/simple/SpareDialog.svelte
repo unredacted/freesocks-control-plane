@@ -13,8 +13,12 @@
    * still counts against its account until the provider confirms it gone, so
    * an account at its limit gets the new spare later ("Add a spare" again).
    *
+   * Where: Automatic (the dry run's own choice, said in words), or one location
+   * of the node's set for the transport Automatic would pick.
+   *
    * Props:
    *   open (bindable); relay; renew?: { edgeId, listenerId, listenerKey } | null
+   *   listeners?: { id, listenerKey }[]   the node's transports (for a named location)
    *   onStarted?()                 after the create was accepted
    *   onClose?()                   whenever the dialog closes (for a caller that mounts it per use)
    */
@@ -22,6 +26,8 @@
   import { toast } from 'svelte-sonner';
   import type { OriginAdmin } from '@shared/contracts/edges';
   import { Skeleton } from '@client/components/ui/skeleton';
+  import { Label } from '@client/components/ui/label';
+  import * as Select from '@client/components/ui/select';
   import { codeLabel } from '@client/lib/edgeCodes';
   import {
     deleteEdge,
@@ -29,6 +35,7 @@
     invalidateRelay,
     preflightRelay,
     provisionRelay,
+    relayProvidersQuery,
   } from '@client/lib/edgesApi';
   import CodeNote from '../components/CodeNote.svelte';
   import AdminListState from '../../AdminListState.svelte';
@@ -39,18 +46,36 @@
     open: boolean;
     relay: OriginAdmin;
     renew?: { edgeId: string; listenerId: string; listenerKey: string } | null;
+    listeners?: Array<{ id: string; listenerKey: string }>;
     onStarted?: () => void;
     onClose?: () => void;
   }
-  let { open = $bindable(false), relay, renew = null, onStarted, onClose }: Props = $props();
+  let {
+    open = $bindable(false),
+    relay,
+    renew = null,
+    listeners = [],
+    onStarted,
+    onClose,
+  }: Props = $props();
 
   const qc = useQueryClient();
-  const spareCheck = (listenerKey?: string) =>
+  const uid = $props.id();
+  /** '' = Automatic; else a location of the node's set. */
+  let where = $state('');
+  const setQ = relayProvidersQuery({
+    slug: () => relay.slug,
+    id: () => relay.id,
+    rotating: () => false,
+  });
+  const picks = $derived((setQ.data?.picks ?? []).filter((p) => p.usable));
+  const spareCheck = (listenerKey?: string, locationId?: string) =>
     preflightRelay(relay.id, {
       kind: 'provision',
       trigger: 'manual',
       publish: false,
       ...(listenerKey ? { listenerKey } : {}),
+      ...(locationId ? { locationId } : {}),
     });
   // A new spare is checked before the confirm; a renewal after the old one is gone.
   const preflight = createQuery(() => ({
@@ -60,12 +85,34 @@
     staleTime: 0,
     gcTime: 0,
   }));
-  const blockers = $derived(renew ? [] : (preflight.data?.blockers ?? []));
+  // The transport Automatic would give the spare: a named location gets it too.
+  const autoKey = $derived(preflight.data?.wouldSelect?.listenerKey ?? null);
+  const autoListener = $derived(listeners.find((l) => l.listenerKey === autoKey) ?? null);
+  const named = createQuery(() => ({
+    queryKey: [...edgeKeys.relay(relay.slug), 'preflight', 'spare', where, autoKey],
+    queryFn: () => spareCheck(autoKey ?? undefined, where),
+    enabled: open && !renew && where !== '' && !!autoKey,
+    staleTime: 0,
+    gcTime: 0,
+  }));
+  const blockers = $derived(
+    renew ? [] : where ? (named.data?.blockers ?? []) : (preflight.data?.blockers ?? []),
+  );
+  const autoWords = $derived.by(() => {
+    const w = preflight.data?.wouldSelect;
+    if (!w?.accountName || where) return null;
+    return `Automatic creates it in ${w.locationLabel ? `${w.locationLabel} (${w.accountName})` : w.accountName}.`;
+  });
 
   let destroyed = $state<string | null>(null);
   async function run(): Promise<void> {
     if (!renew) {
-      await provisionRelay(relay.id, { publish: false });
+      await provisionRelay(
+        relay.id,
+        where && autoListener
+          ? { publish: false, listenerId: autoListener.id, locationId: where }
+          : { publish: false },
+      );
       toast.success('Creating a spare address. Test it here once it is ready.');
       invalidateRelay(qc, relay.slug);
       onStarted?.();
@@ -98,10 +145,38 @@
     ? 'FCP destroys this spare, then creates a new one for the same transport at your provider when nothing blocks it. The new spare is billed and stays unused until you test it.'
     : 'FCP creates one more address for this node at your provider and keeps it as a spare. It is billed, and it is only put in use after you test it.'}
   confirmLabel={renew ? 'Replace the spare' : 'Add a spare'}
-  disabled={!renew && (preflight.isPending || blockers.length > 0)}
+  disabled={!renew &&
+    (preflight.isPending || (where !== '' && named.isPending) || blockers.length > 0)}
   {onClose}
   {run}
 >
+  {#if !renew && picks.length > 1 && autoListener}
+    <div class="mb-3 space-y-1.5">
+      <Label for={`${uid}-where`}>Where</Label>
+      <Select.Root
+        type="single"
+        value={where || 'auto'}
+        onValueChange={(v: string) => (where = v === 'auto' ? '' : v)}
+      >
+        <Select.Trigger id={`${uid}-where`} class="w-full">
+          {where
+            ? (picks.find((p) => p.locationId === where)?.label ?? 'That location')
+            : 'Automatic, prefer a different provider'}
+        </Select.Trigger>
+        <Select.Content>
+          <Select.Item value="auto" label="Automatic, prefer a different provider">
+            Automatic, prefer a different provider
+          </Select.Item>
+          {#each picks as p (p.locationId)}
+            <Select.Item value={p.locationId} label={p.label}>
+              {p.label} ({p.accountName}): {p.spare} spare
+            </Select.Item>
+          {/each}
+        </Select.Content>
+      </Select.Root>
+      {#if autoWords}<p class="text-muted-foreground text-xs">{autoWords}</p>{/if}
+    </div>
+  {/if}
   {#if !renew}
     {#if preflight.isPending}
       <Skeleton class="h-9 w-full" />

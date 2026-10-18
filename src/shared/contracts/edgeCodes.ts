@@ -225,6 +225,9 @@ export const ATTENTION_KINDS = [
   'account_budget_unlimited',
   // A live node whose connection mode is turned off: no member can pick it.
   'node_mode_disabled',
+  // Provider sets: a pick cooling after a burn; transports with no backup in another failure domain.
+  'pick_cooling',
+  'reduced_resilience',
 ] as const;
 export type AttentionKind = (typeof ATTENTION_KINDS)[number];
 
@@ -362,6 +365,12 @@ export const WORKFLOW_CODES = [
   // ... served through more than one provider account, or with no room for the new addresses
   'reprotect_mixed_accounts',
   'reprotect_no_room',
+  // provider sets: a pick switched after its addresses were published, a set
+  // that leaves a transport uncovered or is too large, a removal that would uncover
+  'pick_switch_late',
+  'set_uncovered_listener',
+  'set_too_large',
+  'set_would_uncover',
 ] as const;
 export type WorkflowCode = (typeof WORKFLOW_CODES)[number];
 
@@ -447,6 +456,8 @@ export const SETUP_RUN_NEEDS = [
   'quarantined',
   // The node behind the relay is enrolled and its activation is not approved (docs/servers.md).
   'node_not_approved',
+  // A member body's backup sits in its main address's failure domain although another is on offer.
+  'resilience_short',
 ] as const;
 export type SetupRunNeed = (typeof SETUP_RUN_NEEDS)[number];
 

@@ -109,6 +109,9 @@ export interface StandbyCandidate {
   provider: string | null;
   /** Provisioning account (null for adopted, observe-only edges). */
   accountId?: string | null;
+  /** Its location and `<provider>:<placeKey>` (absent for edges without one). */
+  locationId?: string | null;
+  locationKey?: string | null;
   status: string;
   publication: string;
   health: string;
@@ -116,10 +119,24 @@ export interface StandbyCandidate {
   hasAddress: boolean;
 }
 
+export interface StandbyPickOptions {
+  /**
+   * The failure domain to move away from (a replace's target): another
+   * provider first, then another location, then anything.
+   */
+  avoid?: { provider: string | null; locationKey: string | null } | null;
+  /** Locations automatic work may not use (cooling, outside the node's set). */
+  skipLocations?: ReadonlySet<string>;
+  /** An explicit spare: that one or nothing. */
+  spareEdgeId?: string | null;
+}
+
 /**
  * A compatible standby: active + unpublished, on the SAME slot (same profile,
  * same transport), with a publishable address, and from the profile's account when
- * the profile is account-scoped. Prefers a provider not already published.
+ * the profile is account-scoped. With `avoid` (a replace): a provider other
+ * than the target's first, then another location, then any; otherwise a
+ * provider not already published.
  */
 export function pickStandby(
   candidates: readonly StandbyCandidate[],
@@ -128,6 +145,7 @@ export function pickStandby(
   excludeEdgeId: string | null,
   requireOnline: boolean,
   requiredAccountId: string | null = null,
+  opts: StandbyPickOptions = {},
 ): StandbyCandidate | null {
   const ok = candidates.filter(
     (c) =>
@@ -137,11 +155,69 @@ export function pickStandby(
       c.publication === 'unpublished' &&
       c.hasAddress &&
       providerHealthSatisfies(c.provider, c.health, requireOnline) &&
-      (!requiredAccountId || !c.accountId || c.accountId === requiredAccountId),
+      (!requiredAccountId || !c.accountId || c.accountId === requiredAccountId) &&
+      (opts.spareEdgeId ? c.id === opts.spareEdgeId : true) &&
+      !(c.locationId && opts.skipLocations?.has(c.locationId) && c.id !== opts.spareEdgeId),
   );
   if (ok.length === 0) return null;
+  const avoid = opts.avoid;
+  if (avoid) {
+    return (
+      ok.find((c) => !c.provider || !avoid.provider || c.provider !== avoid.provider) ??
+      ok.find((c) => !c.locationKey || !avoid.locationKey || c.locationKey !== avoid.locationKey) ??
+      ok[0]!
+    );
+  }
   const distinct = ok.find((c) => !c.provider || !publishedProviders.includes(c.provider));
-  return distinct ?? ok[0];
+  return distinct ?? ok[0]!;
+}
+
+/**
+ * A pick of the node's provider set as selection ranks it for one listener
+ * (docs/edges.md § "Provider sets"): what it would add, then set order, then
+ * the fewest live edges.
+ */
+export interface SetLocationCandidate extends AccountCandidate {
+  /** Index in the node's set (the deterministic tie-break). */
+  setOrder: number;
+  /** Publishing an edge here would lower the coverage deficit. */
+  lowersDeficit: boolean;
+  /** No edge of this provider is published for the listener yet. */
+  providerNew: boolean;
+  /** No edge of this location key is published for the listener yet. */
+  locationKeyNew: boolean;
+}
+
+/**
+ * Selection with a set: the trusted, usable picks (any pick when the request
+ * allows an untrusted location), ranked by what they add: lowers the deficit,
+ * a provider not yet published for the listener, a location not yet
+ * published, set order, fewest live edges.
+ */
+export function pickLocation(
+  candidates: readonly SetLocationCandidate[],
+  opts: { allowUnqualified?: boolean } = {},
+): { ok: true; account: SetLocationCandidate } | { ok: false; code: AccountPickFailure } {
+  if (candidates.length === 0) return { ok: false, code: 'no_account_for_provider' };
+  const trusted = candidates.filter((a) => opts.allowUnqualified || a.qualified);
+  if (trusted.length === 0) return { ok: false, code: 'no_qualified_account' };
+  const usable = trusted
+    .filter(
+      (a) =>
+        a.liveEdges < a.maxLiveEdges &&
+        (a.locationMaxLiveEdges == null || (a.locationLiveEdges ?? 0) < a.locationMaxLiveEdges) &&
+        (a.dailyAllocationBudget === 0 || a.allocationsToday < a.dailyAllocationBudget),
+    )
+    .sort(
+      (a, b) =>
+        Number(b.lowersDeficit) - Number(a.lowersDeficit) ||
+        Number(b.providerNew) - Number(a.providerNew) ||
+        Number(b.locationKeyNew) - Number(a.locationKeyNew) ||
+        a.setOrder - b.setOrder ||
+        a.liveEdges - b.liveEdges,
+    );
+  if (usable.length === 0) return { ok: false, code: 'accounts_exhausted' };
+  return { ok: true, account: usable[0]! };
 }
 
 /**
@@ -203,7 +279,9 @@ export interface AccountCandidate {
 export type AccountPickFailure =
   | 'no_account_for_provider'
   | 'no_qualified_account'
-  | 'accounts_exhausted';
+  | 'accounts_exhausted'
+  /** Every pick of the node's set that could carry it cools (D6). */
+  | 'set_picks_cooling';
 
 /**
  * A trusted location of the provider whose account has capacity + budget (and

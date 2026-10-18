@@ -32,10 +32,12 @@ import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
 import { randomHex } from './lib/crypto';
 import { toProviderUserId } from './lib/backendUserId';
 import {
+  dedupeReviewListeners,
   evidenceHolds,
   publicationAdmitted,
   publicationFits,
   reviewHashOf,
+  sortReviewListeners,
   type Evidence,
   type PublicationShape,
   type ReviewListener,
@@ -104,14 +106,20 @@ async function reviewShapeOf(
   const mode = modeEntry(setup, modeSlug(intent));
   const transport = transportFor(setup, modeSlug(intent));
   const direct = isDirect(mode.shape);
+  // The union of what is served and what the run adds: one entry per distinct
+  // (transport, account, location, template).
   const listeners: ReviewListener[] = direct
     ? []
-    : (await frontedListenersOf(ctx, intent)).map((l) => ({
-        listenerKey: l.listenerKey,
-        accountId: l.accountId,
-        locationId: l.locationId ?? null,
-        templateHash: l.templateHash,
-      }));
+    : sortReviewListeners(
+        dedupeReviewListeners(
+          (await frontedListenersOf(ctx, intent)).map((l) => ({
+            listenerKey: l.listenerKey,
+            accountId: l.accountId,
+            locationId: l.locationId ?? null,
+            templateHash: l.templateHash,
+          })),
+        ),
+      );
   // A direct node's addresses follow the names its transport lists today.
   const names = direct ? await liveNamesOf(ctx, intent, transport.uuid) : [];
   return {
@@ -127,11 +135,13 @@ async function reviewShapeOf(
 }
 
 /**
- * Every required listener of a fronted node, sorted by key, with the edge
- * that fronts it: the candidate the open setup run holds for it, else the
- * listener's published template edge. The review lists each one (never one
- * representative edge), so a change of account or template on ANY listener
- * is a new review.
+ * Every (transport, location) a fronted node is served from or about to be:
+ * the targets of the open setup run (each with its candidate, once it has
+ * one), and every published address members are served through that is not
+ * one of them. A transport with neither keeps one line for its template edge
+ * (or nothing). Sorted by key. The review lists each one (never one
+ * representative edge), so a new account, location or template on ANY
+ * transport is a new review. `fromRun` marks the run's own targets.
  */
 async function frontedListenersOf(
   ctx: { db: QueryCtx['db'] },
@@ -142,6 +152,7 @@ async function frontedListenersOf(
       layer: 'l4' | 'l7';
       edge: Doc<'edges'> | null;
       templateEdgeId: Id<'edges'> | null;
+      fromRun: boolean;
     }
   >
 > {
@@ -157,20 +168,64 @@ async function frontedListenersOf(
   )
     .filter((l) => !l.retired)
     .sort((a, b) => a.listenerKey.localeCompare(b.listenerKey));
+  const runEdges = new Set(
+    (run?.listeners ?? []).map((x) => x.edgeId as string | undefined).filter(Boolean),
+  );
   const out = [];
   for (const l of listeners) {
-    const entry = run?.listeners.find((x) => x.listenerKey === l.listenerKey);
-    const edgeId = entry?.edgeId ?? l.templateEdgeId;
-    const edge = edgeId ? await ctx.db.get(edgeId) : null;
-    out.push({
-      listenerKey: l.listenerKey,
-      accountId: edge?.accountId ? String(edge.accountId) : null,
-      locationId: edge?.locationId ? String(edge.locationId) : null,
-      templateHash: edge?.templateHash ?? null,
-      layer: entry?.layer ?? edge?.layer ?? ('l4' as const),
-      edge,
-      templateEdgeId: l.templateEdgeId ?? null,
-    });
+    const lines: Array<{
+      edge: Doc<'edges'> | null;
+      locationId: string | null;
+      fromRun: boolean;
+      layer?: 'l4' | 'l7';
+    }> = [];
+    for (const entry of (run?.listeners ?? []).filter((x) => x.listenerKey === l.listenerKey)) {
+      const edge = entry.edgeId ? await ctx.db.get(entry.edgeId) : null;
+      lines.push({
+        edge,
+        locationId: edge?.locationId
+          ? String(edge.locationId)
+          : ((entry.locationId as string | undefined) ?? null),
+        fromRun: true,
+        layer: entry.layer,
+      });
+    }
+    // What members are served through on this transport (not a run candidate).
+    for (const id of relay.publishedEdgeIds) {
+      if (!id || runEdges.has(id as string)) continue;
+      const e = await ctx.db.get(id);
+      if (!e || e.listenerId !== l._id || e.publication !== 'published') continue;
+      lines.push({
+        edge: e,
+        locationId: e.locationId ? String(e.locationId) : null,
+        fromRun: false,
+      });
+    }
+    if (lines.length === 0) {
+      const edge = l.templateEdgeId ? await ctx.db.get(l.templateEdgeId) : null;
+      lines.push({
+        edge,
+        locationId: edge?.locationId ? String(edge.locationId) : null,
+        fromRun: false,
+      });
+    }
+    for (const line of lines) {
+      const e = line.edge;
+      const pickAccount =
+        !e && line.locationId
+          ? (run?.picks ?? []).find((p) => (p.locationId as string) === line.locationId)?.accountId
+          : undefined;
+      out.push({
+        listenerKey: l.listenerKey,
+        accountId: e?.accountId ? String(e.accountId) : pickAccount ? String(pickAccount) : null,
+        locationId: line.locationId,
+        templateHash: e?.templateHash ?? null,
+        layer: line.layer ?? e?.layer ?? ('l4' as const),
+        edge: e,
+        templateEdgeId: l.templateEdgeId ?? null,
+        fromRun: line.fromRun,
+      });
+    }
   }
   return out;
 }
@@ -214,10 +269,16 @@ export const review = internalQuery({
   },
 });
 
-/** What the review card shows of a fronted node's candidates: one line per required listener. */
+/**
+ * What the review card shows of a fronted node's candidates: one line per
+ * (transport, location) the approval releases (the run's targets; with no run,
+ * what is served).
+ */
 async function standbyDisplayOf(ctx: { db: QueryCtx['db'] }, intent: Intent) {
   const out = [];
-  for (const l of await frontedListenersOf(ctx, intent)) {
+  const all = await frontedListenersOf(ctx, intent);
+  const shown = all.some((l) => l.fromRun) ? all.filter((l) => l.fromRun) : all;
+  for (const l of shown) {
     const e = l.edge;
     const host = e ? (e.addresses.v4 ?? e.addresses.hostname ?? e.addresses.v6 ?? null) : null;
     const port = e?.listeners[0]?.edgePort ?? null;
@@ -228,7 +289,11 @@ async function standbyDisplayOf(ctx: { db: QueryCtx['db'] }, intent: Intent) {
       layer: l.layer,
       endpoint: host ? (port ? `${host}:${port}` : host) : null,
       accountName: account?.name ?? null,
-      locationLabel: location?.label ?? null,
+      locationLabel:
+        location?.label ??
+        (l.locationId
+          ? ((await ctx.db.get(l.locationId as Id<'edgeLocations'>))?.label ?? null)
+          : null),
       provider: e?.provider ?? null,
     });
   }
@@ -276,7 +341,7 @@ interface Standbys {
 async function standbysOf(ctx: { db: QueryCtx['db'] }, intent: Intent): Promise<Standbys> {
   const run = await openSetupRunOf(ctx, intent);
   if (!run) return { code: 'servers.standbys_missing', listenerKeys: [], edgeIds: [] };
-  const listenerKeys = run.listeners.map((l) => l.listenerKey).sort();
+  const listenerKeys = [...new Set(run.listeners.map((l) => l.listenerKey))].sort();
   const edgeIds = run.listeners.map((l) => l.edgeId).filter((e): e is Id<'edges'> => !!e);
   if (run.listeners.length === 0 || run.listeners.some((l) => !l.edgeId || l.verify !== 'verified'))
     return { code: 'servers.standbys_unverified', listenerKeys, runId: run._id, edgeIds };
@@ -1137,26 +1202,50 @@ export async function promoteCandidate(
   ).some((o) => o.state === 'pending' || o.state === 'sent' || o.state === 'unresolved');
   if (open) return { ok: false, code: 'servers.obligation_unresolved' };
   const at = Date.now();
-  // What members are served from now on: this run's set, plus every edge of
-  // the previous commit still published (a replacement joins the pool beside
-  // the committed edges; the replace or unpublish that retires them is its own
-  // decision), so a later approval never mistakes a served edge for a candidate.
-  const kept: string[] = [];
-  for (const id of intent.approved?.committed.edgeIds ?? []) {
-    const e = await ctx.db.get(id as Id<'edges'>);
-    if (e && e.publication === 'published' && e.status === 'active') kept.push(id);
+  let committed: { hostUuids: string[]; edgeIds: string[] };
+  if (run.delivery) {
+    // The reviewed delivery snapshot (the rehearsal rendered exactly it): the
+    // commit promotes exactly it, every address still published and active,
+    // the setup run's targets among it. Anything else moved since the
+    // rehearsal, which runs again for a new snapshot. `resources` stays what
+    // the run owns.
+    const snapshot = run.delivery.edgeIds;
+    if ((extra.edgeIds ?? []).some((id) => !snapshot.includes(id)))
+      return { ok: false, code: 'servers.delivery_changed' };
+    for (const id of snapshot) {
+      const e = await ctx.db.get(id as Id<'edges'>);
+      if (!e || e.publication !== 'published' || e.status !== 'active')
+        return { ok: false, code: 'servers.delivery_changed' };
+    }
+    committed = { hostUuids: run.resources.hostUuids, edgeIds: [...snapshot] };
+    await ctx.db.patch(run._id, {
+      state: 'committed',
+      stage: 'done',
+      events: [...run.events, { at, code: 'committed' }],
+      updatedAt: at,
+    });
+  } else {
+    // What members are served from now on: this run's set, plus every edge of
+    // the previous commit still published (a replacement joins the pool beside
+    // the committed edges; the replace or unpublish that retires them is its own
+    // decision), so a later approval never mistakes a served edge for a candidate.
+    const kept: string[] = [];
+    for (const id of intent.approved?.committed.edgeIds ?? []) {
+      const e = await ctx.db.get(id as Id<'edges'>);
+      if (e && e.publication === 'published' && e.status === 'active') kept.push(id);
+    }
+    committed = {
+      hostUuids: run.resources.hostUuids,
+      edgeIds: [...new Set([...kept, ...run.resources.edgeIds, ...(extra.edgeIds ?? [])])],
+    };
+    await ctx.db.patch(run._id, {
+      state: 'committed',
+      stage: 'done',
+      resources: committed,
+      events: [...run.events, { at, code: 'committed' }],
+      updatedAt: at,
+    });
   }
-  const committed = {
-    hostUuids: run.resources.hostUuids,
-    edgeIds: [...new Set([...kept, ...run.resources.edgeIds, ...(extra.edgeIds ?? [])])],
-  };
-  await ctx.db.patch(run._id, {
-    state: 'committed',
-    stage: 'done',
-    resources: committed,
-    events: [...run.events, { at, code: 'committed' }],
-    updatedAt: at,
-  });
   await ctx.db.patch(intent._id, {
     approved: {
       machineRevision: cand.machineRevision,
@@ -1373,15 +1462,15 @@ async function servedListenersOf(
 ): Promise<ReviewListener[]> {
   const out: ReviewListener[] = [];
   for (const l of await frontedListenersOf(ctx, intent)) {
-    const e = l.templateEdgeId ? await ctx.db.get(l.templateEdgeId) : null;
+    if (l.fromRun) continue;
     out.push({
       listenerKey: l.listenerKey,
-      accountId: e?.accountId ? String(e.accountId) : null,
-      locationId: e?.locationId ? String(e.locationId) : null,
-      templateHash: e?.templateHash ?? null,
+      accountId: l.accountId,
+      locationId: l.locationId,
+      templateHash: l.templateHash,
     });
   }
-  return out;
+  return dedupeReviewListeners(out);
 }
 
 /** Whether publishing on this listener of a live node would add or move a committed Host pointer. */

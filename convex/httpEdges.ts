@@ -363,6 +363,10 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
         }),
       );
     }
+    if (c === 'providers' && !d) {
+      const r = await ctx.runQuery(internal.edgeProviderSets.view, { relayId: id<'relays'>(b) });
+      return r ? json(r) : notFound();
+    }
     if (c === 'timeline' && !d)
       return json(
         await ctx.runQuery(internal.edgeOperator.timeline, {
@@ -633,12 +637,17 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
     const listenerKeys = Array.isArray(body.listenerKeys)
       ? { listenerKeys: body.listenerKeys.filter((x): x is string => typeof x === 'string') }
       : {};
+    // The provider set: the locations to protect the node from, in set order.
+    const picks = Array.isArray(body.picks)
+      ? body.picks.filter((x): x is string => typeof x === 'string' && x.length > 0)
+      : null;
     if (b === 'plan' && !c) {
       return json(
         await ctx.runAction(internal.edgeSetupPlan.plan, {
           backendServerId: id<'backendServers'>(String(body.backendServerId ?? '')),
           nodeUuid: String(body.nodeUuid ?? ''),
           ...listenerKeys,
+          ...(picks && picks.length > 0 ? { picks } : {}),
         }),
       );
     }
@@ -651,6 +660,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           backendServerId: id<'backendServers'>(String(body.backendServerId ?? '')),
           nodeUuid: String(body.nodeUuid ?? ''),
           ...listenerKeys,
+          ...(picks && picks.length > 0 ? { picks: picks.map((p) => id<'edgeLocations'>(p)) } : {}),
           ...(typeof body.accountId === 'string' && body.accountId
             ? { accountId: id<'edgeProviderAccounts'>(body.accountId) }
             : {}),
@@ -681,6 +691,18 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
             : {}),
           ...(typeof body.locationId === 'string' && body.locationId
             ? { locationId: id<'edgeLocations'>(body.locationId) }
+            : {}),
+          ...(body.replacePick && typeof body.replacePick === 'object'
+            ? {
+                replacePick: {
+                  from: id<'edgeLocations'>(
+                    String((body.replacePick as Record<string, unknown>).from ?? ''),
+                  ),
+                  to: id<'edgeLocations'>(
+                    String((body.replacePick as Record<string, unknown>).to ?? ''),
+                  ),
+                },
+              }
             : {}),
           ...act,
         }),
@@ -933,6 +955,10 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
             typeof body.locationId === 'string' && body.locationId
               ? id<'edgeLocations'>(body.locationId)
               : undefined,
+          spareEdgeId:
+            typeof body.spareEdgeId === 'string' && body.spareEdgeId
+              ? id<'edges'>(body.spareEdgeId)
+              : undefined,
           templateId:
             typeof body.templateId === 'string' && body.templateId
               ? id<'edgeTemplates'>(body.templateId)
@@ -996,11 +1022,42 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
             ...act,
           }),
         );
+      case 'providers': {
+        // The node's provider set: add or remove locations (a live enrolled
+        // node gets its new addresses through an `add` run).
+        const ids = (x: unknown) =>
+          Array.isArray(x)
+            ? x
+                .filter((y): y is string => typeof y === 'string' && y.length > 0)
+                .map((y) => id<'edgeLocations'>(y))
+            : undefined;
+        return json(
+          await ctx.runMutation(internal.edgeProviderSets.change, {
+            relayId,
+            ...(ids(body.add) ? { add: ids(body.add) } : {}),
+            ...(ids(body.remove) ? { remove: ids(body.remove) } : {}),
+            ...act,
+          }),
+        );
+      }
       case 'reprotect':
         // "Protect again" on a live, bound enrolled node: a re-protect run
         // (fresh candidates, Try it, the approval when one is needed). Members
         // keep the committed delivery; a cancel drops only its candidates.
-        return json(await ctx.runMutation(internal.edgeSetupRuns.reprotect, { relayId, ...act }));
+        return json(
+          await ctx.runMutation(internal.edgeSetupRuns.reprotect, {
+            relayId,
+            ...(body.mode === 'add' || body.mode === 'replace_all' ? { mode: body.mode } : {}),
+            ...(Array.isArray(body.addPicks)
+              ? {
+                  addPicks: body.addPicks
+                    .filter((x): x is string => typeof x === 'string' && x.length > 0)
+                    .map((x) => id<'edgeLocations'>(x)),
+                }
+              : {}),
+            ...act,
+          }),
+        );
       case 'serve-direct':
         // "Serve this node directly again": the restore workflow with purpose
         // `release_requirement` (binding released BEFORE any direct Host is
@@ -1072,7 +1129,11 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
             ...act,
           }),
         );
-      case 'provision':
+      case 'provision': {
+        // An explicit location: an untrusted one only for a spare that waits
+        // unpublished (its first tested address trusts it).
+        const locationId =
+          typeof body.locationId === 'string' ? id<'edgeLocations'>(body.locationId) : undefined;
         return json(
           await ctx.runMutation(internal.edgeRotations.start, {
             relayId,
@@ -1083,9 +1144,12 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
               typeof body.listenerId === 'string'
                 ? id<'relayListeners'>(body.listenerId)
                 : undefined,
+            ...(locationId ? { requestedLocationId: locationId } : {}),
+            ...(locationId && body.publish === false ? { allowUnqualified: true } : {}),
             ...act,
           }),
         );
+      }
       case 'rotate':
       case 'burn':
         return json(
@@ -1099,6 +1163,13 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
             // proof, the TLS chain and every binding check still apply.
             forceGeoEvidence: body.forceGeoEvidence === true,
             targetEdgeId: id<'edges'>(String(body.edgeId ?? '')),
+            // An explicit spare (L4) or location (an L7 front); Automatic otherwise.
+            ...(typeof body.spareEdgeId === 'string'
+              ? { requestedSpareEdgeId: id<'edges'>(body.spareEdgeId) }
+              : {}),
+            ...(typeof body.locationId === 'string'
+              ? { requestedLocationId: id<'edgeLocations'>(body.locationId) }
+              : {}),
             ...act,
           }),
         );

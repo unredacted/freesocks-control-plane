@@ -106,6 +106,10 @@ import {
 import { isDirect, modeEntry, modeSlug, nodeGateFor } from './nodeIntents';
 import { setupReady } from './backendSetup';
 import { runningRenameOf } from './lib/backend/nodeAliases';
+import { MAX_PROVIDER_PICKS, coverTargets, requirementOf } from './lib/edges/providerSet';
+import { carries, setStateOf } from './lib/edges/setState';
+import { locationKeyOf } from './lib/edges/locations';
+import type { EdgeProviderId } from './lib/edgeProviderIds';
 
 type Run = Doc<'edgeSetupRuns'>;
 
@@ -121,6 +125,27 @@ export function runPick(r: Pick<Run, 'picks' | 'accountId'>): {
   const p = r.picks?.[0];
   if (p) return { accountId: p.accountId, locationId: p.locationId };
   return { accountId: r.accountId ?? null, locationId: null };
+}
+
+/** Every pick of the run, in set order (a row from before picks: its one account). */
+export function runPicks(r: Pick<Run, 'picks' | 'accountId'>): Array<{
+  accountId: Id<'edgeProviderAccounts'> | null;
+  locationId: Id<'edgeLocations'> | null;
+}> {
+  if (r.picks && r.picks.length > 0)
+    return r.picks.map((p) => ({ accountId: p.accountId, locationId: p.locationId }));
+  return [runPick(r)];
+}
+
+/** The (account, location) of one target: its own location's pick, else the run's first. */
+function pickOfTarget(
+  r: Pick<Run, 'picks' | 'accountId'>,
+  entry: Pick<RunListener, 'locationId'>,
+): { accountId: Id<'edgeProviderAccounts'> | null; locationId: Id<'edgeLocations'> | null } {
+  const all = runPicks(r);
+  return (
+    (entry.locationId ? all.find((p) => p.locationId === entry.locationId) : undefined) ?? all[0]!
+  );
 }
 
 /** A run plan's offer of one location (the run was given that location; nothing else is judged). */
@@ -400,14 +425,32 @@ export function mapRunAdmin(r: Run, enrolled: RunEnrolled | null = null) {
     planRevision: r.planRevision,
     keepDirect: r.keepDirect === true,
     kind: r.kind ?? ('protect' as const),
+    // One line per target: a transport has one address per pick of its set.
     listeners: r.listeners.map((l) => ({
       listenerKey: l.listenerKey,
+      locationId: (l.locationId as string | undefined) ?? null,
       layer: l.layer,
       edgeId: (l.edgeId as string | undefined) ?? null,
       verify: l.verify,
       published: l.published,
       transport: transportOf(plan, l.listenerKey),
     })),
+    // The set's picks, with the plan's words for them.
+    picks: runPicks(r).map((p) => {
+      const shown = plan.set?.picks.find((x) => x.locationId === (p.locationId as string | null));
+      const account = plan.accounts.find((a) => a.id === (p.accountId as string | null));
+      return {
+        locationId: (p.locationId as string | null) ?? null,
+        accountId: (p.accountId as string | null) ?? null,
+        accountName: account?.name ?? null,
+        provider: account?.provider ?? shown?.provider ?? null,
+        label:
+          shown?.label ??
+          account?.locations?.find((l) => l.id === (p.locationId as string | null))?.label ??
+          null,
+      };
+    }),
+    reduced: plan.set?.reduced ?? [],
     testLinks: (r.testLinks ?? []).map((t) => ({
       edgeId: t.edgeId as string,
       listenerKey: t.listenerKey,
@@ -449,6 +492,7 @@ export function mapRunAdmin(r: Run, enrolled: RunEnrolled | null = null) {
         name: a.name,
         provider: a.provider,
         compatible: a.compatible,
+        carries: a.carries ?? null,
         locations: (a.locations ?? []).map((l) => ({
           id: l.id,
           label: l.label,
@@ -691,29 +735,32 @@ export const relayContext = internalQuery({
       edges,
       cfg,
       frontedEnrolled: await frontedEnrolled(ctx, run.backendServerId, run.nodeName),
+      // Keyed by the target's edge: a transport may have one address per pick.
       verification: Object.fromEntries(
-        run.listeners.map((rl) => {
-          const l = listeners.find((x) => x.listenerKey === rl.listenerKey);
-          const e = rl.edgeId ? edges.find((x) => x._id === rl.edgeId) : undefined;
-          return [
-            rl.listenerKey,
-            {
-              current: !!l && !!e && (!needsEndpointVerification(e) || verificationCurrent(e, l)),
-              // Stale only because the enrolled node's REALITY key moved.
-              keyChanged:
-                !!l &&
-                !!e &&
-                needsEndpointVerification(e) &&
-                verificationStaleReason(e, l) === 'reality_key_changed',
-              proofOk: !!e && l7ProofCurrent(e, l ?? null, now),
-              // In the pool, on a listener whose FCP Host exists (its template
-              // edge). A live node's replacement joins the pool beside the
-              // committed template without moving the Host pointer.
-              published: !!l && !!e && !!l.templateEdgeId && e.publication === 'published',
-              live: !!e && LIVE_CANDIDATE.has(e.status),
-            },
-          ];
-        }),
+        run.listeners
+          .filter((rl) => !!rl.edgeId)
+          .map((rl) => {
+            const l = listeners.find((x) => x.listenerKey === rl.listenerKey);
+            const e = edges.find((x) => x._id === rl.edgeId);
+            return [
+              rl.edgeId as string,
+              {
+                current: !!l && !!e && (!needsEndpointVerification(e) || verificationCurrent(e, l)),
+                // Stale only because the enrolled node's REALITY key moved.
+                keyChanged:
+                  !!l &&
+                  !!e &&
+                  needsEndpointVerification(e) &&
+                  verificationStaleReason(e, l) === 'reality_key_changed',
+                proofOk: !!e && l7ProofCurrent(e, l ?? null, now),
+                // In the pool, on a listener whose FCP Host exists (its template
+                // edge). A live node's replacement joins the pool beside the
+                // committed template without moving the Host pointer.
+                published: !!l && !!e && !!l.templateEdgeId && e.publication === 'published',
+                live: !!e && LIVE_CANDIDATE.has(e.status),
+              },
+            ];
+          }),
       ) as Record<
         string,
         {
@@ -727,6 +774,19 @@ export const relayContext = internalQuery({
     };
   },
 });
+
+/** A target's verification facts (its edge's), or undefined while it has no edge. */
+function vOf<V>(
+  c: { verification: Record<string, V> },
+  entry: Pick<RunListener, 'edgeId'>,
+): V | undefined {
+  return entry.edgeId ? c.verification[entry.edgeId as string] : undefined;
+}
+
+/** A target's identity: its transport and its pick (a transport has one address per pick). */
+export function targetKeyOf(entry: Pick<RunListener, 'listenerKey' | 'locationId'>): string {
+  return `${entry.listenerKey}@${(entry.locationId as string | undefined) ?? ''}`;
+}
 
 function l7ProofCurrent(e: Edge, l: Listener | null, now: number): boolean {
   if ((e.layer ?? edgeLayerOf(e.provider)) !== 'l7') return true;
@@ -752,6 +812,12 @@ export const insert = internalMutation({
   args: {
     plan: v.string(),
     planHash: v.string(),
+    /** The set's picks (locations), in set order, and the targets the plan's cover asked for. */
+    picks: v.optional(v.array(v.id('edgeLocations'))),
+    targets: v.optional(
+      v.array(v.object({ listenerKey: v.string(), locationId: v.id('edgeLocations') })),
+    ),
+    /** One pick the old way: an account (its default location) or a location. */
     accountId: v.optional(v.id('edgeProviderAccounts')),
     locationId: v.optional(v.id('edgeLocations')),
     approvedHideUuids: v.array(v.string()),
@@ -782,27 +848,55 @@ export const insert = internalMutation({
         code: 'edge.panel_op_running',
         message: 'This node is being renamed; wait for it to finish',
       });
-    const named = a.locationId ? await ctx.db.get(a.locationId) : null;
-    if (a.locationId && !named)
-      throw new ConvexError({ code: 'not_found', message: 'Location not found' });
-    const accountId = a.accountId ?? named?.accountId;
-    if (!accountId)
-      throw new ConvexError({ code: 'validation', message: 'Name an account or a location' });
-    const account = await ctx.db.get(accountId);
-    if (!account) throw new ConvexError({ code: 'not_found', message: 'Account not found' });
-    const location = await pickLocationOf(ctx.db, account, a.locationId);
-    if (!location)
-      throw new ConvexError({
-        code: 'edge.account_incompatible',
-        message: 'The account has no such location',
-      });
-    const offered = plan.accounts.find((x) => x.id === (accountId as string));
-    const offeredLocation = offered?.locations?.find((l) => l.id === (location._id as string));
-    if (!offered?.compatible || (offered.locations && !offeredLocation?.compatible))
-      throw new ConvexError({
-        code: 'edge.account_incompatible',
-        message: 'The account cannot front this node from that location',
-      });
+    // The picks: the set the plan was shown with, or one pick the old way.
+    let pickIds = a.picks ?? [];
+    if (pickIds.length === 0) {
+      const named = a.locationId ? await ctx.db.get(a.locationId) : null;
+      if (a.locationId && !named)
+        throw new ConvexError({ code: 'not_found', message: 'Location not found' });
+      const accountId = a.accountId ?? named?.accountId;
+      if (!accountId)
+        throw new ConvexError({ code: 'validation', message: 'Name an account or a location' });
+      const account = await ctx.db.get(accountId);
+      if (!account) throw new ConvexError({ code: 'not_found', message: 'Account not found' });
+      const location = await pickLocationOf(ctx.db, account, a.locationId);
+      if (!location)
+        throw new ConvexError({
+          code: 'edge.account_incompatible',
+          message: 'The account has no such location',
+        });
+      pickIds = [location._id];
+    }
+    const picks: Array<{ location: Doc<'edgeLocations'>; account: Doc<'edgeProviderAccounts'> }> =
+      [];
+    for (const id of pickIds) {
+      const location = await ctx.db.get(id);
+      const account = location ? await ctx.db.get(location.accountId) : null;
+      if (!location || !account)
+        throw new ConvexError({ code: 'not_found', message: 'Location not found' });
+      const offered = plan.accounts.find((x) => x.id === (account._id as string));
+      const offeredLocation = offered?.locations?.find((l) => l.id === (location._id as string));
+      if (!offered?.compatible || (offered.locations && !offeredLocation?.compatible))
+        throw new ConvexError({
+          code: 'edge.account_incompatible',
+          message: 'An account cannot front this node from that location',
+        });
+      picks.push({ location, account });
+    }
+    // The run's targets: the plan's cover, else (the old single pick) every
+    // required transport on that one location.
+    const targets =
+      a.targets ??
+      plan.requiredListeners.map((listenerKey) => ({
+        listenerKey,
+        locationId: picks[0]!.location._id,
+      }));
+    for (const t of targets)
+      if (!picks.some((p) => p.location._id === t.locationId))
+        throw new ConvexError({
+          code: 'validation',
+          message: 'A target names a location not picked',
+        });
     if (a.keepDirect === true && (await frontedEnrolled(ctx, backendServerId, plan.nodeName)))
       refuseKeepDirect();
     const now = Date.now();
@@ -828,15 +922,16 @@ export const insert = internalMutation({
         if (stage === 'done') stage = 'go_live';
       }
     }
-    const layer = edgeLayerOf(account.provider);
+    const layerOf = (locationId: Id<'edgeLocations'>) =>
+      edgeLayerOf(picks.find((p) => p.location._id === locationId)!.account.provider);
     const id = await ctx.db.insert('edgeSetupRuns', {
       relayId,
       relaySlug: slug,
       backendServerId,
       nodeName: plan.nodeName,
       nodeUuid: plan.nodeUuid,
-      picks: [{ locationId: location._id, accountId: account._id }],
-      plan: a.plan,
+      picks: picks.map((p) => ({ locationId: p.location._id, accountId: p.account._id })),
+      plan: JSON.stringify(plan),
       planHash: a.planHash,
       planRevision: 1,
       approvedHideUuids: a.approvedHideUuids,
@@ -845,10 +940,10 @@ export const insert = internalMutation({
       state: 'running',
       generation: 1,
       stepVersion: 1,
-      listeners: plan.requiredListeners.map((listenerKey) => ({
-        listenerKey,
-        locationId: location._id,
-        layer,
+      listeners: targets.map((t) => ({
+        listenerKey: t.listenerKey,
+        locationId: t.locationId,
+        layer: layerOf(t.locationId),
         verify: 'pending' as const,
         published: false,
       })),
@@ -866,8 +961,10 @@ export const insert = internalMutation({
       {
         stage,
         listeners: plan.requiredListeners.length,
-        accountName: account.name,
-        provider: account.provider,
+        accountName: picks[0]!.account.name,
+        provider: picks[0]!.account.provider,
+        picks: picks.length,
+        targets: targets.length,
         approvedHides: a.approvedHideUuids.length,
         keepDirect: a.keepDirect === true,
       },
@@ -1019,12 +1116,13 @@ async function releaseReprotectOrigin(ctx: MutationCtx, run: Run): Promise<void>
  * Room for a re-protect's new addresses. Each one is published BESIDE what
  * members already hold, so a full pool would keep every candidate a standby
  * (`pool_full_standby`) and the run could never go live. The pool is widened
- * to what is published, plus one slot per transport of the run that has no
- * published address of the run yet, plus the slots reserved for uncovered
- * listeners (`allocatePoolIndex`), bounded by MAX_DESIRED_PUBLISHED: past that
- * `edge.reprotect_no_room`. Go-live retires the replaced addresses and gives
- * the room back (`retireReplacedEdges`), and so does a run that ends without
- * going live.
+ * to what is published, plus one slot per target of the run that has no
+ * published address yet, plus the slots the coverage deficit reserves
+ * (`allocatePoolIndex`). The run's own targets are TEMPORARY room above the
+ * cap (MAX_DESIRED_PUBLISHED): any set that fits the steady state can be
+ * protected again; past that `edge.reprotect_no_room`. Go-live retires the
+ * replaced addresses and gives the room back (`retireReplacedEdges`), and so
+ * does a run that ends without going live.
  */
 async function ensureReprotectRoom(
   ctx: MutationCtx,
@@ -1037,7 +1135,7 @@ async function ensureReprotectRoom(
   ).length;
   const needed = publishedCount(relay.publishedEdgeIds) + newAddresses + uncovered;
   if (needed <= relay.desiredPublished) return;
-  if (needed > MAX_DESIRED_PUBLISHED)
+  if (needed > MAX_DESIRED_PUBLISHED + newAddresses)
     throw new ConvexError({
       code: 'edge.reprotect_no_room',
       message: `This origin has no room for a new address per transport (at most ${MAX_DESIRED_PUBLISHED} in use); remove an address first`,
@@ -1098,6 +1196,7 @@ async function retireReplacedEdges(ctx: MutationCtx, run: Run, relay: Relay): Pr
   const keep = new Set(run.listeners.map((l) => l.edgeId).filter((e): e is Id<'edges'> => !!e));
   const listeners = await listenersOf(ctx, relay._id);
   const retire: Edge[] = [];
+  const seen = new Set<string>();
   for (const entry of run.listeners) {
     const l = listeners.find((x) => x.listenerKey === entry.listenerKey && !x.retired);
     const fresh = entry.edgeId ? await ctx.db.get(entry.edgeId) : null;
@@ -1105,7 +1204,10 @@ async function retireReplacedEdges(ctx: MutationCtx, run: Run, relay: Relay): Pr
     for (const id of relay.publishedEdgeIds) {
       if (!id || keep.has(id)) continue;
       const e = await ctx.db.get(id);
-      if (e && e.listenerId === l._id && e.publication === 'published') retire.push(e);
+      if (e && e.listenerId === l._id && e.publication === 'published' && !seen.has(id)) {
+        seen.add(id);
+        retire.push(e);
+      }
     }
   }
   for (const e of retire) await unpublishFromPool(ctx, relay, e, {});
@@ -1113,8 +1215,26 @@ async function retireReplacedEdges(ctx: MutationCtx, run: Run, relay: Relay): Pr
   return retire.length;
 }
 
+/**
+ * The provider set a run leaves the node with: its picks in order, an `add`
+ * re-protect's after the picks the node already had. A pick already in the
+ * set keeps its `addedAt`.
+ */
+function providerSetAfter(relay: Relay, r: Run, now: number): NonNullable<Relay['providerSet']> {
+  const before = relay.providerSet ?? [];
+  const add = parsePlan(r).reprotect?.mode === 'add';
+  const out: NonNullable<Relay['providerSet']> = add ? [...before] : [];
+  for (const p of runPicks(r)) {
+    if (!p.locationId || out.some((x) => x.locationId === p.locationId)) continue;
+    const kept = before.find((x) => x.locationId === p.locationId);
+    out.push({ locationId: p.locationId, addedAt: kept?.addedAt ?? now });
+  }
+  return out;
+}
+
 function verdictsOf(run: Run): string {
-  return run.listeners.map((l) => `${l.listenerKey}:${l.verify}`).join(',');
+  const many = new Set(run.listeners.map((l) => l.locationId ?? '')).size > 1;
+  return run.listeners.map((l) => `${many ? targetKeyOf(l) : l.listenerKey}:${l.verify}`).join(',');
 }
 
 /** The step action stamps its start so `listStale` can tell "never started" from "started and hung". */
@@ -1141,6 +1261,8 @@ export const startStageRotation = internalMutation({
     stepVersion: v.number(),
     kind: v.union(v.literal('provision'), v.literal('publish')),
     listenerKey: v.string(),
+    /** The target's pick (a transport has one address per pick). */
+    locationId: v.optional(v.id('edgeLocations')),
   },
   handler: async (ctx, a) => {
     const r = await guard(ctx, a.runId, a.stepVersion);
@@ -1148,7 +1270,13 @@ export const startStageRotation = internalMutation({
     const listener = (await listenersOf(ctx, r.relayId)).find(
       (l) => l.listenerKey === a.listenerKey && !l.retired,
     );
-    const entry = r.listeners.find((l) => l.listenerKey === a.listenerKey);
+    const entry =
+      r.listeners.find(
+        (l) =>
+          l.listenerKey === a.listenerKey &&
+          (l.locationId ?? null) === (a.locationId ?? null) &&
+          (a.kind === 'publish' ? !l.published : !l.edgeId),
+      ) ?? r.listeners.find((l) => l.listenerKey === a.listenerKey);
     if (!listener || !entry) return { ok: false as const, code: 'listener_not_found' };
     const now = Date.now();
     const next = r.stepVersion + 1;
@@ -1174,8 +1302,9 @@ export const startStageRotation = internalMutation({
         listenerId: listener._id,
         ...(a.kind === 'provision'
           ? {
-              requestedAccountId: runPick(r).accountId ?? undefined,
-              requestedLocationId: entry.locationId ?? runPick(r).locationId ?? undefined,
+              requestedAccountId: pickOfTarget(r, entry).accountId ?? undefined,
+              requestedLocationId:
+                entry.locationId ?? pickOfTarget(r, entry).locationId ?? undefined,
               allowUnqualified: true,
               publishOnDone: false,
             }
@@ -1350,7 +1479,20 @@ export const onRotationTerminal = internalMutation({
     const now = Date.now();
     const next = r.stepVersion + 1;
     const key = rot.listenerId ? ((await ctx.db.get(rot.listenerId))?.listenerKey ?? null) : null;
-    const entryIdx = r.listeners.findIndex((l) => l.listenerKey === key);
+    // A provision fills the target of its listener AND its location (a
+    // transport has one address per pick); a publish, the target of its edge.
+    const entryIdx =
+      rot.kind === 'publish'
+        ? r.listeners.findIndex((l) => !!rot.toEdgeId && l.edgeId === rot.toEdgeId)
+        : (() => {
+            const want = (rot.requestedLocationId as string | undefined) ?? null;
+            const exact = r.listeners.findIndex(
+              (l) => l.listenerKey === key && !l.edgeId && (l.locationId ?? null) === want,
+            );
+            return exact >= 0
+              ? exact
+              : r.listeners.findIndex((l) => l.listenerKey === key && !l.edgeId);
+          })();
     const listeners = r.listeners.map((l) => ({ ...l }));
     const base = { expect: undefined, stepVersion: next, updatedAt: now };
     const outcome = rot.outcome ?? rot.phase;
@@ -1545,13 +1687,19 @@ async function stagePrepare(ctx: ActionCtx, run: Run): Promise<null> {
   const plan = parsePlan(run);
   const ctxRow = await ctx.runQuery(internal.edgeSetupRuns.prepareContext, { runId: run._id });
   if (!ctxRow.admitted) return needsYou(ctx, run, 'maintenance');
-  if (!ctxRow.account) return needsYou(ctx, run, 'account_incompatible', 'account_not_found');
-  if (!ctxRow.accountTested) return needsYou(ctx, run, 'account_untested');
-  if (!ctxRow.accountEnabled) return needsYou(ctx, run, 'account_incompatible', 'account_disabled');
-  if (!ctxRow.location) return needsYou(ctx, run, 'account_incompatible', 'location_not_found');
-  const offered = plan.accounts.find((a) => a.id === (runPick(run).accountId as string | null));
-  if (!offered?.compatible)
-    return needsYou(ctx, run, 'account_incompatible', offered?.reasons[0] ?? 'not_offered');
+  // Every pick of the run: its account present, tested, enabled, its location
+  // switched on, and the plan still offering it.
+  for (const p of ctxRow.picks) {
+    if (!p.account) return needsYou(ctx, run, 'account_incompatible', 'account_not_found');
+    if (!p.accountTested) return needsYou(ctx, run, 'account_untested');
+    if (!p.accountEnabled) return needsYou(ctx, run, 'account_incompatible', 'account_disabled');
+    if (!p.location) return needsYou(ctx, run, 'account_incompatible', 'location_not_found');
+    const offered = plan.accounts.find((a) => a.id === p.accountId);
+    if (!offered?.compatible)
+      return needsYou(ctx, run, 'account_incompatible', offered?.reasons[0] ?? 'not_offered');
+  }
+  if (ctxRow.picks.length === 0)
+    return needsYou(ctx, run, 'account_incompatible', 'account_not_found');
   let relayId = run.relayId;
   let relaySlug = run.relaySlug;
   if (!relayId) {
@@ -1569,9 +1717,14 @@ async function stagePrepare(ctx: ActionCtx, run: Run): Promise<null> {
       const specs = plan.inbounds
         .filter((i) => plan.requiredListeners.includes(i.listenerKey))
         .map((i) => i.listenerSpec as ListenerSpecInput);
+      // Room for every target (a transport may get one address per pick).
       const desired = Math.min(
         MAX_DESIRED_PUBLISHED,
-        Math.max(ctxRow.desiredPublishedDefault, plan.requiredListeners.length),
+        Math.max(
+          ctxRow.desiredPublishedDefault,
+          plan.requiredListeners.length,
+          run.listeners.length,
+        ),
       );
       let slug = plan.relaySlug;
       let created: { id: Id<'relays'> } | null = null;
@@ -1617,11 +1770,15 @@ async function stagePrepare(ctx: ActionCtx, run: Run): Promise<null> {
       relaySlug = slug;
     }
   }
-  const layer = edgeLayerOf(ctxRow.account.provider);
+  // Each target's layer is its pick's provider's.
+  const layerOf = (locationId: Id<'edgeLocations'> | undefined) => {
+    const p = ctxRow.picks.find((x) => x.locationId === (locationId ?? null)) ?? ctxRow.picks[0]!;
+    return edgeLayerOf(p.account!.provider);
+  };
   return advance(ctx, run, {
     relayId,
     relaySlug,
-    listeners: run.listeners.map((l) => ({ ...l, layer })),
+    listeners: run.listeners.map((l) => ({ ...l, layer: layerOf(l.locationId) })),
     event: { level: 'info', code: 'prepared', detail: relaySlug },
   });
 }
@@ -1630,19 +1787,26 @@ export const prepareContext = internalQuery({
   args: { runId: v.id('edgeSetupRuns') },
   handler: async (ctx, { runId }) => {
     const run = (await ctx.db.get(runId))!;
-    const pick = runPick(run);
-    const account = pick.accountId ? await ctx.db.get(pick.accountId) : null;
-    const location = account ? await pickLocationOf(ctx.db, account, pick.locationId) : null;
+    const picks = [];
+    for (const pick of runPicks(run)) {
+      const account = pick.accountId ? await ctx.db.get(pick.accountId) : null;
+      const location = account ? await pickLocationOf(ctx.db, account, pick.locationId) : null;
+      picks.push({
+        accountId: (pick.accountId as string | null) ?? null,
+        locationId: (location?._id as Id<'edgeLocations'> | undefined) ?? pick.locationId ?? null,
+        account: account ? { provider: account.provider, name: account.name } : null,
+        location: location && location.enabled ? { id: location._id, label: location.label } : null,
+        accountTested: !!account && accountTested(account),
+        accountEnabled: !!account && account.enabled,
+      });
+    }
     const cfg = await resolveEdgeConfig(ctx.db);
     const existing = run.relayId
       ? await ctx.db.get(run.relayId)
       : await relayForBackendNode(ctx.db, run.backendServerId, run.nodeName);
     return {
       admitted: await admitted(ctx.db),
-      account: account ? { provider: account.provider, name: account.name } : null,
-      location: location && location.enabled ? { id: location._id, label: location.label } : null,
-      accountTested: !!account && accountTested(account),
-      accountEnabled: !!account && account.enabled,
+      picks,
       desiredPublishedDefault: cfg.desiredPublishedDefault,
       existingRelay: existing
         ? {
@@ -1694,15 +1858,24 @@ async function stageProvision(ctx: ActionCtx, run: Run): Promise<null> {
   // address with a fresh test link (after a REALITY key change, a retest of a
   // committed address could not be proven by a named connection).
   const reprotect = run.kind === 'reprotect';
-  const pick = runPick(run);
+  // Each target reuses at most one edge, and no edge serves two targets.
+  const taken = new Set(
+    run.listeners
+      .filter(
+        (l) => l.edgeId && c.edges.some((e) => e._id === l.edgeId && LIVE_CANDIDATE.has(e.status)),
+      )
+      .map((l) => l.edgeId as string),
+  );
   const listeners = run.listeners.map((l) => {
     const row = c.listeners.find((x) => x.listenerKey === l.listenerKey);
     const own = l.edgeId ? c.edges.find((e) => e._id === l.edgeId) : undefined;
     if (own && LIVE_CANDIDATE.has(own.status)) return { ...l };
+    const pick = pickOfTarget(run, l);
     const reuse =
       row && !reprotect
         ? c.edges.find(
             (e) =>
+              !taken.has(e._id as string) &&
               e.listenerId === row._id &&
               LIVE_CANDIDATE.has(e.status) &&
               (e.publication === 'unpublished' || e.publication === 'published') &&
@@ -1712,6 +1885,7 @@ async function stageProvision(ctx: ActionCtx, run: Run): Promise<null> {
                 (e.locationId ?? null) === (l.locationId ?? pick.locationId)),
           )
         : undefined;
+    if (reuse) taken.add(reuse._id as string);
     return { ...l, edgeId: reuse?._id, verify: 'pending' as const };
   });
   const missing = listeners.find((l) => !l.edgeId);
@@ -1731,6 +1905,7 @@ async function stageProvision(ctx: ActionCtx, run: Run): Promise<null> {
     stepVersion: fresh.stepVersion,
     kind: 'provision',
     listenerKey: missing.listenerKey,
+    ...(missing.locationId ? { locationId: missing.locationId } : {}),
   });
   return null;
 }
@@ -1751,7 +1926,7 @@ async function stageVerify(ctx: ActionCtx, run: Run): Promise<null> {
     if (l.verify !== 'pending') continue;
     if (!l.edgeId) return tr(ctx, run, { stage: 'provision', state: 'running', scheduleMs: 0 });
     if (l.layer === 'l7') {
-      if (c.verification[l.listenerKey]?.proofOk) {
+      if (vOf(c, l)?.proofOk) {
         l.verify = 'verified';
         continue;
       }
@@ -1807,7 +1982,7 @@ async function pendingTestLinks(
   const links: NonNullable<Run['testLinks']> = [];
   for (const l of run.listeners) {
     if (l.layer !== 'l4' || !l.edgeId) continue;
-    if (c.verification[l.listenerKey]?.current) continue;
+    if (vOf(c, l)?.current) continue;
     const edge = c.edges.find((e) => e._id === l.edgeId);
     if (!edge) continue;
     if (edge.publication === 'published') {
@@ -1861,9 +2036,7 @@ async function stageTryIt(ctx: ActionCtx, run: Run): Promise<null> {
   const links = await pendingTestLinks(ctx, run, c);
   if (links.length === 0) {
     const listeners = run.listeners.map((l) =>
-      l.layer === 'l4' && c.verification[l.listenerKey]?.current
-        ? { ...l, verify: 'verified' as const }
-        : l,
+      l.layer === 'l4' && vOf(c, l)?.current ? { ...l, verify: 'verified' as const } : l,
     );
     return advance(ctx, run, { listeners, testLinks: null });
   }
@@ -1880,10 +2053,8 @@ function tryItDetail(
   c: { verification: Record<string, { current: boolean; keyChanged: boolean }> },
   count: number,
 ): string {
-  const pending = run.listeners.filter(
-    (l) => l.layer === 'l4' && !c.verification[l.listenerKey]?.current,
-  );
-  return pending.length > 0 && pending.every((l) => c.verification[l.listenerKey]?.keyChanged)
+  const pending = run.listeners.filter((l) => l.layer === 'l4' && !vOf(c, l)?.current);
+  return pending.length > 0 && pending.every((l) => vOf(c, l)?.keyChanged)
     ? 'reality_key_changed'
     : `${count} endpoint(s)`;
 }
@@ -1905,7 +2076,7 @@ async function stagePublish(ctx: ActionCtx, run: Run): Promise<null> {
   }
   const listeners = run.listeners.map((l) => ({
     ...l,
-    published: c.verification[l.listenerKey]?.published === true,
+    published: vOf(c, l)?.published === true,
   }));
   const target = listeners.find((l) => !l.published);
   if (!target) {
@@ -1925,7 +2096,7 @@ async function stagePublish(ctx: ActionCtx, run: Run): Promise<null> {
   }
   if (!target.edgeId)
     return tr(ctx, run, { stage: 'provision', state: 'running', listeners, scheduleMs: 0 });
-  if (target.layer === 'l4' && !c.verification[target.listenerKey]?.current) {
+  if (target.layer === 'l4' && !vOf(c, target)?.current) {
     // The gate would refuse it: back to the card rather than a doomed start.
     return tr(ctx, run, { stage: 'try_it', state: 'running', listeners, scheduleMs: 0 });
   }
@@ -1943,6 +2114,7 @@ async function stagePublish(ctx: ActionCtx, run: Run): Promise<null> {
     stepVersion: fresh.stepVersion,
     kind: 'publish',
     listenerKey: target.listenerKey,
+    ...(target.locationId ? { locationId: target.locationId } : {}),
   });
   return null;
 }
@@ -1959,12 +2131,10 @@ async function stageHide(ctx: ActionCtx, run: Run): Promise<null> {
   // Before any Host is hidden: every L4 endpoint must still be confirmed for
   // the configuration it holds now (a listener change since the tick returns
   // it to the card).
-  const stale = run.listeners.filter(
-    (l) => l.layer === 'l4' && !c.verification[l.listenerKey]?.current,
-  );
+  const stale = run.listeners.filter((l) => l.layer === 'l4' && !vOf(c, l)?.current);
   if (stale.length > 0) {
     const links = await pendingTestLinks(ctx, run, c);
-    const detail = stale.every((l) => c.verification[l.listenerKey]?.keyChanged)
+    const detail = stale.every((l) => vOf(c, l)?.keyChanged)
       ? 'reality_key_changed'
       : `retest ${stale.map((l) => l.listenerKey).join(',')}`;
     return needsYou(ctx, run, 'try_it', detail, { testLinks: links });
@@ -2003,6 +2173,10 @@ async function stageRehearse(ctx: ActionCtx, run: Run): Promise<null> {
   const disabled = RENDER_CLIENT_FAMILIES.filter((f) => !c.cfg.render.clients[f].enabled);
   if (disabled.length > 0) return needsYou(ctx, run, 'family_disabled', disabled[0]);
   const attempts = (run.rehearsal?.attempts ?? 0) + 1;
+  // An enrolled node's activation records what members will get after the
+  // commit (the delivery snapshot); the rehearsal renders exactly that.
+  if (run.activationRunId)
+    await ctx.runMutation(internal.edgeSetupRuns.recordDeliverySnapshot, { runId: run._id });
   // An enrolled node rehearses ITS activation's candidates (the edges the
   // commit will promote), never the committed edges members hold now.
   const res = await ops.rehearse(ctx, {
@@ -2048,6 +2222,16 @@ async function stageRehearse(ctx: ActionCtx, run: Run): Promise<null> {
         event: { level: 'warn', code: 'dark_cohorts', detail: dark.join(',') },
         scheduleMs: 0,
       });
+    // Every failure is a body whose backup sits in its primary's failure
+    // domain although another is on offer: the run parks for the operator
+    // (more addresses of its own would not change the assignment; it never
+    // loops through provisioning).
+    if (res.failures.length > 0 && res.failures.every((f) => f.reason === 'resilience_short')) {
+      const f = res.failures[0]!;
+      return needsYou(ctx, run, 'resilience_short', `${f.cohortKey}/${f.format}`, {
+        rehearsal: rehearsalRecord(res, attempts, run),
+      });
+    }
     const f = res.failures[0];
     return needsYou(
       ctx,
@@ -2059,9 +2243,15 @@ async function stageRehearse(ctx: ActionCtx, run: Run): Promise<null> {
       },
     );
   }
+  // Bodies with no backup in another failure domain are reported, with why.
+  const reduced = [...new Set((res.reduced ?? []).map((r) => r.reason))];
   return advance(ctx, run, {
     rehearsal: rehearsalRecord(res, attempts, run),
-    event: { level: 'info', code: 'rehearsed', detail: `attempt ${attempts}` },
+    event: {
+      level: 'info',
+      code: 'rehearsed',
+      detail: `attempt ${attempts}${reduced.length > 0 ? `; reduced: ${reduced.join(',')}` : ''}`,
+    },
   });
 }
 
@@ -2175,6 +2365,54 @@ function rehearsalRecord(
     darkCohortKeys: run.rehearsal?.darkCohortKeys ?? [],
   };
 }
+
+/**
+ * The reviewed delivery snapshot of the activation this run is bound to: the
+ * addresses members are served now that go-live keeps (every one for an
+ * `add`; for a first protection or a `replace_all`, those on transports the
+ * run does not touch, since go-live retires the others) plus the run's
+ * candidates. Promotion
+ * commits exactly it (`promoteCandidate`); the rehearsal renders it. A run not
+ * bound to the node's current, running activation records nothing.
+ */
+export const recordDeliverySnapshot = internalMutation({
+  args: { runId: v.id('edgeSetupRuns') },
+  handler: async (ctx, { runId }) => {
+    const r = await ctx.db.get(runId);
+    if (!r?.activationRunId || !r.relayId) return null;
+    const act = await ctx.db.get(r.activationRunId);
+    if (!act || act.state !== 'running' || act.setupRunId !== r._id) return null;
+    const intent = await ctx.db.get(act.intentId);
+    if (!intent || intent.activation.currentRunId !== act._id) return null;
+    const candidates = r.listeners
+      .map((l) => l.edgeId as string | undefined)
+      .filter((e): e is string => !!e);
+    const add = parsePlan(r).reprotect?.mode === 'add';
+    const touched = new Set(
+      (await listenersOf(ctx, r.relayId))
+        .filter((l) => r.listeners.some((x) => x.listenerKey === l.listenerKey))
+        .map((l) => l._id as string),
+    );
+    // What members are served now: the origin's published, active edges that
+    // no activation holds back (an address published since the last commit
+    // under its approval counts too).
+    const relay = await ctx.db.get(r.relayId);
+    const gate = await nodeGateFor(ctx, r.backendServerId, r.nodeName);
+    const kept: string[] = [];
+    for (const id of relay?.publishedEdgeIds ?? []) {
+      if (!id || candidates.includes(id as string) || isCandidateEdge(gate, id as string)) continue;
+      const e = await ctx.db.get(id);
+      if (!e || e.publication !== 'published' || e.status !== 'active') continue;
+      if (!add && touched.has(e.listenerId as string)) continue;
+      kept.push(id as string);
+    }
+    await ctx.db.patch(act._id, {
+      delivery: { edgeIds: [...kept, ...candidates] },
+      updatedAt: Date.now(),
+    });
+    return null;
+  },
+});
 
 // --- stage 8: go live -------------------------------------------------------------------------------------
 
@@ -2311,6 +2549,10 @@ export const goLive = internalMutation({
           if (r.activationRunId && act.run._id !== r.activationRunId)
             return need('node_not_approved', 'servers.run_superseded');
           const p = await promoteCandidate(ctx, act.run, { edgeIds });
+          // What members would keep moved since the rehearsal: rehearse again
+          // for a new snapshot (never a block: nothing about the approval changed).
+          if (!p.ok && p.code === 'servers.delivery_changed')
+            return back('rehearse', 'delivery_changed');
           if (!p.ok) {
             // An obligation of the node still in flight settles by itself: go-live is tried again.
             if (p.code === 'servers.obligation_unresolved') {
@@ -2348,14 +2590,22 @@ export const goLive = internalMutation({
       }
     }
     await claimDeliveryBinding(ctx, relay);
-    // A re-protect's new addresses take the places of the ones they replace.
-    const retired = r.kind === 'reprotect' ? await retireReplacedEdges(ctx, r, relay) : 0;
+    // A re-protect's new addresses take the places of the ones they replace
+    // (`replace_all`); an `add` keeps every address and only gives back room.
+    let retired = 0;
+    if (r.kind === 'reprotect') {
+      if (parsePlan(r).reprotect?.mode === 'add') await restoreReprotectPool(ctx, r, relay);
+      else retired = await retireReplacedEdges(ctx, r, relay);
+    }
     await ctx.db.patch(relay._id, {
       setupOwned: undefined,
       setupStage: undefined,
       // The consented dark cohorts outlive the run: a later restore (remove
       // protection, release the requirement) must skip them or never pass.
       darkCohortKeys: r.rehearsal?.darkCohortKeys ?? [],
+      // The node's provider set: the run's picks (an `add` joins them to the
+      // set it had). Automatic work stays inside it from now on.
+      providerSet: providerSetAfter(relay, r, now),
       updatedAt: now,
     });
     const verified = r.listeners.map((l) => ({
@@ -2498,6 +2748,8 @@ export const retry = internalMutation({
     acceptPartial: v.optional(v.boolean()),
     accountId: v.optional(v.id('edgeProviderAccounts')),
     locationId: v.optional(v.id('edgeLocations')),
+    /** Replace one pick of the run's set (before its addresses are published). */
+    replacePick: v.optional(v.object({ from: v.id('edgeLocations'), to: v.id('edgeLocations') })),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a) => {
@@ -2515,12 +2767,24 @@ export const retry = internalMutation({
     let stage = r.stage;
     let listeners = r.listeners.map((l) => ({ ...l }));
     let picks = r.picks;
-    if (a.accountId || a.locationId) {
+    if (a.accountId || a.locationId || a.replacePick) {
       const plan = parsePlan(r);
-      const named = a.locationId ? await ctx.db.get(a.locationId) : null;
-      if (a.locationId && !named)
+      const current = runPicks(r);
+      // Which pick goes: the named one, else the run's only pick.
+      const from =
+        (a.replacePick?.from as Id<'edgeLocations'> | undefined) ??
+        (current.length === 1 ? current[0]!.locationId : null);
+      if (!from || !current.some((p) => p.locationId === from))
+        throw new ConvexError({
+          code: 'validation',
+          message: 'Name the pick to replace (replacePick.from)',
+        });
+      const toId = (a.replacePick?.to as Id<'edgeLocations'> | undefined) ?? a.locationId;
+      const named = toId ? await ctx.db.get(toId) : null;
+      if (toId && !named)
         throw new ConvexError({ code: 'not_found', message: 'Location not found' });
-      const accountId = a.accountId ?? named?.accountId ?? runPick(r).accountId;
+      const accountId =
+        a.accountId ?? named?.accountId ?? current.find((p) => p.locationId === from)!.accountId;
       const offered = plan.accounts.find((x) => x.id === (accountId as string | null));
       if (!offered?.compatible)
         throw new ConvexError({
@@ -2529,7 +2793,7 @@ export const retry = internalMutation({
         });
       const account = accountId ? await ctx.db.get(accountId) : null;
       if (!account) throw new ConvexError({ code: 'not_found', message: 'Account not found' });
-      const location = await pickLocationOf(ctx.db, account, a.locationId);
+      const location = await pickLocationOf(ctx.db, account, toId);
       const offeredLocation = location
         ? offered.locations?.find((l) => l.id === (location._id as string))
         : null;
@@ -2538,40 +2802,104 @@ export const retry = internalMutation({
           code: 'edge.account_incompatible',
           message: 'Not a compatible location',
         });
-      const layer = edgeLayerOf(account.provider);
-      const current = runPick(r);
-      if (account._id !== current.accountId || location._id !== current.locationId) {
-        // Switching the pick only while nothing is published: a candidate of
-        // the old account or location (its layer, its bill, its region) is
-        // cancelled, never re-labelled, and provisioning starts over for that
-        // listener.
-        if (!SWITCHABLE_STAGES.has(r.stage))
+      const moving = listeners.filter((l) => (l.locationId ?? from) === from);
+      if (location._id !== from) {
+        if (current.some((p) => p.locationId === location._id))
+          throw new ConvexError({ code: 'validation', message: 'That location is already picked' });
+        // Switching a pick only while none of its addresses is published: a
+        // candidate of the old pick (its layer, its bill, its region) is
+        // cancelled, never re-labelled.
+        if (!SWITCHABLE_STAGES.has(r.stage) || moving.some((l) => l.published))
           throw new ConvexError({
-            code: 'edge.account_switch_late',
-            message: 'The account can only change before anything is published',
+            code: current.length === 1 ? 'edge.account_switch_late' : 'edge.pick_switch_late',
+            message: 'A pick can only change before its addresses are published',
           });
-        for (const entry of listeners) {
-          entry.locationId = location._id;
-          if (!entry.edgeId) continue;
-          const e = await ctx.db.get(entry.edgeId);
-          if (e && e.accountId === account._id && e.locationId === location._id) continue;
+        picks = current.map((p) =>
+          p.locationId === from
+            ? { locationId: location._id, accountId: account._id }
+            : { locationId: p.locationId!, accountId: p.accountId! },
+        );
+        // The new set's cover, from scratch, as a fresh run would have it (the
+        // old assignment could leave a transport without a backup elsewhere):
+        // a line the new cover keeps stays with its address and its tick, a
+        // new target joins, a published line stays, the rest go.
+        const accountOf = (id: string) => plan.accounts.find((x) => x.id === id);
+        const info = picks.map((p) => {
+          const own = p.accountId === account._id;
+          const acct = accountOf(p.accountId as string);
+          const provider = own ? account.provider : (acct?.provider ?? '');
+          const placeKey =
+            p.locationId === location._id
+              ? location.placeKey
+              : (acct?.locations?.find((l) => l.id === (p.locationId as string))?.placeKey ??
+                (p.locationId as string));
+          const carriesKeys = own ? (offered.carries ?? null) : (acct?.carries ?? null);
+          return {
+            locationId: p.locationId as string,
+            provider,
+            locationKey: locationKeyOf(provider, placeKey),
+            carries: carriesKeys,
+          };
+        });
+        const req = requirementOf(
+          plan.requiredListeners.map((k) => ({
+            listenerKey: k,
+            carriers: info
+              .filter((p) => !p.carries || p.carries.includes(k))
+              .map((p) => p.locationId),
+          })),
+          info.map((p) => ({
+            locationId: p.locationId,
+            provider: p.provider,
+            locationKey: p.locationKey,
+          })),
+        );
+        if (req.uncarried.length > 0)
+          throw new ConvexError({
+            code: 'edge.set_uncovered_listener',
+            message: `No location of the new set carries ${req.uncarried.join(', ')}`,
+          });
+        const layerOf = (locationId: string) =>
+          edgeLayerOf(
+            (info.find((p) => p.locationId === locationId)?.provider ??
+              account.provider) as EdgeProviderId,
+          );
+        const next: RunListener[] = [];
+        for (const t of coverTargets(req, [])) {
+          if (!t.locationId) continue;
+          const existing = listeners.find(
+            (l) =>
+              l.listenerKey === t.listenerKey &&
+              (l.locationId as string | undefined) === t.locationId &&
+              l.locationId !== from,
+          );
+          next.push(
+            existing ?? {
+              listenerKey: t.listenerKey,
+              locationId: t.locationId as Id<'edgeLocations'>,
+              layer: layerOf(t.locationId),
+              verify: 'pending' as const,
+              published: false,
+            },
+          );
+        }
+        for (const l of listeners) if (l.published && !next.includes(l)) next.push(l);
+        for (const l of listeners) {
+          if (next.includes(l) || !l.edgeId) continue;
+          const e = await ctx.db.get(l.edgeId);
           if (e && e.publication === 'unpublished' && LIVE_CANDIDATE.has(e.status))
             await ctx.db.patch(e._id, {
               status: 'cancelled',
               statusChangedAt: now,
               updatedAt: now,
             });
-          entry.edgeId = undefined;
-          entry.verify = 'pending';
-          entry.probeRequestedAt = undefined;
-          entry.proofRequestedAt = undefined;
         }
+        listeners = next;
         if (STAGE_INDEX[r.stage] > STAGE_INDEX.provision) stage = 'provision';
       }
-      listeners = listeners.map((l) => ({ ...l, layer }));
-      picks = [{ locationId: location._id, accountId: account._id }];
     }
-    const failedKey = r.need?.detail?.split(':')[0] ?? null;
+    // The target the run stopped on: the one stage 4 marked unreachable.
+    const failed = listeners.find((l) => l.verify === 'unreachable') ?? null;
     if (a.edgeId && !(a.tryAnotherAddress && r.need?.code === 'try_it'))
       throw new ConvexError({
         code: 'validation',
@@ -2603,8 +2931,8 @@ export const retry = internalMutation({
         entry.proofRequestedAt = undefined;
       }
       stage = 'provision';
-    } else if (a.tryAnotherAddress && r.need?.code === 'address_unreachable' && failedKey) {
-      const entry = listeners.find((l) => l.listenerKey === failedKey);
+    } else if (a.tryAnotherAddress && r.need?.code === 'address_unreachable' && failed) {
+      const entry = failed;
       if (entry?.edgeId) {
         const e = await ctx.db.get(entry.edgeId);
         if (e && e.publication === 'unpublished' && LIVE_CANDIDATE.has(e.status))
@@ -2615,9 +2943,8 @@ export const retry = internalMutation({
         entry.proofRequestedAt = undefined;
       }
       stage = 'provision';
-    } else if (a.acceptPartial && r.need?.code === 'address_unreachable' && failedKey) {
-      const entry = listeners.find((l) => l.listenerKey === failedKey);
-      if (entry) entry.verify = 'partial';
+    } else if (a.acceptPartial && r.need?.code === 'address_unreachable' && failed) {
+      failed.verify = 'partial';
     } else if (r.stage === 'verify') {
       for (const l of listeners) if (l.verify === 'unreachable') l.verify = 'pending';
     }
@@ -2697,7 +3024,7 @@ async function assertReprotectReclaimable(ctx: MutationCtx, r: Run): Promise<voi
 }
 
 /** Whether the node's members are served through THIS origin (its delivery binding is active). */
-async function boundToRelay(ctx: { db: QueryCtx['db'] }, relay: Relay): Promise<boolean> {
+export async function boundToRelay(ctx: { db: QueryCtx['db'] }, relay: Relay): Promise<boolean> {
   if (relay.bindingDeferred || !relay.backendServerId) return false;
   const binding = await deliveryBindingFor(ctx.db, relay.backendServerId, relay.nodeName);
   return !!binding && binding.relaySlug === relay.slug;
@@ -2771,7 +3098,7 @@ export const resume = internalMutation({
           actorAdminId: a.actorAdminId,
         });
         accountTrusted = accountTrusted || res.accountTrusted;
-        const entry = listeners.find((l) => l.listenerKey === link.listenerKey);
+        const entry = listeners.find((l) => l.edgeId === c.edgeId);
         if (entry) entry.verify = 'verified';
         testedEndpoints = [
           ...testedEndpoints.filter((t) => t.edgeId !== c.edgeId),
@@ -3186,36 +3513,62 @@ export const requireEdges = internalMutation({
         }
       }
     }
-    // The pick: the named location (or account), else the place the origin's
-    // template edges are served from.
+    // The picks: the named location (or account), else the node's provider set,
+    // else the places the origin's template edges are served from.
     const named = locationId ? await ctx.db.get(locationId) : null;
-    const servedFrom = edges.find(
-      (e) => e.accountId && listeners.some((l) => l.templateEdgeId === e._id),
-    );
-    const account =
-      (accountId ? await ctx.db.get(accountId) : null) ??
-      (named ? await ctx.db.get(named.accountId) : null) ??
-      (servedFrom?.accountId ? await ctx.db.get(servedFrom.accountId) : null) ??
-      (await (async () => {
+    const pickRows: Array<{
+      location: Doc<'edgeLocations'>;
+      account: Doc<'edgeProviderAccounts'>;
+    }> = [];
+    const addPick = async (loc: Doc<'edgeLocations'> | null) => {
+      if (!loc || pickRows.some((p) => p.location._id === loc._id)) return;
+      const acct = await ctx.db.get(loc.accountId);
+      if (acct) pickRows.push({ location: loc, account: acct });
+    };
+    if (named || accountId) {
+      const account =
+        (accountId ? await ctx.db.get(accountId) : null) ??
+        (named ? await ctx.db.get(named.accountId) : null);
+      if (!account) throw new ConvexError({ code: 'not_found', message: 'Account not found' });
+      const location = await pickLocationOf(ctx.db, account, named?._id);
+      if (!location)
+        throw new ConvexError({
+          code: 'edge.account_incompatible',
+          message: 'The account has no such location',
+        });
+      await addPick(location);
+    } else if (relay.providerSet) {
+      for (const p of relay.providerSet) await addPick(await ctx.db.get(p.locationId));
+    } else {
+      for (const l of listeners) {
+        const e = l.templateEdgeId ? edges.find((x) => x._id === l.templateEdgeId) : undefined;
+        if (e?.locationId) await addPick(await ctx.db.get(e.locationId));
+      }
+      if (pickRows.length === 0) {
         const withAccount = edges.find((e) => e.accountId);
-        return withAccount?.accountId ? ctx.db.get(withAccount.accountId) : null;
-      })());
-    if (!account)
+        const account = withAccount?.accountId ? await ctx.db.get(withAccount.accountId) : null;
+        if (account) await addPick(await pickLocationOf(ctx.db, account, undefined));
+      }
+    }
+    if (pickRows.length === 0)
       throw new ConvexError({
         code: 'validation',
         message: 'accountId is required for this origin',
       });
-    const location = await pickLocationOf(
-      ctx.db,
-      account,
-      named?._id ??
-        (servedFrom && servedFrom.accountId === account._id ? servedFrom.locationId : undefined),
-    );
-    if (!location)
-      throw new ConvexError({
-        code: 'edge.account_incompatible',
-        message: 'The account has no such location',
-      });
+    const accountsOfPlan = new Map<string, SetupPlanAccount>();
+    for (const p of pickRows) {
+      const row = accountsOfPlan.get(p.account._id as string) ?? {
+        id: p.account._id as string,
+        name: p.account.name,
+        provider: p.account.provider,
+        layer: edgeLayerOf(p.account.provider),
+        compatible: true,
+        reasons: [],
+        locations: [],
+      };
+      row.locations = [...(row.locations ?? []), planLocationOf(p.location)];
+      accountsOfPlan.set(row.id, row);
+    }
     const plan: SetupPlanSnapshot = {
       backendServerId: relay.backendServerId as string,
       backend: '',
@@ -3227,17 +3580,7 @@ export const requireEdges = internalMutation({
       requiredListeners: entries.map((e) => e.listenerKey),
       tooManyInbounds: false,
       directHosts: [],
-      accounts: [
-        {
-          id: account._id as string,
-          name: account.name,
-          provider: account.provider,
-          layer: edgeLayerOf(account.provider),
-          compatible: true,
-          reasons: [],
-          locations: [planLocationOf(location)],
-        },
-      ],
+      accounts: [...accountsOfPlan.values()],
       renderGlobal: { willEnable: false, affectedRelays: [] },
       familiesDisabled: [],
       emptyNode: false,
@@ -3258,7 +3601,7 @@ export const requireEdges = internalMutation({
       backendServerId: relay.backendServerId,
       nodeName: relay.nodeName,
       nodeUuid: plan.nodeUuid,
-      picks: [{ locationId: location._id, accountId: account._id }],
+      picks: pickRows.map((p) => ({ locationId: p.location._id, accountId: p.account._id })),
       plan: JSON.stringify(plan),
       planHash: '',
       planRevision: 1,
@@ -3289,8 +3632,9 @@ export const requireEdges = internalMutation({
       {
         stage,
         listeners: entries.length,
-        accountName: account.name,
-        provider: account.provider,
+        accountName: pickRows[0]!.account.name,
+        provider: pickRows[0]!.account.provider,
+        picks: pickRows.length,
         approvedHides: 0,
         keepDirect: false,
       },
@@ -3318,8 +3662,34 @@ export const requireEdges = internalMutation({
  * (`onSetupRunEnded`).
  */
 export const reprotect = internalMutation({
-  args: { relayId: v.id('relays'), actorAdminId: v.optional(v.id('adminUsers')) },
-  handler: async (ctx, { relayId, actorAdminId }) => {
+  args: {
+    relayId: v.id('relays'),
+    /** `replace_all` (fresh addresses everywhere, the old ones drain) or `add` (only what a larger set lacks). */
+    mode: v.optional(v.union(v.literal('replace_all'), v.literal('add'))),
+    /** `add`: the locations joining the node's set. */
+    addPicks: v.optional(v.array(v.id('edgeLocations'))),
+    actorAdminId: v.optional(v.id('adminUsers')),
+  },
+  handler: (ctx, a) => startReprotect(ctx, a),
+});
+
+/** The re-protect start (`reprotect`, and a set edit that adds a pick to a live enrolled node). */
+export async function startReprotect(
+  ctx: MutationCtx,
+  {
+    relayId,
+    actorAdminId,
+    addPicks,
+    ...rest
+  }: {
+    relayId: Id<'relays'>;
+    mode?: 'replace_all' | 'add';
+    addPicks?: Id<'edgeLocations'>[];
+    actorAdminId?: Id<'adminUsers'>;
+  },
+): Promise<{ runId: Id<'edgeSetupRuns'>; stage: SetupRunStage }> {
+  {
+    const mode = rest.mode ?? (addPicks && addPicks.length > 0 ? 'add' : 'replace_all');
     const relay = await ctx.db.get(relayId);
     if (!relay || relay.deleting)
       throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
@@ -3382,41 +3752,101 @@ export const reprotect = internalMutation({
         code: 'edge.coverage_incomplete',
         message: 'No listener of this origin is served by a published edge',
       });
-    // The account and location members are served through now. One run has
-    // one pick, so an origin served through several (one transport moved to
-    // another provider or region) is refused rather than forced onto the
-    // first one's.
-    const accountIds = new Set(
-      served.map((s) => s.template.accountId).filter((a): a is Id<'edgeProviderAccounts'> => !!a),
-    );
-    const locationIds = new Set(
-      served.map((s) => s.template.locationId).filter((l): l is Id<'edgeLocations'> => !!l),
-    );
-    if (accountIds.size > 1 || locationIds.size > 1)
+    // The picks: the node's provider set (what members are served from), plus
+    // the new ones an `add` brings; without a set, the locations its served
+    // edges come from.
+    const servedLocations = [
+      ...new Set(
+        served.map((x) => x.template.locationId).filter((l): l is Id<'edgeLocations'> => !!l),
+      ),
+    ];
+    const base = relay.providerSet?.map((p) => p.locationId) ?? servedLocations;
+    const pickIds = [...base, ...(addPicks ?? []).filter((p) => !base.includes(p))];
+    if (mode === 'add' && pickIds.length === base.length)
+      throw new ConvexError({ code: 'validation', message: 'Name a location to add' });
+    if (pickIds.length > MAX_PROVIDER_PICKS)
       throw new ConvexError({
-        code: 'edge.reprotect_mixed_accounts',
-        message:
-          'This origin is served through more than one provider account; protect it again one account at a time from Origin details',
+        code: 'edge.set_too_large',
+        message: `A node is protected from at most ${MAX_PROVIDER_PICKS} locations`,
       });
-    const accountId = [...accountIds][0];
-    const account = accountId ? await ctx.db.get(accountId) : null;
-    if (!account || !account.enabled || !accountTested(account))
+    const pickRows: Array<{
+      location: Doc<'edgeLocations'>;
+      account: Doc<'edgeProviderAccounts'>;
+    }> = [];
+    for (const id of pickIds) {
+      const location = await ctx.db.get(id);
+      const account = location ? await ctx.db.get(location.accountId) : null;
+      if (!location || !account || !account.enabled || !accountTested(account) || !location.enabled)
+        throw new ConvexError({
+          code: 'edge.account_incompatible',
+          message:
+            'A location this node is protected from is missing, switched off, or its account is disabled or untested',
+        });
+      pickRows.push({ location, account });
+    }
+    if (pickRows.length === 0)
       throw new ConvexError({
         code: 'edge.account_incompatible',
-        message: 'The account this node is served through is missing, disabled or untested',
+        message: 'No location to protect this node from',
       });
-    const location = await pickLocationOf(ctx.db, account, [...locationIds][0]);
-    if (!location || !location.enabled)
+    // The requirement over the served transports, and its cover: fresh targets
+    // over the whole of it (`replace_all`: the new addresses take the old
+    // ones' places at go-live), or what the larger set still lacks given what
+    // is published (`add`: nothing is retired).
+    const picks = pickRows.map((p) => ({
+      locationId: p.location._id as string,
+      provider: p.account.provider,
+      locationKey: locationKeyOf(p.account.provider, p.location.placeKey),
+    }));
+    const carriersOf = (l: Listener) =>
+      pickRows.filter((p) => carries(p, l)).map((p) => p.location._id as string);
+    const req = requirementOf(
+      served.map((x) => ({
+        listenerKey: x.listener.listenerKey,
+        carriers: carriersOf(x.listener),
+      })),
+      picks,
+    );
+    if (req.uncarried.length > 0)
       throw new ConvexError({
-        code: 'edge.account_incompatible',
-        message: 'The location this node is served from is missing or disabled',
+        code: 'edge.set_uncovered_listener',
+        message: `No location of this node can carry ${req.uncarried.join(', ')}`,
       });
-    const layer = edgeLayerOf(account.provider);
-    const requiredListeners = served.map((s) => s.listener.listenerKey);
+    const state = mode === 'add' ? await setStateOf(ctx.db, relay) : null;
+    const targets = coverTargets(req, state?.published ?? [])
+      .filter((t): t is typeof t & { locationId: string } => t.locationId !== null)
+      .map((t) => ({
+        listenerKey: t.listenerKey,
+        locationId: t.locationId as Id<'edgeLocations'>,
+      }));
+    if (targets.length === 0)
+      throw new ConvexError({
+        code: 'validation',
+        message: 'Nothing to add: the node already has an address in every location it needs',
+      });
+    const requiredListeners = [...new Set(targets.map((t) => t.listenerKey))];
     const nodeUuid = relay.origin.kind === 'panel-node' ? (relay.origin.nodeUuid ?? '') : '';
-    // Room for one new address per transport, beside what members hold.
+    // Room for the run's own targets beside what members hold (temporary room
+    // above the cap, given back at go-live or when the run ends).
     const desiredBefore = relay.desiredPublished;
-    await ensureReprotectRoom(ctx, relay, requiredListeners.length);
+    await ensureReprotectRoom(ctx, relay, targets.length);
+    const layerOf = (locationId: Id<'edgeLocations'>) =>
+      edgeLayerOf(pickRows.find((p) => p.location._id === locationId)!.account.provider);
+    const accounts = new Map<string, SetupPlanAccount>();
+    for (const p of pickRows) {
+      const row = accounts.get(p.account._id as string) ?? {
+        id: p.account._id as string,
+        name: p.account.name,
+        provider: p.account.provider,
+        layer: edgeLayerOf(p.account.provider),
+        compatible: true,
+        reasons: [],
+        locations: [],
+        carries: served.filter((x) => carries(p, x.listener)).map((x) => x.listener.listenerKey),
+      };
+      row.locations = [...(row.locations ?? []), planLocationOf(p.location)];
+      accounts.set(row.id, row);
+    }
     const plan: SetupPlanSnapshot = {
       backendServerId: backendServerId as string,
       backend: '',
@@ -3428,24 +3858,28 @@ export const reprotect = internalMutation({
       requiredListeners,
       tooManyInbounds: false,
       directHosts: [],
-      accounts: [
-        {
-          id: account._id as string,
-          name: account.name,
-          provider: account.provider,
-          layer,
-          compatible: true,
-          reasons: [],
-          locations: [planLocationOf(location)],
-        },
-      ],
+      accounts: [...accounts.values()],
       renderGlobal: { willEnable: false, affectedRelays: [] },
       familiesDisabled: [],
       emptyNode: false,
       existingRelay: { id: relay._id as string, slug: relay.slug, setupStage: null },
       activeRunId: null,
       enrolled: true,
-      reprotect: { desiredBefore },
+      reprotect: { desiredBefore, mode },
+      set: {
+        picks: pickRows.map((p) => ({
+          locationId: p.location._id as string,
+          accountId: p.account._id as string,
+          provider: p.account.provider,
+          locationKey: locationKeyOf(p.account.provider, p.location.placeKey),
+          label: p.location.label,
+        })),
+        targets: targets.map((t) => ({ listenerKey: t.listenerKey, locationId: t.locationId })),
+        reduced: req.reduced,
+        uncovered: [],
+        tooLarge: false,
+        problems: [],
+      },
     };
     const stage: SetupRunStage = 'prepare';
     const now = Date.now();
@@ -3455,7 +3889,7 @@ export const reprotect = internalMutation({
       backendServerId,
       nodeName,
       nodeUuid,
-      picks: [{ locationId: location._id, accountId: account._id }],
+      picks: pickRows.map((p) => ({ locationId: p.location._id, accountId: p.account._id })),
       plan: JSON.stringify(plan),
       planHash: '',
       planRevision: 1,
@@ -3466,10 +3900,10 @@ export const reprotect = internalMutation({
       generation: 1,
       stepVersion: 1,
       // No edge yet: every candidate is provisioned fresh.
-      listeners: requiredListeners.map((listenerKey) => ({
-        listenerKey,
-        locationId: location._id,
-        layer,
+      listeners: targets.map((t) => ({
+        listenerKey: t.listenerKey,
+        locationId: t.locationId,
+        layer: layerOf(t.locationId),
         verify: 'pending' as const,
         published: false,
       })),
@@ -3489,9 +3923,12 @@ export const reprotect = internalMutation({
       {
         stage,
         kind: 'reprotect',
+        mode,
         listeners: requiredListeners.length,
-        accountName: account.name,
-        provider: account.provider,
+        accountName: pickRows[0]!.account.name,
+        provider: pickRows[0]!.account.provider,
+        picks: pickRows.length,
+        targets: targets.length,
         approvedHides: 0,
         keepDirect: false,
       },
@@ -3499,8 +3936,8 @@ export const reprotect = internalMutation({
     );
     await scheduleStep(ctx, id, 0);
     return { runId: id, stage };
-  },
-});
+  }
+}
 
 // --- reconcile: crash safety ------------------------------------------------------------------------
 

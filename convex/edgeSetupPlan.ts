@@ -24,7 +24,9 @@ import type { ActionCtx, QueryCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { BackendHost, BackendTransport } from './lib/backends/types';
-import { RENDER_CLIENT_FAMILIES, resolveEdgeConfig } from './lib/edgeConfig';
+import { MAX_DESIRED_PUBLISHED, RENDER_CLIENT_FAMILIES, resolveEdgeConfig } from './lib/edgeConfig';
+import { MAX_PROVIDER_PICKS, coverTargets, requirementOf } from './lib/edges/providerSet';
+import { locationKeyOf } from './lib/edges/locations';
 import { mapTransportsToListeners } from './lib/edges/inboundMapping';
 import { applyOriginProbes, originProbeTargets } from './edgeOriginProbe';
 import type { OriginProbeOutcome } from './lib/edges/originProbe';
@@ -43,7 +45,12 @@ import { accountTested } from './edgeProviderAccounts';
 import { listenersOf } from './relayListeners';
 import { enrolledOriginOf, withVerifiedIngress } from './nodeIntents';
 import { isTerminalRunState, planHashOf, slugForNode } from './lib/edges/setupRuns';
-import type { SetupPlanAccount, SetupPlanInbound, SetupPlanSnapshot } from './lib/edges/setupRuns';
+import type {
+  SetupPlanAccount,
+  SetupPlanInbound,
+  SetupPlanSet,
+  SetupPlanSnapshot,
+} from './lib/edges/setupRuns';
 import type { ListenerSpecInput } from './lib/edges/registration';
 import type { EdgeLayer } from './lib/edges/providers/capabilities';
 import { SETUP_RUN_MAX_LISTENERS } from '../src/shared/contracts/edgeCodes';
@@ -242,6 +249,15 @@ function modesOffOf(
     .map((m) => ({ slug: m.slug, label: m.label }));
 }
 
+/**
+ * One account judged for the plan. A pick need not carry every transport (a
+ * set covers them between its picks): the account is compatible when it can
+ * front at least one required transport, and `carries` names which. Its
+ * locations are judged on their own (an untrusted one is offered: its first
+ * tested address trusts it); an account with no usable location cannot be
+ * picked yet. Capacity here is room for one address; the set's own check sums
+ * what each pick gets over its targets.
+ */
 function accountCompatibility(
   a: PlanContext['accounts'][number],
   required: SetupPlanInbound[],
@@ -250,8 +266,9 @@ function accountCompatibility(
   const reasons: string[] = [];
   const layer = edgeLayerOf(a.provider);
   if (!a.tested) reasons.push('account_untested');
-  // The account must be able to front EVERY required listener at its layer,
-  // with the provider able to carry the protocol (accountsForSlot's rule).
+  const carries: string[] = [];
+  let portOnly = false;
+  let scoped = false;
   for (const inb of required) {
     const spec = inb.listenerSpec as ListenerSpecInput;
     const proto = {
@@ -259,40 +276,46 @@ function accountCompatibility(
       streamTransport: spec.streamTransport,
       security: spec.security,
     };
+    const scope = relay?.providerScopes.find((s) => s.listenerKey === inb.listenerKey);
+    if (scope && scope.provider !== a.provider) {
+      scoped = true;
+      continue;
+    }
     const eligible = accountsForSlot([a], {
       layers: inb.layers,
       proto,
       originPort: spec.originPort,
       allowL7: true,
     });
-    if (eligible.length === 0) {
-      // The layer and the transport fit, the port does not (gRPC behind a CDN
-      // is proxied to 443 only): say so, the operator moves the transport.
-      const portOnly =
-        accountsForSlot([a], { layers: inb.layers, proto, allowL7: true }).length > 0 &&
-        !originPortCarriedBy(a.provider as EdgeProviderId, proto, spec.originPort);
-      reasons.push(portOnly ? 'origin_port_not_carried' : 'layer_mismatch');
-      break;
+    if (eligible.length > 0) {
+      carries.push(inb.listenerKey);
+      continue;
     }
+    // The layer and the transport fit, the port does not (gRPC behind a CDN
+    // is proxied to 443 only): say so, the operator moves the transport.
+    if (
+      accountsForSlot([a], { layers: inb.layers, proto, allowL7: true }).length > 0 &&
+      !originPortCarriedBy(a.provider as EdgeProviderId, proto, spec.originPort)
+    )
+      portOnly = true;
   }
-  if (a.maxLiveEdges - a.live < required.length) reasons.push('account_capacity_reached');
-  if (
-    a.dailyAllocationBudget !== 0 &&
-    a.dailyAllocationBudget - a.allocationsToday < required.length
-  )
+  if (carries.length === 0)
+    reasons.push(
+      scoped ? 'provider_mismatch' : portOnly ? 'origin_port_not_carried' : 'layer_mismatch',
+    );
+  // Room for one address: what a pick really gets is the set's cover, summed
+  // per account and location over its targets (`setOfPicks`).
+  const need = 1;
+  if (a.maxLiveEdges - a.live < need) reasons.push('account_capacity_reached');
+  if (a.dailyAllocationBudget !== 0 && a.dailyAllocationBudget - a.allocationsToday < need)
     reasons.push('account_budget_exhausted');
-  if (relay?.providerScopes.some((s) => s.provider !== a.provider))
-    reasons.push('provider_mismatch');
   const caps = EDGE_PROVIDER_CAPABILITIES[a.provider];
   if (layer === 'l7' && caps.needsDnsAccount && !a.settings.dnsAccountId)
     reasons.push('dns_zone_missing');
-  // Where the addresses would be created: every location of the account,
-  // judged on its own (an untrusted one is offered: its first tested address
-  // trusts it). An account with no usable location cannot be picked yet.
   const locations = a.locations.map((loc) => {
     const why: string[] = [];
     if (!loc.enabled) why.push('location_disabled');
-    if (loc.maxLiveEdges !== null && loc.maxLiveEdges - loc.live < required.length)
+    if (loc.maxLiveEdges !== null && loc.maxLiveEdges - loc.live < need)
       why.push('location_capacity_reached');
     return {
       id: loc.id,
@@ -313,6 +336,119 @@ function accountCompatibility(
     compatible: reasons.length === 0,
     reasons: [...new Set(reasons)],
     locations,
+    carries,
+  };
+}
+
+/**
+ * What a chosen set of picks makes (docs/edges.md § "Provider sets"): the
+ * requirement over the required transports (lib/edges/providerSet.ts) and its
+ * cover, the fewest (transport, pick) addresses a fresh protection creates.
+ * Capacity and budget are summed per account over its targets. Pure over the
+ * plan; `create` refuses what it reports (uncovered, too large, a problem).
+ */
+/** What a run cannot be created with: a transport no pick carries, a set too large, a pick that cannot be used. */
+export function refuseSet(set: SetupPlanSet): void {
+  if (set.uncovered.length > 0)
+    throw new ConvexError({
+      code: 'edge.set_uncovered_listener',
+      message: `No picked location can carry ${set.uncovered.join(', ')}; add one that can`,
+    });
+  if (set.tooLarge)
+    throw new ConvexError({
+      code: 'edge.set_too_large',
+      message: `These picks need more than ${MAX_DESIRED_PUBLISHED} addresses for one node`,
+    });
+  if (set.problems.length > 0)
+    throw new ConvexError({
+      code: 'edge.account_incompatible',
+      message: `A picked location cannot be used (${set.problems[0]!.reason})`,
+    });
+}
+
+export function setOfPicks(
+  pickIds: readonly string[],
+  accounts: readonly SetupPlanAccount[],
+  required: readonly SetupPlanInbound[],
+  usage: ReadonlyArray<{
+    id: string;
+    live: number;
+    maxLiveEdges: number;
+    dailyAllocationBudget: number;
+    allocationsToday: number;
+    locations: ReadonlyArray<{ id: string; live: number; maxLiveEdges: number | null }>;
+  }>,
+): SetupPlanSet {
+  if (new Set(pickIds).size !== pickIds.length)
+    throw new ConvexError({ code: 'validation', message: 'A location is picked twice' });
+  if (pickIds.length === 0)
+    throw new ConvexError({ code: 'validation', message: 'Pick at least one location' });
+  if (pickIds.length > MAX_PROVIDER_PICKS)
+    throw new ConvexError({
+      code: 'edge.set_too_large',
+      message: `Pick at most ${MAX_PROVIDER_PICKS} locations for one node`,
+    });
+  const picks: SetupPlanSet['picks'] = [];
+  const problems: SetupPlanSet['problems'] = [];
+  for (const id of pickIds) {
+    const acct = accounts.find((a) => a.locations?.some((l) => l.id === id));
+    const loc = acct?.locations?.find((l) => l.id === id);
+    if (!acct || !loc)
+      throw new ConvexError({
+        code: 'edge.account_incompatible',
+        message: 'A picked location is not one the plan offers',
+      });
+    picks.push({
+      locationId: id,
+      accountId: acct.id,
+      provider: acct.provider,
+      locationKey: locationKeyOf(acct.provider, loc.placeKey),
+      label: loc.label,
+    });
+    if (!acct.compatible) problems.push({ locationId: id, reason: acct.reasons[0] ?? 'account' });
+    else if (!loc.compatible)
+      problems.push({ locationId: id, reason: loc.reasons[0] ?? 'location' });
+  }
+  const req = requirementOf(
+    required.map((i) => ({
+      listenerKey: i.listenerKey,
+      carriers: picks
+        .filter((p) => accounts.find((a) => a.id === p.accountId)?.carries?.includes(i.listenerKey))
+        .map((p) => p.locationId),
+    })),
+    picks.map((p) => ({
+      locationId: p.locationId,
+      provider: p.provider,
+      locationKey: p.locationKey,
+    })),
+  );
+  const targets = coverTargets(req, [])
+    .filter((t): t is typeof t & { locationId: string } => t.locationId !== null)
+    .map((t) => ({ listenerKey: t.listenerKey, locationId: t.locationId }));
+  // Capacity and budget, summed per account (and per location) over its targets.
+  for (const u of usage) {
+    const mine = targets.filter((t) =>
+      picks.some((p) => p.locationId === t.locationId && p.accountId === u.id),
+    );
+    if (mine.length === 0) continue;
+    const first = picks.find((p) => p.accountId === u.id)!.locationId;
+    if (u.maxLiveEdges - u.live < mine.length)
+      problems.push({ locationId: first, reason: 'account_capacity_reached' });
+    if (u.dailyAllocationBudget !== 0 && u.dailyAllocationBudget - u.allocationsToday < mine.length)
+      problems.push({ locationId: first, reason: 'account_budget_exhausted' });
+    for (const loc of u.locations) {
+      const here = mine.filter((t) => t.locationId === loc.id).length;
+      if (here > 0 && loc.maxLiveEdges !== null && loc.maxLiveEdges - loc.live < here)
+        problems.push({ locationId: loc.id, reason: 'location_capacity_reached' });
+    }
+  }
+  return {
+    picks,
+    targets,
+    reduced: req.reduced,
+    uncovered: req.uncarried,
+    tooLarge: targets.length > MAX_DESIRED_PUBLISHED,
+    problems,
   };
 }
 
@@ -359,7 +495,12 @@ async function planStage<T>(doing: string, fn: () => Promise<T>): Promise<T> {
 
 export async function buildPlan(
   ctx: ActionCtx,
-  args: { backendServerId: Id<'backendServers'>; nodeUuid: string; listenerKeys?: string[] },
+  args: {
+    backendServerId: Id<'backendServers'>;
+    nodeUuid: string;
+    listenerKeys?: string[];
+    picks?: string[];
+  },
 ): Promise<{ plan: SetupPlanSnapshot; planHash: string }> {
   // Only the two keys: `create` hands its whole argument object here.
   const a = { backendServerId: args.backendServerId, nodeUuid: args.nodeUuid };
@@ -479,6 +620,10 @@ export async function buildPlan(
     })),
   ];
   const accounts = c.accounts.map((acct) => accountCompatibility(acct, required, c.relay));
+  const set =
+    args.picks && args.picks.length > 0
+      ? setOfPicks(args.picks, accounts, required, c.accounts)
+      : undefined;
   const plan: SetupPlanSnapshot = {
     backendServerId: a.backendServerId as string,
     backend: c.backend,
@@ -504,6 +649,7 @@ export async function buildPlan(
     activeRunId: c.activeRunId,
     enrolled: !!c.enrolled,
     modesOff: modesOffOf(c, required),
+    ...(set ? { set } : {}),
   };
   const offered = accounts.filter((x) => x.compatible);
   const planHash = await planHashOf({
@@ -513,20 +659,23 @@ export async function buildPlan(
     locationIds: offered.flatMap((x) =>
       (x.locations ?? []).filter((l) => l.compatible).map((l) => l.id),
     ),
+    ...(args.picks ? { pickIds: args.picks } : {}),
   });
   return { plan, planHash };
 }
 
 /**
- * `POST setup-runs/plan {backendServerId, nodeUuid, listenerKeys?}` (throttled like
+ * `POST setup-runs/plan {backendServerId, nodeUuid, listenerKeys?, picks?}` (throttled like
  * `quarantine/inspect`). `listenerKeys` names the transports to protect when the
- * node has more than one run takes (`tooManyInbounds`).
+ * node has more than one run takes (`tooManyInbounds`); `picks` names the
+ * locations to protect it from, and the plan then says what they make (`set`).
  */
 export const plan = internalAction({
   args: {
     backendServerId: v.id('backendServers'),
     nodeUuid: v.string(),
     listenerKeys: v.optional(v.array(v.string())),
+    picks: v.optional(v.array(v.string())),
   },
   handler: async (ctx, a) => {
     const { plan, planHash } = await buildPlan(ctx, a);
@@ -535,19 +684,22 @@ export const plan = internalAction({
 });
 
 /**
- * `POST setup-runs {backendServerId, nodeUuid, accountId?, locationId?, planHash, approvedHideUuids[], keepDirect?, listenerKeys?}`:
- * re-plans (with the same `listenerKeys` the plan was shown with), refuses a
- * stale hash (`edge.plan_stale`), an unoffered account or location
+ * `POST setup-runs {backendServerId, nodeUuid, picks? | accountId? | locationId?, planHash, approvedHideUuids[], keepDirect?, listenerKeys?}`:
+ * re-plans (with the same `listenerKeys` and `picks` the plan was shown with),
+ * refuses a stale hash (`edge.plan_stale`), an unoffered account or location
  * (`edge.account_incompatible`), too many transports without a choice
- * (`edge.too_many_inbounds`), an unknown approved uuid (`validation`), then
- * persists the run and schedules its first step. The pick is a location (its
- * account implied) or an account (its default location).
+ * (`edge.too_many_inbounds`), a set that leaves a transport uncovered
+ * (`edge.set_uncovered_listener`) or is too large (`edge.set_too_large`), an
+ * unknown approved uuid (`validation`), then persists the run with its
+ * targets and schedules its first step. One pick may also be named the old
+ * way: a location, or an account (its default location).
  */
 export const create = internalAction({
   args: {
     backendServerId: v.id('backendServers'),
     nodeUuid: v.string(),
     listenerKeys: v.optional(v.array(v.string())),
+    picks: v.optional(v.array(v.id('edgeLocations'))),
     accountId: v.optional(v.id('edgeProviderAccounts')),
     locationId: v.optional(v.id('edgeLocations')),
     planHash: v.string(),
@@ -556,7 +708,12 @@ export const create = internalAction({
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a) => {
-    const { plan, planHash } = await buildPlan(ctx, a);
+    const { plan, planHash } = await buildPlan(ctx, {
+      backendServerId: a.backendServerId,
+      nodeUuid: a.nodeUuid,
+      listenerKeys: a.listenerKeys,
+      picks: a.picks as string[] | undefined,
+    });
     if (planHash !== a.planHash)
       throw new ConvexError({
         code: 'edge.plan_stale',
@@ -580,13 +737,39 @@ export const create = internalAction({
           message: 'approvedHideUuids names a Host the plan did not show',
         });
     }
+    // The set: the picks the plan was shown with, or the one pick named the old way.
+    let set = plan.set;
+    if (!set) {
+      const account = a.accountId
+        ? plan.accounts.find((x) => x.id === (a.accountId as string))
+        : plan.accounts.find((x) => x.locations?.some((l) => l.id === (a.locationId as string)));
+      const location = a.locationId
+        ? account?.locations?.find((l) => l.id === (a.locationId as string))
+        : account?.locations?.find((l) => l.isDefault && l.compatible);
+      if (!account || !location)
+        throw new ConvexError({
+          code: 'edge.account_incompatible',
+          message: 'Name a location (or an account) the plan offers',
+        });
+      const required = plan.inbounds.filter((i) => plan.requiredListeners.includes(i.listenerKey));
+      const context = await ctx.runQuery(internal.edgeSetupPlan.planContext, {
+        backendServerId: a.backendServerId,
+        nodeUuid: a.nodeUuid,
+      });
+      set = setOfPicks([location.id], plan.accounts, required, context.accounts);
+      plan.set = set;
+    }
+    refuseSet(set);
     const res: { id: Id<'edgeSetupRuns'>; stage: string } = await ctx.runMutation(
       internal.edgeSetupRuns.insert,
       {
         plan: JSON.stringify(plan),
         planHash,
-        accountId: a.accountId,
-        locationId: a.locationId,
+        picks: set.picks.map((p) => p.locationId as Id<'edgeLocations'>),
+        targets: set.targets.map((t) => ({
+          listenerKey: t.listenerKey,
+          locationId: t.locationId as Id<'edgeLocations'>,
+        })),
         approvedHideUuids: a.approvedHideUuids,
         keepDirect: a.keepDirect,
         actorAdminId: a.actorAdminId,
