@@ -17,6 +17,8 @@ describe('classifyClient', () => {
     ['Streisand/1.5', 'streisand', 'links'],
     ['v2rayNG/1.9', 'v2rayng', 'links'],
     ['Shadowrocket/2.2', 'xray-links', 'links'],
+    ['Anywhere/1.0', 'xray-links', 'links'],
+    ['Mozilla/5.0 (works anywhere)', 'other', 'links'],
     ['curl/8.0', 'other', 'links'],
     ['', 'other', 'links'],
   ])('%s → %s / %s', (ua, family, format) => {

@@ -6,11 +6,17 @@
  * edge-required unavailable behaviour; moving them to another node is not
  * offered). Never `restore-direct`.
  *
- * The ladder, each step resumable by the sweep:
+ * An admin's own request is that decision (its confirm says members lose the
+ * node at once): it starts draining keep-dark without a second question.
+ *
+ * The ladder, each step resumable by the sweep (`backend-bootstrap-sweep`,
+ * every 5 minutes); `step` records where `draining` stopped last:
  *   requested / needs_admin -> draining      publication withdrawn, the origin
- *                                            deleted keep-dark, credentials
- *                                            released, the direct Host deleted,
- *                                            DNS withdrawn, mirrors refreshed
+ *                                            deleted keep-dark (`origin`),
+ *                                            credentials released
+ *                                            (`credentials`), the direct Host
+ *                                            deleted (`addresses`), DNS withdrawn
+ *                                            (`dns`), mirrors refreshed
  *   draining -> panel_removed                the node row removed with
  *                                            removeOnly (the process may run)
  *   panel_removed -> ready_to_wipe           answered to the role
@@ -34,6 +40,16 @@ const refuse = (code: string, message: string): never => {
 };
 
 type Retirement = Doc<'panelRetirements'>;
+
+/** Where `draining` stopped (`panelRetirements.step`). */
+const STEP = v.union(
+  v.literal('origin'),
+  v.literal('credentials'),
+  v.literal('addresses'),
+  v.literal('dns'),
+  v.literal('panel_row'),
+);
+type Step = 'origin' | 'credentials' | 'addresses' | 'dns' | 'panel_row';
 
 async function event(
   ctx: { db: import('./_generated/server').MutationCtx['db'] },
@@ -109,7 +125,12 @@ export const decide = internalMutation({
   },
 });
 
-/** A request that needs no decision (never live, nothing outstanding) starts draining at once. */
+/**
+ * A request that needs no further decision starts draining at once (keep-dark):
+ * an admin's own request, whose confirm is the decision whatever the node
+ * exposed, or a role's request for a node never live with nothing outstanding.
+ * A role's request for anything else waits at `needs_admin` instead.
+ */
 export const startIfPlain = internalMutation({
   args: { retirementId: v.id('panelRetirements') },
   handler: async (ctx, { retirementId }) => {
@@ -167,17 +188,24 @@ export const mark = internalMutation({
       v.union(v.literal('draining'), v.literal('panel_removed'), v.literal('ready_to_wipe')),
     ),
     code: v.optional(v.union(v.string(), v.null())),
+    step: v.optional(STEP),
     tombstone: v.optional(v.boolean()),
   },
   handler: async (ctx, a) => {
     const r = await ctx.db.get(a.retirementId);
     if (!r) return null;
-    await event(
-      ctx,
-      r,
-      { ...(a.stage ? { stage: a.stage } : {}), code: a.code ?? undefined },
-      a.code ?? a.stage ?? 'step',
-    );
+    const patch = {
+      ...(a.stage ? { stage: a.stage } : {}),
+      code: a.code ?? undefined,
+      ...(a.step ? { step: a.step } : {}),
+    };
+    const code = a.code ?? a.stage ?? 'step';
+    // The sweep stops on the same thing every 5 minutes while it waits: one
+    // event for the wait (its `at` is when the wait began), not one per pass.
+    const last = r.events[r.events.length - 1];
+    if (!a.stage && !a.tombstone && last?.code === code && r.step === (a.step ?? r.step))
+      await ctx.db.patch(r._id, { ...patch, updatedAt: Date.now() });
+    else await event(ctx, r, patch, code);
     if (a.tombstone) {
       const intent = await ctx.db.get(r.intentId);
       if (intent) {
@@ -244,8 +272,9 @@ export const advance = internalAction({
     const c = await ctx.runQuery(internal.nodeRetirement.context, { retirementId });
     if (!c || c.r.stage !== 'draining') return null;
     const sid = c.intent.backendServerId;
+    let step: Step = 'origin';
     const stop = (code: string) =>
-      ctx.runMutation(internal.nodeRetirement.mark, { retirementId, code });
+      ctx.runMutation(internal.nodeRetirement.mark, { retirementId, code, step });
     try {
       // 1. The origin and its edges (publication withdrawn by the delete; edges destroyed by reconcile).
       if (c.relay) {
@@ -266,6 +295,7 @@ export const advance = internalAction({
         return null;
       }
       // 2. The node's own test credentials.
+      step = 'credentials';
       const released = await ctx.runMutation(internal.edgeTestCredentials.releaseForIntent, {
         nodeIntentId: c.intent._id,
       });
@@ -275,6 +305,7 @@ export const advance = internalAction({
         return null;
       }
       // 3. The node's own addresses.
+      step = 'addresses';
       for (const h of c.addresses) {
         const { opId } = await ctx.runMutation(internal.backendWrites.requestAddressDelete, {
           backendServerId: sid,
@@ -288,6 +319,7 @@ export const advance = internalAction({
         }
       }
       // 4. Origin DNS.
+      step = 'dns';
       const dns = await ctx.runAction(internal.nodeIntentOps.withdrawOriginDns, {
         intentId: c.intent._id,
       });
@@ -296,6 +328,7 @@ export const advance = internalAction({
         return null;
       }
       // 5. The backend row: removed with removeOnly (the role stops the process after).
+      step = 'panel_row';
       await ctx.runAction(internal.backendObserve.refresh, { backendServerId: sid });
       const fresh = await ctx.runQuery(internal.nodeRetirement.context, { retirementId });
       if (fresh?.node) {

@@ -107,12 +107,16 @@
   };
 </script>
 
-{#if summary.isPending || tree.isPending}
+{#if summary.isPending || tree.isPending || (!node && intents.isPending)}
   <SectionHeader title="Node" {back} />
   <div class="space-y-3"><Skeleton class="h-6 w-72" /><Skeleton class="h-32 w-full" /></div>
 {:else if tree.isError}
   <SectionHeader title="Node" {back} />
   <p class="text-destructive text-sm">{serverErrorWords(codeOf(tree.error))}</p>
+{:else if !node && slug && intent?.retirement}
+  <!-- Retiring removes the panel row before the machine is wiped: the steps stay here. -->
+  <SectionHeader title={intent.name} description={intent.machineName ?? undefined} {back} />
+  <ActivationSection {slug} {intent} />
 {:else if !node || !slug}
   <SectionHeader title="Node not found" {back} />
   <p class="text-muted-foreground text-sm">
@@ -129,8 +133,8 @@
     {back}
   >
     {#snippet actions()}
-      {#if canWrite}
-        <NodeActions {slug} {node} />
+      {#if canWrite || (intent && !intent.retirement)}
+        <NodeActions {slug} {node} {canWrite} {intent} />
       {/if}
     {/snippet}
   </SectionHeader>

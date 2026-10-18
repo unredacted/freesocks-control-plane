@@ -118,6 +118,12 @@
   // the UI so the user knows what they're looking at. All labels resolve in
   // $derived so a locale switch re-renders them (t() reads $state).
   let resolvedTitle = $derived(title ?? t('hero.titleDefault'));
+  // The labels of this key's main and backup connections, when it has a backup.
+  let relayBackup = $derived.by(() => {
+    const primary = nodeRelay?.connections.find((c) => c.role === 'primary')?.label;
+    const backup = nodeRelay?.connections.find((c) => c.role === 'backup')?.label;
+    return primary && backup ? { primary, backup } : null;
+  });
   let isAccessKey = $derived(accessKeyOnly ?? backend === 'outline');
   let urlLabel = $derived(
     isAccessKey ? t('hero.urlLabelAccessKey') : t('hero.urlLabelSubscription'),
@@ -269,6 +275,13 @@
             <span class="rounded-full border px-2 py-0.5">{c.label}</span>
           {/each}
         </p>
+        <!-- An app that imports a plain link list (Anywhere, v2rayNG...) shows the
+             main and backup entries side by side and never switches on its own. -->
+        {#if relayBackup}
+          <p class="text-xs text-muted-foreground">
+            {t('hero.relayBackupHint', relayBackup)}
+          </p>
+        {/if}
       {/if}
     </div>
 

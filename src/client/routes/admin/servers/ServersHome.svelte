@@ -115,6 +115,16 @@
   );
   const intentOf = (node: { nodeUuid: string; name: string }) =>
     intents.data?.intents.find((i) => i.nodeUuid === node.nodeUuid || i.name === node.name) ?? null;
+  // Retiring removes a node's panel row before its machine is wiped: such a
+  // node is listed on its own until it is retired, so its steps stay reachable.
+  let rowless = $derived(
+    (intents.data?.intents ?? []).filter(
+      (i) =>
+        !!i.retirement &&
+        i.retirement.stage !== 'retired' &&
+        !(tree.data?.nodes ?? []).some((n) => n.nodeUuid === i.nodeUuid || n.name === i.name),
+    ),
+  );
   // The nodes a change is being applied to right now (they restart for it),
   // shared with Recent changes' query: an offline reading of one of THEM is a
   // restart, not an outage. Any other offline node still counts as unreachable.
@@ -382,6 +392,37 @@
                     }}>Adopt as an enrolled node</Button
                   >
                 </div>
+              {/if}
+            </li>
+          {/each}
+        </ul>
+      {/if}
+      {#if rowless.length > 0}
+        <ul class="mt-2 space-y-2" aria-label="Retiring nodes">
+          {#each rowless as intent (intent.id)}
+            {@const st = stageWords(intent)}
+            <li>
+              {#if intent.nodeUuid}
+                <Link
+                  href={serversPaths.node(intent.nodeUuid, { instance: slug ?? undefined })}
+                  class={ROW}
+                >
+                  <StatusDot dot={st.dot} />
+                  <span class="min-w-0 flex-1">
+                    <span class="font-medium">{intent.name}</span>
+                    <span class="text-muted-foreground block text-sm">{st.sentence}</span>
+                  </span>
+                  <ChevronRight
+                    class="text-muted-foreground size-4 shrink-0 rtl:rotate-180"
+                    aria-hidden="true"
+                  />
+                </Link>
+              {:else}
+                <p class="flex items-center gap-2 px-3 py-2 text-sm">
+                  <StatusDot dot={st.dot} />
+                  <span class="font-medium">{intent.name}</span>
+                  <span class="text-muted-foreground">{st.sentence}</span>
+                </p>
               {/if}
             </li>
           {/each}

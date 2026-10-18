@@ -866,7 +866,10 @@ by name and marker), never by rule.
 
 `DELETE …/by-name/{name}` only records the request. Whenever the node was ever live or anything
 of it is still out there, the retirement is `needs_admin`; the admin decides `keep-dark` (its
-members get the edge-required unavailable answer). Moving the members to another node is not
+members get the edge-required unavailable answer). An admin's own retire (the node page's header
+More menu, "Retire node…", a typed-name confirm) IS that decision: it starts the ladder keep-dark
+at once (`nodeRetirement.startIfPlain`), audited with the admin. Either way the gate closes the
+moment the retirement is recorded: members lose the node at once. Moving the members to another node is not
 offered: a `migrate` disposition is refused with `servers.migration_not_built`. Never
 `restore-direct`. The ladder: `draining` (the origin deleted keep-dark, credentials released,
 the direct Host deleted, DNS withdrawn) → `panel_removed` (the row removed with `removeOnly`, the
@@ -874,6 +877,14 @@ name tombstoned) → `ready_to_wipe` → `retired` (events `wiped`, `retired`). 
 admin's confirmation that the machine is gone for an ADOPTED node, whose machine no role runs
 ("The machine is gone" on the node, `POST {slug}/nodes/intents/{id}/wiped`, audited with
 `confirmedBy: admin`). Without either the ladder would sit at `ready_to_wipe` forever.
+
+The sweep (`backend-bootstrap-sweep`, every 5 minutes) pushes `draining` along and records where
+it stopped (`panelRetirements.step`: `origin`, `credentials`, `addresses`, `dns`, `panel_row`)
+and why (`code`); a wait it meets again on the next pass is one event, not one per pass. The
+intents list projects `retirement {stage, code, step, requestedBy, requestedAt, since}` and the
+node page words it as steps (`retirementSteps`): the one it is on and why it waits there. A
+retiring node whose panel row is already gone stays listed on Servers (and its page stays
+reachable) until it is retired.
 
 ## Deploy a fronted node
 
@@ -1006,6 +1017,9 @@ is the primary action while the node waits to be protected again.
 With changes allowed and the backend set up the node header carries Edit, Restart or Turn on,
 and a More menu with Turn off, **Stop and remove** (offered only once the node is off) and
 **Remove from the backend only** (says the process may keep running); both removes are typed.
+An enrolled node adds **Retire node…** after a separator (typed; it says members lose the node at
+once), offered even with changes off; its steps then show under "On its way to members" (see
+"Retirement").
 On a transport: add, change or remove an address; edit a REALITY transport's names and target as
 write -> preview -> apply, typed when more than one node restarts; **Change port** (write ->
 preview -> stage: the nodes and who confirms each, then "Port changes" lists what waits on whom)

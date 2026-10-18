@@ -757,6 +757,9 @@ export const resolveOperator = internalMutation({
 /**
  * DELETE an edge: refuses while published, quarantined or rotating; unmanaged
  * rows are forgotten, managed ones destroyed. Heals the pool lists on the way out.
+ * On a DRAINING edge this is "Delete now" (the node page): the drain ends early,
+ * members who have not refreshed since lose the address, and the audit says so
+ * (`drainEndedEarly`).
  */
 export const deleteEdge = internalMutation({
   args: { edgeId: v.id('edges'), actorAdminId: v.optional(v.id('adminUsers')) },
@@ -769,6 +772,8 @@ export const deleteEdge = internalMutation({
     const now = Date.now();
     const origin = await ctx.db.get(e.relayId);
     if (origin) await assertNoRotationOrQuarantine(ctx.db, origin);
+    const drainEndedEarly =
+      e.publication === 'draining' && e.drainUntil !== undefined && e.drainUntil > now;
     if (!e.managed || e.status === 'destroyed') {
       await ctx.db.patch(edgeId, {
         ...destroyedPatch(now),
@@ -792,7 +797,7 @@ export const deleteEdge = internalMutation({
       action: 'edge.delete',
       targetType: 'edge',
       targetId: edgeId,
-      payload: { relaySlug: origin?.slug ?? '', edgeId, force: false },
+      payload: { relaySlug: origin?.slug ?? '', edgeId, force: false, drainEndedEarly },
     });
     return { ok: true as const };
   },

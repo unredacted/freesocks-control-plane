@@ -1,7 +1,7 @@
 # FreeSocks translation review — Russian (Русский)
 
 Generated from `messages/en.json` (source of truth) vs `messages/ru.json`.
-**144 of 785 strings are missing** (the app currently shows English for
+**153 of 794 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -270,7 +270,7 @@ review.
 | `account.deviceRevokedBody` | The slot is free. That device loses access until it re-imports your subscription. | Слот бесплатный. Это устройство потеряет доступ, пока не повторно не импортирует вашу подписку. |
 | `account.deviceRevokeFailedTitle` | Couldn't revoke the device | Не удалось отозвать устройство. |
 
-## `hero` — The subscription panel: the key/URL block, traffic + expiry stats, QR, status callouts. *(5 missing)*
+## `hero` — The subscription panel: the key/URL block, traffic + expiry stats, QR, status callouts. *(6 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
@@ -319,6 +319,7 @@ review.
 | `hero.nodeStatusLink` | Network status | Состояние сети |
 | `hero.relayRefreshSuggested` | New connection details are available. Update this subscription in your app to keep connecting. | ⚠️ **MISSING** |
 | `hero.relayConnections` | Connections in your config: | ⚠️ **MISSING** |
+| `hero.relayBackupHint` | If your app lists {primary} and {backup} separately and {primary} stops working, pick {backup}. | ⚠️ **MISSING** |
 | `hero.nodeOnlineHint` | The server behind your config is up and responding. If you still can't connect, your network or ISP is likely filtering it - try another connection mode or location. | Сервер вашей конфигурации работает и отвечает. Если подключиться всё равно не удаётся, скорее всего, ваша сеть или провайдер его фильтрует - попробуйте другой режим подключения или другую локацию. |
 | `hero.nodeOfflineBody` | The server behind your config is currently offline. This is on our side, not your network. Try again in a few minutes, or create a new config (optionally in a different location). | Сервер вашей конфигурации сейчас не в сети. Проблема на нашей стороне, а не в вашей сети. Попробуйте снова через несколько минут или создайте новую конфигурацию (можно в другой локации). |
 | `hero.keyLimited` | You've used all your data for this period. It resets automatically, or you can upgrade for more. | Вы использовали весь свой трафик за этот период. Он автоматически обнуляется, или вы можете приобрести более дорогой тарифный план. |
@@ -722,7 +723,17 @@ review.
 | `rawconfig.confirmBody` | These connection details are a snapshot and can change at any time, so a copied configuration may stop working without warning. In Freedom Mode, your subscription link is the best way to connect - it updates automatically when servers change. | ⚠️ **MISSING** |
 | `rawconfig.confirmCta` | Show configuration | ⚠️ **MISSING** |
 
-## `delivery` — The connection-mode picker: "Beat censorship" (for censored countries) vs "Maximum privacy" (for open internet), plus the switch-confirmation dialog. *(23 missing)*
+## `region` — Miscellaneous strings. *(5 missing)*
+
+| Key | English | Russian (Русский) |
+| --- | --- | --- |
+| `region.title` | Where are you connecting from? | ⚠️ **MISSING** |
+| `region.help` | Leave this on Automatic unless connecting is unreliable. In a few countries some of the website names a key uses are blocked. Choosing yours makes your key use names known to work there. Your choice is saved with your account and is never used for anything else. | ⚠️ **MISSING** |
+| `region.automatic` | Automatic | ⚠️ **MISSING** |
+| `region.saved` | Saved. Refresh your app to pick up the change. | ⚠️ **MISSING** |
+| `region.failed` | That did not save. Try again. | ⚠️ **MISSING** |
+
+## `delivery` — The connection-mode picker: "Beat censorship" (for censored countries) vs "Maximum privacy" (for open internet), plus the switch-confirmation dialog. *(24 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
@@ -737,6 +748,7 @@ review.
 | `delivery.freedomWsBody` | The standard option - an auto-updating link that works in every app. | ⚠️ **MISSING** |
 | `delivery.freedomRealityTitle` | REALITY | ⚠️ **MISSING** |
 | `delivery.freedomRealityBody` | For the heaviest censorship, when WebSocket won't connect. Harder to block, but you copy the configuration in by hand. | ⚠️ **MISSING** |
+| `delivery.freedomRealityLinkBody` | For the heaviest censorship, when WebSocket won't connect. Harder to block, and it still comes as an auto-updating link. | ⚠️ **MISSING** |
 | `delivery.privacyTitle` | Privacy Mode | ⚠️ **MISSING** |
 | `delivery.privacyAudience` | For open internet - a traditional VPN | ⚠️ **MISSING** |
 | `delivery.privacyBody` | Your traffic mixes with everyone else's on a shared address, and your configuration stays off third-party servers. Not built for censored networks. | ⚠️ **MISSING** |
@@ -964,7 +976,7 @@ review.
 | `switchServer.failed` | Could not move your key | ⚠️ **MISSING** |
 | `switchServer.vsNewKey` | If the subscription URL itself stopped working everywhere, or you think someone else has it, use "Create a new key" instead - that replaces the URL. | ⚠️ **MISSING** |
 
-## `report` — Miscellaneous strings. *(17 missing)*
+## `report` — Miscellaneous strings. *(19 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
@@ -972,6 +984,8 @@ review.
 | `report.title` | Report a connection problem | ⚠️ **MISSING** |
 | `report.body` | Tell us what's going wrong. Nothing about your key or account changes. | ⚠️ **MISSING** |
 | `report.reasonLegend` | What's the problem? | ⚠️ **MISSING** |
+| `report.connectionLegend` | Which connection were you using? | ⚠️ **MISSING** |
+| `report.connectionUnsure` | Not sure | ⚠️ **MISSING** |
 | `report.reasonCantConnect` | I can't connect at all | ⚠️ **MISSING** |
 | `report.reasonSlow` | It connects, but it's very slow | ⚠️ **MISSING** |
 | `report.reasonDisconnects` | It keeps disconnecting | ⚠️ **MISSING** |

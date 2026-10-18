@@ -3,7 +3,13 @@
    * One enrolled node's way to members (docs/servers.md "Node lifecycle"):
    * its sentence, the isolated test link with its "Works" tick (direct nodes),
    * the review card with Approve (NodeApprovalCard), and the quiet actions:
-   * finish maintenance, retire. Nothing here reaches a member before the commit.
+   * finish maintenance. Nothing here reaches a member before the commit.
+   *
+   * Retiring starts from the header's More menu (NodeActions, "Retire node…");
+   * once a retirement exists this section shows its steps (retirementSteps):
+   * the one it is on and why it waits there. A retirement the node role asked
+   * for waits here for "Decide the retirement"; an adopted node's ends here with
+   * "The machine is gone".
    *
    * A fronted node goes live through its protection in Edges (Start, try each
    * address, approve go-live, all in the protect sheet): this page links there
@@ -17,6 +23,8 @@
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
   import Check from '@lucide/svelte/icons/check';
+  import Circle from '@lucide/svelte/icons/circle';
+  import CircleDot from '@lucide/svelte/icons/circle-dot';
   import { Button } from '@client/components/ui/button';
   import {
     buildDirectTestLink,
@@ -34,7 +42,7 @@
   import { edgesPaths } from '../../edges/lib/routes';
   import StatusDot from '../../edges/simple/StatusDot.svelte';
   import { codeOf } from '../lib/run';
-  import { protectionWords, serverErrorWords, stageWords } from '../lib/words';
+  import { protectionWords, retirementSteps, serverErrorWords, stageWords } from '../lib/words';
   import NodeApprovalCard from './NodeApprovalCard.svelte';
 
   let {
@@ -73,10 +81,11 @@
       await confirmDirect(slug, intent.id, link.binding);
       ticked = true;
     });
-  const retire = (disposition?: 'keep-dark') =>
+  // The decision on a retirement the node role asked for (keep-dark, the only one offered).
+  const decide = () =>
     run(async () => {
       retireOpen = false;
-      await retireNode(slug, intent.id, disposition ? { disposition } : undefined);
+      await retireNode(slug, intent.id, { disposition: 'keep-dark' });
     });
 
   let direct = $derived(intent.mode.shape.fronting === 'direct');
@@ -112,6 +121,11 @@
   let needsWipeConfirmation = $derived(
     intent.adopted && intent.retirement?.stage === 'ready_to_wipe',
   );
+  let steps = $derived(
+    intent.retirement
+      ? retirementSteps({ adopted: intent.adopted, retirement: intent.retirement })
+      : [],
+  );
 </script>
 
 <section aria-labelledby="activation">
@@ -130,6 +144,41 @@
         >Turn it on in Connection modes</Link
       >
     </p>
+  {/if}
+  {#if steps.length > 0}
+    <ol class="bg-card mt-3 space-y-2 rounded-md border p-3 text-sm" aria-label="Retirement steps">
+      {#each steps as st (st.key)}
+        <li class="flex gap-2" aria-current={st.state === 'current' ? 'step' : undefined}>
+          {#if st.state === 'done'}
+            <Check
+              class="mt-0.5 size-4 shrink-0 text-emerald-600 dark:text-emerald-400"
+              aria-hidden="true"
+            />
+          {:else if st.state === 'current'}
+            <CircleDot
+              class="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400"
+              aria-hidden="true"
+            />
+          {:else}
+            <Circle class="text-muted-foreground mt-0.5 size-4 shrink-0" aria-hidden="true" />
+          {/if}
+          <span class="min-w-0">
+            <span
+              class={st.state === 'todo'
+                ? 'text-muted-foreground'
+                : st.state === 'current'
+                  ? 'font-medium'
+                  : ''}>{st.label}</span
+            ><span class="sr-only"
+              >{st.state === 'done' ? ', done' : st.state === 'current' ? ', now' : ', next'}</span
+            >
+            {#if st.why}
+              <span class="text-muted-foreground block">{st.why}</span>
+            {/if}
+          </span>
+        </li>
+      {/each}
+    </ol>
   {/if}
   {#if intent.origin.hostname}
     <p class="text-muted-foreground mt-1 text-sm">
@@ -241,14 +290,6 @@
       <Button size="sm" variant="destructive" disabled={busy} onclick={() => (retireOpen = true)}
         >Decide the retirement</Button
       >
-    {:else if !intent.retirement}
-      <Button
-        size="sm"
-        variant="ghost"
-        class="text-destructive"
-        disabled={busy}
-        onclick={() => (retireOpen = true)}>Retire</Button
-      >
     {/if}
   </div>
 </section>
@@ -267,14 +308,12 @@
 <ConfirmDialog
   bind:open={retireOpen}
   title={`Retire ${intent.name}?`}
-  body={(needsDecision
-    ? 'Members on this node get the unavailable answer until they are moved. Its addresses, edges and records are removed. '
-    : 'Its addresses, edges and records are removed. ') +
+  body={'The node role asked to retire it. Members on this node get the unavailable answer until they are moved. Its addresses, edges and records are removed. ' +
     (intent.adopted
       ? 'FCP never ran this machine, so confirm here once you have cleaned it up yourself.'
       : 'The role then wipes the machine.')}
   typed={intent.name}
   confirmLabel="Retire"
   danger
-  onConfirm={() => retire(needsDecision ? 'keep-dark' : undefined)}
+  onConfirm={decide}
 />
