@@ -12,6 +12,7 @@ import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { upsertSettingRow } from './appSettings';
+import { defaultLocationOf } from './edgeLocations';
 import { adoptL4Edge, registerRelay, seedEdgeFixture } from './lib/edges/testing/fixtures';
 import { AttentionResponse, SetupStatusResponse } from '../src/shared/contracts/edges';
 
@@ -66,14 +67,16 @@ async function parkedRun(
   },
 ) {
   const now = Date.now();
-  return t.run((ctx) =>
-    ctx.db.insert('edgeSetupRuns', {
+  return t.run(async (ctx) => {
+    const account = (await ctx.db.get(opts.accountId))!;
+    const location = (await defaultLocationOf(ctx.db, account))!;
+    return ctx.db.insert('edgeSetupRuns', {
       relayId: opts.relayId,
       relaySlug: opts.slug,
       backendServerId: opts.serverId,
       nodeName: opts.slug,
       nodeUuid: '55555555-5555-4555-8555-555555555555',
-      accountId: opts.accountId,
+      picks: [{ locationId: location._id, accountId: opts.accountId }],
       plan: '{}',
       planHash: 'fixture',
       planRevision: 1,
@@ -89,8 +92,8 @@ async function parkedRun(
       events: [],
       startedAt: now,
       updatedAt: now,
-    }),
-  );
+    });
+  });
 }
 
 describe('the attention response carries the one origin status', () => {

@@ -113,22 +113,19 @@ import type { EdgeProviderId } from './lib/edgeProviderIds';
 
 type Run = Doc<'edgeSetupRuns'>;
 
-/**
- * The (account, location) the run creates its addresses in: its first pick,
- * else (a row written before picks existed, until the migration reaches it)
- * its one account, in that account's default location.
- */
-export function runPick(r: Pick<Run, 'picks' | 'accountId'>): {
+/** The (account, location) the run creates its addresses in: its first pick. */
+export function runPick(r: Pick<Run, 'picks'>): {
   accountId: Id<'edgeProviderAccounts'> | null;
   locationId: Id<'edgeLocations'> | null;
 } {
   const p = r.picks?.[0];
-  if (p) return { accountId: p.accountId, locationId: p.locationId };
-  return { accountId: r.accountId ?? null, locationId: null };
+  return p
+    ? { accountId: p.accountId, locationId: p.locationId }
+    : { accountId: null, locationId: null };
 }
 
-/** Every pick of the run, in set order (a row from before picks: its one account). */
-export function runPicks(r: Pick<Run, 'picks' | 'accountId'>): Array<{
+/** Every pick of the run, in set order (never empty: a run without picks has one unknown). */
+export function runPicks(r: Pick<Run, 'picks'>): Array<{
   accountId: Id<'edgeProviderAccounts'> | null;
   locationId: Id<'edgeLocations'> | null;
 }> {
@@ -139,7 +136,7 @@ export function runPicks(r: Pick<Run, 'picks' | 'accountId'>): Array<{
 
 /** The (account, location) of one target: its own location's pick, else the run's first. */
 function pickOfTarget(
-  r: Pick<Run, 'picks' | 'accountId'>,
+  r: Pick<Run, 'picks'>,
   entry: Pick<RunListener, 'locationId'>,
 ): { accountId: Id<'edgeProviderAccounts'> | null; locationId: Id<'edgeLocations'> | null } {
   const all = runPicks(r);
@@ -2960,7 +2957,7 @@ export const retry = internalMutation({
       generation: r.generation + 1,
       stepVersion: r.stepVersion + 1,
       listeners,
-      ...(picks !== r.picks ? { picks, accountId: undefined } : {}),
+      ...(picks !== r.picks ? { picks } : {}),
       ...(stage !== r.stage ? { stageEnteredAt: now } : {}),
       finishedAt: undefined,
       events: appendRunEvent(r.events, {

@@ -899,3 +899,58 @@ describe('edgeProviderOps: the inventory pull refreshes what was observed', () =
     ).toEqual({ zoneSslMode: 'strict' });
   });
 });
+
+describe('edgeProviderOps: an existing edge acts only where it was placed', () => {
+  test("a describe reaches the edge's own region; a placed edge without a placement is refused before any call", async () => {
+    const t = newT();
+    const accountId = await gcoreAccount(t);
+    await insertPanelServer(t);
+    const { relayId, listenerId } = await registerRelay(t, {
+      slug: 'o1',
+      nodeName: 'o1',
+      originAddress: '198.51.100.7',
+      listeners: [wsListener({ tlsNames: ['ws.example'] })],
+    });
+    // Planned in another region of the account than its first location.
+    const edgeId = await t.run((ctx) =>
+      ctx.db.insert('edges', {
+        relayId,
+        listenerId,
+        accountId,
+        provider: 'gcore',
+        placement: { type: 'gcore', projectId: 11, regionId: 77 },
+        placeKey: '77',
+        managed: true,
+        name: 'fcp-relay-o1-1',
+        steps: [],
+        resources: lbLedger.resources,
+        listeners: [{ edgePort: 443, originAddress: '198.51.100.7', originPort: 443 }],
+        addresses: { v4: '198.51.100.9' },
+        layer: 'l4',
+        publication: 'unpublished',
+        status: 'active',
+        statusChangedAt: Date.now(),
+        health: 'unknown',
+        destroyAttempts: 0,
+        updatedAt: Date.now(),
+      }),
+    );
+    const stub = mockFetch(() => jsonRes({}, 404));
+    await t
+      .action(internal.edgeProviderOps.describe, { accountId, ledger: lbLedger, edgeId })
+      .catch(() => null);
+    expect(stub.calls.length).toBeGreaterThan(0);
+    expect(stub.calls.every((c) => c.path.includes('/11/77'))).toBe(true);
+    // Without its own placement the call is refused: it never falls back to a region.
+    await t.run((ctx) => ctx.db.patch(edgeId, { placement: undefined }));
+    const before = stub.calls.length;
+    let err: unknown;
+    try {
+      await t.action(internal.edgeProviderOps.describe, { accountId, ledger: lbLedger, edgeId });
+    } catch (e) {
+      err = e;
+    }
+    expect(dataOf(err)).toMatchObject({ code: 'placement_missing', retryable: false });
+    expect(stub.calls.length).toBe(before);
+  });
+});
