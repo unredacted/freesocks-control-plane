@@ -1798,6 +1798,57 @@ export const SetupPlanAccount = z.object({
   carries: z.array(z.string()).default([]),
 });
 
+/** `GET relays/{id}/providers`: the node's provider set as its Providers card shows it. */
+export const ProviderSetView = z.object({
+  /** False: no set recorded (any trusted location; the picks shown are implied). */
+  hasSet: z.boolean(),
+  picks: z.array(
+    z.object({
+      locationId: z.string(),
+      accountId: z.string(),
+      accountName: z.string(),
+      provider: z.string(),
+      label: z.string(),
+      /** Switched on, its account enabled and tested. */
+      usable: z.boolean(),
+      qualified: z.boolean(),
+      inUse: z.number(),
+      spare: z.number(),
+      /** A burn here: automatic work keeps away until then. */
+      coolingUntil: iso.nullable(),
+      addedAt: iso,
+    }),
+  ),
+  /** Transports with no backup in another failure domain. */
+  reduced: z.array(z.object({ listenerKey: z.string(), reason: z.literal('one_group') })),
+  coolingOnly: z.array(z.string()),
+  uncarried: z.array(z.string()),
+  /** Addresses the set still needs (0 = complete). */
+  deficit: z.number(),
+  /** Locations that could be added (they carry at least one transport of the node). */
+  available: z.array(
+    z.object({
+      locationId: z.string(),
+      accountId: z.string(),
+      accountName: z.string(),
+      provider: z.string(),
+      label: z.string(),
+      qualified: z.boolean(),
+      carries: z.array(z.string()),
+    }),
+  ),
+});
+export type ProviderSetView = z.infer<typeof ProviderSetView>;
+
+/** `POST relays/{id}/providers {add?, remove?}`. */
+export const ProviderSetChangeResponse = z.object({
+  ok: z.literal(true),
+  /** The `add` run started on a live enrolled node (null: the set was saved). */
+  runId: z.string().nullable(),
+  drained: z.number(),
+});
+export type ProviderSetChangeResponse = z.infer<typeof ProviderSetChangeResponse>;
+
 /** What a chosen set of picks makes (docs/edges.md § "Provider sets"). */
 export const SetupPlanSet = z.object({
   picks: z.array(

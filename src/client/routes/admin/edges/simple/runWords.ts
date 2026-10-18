@@ -9,7 +9,11 @@
  *   planWords(plan)                  the review sentence pieces of a plan
  *   hideButton(n), moreDirectWords(n)  the "hide the unsupported direct addresses" words
  */
-import type { SetupRunAdmin, SetupPlanResponse } from '../../../../../shared/contracts/edges';
+import type {
+  ProviderSetView,
+  SetupRunAdmin,
+  SetupPlanResponse,
+} from '../../../../../shared/contracts/edges';
 import { transportName } from '../lib/format';
 
 export interface TestItem {
@@ -34,13 +38,32 @@ export function runListenerName(
   return t ? transportName(t) : null;
 }
 
+/**
+ * One test line's name: the transport in words, and where the address is when
+ * the run protects the node from more than one location ("REALITY in Region B").
+ */
+export function runLineName(
+  run: Pick<SetupRunAdmin, 'listeners'> & Partial<Pick<SetupRunAdmin, 'picks'>>,
+  edgeId: string,
+  listenerKey: string,
+): string | null {
+  const base = runListenerName(run, listenerKey);
+  const picks = run.picks ?? [];
+  if (picks.length <= 1) return base;
+  const where = run.listeners.find((l) => l.edgeId === edgeId)?.locationId ?? null;
+  const label = picks.find((p) => p.locationId === where)?.label;
+  return label ? `${base ?? 'Address'} in ${label}` : base;
+}
+
 export function runTestItems(
-  run: Pick<SetupRunAdmin, 'testLinks'> & Partial<Pick<SetupRunAdmin, 'listeners'>>,
+  run: Pick<SetupRunAdmin, 'testLinks'> & Partial<Pick<SetupRunAdmin, 'listeners' | 'picks'>>,
 ): TestItem[] {
   return run.testLinks.map((l) => ({
     edgeId: l.edgeId,
     listenerKey: l.listenerKey,
-    name: run.listeners ? runListenerName({ listeners: run.listeners }, l.listenerKey) : null,
+    name: run.listeners
+      ? runLineName({ listeners: run.listeners, picks: run.picks }, l.edgeId, l.listenerKey)
+      : null,
     link: l.link,
     method: l.method,
     endpoint: l.binding.endpoint,
@@ -57,7 +80,8 @@ export function runTestItems(
  * than its link. A link issued after the tick (a retest) is pending again.
  */
 export function runTestLines(
-  run: Pick<SetupRunAdmin, 'testLinks' | 'testedEndpoints' | 'listeners'>,
+  run: Pick<SetupRunAdmin, 'testLinks' | 'testedEndpoints' | 'listeners'> &
+    Partial<Pick<SetupRunAdmin, 'picks'>>,
 ): { items: TestItem[]; done: Set<string> } {
   const current = run.listeners.filter((l) => l.layer === 'l4' && l.edgeId !== null);
   const linkOf = new Map(run.testLinks.map((l) => [l.edgeId, l]));
@@ -70,12 +94,15 @@ export function runTestLines(
     const tick = tickOf.get(edgeId);
     const ticked =
       tick !== undefined && (!link || Date.parse(tick.at) >= Date.parse(link.binding.issuedAt));
-    if (link) items.push(runTestItems({ testLinks: [link], listeners: run.listeners })[0]!);
+    if (link)
+      items.push(
+        runTestItems({ testLinks: [link], listeners: run.listeners, picks: run.picks })[0]!,
+      );
     else if (ticked)
       items.push({
         edgeId,
         listenerKey: tick.listenerKey,
-        name: runListenerName(run, tick.listenerKey),
+        name: runLineName(run, edgeId, tick.listenerKey),
         link: '',
         method: 'test_link',
         endpoint: tick.endpoint,
@@ -217,8 +244,10 @@ export function planWords(
     'nodeName' | 'inbounds' | 'requiredListeners' | 'directHosts' | 'renderGlobal'
   >,
   accountName: string,
+  /** How many addresses the run creates (a set may need more than one per transport). */
+  addresses: number = plan.requiredListeners.length,
 ): PlanWords {
-  const required = plan.requiredListeners.length;
+  const required = addresses;
   const sentence = `FCP creates ${plural(required, 'address', 'addresses')} in ${accountName}, checks ${required === 1 ? 'it' : 'each one'} from outside and with you, then moves ${plan.nodeName} behind ${required === 1 ? 'it' : 'them'}.`;
   const unc = plan.directHosts.filter((h) => !h.covered);
   const uncovered =
@@ -230,9 +259,12 @@ export function planWords(
           uuids: unc.map((h) => h.uuid),
           statement: `${direct(unc.length)} on the backend ${unc.length === 1 ? 'uses' : 'use'} a transport the new address cannot carry. Protecting the node hides ${unc.length === 1 ? 'it' : 'them'}, so members who rely on ${unc.length === 1 ? 'it' : 'them'} must switch to a supported one.`,
         };
-  const renderGlobal = plan.renderGlobal.willEnable
-    ? `Going live also turns on protected delivery for ${plural(plan.renderGlobal.affectedRelays.length, 'other node', 'other nodes')} that ${plan.renderGlobal.affectedRelays.length === 1 ? 'is' : 'are'} ready for it${plan.renderGlobal.affectedRelays.length > 0 ? ` (${plan.renderGlobal.affectedRelays.join(', ')})` : ''}.`
-    : null;
+  const others = plan.renderGlobal.affectedRelays;
+  const renderGlobal = !plan.renderGlobal.willEnable
+    ? null
+    : others.length === 0
+      ? 'Going live also turns on protected delivery.'
+      : `Going live also turns on protected delivery for ${plural(others.length, 'other node', 'other nodes')} that ${others.length === 1 ? 'is' : 'are'} ready for it (${others.join(', ')}).`;
   const button = uncovered ? hideButton(uncovered.count) : 'Protect this node';
   // The protected transports only: on a node with more than one run takes, the
   // plan lists every frontable one but the run carries the chosen ones.
@@ -253,4 +285,118 @@ export function planWords(
         ? 'No subscription format is fully covered yet.'
         : `Works for ${names.join(' and ')} subscriptions; other formats keep the direct address.`;
   return { sentence, uncovered, renderGlobal, button, formats };
+}
+
+/** What a chosen set of picks makes, in words (the protect sheet's summary). */
+export interface SetWords {
+  /** One line per pick: how many addresses it gets. */
+  lines: Array<{ locationId: string; text: string }>;
+  /** Transports no picked location carries, or null. */
+  uncovered: string | null;
+  /** Transports with no backup at another provider, or null. */
+  reduced: string | null;
+  /** Too many addresses for one node, or null. */
+  tooLarge: string | null;
+  /** Where the addresses go, for the review sentence. */
+  where: string;
+}
+
+export function setWords(
+  set: {
+    picks: Array<{ locationId: string; accountId: string; label: string }>;
+    targets: Array<{ listenerKey: string; locationId: string }>;
+    reduced: Array<{ listenerKey: string }>;
+    uncovered: string[];
+    tooLarge: boolean;
+  },
+  nameOf: (listenerKey: string) => string,
+  accountNameOf: (accountId: string) => string,
+): SetWords {
+  const lines = set.picks.map((p) => {
+    const n = set.targets.filter((t) => t.locationId === p.locationId).length;
+    return {
+      locationId: p.locationId,
+      text: `${plural(n, 'address', 'addresses')} in ${p.label} (${accountNameOf(p.accountId)}).`,
+    };
+  });
+  const names = (keys: string[]) => [...new Set(keys)].map(nameOf).join(', ');
+  const uncovered =
+    set.uncovered.length > 0
+      ? `No picked location carries ${names(set.uncovered)}. Add one that can.`
+      : null;
+  const reduced =
+    set.reduced.length > 0
+      ? `Members on ${names(set.reduced.map((r) => r.listenerKey))} have no backup at another provider.`
+      : null;
+  const tooLarge = set.tooLarge
+    ? 'These locations need more addresses than one node can use.'
+    : null;
+  const where =
+    set.picks.length === 1
+      ? `${accountNameOf(set.picks[0]!.accountId)} (${set.picks[0]!.label})`
+      : `${set.picks.length} locations`;
+  return { lines, uncovered, reduced, tooLarge, where };
+}
+
+/** Per pick of a run: how many of its addresses are made and published, in words. */
+export function runPickLines(
+  run: Pick<SetupRunAdmin, 'listeners' | 'picks'>,
+): Array<{ locationId: string; text: string }> {
+  if (run.picks.length <= 1) return [];
+  return run.picks
+    .filter((p): p is typeof p & { locationId: string } => p.locationId !== null)
+    .map((p) => {
+      const mine = run.listeners.filter((l) => l.locationId === p.locationId);
+      const published = mine.filter((l) => l.published).length;
+      const where = `${p.label ?? 'A location'}${p.accountName ? ` (${p.accountName})` : ''}`;
+      return {
+        locationId: p.locationId,
+        text:
+          published === mine.length && mine.length > 0
+            ? `${where}: ${plural(mine.length, 'address', 'addresses')}, in use.`
+            : `${where}: ${plural(mine.length, 'address', 'addresses')}, ${published} in use.`,
+      };
+    });
+}
+
+/** A node's provider set in words (the node page's card): per location, then what members miss. */
+export function providerPickWords(
+  view: Pick<
+    ProviderSetView,
+    'picks' | 'reduced' | 'coolingOnly' | 'uncarried' | 'deficit' | 'hasSet'
+  >,
+  nameOf: (listenerKey: string) => string = (k) => k,
+  now: number = Date.now(),
+): {
+  picks: Array<{ locationId: string; counts: string; cooling: string | null }>;
+  notes: string[];
+} {
+  const picks = view.picks.map((p) => {
+    const left = p.coolingUntil
+      ? Math.max(1, Math.ceil((Date.parse(p.coolingUntil) - now) / 60_000))
+      : 0;
+    return {
+      locationId: p.locationId,
+      counts: `${p.inUse} in use, ${p.spare} spare.`,
+      cooling:
+        left > 0
+          ? `An address here was just blocked: automatic work keeps away for about ${plural(left, 'minute', 'minutes')}.`
+          : null,
+    };
+  });
+  const names = (keys: string[]) => [...new Set(keys)].map(nameOf).join(', ');
+  const notes: string[] = [];
+  if (view.uncarried.length > 0)
+    notes.push(`No location here carries ${names(view.uncarried)}. Add one that can.`);
+  if (view.coolingOnly.length > 0)
+    notes.push(`Every location for ${names(view.coolingOnly)} is cooling after a block.`);
+  if (view.reduced.length > 0)
+    notes.push(
+      `Members on ${names(view.reduced.map((r) => r.listenerKey))} have no backup at another provider.`,
+    );
+  if (view.hasSet && view.deficit > 0)
+    notes.push(
+      `${plural(view.deficit, 'address is', 'addresses are')} still missing; automatic upkeep adds ${view.deficit === 1 ? 'it' : 'them'}.`,
+    );
+  return { picks, notes };
 }

@@ -363,6 +363,10 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
         }),
       );
     }
+    if (c === 'providers' && !d) {
+      const r = await ctx.runQuery(internal.edgeProviderSets.view, { relayId: id<'relays'>(b) });
+      return r ? json(r) : notFound();
+    }
     if (c === 'timeline' && !d)
       return json(
         await ctx.runQuery(internal.edgeOperator.timeline, {

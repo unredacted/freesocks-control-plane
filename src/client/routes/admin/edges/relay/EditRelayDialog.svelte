@@ -187,9 +187,9 @@
           bind:invalid={invalid.desired}
           label="Published edges wanted"
           unit="edges"
-          bounds={bounds['desiredPublishedDefault']}
+          bounds={{ min: 1, max: 16 }}
           min={1}
-          max={8}
+          max={16}
           defaultValue={num(defaults['desiredPublishedDefault'])}
           helper="How many edges members are spread over. More edges cost more and survive a block better."
         />

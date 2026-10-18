@@ -18,14 +18,15 @@
  * origin is quarantined, or edges are frozen. Audited `edge.relay.providers_changed`.
  */
 import { ConvexError, v } from 'convex/values';
-import { internalMutation } from './_generated/server';
+import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { MAX_DESIRED_PUBLISHED } from './lib/edgeConfig';
 import { assertAdmission } from './lib/edges/maintenance';
 import { assertNoRunningSetup, assertNoRotationOrQuarantine } from './lib/edges/relayGuards';
 import { coverTargets, MAX_PROVIDER_PICKS, requirementOf } from './lib/edges/providerSet';
-import { carries, publishedRefOf, setPicksOf } from './lib/edges/setState';
+import { carries, coolingOf, publishedRefOf, setPicksOf, setStateOf } from './lib/edges/setState';
+import { locationsOfAccount } from './edgeLocations';
 import type { PublishedRef } from './lib/edges/providerSet';
 import { verificationListenersOf } from './lib/edges/verificationContext';
 import { needsEndpointVerification, verificationCurrent } from './lib/edges/verification';
@@ -37,6 +38,77 @@ import { boundToRelay, startReprotect } from './edgeSetupRuns';
 import { EDGE_LIVE_STATUSES } from './lib/edges/pool';
 
 const LIVE: ReadonlySet<string> = new Set(EDGE_LIVE_STATUSES);
+
+/**
+ * `GET relays/{id}/providers`: the node's set as its Providers card shows it.
+ * Each pick with its addresses in use (published) and spare (active,
+ * unpublished) on this origin, whether it cools and until when; the
+ * transports with no backup elsewhere; and the locations that could be added
+ * (switched on, of an enabled and tested account, carrying at least one of
+ * the node's transports). Names are admin-only.
+ */
+export const view = internalQuery({
+  args: { relayId: v.id('relays') },
+  handler: async (ctx, { relayId }) => {
+    const relay = await ctx.db.get(relayId);
+    if (!relay) return null;
+    const now = Date.now();
+    const state = await setStateOf(ctx.db, relay, now);
+    const edges = await liveEdgesOfRelay(ctx.db, relayId);
+    const cooling = coolingOf(relay, now);
+    const pickRows = state.picks ?? [];
+    const picks = pickRows.map((p) => {
+      const mine = edges.filter((e) => e.locationId === p.location._id);
+      const until = (relay.cooling ?? []).find(
+        (c) => c.locationId === p.location._id && c.until > now,
+      )?.until;
+      return {
+        locationId: p.location._id as string,
+        accountId: p.account._id as string,
+        accountName: p.account.name,
+        provider: p.account.provider,
+        label: p.location.label,
+        usable: p.usable,
+        qualified: p.location.qualified,
+        inUse: mine.filter((e) => e.publication === 'published').length,
+        spare: mine.filter((e) => e.publication === 'unpublished' && e.status === 'active').length,
+        coolingUntil:
+          until && cooling.has(p.location._id as string) ? new Date(until).toISOString() : null,
+        addedAt: new Date(
+          relay.providerSet?.find((x) => x.locationId === p.location._id)?.addedAt ?? now,
+        ).toISOString(),
+      };
+    });
+    const available = [];
+    for (const account of await ctx.db.query('edgeProviderAccounts').collect()) {
+      if (!account.enabled || !account.lastTestOkAt || account.lastTestError) continue;
+      for (const location of await locationsOfAccount(ctx.db, account._id)) {
+        if (!location.enabled || picks.some((p) => p.locationId === location._id)) continue;
+        const row = { account, location };
+        const carried = state.listeners.filter((l) => carries(row, l)).map((l) => l.listenerKey);
+        if (carried.length === 0) continue;
+        available.push({
+          locationId: location._id as string,
+          accountId: account._id as string,
+          accountName: account.name,
+          provider: account.provider,
+          label: location.label,
+          qualified: location.qualified,
+          carries: carried,
+        });
+      }
+    }
+    return {
+      hasSet: !!relay.providerSet,
+      picks,
+      reduced: state.requirement.reduced,
+      coolingOnly: state.requirement.coolingOnly,
+      uncarried: state.requirement.uncarried,
+      deficit: state.deficit,
+      available,
+    };
+  },
+});
 
 export const change = internalMutation({
   args: {

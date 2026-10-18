@@ -1317,13 +1317,14 @@ describe('edgeSetupRuns: a provider set of two locations', () => {
     });
     expect(plan.set?.targets.map((x) => x.locationId).sort()).toEqual([first, second].sort());
     expect(plan.set?.reduced).toEqual([]);
-    const { runId } = (await t.action(internal.edgeSetupPlan.create, {
+    const created = (await t.action(internal.edgeSetupPlan.create, {
       backendServerId: serverId,
       nodeUuid: NODE_UUID,
       picks: [first, second],
       planHash: plan.planHash,
       approvedHideUuids: [],
-    })) as { runId: Id<'edgeSetupRuns'> };
+    })) as { runId: string };
+    const runId = created.runId as Id<'edgeSetupRuns'>;
     let r = await pump(t, runId, settled);
     expect(r.need?.code).toBe('try_it');
     expect(r.listeners.map((l) => l.locationId).sort()).toEqual([first, second].sort());
