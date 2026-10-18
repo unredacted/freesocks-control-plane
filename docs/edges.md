@@ -675,6 +675,16 @@ the **observation boundary**: the backend Hosts are listed before and after
 attempts, then `listingChanged`), and the FINAL listing is the observation the go-live clock
 starts from.
 
+**The raw-config view follows the same decision.** The member page's sealed copy of the
+configuration (`GET /api/v1/subscription/content`) decides, renders, leak-checks and relabels
+through the same helper as the subscription route (`lib/subscriptionDelivery.ts`
+`deliverBody`, with `locateMember` for the member's country): a gated node or an edge-required
+key is answered `503` `delivery.unavailable` with the same reason (counted in the same refusal
+counter), never the panel body. It fetches with no client User-Agent (the panel's default link
+format; a browser's could fetch the panel's HTML page), so it equals what `/sub` serves an empty
+one; it is neither cached nor stamped as a delivery. The app's config endpoint will use the same
+helper.
+
 Mirrors follow the same policy: each mirror row records what its object holds (`validated`:
 policy version, epoch, edges); creating an origin revalidates the origin's mirrors, replacing
 a raw object with a fresh render or, when nothing can render, with an **unavailable stub**

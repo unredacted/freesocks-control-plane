@@ -13,12 +13,11 @@ import { httpAction } from './_generated/server';
 import type { ActionCtx } from './_generated/server';
 import { api, internal } from './_generated/api';
 import { registerEdgeRoutes } from './httpEdges';
-import { bodyIsCacheable, cacheIsServable, resolveWhere } from './lib/edges/sni/country';
+import { bodyIsCacheable, cacheIsServable } from './lib/edges/sni/country';
 import { registerServerRoutes } from './httpServers';
 import { hmacSha256Hex } from './lib/crypto';
 import { sanitizeConnectionChoice } from './edgeAttribution';
-import { classifyClient } from './lib/edges/clientFamilies';
-import { applyEdgeRender } from './lib/edges/renderPipeline';
+import { deliverBody, locateMember, type DeliverySubscription } from './lib/subscriptionDelivery';
 import { relabelMemberEntries } from './lib/memberEntryNames';
 import { SUBSCRIPTION_PASSTHROUGH_HEADERS } from './lib/backends/types';
 import {
@@ -1054,11 +1053,13 @@ http.route({
         retryAfterMs: rl.retryAfterMs,
       });
     }
-    const sub = await ctx.runQuery(internal.subscriptions.mirrorContextForUser, {
+    const sub = await ctx.runQuery(internal.subscriptions.deliveryContextForUser, {
       userId: member.userId,
     });
     if (!sub) return errorJson('not_found', 'No active subscription', 404);
     try {
+      // No client User-Agent: the panel's default link format (a browser's UA
+      // could fetch the panel's HTML landing page instead of a configuration).
       const fetched = await ctx.runAction(internal.backends.fetchSubscriptionContent, {
         backend: sub.backend,
         backendServerId: sub.backendServerId ?? undefined,
@@ -1066,17 +1067,33 @@ http.route({
         subscriptionUrl: sub.subscriptionUrl,
         excludeNode: sub.excludeNode ?? undefined,
       });
-      if (fetched.pinnedNode) {
-        await ctx.runMutation(internal.subscriptions.recordPinnedNode, {
-          subscriptionId: sub.subscriptionId,
-          node: fetched.pinnedNode,
-        });
-      }
-      const naming = await ctx.runQuery(internal.subscriptions.entryNamingFor, {
-        backendServerId: sub.backendServerId ?? undefined,
+      // The same decision, render, leak check and relabel the subscription
+      // route applies (lib/subscriptionDelivery.ts): a copy path must never hand
+      // out what the delivery gate or the edge render withhold. Not stamped as a
+      // delivery (this is the member's browser, not their app) and not cached.
+      const place = {
+        subscriptionId: sub.subscriptionId,
+        backendServerId: sub.backendServerId,
+        pinnedNode: sub.pinnedNode,
+        sniRegion: sub.sniRegion,
+      };
+      const location = await locateMember(ctx, place, req);
+      const out = await deliverBody(ctx, {
+        sub: place,
+        fetched,
+        ua: '',
+        location,
+        now: Date.now(),
       });
+      if (out.kind === 'refuse')
+        return errorJson(
+          'delivery.unavailable',
+          'This configuration is not available right now',
+          503,
+          { reason: out.reason },
+        );
       return json({
-        content: relabelMemberEntries(fetched.content, naming).content,
+        content: out.content,
         contentType: fetched.contentType ?? 'text/plain',
       });
     } catch (err) {
@@ -1166,17 +1183,6 @@ http.route({
       ...entry,
       content: relabelMemberEntries(entry.content, await naming()).content,
     });
-    // Every edge-required refusal is counted per reason (deliveryRefusals.ts,
-    // attention `delivery_refusals`): dark members must be visible to the
-    // operator, not only to the member. Counting never changes the answer.
-    const refuse = async (reason: string): Promise<Response> => {
-      try {
-        await ctx.runMutation(internal.deliveryRefusals.record, { reason });
-      } catch {
-        /* the counter is best effort */
-      }
-      return unavailableResponse(reason);
-    };
     // Truncate the UA: it's the cache key, so an unbounded UA is an unbounded
     // cache-bypass amplification vector (each distinct UA = a live backend
     // fetch). 256 chars covers every real proxy-app UA. (Review B-F1.)
@@ -1202,24 +1208,22 @@ http.route({
     // otherwise), compared against the token stored on the entry. Only bodies
     // that PASSED the delivery policy are ever cached, so a hit is safe. The
     // same read answers whether names are judged per country at that place.
-    const { token: edgeToken, ...countryPolicy } = sub.backendServerId
-      ? await ctx.runQuery(internal.edgeRender.renderContextFor, {
-          backendServerId: sub.backendServerId,
-          nodeName: sub.pinnedNode ?? undefined,
-        })
-      : { token: null as string | null, curated: [] as string[], sensitive: false };
     // Where the member is, for server-name selection: their OWN stored answer,
     // else the country the CDN reports for this request (null unless fronted),
     // and only when it is a curated one. An INFERRED country is used for this
     // response and kept nowhere: a body shaped by it is neither read from nor
     // written to the content cache, and is served `private, no-store`
-    // (lib/edges/sni/country.ts).
-    const located = resolveWhere({
-      override: sub.sniRegion,
-      inferred: resolveCountry(req),
-      curated: countryPolicy.curated,
-    });
-    const useCache = cacheIsServable(located.source, countryPolicy.sensitive);
+    // (lib/edges/sni/country.ts). The same function locates the member for the
+    // raw-config view (lib/subscriptionDelivery.ts).
+    const place: DeliverySubscription = {
+      subscriptionId: sub._id,
+      backendServerId: sub.backendServerId ?? null,
+      pinnedNode: sub.pinnedNode ?? null,
+      sniRegion: sub.sniRegion,
+    };
+    const location = await locateMember(ctx, place, req);
+    const { edgeToken, sensitive, located } = location;
+    const useCache = cacheIsServable(located.source, sensitive);
     // An entry answers THIS request only for this UA's format, under the current
     // edge token and for the same stored country; and never once a proof inside
     // it has lapsed.
@@ -1282,126 +1286,26 @@ http.route({
         excludeNode: sub.excludeNode,
         ...(hasHwid ? { hwidHeaders } : {}),
       });
-      // ONE node value drives everything below: the pin recorded on the row,
-      // the render context, and the epoch token stored on the cache entry (so
-      // the token `epochFor` computes from `sub.pinnedNode` on the next request
-      // is for the same node the body was rendered for). The pinner reports a
-      // node for every known body shape — a single-node body included, which
-      // is the real topology (one mode group per node) — so the fallback to the
-      // stored pin only covers unknown shapes.
-      const node = fetched.pinnedNode ?? sub.pinnedNode;
-      // A body that names no node while the key has no pin either (the
-      // backend's placeholder before its node serves anything) is answered but
-      // never cached: its token carries no node, so the node going live would
-      // not re-key it and the placeholder would outlive the go-live.
-      const placeholder = fetched.nodeless === true && !node;
-      if (fetched.pinnedNode && fetched.pinnedNode !== sub.pinnedNode) {
-        await ctx.runMutation(internal.subscriptions.recordPinnedNode, {
-          subscriptionId: sub._id,
-          node: fetched.pinnedNode,
-        });
-      }
-      // Edge-required delivery: the policy is judged against the place the body
-      // ACTUALLY resolved to (the node it was pinned to, else the whole server),
-      // after the fetch. A place no origin covers passes through; a covered
-      // place is served a rendered body that passed every check or an
-      // unavailable response (503 keeps the client's last config; an empty 200
-      // would wipe it), never the origin body.
-      let content = fetched.content;
-      let relay: string | null = null;
-      let renderedEpoch: number | null = null;
-      let validUntil: number | null = null;
-      let renderSnapshot: {
-        epoch: number;
-        family: string;
-        listenerKeys: string[];
-        primaryEdgeId?: Id<'edges'>;
-        backupEdgeId?: Id<'edges'>;
-      } | null = null;
-      if (sub.backendServerId) {
-        const family = classifyClient(ua).family;
-        // The token is read BEFORE the decision and again AFTER the render: a
-        // policy that moved meanwhile (a node's gate closed, a rotation) means
-        // the body was rendered under an older policy, and it is never served
-        // or cached under the newer token. One re-render is allowed; a second
-        // move refuses (docs/servers.md "Node lifecycle").
-        let renderedUnder: string | null = null;
-        for (let pass = 0; pass < 2; pass++) {
-          const before = await ctx.runQuery(internal.edgeRender.epochFor, {
-            backendServerId: sub.backendServerId,
-            nodeName: node ?? undefined,
-          });
-          const decision = await ctx.runQuery(internal.edgeRender.decideForSubscription, {
-            subscriptionId: sub._id,
-            family,
-            nodeName: node ?? undefined,
-          });
-          if (decision.kind === 'unavailable') {
-            return refuse(decision.reason);
-          }
-          let body = fetched.content;
-          let epoch: number | null = null;
-          let passValidUntil: number | null = null;
-          let snapshot: {
-            epoch: number;
-            family: string;
-            listenerKeys: string[];
-            primaryEdgeId?: Id<'edges'>;
-            backupEdgeId?: Id<'edges'>;
-          } | null = null;
-          if (decision.kind === 'render') {
-            const rctx = decision.context;
-            const renderKey =
-              rctx.renderKey ??
-              (await ctx.runMutation(internal.subscriptions.ensureRenderKey, {
-                subscriptionId: sub._id,
-              }));
-            if (!renderKey) return refuse('no_render_key');
-            const out = applyEdgeRender(rctx, body, renderKey, { now, where: located.where });
-            if (out.delivery.kind !== 'serve') return refuse(out.delivery.reason);
-            body = out.body;
-            epoch = rctx.epoch;
-            passValidUntil = out.validUntil;
-            snapshot = {
-              epoch: rctx.epoch,
-              family,
-              listenerKeys: out.snapshot.listenerKeys,
-              primaryEdgeId: (out.snapshot.primaryEdgeId as Id<'edges'> | null) ?? undefined,
-              backupEdgeId: (out.snapshot.backupEdgeId as Id<'edges'> | null) ?? undefined,
-            };
-          }
-          const after = await ctx.runQuery(internal.edgeRender.epochFor, {
-            backendServerId: sub.backendServerId,
-            nodeName: node ?? undefined,
-          });
-          // A front whose proof lapsed while this body was rendered must not go
-          // out: render again (that front is now ineligible), as for a moved token.
-          if (after !== before || !withinValidity(passValidUntil, subscriptionNow())) continue;
-          content = body;
-          renderedEpoch = epoch;
-          validUntil = passValidUntil;
-          renderSnapshot = snapshot;
-          renderedUnder = after;
-          break;
-        }
-        if (
-          renderedUnder === null &&
-          (await ctx.runQuery(internal.edgeRender.epochFor, {
-            backendServerId: sub.backendServerId,
-            nodeName: node ?? undefined,
-          })) !== null
-        )
-          return refuse('policy_moved');
-        relay = renderedUnder;
-      }
-      // Member-facing names (docs/privacy.md): an entry the backend named after
-      // its node and server name gets a neutral label. Last, because pinning
-      // and the edge render both read those names.
-      content = relabelMemberEntries(content, await naming()).content;
-      // Judged once more before the body is kept or stamped: a proof that lapsed
-      // after the render answers like a policy that moved (the client keeps its
-      // configuration; its next request renders without that front).
-      if (!withinValidity(validUntil, subscriptionNow())) return refuse('policy_moved');
+      // Decide, render and relabel through the one helper every route uses
+      // (lib/subscriptionDelivery.ts): the policy is judged against the place
+      // the body ACTUALLY resolved to (the node it was pinned to, else the whole
+      // server), after the fetch. A place no origin covers passes through; a
+      // covered place gets a rendered body that passed every check or a 503
+      // (it keeps the client's last config; an empty 200 would wipe it), never
+      // the origin body. Refusals are counted inside.
+      const out = await deliverBody(ctx, { sub: place, fetched, ua, location, now });
+      if (out.kind === 'refuse') return unavailableResponse(out.reason);
+      // Where the member was located for THIS body (its node may not be the
+      // stored pin): what the entry's region and its cacheability follow.
+      const at = out.location;
+      const {
+        content,
+        relay,
+        renderedEpoch,
+        validUntil,
+        placeholder,
+        render: renderSnapshot,
+      } = out;
       const entry: SubCacheEntry = {
         v: SUBSCRIPTION_CACHE_FORMAT,
         content,
@@ -1413,11 +1317,11 @@ http.route({
         renderedEpoch,
         validUntil,
         // Only ever the member's OWN answer; an inferred country is not cached at all.
-        ...(located.source === 'override' ? { region: located.where.country } : {}),
+        ...(at.located.source === 'override' ? { region: at.located.where.country } : {}),
       };
       // Don't cache an hwid'd response — the next device (different hwid, same
       // UA) must reach the backend too, for its own registration + enforcement.
-      const cacheable = bodyIsCacheable(located.source, countryPolicy.sensitive) && !placeholder;
+      const cacheable = bodyIsCacheable(at.located.source, at.sensitive) && !placeholder;
       if (!hasHwid && cacheable) {
         await ctx.runMutation(internal.subscriptions.writeContentCache, {
           subscriptionId: sub._id,
