@@ -168,7 +168,9 @@ describe('readings on the fronted route', () => {
     await fetchSub(t, { country: 'IR' });
     let sub = await row(t, subId);
     expect(sub.regionSeenCountry).toBe('IR');
-    expect(regions(sub)).toEqual(['IR']); // the body cached under the stored country
+    // No origin covers this place, so nothing is rendered by country and the body
+    // is cached without one (edgeRender.test.ts covers a covered place).
+    expect(regions(sub)).toEqual([null]);
     const rev = sub.countryRev;
     await fetchSub(t, { country: 'DE', ua: 'app/2' });
     sub = await row(t, subId);
@@ -240,6 +242,9 @@ describe('readings on the fronted route', () => {
   });
 });
 
+// The clearing on each transition, over HTTP. That a resumed request cannot
+// write a country-shaped body back is covered at a place an origin covers
+// (edgeRender.test.ts "where a member connects from").
 describe('transitions made while a request is fetching from the backend', () => {
   /** A first request stores IR (and an IR body); the second runs `transition` mid-fetch. */
   async function midFetch(transition: (w: Awaited<ReturnType<typeof world>>) => Promise<unknown>) {

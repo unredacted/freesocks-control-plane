@@ -286,13 +286,20 @@ export const noteSeenCountryForUser = internalMutation({
   },
 });
 
-/** What the fronted route needs to decide where the member is. */
+/**
+ * What the delivery routes need to decide where the member is
+ * (lib/subscriptionDelivery.ts `locateMember` / `locateAt`): the key's family
+ * judged at `nodeName` (the node the body resolves to, default the stored pin),
+ * the settings, the list and the own-exit set.
+ */
 export const contextFor = internalQuery({
-  args: { subscriptionId: v.id('subscriptions') },
-  handler: async (ctx, { subscriptionId }) => {
+  args: { subscriptionId: v.id('subscriptions'), nodeName: v.optional(v.string()) },
+  handler: async (ctx, { subscriptionId, nodeName }) => {
     const sub = await ctx.db.get(subscriptionId);
     const { cfg, listed } = await settingsAndList(ctx.db);
-    const family: MemberFamily = sub ? await memberFamilyOf(ctx.db, sub) : 'none';
+    const family: MemberFamily = sub
+      ? await memberFamilyOf(ctx.db, { ...sub, pinnedNode: nodeName ?? sub.pinnedNode })
+      : 'none';
     const exits = cfg.detect ? await readOwnExits(ctx.db) : EMPTY_OWN_EXITS;
     return { family, cfg, listed, ownExits: exits };
   },

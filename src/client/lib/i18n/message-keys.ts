@@ -171,6 +171,7 @@ export type MessageKey =
   | "error.captchaUnconfigured"
   | "error.changeInProgress"
   | "error.codeInvalid"
+  | "error.configUnavailable"
   | "error.deviceNotFound"
   | "error.deviceUnsupported"
   | "error.generic"

@@ -50,6 +50,8 @@ const CODE_MESSAGES: Record<string, () => string> = {
   'server.error': () => t('error.serverError'),
   'billing.error': () => t('error.billing'),
   'content.unavailable': () => t('error.backendUnavailable'),
+  // The raw-config view under edge-required delivery (the same refusals as the subscription).
+  'delivery.unavailable': () => t('error.configUnavailable'),
   'mode.unavailable': () => t('error.modeUnavailable'),
   'server.no_alternative': () => t('error.noOtherServer'),
   'server.no_subscription': () => t('error.generic'),

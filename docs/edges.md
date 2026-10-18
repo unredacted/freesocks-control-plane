@@ -675,6 +675,16 @@ the **observation boundary**: the backend Hosts are listed before and after
 attempts, then `listingChanged`), and the FINAL listing is the observation the go-live clock
 starts from.
 
+**The raw-config view follows the same decision.** The member page's sealed copy of the
+configuration (`GET /api/v1/subscription/content`) decides, renders, leak-checks and relabels
+through the same helper as the subscription route (`lib/subscriptionDelivery.ts`
+`deliverBody`, with `locateMember` for the member's country): a gated node or an edge-required
+key is answered `503` `delivery.unavailable` with the same reason (counted in the same refusal
+counter), never the panel body. It fetches with no client User-Agent (the panel's default link
+format; a browser's could fetch the panel's HTML page), so it equals what `/sub` serves an empty
+one; it is neither cached nor stamped as a delivery. The app's config endpoint will use the same
+helper.
+
 Mirrors follow the same policy: each mirror row records what its object holds (`validated`:
 policy version, epoch, edges); creating an origin revalidates the origin's mirrors, replacing
 a raw object with a fresh render or, when nothing can render, with an **unavailable stub**
@@ -1401,7 +1411,11 @@ else" means no country), else, with `delivery.country.detect` on, the country st
 from earlier requests (this request's CDN country may set or refresh it first, unless the request
 came from one of FCP's own exits), else, with detection off, the country the CDN reports for this
 request (`resolveCountry`: only when the deployment is fronted by it, otherwise it is a header a
-client could forge and it is ignored). Each counts only when it is a curated country.
+client could forge and it is ignored). Each counts only when it is a curated country, and only
+at a place an origin covers (elsewhere nothing is rendered). The subscription route and the
+raw-config view locate the member with the same function (`lib/subscriptionDelivery.ts`
+`locateMember`), so both read this request's country, may set or refresh the guess, and pick the
+same names; the family and the place are judged again at the node the body resolves to.
 
 **What is stored.** The member's own answer, and with detection on the guess, on the subscription
 row; a body shaped by either caches under that country, and the cache keeps no body for any other

@@ -57,7 +57,7 @@ accidentally regress it).
     reads "elsewhere". A newer listed reading replaces it; an unlisted one leaves it (a member
     whose app sometimes refreshes from elsewhere keeps it), and it is forgotten
     `delivery.country.stickyDays` (30) after it was last seen, by a daily sweep. It is read on
-    the subscription route and the account view only.
+    the subscription route, the raw-config view and the account view only.
   - **Our own exits.** An app that refreshes its subscription through the tunnel reaches FCP
     from one of FCP's own addresses, and the CDN country is then the node's. Such a reading
     never sets or changes the guess (it only keeps an existing one alive). The client address

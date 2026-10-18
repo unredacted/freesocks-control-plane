@@ -24,6 +24,7 @@ import {
   type ListenerSpecFixture,
 } from './lib/edges/testing/fixtures';
 import { bumpEpoch } from './lib/edges/testing/reads';
+import { signValue } from './lib/cookies';
 import { DEFAULT_CENSORED_COUNTRIES } from './lib/censoredCountries';
 import { __setSubscriptionClockForTests } from './lib/subscriptionEtag';
 
@@ -1221,5 +1222,420 @@ describe('edgeRender: conditional requests and freshness', () => {
     const sub = (await t.run((ctx) => ctx.db.get(subId)))!;
     expect(JSON.parse(sub.subCache!)[0]).toMatchObject({ validUntil: T0 + 2 * 3_600_000 });
     expect(sub.lastRender).toMatchObject({ primaryEdgeId: edgeB });
+  });
+});
+
+/**
+ * The sealed raw-config view (`GET /api/v1/subscription/content`) decides,
+ * renders and relabels through the same helper as the subscription route
+ * (lib/subscriptionDelivery.ts): never the origin body, never a gated node's,
+ * the same names for the same country, the stored pin when the body names no
+ * node. It fetches with no client User-Agent, so it equals what `/sub` serves an
+ * empty one.
+ */
+describe('edgeRender: the raw-config view goes through delivery', () => {
+  const SIGN_KEY = 'raw-view-sign';
+  async function memberCookie(t: ReturnType<typeof convexTest>, subId: Id<'subscriptions'>) {
+    vi.stubEnv('SESSION_SIGNING_KEY', SIGN_KEY);
+    const userId = (await t.run((ctx) => ctx.db.get(subId)))!.userId;
+    const sid = `sid-raw-${Math.random().toString(36).slice(2)}`;
+    await t.mutation(internal.sessions.create, { sid, kind: 'member', userId, ttlMs: 3_600_000 });
+    return `fs_session=${await signValue(sid, SIGN_KEY)}`;
+  }
+  const raw = (
+    t: ReturnType<typeof convexTest>,
+    cookie: string,
+    headers: Record<string, string> = {},
+  ) => t.fetch('/api/v1/subscription/content', { headers: { cookie, ...headers } });
+  const subNoUa = (t: ReturnType<typeof convexTest>, headers: Record<string, string> = {}) =>
+    t.fetch('/api/v1/sub/tok_abc', { headers });
+  const sniOf = (body: string) => [
+    ...new Set(
+      proxyLines(body).map((l) =>
+        new URLSearchParams(l.slice(l.indexOf('?') + 1).split('#')[0]).get('sni'),
+      ),
+    ),
+  ];
+
+  test('an edge-required key: the rendered body /sub serves, never the origin; the view is not a delivery', async () => {
+    stubPanel();
+    const { t, subId } = await seed();
+    const cookie = await memberCookie(t, subId);
+    const res = await raw(t, cookie);
+    expect(res.status).toBe(200);
+    const { content } = (await res.json()) as { content: string };
+    expect(content).toContain(`@${EDGE_A}:443?`);
+    expect(content).not.toContain(ORIGIN);
+    expect(content).not.toContain(`#${TEMPLATE}`);
+    // Not stamped as a delivery: the browser is not the member's app.
+    expect((await t.run((ctx) => ctx.db.get(subId)))!.lastDeliveredAt).toBeUndefined();
+    const viaSub = await subNoUa(t);
+    expect(viaSub.status).toBe(200);
+    expect(await viaSub.text()).toBe(content);
+  });
+
+  test('a body carrying the origin in a direct entry is refused leak_detected, as /sub refuses it', async () => {
+    stubPanel(`${panelBody}\nvless://${UUID}@${ORIGIN}:443?${REALITY_QS}#direct-entry`);
+    const { t, subId } = await seed();
+    const cookie = await memberCookie(t, subId);
+    const res = await raw(t, cookie);
+    expect(res.status).toBe(503);
+    const text = await res.text();
+    expect(text).not.toContain(ORIGIN);
+    expect(JSON.parse(text)).toEqual({
+      error: expect.objectContaining({
+        code: 'delivery.unavailable',
+        details: { reason: 'leak_detected' },
+      }),
+    });
+    const viaSub = await subNoUa(t);
+    expect(viaSub.status).toBe(503);
+    expect(viaSub.headers.get('x-fcp-delivery')).toBe('leak_detected');
+  });
+
+  test('a gated node answers node_gated, never its body', async () => {
+    stubPanel();
+    const { t, subId, serverId } = await seed();
+    await t.run((ctx) =>
+      ctx.db.insert('panelMaintenanceHolds', {
+        backendServerId: serverId,
+        transitionId: 'hold-1',
+        reason: 'maintenance',
+        heldNodeNames: [NODE],
+        closedIntentIds: [],
+        released: false,
+        since: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+    const cookie = await memberCookie(t, subId);
+    const res = await raw(t, cookie);
+    expect(res.status).toBe(503);
+    expect(
+      ((await res.json()) as { error: { details: { reason: string } } }).error.details,
+    ).toEqual({ reason: 'node_gated' });
+    expect((await subNoUa(t)).headers.get('x-fcp-delivery')).toBe('node_gated');
+  });
+
+  test('the same names for the same country: the stored answer, and the inferred one behind the CDN', async () => {
+    stubPanel();
+    vi.stubEnv('CF_FRONTED', 'true');
+    const s = await seed({
+      listeners: [
+        realityListener({
+          tlsNames: ['cn-ok-1.example', 'cn-ok-2.example', 'cn-blocked.example', 'plain.example'],
+        }),
+      ],
+    });
+    await s.t.run(async (ctx) => {
+      const l = (await ctx.db.get(s.listenerId))!;
+      const mark: Record<string, { provenIn?: string[]; blockedIn?: string[] }> = {
+        'cn-ok-1.example': { provenIn: ['CN'] },
+        'cn-ok-2.example': { provenIn: ['CN'] },
+        'cn-blocked.example': { blockedIn: ['CN'] },
+      };
+      await ctx.db.patch(s.listenerId, {
+        sniPick: 'hrw1',
+        tlsNames: l.tlsNames!.map((n) => ({ ...n, ...mark[n.name] })),
+      });
+    });
+    const cookie = await memberCookie(s.t, s.subId);
+    // Inferred from the request (behind the CDN), on both routes.
+    const inferredRaw = (await (await raw(s.t, cookie, { 'cf-ipcountry': 'CN' })).json()) as {
+      content: string;
+    };
+    const inferredSub = await (await subNoUa(s.t, { 'cf-ipcountry': 'CN' })).text();
+    expect(sniOf(inferredRaw.content).slice(0, 2).sort()).toEqual([
+      'cn-ok-1.example',
+      'cn-ok-2.example',
+    ]);
+    expect(sniOf(inferredRaw.content)).toEqual(sniOf(inferredSub));
+    // The member's own answer wins over the request, on both routes.
+    const userId = (await s.t.run((ctx) => ctx.db.get(s.subId)))!.userId;
+    await s.t.mutation(internal.memberCountry.setChoice, { userId, region: 'CN' });
+    const storedRaw = (await (await raw(s.t, cookie, { 'cf-ipcountry': 'RU' })).json()) as {
+      content: string;
+    };
+    const storedSub = await (await subNoUa(s.t, { 'cf-ipcountry': 'RU' })).text();
+    expect(sniOf(storedRaw.content)).toEqual(sniOf(storedSub));
+    expect(sniOf(storedRaw.content)).not.toContain('cn-blocked.example');
+  });
+
+  test('a body that resolves to another node than the stored pin is located THERE before rendering', async () => {
+    // Every name but the two proven in CN is blocked there, so only a render
+    // that judged the member's country can return just those two. Before the
+    // fix, a key with no pin (or a pin on another node) was located at that
+    // stored place, whose curated list is empty, and could be handed a name
+    // blocked in CN on its first fetch.
+    const allowed = ['cn-ok-1.example', 'cn-ok-2.example'];
+    for (const pin of ['none', 'moved'] as const)
+      for (const country of ['inferred', 'stored'] as const)
+        for (const route of ['raw', 'sub'] as const) {
+          stubPanel();
+          vi.stubEnv('CF_FRONTED', 'true');
+          const s = await seed({
+            pinned: false,
+            listeners: [
+              realityListener({
+                tlsNames: [
+                  'cn-ok-1.example',
+                  'cn-ok-2.example',
+                  'cn-blocked.example',
+                  'plain.example',
+                ],
+              }),
+            ],
+          });
+          await s.t.run(async (ctx) => {
+            const l = (await ctx.db.get(s.listenerId))!;
+            const mark: Record<string, { provenIn?: string[]; blockedIn?: string[] }> = {
+              'cn-ok-1.example': { provenIn: ['CN'] },
+              'cn-ok-2.example': { provenIn: ['CN'] },
+              'cn-blocked.example': { blockedIn: ['CN'] },
+              'plain.example': { blockedIn: ['CN'] },
+            };
+            await ctx.db.patch(s.listenerId, {
+              sniPick: 'hrw1',
+              tlsNames: l.tlsNames!.map((n) => ({ ...n, ...mark[n.name] })),
+            });
+            await ctx.db.patch(s.subId, {
+              renderKey: '0'.repeat(64),
+              ...(pin === 'moved' ? { pinnedNode: 'old-node' } : {}),
+            });
+          });
+          if (country === 'stored') {
+            const userId = (await s.t.run((ctx) => ctx.db.get(s.subId)))!.userId;
+            await s.t.mutation(internal.memberCountry.setChoice, {
+              userId,
+              region: 'CN',
+            });
+          }
+          // The stored answer wins over the request; the inferred case asks from CN.
+          const headers = { 'cf-ipcountry': country === 'stored' ? 'RU' : 'CN' };
+          const body =
+            route === 'raw'
+              ? (
+                  (await (await raw(s.t, await memberCookie(s.t, s.subId), headers)).json()) as {
+                    content: string;
+                  }
+                ).content
+              : await (await subNoUa(s.t, headers)).text();
+          const names = sniOf(body);
+          const label = `${pin} pin, ${country} country, ${route}`;
+          expect(names.length, label).toBeGreaterThan(0);
+          expect(
+            names.every((n) => allowed.includes(n!)),
+            `${label}: ${names.join(',')}`,
+          ).toBe(true);
+          // The pin the body named is recorded either way.
+          expect((await s.t.run((ctx) => ctx.db.get(s.subId)))!.pinnedNode, label).toBe(NODE);
+          vi.unstubAllEnvs();
+        }
+  });
+
+  test('a body that names no node is judged against the STORED pin, on both routes', async () => {
+    // An address-matched listener and a body entry with no remark: the pinner
+    // reports no node, so only the stored pin puts the key behind its origin.
+    const bare = `vless://${UUID}@${ORIGIN}:443?${REALITY_QS}`;
+    stubPanel(bare);
+    const { t, subId } = await seed({
+      listeners: [realityListener({ tlsNames: NAMES, matchRule: { kind: 'address' } })],
+    });
+    expect((await t.run((ctx) => ctx.db.get(subId)))!.pinnedNode).toBe(NODE);
+    const cookie = await memberCookie(t, subId);
+    const res = await raw(t, cookie);
+    expect(res.status).toBe(200);
+    const { content } = (await res.json()) as { content: string };
+    expect(content).toContain(`@${EDGE_A}:443?`);
+    expect(content).not.toContain(ORIGIN);
+    expect(await (await subNoUa(t)).text()).toBe(content);
+    // The pin is unchanged (the body reported none to record).
+    expect((await t.run((ctx) => ctx.db.get(subId)))!.pinnedNode).toBe(NODE);
+  });
+});
+
+describe('edgeRender: where a member connects from, at a place an origin covers', () => {
+  const SIGN_KEY = 'country-sign';
+  const PRIVACY_SQUAD = '11111111-2222-3333-4444-0000000000aa';
+  const CN_OK = ['cn-ok-1.example', 'cn-ok-2.example'];
+  async function memberCookie(t: ReturnType<typeof convexTest>, subId: Id<'subscriptions'>) {
+    vi.stubEnv('SESSION_SIGNING_KEY', SIGN_KEY);
+    const userId = (await t.run((ctx) => ctx.db.get(subId)))!.userId;
+    const sid = `sid-c-${Math.random().toString(36).slice(2)}`;
+    await t.mutation(internal.sessions.create, { sid, kind: 'member', userId, ttlMs: 3_600_000 });
+    return `fs_session=${await signValue(sid, SIGN_KEY)}`;
+  }
+  const sniOf = (body: string) => [
+    ...new Set(
+      proxyLines(body).map((l) =>
+        new URLSearchParams(l.slice(l.indexOf('?') + 1).split('#')[0]).get('sni'),
+      ),
+    ),
+  ];
+  /** The panel's answer; `during` runs once while a request waits for it. */
+  let during: (() => Promise<unknown>) | null = null;
+  function stubPanelDuring() {
+    during = null;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        const hook = during;
+        during = null;
+        if (hook) await hook();
+        return new Response(panelBody, { status: 200, headers: { 'content-type': 'text/plain' } });
+      }),
+    );
+  }
+  /** Names proven / blocked in CN on an hrw1 listener; detection on; a privacy pool bound. */
+  async function world() {
+    stubPanelDuring();
+    vi.stubEnv('CF_FRONTED', 'true');
+    vi.stubEnv('IP_HASH_SALT', 'test-salt');
+    const s = await seed({
+      listeners: [
+        realityListener({
+          tlsNames: ['cn-ok-1.example', 'cn-ok-2.example', 'cn-blocked.example', 'plain.example'],
+        }),
+      ],
+    });
+    await s.t.run(async (ctx) => {
+      const l = (await ctx.db.get(s.listenerId))!;
+      const mark: Record<string, { provenIn?: string[]; blockedIn?: string[] }> = {
+        'cn-ok-1.example': { provenIn: ['CN'] },
+        'cn-ok-2.example': { provenIn: ['CN'] },
+        'cn-blocked.example': { blockedIn: ['CN'] },
+        'plain.example': { blockedIn: ['CN'] },
+      };
+      await ctx.db.patch(s.listenerId, {
+        sniPick: 'hrw1',
+        tlsNames: l.tlsNames!.map((n) => ({ ...n, ...mark[n.name] })),
+      });
+      await upsertSettingRow(ctx, 'delivery.country.detect', 'true');
+      await ctx.db.insert('modePlacements', {
+        modeSlug: 'privacy-reality',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: [PRIVACY_SQUAD] }),
+        updatedAt: Date.now(),
+      });
+    });
+    const userId = (await s.t.run((ctx) => ctx.db.get(s.subId)))!.userId;
+    // A freedom key (with the privacy pool bound, the default would be privacy).
+    await s.t.run((ctx) => ctx.db.patch(userId, { connectionModeId: 'freedom-ws' }));
+    return { ...s, userId };
+  }
+  const sub = (t: ReturnType<typeof convexTest>, ua: string, country: string) =>
+    t.fetch('/api/v1/sub/tok_abc', {
+      headers: { 'user-agent': ua, 'cf-ipcountry': country, 'cf-connecting-ip': '192.0.2.60' },
+    });
+  const row = (t: ReturnType<typeof convexTest>, id: Id<'subscriptions'>) =>
+    t.run((ctx) => ctx.db.get(id)) as Promise<Doc<'subscriptions'>>;
+  const regions = (s: Doc<'subscriptions'>) =>
+    (s.subCache ? (JSON.parse(s.subCache) as { region?: string | null }[]) : []).map(
+      (e) => e.region ?? null,
+    );
+  const countriesOn = (s: Doc<'subscriptions'>) =>
+    [s.sniRegion, s.regionSeenCountry, ...regions(s)].filter(
+      (c): c is string => typeof c === 'string' && c !== 'ZZ',
+    );
+
+  test('the guess is stored once, keys the cache, and both routes pick the same names with it', async () => {
+    const { t, subId } = await world();
+    const first = await sub(t, 'v2rayNG/1.9.0', 'CN');
+    expect(first.headers.get('cache-control')).toMatch(/^public/);
+    expect(sniOf(await first.text()).sort()).toEqual(CN_OK);
+    let s = await row(t, subId);
+    expect(s.regionSeenCountry).toBe('CN');
+    expect(regions(s)).toEqual(['CN']);
+    // Later readings from elsewhere keep it (sticky): the next body is still CN's.
+    const later = await sub(t, 'Hiddify/2.0', 'DE');
+    expect(sniOf(await later.text()).sort()).toEqual(CN_OK);
+    s = await row(t, subId);
+    expect(s.regionSeenCountry).toBe('CN');
+    // The raw-config view locates the member the same way, from its own request.
+    const raw = await t.fetch('/api/v1/subscription/content', {
+      headers: { cookie: await memberCookie(t, subId), 'cf-ipcountry': 'DE' },
+    });
+    expect(sniOf(((await raw.json()) as { content: string }).content).sort()).toEqual(CN_OK);
+  });
+
+  test('the raw-config view takes a reading too, and a stored answer wins over it', async () => {
+    const { t, subId, userId } = await world();
+    const cookie = await memberCookie(t, subId);
+    await t.fetch('/api/v1/subscription/content', {
+      headers: { cookie, 'cf-ipcountry': 'CN', 'cf-connecting-ip': '192.0.2.61' },
+    });
+    expect((await row(t, subId)).regionSeenCountry).toBe('CN');
+    await t.mutation(internal.memberCountry.setChoice, { userId, region: 'ZZ' });
+    const raw = await t.fetch('/api/v1/subscription/content', {
+      headers: { cookie, 'cf-ipcountry': 'CN' },
+    });
+    // "Somewhere else": the universal pool, never a name blocked in any listed country.
+    const names = sniOf(((await raw.json()) as { content: string }).content);
+    expect(names).not.toContain('cn-blocked.example');
+    expect(names).not.toContain('plain.example');
+    expect((await row(t, subId)).regionSeenCountry).toBeUndefined();
+  });
+
+  describe('a transition while the request waits for the panel leaves no country behind', () => {
+    async function midFetch(
+      transition: (w: Awaited<ReturnType<typeof world>>) => Promise<unknown>,
+    ) {
+      const w = await world();
+      await sub(w.t, 'v2rayNG/1.9.0', 'CN');
+      expect(regions(await row(w.t, w.subId))).toEqual(['CN']);
+      let ran = false;
+      during = async () => {
+        ran = true;
+        await transition(w);
+      };
+      const res = await sub(w.t, 'Hiddify/2.0', 'CN');
+      expect(res.status).toBe(200);
+      expect(ran).toBe(true);
+      await w.t.finishInProgressScheduledFunctions();
+      return { ...w, s: await row(w.t, w.subId) };
+    }
+
+    test('"Somewhere else"', async () => {
+      const { s } = await midFetch(({ t, userId }) =>
+        t.mutation(internal.memberCountry.setChoice, { userId, region: 'ZZ' }),
+      );
+      expect(s.sniRegion).toBe('ZZ');
+      expect(countriesOn(s)).toEqual([]);
+    });
+
+    test('the key is deleted', async () => {
+      const { s } = await midFetch(({ t, subId }) =>
+        t.mutation(internal.subscriptions.markSubscriptionDeleted, { subscriptionId: subId }),
+      );
+      expect(countriesOn(s)).toEqual([]);
+      expect(s.subCache).toBeUndefined();
+    });
+
+    test('an in-place switch into a privacy-family mode', async () => {
+      const { s } = await midFetch(({ t, subId }) =>
+        t.mutation(internal.subscriptions.setPlacementAndClearCache, {
+          subscriptionId: subId,
+          placement: PRIVACY_SQUAD,
+        }),
+      );
+      expect(countriesOn(s)).toEqual([]);
+    });
+
+    test('the guess moves to RU, then CN leaves the list, then the CN request resumes', async () => {
+      const { s } = await midFetch(async ({ t, subId }) => {
+        await t.mutation(internal.memberCountry.noteSeenCountry, {
+          subscriptionId: subId,
+          countryRev: (await row(t, subId)).countryRev ?? 0,
+          country: 'RU',
+          ownExit: false,
+        });
+        await t.mutation(internal.censoredCountries.set, {
+          countries: ['RU', 'IR'].map((code) => ({ code, checkEdges: true })),
+        });
+        await t.finishInProgressScheduledFunctions();
+      });
+      expect(s.regionSeenCountry).toBe('RU');
+      expect(countriesOn(s)).not.toContain('CN');
+    });
   });
 });
