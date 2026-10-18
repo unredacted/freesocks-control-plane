@@ -64,9 +64,12 @@ import {
   withEdgeAt,
   withoutEdge,
   publishedCount,
+  type PoolAdmit,
   type PoolListener,
 } from './lib/edges/pool';
 import { ensurePoolCapacity } from './lib/edges/poolCapacity';
+import { admissionOf, publishedRefOf, setStateOf } from './lib/edges/setState';
+import { removableUnder } from './lib/edges/providerSet';
 import { resolveTemplateFor } from './edgeTemplates';
 import { defaultLocationOf } from './edgeLocations';
 import { assertAdmission } from './lib/edges/maintenance';
@@ -971,6 +974,16 @@ export const update = internalMutation({
           code: 'edge.pool_below_coverage',
           message: `desiredPublished cannot go below the ${coverage} deployed, enabled listener(s) of this relay; retire or disable a listener first`,
         });
+      // With a provider set, nor below what is published plus what it still lacks.
+      if (row.providerSet) {
+        const state = await setStateOf(ctx.db, row);
+        const floor = Math.min(MAX_DESIRED_PUBLISHED, state.published.length + state.deficit);
+        if (p.desiredPublished < floor)
+          throw new ConvexError({
+            code: 'edge.pool_below_coverage',
+            message: `desiredPublished cannot go below ${floor}: the published addresses plus what the provider set still needs`,
+          });
+      }
     }
     if (p.qualificationModeSlug) {
       const { modes } = await resolveModeCatalog(ctx.db);
@@ -1468,8 +1481,7 @@ async function insertAdoptedEdge(
     const alloc = allocatePoolIndex(
       origin.publishedEdgeIds,
       origin.desiredPublished,
-      listener._id,
-      await poolListenersOf(ctx.db, origin._id),
+      await poolAdmitOf(ctx.db, origin, (await ctx.db.get(edgeId))!),
     );
     if ('refused' in alloc) {
       if (!softRefusal) throw poolRefusal(alloc.refused);
@@ -1607,6 +1619,21 @@ export const adoptEdge = internalMutation({
 // --- published pool -----------------------------------------------------------------------------
 
 /** The listener projection the reserved-allocation rule reads. */
+/**
+ * What publishing `edge` on `relay` does to the coverage deficit (the pool
+ * admission input, `allocatePoolIndex`): read from the origin's provider set
+ * and what its pool publishes now.
+ */
+export async function poolAdmitOf(
+  db: Db,
+  relay: Doc<'relays'>,
+  edge: Pick<Doc<'edges'>, 'listenerId' | 'locationId' | 'provider' | 'placeKey'>,
+): Promise<PoolAdmit> {
+  const state = await setStateOf(db, relay);
+  const listener = await db.get(edge.listenerId);
+  return admissionOf(state, publishedRefOf(edge, listener?.listenerKey ?? ''));
+}
+
 export async function poolListenersOf(db: Db, relayId: Id<'relays'>): Promise<PoolListener[]> {
   const rows = await db
     .query('relayListeners')
@@ -1779,8 +1806,7 @@ export const publishEdge = internalMutation({
     const alloc = allocatePoolIndex(
       origin.publishedEdgeIds,
       origin.desiredPublished,
-      edge.listenerId,
-      await poolListenersOf(ctx.db, relayId),
+      await poolAdmitOf(ctx.db, origin, edge),
     );
     if ('refused' in alloc) throw poolRefusal(alloc.refused);
     let idx = poolIndex ?? alloc.index;
@@ -1969,11 +1995,13 @@ export const ensureCapacity = internalMutation({
 });
 
 /**
- * Make room in a pool at its cap: unpublish ONE duplicate (a published edge
- * that is not its listener's template edge, highest pool index first) back to
- * standby so upkeep can publish an uncovered listener into the freed slot.
- * Never automatic: it changes what members receive. Refusals: `edge.no_duplicate`
- * (every published edge is a template edge), the usual rotation / quarantine guard.
+ * Make room in a pool at its cap: unpublish ONE removable edge (highest pool
+ * index first) back to standby so upkeep can publish what the origin lacks
+ * into the freed slot. Removable: published, not its listener's template edge,
+ * and its removal does not increase the coverage deficit (lib/edges/providerSet.ts
+ * `removableUnder`; a pool that is already short somewhere can still give up a
+ * redundant copy). Never automatic: it changes what members receive. Refusals:
+ * `edge.no_duplicate` (nothing removable), the usual rotation / quarantine guard.
  */
 export const rebalance = internalMutation({
   args: { relayId: v.id('relays'), actorAdminId: v.optional(v.id('adminUsers')) },
@@ -1986,10 +2014,12 @@ export const rebalance = internalMutation({
     const templates = new Set(
       listeners.map((l) => l.templateEdgeId as string | undefined).filter(Boolean),
     );
+    const state = await setStateOf(ctx.db, origin);
     let pick: Doc<'edges'> | null = null;
-    for (let i = origin.publishedEdgeIds.length - 1; i >= 0; i--) {
-      const edgeId = origin.publishedEdgeIds[i];
-      if (!edgeId || templates.has(edgeId as string)) continue;
+    for (let i = state.published.length - 1; i >= 0; i--) {
+      const edgeId = state.published[i]!.edgeId;
+      if (templates.has(edgeId as string)) continue;
+      if (!removableUnder(state.requirement, state.published, i)) continue;
       const e = await ctx.db.get(edgeId);
       if (e && e.publication === 'published') {
         pick = e;
@@ -1999,7 +2029,8 @@ export const rebalance = internalMutation({
     if (!pick)
       throw new ConvexError({
         code: 'edge.no_duplicate',
-        message: 'Every published edge is the template edge of its listener; nothing to unpublish',
+        message:
+          "No published edge can go without costing coverage (each is its listener's template edge or the only one of its group or pick)",
       });
     const picked = pick;
     const now = Date.now();

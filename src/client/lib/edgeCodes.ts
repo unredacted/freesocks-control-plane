@@ -618,10 +618,21 @@ const COPY = {
     fix: 'Finish the guided setup to go live.',
   },
   pool_rebalance: {
-    label: 'Make room for a listener',
+    label: 'Make room for what is missing',
     explain:
-      'A deployed listener has no published edge, every pool slot is taken and the pool is at its cap.',
-    fix: 'Rebalance: one duplicate edge goes back to standby so the listener can be published.',
+      'A transport or a provider of this node has no published address, every pool slot is taken and the pool is at its cap.',
+    fix: 'Rebalance: one redundant address goes back to standby so the missing one can be published.',
+  },
+  pick_cooling: {
+    label: 'A location is cooling',
+    explain:
+      'An address in this location was just blocked here, so automatic work leaves the location alone for a while.',
+  },
+  reduced_resilience: {
+    label: 'No backup elsewhere',
+    explain:
+      'Members on these transports get no backup at another provider: every location that carries them is one provider.',
+    fix: 'Add a location of another provider to this node.',
   },
   needs_test: {
     label: 'Blocked and the spare is untested',

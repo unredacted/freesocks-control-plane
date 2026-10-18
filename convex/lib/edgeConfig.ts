@@ -80,11 +80,18 @@ export function defaultClientRule(family: RenderClientFamily): ClientRenderRule 
 // --- main config -------------------------------------------------------------
 
 /**
- * The published-pool cap per origin. Coverage needs one slot per deployed
- * listener (`ensurePoolCapacity`), so the bound is the listener cap of a guided
- * setup, not a tuning knob.
+ * The published-pool cap per origin. Coverage needs a slot per deployed
+ * listener and, with a provider set, an address per diversity group and per
+ * pick (lib/edges/providerSet.ts), so the cap is twice the listener cap: a set
+ * whose steady-state cover would exceed it is refused (`edge.set_too_large`).
  */
-export const MAX_DESIRED_PUBLISHED = 8;
+export const MAX_DESIRED_PUBLISHED = 16;
+
+/** Deployed, enabled listeners per origin (`edge.listener_cap`; a guided setup's `too_many_inbounds`). */
+export const MAX_COVERAGE_LISTENERS = 8;
+
+/** The fleet default pool size stays within the listener cap. */
+export const MAX_DESIRED_PUBLISHED_DEFAULT = 8;
 
 export interface EdgeConfig {
   /** Master switch for the detector + automatic actions. Ships OFF. */
@@ -417,7 +424,7 @@ export function sanitizeRelayConfig(
     desiredPublishedDefault: sanitizeInt(
       raw.desiredPublishedDefault,
       1,
-      MAX_DESIRED_PUBLISHED,
+      MAX_DESIRED_PUBLISHED_DEFAULT,
       D.desiredPublishedDefault,
     ),
     standbyPerRelay: sanitizeInt(raw.standbyPerRelay, 0, 2, D.standbyPerRelay),
@@ -800,7 +807,7 @@ export function originOverrideNames(o: OriginOverrides): string[] {
  * test against the sanitizer, so a bound can never drift between the two.
  */
 export const EDGE_CONFIG_BOUNDS: Readonly<Record<string, { min: number; max: number }>> = {
-  desiredPublishedDefault: { min: 1, max: MAX_DESIRED_PUBLISHED },
+  desiredPublishedDefault: { min: 1, max: MAX_DESIRED_PUBLISHED_DEFAULT },
   standbyPerRelay: { min: 0, max: 2 },
   standbyPerListener: { min: 0, max: 2 },
   drainMinutes: { min: 1, max: 7 * 1440 },

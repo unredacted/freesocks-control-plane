@@ -69,25 +69,32 @@ export function uncoveredListeners<L extends PoolListener>(listeners: readonly L
 
 export type PoolAllocation = { index: number } | { refused: 'pool_full' | 'pool_reserved' };
 
+/** What one more publication does to the origin's coverage deficit (`setState.admissionOf`). */
+export interface PoolAdmit {
+  lowersDeficit: boolean;
+  deficit: number;
+}
+
 /**
  * Reserved allocation (docs/edges.md § Publication): the free slots of a pool
- * are held for the coverage listeners that have no template edge yet. Publishing
- * an edge for a listener that is already covered is refused (`pool_reserved`)
- * while `freeSlots <= uncoveredListeners`, so a second copy for A can never take
- * the slot B is waiting for. An edge for an uncovered listener always gets the
- * lowest free index; no free slot at all is `pool_full`.
+ * are held for what the origin still lacks, its coverage DEFICIT (a listener
+ * with nothing published, a group or a pick of its provider set without an
+ * address; lib/edges/providerSet.ts). An edge that lowers the deficit gets the
+ * lowest free index; any other edge only while the free slots exceed the
+ * deficit (`pool_reserved` otherwise), so a second copy for A can never take
+ * the slot B is waiting for. No free slot at all is `pool_full`. A shortfall
+ * only a cooling pick could fill is not part of the deficit: reserved slots
+ * never hold healthy work hostage.
  */
 export function allocatePoolIndex(
   published: readonly (string | null)[],
   desired: number,
-  listenerId: string,
-  listeners: readonly PoolListener[],
+  admit: PoolAdmit,
 ): PoolAllocation {
   const index = nextFreePoolIndex(published, desired);
   if (index === null) return { refused: 'pool_full' };
-  const uncovered = uncoveredListeners(listeners);
-  if (uncovered.some((l) => l.id === listenerId)) return { index };
-  if (freeSlotCount(published, desired) <= uncovered.length) return { refused: 'pool_reserved' };
+  if (admit.lowersDeficit) return { index };
+  if (freeSlotCount(published, desired) <= admit.deficit) return { refused: 'pool_reserved' };
   return { index };
 }
 

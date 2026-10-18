@@ -1072,7 +1072,11 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
             ...act,
           }),
         );
-      case 'provision':
+      case 'provision': {
+        // An explicit location: an untrusted one only for a spare that waits
+        // unpublished (its first tested address trusts it).
+        const locationId =
+          typeof body.locationId === 'string' ? id<'edgeLocations'>(body.locationId) : undefined;
         return json(
           await ctx.runMutation(internal.edgeRotations.start, {
             relayId,
@@ -1083,9 +1087,12 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
               typeof body.listenerId === 'string'
                 ? id<'relayListeners'>(body.listenerId)
                 : undefined,
+            ...(locationId ? { requestedLocationId: locationId } : {}),
+            ...(locationId && body.publish === false ? { allowUnqualified: true } : {}),
             ...act,
           }),
         );
+      }
       case 'rotate':
       case 'burn':
         return json(
@@ -1099,6 +1106,13 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
             // proof, the TLS chain and every binding check still apply.
             forceGeoEvidence: body.forceGeoEvidence === true,
             targetEdgeId: id<'edges'>(String(body.edgeId ?? '')),
+            // An explicit spare (L4) or location (an L7 front); Automatic otherwise.
+            ...(typeof body.spareEdgeId === 'string'
+              ? { requestedSpareEdgeId: id<'edges'>(body.spareEdgeId) }
+              : {}),
+            ...(typeof body.locationId === 'string'
+              ? { requestedLocationId: id<'edgeLocations'>(body.locationId) }
+              : {}),
             ...act,
           }),
         );

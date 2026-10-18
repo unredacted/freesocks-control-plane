@@ -42,34 +42,29 @@ describe('pool: free slots and coverage', () => {
 });
 
 describe('allocatePoolIndex: reserved allocation', () => {
-  test('an uncovered listener always takes the lowest free index', () => {
-    const rows = [L('a', { templateEdgeId: 'e1' }), L('b')];
-    expect(allocatePoolIndex(['e1'], 2, 'b', rows)).toEqual({ index: 1 });
+  const lowers = { lowersDeficit: true, deficit: 1 };
+  const extra = { lowersDeficit: false, deficit: 1 };
+
+  test('an edge that lowers the deficit always takes the lowest free index', () => {
+    expect(allocatePoolIndex(['e1'], 2, lowers)).toEqual({ index: 1 });
   });
 
-  test('an extra copy for a covered listener is refused while free slots are reserved', () => {
-    const rows = [L('a', { templateEdgeId: 'e1' }), L('b')];
-    // One free slot, one uncovered listener: A may not take it.
-    expect(allocatePoolIndex(['e1'], 2, 'a', rows)).toEqual({ refused: 'pool_reserved' });
-    // Two free slots, one uncovered: A may take one.
-    expect(allocatePoolIndex(['e1'], 3, 'a', rows)).toEqual({ index: 1 });
+  test('any other edge is refused while the free slots are held for the deficit', () => {
+    // One free slot, a deficit of one: an extra copy may not take it.
+    expect(allocatePoolIndex(['e1'], 2, extra)).toEqual({ refused: 'pool_reserved' });
+    // Two free slots, a deficit of one: it may take one.
+    expect(allocatePoolIndex(['e1'], 3, extra)).toEqual({ index: 1 });
   });
 
-  test('no free slot at all is pool_full, whatever the listener', () => {
-    const rows = [L('a', { templateEdgeId: 'e1' }), L('b')];
-    expect(allocatePoolIndex(['e1', 'e2'], 2, 'b', rows)).toEqual({ refused: 'pool_full' });
-    expect(allocatePoolIndex(['e1', 'e2'], 2, 'a', rows)).toEqual({ refused: 'pool_full' });
+  test('no free slot at all is pool_full, whatever the edge', () => {
+    expect(allocatePoolIndex(['e1', 'e2'], 2, lowers)).toEqual({ refused: 'pool_full' });
+    expect(allocatePoolIndex(['e1', 'e2'], 2, extra)).toEqual({ refused: 'pool_full' });
   });
 
-  test('a listener that is not a coverage listener (disabled) is treated as covered', () => {
-    const rows = [L('a', { templateEdgeId: 'e1' }), L('b'), L('c', { enabled: false })];
-    expect(allocatePoolIndex(['e1'], 2, 'c', rows)).toEqual({ refused: 'pool_reserved' });
-  });
-
-  test('with every listener covered the pool behaves as before', () => {
-    const rows = [L('a', { templateEdgeId: 'e1' }), L('b', { templateEdgeId: 'e2' })];
-    expect(allocatePoolIndex(['e1', 'e2'], 4, 'a', rows)).toEqual({ index: 2 });
-    expect(allocatePoolIndex(['e1', null, 'e2'], 4, 'b', rows)).toEqual({ index: 1 });
+  test('with no deficit the pool behaves as before', () => {
+    const none = { lowersDeficit: false, deficit: 0 };
+    expect(allocatePoolIndex(['e1', 'e2'], 4, none)).toEqual({ index: 2 });
+    expect(allocatePoolIndex(['e1', null, 'e2'], 4, none)).toEqual({ index: 1 });
   });
 
   test('pool helpers round-trip an edge in and out of a slot', () => {

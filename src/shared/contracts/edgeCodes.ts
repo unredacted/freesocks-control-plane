@@ -225,6 +225,9 @@ export const ATTENTION_KINDS = [
   'account_budget_unlimited',
   // A live node whose connection mode is turned off: no member can pick it.
   'node_mode_disabled',
+  // Provider sets: a pick cooling after a burn; transports with no backup in another failure domain.
+  'pick_cooling',
+  'reduced_resilience',
 ] as const;
 export type AttentionKind = (typeof ATTENTION_KINDS)[number];
 
