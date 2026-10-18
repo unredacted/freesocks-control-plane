@@ -264,10 +264,11 @@
   $effect(() => {
     if (step === 'account' && plan && plan.accounts.length === 0) addingAccount = true;
   });
-  // The layers every chosen transport can be carried at (an account of another one cannot).
+  // The layers that carry at least one chosen transport: a pick of a set need
+  // not carry them all, so a new account of either layer can be one of them.
   const neededLayers = $derived.by((): EdgeLayer[] | undefined => {
     if (required.length === 0) return undefined;
-    return (['l4', 'l7'] as const).filter((l) => required.every((i) => i.layers.includes(l)));
+    return (['l4', 'l7'] as const).filter((l) => required.some((i) => i.layers.includes(l)));
   });
   // Remnawave's "XX" (no country set) names no country.
   const nodeCountry = $derived(countryLabel(pickedNode?.countryCode));

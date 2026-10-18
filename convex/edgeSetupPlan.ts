@@ -255,7 +255,8 @@ function modesOffOf(
  * front at least one required transport, and `carries` names which. Its
  * locations are judged on their own (an untrusted one is offered: its first
  * tested address trusts it); an account with no usable location cannot be
- * picked yet. Capacity is judged for one pick carrying all it can.
+ * picked yet. Capacity here is room for one address; the set's own check sums
+ * what each pick gets over its targets.
  */
 function accountCompatibility(
   a: PlanContext['accounts'][number],
@@ -302,7 +303,9 @@ function accountCompatibility(
     reasons.push(
       scoped ? 'provider_mismatch' : portOnly ? 'origin_port_not_carried' : 'layer_mismatch',
     );
-  const need = Math.max(1, carries.length);
+  // Room for one address: what a pick really gets is the set's cover, summed
+  // per account and location over its targets (`setOfPicks`).
+  const need = 1;
   if (a.maxLiveEdges - a.live < need) reasons.push('account_capacity_reached');
   if (a.dailyAllocationBudget !== 0 && a.dailyAllocationBudget - a.allocationsToday < need)
     reasons.push('account_budget_exhausted');

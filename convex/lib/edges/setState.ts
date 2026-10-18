@@ -182,7 +182,9 @@ export async function setStateOf(
     picks ? picks.map((p) => p.pick) : null,
     coolingOf(relay, now),
   );
-  const keyOf = new Map(rows.map((l) => [l._id as string, l.listenerKey]));
+  // Only coverage listeners count: an edge of a disabled or retired listener
+  // serves nobody, so it neither covers a transport nor holds a pick.
+  const keyOf = new Map(listeners.map((l) => [l._id as string, l.listenerKey]));
   const published: SetState['published'] = [];
   for (const id of relay.publishedEdgeIds) {
     if (!id) continue;

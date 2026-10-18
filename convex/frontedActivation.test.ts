@@ -2913,6 +2913,67 @@ describe("a node's provider set, edited by hand", () => {
     ]);
   });
 
+  test("an address published since the last commit is in the add run's snapshot and its commit", async () => {
+    const w = await world();
+    const { t } = w;
+    const live = await liveL4(w);
+    // A second address in the first location, published after the commit
+    // (outside `committed.edgeIds`, same shape as the first).
+    const e1 = (await t.run((c) => c.db.get(live.e1)))!;
+    const extra = (
+      await adoptL4Edge(t, live.relayId, e1.listenerId, {
+        ipv4: '198.51.100.78',
+        accountId: live.l4,
+        verified: false,
+      })
+    ).edgeId as Id<'edges'>;
+    await t.run((c) =>
+      c.db.patch(extra, {
+        locationId: e1.locationId,
+        placeKey: e1.placeKey,
+        placement: e1.placement,
+        templateHash: e1.templateHash,
+      }),
+    );
+    await verifyL4Edge(t, extra);
+    await t.run(async (c) => {
+      const relay = (await c.db.get(live.relayId))!;
+      await c.db.patch(extra, {
+        publication: 'published',
+        poolIndex: relay.publishedEdgeIds.length,
+      });
+      await c.db.patch(live.relayId, {
+        publishedEdgeIds: [...relay.publishedEdgeIds, extra],
+        desiredPublished: relay.publishedEdgeIds.length + 1,
+      });
+    });
+    expect((await intentOf(t, live.intentId)).approved!.committed.edgeIds).not.toContain(extra);
+    const second = (
+      await t.mutation(internal.edgeLocations.create, {
+        accountId: live.l4,
+        placement: { zone: 'nl-ams1' },
+        label: 'Zone two',
+      })
+    ).id as Id<'edgeLocations'>;
+    const res = await edgesPost(t, live.cookie, `relays/${live.relayId}/providers`, {
+      add: [second],
+    });
+    expect(res.status).toBe(200);
+    const { runId } = (await res.json()) as { runId: Id<'edgeSetupRuns'> };
+    const card = await drive(t, () => setupRun(t, runId), parked, 'add run to the card');
+    const e2 = card.listeners[0]!.edgeId!;
+    await tickAll(t, runId);
+    await drive(t, () => setupRun(t, runId), parked, 'add run to the approval');
+    const { runId: actId } = await approveOverHttp(t, live.cookie, live.intentId);
+    const done = await drive(t, () => setupRun(t, runId), movedOn, 'add run after approval');
+    expect([done.stage, done.state]).toEqual(['done', 'done']);
+    const all = [live.e1 as string, extra as string, e2].sort();
+    expect([...w.calls.rehearsedEdges.at(-1)!].sort()).toEqual(all);
+    expect([...(await activationRun(t, actId)).delivery!.edgeIds].sort()).toEqual(all);
+    expect([...(await intentOf(t, live.intentId)).approved!.committed.edgeIds].sort()).toEqual(all);
+    expect((await t.run((c) => c.db.get(extra)))!.publication).toBe('published');
+  });
+
   test('a kept address that stops serving between the rehearsal and go-live: the run rehearses a new snapshot and commits exactly it', async () => {
     const w = await world();
     const { t } = w;

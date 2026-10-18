@@ -1352,3 +1352,44 @@ describe('edgeSetupRuns: a provider set of two locations', () => {
     ).rejects.toThrow(/picked twice/);
   });
 });
+
+describe('edgeSetupRuns: replacing a pick of a set', () => {
+  test('the cover is worked out again: the kept pick keeps its line and address, the new pick gets a fresh one, the old candidate is cancelled', async () => {
+    const { t, serverId, accountId } = await seed();
+    const first = (await defaultLocationRow(t, accountId))!._id;
+    const mk = async (zone: string) =>
+      (await t.mutation(internal.edgeLocations.create, { accountId, placement: { zone } }))
+        .id as Id<'edgeLocations'>;
+    const second = await mk('nl-ams1');
+    const third = await mk('fi-hel1');
+    const plan = await t.action(internal.edgeSetupPlan.plan, {
+      backendServerId: serverId,
+      nodeUuid: NODE_UUID,
+      picks: [first, second],
+    });
+    const created = (await t.action(internal.edgeSetupPlan.create, {
+      backendServerId: serverId,
+      nodeUuid: NODE_UUID,
+      picks: [first, second],
+      planHash: plan.planHash,
+      approvedHideUuids: [],
+    })) as { runId: string };
+    const runId = created.runId as Id<'edgeSetupRuns'>;
+    const card = await pump(t, runId, settled);
+    expect(card.need?.code).toBe('try_it');
+    const kept = card.listeners.find((l) => l.locationId === first)!;
+    const dropped = card.listeners.find((l) => l.locationId === second)!;
+    await t.mutation(internal.edgeSetupRuns.retry, {
+      runId,
+      replacePick: { from: second, to: third },
+    });
+    const after = await run(t, runId);
+    expect(after.picks!.map((p) => p.locationId)).toEqual([first, third]);
+    expect(after.listeners.map((l) => l.locationId).sort()).toEqual([first, third].sort());
+    // The kept line keeps its address; the replaced pick's candidate is cancelled.
+    expect(after.listeners.find((l) => l.locationId === first)!.edgeId).toBe(kept.edgeId);
+    expect(after.listeners.find((l) => l.locationId === third)!.edgeId).toBeUndefined();
+    expect((await t.run((c) => c.db.get(dropped.edgeId!)))!.status).toBe('cancelled');
+    expect(after.stage).toBe('provision');
+  });
+});

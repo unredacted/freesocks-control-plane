@@ -78,7 +78,7 @@ import {
   type RotationEvent,
   type SetLocationCandidate,
 } from './lib/edges/rotation';
-import { admissionOf, coolingOf, setStateOf, withCooling } from './lib/edges/setState';
+import { admissionOf, coolingOf, setPicksOf, setStateOf, withCooling } from './lib/edges/setState';
 import { locationKeyOf } from './lib/edges/locations';
 import {
   protocolIsHttpTransport,
@@ -614,8 +614,9 @@ export async function collectStartBlockers(
       const couldGoL7 =
         !!targetListener &&
         listenerLayers(targetListener).layers.includes('l7') &&
-        (a.trigger === 'manual' || l7SelectionAllowed(cfg));
-      if (!couldGoL7 && !(await verifiedSpareFor(ctx, origin, targetEdge, cfg))) {
+        (a.trigger === 'manual' || l7SelectionAllowed(cfg) || (await setHasL7Pick(ctx.db, origin)));
+      const automatic = a.trigger === 'detector' || a.trigger === 'reconcile';
+      if (!couldGoL7 && !(await verifiedSpareFor(ctx, origin, targetEdge, cfg, automatic))) {
         push(
           'edge.no_verified_spare',
           'No tested spare address exists for this listener; test a spare first',
@@ -680,7 +681,12 @@ export async function collectStartBlockers(
       // forwarder. The veto is explicit so the operator sees why nothing happened.
       if (a.trigger === 'detector') {
         const layers = listenerLayers(listener).layers;
-        if (layers.length === 1 && layers[0] === 'l7' && !l7SelectionAllowed(cfg)) {
+        if (
+          layers.length === 1 &&
+          layers[0] === 'l7' &&
+          !l7SelectionAllowed(cfg) &&
+          !(await setHasL7Pick(ctx.db, origin))
+        ) {
           push(
             'edge.l7_auto_select_disabled',
             'Automatic selection of L7 edges is disabled; publish this listener by hand',
@@ -725,6 +731,16 @@ export const start = internalMutation({
 });
 
 /**
+ * Whether the node's provider set holds a usable CDN pick: a set pick is the
+ * operator's own choice (D4), so automatic work on that node may use it even
+ * with `edge.l7.autoSelect` off.
+ */
+async function setHasL7Pick(db: QueryCtx['db'], origin: Origin): Promise<boolean> {
+  const picks = await setPicksOf(db, origin);
+  return !!picks?.some((p) => p.usable && edgeLayerOf(p.account.provider) === 'l7');
+}
+
+/**
  * Whether the target's listener holds a spare the machine could switch to
  * WITHOUT provisioning: an active, unpublished edge on the same listener that
  * passes the whole publication gate (for an L4 edge that includes a current
@@ -736,11 +752,20 @@ async function verifiedSpareFor(
   origin: Origin,
   targetEdge: Edge,
   cfg: EdgeConfig,
+  automatic = false,
 ): Promise<boolean> {
   const edges = await liveEdgesOfRelay(ctx.db, origin._id);
+  // Automatic work takes the spares the selection may take: inside the
+  // node's provider set and outside a cooling pick (`selectionContext`).
+  const cooling = coolingOf(origin);
+  const inSet = origin.providerSet
+    ? new Set(origin.providerSet.map((p) => p.locationId as string))
+    : null;
   for (const e of edges) {
     if (e._id === targetEdge._id || e.listenerId !== targetEdge.listenerId) continue;
     if (e.status !== 'active' || e.publication !== 'unpublished') continue;
+    const loc = (e.locationId as string | undefined) ?? null;
+    if (automatic && loc && (cooling.has(loc) || (inSet && !inSet.has(loc)))) continue;
     // The same health rule `pickStandby` applies (an observe-only import with
     // no provider is not a candidate the selection would take).
     if (!providerHealthSatisfies(e.provider, e.health, cfg.requireProviderHealth)) continue;

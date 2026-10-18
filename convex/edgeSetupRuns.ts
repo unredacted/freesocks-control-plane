@@ -109,6 +109,7 @@ import { runningRenameOf } from './lib/backend/nodeAliases';
 import { MAX_PROVIDER_PICKS, coverTargets, requirementOf } from './lib/edges/providerSet';
 import { carries, setStateOf } from './lib/edges/setState';
 import { locationKeyOf } from './lib/edges/locations';
+import type { EdgeProviderId } from './lib/edgeProviderIds';
 
 type Run = Doc<'edgeSetupRuns'>;
 
@@ -2367,9 +2368,10 @@ function rehearsalRecord(
 
 /**
  * The reviewed delivery snapshot of the activation this run is bound to: the
- * committed addresses go-live keeps (every one for an `add`; for a first
- * protection or a `replace_all`, those on transports the run does not touch,
- * since go-live retires the others) plus the run's candidates. Promotion
+ * addresses members are served now that go-live keeps (every one for an
+ * `add`; for a first protection or a `replace_all`, those on transports the
+ * run does not touch, since go-live retires the others) plus the run's
+ * candidates. Promotion
  * commits exactly it (`promoteCandidate`); the rehearsal renders it. A run not
  * bound to the node's current, running activation records nothing.
  */
@@ -2391,13 +2393,18 @@ export const recordDeliverySnapshot = internalMutation({
         .filter((l) => r.listeners.some((x) => x.listenerKey === l.listenerKey))
         .map((l) => l._id as string),
     );
+    // What members are served now: the origin's published, active edges that
+    // no activation holds back (an address published since the last commit
+    // under its approval counts too).
+    const relay = await ctx.db.get(r.relayId);
+    const gate = await nodeGateFor(ctx, r.backendServerId, r.nodeName);
     const kept: string[] = [];
-    for (const id of intent.approved?.committed.edgeIds ?? []) {
-      if (candidates.includes(id)) continue;
-      const e = await ctx.db.get(id as Id<'edges'>);
+    for (const id of relay?.publishedEdgeIds ?? []) {
+      if (!id || candidates.includes(id as string) || isCandidateEdge(gate, id as string)) continue;
+      const e = await ctx.db.get(id);
       if (!e || e.publication !== 'published' || e.status !== 'active') continue;
       if (!add && touched.has(e.listenerId as string)) continue;
-      kept.push(id);
+      kept.push(id as string);
     }
     await ctx.db.patch(act._id, {
       delivery: { edgeIds: [...kept, ...candidates] },
@@ -2796,47 +2803,99 @@ export const retry = internalMutation({
           message: 'Not a compatible location',
         });
       const moving = listeners.filter((l) => (l.locationId ?? from) === from);
-      // The new pick must carry what the old one did.
-      if (offered.carries && moving.some((l) => !offered.carries!.includes(l.listenerKey)))
-        throw new ConvexError({
-          code: 'edge.account_incompatible',
-          message: 'That location cannot carry every transport of the pick it replaces',
-        });
       if (location._id !== from) {
-        if (location._id !== from && current.some((p) => p.locationId === location._id))
+        if (current.some((p) => p.locationId === location._id))
           throw new ConvexError({ code: 'validation', message: 'That location is already picked' });
         // Switching a pick only while none of its addresses is published: a
         // candidate of the old pick (its layer, its bill, its region) is
-        // cancelled, never re-labelled, and provisioning starts over for it.
+        // cancelled, never re-labelled.
         if (!SWITCHABLE_STAGES.has(r.stage) || moving.some((l) => l.published))
           throw new ConvexError({
             code: current.length === 1 ? 'edge.account_switch_late' : 'edge.pick_switch_late',
             message: 'A pick can only change before its addresses are published',
           });
-        const layer = edgeLayerOf(account.provider);
-        for (const entry of moving) {
-          entry.locationId = location._id;
-          entry.layer = layer;
-          if (!entry.edgeId) continue;
-          const e = await ctx.db.get(entry.edgeId);
-          if (e && e.accountId === account._id && e.locationId === location._id) continue;
+        picks = current.map((p) =>
+          p.locationId === from
+            ? { locationId: location._id, accountId: account._id }
+            : { locationId: p.locationId!, accountId: p.accountId! },
+        );
+        // The new set's cover, from scratch, as a fresh run would have it (the
+        // old assignment could leave a transport without a backup elsewhere):
+        // a line the new cover keeps stays with its address and its tick, a
+        // new target joins, a published line stays, the rest go.
+        const accountOf = (id: string) => plan.accounts.find((x) => x.id === id);
+        const info = picks.map((p) => {
+          const own = p.accountId === account._id;
+          const acct = accountOf(p.accountId as string);
+          const provider = own ? account.provider : (acct?.provider ?? '');
+          const placeKey =
+            p.locationId === location._id
+              ? location.placeKey
+              : (acct?.locations?.find((l) => l.id === (p.locationId as string))?.placeKey ??
+                (p.locationId as string));
+          const carriesKeys = own ? (offered.carries ?? null) : (acct?.carries ?? null);
+          return {
+            locationId: p.locationId as string,
+            provider,
+            locationKey: locationKeyOf(provider, placeKey),
+            carries: carriesKeys,
+          };
+        });
+        const req = requirementOf(
+          plan.requiredListeners.map((k) => ({
+            listenerKey: k,
+            carriers: info
+              .filter((p) => !p.carries || p.carries.includes(k))
+              .map((p) => p.locationId),
+          })),
+          info.map((p) => ({
+            locationId: p.locationId,
+            provider: p.provider,
+            locationKey: p.locationKey,
+          })),
+        );
+        if (req.uncarried.length > 0)
+          throw new ConvexError({
+            code: 'edge.set_uncovered_listener',
+            message: `No location of the new set carries ${req.uncarried.join(', ')}`,
+          });
+        const layerOf = (locationId: string) =>
+          edgeLayerOf(
+            (info.find((p) => p.locationId === locationId)?.provider ??
+              account.provider) as EdgeProviderId,
+          );
+        const next: RunListener[] = [];
+        for (const t of coverTargets(req, [])) {
+          if (!t.locationId) continue;
+          const existing = listeners.find(
+            (l) =>
+              l.listenerKey === t.listenerKey &&
+              (l.locationId as string | undefined) === t.locationId &&
+              l.locationId !== from,
+          );
+          next.push(
+            existing ?? {
+              listenerKey: t.listenerKey,
+              locationId: t.locationId as Id<'edgeLocations'>,
+              layer: layerOf(t.locationId),
+              verify: 'pending' as const,
+              published: false,
+            },
+          );
+        }
+        for (const l of listeners) if (l.published && !next.includes(l)) next.push(l);
+        for (const l of listeners) {
+          if (next.includes(l) || !l.edgeId) continue;
+          const e = await ctx.db.get(l.edgeId);
           if (e && e.publication === 'unpublished' && LIVE_CANDIDATE.has(e.status))
             await ctx.db.patch(e._id, {
               status: 'cancelled',
               statusChangedAt: now,
               updatedAt: now,
             });
-          entry.edgeId = undefined;
-          entry.verify = 'pending';
-          entry.probeRequestedAt = undefined;
-          entry.proofRequestedAt = undefined;
         }
+        listeners = next;
         if (STAGE_INDEX[r.stage] > STAGE_INDEX.provision) stage = 'provision';
-        picks = current.map((p) =>
-          p.locationId === from
-            ? { locationId: location._id, accountId: account._id }
-            : { locationId: p.locationId!, accountId: p.accountId! },
-        );
       }
     }
     // The target the run stopped on: the one stage 4 marked unreachable.

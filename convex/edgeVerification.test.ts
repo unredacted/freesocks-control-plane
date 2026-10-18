@@ -253,6 +253,73 @@ describe('case 23: blocked primary, trusted account, untested spare', () => {
   });
 });
 
+describe('an automatic replace takes only a spare the selection may take', () => {
+  test('a tested spare outside the provider set: refused for the detector (no_verified_spare), taken by a manual replace', async () => {
+    const { t, relayId, listenerId, accountId, publishedEdgeId } = await seed();
+    await t.run(async (ctx) => {
+      await upsertSettingRow(ctx, 'edge.enabled', 'true');
+      await upsertSettingRow(ctx, 'edge.autoRotate', 'true');
+      await ctx.db.patch(relayId, { autoRotate: true });
+    });
+    const home = (await defaultLocationRow(t, accountId))!;
+    const elsewhere = (
+      await t.mutation(internal.edgeLocations.create, {
+        accountId,
+        placement: { projectId: 11, regionId: 99 },
+        label: 'Region two',
+      })
+    ).id as Id<'edgeLocations'>;
+    // The node's set is its home location only; the tested spare lives elsewhere.
+    await t.run((ctx) =>
+      ctx.db.patch(relayId, { providerSet: [{ locationId: home._id, addedAt: 1 }] }),
+    );
+    const { edgeId } = await adoptL4Edge(t, relayId, listenerId, {
+      ipv4: SPARE,
+      accountId,
+      verified: true,
+    });
+    const spare = edgeId as Id<'edges'>;
+    await t.run((ctx) =>
+      ctx.db.patch(spare, { health: 'online', locationId: elsewhere, placeKey: '99' }),
+    );
+    const preflight = (trigger: 'detector' | 'manual') =>
+      t.query(internal.edgeOperator.preflight, {
+        relayId,
+        kind: 'replace',
+        edgeId: publishedEdgeId,
+        trigger,
+      });
+    expect((await preflight('detector')).blockers.map((b) => b.code)).toContain(
+      'no_verified_spare',
+    );
+    await expect(
+      t.mutation(internal.edgeRotations.start, {
+        relayId,
+        kind: 'replace',
+        trigger: 'detector',
+        burn: true,
+        targetEdgeId: publishedEdgeId,
+      }),
+    ).rejects.toThrow(/no_verified_spare/);
+    // The operator may reach outside the set.
+    expect((await preflight('manual')).blockers.map((b) => b.code)).not.toContain(
+      'no_verified_spare',
+    );
+    // Once the spare's location joins the set, the detector may take it too.
+    await t.run((ctx) =>
+      ctx.db.patch(relayId, {
+        providerSet: [
+          { locationId: home._id, addedAt: 1 },
+          { locationId: elsewhere, addedAt: 2 },
+        ],
+      }),
+    );
+    expect((await preflight('detector')).blockers.map((b) => b.code)).not.toContain(
+      'no_verified_spare',
+    );
+  });
+});
+
 describe('case 24: configuration-bound evidence', () => {
   test('a listener revision bump after the tick makes the verification stale: retest_needed, publish refused, a stale echo refused', async () => {
     const { t, relayId, listenerId, accountId } = await seed();

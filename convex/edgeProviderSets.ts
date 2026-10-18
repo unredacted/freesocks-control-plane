@@ -56,7 +56,12 @@ export const view = internalQuery({
     const state = await setStateOf(ctx.db, relay, now);
     const edges = await liveEdgesOfRelay(ctx.db, relayId);
     const cooling = coolingOf(relay, now);
-    const pickRows = state.picks ?? [];
+    // Without a recorded set, the picks are the ones its published edges imply
+    // (what an edit starts from), so they are not offered as new ones either.
+    const pickRows =
+      state.picks ??
+      (await setPicksOf(ctx.db, { providerSet: await impliedSetOf(ctx, relay) })) ??
+      [];
     const picks = pickRows.map((p) => {
       const mine = edges.filter((e) => e.locationId === p.location._id);
       const until = (relay.cooling ?? []).find(
