@@ -64,14 +64,16 @@ describe('legacyUnion', () => {
     expect(legacyUnion({ curated: [], probe: [] })).toEqual([]);
   });
 
-  test('reserved and malformed codes are dropped; the union is capped', () => {
+  test('reserved and malformed codes are dropped; the union is never truncated', () => {
     expect(legacyUnion({ curated: ['XX', 'ZZ', 'usa', 7, 'IR'], probe: [] })).toEqual([
       entry('IR'),
     ]);
     const many = Array.from({ length: 60 }, (_, i) =>
       String.fromCharCode(65 + Math.floor(i / 26), 65 + (i % 26)),
     );
-    expect(legacyUnion({ curated: many, probe: [] })).toHaveLength(MAX_CENSORED_COUNTRIES);
+    // The old lists could together exceed the cap: nothing is dropped (the seed
+    // refuses to copy such a union instead).
+    expect(legacyUnion({ curated: many.slice(0, 32), probe: many.slice(20) })).toHaveLength(60);
   });
 });
 
@@ -117,6 +119,19 @@ describe('validateCensoredCountries', () => {
     expect(validateCensoredCountries([{ code: 'IR' }, { code: 'ir' }])).toEqual({
       ok: false,
       message: 'IR is listed twice',
+    });
+    // A flag given as anything but a boolean would read as off: refused.
+    expect(validateCensoredCountries([{ code: 'IR', checkEdges: 'true' }])).toEqual({
+      ok: false,
+      message: 'IR: checkEdges must be true or false',
+    });
+    expect(validateCensoredCountries([{ code: 'IR', checkNamesInside: 1 }])).toMatchObject({
+      ok: false,
+    });
+    // A flag left out is off.
+    expect(validateCensoredCountries([{ code: 'IR', checkEdges: true }])).toEqual({
+      ok: true,
+      list: [entry('IR', true)],
     });
     const tooMany = Array.from({ length: MAX_CENSORED_COUNTRIES + 1 }, (_, i) => ({
       code: String.fromCharCode(65 + Math.floor(i / 26), 65 + (i % 26)),

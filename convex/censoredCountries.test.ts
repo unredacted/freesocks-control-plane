@@ -106,6 +106,7 @@ describe('the admin routes', () => {
       [{ code: 'IRN' }],
       [{ code: 'ZZ' }],
       [entry('IR'), entry('ir')],
+      [{ code: 'IR', checkEdges: 'true' }],
     ]) {
       const res = await call('PUT', { countries });
       expect(res.status).toBe(400);
@@ -150,6 +151,27 @@ describe('seed.seedCensoredCountries', () => {
     await setting(CENSORED_COUNTRIES_KEY, [entry('RU', true)]);
     expect(await t.mutation(internal.seed.seedCensoredCountries, {})).toEqual({ copied: null });
     expect(await raw(CENSORED_COUNTRIES_KEY)).toEqual([entry('RU', true)]);
+  });
+
+  test('refuses to copy a union longer than the cap, which stays live and whole', async () => {
+    const { t, call, setting, raw } = await setup();
+    const codes = Array.from({ length: 70 }, (_, i) =>
+      String.fromCharCode(65 + Math.floor(i / 26), 65 + (i % 26)),
+    ).filter((c) => c !== 'XX' && c !== 'ZZ');
+    await setting('edge.sni.curatedCountries', codes.slice(0, 32));
+    await setting('edge.probe.countries', codes.slice(25, 65));
+    expect(await t.mutation(internal.seed.seedCensoredCountries, {})).toEqual({
+      copied: null,
+      overCap: 65,
+    });
+    expect(await raw(CENSORED_COUNTRIES_KEY)).toBeNull();
+    // Every country still counts until an admin trims the list.
+    const view = await (await call('GET')).json();
+    expect(view.stored).toBe(false);
+    expect(view.countries).toHaveLength(65);
+    // Saving needs a list within the cap.
+    expect((await call('PUT', { countries: view.countries })).status).toBe(400);
+    expect((await call('PUT', { countries: view.countries.slice(0, 40) })).status).toBe(200);
   });
 });
 

@@ -17,9 +17,10 @@
  *
  * While the key has never been written, the list is computed LIVE from the old
  * keys (their union, in the order curated, probe, vantage, privacy, matrix
- * rows), so behaviour does not move between `convex deploy` and the seed that
- * copies it (`seed.seedCensoredCountries`). The old keys are left in place
- * until a later cleanup, so a rollback still finds them.
+ * rows, never truncated), so behaviour does not move between `convex deploy`
+ * and the seed that copies it (`seed.seedCensoredCountries`). The old keys are
+ * left in place until a later cleanup, so a rollback still finds them. A union
+ * longer than the cap is not copied: it stays live until an admin trims it.
  *
  * Pure apart from the reads; no import from edgeConfig or sniConfig (they read
  * this module).
@@ -133,7 +134,9 @@ export interface LegacyCountryValues {
 /**
  * The union of the old lists, as one list. A probe country gets `checkEdges`;
  * a vantage country gets `checkNamesInside` only when it was also curated
- * (that is the only way it was ever checked before). Truncated at the cap.
+ * (that is the only way it was ever checked before). NOT truncated: the old
+ * lists could together exceed the cap, and dropping the tail would silently
+ * stop checks, suggestions and matrix rows. The seed refuses such a union.
  */
 export function legacyUnion(raw: LegacyCountryValues): CensoredCountry[] {
   const curated = codeList(raw.curated, LEGACY_DEFAULTS.curated);
@@ -144,7 +147,7 @@ export function legacyUnion(raw: LegacyCountryValues): CensoredCountry[] {
   const order: string[] = [];
   for (const c of [...curated, ...probe, ...vantage, ...privacy, ...matrix])
     if (!order.includes(c)) order.push(c);
-  return order.slice(0, MAX_CENSORED_COUNTRIES).map((code) => ({
+  return order.map((code) => ({
     code,
     checkEdges: probe.includes(code),
     checkNamesInside: vantage.includes(code) && curated.includes(code),
@@ -213,10 +216,15 @@ export function validateCensoredCountries(
     return { ok: false, message: `At most ${MAX_CENSORED_COUNTRIES} countries` };
   const seen = new Set<string>();
   for (const e of v) {
-    const code =
-      e && typeof e === 'object' ? normalizeCode((e as Record<string, unknown>).code) : null;
-    if (!code) return { ok: false, message: 'Each entry needs a two-letter country code' };
+    const o = e && typeof e === 'object' ? (e as Record<string, unknown>) : null;
+    const code = o ? normalizeCode(o.code) : null;
+    if (!o || !code) return { ok: false, message: 'Each entry needs a two-letter country code' };
     if (seen.has(code)) return { ok: false, message: `${code} is listed twice` };
+    // A flag left out is off; one given must be a boolean (a "true" string read
+    // as off would silently stop checks while the save reports success).
+    for (const flag of ['checkEdges', 'checkNamesInside'] as const)
+      if (o[flag] !== undefined && typeof o[flag] !== 'boolean')
+        return { ok: false, message: `${code}: ${flag} must be true or false` };
     seen.add(code);
   }
   return { ok: true, list: sanitizeCensoredCountries(v) ?? [] };

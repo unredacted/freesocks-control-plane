@@ -1635,7 +1635,10 @@ While the key has never been written the list is computed **live** from the five
 union, in the order curated, probe, vantage, privacy, matrix rows; a probe country keeps
 `checkEdges`, a vantage country keeps `checkNamesInside` only if it was also curated), so nothing
 moves between `convex deploy` and the seed. `seed:seedCensoredCountries` (part of `seedCutover`)
-then writes that list once and never overwrites a stored one. The old keys are left in place for
+then writes that list once and never overwrites a stored one. The union is never truncated: when
+the old keys together hold more than 40 countries the seed does not copy it (dropping the tail
+would silently stop checks, suggestions and matrix rows), it stays live, and the Settings card asks
+the operator to remove the extra countries and save. The old keys are left in place for
 a rollback and no longer read once the list is stored; the edges and server-name PATCH routes no
 longer write them. A matrix row of a country that leaves the list stays stored (adding the
 country back brings it back) but is not shown on the public page. Audit:

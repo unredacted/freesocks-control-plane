@@ -22,7 +22,11 @@ import {
 const BUILT_IN_MODES_VERSION_KEY = 'connectionModes.builtInsVersion';
 import { fakeEdgeProviderEnabled } from './lib/edges/providers/fake';
 import { mockBackendEnabled } from './lib/backends/mock';
-import { CENSORED_COUNTRIES_KEY, resolveCensoredCountries } from './lib/censoredCountries';
+import {
+  CENSORED_COUNTRIES_KEY,
+  MAX_CENSORED_COUNTRIES,
+  resolveCensoredCountries,
+} from './lib/censoredCountries';
 
 /** Insert the default-free tier if absent; return its id. */
 export const seedDefaultFreeTier = internalMutation({
@@ -539,12 +543,22 @@ export const renameAppSettingKeys = internalMutation({
  * Until then it is computed live from the five keys it replaced, so this only
  * freezes what is already in effect. Never overwrites a stored list, and leaves
  * the old keys in place (a rollback still finds them). Idempotent.
+ *
+ * A union longer than the cap is NOT copied (copying would have to drop
+ * countries): it stays live from the old keys, and Admin -> Settings ->
+ * Censored countries asks the operator to trim it and save.
  */
 export const seedCensoredCountries = internalMutation({
   args: {},
-  handler: async (ctx): Promise<{ copied: number | null }> => {
+  handler: async (ctx): Promise<{ copied: number | null; overCap?: number }> => {
     const current = await resolveCensoredCountries(ctx.db);
     if (current.source === 'stored') return { copied: null };
+    if (current.list.length > MAX_CENSORED_COUNTRIES) {
+      console.warn(
+        `[seed] censorship.countries not copied: the old settings hold ${current.list.length} countries, more than ${MAX_CENSORED_COUNTRIES}; trim the list under Settings, Censored countries`,
+      );
+      return { copied: null, overCap: current.list.length };
+    }
     await upsertSettingRow(ctx, CENSORED_COUNTRIES_KEY, JSON.stringify(current.list));
     return { copied: current.list.length };
   },

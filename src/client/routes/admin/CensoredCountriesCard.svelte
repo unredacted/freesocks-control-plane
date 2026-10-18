@@ -27,6 +27,8 @@
   import { apiErrorMessage } from '../../lib/errors';
   import { countryName } from '../../lib/countries';
   import { adminCensoredCountriesQuery, queryKeys } from '../../lib/queries';
+  import { edgeKeys } from '../../lib/edgesApi';
+  import { sniKeys } from '../../lib/sniApi';
   import { AdminCensoredCountries, type CensoredCountry } from '../../../shared/contracts/admin';
   import CountryPicker from './edges/components/CountryPicker.svelte';
 
@@ -39,8 +41,13 @@
   const rows = $derived(draft ?? list.data?.countries ?? []);
   const max = $derived(list.data?.max ?? 40);
   const dirty = $derived(draft !== null);
+  // The old settings can together hold more than the list's cap: the seed then
+  // leaves them in place, and the operator trims the list here before saving.
+  const overCap = $derived(rows.length > max);
 
   function edit(next: CensoredCountry[]) {
+    // An edit made while the PUT is in flight would be dropped when it lands.
+    if (save.isPending) return;
     draft = next;
   }
   function add(code: string | undefined) {
@@ -71,7 +78,16 @@
       ),
     onSuccess: () => {
       draft = null;
-      void qc.invalidateQueries({ queryKey: queryKeys.adminCensoredCountries });
+      // Everything that shows a view of the list: the status matrix editor (its
+      // rows are the listed countries), the edges probe countries, the
+      // server-name countries and opt-ins.
+      for (const queryKey of [
+        queryKeys.adminCensoredCountries,
+        queryKeys.adminStatusPage,
+        edgeKeys.config,
+        sniKeys.all,
+      ])
+        void qc.invalidateQueries({ queryKey });
       toast.success('Censored countries saved');
     },
     onError: (err) => {
@@ -101,6 +117,12 @@
           Read from the settings this list replaced. Saving stores it as it is shown here.
         </p>
       {/if}
+      {#if overCap}
+        <p class="text-destructive">
+          These are {rows.length} countries; the list holds at most {max}. Remove {rows.length -
+            max} before saving.
+        </p>
+      {/if}
       <p class="text-muted-foreground">
         "Check names from inside" runs checks on other people's machines in that country, often home
         connections. Whoever runs one sees the address and the server name. Turn it on only where
@@ -123,7 +145,7 @@
                     variant="ghost"
                     class="touch-44"
                     aria-label={`Move ${countryName(r.code, 'en')} up`}
-                    disabled={i === 0}
+                    disabled={save.isPending || i === 0}
                     onclick={() => move(i, -1)}
                   >
                     <ArrowUp class="size-4" aria-hidden="true" />
@@ -133,7 +155,7 @@
                     variant="ghost"
                     class="touch-44"
                     aria-label={`Move ${countryName(r.code, 'en')} down`}
-                    disabled={i === rows.length - 1}
+                    disabled={save.isPending || i === rows.length - 1}
                     onclick={() => move(i, 1)}
                   >
                     <ArrowDown class="size-4" aria-hidden="true" />
@@ -143,6 +165,7 @@
                     variant="ghost"
                     class="touch-44"
                     aria-label={`Remove ${countryName(r.code, 'en')}`}
+                    disabled={save.isPending}
                     onclick={() => remove(r.code)}
                   >
                     <X class="size-4" aria-hidden="true" />
@@ -154,6 +177,7 @@
                   <Checkbox
                     id={`${uid}-edges-${r.code}`}
                     checked={r.checkEdges}
+                    disabled={save.isPending}
                     onCheckedChange={(v) => flag(r.code, 'checkEdges', v === true)}
                   />
                   <span>Check edges from here</span>
@@ -162,6 +186,7 @@
                   <Checkbox
                     id={`${uid}-names-${r.code}`}
                     checked={r.checkNamesInside}
+                    disabled={save.isPending}
                     onCheckedChange={(v) => flag(r.code, 'checkNamesInside', v === true)}
                   />
                   <span>Check names from inside</span>
@@ -175,7 +200,7 @@
         class="max-w-sm"
         label="Add a country"
         max={1}
-        disabled={rows.length >= max}
+        disabled={save.isPending || rows.length >= max}
         helper={rows.length >= max ? `The list holds at most ${max} countries.` : undefined}
         bind:value={picked}
         onchange={(next) => add(next[0])}
@@ -186,7 +211,7 @@
             Undo changes
           </Button>
         {/if}
-        <Button onclick={() => save.mutate()} disabled={!dirty || save.isPending}>
+        <Button onclick={() => save.mutate()} disabled={!dirty || overCap || save.isPending}>
           {save.isPending ? 'Saving…' : 'Save countries'}
         </Button>
       </div>
