@@ -17,6 +17,7 @@
  */
 import type { DatabaseReader } from '../_generated/server';
 import { resolveCensoredCountries } from './censoredCountries';
+import { drainWarningCodes } from '../../src/shared/contracts/edgeCodes';
 
 const MIN = 60_000;
 
@@ -104,6 +105,12 @@ export interface EdgeConfig {
   standbyPerListener: number;
   drainMinutes: number;
   burnedDrainMinutes: number;
+  /**
+   * The refresh hint FCP sends with an edge-rendered subscription
+   * (`profile-update-interval`, whole hours): how often apps that honour it
+   * fetch their configuration again, so a rotation reaches them in time.
+   */
+  updateIntervalHours: number;
   sniDrainMinutes: number;
   cooldownMinutes: number;
   maxRotationsPerRelayPerDay: number;
@@ -195,7 +202,10 @@ export const EDGE_DEFAULTS: EdgeConfig = {
   standbyPerRelay: 0,
   standbyPerListener: 0,
   drainMinutes: 1440,
-  burnedDrainMinutes: 60,
+  // Twice the refresh hint: an app outside the blocking country that refreshes
+  // hourly never races the destroy (docs/edges.md "How fast members move").
+  burnedDrainMinutes: 120,
+  updateIntervalHours: 1,
   sniDrainMinutes: 1440,
   cooldownMinutes: 120,
   maxRotationsPerRelayPerDay: 3,
@@ -335,6 +345,7 @@ export const EDGE_KEYS = {
   standbyPerListener: 'edge.standbyPerListener',
   drainMinutes: 'edge.drainMinutes',
   burnedDrainMinutes: 'edge.burnedDrainMinutes',
+  updateIntervalHours: 'edge.updateIntervalHours',
   sniDrainMinutes: 'edge.sniDrainMinutes',
   cooldownMinutes: 'edge.cooldownMinutes',
   maxRotationsPerRelayPerDay: 'edge.maxRotationsPerRelayPerDay',
@@ -431,6 +442,7 @@ export function sanitizeRelayConfig(
     standbyPerListener: sanitizeInt(raw.standbyPerListener, 0, 2, D.standbyPerListener),
     drainMinutes: sanitizeInt(raw.drainMinutes, 1, 7 * 1440, D.drainMinutes),
     burnedDrainMinutes: sanitizeInt(raw.burnedDrainMinutes, 0, 7 * 1440, D.burnedDrainMinutes),
+    updateIntervalHours: sanitizeUpdateIntervalHours(raw.updateIntervalHours),
     sniDrainMinutes: sanitizeInt(raw.sniDrainMinutes, 1, 30 * 1440, D.sniDrainMinutes),
     cooldownMinutes: sanitizeInt(raw.cooldownMinutes, 10, 1440, D.cooldownMinutes),
     maxRotationsPerRelayPerDay: sanitizeInt(
@@ -573,6 +585,31 @@ export async function resolveEdgeConfig(db: DatabaseReader): Promise<EdgeConfig>
   });
   const cfg = sanitizeRelayConfig(raw, rawClients);
   return { ...cfg, probe: { ...cfg.probe, countries: censored.edgeChecks } };
+}
+
+/** Whole hours, 1..24: the header is read as an integer by the apps that honour it. */
+export function sanitizeUpdateIntervalHours(v: unknown): number {
+  return sanitizeInt(v, 1, 24, EDGE_DEFAULTS.updateIntervalHours);
+}
+
+/**
+ * The refresh hint alone (one point read): the subscription route needs it on
+ * every request and nothing else of the `edge.*` namespace.
+ */
+export async function resolveUpdateIntervalHours(db: DatabaseReader): Promise<number> {
+  return sanitizeUpdateIntervalHours(await readSetting(db, EDGE_KEYS.updateIntervalHours));
+}
+
+/**
+ * Drains that are too short for the refresh hint, as `edge.<code>` warnings
+ * (never refusals). The rule itself is shared with the settings page
+ * (`drainWarningCodes`, src/shared/contracts/edgeCodes.ts).
+ */
+export function drainWarnings(
+  cfg: Pick<EdgeConfig, 'drainMinutes' | 'burnedDrainMinutes' | 'updateIntervalHours'>,
+  originDrainMinutes?: number,
+): string[] {
+  return drainWarningCodes(cfg, originDrainMinutes).map((c) => `edge.${c}`);
 }
 
 // --- writes ----------------------------------------------------------------------
@@ -812,6 +849,7 @@ export const EDGE_CONFIG_BOUNDS: Readonly<Record<string, { min: number; max: num
   standbyPerListener: { min: 0, max: 2 },
   drainMinutes: { min: 1, max: 7 * 1440 },
   burnedDrainMinutes: { min: 0, max: 7 * 1440 },
+  updateIntervalHours: { min: 1, max: 24 },
   sniDrainMinutes: { min: 1, max: 30 * 1440 },
   cooldownMinutes: { min: 10, max: 1440 },
   maxRotationsPerRelayPerDay: { min: 1, max: 12 },

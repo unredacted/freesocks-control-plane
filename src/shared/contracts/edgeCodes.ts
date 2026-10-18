@@ -503,3 +503,35 @@ export type InboundUnsupportedCode = (typeof INBOUND_UNSUPPORTED_CODES)[number];
  */
 export const VERIFICATION_STALE_REASONS = ['verification_stale', 'reality_key_changed'] as const;
 export type VerificationStaleReason = (typeof VERIFICATION_STALE_REASONS)[number];
+
+/**
+ * Notices a settings save answers with (`edge.<code>` in `warnings`), never
+ * refusals: a drain that members' apps cannot outlive at the refresh hint
+ * (`edge.updateIntervalHours`). `drain_below_refresh` = a replaced edge's drain
+ * is under two refresh intervals; `burned_drain_below_refresh` = a burned
+ * edge's drain is under one interval plus half an hour.
+ */
+export const SETTINGS_WARNING_CODES = [
+  'drain_below_refresh',
+  'burned_drain_below_refresh',
+] as const;
+export type SettingsWarningCode = (typeof SETTINGS_WARNING_CODES)[number];
+
+/**
+ * The one drain rule (the server answers with it as `warnings`, the settings
+ * page and the origin dialog show it while typing): a replaced edge should
+ * outlive two refresh intervals and a burned one an interval plus 30 minutes,
+ * so members whose apps honour the hint move before the old address goes.
+ * `originDrainMinutes` = an origin's own drain (then only that one is judged).
+ */
+export function drainWarningCodes(
+  cfg: { drainMinutes: number; burnedDrainMinutes: number; updateIntervalHours: number },
+  originDrainMinutes?: number,
+): SettingsWarningCode[] {
+  const minutes = cfg.updateIntervalHours * 60;
+  const out: SettingsWarningCode[] = [];
+  if ((originDrainMinutes ?? cfg.drainMinutes) < 2 * minutes) out.push('drain_below_refresh');
+  if (originDrainMinutes === undefined && cfg.burnedDrainMinutes < minutes + 30)
+    out.push('burned_drain_below_refresh');
+  return out;
+}

@@ -255,6 +255,9 @@ export function toPublishedEdge(
         }))
       : [],
     ...(listener.sniPick ? { sniPick: listener.sniPick } : {}),
+    ...((edge.layer ?? 'l4') === 'l7' && edge.frontQualification?.ok
+      ? { proofExpiresAt: edge.frontQualification.expiresAt }
+      : {}),
     ...(eligible ? {} : { eligible: false }),
   };
 }

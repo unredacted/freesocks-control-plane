@@ -21,6 +21,7 @@ import { isTerminalPhase } from './lib/edges/rotation';
 import { edgeProviderIdValidator } from './lib/edgeProviderIds';
 import {
   MAX_DESIRED_PUBLISHED,
+  drainWarnings,
   originOverrideNames,
   originPolicy,
   resolveEdgeConfig,
@@ -1010,7 +1011,12 @@ export const update = internalMutation({
       targetId: id,
       payload: { slug: row.slug, ...changedFields(row, p) },
     });
-    return { ok: true as const };
+    // An origin's own drain that a member's refresh cannot outlive (a warning).
+    const warnings =
+      typeof p.drainMs === 'number'
+        ? drainWarnings(await resolveEdgeConfig(ctx.db), p.drainMs / 60_000)
+        : [];
+    return { ok: true as const, warnings };
   },
 });
 

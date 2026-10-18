@@ -19,7 +19,7 @@ for (const binary of ['.cache/compat/bin/sing-box', '.cache/compat/bin/mihomo'])
     throw new Error(`${binary} missing or not executable; run scripts/compat/download.ts first`);
   });
 }
-type Stage = 'fetch' | 'format' | 'cache-headers' | 'native-check';
+type Stage = 'fetch' | 'format' | 'cache-headers' | 'native-check' | 'revalidate';
 const results: Array<{ target: string; client: string; status: string; stage?: Stage }> = [];
 let failed = false;
 for (const target of targets) {
@@ -32,6 +32,49 @@ for (const target of targets) {
   )
     throw new Error('Each target needs an HTTPS URL and a non-secret slug name');
   if (process.env.GITHUB_ACTIONS) console.log(`::add-mask::${target.url}`);
+  // Revalidation through the deployed chain (proxies, Caddy's compression):
+  // whatever encoding the body travels in, its weak validator comes back
+  // unchanged and a matching If-None-Match is a 304. Once per target: the
+  // per-token throttle would not carry it for every client.
+  {
+    let stage: Stage = 'revalidate';
+    try {
+      const ua = clients.find((c) => c.format === 'singbox')!.userAgents[0]!;
+      const ask = (headers: Record<string, string>) =>
+        fetch(target.url, {
+          headers: { 'user-agent': ua, ...headers },
+          redirect: 'manual',
+          signal: AbortSignal.timeout(20_000),
+        });
+      let tag: string | null = null;
+      for (const encoding of ['identity', 'gzip', 'zstd']) {
+        stage = 'fetch';
+        const response = await ask({ 'accept-encoding': encoding });
+        await response.body?.cancel();
+        if (response.status !== 200) throw new Error('HTTP failure');
+        stage = 'revalidate';
+        const got = response.headers.get('etag');
+        if (!got || !/^W\/"fs1-[A-Za-z0-9_-]{22}"$/.test(got)) throw new Error('No weak validator');
+        if (tag !== null && got !== tag) throw new Error('Validator differs by encoding');
+        tag = got;
+        const vary = (response.headers.get('vary') ?? '')
+          .toLowerCase()
+          .split(',')
+          .map((x) => x.trim());
+        if (!vary.includes('user-agent')) throw new Error('Unsafe shared-cache response');
+        if (response.headers.get('content-encoding') && !vary.includes('accept-encoding'))
+          throw new Error('Compressed without Vary: Accept-Encoding');
+        const again = await ask({ 'accept-encoding': encoding, 'if-none-match': got });
+        await again.body?.cancel();
+        if (again.status !== 304) throw new Error('No 304');
+        if (again.headers.get('etag') !== got) throw new Error('Validator rewritten');
+      }
+      results.push({ target: target.name, client: 'revalidation', status: 'passed' });
+    } catch {
+      failed = true;
+      results.push({ target: target.name, client: 'revalidation', status: 'failed', stage });
+    }
+  }
   for (const client of clients.filter((c) => c.format !== 'outline')) {
     const dir = await mkdtemp(join(tmpdir(), 'fcp-smoke-'));
     // Only the stage name is recorded on failure — never the error text, which

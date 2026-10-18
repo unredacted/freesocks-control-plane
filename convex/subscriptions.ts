@@ -14,6 +14,7 @@ import { backendIdValidator, type BackendId } from './lib/backendIds';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import { entryNamingFrom, type EntryNaming } from './lib/memberEntryNames';
 import { profileTitleValue, resolveSubscriptionSiteName } from './lib/subscriptionTitle';
+import { resolveUpdateIntervalHours } from './lib/edgeConfig';
 
 const mirror = v.object({
   provider: v.string(),
@@ -345,6 +346,8 @@ interface SubCacheEntry {
   headers?: Record<string, string>;
   ua: string;
   at: number;
+  // The route's further fields (format version, edge token, render epoch,
+  // validity) pass through untouched; see SubCacheEntry in convex/http.ts.
 }
 
 /**
@@ -918,7 +921,18 @@ export const remapBackendUserId = internalMutation({
 
 /** The `profile-title` every subscription response carries: the service name
  *  (`subscription.siteName`), never the backend's own title. */
-export const profileTitle = internalQuery({
+/**
+ * What the subscription route stamps on every answer, whatever path the body
+ * took: FCP's `profile-title` and the refresh hint it sends with an
+ * edge-rendered body (`edge.updateIntervalHours`). Two point reads.
+ */
+export const responseHints = internalQuery({
   args: {},
-  handler: async (ctx) => profileTitleValue(await resolveSubscriptionSiteName(ctx.db)),
+  handler: async (ctx): Promise<{ title: string; updateIntervalHours: number }> => {
+    const [siteName, updateIntervalHours] = await Promise.all([
+      resolveSubscriptionSiteName(ctx.db),
+      resolveUpdateIntervalHours(ctx.db),
+    ]);
+    return { title: profileTitleValue(siteName), updateIntervalHours };
+  },
 });

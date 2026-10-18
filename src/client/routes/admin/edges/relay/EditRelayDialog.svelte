@@ -28,6 +28,9 @@
   import { adminConnectionModesQuery } from '@client/lib/queries';
   import NumberField from '../components/NumberField.svelte';
   import { assertEdgeOk, edgeErrorMessage } from '../lib/edgeErrors';
+  import { drainWarningCodes } from '@shared/contracts/edgeCodes';
+  import { codeExplain, codeFix, codeLabel } from '@client/lib/edgeCodes';
+  import CodeNote from '../components/CodeNote.svelte';
 
   interface Props {
     open: boolean;
@@ -48,6 +51,9 @@
     drainMinutes: num(config.data?.config.drainMinutes),
   });
   const own = (field: keyof typeof fleet): boolean => relay.overrides.includes(field);
+  // The refresh hint members' apps get: a drain under two of its intervals ends
+  // before they have moved (the save answers with the same rule).
+  const refreshHours = $derived(num(config.data?.config.updateIntervalHours));
   /** Unchanged: nothing. Changed to the fleet's value: null (follow the fleet). Else this origin's own. */
   const knob = (value: number, current: number, fleetValue: number | undefined) =>
     value === current ? undefined : value === fleetValue ? null : value;
@@ -130,12 +136,30 @@
     return p;
   });
   const dirty = $derived(Object.keys(patch).length > 0);
+  const drainShort = $derived(
+    refreshHours !== undefined &&
+      Number.isFinite(drainMinutes) &&
+      drainWarningCodes(
+        {
+          drainMinutes,
+          burnedDrainMinutes: Number.POSITIVE_INFINITY,
+          updateIntervalHours: refreshHours,
+        },
+        drainMinutes,
+      ).includes('drain_below_refresh'),
+  );
   const anyInvalid = $derived(Object.values(invalid).some(Boolean));
 
   const save = createMutation(() => ({
     mutationFn: async (p: RelayPatch) => assertEdgeOk(await updateRelay(relay.id, p)),
-    onSuccess: () => {
+    onSuccess: (res) => {
       toast.success('Origin saved.');
+      for (const w of res.warnings ?? []) {
+        const code = w.replace(/^edge\./, '');
+        toast.warning(codeLabel(code), {
+          description: [codeExplain(code), codeFix(code)].filter(Boolean).join(' '),
+        });
+      }
       invalidateRelay(qc, relay.slug);
       open = false;
     },
@@ -245,6 +269,9 @@
             'How long a replaced edge keeps forwarding before it is destroyed, so members who have not refreshed stay connected.',
           )}
         />
+        {#if drainShort}
+          <CodeNote issue={{ code: 'drain_below_refresh' }} tone="warning" class="sm:col-span-2" />
+        {/if}
       </div>
       {#if hasPanel}
         <div class="space-y-1.5">
