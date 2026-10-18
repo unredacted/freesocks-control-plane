@@ -309,10 +309,10 @@ const ledgerResource = v.object({
  * it was planned, so a describe or a destroy always reaches the edge's own
  * region (a wrong-region 404 would read as "gone" and orphan a billing
  * resource); PLANNING a new edge or an inventory pull acts in the chosen
- * location (`locationId`). The account is read first and the edge second, so
- * a call racing the one-time migration (which freezes every edge before it
- * clears the account's old fixed location) always sees a placement on one of
- * the two. An account-level call (a credential test) acts nowhere.
+ * location (`locationId`). An edge of a placed provider without its own
+ * placement is refused (`placement_missing`) rather than sent to whatever
+ * region the call would default to. An account-level call (a credential test)
+ * acts nowhere.
  *
  * A provider whose DNS lives in ANOTHER account (Fastly's records in a
  * Cloudflare zone) needs that account's secret attached. Which DNS account is
@@ -364,6 +364,14 @@ async function loadAdapter(
   if (placement) {
     const { type: _t, ...where } = placement;
     Object.assign(cfg as unknown as Record<string, unknown>, where);
+  } else if (edgeId && EDGE_PLACEMENT_SETTINGS[acct.provider].length > 0) {
+    throw new ConvexError<EdgeProviderOpsFailure>({
+      code: 'placement_missing',
+      message: 'the edge has no placement of its own',
+      step: 'load',
+      retryable: false,
+      timedOut: false,
+    });
   }
   // Acting on an EXISTING edge: every setting the intent froze wins over the
   // account row. The zone/DNS account below is one of them; so is the TLS

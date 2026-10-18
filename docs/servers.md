@@ -757,8 +757,7 @@ mirror). FCP never starts a run by itself.
   publication fits the committed review (a replacement ADDRESS in the same location reuses the
   approval); refused otherwise (another account, location, template, listener or revision needs
   a review; maintenance and retirement refuse). `publicationFits` needs one approved entry equal
-  on all four; an entry that names an account but no location never fits, so a review the
-  locations migration has not reached fails closed. The review lists every required listener
+  on all four; an entry that names an account but no location never fits (it fails closed). The review lists every required listener
   with its account, location and template (`shape.listeners`; the card names the location),
   never one representative edge. With a provider set the shape is the union of what members
   are served from (every published address, not only the template edge) and the run's targets,

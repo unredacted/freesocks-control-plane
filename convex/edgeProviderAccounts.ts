@@ -360,30 +360,10 @@ async function assertPlacementUnchanged(
   const hash = placementHashOf(parsed.placement);
   const dflt = await defaultLocationOf(db, row);
   if (dflt && dflt.placementHash === hash) return;
-  const legacy = placementKeysOf(row.provider, row.settings as Record<string, unknown>);
-  if (legacy) {
-    const p = validatePlacement(row.provider, legacy);
-    if (p.ok && placementHashOf(p.placement) === hash) return;
-  }
   throw new ConvexError({
     code: 'edge.placement_on_location',
     message: 'A place belongs to a location: add a location instead of moving the account',
   });
-}
-
-/**
- * The settings to store: the account's own keys, plus any placement keys a row
- * written before locations existed still holds (they locate its edges until
- * `seed:migrateEdgeLocations` moves them; never written anew).
- */
-function withLegacyPlacement(
-  row: Doc<'edgeProviderAccounts'>,
-  own: Record<string, unknown>,
-): Record<string, unknown> {
-  return {
-    ...(placementKeysOf(row.provider, row.settings as Record<string, unknown>) ?? {}),
-    ...own,
-  };
 }
 
 /**
@@ -563,7 +543,7 @@ export const update = internalMutation({
         row.provider,
         settings.settings as Record<string, unknown>,
       );
-      patch.settings = withLegacyPlacement(row, settings.settings) as never;
+      patch.settings = settings.settings as never;
     }
     if (a.credentials !== undefined) {
       const creds = buildCredentials(
@@ -748,7 +728,7 @@ export const applyCredentialRotation = internalMutation({
     const now = Date.now();
     await ctx.db.patch(a.id, {
       credentials: creds.credentials as never,
-      settings: withLegacyPlacement(row, settings.settings) as never,
+      settings: settings.settings as never,
       lastTestOkAt: now,
       lastTestError: undefined,
       // The passing test observed the provider's live facts; a test that observed

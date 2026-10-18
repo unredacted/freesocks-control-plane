@@ -5,6 +5,7 @@ import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { EDGE_PROVIDER_IDS } from '../src/shared/contracts/edgeProviderIds';
+import { defaultLocationOf } from './edgeLocations';
 import { resolveTemplateFor } from './edgeTemplates';
 import { qualificationBinding } from './lib/edges/frontCheck/binding';
 import {
@@ -1308,10 +1309,14 @@ describe('edgeProviderAccounts: the DNS-account reference', () => {
           templateParams: {},
         };
         const now = Date.now();
+        const location = (await defaultLocationOf(ctx.db, (await ctx.db.get(fastlyId))!))!;
         return ctx.db.insert('edges', {
           relayId,
           listenerId,
           accountId: fastlyId,
+          locationId: location._id,
+          placement: location.placement,
+          placeKey: location.placeKey,
           provider: 'fastly',
           templateHash: template.hash,
           managed: true,

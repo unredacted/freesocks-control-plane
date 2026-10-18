@@ -202,9 +202,9 @@ export function validatePlacement(
 }
 
 /**
- * The placement keys an admin payload or a stored row carries (null when it
- * carries none): what an account created with its old single-location shape,
- * or one written before locations existed, says about where it lives.
+ * The placement keys an admin payload carries (null when it carries none):
+ * what an account created with the single-location shape says about where its
+ * first location is.
  */
 export function placementKeysOf(
   provider: EdgeProviderId,
