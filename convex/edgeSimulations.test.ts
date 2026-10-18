@@ -13,6 +13,7 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { upsertSettingRow } from './appSettings';
 import { signValue } from './lib/cookies';
+import { throttlePolicyFor } from './httpEdges';
 import {
   adoptL4Edge,
   createAccount,
@@ -145,6 +146,67 @@ describe('test block evidence: the gate and the start refusals', () => {
     await expect(
       off.t.mutation(internal.edgeSimulations.start, { edgeId: off.edgeA, country: 'IR' }),
     ).rejects.toThrow(/simulation_needs_probes/);
+  });
+});
+
+describe('test block evidence: review fixes', () => {
+  test('refused on an origin the detector does not look at: disabled, or being deleted', async () => {
+    const s = await seed();
+    await s.t.run((ctx) => ctx.db.patch(s.relayId, { enabled: false }));
+    await expect(
+      s.t.mutation(internal.edgeSimulations.start, { edgeId: s.edgeA, country: 'IR' }),
+    ).rejects.toThrow(/simulation_origin_off/);
+    await s.t.run((ctx) => ctx.db.patch(s.relayId, { enabled: true, deleting: true }));
+    await expect(
+      s.t.mutation(internal.edgeSimulations.start, { edgeId: s.edgeA, country: 'IR' }),
+    ).rejects.toThrow(/simulation_origin_off/);
+  });
+
+  test('expired rows a stalled sweep left open never hide a live one from the limits', async () => {
+    const s = await seed();
+    const now = Date.now();
+    const row = (edgeId: Id<'edges'>, expiresAt: number) => ({
+      relayId: s.relayId,
+      edgeId,
+      country: 'IR',
+      reporters: 8,
+      startedAt: now - 2 * 60 * 60_000,
+      expiresAt,
+    });
+    await s.t.run(async (ctx) => {
+      // Older-expiring open rows first in index order, then the live one.
+      for (let i = 0; i < 6; i++)
+        await ctx.db.insert('edgeBlockSimulations', row(s.edgeA, now - 60_000 - i));
+      await ctx.db.insert('edgeBlockSimulations', row(s.edgeA, now + 60 * 60_000));
+    });
+    await expect(
+      s.t.mutation(internal.edgeSimulations.start, { edgeId: s.edgeA, country: 'RU' }),
+    ).rejects.toThrow(/simulation_active/);
+    await s.t.run(async (ctx) => {
+      for (let i = 0; i < 60; i++)
+        await ctx.db.insert('edgeBlockSimulations', row(s.spare!, now - 60_000 - i));
+      for (let i = 0; i < 2; i++)
+        await ctx.db.insert('edgeBlockSimulations', row(s.spare!, now + 60 * 60_000));
+    });
+    await expect(
+      s.t.mutation(internal.edgeSimulations.start, { edgeId: s.edgeB, country: 'IR' }),
+    ).rejects.toThrow(/simulation_limit/);
+    // The sweep closes 50 expired ones (its bound) and the two live ones on the
+    // unpublished spare (their edge is not in use); the live one on edgeA stays.
+    const swept = await s.t.mutation(internal.edgeSimulations.sweep, { now: Date.now() });
+    expect(swept.ended).toBe(52);
+    const live = await s.t.run((ctx) =>
+      ctx.db
+        .query('edgeBlockSimulations')
+        .withIndex('by_live', (q) => q.eq('endedAt', undefined).gt('expiresAt', Date.now()))
+        .collect(),
+    );
+    expect(live.map((r) => r.edgeId)).toEqual([s.edgeA]);
+  });
+
+  test('ending a test block is never held back by the probe quota; starting one is', () => {
+    expect(throttlePolicyFor(['edges', 'e1', 'simulate-block'])).toBe('admin.edges.probe');
+    expect(throttlePolicyFor(['edges', 'e1', 'simulate-block', 'end'])).toBeNull();
   });
 });
 

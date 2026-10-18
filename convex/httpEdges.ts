@@ -178,7 +178,9 @@ export function throttlePolicyFor(parts: string[]): RateLimitPolicyKey | null {
   if (a === 'edges' && b && c === 'probe') return 'admin.edges.probe';
   if (a === 'relays' && b && c === 'probe') return 'admin.edges.probe';
   // Test block evidence: rare operator writes, throttled like a probe request.
-  if (a === 'edges' && b && c === 'simulate-block') return 'admin.edges.probe';
+  // Ending one is cleanup (no probe credit, allowed even after the opt-in is
+  // gone), so it is never held back by the quota.
+  if (a === 'edges' && b && c === 'simulate-block' && !d) return 'admin.edges.probe';
   // Minting the L7 qualification credential creates a backend user.
   if (a === 'relays' && b && c === 'qualification-credential' && !d)
     return 'admin.edges.provider-call';

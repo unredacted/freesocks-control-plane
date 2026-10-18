@@ -62,7 +62,10 @@
   const name = $derived(edgeAddress(edge) || edge.name);
   // Test block evidence (a test deployment only): offered while the origin's view says available.
   const simulations = relaySimulationsQuery({ slug: () => relay.slug, id: () => relay.id });
-  const simulatorOn = $derived(simulations.data?.available === true);
+  // Only where the detector looks: an enabled origin that is not being deleted.
+  const simulatorOn = $derived(
+    simulations.data?.available === true && relay.enabled && !relay.deleting,
+  );
   const testBlockLive = $derived((simulations.data?.live ?? []).some((s) => s.edgeId === edge.id));
 
   let publishOpen = $state(false);

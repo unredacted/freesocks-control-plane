@@ -1193,12 +1193,12 @@ export const attention = internalQuery({
       }
       // Test block evidence (edgeSimulations.ts) is running on this origin: it
       // can replace an edge for real, so it is never out of sight.
-      const simulations = (
-        await ctx.db
-          .query('edgeBlockSimulations')
-          .withIndex('by_relay_ended', (q) => q.eq('relayId', relay._id).eq('endedAt', undefined))
-          .take(20)
-      ).filter((s) => s.expiresAt > now);
+      const simulations = await ctx.db
+        .query('edgeBlockSimulations')
+        .withIndex('by_relay_live', (q) =>
+          q.eq('relayId', relay._id).eq('endedAt', undefined).gt('expiresAt', now),
+        )
+        .take(20);
       if (simulations.length > 0) {
         items.push({
           ...base(relay),

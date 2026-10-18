@@ -1125,6 +1125,11 @@ const REFUSAL_COPY = {
     explain: 'Addresses are not checked from that country, so a test block there would not count.',
     fix: 'Pick a country from the list, or turn its address checks on under Settings.',
   },
+  simulation_origin_off: {
+    label: 'Origin not watched',
+    explain: 'The detector does not look at a disabled origin or one being deleted.',
+    fix: 'Enable the origin first.',
+  },
   simulation_needs_probes: {
     label: 'Probes are off',
     explain: 'A test block needs reachability probes on.',

@@ -48,11 +48,12 @@ async function liveOfRelay(
   relayId: Id<'relays'>,
   now: number,
 ): Promise<Simulation[]> {
-  const rows = await db
+  return db
     .query('edgeBlockSimulations')
-    .withIndex('by_relay_ended', (q) => q.eq('relayId', relayId).eq('endedAt', undefined))
+    .withIndex('by_relay_live', (q) =>
+      q.eq('relayId', relayId).eq('endedAt', undefined).gt('expiresAt', now),
+    )
     .take(20);
-  return rows.filter((r) => r.expiresAt > now);
 }
 
 async function endSimulation(
@@ -108,6 +109,13 @@ export const start = internalMutation({
       !origin.publishedEdgeIds.some((id) => id === edge._id)
     )
       refuse('edge.not_published', 'Only a published edge can be blocked for a test');
+    // The detector evaluates enabled origins only, and never one being deleted:
+    // a test block there would never count, only wait out its time.
+    if (!origin.enabled || origin.deleting)
+      refuse(
+        'edge.simulation_origin_off',
+        'The detector does not look at this origin (disabled or being deleted)',
+      );
     const cfg = await resolveEdgeConfig(ctx.db);
     if (!cfg.probe.enabled)
       refuse('edge.simulation_needs_probes', 'Turn reachability probes on first');
@@ -135,17 +143,20 @@ export const start = internalMutation({
         `minutes must be a whole number from ${SIMULATION_MINUTES.min} to ${SIMULATION_MINUTES.max}`,
       );
     const now = Date.now();
+    // Live rows only, read as a range on expiry: rows a stalled sweep left open
+    // after they expired never hide a live one from these limits.
     const onEdge = await ctx.db
       .query('edgeBlockSimulations')
-      .withIndex('by_edge_ended', (q) => q.eq('edgeId', edge._id).eq('endedAt', undefined))
-      .take(5);
-    if (onEdge.some((s) => s.expiresAt > now))
-      refuse('edge.simulation_active', 'This edge already has a test block running');
+      .withIndex('by_edge_live', (q) =>
+        q.eq('edgeId', edge._id).eq('endedAt', undefined).gt('expiresAt', now),
+      )
+      .first();
+    if (onEdge) refuse('edge.simulation_active', 'This edge already has a test block running');
     const anywhere = await ctx.db
       .query('edgeBlockSimulations')
-      .withIndex('by_ended', (q) => q.eq('endedAt', undefined))
-      .take(50);
-    if (anywhere.filter((s) => s.expiresAt > now).length >= MAX_LIVE_SIMULATIONS)
+      .withIndex('by_live', (q) => q.eq('endedAt', undefined).gt('expiresAt', now))
+      .take(MAX_LIVE_SIMULATIONS);
+    if (anywhere.length >= MAX_LIVE_SIMULATIONS)
       refuse(
         'edge.simulation_limit',
         `At most ${MAX_LIVE_SIMULATIONS} test blocks can run at once; end one first`,
@@ -176,9 +187,12 @@ export const end = internalMutation({
   args: { edgeId: v.id('edges'), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, { edgeId, actorAdminId }) => {
     const now = Date.now();
+    // The live ones (expired rows are the sweep's to close).
     const rows = await ctx.db
       .query('edgeBlockSimulations')
-      .withIndex('by_edge_ended', (q) => q.eq('edgeId', edgeId).eq('endedAt', undefined))
+      .withIndex('by_edge_live', (q) =>
+        q.eq('edgeId', edgeId).eq('endedAt', undefined).gt('expiresAt', now),
+      )
       .take(20);
     for (const sim of rows) await endSimulation(ctx, sim, 'ended', now, { actorAdminId });
     return { ok: true as const, ended: rows.length };
@@ -208,7 +222,7 @@ export const viewForRelay = internalQuery({
     const live = await liveOfRelay(ctx.db, relayId, now);
     const recent = await ctx.db
       .query('edgeBlockSimulations')
-      .withIndex('by_relay_ended', (q) => q.eq('relayId', relayId).gt('endedAt', 0))
+      .withIndex('by_relay_live', (q) => q.eq('relayId', relayId).gt('endedAt', 0))
       .order('desc')
       .take(5);
     const iso = (ms: number) => new Date(ms).toISOString();
@@ -292,18 +306,29 @@ export const sweep = internalMutation({
   args: { now: v.number() },
   handler: async (ctx, { now }) => {
     const allowed = simulatorAllowed();
-    const open = await ctx.db
-      .query('edgeBlockSimulations')
-      .withIndex('by_ended', (q) => q.eq('endedAt', undefined))
-      .take(50);
     let ended = 0;
-    for (const sim of open) {
+    // Expired first (oldest expiry first), then the live ones: each read is its
+    // own bounded range, so neither kind can starve the other.
+    const expired = await ctx.db
+      .query('edgeBlockSimulations')
+      .withIndex('by_live', (q) => q.eq('endedAt', undefined).lte('expiresAt', now))
+      .take(50);
+    for (const sim of expired) {
+      await endSimulation(ctx, sim, allowed ? 'expired' : 'disabled', now);
+      ended++;
+    }
+    const live = await ctx.db
+      .query('edgeBlockSimulations')
+      .withIndex('by_live', (q) => q.eq('endedAt', undefined).gt('expiresAt', now))
+      .take(50);
+    for (const sim of live) {
       let reason: EndReason | null = null;
       if (!allowed) reason = 'disabled';
-      else if (sim.expiresAt <= now) reason = 'expired';
       else {
         const edge = await ctx.db.get(sim.edgeId);
+        const origin = await ctx.db.get(sim.relayId);
         if (!edge || edge.publication !== 'published') reason = 'ended';
+        else if (!origin || !origin.enabled || origin.deleting) reason = 'ended';
       }
       if (reason) {
         await endSimulation(ctx, sim, reason, now);
@@ -312,7 +337,7 @@ export const sweep = internalMutation({
     }
     const old = await ctx.db
       .query('edgeBlockSimulations')
-      .withIndex('by_ended', (q) => q.gt('endedAt', 0).lt('endedAt', now - SIMULATION_RETENTION_MS))
+      .withIndex('by_live', (q) => q.gt('endedAt', 0).lt('endedAt', now - SIMULATION_RETENTION_MS))
       .take(50);
     for (const s of old) await ctx.db.delete(s._id);
     return { ended, deleted: old.length };

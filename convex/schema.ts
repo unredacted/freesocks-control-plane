@@ -3360,9 +3360,12 @@ export default defineSchema({
     ),
     rotationId: v.optional(v.id('edgeRotations')),
   })
-    .index('by_relay_ended', ['relayId', 'endedAt'])
-    .index('by_edge_ended', ['edgeId', 'endedAt'])
-    .index('by_ended', ['endedAt']),
+    // Open rows (`endedAt` absent) ordered by expiry: a live one is
+    // `endedAt == undefined && expiresAt > now`, read as a RANGE, so expired
+    // rows a stalled sweep left open never crowd a bounded read of live ones.
+    .index('by_relay_live', ['relayId', 'endedAt', 'expiresAt'])
+    .index('by_edge_live', ['edgeId', 'endedAt', 'expiresAt'])
+    .index('by_live', ['endedAt', 'expiresAt']),
 
   // S3 subscription-mirror providers (the censorship-resistance hedge): a
   // variable-length POOL of S3-compatible buckets the subscription content is
