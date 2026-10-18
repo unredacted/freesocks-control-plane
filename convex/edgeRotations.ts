@@ -40,7 +40,7 @@ import {
   checkPublishable,
   liveEdgesOfAccount,
   liveEdgesOfRelay,
-  poolListenersOf,
+  poolAdmitOf,
   refreshTemplateEdges,
   scheduleMirrorRefresh,
   todayKey,
@@ -66,6 +66,7 @@ import {
   pickStandby,
   pickAccount,
   pickAccountAny,
+  pickLocation,
   pickSlot,
   accountsForSlot,
   l7SelectionAllowed,
@@ -75,7 +76,10 @@ import {
   TERMINAL_PHASES,
   type AccountCandidate,
   type RotationEvent,
+  type SetLocationCandidate,
 } from './lib/edges/rotation';
+import { admissionOf, coolingOf, setPicksOf, setStateOf, withCooling } from './lib/edges/setState';
+import { locationKeyOf } from './lib/edges/locations';
 import {
   protocolIsHttpTransport,
   protocolTransport,
@@ -429,8 +433,10 @@ const startArgs = {
   requestedAccountId: v.optional(v.id('edgeProviderAccounts')),
   requestedTemplateId: v.optional(v.id('edgeTemplates')),
   allowUnqualified: v.optional(v.boolean()),
-  /** An explicit provision's location (its account when `requestedAccountId` is absent). */
+  /** An explicit provision's location (its account when `requestedAccountId` is absent); a replace's for an L7 front. */
   requestedLocationId: v.optional(v.id('edgeLocations')),
+  /** A replace's explicit spare (L4): that tested spare of the same listener, or nothing. */
+  requestedSpareEdgeId: v.optional(v.id('edges')),
   reason: v.optional(v.string()),
   actorAdminId: v.optional(v.id('adminUsers')),
   /** The guided setup run starting this rotation (+ its generation, reported by the terminal hook). */
@@ -458,6 +464,7 @@ export interface StartRotationArgs {
   requestedTemplateId?: Id<'edgeTemplates'>;
   allowUnqualified?: boolean;
   requestedLocationId?: Id<'edgeLocations'>;
+  requestedSpareEdgeId?: Id<'edges'>;
   reason?: string;
   actorAdminId?: Id<'adminUsers'>;
   setupRun?: { runId: Id<'edgeSetupRuns'>; generation: number };
@@ -616,8 +623,9 @@ export async function collectStartBlockers(
       const couldGoL7 =
         !!targetListener &&
         listenerLayers(targetListener).layers.includes('l7') &&
-        (a.trigger === 'manual' || l7SelectionAllowed(cfg));
-      if (!couldGoL7 && !(await verifiedSpareFor(ctx, origin, targetEdge, cfg))) {
+        (a.trigger === 'manual' || l7SelectionAllowed(cfg) || (await setHasL7Pick(ctx.db, origin)));
+      const automatic = a.trigger === 'detector' || a.trigger === 'reconcile';
+      if (!couldGoL7 && !(await verifiedSpareFor(ctx, origin, targetEdge, cfg, automatic))) {
         push(
           'edge.no_verified_spare',
           'No tested spare address exists for this listener; test a spare first',
@@ -682,7 +690,12 @@ export async function collectStartBlockers(
       // forwarder. The veto is explicit so the operator sees why nothing happened.
       if (a.trigger === 'detector') {
         const layers = listenerLayers(listener).layers;
-        if (layers.length === 1 && layers[0] === 'l7' && !l7SelectionAllowed(cfg)) {
+        if (
+          layers.length === 1 &&
+          layers[0] === 'l7' &&
+          !l7SelectionAllowed(cfg) &&
+          !(await setHasL7Pick(ctx.db, origin))
+        ) {
           push(
             'edge.l7_auto_select_disabled',
             'Automatic selection of L7 edges is disabled; publish this listener by hand',
@@ -727,6 +740,16 @@ export const start = internalMutation({
 });
 
 /**
+ * Whether the node's provider set holds a usable CDN pick: a set pick is the
+ * operator's own choice (D4), so automatic work on that node may use it even
+ * with `edge.l7.autoSelect` off.
+ */
+async function setHasL7Pick(db: QueryCtx['db'], origin: Origin): Promise<boolean> {
+  const picks = await setPicksOf(db, origin);
+  return !!picks?.some((p) => p.usable && edgeLayerOf(p.account.provider) === 'l7');
+}
+
+/**
  * Whether the target's listener holds a spare the machine could switch to
  * WITHOUT provisioning: an active, unpublished edge on the same listener that
  * passes the whole publication gate (for an L4 edge that includes a current
@@ -738,11 +761,20 @@ async function verifiedSpareFor(
   origin: Origin,
   targetEdge: Edge,
   cfg: EdgeConfig,
+  automatic = false,
 ): Promise<boolean> {
   const edges = await liveEdgesOfRelay(ctx.db, origin._id);
+  // Automatic work takes the spares the selection may take: inside the
+  // node's provider set and outside a cooling pick (`selectionContext`).
+  const cooling = coolingOf(origin);
+  const inSet = origin.providerSet
+    ? new Set(origin.providerSet.map((p) => p.locationId as string))
+    : null;
   for (const e of edges) {
     if (e._id === targetEdge._id || e.listenerId !== targetEdge.listenerId) continue;
     if (e.status !== 'active' || e.publication !== 'unpublished') continue;
+    const loc = (e.locationId as string | undefined) ?? null;
+    if (automatic && loc && (cooling.has(loc) || (inSet && !inSet.has(loc)))) continue;
     // The same health rule `pickStandby` applies (an observe-only import with
     // no provider is not a candidate the selection would take).
     if (!providerHealthSatisfies(e.provider, e.health, cfg.requireProviderHealth)) continue;
@@ -848,7 +880,9 @@ export async function startRotation(
     requestedAccountId: a.kind === 'provision' ? a.requestedAccountId : undefined,
     requestedTemplateId: a.kind === 'provision' ? a.requestedTemplateId : undefined,
     allowUnqualified: a.kind === 'provision' && a.allowUnqualified ? true : undefined,
-    requestedLocationId: a.kind === 'provision' ? a.requestedLocationId : undefined,
+    requestedLocationId:
+      a.kind === 'provision' || a.kind === 'replace' ? a.requestedLocationId : undefined,
+    requestedSpareEdgeId: a.kind === 'replace' ? a.requestedSpareEdgeId : undefined,
     affectedCountries: a.affectedCountries?.slice(0, 20),
     simulationId: a.simulationId,
     setupRun: a.setupRun,
@@ -1666,8 +1700,7 @@ export const applyPublish = internalMutation({
       const alloc = allocatePoolIndex(
         published,
         origin.desiredPublished,
-        to.listenerId,
-        await poolListenersOf(ctx.db, r.relayId),
+        await poolAdmitOf(ctx.db, origin, to),
       );
       if ('refused' in alloc) {
         // Pool full (or its free slots reserved): keep the edge as a standby and finish.
@@ -2027,6 +2060,18 @@ export const finalize = internalMutation({
         : {}),
       ...(r.kind === 'replace'
         ? { lastRotatedAt: now, cooldownUntil: now + originPolicy(origin, cfg).cooldownMs }
+        : {}),
+      // A detector burn: the burned address's pick cools on this origin (D6),
+      // so no automatic path allocates, provisions or publishes into it until then.
+      ...(r.kind === 'replace' && r.burn && r.trigger === 'detector' && from?.locationId
+        ? {
+            cooling: withCooling(
+              origin.cooling,
+              from.locationId,
+              now + originPolicy(origin, cfg).cooldownMs,
+              now,
+            ),
+          }
         : {}),
       // Standby bookkeeping for a provision that did not publish. Only an edge
       // that could actually be published later belongs on the list: a destroyed
@@ -2393,6 +2438,8 @@ export interface SelectionRequest {
   allowUnqualified?: boolean;
   /** An explicit location (the operator's pick); its account is implied. */
   requestedLocationId?: Id<'edgeLocations'>;
+  /** A replace's explicit spare: that one or nothing. */
+  requestedSpareEdgeId?: Id<'edges'>;
   /** Started by a guided setup run (the operator chose its account). */
   setupRun?: { runId: Id<'edgeSetupRuns'>; generation: number };
 }
@@ -2531,14 +2578,28 @@ export async function selectionContext(
       { listenerKey: listener.listenerKey, accountId, locationId, templateHash },
       { replace: rotation.kind === 'replace' },
     ));
+  // Automatic work (the detector, upkeep) stays inside the node's provider set
+  // and out of a pick that cools (D6); an operator's own request is not held.
+  const automatic = rotation.trigger === 'detector' || rotation.trigger === 'reconcile';
+  const now = Date.now();
+  const cooling = coolingOf(origin, now);
+  const inSet = origin.providerSet
+    ? new Set(origin.providerSet.map((p) => p.locationId as string))
+    : null;
+  const skipLocations = new Set<string>();
   const standbyCandidates = [];
   for (const e of edges) {
     const slotOfEdge = slotRows.find((s) => s._id === e.listenerId);
+    const loc = (e.locationId as string | undefined) ?? null;
+    if (automatic && loc && (cooling.has(loc) || (inSet && !inSet.has(loc))))
+      skipLocations.add(loc);
     standbyCandidates.push({
       id: e._id,
       slotId: e.listenerId,
       provider: e.provider ?? null,
       accountId: e.accountId ?? null,
+      locationId: loc,
+      locationKey: e.provider && e.placeKey ? locationKeyOf(e.provider, e.placeKey) : null,
       status: e.status,
       publication: e.publication,
       health: e.health,
@@ -2564,8 +2625,36 @@ export async function selectionContext(
     targetEdge?._id ?? null,
     cfg.requireProviderHealth,
     (listener.providerScope?.accountId as Id<'edgeProviderAccounts'> | undefined) ?? null,
+    {
+      // A replace moves away from the target's failure domain.
+      avoid:
+        rotation.kind === 'replace' && targetEdge
+          ? {
+              provider: targetEdge.provider ?? null,
+              locationKey:
+                targetEdge.provider && targetEdge.placeKey
+                  ? locationKeyOf(targetEdge.provider, targetEdge.placeKey)
+                  : null,
+            }
+          : null,
+      skipLocations,
+      spareEdgeId: (rotation.requestedSpareEdgeId as string | undefined) ?? null,
+    },
   );
-  if (standby && (rotation.kind === 'replace' || rotation.publishOnDone)) {
+  // The operator named a spare: that one or nothing.
+  if (rotation.requestedSpareEdgeId && !standby)
+    return {
+      listener,
+      standbyId: null,
+      account: null,
+      accountFailure: 'spare_not_usable',
+      template: null,
+    };
+  if (
+    standby &&
+    !rotation.requestedLocationId &&
+    (rotation.kind === 'replace' || rotation.publishOnDone)
+  ) {
     return {
       listener,
       standbyId: standby.id as Id<'edges'>,
@@ -2584,7 +2673,13 @@ export async function selectionContext(
   // gate: an unproven front must not reach members because a cron or the
   // detector chose it. A guided setup run's account IS the operator's own
   // choice, and its front is proven (stage verify) before anything publishes.
-  const allowL7 = rotation.trigger === 'manual' || !!rotation.setupRun || l7SelectionAllowed(cfg);
+  // A pick of the node's provider set is the operator's own choice too (D4):
+  // automatic work on such a node may use its L7 picks.
+  const allowL7 =
+    rotation.trigger === 'manual' ||
+    !!rotation.setupRun ||
+    !!origin.providerSet ||
+    l7SelectionAllowed(cfg);
   const eligibleAccounts = accountsForSlot(
     (await ctx.db.query('edgeProviderAccounts').collect()).filter((a) => a.enabled),
     { layers, proto: protoOf(listener), originPort: listener.originPort, allowL7 },
@@ -2649,6 +2744,7 @@ export async function selectionContext(
   // One candidate per enabled LOCATION of each eligible account: the account
   // brings its budget, live cap and priority; the location its trust and cap.
   const candidates: AccountCandidate[] = [];
+  const keyOfLocation = new Map<string, string>();
   let outsideShape = 0;
   for (const a of accounts) {
     // An account-scoped profile provisions from that account only.
@@ -2658,6 +2754,7 @@ export async function selectionContext(
     const live = (await liveEdgesOfAccount(ctx.db, a._id)).filter((e) => e.managed).length;
     for (const loc of await locationsOfAccount(ctx.db, a._id)) {
       if (!loc.enabled) continue;
+      keyOfLocation.set(loc._id as string, locationKeyOf(a.provider, loc.placeKey));
       if (underApproval) {
         const tpl = await resolveTemplateFor(
           ctx,
@@ -2687,16 +2784,56 @@ export async function selectionContext(
       });
     }
   }
-  // A provider-scoped profile binds the slot to that network; an unscoped one
-  // takes the best trusted location of any provider.
-  const picked = listener.providerScope?.provider
-    ? pickAccount(candidates, listener.providerScope.provider)
-    : pickAccountAny(
-        candidates,
-        publishedProviders,
-        cfg.render.preferDistinctProviders,
-        origin.providerPreference ?? null,
-      );
+  // A node with a provider set picks among its set (D2): the ranking prefers
+  // what lowers the coverage deficit, then a provider and a location not yet
+  // published for the listener. Without a set: a provider-scoped profile binds
+  // the slot to that network; an unscoped one takes the best trusted location
+  // of any provider.
+  let picked: ReturnType<typeof pickAccount>;
+  if (origin.providerSet) {
+    const order = origin.providerSet.map((p) => p.locationId as string);
+    const state = await setStateOf(ctx.db, origin, now);
+    const mine = state.published.filter((p) => p.listenerKey === listener.listenerKey);
+    const setCandidates: SetLocationCandidate[] = [];
+    let coolingOnly = 0;
+    for (const c of candidates) {
+      const at = c.locationId ? order.indexOf(c.locationId) : -1;
+      if (at < 0) continue;
+      // A provider-scoped profile binds the slot to that network, set or not.
+      if (listener.providerScope?.provider && c.provider !== listener.providerScope.provider)
+        continue;
+      if (automatic && cooling.has(c.locationId!)) {
+        coolingOnly++;
+        continue;
+      }
+      const locationKey = keyOfLocation.get(c.locationId!) ?? null;
+      setCandidates.push({
+        ...c,
+        setOrder: at,
+        lowersDeficit: admissionOf(state, {
+          listenerKey: listener.listenerKey,
+          locationId: c.locationId,
+          provider: c.provider,
+          locationKey,
+        }).lowersDeficit,
+        providerNew: !mine.some((p) => p.provider === c.provider),
+        locationKeyNew: !mine.some((p) => p.locationKey === locationKey),
+      });
+    }
+    picked =
+      setCandidates.length === 0 && coolingOnly > 0
+        ? { ok: false, code: 'set_picks_cooling' }
+        : pickLocation(setCandidates, { allowUnqualified: rotation.allowUnqualified === true });
+  } else {
+    picked = listener.providerScope?.provider
+      ? pickAccount(candidates, listener.providerScope.provider)
+      : pickAccountAny(
+          candidates,
+          publishedProviders,
+          cfg.render.preferDistinctProviders,
+          origin.providerPreference ?? null,
+        );
+  }
   if (!picked.ok)
     return {
       listener,

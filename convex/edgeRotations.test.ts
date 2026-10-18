@@ -1,4 +1,6 @@
 /// <reference types="vite/client" />
+import { withCooling } from './lib/edges/setState';
+import { defaultLocationRow } from './lib/edges/testing/reads';
 import { convexTest } from 'convex-test';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
@@ -505,6 +507,57 @@ describe('edgeRotations: replace', () => {
     const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
     expect(audit.some((a) => a.action === 'edge.burned')).toBe(true);
     expect(audit.some((a) => a.action === 'admin.edge.burn')).toBe(true);
+    // An operator's burn cools nothing: only the detector's does (D6).
+    expect((await t.run((ctx) => ctx.db.get(relayId)))!.cooling).toBeUndefined();
+  });
+
+  test('a detector burn cools the burned address location on this origin', async () => {
+    vi.useFakeTimers();
+    fakeWorld();
+    const { t, relayId, oldEdgeId } = await seed();
+    await provisionSpare(t, relayId);
+    // The burned address lives in a location (the pick that will cool).
+    const acct = await createAccount(t, { provider: 'upcloud', name: 'acct-cool' });
+    const where = (await defaultLocationRow(t, acct))!._id;
+    await t.run((ctx) => ctx.db.patch(oldEdgeId, { locationId: where }));
+    const old = (await t.query(internal.edges.get, { id: oldEdgeId }))!;
+    // Automatic rotation on, fleet-wide and for this origin.
+    await t.run(async (ctx) => {
+      await upsertSettingRow(ctx, 'edge.enabled', 'true');
+      await upsertSettingRow(ctx, 'edge.autoRotate', 'true');
+      await ctx.db.patch(relayId, { autoRotate: true });
+    });
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'replace',
+      trigger: 'detector',
+      targetEdgeId: oldEdgeId,
+      burn: true,
+      forceGeoEvidence: true,
+    });
+    await drain(t, rotationId);
+    expect((await t.query(internal.edgeRotations.get, { id: rotationId }))!.phase).toBe('done');
+    const cooling = (await t.run((ctx) => ctx.db.get(relayId)))!.cooling ?? [];
+    expect(cooling.map((c) => c.locationId)).toEqual([old.locationId]);
+    expect(cooling[0]!.until).toBeGreaterThan(Date.now());
+  });
+
+  test('withCooling: the burned pick cools until its end, the later end wins, ended ones are pruned', () => {
+    const now = 1_000;
+    const a = 'loc-a' as Id<'edgeLocations'>;
+    const b = 'loc-b' as Id<'edgeLocations'>;
+    expect(withCooling(undefined, a, now + 60, now)).toEqual([{ locationId: a, until: now + 60 }]);
+    expect(
+      withCooling(
+        [
+          { locationId: a, until: now + 600 },
+          { locationId: b, until: now - 1 },
+        ],
+        a,
+        now + 60,
+        now,
+      ),
+    ).toEqual([{ locationId: a, until: now + 600 }]);
   });
 
   test("the origin's own drain and cooldown win over the fleet's (one inheritance rule)", async () => {

@@ -1810,6 +1810,8 @@ export default defineSchema({
     // The location an explicit provision asks for (its account is
     // `requestedAccountId`); a setup run's terminal hook matches its target on it.
     requestedLocationId: v.optional(v.id('edgeLocations')),
+    // A replace's explicit spare (the operator named it).
+    requestedSpareEdgeId: v.optional(v.id('edges')),
     // A DETECTOR start: the countries its evidence named for the target, taken
     // from the evaluation that started it. The L7 replacement gate and the
     // confirming re-check prove the new front against these, never against the

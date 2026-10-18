@@ -869,6 +869,39 @@ export const createLocation = internalAction({
   },
 });
 
+/**
+ * Give the locations named after their bare region id the name their provider
+ * lists for that region (an account migrated into locations had no name to
+ * copy). Fail-soft per location (a read the provider refuses leaves the id);
+ * scheduled by `seedCutover`, and it touches only such rows.
+ */
+export const relabelLocations = internalAction({
+  args: {},
+  handler: async (ctx): Promise<{ named: number }> => {
+    const rows = await ctx.runQuery(internal.edgeLocations.unnamed, {});
+    let named = 0;
+    for (const row of rows) {
+      try {
+        const { provider, cfg } = await loadAdapter(
+          ctx,
+          row.accountId,
+          undefined,
+          undefined,
+          row.id,
+        );
+        if (!provider.listRegions) continue;
+        const region = (await provider.listRegions(cfg)).find((r) => String(r.id) === row.placeKey);
+        if (!region?.label || region.label === row.placeKey) continue;
+        await ctx.runMutation(internal.edgeLocations.setLabel, { id: row.id, label: region.label });
+        named++;
+      } catch {
+        // The id stays the label; the next deploy asks again.
+      }
+    }
+    return { named };
+  },
+});
+
 export const listRegions = internalAction({
   args: { accountId: v.id('edgeProviderAccounts') },
   handler: (ctx, { accountId }): Promise<Array<{ id: string; label: string }>> =>

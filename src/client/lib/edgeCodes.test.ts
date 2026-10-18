@@ -126,6 +126,10 @@ describe('EDGE_REFUSAL_COPY', () => {
     'location_not_geographic',
     'placement_on_location',
     'template_value_required',
+    'pick_switch_late',
+    'set_uncovered_listener',
+    'set_too_large',
+    'set_would_uncover',
   ];
 
   test('every refusal the pages meet is worded, and is part of the shared table', () => {

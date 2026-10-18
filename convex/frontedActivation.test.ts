@@ -33,6 +33,7 @@ import { resolveEdgeConfig } from './lib/edgeConfig';
 import type { Id } from './_generated/dataModel';
 import {
   FIXTURE_PANEL_SLUG,
+  adoptL4Edge,
   createAccount,
   insertPanelServer,
   verifyL4Edge,
@@ -59,6 +60,7 @@ import {
   SetupRunCreatedResponse,
 } from '../src/shared/contracts/edges';
 import {
+  defaultLocationRow,
   deliveryBindingOf,
   gateOfNode,
   insertPlanned,
@@ -948,12 +950,14 @@ describe("a live node's replacement stays a candidate until its commit", () => {
     if (member.kind === 'render')
       expect(member.context.published.map((p) => p.edgeId)).toContain(e2);
     expect((await gateOf(t, serverId)).candidates.edgeIds).toEqual([]);
-    // What members are served stays committed: the edge it replaced beside the
-    // new one (still published), so the next review is not mistaken for a new Host.
+    // The commit promoted exactly the reviewed delivery snapshot: the new
+    // address (the one it replaced drains at go-live, so it is not part of it),
+    // and the next review is not mistaken for a new Host.
     const after = await intentOf(t, live.intentId);
-    expect([...after.approved!.committed.edgeIds].sort()).toEqual(
-      [live.e1 as string, e2 as string].sort(),
-    );
+    expect([...after.approved!.committed.edgeIds]).toEqual([e2 as string]);
+    expect((await activationRun(t, act3)).delivery?.edgeIds).toEqual([e2 as string]);
+    // The run still owns what it created; nothing else.
+    expect((await activationRun(t, act3)).resources.edgeIds).toEqual([e2 as string]);
     const next = await t.query(internal.nodeActivation.review, { intentId: live.intentId });
     expect(next.blockers).not.toContain('servers.maintenance_required');
   });
@@ -1394,21 +1398,30 @@ describe('re-protect a live node (its own run kind)', () => {
     }
   });
 
-  test('refused with no room left, and for an origin served through more than one account', async () => {
+  test('a full pool gets temporary room for the run; a node served through several accounts is protected again from its set', async () => {
     const w = await world();
     const { t } = w;
     const live = await liveL4(w);
-    // Already at the most addresses one origin may use.
-    const full = Array.from({ length: 8 }, () => live.e1);
-    await t.run((c) => c.db.patch(live.relayId, { publishedEdgeIds: full, desiredPublished: 8 }));
+    // A pool past the cap is not a supported shape: refused.
+    const over = Array.from({ length: 17 }, () => live.e1);
+    await t.run((c) => c.db.patch(live.relayId, { publishedEdgeIds: over, desiredPublished: 17 }));
     const noRoom = await edgesPost(t, live.cookie, `relays/${live.relayId}/reprotect`);
     expect(noRoom.status).toBe(409);
     expect(await errorCode(noRoom)).toBe('edge.reprotect_no_room');
     expect((await relayRow(t, live.relayId)).setupOwned).toBeFalsy();
+    // At the cap, the run's own addresses are room above it, given back later.
+    const full = Array.from({ length: 16 }, () => live.e1);
+    await t.run((c) => c.db.patch(live.relayId, { publishedEdgeIds: full, desiredPublished: 16 }));
+    const atCap = await edgesPost(t, live.cookie, `relays/${live.relayId}/reprotect`);
+    expect(atCap.status).toBe(200);
+    expect((await relayRow(t, live.relayId)).desiredPublished).toBe(17);
+    const { runId: first } = (await atCap.json()) as { runId: string };
+    await edgesPost(t, live.cookie, `setup-runs/${first}/cancel`);
     await t.run((c) =>
       c.db.patch(live.relayId, { publishedEdgeIds: [live.e1], desiredPublished: 2 }),
     );
-    // A second transport served through another account.
+    // A second transport served through another account: no longer refused.
+    // The run's picks are the node's set; its targets cover both transports.
     await t.run(async (c) => {
       const e1 = (await c.db.get(live.e1))!;
       const l1 = (await c.db.get(e1.listenerId))!;
@@ -1420,8 +1433,15 @@ describe('re-protect a live node (its own run kind)', () => {
       await c.db.patch(live.relayId, { publishedEdgeIds: [live.e1, e2], desiredPublished: 3 });
     });
     const mixed = await edgesPost(t, live.cookie, `relays/${live.relayId}/reprotect`);
-    expect(mixed.status).toBe(409);
-    expect(await errorCode(mixed)).toBe('edge.reprotect_mixed_accounts');
+    expect(mixed.status).toBe(200);
+    const { runId } = (await mixed.json()) as { runId: string };
+    const run = await setupRun(t, runId as Id<'edgeSetupRuns'>);
+    const set = (await relayRow(t, live.relayId)).providerSet!.map((p) => p.locationId);
+    expect(run.picks!.map((p) => p.locationId)).toEqual(set);
+    const firstKey = (await t.run(
+      async (c) => (await c.db.get((await c.db.get(live.e1))!.listenerId))!.listenerKey,
+    ))!;
+    expect(run.listeners.map((l) => l.listenerKey).sort()).toEqual([firstKey, 'second'].sort());
   });
 
   test('a node not live behind its origin yet is refused: protect it first', async () => {
@@ -1995,7 +2015,33 @@ describe('automatic work on a live node stays in its approved shape', () => {
         await resolveEdgeConfig(ctx.db),
       ),
     );
-    expect(standby.account?.id).toBe(other);
+    // Automatic work stays inside the node's provider set (its picks since go-live).
+    expect(standby.account?.id).toBe(live.l4);
+    // A pick added to the set is in reach (and preferred here by its priority).
+    const otherLocation = (await defaultLocationRow(t, other))!._id;
+    await t.run(async (c) => {
+      const relay = (await c.db.get(live.relayId))!;
+      await c.db.patch(live.relayId, {
+        providerSet: [...(relay.providerSet ?? []), { locationId: otherLocation, addedAt: 1 }],
+      });
+    });
+    const inSet = await t.run(async (ctx) =>
+      selectionContext(
+        ctx,
+        { kind: 'provision', trigger: 'reconcile', listenerId: e1.listenerId },
+        (await ctx.db.get(live.relayId))!,
+        null,
+        await resolveEdgeConfig(ctx.db),
+      ),
+    );
+    expect(inSet.account?.id).toBe(other);
+    // (Back to the set the node went live with.)
+    await t.run(async (c) => {
+      const relay = (await c.db.get(live.relayId))!;
+      await c.db.patch(live.relayId, {
+        providerSet: (relay.providerSet ?? []).filter((p) => p.locationId !== otherLocation),
+      });
+    });
     // The approved account gone: nothing fits, and a new review is the way forward.
     await t.run((c) => c.db.patch(live.l4, { enabled: false }));
     expect(await select('replace')).toMatchObject({
@@ -2815,5 +2861,268 @@ describe('the maintenance switch holds new edge work around a migration', () => 
     // Members keep being served while it is held.
     await memberBody(t, (await t.run((c) => c.db.get(live.e1)))!.addresses.v4!);
     await t.mutation(internal.edgeMaintenance.thaw, {});
+  });
+});
+
+describe("a node's provider set, edited by hand", () => {
+  test('adding a location to a live node: an add run, a review for the new place, the rehearsal renders the whole future pool, nothing retired', async () => {
+    const w = await world();
+    const { t } = w;
+    const live = await liveL4(w);
+    const firstLoc = (await relayRow(t, live.relayId)).providerSet![0]!.locationId;
+    const second = (
+      await t.mutation(internal.edgeLocations.create, {
+        accountId: live.l4,
+        placement: { zone: 'nl-ams1' },
+        label: 'Zone two',
+      })
+    ).id as Id<'edgeLocations'>;
+    const res = await edgesPost(t, live.cookie, `relays/${live.relayId}/providers`, {
+      add: [second],
+    });
+    expect(res.status).toBe(200);
+    const { runId } = (await res.json()) as { runId: Id<'edgeSetupRuns'> };
+    const card = await drive(t, () => setupRun(t, runId), parked, 'add run to the card');
+    expect([card.stage, card.need?.code]).toEqual(['try_it', 'try_it']);
+    // Only what the larger set lacks: one address, in the new location.
+    expect(card.listeners.map((l) => l.locationId)).toEqual([second]);
+    const e2 = card.listeners[0]!.edgeId!;
+    await tickAll(t, runId);
+    // A new location is a new shape: the node's review.
+    const held = await drive(t, () => setupRun(t, runId), parked, 'add run to the approval');
+    expect(held.need?.code).toBe('node_not_approved');
+    const { review, runId: actId } = await approveOverHttp(t, live.cookie, live.intentId);
+    expect(review.display.standbys).toEqual([
+      expect.objectContaining({ locationLabel: 'Zone two' }),
+    ]);
+    const done = await drive(t, () => setupRun(t, runId), movedOn, 'add run after approval');
+    expect([done.stage, done.state]).toEqual(['done', 'done']);
+    // The rehearsal rendered the whole future pool, and the commit is exactly it.
+    expect([...w.calls.rehearsedEdges.at(-1)!].sort()).toEqual([live.e1 as string, e2].sort());
+    const act = await activationRun(t, actId);
+    expect([...act.delivery!.edgeIds].sort()).toEqual([live.e1 as string, e2].sort());
+    expect(act.resources.edgeIds).toEqual([e2]);
+    expect([...(await intentOf(t, live.intentId)).approved!.committed.edgeIds].sort()).toEqual(
+      [live.e1 as string, e2].sort(),
+    );
+    // Nothing retired; the set is the union.
+    expect((await t.run((c) => c.db.get(live.e1)))!.publication).toBe('published');
+    expect((await relayRow(t, live.relayId)).providerSet!.map((p) => p.locationId)).toEqual([
+      firstLoc,
+      second,
+    ]);
+  });
+
+  test("an address published since the last commit is in the add run's snapshot and its commit", async () => {
+    const w = await world();
+    const { t } = w;
+    const live = await liveL4(w);
+    // A second address in the first location, published after the commit
+    // (outside `committed.edgeIds`, same shape as the first).
+    const e1 = (await t.run((c) => c.db.get(live.e1)))!;
+    const extra = (
+      await adoptL4Edge(t, live.relayId, e1.listenerId, {
+        ipv4: '198.51.100.78',
+        accountId: live.l4,
+        verified: false,
+      })
+    ).edgeId as Id<'edges'>;
+    await t.run((c) =>
+      c.db.patch(extra, {
+        locationId: e1.locationId,
+        placeKey: e1.placeKey,
+        placement: e1.placement,
+        templateHash: e1.templateHash,
+      }),
+    );
+    await verifyL4Edge(t, extra);
+    await t.run(async (c) => {
+      const relay = (await c.db.get(live.relayId))!;
+      await c.db.patch(extra, {
+        publication: 'published',
+        poolIndex: relay.publishedEdgeIds.length,
+      });
+      await c.db.patch(live.relayId, {
+        publishedEdgeIds: [...relay.publishedEdgeIds, extra],
+        desiredPublished: relay.publishedEdgeIds.length + 1,
+      });
+    });
+    expect((await intentOf(t, live.intentId)).approved!.committed.edgeIds).not.toContain(extra);
+    const second = (
+      await t.mutation(internal.edgeLocations.create, {
+        accountId: live.l4,
+        placement: { zone: 'nl-ams1' },
+        label: 'Zone two',
+      })
+    ).id as Id<'edgeLocations'>;
+    const res = await edgesPost(t, live.cookie, `relays/${live.relayId}/providers`, {
+      add: [second],
+    });
+    expect(res.status).toBe(200);
+    const { runId } = (await res.json()) as { runId: Id<'edgeSetupRuns'> };
+    const card = await drive(t, () => setupRun(t, runId), parked, 'add run to the card');
+    const e2 = card.listeners[0]!.edgeId!;
+    await tickAll(t, runId);
+    await drive(t, () => setupRun(t, runId), parked, 'add run to the approval');
+    const { runId: actId } = await approveOverHttp(t, live.cookie, live.intentId);
+    const done = await drive(t, () => setupRun(t, runId), movedOn, 'add run after approval');
+    expect([done.stage, done.state]).toEqual(['done', 'done']);
+    const all = [live.e1 as string, extra as string, e2].sort();
+    expect([...w.calls.rehearsedEdges.at(-1)!].sort()).toEqual(all);
+    expect([...(await activationRun(t, actId)).delivery!.edgeIds].sort()).toEqual(all);
+    expect([...(await intentOf(t, live.intentId)).approved!.committed.edgeIds].sort()).toEqual(all);
+    expect((await t.run((c) => c.db.get(extra)))!.publication).toBe('published');
+  });
+
+  test('a kept address that stops serving between the rehearsal and go-live: the run rehearses a new snapshot and commits exactly it', async () => {
+    const w = await world();
+    const { t } = w;
+    const live = await liveL4(w);
+    const second = (
+      await t.mutation(internal.edgeLocations.create, {
+        accountId: live.l4,
+        placement: { zone: 'nl-ams1' },
+        label: 'Zone two',
+      })
+    ).id as Id<'edgeLocations'>;
+    const res = await edgesPost(t, live.cookie, `relays/${live.relayId}/providers`, {
+      add: [second],
+    });
+    const { runId } = (await res.json()) as { runId: Id<'edgeSetupRuns'> };
+    const card = await drive(t, () => setupRun(t, runId), parked, 'add run to the card');
+    const e2 = card.listeners[0]!.edgeId!;
+    await tickAll(t, runId);
+    await drive(t, () => setupRun(t, runId), parked, 'add run to the approval');
+    // Right after the rehearsal, the kept address stops serving (still in the pool).
+    w.hooks.afterRehearsal = () =>
+      t.run(async (c) => {
+        await c.db.patch(live.e1, { status: 'failed' });
+      });
+    const { runId: actId } = await approveOverHttp(t, live.cookie, live.intentId);
+    const done = await drive(t, () => setupRun(t, runId), movedOn, 'add run after approval');
+    expect([done.stage, done.state]).toEqual(['done', 'done']);
+    expect(
+      done.events.some((e) => e.code === 'vector_drift' || e.code === 'delivery_changed'),
+    ).toBe(true);
+    // The second rehearsal's snapshot, exactly what was committed.
+    const act = await activationRun(t, actId);
+    expect(act.state).toBe('committed');
+    expect(act.delivery!.edgeIds).toEqual([e2]);
+    expect((await intentOf(t, live.intentId)).approved!.committed.edgeIds).toEqual([e2]);
+  });
+
+  test('cooling keeps automatic selection out of a pick; every pick cooling is set_picks_cooling', async () => {
+    const w = await world();
+    const { t } = w;
+    const live = await liveL4(w);
+    const firstLoc = (await relayRow(t, live.relayId)).providerSet![0]!.locationId;
+    const second = (
+      await t.mutation(internal.edgeLocations.create, {
+        accountId: live.l4,
+        placement: { zone: 'nl-ams1' },
+        label: 'Zone two',
+      })
+    ).id as Id<'edgeLocations'>;
+    await t.mutation(internal.edgeLocations.setQualified, { id: second, qualified: true });
+    const until = Date.now() + 60 * 60_000;
+    await t.run((c) =>
+      c.db.patch(live.relayId, {
+        providerSet: [
+          { locationId: firstLoc, addedAt: 1 },
+          { locationId: second, addedAt: 2 },
+        ],
+        cooling: [{ locationId: firstLoc, until }],
+      }),
+    );
+    const e1 = (await t.run((c) => c.db.get(live.e1)))!;
+    const select = (trigger: 'reconcile' | 'manual') =>
+      t.run(async (ctx) =>
+        selectionContext(
+          ctx,
+          { kind: 'provision', trigger, listenerId: e1.listenerId },
+          (await ctx.db.get(live.relayId))!,
+          null,
+          await resolveEdgeConfig(ctx.db),
+        ),
+      );
+    expect((await select('reconcile')).account?.locationId).toBe(second);
+    await t.run((c) =>
+      c.db.patch(live.relayId, {
+        cooling: [
+          { locationId: firstLoc, until },
+          { locationId: second, until },
+        ],
+      }),
+    );
+    expect(await select('reconcile')).toMatchObject({
+      account: null,
+      accountFailure: 'set_picks_cooling',
+    });
+    // An operator's own request is not held.
+    expect((await select('manual')).account).not.toBeNull();
+  });
+
+  test('removing a location: refused while only an untested spare holds the rest; allowed once a tested address is published there; its addresses drain', async () => {
+    const w = await world();
+    const { t } = w;
+    const live = await liveL4(w);
+    const firstLoc = (await relayRow(t, live.relayId)).providerSet![0]!.locationId;
+    const second = (
+      await t.mutation(internal.edgeLocations.create, {
+        accountId: live.l4,
+        placement: { zone: 'nl-ams1' },
+        label: 'Zone two',
+      })
+    ).id as Id<'edgeLocations'>;
+    await t.run((c) =>
+      c.db.patch(live.relayId, {
+        providerSet: [
+          { locationId: firstLoc, addedAt: 1 },
+          { locationId: second, addedAt: 2 },
+        ],
+      }),
+    );
+    const listenerId = (await t.run((c) => c.db.get(live.e1)))!.listenerId;
+    const spare = await adoptL4Edge(t, live.relayId, listenerId, {
+      ipv4: '198.51.100.77',
+      accountId: live.l4,
+      verified: false,
+    });
+    const spareId = spare.edgeId as Id<'edges'>;
+    await t.run((c) => c.db.patch(spareId, { locationId: second, placeKey: 'nl-ams1' }));
+    const refused = await edgesPost(t, live.cookie, `relays/${live.relayId}/providers`, {
+      remove: [firstLoc],
+    });
+    expect(refused.status).toBe(409);
+    expect(await errorCode(refused)).toBe('edge.set_would_uncover');
+    expect((await t.run((c) => c.db.get(live.e1)))!.publication).toBe('published');
+    // Tested and published in the other location: now the removal goes through.
+    await verifyL4Edge(t, spareId);
+    await t.run(async (c) => {
+      const relay = (await c.db.get(live.relayId))!;
+      await c.db.patch(spareId, {
+        publication: 'published',
+        poolIndex: relay.publishedEdgeIds.length,
+      });
+      await c.db.patch(live.relayId, {
+        publishedEdgeIds: [...relay.publishedEdgeIds, spareId],
+        desiredPublished: relay.publishedEdgeIds.length + 1,
+      });
+    });
+    const ok = await edgesPost(t, live.cookie, `relays/${live.relayId}/providers`, {
+      remove: [firstLoc],
+    });
+    expect(ok.status).toBe(200);
+    expect((await t.run((c) => c.db.get(live.e1)))!.publication).toBe('draining');
+    const relay = await relayRow(t, live.relayId);
+    expect(relay.providerSet!.map((p) => p.locationId)).toEqual([second]);
+    expect(relay.desiredPublished).toBeGreaterThanOrEqual(1);
+    const audit = await t.run((c) =>
+      c.db
+        .query('auditLog')
+        .filter((q) => q.eq(q.field('action'), 'edge.relay.providers_changed'))
+        .collect(),
+    );
+    expect(audit.at(-1)?.payload).toMatchObject({ removed: 1, drained: 1, picks: 1 });
   });
 });

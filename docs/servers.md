@@ -760,8 +760,19 @@ mirror). FCP never starts a run by itself.
   on all four; an entry that names an account but no location never fits, so a review the
   locations migration has not reached fails closed. The review lists every required listener
   with its account, location and template (`shape.listeners`; the card names the location),
-  never one representative edge. Approving a fronted node is refused while edges are frozen
-  (docs/edges.md "Maintenance switch and reset drain"). A re-protect of a live node within its approved shape reaches
+  never one representative edge. With a provider set the shape is the union of what members
+  are served from (every published address, not only the template edge) and the run's targets,
+  one entry per (listener, account, location, template). Approving a fronted node is refused
+  while edges are frozen (docs/edges.md "Maintenance switch and reset drain").
+- **The delivery snapshot.** Before its rehearsal, an enrolled setup run records on its
+  activation what members will get after the commit (`delivery.edgeIds`: the committed
+  addresses go-live keeps plus the candidates; a `replace_all` keeps only those on transports
+  it does not touch). The rehearsal renders exactly that set (an `add` run rehearses every
+  cohort against its real future pool), and the commit promotes exactly it into
+  `approved.committed.edgeIds`, refusing `servers.delivery_changed` when a kept address stopped
+  serving (the run rehearses a new snapshot). `resources` is left as the run's own: the gate and
+  cancel keep reading it. A run without a snapshot (a direct node, an older row) commits as
+  before. A re-protect of a live node within its approved shape reaches
   go-live and binds without a new approval; outside it, it parks for the review.
 - **Protect again from the node page.** A live node is protected again by its own run kind
   (`POST /api/v1/admin/edges/relays/{id}/reprotect`, a `reprotect` setup run, docs/edges.md

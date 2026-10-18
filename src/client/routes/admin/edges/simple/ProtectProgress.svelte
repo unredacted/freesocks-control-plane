@@ -31,6 +31,8 @@
     moreDirectWords,
     needButtons,
     runTestLines,
+    runPickLines,
+    runListenerName,
     type NeedAction,
     type TestItem,
   } from './runWords';
@@ -111,6 +113,7 @@
   // on once every line works. Between a tick and the rebuilt card (the run is
   // briefly `running` at try_it) the card stays up with its answers locked.
   const lines = $derived(run ? runTestLines(run) : { items: [], done: new Set<string>() });
+  const pickLines = $derived(run ? runPickLines(run) : []);
   const testing = $derived(
     !!run &&
       run.stage === 'try_it' &&
@@ -276,6 +279,22 @@
     {/each}
   </ol>
 
+  {#if pickLines.length > 0}
+    <ul class="space-y-0.5 text-sm" aria-label="Locations">
+      {#each pickLines as line (line.locationId)}
+        <li>{line.text}</li>
+      {/each}
+    </ul>
+  {/if}
+  {#if run.reduced.length > 0}
+    <p class="text-muted-foreground text-sm">
+      Members on {[
+        ...new Set(run.reduced.map((r) => runListenerName(run, r.listenerKey) ?? r.listenerKey)),
+      ].join(', ')}
+      have no backup at another provider.
+    </p>
+  {/if}
+
   {#if run.kind === 'reprotect' && live}
     <p class="text-sm">
       Protecting {run.nodeName} again with new addresses. Members keep the addresses they have until the
@@ -368,7 +387,46 @@
         <PausedCard relay={pausedRelay.data} onResolved={() => retry()} />
       {/if}
 
-      {#if choosingAccount}
+      {#if choosingAccount && run.picks.length > 1}
+        <!-- A set: replace one pick (before its addresses are published). -->
+        <div class="space-y-3">
+          {#each run.picks as from (from.locationId)}
+            {@const moving = run.listeners.filter((l) => l.locationId === from.locationId)}
+            {@const others = run.plan.accounts
+              .filter((a) => a.compatible)
+              .flatMap((a) =>
+                a.locations
+                  .filter((l) => l.compatible && !run.picks.some((p) => p.locationId === l.id))
+                  .filter(() =>
+                    moving.every((m) => !a.carries || a.carries.includes(m.listenerKey)),
+                  )
+                  .map((l) => ({ account: a, location: l })),
+              )}
+            {#if from.locationId && others.length > 0 && !moving.some((m) => m.published)}
+              <fieldset class="space-y-1.5">
+                <legend class="text-xs font-medium"
+                  >Instead of {from.label ?? 'this location'}</legend
+                >
+                <div class="flex flex-wrap gap-2">
+                  {#each others as o (o.location.id)}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={act.isPending}
+                      onclick={() => {
+                        choosingAccount = false;
+                        retry({ replacePick: { from: from.locationId!, to: o.location.id } });
+                      }}
+                    >
+                      {o.account.name}, {o.location.label}
+                    </Button>
+                  {/each}
+                </div>
+              </fieldset>
+            {/if}
+          {/each}
+        </div>
+      {:else if choosingAccount}
         <fieldset class="space-y-2">
           <legend class="text-xs font-medium">Another account or location</legend>
           {#each run.plan.accounts.filter((a) => a.compatible) as a (a.id)}

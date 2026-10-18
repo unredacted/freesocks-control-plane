@@ -6,6 +6,8 @@ import {
   moreDirectWords,
   needButtons,
   planWords,
+  setWords,
+  providerPickWords,
   runTestItems,
   runTestLines,
 } from './runWords';
@@ -93,6 +95,7 @@ describe('runTestLines', () => {
   });
   const listener = (listenerKey: string, edgeId: string | null) => ({
     listenerKey,
+    locationId: null,
     layer: 'l4' as const,
     edgeId,
     verify: 'pending' as const,
@@ -216,5 +219,101 @@ describe('planWords', () => {
     expect(w.renderGlobal).toBeNull();
     expect(w.button).toBe('Protect this node');
     expect(w.formats).toBe('Works for every subscription format.');
+  });
+});
+
+describe('setWords', () => {
+  const set = {
+    picks: [
+      { locationId: 'x', accountId: 'a', label: 'Region A' },
+      { locationId: 'y', accountId: 'b', label: 'Region B' },
+    ],
+    targets: [
+      { listenerKey: 'main', locationId: 'x' },
+      { listenerKey: 'main', locationId: 'y' },
+      { listenerKey: 'ws', locationId: 'x' },
+    ],
+    reduced: [{ listenerKey: 'ws' }],
+    uncovered: [],
+    tooLarge: false,
+  };
+  const name = (k: string) => (k === 'main' ? 'REALITY' : 'WebSocket');
+  const acct = (id: string) => (id === 'a' ? 'Acct A' : 'Acct B');
+
+  it('says how many addresses each pick gets and which transports have no backup elsewhere', () => {
+    const w = setWords(set, name, acct);
+    expect(w.lines.map((l) => l.text)).toEqual([
+      '2 addresses in Region A (Acct A).',
+      '1 address in Region B (Acct B).',
+    ]);
+    expect(w.reduced).toBe('Members on WebSocket have no backup at another provider.');
+    expect(w.uncovered).toBeNull();
+    expect(w.where).toBe('2 locations');
+    for (const t of [...w.lines.map((l) => l.text), w.reduced]) expect(t).not.toContain('—');
+  });
+
+  it('names a transport no pick carries, and one pick by its account and place', () => {
+    const w = setWords({ ...set, picks: [set.picks[1]!], uncovered: ['ws'] }, name, acct);
+    expect(w.uncovered).toBe('No picked location carries WebSocket. Add one that can.');
+    expect(w.where).toBe('Acct B (Region B)');
+  });
+});
+
+describe('planWords: the fleet-wide sentence', () => {
+  it('says no "0 other nodes" when going live turns rendering on for this node only', () => {
+    const w = planWords(
+      {
+        nodeName: 'node-a',
+        inbounds: [],
+        requiredListeners: ['a'],
+        directHosts: [],
+        renderGlobal: { willEnable: true, affectedRelays: [] },
+      },
+      'Acct',
+      2,
+    );
+    expect(w.renderGlobal).toBe('Going live also turns on protected delivery.');
+    expect(w.sentence).toMatch(/^FCP creates 2 addresses in Acct/);
+  });
+});
+
+describe('providerPickWords', () => {
+  it('counts per location, a cooling line, and what members miss', () => {
+    const now = Date.parse('2026-10-18T12:00:00Z');
+    const w = providerPickWords(
+      {
+        hasSet: true,
+        picks: [
+          {
+            locationId: 'x',
+            accountId: 'a',
+            accountName: 'Acct A',
+            provider: 'acme',
+            label: 'Region A',
+            usable: true,
+            qualified: true,
+            inUse: 2,
+            spare: 1,
+            coolingUntil: '2026-10-18T12:30:00Z',
+            addedAt: '2026-10-01T00:00:00Z',
+          },
+        ],
+        reduced: [{ listenerKey: 'main', reason: 'one_group' }],
+        coolingOnly: [],
+        uncarried: [],
+        deficit: 1,
+      },
+      (k) => (k === 'main' ? 'REALITY' : k),
+      now,
+    );
+    expect(w.picks[0]).toEqual({
+      locationId: 'x',
+      counts: '2 in use, 1 spare.',
+      cooling: 'An address here was just blocked: automatic work keeps away for about 30 minutes.',
+    });
+    expect(w.notes).toEqual([
+      'Members on REALITY have no backup at another provider.',
+      '1 address is still missing; automatic upkeep adds it.',
+    ]);
   });
 });

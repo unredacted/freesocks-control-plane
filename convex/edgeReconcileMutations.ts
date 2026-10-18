@@ -6,19 +6,20 @@
  */
 import { ConvexError, v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
-import type { Id } from './_generated/dataModel';
+import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { resolveEdgeConfig } from './lib/edgeConfig';
 import {
   assertNoRotationOrQuarantine,
   checkPublishable,
   dropEdgeFromPool,
-  poolListenersOf,
+  poolAdmitOf,
   refreshTemplateEdges,
   scheduleMirrorRefresh,
 } from './relays';
 import { destroyedPatch } from './edges';
-import { allocatePoolIndex, withEdgeAt } from './lib/edges/pool';
+import { allocatePoolIndex, withEdgeAt, type PoolAdmit } from './lib/edges/pool';
+import { isCooling } from './lib/edges/setState';
 import { publicationApproval, startRotation } from './edgeRotations';
 import { recordCandidateEdge } from './nodeActivation';
 
@@ -233,19 +234,24 @@ export const publishStandby = internalMutation({
       return none;
     }
     const cfg = await resolveEdgeConfig(ctx.db);
-    const poolListeners = await poolListenersOf(ctx.db, relayId);
     let awaitingVerification = false;
+    // Automatic work stays inside the node's provider set and out of a pick
+    // that cools (D6); a spare that fills a gap goes first.
+    const inSet = new Set((origin.providerSet ?? []).map((p) => p.locationId as string));
+    const ranked: Array<{ edge: Doc<'edges'>; admit: PoolAdmit }> = [];
     for (const edgeId of candidates) {
       const edge = await ctx.db.get(edgeId);
       if (!edge || edge.relayId !== relayId) continue;
-      // Reserved allocation is per listener: a candidate for a covered listener
-      // may not take a slot held for an uncovered one.
-      const alloc = allocatePoolIndex(
-        origin.publishedEdgeIds,
-        origin.desiredPublished,
-        edge.listenerId,
-        poolListeners,
-      );
+      if (isCooling(origin, edge.locationId)) continue;
+      if (origin.providerSet && edge.locationId && !inSet.has(edge.locationId as string)) continue;
+      ranked.push({ edge, admit: await poolAdmitOf(ctx.db, origin, edge) });
+    }
+    ranked.sort((a, b) => Number(b.admit.lowersDeficit) - Number(a.admit.lowersDeficit));
+    for (const { edge, admit } of ranked) {
+      const edgeId = edge._id;
+      // Reserved allocation: an edge that adds nothing may not take a slot
+      // held for what the origin still lacks.
+      const alloc = allocatePoolIndex(origin.publishedEdgeIds, origin.desiredPublished, admit);
       if ('refused' in alloc) continue;
       const idx = alloc.index;
       const check = await checkPublishable(ctx, edge, cfg.requireProviderHealth);

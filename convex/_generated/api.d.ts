@@ -44,6 +44,7 @@ import type * as edgeOriginProbe from "../edgeOriginProbe.js";
 import type * as edgeOriginProbeOps from "../edgeOriginProbeOps.js";
 import type * as edgeProviderAccounts from "../edgeProviderAccounts.js";
 import type * as edgeProviderOps from "../edgeProviderOps.js";
+import type * as edgeProviderSets from "../edgeProviderSets.js";
 import type * as edgeReconcile from "../edgeReconcile.js";
 import type * as edgeReconcileMutations from "../edgeReconcileMutations.js";
 import type * as edgeRehearsal from "../edgeRehearsal.js";
@@ -219,6 +220,7 @@ declare const fullApi: ApiFromModules<{
   edgeOriginProbeOps: typeof edgeOriginProbeOps;
   edgeProviderAccounts: typeof edgeProviderAccounts;
   edgeProviderOps: typeof edgeProviderOps;
+  edgeProviderSets: typeof edgeProviderSets;
   edgeReconcile: typeof edgeReconcile;
   edgeReconcileMutations: typeof edgeReconcileMutations;
   edgeRehearsal: typeof edgeRehearsal;

@@ -94,6 +94,8 @@ import {
   RelayRebalanceResponse,
   RequireEdgesResponse,
   SetupPlanResponse,
+  ProviderSetView,
+  ProviderSetChangeResponse,
   SetupRunAdmin,
   SetupRunCancelResponse,
   SetupRunContinueRequest,
@@ -204,6 +206,8 @@ export type RelayDeleteDisposition = 'restore-direct' | 'keep-dark';
 export interface ProvisionBody {
   listenerId?: string;
   publish?: boolean;
+  /** An explicit location (needs `listenerId`); an untrusted one only with `publish: false`. */
+  locationId?: string;
 }
 export interface PublishRelayEdgeBody {
   edgeId: string;
@@ -213,6 +217,10 @@ export interface RotateBody {
   edgeId: string;
   force?: boolean;
   forceGeoEvidence?: boolean;
+  /** An explicit spare (that one or nothing); Automatic otherwise. */
+  spareEdgeId?: string;
+  /** An explicit location for a new CDN front; Automatic otherwise. */
+  locationId?: string;
 }
 export interface AdoptEdgeBody {
   accountId?: string;
@@ -296,10 +304,20 @@ export type SetupRunContinueBody = z.infer<typeof SetupRunContinueRequest>;
  * The read-only plan for one backend node (throttled: it lists the node's transports and Hosts).
  * `listenerKeys` names the transports to protect on a node with more than one run takes.
  */
-export const planSetupRun = (backendServerId: string, nodeUuid: string, listenerKeys?: string[]) =>
+export const planSetupRun = (
+  backendServerId: string,
+  nodeUuid: string,
+  listenerKeys?: string[],
+  picks?: string[],
+) =>
   apiClient.post(
     `${BASE}/setup-runs/plan`,
-    { backendServerId, nodeUuid, ...(listenerKeys ? { listenerKeys } : {}) },
+    {
+      backendServerId,
+      nodeUuid,
+      ...(listenerKeys ? { listenerKeys } : {}),
+      ...(picks && picks.length > 0 ? { picks } : {}),
+    },
     SetupPlanResponse,
   );
 export const createSetupRun = (body: SetupRunCreateBody) =>
@@ -324,8 +342,18 @@ export const serveRelayDirect = (relayId: string) =>
  * candidate addresses, Try it, the approval when one is needed). Members keep
  * what they have until it goes live; cancelling drops only its candidates.
  */
-export const reprotectRelay = (relayId: string) =>
-  apiClient.post(`${BASE}/relays/${enc(relayId)}/reprotect`, {}, SetupRunCreatedResponse);
+export const reprotectRelay = (relayId: string, mode?: 'replace_all' | 'add') =>
+  apiClient.post(
+    `${BASE}/relays/${enc(relayId)}/reprotect`,
+    mode ? { mode } : {},
+    SetupRunCreatedResponse,
+  );
+/** The node's provider set: its picks, what they hold, what could be added. */
+export const fetchProviderSet = (relayId: string) =>
+  apiClient.get(`${BASE}/relays/${enc(relayId)}/providers`, ProviderSetView);
+/** Add or remove picks (an add on a live enrolled node starts a run). */
+export const changeProviderSet = (relayId: string, body: { add?: string[]; remove?: string[] }) =>
+  apiClient.post(`${BASE}/relays/${enc(relayId)}/providers`, body, ProviderSetChangeResponse);
 /** The activation policy on a deferred origin: pending untested L4 endpoints come back instead of a binding. */
 export const requireRelayEdges = (relayId: string, accountId?: string, locationId?: string) =>
   apiClient.post(
@@ -647,6 +675,7 @@ export const edgeKeys = {
   relayTimeline: (slug: string) => [...ROOT, 'relay', slug, 'timeline'] as const,
   relayQuarantine: (slug: string) => [...ROOT, 'relay', slug, 'quarantine'] as const,
   relayEdges: (slug: string) => [...ROOT, 'relay', slug, 'edges'] as const,
+  relayProviders: (slug: string) => [...ROOT, 'relay', slug, 'providers'] as const,
   relaySimulations: (slug: string) => [...ROOT, 'relay', slug, 'simulations'] as const,
   nodeCandidates: (backendServerId: string) =>
     [...ROOT, 'node-candidates', backendServerId] as const,
@@ -884,6 +913,15 @@ export const relayQuarantineQuery = (r: RelayRef) =>
     queryFn: () => fetchRelayQuarantine(r.id()!),
     enabled: relayEnabled(r),
     staleTime: 5_000,
+  }));
+
+export const relayProvidersQuery = (r: RelayRef) =>
+  createQuery(() => ({
+    queryKey: edgeKeys.relayProviders(r.slug() ?? ''),
+    queryFn: () => fetchProviderSet(r.id()!),
+    enabled: relayEnabled(r),
+    staleTime: 10_000,
+    refetchInterval: relayInterval(r),
   }));
 
 export const relayEdgesQuery = (r: RelayRef) =>

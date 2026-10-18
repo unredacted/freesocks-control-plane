@@ -65,6 +65,8 @@ export const ATTENTION_RANK = [
   'pool_rebalance',
   'spare_untested',
   'pool_below_desired',
+  'reduced_resilience',
+  'pick_cooling',
   'account_budget_unlimited',
   'account_unqualified',
   'account_untested',

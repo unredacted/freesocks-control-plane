@@ -626,10 +626,21 @@ const COPY = {
     fix: 'Finish the guided setup to go live.',
   },
   pool_rebalance: {
-    label: 'Make room for a listener',
+    label: 'Make room for what is missing',
     explain:
-      'A deployed listener has no published edge, every pool slot is taken and the pool is at its cap.',
-    fix: 'Rebalance: one duplicate edge goes back to standby so the listener can be published.',
+      'A transport or a provider of this node has no published address, every pool slot is taken and the pool is at its cap.',
+    fix: 'Rebalance: one redundant address goes back to standby so the missing one can be published.',
+  },
+  pick_cooling: {
+    label: 'A location is cooling',
+    explain:
+      'An address in this location was just blocked here, so automatic work leaves the location alone for a while.',
+  },
+  reduced_resilience: {
+    label: 'No backup elsewhere',
+    explain:
+      'Members on these transports get no backup at another provider: every location that carries them is one provider.',
+    fix: 'Add a location of another provider to this node.',
   },
   needs_test: {
     label: 'Blocked and the spare is untested',
@@ -1168,6 +1179,27 @@ const REFUSAL_COPY = {
     explain: 'The node already uses as many addresses as one origin may.',
     fix: 'Remove an address from Origin details first, then protect it again.',
   },
+  // provider sets
+  pick_switch_late: {
+    label: 'Already in use',
+    explain: 'That location already has a published address in this run, so it cannot be swapped.',
+    fix: "Let the run finish, then change the node's locations.",
+  },
+  set_uncovered_listener: {
+    label: 'A transport has no location',
+    explain: "None of the picked locations can carry one of this node's transports.",
+    fix: 'Add a location whose provider carries it.',
+  },
+  set_too_large: {
+    label: 'Too many addresses',
+    explain: 'These locations would need more addresses than one node can publish.',
+    fix: 'Pick fewer locations.',
+  },
+  set_would_uncover: {
+    label: 'Would leave members without',
+    explain: 'Removing it would leave a transport without a tested address in another location.',
+    fix: 'Publish a tested address elsewhere first, then remove it.',
+  },
   // provider locations (where an account creates its addresses)
   no_location: {
     label: 'No location yet',
@@ -1575,6 +1607,12 @@ export const SETUP_RUN_NEED_COPY: Record<SetupRunNeed, CodeCopy> = {
     label: 'Rehearsal failed',
     explain: 'A member body did not render through the new address (the detail names the case).',
     fix: 'Try again.',
+  },
+  resilience_short: {
+    label: 'No backup elsewhere',
+    explain:
+      'A member would get the backup address from the same provider as the main one, although another provider is on offer.',
+    fix: 'Try again. If it stays, check the render rules for that client family.',
   },
   node_not_approved: {
     label: 'Approve go-live',

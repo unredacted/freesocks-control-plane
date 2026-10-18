@@ -4,9 +4,11 @@ import {
   l7SelectionAllowed,
   pickAccount,
   pickSlot,
+  pickLocation,
   pickStandby,
   slotEligible,
   type AccountCandidate,
+  type SetLocationCandidate,
   type SlotCandidate,
   type StandbyCandidate,
 } from './rotation';
@@ -224,5 +226,72 @@ describe('pickStandby', () => {
   test('a standby without the address of its own layer is not compatible', () => {
     expect(pickStandby([standby({})], 's1', [], null, false)).toMatchObject({ id: 'e1' });
     expect(pickStandby([standby({ hasAddress: false })], 's1', [], null, false)).toBeNull();
+  });
+
+  test('a replace moves away from the target provider first, then its location', () => {
+    const same = standby({ id: 'same', provider: 'gcore', locationKey: 'gcore:r1' });
+    const otherPlace = standby({ id: 'place', provider: 'gcore', locationKey: 'gcore:r2' });
+    const otherProvider = standby({ id: 'prov', provider: 'ovh', locationKey: 'ovh:r9' });
+    const avoid = { avoid: { provider: 'gcore', locationKey: 'gcore:r1' } };
+    expect(
+      pickStandby([same, otherPlace, otherProvider], 's1', [], null, false, null, avoid)?.id,
+    ).toBe('prov');
+    expect(pickStandby([same, otherPlace], 's1', [], null, false, null, avoid)?.id).toBe('place');
+    expect(pickStandby([same], 's1', [], null, false, null, avoid)?.id).toBe('same');
+  });
+
+  test('automatic work skips a cooling or outside location; a named spare is that one or nothing', () => {
+    const a = standby({ id: 'a', locationId: 'loc-a' });
+    const b = standby({ id: 'b', locationId: 'loc-b' });
+    const skip = { skipLocations: new Set(['loc-a']) };
+    expect(pickStandby([a, b], 's1', [], null, false, null, skip)?.id).toBe('b');
+    expect(pickStandby([a], 's1', [], null, false, null, skip)).toBeNull();
+    expect(pickStandby([a, b], 's1', [], null, false, null, { spareEdgeId: 'a' })?.id).toBe('a');
+    expect(pickStandby([b], 's1', [], null, false, null, { spareEdgeId: 'a' })).toBeNull();
+  });
+});
+
+describe('pickLocation', () => {
+  const cand = (over: Partial<SetLocationCandidate>): SetLocationCandidate => ({
+    id: 'acct',
+    locationId: 'loc',
+    provider: 'gcore',
+    qualified: true,
+    priority: 0,
+    dailyAllocationBudget: 0,
+    allocationsToday: 0,
+    maxLiveEdges: 10,
+    liveEdges: 0,
+    setOrder: 0,
+    lowersDeficit: false,
+    providerNew: false,
+    locationKeyNew: false,
+    ...over,
+  });
+  test('ranks what a pick adds: deficit, a new provider, a new location, set order, fewest live', () => {
+    const r = pickLocation([
+      cand({ locationId: 'first', setOrder: 0 }),
+      cand({ locationId: 'newloc', setOrder: 2, locationKeyNew: true }),
+      cand({ locationId: 'newprov', setOrder: 3, providerNew: true }),
+      cand({ locationId: 'fills', setOrder: 4, lowersDeficit: true }),
+    ]);
+    expect(r.ok && r.account.locationId).toBe('fills');
+    const s = pickLocation([
+      cand({ locationId: 'first', setOrder: 0 }),
+      cand({ locationId: 'newloc', setOrder: 2, locationKeyNew: true }),
+      cand({ locationId: 'newprov', setOrder: 3, providerNew: true }),
+    ]);
+    expect(s.ok && s.account.locationId).toBe('newprov');
+  });
+  test('untrusted only on request; exhausted capacity is accounts_exhausted', () => {
+    expect(pickLocation([cand({ qualified: false })])).toEqual({
+      ok: false,
+      code: 'no_qualified_account',
+    });
+    expect(pickLocation([cand({ qualified: false })], { allowUnqualified: true }).ok).toBe(true);
+    expect(pickLocation([cand({ liveEdges: 10 })])).toEqual({
+      ok: false,
+      code: 'accounts_exhausted',
+    });
   });
 });

@@ -40,7 +40,8 @@ import type { Cohort } from './lib/edges/cohorts';
 import { cohortValidator, walkRelayCohorts } from './edgeCohorts';
 import { formatSupported, type RenderFormat } from './lib/edges/protocols';
 import { fnv1a64Hex } from './lib/edges/registration';
-import { effectiveRule, type DeliveryStyle } from './lib/edges/render';
+import { effectiveRule, ruleForDelivery, type DeliveryStyle } from './lib/edges/render';
+import { bodyGroups, resilienceExpectation, type ReducedReason } from './lib/edges/providerSet';
 import { applyEdgeRender, type EdgeRenderContext } from './lib/edges/renderPipeline';
 import { verificationCurrent } from './lib/edges/verification';
 import { deliveryStyleOf, l7QualificationCurrent, publishedEdgesOf } from './edgeRender';
@@ -78,6 +79,13 @@ export interface RehearsalFailure {
   reason: string;
 }
 
+/** A body that gets no backup in another failure domain, and why (reported, not failed). */
+export interface RehearsalReduced {
+  cohortKey: string;
+  format: RenderFormat;
+  reason: ReducedReason;
+}
+
 export interface RehearsalResult {
   ok: boolean;
   failures: RehearsalFailure[];
@@ -93,6 +101,8 @@ export interface RehearsalResult {
   source: 'members' | 'credential';
   /** Every format each cohort was rehearsed in (a dark cohort must fail in ALL of them). */
   formats: RenderFormat[];
+  /** Bodies with no backup in another failure domain, and why. */
+  reduced?: RehearsalReduced[];
 }
 
 function canonicalJson(x: unknown): string {
@@ -271,6 +281,7 @@ async function rehearseBody(
   format: RenderFormat,
   ref: { backendShortId: string; subscriptionUrl: string; excludeNode: string | null },
   renderKey: string,
+  onReduced?: (r: RehearsalReduced) => void,
 ): Promise<RehearsalFailure | null> {
   const ua = REHEARSAL_USER_AGENTS[format];
   let content: string;
@@ -305,6 +316,25 @@ async function rehearseBody(
   };
   const out = applyEdgeRender(rctx, content, renderKey, { now: Date.now() });
   if (out.delivery.kind !== 'serve') return { cohortKey, format, reason: out.delivery.reason };
+  // Resilience: under the EFFECTIVE delivery rule, a body that can have a
+  // backup in another failure domain must get one (`resilience_short`); one
+  // that cannot is reported with why, never failed.
+  const effective = ruleForDelivery(rctx.rule, c.deliveryStyle);
+  const usable = c.published.filter((e) => formatSupported(e.proto, format));
+  const groups = bodyGroups(usable, out.snapshot.listenerKeys);
+  const expectation = resilienceExpectation({
+    style: c.deliveryStyle,
+    includeBackup: effective.includeBackup,
+    maxEntries: effective.maxEntries,
+    preferDistinct: c.preferDistinctProviders,
+    groupsOffered: groups.count,
+  });
+  if (expectation.on) {
+    const primary = c.published.find((e) => e.edgeId === out.snapshot.primaryEdgeId);
+    const backup = c.published.find((e) => e.edgeId === out.snapshot.backupEdgeId);
+    if (!primary || !backup || groups.groupOf(primary) === groups.groupOf(backup))
+      return { cohortKey, format, reason: 'resilience_short' };
+  } else onReduced?.({ cohortKey, format, reason: expectation.reason });
   return null;
 }
 
@@ -328,6 +358,8 @@ export const run = internalAction({
       });
       if (!c) throw new Error('rehearsal: the origin has no backend origin');
       const failures: RehearsalFailure[] = [];
+      const reduced: RehearsalReduced[] = [];
+      const noteReduced = (r: RehearsalReduced) => reduced.push(r);
       let source: RehearsalResult['source'] = 'members';
       if (!c.activationCurrent) {
         // A newer approval (or none) owns the node now: this run proves nothing.
@@ -349,6 +381,7 @@ export const run = internalAction({
               format,
               sub,
               sub.renderKey ?? `rehearsal:${cohort.key}`,
+              noteReduced,
             );
             if (fail) failures.push(fail);
           }
@@ -372,6 +405,7 @@ export const run = internalAction({
               format,
               { ...cred.fetchRef, excludeNode: null },
               'rehearsal:credential',
+              noteReduced,
             );
             if (fail) failures.push(fail);
           }
@@ -399,6 +433,7 @@ export const run = internalAction({
         cohorts: c.cohorts.length,
         source,
         formats: c.formats,
+        reduced,
       };
       if (!listingChanged) return last;
     }
