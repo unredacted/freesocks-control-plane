@@ -264,8 +264,23 @@ async function accountTrustEvidence(
 
 // --- the partial rung (probe evidence) -----------------------------------------------------------
 
-/** Newest probe runs read for the shape check (every source, every port, both families). */
+/**
+ * Newest INTERNAL runs read for the shape check (every port, both families).
+ * They have their own index range: more external runs per round (controls,
+ * standby and repeat rounds) can never push the shape check out of the window.
+ */
 const RUNG_RUN_WINDOW = 40;
+
+/** The newest internal shape runs of an edge (the only runs the rung reads). */
+export function internalRunsOf(db: DatabaseReader, edgeId: Id<'edges'>) {
+  return db
+    .query('probeRuns')
+    .withIndex('by_target_source_requested', (q) =>
+      q.eq('targetKind', 'edge').eq('targetRef', edgeId).eq('source', 'internal'),
+    )
+    .order('desc')
+    .take(RUNG_RUN_WINDOW);
+}
 
 /**
  * Re-derive the `partial` rung of an active L4 edge from its probe evidence
@@ -302,11 +317,7 @@ export async function refreshPartialRung(
     .query('probeReachability')
     .withIndex('by_target_country', (q) => q.eq('targetKind', 'edge').eq('targetRef', edgeId))
     .collect();
-  const runs = await ctx.db
-    .query('probeRuns')
-    .withIndex('by_target_requested', (q) => q.eq('targetKind', 'edge').eq('targetRef', edgeId))
-    .order('desc')
-    .take(RUNG_RUN_WINDOW);
+  const runs = await internalRunsOf(ctx.db, edgeId);
   const rung = partialRungFor(listener, {
     // The gate's own health rule: an observe-only import has no provider to ask.
     providerHealthy:

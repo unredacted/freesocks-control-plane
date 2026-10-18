@@ -67,7 +67,7 @@
   const setQ = relayProvidersQuery({
     slug: () => relay.slug,
     id: () => relay.id,
-    rotating: () => false,
+    poll: false,
   });
   const picks = $derived(setQ.data?.picks ?? []);
   const labelOf = (locationId: string | null) =>

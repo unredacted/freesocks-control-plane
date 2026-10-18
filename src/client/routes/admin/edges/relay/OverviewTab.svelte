@@ -17,6 +17,7 @@
   import { Button } from '@client/components/ui/button';
   import { Skeleton } from '@client/components/ui/skeleton';
   import { relayTimelineQuery } from '@client/lib/edgesApi';
+  import { originBusy } from '@client/lib/livePoll';
   import AdminListState from '../../AdminListState.svelte';
   import Timeline from '../components/Timeline.svelte';
   import { edgesPaths } from '../lib/routes';
@@ -41,7 +42,7 @@
   const timelineQ = relayTimelineQuery({
     slug: () => relay.slug,
     id: () => relay.id,
-    rotating: () => !!relay.activeRotationId,
+    rotating: () => originBusy(relay),
   });
 
   function hrefFor(entry: TimelineRow): string | null {

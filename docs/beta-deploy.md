@@ -785,7 +785,10 @@ Walk
 2. Start a poller standing in for an app: a shell loop every 60 s sending `If-None-Match`,
    logging time, status and endpoints. It proves the HTTP contract, not client behaviour.
 3. The real report path: report a problem from the member page (primary connection, country
-   consent). The report detail shows weight 1 and the member's primary edge.
+   consent). The consent block's country starts as the member's "Where are you connecting from?"
+   answer; the connection question is asked only while the member's last download matches the
+   origin's current addresses. Admin, Telemetry, Recent events shows the report's country and,
+   under Origin, the origin, `primary, counted` (weight 1) and a link to the primary edge.
 4. No tested spare: Simulate a block (test) on the member's primary edge in the chosen country.
    Within one detector pass the origin is suspected and the start is refused
    `edge.no_verified_spare` (attention `needs_test`, critical); no rotation exists and the test

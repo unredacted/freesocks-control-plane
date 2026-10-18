@@ -29,6 +29,15 @@ API prefix is HPKE-sealed by verb class (see [Sealing](#sealing)).
 How to take one node from the role run to a member connection is the runbook
 "Deploy a fronted node" in `docs/servers.md`.
 
+The pages that show live state keep themselves current while the tab is visible
+(`src/client/lib/livePoll.ts`): an origin and its lists every 30 s, every 4 s while something runs
+on it (a rotation, a setup run, an edge being made or destroyed, a restore). The origin lookup,
+the fleet summary and the attention list each remember a stamp per origin (epoch, running and
+last rotation, published and spare edges, pause, restore; the status and counts for attention)
+and refresh that origin's lists as soon as one moves, so an automatic replacement shorter than a
+poll still shows within one summary read. Forms, catalogs and test links never poll. The node
+page and the Edges home say "Updated N s ago" with a button that reads them again now.
+
 ## Supported matrix
 
 What a member's client can reach through an edge, per protocol, stream transport, security,
@@ -1704,6 +1713,111 @@ edges/{id}/simulate-block/end` ends it; `GET relays/{id}/simulations` lists the 
   deleted after 30 days.
 
 The runbook that uses it is docs/beta-deploy.md "Walking automatic rotation".
+
+### Checks from each country
+
+Every edge is checked from each censored country edges are checked from, and the evidence is
+kept per (edge, country) (`convex/edgeCountry.ts`, pure rules in `lib/edges/country/`).
+Switched by `edge.country.enabled` (default off): with it off the probes behave exactly as
+before (no controls, no spare rounds, no verdicts, no waits). Delivery does not read any of it
+yet (a later change orders members' addresses by it).
+
+- **Rounds and controls.** A ROUND is the runs one request makes for one edge
+  (`probeRuns.roundId`): every enabled source, every listener port, every family. Each external
+  run also asks the **control countries** (`edge.country.controlCountries`, default `DE US JP`;
+  a country on the censored-country list is never one) in the same measurement, one vantage
+  each, and FCP's own internal check is one more control. Control results are tagged
+  (`control: true`) and reach ONLY the round verdict: never `probeReachability`, the edge's
+  summary, the detector, scoring or the verification rung. The round is read once, when its
+  last run settles (`finishRun`, `failRun` or the stuck-run sweep).
+- **A source that errors is no evidence.** A failed or timed-out run adds nothing, and a probe
+  that could not run the test is dropped by the parsers. Per path (family, port), from one
+  country: `unknown` with fewer than `minProbes` (3) vantages answering or fewer than
+  `minNetworks` (2) networks among them (an ASN or a network name, normalized; a vantage the
+  source gave neither for adds no network, whichever service it came from), or with more than a
+  third failing while some work;
+  `proven` with at least 3 working on 2 networks, a third failing at most, and, where the edge
+  presents a name (an L7 front, an L4 edge before a REALITY / TLS listener), FCP's own TLS
+  check with the real name passed; `blocked` when every vantage fails with the spread met AND
+  at least `minControls` (2) controls reach the edge in the same round; `down` when they fail
+  too (broken, not blocked). The worst port decides; the result follows IPv4 (or the name of an
+  L7 front), IPv6 beside it is kept apart.
+- **The address track** (`edgeCountryEvidence.address`) keeps the newest DECIDED result for
+  `windowDays` (14). `unknown` and `down` never override it. Proven to blocked needs
+  `blockedRounds` (2) blocked rounds at least 30 minutes apart: the first sets `repeatAt` and
+  the probe planner takes that edge first once it is due. Blocked to proven takes one round. A
+  never-decided edge whose group is already blocked there is blocked on its first blocked
+  round. **Country-wide guard:** a block that would make at least 80 % of the edges checked in
+  that country within 2 hours blocked, across at least 2 groups and 3 edges, is held as
+  `unknown` (`country_wide`): a censor does not block every provider at once, an outage or a
+  probe problem does.
+- **The handshake track** (`edgeCountryEvidence.handshake`) reads the checks from inside a
+  country: a finished batch in which no name got through (`path`, from at least the name
+  checks' `minVantages` on `minNetworks`; a service measures every name of a batch from the
+  same probes, so a probe counts once however many names it tried) counts only when PAIRED with a working TCP reading of
+  the same address, port, family and country from a round within 60 minutes; an unpaired one
+  is recorded (`no_tcp_pairing`) and asks for a round at once. Two paired batches at least an
+  hour apart block (one when the group is already blocked there). It clears only when names
+  reach the address again from enough vantages, by expiry, or by a mark: a working TCP round
+  never clears it (both work while a country blocks every name on the address). With the
+  checks on, the name planner takes the addresses of a listener in turn (the one batched there
+  longest ago first, a new one before all).
+- **Combined, groups, marks.** An edge is blocked in a country if either track is, proven if
+  the address track is and the handshake track is not. A GROUP is one provider location
+  (`<provider>:<placeKey>`; a CDN front is `<provider>:global`; an adopted edge, or one without
+  a recorded location, is its own): blocked with at least two blocked edges, at least half of
+  the decided ones and none proven (`countryGroupGrades`). An operator's mark
+  (`countryMarks`, edge or group, never expires) wins over every check. What an edge counts as
+  per country (its mark, the group's mark, its own result, else the group's block for an edge
+  with nothing decided) is copied onto `edges.countryState` (decided entries only, each with
+  its `until`; one past it reads as unknown). That `until` is how long the combined state
+  itself holds (`edgeCountryEvidence.stateUntil`: a block while any blocking track does, a proof
+  while the address proof does), not the earliest track's expiry the worker runs on: an address
+  proof lapsing never ends a handshake block that still stands. A group never proves an edge.
+- **Expiry.** Cron `edge-country-expiry` (hourly, whether or not probes run) lapses decided
+  tracks past their `until`, regrades the groups, rewrites every affected `countryState` and
+  deletes rows nothing touched for a whole window.
+- **Before use.** A guided setup's stage 4 asks for its address's round itself (even when the
+  evidence on record already makes the rung `partial`, as for a reused spare) and waits for it (at most
+  `preUseWaitMinutes`, 15; not known never holds it); one that finds the address blocked in a
+  checked country while the controls reach it stops at `blocked_in` ("Try another address" or
+  "Use it anyway"). A rotation that publishes an L4 address (a replacement, a spare's
+  publication) requests a round once and waits the same bound; a DETECTOR replacement whose
+  round finds it blocked in one of the countries that triggered it
+  (`edgeRotations.affectedCountries`) fails `replacement_blocked`. Spares are checked every
+  `standbyRecheckHours` (12), and a spare blocked in fewer checked countries is published
+  first. A test block (§ Simulating a block) stays detector-only: the replacement's own round is
+  real.
+- **Budget and failing sources.** `edge.probe.globalpingTestsPerHour` (default 400) counts the
+  vantage points asked of Globalping (`probeRuns.tests`: countries x vantages, plus one per
+  control); a round that would pass it runs without Globalping, and the executor asks
+  Globalping's `GET /v1/limits` first and does not start a measurement that would not fit
+  (`globalping_limit`). A failed run keeps a short class (`probeRuns.error`: `auth`,
+  `rate_limited`, `timeout`, `service_error`, ...). A source whose newest three settled runs
+  brought back nothing (of its newest 50), with nothing working for six hours, raises attention
+  `probe_source_failing` (warning) and shows on `GET probes/sources` and `GET probes/matrix`
+  (`sources`).
+- **Admin API.** `GET countries` (checked and control countries, grades, every edge's tracks
+  per country with its effective state, marks, sources; never an address), `POST countries/marks
+{scope: edge | group, ref, country, state: proven | blocked | null}` (a listed country only),
+  `POST countries/check {edgeId}` (one manual round, throttled like a probe request). Audited
+  `edge.country.state` (slug, country, track, state, reason), `edge.country.mark` and
+  `edge.country.check`. The verification rung reads its internal shape runs with their own
+  query, so the extra runs never push them out of its window.
+- **Rollback.** Before deploying a build without these checks, run
+  `edgeCountry:purgeForRollback` (it walks the evidence, grades, marks, edges and runs).
+
+| Key (`edge.country.*`) | Default    | Bounds | Meaning                                                   |
+| ---------------------- | ---------- | ------ | --------------------------------------------------------- |
+| `enabled`              | `false`    |        | the switch                                                |
+| `controlCountries`     | `DE US JP` | 1..5   | control countries, one vantage each per run               |
+| `minProbes`            | 3          | 2..10  | vantages answering before a country decides anything      |
+| `minNetworks`          | 2          | 1..5   | networks among them                                       |
+| `minControls`          | 2          | 1..5   | controls that must work for `blocked`                     |
+| `blockedRounds`        | 2          | 1..5   | blocked rounds (30 min apart) before proven turns blocked |
+| `windowDays`           | 14         | 1..60  | how long a decided result stands                          |
+| `standbyRecheckHours`  | 12         | 1..168 | spare check interval                                      |
+| `preUseWaitMinutes`    | 15         | 0..60  | the setup run's and a replacement's wait for a round      |
 
 **Verification rungs of an L4 edge** (`lib/edges/verifyRung.ts`, pure): `partial` = provider
 health + outside reachability (at least `probe.agreementVantages` distinct vantages reachable,

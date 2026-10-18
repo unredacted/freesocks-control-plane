@@ -22,6 +22,7 @@ import {
   resolveEdgeConfig,
   type EdgeConfig,
 } from './lib/edgeConfig';
+import { probeSourceHealth } from './probes';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import { readMaintenance } from './lib/edges/maintenance';
 import { isTerminalPhase } from './lib/edges/rotation';
@@ -1621,6 +1622,22 @@ export const attention = internalQuery({
           since: null,
         });
       }
+    }
+    // A probe source that keeps bringing back nothing (a missing or refused
+    // credential, a spent allowance): its failures are never read as blocks, so
+    // every country it alone covers silently reads "not known" without this.
+    for (const h of await probeSourceHealth(ctx.db, now)) {
+      if (!h.failing) continue;
+      items.push({
+        ...fleetBase,
+        id: `probe_source_failing:${h.source}`,
+        kind: 'probe_source_failing',
+        severity: 'warning',
+        code: h.lastError,
+        facts: { source: h.source, streak: h.streak, runs: h.runs, lastOkAt: isoN(h.lastOkAt) },
+        action: 'open_settings',
+        since: isoN(h.lastFailAt),
+      });
     }
     // Enrolled nodes waiting on the operator (docs/servers.md "Node lifecycle"):
     // FCP never starts a protect run or approves on its own, it asks.

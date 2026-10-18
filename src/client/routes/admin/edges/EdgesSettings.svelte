@@ -30,6 +30,7 @@
     BASIC_NUMBERS,
     BASIC_SWITCHES,
     DETECTOR_FIELDS,
+    COUNTRY_FIELDS,
     L7_FIELDS,
     PROBE_FIELDS,
     PROBE_SOURCE_FIELDS,
@@ -72,6 +73,21 @@
     };
     return Object.values(values).every(Number.isFinite) ? drainWarningCodes(values) : [];
   });
+
+  // What one Globalping run costs, as typed (lib/edgeConfig `globalpingTestsPerRun` on the server).
+  const controlCount = $derived(
+    form
+      .str('country.controlCountries')
+      .split(/[\s,]+/)
+      .filter(
+        (c) => /^[A-Za-z]{2}$/.test(c) && !form.list('probe.countries').includes(c.toUpperCase()),
+      ).length,
+  );
+  const globalpingTestsPerRun = $derived(
+    form.list('probe.countries').length *
+      Math.max(1, Math.min(form.num('probe.perCountryLimit') || 1, 10)) +
+      (form.bool('country.enabled') ? controlCount : 0),
+  );
 
   const renderingPaths = $derived([
     ...SECTION_PATHS.rendering,
@@ -281,6 +297,20 @@
       </div>
       <div class="mt-5 grid gap-5 sm:grid-cols-2">
         {#each PROBE_FIELDS as field (field.path)}
+          <ConfigField {field} {form} />
+        {/each}
+      </div>
+
+      <h3 class="mt-6 mb-2 text-sm font-medium">Checks per country</h3>
+      <p class="text-muted-foreground mb-4 text-sm">
+        One Globalping run of an IPv4 edge asks {globalpingTestsPerRun} vantage points ({form.list(
+          'probe.countries',
+        ).length} countries, {form.num('probe.perCountryLimit')} each{form.bool('country.enabled')
+          ? `, plus ${controlCount} controls`
+          : ''}). A source that fails gives no evidence; it never reads as a block.
+      </p>
+      <div class="grid gap-5 sm:grid-cols-2">
+        {#each COUNTRY_FIELDS as field (field.path)}
           <ConfigField {field} {form} />
         {/each}
       </div>

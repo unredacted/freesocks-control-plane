@@ -59,7 +59,7 @@ import {
 import { releaseTestCredentialsOf } from './edgeTestCredentials';
 import { isCandidateEdge } from './lib/backend/deliveryGate';
 import { assertNoRelayPanelClaim, assertNoRotationOrQuarantine } from './lib/edges/relayGuards';
-import { confirmEndpoint } from './edgeVerification';
+import { confirmEndpoint, internalRunsOf } from './edgeVerification';
 import { listenersOf } from './relayListeners';
 import { accountTested } from './edgeProviderAccounts';
 import { isTerminalPhase } from './lib/edges/rotation';
@@ -176,6 +176,13 @@ type RunListener = Run['listeners'][number];
 
 /** How long stage 4 waits for outside evidence before it asks the operator. */
 const VERIFY_TIMEOUT_MS = 15 * 60_000;
+
+/**
+ * The two cards stage 4 stops on for one address, answered alike: the address
+ * is unreachable, or a country's first round finds it blocked there.
+ */
+const unreachableNeed = (code: string | undefined) =>
+  code === 'address_unreachable' || code === 'blocked_in';
 /** A run whose scheduled step never ran (crashed action) is re-kicked after this. */
 const STALE_KICK_GRACE_MS = 30_000;
 const STALE_STARTED_MS = 10 * 60_000;
@@ -682,11 +689,9 @@ export const rungFor = internalQuery({
       .query('probeReachability')
       .withIndex('by_target_country', (q) => q.eq('targetKind', 'edge').eq('targetRef', edgeId))
       .collect();
-    const runs = await ctx.db
-      .query('probeRuns')
-      .withIndex('by_target_requested', (q) => q.eq('targetKind', 'edge').eq('targetRef', edgeId))
-      .order('desc')
-      .take(30);
+    // The shape check's own runs (their own index range: controls and extra
+    // rounds can never push them out of the window).
+    const runs = await internalRunsOf(ctx.db, edgeId);
     return partialRungFor(listener, {
       providerHealthy: providerHealthSatisfies(
         edge.provider,
@@ -1946,6 +1951,37 @@ async function stageVerify(ctx: ActionCtx, run: Run): Promise<null> {
         },
       );
     }
+    // Per-country checks (edgeCountry.ts): this stage asks for the address's
+    // round from every checked country ITSELF, before the rung is looked at:
+    // evidence already on record (a reused spare, background probes) may make
+    // the rung `partial`, and that must not skip the country check. The round
+    // is waited for (at most `edge.country.preUseWaitMinutes`; unknown never
+    // holds the run), and one that finds the address blocked somewhere while
+    // the controls reach it asks before going live: try another address, or
+    // use this one anyway.
+    const pu = await ctx.runQuery(internal.edgeCountry.preUse, {
+      edgeId: l.edgeId,
+      since: (l.probeRequestedAt ?? now) - 1000,
+    });
+    if (pu.enabled) {
+      if (!l.probeRequestedAt) {
+        await ops.requestVerificationProbes(ctx, l.edgeId);
+        l.probeRequestedAt = now;
+        waiting = waiting ?? l.listenerKey;
+        continue;
+      }
+      const clock = pu.requestedAt ?? l.probeRequestedAt;
+      if (pu.state !== 'settled' && now - clock < pu.waitMs) {
+        waiting = waiting ?? l.listenerKey;
+        continue;
+      }
+      if (pu.blockedIn.length > 0) {
+        l.verify = 'unreachable';
+        return needsYou(ctx, run, 'blocked_in', `${l.listenerKey}:${pu.blockedIn.join(',')}`, {
+          listeners,
+        });
+      }
+    }
     const rung = await ctx.runQuery(internal.edgeSetupRuns.rungFor, { edgeId: l.edgeId });
     if (rung === 'partial') {
       l.verify = 'partial';
@@ -2928,7 +2964,7 @@ export const retry = internalMutation({
         entry.proofRequestedAt = undefined;
       }
       stage = 'provision';
-    } else if (a.tryAnotherAddress && r.need?.code === 'address_unreachable' && failed) {
+    } else if (a.tryAnotherAddress && unreachableNeed(r.need?.code) && failed) {
       const entry = failed;
       if (entry?.edgeId) {
         const e = await ctx.db.get(entry.edgeId);
@@ -2940,7 +2976,7 @@ export const retry = internalMutation({
         entry.proofRequestedAt = undefined;
       }
       stage = 'provision';
-    } else if (a.acceptPartial && r.need?.code === 'address_unreachable' && failed) {
+    } else if (a.acceptPartial && unreachableNeed(r.need?.code) && failed) {
       failed.verify = 'partial';
     } else if (r.stage === 'verify') {
       for (const l of listeners) if (l.verify === 'unreachable') l.verify = 'pending';

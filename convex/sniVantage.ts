@@ -52,6 +52,7 @@ import {
   type SniVantageConfig,
 } from './lib/sniConfig';
 import { writeCountryMarks } from './sniFamilies';
+import { lastBatchAt, noteNameBatch } from './edgeCountry';
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -96,6 +97,8 @@ interface Target {
   listener: Doc<'relayListeners'>;
   /** The address-level verdict from the country being planned (null = none yet). */
   verdict: AddressVerdict;
+  /** Per-country checks on: when this edge's address was last batched from there (null = never). */
+  lastBatchAt?: number | null;
 }
 
 /** The address a measurement dialled, as evidence pools it (an address that moved is another one). */
@@ -127,6 +130,7 @@ function verdictIn(
  * opt in is never dialled. Stable order (origin slug, pool index).
  */
 async function targetsFor(db: Db, country: string): Promise<Target[]> {
+  const countryChecks = (await resolveEdgeConfig(db)).country.enabled;
   const relays = (
     await db
       .query('relays')
@@ -152,6 +156,7 @@ async function targetsFor(db: Db, country: string): Promise<Target[]> {
         port: edge.listeners[0]?.edgePort ?? 443,
         listener,
         verdict: verdictIn(edge.reachability, country),
+        ...(countryChecks ? { lastBatchAt: await lastBatchAt(db, edge._id, country) } : {}),
       });
     }
     if (relay.probeNode) {
@@ -184,7 +189,12 @@ function oneTargetPerListener(targets: readonly Target[]): Target[] {
   }
   const out: Target[] = [];
   for (const group of byListener.values()) {
-    const i = pickTargetIndex(group.map((t) => t.verdict));
+    const i = pickTargetIndex(
+      group.map((t) => t.verdict),
+      group.some((t) => t.lastBatchAt !== undefined)
+        ? group.map((t) => t.lastBatchAt ?? null)
+        : undefined,
+    );
     if (i >= 0) out.push(group[i]!);
   }
   return out;
@@ -667,7 +677,23 @@ async function settleBatch(ctx: MutationCtx, batch: string, now: number) {
   const country = rows[0]!.country;
   const names = [...new Map(rows.map((r) => [r.name, r.familyId])).entries()];
   for (const [name] of names) await refreshEvidence(ctx, name, country, now);
-  if (!rows.some(isOpen)) await autoApply(ctx, names, country, now);
+  if (rows.some(isOpen)) return;
+  await autoApply(ctx, names, country, now);
+  // The whole look, every source settled: what it says about the ADDRESS from
+  // there feeds the edge's handshake track (edgeCountry.ts; a batch in which no
+  // name got through is an address fact only when paired with working TCP).
+  const first = rows[0]!;
+  await noteNameBatch(ctx, {
+    targetKind: first.targetKind,
+    targetRef: first.targetRef,
+    address: first.address,
+    port: first.port,
+    country,
+    measurements: rows
+      .filter((r) => r.status === 'finished')
+      .map((r) => ({ name: r.name, source: r.source, results: r.results })),
+    at: Math.max(...rows.map((r) => r.finishedAt ?? r.requestedAt)),
+  });
 }
 
 /**

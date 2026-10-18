@@ -167,6 +167,11 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
     description: 'Origin edges: budgeted reachability probes of published edges',
   },
   {
+    name: 'edge-country-expiry',
+    everyMs: HOUR,
+    description: 'Origin edges: per-country results past their window lapse; grades follow',
+  },
+  {
     name: 'edge-block-detector',
     everyMs: 5 * MIN,
     description: 'Origin edges: score reports + load + probes per origin; opt-in auto-rotate',

@@ -79,7 +79,8 @@ export async function ripeAtlasStart(
   opts: ProbeRequestOptions,
 ): Promise<AtlasStarted> {
   const measurements: Record<string, number> = {};
-  for (const country of opts.countries) {
+  const controls = new Set(opts.controls ?? []);
+  for (const country of [...opts.countries, ...controls]) {
     const res = await fetchFn(`${RIPE_ATLAS_BASE}/measurements/`, {
       method: 'POST',
       headers: {
@@ -87,7 +88,9 @@ export async function ripeAtlasStart(
         'content-type': 'application/json',
         accept: 'application/json',
       },
-      body: JSON.stringify(ripeAtlasBody(target, country, opts.perCountryLimit)),
+      body: JSON.stringify(
+        ripeAtlasBody(target, country, controls.has(country) ? 1 : opts.perCountryLimit),
+      ),
     });
     if (!res.ok) throw new Error(`ripe atlas create (${country}): ${res.status}`);
     const body = (await res.json()) as { measurements?: unknown };

@@ -27,6 +27,8 @@
     reason: SwitchServerReason | null;
     /** From telemetryContextQuery; drives the optional consent block. */
     telemetryContext?: TelemetryContextResponse | undefined;
+    /** The member's chosen country (ConnectionRegion), prefilled in the consent block. */
+    ownCountry?: string | null;
     onCancel: () => void;
     /** `telemetry` is the consent block's outcome (null = declined/unavailable). */
     onConfirm: (telemetry: TelemetryPayload | null) => void;
@@ -39,6 +41,7 @@
     deviceCount = 0,
     reason = $bindable(),
     telemetryContext = undefined,
+    ownCountry = null,
     onCancel,
     onConfirm,
     busy,
@@ -103,7 +106,7 @@
       {/if}
     </ul>
 
-    <TelemetryConsent bind:this={consent} context={telemetryContext} {busy} />
+    <TelemetryConsent bind:this={consent} context={telemetryContext} {ownCountry} {busy} />
 
     <!-- The other tool, for the other problem: when the URL itself is the issue,
          switching servers won't help - point at "Create a new key" so members

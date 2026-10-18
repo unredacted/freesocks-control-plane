@@ -14,15 +14,22 @@
    * the exit node's network), so the copy says to correct them. Everything here
    * is optional; unchecking sends the reason alone.
    *
+   * The member's own answer to "Where are you connecting from?" (`ownCountry`,
+   * lib/countries.ts `ownCountryOf`) prefills the country ahead of the CDN's
+   * view: they told us already, so a report says it without asking again, and
+   * it stays as editable and as declinable as every other value here.
+   *
    * The parent reads the outcome via `payload()` (null = declined). Fields the
    * deployment doesn't collect never render, so the disclosure can't overstate.
    */
   interface Props {
     /** From telemetryContextQuery; undefined while loading (block hidden). */
     context: TelemetryContextResponse | undefined;
+    /** The member's chosen country, if any (never a guess, never "Somewhere else"). */
+    ownCountry?: string | null;
     busy?: boolean;
   }
-  let { context, busy = false }: Props = $props();
+  let { context, ownCountry = null, busy = false }: Props = $props();
 
   const locale = getLocale();
   let send = $state(true);
@@ -30,16 +37,15 @@
   let city = $state('');
   let asn = $state('');
 
-  // Seed the editable fields ONCE from the detected values (later refetches
-  // must not clobber what the member typed).
-  let seeded = $state(false);
+  // Seed each editable field from the prefill until the member edits it
+  // (later refetches, or the chosen country arriving after the context, must
+  // not clobber what the member typed).
+  const edited = { country: false, city: false, asn: false };
   $effect(() => {
-    if (!seeded && context) {
-      seeded = true;
-      country = context.detected.country ?? '';
-      city = context.detected.city ?? '';
-      asn = context.detected.asn !== null ? String(context.detected.asn) : '';
-    }
+    if (!context) return;
+    if (!edited.country) country = ownCountry ?? context.detected.country ?? '';
+    if (!edited.city) city = context.detected.city ?? '';
+    if (!edited.asn) asn = context.detected.asn !== null ? String(context.detected.asn) : '';
   });
 
   const regions = COUNTRY_CODES.map((c) => ({ code: c, name: countryName(c, locale) })).sort(
@@ -93,7 +99,10 @@
             <Select.Root
               type="single"
               value={country}
-              onValueChange={(v) => (country = v ?? '')}
+              onValueChange={(v) => {
+                edited.country = true;
+                country = v ?? '';
+              }}
               disabled={busy}
             >
               <Select.Trigger id="telemetry-country" class="w-full">{countryLabel}</Select.Trigger>
@@ -116,7 +125,10 @@
               value={city}
               maxlength={64}
               disabled={busy}
-              oninput={(e) => (city = (e.target as HTMLInputElement).value)}
+              oninput={(e) => {
+                edited.city = true;
+                city = (e.target as HTMLInputElement).value;
+              }}
             />
           </div>
         {/if}
@@ -130,7 +142,10 @@
               value={asn}
               placeholder="AS44244"
               disabled={busy}
-              oninput={(e) => (asn = (e.target as HTMLInputElement).value)}
+              oninput={(e) => {
+                edited.asn = true;
+                asn = (e.target as HTMLInputElement).value;
+              }}
             />
           </div>
         {/if}

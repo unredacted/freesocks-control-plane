@@ -24,6 +24,8 @@ import {
 } from './lib/edges/testing/fixtures';
 import { __setStageOpsForTests, approvedDarkCohorts, type StageOps } from './edgeSetupRuns';
 import { __setPlanOpsForTests } from './edgeSetupPlan';
+import { upsertSettingRow } from './appSettings';
+import { CENSORED_COUNTRIES_KEY } from './lib/censoredCountries';
 import type { BackendTransport } from './lib/backends/types';
 import { MAX_OBSERVATION_AGE_MS, slugForNode, vectorsEqual } from './lib/edges/setupRuns';
 import { signValue } from './lib/cookies';
@@ -113,7 +115,13 @@ function fakeWorld(opts: { hosts?: BackendAddress[]; failCreateAt?: number } = {
 
 /** Backend + a TESTED but unqualified UpCloud account + the node in the inventory. */
 async function seed(
-  opts: { inbounds?: BackendTransport[]; hosts?: BackendAddress[]; failCreateAt?: number } = {},
+  opts: {
+    inbounds?: BackendTransport[];
+    hosts?: BackendAddress[];
+    failCreateAt?: number;
+    /** Lands a per-country round with the verification probes (the nth request, from 1). */
+    countryRound?: (t: T, edgeId: Id<'edges'>, nth: number) => Promise<void>;
+  } = {},
 ) {
   vi.useFakeTimers();
   const world = fakeWorld({ hosts: opts.hosts, failCreateAt: opts.failCreateAt });
@@ -152,6 +160,7 @@ async function seed(
     requestVerificationProbes: async (_ctx, edgeId) => {
       calls.probes.push(edgeId as string);
       await landPartialEvidence(t, edgeId);
+      if (opts.countryRound) await opts.countryRound(t, edgeId, calls.probes.length);
     },
     runFrontProof: async () => ({ ok: false, code: 'unsupported_protocol' }),
     buildTestLink: async (ctx, edgeId) => {
@@ -557,6 +566,137 @@ describe('edgeSetupPlan', () => {
     await expect(plan(keys)).rejects.toThrow(/validation/);
     await expect(plan([keys[0]!, keys[0]!])).rejects.toThrow(/validation/);
     await expect(plan([keys[0]!, 'not-a-transport'])).rejects.toThrow(/validation/);
+  });
+});
+
+/**
+ * A per-country round lands with the verification probes: three IR vantages
+ * (working or failing), two control countries that work, and FCP's own
+ * `tls-sni` check, all one round.
+ */
+const countryRound =
+  (ir: (nth: number) => 'ok' | 'fail') => async (t: T, edgeId: Id<'edges'>, nth: number) => {
+    await t.run(async (ctx) => {
+      const edge = (await ctx.db.get(edgeId))!;
+      const listener = (await ctx.db.get(edge.listenerId))!;
+      const now = Date.now();
+      const base = {
+        targetKind: 'edge' as const,
+        targetRef: edgeId as string,
+        target: `${edge.addresses.v4}:${listener.originPort}`,
+        port: listener.originPort,
+        ipVersion: 4 as const,
+        addressKind: 'ip' as const,
+        requestedFamily: 4 as const,
+        status: 'finished' as const,
+        trigger: 'qualification' as const,
+        requestedAt: now,
+        finishedAt: now,
+        roundId: `edge:${edgeId}:${nth}`,
+      };
+      const ok = ir(nth) === 'ok';
+      await ctx.db.insert('probeRuns', {
+        ...base,
+        source: 'globalping',
+        probeProtocol: 'tcp',
+        controls: ['DE', 'US'],
+        results: [
+          ...[1, 2, 3].map((k) => ({
+            country: 'IR',
+            asn: `AS${k}`,
+            vantageClass: 'eyeball' as const,
+            ok,
+          })),
+          ...['DE', 'US'].map((country) => ({
+            country,
+            asn: `AS9${country}`,
+            vantageClass: 'eyeball' as const,
+            ok: true,
+            control: true,
+          })),
+        ],
+      });
+      await ctx.db.insert('probeRuns', {
+        ...base,
+        source: 'internal',
+        probeProtocol: 'tls-sni',
+        results: [{ country: 'XX', vantageClass: 'datacenter' as const, ok: true }],
+      });
+    });
+  };
+
+async function checkFromIran(t: T) {
+  await t.run(async (ctx) => {
+    await upsertSettingRow(ctx, 'edge.probe.enabled', 'true');
+    await upsertSettingRow(ctx, 'edge.country.enabled', 'true');
+    await upsertSettingRow(
+      ctx,
+      CENSORED_COUNTRIES_KEY,
+      JSON.stringify([{ code: 'IR', checkEdges: true, checkNamesInside: false }]),
+    );
+  });
+}
+
+describe('edgeSetupRuns: per-country checks before use', () => {
+  test('a first round that finds the new address blocked in IR asks; trying another address goes on', async () => {
+    const { t, serverId, accountId, world } = await seed({
+      countryRound: countryRound((nth) => (nth === 1 ? 'fail' : 'ok')),
+    });
+    await checkFromIran(t);
+    const { runId } = await startRun(t, serverId, accountId);
+    let r = await pump(t, runId, settled);
+    expect(r.state).toBe('needs_you');
+    expect(r.need).toMatchObject({
+      code: 'blocked_in',
+      detail: `${r.listeners[0]!.listenerKey}:IR`,
+    });
+    expect(r.listeners[0]!.verify).toBe('unreachable');
+    const first = r.listeners[0]!.edgeId;
+    await t.mutation(internal.edgeSetupRuns.retry, { runId, tryAnotherAddress: true });
+    r = await pump(t, runId, settled);
+    expect(r.need?.code).toBe('try_it');
+    expect(r.listeners[0]!.edgeId).not.toBe(first);
+    expect(r.listeners[0]!.verify).toBe('partial');
+    expect(world.lbCreates()).toBe(2);
+    expect((await t.run((ctx) => ctx.db.get(first!)))!.status).toBe('cancelled');
+  });
+
+  test('an address the probes already find partial still gets its own round first, and stops at blocked_in', async () => {
+    const { t, serverId, accountId, calls } = await seed({
+      countryRound: countryRound(() => 'fail'),
+    });
+    await checkFromIran(t);
+    const { runId } = await startRun(t, serverId, accountId);
+    // Evidence lands before stage 4 looks (a reused spare, background probes):
+    // the rung alone would already be `partial`.
+    const early = await pumpFine(t, runId, (x) => x.listeners[0]?.edgeId !== undefined);
+    await landPartialEvidence(t, early.listeners[0]!.edgeId!);
+    const r = await pump(t, runId, settled);
+    expect(calls.probes).toHaveLength(1);
+    expect(r.need).toMatchObject({
+      code: 'blocked_in',
+      detail: `${r.listeners[0]!.listenerKey}:IR`,
+    });
+  });
+
+  test('"Use it anyway" keeps the blocked address and goes on', async () => {
+    const { t, serverId, accountId } = await seed({ countryRound: countryRound(() => 'fail') });
+    await checkFromIran(t);
+    const { runId } = await startRun(t, serverId, accountId);
+    let r = await pump(t, runId, settled);
+    expect(r.need?.code).toBe('blocked_in');
+    const first = r.listeners[0]!.edgeId;
+    await t.mutation(internal.edgeSetupRuns.retry, { runId, acceptPartial: true });
+    r = await pump(t, runId, settled);
+    expect(r.need?.code).toBe('try_it');
+    expect(r.listeners[0]).toMatchObject({ edgeId: first, verify: 'partial' });
+  });
+
+  test('with the checks off the same blocked round changes nothing', async () => {
+    const { t, serverId, accountId } = await seed({ countryRound: countryRound(() => 'fail') });
+    const { runId } = await startRun(t, serverId, accountId);
+    const r = await pump(t, runId, settled);
+    expect(r.need?.code).toBe('try_it');
   });
 });
 
