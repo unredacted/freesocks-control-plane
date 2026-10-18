@@ -526,6 +526,9 @@ mirror refresh) fetches a body, it pins the node as before, then, in this order:
    families get one named auto group, link-list families get labelled primary/backup entries.
    The labels are settings (`render.primaryLabel` / `render.backupLabel`, per family too),
    plain by default: `FreeSocks` and `FreeSocks (backup)`, since most members see one entry.
+   A link-list app (v2rayNG, Anywhere, anything unrecognized) shows both side by side and never
+   switches on its own, so the member page adds one line when the key has a backup: pick the
+   backup when the first stops working (`hero.relayBackupHint`).
    An L7 edge renders as ONE entry (its hostname). A backend that hands out a single access
    key (Outline) renders in **single-key** style: one entry, no backup, no auto group;
 5. checks every outgoing entry, emitted AND retained, against the origin address
@@ -761,8 +764,14 @@ setup-runs/plan` lists the transports in words, a closed "Not supported yet" dis
   Servers node page embeds it (docs/servers.md "The page") and `/admin/edges/nodes/<slug>`
   redirects there (`nodeHomeOf`, keeping `?test=`); an origin that is not a backend node (manual,
   a whole Outline server) keeps it at that address. The status sentence, "Addresses in use" per
-  transport (a reduced pool strip + one plain line per address), the primary **Replace
-  address** (`ReplaceDialog`; "Replace now, address is blocked" under More), the per-node
+  transport (a reduced pool strip + one plain line per address; a retiring address says
+  when it is deleted, from `drainUntil` and the 5-minute reconcile, and offers **Delete now**
+  (`DELETE edges/{id}`: the drain ends early, audited `edge.delete` with `drainEndedEarly`;
+  members who have not refreshed lose it) and **Keep as a spare** (the operator `reactivate`;
+  never for a burned one), both only while no rotation, restore or pause holds the origin),
+  the primary **Replace address** (`ReplaceDialog`, which states the drain: the origin's
+  `drainMinutes`, or `edge.burnedDrainMinutes` for "Replace now, address is blocked" under
+  More), the per-node
   "Replace addresses automatically" switch (origin `autoRotate`, captioned when the global
   switch is off), "Recent activity" (the timeline through `plainAuditActionLabel`), and More: add
   a spare address, **Protect again** (an enrolled node live behind edges: a re-protect run, see
@@ -1484,7 +1493,8 @@ Admin -> Edges -> Advanced -> Server names (`/admin/edges/names`, `/admin/edges/
   at creation).
 - A family: bind it to a REALITY transport (the transports come from the Servers observation),
   add names (the answer says what happened to every kind of line), filter and pick names, then
-  check again, retire, bring back, burn (typed), or record for a curated country that they work
+  check again, retire (confirmed: it states the name drain, `edge.sniDrainMinutes`), bring
+  back, burn (typed), or record for a curated country that they work
   or are blocked there.
 - Checks from inside countries (the list page): the switch for `edge.sni.vantage.enabled`, a
   box per curated country, the services, "Apply suggestions by themselves", the budget in one

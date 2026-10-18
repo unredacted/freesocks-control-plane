@@ -5,7 +5,12 @@
    * and both are named: "Stop and remove" needs the node to be off already;
    * "Remove from the backend only" says that the node process may keep running.
    *
-   * Props: slug, node
+   * An enrolled node adds "Retire node…" after a separator (typed-name confirm
+   * that says members lose it at once); the retirement's steps then show in
+   * its activation section. Retiring is offered even when backend changes are
+   * off (`canWrite` false): the menu then holds only that.
+   *
+   * Props: slug, node, canWrite, intent (the enrolled node behind it, if any)
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
@@ -20,14 +25,25 @@
     invalidateServers,
     nodeAction,
     renameNode,
+    retireNode,
     updateNode,
   } from '@client/lib/serversApi';
-  import type { NodeView } from '../../../../../shared/contracts/servers';
+  import type { NodeIntentView, NodeView } from '../../../../../shared/contracts/servers';
   import ConfirmDialog from '../../edges/components/ConfirmDialog.svelte';
   import { codeOf, runWrite } from '../lib/run';
-  import { serverErrorWords } from '../lib/words';
+  import { retireConfirmWords, serverErrorWords } from '../lib/words';
 
-  let { slug, node }: { slug: string; node: NodeView } = $props();
+  let {
+    slug,
+    node,
+    canWrite = true,
+    intent = null,
+  }: {
+    slug: string;
+    node: NodeView;
+    canWrite?: boolean;
+    intent?: NodeIntentView | null;
+  } = $props();
   const qc = useQueryClient();
   const uid = $props.id();
 
@@ -36,6 +52,7 @@
   let offOpen = $state(false);
   let removeOpen = $state(false);
   let removeOnlyOpen = $state(false);
+  let retireOpen = $state(false);
   let editOpen = $state(false);
   let name = $state('');
   let address = $state('');
@@ -99,42 +116,71 @@
     }
   }
 
+  // A role-requested retirement is decided in the activation section instead.
+  let retirable = $derived(!!intent && !intent.retirement);
+  async function retire() {
+    if (!intent) return;
+    retireOpen = false;
+    busy = true;
+    try {
+      await retireNode(slug, intent.id);
+      toast.success(`Retiring ${intent.name}. Members no longer get it.`);
+    } catch (e) {
+      toast.error(serverErrorWords(codeOf(e)));
+    } finally {
+      busy = false;
+      invalidateServers(qc);
+    }
+  }
+
   let restarts = $derived(
     address.trim() !== (node.address ?? '') || (port.trim() !== '' && Number(port) !== node.port),
   );
 </script>
 
-<Button variant="outline" disabled={busy} onclick={startEdit}>Edit</Button>
-{#if node.isDisabled}
-  <Button disabled={busy} onclick={() => act(() => nodeAction(slug, node.nodeUuid, 'enable'))}>
-    Turn on
-  </Button>
-{:else}
-  <Button disabled={busy} onclick={() => (restartOpen = true)}>Restart</Button>
+{#if canWrite}
+  <Button variant="outline" disabled={busy} onclick={startEdit}>Edit</Button>
+  {#if node.isDisabled}
+    <Button disabled={busy} onclick={() => act(() => nodeAction(slug, node.nodeUuid, 'enable'))}>
+      Turn on
+    </Button>
+  {:else}
+    <Button disabled={busy} onclick={() => (restartOpen = true)}>Restart</Button>
+  {/if}
 {/if}
-<DropdownMenu.Root>
-  <DropdownMenu.Trigger>
-    {#snippet child({ props })}
-      <Button {...props} variant="outline" disabled={busy}>
-        More <ChevronDown aria-hidden="true" />
-      </Button>
-    {/snippet}
-  </DropdownMenu.Trigger>
-  <DropdownMenu.Content align="end" class="w-64">
-    {#if !node.isDisabled}
-      <DropdownMenu.Item onSelect={() => (offOpen = true)}>Turn off</DropdownMenu.Item>
-    {/if}
-    <DropdownMenu.Separator />
-    {#if node.isDisabled}
-      <DropdownMenu.Item variant="destructive" onSelect={() => (removeOpen = true)}>
-        Stop and remove
-      </DropdownMenu.Item>
-    {/if}
-    <DropdownMenu.Item variant="destructive" onSelect={() => (removeOnlyOpen = true)}>
-      Remove from the backend only
-    </DropdownMenu.Item>
-  </DropdownMenu.Content>
-</DropdownMenu.Root>
+{#if canWrite || retirable}
+  <DropdownMenu.Root>
+    <DropdownMenu.Trigger>
+      {#snippet child({ props })}
+        <Button {...props} variant="outline" disabled={busy}>
+          More <ChevronDown aria-hidden="true" />
+        </Button>
+      {/snippet}
+    </DropdownMenu.Trigger>
+    <DropdownMenu.Content align="end" class="w-64">
+      {#if canWrite}
+        {#if !node.isDisabled}
+          <DropdownMenu.Item onSelect={() => (offOpen = true)}>Turn off</DropdownMenu.Item>
+        {/if}
+        <DropdownMenu.Separator />
+        {#if node.isDisabled}
+          <DropdownMenu.Item variant="destructive" onSelect={() => (removeOpen = true)}>
+            Stop and remove
+          </DropdownMenu.Item>
+        {/if}
+        <DropdownMenu.Item variant="destructive" onSelect={() => (removeOnlyOpen = true)}>
+          Remove from the backend only
+        </DropdownMenu.Item>
+      {/if}
+      {#if retirable}
+        {#if canWrite}<DropdownMenu.Separator />{/if}
+        <DropdownMenu.Item variant="destructive" onSelect={() => (retireOpen = true)}>
+          Retire node…
+        </DropdownMenu.Item>
+      {/if}
+    </DropdownMenu.Content>
+  </DropdownMenu.Root>
+{/if}
 
 <ConfirmDialog
   bind:open={restartOpen}
@@ -181,6 +227,18 @@
     void act(() => deleteNode(slug, node.nodeUuid, true));
   }}
 />
+
+{#if intent}
+  <ConfirmDialog
+    bind:open={retireOpen}
+    title={`Retire ${intent.name}?`}
+    body={retireConfirmWords(intent)}
+    typed={intent.name}
+    confirmLabel="Retire node"
+    danger
+    onConfirm={retire}
+  />
+{/if}
 
 <Dialog.Root bind:open={editOpen}>
   <Dialog.Content class="sm:max-w-md">

@@ -21,6 +21,12 @@
    * use opens "Replace now", a spare is renewed (SpareDialog), a go-live check
    * retries its run for that line.
    *
+   * A retiring address (drained after a Replace) says when it is deleted; "Delete
+   * now" ends its drain early (DELETE the edge: members who have not refreshed
+   * lose it), "Keep as a spare" puts it back among the spares (the operator
+   * reactivate). Both refuse while a rotation, a restore or a pause holds the
+   * origin, so they are offered only when nothing does.
+   *
    * Props:
    *   slug: string                          the origin's slug
    *   enrolled?: { stage: string } | null   the enrolled node behind it (Servers knows)
@@ -39,6 +45,7 @@
   import { plainAuditActionLabel, restorePhaseWords } from '@client/lib/edgeCodes';
   import {
     attentionQuery,
+    deleteEdge,
     deleteRelay,
     edgeConfigQuery,
     invalidateRelay,
@@ -48,6 +55,7 @@
     relayTimelineQuery,
     reprotectRelay,
     requireRelayEdges,
+    resolveEdgeOperator,
     retrySetupRun,
     updateRelay,
   } from '@client/lib/edgesApi';
@@ -65,6 +73,7 @@
   import PausedCard from './PausedCard.svelte';
   import SpareDialog from './SpareDialog.svelte';
   import StatusDot from './StatusDot.svelte';
+  import { retiringWords } from './drainWords';
   import { automationOn } from './runWords';
 
   interface Props {
@@ -123,6 +132,13 @@
     if (published.length === 1) replacing = { kind, edge: published[0]! };
     else choosing = kind;
   }
+  // A retiring address: end its drain now, or keep it as a spare.
+  let ending = $state<{ edge: EdgeAdmin; action: 'delete' | 'keep' } | null>(null);
+  const canEndDrains = $derived(
+    !!relay && !relay.deleting && !relay.restore && !relay.quarantine && !relay.activeRotationId,
+  );
+  const addressOf = (e: EdgeAdmin) =>
+    e.addresses.hostname ?? e.addresses.v4 ?? e.addresses.v6 ?? e.name;
   let spareOpen = $state(false);
   let renewing = $state<{ edgeId: string; listenerId: string; listenerKey: string } | null>(null);
   let removeOpen = $state(false);
@@ -319,6 +335,9 @@
                 listener={l}
                 {edges}
                 onTest={(edgeId) => (testEdgeIds = [edgeId])}
+                onRetiring={canEndDrains
+                  ? (edge, action) => (ending = { edge, action })
+                  : undefined}
               />
             </li>
           {/each}
@@ -410,6 +429,38 @@
         {/each}
       </div>
     </ActionConfirm>
+  {/if}
+  {#if ending}
+    {@const e = ending.edge}
+    {@const r = retiringWords(e)}
+    {#if ending.action === 'delete'}
+      <ActionConfirm
+        open={true}
+        title={`Delete ${addressOf(e)} now?`}
+        body={`Members who have not refreshed their app since it was replaced still connect through it, and they lose it now; their app connects again once it refreshes.${r.left ? ` Left alone it would be deleted in ${r.left}.` : ''} FCP deletes it at its next check, within 5 minutes${e.managed ? ', and billing stops' : ''}.`}
+        confirmLabel="Delete now"
+        danger
+        onClose={() => (ending = null)}
+        run={async () => {
+          assertEdgeOk(await deleteEdge(e.id));
+          toast.success(`Deleting ${addressOf(e)}.`);
+          invalidateRelay(qc, slug);
+        }}
+      />
+    {:else}
+      <ActionConfirm
+        open={true}
+        title={`Keep ${addressOf(e)} as a spare?`}
+        body="It stops retiring and is not deleted. Members are not given it; it waits as a spare and can be put in use again later. Your provider keeps billing for it."
+        confirmLabel="Keep as a spare"
+        onClose={() => (ending = null)}
+        run={async () => {
+          assertEdgeOk(await resolveEdgeOperator(e.id, 'reactivate'));
+          toast.success(`${addressOf(e)} is a spare again.`);
+          invalidateRelay(qc, slug);
+        }}
+      />
+    {/if}
   {/if}
   <SpareDialog bind:open={spareOpen} {relay} />
   {#if renewing}

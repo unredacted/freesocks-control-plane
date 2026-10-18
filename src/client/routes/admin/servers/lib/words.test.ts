@@ -8,6 +8,8 @@ import {
   portChangeable,
   protectionWords,
   renameWords,
+  retireConfirmWords,
+  retirementSteps,
   setupWords,
   stageWords,
   standbyWords,
@@ -394,6 +396,110 @@ describe('write wording', () => {
     ]);
     expect(namesDelta(['a', 'b'], ['b', 'c', 'd'])).toBe('2 added, 1 removed');
     expect(namesDelta(['a', 'b'], ['b', 'a'])).toBe('Same names, new order');
+  });
+});
+
+describe('retiring a node', () => {
+  const now = Date.parse('2026-10-17T10:00:00Z');
+  const r = (over: Record<string, unknown> = {}) => ({
+    stage: 'draining',
+    code: null as string | null,
+    step: null as string | null,
+    requestedBy: 'admin' as 'admin' | 'role',
+    since: '2026-10-17T09:48:00Z' as string | null,
+    ...over,
+  });
+  const current = (steps: ReturnType<typeof retirementSteps>) =>
+    steps.find((s) => s.state === 'current') ?? null;
+
+  test('the confirm says members lose the node at once, and who wipes the machine', () => {
+    const fcp = retireConfirmWords({ adopted: false });
+    expect(fcp).toMatch(/^Members lose this node at once/);
+    expect(fcp).toMatch(/every 5 minutes/);
+    expect(fcp).toMatch(/node role wipes the machine/);
+    expect(retireConfirmWords({ adopted: true })).toMatch(/you confirm here/);
+    for (const w of [fcp, retireConfirmWords({ adopted: true })]) expect(w).not.toMatch(/—/);
+  });
+
+  test('an admin retirement walks the ladder; the step the server recorded is the current one', () => {
+    const steps = retirementSteps(
+      { adopted: false, retirement: r({ step: 'origin', code: 'servers.relay_draining' }) },
+      now,
+    );
+    // An admin's own request needs no decision step.
+    expect(steps.map((s) => s.key)).toEqual([
+      'closed',
+      'edges',
+      'addresses',
+      'dns',
+      'panel',
+      'wipe',
+      'retired',
+    ]);
+    expect(steps[0]!.state).toBe('done');
+    const c = current(steps)!;
+    expect(c.key).toBe('edges');
+    expect(c.why).toBe(
+      'Its edges are still being taken down. FCP looks again every 5 minutes (this step started 12 minutes ago).',
+    );
+    expect(steps.filter((s) => s.state === 'todo').map((s) => s.key)).toEqual([
+      'addresses',
+      'dns',
+      'panel',
+      'wipe',
+      'retired',
+    ]);
+    expect(
+      current(retirementSteps({ adopted: false, retirement: r({ step: 'credentials' }) }, now))!
+        .key,
+    ).toBe('edges');
+    expect(
+      current(
+        retirementSteps(
+          { adopted: false, retirement: r({ step: 'dns', code: 'servers.obligation_unresolved' }) },
+          now,
+        ),
+      )!.key,
+    ).toBe('dns');
+    expect(
+      current(retirementSteps({ adopted: false, retirement: r({ step: 'panel_row' }) }, now))!.key,
+    ).toBe('panel');
+  });
+
+  test('a role request waits for the decision; the wipe step names who acts', () => {
+    const asked = retirementSteps(
+      { adopted: false, retirement: r({ stage: 'needs_admin', requestedBy: 'role' }) },
+      now,
+    );
+    expect(current(asked)!.key).toBe('decision');
+    expect(current(asked)!.why).toMatch(/Decide below/);
+    const role = retirementSteps(
+      { adopted: false, retirement: r({ stage: 'ready_to_wipe' }) },
+      now,
+    );
+    expect(current(role)!.label).toBe('The node role wipes the machine');
+    expect(current(role)!.why).toMatch(/node role to wipe/);
+    const adopted = retirementSteps(
+      { adopted: true, retirement: r({ stage: 'ready_to_wipe' }) },
+      now,
+    );
+    expect(current(adopted)!.label).toBe('You confirm the machine is gone');
+    expect(current(adopted)!.why).toMatch(/The machine is gone/);
+  });
+
+  test('retired: every step done, nothing waits; an unworded code still reads as an error', () => {
+    const done = retirementSteps({ adopted: false, retirement: r({ stage: 'retired' }) }, now);
+    expect(done.every((s) => s.state === 'done' && s.why === null)).toBe(true);
+    const odd = retirementSteps(
+      { adopted: false, retirement: r({ step: 'addresses', code: 'servers.op_refused:x' }) },
+      now,
+    );
+    expect(current(odd)!.why).toMatch(/^It stopped on an error \(servers\.op_refused:x\)\./);
+    const fresh = retirementSteps(
+      { adopted: false, retirement: r({ stage: 'requested', since: null }) },
+      now,
+    );
+    expect(current(fresh)!.why).toBe('Under way. FCP looks again every 5 minutes.');
   });
 });
 

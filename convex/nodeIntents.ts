@@ -1607,16 +1607,20 @@ export const blockedNodeNames = internalQuery({
 // --- retirement request (the role) ---------------------------------------------------------------------
 
 /**
- * The role asks for a node to be retired. Only a request: the admin decides
- * whenever the node was ever live or anything of it is still out there
- * (Hosts, an origin, DNS, credentials); otherwise the ladder starts at once.
+ * A node is to be retired. The gate closes at once either way (disposition
+ * `retiring`: members lose the node now). From the role it is only a request:
+ * the admin decides whenever the node was ever live or anything of it is still
+ * out there (Hosts, an origin, DNS, credentials); otherwise the ladder starts
+ * at once. From an admin it IS the decision (their confirm said so): the ladder
+ * starts keep-dark at once (nodeRetirement.startIfPlain).
  */
 export const requestRetirement = internalMutation({
   args: {
     intentId: v.id('panelNodeIntents'),
     requestedBy: v.union(v.literal('role'), v.literal('admin')),
+    actorAdminId: v.optional(v.id('adminUsers')),
   },
-  handler: async (ctx, { intentId, requestedBy }) => {
+  handler: async (ctx, { intentId, requestedBy, actorAdminId }) => {
     const intent = await ctx.db.get(intentId);
     if (!intent) return refuse('not_found', 'No such node');
     const existing = intent.retirementId ? await ctx.db.get(intent.retirementId) : null;
@@ -1664,6 +1668,7 @@ export const requestRetirement = internalMutation({
     const server = await ctx.db.get(intent.backendServerId);
     await writeAuditLog(ctx, {
       actorType: requestedBy === 'admin' ? 'admin' : 'system',
+      actorId: requestedBy === 'admin' ? actorAdminId : undefined,
       action: 'servers.node.retire_requested',
       targetType: 'panel_node_intent',
       targetId: intentId,

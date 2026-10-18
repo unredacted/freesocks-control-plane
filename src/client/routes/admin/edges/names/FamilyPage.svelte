@@ -4,6 +4,10 @@
    * check said, the operator's per-country judgement, and the transports it is
    * bound to with their rollouts (BindingCard).
    *
+   * Retiring picked names asks first and says what it does: the names leave
+   * every origin that presents them with the name drain (`edge.sniDrainMinutes`),
+   * the way a single listener's retire does (ListenerCard).
+   *
    * All wording lives in ./lib/words.ts (pure, unit-tested).
    */
   import { useQueryClient } from '@tanstack/svelte-query';
@@ -16,6 +20,7 @@
   import Link from '@client/components/Link.svelte';
   import { ApiCallError } from '@client/lib/api';
   import { fetchServerSummary, fetchServerTree } from '@client/lib/serversApi';
+  import { edgeConfigQuery } from '@client/lib/edgesApi';
   import {
     actOnNames,
     applyVantage,
@@ -33,6 +38,7 @@
   import ConfirmDialog from '../components/ConfirmDialog.svelte';
   import SectionHeader from '../components/SectionHeader.svelte';
   import { edgesPaths } from '../lib/routes';
+  import { drainLength } from '../simple/drainWords';
   import BindingCard from './BindingCard.svelte';
   import {
     FILTER_LABEL,
@@ -88,6 +94,11 @@
   const toggleAll = (on: boolean) => (picked = on ? shown.map((n) => n.name) : []);
 
   let burnOpen = $state(false);
+  let retireOpen = $state(false);
+  const edgeConfig = edgeConfigQuery();
+  let nameDrain = $derived(
+    edgeConfig.data ? drainLength(edgeConfig.data.config.sniDrainMinutes) : 'the name drain time',
+  );
   async function act(action: NameAction) {
     const names = [...picked];
     if ((await run(() => actOnNames(slug, action, names))) !== null) picked = [];
@@ -286,7 +297,7 @@
           <Button variant="outline" size="sm" disabled={busy} onclick={() => act('recheck')}>
             Check again
           </Button>
-          <Button variant="outline" size="sm" disabled={busy} onclick={() => act('retire')}>
+          <Button variant="outline" size="sm" disabled={busy} onclick={() => (retireOpen = true)}>
             Retire
           </Button>
           <Button variant="outline" size="sm" disabled={busy} onclick={() => act('reactivate')}>
@@ -462,6 +473,17 @@
   </Card>
 {/if}
 
+<ConfirmDialog
+  bind:open={retireOpen}
+  title={`Retire ${picked.length} ${picked.length === 1 ? 'name' : 'names'}?`}
+  body={`New subscriptions stop presenting ${picked.length === 1 ? 'it' : 'them'} at once, on every origin that presents ${picked.length === 1 ? 'it' : 'them'}. Each node keeps accepting ${picked.length === 1 ? 'it' : 'them'} for ${nameDrain}, so members who already hold ${picked.length === 1 ? 'it' : 'one'} stay connected until their app refreshes. An origin keeps its last active name, and an origin that is busy (replacing an address, removing protection, paused) is skipped. Bring ${picked.length === 1 ? 'it' : 'them'} back any time.`}
+  confirmLabel="Retire"
+  danger
+  onConfirm={() => {
+    retireOpen = false;
+    void act('retire');
+  }}
+/>
 <ConfirmDialog
   bind:open={burnOpen}
   title={`Burn ${picked.length} ${picked.length === 1 ? 'name' : 'names'}?`}

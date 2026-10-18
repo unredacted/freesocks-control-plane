@@ -620,7 +620,21 @@ export const NodeIntentView = z.object({
     })
     .nullable()
     .default(null),
-  retirement: z.object({ stage: z.string(), code: z.string().nullable() }).nullable(),
+  /**
+   * The retirement, if any: its stage, why it waits (`code`), where `draining`
+   * stopped (`step`: origin | credentials | addresses | dns | panel_row), who
+   * asked, and since when it waits at this point (`since`).
+   */
+  retirement: z
+    .object({
+      stage: z.string(),
+      code: z.string().nullable(),
+      step: z.string().nullable().default(null),
+      requestedBy: z.enum(['role', 'admin']).default('admin'),
+      requestedAt: z.string().nullable().default(null),
+      since: z.string().nullable().default(null),
+    })
+    .nullable(),
   registeredAt: z.string(),
   updatedAt: z.string(),
 });

@@ -22,7 +22,7 @@ import { BACKEND_USERNAME_RE } from './lib/backends/username';
 import { claimKey, hostIdentity } from './lib/backend/ops';
 import { signValue } from './lib/cookies';
 import { sha256Hex } from './lib/crypto';
-import { ActivationReview, DirectTestLink } from '../src/shared/contracts/servers';
+import { ActivationReview, DirectTestLink, NodeIntentView } from '../src/shared/contracts/servers';
 import {
   FAKE_BACKEND_USER_UUID as USER_UUID,
   installFakeBackend,
@@ -341,12 +341,66 @@ describe('the activation routes over HTTP', () => {
     }
   });
 
-  test('retire is routed', async () => {
+  test('retire is routed; an admin retire closes the node at once and is audited with the admin', async () => {
     const { t, intentId } = await seedLiveDirect();
     const call = await adminCall(t);
     const res = await call('POST', `nodes/intents/${intentId}/retire`, {});
     expect(res.status).toBe(200);
-    expect(typeof (await res.json()).stage).toBe('string');
+    // An admin's own request is the decision: no needs_admin stop.
+    expect((await res.json()).stage).toBe('requested');
+    const intent = (await t.run((ctx) => ctx.db.get(intentId)))!;
+    expect(intent.state).toBe('retiring');
+    expect(intent.delivery.disposition).toBe('retiring');
+    const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
+    const row = audit.find((a) => a.action === 'servers.node.retire_requested')!;
+    expect(row.actorType).toBe('admin');
+    expect(row.actorId).toBeTruthy();
+  });
+
+  test('where a retirement waits is projected; a wait the sweep meets again is one event', async () => {
+    const { t, serverId, intentId } = await seedLiveDirect();
+    const at = Date.now() - 60_000;
+    const retirementId = await t.run(async (ctx) => {
+      const id = await ctx.db.insert('panelRetirements', {
+        backendServerId: serverId,
+        intentId,
+        stage: 'draining',
+        disposition: 'keep-dark',
+        requestedBy: 'admin',
+        events: [{ at, code: 'requested' }],
+        createdAt: at,
+        updatedAt: at,
+      });
+      await ctx.db.patch(intentId, { retirementId: id, state: 'retiring' });
+      return id;
+    });
+    const mark = (code: string, step: 'origin' | 'addresses') =>
+      t.mutation(internal.nodeRetirement.mark, { retirementId, code, step });
+    await mark('servers.relay_draining', 'origin');
+    await mark('servers.relay_draining', 'origin');
+    await mark('servers.op_running', 'addresses');
+    const r = (await t.run((ctx) => ctx.db.get(retirementId)))!;
+    expect(r.events.map((e) => e.code)).toEqual([
+      'requested',
+      'servers.relay_draining',
+      'servers.op_running',
+    ]);
+    expect(r.step).toBe('addresses');
+    const call = await adminCall(t);
+    const list = (await (await call('GET', 'nodes/intents')).json()) as {
+      intents: unknown[];
+    };
+    const view = list.intents
+      .map((i) => NodeIntentView.parse(i))
+      .find((i) => i.id === (intentId as string))!;
+    expect(view.retirement).toEqual({
+      stage: 'draining',
+      code: 'servers.op_running',
+      step: 'addresses',
+      requestedBy: 'admin',
+      requestedAt: new Date(at).toISOString(),
+      since: new Date(r.events[2]!.at).toISOString(),
+    });
   });
 });
 

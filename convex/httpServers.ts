@@ -616,6 +616,7 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
         await ctx.runMutation(internal.nodeIntents.requestRetirement, {
           intentId,
           requestedBy: 'admin',
+          ...actorOf(admin),
         }),
       );
     }
