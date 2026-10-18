@@ -16,7 +16,7 @@
   import { edgeConfigQuery } from '@client/lib/edgesApi';
   import AdminListState from '../AdminListState.svelte';
   import SectionHeader from './components/SectionHeader.svelte';
-  import CountryPicker from './components/CountryPicker.svelte';
+  import Link from '@client/components/Link.svelte';
   import ConfigField from './settings/ConfigField.svelte';
   import SettingsSectionCard, { type ExtraChanges } from './settings/SettingsSectionCard.svelte';
   import RenderRules from './settings/RenderRules.svelte';
@@ -29,7 +29,6 @@
     BASIC_SWITCHES,
     DETECTOR_FIELDS,
     L7_FIELDS,
-    PROBE_COUNTRIES_PATH,
     PROBE_FIELDS,
     PROBE_SOURCE_FIELDS,
     RENDER_GLOBAL_FIELDS,
@@ -249,12 +248,18 @@
       </div>
 
       <h3 class="mt-6 mb-2 text-sm font-medium">Coverage and budget</h3>
-      <CountryPicker
-        label="Countries to probe from"
-        helper="Each published edge is checked from vantage points in these countries. Up to 40."
-        max={40}
-        bind:value={() => form.list(PROBE_COUNTRIES_PATH), (v) => form.set(PROBE_COUNTRIES_PATH, v)}
-      />
+      <div class="space-y-1 text-sm">
+        <p class="font-medium">Countries to probe from</p>
+        <p class="text-muted-foreground">
+          {form.list('probe.countries').length > 0
+            ? `${form.list('probe.countries').join(', ')}.`
+            : 'None.'}
+          These are the countries on the censored-country list with "Check edges from here" on.
+          <Link href="/admin/settings" class="underline underline-offset-2">
+            Change them in Settings, Censored countries.
+          </Link>
+        </p>
+      </div>
       <div class="mt-5 grid gap-5 sm:grid-cols-2">
         {#each PROBE_FIELDS as field (field.path)}
           <ConfigField {field} {form} />

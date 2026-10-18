@@ -22,6 +22,7 @@ import {
 const BUILT_IN_MODES_VERSION_KEY = 'connectionModes.builtInsVersion';
 import { fakeEdgeProviderEnabled } from './lib/edges/providers/fake';
 import { mockBackendEnabled } from './lib/backends/mock';
+import { CENSORED_COUNTRIES_KEY, resolveCensoredCountries } from './lib/censoredCountries';
 
 /** Insert the default-free tier if absent; return its id. */
 export const seedDefaultFreeTier = internalMutation({
@@ -533,6 +534,22 @@ export const renameAppSettingKeys = internalMutation({
   },
 });
 
+/**
+ * Copy the censored-country list into its own key once (lib/censoredCountries.ts).
+ * Until then it is computed live from the five keys it replaced, so this only
+ * freezes what is already in effect. Never overwrites a stored list, and leaves
+ * the old keys in place (a rollback still finds them). Idempotent.
+ */
+export const seedCensoredCountries = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<{ copied: number | null }> => {
+    const current = await resolveCensoredCountries(ctx.db);
+    if (current.source === 'stored') return { copied: null };
+    await upsertSettingRow(ctx, CENSORED_COUNTRIES_KEY, JSON.stringify(current.list));
+    return { copied: current.list.length };
+  },
+});
+
 export const seedCutover = internalAction({
   args: {},
   handler: async (
@@ -550,6 +567,7 @@ export const seedCutover = internalAction({
     const memberTierId = await ctx.runMutation(internal.seed.seedMemberTier, {});
     const settings = await ctx.runMutation(internal.seed.seedAppSettings, {});
     await ctx.runMutation(internal.seed.renameAppSettingKeys, {});
+    await ctx.runMutation(internal.seed.seedCensoredCountries, {});
     const instances = await ctx.runMutation(internal.seed.seedBackendServersFromEnv, {});
     const clients = await ctx.runMutation(internal.seed.seedClients, {});
     const modes = await ctx.runMutation(internal.seed.seedConnectionModes, {});

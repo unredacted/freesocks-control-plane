@@ -16,6 +16,7 @@ import type { DatabaseReader } from '../_generated/server';
 import type { Doc } from '../_generated/dataModel';
 import { collectLocationCapableServers } from './locations';
 import { byFamilyThenOrder, resolveModeCatalog } from './connectionModes';
+import { resolveCensoredCountries } from './censoredCountries';
 import {
   computeLocationLoad,
   HEALTH_FRESH_MS,
@@ -343,12 +344,47 @@ export function validateIncidentInput(raw: unknown): IncidentInput {
 // The assembled public page
 // ---------------------------------------------------------------------------
 
+/**
+ * The matrix rows the public page shows: those of countries on the
+ * censored-country list, in the list's order. A row whose country left the
+ * list stays stored (re-adding the country brings it back) but is not shown.
+ */
+export function listedCensorshipRows(
+  rows: readonly CensorshipRow[],
+  listed: readonly string[],
+): CensorshipRow[] {
+  const byCode = new Map(rows.map((r) => [r.countryCode, r]));
+  return listed.flatMap((code) => {
+    const r = byCode.get(code);
+    return r ? [r] : [];
+  });
+}
+
+/**
+ * The stored matrix after an admin save: the submitted rows of LISTED
+ * countries (a row with no cell and no label is dropped: nothing to show),
+ * plus the stored rows of countries not on the list, which the editor does not
+ * show and must not erase.
+ */
+export function mergeCensorshipRows(
+  submitted: readonly CensorshipRow[],
+  stored: readonly CensorshipRow[],
+  listed: readonly string[],
+): CensorshipRow[] {
+  const kept = stored.filter((r) => !listed.includes(r.countryCode));
+  const edited = submitted.filter(
+    (r) => listed.includes(r.countryCode) && (r.label !== null || Object.keys(r.cells).length > 0),
+  );
+  return [...edited, ...kept];
+}
+
 export async function resolvePublicStatusPage(db: DatabaseReader): Promise<PublicStatusPage> {
-  const [locations, cfg, incidents, catalog] = await Promise.all([
+  const [locations, cfg, incidents, catalog, censored] = await Promise.all([
     resolveStatusLocations(db),
     resolveStatusConfig(db),
     resolvePublicIncidents(db, Date.now()),
     resolveModeCatalog(db),
+    resolveCensoredCountries(db),
   ]);
   // Columns = ENABLED catalog modes in display order (the old compiled-array
   // projection leaked deprecated/disabled columns). Cells stored for a
@@ -362,7 +398,7 @@ export async function resolvePublicStatusPage(db: DatabaseReader): Promise<Publi
     locations,
     censorship: {
       modes: columns.map((m) => ({ id: m.id, label: m.label })),
-      rows: cfg.censorshipRows.map((r) => ({
+      rows: listedCensorshipRows(cfg.censorshipRows, censored.codes).map((r) => ({
         ...r,
         cells: Object.fromEntries(
           Object.entries(r.cells).filter(([modeId]) => columnIds.has(modeId)),

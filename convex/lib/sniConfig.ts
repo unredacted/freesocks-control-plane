@@ -3,6 +3,7 @@
  * default: with `enabled` off nothing is qualified and no family can be bound.
  */
 import type { DatabaseReader } from '../_generated/server';
+import { DEFAULT_CENSORED_COUNTRIES, resolveCensoredCountries } from './censoredCountries';
 import { sanitizeBool, sanitizeInt } from './edgeConfig';
 
 export interface SniConfig {
@@ -22,7 +23,8 @@ export interface SniConfig {
   /**
    * Countries where names are blocked selectively, so a member there is given
    * names proven to work there, and a name blocked there is never offered.
-   * ISO 3166-1 alpha-2, uppercase.
+   * ISO 3166-1 alpha-2, uppercase. Not a setting of its own: every country on
+   * the censored-country list (lib/censoredCountries.ts).
    */
   curatedCountries: string[];
 }
@@ -33,7 +35,7 @@ export const SNI_DEFAULTS: SniConfig = {
   requalifyHours: 24,
   suspendAfterFails: 2,
   reportWindowDays: 14,
-  curatedCountries: ['CN', 'RU', 'IR', 'MM'],
+  curatedCountries: DEFAULT_CENSORED_COUNTRIES.codes,
 };
 
 export const SNI_BOUNDS = {
@@ -49,7 +51,6 @@ export const SNI_KEYS = {
   requalifyHours: 'edge.sni.requalifyHours',
   suspendAfterFails: 'edge.sni.suspendAfterFails',
   reportWindowDays: 'edge.sni.reportWindowDays',
-  curatedCountries: 'edge.sni.curatedCountries',
 } as const;
 type Path = keyof typeof SNI_KEYS;
 
@@ -68,9 +69,11 @@ async function readSetting(db: DatabaseReader, key: string): Promise<unknown> {
 
 export async function resolveSniConfig(db: DatabaseReader): Promise<SniConfig> {
   const paths = Object.keys(SNI_KEYS) as Path[];
-  const raw = Object.fromEntries(
-    await Promise.all(paths.map(async (p) => [p, await readSetting(db, SNI_KEYS[p])] as const)),
-  ) as Record<Path, unknown>;
+  const [entries, censored] = await Promise.all([
+    Promise.all(paths.map(async (p) => [p, await readSetting(db, SNI_KEYS[p])] as const)),
+    resolveCensoredCountries(db),
+  ]);
+  const raw = Object.fromEntries(entries) as Record<Path, unknown>;
   const D = SNI_DEFAULTS;
   const B = SNI_BOUNDS;
   return {
@@ -99,16 +102,8 @@ export async function resolveSniConfig(db: DatabaseReader): Promise<SniConfig> {
       B.reportWindowDays.max,
       D.reportWindowDays,
     ),
-    curatedCountries: sanitizeCountries(raw.curatedCountries, D.curatedCountries),
+    curatedCountries: censored.codes,
   };
-}
-
-export function sanitizeCountries(v: unknown, dflt: string[]): string[] {
-  if (!Array.isArray(v)) return dflt;
-  const out = [...new Set(v.map((c) => String(c).trim().toUpperCase()))].filter((c) =>
-    /^[A-Z]{2}$/.test(c),
-  );
-  return out.slice(0, 32);
 }
 
 /** The appSettings writes for a patch; unknown keys and wrong types are ignored. */
@@ -124,9 +119,6 @@ export function sniConfigWrites(patch: Record<string, unknown>): {
     if (p === 'enabled') {
       if (typeof v !== 'boolean') continue;
       value = v;
-    } else if (p === 'curatedCountries') {
-      if (!Array.isArray(v)) continue;
-      value = sanitizeCountries(v, []);
     } else {
       if (typeof v !== 'number' || !Number.isFinite(v)) continue;
       value = sanitizeInt(v, SNI_BOUNDS[p].min, SNI_BOUNDS[p].max, SNI_DEFAULTS[p]);
@@ -147,7 +139,10 @@ export function sniConfigWrites(patch: Record<string, unknown>): {
  */
 export interface SniVantageConfig {
   enabled: boolean;
-  /** Opted-in countries (a subset of the curated ones; others are ignored at use). */
+  /**
+   * Opted-in countries: those on the censored-country list with "check names
+   * from inside" (lib/censoredCountries.ts). Not a setting of its own.
+   */
   countries: string[];
   sources: { globalping: boolean; ripeatlas: boolean };
   /** A name is checked from a country again after this long. */
@@ -193,7 +188,6 @@ type VantageIntPath = keyof typeof SNI_VANTAGE_BOUNDS;
 
 export const SNI_VANTAGE_KEYS = {
   enabled: 'edge.sni.vantage.enabled',
-  countries: 'edge.sni.vantage.countries',
   'sources.globalping': 'edge.sni.vantage.sources.globalping',
   'sources.ripeatlas': 'edge.sni.vantage.sources.ripeatlas',
   intervalHours: 'edge.sni.vantage.intervalHours',
@@ -215,17 +209,17 @@ const VANTAGE_BOOLS: readonly VantagePath[] = [
 
 export async function resolveSniVantageConfig(db: DatabaseReader): Promise<SniVantageConfig> {
   const paths = Object.keys(SNI_VANTAGE_KEYS) as VantagePath[];
-  const raw = Object.fromEntries(
-    await Promise.all(
-      paths.map(async (p) => [p, await readSetting(db, SNI_VANTAGE_KEYS[p])] as const),
-    ),
-  ) as Record<VantagePath, unknown>;
+  const [entries, censored] = await Promise.all([
+    Promise.all(paths.map(async (p) => [p, await readSetting(db, SNI_VANTAGE_KEYS[p])] as const)),
+    resolveCensoredCountries(db),
+  ]);
+  const raw = Object.fromEntries(entries) as Record<VantagePath, unknown>;
   const D = SNI_VANTAGE_DEFAULTS;
   const int = (p: VantageIntPath) =>
     sanitizeInt(raw[p], SNI_VANTAGE_BOUNDS[p].min, SNI_VANTAGE_BOUNDS[p].max, D[p]);
   return {
     enabled: sanitizeBool(raw.enabled, D.enabled),
-    countries: sanitizeCountries(raw.countries, D.countries),
+    countries: censored.namesInside,
     sources: {
       globalping: sanitizeBool(raw['sources.globalping'], D.sources.globalping),
       ripeatlas: sanitizeBool(raw['sources.ripeatlas'], D.sources.ripeatlas),
@@ -267,9 +261,6 @@ export function sniVantageConfigWrites(patch: Record<string, unknown>): {
     if (VANTAGE_BOOLS.includes(p)) {
       if (typeof v !== 'boolean') continue;
       value = v;
-    } else if (p === 'countries') {
-      if (!Array.isArray(v)) continue;
-      value = sanitizeCountries(v, []);
     } else {
       if (typeof v !== 'number' || !Number.isFinite(v)) continue;
       const q = p as VantageIntPath;

@@ -23,6 +23,7 @@ import type * as backendNodes from "../backendNodes.js";
 import type * as backendServers from "../backendServers.js";
 import type * as backends from "../backends.js";
 import type * as billing from "../billing.js";
+import type * as censoredCountries from "../censoredCountries.js";
 import type * as clients from "../clients.js";
 import type * as connectionModes from "../connectionModes.js";
 import type * as cronHeartbeat from "../cronHeartbeat.js";
@@ -194,6 +195,7 @@ declare const fullApi: ApiFromModules<{
   backendServers: typeof backendServers;
   backends: typeof backends;
   billing: typeof billing;
+  censoredCountries: typeof censoredCountries;
   clients: typeof clients;
   connectionModes: typeof connectionModes;
   cronHeartbeat: typeof cronHeartbeat;

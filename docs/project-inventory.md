@@ -308,7 +308,8 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
     defaults are re-synced by operator-run `seed:refreshDefaultClients`, which preserves
     `enabled` flags + admin-added rows); **Theme** (preset gallery + hue slider + live preview; §1.7); **Rate-limit policies**
     (W2); **Membership codes** (W4); **Status page** (`/admin/status` — publish/edit/
-    resolve/delete incidents, curate the country × connection-mode censorship matrix,
+    resolve/delete incidents, curate the country × connection-mode censorship matrix (one
+    row per country on the censored-country list, Settings),
     tune the load-band thresholds; scope `admin:servers:write`, routes
     `/api/v1/admin/status/{page,incidents}`); App settings (incl. the **Verification** backend — `setVerification` /
     `PATCH /api/v1/admin/verification`, surfaced in `HpkeVerifyModal` — and the **site

@@ -30,10 +30,6 @@ export const SETTINGS_DEFAULTS = {
   // Max S3 subscription mirrors a single member can provision (the opt-in
   // "trouble connecting? try a mirror" flow). Bounds at-rest copies per user.
   'mirror.maxPerUser': 3,
-  // Country codes (ISO-3166-1 alpha-2) where the signup delivery picker SUGGESTS
-  // "hardened privacy" instead of the default "evade censorship". Admin-tunable;
-  // empty = always suggest evade. The choice itself is client-side only.
-  'delivery.privacyCountries': [] as string[],
   // Master switch for per-tier device (HWID) limits. OFF (default) = FCP sends
   // hwidDeviceLimit:null for every user regardless of the tier's hwidEnabled, so
   // devices are effectively unlimited and the device UI is neutralized. ON =

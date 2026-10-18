@@ -38,8 +38,10 @@ accidentally regress it).
 - **No `console.*` in `convex/` logs an IP, header, or raw request.**
 - The admin self-diagnostic `GET /api/v1/admin/client-ip` computes the resolved
   IP **transiently** and returns it `no-store`; it is never persisted or audited.
-- The country used to suggest a delivery profile is read transiently from
-  `CF-IPCountry` (only when `CF_FRONTED=true`) and **never stored**.
+- The country used to suggest a connection mode is read transiently from
+  `CF-IPCountry` (only when `CF_FRONTED=true`) and **never stored**. In a country on the
+  censored-country list the status page's availability matrix picks the suggestion; only the
+  suggested mode id leaves the server.
 - The same transient country also picks **server names** for a key fetched from a heavily
   filtered country (`docs/edges.md` § Names for the member's country), and the same rule holds:
   it is used for that one response and **kept nowhere**. A subscription body shaped by an
@@ -47,7 +49,8 @@ accidentally regress it).
   the row), is served `private, no-store` (a shared cache would hand one country's body to
   another), and is not part of the render snapshot. The one country FCP does store is the
   member's **own answer** to "Where are you connecting from?" on the account page
-  (`subscriptions.sniRegion`): they chose to say it, it is one of a short curated list, they can
+  (`subscriptions.sniRegion`): they chose to say it, it is one of the countries on the
+  censored-country list (Admin -> Settings), they can
   set it back to Automatic (which removes it), it follows them to a re-issued key, and it is sent
   to no analytics or telemetry.
 - **Device identification (HWID) is opt-in and backend-side.** When the admin

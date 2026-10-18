@@ -119,19 +119,16 @@ describe('edgeConfigWrites', () => {
       detect: { nothing: 2 },
     });
     const keys = writes.map((w) => w.key).sort();
+    // `probe.countries` is not a setting any more: it comes from the
+    // censored-country list (lib/censoredCountries.ts), so it is never written.
     expect(keys).toEqual(
-      [
-        'edge.enabled',
-        'edge.detect.windowMinutes',
-        'edge.probe.countries',
-        'edge.probe.sources.checkhost',
-      ].sort(),
+      ['edge.enabled', 'edge.detect.windowMinutes', 'edge.probe.sources.checkhost'].sort(),
     );
     expect(changedKeys.sort()).toEqual(
-      ['enabled', 'detect.windowMinutes', 'probe.countries', 'probe.sources.checkhost'].sort(),
+      ['enabled', 'detect.windowMinutes', 'probe.sources.checkhost'].sort(),
     );
     // Stored as given; the resolver sanitizes on read.
-    expect(writes.find((w) => w.key === 'edge.probe.countries')?.value).toBe('["ir","ru"]');
+    expect(writes.find((w) => w.key === 'edge.probe.sources.checkhost')?.value).toBe('false');
   });
 
   test('client rules are sanitized on write, one row per family, unknown families dropped', () => {

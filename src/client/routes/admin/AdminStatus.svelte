@@ -17,6 +17,8 @@
   import { apiErrorMessage } from '../../lib/errors';
   import { mergeMatrixColumns } from '../../lib/matrixColumns';
   import { humanizeSlug } from '../../lib/humanize';
+  import { countryName } from '../../lib/countries';
+  import Link from '../../components/Link.svelte';
   import {
     adminConnectionModesQuery,
     adminStatusIncidentsQuery,
@@ -62,9 +64,7 @@
   }
   // The grid must actually track the column count — grid-cols-[...repeat(auto,6rem)]
   // is invalid CSS and never was a per-mode template.
-  let matrixGridStyle = $derived(
-    `grid-template-columns: 7rem 1fr repeat(${MODES.length}, 6rem) 2rem;`,
-  );
+  let matrixGridStyle = $derived(`grid-template-columns: 9rem 1fr repeat(${MODES.length}, 6rem);`);
 
   function invalidate() {
     void qc.invalidateQueries({ queryKey: queryKeys.adminStatusPage });
@@ -171,25 +171,22 @@
   let matrixDraft = $state<MatrixDraftRow[] | null>(null);
   let thresholds = $state<{ busyAt: string; crowdedAt: string } | null>(null);
 
+  // One row per country on the censored-country list, in its order (the server
+  // keeps the stored rows of countries that left the list).
   function matrixRows(): MatrixDraftRow[] {
     if (matrixDraft) return matrixDraft;
-    return (page.data?.rows ?? []).map((r) => ({
-      countryCode: r.countryCode,
-      label: r.label ?? '',
-      cells: Object.fromEntries(MODES.map((m) => [m, r.cells[m] ?? ''])),
-    }));
+    const stored = new Map((page.data?.rows ?? []).map((r) => [r.countryCode, r]));
+    return (page.data?.countries ?? []).map((code) => {
+      const r = stored.get(code);
+      return {
+        countryCode: code,
+        label: r?.label ?? '',
+        cells: Object.fromEntries(MODES.map((m) => [m, r?.cells[m] ?? ''])),
+      };
+    });
   }
   function setMatrix(rows: MatrixDraftRow[]) {
     matrixDraft = rows;
-  }
-  function addMatrixRow() {
-    setMatrix([
-      ...matrixRows(),
-      { countryCode: '', label: '', cells: Object.fromEntries(MODES.map((m) => [m, ''])) },
-    ]);
-  }
-  function removeMatrixRow(idx: number) {
-    setMatrix(matrixRows().filter((_, i) => i !== idx));
   }
   function setMatrixCell(idx: number, modeId: string, val: string) {
     setMatrix(
@@ -410,7 +407,11 @@
         <CardTitle>Censorship availability matrix</CardTitle>
         <CardDescription>
           Per-country availability of each connection mode, as judged by the operator (user reports,
-          community signal). Shown on /status as country × mode.
+          community signal). Shown on /status as country × mode, for the countries on the
+          censored-country list (<Link href="/admin/settings" class="underline underline-offset-2"
+            >Settings, Censored countries</Link
+          >); a country with no cell and no label is left off the page. In a listed country, the
+          connection mode suggested to a member follows this matrix.
         </CardDescription>
       </CardHeader>
       <CardContent class="space-y-4">
@@ -422,26 +423,23 @@
               style={matrixGridStyle}
               class="grid items-center gap-2 text-xs font-medium text-muted-foreground"
             >
-              <span>Country (alpha-2)</span>
+              <span>Country</span>
               <span>Label (optional)</span>
               {#each MODES as m (m)}
                 <span class="text-center" title={m}>{columnLabel(m)}</span>
               {/each}
-              <span></span>
             </div>
-            {#each matrixRows() as row, idx (idx)}
+            {#if matrixRows().length === 0}
+              <p class="text-sm text-muted-foreground">
+                No country is on the censored-country list.
+              </p>
+            {/if}
+            {#each matrixRows() as row, idx (row.countryCode)}
               <div style={matrixGridStyle} class="grid items-center gap-2">
-                <Input
-                  value={row.countryCode}
-                  oninput={(e) => {
-                    const rows = matrixRows();
-                    rows[idx] = { ...rows[idx]!, countryCode: e.currentTarget.value.toUpperCase() };
-                    setMatrix(rows);
-                  }}
-                  placeholder="IR"
-                  maxlength={2}
-                  class="font-mono uppercase"
-                />
+                <span class="text-sm">
+                  <span class="font-mono text-xs text-muted-foreground">{row.countryCode}</span>
+                  {countryName(row.countryCode, 'en')}
+                </span>
                 <Input
                   value={row.label}
                   oninput={(e) => {
@@ -449,7 +447,7 @@
                     rows[idx] = { ...rows[idx]!, label: e.currentTarget.value };
                     setMatrix(rows);
                   }}
-                  placeholder="Iran"
+                  placeholder={countryName(row.countryCode, 'en')}
                 />
                 {#each MODES as m (m)}
                   <Select.Root
@@ -468,12 +466,10 @@
                     </Select.Content>
                   </Select.Root>
                 {/each}
-                <Button size="sm" variant="ghost" onclick={() => removeMatrixRow(idx)}>✕</Button>
               </div>
             {/each}
           </div>
           <div class="flex gap-2">
-            <Button size="sm" variant="outline" onclick={addMatrixRow}>Add country</Button>
             <Button
               size="sm"
               onclick={() => saveMatrix.mutate()}

@@ -74,10 +74,6 @@
       invalidateSni(qc);
     }
   }
-  function toggleCountry(c: string, on: boolean) {
-    const now = vantage?.countries ?? [];
-    void patchVantage({ countries: on ? [...now, c] : now.filter((x) => x !== c) });
-  }
 
   let open = $state(false);
   let label = $state('');
@@ -189,25 +185,16 @@
           </p>
         </div>
       </div>
-      <fieldset class="space-y-2">
-        <legend class="font-medium">Countries</legend>
-        {#if curated.length === 0}
-          <p class="text-muted-foreground">No country is on the curated list.</p>
-        {/if}
-        <div class="flex flex-wrap gap-4">
-          {#each curated as c (c)}
-            <div class="flex items-center gap-2">
-              <Checkbox
-                id={`${uid}-vc-${c}`}
-                checked={vantage.countries.includes(c)}
-                disabled={saving}
-                onCheckedChange={(v) => toggleCountry(c, v === true)}
-              />
-              <Label for={`${uid}-vc-${c}`} class="font-normal">{c}</Label>
-            </div>
-          {/each}
-        </div>
-      </fieldset>
+      <div class="space-y-1">
+        <p class="font-medium">Countries</p>
+        <p class="text-muted-foreground">
+          {checkedIn.length > 0 ? `${checkedIn.join(', ')}.` : 'None.'}
+          These are the countries on the censored-country list with "Check names from inside" on.
+          <Link href="/admin/settings" class="underline underline-offset-2">
+            Change them in Settings, Censored countries.
+          </Link>
+        </p>
+      </div>
       <fieldset class="space-y-2">
         <legend class="font-medium">Services</legend>
         <div class="flex items-center gap-2">

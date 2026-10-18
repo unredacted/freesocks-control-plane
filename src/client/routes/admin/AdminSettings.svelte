@@ -19,6 +19,7 @@
   import { ADMIN_BACKEND_LABELS } from '../../lib/backendLabels';
   import AdminListState from './AdminListState.svelte';
   import AlertsCard from './AlertsCard.svelte';
+  import CensoredCountriesCard from './CensoredCountriesCard.svelte';
   import { adminAnalyticsQuery, appSettingsQuery, configQuery, queryKeys } from '../../lib/queries';
   import Link from '../../components/Link.svelte';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
@@ -46,16 +47,10 @@
   // edits if the underlying query refetches in the background.
   let draft = $state<Record<string, unknown>>({});
   let initialized = $state(false);
-  // Free-text mirror of the privacyCountries array so typing (incl. spaces) isn't
-  // reflowed by re-joining; parsed back into `draft` as a normalized array on input.
-  let privacyCountriesText = $state('');
 
   $effect(() => {
     if (settings.data && !initialized) {
       draft = { ...settings.data };
-      privacyCountriesText = (
-        (settings.data['delivery.privacyCountries'] as string[] | undefined) ?? []
-      ).join(' ');
       initialized = true;
     }
   });
@@ -584,45 +579,14 @@
         </CardContent>
       </Card>
 
-      <!-- Delivery preference suggestion (country-based) -->
-      <Card>
-        <CardHeader>
-          <CardTitle class="text-base">Delivery preference</CardTitle>
-          <CardDescription>
-            Countries (ISO 2-letter) where the picker suggests the censorship-recommended mode (see
-            the Connection modes page) instead of the catalog default. Empty = always suggest the
-            default. The member's actual choice is stored only on their device, never here.
-          </CardDescription>
-        </CardHeader>
-        <CardContent class="space-y-3 text-sm">
-          <div>
-            <label class="text-xs text-muted-foreground mb-1 block" for="privacy-countries">
-              Suggest privacy for these countries
-            </label>
-            <Input
-              id="privacy-countries"
-              placeholder="(none - always suggest stay-connected)"
-              value={privacyCountriesText}
-              oninput={(e) => {
-                privacyCountriesText = (e.target as HTMLInputElement).value;
-                draft = {
-                  ...draft,
-                  'delivery.privacyCountries': privacyCountriesText
-                    .split(/[\s,]+/)
-                    .map((c) => c.trim().toUpperCase())
-                    .filter((c) => /^[A-Z]{2}$/.test(c)),
-                };
-              }}
-            />
-          </div>
-        </CardContent>
-      </Card>
-
       <div class="flex justify-end">
         <Button onclick={() => save.mutate()} disabled={save.isPending}>
           {save.isPending ? 'Saving…' : 'Save settings'}
         </Button>
       </div>
+
+      <!-- The censored-country list (own endpoint + own save) -->
+      <CensoredCountriesCard />
 
       <!-- HPKE verification (own namespace + own save) -->
       <Card>

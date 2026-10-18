@@ -629,3 +629,22 @@ export type AdminAlertsPatch = z.infer<typeof AdminAlertsPatch>;
 
 export const AdminAlertsTestResult = z.object({ ok: z.boolean(), error: z.string().nullable() });
 export type AdminAlertsTestResult = z.infer<typeof AdminAlertsTestResult>;
+
+/** One entry of the censored-country list (`/api/v1/admin/censored-countries`). */
+export const CensoredCountry = z.object({
+  /** ISO 3166-1 alpha-2, uppercase. */
+  code: z.string(),
+  /** Edges are probed from vantages in this country. */
+  checkEdges: z.boolean(),
+  /** Server names are checked from inside this country (opt-in). */
+  checkNamesInside: z.boolean(),
+});
+export type CensoredCountry = z.infer<typeof CensoredCountry>;
+
+/** The list, in order. `stored` false = still computed from the old settings. */
+export const AdminCensoredCountries = z.object({
+  countries: z.array(CensoredCountry),
+  stored: z.boolean(),
+  max: z.number(),
+});
+export type AdminCensoredCountries = z.infer<typeof AdminCensoredCountries>;
