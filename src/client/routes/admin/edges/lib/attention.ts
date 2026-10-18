@@ -221,7 +221,8 @@ export function attentionFactsLine(item: AttentionItem): string {
   const str = (k: string): string | null =>
     typeof f[k] === 'string' && f[k] !== '' ? (f[k] as string) : null;
   const name = str('name');
-  if (name !== null) out.push(`Account ${name}`);
+  const location = str('location');
+  if (name !== null) out.push(location ? `Account ${name}, ${location}` : `Account ${name}`);
   const kind = str('kind');
   if (kind !== null) out.push(`${kind.charAt(0).toUpperCase()}${kind.slice(1)} run`);
   const op = str('op');

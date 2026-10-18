@@ -1446,9 +1446,11 @@ export const attention = internalQuery({
           since: null,
         });
       } else {
-        // Trust is per location: one item per enabled location not trusted yet.
-        for (const loc of await locationsOfAccount(ctx.db, a._id)) {
-          if (!loc.enabled || loc.qualified) continue;
+        // Trust is per location: one item per enabled location not trusted yet,
+        // naming the location when the account has more than one.
+        const locs = (await locationsOfAccount(ctx.db, a._id)).filter((l) => l.enabled);
+        for (const loc of locs) {
+          if (loc.qualified) continue;
           items.push({
             id: `account_unqualified:${a._id}:${loc._id}`,
             kind: 'account_unqualified',
@@ -1463,7 +1465,7 @@ export const attention = internalQuery({
             facts: {
               name: a.name,
               provider: a.provider,
-              location: loc.label,
+              ...(locs.length > 1 ? { location: loc.label } : {}),
               locationId: loc._id as string,
             },
             action: 'open_account',
