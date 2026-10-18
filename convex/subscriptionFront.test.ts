@@ -785,3 +785,226 @@ describe('getAccountView subscription URL', () => {
     expect(view?.subscription?.subToken).toBeNull();
   });
 });
+
+/**
+ * Asking whether a configuration changed (docs/edges.md): every answer carries
+ * a weak tag over what the app applies; `If-None-Match` naming it gets a 304.
+ * Here on a place no origin covers (the backend body passes through); the
+ * edge-rendered cases live in edgeRender.test.ts.
+ */
+describe('GET /api/v1/sub/<token>: conditional requests', () => {
+  const UA = { 'user-agent': 'Clash/1' };
+  beforeEach(() => {
+    vi.stubEnv('IP_HASH_SALT', 'test-salt');
+    mockBody = 'RAW-CONFIG-1';
+    mockStatus = 200;
+    mockHeaders = {
+      'content-type': 'text/yaml',
+      'subscription-userinfo': 'upload=0; download=10; total=100; expire=0',
+      'profile-update-interval': '12',
+    };
+    stubFrontFetch();
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+  const get = (t: ReturnType<typeof convexTest>, extra: Record<string, string> = {}) =>
+    t.fetch('/api/v1/sub/tok_abc', { headers: { ...UA, ...extra } });
+  const ageCache = (t: ReturnType<typeof convexTest>, subId: Id<'subscriptions'>, ms: number) =>
+    t.run(async (ctx) => {
+      const sub = (await ctx.db.get(subId))!;
+      const entries = JSON.parse(sub.subCache!) as Array<Record<string, unknown> & { at: number }>;
+      for (const e of entries) e.at -= ms;
+      await ctx.db.patch(subId, { subCache: JSON.stringify(entries) });
+    });
+
+  test('a weak tag on the miss, the same on a hit; a matching If-None-Match is a 304', async () => {
+    const t = convexTest(schema, modules);
+    await seedSub(t);
+    const first = await get(t);
+    const tag = first.headers.get('etag')!;
+    expect(tag).toMatch(/^W\/"fs1-[A-Za-z0-9_-]{22}"$/);
+    // An unbound place keeps the backend's own refresh interval.
+    expect(first.headers.get('profile-update-interval')).toBe('12');
+    expect((await get(t)).headers.get('etag')).toBe(tag); // cache hit, same bytes
+    const again = await get(t, { 'if-none-match': tag });
+    expect(again.status).toBe(304);
+    expect(await again.text()).toBe('');
+    expect(again.headers.get('etag')).toBe(tag);
+    expect(again.headers.get('cache-control')).toBe('public, max-age=30');
+    expect(again.headers.get('vary')).toBe('User-Agent');
+    expect(again.headers.get('subscription-userinfo')).toBe(
+      'upload=0; download=10; total=100; expire=0',
+    );
+    expect(again.headers.get('profile-title')).toBeTruthy();
+    expect(again.headers.get('profile-update-interval')).toBe('12');
+    expect(again.headers.get('content-type')).toBeNull();
+    // The strong spelling, a list and the wildcard match too (weak comparison).
+    expect((await get(t, { 'if-none-match': tag.slice(2) })).status).toBe(304);
+    expect((await get(t, { 'if-none-match': `"x", ${tag}` })).status).toBe(304);
+    expect((await get(t, { 'if-none-match': '*' })).status).toBe(304);
+    expect(fetchCalls).toBe(1);
+  });
+
+  test('a different, suffixed or malformed validator gets the full body', async () => {
+    const t = convexTest(schema, modules);
+    await seedSub(t);
+    const tag = (await get(t)).headers.get('etag')!;
+    for (const header of [
+      'W/"fs1-BBBBBBBBBBBBBBBBBBBBBB"',
+      `${tag}-gzip`,
+      tag.replace(/"$/, '-zstd"'),
+      tag.replace(/"/g, ''),
+      `${tag}, garbage`,
+    ]) {
+      const res = await get(t, { 'if-none-match': header });
+      expect(res.status, header).toBe(200);
+      expect(await res.text()).toBe('RAW-CONFIG-1');
+    }
+  });
+
+  test('the tag follows what the app applies: a new body or a new service name changes it', async () => {
+    const t = convexTest(schema, modules);
+    const { subId } = await seedSub(t);
+    const tag = (await get(t)).headers.get('etag')!;
+    await t.run((ctx) =>
+      ctx.db.insert('appSettings', {
+        key: 'subscription.siteName',
+        value: JSON.stringify('Ours'),
+        updatedAt: Date.now(),
+      }),
+    );
+    const renamed = await get(t, { 'if-none-match': tag });
+    expect(renamed.status).toBe(200); // a cache hit, but the title moved
+    const tag2 = renamed.headers.get('etag')!;
+    expect(tag2).not.toBe(tag);
+    // The backend body changes once the cache ages out.
+    await ageCache(t, subId, 120_000 + 11 * 60_000);
+    mockBody = 'RAW-CONFIG-2';
+    const changed = await get(t, { 'if-none-match': tag2 });
+    expect(changed.status).toBe(200);
+    expect(await changed.text()).toBe('RAW-CONFIG-2');
+    expect(changed.headers.get('etag')).not.toBe(tag2);
+  });
+
+  test('revalidation: past the 30 s cache a matching validator is answered from the entry, unconditional polls refetch', async () => {
+    const t = convexTest(schema, modules);
+    const { subId } = await seedSub(t);
+    const tag = (await get(t)).headers.get('etag')!;
+    await ageCache(t, subId, 5 * 60_000);
+    mockBody = 'RAW-CONFIG-2'; // would surface if the conditional request refetched
+    const kept = await get(t, { 'if-none-match': tag });
+    expect(kept.status).toBe(304);
+    expect(fetchCalls).toBe(1);
+    // Past the revalidation window the backend is asked again.
+    await ageCache(t, subId, 6 * 60_000);
+    const asked = await get(t, { 'if-none-match': tag });
+    expect(asked.status).toBe(200);
+    expect(await asked.text()).toBe('RAW-CONFIG-2');
+    expect(fetchCalls).toBe(2);
+    // An unconditional poll keeps the 30 s cache: aged 1 min, it refetches.
+    await ageCache(t, subId, 60_000);
+    await get(t);
+    expect(fetchCalls).toBe(3);
+  });
+
+  test('a stale body served while the backend is down carries the tag and can be a 304', async () => {
+    const t = convexTest(schema, modules);
+    const { subId } = await seedSub(t);
+    const tag = (await get(t)).headers.get('etag')!;
+    await ageCache(t, subId, 24 * 3600_000);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('backend down');
+      }),
+    );
+    const stale = await get(t);
+    expect(stale.status).toBe(200);
+    expect(stale.headers.get('etag')).toBe(tag);
+    expect((await get(t, { 'if-none-match': tag })).status).toBe(304);
+  });
+
+  test('a cache entry from before the format change is never served, fresh or stale', async () => {
+    const t = convexTest(schema, modules);
+    const { subId } = await seedSub(t);
+    await get(t);
+    const legacy = async () =>
+      t.run(async (ctx) => {
+        const sub = (await ctx.db.get(subId))!;
+        const entries = JSON.parse(sub.subCache!) as Array<Record<string, unknown>>;
+        for (const e of entries) {
+          delete e.v;
+          delete e.validUntil;
+        }
+        await ctx.db.patch(subId, { subCache: JSON.stringify(entries) });
+      });
+    await legacy();
+    await get(t); // within the TTL, yet the backend is asked
+    expect(fetchCalls).toBe(2);
+    const fresh = (await t.run((ctx) => ctx.db.get(subId)))!;
+    expect(JSON.parse(fresh.subCache!)[0]).toMatchObject({ v: 2, validUntil: null });
+    await legacy();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('backend down');
+      }),
+    );
+    expect((await get(t)).status).toBe(502);
+  });
+
+  test('no tag and no 304 on a refusal: unknown token, throttled, backend down, device rejected', async () => {
+    const t = convexTest(schema, modules);
+    await seedSub(t);
+    const tag = (await get(t)).headers.get('etag')!;
+    const unknown = await t.fetch('/api/v1/sub/nope', { headers: { 'if-none-match': '*' } });
+    expect(unknown.status).toBe(404);
+    expect(unknown.headers.get('etag')).toBeNull();
+    // Backend down with nothing cached for this UA.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('backend down');
+      }),
+    );
+    const down = await t.fetch('/api/v1/sub/tok_abc', {
+      headers: { 'user-agent': 'sing-box/1', 'if-none-match': '*' },
+    });
+    expect(down.status).toBe(502);
+    expect(down.headers.get('etag')).toBeNull();
+    // A device rejection.
+    stubFrontFetch();
+    await enableDeviceEnforcement(t);
+    mockStatus = 404;
+    mockBody = 'not found';
+    const rejected = await get(t, { 'x-hwid': 'unregistered', 'if-none-match': tag });
+    expect(rejected.status).toBe(404);
+    expect(rejected.headers.get('etag')).toBeNull();
+    // Throttled (the per-token cap, UA-rotating so every request is live).
+    mockStatus = 200;
+    let last: Response | null = null;
+    for (let i = 0; i < 61; i++)
+      last = await t.fetch('/api/v1/sub/tok_abc', {
+        headers: { 'user-agent': `Rot/${i}`, 'if-none-match': '*' },
+      });
+    expect(last!.status).toBe(429);
+    expect(last!.headers.get('etag')).toBeNull();
+  });
+
+  test('a device-specific request still reaches the backend every time, and may be a 304', async () => {
+    const t = convexTest(schema, modules);
+    await seedSub(t);
+    await enableDeviceEnforcement(t);
+    const first = await get(t, { 'x-hwid': 'device-a' });
+    const tag = first.headers.get('etag')!;
+    expect(first.headers.get('cache-control')).toBe('private, no-store');
+    const second = await get(t, { 'x-hwid': 'device-a', 'if-none-match': tag });
+    expect(second.status).toBe(304);
+    expect(second.headers.get('vary')).toBeNull();
+    expect(second.headers.get('cache-control')).toBe('private, no-store');
+    expect(fetchCalls).toBe(2); // the device registered with the backend both times
+    expect(lastReqHeaders['x-hwid']).toBe('device-a');
+  });
+});

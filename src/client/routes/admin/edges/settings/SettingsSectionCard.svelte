@@ -41,6 +41,7 @@
     patchEdgeConfig,
   } from '@client/lib/edgesApi';
   import { edgeErrorMessage } from '../lib/edgeErrors';
+  import { codeExplain, codeFix, codeLabel } from '@client/lib/edgeCodes';
   import {
     adjustedValues,
     flattenConfig,
@@ -115,6 +116,13 @@
           ? `${title}: nothing needed saving.`
           : `${title}: saved ${n} ${n === 1 ? 'setting' : 'settings'}.`,
       );
+      // Notices about what was stored (never refusals), e.g. a drain shorter than refreshes.
+      for (const w of res.warnings) {
+        const code = w.replace(/^edge\./, '');
+        toast.warning(codeLabel(code), {
+          description: [codeExplain(code), codeFix(code)].filter(Boolean).join(' '),
+        });
+      }
     },
   }));
 
