@@ -15,15 +15,21 @@
  * fake backend nor the network. It runs again after the afterEach hooks and
  * after each suite, for work those hooks scheduled.
  *
+ * The instances a test used end as one group. Every instance's pending jobs are
+ * cancelled before any running job is waited for, and one instance that cannot
+ * end does not keep the others from ending: the drain finishes them all, then
+ * fails the test with what went wrong.
+ *
  * Fake timers: a running job may await a faked timer (a sleep between probe
  * attempts). If the test still has fake timers installed, the drain moves the
- * faked clock one timer at a time, cancelling new jobs before each step, so
- * that job finishes inside its own test instead of whenever a later test moves
- * the clock. If the test restored real timers itself while such a job was
- * waiting, the timer is gone and the job can never resume: the drain fails the
- * test after SETTLE_LIMIT_MS rather than hang. Finish the scheduled work
- * (`t.finishAllScheduledFunctions(vi.runAllTimers)`) before
- * `vi.useRealTimers()` in such a test.
+ * faked clock one timer at a time, cancelling every instance's new jobs before
+ * each step (the clock is the whole test's), so that job finishes inside its
+ * own test instead of whenever a later test moves the clock. If the test
+ * restored real timers itself while such a job was waiting, the timer is gone
+ * and the job can never resume: the drain fails the test after SETTLE_LIMIT_MS
+ * (a test may stub a shorter one under SETTLE_LIMIT_KEY) rather than hang.
+ * Finish the scheduled work (`t.finishAllScheduledFunctions(vi.runAllTimers)`)
+ * before `vi.useRealTimers()` in such a test.
  *
  * Tests run one at a time within a file (no `test.concurrent`): the drain ends
  * every instance used since the last drain.
@@ -45,6 +51,8 @@ import { takeLiveConvexTests, type ScheduledWorkOf } from './convexTest.tracked'
 const MAX_ROUNDS = 100;
 /** How long running jobs may take to finish once their test is over. */
 const SETTLE_LIMIT_MS = 30_000;
+/** `vi.stubGlobal(Symbol.for(...), ms)` sets a shorter limit for one test. */
+const SETTLE_LIMIT_KEY = Symbol.for('fcp.test.scheduledWorkSettleLimitMs');
 /** The longest delay Node arms as asked. */
 const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
 const WITHIN_RANGE = Symbol.for('fcp.test.setTimeoutWithinRange');
@@ -103,22 +111,40 @@ export async function endScheduledWork(): Promise<void> {
   const before = globalThis.fetch;
   globalThis.fetch = refused;
   try {
-    for (const work of ending) await endScheduled(work);
+    const errors = await endTogether(ending);
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) {
+      throw new AggregateError(errors, `${errors.length} failures ending scheduled work`);
+    }
   } finally {
     globalThis.fetch = before;
   }
 }
 
 /**
- * Cancel what has not started and wait for what is running; a running job may
- * schedule more, which the next round cancels. Done when nothing is running.
+ * Each round cancels what has not started on every instance, then waits for
+ * what is running; a running job may schedule more, which the next round
+ * cancels. Done when nothing is running anywhere. Returns what went wrong.
  */
-async function endScheduled(work: ScheduledWorkOf): Promise<void> {
-  for (let round = 0; round < MAX_ROUNDS; round++) {
-    if ((await cancelPending(work)) === 0) return;
-    await settle(work);
+async function endTogether(ending: ScheduledWorkOf[]): Promise<unknown[]> {
+  const errors: unknown[] = [];
+  let open = ending;
+  for (let round = 0; open.length > 0; round++) {
+    if (round === MAX_ROUNDS) {
+      errors.push(new Error(`scheduled functions still running after ${MAX_ROUNDS} rounds`));
+      break;
+    }
+    const running: ScheduledWorkOf[] = [];
+    for (const work of open) {
+      try {
+        if ((await cancelPending(work)) > 0) running.push(work);
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    open = await settle(running, errors);
   }
-  throw new Error(`scheduled functions still running after ${MAX_ROUNDS} rounds`);
+  return errors;
 }
 
 /** Cancels every pending job; returns how many are running. */
@@ -133,26 +159,43 @@ async function cancelPending(work: ScheduledWorkOf): Promise<number> {
   });
 }
 
-/** Wait for the running jobs, moving a faked clock for them if the test left one installed. */
-async function settle(work: ScheduledWorkOf): Promise<void> {
-  let settled = false;
-  const finished = work.finishInProgressScheduledFunctions().finally(() => {
-    settled = true;
-  });
-  const deadline = realNow() + SETTLE_LIMIT_MS;
-  while (!settled) {
+/**
+ * Wait for the running jobs, moving a faked clock for them if the test left one
+ * installed; returns the instances that settled. One still running at the
+ * limit is reported and left behind: it is waiting for a timer that is gone.
+ */
+async function settle(running: ScheduledWorkOf[], errors: unknown[]): Promise<ScheduledWorkOf[]> {
+  const settled: ScheduledWorkOf[] = [];
+  let waiting = running.length;
+  for (const work of running) {
+    work
+      .finishInProgressScheduledFunctions()
+      .then(
+        () => settled.push(work),
+        (error: unknown) => errors.push(error),
+      )
+      .finally(() => waiting--);
+  }
+  const limitMs =
+    (globalThis as { [SETTLE_LIMIT_KEY]?: number })[SETTLE_LIMIT_KEY] ?? SETTLE_LIMIT_MS;
+  const deadline = realNow() + limitMs;
+  while (waiting > 0) {
     if (vi.isFakeTimers()) {
-      await cancelPending(work);
+      // The faked clock is the whole test's: no instance's pending job may start when it moves.
+      await Promise.allSettled(running.map(cancelPending));
       vi.advanceTimersToNextTimer();
     }
     await new Promise((resolve) => realSetTimeout(resolve, 1));
-    if (!settled && realNow() > deadline) {
-      throw new Error(
-        `scheduled functions still running ${SETTLE_LIMIT_MS} ms after their test ended; ` +
-          'one awaiting a fake timer that vi.useRealTimers() dropped never resumes, so finish ' +
-          "the test's scheduled work before restoring real timers",
+    if (waiting > 0 && realNow() > deadline) {
+      errors.push(
+        new Error(
+          `scheduled functions still running ${limitMs} ms after their test ended; ` +
+            'one awaiting a fake timer that vi.useRealTimers() dropped never resumes, so ' +
+            "finish the test's scheduled work before restoring real timers",
+        ),
       );
+      break;
     }
   }
-  await finished;
+  return [...settled];
 }
