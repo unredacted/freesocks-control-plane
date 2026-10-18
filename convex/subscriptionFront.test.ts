@@ -14,6 +14,7 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { addressRemark } from './lib/backend/hostRemark';
 import { decodeBase64Loose, encodeBase64 } from './lib/edges/render/base64';
+import { signValue } from './lib/cookies';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -1006,5 +1007,40 @@ describe('GET /api/v1/sub/<token>: conditional requests', () => {
     expect(second.headers.get('cache-control')).toBe('private, no-store');
     expect(fetchCalls).toBe(2); // the device registered with the backend both times
     expect(lastReqHeaders['x-hwid']).toBe('device-a');
+  });
+});
+
+/** A place no origin covers: the raw-config view hands out the backend body as `/sub` does. */
+describe('GET /api/v1/subscription/content on an unbound place', () => {
+  beforeEach(() => {
+    vi.stubEnv('IP_HASH_SALT', 'test-salt');
+    vi.stubEnv('SESSION_SIGNING_KEY', 'raw-sign');
+    mockBody = 'vless://u@192.0.2.40:443?security=reality#direct';
+    mockStatus = 200;
+    mockHeaders = { 'content-type': 'text/plain' };
+    stubFrontFetch();
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  test('the panel body passes through (relabelled), fetched with no client User-Agent', async () => {
+    const t = convexTest(schema, modules);
+    const { userId } = await seedSub(t);
+    const sid = `sid-raw-${Math.random().toString(36).slice(2)}`;
+    await t.mutation(internal.sessions.create, { sid, kind: 'member', userId, ttlMs: 3_600_000 });
+    const res = await t.fetch('/api/v1/subscription/content', {
+      headers: {
+        cookie: `fs_session=${await signValue(sid, 'raw-sign')}`,
+        'user-agent': 'Mozilla/5',
+      },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { content: string; contentType: string };
+    expect(body.content).toContain('192.0.2.40:443');
+    expect(body.contentType).toBe('text/plain');
+    // The browser's User-Agent never reaches the panel (it could fetch the HTML page).
+    expect(lastReqHeaders['user-agent']).not.toBe('Mozilla/5');
   });
 });

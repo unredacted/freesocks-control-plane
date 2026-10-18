@@ -548,6 +548,31 @@ export const mirrorContextForUser = internalQuery({
 });
 
 /**
+ * What the sealed raw-config view needs to fetch a member's body AND decide it
+ * the way the subscription route does (lib/subscriptionDelivery.ts): the fetch
+ * locator plus the stored pin and the stored country answer.
+ */
+export const deliveryContextForUser = internalQuery({
+  args: { userId: v.id('users') },
+  handler: async (ctx, { userId }) => {
+    const user = await ctx.db.get(userId);
+    if (!user) return null;
+    const sub = await currentOrActiveSub(ctx.db, user);
+    if (!sub) return null;
+    return {
+      subscriptionId: sub._id,
+      backend: sub.backend,
+      backendServerId: sub.backendServerId ?? null,
+      backendShortId: sub.backendShortId,
+      subscriptionUrl: sub.subscriptionUrl,
+      excludeNode: sub.excludeNode ?? null,
+      pinnedNode: sub.pinnedNode ?? null,
+      sniRegion: sub.sniRegion ?? null,
+    };
+  },
+});
+
+/**
  * What the entry names of a member body served from this backend instance are
  * built from (lib/memberEntryNames.ts): the site name and the instance's
  * location label, or null when they are off or the backend's names are not
