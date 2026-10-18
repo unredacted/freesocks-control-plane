@@ -194,7 +194,7 @@ describe('hpke: FS_HPKE_ADMIN_REQUIRED', () => {
       body: JSON.stringify({ render: { enabled: true } }),
     });
     expect(patch.status).toBe(200);
-    expect(await patch.json()).toEqual({ changedKeys: ['render.enabled'] });
+    expect(await patch.json()).toEqual({ changedKeys: ['render.enabled'], warnings: [] });
     // A bogus bearer is still a "token caller" for the gate, but then fails auth (401, not 400).
     const bogus = await t.fetch(SUMMARY, { headers: { authorization: 'Bearer fsv1_nope' } });
     expect(bogus.status).toBe(401);
@@ -243,7 +243,7 @@ describe('hpke: FS_HPKE_ADMIN_REQUIRED', () => {
       body: JSON.stringify(prepPatch.body),
     });
     expect(patch.status).toBe(200);
-    expect(await patch.json()).toEqual({ changedKeys: ['render.enabled'] });
+    expect(await patch.json()).toEqual({ changedKeys: ['render.enabled'], warnings: [] });
   });
 });
 

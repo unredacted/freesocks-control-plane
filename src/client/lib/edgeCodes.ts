@@ -34,6 +34,7 @@ import type {
   SetupRunNeed,
   SetupStepId,
   SetupStepStatus,
+  SettingsWarningCode,
 } from '../../shared/contracts/edgeCodes';
 import { SETUP_RUN_STAGE_STEP } from '../../shared/contracts/edgeCodes';
 
@@ -55,7 +56,8 @@ type KnownCode =
   | AttentionKind
   | LayerExclusionCode
   | DeliveryUnavailableCode
-  | PoolCode;
+  | PoolCode
+  | SettingsWarningCode;
 
 const COPY = {
   // --- origin --------------------------------------------------------------------------
@@ -898,6 +900,19 @@ const COPY = {
     explain:
       'The render rule for this client app family is off, so its members get nothing from a protected node.',
     fix: 'Turn the family on under Settings.',
+  },
+  // --- settings notices (a save answers with them; nothing was refused) ------------------
+  drain_below_refresh: {
+    label: 'Drain shorter than refreshes',
+    explain:
+      'A replaced address is removed before apps that check for a new one at the refresh interval have had two chances to do so.',
+    fix: 'Keep the drain time at two refresh intervals or more, or shorten the refresh interval.',
+  },
+  burned_drain_below_refresh: {
+    label: 'Burned drain too short',
+    explain:
+      'A burned address is removed before apps outside the blocking country that refresh at the interval have moved to the new one.',
+    fix: 'Keep the burned drain time at one refresh interval plus 30 minutes or more.',
   },
 } as const satisfies Record<KnownCode, CodeCopy> & Record<string, CodeCopy>;
 

@@ -98,7 +98,21 @@ async function subscription(ua: string) {
   expect(response.headers.get('vary')?.toLowerCase()).toBe('user-agent');
   // The panel's page URL is the key's raw panel subscription URL.
   expect(response.headers.get('profile-web-page-url')).toBeNull();
+  // Every answer carries the validator an app revalidates with.
+  expect(response.headers.get('etag')).toMatch(/^W\/"fs1-[A-Za-z0-9_-]{22}"$/);
   return await response.text();
+}
+
+/** Revalidate with the tag the last answer carried: nothing changed, so a 304 with no body. */
+async function revalidated(ua: string): Promise<void> {
+  const first = await t.fetch(`/api/v1/sub/${token}`, { headers: { 'user-agent': ua } });
+  const tag = first.headers.get('etag')!;
+  const again = await t.fetch(`/api/v1/sub/${token}`, {
+    headers: { 'user-agent': ua, 'if-none-match': tag },
+  });
+  expect(again.status).toBe(304);
+  expect(await again.text()).toBe('');
+  expect(again.headers.get('etag')).toBe(tag);
 }
 
 describe('real panel → FCP HTTP handler → client format (Convex test runtime)', () => {
@@ -110,6 +124,7 @@ describe('real panel → FCP HTTP handler → client format (Convex test runtime
         expectMemberNames(body, client.format);
         // An immediate repeat is a fresh-cache hit for this UA and must be byte-identical.
         expect(await subscription(ua)).toBe(body);
+        await revalidated(ua);
       });
     }
   }

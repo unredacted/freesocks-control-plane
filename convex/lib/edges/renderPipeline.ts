@@ -48,6 +48,25 @@ export interface RenderSnapshot {
 
 export interface PipelineResult extends RenderResult {
   snapshot: RenderSnapshot;
+  /**
+   * When this body stops being servable: the earliest proof expiry among the
+   * L7 fronts it hands out (primary and backup), null when it holds none. A
+   * cached copy is never served past it (docs/edges.md "Asking whether a
+   * configuration changed").
+   */
+  validUntil: number | null;
+}
+
+/** The earliest proof expiry among the assigned edges, null when none is an L7 front. */
+export function renderValidUntil(
+  edges: ReadonlyArray<PublishedEdge | null | undefined>,
+): number | null {
+  let earliest: number | null = null;
+  for (const e of edges) {
+    if (!e || e.layer !== 'l7' || e.proofExpiresAt === undefined) continue;
+    earliest = earliest === null ? e.proofExpiresAt : Math.min(earliest, e.proofExpiresAt);
+  }
+  return earliest;
 }
 
 const RENDER_FORMAT_OF = {
@@ -106,5 +125,6 @@ export function applyEdgeRender(
       primaryEdgeId: assigned.primary?.edge.edgeId ?? null,
       backupEdgeId: assigned.backup?.edge.edgeId ?? null,
     },
+    validUntil: renderValidUntil([assigned.primary?.edge, assigned.backup?.edge]),
   };
 }

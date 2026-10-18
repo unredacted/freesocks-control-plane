@@ -14,6 +14,7 @@ import { backendIdValidator, type BackendId } from './lib/backendIds';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import { entryNamingFrom, type EntryNaming } from './lib/memberEntryNames';
 import { profileTitleValue, resolveSubscriptionSiteName } from './lib/subscriptionTitle';
+import { resolveUpdateIntervalHours } from './lib/edgeConfig';
 import { resolveCensoredCountries } from './lib/censoredCountries';
 import { storedCountry } from './lib/memberCountry';
 import { carriedCountry, onPlacementChanged, resolveMemberCountryConfig } from './memberCountry';
@@ -328,6 +329,8 @@ interface SubCacheEntry {
   at: number;
   /** The stored country the body was shaped for (convex/memberCountry.ts). */
   region?: string | null;
+  // The route's further fields (format version, edge token, render epoch,
+  // validity) pass through untouched; see SubCacheEntry in convex/http.ts.
 }
 
 /**
@@ -927,7 +930,18 @@ export const remapBackendUserId = internalMutation({
 
 /** The `profile-title` every subscription response carries: the service name
  *  (`subscription.siteName`), never the backend's own title. */
-export const profileTitle = internalQuery({
+/**
+ * What the subscription route stamps on every answer, whatever path the body
+ * took: FCP's `profile-title` and the refresh hint it sends with an
+ * edge-rendered body (`edge.updateIntervalHours`). Two point reads.
+ */
+export const responseHints = internalQuery({
   args: {},
-  handler: async (ctx) => profileTitleValue(await resolveSubscriptionSiteName(ctx.db)),
+  handler: async (ctx): Promise<{ title: string; updateIntervalHours: number }> => {
+    const [siteName, updateIntervalHours] = await Promise.all([
+      resolveSubscriptionSiteName(ctx.db),
+      resolveUpdateIntervalHours(ctx.db),
+    ]);
+    return { title: profileTitleValue(siteName), updateIntervalHours };
+  },
 });
