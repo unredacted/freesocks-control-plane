@@ -317,6 +317,8 @@ and refuses `front_unqualified` / `front_qualification_stale`. The reconcile cro
 published L7 edges before their qualification expires.
 
 A detector-triggered L7 replacement waits up to 15 minutes for **affected-country evidence**
+(the countries snapshotted on the rotation when the detector started it, § "Probes and the
+block detector")
 for the new front (`EDGE_PLUMBING.l7QualifyTimeoutMs`); the reconcile cron renews a proof a
 quarter of its lifetime before it lapses (at most six re-proofs a pass); a failed renewal is
 retried, and once the proof lapses the front leaves rendering until a proof succeeds. **Importing a front**
@@ -1646,10 +1648,62 @@ Probe targets are the published edges of
 every origin (the only kind the detector reads), origin targets that opted in (`probeNode`) and
 operator-entered custom targets; UDP listeners are not probeable (`probe.udp_unsupported`).
 The detector's load and node-online signals exist only for a `panel-node` origin; for other
-kinds the load score is 0 (`no_load_signal`) and `node_offline` reads the instance health of a
-`backend-server` origin. The "manageable Host" veto applies only to `hostMode: operator`; a
+kinds there is no node signal at all: the load score is 0 (`no_load_signal`) and the online bit
+is unknown, so `node_offline` never applies. The "manageable Host" veto applies only to `hostMode: operator`; a
 `setupOwned` origin (a guided setup in progress) is vetoed `setup_owned` right after the
 auto-rotate gates, before any evidence is weighed.
+
+**The countries a detector start answers to.** Every detector start records the countries its
+evaluation's evidence named for the target (`edgeRotations.affectedCountries`). The L7
+replacement gate and the confirming re-check prove the new front against that snapshot, never
+against the origin's live suspicion, which every later pass rewrites: a replacement that takes
+longer than one pass (provisioning, the 15-minute evidence wait) is still proven where the
+block was seen. A rotation row written before the snapshot existed reads the suspicion as
+before. Only a detector start carries one (`validation` otherwise); the rotation view shows it.
+
+### Simulating a block on a test deployment
+
+A beta or local deployment cannot produce real censorship, so the automatic path (detector,
+start checks, rotation, burn drain, epoch, members' subscriptions) would otherwise never run
+there. **Test block evidence** (`convex/edgeSimulations.ts`, `lib/edges/simulation.ts`) makes
+the detector believe one published edge is blocked in one country:
+
+- **Only where the deployment opts in**: `EDGE_SIMULATOR_ALLOW=simulate-blocks`, or
+  `ENVIRONMENT=development`. `ENVIRONMENT` alone cannot tell a beta stack from production (both
+  run `production`). The value is read on every call: once it is removed (`convex env remove`,
+  removing the line from `.env.convex` does not unset it), new test blocks are refused
+  (`edge.simulator_disabled`, 403) and the next detector pass ends the live ones (`disabled`).
+  Never set it on production. While it is on, every admin page says so
+  (`GET /api/v1/admin/status` `testTools.blockSimulator`).
+- **What it overlays.** A live test block is laid over a COPY of the detector's inputs right
+  before `evaluate`: `reporters` more distinct reporters (default twice
+  `detect.minReporters`), counted for its country and attributed to its edge, and its edge
+  reading `unreachable` from that country, measured just now. Nothing is written to member
+  reports, probe rows or baseline samples. With the shipped detection settings (load
+  corroboration on, a cold or quiet baseline) the default scores 0.75 against `suspectAt` 0.6,
+  hint `corroborated`, so no detector setting has to change. Every gate still applies:
+  `edge.enabled`, `edge.autoRotate`, the origin's own Auto rotate, the fleet brake and caps,
+  cooldown, the daily cap, `no_verified_spare`, `outside_approved_shape`, maintenance.
+- **One test block, one rotation.** When the detector's decision names an edge with a live
+  test block, it starts the rotation through `edgeSimulations.startSimulatedRotation`, which
+  re-checks the test block (live, same origin and edge, edge still published, opt-in on),
+  starts the rotation through the same `startRotation` every start uses, and marks the test
+  block `consumed` with the rotation's id, all in one transaction. A refused start rolls the
+  whole transaction back and leaves the test block live (the refusal shows on the suspicion as
+  usual). The rotation's reason is `detector:<source>:simulated`; the suspicion and its
+  `edge.block_suspected` audit carry `simulated: true`.
+- **Starting one** (`POST edges/{id}/simulate-block {country, reporters?, minutes?}`, the
+  servers write scope, throttled like a probe request; or Simulate a block (test) in the edge's
+  actions menu): only a published edge (`edge.not_published`), with probes on
+  (`edge.simulation_needs_probes`), in a country edges are checked from
+  (`edge.simulation_country`), one per edge (`edge.simulation_active`), three per deployment
+  (`edge.simulation_limit`), for 15 to 360 minutes (default 60). `POST
+edges/{id}/simulate-block/end` ends it; `GET relays/{id}/simulations` lists the live and the
+  last ended ones. Audited `edge.block_simulation.started` / `.ended` (country, reporters,
+  minutes, reason); attention `block_simulated` (warning) while one runs. Ended rows are
+  deleted after 30 days.
+
+The runbook that uses it is docs/beta-deploy.md "Walking automatic rotation".
 
 **Verification rungs of an L4 edge** (`lib/edges/verifyRung.ts`, pure): `partial` = provider
 health + outside reachability (at least `probe.agreementVantages` distinct vantages reachable,
@@ -1878,6 +1932,10 @@ Node pinning understands the origin remark (`convex/lib/nodePinning.ts`).
 A manual "Remove trust" holds automatic trust off until an operator trusts again or the
 credentials change. Editing credentials or settings, or a template change that moves the
 account's effective template, clears the qualification (and its evidence).
+
+**Walk automatic rotation, or an L7 front, on a test deployment.** docs/beta-deploy.md
+"Walking the edges on a test deployment" (test block evidence, § "Simulating a block on a test
+deployment").
 
 **Protect a backend node.** Autopilot only: the runbook "Deploy a fronted node" in
 `docs/servers.md`, from the role run to a member connection.

@@ -1192,6 +1192,29 @@ export const attention = internalQuery({
           });
         }
       }
+      // Test block evidence (edgeSimulations.ts) is running on this origin: it
+      // can replace an edge for real, so it is never out of sight.
+      const simulations = await ctx.db
+        .query('edgeBlockSimulations')
+        .withIndex('by_relay_live', (q) =>
+          q.eq('relayId', relay._id).eq('endedAt', undefined).gt('expiresAt', now),
+        )
+        .take(20);
+      if (simulations.length > 0) {
+        items.push({
+          ...base(relay),
+          edgeId: simulations[0].edgeId as string,
+          id: `block_simulated:${relay._id}`,
+          kind: 'block_simulated',
+          severity: 'warning',
+          facts: {
+            count: simulations.length,
+            countries: [...new Set(simulations.map((s) => s.country))],
+          },
+          action: 'open_relay',
+          since: iso(Math.min(...simulations.map((s) => s.startedAt))),
+        });
+      }
       if (relay.suspicion?.state === 'suspected') {
         // A one-click replace needs ONE target: the single published edge the
         // evidence names. Anything else (no edge-level evidence, several edges)
@@ -1783,7 +1806,9 @@ export const preflight = internalQuery({
     if (!cfg.render.enabled) warnings.push({ code: 'render_disabled', detail: null });
     if (!cfg.enabled) warnings.push({ code: 'edge_disabled', detail: null });
     if (!cfg.probe.enabled) warnings.push({ code: 'probe_disabled', detail: null });
-    if (!process.env.EDGE_MARK_PEPPER) warnings.push({ code: 'mark_pepper_missing', detail: null });
+    // The same key the report route marks with (http.ts): the pepper, else the IP salt.
+    if (!(process.env.EDGE_MARK_PEPPER || process.env.IP_HASH_SALT))
+      warnings.push({ code: 'mark_pepper_missing', detail: null });
     if (relay.backendServerId && relay.origin.kind !== 'manual') {
       const { bound } = await bindingStateOf(ctx.db, relay);
       if (bound && publishedCount(relay.publishedEdgeIds) === 0)

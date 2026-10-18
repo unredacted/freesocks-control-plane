@@ -22,6 +22,7 @@ import { internalAction, internalMutation, internalQuery } from './_generated/se
 import type { DatabaseReader, MutationCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
+import { blockSimulatorAllowedIn } from './lib/edges/simulation';
 import { postureKnob } from './lib/hpke';
 import { resolveRange } from './lib/timeRange';
 import { ConvexError, v } from 'convex/values';
@@ -2106,6 +2107,8 @@ export const statusSummary = internalQuery({
       hpke,
       relays,
       runtime,
+      // Test tools this deployment accepts: every admin page says so while on.
+      testTools: { blockSimulator: blockSimulatorAllowedIn(process.env) },
       generatedAt: iso(now),
     };
   },

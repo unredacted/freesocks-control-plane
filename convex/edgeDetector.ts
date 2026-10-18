@@ -31,6 +31,11 @@ import {
   type WindowReports,
 } from './lib/edges/scoring';
 import type { Verdict } from './lib/edges/probes/verdict';
+import {
+  applySimulatedEvidence,
+  blockSimulatorAllowedIn,
+  type SimulatedEvidence,
+} from './lib/edges/simulation';
 
 const MIN = 60_000;
 const DAY = 24 * 60 * MIN;
@@ -287,6 +292,8 @@ export const recordEvaluation = internalMutation({
     windowReports: v.optional(v.number()),
     windowDistinctReporters: v.optional(v.number()),
     windowIncomplete: v.optional(v.boolean()),
+    /** Test block evidence took part (edgeSimulations.ts): kept on the suspicion and in its audit. */
+    simulated: v.optional(v.boolean()),
   },
   handler: async (ctx, a) => {
     const origin = await ctx.db.get(a.relayId);
@@ -331,6 +338,7 @@ export const recordEvaluation = internalMutation({
           a.lastRotateError === undefined
             ? prev?.lastRotateError
             : (a.lastRotateError ?? undefined),
+        ...(a.simulated ? { simulated: true } : {}),
       },
       updatedAt: a.now,
     });
@@ -371,6 +379,7 @@ export const recordEvaluation = internalMutation({
           topCountry: ev.countries[0]?.code ?? null,
           scope: ev.scope,
           autoRotate: origin.autoRotate,
+          simulated: a.simulated === true,
         },
       });
     } else if (ev.transition === 'cleared') {
@@ -466,6 +475,15 @@ interface Evaluated {
   origin: Origin;
   w: RelayWindow;
   ev: Evaluation;
+  /** The live test blocks laid over this origin's inputs (empty unless the deployment opts in). */
+  sims: Array<SimulatedEvidence & { id: Id<'edgeBlockSimulations'> }>;
+}
+
+/** The countries the evaluation's evidence names for one edge (a detector start's snapshot). */
+function evidenceCountries(ev: Evaluation, edgeId: string): string[] {
+  const out = new Set<string>();
+  for (const e of ev.edgeEvidence) if (e.edgeId === edgeId) for (const c of e.countries) out.add(c);
+  return [...out];
 }
 
 export const run = internalAction({
@@ -482,6 +500,10 @@ export const run = internalAction({
       };
       const now = Date.now();
       await ctx.runMutation(internal.edgeDetector.sweepMarks, { now });
+      // Test blocks (edgeSimulations.ts): end what expired or lost its edge, and
+      // everything once the deployment's opt-in is gone.
+      await ctx.runMutation(internal.edgeSimulations.sweep, { now });
+      const simulatorOn = blockSimulatorAllowedIn(process.env);
       const origins: Origin[] = await ctx.runQuery(internal.relays.listEnabled, {});
       // Maintenance: detection is new work (it can start a rotation); skip the tick.
       if ((await ctx.runQuery(internal.edgeMaintenance.state, {})).frozen) return report;
@@ -497,14 +519,23 @@ export const run = internalAction({
             now,
           });
           if (!w) continue;
+          // A live test block is laid over a COPY of the inputs: the real
+          // window still reaches the record (and the baseline sample) below.
+          const sims = simulatorOn
+            ? await ctx.runQuery(internal.edgeSimulations.liveForRelay, { relayId: o._id, now })
+            : [];
+          const inputs =
+            sims.length > 0
+              ? applySimulatedEvidence(w.window, w.edges, sims)
+              : { window: w.window, edges: w.edges };
           const ev = evaluate({
             now,
-            window: w.window,
+            window: inputs.window,
             baseline: w.baseline,
             usersOnline: w.usersOnline,
             loadStale: w.loadStale,
             nodeOnline: w.nodeOnline,
-            edges: w.edges,
+            edges: inputs.edges,
             cfg: w.cfg,
             prev: w.origin.suspicion
               ? {
@@ -516,7 +547,7 @@ export const run = internalAction({
           });
           report.evaluated++;
           if (ev.state === 'suspected') report.suspected++;
-          evaluated.push({ origin: o, w, ev });
+          evaluated.push({ origin: o, w, ev, sims });
         } catch (err) {
           report.errors++;
           console.warn(
@@ -533,7 +564,7 @@ export const run = internalAction({
       // Started this pass; the start mutation counts each one against the cap too.
       let rotationsToday = fleet.rotationsToday;
       // Pass 2: per origin, the automatic decision, the record and the probes.
-      for (const { origin: o, w, ev } of evaluated) {
+      for (const { origin: o, w, ev, sims } of evaluated) {
         try {
           const decision = autoRotateDecision({
             evaluation: ev,
@@ -561,15 +592,30 @@ export const run = internalAction({
           const veto = 'veto' in decision ? decision.veto : null;
           let lastRotateError: string | null | undefined = undefined;
           if (!('veto' in decision)) {
+            // The countries this start answers to, from THIS evaluation (the
+            // record below rewrites the suspicion; later passes again).
+            const affectedCountries = evidenceCountries(ev, decision.edgeId);
+            const sim = sims.find((s) => s.edgeId === decision.edgeId);
             try {
-              await ctx.runMutation(internal.edgeRotations.start, {
-                relayId: o._id,
-                kind: 'replace',
-                trigger: 'detector',
-                burn: true,
-                targetEdgeId: decision.edgeId as Id<'edges'>,
-                reason: `detector:${decision.source}`,
-              });
+              if (sim)
+                // Consumed in the transaction that creates the rotation.
+                await ctx.runMutation(internal.edgeSimulations.startSimulatedRotation, {
+                  simulationId: sim.id,
+                  relayId: o._id,
+                  targetEdgeId: decision.edgeId as Id<'edges'>,
+                  reason: `detector:${decision.source}:simulated`,
+                  affectedCountries,
+                });
+              else
+                await ctx.runMutation(internal.edgeRotations.start, {
+                  relayId: o._id,
+                  kind: 'replace',
+                  trigger: 'detector',
+                  burn: true,
+                  targetEdgeId: decision.edgeId as Id<'edges'>,
+                  reason: `detector:${decision.source}`,
+                  affectedCountries,
+                });
               report.rotated++;
               rotationsToday++;
               lastRotateError = null;
@@ -591,6 +637,7 @@ export const run = internalAction({
             windowReports: w.window.reports,
             windowDistinctReporters: w.window.distinctReporters,
             windowIncomplete: w.window.incomplete ?? false,
+            ...(sims.length > 0 ? { simulated: true } : {}),
             ...(lastRotateError !== undefined ? { lastRotateError } : {}),
           });
           // Reports alone raised suspicion: ask the probes for edge-level evidence now.

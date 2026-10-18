@@ -250,6 +250,9 @@ export function mapRotationAdmin(
     hostPlanSize: r.hostPlan.length,
     flipAttempts: r.flipAttempts,
     rollbackAttempts: r.rollbackAttempts,
+    // A detector start: the countries it answers to, and whether a test block started it.
+    affectedCountries: r.affectedCountries ?? null,
+    simulated: r.simulationId !== undefined,
     startedAt: new Date(r.startedAt).toISOString(),
     provisionedAt: r.provisionedAt ? new Date(r.provisionedAt).toISOString() : null,
     flippedAt: r.flippedAt ? new Date(r.flippedAt).toISOString() : null,
@@ -440,6 +443,10 @@ const startArgs = {
   setupRun: v.optional(v.object({ runId: v.id('edgeSetupRuns'), generation: v.number() })),
   /** `setup.complete`: a setup run finishing admitted work; passes a maintenance freeze (needs `setupRun`). */
   admission: v.optional(v.literal('setup.complete')),
+  /** Detector starts only: the countries the evaluation's evidence named for the target (the L7 gate's snapshot). */
+  affectedCountries: v.optional(v.array(v.string())),
+  /** Detector starts only: the test block this start answers (consumed by the caller in the same transaction). */
+  simulationId: v.optional(v.id('edgeBlockSimulations')),
 };
 
 export interface StartRotationArgs {
@@ -462,6 +469,8 @@ export interface StartRotationArgs {
   actorAdminId?: Id<'adminUsers'>;
   setupRun?: { runId: Id<'edgeSetupRuns'>; generation: number };
   admission?: 'setup.complete';
+  affectedCountries?: string[];
+  simulationId?: Id<'edgeBlockSimulations'>;
 }
 
 /** One reason a start is refused: the code `startRotation` throws (`edge.*`, `validation`, `not_found`) + its message. */
@@ -848,6 +857,15 @@ export async function startRotation(
   if (a.kind === 'publish' && a.toEdgeId && g.approval?.kind === 'candidate')
     await recordCandidateEdge(ctx, g.approval.run, a.toEdgeId);
   const listenerId = g.listenerId;
+  // The evidence snapshot belongs to a detector start; nothing else answers to countries.
+  if (
+    (a.affectedCountries !== undefined || a.simulationId !== undefined) &&
+    a.trigger !== 'detector'
+  )
+    throw new ConvexError({
+      code: 'validation',
+      message: 'Only a detector start carries affected countries or a test block',
+    });
   const id = await ctx.db.insert('edgeRotations', {
     relayId: a.relayId,
     kind: a.kind,
@@ -865,6 +883,8 @@ export async function startRotation(
     requestedLocationId:
       a.kind === 'provision' || a.kind === 'replace' ? a.requestedLocationId : undefined,
     requestedSpareEdgeId: a.kind === 'replace' ? a.requestedSpareEdgeId : undefined,
+    affectedCountries: a.affectedCountries?.slice(0, 20),
+    simulationId: a.simulationId,
     setupRun: a.setupRun,
     viaStandby: a.kind === 'publish' ? true : undefined,
     phase: 'select',
@@ -2310,13 +2330,18 @@ export const l7GateState = internalQuery({
     // Evidence is required only for a replacement the DETECTOR asked for: a
     // manual or reconcile run has no "affected countries" to answer to.
     const needsGeoEvidence = r.trigger === 'detector' && r.forceGeoEvidence !== true;
-    const relay = await ctx.db.get(r.relayId);
-    const evidence = relay?.suspicion?.edgeEvidence ?? [];
-    const target = r.targetEdgeId;
-    const countries = new Set<string>();
-    for (const e of evidence) {
-      if (target && e.edgeId !== target) continue;
-      for (const c of e.countries) countries.add(c);
+    // The countries the START answered (snapshotted from the evaluation that
+    // started it): later detector passes rewrite the origin's suspicion, and a
+    // replacement that outlives one pass must still be proven where the block
+    // was seen. A row written before the snapshot existed reads the suspicion.
+    const countries = new Set<string>(r.affectedCountries ?? []);
+    if (r.affectedCountries === undefined) {
+      const relay = await ctx.db.get(r.relayId);
+      const target = r.targetEdgeId;
+      for (const e of relay?.suspicion?.edgeEvidence ?? []) {
+        if (target && e.edgeId !== target) continue;
+        for (const c of e.countries) countries.add(c);
+      }
     }
     return {
       qualified,

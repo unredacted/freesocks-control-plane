@@ -42,11 +42,17 @@
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import type { LucideIcon } from '@lucide/svelte';
   import * as Collapsible from '@client/components/ui/collapsible';
+  import { adminStatusQuery } from '../../lib/queries';
 
   interface Props {
     children?: import('svelte').Snippet;
   }
   let { children }: Props = $props();
+
+  // Test tools this deployment accepts (never production): said on every page
+  // while on. The status query is already running for the router's PoP probe.
+  const status = adminStatusQuery();
+  const blockSimulatorOn = $derived(status.data?.testTools.blockSimulator === true);
 
   let signingOut = $state(false);
   // Mirror the member logout (Account.svelte): the local clear + redirect must
@@ -249,6 +255,14 @@
   <!-- min-w-0: a grid item defaults to min-width:auto, so one long unbreakable
        value (a test link, an address) would widen the whole content column. -->
   <section class="min-w-0">
+    {#if blockSimulatorOn}
+      <p
+        class="mb-4 rounded-md border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-sm"
+        role="status"
+      >
+        Block simulator is on. This deployment accepts test block evidence.
+      </p>
+    {/if}
     {#if children}{@render children()}{/if}
   </section>
 </div>

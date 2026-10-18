@@ -228,6 +228,8 @@ export const ATTENTION_KINDS = [
   // Provider sets: a pick cooling after a burn; transports with no backup in another failure domain.
   'pick_cooling',
   'reduced_resilience',
+  // Test block evidence is running on a test deployment (it can replace an edge for real).
+  'block_simulated',
 ] as const;
 export type AttentionKind = (typeof ATTENTION_KINDS)[number];
 

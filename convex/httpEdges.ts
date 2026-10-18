@@ -36,6 +36,8 @@ type Handler = (
 
 function statusFromCode(code: string): number {
   if (code === 'not_found') return 404;
+  // The deployment does not accept test block evidence: not a conflict to retry.
+  if (code === 'edge.simulator_disabled') return 403;
   // The backend (or a step that depends on it) failed: an upstream fault, not a refusal.
   if (code === 'backend.panel_read_failed' || code === 'edge.plan_step_failed') return 502;
   // The hourly budget of checks from inside a country is a quota, like the probes'.
@@ -175,6 +177,10 @@ export function throttlePolicyFor(parts: string[]): RateLimitPolicyKey | null {
   if (a === 'render' && b === 'preview') return 'admin.edges.provider-call';
   if (a === 'edges' && b && c === 'probe') return 'admin.edges.probe';
   if (a === 'relays' && b && c === 'probe') return 'admin.edges.probe';
+  // Test block evidence: rare operator writes, throttled like a probe request.
+  // Ending one is cleanup (no probe credit, allowed even after the opt-in is
+  // gone), so it is never held back by the quota.
+  if (a === 'edges' && b && c === 'simulate-block' && !d) return 'admin.edges.probe';
   // Minting the L7 qualification credential creates a backend user.
   if (a === 'relays' && b && c === 'qualification-credential' && !d)
     return 'admin.edges.provider-call';
@@ -377,6 +383,11 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
     if (c === 'quarantine' && !d)
       return json(
         await ctx.runQuery(internal.edgeOperator.quarantineView, { relayId: id<'relays'>(b) }),
+      );
+    // Test block evidence on this origin (edgeSimulations.ts): accepted here at all, live, recent.
+    if (c === 'simulations' && !d)
+      return json(
+        await ctx.runQuery(internal.edgeSimulations.viewForRelay, { relayId: id<'relays'>(b) }),
       );
     return notFound();
   }
@@ -1247,6 +1258,22 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
     const edge = await ctx.runQuery(internal.edges.get, { id: edgeId });
     if (!edge) return notFound();
     switch (c) {
+      case 'simulate-block':
+        // Test block evidence (edgeSimulations.ts): refused unless the deployment opts in.
+        if (d === 'end')
+          return json(await ctx.runMutation(internal.edgeSimulations.end, { edgeId, ...act }));
+        if (d) return notFound();
+        if (typeof body.country !== 'string')
+          return errorJson('validation', 'country is required', 400);
+        return json(
+          await ctx.runMutation(internal.edgeSimulations.start, {
+            edgeId,
+            country: body.country,
+            reporters: typeof body.reporters === 'number' ? body.reporters : undefined,
+            minutes: typeof body.minutes === 'number' ? body.minutes : undefined,
+            ...act,
+          }),
+        );
       case 'publish':
         // Pool index 0 on a Host-managed origin needs the flip → rotation machine.
         return json(
