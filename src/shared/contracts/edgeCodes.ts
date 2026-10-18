@@ -225,6 +225,8 @@ export const ATTENTION_KINDS = [
   'account_budget_unlimited',
   // A live node whose connection mode is turned off: no member can pick it.
   'node_mode_disabled',
+  // Test block evidence is running on a test deployment (it can replace an edge for real).
+  'block_simulated',
 ] as const;
 export type AttentionKind = (typeof ATTENTION_KINDS)[number];
 

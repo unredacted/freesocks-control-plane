@@ -559,6 +559,9 @@ export const AdminStatusSummary = z.object({
   runtime: z
     .object({ nodeVersion: z.string().nullable(), checkedAt: z.string().nullable() })
     .default({ nodeVersion: null, checkedAt: null }),
+  // Test tools the deployment accepts (never on production): the block
+  // simulator (EDGE_SIMULATOR_ALLOW, docs/edges.md). Additive default.
+  testTools: z.object({ blockSimulator: z.boolean() }).default({ blockSimulator: false }),
   generatedAt: z.string().datetime(),
 });
 export type AdminStatusSummary = z.infer<typeof AdminStatusSummary>;

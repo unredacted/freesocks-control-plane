@@ -19,6 +19,7 @@
   import { Switch } from '@client/components/ui/switch';
   import { Label } from '@client/components/ui/label';
   import { codeLabel } from '@client/lib/edgeCodes';
+  import { relaySimulationsQuery } from '@client/lib/edgesApi';
   import AdminListState from '../../AdminListState.svelte';
   import LayerBadge from '../components/LayerBadge.svelte';
   import StatusBadge from '../components/StatusBadge.svelte';
@@ -51,6 +52,10 @@
     onOpenEdge,
     onRotationStarted,
   }: Props = $props();
+
+  // Edges with test block evidence running (a test deployment only).
+  const simulations = relaySimulationsQuery({ slug: () => relay.slug, id: () => relay.id });
+  const testBlocked = $derived(new Set((simulations.data?.live ?? []).map((s) => s.edgeId)));
 
   let showGone = $state(false);
   let importOpen = $state(false);
@@ -188,6 +193,13 @@
                   <StatusBadge kind="status" value={e.status} />
                   <StatusBadge kind="health" value={e.health} />
                   <StatusBadge kind="publication" value={e.publication} />
+                  {#if testBlocked.has(e.id)}
+                    <Badge
+                      variant="warning"
+                      title="Test block evidence is running on this address: the detector treats it as blocked."
+                      >Test block</Badge
+                    >
+                  {/if}
                 </div>
                 {#if e.failure?.code}
                   <span class="mt-1 block text-xs text-destructive"

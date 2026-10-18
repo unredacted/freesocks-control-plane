@@ -602,6 +602,12 @@ const COPY = {
     explain: 'The detector suspects a censor is blocking a published edge.',
     fix: 'Rotate the edge, or wait for corroboration.',
   },
+  block_simulated: {
+    label: 'Test block running',
+    explain:
+      'Test block evidence is running on this deployment: the detector treats an address as blocked and can replace it for real.',
+    fix: 'End the test on the origin page when you are done.',
+  },
   edge_unreachable: {
     label: 'Edge unreachable',
     explain: 'Probes cannot reach a published edge from at least one country.',
@@ -1084,6 +1090,43 @@ const REFUSAL_COPY = {
   not_edge_required: {
     label: 'Already direct',
     explain: 'Members of this node already receive its own address.',
+  },
+  simulator_disabled: {
+    label: 'Test blocks are off',
+    explain: 'This deployment does not accept test block evidence.',
+    fix: 'Only a test deployment that sets EDGE_SIMULATOR_ALLOW accepts it.',
+  },
+  not_published: {
+    label: 'Not in use',
+    explain: 'Only an address members are given can be blocked for a test.',
+  },
+  simulation_active: {
+    label: 'Test already running',
+    explain: 'This address already has a test block running.',
+    fix: 'End it first, or wait for it to expire.',
+  },
+  simulation_country: {
+    label: 'Country not checked',
+    explain: 'Addresses are not checked from that country, so a test block there would not count.',
+    fix: 'Pick a country from the list, or turn its address checks on under Settings.',
+  },
+  simulation_needs_probes: {
+    label: 'Probes are off',
+    explain: 'A test block needs reachability probes on.',
+    fix: 'Turn reachability probes on under Settings.',
+  },
+  simulation_limit: {
+    label: 'Too many tests',
+    explain: 'At most three test blocks run at once.',
+    fix: 'End one first.',
+  },
+  simulation_ended: {
+    label: 'Test ended',
+    explain: 'The test block is no longer running.',
+  },
+  simulation_moved: {
+    label: 'Address changed',
+    explain: 'The test block no longer names an address in use.',
   },
   reprotect_not_bound: {
     label: 'Not live behind addresses yet',
@@ -1629,6 +1672,8 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'edge.live.pulled': 'Live snapshot refreshed',
   'edge.block_suspected': 'Block suspected',
   'edge.block_cleared': 'Block suspicion cleared',
+  'edge.block_simulation.started': 'Test block started',
+  'edge.block_simulation.ended': 'Test block ended',
   'edge.delivery.binding_released': 'Delivery binding released',
   'edge.provider_account.create': 'Provider account created',
   'edge.provider_account.update': 'Provider account changed',
@@ -1758,6 +1803,8 @@ const PLAIN_AUDIT_LABELS: Record<string, string> = {
   'edge.verified': 'Address tested with a real session',
   'edge.block_suspected': 'Address looks blocked',
   'edge.block_cleared': 'Address no longer looks blocked',
+  'edge.block_simulation.started': 'Test block started',
+  'edge.block_simulation.ended': 'Test block ended',
   'edge.host.hidden': 'Direct address hidden in the backend',
   'edge.host.restored': 'Direct address restored in the backend',
   'edge.relay.restore_started': 'Removing protection',

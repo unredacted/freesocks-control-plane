@@ -88,6 +88,14 @@
       },
       { label: 'Listener', value: r.listenerKey },
       { label: 'Started by', value: ROTATION_TRIGGER_LABELS[r.trigger] },
+      // A detector start: where the block was seen (a CDN front's replacement is proven there).
+      {
+        label: 'Blocked in',
+        value:
+          r.affectedCountries && r.affectedCountries.length > 0
+            ? r.affectedCountries.join(', ')
+            : '',
+      },
       { label: 'Started', value: when(r.startedAt) },
       {
         label: r.terminal ? 'Took' : 'Running for',
@@ -135,6 +143,11 @@
       {#if r}
         <div class="flex flex-wrap items-center gap-1.5 pt-1">
           <StatusBadge kind="phase" value={r.phase} />
+          {#if r.simulated}
+            <Badge variant="warning" title="Started by test block evidence on a test deployment"
+              >Test block</Badge
+            >
+          {/if}
           {#if r.cancelRequested && !r.terminal}
             <Badge variant="warning">Cancel requested</Badge>
           {/if}

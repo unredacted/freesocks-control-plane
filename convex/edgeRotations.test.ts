@@ -18,6 +18,7 @@ import {
 } from './lib/edges/testing/fixtures';
 import { upsertSettingRow } from './appSettings';
 import { isStaleRotation, MAX_STEP_ERRORS } from './edgeRotations';
+import { resolveEdgeConfig } from './lib/edgeConfig';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -1745,5 +1746,57 @@ describe('edgeRotations: recovery, guards and bounds', () => {
       rotationId: started.rotationId,
       edgeId: standby,
     });
+  });
+});
+
+describe('edgeRotations: a test block drives the real automatic replace', () => {
+  test('simulated block → detector suspects → burn onto the tested spare, consumed with the start, burned drain, epoch +1', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('EDGE_SIMULATOR_ALLOW', 'simulate-blocks');
+    fakeWorld();
+    try {
+      const { t, relayId, oldEdgeId } = await seed();
+      const spare = await provisionSpare(t, relayId);
+      await t.run(async (ctx) => {
+        await upsertSettingRow(ctx, 'edge.enabled', 'true');
+        await upsertSettingRow(ctx, 'edge.autoRotate', 'true');
+        await upsertSettingRow(ctx, 'edge.probe.enabled', 'true');
+        await ctx.db.patch(relayId, { autoRotate: true });
+      });
+      const before = (await t.query(internal.relays.get, { id: relayId }))!;
+      const { simulationId } = await t.mutation(internal.edgeSimulations.start, {
+        edgeId: oldEdgeId,
+        country: 'IR',
+      });
+      expect((await t.action(internal.edgeDetector.run, {})).rotated).toBe(1);
+      const rotationId = (await t.query(internal.relays.get, { id: relayId }))!.activeRotationId!;
+      expect(await t.query(internal.edgeRotations.get, { id: rotationId })).toMatchObject({
+        trigger: 'detector',
+        burn: true,
+        targetEdgeId: oldEdgeId,
+        simulationId,
+        affectedCountries: ['IR'],
+      });
+      await drain(t, rotationId);
+      const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
+      expect([r.phase, r.outcome, r.toEdgeId]).toEqual(['done', 'published', spare]);
+      const after = (await t.query(internal.relays.get, { id: relayId }))!;
+      expect(after.publishedEdgeIds[0]).toBe(spare);
+      expect(after.publicationEpoch).toBeGreaterThan(before.publicationEpoch);
+      const cfg = await t.run((ctx) => resolveEdgeConfig(ctx.db));
+      const old = (await t.run((ctx) => ctx.db.get(oldEdgeId)))!;
+      expect(old.burnedAt).toBeDefined();
+      expect(old.drainUntil! - r.finishedAt!).toBeGreaterThanOrEqual(
+        cfg.burnedDrainMinutes * 60_000 - 1_000,
+      );
+      expect(old.drainUntil! - r.finishedAt!).toBeLessThanOrEqual(
+        cfg.burnedDrainMinutes * 60_000 + 1_000,
+      );
+      expect(
+        await t.run((ctx) => ctx.db.get(simulationId as Id<'edgeBlockSimulations'>)),
+      ).toMatchObject({ endReason: 'consumed', rotationId });
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });

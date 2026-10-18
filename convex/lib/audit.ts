@@ -460,8 +460,13 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
     'topCountry',
     'scope',
     'autoRotate',
+    'simulated',
   ],
   'edge.block_cleared': ['relaySlug', 'reason'],
+  // Test block evidence on a test deployment (edgeSimulations.ts): the country,
+  // the simulated reporters and the duration; why it ended.
+  'edge.block_simulation.started': ['relaySlug', 'country', 'reporters', 'minutes'],
+  'edge.block_simulation.ended': ['relaySlug', 'reason'],
   // The fleet brake (lib/edges/fleet.ts): counts and the threshold only.
   'edge.fleet_brake': ['engaged', 'suspected', 'evaluated', 'threshold'],
   'probe.run': ['targetKey', 'source', 'trigger'],

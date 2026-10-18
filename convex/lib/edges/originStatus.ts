@@ -55,6 +55,7 @@ export const ATTENTION_RANK = [
   'node_mode_disabled',
   'qualification_lapsed',
   'retest_needed',
+  'block_simulated',
   'block_suspected',
   'edge_unreachable',
   'fleet_rotation_cap',

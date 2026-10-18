@@ -19,8 +19,12 @@
   import * as DropdownMenu from '@client/components/ui/dropdown-menu';
   import {
     deleteEdge,
+    edgeKeys,
+    endSimulatedBlock,
     invalidateEdge,
+    invalidateOverview,
     invalidateProbes,
+    relaySimulationsQuery,
     probeEdge,
     qualifyEdge,
     resolveEdgeOperator,
@@ -33,6 +37,7 @@
   import PublishDialog from '../forms/PublishDialog.svelte';
   import ActionConfirm from './ActionConfirm.svelte';
   import ReplaceDialog from './ReplaceDialog.svelte';
+  import SimulateBlockDialog from './SimulateBlockDialog.svelte';
   import { relayAction } from './actions.svelte';
   import { edgeAddress, operatorFactsRows } from './relayLogic';
 
@@ -55,8 +60,13 @@
   );
   const gone = $derived(edge.status === 'destroyed');
   const name = $derived(edgeAddress(edge) || edge.name);
+  // Test block evidence (a test deployment only): offered while the origin's view says available.
+  const simulations = relaySimulationsQuery({ slug: () => relay.slug, id: () => relay.id });
+  const simulatorOn = $derived(simulations.data?.available === true);
+  const testBlockLive = $derived((simulations.data?.live ?? []).some((s) => s.edgeId === edge.id));
 
   let publishOpen = $state(false);
+  let simulateOpen = $state(false);
   let unpublishOpen = $state(false);
   let keepActive = $state(true);
   let deleteOpen = $state(false);
@@ -105,6 +115,16 @@
           ? `${res.runIds.length} probe run(s) requested. Results arrive within a minute or two.`
           : 'No probe was started. Check that a probe source is on and the hourly budget is not used up.',
       also: invalidateProbes,
+    });
+  }
+  function endTestBlock(): void {
+    act.mutate({
+      run: () => endSimulatedBlock(edge.id),
+      success: 'Test block ended.',
+      also: (qc) => {
+        void qc.invalidateQueries({ queryKey: edgeKeys.relaySimulations(relay.slug) });
+        invalidateOverview(qc);
+      },
     });
   }
   function retryDestroy(): void {
@@ -163,6 +183,15 @@
       {#if !gone}
         <DropdownMenu.Item onSelect={probe} disabled={act.isPending}>Probe now</DropdownMenu.Item>
       {/if}
+      {#if testBlockLive}
+        <DropdownMenu.Item onSelect={endTestBlock} disabled={act.isPending}>
+          End test block
+        </DropdownMenu.Item>
+      {:else if simulatorOn && published}
+        <DropdownMenu.Item onSelect={() => (simulateOpen = true)}>
+          Simulate a block (test)
+        </DropdownMenu.Item>
+      {/if}
       {#if canRetryDestroy}
         <DropdownMenu.Item onSelect={retryDestroy} disabled={act.isPending}>
           Retry destroy
@@ -202,6 +231,10 @@
       edgeId={edge.id}
       onStarted={onRotationStarted}
     />
+  {/if}
+
+  {#if simulateOpen}
+    <SimulateBlockDialog {relay} {edge} onClose={() => (simulateOpen = false)} />
   {/if}
 
   {#if replaceKind}
