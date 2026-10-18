@@ -27,13 +27,10 @@ import {
   type ListenerSpecFixture,
 } from './lib/edges/testing/fixtures';
 import { insertPlanned } from './lib/edges/testing/reads';
-import { scheduledWork } from './lib/edges/testing/scheduled';
 
 const modules = import.meta.glob('./**/*.*s');
-const scheduled = scheduledWork();
 
-afterEach(async () => {
-  await scheduled.end();
+afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
   __setEdgePlumbingForTests(null);
@@ -130,7 +127,7 @@ function listenerG(): ListenerSpecFixture {
 }
 
 async function seed() {
-  const t = scheduled.track(convexTest(schema, modules));
+  const t = convexTest(schema, modules);
   await insertPanelServer(t);
   const accountId = await createAccount(t, {
     provider: 'upcloud',
@@ -637,7 +634,7 @@ describe('edgeReconcile', () => {
 
   test('pool upkeep: the template rule is PER LISTENER: a free non-zero index still needs the rotation when the standby’s listener has no template yet', async () => {
     fakeUpcloud([{ uuid: 'lb-1', name: 'x' }]);
-    const t = scheduled.track(convexTest(schema, modules));
+    const t = convexTest(schema, modules);
     await insertPanelServer(t);
     const accountId = await createAccount(t, {
       provider: 'upcloud',
@@ -1246,7 +1243,7 @@ describe('edgeReconcile: tearing a hostname off a SHARED resource', () => {
 
   /** A destroying L7 edge whose ledger holds a shared service + the children FCP owns. */
   async function sharedEdge() {
-    const t = scheduled.track(convexTest(schema, modules));
+    const t = convexTest(schema, modules);
     await insertPanelServer(t);
     const { id: accountId } = await t.mutation(internal.edgeProviderAccounts.create, {
       provider: 'cloudflare',
@@ -1474,7 +1471,7 @@ describe('edgeReconcile: renewing a front qualification before it lapses', () =>
    * reconcile pass to it.
    */
   async function frontedRelay(expiresInMs: number[]) {
-    const t = scheduled.track(convexTest(schema, modules));
+    const t = convexTest(schema, modules);
     await insertPanelServer(t);
     const { id: accountId } = await t.mutation(internal.edgeProviderAccounts.create, {
       provider: 'cloudflare',

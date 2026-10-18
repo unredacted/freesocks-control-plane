@@ -17,7 +17,6 @@ import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { insertPanelServer } from './lib/edges/testing/fixtures';
-import { scheduledWork } from './lib/edges/testing/scheduled';
 import { addressRemark, addressesOf, ownsAddress } from './nodeIntents';
 import { gateOfNode } from './lib/edges/testing/reads';
 import {
@@ -30,7 +29,6 @@ import { NodeIntentView } from '../src/shared/contracts/servers';
 
 const modules = import.meta.glob('./**/*.*s');
 type T = TestConvex<typeof schema>;
-const scheduled = scheduledWork();
 
 beforeEach(() => {
   vi.stubEnv('SESSION_SIGNING_KEY', 'test-sign');
@@ -38,9 +36,7 @@ beforeEach(() => {
   vi.stubEnv('IP_HASH_SALT', 'test-salt');
   vi.stubEnv('ACCOUNT_ID_PEPPER', 'test-pepper');
 });
-afterEach(async () => {
-  // A workflow a test leaves running would otherwise reach the next test's fake panel.
-  await scheduled.end();
+afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
@@ -239,7 +235,7 @@ async function seedFamilies(t: T) {
 }
 
 async function seed() {
-  const t = scheduled.track(convexTest(schema, modules));
+  const t = convexTest(schema, modules);
   const serverId = await insertPanelServer(t);
   const panel = installPanel();
   await t.mutation(internal.seed.seedConnectionModes, {});
