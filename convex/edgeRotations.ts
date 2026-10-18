@@ -2749,6 +2749,9 @@ export async function selectionContext(
     for (const c of candidates) {
       const at = c.locationId ? order.indexOf(c.locationId) : -1;
       if (at < 0) continue;
+      // A provider-scoped profile binds the slot to that network, set or not.
+      if (listener.providerScope?.provider && c.provider !== listener.providerScope.provider)
+        continue;
       if (automatic && cooling.has(c.locationId!)) {
         coolingOnly++;
         continue;
