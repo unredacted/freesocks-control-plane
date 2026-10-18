@@ -1853,3 +1853,111 @@ describe('edgeRotations: a test block drives the real automatic replace', () => 
     }
   });
 });
+
+describe('edgeRotations: per-country checks before a replacement goes out', () => {
+  /** A settled round for an edge: IR working or failing from three networks, controls working. */
+  async function landRound(
+    t: ReturnType<typeof convexTest>,
+    edgeId: Id<'edges'>,
+    ir: 'ok' | 'fail',
+  ) {
+    await t.run(async (ctx) => {
+      const edge = (await ctx.db.get(edgeId))!;
+      const now = Date.now();
+      const base = {
+        targetKind: 'edge' as const,
+        targetRef: edgeId as string,
+        target: `${edge.addresses.v4}:${edge.listeners[0]!.edgePort}`,
+        port: edge.listeners[0]!.edgePort,
+        ipVersion: 4 as const,
+        addressKind: 'ip' as const,
+        requestedFamily: 4 as const,
+        status: 'finished' as const,
+        trigger: 'qualification' as const,
+        requestedAt: now,
+        finishedAt: now,
+        roundId: `edge:${edgeId}:${now}`,
+      };
+      await ctx.db.insert('probeRuns', {
+        ...base,
+        source: 'globalping',
+        probeProtocol: 'tcp',
+        controls: ['DE', 'US'],
+        results: [
+          ...[1, 2, 3].map((k) => ({
+            country: 'IR',
+            asn: `AS${k}`,
+            vantageClass: 'eyeball' as const,
+            ok: ir === 'ok',
+          })),
+          ...['DE', 'US'].map((country) => ({
+            country,
+            asn: `AS9${country}`,
+            vantageClass: 'eyeball' as const,
+            ok: true,
+            control: true,
+          })),
+        ],
+      });
+      await ctx.db.insert('probeRuns', {
+        ...base,
+        source: 'internal',
+        probeProtocol: 'tls-sni',
+        results: [{ country: 'XX', vantageClass: 'datacenter' as const, ok: true }],
+      });
+    });
+  }
+
+  async function detectorReplace(ir: 'ok' | 'fail') {
+    vi.useFakeTimers();
+    vi.stubEnv('EDGE_SIMULATOR_ALLOW', 'simulate-blocks');
+    fakeWorld();
+    const { t, relayId, oldEdgeId } = await seed();
+    const spare = await provisionSpare(t, relayId);
+    await t.run(async (ctx) => {
+      await upsertSettingRow(ctx, 'edge.enabled', 'true');
+      await upsertSettingRow(ctx, 'edge.autoRotate', 'true');
+      await upsertSettingRow(ctx, 'edge.probe.enabled', 'true');
+      await upsertSettingRow(ctx, 'edge.country.enabled', 'true');
+      await ctx.db.patch(relayId, { autoRotate: true });
+    });
+    await t.mutation(internal.edgeSimulations.start, { edgeId: oldEdgeId, country: 'IR' });
+    expect((await t.action(internal.edgeDetector.run, {})).rotated).toBe(1);
+    const rotationId = (await t.query(internal.relays.get, { id: relayId }))!.activeRotationId!;
+    // The spare's first round since the replacement started.
+    await landRound(t, spare, ir);
+    await drain(t, rotationId);
+    return {
+      t,
+      relayId,
+      oldEdgeId,
+      spare,
+      r: (await t.query(internal.edgeRotations.get, { id: rotationId }))!,
+    };
+  }
+
+  test('a detector replacement blocked in a country that triggered it fails and leaves the pool alone', async () => {
+    try {
+      const { t, relayId, oldEdgeId, r } = await detectorReplace('fail');
+      expect(r.outcome).toBe('replacement_blocked');
+      expect(JSON.stringify(r.events)).toContain('replacement_blocked');
+      expect(r.events.find((e) => e.code === 'replacement_blocked')?.detail).toBe('IR');
+      const origin = (await t.query(internal.relays.get, { id: relayId }))!;
+      expect(origin.publishedEdgeIds[0]).toBe(oldEdgeId);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test('a replacement that works from there goes out as before', async () => {
+    try {
+      const { t, relayId, spare, r } = await detectorReplace('ok');
+      expect([r.phase, r.outcome, r.toEdgeId]).toEqual(['done', 'published', spare]);
+      expect((await t.query(internal.relays.get, { id: relayId }))!.publishedEdgeIds[0]).toBe(
+        spare,
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});

@@ -200,6 +200,9 @@ crons.interval('edge-reconcile', { minutes: 5 }, internal.edgeReconcile.run, {})
 // Reachability probes of FCP's own edge addresses from the configured countries
 // (Globalping / check-host.net / RIPE Atlas / internal), within an hourly budget.
 crons.interval('edge-probe', { minutes: 5 }, internal.probes.run, {});
+// Per-country checks (edgeCountry.ts): decided results past their window lapse,
+// grades and every edge's copied state follow (whether or not probes run).
+crons.interval('edge-country-expiry', { hours: 1 }, internal.edgeCountry.expire, {});
 // Settled probe runs are evidence history: keep two weeks, delete in bounded pages.
 crons.daily(
   'retention-edge-probes',

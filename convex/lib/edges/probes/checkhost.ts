@@ -51,16 +51,18 @@ export function parseCheckhostNodes(body: unknown): CheckhostNode[] {
   return out;
 }
 
-/** Pick up to `perCountryLimit` nodes per requested country. */
+/** Pick up to `perCountryLimit` nodes per requested country, and one per control country. */
 export function selectCheckhostNodes(
   nodes: readonly CheckhostNode[],
   countries: readonly string[],
   perCountryLimit: number,
+  controls: readonly string[] = [],
 ): CheckhostNode[] {
   const out: CheckhostNode[] = [];
   for (const c of countries) {
     out.push(...nodes.filter((n) => n.country === c).slice(0, Math.max(1, perCountryLimit)));
   }
+  for (const c of controls) out.push(...nodes.filter((n) => n.country === c).slice(0, 1));
   return out;
 }
 
@@ -92,7 +94,12 @@ export async function checkhostStart(
   opts: ProbeRequestOptions,
   nodes: readonly CheckhostNode[],
 ): Promise<ProbeStarted & { nodeCountries: Record<string, string> }> {
-  const selected = selectCheckhostNodes(nodes, opts.countries, opts.perCountryLimit);
+  const selected = selectCheckhostNodes(
+    nodes,
+    opts.countries,
+    opts.perCountryLimit,
+    opts.controls ?? [],
+  );
   if (selected.length === 0) throw new Error('check-host: no nodes for the requested countries');
   const endpoint = checkhostEndpoint(target);
   const q = new URLSearchParams({ host: checkhostHostParam(target) });

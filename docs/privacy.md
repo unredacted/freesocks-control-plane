@@ -421,6 +421,13 @@ member reports. Neither adds member data anywhere.
   the deployment. Results (vantage country/ASN, reachable or not) are stored per
   edge. Probes are off by default (`edge.probe.enabled`); tokens for the
   services are write-only settings.
+- **Checks from each country** (`edge.country.enabled`, off by default) add a few uncensored
+  **control** countries to the same measurements (one vantage each) and keep, per edge and
+  censored country, what the rounds say and what the checks from inside a country say about the
+  address. Stored: the edge, the country, its provider location, counts and states, and the
+  address a round dialled (for pairing it with a name check); never anything about a member.
+  The evidence affects only which of FCP's own addresses are trusted where; it outlives the
+  edge for `edge.country.windowDays` (default 14), then it is deleted.
 - **Checks from inside a country** (off by default, opted in per country) ask Globalping or
   RIPE Atlas to present one server name (a public site's) to one of **FCP's own** member-facing
   addresses from vantages in that country. The request carries the address, the name and the

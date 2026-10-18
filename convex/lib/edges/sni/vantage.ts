@@ -421,15 +421,27 @@ export type AddressVerdict = 'reachable' | 'unreachable' | 'mixed' | 'unknown' |
  * Which address to check a name on: never one the address-level probes find
  * unreachable from there (that is the block detector's business, and checking
  * it from inside teaches nothing about names); reachable ones first, in the
- * given (stable) order.
+ * given (stable) order. With `lastBatchAt` (per-country checks on), among
+ * equally good addresses the one batched there longest ago goes first, a
+ * newly published one (never) before all: every address of a listener gets
+ * its handshake evidence in turn.
  */
-export function pickTargetIndex(verdicts: readonly AddressVerdict[]): number {
+export function pickTargetIndex(
+  verdicts: readonly AddressVerdict[],
+  lastBatchAt?: ReadonlyArray<number | null>,
+): number {
   const rank = (v: AddressVerdict) => (v === 'reachable' ? 0 : v === 'unreachable' ? -1 : 1);
+  const age = (i: number) => lastBatchAt?.[i] ?? -Infinity;
   let best = -1;
   for (let i = 0; i < verdicts.length; i++) {
     const r = rank(verdicts[i]!);
     if (r < 0) continue;
-    if (best < 0 || r < rank(verdicts[best]!)) best = i;
+    if (best < 0) {
+      best = i;
+      continue;
+    }
+    const rb = rank(verdicts[best]!);
+    if (r < rb || (r === rb && lastBatchAt && age(i) < age(best))) best = i;
   }
   return best;
 }

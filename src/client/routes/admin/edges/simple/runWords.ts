@@ -171,6 +171,14 @@ export function needButtons(code: string): NeedButtons {
         primary: B('Try another address', 'retry_another_address'),
         secondary: B('Go live anyway', 'accept_partial'),
       };
+    case 'blocked_in':
+      // Its first check found the address blocked in a censored country while
+      // it works from elsewhere: a new one is likely in another range.
+      return {
+        primary: B('Try another address', 'retry_another_address'),
+        secondary: B('Use it anyway', 'accept_partial'),
+        hint: 'A new address may land in a range that country does not block.',
+      };
     case 'try_it':
       // Per line on the test card: each tick is saved on its own, "Doesn't work"
       // replaces that one address; the run carries on once every line works.

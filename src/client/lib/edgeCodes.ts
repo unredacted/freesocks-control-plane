@@ -619,6 +619,12 @@ const COPY = {
     label: 'Edge unreachable',
     explain: 'Probes cannot reach a published edge from at least one country.',
   },
+  probe_source_failing: {
+    label: 'A probe source is failing',
+    explain:
+      'A reachability source has brought back nothing for hours. A failure is never read as a block, so the countries it alone covers read as not known.',
+    fix: 'Check its credential and budget in Edges settings, Probes.',
+  },
   pool_below_desired: {
     label: 'Pool below desired',
     explain: 'Fewer edges are published than the origin wants.',
@@ -1580,6 +1586,12 @@ export const SETUP_RUN_NEED_COPY: Record<SetupRunNeed, CodeCopy> = {
   address_unreachable: {
     label: 'Address unreachable',
     explain: 'The new address could not be reached from outside.',
+    fix: 'Try another address (Go live anyway).',
+  },
+  blocked_in: {
+    label: 'Blocked in a country',
+    explain:
+      'The new address is blocked from at least one censored country on its first check, while it works from elsewhere.',
     fix: 'Try another address (Go live anyway).',
   },
   coverage_incomplete: {

@@ -539,6 +539,84 @@ export const PROBE_FIELDS: Field[] = [
     label: 'Probe IPv6 paths',
     helper: 'Applies to origin and custom targets. Edge targets follow the rendering IPv6 setting.',
   },
+  {
+    kind: 'number',
+    path: 'probe.globalpingTestsPerHour',
+    label: 'Globalping tests per hour',
+    unit: 'tests per hour',
+    helper:
+      'Vantage points asked of Globalping per hour. A round that would pass it runs without Globalping.',
+  },
+];
+
+/** Checks of every edge from each censored country (edgeCountry.ts). */
+export const COUNTRY_FIELDS: Field[] = [
+  {
+    kind: 'switch',
+    path: 'country.enabled',
+    label: 'Check edges from each country',
+    helper:
+      'On: every round also asks a few uncensored control countries, spares are checked too, and each edge gets a result per country. Off: probes work as before.',
+  },
+  {
+    kind: 'text',
+    path: 'country.controlCountries',
+    label: 'Control countries',
+    maxLength: 20,
+    helper:
+      'Country codes, like DE US JP. One vantage each per run. They tell a blocked edge from a broken one.',
+  },
+  {
+    kind: 'number',
+    path: 'country.minProbes',
+    label: 'Vantages needed',
+    unit: 'vantages',
+    helper: 'Fewer vantages with an answer from a country decide nothing there.',
+  },
+  {
+    kind: 'number',
+    path: 'country.minNetworks',
+    label: 'Networks needed',
+    unit: 'networks',
+    helper: 'Those vantages must sit in at least this many networks.',
+  },
+  {
+    kind: 'number',
+    path: 'country.minControls',
+    label: 'Controls that must work',
+    unit: 'controls',
+    helper:
+      'Blocked needs this many controls to reach the edge in the same round (the control plane counts as one). Otherwise the edge is down, not blocked.',
+  },
+  {
+    kind: 'number',
+    path: 'country.blockedRounds',
+    label: 'Blocked rounds before it counts',
+    unit: 'rounds',
+    helper: 'At least 30 minutes apart. Working again takes one round.',
+  },
+  {
+    kind: 'number',
+    path: 'country.windowDays',
+    label: 'How long a result stands',
+    unit: 'days',
+    helper: 'Without a new decided round, a result lapses to not known after this.',
+  },
+  {
+    kind: 'number',
+    path: 'country.standbyRecheckHours',
+    label: 'Spare check interval',
+    unit: 'h',
+    helper: 'Spares are checked from every country this often.',
+  },
+  {
+    kind: 'number',
+    path: 'country.preUseWaitMinutes',
+    label: 'Wait for the first round',
+    unit: 'min',
+    helper:
+      'A new address waits this long for its first check before a setup run or a replacement goes on. Not known never holds it.',
+  },
 ];
 
 export const L7_FIELDS: Field[] = [
@@ -560,6 +638,6 @@ export const SECTION_PATHS: Record<Exclude<SettingsSection, 'maintenance'>, stri
   rotation: pathsOf(ROTATION_FIELDS),
   rendering: pathsOf(RENDER_GLOBAL_FIELDS),
   detector: pathsOf(DETECTOR_FIELDS),
-  probes: [...pathsOf(PROBE_SOURCE_FIELDS), ...pathsOf(PROBE_FIELDS)],
+  probes: [...pathsOf(PROBE_SOURCE_FIELDS), ...pathsOf(PROBE_FIELDS), ...pathsOf(COUNTRY_FIELDS)],
   l7: pathsOf(L7_FIELDS),
 };

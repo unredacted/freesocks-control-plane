@@ -230,6 +230,8 @@ export const ATTENTION_KINDS = [
   'reduced_resilience',
   // Test block evidence is running on a test deployment (it can replace an edge for real).
   'block_simulated',
+  // A probe source keeps giving no evidence (every country it alone covers reads "not known").
+  'probe_source_failing',
 ] as const;
 export type AttentionKind = (typeof ATTENTION_KINDS)[number];
 
@@ -460,6 +462,8 @@ export const SETUP_RUN_NEEDS = [
   'node_not_approved',
   // A member body's backup sits in its main address's failure domain although another is on offer.
   'resilience_short',
+  // Per-country checks: the new address's first round finds it blocked in a checked country.
+  'blocked_in',
 ] as const;
 export type SetupRunNeed = (typeof SETUP_RUN_NEEDS)[number];
 

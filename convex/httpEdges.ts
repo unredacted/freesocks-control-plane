@@ -75,6 +75,7 @@ const RESERVED = new Set([
   'automation',
   'setup-runs',
   'sni',
+  'countries',
 ]);
 
 /**
@@ -185,6 +186,8 @@ export function throttlePolicyFor(parts: string[]): RateLimitPolicyKey | null {
   if (a === 'relays' && b && c === 'qualification-credential' && !d)
     return 'admin.edges.provider-call';
   if (a === 'probes' && !b) return 'admin.edges.probe';
+  // A manual round from every checked country spends third-party measurements.
+  if (a === 'countries' && b === 'check' && !c) return 'admin.edges.probe';
   // The setup plan lists the node's transports and Hosts from the backend.
   if (a === 'setup-runs' && b === 'plan' && !c) return 'admin.edges.provider-call';
   return null;
@@ -433,6 +436,14 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
     });
     return r ? json(r) : notFound();
   }
+  if (a === 'countries' && !b) {
+    // Per-country checks of edges (edgeCountry.ts): grades, tracks, marks, sources.
+    const [overview, sources] = await Promise.all([
+      ctx.runQuery(internal.edgeCountry.overview, {}),
+      ctx.runQuery(internal.probes.sourceHealthView, {}),
+    ]);
+    return json({ ...overview, sources: sources.sources });
+  }
   if (a === 'probes') {
     if (!b) {
       // Run history of one target: ?target=<kind>:<ref>
@@ -446,6 +457,9 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
       });
     }
     if (b === 'matrix' && !c) return json(await ctx.runQuery(internal.probes.matrix, {}));
+    // Whether each enabled source is bringing back evidence (a failure is never a block).
+    if (b === 'sources' && !c)
+      return json(await ctx.runQuery(internal.probes.sourceHealthView, {}));
     if (b === 'summary' && !c) {
       // ?window=<ms> ending now, or ?from=<ms>[&to=<ms>] (the query clamps the span).
       const windowMs = Number(query.get('window') ?? '');
@@ -1379,6 +1393,39 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
       default:
         return notFound();
     }
+  }
+  if (a === 'countries') {
+    if (b === 'marks' && !c) {
+      // { scope: 'edge' | 'group', ref, country, state: 'proven' | 'blocked' | null }
+      const scope = body.scope;
+      const state = body.state ?? null;
+      if (scope !== 'edge' && scope !== 'group')
+        return errorJson('validation', 'scope must be edge or group', 400);
+      if (state !== null && state !== 'proven' && state !== 'blocked')
+        return errorJson('validation', 'state must be proven, blocked or null', 400);
+      if (typeof body.ref !== 'string' || typeof body.country !== 'string')
+        return errorJson('validation', 'ref and country are required', 400);
+      return json(
+        await ctx.runMutation(internal.edgeCountry.setMark, {
+          scope,
+          ref: body.ref,
+          country: body.country,
+          state,
+          ...act,
+        }),
+      );
+    }
+    if (b === 'check' && !c) {
+      if (typeof body.edgeId !== 'string')
+        return errorJson('validation', 'edgeId is required', 400);
+      return json(
+        await ctx.runMutation(internal.probes.requestCountryCheck, {
+          edgeId: id<'edges'>(body.edgeId),
+          ...act,
+        }),
+      );
+    }
+    return notFound();
   }
   if (a === 'probes') {
     if (!b) {

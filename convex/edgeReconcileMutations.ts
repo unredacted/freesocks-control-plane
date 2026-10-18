@@ -9,6 +9,7 @@ import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { resolveEdgeConfig } from './lib/edgeConfig';
+import { blockedCountries } from './edgeCountry';
 import {
   assertNoRotationOrQuarantine,
   checkPublishable,
@@ -246,7 +247,15 @@ export const publishStandby = internalMutation({
       if (origin.providerSet && edge.locationId && !inSet.has(edge.locationId as string)) continue;
       ranked.push({ edge, admit: await poolAdmitOf(ctx.db, origin, edge) });
     }
-    ranked.sort((a, b) => Number(b.admit.lowersDeficit) - Number(a.admit.lowersDeficit));
+    // Per-country checks: among equals, a spare blocked in fewer checked
+    // countries goes first (a stable sort keeps the given order otherwise).
+    const now = Date.now();
+    const blocked = (e: Doc<'edges'>) => (cfg.country.enabled ? blockedCountries(e, now) : 0);
+    ranked.sort(
+      (a, b) =>
+        Number(b.admit.lowersDeficit) - Number(a.admit.lowersDeficit) ||
+        blocked(a.edge) - blocked(b.edge),
+    );
     for (const { edge, admit } of ranked) {
       const edgeId = edge._id;
       // Reserved allocation: an edge that adds nothing may not take a slot
@@ -286,7 +295,6 @@ export const publishStandby = internalMutation({
         }
       }
       if (approval.kind === 'candidate') await recordCandidateEdge(ctx, approval.run, edgeId);
-      const now = Date.now();
       const epoch = origin.publicationEpoch + 1;
       await ctx.db.patch(edgeId, {
         publication: 'published',

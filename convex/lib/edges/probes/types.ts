@@ -64,6 +64,11 @@ export interface ProbeRequestOptions {
   countries: string[];
   perCountryLimit: number;
   preferEyeball: boolean;
+  /**
+   * Uncensored control countries asked in the same measurement, ONE vantage
+   * each (per-country checks): they tell a blocked edge from a broken one.
+   */
+  controls?: string[];
 }
 
 /** A started measurement the caller polls (or an already-complete one). */
