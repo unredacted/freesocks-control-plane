@@ -2322,6 +2322,23 @@ lifecycle runs in that test and its rows appear here.
 
 ## Deploy notes
 
+**Locations cleanup** narrows what the locations release left optional: account settings hold
+no placement keys any more, the moved account fields (`qualified`, `qualifiedTemplateHash`,
+`qualification`, `autoQualifyHold`, `inventorySnapshot`, `inventoryAt`) and
+`edgeSetupRuns.accountId` are gone, and so is the migration driver
+(`seed:migrateEdgeLocations`, `seed:edgeLocationsStatus`; its `appState` marker stays, unread).
+An edge of a placed provider (gcore, upcloud, scaleway, ovh) without its own placement is
+refused at the provider call (`placement_missing`) instead of reading the account, and a
+location's live edges are read by `by_location_status`. Convex validates every stored document
+on push, so a row still holding a dropped value makes the push fail before anything changes.
+The deploy goes under the maintenance barrier like the locations release, after a read-only
+count shows zero for: accounts with a placement key in `settings`, accounts holding a moved
+field, setup runs holding `accountId`, and edges of a placed provider without a placement that
+are not destroyed or cancelled. Procedure: finish or cancel open setup runs, activations and
+rotations; `edgeMaintenance:freeze {reason: 'locations-cleanup'}`; the quiescence counts and the
+count above are zero; deploy; thaw. A deployment where the migration never ran (it never had
+an account) needs nothing.
+
 **Provider sets** add one optional field (`edgeRotations.requestedSpareEdgeId`, a replace's
 named spare); everything else the series needs came with locations. One deploy, no migration,
 no freeze. `seedCutover` schedules the location relabel (a read of each provider's region
@@ -2332,7 +2349,7 @@ names for locations still named after a bare region id). The pool cap moves to 1
 later releases of the series use (`edgeRotations.requestedLocationId`, `edgeSetupRuns.picks`,
 `relays.providerSet` and `relays.cooling`, `panelActivationRuns.delivery`); the account's
 placement and trust fields become optional. One deploy, under the maintenance barrier, because
-`seedCutover` migrates the rows (`convex/edgeLocationsMigration.ts`). Six phases, each with its
+`seedCutover` migrated the rows (`convex/edgeLocationsMigration.ts`, since removed). Six phases, each with its
 own predicate, each paged and idempotent:
 
 | Phase     | Work left while                                                                            | What it does                                                                                |
@@ -2351,17 +2368,17 @@ with work left. Before its first write the driver checks the barrier itself: wit
 it only writes the marker; otherwise it needs the maintenance freeze (`needs_freeze`, nothing
 written) and re-counts open work inside the mutation of its first write (non-terminal rotations
 and setup runs, running fronted activations, edges inside a provisioning step;
-`not_quiescent`, nothing written). Either answer is logged and the deploy still succeeds: edges
-keep working through the fallback, where an edge without its own placement reads the account's.
+`not_quiescent`, nothing written). Either answer was logged and the deploy still succeeded:
+edges kept working through a fallback, where an edge without its own placement read the
+account's (removed by the cleanup release above).
 
 Procedure: finish or cancel every open setup run, activation and rotation; `edgeMaintenance:freeze
 {reason: 'locations-migration'}`; check the counts are zero; deploy; `seed:edgeLocationsStatus`
 shows every predicate at zero and the marker set (`seed:migrateEdgeLocations` re-runs the driver
 after a `not_quiescent`); then thaw. If the migration or the checks fail, stay frozen and fix
 forward: members keep being served. Both one-offs run through the deployer container
-(`docs/beta-deploy.md` § "One-off functions"). A later cleanup release narrows the settings
-union, drops the moved account fields and `edgeSetupRuns.accountId`, and removes the fallback;
-it is a second deploy, after the status and a `convex data` count both show zero.
+(`docs/beta-deploy.md` § "One-off functions"). The driver and both one-offs are gone since the
+cleanup release above.
 
 **The cleanup release** tightens the schema (removes values no row holds: the `standby` edge
 status, the restore workflow's copy of `darkCohortKeys`, the `wiped` retirement stage and the

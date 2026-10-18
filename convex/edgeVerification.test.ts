@@ -13,6 +13,7 @@ import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { upsertSettingRow } from './appSettings';
+import { defaultLocationOf } from './edgeLocations';
 import { resolveTemplateFor } from './edgeTemplates';
 import { qualificationBinding } from './lib/edges/frontCheck/binding';
 import {
@@ -588,10 +589,14 @@ describe('L7 auto-trust (cases 7 and 13)', () => {
           templateParams: {},
         };
         const now = Date.now();
+        const location = (await defaultLocationOf(ctx.db, (await ctx.db.get(accountId))!))!;
         return ctx.db.insert('edges', {
           relayId,
           listenerId,
           accountId,
+          locationId: location._id,
+          placement: location.placement,
+          placeKey: location.placeKey,
           provider: 'cloudflare',
           templateHash,
           managed: true,

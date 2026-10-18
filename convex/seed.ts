@@ -577,7 +577,6 @@ export const seedCutover = internalAction({
     clientsInserted: number;
     modeFamiliesInserted: number;
     modesInserted: number;
-    edgeLocations: string;
   }> => {
     const freeTierId = await ctx.runMutation(internal.seed.seedDefaultFreeTier, {});
     const memberTierId = await ctx.runMutation(internal.seed.seedMemberTier, {});
@@ -593,26 +592,8 @@ export const seedCutover = internalAction({
     const clients = await ctx.runMutation(internal.seed.seedClients, {});
     const modes = await ctx.runMutation(internal.seed.seedConnectionModes, {});
     await ctx.runMutation(internal.seed.seedPeerGroups, {});
-    // The one-time move of accounts' fixed locations into locations
-    // (convex/edgeLocationsMigration.ts): a no-op once its marker is written.
-    // It never fails the deploy: `needs_freeze` / `not_quiescent` write
-    // nothing and are reported here; `seed:migrateEdgeLocations` runs it again.
-    let edgeLocations: string;
-    try {
-      const r = await ctx.runAction(internal.edgeLocationsMigration.drive, {});
-      edgeLocations = r.result;
-      // Locations still named after a bare region id get their provider's name.
-      await ctx.scheduler.runAfter(0, internal.edgeProviderOps.relabelLocations, {});
-      if (r.result !== 'already_done' && r.result !== 'nothing_to_migrate')
-        console.log(
-          `[seedCutover] edge locations migration: ${r.result} ${JSON.stringify(r.wrote)}`,
-        );
-    } catch (err) {
-      edgeLocations = 'error';
-      console.log(
-        `[seedCutover] edge locations migration failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
+    // Locations still named after a bare region id get their provider's name.
+    await ctx.scheduler.runAfter(0, internal.edgeProviderOps.relabelLocations, {});
     return {
       freeTierId,
       memberTierId,
@@ -621,26 +602,8 @@ export const seedCutover = internalAction({
       clientsInserted: clients.inserted,
       modeFamiliesInserted: modes.familiesInserted,
       modesInserted: modes.modesInserted,
-      edgeLocations,
     };
   },
-});
-
-/**
- * Run the edge locations migration by hand (through the deployer container,
- * docs/beta-deploy.md): the same driver `seedCutover` runs, with its result.
- */
-export const migrateEdgeLocations = internalAction({
-  args: {},
-  handler: async (ctx): Promise<unknown> =>
-    ctx.runAction(internal.edgeLocationsMigration.drive, {}),
-});
-
-/** What the edge locations migration still has to do, per phase (zero everywhere = done). */
-export const edgeLocationsStatus = internalAction({
-  args: {},
-  handler: async (ctx): Promise<unknown> =>
-    ctx.runQuery(internal.edgeLocationsMigration.status, {}),
 });
 
 /**
