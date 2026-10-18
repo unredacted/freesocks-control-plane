@@ -863,6 +863,14 @@ describe('edgeRotations: a detector replacement answers to the countries of its 
         for (const [key, value] of [
           ['edge.autoRotate', 'true'],
           ['edge.probe.enabled', 'true'],
+          // No probe source answers here: the stamp below is the only verdict
+          // the new hostname ever gets. A real round (the internal probe looks
+          // the minted name up from this host) would rewrite it whenever it
+          // lands after the stamp, and how far one clock step carries the run
+          // depends on which modules earlier tests already loaded.
+          ['edge.probe.sources.globalping', 'false'],
+          ['edge.probe.sources.checkhost', 'false'],
+          ['edge.probe.sources.internal', 'false'],
         ] as const) {
           await ctx.db.insert('appSettings', { key, value, updatedAt: Date.now() });
         }

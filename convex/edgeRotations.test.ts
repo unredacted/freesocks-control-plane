@@ -1424,6 +1424,10 @@ describe('edgeRotations: recovery, guards and bounds', () => {
   });
 
   test('a running rotation blocks every other pool writer and a hostMode change', async () => {
+    // The clock stands still, so the run stays where `start` left it. On real
+    // timers it advances while the writers below are tried, and how far it gets
+    // (past cancellation, or done) depends on which modules earlier tests loaded.
+    vi.useFakeTimers();
     fakeWorld();
     const { t, relayId, listenerId, oldEdgeId, accountId } = await seed();
     // A tested, managed spare: what the replace will switch to.

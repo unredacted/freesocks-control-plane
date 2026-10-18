@@ -23,6 +23,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 const active = async (t: T, id: Id<'relayListeners'>) =>
@@ -334,6 +335,11 @@ describe('the Host follows its server name', () => {
   });
 
   test('the reconcile pass withdraws a Host left on a burned last name (the resync never ran)', async () => {
+    // The clock stands still, so the resync the burn schedules never runs. On
+    // real timers it fires whenever the test first yields to the event loop:
+    // when this is the file's first convex-test case, a module load does that
+    // while `fresh.example` is active below, and the resync rewrites the Host.
+    vi.useFakeTimers();
     const { t, relayId, listenerId } = await seed(['only.example']);
     await withHost(t, relayId, listenerId, 'only.example');
     await t.mutation(internal.sniFamilies.setNames, {
