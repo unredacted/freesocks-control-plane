@@ -4,9 +4,11 @@ import {
   CHECK_WAIT_MS,
   checkPending,
   edgeCountryLines,
+  edgeHasCountryData,
   locationGrades,
   locationGroupKey,
   markConflict,
+  newestRoundAt,
 } from './countryChecks';
 
 const NOW = Date.parse('2026-10-18T12:00:00Z');
@@ -148,10 +150,25 @@ test('markConflict: a mark against decided or mixed checks', () => {
   expect(markConflict(null, 'blocked')).toBe(false);
 });
 
-test('checkPending until a round comes back or the wait runs out', () => {
+test('checkPending compares server rounds only, and gives up after the wait', () => {
   const edge = data.edges[0]!;
-  expect(checkPending(NOW - 30_000, edge, NOW)).toBe(true);
-  expect(checkPending(NOW - 90_000, edge, NOW)).toBe(false);
-  expect(checkPending(NOW - CHECK_WAIT_MS, null, NOW)).toBe(false);
-  expect(checkPending(NOW - 1000, null, NOW)).toBe(true);
+  const newest = newestRoundAt(edge);
+  expect(newest).toBe(at(60_000));
+  // Asked while that round was the newest: still out, whatever this tab's clock says.
+  expect(checkPending({ at: NOW - 30_000, before: newest }, edge, NOW)).toBe(true);
+  expect(checkPending({ at: NOW + 3_600_000, before: newest }, edge, NOW + 3_600_000)).toBe(true);
+  // A round newer than it came back (even one stamped before this tab's request time).
+  expect(checkPending({ at: NOW, before: at(120_000) }, edge, NOW)).toBe(false);
+  // Nothing on record before: the first round is the answer.
+  expect(checkPending({ at: NOW, before: null }, edge, NOW)).toBe(false);
+  expect(checkPending({ at: NOW - 1000, before: null }, null, NOW)).toBe(true);
+  expect(checkPending({ at: NOW - CHECK_WAIT_MS, before: newest }, edge, NOW)).toBe(false);
+});
+
+test('edgeHasCountryData: evidence or a mark of its own', () => {
+  expect(edgeHasCountryData(data, 'e1')).toBe(true);
+  expect(edgeHasCountryData({ ...data, edges: [] }, 'e1')).toBe(true);
+  expect(edgeHasCountryData({ ...data, edges: [], marks: [] }, 'e1')).toBe(false);
+  expect(edgeHasCountryData(null, 'e1')).toBe(false);
+  expect(newestRoundAt(null)).toBeNull();
 });

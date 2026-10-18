@@ -42,6 +42,7 @@
   import CodeNote from './CodeNote.svelte';
   import EdgeCountryActions from './EdgeCountryActions.svelte';
   import { anyCountryCheckPending } from '../lib/countryCheckRequests';
+  import { edgeHasCountryData } from '../lib/countryChecks';
   import { formatBytes, providerLabel } from '../lib/format';
   import { relativeTime, shortId } from '../lib/time';
   import type { KeyValueRow } from '../lib/types';
@@ -57,7 +58,11 @@
   // The detail carries the live snapshot too: one cache, polled by the detail
   // query, so a newer poll always replaces what is shown.
   const detail = edgeDetailQuery(() => edgeId);
-  const countries = edgeCountriesQuery({ busy: (d) => anyCountryCheckPending(d) });
+  // Only while the drawer shows an edge: the page keeps it mounted when closed.
+  const countries = edgeCountriesQuery({
+    busy: (d) => anyCountryCheckPending(d),
+    enabled: () => edgeId !== null,
+  });
 
   let showRaw = $state(false);
   $effect(() => {
@@ -325,7 +330,7 @@
           {/if}
         </section>
 
-        {#if countries.data && countries.data.countries.length > 0 && (countries.data.enabled || countries.data.edges.some((e) => e.edgeId === edge.id))}
+        {#if countries.data && countries.data.countries.length > 0 && (countries.data.enabled || edgeHasCountryData(countries.data, edge.id))}
           <section class="space-y-2">
             <h3 class="text-sm font-semibold">From each country</h3>
             <EdgeCountryActions

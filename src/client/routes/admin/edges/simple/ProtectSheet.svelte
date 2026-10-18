@@ -254,12 +254,13 @@
     const t = setInterval(() => (now = Date.now()), 30_000);
     return () => clearInterval(t);
   });
-  const gradesOf = (provider: string, layer: string, placeKey: string) =>
-    countriesQ.data?.enabled || countriesQ.data?.groups.length
-      ? locationGrades(countriesQ.data, locationGroupKey({ provider, placeKey, layer })).map((c) =>
-          gradeWords(c, now),
-        )
-      : [];
+  // With the checks off, a location still shows what is on record for it: a
+  // grade, or a mark (marks never expire).
+  const gradesOf = (provider: string, layer: string, placeKey: string) => {
+    const cells = locationGrades(countriesQ.data, locationGroupKey({ provider, placeKey, layer }));
+    const shown = countriesQ.data?.enabled || cells.some((c) => c.grade || c.mark);
+    return shown ? cells.map((c) => gradeWords(c, now)) : [];
+  };
   const accounts = $derived(
     [...(plan?.accounts ?? [])].sort((a, b) => Number(b.compatible) - Number(a.compatible)),
   );

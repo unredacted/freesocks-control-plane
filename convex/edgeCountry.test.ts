@@ -584,6 +584,31 @@ describe('edgeCountry: what the admin reads', () => {
     });
     // A held round is not the new address's own block.
     expect(items.find((i) => i.id === `new_edge_blocked_in:${c}`)).toBeUndefined();
+    // Many older rounds in the window (one row per edge checked there) never hide
+    // the newest hold: the scan reads newest first.
+    await t.run(async (ctx) => {
+      const row = (await ctx.db
+        .query('edgeCountryEvidence')
+        .withIndex('by_edge_country', (q) => q.eq('edgeId', a).eq('country', 'IR'))
+        .unique())!;
+      for (let i = 0; i < 600; i++)
+        await ctx.db.insert('edgeCountryEvidence', {
+          edgeId: a,
+          relayId: row.relayId,
+          groupKey: 'upcloud:zone-a',
+          country: 'IR',
+          address: { state: 'proven', blockedRounds: 0 },
+          handshake: { state: 'none', pathBatches: [] },
+          combined: 'proven',
+          lastRoundAt: t0 - 60 * MIN - i,
+          updatedAt: t0 - 60 * MIN,
+        });
+    });
+    const crowded = await t.query(internal.edgeOperator.attention, {});
+    expect(crowded.items.find((i) => i.kind === 'country_wide_failure')).toMatchObject({
+      id: 'country_wide_failure:IR',
+      facts: { countries: ['IR'], edges: 1 },
+    });
     // With the checks off, neither item is raised.
     await t.run((ctx) => upsertSettingRow(ctx, 'edge.country.enabled', 'false'));
     const off = await t.query(internal.edgeOperator.attention, {});

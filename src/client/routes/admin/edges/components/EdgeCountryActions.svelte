@@ -4,7 +4,7 @@
    * (CountryLines) and a "Countries" menu with "Mark for a country" (the
    * operator's word, CountryMarkDialog) and "Check from every country now" (one
    * round, `POST countries/check`, throttled like a probe request). Renders
-   * nothing while the checks are off and the address has no evidence.
+   * nothing while the checks are off and the address has no evidence or mark.
    *
    * Props:
    *   edgeId: string
@@ -19,7 +19,7 @@
   import { invalidateCountries, requestCountryCheck } from '@client/lib/edgesApi';
   import type { EdgeCountriesResponse } from '@shared/contracts/edges';
   import { countryCheckPending, noteCountryCheck } from '../lib/countryCheckRequests';
-  import { edgeCountryLines } from '../lib/countryChecks';
+  import { edgeCountryLines, edgeHasCountryData, newestRoundAt } from '../lib/countryChecks';
   import { edgeErrorMessage } from '../lib/edgeErrors';
   import CountryLines from './CountryLines.svelte';
   import CountryMarkDialog from './CountryMarkDialog.svelte';
@@ -33,8 +33,10 @@
   const qc = useQueryClient();
 
   const lines = $derived(edgeCountryLines(data, edgeId));
-  const hasEvidence = $derived(!!data?.edges.some((e) => e.edgeId === edgeId));
-  const shown = $derived(!!data && data.countries.length > 0 && (data.enabled || hasEvidence));
+  // Evidence or a mark stays visible with the checks off (a mark never expires).
+  const shown = $derived(
+    !!data && data.countries.length > 0 && (data.enabled || edgeHasCountryData(data, edgeId)),
+  );
   let now = $state(Date.now());
   $effect(() => {
     const t = setInterval(() => (now = Date.now()), 30_000);
@@ -49,9 +51,11 @@
   let asking = $state(false);
   async function checkNow() {
     asking = true;
+    // The newest round on record now: the answer is the first round newer than it.
+    const before = newestRoundAt(data?.edges.find((e) => e.edgeId === edgeId));
     try {
       await requestCountryCheck(edgeId);
-      noteCountryCheck(edgeId);
+      noteCountryCheck(edgeId, before);
       invalidateCountries(qc);
       toast.success('Checking from every country. Results show as they come back.');
     } catch (e) {

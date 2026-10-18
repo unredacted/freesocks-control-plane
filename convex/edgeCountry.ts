@@ -894,6 +894,13 @@ export const overview = internalQuery({
 // --- reads for attention ---------------------------------------------------------------------------
 
 /**
+ * Rows (one per edge checked there) one country's scan for holds reads at most.
+ * Newest round first, so a recent mass failure is always inside it; past it
+ * the fleet is far beyond operator scale.
+ */
+const COUNTRY_WIDE_SCAN = 2000;
+
+/**
  * Countries where the country-wide guard holds new blocks (attention
  * `country_wide_failure`): edges whose round there within `windowMs` came back
  * blocked but was held as `country_wide`. Most of what is checked there failed
@@ -908,14 +915,17 @@ export async function countryWideHolds(
 ): Promise<Array<{ country: string; edges: number; groups: number; since: number }>> {
   const out = [];
   for (const country of countries) {
-    const held = (
-      await db
-        .query('edgeCountryEvidence')
-        .withIndex('by_country_round', (q) =>
-          q.eq('country', country).gte('lastRoundAt', now - windowMs),
-        )
-        .take(500)
-    ).filter((r) => r.address.reason === 'country_wide');
+    const held: Evidence[] = [];
+    let scanned = 0;
+    for await (const r of db
+      .query('edgeCountryEvidence')
+      .withIndex('by_country_round', (q) =>
+        q.eq('country', country).gte('lastRoundAt', now - windowMs),
+      )
+      .order('desc')) {
+      if (r.address.reason === 'country_wide') held.push(r);
+      if (++scanned >= COUNTRY_WIDE_SCAN) break;
+    }
     if (held.length === 0) continue;
     out.push({
       country,

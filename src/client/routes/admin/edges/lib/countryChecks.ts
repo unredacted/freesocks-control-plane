@@ -9,7 +9,9 @@
  *   edgeCountryLines(data, edgeId)            one entry per checked country: the edge's row and marks
  *   locationGrades(data, groupKey)            one cell per checked country: the grade, its age, the mark
  *   markConflict(mark, state)                 whether a mark disagrees with what the checks say
- *   checkPending(requestedAt, edge, now)      a check the page asked for has not come back yet
+ *   edgeHasCountryData(data, edgeId)          the edge has evidence or a mark of its own
+ *   newestRoundAt(edge)                       the edge's newest round on record (server time)
+ *   checkPending(request, edge, now)          a check the page asked for has not come back yet
  *   CHECK_WAIT_MS                             how long a page waits for it at most
  */
 import type {
@@ -123,19 +125,46 @@ export function markConflict(
   return checks !== mark.state;
 }
 
+/** The edge has something to show without the checks running: evidence, or a mark on it. */
+export function edgeHasCountryData(
+  data: EdgeCountriesResponse | null | undefined,
+  edgeId: string,
+): boolean {
+  if (!data) return false;
+  return (
+    data.edges.some((e) => e.edgeId === edgeId) ||
+    data.marks.some((m) => m.scope === 'edge' && m.edgeId === edgeId)
+  );
+}
+
+/** The newest round of the edge on record in any country (the server's clock), or null. */
+export function newestRoundAt(edge: EdgeCountriesEdge | null | undefined): string | null {
+  let newest: number | null = null;
+  for (const c of edge?.countries ?? []) {
+    const at = c.lastRound?.at ? Date.parse(c.lastRound.at) : NaN;
+    if (Number.isFinite(at) && (newest === null || at > newest)) newest = at;
+  }
+  return newest === null ? null : new Date(newest).toISOString();
+}
+
+/** A "Check from every country now": when this tab asked (its clock) and the newest round then. */
+export interface CheckRequest {
+  at: number;
+  before: string | null;
+}
+
 /**
- * A check the page asked for at `requestedAt` is still out: no round of the
- * edge has come back since, and it was asked less than CHECK_WAIT_MS ago.
+ * A check the page asked for is still out: no round newer than the one on
+ * record when it asked has come back (server times compared with each other,
+ * never with this tab's clock), and it was asked less than CHECK_WAIT_MS ago.
  */
 export function checkPending(
-  requestedAt: number,
+  request: CheckRequest,
   edge: EdgeCountriesEdge | null | undefined,
   now: number,
 ): boolean {
-  if (now - requestedAt >= CHECK_WAIT_MS) return false;
-  const back = (edge?.countries ?? []).some((c) => {
-    const at = c.lastRound?.at ? new Date(c.lastRound.at).getTime() : NaN;
-    return Number.isFinite(at) && at >= requestedAt;
-  });
-  return !back;
+  if (now - request.at >= CHECK_WAIT_MS) return false;
+  const newest = newestRoundAt(edge);
+  if (newest === null) return true;
+  return request.before !== null && Date.parse(newest) <= Date.parse(request.before);
 }
