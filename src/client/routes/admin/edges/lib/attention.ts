@@ -4,11 +4,15 @@
  * Every `AttentionAction` literal is classified here:
  *   - navigate: a pure navigation, AttentionList performs it itself.
  *   - call:     a server call; AttentionList hands the item to `onAction`
- *               (after a ConfirmDialog when `confirm` is set).
+ *               (after a ConfirmDialog when `confirm` is set), and the host
+ *               page runs it with lib/attentionCalls.ts.
  * The `satisfies Record<AttentionAction, …>` makes a new server action fail typecheck.
+ * `attentionCallable(item)` says whether a call item carries the ids its call
+ * needs; one that does not navigates instead (no confirm promising a call).
  *
- * Exports: attentionTarget(item), ATTENTION_ACTION_PLAN, attentionSubject(item),
- *          attentionFactsLine(item), AttentionPlan, AttentionConfirmCopy.
+ * Exports: attentionTarget(item), ATTENTION_ACTION_PLAN, attentionCallable(item),
+ *          attentionSubject(item), attentionFactsLine(item), AttentionPlan,
+ *          AttentionConfirmCopy.
  */
 import type { z } from 'zod';
 import type { AttentionItem as AttentionItemSchema } from '../../../../../shared/contracts/edges';
@@ -42,8 +46,9 @@ export const ATTENTION_ACTION_PLAN = {
   publish: {
     type: 'call',
     confirm: {
+      // Plain words: "Put this address in use?", "...start receiving this address...".
       title: 'Publish this edge?',
-      body: 'Members of this origin start receiving the edge address on their next subscription refresh.',
+      body: 'Members of this origin start receiving this edge on their next subscription refresh.',
       confirmLabel: 'Publish',
       danger: false,
     },
@@ -100,6 +105,35 @@ export const ATTENTION_ACTION_PLAN = {
   open_node: { type: 'navigate' },
   open_modes: { type: 'navigate' },
 } as const satisfies Record<AttentionAction, AttentionPlan>;
+
+/**
+ * Whether a call item carries what its call needs (the origin, the edge, the
+ * account). The server names the edge only when the call can run (a
+ * `pool_below_desired` publish names a standby that passes the publish checks;
+ * with none it sends `open_relay` or `provision` instead), so a false here is a
+ * malformed item: the row navigates to attentionTarget(item) without a confirm.
+ * False for the navigate actions.
+ */
+export function attentionCallable(item: AttentionItem): boolean {
+  switch (item.action) {
+    case 'publish':
+    case 'rotate':
+      return !!item.relayId && !!item.edgeId;
+    case 'provision':
+    case 'rebalance':
+    case 'require_edges':
+      return !!item.relayId;
+    case 'qualify_front':
+    case 'verify_endpoint':
+      return !!item.edgeId;
+    case 'test_credentials':
+      return !!item.accountId;
+    case 'thaw':
+      return true;
+    default:
+      return false;
+  }
+}
 
 /**
  * Where the action's button leads. For `navigate` actions this IS the action;

@@ -19,7 +19,9 @@
    *     verify_endpoint (the host opens the test card), require_edges (go live)
    *   Without `onAction` a call action falls back to navigating to the page where
    *   the operator can do it by hand (provision -> origin page ?tab=edges,
-   *   verify_endpoint / require_edges -> the node page, ...).
+   *   verify_endpoint / require_edges -> the node page, ...). So does a call item
+   *   without the ids its call needs (attentionCallable): no confirm promises a
+   *   call that cannot run. The host pages run the calls with lib/attentionCalls.ts.
    *
    * Props:
    *   items: AttentionItem[]
@@ -49,6 +51,7 @@
   import ConfirmDialog from './ConfirmDialog.svelte';
   import {
     ATTENTION_ACTION_PLAN,
+    attentionCallable,
     attentionFactsLine,
     attentionSubject,
     attentionTarget,
@@ -99,9 +102,13 @@
     }
   }
 
+  /** The row runs a call (through `onAction`) rather than navigating. */
+  const calls = (item: AttentionItem): boolean =>
+    !!onAction && ATTENTION_ACTION_PLAN[item.action].type === 'call' && attentionCallable(item);
+
   function act(item: AttentionItem) {
     const plan = ATTENTION_ACTION_PLAN[item.action];
-    if (plan.type === 'navigate' || !onAction) {
+    if (plan.type === 'navigate' || !calls(item)) {
       router.navigate(attentionTarget(item));
       return;
     }
@@ -133,7 +140,6 @@
 {:else}
   <ul class={cn('space-y-2', className)} aria-label="Needs attention">
     {#each shown as item (item.id)}
-      {@const plan = ATTENTION_ACTION_PLAN[item.action]}
       {@const facts = w(attentionFactsLine(item))}
       {@const subject = w(attentionSubject(item))}
       {@const actionLabel = plain
@@ -179,7 +185,7 @@
           onclick={() => act(item)}
         >
           {busyId === item.id ? 'Working…' : actionLabel}
-          {#if plan.type === 'navigate' || !onAction}
+          {#if !calls(item)}
             <ChevronRight class="rtl:rotate-180" aria-hidden="true" />
           {/if}
         </Button>

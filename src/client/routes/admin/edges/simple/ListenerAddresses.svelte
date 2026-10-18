@@ -8,11 +8,13 @@
    * when the caller can act on it.
    *
    * Props: listener; edges (every non-destroyed edge of the origin); onTest(edgeId);
+   *        publishable? (the spare the server says can be put in use now, or null)
+   *        with onPublish() (the caller confirms and publishes it)
    *        onRetiring?(edge, 'delete' | 'keep') (the caller confirms; absent = no actions)
    */
   import type { EdgeAdmin, RelayListenerAdmin } from '@shared/contracts/edges';
   import { Button } from '@client/components/ui/button';
-  import { healthLabel } from '@client/lib/edgeCodes';
+  import { PLAIN_ATTENTION_ACTION_LABELS, healthLabel } from '@client/lib/edgeCodes';
   import PoolStrip from '../components/PoolStrip.svelte';
   import type { PoolEntry } from '../lib/types';
   import { endNowWords, retiringWords } from './drainWords';
@@ -21,9 +23,11 @@
     listener: RelayListenerAdmin;
     edges: EdgeAdmin[];
     onTest: (edgeId: string) => void;
+    publishable?: string | null;
+    onPublish?: () => void;
     onRetiring?: (edge: EdgeAdmin, action: 'delete' | 'keep') => void;
   }
-  let { listener, edges, onTest, onRetiring }: Props = $props();
+  let { listener, edges, onTest, publishable = null, onPublish, onRetiring }: Props = $props();
 
   const mine = $derived(edges.filter((e) => e.listenerId === listener.id));
   const inUse = $derived(mine.filter((e) => e.publication === 'published'));
@@ -116,6 +120,16 @@
               onclick={() => onTest(e.id)}
             >
               Test it
+            </Button>
+          {/if}
+          {#if onPublish && e.id === publishable}
+            <Button
+              variant="link"
+              size="sm"
+              class="h-auto min-h-11 p-0 sm:min-h-0"
+              onclick={onPublish}
+            >
+              {PLAIN_ATTENTION_ACTION_LABELS.publish}
             </Button>
           {/if}
         </li>

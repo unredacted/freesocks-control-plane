@@ -1705,6 +1705,7 @@ export const PLAIN_WORDS: Record<string, string> = {
   'run qualify front on the edge': 'check the address',
   'qualify the front again': 'check the address again',
   'publish an edge': 'put an address in use',
+  'publish this edge': 'put this address in use',
   'provision or import an edge': 'create or import an address',
   'provision or publish an edge': 'create an address or put one in use',
   'provision a new edge': 'create a new address',

@@ -20,7 +20,6 @@
   import Link from '@client/components/Link.svelte';
   import { router } from '@client/stores/router.svelte';
   import { searchParam } from '@client/lib/urlState.svelte';
-  import { codeLabel } from '@client/lib/edgeCodes';
   import {
     attentionQuery,
     edgeConfigQuery,
@@ -28,17 +27,12 @@
     invalidateConfig,
     invalidateOverview,
     invalidateProbes,
-    invalidateProviders,
     invalidateRelay,
     maintenanceQuery,
     probeRelay,
     probeSummaryQuery,
     provisionRelay,
-    publishRelayEdge,
-    qualifyEdge,
-    rotateRelayEdge,
     setupStatusQuery,
-    testProviderCredentials,
     thawMaintenance,
     type ProbeRange,
   } from '@client/lib/edgesApi';
@@ -53,7 +47,8 @@
   import NewRelayDialog from './forms/NewRelayDialog.svelte';
   import { edgesPaths } from './lib/routes';
   import { edgeErrorMessage } from './lib/edgeErrors';
-  import { ATTENTION_ACTION_PLAN, attentionTarget } from './lib/attention';
+  import { runAttentionCall } from './lib/attentionCalls';
+  import { attentionCallDeps, openRotationOf } from './lib/attentionCallDeps';
   import { relativeTime } from './lib/time';
   import {
     FILTER_LABELS,
@@ -110,95 +105,9 @@
     filterParam.value = next;
   }
 
-  const openRotation = (slug: string | null, rotationId: string) => {
-    if (slug) router.navigate(edgesPaths.relay(slug, { tab: 'rotations', rotation: rotationId }));
-  };
-
   /** The server-call attention actions (AttentionList has already confirmed the disruptive ones). */
-  async function onAction(item: AttentionItem): Promise<void> {
-    try {
-      switch (item.action) {
-        case 'publish':
-        case 'rotate': {
-          if (!item.relayId || !item.edgeId) {
-            router.navigate(attentionTarget(item));
-            return;
-          }
-          const call = item.action === 'publish' ? publishRelayEdge : rotateRelayEdge;
-          const res = await call(item.relayId, { edgeId: item.edgeId });
-          toast.success(
-            item.action === 'publish'
-              ? 'Publishing started. Follow the run on the origin page.'
-              : 'Replacement started. Follow the run on the origin page.',
-          );
-          if (item.relaySlug) invalidateRelay(qc, item.relaySlug);
-          else invalidateOverview(qc);
-          openRotation(item.relaySlug, res.rotationId);
-          return;
-        }
-        case 'provision': {
-          if (!item.relayId) {
-            router.navigate(attentionTarget(item));
-            return;
-          }
-          const res = await provisionRelay(item.relayId);
-          toast.success('Provisioning started. Follow the run on the origin page.');
-          if (item.relaySlug) invalidateRelay(qc, item.relaySlug);
-          else invalidateOverview(qc);
-          openRotation(item.relaySlug, res.rotationId);
-          return;
-        }
-        case 'thaw': {
-          await thawMaintenance();
-          toast.success('New edge work is allowed again.');
-          invalidateConfig(qc);
-          invalidateOverview(qc);
-          return;
-        }
-        case 'qualify_front': {
-          if (!item.edgeId) {
-            router.navigate(attentionTarget(item));
-            return;
-          }
-          const res = await qualifyEdge(item.edgeId);
-          if (res.ok) toast.success('The front passed qualification.');
-          else
-            toast.error(
-              res.code
-                ? `The front did not qualify: ${codeLabel(res.code)}.`
-                : 'The front did not qualify.',
-            );
-          if (item.relaySlug) invalidateRelay(qc, item.relaySlug);
-          else invalidateOverview(qc);
-          return;
-        }
-        case 'test_credentials': {
-          if (!item.accountId) {
-            router.navigate(attentionTarget(item));
-            return;
-          }
-          const res = await testProviderCredentials(item.accountId);
-          if (res.ok) toast.success('The provider accepted the credentials.');
-          else
-            toast.error(
-              res.code
-                ? `The credential test failed: ${codeLabel(res.code)}.`
-                : 'The credential test failed.',
-            );
-          invalidateProviders(qc);
-          invalidateOverview(qc);
-          return;
-        }
-        default:
-          router.navigate(attentionTarget(item));
-      }
-    } catch (e) {
-      // A confirmed action fails inside its dialog (which shows the reason); the rest toast.
-      const plan = ATTENTION_ACTION_PLAN[item.action];
-      if (plan.type !== 'call' || !plan.confirm) toast.error(edgeErrorMessage(e));
-      throw e;
-    }
-  }
+  const attentionDeps = attentionCallDeps(qc, { plain: false });
+  const onAction = (item: AttentionItem) => runAttentionCall(item, attentionDeps);
 
   // Row actions.
   let provisionRow = $state<OriginRow | null>(null);
@@ -208,7 +117,7 @@
     onSuccess: (res, row) => {
       toast.success('Provisioning started. Follow the run on the origin page.');
       invalidateRelay(qc, row.relay.slug);
-      openRotation(row.relay.slug, res.rotationId);
+      openRotationOf(row.relay.slug, res.rotationId);
     },
   }));
   const probe = createMutation(() => ({
