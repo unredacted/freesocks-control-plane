@@ -132,7 +132,23 @@ export const intentsView = internalQuery({
               need: protection.need?.code ?? null,
             }
           : null,
-        retirement: retirement ? { stage: retirement.stage, code: retirement.code ?? null } : null,
+        // Where the ladder is, and since when it waits there (the page words the steps).
+        retirement: retirement
+          ? {
+              stage: retirement.stage,
+              code: retirement.code ?? null,
+              step: retirement.step ?? null,
+              requestedBy: retirement.requestedBy,
+              // It waited for an admin's decision (or got one): only then is that a step.
+              decision: retirement.events.some(
+                (e) => e.code === 'needs_admin' || e.code === 'decided',
+              ),
+              requestedAt: new Date(retirement.createdAt).toISOString(),
+              since: new Date(
+                retirement.events[retirement.events.length - 1]?.at ?? retirement.updatedAt,
+              ).toISOString(),
+            }
+          : null,
         registeredAt: new Date(i.registeredAt).toISOString(),
         updatedAt: new Date(i.updatedAt).toISOString(),
       });

@@ -3127,6 +3127,16 @@ export default defineSchema({
     disposition: v.optional(v.literal('keep-dark')),
     requestedBy: v.union(v.literal('role'), v.literal('admin')),
     code: v.optional(v.string()),
+    // Where `draining` stopped last (the admin page words the ladder from it).
+    step: v.optional(
+      v.union(
+        v.literal('origin'),
+        v.literal('credentials'),
+        v.literal('addresses'),
+        v.literal('dns'),
+        v.literal('panel_row'),
+      ),
+    ),
     events: v.array(v.object({ at: v.number(), code: v.string() })),
     createdAt: v.number(),
     updatedAt: v.number(),

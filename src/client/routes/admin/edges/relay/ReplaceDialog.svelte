@@ -5,7 +5,9 @@
    * start and what it would pick. Mount it while wanted (`{#if}`) with `open={true}`.
    *
    * `plain` is the node page's wording (address, replace, spare) with only what
-   * blocks the start; the Advanced pages keep the full dry run.
+   * blocks the start; the Advanced pages keep the full dry run. Both say how
+   * long the old address drains: the origin's drain (`drainMinutes`, its own or
+   * `edge.drainMinutes`), or `edge.burnedDrainMinutes` for a burn.
    *
    * Props: kind 'rotate' | 'burn'; origin; edge; plain?; onClose(); onStarted(rotationId)
    */
@@ -16,6 +18,7 @@
   import { Label } from '@client/components/ui/label';
   import {
     burnRelayEdge,
+    edgeConfigQuery,
     edgeKeys,
     invalidateRelay,
     preflightRelay,
@@ -25,6 +28,7 @@
   import PreflightPanel from '../components/PreflightPanel.svelte';
   import ActionConfirm from './ActionConfirm.svelte';
   import { edgeAddress } from './relayLogic';
+  import { drainLength, replaceDrainMinutes } from '../simple/drainWords';
 
   interface Props {
     open: boolean;
@@ -63,6 +67,14 @@
   let force = $state(false);
 
   const name = $derived(edgeAddress(edge) || edge.name);
+  const config = edgeConfigQuery();
+  const drainMin = $derived(
+    replaceDrainMinutes(kind, relay.drainMinutes, config.data?.config.burnedDrainMinutes ?? null),
+  );
+  // "for 24 h" once the length is known; the burn's fleet setting may still be loading.
+  const drainFor = $derived(
+    drainMin === null ? 'for a short time' : `for ${drainLength(drainMin)}`,
+  );
 
   async function start(): Promise<void> {
     const body = { edgeId: edge.id, ...(force ? { force: true } : {}) };
@@ -80,16 +92,16 @@
           title: kind === 'burn' ? `Replace ${name} now?` : `Replace ${name}?`,
           body:
             kind === 'burn'
-              ? 'Use this when the address looks blocked. FCP puts a tested spare (or a new address) in its place, members move over at their next refresh, and this one is retired after a short wait. A new address is billed by your provider.'
-              : 'FCP puts a tested spare (or a new address) in its place, members move over at their next refresh, and this one is retired afterwards. A new address is billed by your provider.',
+              ? `Use this when the address looks blocked. FCP puts a tested spare (or a new address) in its place and members move over at their next refresh. This one keeps working ${drainFor} for members who have not refreshed yet, then it is deleted and its billing stops. A new address is billed by your provider.`
+              : `FCP puts a tested spare (or a new address) in its place and members move over at their next refresh. This one keeps working ${drainFor} for members who have not refreshed yet, then it is deleted and its billing stops. A new address is billed by your provider.`,
           confirm: kind === 'burn' ? 'Replace now' : 'Replace address',
         }
       : {
           title: kind === 'burn' ? `Burn ${name}?` : `Rotate ${name}?`,
           body:
             kind === 'burn'
-              ? 'Use this when the address is believed blocked. A new edge takes its pool position, members are switched over, and the old edge drains for the short "burned" time before it is destroyed. Provisioning a replacement spends provider budget unless a compatible standby exists.'
-              : 'A new edge takes the pool position of this one, members are switched over, and the old edge drains for the normal drain time before it is destroyed. Provisioning a replacement spends provider budget unless a compatible standby exists.',
+              ? `Use this when the address is believed blocked. A new edge takes its pool position, members are switched over, and the old edge drains ${drainFor} (the "burned" drain) before it is destroyed. Provisioning a replacement spends provider budget unless a compatible standby exists.`
+              : `A new edge takes the pool position of this one, members are switched over, and the old edge drains ${drainFor} (this origin's drain time) before it is destroyed. Provisioning a replacement spends provider budget unless a compatible standby exists.`,
           confirm: kind === 'burn' ? 'Burn and replace' : 'Rotate',
         },
   );

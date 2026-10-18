@@ -410,7 +410,7 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'edge.unpublished': ['relaySlug', 'edgeId', 'poolIndex', 'epoch', 'rotationId'],
   'edge.destroyed': ['relaySlug', 'provider', 'edgeId'],
   'edge.destroy_failed': ['relaySlug', 'provider', 'edgeId', 'attempts'],
-  'edge.delete': ['relaySlug', 'edgeId', 'force'],
+  'edge.delete': ['relaySlug', 'edgeId', 'force', 'drainEndedEarly'],
   // Operator resolutions of a parked (`needs_operator`) edge.
   'edge.destroy': ['relaySlug', 'edgeId', 'provider'],
   'edge.forget': ['relaySlug', 'edgeId', 'provider'],

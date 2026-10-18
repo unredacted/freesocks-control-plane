@@ -195,6 +195,9 @@ describe('clients CRUD', () => {
       enabled: false,
       description: 'Admin blurb the refresh must keep.',
     });
+    // A deployment seeded while Anywhere was still marked IPv4-only.
+    const anywhere = clients.find((c) => c.name === 'Anywhere')!;
+    await t.mutation(internal.clients.update, { id: anywhere.id as Id<'clients'>, ipv6: false });
     // An admin-added client the refresh must not touch.
     await t.mutation(internal.clients.create, {
       name: 'AdminOnly',
@@ -215,6 +218,8 @@ describe('clients CRUD', () => {
     expect(h.description).toBe('Admin blurb the refresh must keep.'); // admin blurb preserved
     const admin = after.find((c) => c.name === 'AdminOnly')!;
     expect(admin.homepageUrl).toBe('https://admin.example'); // untouched
+    // The refresh is how a catalog fix (Anywhere's IPv6) reaches a running deployment.
+    expect(after.find((c) => c.name === 'Anywhere')!.ipv6).toBe(true);
   });
 });
 
@@ -292,14 +297,15 @@ describe('clientCatalog resolve + project', () => {
 
   test('ipv6 defaults carry only VERIFIED states and reach the public projection', () => {
     const find = (name: string) => DEFAULT_CLIENTS.find((c) => c.name === name);
-    // Verified live 2026-08-30: sing-box gets the dual-stack tun template;
-    // Anywhere's own tun is IPv4-only. Everything else stays untested (unset).
+    // Verified live 2026-08-30: sing-box gets the dual-stack tun template.
+    // Anywhere supports IPv6 (verified 2026-10-17). Everything else
+    // stays untested (unset).
     expect(find('sing-box')?.ipv6).toBe(true);
-    expect(find('Anywhere')?.ipv6).toBe(false);
+    expect(find('Anywhere')?.ipv6).toBe(true);
     expect(find('Hiddify')?.ipv6).toBeUndefined();
     const projected = publicClients(DEFAULT_CLIENTS);
     expect(projected.find((c) => c.name === 'sing-box')?.ipv6).toBe(true);
-    expect(projected.find((c) => c.name === 'Anywhere')?.ipv6).toBe(false);
+    expect(projected.find((c) => c.name === 'Anywhere')?.ipv6).toBe(true);
   });
 
   test('DEFAULT_CLIENTS carry open-source metadata (labels + source repos)', () => {

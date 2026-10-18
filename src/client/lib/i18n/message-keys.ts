@@ -304,6 +304,7 @@ export type MessageKey =
   | "hero.nodeUnknown"
   | "hero.qrHide"
   | "hero.qrShow"
+  | "hero.relayBackupHint"
   | "hero.relayConnections"
   | "hero.relayRefreshSuggested"
   | "hero.resetsInDays"

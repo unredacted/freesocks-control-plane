@@ -114,7 +114,7 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     license: 'GPL-3.0',
     sourceUrl: 'https://github.com/NodePassProject/Anywhere',
     easeOfUse: 'easy',
-    ipv6: false, // v4-only tun (verified 2026-08-30); v6 sites unreachable through it
+    ipv6: true, // IPv6 works (verified 2026-10-17; supersedes the 2026-08-30 v4-only reading)
     enabled: true,
     priority: 25,
   },

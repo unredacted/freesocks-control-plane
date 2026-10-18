@@ -519,6 +519,32 @@ describe('edgeReconcile', () => {
     expect(destroyed.liveSnapshot).toBeUndefined();
   });
 
+  test('Delete now on a retiring (draining) edge ends its drain: audited as such, destroyed by the next passes', async () => {
+    fakeUpcloud([{ uuid: 'lb-1', name: 'x' }]);
+    const s = await seed();
+    const edgeId = await managedEdge(s, 'lb-1', {
+      status: 'draining',
+      publication: 'draining',
+      drainUntil: Date.now() + 9 * 3_600_000,
+    });
+    // Left alone, a pass keeps it: its drain has hours to go.
+    await run(s.t);
+    expect((await s.t.query(internal.edges.get, { id: edgeId }))!.status).toBe('draining');
+    await s.t.mutation(internal.edgeAdmin.deleteEdge, { edgeId });
+    expect((await s.t.query(internal.edges.get, { id: edgeId }))!).toMatchObject({
+      status: 'destroying',
+      publication: 'unpublished',
+    });
+    const audit = await s.t.run((ctx) => ctx.db.query('auditLog').collect());
+    expect(audit.find((a) => a.action === 'edge.delete')?.payload).toMatchObject({
+      edgeId,
+      drainEndedEarly: true,
+    });
+    await run(s.t); // DELETE requested
+    await run(s.t); // re-issued DELETE answers 404: gone
+    expect((await s.t.query(internal.edges.get, { id: edgeId }))!.status).toBe('destroyed');
+  });
+
   test('resolveOperator forget/destroy heal the pool lists and audit as edge.forget / edge.destroy', async () => {
     fakeUpcloud([{ uuid: 'lb-1', name: 'x' }]);
     const s = await seed();

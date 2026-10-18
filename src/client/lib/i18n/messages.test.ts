@@ -50,6 +50,8 @@ const SAMPLE = {
   gb: 50,
   date: '2026-06-10',
   price: '$5',
+  primary: 'FreeSocks',
+  backup: 'FreeSocks (backup)',
 };
 
 describe('paraglide messages', () => {

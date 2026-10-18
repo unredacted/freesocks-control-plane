@@ -475,7 +475,7 @@ export function stageWords(i: {
     if (s === 'ready_to_wipe')
       return { dot: 'grey', sentence: 'Retired here. Waiting for the machine to be wiped.' };
     if (s === 'retired') return { dot: 'grey', sentence: 'Retired.' };
-    return { dot: 'grey', sentence: 'Retiring.' };
+    return { dot: 'grey', sentence: 'Retiring. Members no longer get it.' };
   }
   if (i.maintenance)
     return { dot: 'amber', sentence: 'Closed for maintenance. Finish it, then approve again.' };
@@ -542,6 +542,117 @@ export function stageWords(i: {
     default:
       return { dot: 'grey', sentence: 'Enrolled.' };
   }
+}
+
+// --- retiring a node (docs/servers.md "Retirement") --------------------------------------------
+
+/** A retirement as `NodeIntentView.retirement` carries it. */
+export interface RetirementLike {
+  stage: string;
+  code: string | null;
+  /** Where `draining` stopped last: origin | credentials | addresses | dns | panel_row. */
+  step: string | null;
+  requestedBy: 'role' | 'admin';
+  /** It waited for an admin's decision, or got one (a plain request never does). */
+  decision: boolean;
+  /** When the ladder began waiting where it is (ISO). */
+  since: string | null;
+}
+
+export interface RetireStep {
+  key: string;
+  label: string;
+  state: 'done' | 'current' | 'todo';
+  /** Why the current step waits, in words. */
+  why: string | null;
+}
+
+/** How often the sweep pushes a retirement along (`backend-bootstrap-sweep`). */
+const RETIRE_SWEEP = 'FCP looks again every 5 minutes';
+
+/** The retire confirm: members lose the node the moment it is confirmed. */
+export function retireConfirmWords(i: { adopted: boolean }): string {
+  return (
+    'Members lose this node at once: it closes now and nobody is given it again. ' +
+    'Members whose key is on it get the unavailable answer; moving them to another node is not offered. ' +
+    'Then FCP takes down its edges and removes its addresses, origin name and panel row, looking again every 5 minutes until each is done, ' +
+    (i.adopted
+      ? 'and you confirm here once you have cleaned up the machine, since FCP never ran it.'
+      : 'and the node role wipes the machine.') +
+    ' This cannot be undone.'
+  );
+}
+
+/**
+ * The retirement ladder as steps, with the one it is on and why it waits
+ * there. The server records where `draining` stopped (`step`) and why
+ * (`code`); a stage after `draining` speaks for itself.
+ */
+export function retirementSteps(
+  i: { adopted: boolean; retirement: RetirementLike },
+  now: number = Date.now(),
+): RetireStep[] {
+  const r = i.retirement;
+  const keys = [
+    'closed',
+    ...(r.decision || r.stage === 'needs_admin' ? ['decision'] : []),
+    'edges',
+    'addresses',
+    'dns',
+    'panel',
+    'wipe',
+    'retired',
+  ];
+  const LABEL: Record<string, string> = {
+    closed: 'Closed to members',
+    decision: 'Your decision',
+    edges: 'Edges taken down, test credentials released',
+    addresses: 'Its own addresses deleted from the panel',
+    dns: 'Its origin name withdrawn from DNS',
+    panel: 'Removed from the panel, its name marked retired',
+    wipe: i.adopted ? 'You confirm the machine is gone' : 'The node role wipes the machine',
+    retired: 'Retired',
+  };
+  const DRAINING_AT: Record<string, string> = {
+    origin: 'edges',
+    credentials: 'edges',
+    addresses: 'addresses',
+    dns: 'dns',
+    panel_row: 'panel',
+  };
+  const current =
+    r.stage === 'needs_admin'
+      ? 'decision'
+      : r.stage === 'requested'
+        ? 'edges'
+        : r.stage === 'draining'
+          ? (DRAINING_AT[r.step ?? ''] ?? 'edges')
+          : r.stage === 'panel_removed' || r.stage === 'ready_to_wipe'
+            ? 'wipe'
+            : null;
+  const at = current ? keys.indexOf(current) : keys.length;
+  const started = r.since ? ` (this step started ${ago(now - Date.parse(r.since))})` : '';
+  const why = (): string => {
+    if (current === 'decision')
+      return 'The node role asked to retire it. Decide below: members on it get the unavailable answer either way.';
+    if (current === 'wipe')
+      return i.adopted
+        ? 'FCP never ran this machine. Stop and clean it up yourself, then choose The machine is gone.'
+        : 'Waiting for the node role to wipe the machine and report back.';
+    const key = r.code ? (r.code.split(':')[0] ?? '') : '';
+    const reason = !r.code
+      ? 'Under way.'
+      : WORDED_CODES.includes(key)
+        ? serverErrorWords(r.code)
+        : `It stopped on an error (${r.code}).`;
+    return `${reason} ${RETIRE_SWEEP}${started}.`;
+  };
+  return keys.map((key, idx) => ({
+    key,
+    label: LABEL[key] ?? key,
+    state: r.stage === 'retired' || idx < at ? 'done' : idx === at ? 'current' : 'todo',
+    why: idx === at && r.stage !== 'retired' ? why() : null,
+  }));
 }
 
 /** The line beside "Open progress" on a fronted node's page, while its protection is open. */
