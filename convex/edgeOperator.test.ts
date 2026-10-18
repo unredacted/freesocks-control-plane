@@ -39,10 +39,8 @@ import {
   SetupStatusResponse,
   TimelineResponse,
 } from '../src/shared/contracts/edges';
-import { scheduledWork } from './lib/edges/testing/scheduled';
 
 const modules = import.meta.glob('./**/*.*s');
-const scheduled = scheduledWork();
 type T = TestConvex<typeof schema>;
 
 const ADMIN_SIGN_KEY = 'test-admin-sign';
@@ -52,8 +50,7 @@ beforeEach(() => {
   vi.stubEnv('IP_HASH_SALT', 'test-salt');
   vi.stubEnv('ACCOUNT_ID_PEPPER', 'test-pepper');
 });
-afterEach(async () => {
-  await scheduled.end();
+afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
@@ -74,7 +71,7 @@ async function adminCookie(t: T) {
 
 /** Backend + one gcore account (untested, unqualified) + origin `node-one` with the REALITY listener `a`. */
 async function seed() {
-  const t = scheduled.track(convexTest(schema, modules));
+  const t = convexTest(schema, modules);
   const f = await seedEdgeFixture(t);
   const cookie = await adminCookie(t);
   const call = (method: string, path: string, body?: unknown) =>
@@ -670,7 +667,7 @@ describe('quarantine view and Host adoption', () => {
   });
 
   test('adopt-host: an operator Host at a published edge with the listener transport becomes adopted (legacy remark kept); a mismatch is refused; hostMode may then flip to fcp', async () => {
-    const t = scheduled.track(convexTest(schema, modules));
+    const t = convexTest(schema, modules);
     await insertPanelServer(t);
     await createAccount(t, { provider: 'gcore', name: 'acct-a' });
     const r = await registerRelay(t, { hostModeRequest: 'operator' });

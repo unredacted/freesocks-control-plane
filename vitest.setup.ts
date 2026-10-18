@@ -5,9 +5,10 @@
  * `vi.unstubAllGlobals()` puts this refusal back, never the real fetch.
  *
  * convex-test runs scheduled functions on timers, so a refused call can come
- * from work the failing test scheduled (stub fetch for the whole test, not
- * just the call it awaits) or from work an earlier test in the same file left
- * running (end it in that test's afterEach).
+ * from work the failing test scheduled: stub fetch for the whole test, not
+ * just the call it awaits. Work an earlier test left behind never gets here:
+ * the runner (convex/lib/edges/testing/scheduledWork.runner.ts) ends it with
+ * that test, under a refusal of its own.
  */
 import { afterAll, afterEach } from 'vitest';
 
@@ -39,8 +40,8 @@ function report(when: string): void {
   const calls = refused.splice(0);
   throw new Error(
     `${when} called the real fetch ${calls.length} time(s): ${calls.join(', ')}. ` +
-      'Stub fetch for it (convex/lib/edges/testing/mockFetch.ts), or end the scheduled ' +
-      'work an earlier test in this file left running.',
+      'Stub fetch for the whole test (convex/lib/edges/testing/mockFetch.ts), work it ' +
+      'scheduled included.',
   );
 }
 
