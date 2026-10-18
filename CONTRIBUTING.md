@@ -33,6 +33,12 @@ the test running at the time (`vitest.setup.ts`), a call from work the test sche
 If you change how FCP talks to proxy servers or how keys reach apps, also run the Docker suites
 (`bun run test:integration:remnawave`, `bun run test:compat`).
 
+Scheduled functions end with the test that scheduled them: the suite's test runner
+(`convex/lib/edges/testing/scheduledWork.runner.ts`) cancels what a test leaves pending and waits
+for what is still running before the next test starts. A test that checks a scheduled job runs it
+itself, with `t.finishInProgressScheduledFunctions()` or, under fake timers,
+`t.finishAllScheduledFunctions(vi.runAllTimers)`.
+
 ## Rules that matter most
 
 ### Privacy and secrets

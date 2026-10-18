@@ -15,15 +15,10 @@ import { jsonRes, mockFetch } from './lib/edges/testing/mockFetch';
 import { createAccount, seedEdgeFixture } from './lib/edges/testing/fixtures';
 import { defaultLocationRow, insertPlanned } from './lib/edges/testing/reads';
 import { resolveTemplateFor } from './edgeTemplates';
-import { scheduledWork } from './lib/edges/testing/scheduled';
 
 const modules = import.meta.glob('./**/*.*s');
-const scheduled = scheduledWork();
 
-afterEach(async () => {
-  await scheduled.end();
-  vi.unstubAllGlobals();
-});
+afterEach(() => vi.unstubAllGlobals());
 
 type T = ReturnType<typeof convexTest>;
 
@@ -56,7 +51,7 @@ async function addGcoreLocation(t: T, accountId: Id<'edgeProviderAccounts'>, reg
 
 describe('an account is credentials; a location is where its edges live', () => {
   test('the old single-location shape becomes the default location; a credentials-only L4 account has none; a CDN account always one', async () => {
-    const t = scheduled.track(convexTest(schema, modules));
+    const t = convexTest(schema, modules);
     const legacy = await createAccount(t, { provider: 'upcloud', name: 'legacy' });
     const locs = await locationsOf(t, legacy);
     expect(locs).toHaveLength(1);
@@ -86,7 +81,7 @@ describe('an account is credentials; a location is where its edges live', () => 
   });
 
   test('a location that would provision without a required regional value is refused', async () => {
-    const t = scheduled.track(convexTest(schema, modules));
+    const t = convexTest(schema, modules);
     // The template names no flavor (the compiled default is empty) and OVH needs one.
     const accountId = await createAccount(t, {
       provider: 'ovh',
@@ -113,7 +108,7 @@ describe('an account is credentials; a location is where its edges live', () => 
   });
 
   test('a new location is offered by the provider to this key, labelled by it, and created once', async () => {
-    const t = scheduled.track(convexTest(schema, modules));
+    const t = convexTest(schema, modules);
     const accountId = await createAccount(t, { provider: 'upcloud', name: 'up', settings: {} });
     const stub = mockFetch((c) =>
       c.path.endsWith('/1.3/zone')
@@ -170,7 +165,7 @@ describe('an account is credentials; a location is where its edges live', () => 
 
 describe('trust is per location', () => {
   test('a location is trusted on its own; an account edit untrusts every location; a rotation keeps them', async () => {
-    const t = scheduled.track(convexTest(schema, modules));
+    const t = convexTest(schema, modules);
     const accountId = await createAccount(t, { provider: 'gcore', name: 'g' });
     const a = (await defaultLocationRow(t, accountId))!._id;
     const b = await addGcoreLocation(t, accountId, 33);
@@ -198,7 +193,7 @@ describe('trust is per location', () => {
   });
 
   test("a location's own flavor lays over the template: an empty overlay keeps the template hash, a flavor of its own moves it and untrusts the location", async () => {
-    const t = scheduled.track(convexTest(schema, modules));
+    const t = convexTest(schema, modules);
     await t.mutation(internal.edgeTemplates.ensureDefaults, {});
     const accountId = await createAccount(t, { provider: 'gcore', name: 'g' });
     const loc = (await defaultLocationRow(t, accountId))!;
@@ -231,7 +226,7 @@ describe('trust is per location', () => {
 
 describe('every edge freezes its location', () => {
   test("describe and destroy act in the edge's own region, never the account's default", async () => {
-    const t = scheduled.track(convexTest(schema, modules));
+    const t = convexTest(schema, modules);
     const fx = await seedEdgeFixture(t, { qualified: true });
     // A credentials-only account with two locations: the edge lives in the second.
     const accountId = await createAccount(t, { provider: 'gcore', name: 'bare', settings: {} });
@@ -277,7 +272,7 @@ describe('every edge freezes its location', () => {
   });
 
   test("a location's own cap bounds its inserts beside the account's", async () => {
-    const t = scheduled.track(convexTest(schema, modules));
+    const t = convexTest(schema, modules);
     const fx = await seedEdgeFixture(t, { qualified: true });
     const capped = await addGcoreLocation(t, fx.accountId, 33);
     await t.mutation(internal.edgeLocations.update, { id: capped, maxLiveEdges: 1 });
@@ -301,7 +296,7 @@ describe('every edge freezes its location', () => {
 
 describe('selection picks a trusted location', () => {
   test('automatic work uses a trusted location only; a named one may be untrusted for a spare', async () => {
-    const t = scheduled.track(convexTest(schema, modules));
+    const t = convexTest(schema, modules);
     const fx = await seedEdgeFixture(t, { qualified: true });
     const trusted = (await defaultLocationRow(t, fx.accountId))!._id;
     const other = await addGcoreLocation(t, fx.accountId, 33);
@@ -338,7 +333,7 @@ describe('selection picks a trusted location', () => {
 
 describe('removing a location', () => {
   test('refused while an edge lives there, a node names it or an open run picked it; the default moves to the next', async () => {
-    const t = scheduled.track(convexTest(schema, modules));
+    const t = convexTest(schema, modules);
     const fx = await seedEdgeFixture(t, { qualified: true });
     const first = (await defaultLocationRow(t, fx.accountId))!._id;
     const second = await addGcoreLocation(t, fx.accountId, 33);
@@ -403,7 +398,7 @@ describe('removing a location', () => {
 
 describe('a credential test needs no location', () => {
   test('gcore lists the projects, scaleway lists in the first zone: no region is guessed', async () => {
-    const t = scheduled.track(convexTest(schema, modules));
+    const t = convexTest(schema, modules);
     const gcore = await createAccount(t, { provider: 'gcore', name: 'g', settings: {} });
     const scw = await createAccount(t, {
       provider: 'scaleway',
@@ -434,7 +429,7 @@ describe('a credential test needs no location', () => {
 
 describe('a location named after its bare region id', () => {
   test('gets the name its provider lists for that region; a named one is left alone', async () => {
-    const t = scheduled.track(convexTest(schema, modules));
+    const t = convexTest(schema, modules);
     const accountId = await createAccount(t, { provider: 'gcore', name: 'g' });
     const row = (await defaultLocationRow(t, accountId))!;
     // A migrated account had no region name to copy: the id is the label.

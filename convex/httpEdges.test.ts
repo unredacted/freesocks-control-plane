@@ -52,11 +52,9 @@ import { qualificationBinding } from './lib/edges/frontCheck/binding';
 import type { AdoptionInspection } from './lib/edges/providers/types';
 import { deliveryBindingOf, relayBySlug } from './lib/edges/testing/reads';
 import { DEFAULT_CENSORED_COUNTRIES } from './lib/censoredCountries';
-import { scheduledWork } from './lib/edges/testing/scheduled';
 import { refuseNetwork } from './lib/edges/testing/mockFetch';
 
 const modules = import.meta.glob('./**/*.*s');
-const scheduled = scheduledWork();
 const ADMIN_SIGN_KEY = 'test-admin-sign';
 
 beforeEach(() => {
@@ -69,8 +67,7 @@ beforeEach(() => {
   // fail soft, and no test here reads what they would have found.
   refuseNetwork();
 });
-afterEach(async () => {
-  await scheduled.end();
+afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
@@ -119,7 +116,7 @@ async function token(
 }
 
 async function seed() {
-  const t = scheduled.track(convexTest(schema, modules));
+  const t = convexTest(schema, modules);
   const serverId = await t.run((ctx) =>
     ctx.db.insert('backendServers', {
       backend: 'remnawave',
