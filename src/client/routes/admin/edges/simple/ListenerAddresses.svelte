@@ -4,7 +4,8 @@
    * dot per address in use, a spare cell per spare) and a plain line per
    * address (In use / Spare, health, tested or not). A retiring address says
    * what that means and when it is deleted (drainWords.ts), with "Delete now"
-   * and "Keep as a spare" when the caller can act on it.
+   * ("Stop tracking" for an address FCP did not create) and "Keep as a spare"
+   * when the caller can act on it.
    *
    * Props: listener; edges (every non-destroyed edge of the origin); onTest(edgeId);
    *        onRetiring?(edge, 'delete' | 'keep') (the caller confirms; absent = no actions)
@@ -14,7 +15,7 @@
   import { healthLabel } from '@client/lib/edgeCodes';
   import PoolStrip from '../components/PoolStrip.svelte';
   import type { PoolEntry } from '../lib/types';
-  import { retiringWords } from './drainWords';
+  import { endNowWords, retiringWords } from './drainWords';
 
   interface Props {
     listener: RelayListenerAdmin;
@@ -89,7 +90,7 @@
                 class="text-destructive h-auto min-h-11 p-0 sm:min-h-0"
                 onclick={() => onRetiring(e, 'delete')}
               >
-                Delete now
+                {endNowWords(e, address(e)).label}
               </Button>
             {/if}
             {#if onRetiring && r.canKeep}

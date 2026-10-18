@@ -406,6 +406,7 @@ describe('retiring a node', () => {
     code: null as string | null,
     step: null as string | null,
     requestedBy: 'admin' as 'admin' | 'role',
+    decision: false,
     since: '2026-10-17T09:48:00Z' as string | null,
     ...over,
   });
@@ -473,6 +474,18 @@ describe('retiring a node', () => {
     );
     expect(current(asked)!.key).toBe('decision');
     expect(current(asked)!.why).toMatch(/Decide below/);
+    // Once decided, the decision is a done step.
+    const decided = retirementSteps(
+      { adopted: false, retirement: r({ requestedBy: 'role', decision: true, step: 'dns' }) },
+      now,
+    );
+    expect(decided.find((s) => s.key === 'decision')!.state).toBe('done');
+    // A plain role request (never live, nothing outstanding) never asked anyone.
+    const plain = retirementSteps(
+      { adopted: false, retirement: r({ requestedBy: 'role', step: 'addresses' }) },
+      now,
+    );
+    expect(plain.map((s) => s.key)).not.toContain('decision');
     const role = retirementSteps(
       { adopted: false, retirement: r({ stage: 'ready_to_wipe' }) },
       now,

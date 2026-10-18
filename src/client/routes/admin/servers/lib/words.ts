@@ -553,6 +553,8 @@ export interface RetirementLike {
   /** Where `draining` stopped last: origin | credentials | addresses | dns | panel_row. */
   step: string | null;
   requestedBy: 'role' | 'admin';
+  /** It waited for an admin's decision, or got one (a plain request never does). */
+  decision: boolean;
   /** When the ladder began waiting where it is (ISO). */
   since: string | null;
 }
@@ -593,7 +595,7 @@ export function retirementSteps(
   const r = i.retirement;
   const keys = [
     'closed',
-    ...(r.requestedBy === 'role' ? ['decision'] : []),
+    ...(r.decision || r.stage === 'needs_admin' ? ['decision'] : []),
     'edges',
     'addresses',
     'dns',

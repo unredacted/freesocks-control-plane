@@ -73,7 +73,7 @@
   import PausedCard from './PausedCard.svelte';
   import SpareDialog from './SpareDialog.svelte';
   import StatusDot from './StatusDot.svelte';
-  import { retiringWords } from './drainWords';
+  import { endNowWords } from './drainWords';
   import { automationOn } from './runWords';
 
   interface Props {
@@ -432,18 +432,18 @@
   {/if}
   {#if ending}
     {@const e = ending.edge}
-    {@const r = retiringWords(e)}
     {#if ending.action === 'delete'}
+      {@const w = endNowWords(e, addressOf(e))}
       <ActionConfirm
         open={true}
-        title={`Delete ${addressOf(e)} now?`}
-        body={`Members who have not refreshed their app since it was replaced still connect through it, and they lose it now; their app connects again once it refreshes.${r.left ? ` Left alone it would be deleted in ${r.left}.` : ''} FCP deletes it at its next check, within 5 minutes${e.managed ? ', and billing stops' : ''}.`}
-        confirmLabel="Delete now"
+        title={w.title}
+        body={w.body}
+        confirmLabel={w.label}
         danger
         onClose={() => (ending = null)}
         run={async () => {
           assertEdgeOk(await deleteEdge(e.id));
-          toast.success(`Deleting ${addressOf(e)}.`);
+          toast.success(w.done);
           invalidateRelay(qc, slug);
         }}
       />

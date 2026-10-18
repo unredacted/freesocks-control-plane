@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'vitest';
-import { clockWords, drainLength, replaceDrainMinutes, retiringWords } from './drainWords';
+import {
+  clockWords,
+  drainLength,
+  endNowWords,
+  replaceDrainMinutes,
+  retiringWords,
+} from './drainWords';
 
 // Local-time fixtures: the words are about the admin's own clock.
 const NOW = new Date(2026, 9, 17, 23, 18);
@@ -50,6 +56,28 @@ describe('drain words', () => {
     expect(retiringWords({ ...edge, managed: false }, NOW.getTime()).line).toMatch(
       /stops tracking it in 9 h 12 min .* delete it at your provider\.$/,
     );
+  });
+
+  test('Delete now deletes what FCP created; an observe-only address is only forgotten', () => {
+    const edge = {
+      status: 'draining',
+      publication: 'draining',
+      drainUntil: iso(new Date(2026, 9, 18, 8, 30)),
+      managed: true,
+      burnedAt: null,
+    };
+    const managed = endNowWords(edge, '198.51.100.44', NOW.getTime());
+    expect(managed.label).toBe('Delete now');
+    expect(managed.body).toMatch(/lose it now/);
+    expect(managed.body).toMatch(/would be deleted in 9 h 12 min \(around 08:30 tomorrow\)/);
+    expect(managed.body).toMatch(/at the provider .* billing stops\.$/);
+    const observed = endNowWords({ ...edge, managed: false }, '198.51.100.44', NOW.getTime());
+    expect(observed.label).toBe('Stop tracking');
+    expect(observed.title).toBe('Stop tracking 198.51.100.44 now?');
+    // Never claims a provider delete FCP does not make.
+    expect(observed.body).not.toMatch(/FCP deletes|billing stops/);
+    expect(observed.body).toMatch(/keeps billing for it, until you delete it there/);
+    expect(observed.done).toMatch(/Delete it at your provider\.$/);
   });
 
   test('an address being deleted offers no action', () => {

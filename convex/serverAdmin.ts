@@ -139,6 +139,10 @@ export const intentsView = internalQuery({
               code: retirement.code ?? null,
               step: retirement.step ?? null,
               requestedBy: retirement.requestedBy,
+              // It waited for an admin's decision (or got one): only then is that a step.
+              decision: retirement.events.some(
+                (e) => e.code === 'needs_admin' || e.code === 'decided',
+              ),
               requestedAt: new Date(retirement.createdAt).toISOString(),
               since: new Date(
                 retirement.events[retirement.events.length - 1]?.at ?? retirement.updatedAt,

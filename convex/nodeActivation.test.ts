@@ -343,6 +343,11 @@ describe('the activation routes over HTTP', () => {
 
   test('retire is routed; an admin retire closes the node at once and is audited with the admin', async () => {
     const { t, intentId } = await seedLiveDirect();
+    // Serving members: its retirement must reach the mirrors at once.
+    await t.run(async (ctx) => {
+      const i = (await ctx.db.get(intentId))!;
+      await ctx.db.patch(intentId, { delivery: { ...i.delivery, disposition: 'live' } });
+    });
     const call = await adminCall(t);
     const res = await call('POST', `nodes/intents/${intentId}/retire`, {});
     expect(res.status).toBe(200);
@@ -351,6 +356,9 @@ describe('the activation routes over HTTP', () => {
     const intent = (await t.run((ctx) => ctx.db.get(intentId)))!;
     expect(intent.state).toBe('retiring');
     expect(intent.delivery.disposition).toBe('retiring');
+    // The node was live: mirrored bodies are refreshed at once, not by the cron.
+    const scheduled = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
+    expect(scheduled.map((f) => f.name)).toContain('storage:refreshActiveMirrors');
     const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
     const row = audit.find((a) => a.action === 'servers.node.retire_requested')!;
     expect(row.actorType).toBe('admin');
@@ -398,6 +406,7 @@ describe('the activation routes over HTTP', () => {
       code: 'servers.op_running',
       step: 'addresses',
       requestedBy: 'admin',
+      decision: false,
       requestedAt: new Date(at).toISOString(),
       since: new Date(r.events[2]!.at).toISOString(),
     });

@@ -1663,6 +1663,9 @@ export const requestRetirement = internalMutation({
       updatedAt: now,
     });
     await bumpGateVersion(ctx, intent.backendServerId);
+    // The gate closed: mirrored bodies must stop carrying a node members had
+    // (as a maintenance close does), not wait for the mirror cron.
+    if (intent.delivery.disposition === 'live') await scheduleMirrorRefresh(ctx);
     if (stage === 'requested')
       await ctx.scheduler.runAfter(0, internal.nodeRetirement.startIfPlain, { retirementId: id });
     const server = await ctx.db.get(intent.backendServerId);

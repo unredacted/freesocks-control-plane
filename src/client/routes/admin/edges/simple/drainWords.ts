@@ -12,6 +12,7 @@
  *   drainLength(minutes)              '24 h', '1 h 30 min', '45 min', '3 d'
  *   clockWords(at, now)               '08:30', '08:30 tomorrow', '08:30 on 19 Oct'
  *   retiringWords(edge, now)          the row's line and which actions it offers
+ *   endNowWords(edge, address, now)   "Delete now" (or "Stop tracking") and its confirm
  *   replaceDrainMinutes(kind, ...)    how long a replaced address drains
  */
 import { durationLabel } from '../lib/time';
@@ -95,6 +96,38 @@ export function retiringWords(
     left,
     canDelete: true,
     canKeep: !e.burnedAt,
+  };
+}
+
+/**
+ * Ending a retiring address's drain now: its row action and confirm. FCP
+ * deletes an address it created at the provider; one it only observes is
+ * forgotten (no provider call), so that one says to delete it there.
+ */
+export function endNowWords(
+  e: RetiringEdge,
+  address: string,
+  now: number = Date.now(),
+): { label: string; title: string; body: string; done: string } {
+  const left = retiringWords(e, now).left;
+  if (!e.managed)
+    return {
+      label: 'Stop tracking',
+      title: `Stop tracking ${address} now?`,
+      body:
+        'FCP did not create this address, so it calls nothing at your provider: it only stops tracking it now. ' +
+        'The address keeps working, and your provider keeps billing for it, until you delete it there. ' +
+        'Members who have not refreshed their app since it was replaced use it until then.',
+      done: `FCP no longer tracks ${address}. Delete it at your provider.`,
+    };
+  return {
+    label: 'Delete now',
+    title: `Delete ${address} now?`,
+    body:
+      'Members who have not refreshed their app since it was replaced still connect through it, and they lose it now; their app connects again once it refreshes.' +
+      (left ? ` Left alone it would be deleted in ${left}.` : '') +
+      ' FCP deletes it at the provider at its next check, within 5 minutes, and billing stops.',
+    done: `Deleting ${address}.`,
   };
 }
 
